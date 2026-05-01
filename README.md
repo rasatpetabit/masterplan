@@ -302,6 +302,28 @@ integrations:
     blocked_channel: null
 ```
 
+## Plan annotations
+
+Tasks in `/superflow`-generated plans can carry an optional `**Codex:**` annotation that overrides the eligibility heuristic for Codex routing:
+
+```markdown
+### Task 3: Add memory adapter
+
+**Files:**
+- Create: `src/memory/adapter.py`
+- Test: `tests/memory/test_adapter.py`
+
+**Codex:** ok    # eligible for Codex auto-delegation under codex_routing=auto
+```
+
+| Annotation | Effect on eligibility cache |
+|---|---|
+| `**Codex:** ok` | `eligible: true`, `annotated: "ok"` — delegate even if the heuristic would reject |
+| `**Codex:** no` | `eligible: false`, `annotated: "no"` — never delegate |
+| (no annotation) | fall through to the heuristic checklist; `annotated: null` |
+
+Plans authored via `/superflow`'s Step B2 get this guidance baked into the `writing-plans` brief: the planner adds `**Codex:** ok` for obviously well-bounded tasks (≤ 3 files, unambiguous, known verification) and `**Codex:** no` for tasks that require broader context. Plans without annotations behave exactly as before — annotations are an aid, never required.
+
 ## Status file (the source of truth)
 
 Every plan has a sibling status file at `docs/superpowers/plans/<slug>-status.md`. It's the **only** thing a future agent needs to resume work — never assume conversational context carries over.

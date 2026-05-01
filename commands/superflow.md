@@ -245,7 +245,11 @@ Invoke `superpowers:brainstorming` with the topic. **Brainstorming is always int
 
 ### Step B2 — Plan
 
-After brainstorming returns, invoke `superpowers:writing-plans` against the spec. It will produce `docs/superpowers/plans/YYYY-MM-DD-<slug>.md`. Brief plan-writing with **CD-1 + CD-6**.
+After brainstorming returns, invoke `superpowers:writing-plans` against the spec. It will produce `docs/superpowers/plans/YYYY-MM-DD-<slug>.md`. Brief plan-writing with **CD-1 + CD-6**, plus this annotation guidance:
+
+> When you judge a task as obviously well-suited for Codex (≤ 3 files, unambiguous, has known verification commands, no design judgment) or obviously unsuited (requires understanding broader system context, design tradeoffs, or files outside the stated scope), add a `**Codex:** ok` or `**Codex:** no` line in the per-task `**Files:**` block. See the Plan annotations subsection in Step C 3a for the exact syntax. The orchestrator's eligibility cache parses these as overrides on the heuristic checklist.
+
+Plans without annotations behave exactly as before (heuristic-only). Annotations are an authoring aid; they're never required.
 
 ### Step B3 — Status file + approval
 
@@ -346,8 +350,31 @@ Proceed to **Step C** with the new status path.
     - Plan does NOT annotate `codex: no` on this task.
 
     **Plan annotations** (override the heuristic when present, recorded in cache as `annotated: "ok"|"no"`):
-    - `codex: ok` in the task metadata → delegate (`eligible: true`, `annotated: "ok"`).
-    - `codex: no` → never delegate; run inline (`eligible: false`, `annotated: "no"`).
+
+    Annotations live as a `**Codex:**` line in the per-task `**Files:**` block of the plan. Concrete syntax:
+
+    ```markdown
+    ### Task 3: Add memory adapter
+
+    **Files:**
+    - Create: `src/memory/adapter.py`
+    - Test: `tests/memory/test_adapter.py`
+
+    **Codex:** ok    # eligible for Codex auto-delegation under codex_routing=auto
+    ```
+
+    Or:
+
+    ```markdown
+    **Codex:** no    # never delegate; requires understanding of the storage layer
+    ```
+
+    Effect on the eligibility cache:
+    - `**Codex:** ok` → `eligible: true`, `annotated: "ok"` (overrides the heuristic; delegate even for tasks the checklist would reject).
+    - `**Codex:** no` → `eligible: false`, `annotated: "no"` (never delegate; run inline).
+    - No annotation → fall through to the heuristic checklist above; `annotated: null`.
+
+    The eligibility-cache builder Haiku (Step C step 1) parses these annotations: scan each task block's `**Files:**` section for a following `**Codex:**` line; record the annotation alongside the heuristic decision.
 
     **Delegating:** dispatch the `codex:codex-rescue` subagent via the Agent tool with a bounded brief in this format (per CLAUDE.md):
     ```
