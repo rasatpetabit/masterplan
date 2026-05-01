@@ -20,6 +20,51 @@ Long-running development work tends to sprawl: a PLAN.md here, a feature branch 
 
 `/superflow` enforces a single source of truth — a status file alongside each plan — that captures: which worktree the work lives in, which branch, which task is current, what's been tried, what's blocked. Resume from anywhere, scan in-progress work across all your worktrees, and lint when something feels off.
 
+## Design philosophy
+
+Three principles shape every decision in `/superflow`:
+
+### 1. Thin orchestrator over composable skills
+
+`/superflow` doesn't reimplement brainstorming, planning, execution, debugging, or branch-finishing. Those live in the [superpowers](https://github.com/obra/superpowers) skills. The slash command's job is to **sequence** them, persist state across phases, and route decisions.
+
+This keeps the command surface small (one markdown file you can hold in your head) and means improvements to the underlying skills compound automatically. When `superpowers:writing-plans` gets sharper, `/superflow`'s plans get sharper — no changes here.
+
+### 2. Subagent-driven execution with strict context control
+
+This is the most important design goal, and the one that makes long autonomous runs viable.
+
+A multi-task plan run in a single Claude session bloats context fast: failed experiments, big diffs, library docs, verification dumps. By task 10, the orchestrator is reasoning on cluttered, partially-stale state and quality drops. `/superflow` solves this structurally: **every substantive piece of work goes to a fresh subagent, and only digested results come back to the orchestrator**.
+
+The dispatch model:
+
+| Phase | Model | Why |
+|---|---|---|
+| Discovery scans (Step I1) | Haiku | Mechanical extraction, parallel, bounded |
+| Per-task implementation | Sonnet | The default workhorse, via `superpowers:subagent-driven-development` |
+| Conversion / rewriting | Sonnet | Generation, not just extraction |
+| Architecture, ambiguous specs | Opus | Reserved for tasks that genuinely need deep reasoning |
+| Small well-defined coding tasks | Codex | Per the routing toggle, via `codex:codex-rescue` |
+| Completion inference | Haiku | One per task chunk, parallel, bounded |
+
+Every subagent gets a **bounded brief**: explicit goal, inputs, allowed scope, constraints, return shape. It doesn't inherit session history, and the orchestrator doesn't see its raw output — just a digest.
+
+Activity log entries illustrate the digest pattern:
+```
+2026-04-22T16:14 task "Implement memory session adapter" complete, commit f4e5d6c [codex] (verify: 24 passed)
+```
+Enough to reconstruct state. Nothing more.
+
+This is what makes ScheduleWakeup'ing into a fresh session every ~3 tasks lossless. The status file is the bridge; the orchestrator's mid-session context is disposable.
+
+### 3. Status file is the only source of truth
+
+A future agent (or future-you, three weeks later) should resume any plan with exactly two reads: the plan file and its sibling status file. Conversation context is discarded by design.
+
+The status file holds worktree path + branch (resume relocates if needed), current task, next action, append-only activity log with CD-rule citations and routing tags, blockers section with CD-4 ladder evidence, and notes for non-obvious decisions. See [Status file](#status-file-the-source-of-truth) below for the full schema.
+
+If you can answer "where did this work get to and what's next?" by reading the status file alone, the design is working.
+
 ## Install
 
 ### Option A — Claude Code plugin (recommended)

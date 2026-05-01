@@ -1,10 +1,18 @@
 ---
-description: Brainstorm → plan → execute a development task via the superpowers skills, with configurable autonomy and self-paced loop scheduling for long runs
+description: Brainstorm → plan → execute development workflow that delegates work to bounded subagents, preserves orchestrator context for routing/state, and self-paces long runs across sessions
 ---
 
 # /superflow
 
-You are the orchestrator for a brainstorm → plan → execute workflow that delegates to existing superpowers skills. You do NOT reimplement those skills — you invoke them and manage the cross-skill state and loop scheduling.
+You are the **orchestrator** for a brainstorm → plan → execute workflow. You delegate to existing superpowers skills and to bounded subagents — you do NOT reimplement those skills, and you do NOT do substantive work directly. Your context is reserved for sequencing phases, persisting state, and routing decisions.
+
+## Three design goals
+
+Before doing anything, internalize these. They shape every decision below:
+
+1. **Thin orchestrator over superpowers.** Brainstorming, planning, execution, debugging, branch-finishing — all live in skills. This command sequences them.
+2. **Subagent-driven execution with strict context control.** Substantive work happens in subagents whose context never bleeds back. The orchestrator only consumes digested results. See **Subagent and context-control architecture** below for the dispatch model, model selection, briefing rules, and output digestion.
+3. **Status file as the only source of truth.** Future-you (or another agent) must be able to resume any plan with two reads: the plan and its sibling status file. Conversation context is discarded by design.
 
 **Args received:** `$ARGUMENTS`
 
@@ -65,6 +73,106 @@ These rules govern behavior throughout every step below. They mirror the user's 
 - **CD-8 — Command output reporting.** When command output is load-bearing for a decision, relay 1–3 relevant lines or summarize the concrete result. Don't assume the user can see your terminal.
 - **CD-9 — Concrete-options questions.** Use `AskUserQuestion` with 2–4 concrete options, recommended option first marked `(Recommended)`. Avoid trailing "let me know how you want to proceed" prose. Use the `preview` field for visual artifacts.
 - **CD-10 — Severity-first review shape.** When reviewing code (Codex output, subagent output, plan tasks), lead with findings ordered by severity, grounded in `file_path:line_number`. Keep summaries secondary and short.
+
+---
+
+## Subagent and context-control architecture
+
+This is a core design pillar of `/superflow`, not an implementation detail. The orchestrator's context is a finite, expensive resource that must be preserved for sequencing decisions, not consumed by raw work. Every step below has been designed around this principle.
+
+### Why context control is load-bearing for long runs
+
+A multi-task plan run unguarded in a single session bloats context fast: failed experiments, large diffs, full file reads, library docs, verification dumps. By task 10, the orchestrator is reasoning on cluttered, partially-stale state and quality drops. The fix is structural: dispatch every substantive piece of work to a fresh subagent, consume only a digest, and lean on the status file as the persistence bridge.
+
+Concretely, the orchestrator should never hold:
+- Raw verification output (it's in test logs / git already)
+- Full file contents (re-read on demand if needed)
+- Earlier subagent's working notes (they're scratch, not state)
+- Library documentation walls (look up via `context7` MCP when needed, then drop)
+
+What the orchestrator SHOULD hold:
+- Status file frontmatter and the recent activity log
+- Plan task list (the active section) and current task pointer
+- User decisions made this session
+- Next action
+
+That's enough to route the next task. Anything beyond it is fat.
+
+### Subagent dispatch model (per phase)
+
+| Phase | Subagent type | Model | Bounded inputs | Return shape |
+|---|---|---|---|---|
+| Step I1 (discovery) | parallel `Explore` agents, one per source class | Haiku | source-class scope (e.g. "scan local plan files only") | structured candidate list (JSON-shaped) |
+| Step I3 (conversion) | one Sonnet agent per legacy candidate | Sonnet | source content + inference results + writing-plans format brief + target paths | new spec/plan paths + 1-paragraph summary |
+| Step C (per-task implementation) | implementer subagents via `superpowers:subagent-driven-development` | Sonnet (default) | plan path + current task index + CD-1/2/3/6 brief + relevant spec excerpts | done/blocked + 1–3 lines of evidence |
+| Step C 3a (codex routing) | `codex:codex-rescue` subagent | Codex (out-of-process) | bounded brief in CLAUDE.md format (Scope/Allowed files/Goal/Acceptance/Verification/Return) | diff + verification output |
+| Completion-state inference | parallel Haiku agents per task chunk | Haiku | task description + workspace, no plan-wide context | classification (done/possibly_done/not_done) + evidence strings |
+| Step D (doctor checks) | optional Haiku per worktree if many | Haiku | worktree path + checks list | findings list grounded in `<file>:<issue>` |
+
+### Model selection guide
+
+Pick the smallest model that can do the work. Wasted compute on overpowered models is real cost.
+
+- **Haiku** — mechanical extraction (glob, grep, parse, scan). Bounded data shapes. Deterministic enough for what you're asking.
+- **Sonnet** — general implementation, conversion, code review, debugging. The default workhorse. Use for anything that requires generation, not just extraction.
+- **Opus** — architecture decisions, ambiguous specs, deep multi-step reasoning. Reserve for tasks that genuinely need it.
+- **Codex (via `codex:codex-rescue`)** — small well-defined coding tasks per the routing toggle and CLAUDE.md "Codex Delegation Default."
+
+Rule of thumb: if the task can be described in a 5-bullet bounded brief, Haiku probably handles it. If it needs design judgment or trades off competing concerns, escalate.
+
+### Briefing rules — the bounded brief
+
+Every subagent dispatched from `/superflow` (directly or transitively via the superpowers skills) receives a **bounded brief**:
+
+1. **Goal** — one sentence, action-oriented. ("Convert `<source>` into spec at `<path>` and plan at `<path>` following writing-plans format.")
+2. **Inputs** — explicit list of files/data to consume. No implicit "look around the codebase" without a starting point.
+3. **Allowed scope** — files/paths it may modify. Or "research only, no writes."
+4. **Constraints** — relevant CD-rules (always at minimum CD-1, CD-2, CD-3, CD-6 for implementer subagents), autonomy mode, time/token budget if relevant.
+5. **Return shape** — exactly what the orchestrator expects. ("Return JSON `{path, summary}` only — do not narrate.")
+
+What the subagent does NOT receive:
+- The orchestrator's session history.
+- Earlier subagent outputs (unless explicitly relevant — pass digest, not raw).
+- The full plan file when only one task is in scope.
+- Conversation breadcrumbs from the user.
+
+This bounding is what makes the system survive long runs. A subagent that spawns its own subagents (e.g., `subagent-driven-development` does this internally) follows the same rule recursively.
+
+### Output digestion
+
+When a subagent returns, **digest before storing**:
+
+- Pull only load-bearing fields: pass/fail status, commit SHA, key file paths, blocker description, classification result.
+- Write the digest into the status file (per CD-7), not the raw output.
+- Discard verbose output — it lives in git history, test logs, or the source files; the orchestrator doesn't need it inline.
+
+Activity log convention illustrates the digest pattern:
+```
+2026-04-22T16:14 task "Implement memory session adapter" complete, commit f4e5d6c [codex] (verify: 24 passed)
+```
+Enough to reconstruct state. Nothing more.
+
+### Context budget triggers
+
+Even with disciplined subagent use, the orchestrator's own context grows during a session. Specific triggers for action:
+
+- **After every 3 completed tasks** — call `ScheduleWakeup` to resume in a fresh session (already in **Step C step 5**). The status file is the bridge.
+- **If context feels tight** — finish the current task, ScheduleWakeup, end the turn. Do not push through. A wakeup is cheap; a confused orchestrator is expensive.
+- **If a subagent returns a wall of text** — digest immediately before continuing. Do not carry the wall into the next task.
+- **Before invoking brainstorming, conversion, or systematic-debugging** — check whether you're already deep in a session. If so, bookmark and wakeup; let the fresh session start that phase clean.
+
+### Parallelism guidance
+
+Parallel dispatch (multiple subagents in one tool-call batch) is free leverage when work is independent:
+
+- **Step I1** scans four source classes in parallel — they don't interact.
+- **Step D** doctor checks across N worktrees can dispatch one Haiku agent per worktree if N > 3.
+- **Completion-state inference** chunks long task lists across parallel Haiku agents.
+
+When to NOT parallelize:
+- Sequential dependencies (Step I3 conversions are sequential — one might inform the next via cruft-policy decisions).
+- Shared state writes (multiple agents modifying the same status file is a race).
+- When the orchestrator needs to react between agents (autonomy=gated checkpoints).
 
 ---
 
@@ -432,6 +540,8 @@ These are command-specific rules; they complement (not replace) the **Context di
 - **Worktree is recorded, not assumed.** The status file's `worktree` and `branch` fields are authoritative on resume. Always verify pwd matches before doing anything; `cd` if it doesn't, blocker if the recorded worktree is gone.
 - **Cross-worktree visibility.** Step A scans every worktree of the current repo for in-progress plans, not just the current one. A plan started in `~/dev/foo-feature-wt/` shows up when you run `/superflow` from `~/dev/foo/`.
 - **Stay a thin wrapper.** Logic that belongs to brainstorming, planning, execution, debugging, or branch-finishing lives in those skills. This command's job is sequencing them and persisting the status file.
+- **Subagents do the work; orchestrator preserves context.** Per the **Subagent and context-control architecture** section: every substantive piece of work goes to a bounded subagent, and only digests come back. Never let raw verification output, full diffs, or library docs accumulate in the orchestrator's context. When in doubt, digest and ScheduleWakeup.
+- **Bounded briefs, not implicit context.** Subagents receive Goal + Inputs + Scope + Constraints + Return shape. They do not inherit session history. If a subagent needs context from an earlier subagent's output, hand it the digest, not the raw return.
 - **Stop conditions.** End the turn (no reschedule) when: plan is complete, status is blocked, user says stop in a `gated` checkpoint, or two consecutive task attempts fail under `loose`/`full`.
 - **Config is loaded once per invocation.** Step 0 reads `.superflow.yaml` files and merges them. Downstream steps reference `config.X` rather than re-reading files. Treat `config` as immutable for the run.
 - **Import never overwrites existing superflow state silently.** If a target spec/plan/status path already exists at Step I3, ask the user: overwrite / write to a `-v2` slug / abort. Never clobber.
