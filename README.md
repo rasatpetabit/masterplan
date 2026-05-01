@@ -302,6 +302,15 @@ Most teams will want a `.superflow.yaml` at the repo root that encodes their con
 
 The plugin ships with sensible defaults; the YAML is for when you outgrow them.
 
+## Recent improvements (post-v0.1)
+
+Two follow-up passes have landed since the initial release, both focused on making long autonomous runs cheaper to operate:
+
+- **Speed — increased parallelism.** Step A frontmatter parsing, Step B0 git surveys, Step C step 1 re-reads, Step C 4a verification commands, Step I3 import (source-fetch wave + conversion wave), and Step D doctor checks now dispatch in parallel wherever the work is genuinely independent. New per-invocation caches (`git_state` for worktrees/branches, `eligibility_cache` for Codex routing) avoid redundant subagent dispatches and subprocess calls within a run.
+- **Context use — tighter prompt + smarter re-reads.** Orchestrator prompt trimmed of duplication (CD-rule restatements collapsed, operational rules de-duplicated against inline Step content, design notes relocated to `docs/design/`). Codex review brief now passes a `<task-start SHA>..HEAD` range instead of inlining full diffs (saves thousands of tokens per review on multi-file tasks). Activity logs in long-running plans rotate to a sibling archive when they exceed 100 entries (keeps last 50 inline). In-session mtime gating skips re-reads of unchanged spec/plan files within the same session.
+
+Both passes preserve the three design pillars (thin orchestrator, subagent + context-control, status file as only source of truth) and don't add user-facing flags. See [CHANGELOG.md](./CHANGELOG.md) under `[Unreleased]` for the full breakdown.
+
 ## Project status
 
 This is a v0.1 release. The orchestration logic is stable and used in real Petabit Scale workflows, but expect the schema and flag surface to evolve as edge cases surface. Breaking changes will be called out in the changelog and gated behind a `--legacy` flag where reasonable.
