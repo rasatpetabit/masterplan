@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Parallelism + caching pass** for orchestrator latency. New parallel dispatch sites: Step A status-frontmatter parsing (one Haiku per worktree when N≥2), Step B0 git survey (single parallel Bash batch + per-worktree name-match scan when ≥2 non-current worktrees), Step C step 1 re-read (status + spec + plan + `pwd` + branch as one tool batch), Step C 4a verification (lint/typecheck/unit tests in one Bash batch with shared-artifact exclusion list), Step I3 source-fetch wave + conversion wave (per-candidate parallel; cruft + commit remain sequential per-candidate to keep a single git writer). Subagent dispatch model table updated with new rows.
+- **Step 0 `git_state` cache** — caches `git worktree list --porcelain` and `git branch --list` once per invocation. Steps A, B0, D consult the cache. `git status --porcelain` is **explicitly never cached** (CD-2: stale dirty state risks overwriting user-owned changes).
+- **Step C step 1 eligibility cache** — Codex eligibility for every plan task is computed once at plan-load by a single Haiku dispatch and cached as `eligibility_cache` for the run. Per-task routing decisions in Step C 3a become O(1) lookups instead of per-task LLM-shaped reasoning. Invalidated on plan-file mtime change. Never persisted to disk.
+- **Step I3 slug-collision pre-pass** — when multiple imported candidates resolve to the same slug, auto-suffix `-2`, `-3`, etc. Confirms via `AskUserQuestion` when ≥ 2 collision groups detected.
+- **Step I1 within-agent batching guidance** — each Explore agent's brief now requires issuing all globs/finds/`gh` calls as one parallel tool batch (within its turn).
+- **"Future: intra-plan task parallelism" design notes** in operational rules — annotation schema (`parallel-group`, `depends-on`, `files`), required safety machinery (per-task git worktree isolation, single-writer status file, rollback policy), and why this is deferred (git index races on concurrent commits to same branch warrant their own dedicated plan).
 - **Subagent and context-control architecture** as a first-class design pillar in `/superflow` — explicit dispatch model per phase, model-selection guide (Haiku/Sonnet/Opus/Codex), bounded-brief contract (Goal/Inputs/Scope/Constraints/Return shape), output-digestion rules, and context-budget triggers.
 - "Three design goals" header in the slash command prompt: thin orchestrator over superpowers, subagent-driven execution with context control, status file as only source of truth.
 - New operational rules: "Subagents do the work; orchestrator preserves context" and "Bounded briefs, not implicit context."
@@ -17,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New operational rule: "Codex review is asymmetric — never self-review."
 
 ### Changed
+- **Step D doctor parallelization threshold lowered from N>3 to N≥2.** Haiku dispatch is cheap; the N=2,3 case (main + one feature worktree) is the common case and previously paid full sequential cost.
+- **Step I3 conversions are now parallel waves** (fetch, then conversion) instead of fully sequential. Cruft handling and `git commit` remain sequential per-candidate (avoids git index races; user-interactive `AskUserQuestion`s would scramble UX in parallel).
+- **Parallelism guidance section** in the architecture overview rewritten to enumerate every parallel dispatch site and to explicitly call out where sequentiality is intentional (per-candidate cruft + commit, per-task implementation in Step C, gated checkpoints).
 - Plugin description reflects the subagent + context-control design goal.
 - Codex inline review moved from a standalone "Step C 3b" section into Step 4 as substep "4b", placed between CD-3 verification (4a) and the status update (4d), to fix an ordering bug where 3b documented "fires after Step 4's CD-3" but appeared before Step 4 in the document. New sub-step layout: 4a (verify) → 4b (codex review) → 4c (worktree integrity) → 4d (status update + commit).
 - Step 3 gated checkpoint now expands the Codex option only under `codex_routing == auto`. Under `manual`, Step 3a's existing `AskUserQuestion` already handles routing, so combining was double-prompting.
@@ -26,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Step B3 and Step I3 now include explicit field-population lists covering all required status frontmatter (slug, status, spec, plan, worktree, branch, started, last_activity, current_task, next_action, autonomy, loop_enabled, codex_routing, codex_review). Doctor check 9 widened to enforce the same set, and a new check 10 catches unparseable status files.
 
 ### Fixed
+- **Unfounded "Step I3 conversions are sequential" premise** in the parallelism guidance section. The original wording ("one might inform the next via cruft-policy decisions") implied an inter-candidate dependency that doesn't exist — cruft policy comes from `config.cruft_policy` or flags, set once per import run. Conversions now parallelize.
 - `plugin.json` had an invented `dependencies` schema not used by Claude Code's plugin loader; removed (dependency documentation lives in the README).
 - `superflow-retro` skill's "already exists" guard checked `<slug>-retro.md` while writes go to `YYYY-MM-DD-<slug>-retro.md`, so re-runs would silently create duplicate retros. Guard now globs `*-<slug>-retro.md`.
 - README claimed "three-tier" precedence while listing four tiers. Fixed to "four-tier."

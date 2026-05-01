@@ -33,6 +33,17 @@ Before doing anything, internalize these. They shape every decision below:
 
 See **Configuration: .superflow.yaml** below for the full schema and built-in defaults.
 
+### Git state cache (per invocation)
+
+Several downstream steps consult the same git facts. Cache them once in Step 0 to avoid repeated subprocess overhead and keep latency predictable across A/B0/D fan-outs:
+
+- `git_state.worktrees` — `git worktree list --porcelain`, parsed into `[{path, branch}]`.
+- `git_state.branches` — `git branch --list` (local) and `git branch -r` (remote) names.
+
+Steps A, B0, D consult the cache instead of re-running these. **Invalidate** the cache after any orchestrator-initiated `git worktree add`/`git worktree remove`/`git branch` operation (typically inside Step B0's "Create new" branch).
+
+**Never cache `git status --porcelain`.** Working-tree dirty state must always be live; CD-2 depends on accurate dirty detection. A stale value here could let the orchestrator overwrite user-owned uncommitted changes.
+
 ### Subcommand routing (first token of `$ARGUMENTS`)
 
 | First token | Branch |
@@ -108,13 +119,16 @@ That's enough to route the next task. Anything beyond it is fat.
 
 | Phase | Subagent type | Model | Bounded inputs | Return shape |
 |---|---|---|---|---|
+| Step A (status frontmatter parse) | parallel Haiku per worktree (or per ~10-file chunk if many) when worktrees ≥ 2 | Haiku | worktree path + status-file glob pattern | `[{path, frontmatter, parse_error?}]` JSON |
 | Step I1 (discovery) | parallel `Explore` agents, one per source class | Haiku | source-class scope (e.g. "scan local plan files only") | structured candidate list (JSON-shaped) |
-| Step I3 (conversion) | one Sonnet agent per legacy candidate | Sonnet | source content + inference results + writing-plans format brief + target paths | new spec/plan paths + 1-paragraph summary |
+| Step I3 (source fetch) | parallel agents per candidate (Read / git diff / `gh issue view` / `gh pr view`) | Haiku — except branch reverse-engineering, which uses Sonnet | candidate metadata + source identifier | raw source content keyed by candidate id |
+| Step I3 (conversion) | parallel Sonnet agents, one per legacy candidate | Sonnet | source content + inference results + writing-plans format brief + target paths | new spec/plan paths + 1-paragraph summary |
+| Step C (plan-load eligibility) | one Haiku at Step C step 1 | Haiku | plan task list + plan annotations + Codex eligibility checklist | `{task_idx → {eligible, reason, annotated}}` cached for the run |
 | Step C (per-task implementation) | implementer subagents via `superpowers:subagent-driven-development` | Sonnet (default) | plan path + current task index + CD-1/2/3/6 brief + relevant spec excerpts | done/blocked + 1–3 lines of evidence + task-start commit SHA |
 | Step C 3a (codex execution) | `codex:codex-rescue` subagent in EXEC mode | Codex (out-of-process) | bounded brief: Scope/Allowed files/Goal/Acceptance/Verification/Return | diff + verification output |
 | Step C 4b (codex review of inline work) | `codex:codex-rescue` subagent in REVIEW mode | Codex (out-of-process) | bounded brief: task + acceptance + spec excerpt + diff + verification; Scope=review-only; Constraints=CD-10 | severity-ordered findings (high/medium/low) grounded in file:line, OR `"no findings"` |
 | Completion-state inference | parallel Haiku agents per task chunk | Haiku | task description + workspace, no plan-wide context | classification (done/possibly_done/not_done) + evidence strings |
-| Step D (doctor checks) | optional Haiku per worktree if many | Haiku | worktree path + checks list | findings list grounded in `<file>:<issue>` |
+| Step D (doctor checks) | parallel Haiku per worktree when N ≥ 2 | Haiku | worktree path + checks list | findings list grounded in `<file>:<issue>` |
 
 ### Model selection guide
 
@@ -170,25 +184,34 @@ Even with disciplined subagent use, the orchestrator's own context grows during 
 
 ### Parallelism guidance
 
-Parallel dispatch (multiple subagents in one tool-call batch) is free leverage when work is independent:
+Parallel dispatch — whether multiple subagents in one Agent batch, multiple Bash commands in one tool batch, or multiple Reads in one tool batch — is free leverage when work is independent:
 
-- **Step I1** scans four source classes in parallel — they don't interact.
-- **Step D** doctor checks across N worktrees can dispatch one Haiku agent per worktree if N > 3.
+- **Step A** dispatches one Haiku per worktree for status-frontmatter parsing when worktrees ≥ 2 (below that, inline reads beat agent-dispatch latency).
+- **Step B0** issues `git rev-parse` + `git status --porcelain` + `git worktree list` as one parallel Bash batch, then dispatches per-worktree name-match scans in parallel when there are ≥ 2 non-current worktrees.
+- **Step C step 1** re-reads status + spec + plan + `pwd` + current branch in one tool batch on every entry.
+- **Step C 4a** verification commands (lint / typecheck / unit tests) run in one Bash batch when they don't share mutable artifacts (see Step C 4a's exclusion list).
+- **Step I1** scans four source classes in parallel; each agent issues its own globs in a single batch.
+- **Step I3** runs the source-fetch wave and the conversion wave in parallel — each candidate has a unique slug and unique target paths, so writes don't contend. Cruft prompts and per-candidate commits run sequentially after the parallel waves.
+- **Step D** doctor checks dispatch one Haiku agent per worktree when N ≥ 2.
 - **Completion-state inference** chunks long task lists across parallel Haiku agents.
 
 When to NOT parallelize:
-- Sequential dependencies (Step I3 conversions are sequential — one might inform the next via cruft-policy decisions).
-- Shared state writes (multiple agents modifying the same status file is a race).
+- Per-candidate cruft handling and `git commit` in Step I3 — single-writer discipline avoids index races and keeps activity-log entries clean.
+- Per-task implementation in Step C — concurrent commits on the same branch race the git index. Intra-plan task parallelism is captured as a future-design note in operational rules; not enabled.
+- Shared-state writes (multiple agents modifying the same status file is a race).
 - When the orchestrator needs to react between agents (autonomy=gated checkpoints).
 
 ---
 
 ## Step A — List + pick (across worktrees)
 
-1. Enumerate all worktrees of the current repo: `git worktree list --porcelain`. Parse into `(worktree_path, branch)` tuples. Include the current worktree.
-2. **Worktree-count short-circuit.** If more than 20 worktrees exist, surface a one-line warning and switch to a faster mode: scan only the current worktree plus any worktree with a status file modified in the last 14 days (use `find <worktree>/docs/superpowers/plans -name '*-status.md' -mtime -14` per worktree before reading frontmatter). Per CD-2, do not auto-prune worktrees — just narrow the scan.
-3. For each worktree (after any short-circuit), glob `<worktree_path>/docs/superpowers/plans/*-status.md`.
-4. Read each file's frontmatter; keep entries where `status` is `in-progress` or `blocked`. Annotate each with the worktree path and branch it lives in. **If a status file fails to parse as YAML**, skip it and add a one-line note to the discovery report ("status file at `<path>` is malformed — run `/superflow doctor` to inspect"). Do not abort the listing. Sort the parsed entries by `last_activity` descending.
+1. Enumerate all worktrees of the current repo from `git_state.worktrees` (cached in Step 0). Parse into `(worktree_path, branch)` tuples. Include the current worktree.
+2. **Worktree-count short-circuit.** If more than 20 worktrees exist, surface a one-line warning and switch to a faster mode: scan only the current worktree plus any worktree with a status file modified in the last 14 days. Issue the per-worktree `find <worktree>/docs/superpowers/plans -name '*-status.md' -mtime -14` calls as **one parallel Bash batch**, not sequentially. Per CD-2, do not auto-prune worktrees — just narrow the scan.
+3. For each worktree (after any short-circuit), glob `<worktree_path>/docs/superpowers/plans/*-status.md`. Issue the per-worktree globs as one parallel Bash batch.
+4. **Frontmatter parsing.**
+   - **When worktrees ≥ 2:** dispatch parallel Haiku agents (one per worktree, or one per ~10-file chunk if any single worktree holds many status files). Each agent's bounded brief: Goal=parse YAML frontmatter from these status files, Inputs=`[<status-file-path>...]`, Scope=read-only, Constraints=CD-7 (do not modify status files), Return=`[{path, frontmatter, parse_error?}]` JSON. Orchestrator merges results.
+   - **When worktrees == 1:** read inline (Read tool) — agent dispatch latency is not worth it.
+   - Keep entries where `status` is `in-progress` or `blocked`. Annotate each with the worktree path and branch it lives in. **If a status file fails to parse**, skip it and add a one-line note to the discovery report ("status file at `<path>` is malformed — run `/superflow doctor` to inspect"). Do not abort the listing. Sort the parsed entries by `last_activity` descending.
 5. Use `AskUserQuestion` with options laid out as: 2 most recent plans + "Start fresh". If more than 2 in-progress plans exist, replace the lower plan slot with a "More…" option that, when picked, re-asks with the next batch — keeps total options at 3, never exceeds the AskUserQuestion 4-option cap.
 6. If user picks a plan → **Step C** with that status path. If the plan's worktree differs from the current working directory, `cd` to that worktree before continuing (run all subsequent commands from the plan's worktree). If "Start fresh" → ask for a one-line topic via `AskUserQuestion` (free-form Other), then **Step B**.
 
@@ -200,11 +223,12 @@ When to NOT parallelize:
 
 The brainstorm/plan/status files will be committed inside whichever worktree you're in when brainstorming runs. Decide first. **Apply CD-2** — if `git status --porcelain` is non-empty, treat those changes as user-owned and bias toward a new worktree rather than committing alongside their work.
 
-1. **Survey the current state:**
+1. **Survey the current state.** Issue these as **one parallel Bash batch** (not sequential):
    - `git rev-parse --abbrev-ref HEAD` → current branch.
-   - `git status --porcelain` → cleanliness.
-   - `git worktree list --porcelain` → all worktrees and branches.
-   - For each non-current worktree, glob `<path>/docs/superpowers/plans/*-status.md` and check for `in-progress` plans + branch names that look related to the topic (case-insensitive substring match on the topic's salient words).
+   - `git status --porcelain` → cleanliness. (Always live per CD-2; never cached.)
+   - Worktree list — read from `git_state.worktrees` (Step 0 cache). If unavailable, run `git worktree list --porcelain` in the same batch.
+
+   Then, for the per-worktree related-plan scan: when there are ≥ 2 non-current worktrees, dispatch parallel Haiku agents (one per worktree). Each agent's bounded brief: Goal=identify any in-progress plans whose slug or branch name overlaps with the topic's salient words (case-insensitive substring), Inputs=`<worktree-path>` + topic words, Scope=read-only, Return=`{worktree, branch, matching_slugs: [], matching_branch: bool}`. With 1 non-current worktree, do the glob+match inline.
 
 2. **Compute a recommendation** using these heuristics, in order of strength:
    - **Use an existing worktree** if any non-current worktree has a branch name or in-progress slug that overlaps with the topic. Likely the same work is already underway.
@@ -259,10 +283,20 @@ Proceed to **Step C** with the new status path.
 
 ## Step C — Execute
 
-1. Read the status file. Read the referenced spec and plan files **fresh** — do not trust cached context from earlier in the session. If the plan or spec has been edited since the status was written, re-read both fully and reconcile `current_task` against the plan's task list.
+1. **Batched re-read.** Issue these as one parallel tool batch (not sequential):
+   - Read the status file.
+   - Read the referenced spec file.
+   - Read the referenced plan file.
+   - `pwd` (Bash).
+   - `git rev-parse --abbrev-ref HEAD` (Bash).
+
+   Re-read **fresh** — do not trust cached context from earlier in the session. If the plan or spec has been edited since the status was written, reconcile `current_task` against the plan's task list.
+
    - **Parse guard.** If the status file fails to parse as YAML+Markdown, surface this immediately via `AskUserQuestion`: "Status file at `<path>` is corrupted. Open it for manual fix / Run /superflow doctor / Abort." Do NOT attempt to silently regenerate — the user's edits may have been intentional and partial.
-   - **Verify the worktree.** Compare the status file's `worktree` field to the current working directory (`pwd`). If they differ, `cd` into the recorded worktree before continuing. If the recorded worktree no longer exists (e.g. removed via `git worktree remove`), surface this as a blocker via `AskUserQuestion`: "Worktree at `<path>` is missing. Recreate it / use the current worktree / abort."
-   - **Verify the branch.** Compare `git rev-parse --abbrev-ref HEAD` (now in the chosen worktree) to the status file's `branch` field. If they differ, ask the user before continuing — the work was started on a different branch and silently switching could cause real problems.
+   - **Verify the worktree.** Compare the status file's `worktree` field to the current working directory (from the `pwd` above). If they differ, `cd` into the recorded worktree before continuing. If the recorded worktree no longer exists (e.g. removed via `git worktree remove`), surface this as a blocker via `AskUserQuestion`: "Worktree at `<path>` is missing. Recreate it / use the current worktree / abort."
+   - **Verify the branch.** Compare the captured branch to the status file's `branch` field. If they differ, ask the user before continuing — the work was started on a different branch and silently switching could cause real problems.
+
+   **Build eligibility cache.** When `codex_routing` is `auto` or `manual`, dispatch one Haiku to compute Codex eligibility for every task in the plan (see Step C 3a's checklist for the criteria). Bounded brief: Goal=apply the checklist to each task and emit `{task_idx → {eligible: bool, reason: str, annotated: "ok"|"no"|null}}`, Inputs=full plan task list + plan annotations, Scope=read-only, Return=JSON only — no narration. Cache this in orchestrator memory as `eligibility_cache`. Invalidate (re-dispatch) on the next Step C entry if the plan file's mtime has changed, or if Step 4d edits the plan inline. Never persist to disk. Skip this step entirely when `codex_routing == off`.
 2. If `--no-subagents` is set: invoke `superpowers:executing-plans`. Otherwise: invoke `superpowers:subagent-driven-development`. Hand the invoked skill the plan path and the current task index. Pass through **CD-1, CD-2, CD-3, CD-6** as briefing for the implementer subagent — project-local tooling first, do not touch unrelated dirty files, evidence-based completion, MCP/skill tier preference.
 3. Layer the autonomy policy on top of the invoked skill's per-task loop:
    - **`gated`** — before each task, call `AskUserQuestion(continue / skip-this-task / stop)`. Honor the answer. If `codex_routing == auto`, expand the question to `(continue inline / continue via Codex / skip / stop)` so the user can override the auto-route. Under `codex_routing == manual`, do NOT expand here — Step 3a's per-task `AskUserQuestion` already handles routing, so combining would double-prompt.
@@ -271,11 +305,11 @@ Proceed to **Step C** with the new status path.
 
 3a. **Codex routing decision per task** (consult `config.codex.routing`, overridden by `--codex=` flag, persisted as `codex_routing` in the status file):
 
-    - **`off`** — never delegate. Run every task inline (Claude or Claude subagent).
-    - **`auto`** (default per CLAUDE.md "Codex Delegation Default") — apply the eligibility checklist below. If ALL boxes are checked → delegate. Otherwise run inline.
-    - **`manual`** — present the checklist result via `AskUserQuestion(Delegate to Codex / Run inline / Skip)` before each task. User decides.
+    - **`off`** — never delegate. Run every task inline (Claude or Claude subagent). Skip the cache lookup.
+    - **`auto`** (default per CLAUDE.md "Codex Delegation Default") — look up `eligibility_cache[task_idx]` (computed in Step 1). If `eligible == true` → delegate. Otherwise run inline.
+    - **`manual`** — present `eligibility_cache[task_idx]` via `AskUserQuestion(Delegate to Codex / Run inline / Skip)` before each task. User decides.
 
-    **Eligibility checklist (per task, all must be true to delegate under `auto`):**
+    **Eligibility checklist** (applied once at plan-load by the Step 1 cache builder, then reused per task — listed here for reference and so the cache builder's brief is reproducible):
     - Task touches ≤ 3 files based on its description, OR plan annotates `codex: ok`.
     - Task description is unambiguous (no "consider", "decide", "choose between", "design", "explore" verbs).
     - Verification commands are known (plan task includes a test or verify step).
@@ -283,9 +317,9 @@ Proceed to **Step C** with the new status path.
     - Task does NOT reference conversational context that isn't captured in the spec or plan.
     - Plan does NOT annotate `codex: no` on this task.
 
-    **Plan annotations** (override the heuristic when present):
-    - `codex: ok` in the task metadata → delegate (skip eligibility check).
-    - `codex: no` → never delegate; run inline.
+    **Plan annotations** (override the heuristic when present, recorded in cache as `annotated: "ok"|"no"`):
+    - `codex: ok` in the task metadata → delegate (`eligible: true`, `annotated: "ok"`).
+    - `codex: no` → never delegate; run inline (`eligible: false`, `annotated: "no"`).
 
     **Delegating:** dispatch the `codex:codex-rescue` subagent via the Agent tool with a bounded brief in this format (per CLAUDE.md):
     ```
@@ -308,6 +342,14 @@ Proceed to **Step C** with the new status path.
 4. **After every completed task** (sub-steps run in this fixed order):
 
    **4a — CD-3 verification.** Run the task's verification commands (preferring project-local ones per CD-1) and capture their output. Don't claim done without evidence. Capture the output for use by 4b.
+
+   **Parallelize independent verifiers.** Lint, typecheck, and unit-test commands typically don't share mutable state and should be issued as one parallel Bash batch. Run them sequentially when commands write to the same shared artifacts:
+   - `node_modules/`, `dist/`, `build/`, `target/`, `out/`
+   - `.tsbuildinfo`, `coverage/`, `.next/`, `.nuxt/`
+   - generated/codegen output directories
+   - any path the plan's task notes as "writes to X"
+
+   When in doubt, run sequentially — a wrong-batch race that corrupts a build artifact costs more than the seconds saved. Brief the implementer subagent on this rule when dispatching it for the task; the rule applies recursively if the implementer dispatches its own verification subagents.
 
    **4b — Codex review of inline work** (consult `config.codex.review`, overridden by `--codex-review=` flag, persisted as `codex_review` in the status file).
 
@@ -383,6 +425,8 @@ If `$ARGUMENTS` includes any of `--pr=<num>`, `--issue=<num>`, `--file=<path>`, 
 
 Dispatch four parallel `Explore` subagents (Haiku model — bounded mechanical extraction). Each returns a JSON list of candidates with: `source_type`, `identifier`, `title`, `last_modified`, `summary` (1–2 sentences), `confidence` (0–1, based on density of plan-like structure: numbered steps, checkboxes, "Phase N" headings, etc.).
 
+Each agent's brief MUST include: "Issue all globs/finds/`gh` calls as one parallel tool batch — do not run them sequentially within your turn." Within-agent batching tightens latency on top of the cross-class parallelism.
+
 1. **Local plan files** — find `PLAN.md`, `TODO.md`, `ROADMAP.md`, `WORKLOG.md`, `docs/plans/*.md`, `docs/design/*.md`, `docs/rfcs/*.md`, `architecture/*.md`, `specs/*.md`, branch READMEs. Skip files inside `node_modules/`, `vendor/`, `.git/`, `legacy/.archive/`, and any path already under `config.specs_path` or `config.plans_path`.
 
 2. **Git artifacts** — local + remote branches not yet merged into the trunk (`git branch -avv`, then filter against `git log <trunk>..<branch>` non-empty); cross-reference `gh pr list --state=all --head=<branch>` to flag branches with no merged PR; named git stashes (`git stash list`).
@@ -395,39 +439,55 @@ Dispatch four parallel `Explore` subagents (Haiku model — bounded mechanical e
 
 Dedupe across scans (the same project may appear as a PLAN.md AND an issue AND a branch — match by slug similarity). Sort by `last_modified` desc, breaking ties by `confidence` desc. Surface the top 8 via `AskUserQuestion(multiSelect=true)` with one option per candidate (label = title + source_type tag, description = `last_modified` + `summary`). Include a "Show more" option if the list exceeds 8 — re-asks with the next 8. User picks 1+ to import.
 
-### Step I3 — Convert (per candidate, sequential)
+### Step I3 — Convert (parallel waves + sequential cruft/commit)
 
-For each picked candidate:
+Conversions parallelize across candidates because each candidate writes to unique target paths. Cruft handling and `git commit` run sequentially after the parallel waves to keep a single writer per commit (avoids git index races and keeps activity-log entries clean).
 
-1. **Fetch source content.**
-   - Local file → `Read` it.
-   - Git branch → dispatch a Sonnet subagent with the full diff vs trunk (`git diff <trunk>...<branch>`) and commit list (`git log --reverse <trunk>..<branch> --format='%h %s%n%b'`). Prompt: "Reverse-engineer the goal, scope, and intended task list from this branch's history. Output structured sections: Goal, Scope, Inferred tasks (in commit order), Open questions."
-   - GH issue → `gh issue view <num> --json=body,comments,labels`. Include comment text for context.
-   - GH PR → `gh pr view <num> --json=body,commits,comments,headRefName`. Treat the body as candidate spec, the commits as candidate progress, comments as notes.
-   - Stale superpowers plan → `Read` it (already half-formed).
+#### I3.1 — Slug-collision pre-pass (sequential, fast)
 
-2. **Decide slug + dates.** Sanitize the candidate's title to a slug. Use today's date as the kickoff date for the new spec/plan filenames.
+For all picked candidates, sanitize each title to a slug and group by slug. When two or more candidates resolve to the same slug, suffix later ones with `-2`, `-3`, etc. If multiple collisions are detected (≥ 2 collision groups), confirm the renames once via `AskUserQuestion(Apply auto-suffixed slugs / Show me the conflicts and let me rename / Abort import)`. Use today's date for all kickoff dates.
 
-3. **Run completion-state inference** (see **Completion-state inference** below) over the candidate's task list. Produce a per-task classification: `done` / `possibly_done` / `not_done`, plus evidence strings.
+This produces a `candidates[]` list with finalized `(slug, spec_path, plan_path, status_path)` tuples — guaranteed unique.
 
-4. **Dispatch a Sonnet conversion subagent.** Hand it: source content, inference results, target paths, and this brief:
-   > Rewrite this legacy planning artifact into superpowers spec format (`<spec-path>`) and plan format (`<plan-path>`) following the writing-plans skill conventions. Drop tasks classified `done`. Move `possibly_done` tasks into a `## Verify before continuing` checklist at the top of the plan, each with its evidence. Keep `not_done` tasks as the active task list, reformatted into bite-sized steps (writing-plans style). Preserve constraints, decisions, and stakeholder context in the spec's Background section. Discard pure status narration. Do not invent tasks the source didn't mention.
+#### I3.2 — Parallel source-fetch wave
 
-5. **Generate status file** at `<config.plans_path>/<slug>-status.md` — populate **every** frontmatter field per the **Step B3** field list:
-   - `slug`, `status: in-progress`, `spec`, `plan`, `worktree`, `branch`, `started` (today), `last_activity` (now), `current_task` (= first `not_done` task), `next_action` (= its first step)
-   - `autonomy`, `loop_enabled` from current config + flags
-   - `codex_routing`, `codex_review` from current config + flags
-   - `## Notes` seeded with: link back to source (path/URL/branch/issue#), inference evidence summary, list of `possibly_done` items the user should verify before execution
+Dispatch one fetch agent per candidate in a single Agent batch (Haiku — bounded mechanical extraction):
 
-6. **Cruft handling.** Apply `config.cruft_policy` (overridden by `--archive`/`--keep-legacy` flags). If policy is `ask` (the default), present `AskUserQuestion` per candidate:
+- **Local file** → `Read`.
+- **Git branch** → Sonnet (not Haiku — needs reverse-engineering judgment); given the full diff vs trunk (`git diff <trunk>...<branch>`) and commit list (`git log --reverse <trunk>..<branch> --format='%h %s%n%b'`). Brief: "Reverse-engineer goal/scope/inferred-tasks/open-questions. Output structured sections."
+- **GH issue** → `gh issue view <num> --json=body,comments,labels`.
+- **GH PR** → `gh pr view <num> --json=body,commits,comments,headRefName`.
+- **Stale superpowers plan** → `Read`.
+
+Each agent's bounded brief: Goal=fetch this candidate's source content, Inputs=candidate identifier, Scope=read-only, Return=raw source content + (for branches) reverse-engineered structure. The orchestrator collects the results keyed by candidate id.
+
+#### I3.3 — Parallel completion-state inference
+
+For each candidate that has a discernible task list, run completion-state inference (see **Completion-state inference** below) — these inference runs can themselves be dispatched in parallel since each candidate is independent.
+
+#### I3.4 — Parallel conversion wave
+
+Dispatch one Sonnet conversion subagent per candidate in a single Agent batch. Each agent owns unique target paths from I3.1 and writes only to its own slug's spec/plan/status — no contention. Brief per agent:
+
+> Rewrite this legacy planning artifact into superpowers spec format (`<spec-path>`) and plan format (`<plan-path>`) following the writing-plans skill conventions. Drop tasks classified `done`. Move `possibly_done` tasks into a `## Verify before continuing` checklist at the top of the plan, each with its evidence. Keep `not_done` tasks as the active task list, reformatted into bite-sized steps (writing-plans style). Preserve constraints, decisions, and stakeholder context in the spec's Background section. Discard pure status narration. Do not invent tasks the source didn't mention. Then write the status file at `<status-path>` populating **every** frontmatter field per the Step B3 field list (`slug`, `status: in-progress`, `spec`, `plan`, `worktree`, `branch`, `started` today, `last_activity` now, `current_task` = first `not_done` task, `next_action` = its first step, `autonomy`, `loop_enabled`, `codex_routing`, `codex_review` from current config + flags), and seed `## Notes` with: link back to source (path/URL/branch/issue#), inference evidence summary, list of `possibly_done` items the user should verify before execution.
+
+Bounded scope per agent: writes only to its own `(spec_path, plan_path, status_path)`; do not touch other candidates' paths or the legacy source.
+
+#### I3.5 — Sequential cruft handling + commit (per candidate)
+
+After all parallel waves complete, iterate candidates one-by-one:
+
+1. **Cruft handling.** Apply `config.cruft_policy` (overridden by `--archive`/`--keep-legacy` flags). If policy is `ask` (the default), present `AskUserQuestion` per candidate:
    - **Local file:** Leave + banner / Archive to `<config.archive_path>/<date>/` / Delete (irreversible).
    - **Branch:** Keep / Rename to `archive/<branch>` / Delete local ref.
    - **GH issue or PR:** Comment with link to new spec / Comment + close / Do nothing.
    - **Stale superpowers plan:** Replace with new plan / Move to `<config.archive_path>/<date>/` / Leave both.
-   
+
    Apply the chosen action.
 
-7. **Commit.** `git add` the new spec, plan, status file (and any banner edits or moves). Commit with: `superflow: import <slug> from <source-type>`.
+2. **Commit.** `git add` the new spec, plan, status file (and any banner edits or moves). Commit with: `superflow: import <slug> from <source-type>`.
+
+Sequential here is deliberate: cruft prompts are user-interactive (parallel `AskUserQuestion` would scramble UX), and per-candidate `git commit` keeps the index clean.
 
 ### Step I4 — Hand off
 
@@ -441,7 +501,9 @@ Triggered by `/superflow doctor [--fix]`. Lints all superflow state across all w
 
 ### Scope
 
-`git worktree list --porcelain` → for each worktree, scan `<worktree>/<config.specs_path>/` and `<worktree>/<config.plans_path>/`.
+Read worktrees from `git_state.worktrees` (Step 0 cache). For each worktree, scan `<worktree>/<config.specs_path>/` and `<worktree>/<config.plans_path>/`.
+
+**Parallelization.** When worktrees ≥ 2, dispatch one Haiku agent per worktree in a single Agent batch (each agent runs all 10 checks for its worktree and returns findings as `[{check_id, severity, file, message}]` JSON). With 1 worktree, run inline — agent dispatch latency isn't worth it. The orchestrator merges results and applies the report ordering below.
 
 ### Checks
 
@@ -626,3 +688,23 @@ These are command-specific rules; they complement (not replace) the **Context di
 - **Codex routing is locked at kickoff, switchable on resume.** `codex_routing` and `codex_review` both land in the status file at Step B3 (or at first Step C invocation for imported plans without them). Mid-run flips happen by re-invoking `/superflow --resume=<path> --codex=<mode> --codex-review=<on|off>`, which rewrites the fields and continues. Per-task overrides come from plan annotations (`codex: ok` / `codex: no`), not inline edits.
 - **Never delegate non-eligible tasks under `auto`.** The eligibility checklist is conservative on purpose: a wrong delegation costs more than running inline. When the heuristic is uncertain, run inline. Plan annotations are the right escape hatch when you need to override.
 - **Codex review is asymmetric — never self-review.** If a task was executed by Codex and `codex_review` is on, skip the review step for that task. Codex reviewing its own output adds no signal. The post-Codex review flow in Step 3a already handles delegated work; **Step 4b's** review only fires after inline tasks.
+- **Eligibility cache is per-invocation only; never persisted to disk.** Step C step 1 builds `eligibility_cache` from a single Haiku dispatch over the plan's task list. It lives in orchestrator memory for the run. Re-dispatch on the next Step C entry if the plan file's mtime has changed, or after Step 4d edits the plan inline. This keeps per-task routing decisions O(1) lookups instead of per-task LLM-shaped reasoning.
+- **Git state cache excludes `git status --porcelain`.** Step 0's `git_state` cache holds `worktrees` and `branches` only. Working-tree dirty state must always be live — CD-2 depends on it. Caching it would risk overwriting user-owned uncommitted changes. Invalidate `git_state.worktrees` after any orchestrator-initiated `git worktree add`/`git worktree remove`; invalidate `git_state.branches` after `git branch` create/delete.
+
+### Future: intra-plan task parallelism (design notes only)
+
+Not enabled. Captured here so future-you has a starting point when a plan with embarrassingly parallel tasks (e.g. multiple "add interface for service X" tasks) makes the latency win obvious.
+
+**Annotation schema (proposed):**
+- `parallel-group: <name>` — tasks sharing the same group name dispatch as one wave.
+- `depends-on: [<task-id>, ...]` — explicit ordering within or across groups.
+- `files: [<path>, ...]` — declared file scope for static-analysis-based safety.
+
+**Required machinery before enabling:**
+- **Per-task git worktree isolation** — concurrent commits to the same branch race the git index. Each parallel task either commits in its own worktree (orchestrator merges after) or the dispatch enforces strict file-scope assertions and serializes commits via the orchestrator.
+- **Single-writer status file** — subagents return digests; orchestrator funnels every status file write to avoid contention (per CD-7).
+- **Per-task verification with rollback policy** — when one task in a wave fails, the others' results need a consistent disposition (rollback wave, mark partially complete, ask user).
+
+**Why deferred:** the per-task worktree subsystem is a meaningful undertaking and warrants its own dedicated plan. The current sequential per-task loop in `superpowers:subagent-driven-development` is correct as a default; intra-plan parallelism is an optimization on top, not a re-architecture.
+
+**When to revisit:** when real plans authored under `/superflow` show parallel-friendly task patterns and the latency cost becomes felt. Track this informally via retros (`superflow-retro` skill).
