@@ -331,7 +331,7 @@ Proceed to **Step C** with the new status path.
    **Telemetry inline snapshot.** If `config.telemetry.enabled` and the status file's frontmatter does NOT include `telemetry: off`, append one JSONL record (kind=`step_c_entry`) to `<plan-without-suffix>-telemetry.jsonl` (sibling to status file). Fields per the format defined in `docs/design/telemetry-signals.md`. Cheap (one append). Provides cross-session datapoints for installs without the Stop hook.
 2. If `--no-subagents` is set: invoke `superpowers:executing-plans`. Otherwise: invoke `superpowers:subagent-driven-development`. Hand the invoked skill the plan path and the current task index. Brief the implementer subagent with **CD-1, CD-2, CD-3, CD-6**.
 3. Layer the autonomy policy on top of the invoked skill's per-task loop:
-   - **`gated`** — before each task, call `AskUserQuestion(continue / skip-this-task / stop)`. Honor the answer. If `codex_routing == auto`, expand the question to `(continue inline / continue via Codex / skip / stop)` so the user can override the auto-route. Under `codex_routing == manual`, do NOT expand here — Step 3a's per-task `AskUserQuestion` already handles routing, so combining would double-prompt.
+   - **`gated`** — before each task, call `AskUserQuestion(continue / skip-this-task / stop)`. Honor the answer. **Routing decisions made via the eligibility cache (under `codex_routing == auto`) are honored silently** — the per-task question is NOT expanded with a Codex-override option, since the user pre-configured auto-routing and the activity log records every decision post-hoc. Users who want the legacy expanded prompt set `codex.confirm_auto_routing: true` in `.superflow.yaml`; in that case the question expands to `(continue inline / continue via Codex / skip / stop)`. Under `codex_routing == manual`, do NOT expand here — Step 3a's per-task `AskUserQuestion` already handles routing.
    - **`loose`** — run autonomously. On a blocker, **apply CD-4** first; only after two rungs have failed, set `status: blocked` and end the turn. Cite the rungs tried in the `## Blockers` entry. Do NOT reschedule a wakeup.
    - **`full`** — run autonomously, applying **CD-4** more aggressively before escalating: at least two ladder rungs, plus `superpowers:systematic-debugging` for test failures and spec reinterpretation cited in the activity log. Escalate to `blocked` only after the full ladder fails.
 
@@ -446,7 +446,7 @@ Proceed to **Step C** with the new status path.
       Why diff-by-SHA: Codex agent runs in the worktree with full git access; passing a SHA range avoids inlining 5K–10K tokens of diff into the brief on multi-file tasks. If the implementer didn't capture a task-start SHA (zero-commit task), inline the diff via the existing fallback in step 1.
    3. Digest the response per output-digestion rules: parse into severity buckets, drop verbose prose. Don't pull the full review text into orchestrator context.
    4. **Decision matrix by autonomy** (retry caps come from `config.codex.review_max_fix_iterations`, default 2):
-      - **`gated`** — present findings via `AskUserQuestion` → `Accept / Fix and re-review (rerun inline with findings as briefing; capped at config.codex.review_max_fix_iterations) / Accept anyway / Stop`.
+      - **`gated`** — auto-accept silently when severity is `clean` or strictly below `config.codex.review_prompt_at` (default `"medium"`). Activity log records the auto-accept; `## Notes` is not polluted (clean and low-only reviews don't need notes per Step 4b step 5). When severity is at or above the threshold, present findings via `AskUserQuestion` → `Accept / Fix and re-review (rerun inline with findings as briefing; capped at config.codex.review_max_fix_iterations) / Accept anyway / Stop`. Users who want every review prompted set `codex.review_prompt_at: "low"` in `.superflow.yaml`.
       - **`loose`**:
         - No or low-severity → auto-accept; tag activity log.
         - Medium → append digest to `## Notes` for human attention later; accept and continue.
@@ -776,6 +776,13 @@ codex:
   review_diff_under_full: false  # if true, even autonomy=full pauses to show Codex output
   max_files_for_auto: 3      # eligibility heuristic threshold for `auto` routing
   review_max_fix_iterations: 2  # cap on "fix and re-review" retries before bailing
+  confirm_auto_routing: false  # under `gated`, prompt per-task to confirm auto-routing decisions
+                               # (default false: honor cache silently; activity log records every decision)
+                               # set true to restore the legacy expanded per-task prompt
+  review_prompt_at: medium   # under `gated`, severity threshold at which Codex review findings prompt
+                             # values: low | medium | high | never
+                             # default `medium` (auto-accept clean and low-only; prompt at medium+)
+                             # set `low` to prompt on every non-clean review; set `never` to auto-accept all
 
 # Auto-compact loop nudge — Step B3 + Step C step 1 surface a passive notice
 # once per plan recommending /loop /compact in a sibling session for

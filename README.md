@@ -216,9 +216,9 @@ The autonomy and codex flags are designed to compose. Common pairs:
 
 | Combination | Behavior |
 |---|---|
-| `/superflow <topic>` | Default: `--autonomy=gated`, codex routing from config (default `auto`), no review. Each task gates on user input; small well-defined tasks may auto-route to Codex. |
+| `/superflow <topic>` | Default: `--autonomy=gated`, codex routing from config (default `auto`), no review. Per-task `(continue / skip / stop)` gate; auto-routing decisions execute silently (no per-task Codex confirmation prompt — set `codex.confirm_auto_routing: true` for the legacy chatty behavior). |
 | `/loop /superflow <topic> --autonomy=loose` | Long autonomous run with no per-task gating; ScheduleWakeup paces it across sessions; stops only on blockers. |
-| `/loop /superflow <topic> --autonomy=loose --codex-review=on` | Same long run, but Codex reviews each inline (Claude/Sonnet) task's diff before it counts as done. Medium findings go to `## Notes`; high findings block. |
+| `/loop /superflow <topic> --autonomy=loose --codex-review=on` | Same long run, but Codex reviews each inline (Claude/Sonnet) task's diff before it counts as done. Under `loose`: low/clean → silent accept; medium → `## Notes`; high → block. (Same behavior under `gated` for non-prompting severities — auto-accepted silently below `codex.review_prompt_at`, default `medium`.) |
 | `/superflow <topic> --codex=auto --codex-review=on` | Codex executes simple well-defined tasks; Codex reviews the inline (complex) ones. Each model plays to its strengths, no overlap (no self-review). |
 | `/superflow <topic> --codex=manual --codex-review=on` | User gets asked per task whether to delegate execution to Codex. Tasks that stay inline are reviewed by Codex afterward. |
 | `/superflow <topic> --codex=off` | Claude does everything; no Codex involvement. Review is automatically disabled too (a routing-off plan never invokes Codex, even for review). |
@@ -276,6 +276,11 @@ codex:
   review_diff_under_full: false
   max_files_for_auto: 3
   review_max_fix_iterations: 2
+  confirm_auto_routing: false  # under `gated`, prompt per-task to confirm auto-routing
+                               # default false: honor eligibility cache silently
+                               # set true to restore legacy expanded prompt
+  review_prompt_at: medium   # under `gated`, severity threshold at which review findings prompt
+                             # low | medium | high | never (default medium)
 
 # Auto-compact loop nudge — once-per-plan passive notice recommending
 # /loop /compact in a sibling session for context compaction
