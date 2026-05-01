@@ -295,7 +295,30 @@ Proceed to **Step C** with the new status path.
    - **Verify the worktree.** Compare the status file's `worktree` field to the current working directory (from the `pwd` above). If they differ, `cd` into the recorded worktree before continuing. If the recorded worktree no longer exists (e.g. removed via `git worktree remove`), surface this as a blocker via `AskUserQuestion`: "Worktree at `<path>` is missing. Recreate it / use the current worktree / abort."
    - **Verify the branch.** Compare the captured branch to the status file's `branch` field. If they differ, ask the user before continuing — the work was started on a different branch and silently switching could cause real problems.
 
-   **Build eligibility cache.** When `codex_routing` is `auto` or `manual`, dispatch one Haiku to compute Codex eligibility for every task in the plan (see Step C 3a's checklist for the criteria). Bounded brief: Goal=apply the checklist to each task and emit `{task_idx → {eligible: bool, reason: str, annotated: "ok"|"no"|null}}`, Inputs=full plan task list + plan annotations, Scope=read-only, Return=JSON only — no narration. Cache this in orchestrator memory as `eligibility_cache`. Invalidate (re-dispatch) on the next Step C entry if the plan file's mtime has changed, or if Step 4d edits the plan inline. Never persist to disk. Skip this step entirely when `codex_routing == off`.
+   **Build eligibility cache.** When `codex_routing` is `auto` or `manual`, the cache lives at `<slug>-eligibility-cache.json` (sibling to status, follows the `<slug>-*` sidecar convention). Decision tree for cache load:
+
+   - **Skip entirely** when `codex_routing == off`.
+   - **Cache file missing** → dispatch one Haiku (see brief below); write `<slug>-eligibility-cache.json`; load into orchestrator memory as `eligibility_cache`.
+   - **Cache file present, `cache.mtime > plan.mtime`** → load JSON from disk into `eligibility_cache`; skip Haiku dispatch.
+   - **Cache file present, `plan.mtime >= cache.mtime`** → dispatch Haiku, overwrite cache file, load result.
+   - When Step 4d edits the plan inline, also `touch` the plan file so the mtime invariant holds for the next Step C entry's cache check.
+
+   **Cache file shape** (JSON):
+   ```json
+   {
+     "plan_path": "docs/superpowers/plans/<slug>.md",
+     "plan_mtime_at_compute": "2026-05-01T14:32:00Z",
+     "generated_at": "2026-05-01T14:32:01Z",
+     "tasks": [
+       {"idx": 1, "name": "...", "eligible": true,  "reason": "...", "annotated": null},
+       {"idx": 2, "name": "...", "eligible": false, "reason": "...", "annotated": "no"}
+     ]
+   }
+   ```
+
+   **Bounded brief for the Haiku** (when dispatched): Goal=apply the Step C 3a checklist to each task and emit `{task_idx → {eligible: bool, reason: str, annotated: "ok"|"no"|null}}`. Inputs=full plan task list + plan annotations (per the `**Codex:**` syntax — see Step C 3a). Scope=read-only. Return=JSON only — no narration.
+
+   **Why persist:** the cache is a pure function of plan-file content. Recomputing on every wakeup (~10 wakeups for a 30-task plan under `loose`) burns Haiku calls for no signal change. Disk persistence with mtime invalidation costs one stat per Step C entry.
 
    **Auto-compact nudge (resume).** If `config.auto_compact.enabled && compact_loop_recommended == false`, output the same one-line passive notice as Step B3, then flip `compact_loop_recommended: true` in the status file. Once-per-plan suppression catches kickoffs that didn't fire (e.g., imported plans).
 
@@ -595,6 +618,7 @@ For each worktree, run all checks. Report findings grouped by worktree → check
 | 11 | **Orphan archive file** — `<slug>-status-archive.md` exists with no sibling `<slug>-status.md`. (The archive is created by Step C 4d's activity log rotation; it must always have a base status file.) | Warning | Suggest moving the archive to `<config.archive_path>/<date>/`. No auto-fix. |
 | 12 | **Telemetry file growth** — `<slug>-telemetry.jsonl` > 5 MB. | Warning | Rotate to `<slug>-telemetry-archive.jsonl` (the active file becomes empty; new appends start fresh). |
 | 13 | **Orphan telemetry file** — `<slug>-telemetry.jsonl` (or `-telemetry-archive.jsonl`) exists with no sibling `<slug>-status.md`. | Warning | Suggest moving to `<config.archive_path>/<date>/`. No auto-fix. |
+| 14 | **Orphan eligibility cache** — `<slug>-eligibility-cache.json` exists with no sibling `<slug>-status.md`. (The cache is a sidecar of an active plan; it must always have a base status file.) | Warning | Suggest moving to `<config.archive_path>/<date>/`. No auto-fix. |
 
 ### Output
 
@@ -776,7 +800,7 @@ These are command-specific rules covering cross-cutting policy not stated inline
 - **Codex review is asymmetric — never self-review.** If a task was executed by Codex and `codex_review` is on, skip the review step for that task. Codex reviewing its own output adds no signal.
 - **Implementer must return `task_start_sha` (required).** Step C step 2's brief to the implementer subagent (whether dispatched directly or transitively via `superpowers:subagent-driven-development`) must include: "Capture `git rev-parse HEAD` BEFORE any work; return it as `task_start_sha` in your final report. This is required, not optional — the orchestrator's Step 4b (Codex review) and Step 4c (worktree integrity) both depend on it." If the implementer omits it, Step 4b blocks (see Step 4b process step 1).
 - **Implementer-return trust contract.** When the implementer subagent reports `tests_passed: true` and lists `commands_run`, Step 4a trusts the report and skips redundant verification (see Step 4a decision logic). This makes SDD's TDD discipline first-class rather than duplicated work. The contract is enforced by the protocol-violation rule: if the implementer reports `tests_passed: true` but a Step 4a complementary check or a Step 4b Codex review surfaces a test failure, the activity log records the discrepancy and Step C 4d notes it under `## Notes` for human attention.
-- **Eligibility cache is per-invocation only; never persisted to disk.** Step C step 1 builds `eligibility_cache`. Re-dispatch on plan-file mtime change, or after Step 4d edits the plan inline. Keeps per-task routing O(1) lookups instead of LLM-shaped reasoning.
+- **Eligibility cache persists to `<slug>-eligibility-cache.json`.** Step C step 1 loads from disk when `cache.mtime > plan.mtime`; dispatches Haiku otherwise. Step 4d's plan edits `touch` the plan file to invalidate. Per-task routing stays O(1) at lookup; the Haiku dispatch happens once per plan-file change, not per Step C entry. Doctor check #14 flags orphan caches.
 - **Git state cache excludes `git status --porcelain`.** Step 0's `git_state` cache holds `worktrees` and `branches` only. Dirty state must always be live (CD-2). Invalidate worktrees after `git worktree add/remove`; invalidate branches after `git branch` create/delete.
 - **CC-1 — Compact-suggest on observable symptoms.** End-of-turn (before Step C step 5's wakeup scheduling), check whether any of these accumulated this session: (a) the in-session `file_cache` recorded ≥ 3 hits on the same path; (b) ≥ 3 consecutive tool failures on the same target; (c) activity log was rotated this session (>100 entries); (d) a subagent returned ≥ 5K characters that the orchestrator had to digest inline. On any trigger, surface a **non-blocking** one-line notice (not `AskUserQuestion`): `*(Context appears strained — symptom: <symptom>. Consider running /compact <config.auto_compact.focus> before next wakeup. To disable for this plan, append "compact_suggest: off" to the status file's ## Notes.)*`. Disable check: at Step C step 1, scan `## Notes` for `compact_suggest: off`; if present, CC-1 is silenced for this plan.
 - **CC-2 — Subagent-delegate triggers (concrete thresholds).** Make "Subagents do the work" enforceable: before issuing a Bash command expected to print > 100 lines, dispatch a Haiku subagent with a bounded brief and consume only its digest. Before reading a file > 300 lines as part of substantive work (orientation reads excepted), dispatch a Haiku to extract the relevant section. Self-check at Step C step 1: scan the upcoming task's verification commands; if any match a known-noisy list (`build`, `test --verbose`, `cargo build`, `npm run build`, full-tree `find`), route the verification through a subagent that returns only pass/fail + ≤ 3 evidence lines. Recursive: applies inside implementer subagents too.
