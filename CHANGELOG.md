@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-05-01
+
 ### Added
 - **Plan annotation schema documented.** `**Codex:** ok|no` lines in per-task `**Files:**` blocks override the eligibility heuristic for Codex routing. Documented in `commands/superflow.md` Step C 3a (with concrete syntax example), threaded through Step C step 1's cache-builder brief, and surfaced in Step B2's brief to `superpowers:writing-plans` so new plans gain annotations when the planner judges tasks obviously suited or unsuited. New "Plan annotations" subsection in README.md. Pre-existing plans without annotations behave exactly as before (heuristic-only). The eligibility cache's `annotated` branch is no longer dead code.
 - **Eligibility cache persists across wakeups.** Previously rebuilt every Step C entry via Haiku dispatch (~10 redundant calls per long run). Now written to `<slug>-eligibility-cache.json` (sibling to status), loaded on subsequent entries when `cache.mtime > plan.mtime`. Plan edits via Step 4d `touch` the plan to invalidate. New doctor check #14 catches orphan cache files. Operational rule updated; "never persisted to disk" claim retired.

@@ -409,7 +409,7 @@ Both passes preserve the three design pillars (thin orchestrator, subagent + con
 
 ## Project status
 
-This is a v0.1 release. The orchestration logic is stable and used in real Petabit Scale workflows, but expect the schema and flag surface to evolve as edge cases surface. Breaking changes will be called out in the changelog and gated behind a `--legacy` flag where reasonable.
+This is a v0.2 release. The orchestration logic is stable and used in real Petabit Scale workflows. v0.2 lands the first behavior-changing pass since v0.1: gated mode no longer prompts on pre-configured Codex automation by default (see CHANGELOG `[0.2.0]`). Expect the schema and flag surface to keep evolving; breaking changes are called out in the changelog and gated behind a `--legacy` flag where reasonable.
 
 Issues and PRs welcome.
 
