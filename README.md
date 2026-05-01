@@ -90,6 +90,39 @@ cp -r skills/superflow-detect ~/.claude/skills/
 cp -r skills/superflow-retro ~/.claude/skills/
 ```
 
+### Option C — opt into per-turn telemetry (optional)
+
+`/superflow` can capture per-turn context-usage signals to `<plan>-telemetry.jsonl` via a Stop hook. The orchestrator also writes inline snapshots at every Step C entry, so the hook is optional — but the hook gives you per-turn cadence whereas inline snapshots only fire on resume.
+
+```bash
+mkdir -p ~/.claude/hooks
+cp hooks/superflow-telemetry.sh ~/.claude/hooks/
+chmod +x ~/.claude/hooks/superflow-telemetry.sh
+```
+
+Add this fragment to `~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/hooks/superflow-telemetry.sh\"",
+            "timeout": 3,
+            "async": true
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+The hook is **defensive** — it bails silently in any session that isn't operating on a `/superflow`-managed plan, so it's safe as a global Stop hook. Per-plan opt-out: add `telemetry: off` to a status file's frontmatter. Global opt-out: set `telemetry.enabled: false` in `.superflow.yaml`. Field shape and `jq` queries: see [`docs/design/telemetry-signals.md`](./docs/design/telemetry-signals.md).
+
 ### Dependencies
 
 - **Required:** [`superpowers`](https://github.com/obra/superpowers) — `/superflow` delegates to its `brainstorming`, `writing-plans`, `subagent-driven-development`, `executing-plans`, `using-git-worktrees`, `systematic-debugging`, and `finishing-a-development-branch` skills.
@@ -137,6 +170,15 @@ Scans for PLAN.md, TODO.md, ROADMAP.md, docs/plans/*.md, GitHub issues, draft PR
 /superflow doctor --fix    # auto-fix safe issues
 ```
 
+### Situation report
+
+```
+/superflow status                  # what's in flight, blocked, stale across all worktrees
+/superflow status --plan=<slug>    # deep view of one plan
+```
+
+Read-only synthesis: status frontmatter + last activity entries + blockers/notes + retro index + telemetry trends + recent commits. Useful as a daily SITREP before deciding what to pick back up.
+
 ## Subcommand reference
 
 | Invocation | Effect |
@@ -150,6 +192,7 @@ Scans for PLAN.md, TODO.md, ROADMAP.md, docs/plans/*.md, GitHub issues, draft PR
 | `/superflow import --file=<path>` | Import directly from a single local file |
 | `/superflow import --branch=<name>` | Reverse-engineer a spec/plan from a single branch's history |
 | `/superflow doctor [--fix]` | Lint state across all worktrees |
+| `/superflow status [--plan=<slug>]` | Read-only situation report across all worktrees: in-flight, blocked, stale, recently completed, telemetry signals, recent design notes. `--plan=<slug>` drills into one plan's blockers/notes/activity/telemetry. |
 
 ## Flags
 
@@ -182,6 +225,16 @@ The autonomy and codex flags are designed to compose. Common pairs:
 | `/superflow <topic> --autonomy=full --codex-review=on` | Maximum autonomy with adversarial review as the safety rail — high-severity findings trigger one auto-fix retry, then block. |
 
 CLI flags always override config for the run, and the resolved values land in the status file so resumes are deterministic.
+
+### Auto-compact pairing
+
+Long-running plans benefit from periodic context compaction in a sibling session. `/superflow` can't auto-start a `/loop` for you (slash commands are user-typed), but it surfaces a one-line passive notice once per plan recommending the canonical pairing:
+
+```
+/loop 30m /compact focus on current task + active plan; drop tool output and old reasoning
+```
+
+Run that in a separate Claude Code shell or session alongside your `/superflow` workflow. CronCreate-backed `/loop` and `/superflow`'s ScheduleWakeup-backed wakeups occupy different slots and don't conflict. Configure interval and focus prompt in `.superflow.yaml` under `auto_compact:`. Silence the notice with `auto_compact.enabled: false`.
 
 ## Configuration
 
@@ -224,6 +277,20 @@ codex:
   max_files_for_auto: 3
   review_max_fix_iterations: 2
 
+# Auto-compact loop nudge — once-per-plan passive notice recommending
+# /loop /compact in a sibling session for context compaction
+auto_compact:
+  enabled: true
+  interval: 30m
+  focus: "focus on current task + active plan; drop tool output and old reasoning"
+
+# Per-turn context telemetry — captured by hooks/superflow-telemetry.sh
+# (Stop hook, manually installed) and Step C inline snapshots.
+# Per-plan opt-out: add `telemetry: off` to status frontmatter.
+telemetry:
+  enabled: true
+  path_suffix: -telemetry.jsonl
+
 # External integration refs (NEVER secrets — secrets live in env or MCP config)
 integrations:
   github:
@@ -255,6 +322,8 @@ autonomy: loose
 loop_enabled: true
 codex_routing: auto
 codex_review: on
+compact_loop_recommended: true
+# Optional: telemetry: off  # silences per-plan telemetry capture
 ---
 
 # Auth Refactor — Status

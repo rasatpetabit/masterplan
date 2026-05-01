@@ -50,6 +50,7 @@ Steps A, B0, D consult the cache instead of re-running these. **Invalidate** the
 | _(empty)_ | **Step A** — list + pick across worktrees |
 | `import` (alone or with args) | **Step I** — legacy import |
 | `doctor` (alone or with `--fix`) | **Step D** — lint state |
+| `status` (alone or with `--plan=<slug>`) | **Step S** — situation report (read-only) |
 | `--resume=<path>` or `--resume <path>` | **Step C** — resume specific plan |
 | anything else | treat as a topic, **Step B** — kickoff |
 
@@ -118,6 +119,7 @@ Dispatch substantive work to fresh subagents; consume only digests; lean on the 
 | Step C 4b (codex review of inline work) | `codex:codex-rescue` subagent in REVIEW mode | Codex (out-of-process) | bounded brief: task + acceptance + spec excerpt + diff range (`<task-start SHA>..HEAD`) + files in scope + verification; Scope=review-only; Constraints=CD-10 | severity-ordered findings (high/medium/low) grounded in file:line, OR `"no findings"` |
 | Completion-state inference | parallel Haiku agents per task chunk | Haiku | task description + workspace, no plan-wide context | classification (done/possibly_done/not_done) + evidence strings |
 | Step D (doctor checks) | parallel Haiku per worktree when N ≥ 2 | Haiku | worktree path + checks list | findings list grounded in `<file>:<issue>` |
+| Step S (situation report) | parallel Haiku per worktree when N ≥ 2 | Haiku | worktree path + collection list (status files, retros, telemetry tails, recent commits) | structured JSON digest per worktree |
 
 ### Model selection guide
 
@@ -263,6 +265,12 @@ Create the sibling status file at `docs/superpowers/plans/YYYY-MM-DD-<slug>-stat
 - `loop_enabled` — `true` unless `--no-loop` is set
 - `codex_routing` — value of `--codex=` flag or `config.codex.routing`
 - `codex_review` — value of `--codex-review=` flag or `config.codex.review`
+- `compact_loop_recommended: false` — flips to `true` after the auto-compact nudge has been shown once for this plan
+
+**Auto-compact nudge** (fires once per plan; respects `config.auto_compact.enabled`). If `config.auto_compact.enabled && compact_loop_recommended == false`, output one passive notice immediately before the kickoff approval prompt below:
+> *(Recommended: pair this run with `/loop {config.auto_compact.interval} /compact {config.auto_compact.focus}` in another shell or session for automatic context compaction. Set `auto_compact.enabled: false` in `.superflow.yaml` to silence this notice.)*
+
+Then flip `compact_loop_recommended: true` in the status file. Whether or not the user pastes the command, the notice is suppressed for subsequent kickoffs/resumes of this plan.
 
 If `--autonomy != full`: present a one-paragraph plan summary and the path to the plan file via `AskUserQuestion` with options "Start execution / Open plan to review / Cancel". Wait for approval. If `--autonomy=full`: skip approval.
 
@@ -288,6 +296,12 @@ Proceed to **Step C** with the new status path.
    - **Verify the branch.** Compare the captured branch to the status file's `branch` field. If they differ, ask the user before continuing — the work was started on a different branch and silently switching could cause real problems.
 
    **Build eligibility cache.** When `codex_routing` is `auto` or `manual`, dispatch one Haiku to compute Codex eligibility for every task in the plan (see Step C 3a's checklist for the criteria). Bounded brief: Goal=apply the checklist to each task and emit `{task_idx → {eligible: bool, reason: str, annotated: "ok"|"no"|null}}`, Inputs=full plan task list + plan annotations, Scope=read-only, Return=JSON only — no narration. Cache this in orchestrator memory as `eligibility_cache`. Invalidate (re-dispatch) on the next Step C entry if the plan file's mtime has changed, or if Step 4d edits the plan inline. Never persist to disk. Skip this step entirely when `codex_routing == off`.
+
+   **Auto-compact nudge (resume).** If `config.auto_compact.enabled && compact_loop_recommended == false`, output the same one-line passive notice as Step B3, then flip `compact_loop_recommended: true` in the status file. Once-per-plan suppression catches kickoffs that didn't fire (e.g., imported plans).
+
+   **CC-1 dismissal scan.** Scan `## Notes` for `compact_suggest: off`. If present, set `cc1_silenced: true` in orchestrator memory for this run. CC-1 (operational rules) honors this flag.
+
+   **Telemetry inline snapshot.** If `config.telemetry.enabled` and the status file's frontmatter does NOT include `telemetry: off`, append one JSONL record (kind=`step_c_entry`) to `<plan-without-suffix>-telemetry.jsonl` (sibling to status file). Fields per the format defined in `docs/design/telemetry-signals.md`. Cheap (one append). Provides cross-session datapoints for installs without the Stop hook.
 2. If `--no-subagents` is set: invoke `superpowers:executing-plans`. Otherwise: invoke `superpowers:subagent-driven-development`. Hand the invoked skill the plan path and the current task index. Brief the implementer subagent with **CD-1, CD-2, CD-3, CD-6**.
 3. Layer the autonomy policy on top of the invoked skill's per-task loop:
    - **`gated`** — before each task, call `AskUserQuestion(continue / skip-this-task / stop)`. Honor the answer. If `codex_routing == auto`, expand the question to `(continue inline / continue via Codex / skip / stop)` so the user can override the auto-route. Under `codex_routing == manual`, do NOT expand here — Step 3a's per-task `AskUserQuestion` already handles routing, so combining would double-prompt.
@@ -394,6 +408,7 @@ Proceed to **Step C** with the new status path.
 
    The invoked skill already commits per task — verify the commit landed; if not, commit the status file update (and any rotation-created archive file) separately.
 5. **Cross-session loop scheduling** (only if `--no-loop` is NOT set AND `ScheduleWakeup` is available — i.e. the session was launched via `/loop /superflow ...`):
+   - **CC-1 check.** Before scheduling the wakeup, apply CC-1 (operational rules): if `cc1_silenced` is not set and any symptom (file_cache ≥3 hits same path, ≥3 consecutive same-target tool failures, activity log rotated this session, subagent ≥5K-char return) accumulated this session, surface the non-blocking compact-suggest notice. Continue with scheduling regardless — CC-1 is informational, never blocks.
    - **Daily quota check.** Track wakeup count for this plan in the status file under a `## Wakeup ledger` heading (one line per wakeup with timestamp). Before scheduling, count entries from the last 24 hours; if `>= config.loop_max_per_day` (default 24), do NOT schedule — set status to `blocked` with reason "loop quota exhausted; resume manually with `/superflow --resume=<path>`" and end the turn. This prevents runaway scheduling under unexpected loop conditions.
    - Otherwise, after every 3 completed tasks, OR when context usage looks tight, call:
      ```
@@ -492,7 +507,59 @@ After all candidates are converted, list the new status file paths. `AskUserQues
 
 ---
 
-## Step D — Doctor
+## Step S — Situation report
+
+Triggered by `/superflow status [--plan=<slug>]`. Pure read-only synthesis of every available state surface — never modifies anything. Use to answer "what's in flight, what's blocked, what's stale, what just shipped, what does the recent activity look like?" without having to grep through worktrees by hand.
+
+### Step S1 — Gather (parallel)
+
+Read worktrees from `git_state.worktrees` (Step 0 cache). When N ≥ 2, dispatch one Haiku per worktree in a single Agent batch. With 1 worktree, run inline.
+
+Each Haiku's bounded brief: Goal=collect this worktree's superflow state, Inputs=worktree path + collection list (below), Scope=read-only (no writes, no `git status` modifications), Return=structured JSON digest. Per-worktree collection list:
+
+- All `<plans-path>/*-status.md` files: parse frontmatter + last 10 entries of `## Activity log` + entire `## Blockers` section + entire `## Notes` section.
+- Linked plan + spec paths from each status: verify existence only (don't read full content).
+- Sibling `<slug>-status-archive.md` files: count entries (don't read full).
+- Sibling `<slug>-telemetry.jsonl` files: count of records in last 24h + last record's snapshot fields.
+- Recent retros in `docs/superpowers/retros/*.md` modified in last 7 days: frontmatter + first paragraph.
+- Recent design notes in `docs/design/*.md` modified in last 14 days: path + first H1 heading.
+- Last 5 commits on the worktree's branch: `git log -5 --format='%h %ci %s' <branch>`.
+
+The orchestrator merges per-worktree digests into a single in-memory model.
+
+### Step S2 — Synthesize
+
+Group findings into salience-ordered sections. Skip empty sections silently.
+
+1. **In-flight** — `status: in-progress` plans, sorted by `last_activity` desc. For each: slug, branch, worktree (relative-from-current if applicable), `current_task`, `next_action`, age (e.g. "active 2h ago"), last 3 activity-log entries.
+2. **Blocked** — `status: blocked` plans, sorted by oldest blocker first. For each: slug, blocker summary (first non-empty line of `## Blockers`), how long blocked.
+3. **Recently completed** — `status: complete` modified in last 7 days. Slug + completion date + retro link if present + commit count since branch start.
+4. **Stale** — `status: in-progress` with `last_activity` > 14 days. Triage candidates.
+5. **Telemetry signals** — for plans with telemetry: turns/day trend (last 7 days), transcript-bytes growth rate (proxy for tokens-per-turn), activity-log throughput. One short line per plan.
+6. **Worktree state** — current branch + dirty status (live `git status --porcelain` — NOT cached, per CD-2) + total worktree count + per-worktree branch list.
+7. **Recent design notes** — path + first heading for each file from S1's design-notes collection.
+
+### Step S3 — Render
+
+Plain-text grouped report. Apply CD-10: severity-first within each section (blocked > stale > in-flight > completed). Each line grounded in `<worktree>:<path>` so the user can jump to the offender. End with a one-line summary:
+```
+<N> in-flight, <M> blocked, <K> stale, <C> recently completed across <W> worktrees
+```
+
+### Step S4 — Drill-down (`--plan=<slug>`)
+
+When `--plan=<slug>` is passed, skip S2's grouped synthesis and instead render a deep view of one plan:
+
+- Full frontmatter (status, branch, worktree, current_task, next_action, autonomy, codex_routing, codex_review, started, last_activity).
+- Full `## Blockers` section.
+- Full `## Notes` section.
+- Last 20 entries of `## Activity log` (or all if fewer).
+- Last 7 days of telemetry: turns count, growth rate, last record snapshot.
+- Latest retro for this slug if present (path + first paragraph).
+- Last 10 commits on the plan's branch.
+- Pointer to the plan + spec files (paths only).
+
+Read-only throughout. Cite each excerpt with `<file>:<line>` so the user can jump to source.
 
 Triggered by `/superflow doctor [--fix]`. Lints all superflow state across all worktrees of the current repo.
 
@@ -516,9 +583,11 @@ For each worktree, run all checks. Report findings grouped by worktree → check
 | 6 | **Stale blocked** — `status: blocked` with `last_activity` > 14 days. | Warning | Report only. |
 | 7 | **Plan/log drift** — plan task count differs from activity-log task references by >50%. | Warning | Report only. |
 | 8 | **Missing spec** — status's `spec` field points at a missing spec doc. | Error | Report only. |
-| 9 | **Schema violation** — status frontmatter missing required fields. Required set: `slug`, `status`, `spec`, `plan`, `worktree`, `branch`, `started`, `last_activity`, `current_task`, `next_action`, `autonomy`, `loop_enabled`, `codex_routing`, `codex_review`. (Step A and Step C both depend on the full set.) | Error | Add missing fields with sentinel/derived values where possible; report the rest. |
+| 9 | **Schema violation** — status frontmatter missing required fields. Required set: `slug`, `status`, `spec`, `plan`, `worktree`, `branch`, `started`, `last_activity`, `current_task`, `next_action`, `autonomy`, `loop_enabled`, `codex_routing`, `codex_review`, `compact_loop_recommended`. (Step A and Step C both depend on the full set.) | Error | Add missing fields with sentinel/derived values where possible (e.g. `compact_loop_recommended: false`); report the rest. |
 | 10 | **Unparseable status file** — frontmatter or body is malformed YAML/Markdown. | Error | Report only (manual fix needed). Step A skips these silently, but doctor calls them out. |
 | 11 | **Orphan archive file** — `<slug>-status-archive.md` exists with no sibling `<slug>-status.md`. (The archive is created by Step C 4d's activity log rotation; it must always have a base status file.) | Warning | Suggest moving the archive to `<config.archive_path>/<date>/`. No auto-fix. |
+| 12 | **Telemetry file growth** — `<slug>-telemetry.jsonl` > 5 MB. | Warning | Rotate to `<slug>-telemetry-archive.jsonl` (the active file becomes empty; new appends start fresh). |
+| 13 | **Orphan telemetry file** — `<slug>-telemetry.jsonl` (or `-telemetry-archive.jsonl`) exists with no sibling `<slug>-status.md`. | Warning | Suggest moving to `<config.archive_path>/<date>/`. No auto-fix. |
 
 ### Output
 
@@ -548,6 +617,8 @@ autonomy: gated | loose | full
 loop_enabled: true | false
 codex_routing: off | auto | manual
 codex_review: off | on
+compact_loop_recommended: true | false
+# Optional: telemetry: off  # silences per-plan telemetry capture
 ---
 
 # <Feature Name> — Status
@@ -648,6 +719,23 @@ codex:
   max_files_for_auto: 3      # eligibility heuristic threshold for `auto` routing
   review_max_fix_iterations: 2  # cap on "fix and re-review" retries before bailing
 
+# Auto-compact loop nudge — Step B3 + Step C step 1 surface a passive notice
+# once per plan recommending /loop /compact in a sibling session for
+# automatic context compaction. Once-per-plan suppression via
+# compact_loop_recommended status field. /superflow itself never starts the loop.
+auto_compact:
+  enabled: true              # nudge user to start compact loop
+  interval: 30m              # passed verbatim into the suggested command
+  focus: "focus on current task + active plan; drop tool output and old reasoning"
+
+# Per-turn context telemetry — captured by hooks/superflow-telemetry.sh
+# (Stop hook, manually installed) and by Step C step 1 inline snapshots.
+# JSONL appended to <plan-without-suffix>-telemetry.jsonl sibling to status.
+# Per-plan opt-out: add `telemetry: off` to status frontmatter.
+telemetry:
+  enabled: true              # on by default
+  path_suffix: -telemetry.jsonl  # appended to status-file-without-suffix
+
 # External integration refs (NEVER secrets — secrets live in env or MCP config)
 integrations:
   github:
@@ -681,5 +769,7 @@ These are command-specific rules covering cross-cutting policy not stated inline
 - **Codex review is asymmetric — never self-review.** If a task was executed by Codex and `codex_review` is on, skip the review step for that task. Codex reviewing its own output adds no signal.
 - **Eligibility cache is per-invocation only; never persisted to disk.** Step C step 1 builds `eligibility_cache`. Re-dispatch on plan-file mtime change, or after Step 4d edits the plan inline. Keeps per-task routing O(1) lookups instead of LLM-shaped reasoning.
 - **Git state cache excludes `git status --porcelain`.** Step 0's `git_state` cache holds `worktrees` and `branches` only. Dirty state must always be live (CD-2). Invalidate worktrees after `git worktree add/remove`; invalidate branches after `git branch` create/delete.
+- **CC-1 — Compact-suggest on observable symptoms.** End-of-turn (before Step C step 5's wakeup scheduling), check whether any of these accumulated this session: (a) the in-session `file_cache` recorded ≥ 3 hits on the same path; (b) ≥ 3 consecutive tool failures on the same target; (c) activity log was rotated this session (>100 entries); (d) a subagent returned ≥ 5K characters that the orchestrator had to digest inline. On any trigger, surface a **non-blocking** one-line notice (not `AskUserQuestion`): `*(Context appears strained — symptom: <symptom>. Consider running /compact <config.auto_compact.focus> before next wakeup. To disable for this plan, append "compact_suggest: off" to the status file's ## Notes.)*`. Disable check: at Step C step 1, scan `## Notes` for `compact_suggest: off`; if present, CC-1 is silenced for this plan.
+- **CC-2 — Subagent-delegate triggers (concrete thresholds).** Make "Subagents do the work" enforceable: before issuing a Bash command expected to print > 100 lines, dispatch a Haiku subagent with a bounded brief and consume only its digest. Before reading a file > 300 lines as part of substantive work (orientation reads excepted), dispatch a Haiku to extract the relevant section. Self-check at Step C step 1: scan the upcoming task's verification commands; if any match a known-noisy list (`build`, `test --verbose`, `cargo build`, `npm run build`, full-tree `find`), route the verification through a subagent that returns only pass/fail + ≤ 3 evidence lines. Recursive: applies inside implementer subagents too.
 
 Future-design notes (intra-plan task parallelism, etc.) live in `docs/design/`, not in this prompt — they're docs, not orchestration logic.
