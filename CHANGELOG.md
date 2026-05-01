@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] — 2026-05-01
+
+### Fixed
+- **Four more silent-stop gates closed.** v0.2.1 fixed brainstorming and writing-plans pauses; this pass closes the remaining ones surfaced by a systematic search of upstream-skill prompts:
+  - **Gate 1 — Step C step 6 (`finishing-a-development-branch`).** The skill's free-text `1. Merge / 2. Push+PR / 3. Keep / 4. Discard — Which option?` prompt could stall on plan completion. Now /superflow surfaces `AskUserQuestion` FIRST and briefs the skill with the chosen option pre-decided.
+  - **Gate 2 — Step B0 step 4 (`using-git-worktrees`, "Create new" path).** The skill's free-text `1. .worktrees/ / 2. ~/.config/superpowers/worktrees/<project>/ — Which would you prefer?` prompt could stall on first-time worktree creation. Now /superflow detects existing dirs/CLAUDE.md preferences first; if neither, surfaces `AskUserQuestion` and pre-decides for the skill.
+  - **Gate 3 — Step C SDD `BLOCKED`/`NEEDS_CONTEXT` escalation.** When an implementer subagent escalates, the orchestrator previously had no explicit re-engagement path before defaulting to the autonomy policy's blocker handling. Now folded into Gate 4's blocker re-engagement gate.
+  - **Gate 4 — Step C step 3 autonomy=loose/full blocker before end-of-turn.** Previously: CD-4 ladder fails → set `status: blocked` → end turn silently. Now: surfaces a "blocker re-engagement gate" `AskUserQuestion(Provide context and re-dispatch / Re-dispatch with stronger model / Break task into smaller pieces / Skip and continue / End turn)` BEFORE setting `status: blocked`. Four of five options keep the plan moving (`status: in-progress`); only the last matches the legacy end-turn behavior. Under `--autonomy=full` the gate may auto-default to end-turn after a brief override window.
+- **Operational rule generalized.** "Don't stop silently mid-kickoff" (v0.2.1, scoped to Step B) → "Don't stop silently anywhere — always close with AskUserQuestion if input might be needed." The rule now enumerates every upstream skill with a free-text prompt that /superflow must pre-empt, plus the canonical pattern (present `AskUserQuestion` first, brief skill with chosen option) for handling each.
+
 ## [0.2.1] — 2026-05-01
 
 ### Fixed

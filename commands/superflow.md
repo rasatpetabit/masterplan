@@ -236,7 +236,7 @@ The brainstorm/plan/status files will be committed inside whichever worktree you
 4. **Act on the choice:**
    - Stay → proceed to Step B1 in cwd.
    - Use existing → `cd` into that worktree path, then proceed to Step B1.
-   - Create new → invoke `superpowers:using-git-worktrees` with the topic slug. After it completes, `cd` into the new worktree, then proceed to Step B1.
+   - Create new → **pre-empt the skill's directory prompt.** `superpowers:using-git-worktrees` will otherwise issue a free-text `(1. .worktrees/ / 2. ~/.config/superpowers/worktrees/<project>/) — Which would you prefer?` question if no `.worktrees/`/`worktrees/` dir exists and no CLAUDE.md preference is set. That free-text prompt can stall a session if it compacts before the user answers. Avoid this by asking via `AskUserQuestion` FIRST: detect existing `.worktrees/`/`worktrees/` dirs and any CLAUDE.md `worktree.*director` preference; if neither exists, surface `AskUserQuestion("Where should the worktree live?", options=[Project-local .worktrees/ (Recommended) / Global ~/.config/superpowers/worktrees/<project>/ / Cancel kickoff])`. Then invoke `superpowers:using-git-worktrees` with the topic slug AND a brief that pre-decides the directory: `"Use directory <chosen> — do not ask. Proceed to safety verification + creation."` After it completes, `cd` into the new worktree, then proceed to Step B1.
 
 5. Record the chosen worktree path and branch — they go into the status file in Step B3.
 
@@ -349,8 +349,27 @@ Proceed to **Step C** with the new status path.
 2. If `--no-subagents` is set: invoke `superpowers:executing-plans`. Otherwise: invoke `superpowers:subagent-driven-development`. Hand the invoked skill the plan path and the current task index. Brief the implementer subagent with **CD-1, CD-2, CD-3, CD-6**.
 3. Layer the autonomy policy on top of the invoked skill's per-task loop:
    - **`gated`** — before each task, call `AskUserQuestion(continue / skip-this-task / stop)`. Honor the answer. **Routing decisions made via the eligibility cache (under `codex_routing == auto`) are honored silently** — the per-task question is NOT expanded with a Codex-override option, since the user pre-configured auto-routing and the activity log records every decision post-hoc. Users who want the legacy expanded prompt set `codex.confirm_auto_routing: true` in `.superflow.yaml`; in that case the question expands to `(continue inline / continue via Codex / skip / stop)`. Under `codex_routing == manual`, do NOT expand here — Step 3a's per-task `AskUserQuestion` already handles routing.
-   - **`loose`** — run autonomously. On a blocker, **apply CD-4** first; only after two rungs have failed, set `status: blocked` and end the turn. Cite the rungs tried in the `## Blockers` entry. Do NOT reschedule a wakeup.
-   - **`full`** — run autonomously, applying **CD-4** more aggressively before escalating: at least two ladder rungs, plus `superpowers:systematic-debugging` for test failures and spec reinterpretation cited in the activity log. Escalate to `blocked` only after the full ladder fails.
+   - **`loose`** — run autonomously. On a blocker, **apply CD-4** first; only after two rungs have failed, surface the **blocker re-engagement gate** below before setting `status: blocked` and ending the turn. Cite the rungs tried in the `## Blockers` entry. Do NOT reschedule a wakeup.
+   - **`full`** — run autonomously, applying **CD-4** more aggressively before escalating: at least two ladder rungs, plus `superpowers:systematic-debugging` for test failures and spec reinterpretation cited in the activity log. Escalate to the **blocker re-engagement gate** only after the full ladder fails.
+
+   **Blocker re-engagement gate (CRITICAL — applies under all autonomy modes when a blocker surfaces).** Before setting `status: blocked` and ending the turn, the orchestrator MUST surface `AskUserQuestion` so the user has a clear continuation path. Never just write a `## Blockers` entry and end silently — the user wakes up later to a status update with no clear next move, the same UX the v0.2.1 spec/plan-gate fix addressed. Concrete pattern (covers SDD's BLOCKED/NEEDS_CONTEXT escalations AND CD-4-exhausted gates):
+
+   ```
+   AskUserQuestion(
+     question="Task <name> is blocked. <one-line summary of what was tried via CD-4 ladder>. How to proceed?",
+     options=[
+       "Provide context and re-dispatch — I'll type the missing context, you re-dispatch the implementer with it",
+       "Re-dispatch with a stronger model (Opus instead of Sonnet) — escalate model tier",
+       "Break this task into smaller pieces — pause so I can edit the plan to decompose, then continue",
+       "Skip this task and continue with the next one — leave a `## Blockers` entry but keep status: in-progress",
+       "Set status: blocked and end the turn — I'll resume manually later"
+     ]
+   )
+   ```
+
+   The first four options KEEP the plan moving (status stays `in-progress`); only the fifth option matches the legacy "end-turn-on-blocker" behavior. Under `--autonomy=full` the orchestrator may pre-select option 5 silently after surfacing the gate ONCE per blocker (the gate fires, user gets ~10 seconds to override, then default fires) — but never under `loose` or `gated`, where the user must explicitly pick an option.
+
+   Activity log records which option was picked (e.g., `task X blocked, user chose: re-dispatch with Opus`).
 
 3a. **Codex routing decision per task** (consult `config.codex.routing`, overridden by `--codex=` flag, persisted as `codex_routing` in the status file):
 
@@ -495,7 +514,21 @@ Proceed to **Step C** with the new status path.
      append the wakeup entry to the ledger, then end the turn. The next firing re-enters this command via Step C.
    - Do NOT reschedule when `status` is `complete` or `blocked`.
    - If `ScheduleWakeup` is not available (not running under `/loop`), skip scheduling silently — the user resumes manually with `/superflow` (which lands in Step A) or `/superflow --resume=<path>`.
-6. **On plan completion:** invoke `superpowers:finishing-a-development-branch`. Set `status: complete` in the status file, append a final activity log line, commit. Do not reschedule.
+6. **On plan completion:** **pre-empt the skill's "Which option?" prompt.** `superpowers:finishing-a-development-branch` will otherwise present a free-text `1. Merge / 2. Push+PR / 3. Keep / 4. Discard — Which option?` question. That free-text prompt can stall a session if it compacts before the user answers (same v0.2.1-style bug pattern). Avoid this by surfacing `AskUserQuestion` FIRST:
+
+   ```
+   AskUserQuestion(
+     question="Plan complete. How should I finish the branch?",
+     options=[
+       "Merge to <base-branch> locally (Recommended) — fast-forward if possible, then delete the feature branch + remove worktree",
+       "Push and open a PR — git push -u origin <branch>; gh pr create",
+       "Keep branch + worktree as-is — handle later",
+       "Discard everything — requires typed 'discard' confirmation"
+     ]
+   )
+   ```
+
+   Then invoke `superpowers:finishing-a-development-branch` with a brief that pre-decides the option: `"Skip Step 1's test verification (this repo has no test suite — verification done by other means; cite [briefly]) IF that's true, otherwise let it run normally. User has chosen Option <N>: <description>. Skip Step 3's free-text 'Which option?' prompt; execute Step 4's chosen-option branch directly. For Option 4 (Discard), still require the typed 'discard' confirmation per the skill's safety rule."` After the skill completes its chosen option's branch, set `status: complete` in the status file, append a final activity log line, commit. Do not reschedule.
 
 ---
 
@@ -845,7 +878,7 @@ These are command-specific rules covering cross-cutting policy not stated inline
 - **Import never overwrites existing superflow state silently.** If a target spec/plan/status path already exists at Step I3, ask the user: overwrite / write to a `-v2` slug / abort. Never clobber.
 - **Doctor is read-only by default.** Without `--fix` it only reports — even an obvious orphan stays in place. `--fix` only acts on errors marked auto-fixable in the checks table.
 - **Inference is conservative by design.** When in doubt, classify `possibly_done`, not `done`. The cost of re-verifying is small; the cost of skipping real work is large.
-- **Don't stop silently mid-kickoff.** Step B (kickoff phase) MUST end every turn with one of: (a) explicit handoff to the next Step, (b) `AskUserQuestion` offering concrete continuation options, or (c) `AskUserQuestion` confirming abort. NEVER end a turn with a free-text question awaiting user input — sessions can compact between turns and lose the upstream skill body (e.g., brainstorming's "User reviews written spec" gate), leaving the user staring at a recap with open tasks and no way to continue. The orchestrator owns re-engagement; the upstream skill's pause-for-user prose is not a substitute. See Step B1 and Step B2 re-engagement gates for the canonical pattern.
+- **Don't stop silently anywhere — always close with AskUserQuestion if input might be needed.** ANY Step that ends a turn waiting on user input MUST close with `AskUserQuestion` offering 2-4 concrete options, never with free-text prose ("Wait for the user's response", "Which approach?", "Type 'X' to confirm"). Sessions can compact between turns and lose upstream-skill bodies; a free-text question becomes a dead end. This rule applies recursively when the orchestrator invokes upstream skills that have their own pre-existing free-text prompts — `superpowers:finishing-a-development-branch` ("1./2./3./4. Which option?"), `superpowers:using-git-worktrees` ("1./2. Which directory?"), `superpowers:writing-plans` ("Subagent-Driven / Inline Execution. Which approach?"), `superpowers:brainstorming` ("Wait for the user's response" at User Reviews Spec). For each, the orchestrator MUST present `AskUserQuestion` FIRST and brief the skill with the chosen option pre-decided so the skill's free-text prompt is bypassed. Canonical patterns: Step B0 step 4 (worktree directory), Step B1+B2 re-engagement gates (spec/plan review), Step C step 3's blocker re-engagement gate (CD-4-exhausted gate; SDD BLOCKED/NEEDS_CONTEXT escalation), Step C step 6 (finishing-branch wrap).
 - **External writes are gated.** Posting comments to GitHub issues/PRs, sending Slack messages, or closing issues during import always passes through `AskUserQuestion` first — even under `--autonomy=full`. Blast-radius actions.
 - **Codex routing is locked at kickoff, switchable on resume.** `codex_routing` and `codex_review` both land in the status file at Step B3 (or at first Step C invocation for imported plans). Mid-run flips happen by re-invoking `/superflow --resume=<path> --codex=<mode> --codex-review=<on|off>`. Per-task overrides come from plan annotations (`codex: ok` / `codex: no`), not inline edits.
 - **Never delegate non-eligible tasks under `auto`.** The eligibility checklist is conservative on purpose: a wrong delegation costs more than running inline. When uncertain, run inline. Plan annotations are the escape hatch when you need to override.
