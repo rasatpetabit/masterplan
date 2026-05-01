@@ -939,7 +939,115 @@ If Steps 1–5 found nothing to fix, skip the commit; the small-fixes pass is co
 - [ ] **Step 7: Report back**
 
 Summarize:
-- How many tasks landed (should be 6 + optional 7).
+- How many tasks landed (should be 6 + optional 7 + Task 8 below).
 - Each commit SHA.
 - Any verification issues that surfaced and how they were resolved.
-- Suggest next steps (e.g. invoke `superpowers:finishing-a-development-branch` to merge or PR).
+- Note that Task 8 (version bump) follows.
+
+---
+
+## Task 8: Bump version to v0.2.0
+
+**Files:**
+- Modify: `.claude-plugin/plugin.json` — `"version"` field
+- Modify: `README.md` — "## Project status" section ("v0.1 release" → "v0.2 release")
+- Modify: `CHANGELOG.md` — rename `[Unreleased]` heading to `[0.2.0] — 2026-05-01`; insert a fresh empty `[Unreleased]` block above it
+
+**Codex:** ok    # mechanical version bump across three files
+
+- [ ] **Step 1: Bump plugin.json version**
+
+Read `.claude-plugin/plugin.json`. Find the line `"version": "0.1.0",`. Edit it to `"version": "0.2.0",` (keep the trailing comma; preserve the surrounding JSON formatting).
+
+- [ ] **Step 2: Verify plugin.json edit**
+
+Run:
+```
+grep -nF '"version": "0.2.0"' .claude-plugin/plugin.json
+```
+Expected: 1 match.
+
+Run:
+```
+grep -nF '"version": "0.1.0"' .claude-plugin/plugin.json
+```
+Expected: 0 matches.
+
+- [ ] **Step 3: Update README.md project status**
+
+Read `README.md`. Find the line "This is a v0.1 release." in the "## Project status" section. Replace:
+
+```
+This is a v0.1 release. The orchestration logic is stable and used in real Petabit Scale workflows, but expect the schema and flag surface to evolve as edge cases surface. Breaking changes will be called out in the changelog and gated behind a `--legacy` flag where reasonable.
+```
+
+With:
+
+```
+This is a v0.2 release. The orchestration logic is stable and used in real Petabit Scale workflows. v0.2 lands the first behavior-changing pass since v0.1: gated mode no longer prompts on pre-configured Codex automation by default (see CHANGELOG `[0.2.0]`). Expect the schema and flag surface to keep evolving; breaking changes are called out in the changelog and gated behind a `--legacy` flag where reasonable.
+```
+
+- [ ] **Step 4: Verify README edit**
+
+Run:
+```
+grep -nF "This is a v0.2 release." README.md
+```
+Expected: 1 match.
+
+Run:
+```
+grep -nF "This is a v0.1 release." README.md
+```
+Expected: 0 matches.
+
+- [ ] **Step 5: Cut CHANGELOG `[Unreleased]` → `[0.2.0]`**
+
+Read `CHANGELOG.md`. The current `[Unreleased]` section now contains all the entries added by Tasks 1–6 plus any from Task 7. Rename the heading and insert a fresh empty `[Unreleased]` block ABOVE it.
+
+Find this exact string (the only occurrence):
+
+```
+## [Unreleased]
+```
+
+Replace with:
+
+```
+## [Unreleased]
+
+## [0.2.0] — 2026-05-01
+```
+
+This preserves all the section content (Added/Changed/Fixed) under the new `[0.2.0]` heading, and leaves a clean empty `[Unreleased]` for future work.
+
+- [ ] **Step 6: Verify CHANGELOG edit**
+
+Run:
+```
+grep -nE "^## \[" CHANGELOG.md | head -5
+```
+Expected: first three matches show `## [Unreleased]`, `## [0.2.0] — 2026-05-01`, and `## [0.1.0] — 2026-05-01` (in that order, top to bottom).
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add .claude-plugin/plugin.json README.md CHANGELOG.md
+git commit -m "$(cat <<'EOF'
+release: v0.2.0
+
+CHANGELOG [Unreleased] cut to [0.2.0]; plugin.json and README project
+status updated. v0.2 lands the small-fixes pass — see [0.2.0] in
+CHANGELOG for the full breakdown.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+EOF
+)"
+```
+
+- [ ] **Step 8: Final report**
+
+Summarize the v0.2.0 release:
+- Total commits in this pass (Tasks 1–8).
+- Net file changes (`git diff main..HEAD --stat`).
+- Suggest invoking `superpowers:finishing-a-development-branch` to merge to main or open a PR.
