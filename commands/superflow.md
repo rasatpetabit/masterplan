@@ -346,9 +346,16 @@ Proceed to **Step C** with the new status path.
 
 4. **After every completed task** (sub-steps run in this fixed order):
 
-   **4a — CD-3 verification.** Run the task's verification commands (per CD-1) and capture output. Don't claim done without evidence. Capture for use by 4b.
+   **4a — CD-3 verification.** Run the task's verification commands (per CD-1) and capture output for 4b. Trust-but-verify the implementer: read `tests_passed` and `commands_run` from the implementer's return digest (required fields per the dispatch model table) and skip what the implementer already ran cleanly.
 
-   **Parallelize independent verifiers.** Lint, typecheck, and unit-test commands typically don't share mutable state and should be issued as one parallel Bash batch. Run them sequentially when commands write to the same shared artifacts:
+   **Decision logic:**
+   - If `tests_passed == true` AND every verification command in the plan task is already in `commands_run`: skip 4a's command execution entirely. Activity log entry records `(verify: trusted implementer; <N> commands)`. 4b still consumes the implementer's captured output.
+   - If `tests_passed == true` AND the plan task lists additional verification commands the implementer didn't run (lint, typecheck, etc.): run only the *complementary* commands. Activity log records `(verify: trusted implementer for tests + ran <complement>)`.
+   - If `tests_passed == false` OR `tests_passed` is missing: run the full verification per CD-1. Activity log records `(verify: full re-run)`. If the implementer claimed done but tests fail on re-run, treat as a protocol violation (block per autonomy policy).
+
+   **Why:** SDD's implementer subagent runs project tests as part of TDD discipline. Re-running them in 4a duplicates token cost and CI time without adding signal. The trust contract is verified by the protocol-violation rule above.
+
+   **Parallelize independent verifiers** (when 4a does run commands). Lint, typecheck, and unit-test commands typically don't share mutable state and should be issued as one parallel Bash batch. Run them sequentially when commands write to the same shared artifacts:
    - `node_modules/`, `dist/`, `build/`, `target/`, `out/`
    - `.tsbuildinfo`, `coverage/`, `.next/`, `.nuxt/`
    - generated/codegen output directories
@@ -768,6 +775,7 @@ These are command-specific rules covering cross-cutting policy not stated inline
 - **Never delegate non-eligible tasks under `auto`.** The eligibility checklist is conservative on purpose: a wrong delegation costs more than running inline. When uncertain, run inline. Plan annotations are the escape hatch when you need to override.
 - **Codex review is asymmetric — never self-review.** If a task was executed by Codex and `codex_review` is on, skip the review step for that task. Codex reviewing its own output adds no signal.
 - **Implementer must return `task_start_sha` (required).** Step C step 2's brief to the implementer subagent (whether dispatched directly or transitively via `superpowers:subagent-driven-development`) must include: "Capture `git rev-parse HEAD` BEFORE any work; return it as `task_start_sha` in your final report. This is required, not optional — the orchestrator's Step 4b (Codex review) and Step 4c (worktree integrity) both depend on it." If the implementer omits it, Step 4b blocks (see Step 4b process step 1).
+- **Implementer-return trust contract.** When the implementer subagent reports `tests_passed: true` and lists `commands_run`, Step 4a trusts the report and skips redundant verification (see Step 4a decision logic). This makes SDD's TDD discipline first-class rather than duplicated work. The contract is enforced by the protocol-violation rule: if the implementer reports `tests_passed: true` but a Step 4a complementary check or a Step 4b Codex review surfaces a test failure, the activity log records the discrepancy and Step C 4d notes it under `## Notes` for human attention.
 - **Eligibility cache is per-invocation only; never persisted to disk.** Step C step 1 builds `eligibility_cache`. Re-dispatch on plan-file mtime change, or after Step 4d edits the plan inline. Keeps per-task routing O(1) lookups instead of LLM-shaped reasoning.
 - **Git state cache excludes `git status --porcelain`.** Step 0's `git_state` cache holds `worktrees` and `branches` only. Dirty state must always be live (CD-2). Invalidate worktrees after `git worktree add/remove`; invalidate branches after `git branch` create/delete.
 - **CC-1 — Compact-suggest on observable symptoms.** End-of-turn (before Step C step 5's wakeup scheduling), check whether any of these accumulated this session: (a) the in-session `file_cache` recorded ≥ 3 hits on the same path; (b) ≥ 3 consecutive tool failures on the same target; (c) activity log was rotated this session (>100 entries); (d) a subagent returned ≥ 5K characters that the orchestrator had to digest inline. On any trigger, surface a **non-blocking** one-line notice (not `AskUserQuestion`): `*(Context appears strained — symptom: <symptom>. Consider running /compact <config.auto_compact.focus> before next wakeup. To disable for this plan, append "compact_suggest: off" to the status file's ## Notes.)*`. Disable check: at Step C step 1, scan `## Notes` for `compact_suggest: off`; if present, CC-1 is silenced for this plan.
