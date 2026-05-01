@@ -228,6 +228,7 @@ The brainstorm/plan/status files will be committed inside whichever worktree you
 
 3. **Present the choice via `AskUserQuestion`** with options reflecting the recommendation. Always include:
    - "Stay in current worktree (`<branch>` at `<path>`)"
+     - When `<branch>` is in `config.trunk_branches`, the option's description text gains a warning: `"(Note: superpowers:subagent-driven-development will refuse to start on this branch without explicit consent — choose Create new if you'll execute via subagents.)"` This surfaces the SDD constraint at the worktree-decision point rather than as a surprise at Step C. When `<branch>` is non-trunk, no warning.
    - One option per existing matching worktree, if any: "Use existing worktree (`<branch>` at `<path>`)"
    - "Create new worktree" (this invokes `superpowers:using-git-worktrees` to do it properly)
    - Mark the recommended option first with "(Recommended)" and a one-line reason in the description (e.g. "current branch is main — isolate this work").
