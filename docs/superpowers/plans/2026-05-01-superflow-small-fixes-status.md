@@ -1,14 +1,14 @@
 ---
 slug: superflow-small-fixes
-status: in-progress
+status: complete
 spec: docs/superpowers/specs/2026-05-01-superflow-small-fixes-design.md
 plan: docs/superpowers/plans/2026-05-01-superflow-small-fixes.md
 worktree: /home/ras/dev/claude-superflow/.worktrees/superflow-small-fixes
 branch: feat/superflow-small-fixes
 started: 2026-05-01
-last_activity: 2026-05-01T15:00:00Z
-current_task: "Task 1: Fix Step 4b SHA fallback bug; require task_start_sha"
-next_action: "Re-read spec section 1 then Edit Step 4b process step 1"
+last_activity: 2026-05-01T15:45:00Z
+current_task: "Task 8: Version bump v0.2.0 (complete)"
+next_action: "Invoke superpowers:finishing-a-development-branch (merge or PR)"
 autonomy: loose
 loop_enabled: false
 codex_routing: off
@@ -25,6 +25,14 @@ compact_loop_recommended: true
 - 2026-05-01T14:50 plan written and committed (12bf0e2), 7 tasks
 - 2026-05-01T14:55 plan extended with Task 8 (version bump v0.1.0 → v0.2.0) per user request, committed (439f2fc)
 - 2026-05-01T15:00 status file created, beginning execution
+- 2026-05-01T15:10 Plan Task 1 complete: Step 4b SHA fallback fix + require task_start_sha (f514598) [inline] (verify: 4 grep checks passed)
+- 2026-05-01T15:15 Plan Task 2 complete: Step 4a trusts implementer's TDD report (2c914de) [inline] (verify: 4 grep checks passed)
+- 2026-05-01T15:20 Plan Task 3 complete: persist eligibility cache to disk (e29a4f6) [inline] (verify: 5 grep checks passed; doctor check #14 added)
+- 2026-05-01T15:25 Plan Task 4 complete: document **Codex:** ok|no plan annotation schema (d3b01db) [inline] (verify: README h2 count went 19→20; 4 grep checks passed)
+- 2026-05-01T15:32 Plan Task 5 complete: gated mode honors pre-configured Codex automation silently (ee97d74) [inline] (verify: 8 grep checks passed across 3 files)
+- 2026-05-01T15:35 Plan Task 6 complete: Step B0 trunk-branch warning (b67ba03) [inline] (verify: 2 grep checks passed)
+- 2026-05-01T15:40 Plan Task 7 complete: cross-cutting verification (no cleanup commit needed; all checks passed)
+- 2026-05-01T15:45 Plan Task 8 complete: v0.2.0 release (51051ba) [inline] (verify: plugin.json, README, CHANGELOG cut all confirmed)
 
 ## Blockers
 (none)
