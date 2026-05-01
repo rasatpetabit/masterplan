@@ -45,6 +45,7 @@ The dispatch model:
 | Conversion / rewriting | Sonnet | Generation, not just extraction |
 | Architecture, ambiguous specs | Opus | Reserved for tasks that genuinely need deep reasoning |
 | Small well-defined coding tasks | Codex | Per the routing toggle, via `codex:codex-rescue` |
+| Asymmetric review of inline work | Codex (review mode) | When `codex_review: on`, fresh-eyes review of Sonnet/Claude diffs against the spec |
 | Completion inference | Haiku | One per task chunk, parallel, bounded |
 
 Every subagent gets a **bounded brief**: explicit goal, inputs, allowed scope, constraints, return shape. It doesn't inherit session history, and the orchestrator doesn't see its raw output — just a digest.
@@ -158,7 +159,9 @@ Scans for PLAN.md, TODO.md, ROADMAP.md, docs/plans/*.md, GitHub issues, draft PR
 | `--no-loop` | unset | Disable cross-session `ScheduleWakeup` self-pacing |
 | `--no-subagents` | unset | Use `executing-plans` instead of `subagent-driven-development` |
 | `--codex=off\|auto\|manual` | from config | Per-task routing between Claude and Codex |
-| `--no-codex` | — | Shorthand for `--codex=off` |
+| `--no-codex` | — | Shorthand for `--codex=off` (also disables review) |
+| `--codex-review=on\|off` | from config | When on, Codex reviews diffs from inline-completed tasks before they're marked done |
+| `--codex-review` | — | Shorthand for `--codex-review=on` |
 | `--archive` | — | (import) Force archive of legacy artifacts after conversion |
 | `--keep-legacy` | — | (import) Force leave-in-place of legacy artifacts |
 | `--fix` | — | (doctor) Auto-fix safe issues |
@@ -196,11 +199,13 @@ archive_path: legacy/.archive
 # /superflow doctor auto-fix policy (overridden by --fix)
 doctor_autofix: false
 
-# Codex routing
+# Codex routing + review
 codex:
-  routing: auto              # off | auto | manual
+  routing: auto              # off | auto | manual — who executes a task
+  review: off                # off | on — Codex reviews diffs from inline-completed tasks
   review_diff_under_full: false
   max_files_for_auto: 3
+  review_max_fix_iterations: 2
 
 # External integration refs (NEVER secrets — secrets live in env or MCP config)
 integrations:

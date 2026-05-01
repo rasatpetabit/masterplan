@@ -55,7 +55,9 @@ See **Configuration: .superflow.yaml** below for the full schema and built-in de
 | `--file=<path>` | I | Direct import of one local file — skip discovery |
 | `--branch=<name>` | I | Direct reverse-engineer from one branch — skip discovery |
 | `--codex=off\|auto\|manual` | C | Override `config.codex.routing` for this run. Persisted to status file |
-| `--no-codex` | C | Shorthand for `--codex=off` |
+| `--no-codex` | C | Shorthand for `--codex=off` (also disables review) |
+| `--codex-review=on\|off` | C | Override `config.codex.review` for this run. When on, Codex reviews diffs from inline-completed tasks before they're marked done. Persisted to status file |
+| `--codex-review` | C | Shorthand for `--codex-review=on` |
 
 ---
 
@@ -280,6 +282,46 @@ Proceed to **Step C** with the new status path.
     - **`loose` / `full`** — auto-accept if verification passed cleanly. If verification failed, fall back to inline rerun under `superpowers:systematic-debugging` and apply the autonomy's blocker policy from above (which itself triggers **CD-4** ladder work).
 
     Append a `[codex]` or `[inline]` tag to the activity log entry for each completed task so future-you can see the routing distribution.
+
+3b. **Codex review of inline work** (consult `config.codex.review`, overridden by `--codex-review=` flag, persisted as `codex_review` in the status file):
+
+    Fires when ALL of the following hold, otherwise skip silently:
+    - `codex_review` is `on`.
+    - The task just completed was **inline** (Sonnet/Claude did the work — not Codex).
+    - The codex plugin is available (`codex:codex-rescue` is installed).
+    - `codex_routing` is not `off`. (Disabling Codex entirely also disables review.)
+
+    Why this exists: even when a task is too complex or context-heavy to delegate execution to Codex, Codex can usefully review the resulting diff. This is asymmetric review — the reviewer didn't do the work, so it's a fresh pair of eyes against the spec, not self-review.
+
+    **Process:**
+    1. Compute the task's diff: `git diff HEAD~1 -- <task's allowed files>` (or `git show HEAD` if the implementer made one commit). Capture verification output from Step 4's CD-3 step (which has already run by the time this fires — see ordering note below).
+    2. Dispatch the `codex:codex-rescue` subagent in REVIEW mode with this bounded brief (per the bounded-brief contract above):
+       ```
+       Codex review:
+       Task: <task name from plan>
+       Acceptance criteria: <bullet list from plan>
+       Spec excerpt: <relevant section of design doc>
+       Diff: <git diff output, scoped to task files>
+       Verification: <captured output from CD-3>
+       Return: severity-ordered findings (high/medium/low) grounded in file:line, OR the literal string "no findings" if clean. Apply CD-10. Do not narrate.
+       ```
+    3. Digest the response per output-digestion rules: parse into severity buckets, drop verbose prose. Don't pull the full review text into orchestrator context.
+    4. **Decision matrix by autonomy:**
+       - **`gated`** — present findings via `AskUserQuestion` → `Accept (mark task done) / Fix and re-review (rerun inline with findings as briefing, capped at 2 iterations) / Accept anyway / Stop`.
+       - **`loose`**:
+         - No findings OR only low-severity → auto-accept; log review tag in activity entry.
+         - Medium-severity → append digest to status `## Notes` for human attention later; accept and continue.
+         - High-severity → set `status: blocked`, append findings to `## Blockers` with file:line cites, end the turn (no reschedule per the existing blocker policy).
+       - **`full`**:
+         - No or low → auto-accept.
+         - Medium → log to `## Notes`, continue.
+         - High → attempt **one** auto-fix iteration (rerun the inline task with Codex's findings as added briefing, capped at one retry). If second review still has high-severity findings, set `status: blocked`. Per **CD-4**, this counts as a ladder rung.
+    5. Activity log gets a review tag in addition to the routing tag, e.g. `[inline][reviewed: clean]` or `[inline][reviewed: 2 medium, 1 low]`. Full findings digest goes to `## Notes` only when severity is medium or higher — clean and low-only reviews don't need notes pollution.
+
+    **Ordering note:** review fires AFTER Step 4's CD-3 verification (so verification output is available to feed Codex) but BEFORE the status file's `current_task` is advanced. If review blocks, the status file shows `status: blocked` on the same task; no advance happens.
+
+    **Self-review anti-pattern:** if the same task was Codex-delegated AND `codex_review` is on, do NOT review with Codex — that's reviewing-yourself and adds no signal. The existing post-Codex review flow in Step 3a already handles Codex output. Skip this step for that task.
+
 4. **After every completed task:**
    - **Apply CD-3** — run the task's verification commands (preferring project-local ones per CD-1) and capture their output. Don't claim done without evidence.
    - **Apply CD-2** — verify with `git status --porcelain` that no files outside the task's scope were modified by the implementer or by verification. If they were, surface that to the user before continuing; never silently revert their work.
@@ -416,6 +458,7 @@ next_action: <one-line summary of what comes next>
 autonomy: gated | loose | full
 loop_enabled: true | false
 codex_routing: off | auto | manual
+codex_review: off | on
 ---
 
 # <Feature Name> — Status
@@ -507,11 +550,14 @@ archive_path: legacy/.archive # relative to repo root
 # /superflow doctor auto-fix policy (overridden by --fix flag)
 doctor_autofix: false
 
-# Codex routing for Step C task execution (overridden by --codex= / --no-codex flags)
+# Codex routing + review for Step C task execution
+# (overridden by --codex= / --no-codex / --codex-review= flags)
 codex:
-  routing: auto              # off | auto | manual
-  review_diff_under_full: false  # if true, even autonomy=full pauses to show Codex diff
-  max_files_for_auto: 3      # eligibility heuristic threshold
+  routing: auto              # off | auto | manual — who executes a task
+  review: off                # off | on — Codex reviews diffs from inline-completed tasks
+  review_diff_under_full: false  # if true, even autonomy=full pauses to show Codex output
+  max_files_for_auto: 3      # eligibility heuristic threshold for `auto` routing
+  review_max_fix_iterations: 2  # cap on "fix and re-review" retries before bailing
 
 # External integration refs (NEVER secrets — secrets live in env or MCP config)
 integrations:
@@ -548,5 +594,6 @@ These are command-specific rules; they complement (not replace) the **Context di
 - **Doctor is read-only by default.** Without `--fix` it only reports — even an obvious orphan stays in place. `--fix` only acts on errors marked auto-fixable in the checks table.
 - **Inference is conservative by design.** When in doubt, classify `possibly_done`, not `done`. The cost of re-verifying is small; the cost of skipping real work is large.
 - **External writes are gated.** Posting comments to GitHub issues/PRs, sending Slack messages, or closing issues during import always passes through `AskUserQuestion` first — even under `--autonomy=full`. These are blast-radius actions per the system prompt's "executing actions with care" guidance.
-- **Codex routing is locked at kickoff, switchable on resume.** `codex_routing` lands in the status file at Step B3 (or at first Step C invocation for imported plans without it). Mid-run flips happen by re-invoking `/superflow --resume=<path> --codex=<mode>`, which rewrites the field and continues. Per-task overrides come from plan annotations (`codex: ok` / `codex: no`), not from inline edits.
+- **Codex routing is locked at kickoff, switchable on resume.** `codex_routing` and `codex_review` both land in the status file at Step B3 (or at first Step C invocation for imported plans without them). Mid-run flips happen by re-invoking `/superflow --resume=<path> --codex=<mode> --codex-review=<on|off>`, which rewrites the fields and continues. Per-task overrides come from plan annotations (`codex: ok` / `codex: no`), not inline edits.
 - **Never delegate non-eligible tasks under `auto`.** The eligibility checklist is conservative on purpose: a wrong delegation costs more than running inline. When the heuristic is uncertain, run inline. Plan annotations are the right escape hatch when you need to override.
+- **Codex review is asymmetric — never self-review.** If a task was executed by Codex and `codex_review` is on, skip the review step for that task. Codex reviewing its own output adds no signal. The post-Codex review flow in Step 3a already handles delegated work; Step 3b's review only fires after inline tasks.
