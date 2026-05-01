@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-05-01
+
+### Fixed
+- **`/superflow` could stop silently mid-kickoff with outstanding tasks.** When `superpowers:brainstorming` reached its "User reviews written spec" gate, the brainstorming skill ended its turn with the open-ended prose "Wait for the user's response." If the session compacted between turns (Claude Code recap), the brainstorming skill body fell out of active context — the user came back to a recap showing open tasks but the orchestrator had no breadcrumb telling it what to do, and just sat there. Fix: Step B1 and Step B2 now own re-engagement explicitly. After brainstorming returns, the orchestrator checks for the spec file and surfaces an `AskUserQuestion(Approve and run writing-plans / Open spec to review / Request changes / Abort)` instead of relying on brainstorming's pause-for-user prose. Same pattern at Step B2 after writing-plans (also briefs writing-plans to skip its own "Which approach?" prompt — /superflow already decided execution mode via the `--no-subagents` flag). New operational rule "Don't stop silently mid-kickoff" formalizes the principle: Step B never ends a turn with a free-text question; always with concrete continuation options or explicit handoff to the next Step.
+
 ## [0.2.0] — 2026-05-01
 
 ### Added

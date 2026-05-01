@@ -242,15 +242,31 @@ The brainstorm/plan/status files will be committed inside whichever worktree you
 
 ### Step B1 — Brainstorm
 
-Invoke `superpowers:brainstorming` with the topic. **Brainstorming is always interactive** — the `--autonomy` flag does not apply. Let it run end-to-end; it will produce `docs/superpowers/specs/YYYY-MM-DD-<slug>-design.md` (relative to the chosen worktree) and get user approval on the spec.
+Invoke `superpowers:brainstorming` with the topic. **Brainstorming is always interactive** — the `--autonomy` flag does not apply. Let it run through its design + writing phases.
+
+**Re-engagement gate (CRITICAL — fixes a v0.2.0 bug where the orchestrator stopped silently when brainstorming hit its "User reviews written spec" gate, leaving the session unable to continue after compaction).** After brainstorming returns control to /superflow, the orchestrator MUST verify state and explicitly drive the next step — never end the turn waiting on the user's free-text response from brainstorming's gate:
+
+1. Check whether the expected spec file exists at `docs/superpowers/specs/YYYY-MM-DD-<slug>-design.md`.
+2. **If spec missing:** brainstorming was aborted or failed. Surface `AskUserQuestion("Brainstorming did not complete (no spec at <path>). Re-invoke brainstorming with the same topic / Refine the topic and re-invoke / Abort kickoff")`.
+3. **If spec exists** (the normal case): under `--autonomy != full`, surface `AskUserQuestion("Spec written at <path>. Ready for writing-plans?", options=[Approve and run writing-plans (Recommended) / Open spec to review first then ping me / Request changes — describe what to change / Abort kickoff])`. Under `--autonomy=full`: auto-approve and proceed to Step B2 silently.
+
+**Why this gate exists:** brainstorming's own "User reviews written spec" step ends with "Wait for the user's response" — open-ended prose that causes the session to stop. When the user comes back in a fresh turn (especially after a recap/compact), the brainstorming skill body may not be in active context, and the orchestrator has no breadcrumb telling it what to do. The re-engagement gate above is the orchestrator owning the transition explicitly so a session compact between turns doesn't lose the workflow. This pattern repeats in Step B2 for the same reason.
 
 ### Step B2 — Plan
 
-After brainstorming returns, invoke `superpowers:writing-plans` against the spec. It will produce `docs/superpowers/plans/YYYY-MM-DD-<slug>.md`. Brief plan-writing with **CD-1 + CD-6**, plus this annotation guidance:
+After Step B1's gate confirms approval, invoke `superpowers:writing-plans` against the spec. It will produce `docs/superpowers/plans/YYYY-MM-DD-<slug>.md`. Brief plan-writing with **CD-1 + CD-6**, plus:
 
 > When you judge a task as obviously well-suited for Codex (≤ 3 files, unambiguous, has known verification commands, no design judgment) or obviously unsuited (requires understanding broader system context, design tradeoffs, or files outside the stated scope), add a `**Codex:** ok` or `**Codex:** no` line in the per-task `**Files:**` block. See the Plan annotations subsection in Step C 3a for the exact syntax. The orchestrator's eligibility cache parses these as overrides on the heuristic checklist.
 
+> **Skip your Execution Handoff prompt** ("Plan complete… Which approach?"). /superflow has already decided execution mode based on the `--no-subagents` flag and config — do not ask the user. Just write the plan and return control.
+
 Plans without annotations behave exactly as before (heuristic-only). Annotations are an authoring aid; they're never required.
+
+**Re-engagement gate** (same v0.2.0 bug pattern as Step B1's gate — never end the turn silently waiting on a free-text question). After writing-plans returns:
+
+1. Check whether the expected plan file exists at `docs/superpowers/plans/YYYY-MM-DD-<slug>.md`.
+2. **If plan missing:** writing-plans was aborted or failed. Surface `AskUserQuestion("writing-plans did not complete (no plan at <path>). Re-invoke against the existing spec / Edit the spec and re-invoke / Abort kickoff")`.
+3. **If plan exists** (the normal case): proceed to Step B3 silently. B3's existing AskUserQuestion handles the final plan-approval gate before Step C, so no separate B2 gate is needed in the success case.
 
 ### Step B3 — Status file + approval
 
@@ -829,6 +845,7 @@ These are command-specific rules covering cross-cutting policy not stated inline
 - **Import never overwrites existing superflow state silently.** If a target spec/plan/status path already exists at Step I3, ask the user: overwrite / write to a `-v2` slug / abort. Never clobber.
 - **Doctor is read-only by default.** Without `--fix` it only reports — even an obvious orphan stays in place. `--fix` only acts on errors marked auto-fixable in the checks table.
 - **Inference is conservative by design.** When in doubt, classify `possibly_done`, not `done`. The cost of re-verifying is small; the cost of skipping real work is large.
+- **Don't stop silently mid-kickoff.** Step B (kickoff phase) MUST end every turn with one of: (a) explicit handoff to the next Step, (b) `AskUserQuestion` offering concrete continuation options, or (c) `AskUserQuestion` confirming abort. NEVER end a turn with a free-text question awaiting user input — sessions can compact between turns and lose the upstream skill body (e.g., brainstorming's "User reviews written spec" gate), leaving the user staring at a recap with open tasks and no way to continue. The orchestrator owns re-engagement; the upstream skill's pause-for-user prose is not a substitute. See Step B1 and Step B2 re-engagement gates for the canonical pattern.
 - **External writes are gated.** Posting comments to GitHub issues/PRs, sending Slack messages, or closing issues during import always passes through `AskUserQuestion` first — even under `--autonomy=full`. Blast-radius actions.
 - **Codex routing is locked at kickoff, switchable on resume.** `codex_routing` and `codex_review` both land in the status file at Step B3 (or at first Step C invocation for imported plans). Mid-run flips happen by re-invoking `/superflow --resume=<path> --codex=<mode> --codex-review=<on|off>`. Per-task overrides come from plan annotations (`codex: ok` / `codex: no`), not inline edits.
 - **Never delegate non-eligible tasks under `auto`.** The eligibility checklist is conservative on purpose: a wrong delegation costs more than running inline. When uncertain, run inline. Plan annotations are the escape hatch when you need to override.
