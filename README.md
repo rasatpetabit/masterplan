@@ -156,6 +156,7 @@ Scans for PLAN.md, TODO.md, ROADMAP.md, docs/plans/*.md, GitHub issues, draft PR
 | Flag | Default | Effect |
 |---|---|---|
 | `--autonomy=gated\|loose\|full` | `gated` | How execution gates on human input |
+| `--resume=<status-path>` | — | Resume a specific plan from its sibling status file; skips Step A/B |
 | `--no-loop` | unset | Disable cross-session `ScheduleWakeup` self-pacing |
 | `--no-subagents` | unset | Use `executing-plans` instead of `subagent-driven-development` |
 | `--codex=off\|auto\|manual` | from config | Per-task routing between Claude and Codex |
@@ -166,9 +167,25 @@ Scans for PLAN.md, TODO.md, ROADMAP.md, docs/plans/*.md, GitHub issues, draft PR
 | `--keep-legacy` | — | (import) Force leave-in-place of legacy artifacts |
 | `--fix` | — | (doctor) Auto-fix safe issues |
 
+## Useful flag combinations
+
+The autonomy and codex flags are designed to compose. Common pairs:
+
+| Combination | Behavior |
+|---|---|
+| `/superflow <topic>` | Default: `--autonomy=gated`, codex routing from config (default `auto`), no review. Each task gates on user input; small well-defined tasks may auto-route to Codex. |
+| `/loop /superflow <topic> --autonomy=loose` | Long autonomous run with no per-task gating; ScheduleWakeup paces it across sessions; stops only on blockers. |
+| `/loop /superflow <topic> --autonomy=loose --codex-review=on` | Same long run, but Codex reviews each inline (Claude/Sonnet) task's diff before it counts as done. Medium findings go to `## Notes`; high findings block. |
+| `/superflow <topic> --codex=auto --codex-review=on` | Codex executes simple well-defined tasks; Codex reviews the inline (complex) ones. Each model plays to its strengths, no overlap (no self-review). |
+| `/superflow <topic> --codex=manual --codex-review=on` | User gets asked per task whether to delegate execution to Codex. Tasks that stay inline are reviewed by Codex afterward. |
+| `/superflow <topic> --codex=off` | Claude does everything; no Codex involvement. Review is automatically disabled too (a routing-off plan never invokes Codex, even for review). |
+| `/superflow <topic> --autonomy=full --codex-review=on` | Maximum autonomy with adversarial review as the safety rail — high-severity findings trigger one auto-fix retry, then block. |
+
+CLI flags always override config for the run, and the resolved values land in the status file so resumes are deterministic.
+
 ## Configuration
 
-Drop a `.superflow.yaml` at your repo root (or `~/.superflow.yaml` for global defaults). Three-tier precedence: CLI flags > repo-local > user-global > built-in defaults.
+Drop a `.superflow.yaml` at your repo root (or `~/.superflow.yaml` for global defaults). Four-tier precedence: CLI flags > repo-local > user-global > built-in defaults.
 
 ```yaml
 # Default execution autonomy
@@ -237,6 +254,7 @@ next_action: "Write failing test for Redis session adapter"
 autonomy: loose
 loop_enabled: true
 codex_routing: auto
+codex_review: on
 ---
 
 # Auth Refactor — Status

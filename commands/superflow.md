@@ -26,6 +26,10 @@ Before doing anything, internalize these. They shape every decision below:
 2. `git rev-parse --show-toplevel` — if inside a repo, read `<repo-root>/.superflow.yaml` if it exists.
 3. Shallow-merge in precedence order: **built-in defaults < user-global < repo-local < CLI flags**. The merged config is available to every downstream step (referenced as `config.X` in this prompt).
 4. Invalid YAML → abort with the file path and parser message. Missing files → skip that tier silently.
+5. **Flag-conflict warnings.** After merge, surface a one-line warning (do not abort) when:
+   - `codex_routing == off` AND `codex_review == on` — review will not fire because routing is off; tell the user the review flag is being ignored for this run.
+   - `--no-loop` is set AND `loop_enabled: true` is in config — the CLI flag wins; note that scheduling is disabled for this run.
+   The user has not been ignored — they explicitly opted into a contradictory pair, and the warning makes that visible rather than silently picking a winner.
 
 See **Configuration: .superflow.yaml** below for the full schema and built-in defaults.
 
@@ -106,8 +110,9 @@ That's enough to route the next task. Anything beyond it is fat.
 |---|---|---|---|---|
 | Step I1 (discovery) | parallel `Explore` agents, one per source class | Haiku | source-class scope (e.g. "scan local plan files only") | structured candidate list (JSON-shaped) |
 | Step I3 (conversion) | one Sonnet agent per legacy candidate | Sonnet | source content + inference results + writing-plans format brief + target paths | new spec/plan paths + 1-paragraph summary |
-| Step C (per-task implementation) | implementer subagents via `superpowers:subagent-driven-development` | Sonnet (default) | plan path + current task index + CD-1/2/3/6 brief + relevant spec excerpts | done/blocked + 1–3 lines of evidence |
-| Step C 3a (codex routing) | `codex:codex-rescue` subagent | Codex (out-of-process) | bounded brief in CLAUDE.md format (Scope/Allowed files/Goal/Acceptance/Verification/Return) | diff + verification output |
+| Step C (per-task implementation) | implementer subagents via `superpowers:subagent-driven-development` | Sonnet (default) | plan path + current task index + CD-1/2/3/6 brief + relevant spec excerpts | done/blocked + 1–3 lines of evidence + task-start commit SHA |
+| Step C 3a (codex execution) | `codex:codex-rescue` subagent in EXEC mode | Codex (out-of-process) | bounded brief: Scope/Allowed files/Goal/Acceptance/Verification/Return | diff + verification output |
+| Step C 4b (codex review of inline work) | `codex:codex-rescue` subagent in REVIEW mode | Codex (out-of-process) | bounded brief: task + acceptance + spec excerpt + diff + verification; Scope=review-only; Constraints=CD-10 | severity-ordered findings (high/medium/low) grounded in file:line, OR `"no findings"` |
 | Completion-state inference | parallel Haiku agents per task chunk | Haiku | task description + workspace, no plan-wide context | classification (done/possibly_done/not_done) + evidence strings |
 | Step D (doctor checks) | optional Haiku per worktree if many | Haiku | worktree path + checks list | findings list grounded in `<file>:<issue>` |
 
@@ -181,10 +186,11 @@ When to NOT parallelize:
 ## Step A — List + pick (across worktrees)
 
 1. Enumerate all worktrees of the current repo: `git worktree list --porcelain`. Parse into `(worktree_path, branch)` tuples. Include the current worktree.
-2. For each worktree, glob `<worktree_path>/docs/superpowers/plans/*-status.md`.
-3. Read each file's frontmatter; keep entries where `status` is `in-progress` or `blocked`. Annotate each with the worktree path and branch it lives in. Sort by `last_activity` descending.
-4. Use `AskUserQuestion` with one option per matching plan (label = `slug` + (worktree-tag if not in cwd), description = `current_task` + " · " + branch + " · " + `last_activity` + " · " + `status`) plus a final "Start fresh" option. Cap at 4 options total — if more in-progress plans exist, take the 3 most recent and surface a "More…" option that prints the full list and re-asks.
-5. If user picks a plan → **Step C** with that status path. If the plan's worktree differs from the current working directory, `cd` to that worktree before continuing (run all subsequent commands from the plan's worktree). If "Start fresh" → ask for a one-line topic via `AskUserQuestion` (free-form Other), then **Step B**.
+2. **Worktree-count short-circuit.** If more than 20 worktrees exist, surface a one-line warning and switch to a faster mode: scan only the current worktree plus any worktree with a status file modified in the last 14 days (use `find <worktree>/docs/superpowers/plans -name '*-status.md' -mtime -14` per worktree before reading frontmatter). Per CD-2, do not auto-prune worktrees — just narrow the scan.
+3. For each worktree (after any short-circuit), glob `<worktree_path>/docs/superpowers/plans/*-status.md`.
+4. Read each file's frontmatter; keep entries where `status` is `in-progress` or `blocked`. Annotate each with the worktree path and branch it lives in. **If a status file fails to parse as YAML**, skip it and add a one-line note to the discovery report ("status file at `<path>` is malformed — run `/superflow doctor` to inspect"). Do not abort the listing. Sort the parsed entries by `last_activity` descending.
+5. Use `AskUserQuestion` with options laid out as: 2 most recent plans + "Start fresh". If more than 2 in-progress plans exist, replace the lower plan slot with a "More…" option that, when picked, re-asks with the next batch — keeps total options at 3, never exceeds the AskUserQuestion 4-option cap.
+6. If user picks a plan → **Step C** with that status path. If the plan's worktree differs from the current working directory, `cd` to that worktree before continuing (run all subsequent commands from the plan's worktree). If "Start fresh" → ask for a one-line topic via `AskUserQuestion` (free-form Other), then **Step B**.
 
 ---
 
@@ -228,7 +234,22 @@ After brainstorming returns, invoke `superpowers:writing-plans` against the spec
 
 ### Step B3 — Status file + approval
 
-Create the sibling status file at `docs/superpowers/plans/YYYY-MM-DD-<slug>-status.md` using the format in **Status file format** below. Fill `current_task` with the first task from the plan, `next_action` with a one-line summary, and the `worktree`/`branch` fields with the values recorded in Step B0.
+Create the sibling status file at `docs/superpowers/plans/YYYY-MM-DD-<slug>-status.md` using the format in **Status file format** below. **Populate every frontmatter field** (omitting any will fail doctor's schema check and break Step A's listing):
+
+- `slug` — the feature slug derived from the topic
+- `status: in-progress`
+- `spec` — relative path to the design doc from Step B1
+- `plan` — relative path to the plan from Step B2
+- `worktree` — absolute path recorded in Step B0
+- `branch` — current branch in that worktree
+- `started` — today's date (YYYY-MM-DD)
+- `last_activity` — current ISO timestamp
+- `current_task` — first task from the plan
+- `next_action` — first step of `current_task`
+- `autonomy` — value of `--autonomy=` flag or `config.autonomy`
+- `loop_enabled` — `true` unless `--no-loop` is set
+- `codex_routing` — value of `--codex=` flag or `config.codex.routing`
+- `codex_review` — value of `--codex-review=` flag or `config.codex.review`
 
 If `--autonomy != full`: present a one-paragraph plan summary and the path to the plan file via `AskUserQuestion` with options "Start execution / Open plan to review / Cancel". Wait for approval. If `--autonomy=full`: skip approval.
 
@@ -239,11 +260,12 @@ Proceed to **Step C** with the new status path.
 ## Step C — Execute
 
 1. Read the status file. Read the referenced spec and plan files **fresh** — do not trust cached context from earlier in the session. If the plan or spec has been edited since the status was written, re-read both fully and reconcile `current_task` against the plan's task list.
+   - **Parse guard.** If the status file fails to parse as YAML+Markdown, surface this immediately via `AskUserQuestion`: "Status file at `<path>` is corrupted. Open it for manual fix / Run /superflow doctor / Abort." Do NOT attempt to silently regenerate — the user's edits may have been intentional and partial.
    - **Verify the worktree.** Compare the status file's `worktree` field to the current working directory (`pwd`). If they differ, `cd` into the recorded worktree before continuing. If the recorded worktree no longer exists (e.g. removed via `git worktree remove`), surface this as a blocker via `AskUserQuestion`: "Worktree at `<path>` is missing. Recreate it / use the current worktree / abort."
    - **Verify the branch.** Compare `git rev-parse --abbrev-ref HEAD` (now in the chosen worktree) to the status file's `branch` field. If they differ, ask the user before continuing — the work was started on a different branch and silently switching could cause real problems.
 2. If `--no-subagents` is set: invoke `superpowers:executing-plans`. Otherwise: invoke `superpowers:subagent-driven-development`. Hand the invoked skill the plan path and the current task index. Pass through **CD-1, CD-2, CD-3, CD-6** as briefing for the implementer subagent — project-local tooling first, do not touch unrelated dirty files, evidence-based completion, MCP/skill tier preference.
 3. Layer the autonomy policy on top of the invoked skill's per-task loop:
-   - **`gated`** — before each task, call `AskUserQuestion(continue / skip-this-task / stop)`. Honor the answer. If `codex_routing != off`, expand the question to `(continue inline / continue via Codex / skip / stop)`.
+   - **`gated`** — before each task, call `AskUserQuestion(continue / skip-this-task / stop)`. Honor the answer. If `codex_routing == auto`, expand the question to `(continue inline / continue via Codex / skip / stop)` so the user can override the auto-route. Under `codex_routing == manual`, do NOT expand here — Step 3a's per-task `AskUserQuestion` already handles routing, so combining would double-prompt.
    - **`loose`** — run autonomously. On a blocker, **first apply CD-4 (work the ladder)**: re-read the error, try an alternate tool, narrow scope, grep prior art, consult `context7`. Only after two rungs have failed, set `status: blocked` and end the turn. Cite the rungs tried in the `## Blockers` entry so it's clear what's been ruled out. Do NOT reschedule a wakeup.
    - **`full`** — run autonomously, applying **CD-4** more aggressively before escalating: at least two ladder rungs (alternate tool, narrowed scope, codebase prior art, `context7` docs, `superpowers:systematic-debugging` for test failures, spec reinterpretation cited in the activity log). Escalate to `blocked` only after the full ladder fails.
 
@@ -283,60 +305,66 @@ Proceed to **Step C** with the new status path.
 
     Append a `[codex]` or `[inline]` tag to the activity log entry for each completed task so future-you can see the routing distribution.
 
-3b. **Codex review of inline work** (consult `config.codex.review`, overridden by `--codex-review=` flag, persisted as `codex_review` in the status file):
+4. **After every completed task** (sub-steps run in this fixed order):
 
-    Fires when ALL of the following hold, otherwise skip silently:
-    - `codex_review` is `on`.
-    - The task just completed was **inline** (Sonnet/Claude did the work — not Codex).
-    - The codex plugin is available (`codex:codex-rescue` is installed).
-    - `codex_routing` is not `off`. (Disabling Codex entirely also disables review.)
+   **4a — CD-3 verification.** Run the task's verification commands (preferring project-local ones per CD-1) and capture their output. Don't claim done without evidence. Capture the output for use by 4b.
 
-    Why this exists: even when a task is too complex or context-heavy to delegate execution to Codex, Codex can usefully review the resulting diff. This is asymmetric review — the reviewer didn't do the work, so it's a fresh pair of eyes against the spec, not self-review.
+   **4b — Codex review of inline work** (consult `config.codex.review`, overridden by `--codex-review=` flag, persisted as `codex_review` in the status file).
 
-    **Process:**
-    1. Compute the task's diff: `git diff HEAD~1 -- <task's allowed files>` (or `git show HEAD` if the implementer made one commit). Capture verification output from Step 4's CD-3 step (which has already run by the time this fires — see ordering note below).
-    2. Dispatch the `codex:codex-rescue` subagent in REVIEW mode with this bounded brief (per the bounded-brief contract above):
-       ```
-       Codex review:
-       Task: <task name from plan>
-       Acceptance criteria: <bullet list from plan>
-       Spec excerpt: <relevant section of design doc>
-       Diff: <git diff output, scoped to task files>
-       Verification: <captured output from CD-3>
-       Return: severity-ordered findings (high/medium/low) grounded in file:line, OR the literal string "no findings" if clean. Apply CD-10. Do not narrate.
-       ```
-    3. Digest the response per output-digestion rules: parse into severity buckets, drop verbose prose. Don't pull the full review text into orchestrator context.
-    4. **Decision matrix by autonomy:**
-       - **`gated`** — present findings via `AskUserQuestion` → `Accept (mark task done) / Fix and re-review (rerun inline with findings as briefing, capped at 2 iterations) / Accept anyway / Stop`.
-       - **`loose`**:
-         - No findings OR only low-severity → auto-accept; log review tag in activity entry.
-         - Medium-severity → append digest to status `## Notes` for human attention later; accept and continue.
-         - High-severity → set `status: blocked`, append findings to `## Blockers` with file:line cites, end the turn (no reschedule per the existing blocker policy).
-       - **`full`**:
-         - No or low → auto-accept.
-         - Medium → log to `## Notes`, continue.
-         - High → attempt **one** auto-fix iteration (rerun the inline task with Codex's findings as added briefing, capped at one retry). If second review still has high-severity findings, set `status: blocked`. Per **CD-4**, this counts as a ladder rung.
-    5. Activity log gets a review tag in addition to the routing tag, e.g. `[inline][reviewed: clean]` or `[inline][reviewed: 2 medium, 1 low]`. Full findings digest goes to `## Notes` only when severity is medium or higher — clean and low-only reviews don't need notes pollution.
+   Fires when ALL of the following hold, otherwise skip silently:
+   - `codex_review` is `on`.
+   - The task just completed was **inline** (Sonnet/Claude did the work — not Codex). Codex-delegated tasks are reviewed by Step 3a's post-Codex flow, not here. Skipping for those is the asymmetric-review rule.
+   - The codex plugin is available (`codex:codex-rescue` is installed).
+   - `codex_routing` is not `off`. (See Step 0's flag-conflict warning — `--codex=off --codex-review=on` is treated as a no-op for review.)
 
-    **Ordering note:** review fires AFTER Step 4's CD-3 verification (so verification output is available to feed Codex) but BEFORE the status file's `current_task` is advanced. If review blocks, the status file shows `status: blocked` on the same task; no advance happens.
+   Why this exists: even when a task is too complex or context-heavy to delegate execution to Codex, Codex can usefully review the resulting diff. The reviewer didn't do the work, so it's a fresh pair of eyes against the spec.
 
-    **Self-review anti-pattern:** if the same task was Codex-delegated AND `codex_review` is on, do NOT review with Codex — that's reviewing-yourself and adds no signal. The existing post-Codex review flow in Step 3a already handles Codex output. Skip this step for that task.
+   **Process:**
 
-4. **After every completed task:**
-   - **Apply CD-3** — run the task's verification commands (preferring project-local ones per CD-1) and capture their output. Don't claim done without evidence.
-   - **Apply CD-2** — verify with `git status --porcelain` that no files outside the task's scope were modified by the implementer or by verification. If they were, surface that to the user before continuing; never silently revert their work.
-   - Update the status file: bump `last_activity` to the current ISO timestamp, set `current_task` to the next task name, set `next_action` to the next task's first step, append a one-line entry to `## Activity log` that includes 1–3 lines of relevant verification output (per **CD-8**) and the routing tag (`[codex]` / `[inline]`). For non-trivial decisions made during the task, also append to `## Notes` per **CD-7**.
-   - The invoked skill already commits per task — verify the commit landed; if not, commit the status file update separately.
+   1. Compute the task's diff against the **task-start commit SHA** captured by the implementer at task start (passed back as part of its return digest). If the implementer didn't record one, fall back to `git merge-base HEAD <branch-of-status>` — but `HEAD~1` is wrong for multi-commit or zero-commit tasks and must NOT be used. If zero commits were made (task aborted before commit), there is no diff to review; skip 4b and let 4a's verification result drive the autonomy policy.
+   2. Dispatch the `codex:codex-rescue` subagent in REVIEW mode with this bounded brief (Goal/Inputs/Scope/Constraints/Return shape per the architecture section):
+      ```
+      Codex review:
+      Goal: Adversarial review of this task's diff against the spec and acceptance criteria.
+      Inputs:
+        Task: <task name from plan>
+        Acceptance criteria: <bullet list from plan>
+        Spec excerpt: <relevant section of design doc>
+        Diff: <git diff output, scoped to task files>
+        Verification: <captured output from 4a>
+      Scope: Review only — no writes, no commits, no file modifications.
+      Constraints: Apply CD-10 (severity-first, grounded in file:line). Do not narrate. Be adversarial about correctness, not style.
+      Return: severity-ordered findings (high/medium/low) grounded in file:line, OR the literal string "no findings" if clean.
+      ```
+   3. Digest the response per output-digestion rules: parse into severity buckets, drop verbose prose. Don't pull the full review text into orchestrator context.
+   4. **Decision matrix by autonomy** (retry caps come from `config.codex.review_max_fix_iterations`, default 2):
+      - **`gated`** — present findings via `AskUserQuestion` → `Accept / Fix and re-review (rerun inline with findings as briefing; capped at config.codex.review_max_fix_iterations) / Accept anyway / Stop`.
+      - **`loose`**:
+        - No or low-severity → auto-accept; tag activity log.
+        - Medium → append digest to `## Notes` for human attention later; accept and continue.
+        - High → set `status: blocked`, append findings to `## Blockers` with file:line cites, end the turn (no reschedule per the existing blocker policy).
+      - **`full`**:
+        - No or low → auto-accept.
+        - Medium → log to `## Notes`; continue.
+        - High → attempt up to `config.codex.review_max_fix_iterations` fix iterations (rerun inline with findings as added briefing). If still high-severity afterward, set `status: blocked`. Per **CD-4**, each iteration counts as a ladder rung.
+   5. Activity log gets a review tag alongside the routing tag, e.g. `[inline][reviewed: clean]` or `[inline][reviewed: 2 medium, 1 low]`. Full findings digest goes to `## Notes` only when severity is medium or higher — clean and low-only reviews don't need notes pollution.
+
+   **4c — Worktree integrity check.** Apply CD-2: verify with `git status --porcelain` that no files outside the task's scope were modified by the implementer or by 4a/4b. If they were, surface that to the user before continuing; never silently revert their work.
+
+   **4d — Status file update.** Update the status file: bump `last_activity` to the current ISO timestamp, set `current_task` to the next task name, set `next_action` to the next task's first step, append a one-line entry to `## Activity log` that includes 1–3 lines of relevant verification output (per **CD-8**) and the routing+review tags. For non-trivial decisions made during the task, also append to `## Notes` per **CD-7**.
+
+   The invoked skill already commits per task — verify the commit landed; if not, commit the status file update separately.
 5. **Cross-session loop scheduling** (only if `--no-loop` is NOT set AND `ScheduleWakeup` is available — i.e. the session was launched via `/loop /superflow ...`):
-   - After every 3 completed tasks, OR when context usage looks tight, call:
+   - **Daily quota check.** Track wakeup count for this plan in the status file under a `## Wakeup ledger` heading (one line per wakeup with timestamp). Before scheduling, count entries from the last 24 hours; if `>= config.loop_max_per_day` (default 24), do NOT schedule — set status to `blocked` with reason "loop quota exhausted; resume manually with `/superflow --resume=<path>`" and end the turn. This prevents runaway scheduling under unexpected loop conditions.
+   - Otherwise, after every 3 completed tasks, OR when context usage looks tight, call:
      ```
      ScheduleWakeup(
-       delaySeconds=1500,
+       delaySeconds=config.loop_interval_seconds,
        prompt="/superflow --resume=<status-path>",
        reason="Continuing <slug> at task <next-task-name>"
      )
      ```
-     and end the turn. The next firing re-enters this command via Step C.
+     append the wakeup entry to the ledger, then end the turn. The next firing re-enters this command via Step C.
    - Do NOT reschedule when `status` is `complete` or `blocked`.
    - If `ScheduleWakeup` is not available (not running under `/loop`), skip scheduling silently — the user resumes manually with `/superflow` (which lands in Step A) or `/superflow --resume=<path>`.
 6. **On plan completion:** invoke `superpowers:finishing-a-development-branch`. Set `status: complete` in the status file, append a final activity log line, commit. Do not reschedule.
@@ -385,10 +413,10 @@ For each picked candidate:
 4. **Dispatch a Sonnet conversion subagent.** Hand it: source content, inference results, target paths, and this brief:
    > Rewrite this legacy planning artifact into superpowers spec format (`<spec-path>`) and plan format (`<plan-path>`) following the writing-plans skill conventions. Drop tasks classified `done`. Move `possibly_done` tasks into a `## Verify before continuing` checklist at the top of the plan, each with its evidence. Keep `not_done` tasks as the active task list, reformatted into bite-sized steps (writing-plans style). Preserve constraints, decisions, and stakeholder context in the spec's Background section. Discard pure status narration. Do not invent tasks the source didn't mention.
 
-5. **Generate status file** at `<config.plans_path>/<slug>-status.md` with:
-   - `worktree`, `branch`, `started`, `last_activity` set to current values
-   - `current_task` = first `not_done` task
-   - `next_action` = its first step
+5. **Generate status file** at `<config.plans_path>/<slug>-status.md` — populate **every** frontmatter field per the **Step B3** field list:
+   - `slug`, `status: in-progress`, `spec`, `plan`, `worktree`, `branch`, `started` (today), `last_activity` (now), `current_task` (= first `not_done` task), `next_action` (= its first step)
+   - `autonomy`, `loop_enabled` from current config + flags
+   - `codex_routing`, `codex_review` from current config + flags
    - `## Notes` seeded with: link back to source (path/URL/branch/issue#), inference evidence summary, list of `possibly_done` items the user should verify before execution
 
 6. **Cruft handling.** Apply `config.cruft_policy` (overridden by `--archive`/`--keep-legacy` flags). If policy is `ask` (the default), present `AskUserQuestion` per candidate:
@@ -429,7 +457,8 @@ For each worktree, run all checks. Report findings grouped by worktree → check
 | 6 | **Stale blocked** — `status: blocked` with `last_activity` > 14 days. | Warning | Report only. |
 | 7 | **Plan/log drift** — plan task count differs from activity-log task references by >50%. | Warning | Report only. |
 | 8 | **Missing spec** — status's `spec` field points at a missing spec doc. | Error | Report only. |
-| 9 | **Schema violation** — status frontmatter missing required fields (`slug`, `status`, `plan`, `worktree`, `branch`). | Error | Add missing fields with sentinel/derived values where possible; report the rest. |
+| 9 | **Schema violation** — status frontmatter missing required fields. Required set: `slug`, `status`, `spec`, `plan`, `worktree`, `branch`, `started`, `last_activity`, `current_task`, `next_action`, `autonomy`, `loop_enabled`, `codex_routing`, `codex_review`. (Step A and Step C both depend on the full set.) | Error | Add missing fields with sentinel/derived values where possible; report the rest. |
+| 10 | **Unparseable status file** — frontmatter or body is malformed YAML/Markdown. | Error | Report only (manual fix needed). Step A skips these silently, but doctor calls them out. |
 
 ### Output
 
@@ -596,4 +625,4 @@ These are command-specific rules; they complement (not replace) the **Context di
 - **External writes are gated.** Posting comments to GitHub issues/PRs, sending Slack messages, or closing issues during import always passes through `AskUserQuestion` first — even under `--autonomy=full`. These are blast-radius actions per the system prompt's "executing actions with care" guidance.
 - **Codex routing is locked at kickoff, switchable on resume.** `codex_routing` and `codex_review` both land in the status file at Step B3 (or at first Step C invocation for imported plans without them). Mid-run flips happen by re-invoking `/superflow --resume=<path> --codex=<mode> --codex-review=<on|off>`, which rewrites the fields and continues. Per-task overrides come from plan annotations (`codex: ok` / `codex: no`), not inline edits.
 - **Never delegate non-eligible tasks under `auto`.** The eligibility checklist is conservative on purpose: a wrong delegation costs more than running inline. When the heuristic is uncertain, run inline. Plan annotations are the right escape hatch when you need to override.
-- **Codex review is asymmetric — never self-review.** If a task was executed by Codex and `codex_review` is on, skip the review step for that task. Codex reviewing its own output adds no signal. The post-Codex review flow in Step 3a already handles delegated work; Step 3b's review only fires after inline tasks.
+- **Codex review is asymmetric — never self-review.** If a task was executed by Codex and `codex_review` is on, skip the review step for that task. Codex reviewing its own output adds no signal. The post-Codex review flow in Step 3a already handles delegated work; **Step 4b's** review only fires after inline tasks.

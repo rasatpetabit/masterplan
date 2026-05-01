@@ -17,7 +17,7 @@ This skill creates a retro doc from a completed superflow plan's status file, pl
 Don't fire on:
 - Trivial bugfixes or one-line PRs.
 - Plans completed by other authors (different `git log` author).
-- Plans where a retro doc already exists at `docs/superpowers/retros/<slug>-retro.md`.
+- A retro for this slug already exists. Check via glob `docs/superpowers/retros/*-<slug>-retro.md` (the file is date-prefixed, so a fixed-path lookup will always miss).
 
 ## What to gather
 
