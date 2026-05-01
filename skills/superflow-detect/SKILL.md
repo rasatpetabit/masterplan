@@ -1,6 +1,6 @@
 ---
 name: superflow-detect
-description: Use when the user opens, lands in, or asks to start work in a repository that contains legacy planning artifacts — PLAN.md, TODO.md, ROADMAP.md, WORKLOG.md, docs/plans/*.md, docs/design/*.md, docs/rfcs/*.md, draft PRs whose body contains a task list, open feature branches with no merged PR, or orphan docs/superpowers/plans/*.md without sibling -status.md files. Surface a one-line suggestion to run `/superflow import` so the user can bring those artifacts under the superflow schema (spec + plan + status with completion-state inference). Never auto-run /superflow itself.
+description: Suggest `/superflow import` when legacy planning artifacts (PLAN.md, TODO.md, ROADMAP.md, orphan superpowers plans, branches without merged PRs, draft PRs with task lists) exist in the repo. Surfaces a one-line suggestion only — never auto-runs.
 ---
 
 # Suggesting /superflow import for legacy planning artifacts

@@ -23,6 +23,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New operational rule: "Codex review is asymmetric — never self-review."
 
 ### Changed
+- **Token-use optimization pass.** `commands/superflow.md` trimmed from 9038 → 8508 words (-530, ~-690 tokens / `/loop` wakeup) net of Phase 2 additions. Skill descriptions trimmed (-72 words combined, ~-94 tokens / Claude Code session). Plus variable savings on long-running plans (activity log rotation), Codex reviews (diff-by-SHA), and same-session resume (mtime gating). Specifics:
+  - **CD-rule restatements compressed** at ~10 inline spots throughout the prompt — bare ID cites instead of paraphrased re-explanation. CD definitions block (lines 80–93) is the canonical reference and is unchanged.
+  - **Operational rules section trimmed** of bullets that duplicate inline Step content (Re-read on resume, Atomic checkpoints, One plan per branch, Worktree is recorded, Cross-worktree visibility, Stop conditions, Config is loaded once). Cross-cutting policy bullets retained.
+  - **"Why context control is load-bearing" prose compressed** — three paragraphs of justification → bulleted hold/discard list.
+  - **Flag-conflict warning justification prose dropped** — the warning behavior remains; the rationale lives in CHANGELOG.
+  - **"Future: intra-plan task parallelism" design notes moved out of the prompt** to `docs/design/intra-plan-parallelism.md`. They're docs, not orchestration logic.
+  - **Step 4b Codex review brief now passes diff range (`<task-start SHA>..HEAD`) + file list** instead of inlining the full `git diff` output. Codex agent runs `git diff` itself (it's in the worktree). Saves 0 to 10K+ tokens per review depending on diff size. Falls back to inline diff via existing fallback if SHA isn't captured.
+  - **Step C 4d activity log rotation.** When a status file's `## Activity log` exceeds 100 entries, archive all but the most recent 50 to `<slug>-status-archive.md` (oldest-first). Insert a one-line marker in the active log. Resume behavior is unchanged — the archive is consulted on demand by `superflow-retro` and by `/superflow doctor`. Saves 1K–5K tokens / wakeup on long-running plans (compounding).
+  - **Step C step 1 in-session mtime gating** for spec/plan re-reads. In-memory `file_cache: {path → (mtime, content)}` skips re-reads when mtime is unchanged within the same session. Cross-session wakeups always re-read. Status file is never mtime-gated.
+  - **Doctor check #11** — orphan archive files (`<slug>-status-archive.md` without sibling `<slug>-status.md`).
+  - **superflow-detect/SKILL.md description**: 88 → 32 words. Trigger semantics unchanged; full body still loads on activation.
+  - **superflow-retro/SKILL.md description**: 70 → 41 words. Same.
 - **Step D doctor parallelization threshold lowered from N>3 to N≥2.** Haiku dispatch is cheap; the N=2,3 case (main + one feature worktree) is the common case and previously paid full sequential cost.
 - **Step I3 conversions are now parallel waves** (fetch, then conversion) instead of fully sequential. Cruft handling and `git commit` remain sequential per-candidate (avoids git index races; user-interactive `AskUserQuestion`s would scramble UX in parallel).
 - **Parallelism guidance section** in the architecture overview rewritten to enumerate every parallel dispatch site and to explicitly call out where sequentiality is intentional (per-candidate cruft + commit, per-task implementation in Step C, gated checkpoints).

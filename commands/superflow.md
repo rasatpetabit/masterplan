@@ -27,9 +27,8 @@ Before doing anything, internalize these. They shape every decision below:
 3. Shallow-merge in precedence order: **built-in defaults < user-global < repo-local < CLI flags**. The merged config is available to every downstream step (referenced as `config.X` in this prompt).
 4. Invalid YAML → abort with the file path and parser message. Missing files → skip that tier silently.
 5. **Flag-conflict warnings.** After merge, surface a one-line warning (do not abort) when:
-   - `codex_routing == off` AND `codex_review == on` — review will not fire because routing is off; tell the user the review flag is being ignored for this run.
-   - `--no-loop` is set AND `loop_enabled: true` is in config — the CLI flag wins; note that scheduling is disabled for this run.
-   The user has not been ignored — they explicitly opted into a contradictory pair, and the warning makes that visible rather than silently picking a winner.
+   - `codex_routing == off` AND `codex_review == on` — review will not fire; the flag is ignored for this run.
+   - `--no-loop` is set AND `loop_enabled: true` is in config — the CLI flag wins; scheduling is disabled for this run.
 
 See **Configuration: .superflow.yaml** below for the full schema and built-in defaults.
 
@@ -97,23 +96,13 @@ These rules govern behavior throughout every step below. They mirror the user's 
 
 This is a core design pillar of `/superflow`, not an implementation detail. The orchestrator's context is a finite, expensive resource that must be preserved for sequencing decisions, not consumed by raw work. Every step below has been designed around this principle.
 
-### Why context control is load-bearing for long runs
+### What the orchestrator holds vs. discards
 
-A multi-task plan run unguarded in a single session bloats context fast: failed experiments, large diffs, full file reads, library docs, verification dumps. By task 10, the orchestrator is reasoning on cluttered, partially-stale state and quality drops. The fix is structural: dispatch every substantive piece of work to a fresh subagent, consume only a digest, and lean on the status file as the persistence bridge.
+Dispatch substantive work to fresh subagents; consume only digests; lean on the status file as the persistence bridge.
 
-Concretely, the orchestrator should never hold:
-- Raw verification output (it's in test logs / git already)
-- Full file contents (re-read on demand if needed)
-- Earlier subagent's working notes (they're scratch, not state)
-- Library documentation walls (look up via `context7` MCP when needed, then drop)
+**Never hold:** raw verification output (in test logs / git), full file contents (re-read on demand), earlier subagent working notes (scratch), library docs (look up via `context7`, then drop).
 
-What the orchestrator SHOULD hold:
-- Status file frontmatter and the recent activity log
-- Plan task list (the active section) and current task pointer
-- User decisions made this session
-- Next action
-
-That's enough to route the next task. Anything beyond it is fat.
+**Hold:** status frontmatter + recent activity log; plan task list + current task pointer; this-session user decisions; next action.
 
 ### Subagent dispatch model (per phase)
 
@@ -126,7 +115,7 @@ That's enough to route the next task. Anything beyond it is fat.
 | Step C (plan-load eligibility) | one Haiku at Step C step 1 | Haiku | plan task list + plan annotations + Codex eligibility checklist | `{task_idx → {eligible, reason, annotated}}` cached for the run |
 | Step C (per-task implementation) | implementer subagents via `superpowers:subagent-driven-development` | Sonnet (default) | plan path + current task index + CD-1/2/3/6 brief + relevant spec excerpts | done/blocked + 1–3 lines of evidence + task-start commit SHA |
 | Step C 3a (codex execution) | `codex:codex-rescue` subagent in EXEC mode | Codex (out-of-process) | bounded brief: Scope/Allowed files/Goal/Acceptance/Verification/Return | diff + verification output |
-| Step C 4b (codex review of inline work) | `codex:codex-rescue` subagent in REVIEW mode | Codex (out-of-process) | bounded brief: task + acceptance + spec excerpt + diff + verification; Scope=review-only; Constraints=CD-10 | severity-ordered findings (high/medium/low) grounded in file:line, OR `"no findings"` |
+| Step C 4b (codex review of inline work) | `codex:codex-rescue` subagent in REVIEW mode | Codex (out-of-process) | bounded brief: task + acceptance + spec excerpt + diff range (`<task-start SHA>..HEAD`) + files in scope + verification; Scope=review-only; Constraints=CD-10 | severity-ordered findings (high/medium/low) grounded in file:line, OR `"no findings"` |
 | Completion-state inference | parallel Haiku agents per task chunk | Haiku | task description + workspace, no plan-wide context | classification (done/possibly_done/not_done) + evidence strings |
 | Step D (doctor checks) | parallel Haiku per worktree when N ≥ 2 | Haiku | worktree path + checks list | findings list grounded in `<file>:<issue>` |
 
@@ -221,7 +210,7 @@ When to NOT parallelize:
 
 ### Step B0 — Worktree decision (do this BEFORE invoking brainstorming)
 
-The brainstorm/plan/status files will be committed inside whichever worktree you're in when brainstorming runs. Decide first. **Apply CD-2** — if `git status --porcelain` is non-empty, treat those changes as user-owned and bias toward a new worktree rather than committing alongside their work.
+The brainstorm/plan/status files will be committed inside whichever worktree you're in when brainstorming runs. Decide first. **Apply CD-2.**
 
 1. **Survey the current state.** Issue these as **one parallel Bash batch** (not sequential):
    - `git rev-parse --abbrev-ref HEAD` → current branch.
@@ -254,7 +243,7 @@ Invoke `superpowers:brainstorming` with the topic. **Brainstorming is always int
 
 ### Step B2 — Plan
 
-After brainstorming returns, invoke `superpowers:writing-plans` against the spec. It will produce `docs/superpowers/plans/YYYY-MM-DD-<slug>.md`. Brief the plan-writing context with **CD-1 + CD-6**: prefer project-local commands (Makefile/scripts/CI targets) and the most-specific tool tier (MCP > skill > project script > generic) when naming verification and build commands in tasks.
+After brainstorming returns, invoke `superpowers:writing-plans` against the spec. It will produce `docs/superpowers/plans/YYYY-MM-DD-<slug>.md`. Brief plan-writing with **CD-1 + CD-6**.
 
 ### Step B3 — Status file + approval
 
@@ -290,18 +279,20 @@ Proceed to **Step C** with the new status path.
    - `pwd` (Bash).
    - `git rev-parse --abbrev-ref HEAD` (Bash).
 
-   Re-read **fresh** — do not trust cached context from earlier in the session. If the plan or spec has been edited since the status was written, reconcile `current_task` against the plan's task list.
+   **In-session mtime gating.** Maintain an orchestrator-memory cache `file_cache: {path → (mtime, content)}`. On a Step C entry within the **same session**, if a file's current mtime matches the cached mtime, reuse the cached content and skip the Read for that file. Cross-session entries (i.e. after a `ScheduleWakeup` resumption) start with an empty cache and always re-read. The status file is **never** mtime-gated — always re-read live, since the orchestrator wrote it last and the user may have edited it between turns. Fail-safe: re-read on any doubt.
+
+   Reconcile `current_task` against the plan's task list if the plan has been edited since the status was written.
 
    - **Parse guard.** If the status file fails to parse as YAML+Markdown, surface this immediately via `AskUserQuestion`: "Status file at `<path>` is corrupted. Open it for manual fix / Run /superflow doctor / Abort." Do NOT attempt to silently regenerate — the user's edits may have been intentional and partial.
    - **Verify the worktree.** Compare the status file's `worktree` field to the current working directory (from the `pwd` above). If they differ, `cd` into the recorded worktree before continuing. If the recorded worktree no longer exists (e.g. removed via `git worktree remove`), surface this as a blocker via `AskUserQuestion`: "Worktree at `<path>` is missing. Recreate it / use the current worktree / abort."
    - **Verify the branch.** Compare the captured branch to the status file's `branch` field. If they differ, ask the user before continuing — the work was started on a different branch and silently switching could cause real problems.
 
    **Build eligibility cache.** When `codex_routing` is `auto` or `manual`, dispatch one Haiku to compute Codex eligibility for every task in the plan (see Step C 3a's checklist for the criteria). Bounded brief: Goal=apply the checklist to each task and emit `{task_idx → {eligible: bool, reason: str, annotated: "ok"|"no"|null}}`, Inputs=full plan task list + plan annotations, Scope=read-only, Return=JSON only — no narration. Cache this in orchestrator memory as `eligibility_cache`. Invalidate (re-dispatch) on the next Step C entry if the plan file's mtime has changed, or if Step 4d edits the plan inline. Never persist to disk. Skip this step entirely when `codex_routing == off`.
-2. If `--no-subagents` is set: invoke `superpowers:executing-plans`. Otherwise: invoke `superpowers:subagent-driven-development`. Hand the invoked skill the plan path and the current task index. Pass through **CD-1, CD-2, CD-3, CD-6** as briefing for the implementer subagent — project-local tooling first, do not touch unrelated dirty files, evidence-based completion, MCP/skill tier preference.
+2. If `--no-subagents` is set: invoke `superpowers:executing-plans`. Otherwise: invoke `superpowers:subagent-driven-development`. Hand the invoked skill the plan path and the current task index. Brief the implementer subagent with **CD-1, CD-2, CD-3, CD-6**.
 3. Layer the autonomy policy on top of the invoked skill's per-task loop:
    - **`gated`** — before each task, call `AskUserQuestion(continue / skip-this-task / stop)`. Honor the answer. If `codex_routing == auto`, expand the question to `(continue inline / continue via Codex / skip / stop)` so the user can override the auto-route. Under `codex_routing == manual`, do NOT expand here — Step 3a's per-task `AskUserQuestion` already handles routing, so combining would double-prompt.
-   - **`loose`** — run autonomously. On a blocker, **first apply CD-4 (work the ladder)**: re-read the error, try an alternate tool, narrow scope, grep prior art, consult `context7`. Only after two rungs have failed, set `status: blocked` and end the turn. Cite the rungs tried in the `## Blockers` entry so it's clear what's been ruled out. Do NOT reschedule a wakeup.
-   - **`full`** — run autonomously, applying **CD-4** more aggressively before escalating: at least two ladder rungs (alternate tool, narrowed scope, codebase prior art, `context7` docs, `superpowers:systematic-debugging` for test failures, spec reinterpretation cited in the activity log). Escalate to `blocked` only after the full ladder fails.
+   - **`loose`** — run autonomously. On a blocker, **apply CD-4** first; only after two rungs have failed, set `status: blocked` and end the turn. Cite the rungs tried in the `## Blockers` entry. Do NOT reschedule a wakeup.
+   - **`full`** — run autonomously, applying **CD-4** more aggressively before escalating: at least two ladder rungs, plus `superpowers:systematic-debugging` for test failures and spec reinterpretation cited in the activity log. Escalate to `blocked` only after the full ladder fails.
 
 3a. **Codex routing decision per task** (consult `config.codex.routing`, overridden by `--codex=` flag, persisted as `codex_routing` in the status file):
 
@@ -333,7 +324,7 @@ Proceed to **Step C** with the new status path.
     Return: <expected diff + verification output>
     ```
 
-    **After Codex returns** — always review (apply **CD-10**: present any concerns severity-first, grounded in `file_path:line_number`):
+    **After Codex returns** — always review (apply **CD-10**):
     - **`gated`** — present diff + verification output via `AskUserQuestion(Accept / Reject and rerun inline / Reject and rerun in Codex with feedback)`.
     - **`loose` / `full`** — auto-accept if verification passed cleanly. If verification failed, fall back to inline rerun under `superpowers:systematic-debugging` and apply the autonomy's blocker policy from above (which itself triggers **CD-4** ladder work).
 
@@ -341,7 +332,7 @@ Proceed to **Step C** with the new status path.
 
 4. **After every completed task** (sub-steps run in this fixed order):
 
-   **4a — CD-3 verification.** Run the task's verification commands (preferring project-local ones per CD-1) and capture their output. Don't claim done without evidence. Capture the output for use by 4b.
+   **4a — CD-3 verification.** Run the task's verification commands (per CD-1) and capture output. Don't claim done without evidence. Capture for use by 4b.
 
    **Parallelize independent verifiers.** Lint, typecheck, and unit-test commands typically don't share mutable state and should be issued as one parallel Bash batch. Run them sequentially when commands write to the same shared artifacts:
    - `node_modules/`, `dist/`, `build/`, `target/`, `out/`
@@ -372,12 +363,16 @@ Proceed to **Step C** with the new status path.
         Task: <task name from plan>
         Acceptance criteria: <bullet list from plan>
         Spec excerpt: <relevant section of design doc>
-        Diff: <git diff output, scoped to task files>
+        Diff range: <task-start SHA>..HEAD
+        Files in scope: <list of task files>
         Verification: <captured output from 4a>
       Scope: Review only — no writes, no commits, no file modifications.
-      Constraints: Apply CD-10 (severity-first, grounded in file:line). Do not narrate. Be adversarial about correctness, not style.
+             Run `git diff <range> -- <files>` yourself to obtain the diff.
+      Constraints: CD-10. Be adversarial about correctness, not style.
       Return: severity-ordered findings (high/medium/low) grounded in file:line, OR the literal string "no findings" if clean.
       ```
+
+      Why diff-by-SHA: Codex agent runs in the worktree with full git access; passing a SHA range avoids inlining 5K–10K tokens of diff into the brief on multi-file tasks. If the implementer didn't capture a task-start SHA (zero-commit task), inline the diff via the existing fallback in step 1.
    3. Digest the response per output-digestion rules: parse into severity buckets, drop verbose prose. Don't pull the full review text into orchestrator context.
    4. **Decision matrix by autonomy** (retry caps come from `config.codex.review_max_fix_iterations`, default 2):
       - **`gated`** — present findings via `AskUserQuestion` → `Accept / Fix and re-review (rerun inline with findings as briefing; capped at config.codex.review_max_fix_iterations) / Accept anyway / Stop`.
@@ -388,14 +383,16 @@ Proceed to **Step C** with the new status path.
       - **`full`**:
         - No or low → auto-accept.
         - Medium → log to `## Notes`; continue.
-        - High → attempt up to `config.codex.review_max_fix_iterations` fix iterations (rerun inline with findings as added briefing). If still high-severity afterward, set `status: blocked`. Per **CD-4**, each iteration counts as a ladder rung.
+        - High → attempt up to `config.codex.review_max_fix_iterations` fix iterations (rerun inline with findings as added briefing). If still high-severity afterward, set `status: blocked`. Each iteration counts as a CD-4 ladder rung.
    5. Activity log gets a review tag alongside the routing tag, e.g. `[inline][reviewed: clean]` or `[inline][reviewed: 2 medium, 1 low]`. Full findings digest goes to `## Notes` only when severity is medium or higher — clean and low-only reviews don't need notes pollution.
 
-   **4c — Worktree integrity check.** Apply CD-2: verify with `git status --porcelain` that no files outside the task's scope were modified by the implementer or by 4a/4b. If they were, surface that to the user before continuing; never silently revert their work.
+   **4c — Worktree integrity check.** Apply CD-2: `git status --porcelain` should show only task-scope files. If unexpected files appear, surface to the user before continuing; never silently revert their work.
 
    **4d — Status file update.** Update the status file: bump `last_activity` to the current ISO timestamp, set `current_task` to the next task name, set `next_action` to the next task's first step, append a one-line entry to `## Activity log` that includes 1–3 lines of relevant verification output (per **CD-8**) and the routing+review tags. For non-trivial decisions made during the task, also append to `## Notes` per **CD-7**.
 
-   The invoked skill already commits per task — verify the commit landed; if not, commit the status file update separately.
+   **Activity log rotation.** Before appending the new entry, count entries under `## Activity log`. If count > 100, move all entries except the most recent 50 to `<slug>-status-archive.md` (create if missing; append in chronological order so the archive itself reads oldest-to-newest). Insert a one-line marker at the top of the active log: `*(N entries archived to <slug>-status-archive.md on YYYY-MM-DD)*`. Then append the new entry. Resume behavior is unchanged — Step C step 1 reads only the active log; the archive is consulted on demand by `superflow-retro` and by `/superflow doctor`.
+
+   The invoked skill already commits per task — verify the commit landed; if not, commit the status file update (and any rotation-created archive file) separately.
 5. **Cross-session loop scheduling** (only if `--no-loop` is NOT set AND `ScheduleWakeup` is available — i.e. the session was launched via `/loop /superflow ...`):
    - **Daily quota check.** Track wakeup count for this plan in the status file under a `## Wakeup ledger` heading (one line per wakeup with timestamp). Before scheduling, count entries from the last 24 hours; if `>= config.loop_max_per_day` (default 24), do NOT schedule — set status to `blocked` with reason "loop quota exhausted; resume manually with `/superflow --resume=<path>`" and end the turn. This prevents runaway scheduling under unexpected loop conditions.
    - Otherwise, after every 3 completed tasks, OR when context usage looks tight, call:
@@ -521,6 +518,7 @@ For each worktree, run all checks. Report findings grouped by worktree → check
 | 8 | **Missing spec** — status's `spec` field points at a missing spec doc. | Error | Report only. |
 | 9 | **Schema violation** — status frontmatter missing required fields. Required set: `slug`, `status`, `spec`, `plan`, `worktree`, `branch`, `started`, `last_activity`, `current_task`, `next_action`, `autonomy`, `loop_enabled`, `codex_routing`, `codex_review`. (Step A and Step C both depend on the full set.) | Error | Add missing fields with sentinel/derived values where possible; report the rest. |
 | 10 | **Unparseable status file** — frontmatter or body is malformed YAML/Markdown. | Error | Report only (manual fix needed). Step A skips these silently, but doctor calls them out. |
+| 11 | **Orphan archive file** — `<slug>-status-archive.md` exists with no sibling `<slug>-status.md`. (The archive is created by Step C 4d's activity log rotation; it must always have a base status file.) | Warning | Suggest moving the archive to `<config.archive_path>/<date>/`. No auto-fix. |
 
 ### Output
 
@@ -669,42 +667,19 @@ Treat the schema as additive — new keys land in built-in defaults first, then 
 
 ## Operational rules
 
-These are command-specific rules; they complement (not replace) the **Context discipline** list above. CD-rules cover general execution behavior — these cover superflow's own state machine.
+These are command-specific rules covering cross-cutting policy not stated inline in any single Step. CD-rules cover general execution; these cover superflow's own state machine.
 
-- **Re-read on resume.** Every Step C entry re-reads the spec, plan, and status from disk. Cached context is not trusted across wakeups or sessions.
-- **Atomic checkpoints.** Update the status file only after a task is fully complete (tests pass, commit landed). If a wakeup fires mid-task, the next session resumes from the last clean checkpoint, which is correct.
-- **One plan at a time per branch.** If `/superflow <topic>` finds another `in-progress` plan in the current worktree at Step B0, the heuristic recommends a new worktree. Don't run two plans in the same branch.
-- **Worktree is recorded, not assumed.** The status file's `worktree` and `branch` fields are authoritative on resume. Always verify pwd matches before doing anything; `cd` if it doesn't, blocker if the recorded worktree is gone.
-- **Cross-worktree visibility.** Step A scans every worktree of the current repo for in-progress plans, not just the current one. A plan started in `~/dev/foo-feature-wt/` shows up when you run `/superflow` from `~/dev/foo/`.
 - **Stay a thin wrapper.** Logic that belongs to brainstorming, planning, execution, debugging, or branch-finishing lives in those skills. This command's job is sequencing them and persisting the status file.
-- **Subagents do the work; orchestrator preserves context.** Per the **Subagent and context-control architecture** section: every substantive piece of work goes to a bounded subagent, and only digests come back. Never let raw verification output, full diffs, or library docs accumulate in the orchestrator's context. When in doubt, digest and ScheduleWakeup.
+- **Subagents do the work; orchestrator preserves context.** Every substantive piece of work goes to a bounded subagent, and only digests come back. Never let raw verification output, full diffs, or library docs accumulate in the orchestrator's context. When in doubt, digest and ScheduleWakeup.
 - **Bounded briefs, not implicit context.** Subagents receive Goal + Inputs + Scope + Constraints + Return shape. They do not inherit session history. If a subagent needs context from an earlier subagent's output, hand it the digest, not the raw return.
-- **Stop conditions.** End the turn (no reschedule) when: plan is complete, status is blocked, user says stop in a `gated` checkpoint, or two consecutive task attempts fail under `loose`/`full`.
-- **Config is loaded once per invocation.** Step 0 reads `.superflow.yaml` files and merges them. Downstream steps reference `config.X` rather than re-reading files. Treat `config` as immutable for the run.
 - **Import never overwrites existing superflow state silently.** If a target spec/plan/status path already exists at Step I3, ask the user: overwrite / write to a `-v2` slug / abort. Never clobber.
 - **Doctor is read-only by default.** Without `--fix` it only reports — even an obvious orphan stays in place. `--fix` only acts on errors marked auto-fixable in the checks table.
 - **Inference is conservative by design.** When in doubt, classify `possibly_done`, not `done`. The cost of re-verifying is small; the cost of skipping real work is large.
-- **External writes are gated.** Posting comments to GitHub issues/PRs, sending Slack messages, or closing issues during import always passes through `AskUserQuestion` first — even under `--autonomy=full`. These are blast-radius actions per the system prompt's "executing actions with care" guidance.
-- **Codex routing is locked at kickoff, switchable on resume.** `codex_routing` and `codex_review` both land in the status file at Step B3 (or at first Step C invocation for imported plans without them). Mid-run flips happen by re-invoking `/superflow --resume=<path> --codex=<mode> --codex-review=<on|off>`, which rewrites the fields and continues. Per-task overrides come from plan annotations (`codex: ok` / `codex: no`), not inline edits.
-- **Never delegate non-eligible tasks under `auto`.** The eligibility checklist is conservative on purpose: a wrong delegation costs more than running inline. When the heuristic is uncertain, run inline. Plan annotations are the right escape hatch when you need to override.
-- **Codex review is asymmetric — never self-review.** If a task was executed by Codex and `codex_review` is on, skip the review step for that task. Codex reviewing its own output adds no signal. The post-Codex review flow in Step 3a already handles delegated work; **Step 4b's** review only fires after inline tasks.
-- **Eligibility cache is per-invocation only; never persisted to disk.** Step C step 1 builds `eligibility_cache` from a single Haiku dispatch over the plan's task list. It lives in orchestrator memory for the run. Re-dispatch on the next Step C entry if the plan file's mtime has changed, or after Step 4d edits the plan inline. This keeps per-task routing decisions O(1) lookups instead of per-task LLM-shaped reasoning.
-- **Git state cache excludes `git status --porcelain`.** Step 0's `git_state` cache holds `worktrees` and `branches` only. Working-tree dirty state must always be live — CD-2 depends on it. Caching it would risk overwriting user-owned uncommitted changes. Invalidate `git_state.worktrees` after any orchestrator-initiated `git worktree add`/`git worktree remove`; invalidate `git_state.branches` after `git branch` create/delete.
+- **External writes are gated.** Posting comments to GitHub issues/PRs, sending Slack messages, or closing issues during import always passes through `AskUserQuestion` first — even under `--autonomy=full`. Blast-radius actions.
+- **Codex routing is locked at kickoff, switchable on resume.** `codex_routing` and `codex_review` both land in the status file at Step B3 (or at first Step C invocation for imported plans). Mid-run flips happen by re-invoking `/superflow --resume=<path> --codex=<mode> --codex-review=<on|off>`. Per-task overrides come from plan annotations (`codex: ok` / `codex: no`), not inline edits.
+- **Never delegate non-eligible tasks under `auto`.** The eligibility checklist is conservative on purpose: a wrong delegation costs more than running inline. When uncertain, run inline. Plan annotations are the escape hatch when you need to override.
+- **Codex review is asymmetric — never self-review.** If a task was executed by Codex and `codex_review` is on, skip the review step for that task. Codex reviewing its own output adds no signal.
+- **Eligibility cache is per-invocation only; never persisted to disk.** Step C step 1 builds `eligibility_cache`. Re-dispatch on plan-file mtime change, or after Step 4d edits the plan inline. Keeps per-task routing O(1) lookups instead of LLM-shaped reasoning.
+- **Git state cache excludes `git status --porcelain`.** Step 0's `git_state` cache holds `worktrees` and `branches` only. Dirty state must always be live (CD-2). Invalidate worktrees after `git worktree add/remove`; invalidate branches after `git branch` create/delete.
 
-### Future: intra-plan task parallelism (design notes only)
-
-Not enabled. Captured here so future-you has a starting point when a plan with embarrassingly parallel tasks (e.g. multiple "add interface for service X" tasks) makes the latency win obvious.
-
-**Annotation schema (proposed):**
-- `parallel-group: <name>` — tasks sharing the same group name dispatch as one wave.
-- `depends-on: [<task-id>, ...]` — explicit ordering within or across groups.
-- `files: [<path>, ...]` — declared file scope for static-analysis-based safety.
-
-**Required machinery before enabling:**
-- **Per-task git worktree isolation** — concurrent commits to the same branch race the git index. Each parallel task either commits in its own worktree (orchestrator merges after) or the dispatch enforces strict file-scope assertions and serializes commits via the orchestrator.
-- **Single-writer status file** — subagents return digests; orchestrator funnels every status file write to avoid contention (per CD-7).
-- **Per-task verification with rollback policy** — when one task in a wave fails, the others' results need a consistent disposition (rollback wave, mark partially complete, ask user).
-
-**Why deferred:** the per-task worktree subsystem is a meaningful undertaking and warrants its own dedicated plan. The current sequential per-task loop in `superpowers:subagent-driven-development` is correct as a default; intra-plan parallelism is an optimization on top, not a re-architecture.
-
-**When to revisit:** when real plans authored under `/superflow` show parallel-friendly task patterns and the latency cost becomes felt. Track this informally via retros (`superflow-retro` skill).
+Future-design notes (intra-plan task parallelism, etc.) live in `docs/design/`, not in this prompt — they're docs, not orchestration logic.

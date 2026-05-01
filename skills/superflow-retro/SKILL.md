@@ -1,6 +1,6 @@
 ---
 name: superflow-retro
-description: Use when a /superflow plan has just transitioned to status:complete in the current session, when the user mentions a tracked feature shipping, or when a merge commit closes a branch tied to a superflow status file. Generate a structured retrospective doc that captures outcomes, what went well, what blocked, deviations from the original spec, time/cost summary, and follow-ups worth scheduling. Save to docs/superpowers/retros/YYYY-MM-DD-<slug>-retro.md and offer to /schedule any time-bounded follow-ups.
+description: Generate a retrospective doc when a `/superflow` plan transitions to `status: complete`, when a tracked feature ships, or when a merge commit closes a branch tied to a superflow status file. Captures outcomes, blockers, deviations, follow-ups; saves to docs/superpowers/retros/YYYY-MM-DD-<slug>-retro.md and offers to `/schedule` time-bounded follow-ups.
 ---
 
 # Generating retrospectives for completed /superflow plans
