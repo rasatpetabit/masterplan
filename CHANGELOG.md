@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-05-02
+
+### Added
+- Explicit phase verbs: `/superflow new <topic>`, `/superflow brainstorm <topic>`, `/superflow plan <topic>`, `/superflow plan --from-spec=<path>`, `/superflow execute [<status-path>]`. The verbs make the pipeline phases addressable at the call site instead of the previous all-or-nothing kickoff.
+- `halt_mode` orchestrator state (`none | post-brainstorm | post-plan`). Drives B1 and B3 close-out gates so `brainstorm` halts cleanly after the spec is written and `plan` halts cleanly after the plan + status file are written.
+- Step P — plan-only no-args picker. `/superflow plan` with no topic and no `--from-spec=` lists existing specs that don't yet have a plan and lets the user pick one.
+- `### Verbs` subsection at the top of `## Subcommand reference` in the README.
+
+### Unchanged
+- Bare-topic shortcut (`/superflow refactor auth middleware`) keeps working — same behavior as `/superflow new refactor auth middleware`. No deprecation notice.
+- `--resume=<status-path>` keeps working as an alias for `/superflow execute <status-path>`.
+- Existing verbs `import`, `doctor`, `status` and their flags are unchanged.
+
 ## [0.2.2] — 2026-05-01
 
 ### Fixed
