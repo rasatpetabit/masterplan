@@ -508,11 +508,11 @@ EOF
 
 **Codex:** ok    # bounded markdown insertion
 
-- [ ] **Step 1: Read the current Subcommand reference region**
+- [x] **Step 1: Read the current Subcommand reference region**
 
 Run: `sed -n '180,200p' README.md`
 
-- [ ] **Step 2: Insert the verb table at the top of the section**
+- [x] **Step 2: Insert the verb table at the top of the section**
 
 Use `Edit` with `old_string` matching `## Subcommand reference\n\n| Invocation | Effect |` and `new_string` prepending the verb table block:
 
@@ -541,7 +541,7 @@ Use `Edit` with `old_string` matching `## Subcommand reference\n\n| Invocation |
 
 (The existing rows of the original table follow; the only structural change is the new heading + table + note above, plus renaming the original table's heading from `## Subcommand reference` (now used by the parent section) to `### Invocation forms (back-compat detail)`.)
 
-- [ ] **Step 3: Verify**
+- [x] **Step 3: Verify**
 
 Run: `grep -n "^### Verbs\|^### Invocation forms" README.md`
 Expected: both new headings present.
@@ -552,7 +552,7 @@ Expected: ≥ 4 (one row per new verb in the verb table).
 Run: `grep -n "Topics literally named after a verb" README.md`
 Expected: one match.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add README.md

@@ -181,6 +181,23 @@ Read-only synthesis: status frontmatter + last activity entries + blockers/notes
 
 ## Subcommand reference
 
+### Verbs
+
+| Verb | Phases | Halts at |
+|---|---|---|
+| `new <topic>` | brainstorm + plan + execute | (runs through) |
+| `brainstorm <topic>` | brainstorm only | spec written |
+| `plan <topic>` | brainstorm + plan | plan written |
+| `plan --from-spec=<path>` | plan only (against existing spec) | plan written |
+| `execute [<status-path>]` | execute (list+pick or resume) | (runs through) |
+| `import [...]` | (unchanged) | n/a |
+| `doctor [--fix]` | (unchanged) | n/a |
+| `status [--plan=<slug>]` | (unchanged) | n/a |
+
+> Topics literally named after a verb (`new`, `brainstorm`, `plan`, `execute`) need to be prefixed with another word — e.g. `/superflow add brainstorm session timer` works because `add` isn't a verb.
+
+### Invocation forms (back-compat detail)
+
 | Invocation | Effect |
 |---|---|
 | `/superflow` | List in-progress plans across all worktrees of the current repo; pick one to resume or start fresh |
