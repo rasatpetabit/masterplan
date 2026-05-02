@@ -629,11 +629,11 @@ EOF
 
 **Codex:** ok    # standard worklog append
 
-- [ ] **Step 1: Read the WORKLOG end**
+- [x] **Step 1: Read the WORKLOG end**
 
 Run: `tail -20 WORKLOG.md`
 
-- [ ] **Step 2: Append the new entry**
+- [x] **Step 2: Append the new entry**
 
 Use `Edit` with `old_string` matching the file's final line + a newline, OR append via `Edit`-with-trailing-context. Content to append (after the existing last entry, separated by `---`):
 
@@ -666,7 +666,7 @@ Use `Edit` with `old_string` matching the file's final line + a newline, OR appe
 - `/superflow execute` with zero in-progress plans currently routes to Step A which offers "Start fresh" → kickoff. That's slightly indirect under explicit-verb framing; a future polish could reword the option to "No in-progress plans. Run /superflow new <topic>?" so the verb model stays coherent.
 ```
 
-- [ ] **Step 3: Verify**
+- [x] **Step 3: Verify**
 
 Run: `grep -n "2026-05-02 — \`/superflow\` v0.3.0 explicit phase verbs" WORKLOG.md`
 Expected: one match.
@@ -674,7 +674,7 @@ Expected: one match.
 Run: `tail -5 WORKLOG.md`
 Expected: shows the tail of the new entry.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add WORKLOG.md
