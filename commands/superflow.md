@@ -274,7 +274,13 @@ Invoke `superpowers:brainstorming` with the topic. **Brainstorming is always int
 
 1. Check whether the expected spec file exists at `docs/superpowers/specs/YYYY-MM-DD-<slug>-design.md`.
 2. **If spec missing:** brainstorming was aborted or failed. Surface `AskUserQuestion("Brainstorming did not complete (no spec at <path>). Re-invoke brainstorming with the same topic / Refine the topic and re-invoke / Abort kickoff")`.
-3. **If spec exists** (the normal case): under `--autonomy != full`, surface `AskUserQuestion("Spec written at <path>. Ready for writing-plans?", options=[Approve and run writing-plans (Recommended) / Open spec to review first then ping me / Request changes — describe what to change / Abort kickoff])`. Under `--autonomy=full`: auto-approve and proceed to Step B2 silently.
+3. **If spec exists** (the normal case): consult `halt_mode`.
+   - **`halt_mode == none`** (existing kickoff path, unchanged): under `--autonomy != full`, surface `AskUserQuestion("Spec written at <path>. Ready for writing-plans?", options=[Approve and run writing-plans (Recommended) / Open spec to review first then ping me / Request changes — describe what to change / Abort kickoff])`. Under `--autonomy=full`: auto-approve and proceed to Step B2 silently.
+   - **`halt_mode == post-brainstorm`** (new, fires when invoked via `/superflow brainstorm <topic>`): surface `AskUserQuestion("Spec written at <path>. What next?", options=["Done — close out this run (Recommended)", "Continue to plan now — run B2+B3 as if /superflow plan --from-spec=<path>", "Open spec to review before deciding — then ping me", "Re-run brainstorming to refine"])`.
+     - "Done" → end the turn cleanly. No status file written, no plan written.
+     - "Continue to plan now" → flip in-session `halt_mode` to `post-plan` and proceed to Step B2. The spec is reused.
+     - "Open spec" → end the turn; user re-invokes whatever they want next.
+     - "Re-run brainstorming to refine" → re-invoke `superpowers:brainstorming` against the same topic; the previous spec is overwritten.
 
 **Why this gate exists:** brainstorming's own "User reviews written spec" step ends with "Wait for the user's response" — open-ended prose that causes the session to stop. When the user comes back in a fresh turn (especially after a recap/compact), the brainstorming skill body may not be in active context, and the orchestrator has no breadcrumb telling it what to do. The re-engagement gate above is the orchestrator owning the transition explicitly so a session compact between turns doesn't lose the workflow. This pattern repeats in Step B2 for the same reason.
 

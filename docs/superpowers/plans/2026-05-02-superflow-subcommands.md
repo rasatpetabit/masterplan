@@ -131,7 +131,7 @@ EOF
 
 **Codex:** no    # must understand existing 3-branch gate to add the variant cleanly
 
-- [ ] **Step 1: Read the current B1 re-engagement gate**
+- [x] **Step 1: Read the current B1 re-engagement gate**
 
 Run: `grep -n "Re-engagement gate (CRITICAL\|If spec exists\|If spec missing" commands/superflow.md | head -10`
 Expected: lines around 247–253 (the existing gate block).
@@ -140,7 +140,7 @@ Read the exact block to capture for `old_string`:
 
 Run: `sed -n '247,255p' commands/superflow.md` (read-only sed, output only)
 
-- [ ] **Step 2: Replace the existing "If spec exists" branch with halt_mode-aware variant**
+- [x] **Step 2: Replace the existing "If spec exists" branch with halt_mode-aware variant**
 
 Use `Edit` with `old_string` covering the existing line `3. **If spec exists** (the normal case): under \`--autonomy != full\`, surface \`AskUserQuestion("Spec written at <path>. Ready for writing-plans?", options=[Approve and run writing-plans (Recommended) / Open spec to review first then ping me / Request changes — describe what to change / Abort kickoff])\`. Under \`--autonomy=full\`: auto-approve and proceed to Step B2 silently.`
 
@@ -156,7 +156,7 @@ Replace with:
      - "Re-run brainstorming to refine" → re-invoke `superpowers:brainstorming` against the same topic; the previous spec is overwritten.
 ```
 
-- [ ] **Step 3: Verify the variant landed**
+- [x] **Step 3: Verify the variant landed**
 
 Run: `grep -n "halt_mode == post-brainstorm" commands/superflow.md`
 Expected: matches inside Step B1.
@@ -164,7 +164,7 @@ Expected: matches inside Step B1.
 Run: `grep -n "Continue to plan now\|Re-run brainstorming to refine" commands/superflow.md`
 Expected: both new option labels found (in the B1 block).
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add commands/superflow.md
