@@ -286,6 +286,8 @@ Invoke `superpowers:brainstorming` with the topic. **Brainstorming is always int
 
 ### Step B2 — Plan
 
+**Dispatch guard.** If `halt_mode == post-brainstorm`, skip Step B2 and Step B3 entirely — the B1 close-out gate already ended the turn (or, if the user picked "Continue to plan now" there, flipped `halt_mode` to `post-plan` and we proceed normally below).
+
 After Step B1's gate confirms approval, invoke `superpowers:writing-plans` against the spec. It will produce `docs/superpowers/plans/YYYY-MM-DD-<slug>.md`. Brief plan-writing with **CD-1 + CD-6**, plus:
 
 > When you judge a task as obviously well-suited for Codex (≤ 3 files, unambiguous, has known verification commands, no design judgment) or obviously unsuited (requires understanding broader system context, design tradeoffs, or files outside the stated scope), add a `**Codex:** ok` or `**Codex:** no` line in the per-task `**Files:**` block. See the Plan annotations subsection in Step C 3a for the exact syntax. The orchestrator's eligibility cache parses these as overrides on the heuristic checklist.

@@ -189,12 +189,12 @@ EOF
 
 **Codex:** ok    # single-paragraph addition at known anchor
 
-- [ ] **Step 1: Locate the Step B2 dispatch line**
+- [x] **Step 1: Locate the Step B2 dispatch line**
 
 Run: `grep -n "After Step B1's gate confirms approval, invoke" commands/superflow.md`
 Expected: one match in Step B2.
 
-- [ ] **Step 2: Insert the dispatch guard above the existing first paragraph**
+- [x] **Step 2: Insert the dispatch guard above the existing first paragraph**
 
 Use `Edit` with `old_string` matching the existing first paragraph of Step B2 (`After Step B1's gate confirms approval, invoke \`superpowers:writing-plans\` against the spec.` plus enough trailing context to make the match unique) and `new_string` prepending the guard:
 
@@ -204,7 +204,7 @@ Use `Edit` with `old_string` matching the existing first paragraph of Step B2 (`
 After Step B1's gate confirms approval, invoke `superpowers:writing-plans` against the spec.
 ```
 
-- [ ] **Step 3: Verify**
+- [x] **Step 3: Verify**
 
 Run: `grep -n "Dispatch guard" commands/superflow.md`
 Expected: at least one match in Step B2 (this task) — Tasks 5 will add another in Step C; that's fine.
@@ -212,7 +212,7 @@ Expected: at least one match in Step B2 (this task) — Tasks 5 will add another
 Run: `grep -n "halt_mode == post-brainstorm" commands/superflow.md | wc -l`
 Expected: ≥ 2 (one in B1 from Task 2, one in B2 from this task).
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add commands/superflow.md
