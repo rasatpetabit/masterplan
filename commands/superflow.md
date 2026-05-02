@@ -266,6 +266,21 @@ The brainstorm/plan/status files will be committed inside whichever worktree you
 
 5. Record the chosen worktree path and branch — they go into the status file in Step B3.
 
+#### Step B0a — `plan --from-spec=<path>` worktree handling
+
+When the verb is `plan --from-spec=<path>` (directly, or via Step P's pick), Step B0's worktree-decision flow is **skipped** — the spec's location is authoritative. Run this short flow instead:
+
+1. Resolve `<path>` to its containing git worktree via `git rev-parse --show-toplevel` from the spec's parent directory.
+2. `cd` into that worktree before invoking `superpowers:writing-plans` (Step B2).
+3. Verify the worktree appears in `git_state.worktrees` (Step 0 cache). If it doesn't, surface `AskUserQuestion("Worktree at <resolved-path> not in git_state cache. What now?", options=["Refresh git_state and retry (Recommended)", "Abort"])`.
+4. If the spec is outside any git worktree (resolution fails), error with: `Spec at <path> is not inside a git worktree. Move it under a worktree, or run /superflow brainstorm <topic> to recreate.`
+5. If the resolved worktree's current branch is in `config.trunk_branches`, surface `AskUserQuestion("Spec lives on \`<branch>\` (a trunk branch). superpowers:subagent-driven-development will refuse to start on this branch at execute time. What now?", options=["Create a new worktree for the plan and copy the spec into it (Recommended)", "Continue on \`<branch>\` anyway — I'll handle SDD's refusal manually later", "Abort"])`.
+   - "Create a new worktree" → run the same flow as B0 step 4's "Create new" branch (with the directory pre-decided per the existing AskUserQuestion + `superpowers:using-git-worktrees` pattern), then `git mv` the spec into the new worktree's `<config.specs_path>/`, commit (`superflow: relocate spec for <slug> to feature worktree`), then proceed to Step B2 in the new worktree.
+   - "Continue" → proceed to Step B2 on the trunk branch; flag this in the status file's `## Notes` so the future `execute` invocation surfaces the SDD refusal up front.
+   - "Abort" → end the turn.
+
+Then proceed to **Step B2** (writing-plans). Step B1 is skipped because the spec already exists.
+
 ### Step B1 — Brainstorm
 
 Invoke `superpowers:brainstorming` with the topic. **Brainstorming is always interactive** — the `--autonomy` flag does not apply. Let it run through its design + writing phases.

@@ -401,14 +401,14 @@ EOF
 
 **Codex:** ok    # well-bounded subsection addition, no rewriting of B0's existing flow
 
-- [ ] **Step 1: Locate the end of Step B0**
+- [x] **Step 1: Locate the end of Step B0**
 
 Run: `grep -n "^### Step B0 —\|^### Step B1 —" commands/superflow.md`
 Expected: two matches; the new subsection goes between them.
 
 Run: `grep -n "5. Record the chosen worktree path and branch" commands/superflow.md` — the existing last numbered point of B0.
 
-- [ ] **Step 2: Insert the new subsection between B0 step 5 and the `### Step B1 — Brainstorm` heading**
+- [x] **Step 2: Insert the new subsection between B0 step 5 and the `### Step B1 — Brainstorm` heading**
 
 Use `Edit` with `old_string` matching the line `5. Record the chosen worktree path and branch — they go into the status file in Step B3.\n\n### Step B1 — Brainstorm` and `new_string` inserting the subsection:
 
@@ -434,7 +434,7 @@ Then proceed to **Step B2** (writing-plans). Step B1 is skipped because the spec
 
 (Note: the existing `### Step B1 — Brainstorm` heading remains the next section after B0a — `new_string` should not delete it.)
 
-- [ ] **Step 3: Verify**
+- [x] **Step 3: Verify**
 
 Run: `grep -n "^#### Step B0a —" commands/superflow.md`
 Expected: one match.
@@ -445,7 +445,7 @@ Expected: matches B0a.
 Run: `grep -n "trunk_branches\|relocate spec" commands/superflow.md`
 Expected: trunk_branches reference appears in B0a (alongside any other existing references).
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add commands/superflow.md
