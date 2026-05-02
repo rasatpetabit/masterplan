@@ -341,6 +341,20 @@ The status file's `autonomy`, `codex_routing`, `codex_review`, `loop_enabled` fi
 
 ---
 
+## Step P — Plan-only no-args picker
+
+Triggered by `/superflow plan` with no topic and no `--from-spec=`. Picks an existing spec without a plan and treats the pick as `plan --from-spec=<picked>`.
+
+1. Glob `<config.specs_path>/*-design.md` across all worktrees as one parallel Bash batch (read worktrees from `git_state.worktrees`).
+2. For each candidate spec, check whether a sibling plan exists at `<config.plans_path>/<same-slug>.md` (slug = filename minus `-design.md` suffix). Filter to specs **without** a plan.
+3. Sort the filtered list by mtime descending.
+4. **If ≥ 1 candidate:** present top 3 via `AskUserQuestion`. The 4th option is "Other — paste a path" (free-text). User picks → treat as `plan --from-spec=<picked>` and proceed to **plan --from-spec worktree handling** (Step B0a, below in Step B), then Step B2 + B3.
+5. **If zero candidates:** surface `AskUserQuestion("No specs without plans found across <N> worktrees. What next?", options=["Start a new feature — /superflow new <topic>", "Brainstorm-only — /superflow brainstorm <topic>", "Cancel"])`. The first two redirect into the corresponding verb's flow with a topic prompted next; "Cancel" ends the turn.
+
+`halt_mode` for this step's outputs is `post-plan` (already set in Step 0 when `plan` was matched). Step B3's close-out gate fires after the plan is written.
+
+---
+
 ## Step C — Execute
 
 **Dispatch guard.** If `halt_mode != none`, skip Step C entirely — the B1 or B3 close-out gate already ended the turn. The only paths into Step C are: (a) `halt_mode == none` from kickoff or `execute`/`--resume=`; (b) the user explicitly flipped `halt_mode` to `none` via the B1 "Continue to plan now → Start execution now" or B3 "Start execution now" gate options.

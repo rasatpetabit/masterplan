@@ -336,14 +336,14 @@ EOF
 
 **Codex:** no    # whole new section; placement and prose must match the file's voice
 
-- [ ] **Step 1: Locate the boundary between Step B and Step C**
+- [x] **Step 1: Locate the boundary between Step B and Step C**
 
 Run: `grep -n "^## Step B —\|^## Step C —" commands/superflow.md`
 Expected: two matches; the new section goes between them.
 
 Run: `grep -n "Proceed to \*\*Step C\*\* with the new status path\|^---$" commands/superflow.md | head -10` to find the `---` separator that ends Step B.
 
-- [ ] **Step 2: Insert Step P before the `---` separator that precedes `## Step C — Execute`**
+- [x] **Step 2: Insert Step P before the `---` separator that precedes `## Step C — Execute`**
 
 Use `Edit` with `old_string` covering the `---\n\n## Step C — Execute` boundary and `new_string` inserting Step P between them:
 
@@ -367,7 +367,7 @@ Triggered by `/superflow plan` with no topic and no `--from-spec=`. Picks an exi
 ## Step C — Execute
 ```
 
-- [ ] **Step 3: Verify**
+- [x] **Step 3: Verify**
 
 Run: `grep -n "^## Step P —" commands/superflow.md`
 Expected: one match.
@@ -378,7 +378,7 @@ Expected: matches the zero-candidates branch.
 Run: `grep -c "^## Step " commands/superflow.md`
 Expected: count increased by 1 (Step P added).
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add commands/superflow.md
