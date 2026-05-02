@@ -290,12 +290,12 @@ EOF
 
 **Codex:** ok    # one-paragraph insertion at section heading
 
-- [ ] **Step 1: Locate Step C heading**
+- [x] **Step 1: Locate Step C heading**
 
 Run: `grep -n "^## Step C — Execute" commands/superflow.md`
 Expected: one match.
 
-- [ ] **Step 2: Insert the dispatch guard immediately after the heading**
+- [x] **Step 2: Insert the dispatch guard immediately after the heading**
 
 Use `Edit` with `old_string` covering `## Step C — Execute\n\n1. **Batched re-read.**` and `new_string` inserting the guard between the heading and step 1:
 
@@ -307,7 +307,7 @@ Use `Edit` with `old_string` covering `## Step C — Execute\n\n1. **Batched re-
 1. **Batched re-read.**
 ```
 
-- [ ] **Step 3: Verify**
+- [x] **Step 3: Verify**
 
 Run: `grep -n "Dispatch guard" commands/superflow.md | wc -l`
 Expected: `2` (B2 from Task 3 + Step C from this task).
@@ -315,7 +315,7 @@ Expected: `2` (B2 from Task 3 + Step C from this task).
 Run: `grep -n "halt_mode != none" commands/superflow.md`
 Expected: at least one match (in Step C).
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add commands/superflow.md

@@ -343,6 +343,8 @@ The status file's `autonomy`, `codex_routing`, `codex_review`, `loop_enabled` fi
 
 ## Step C — Execute
 
+**Dispatch guard.** If `halt_mode != none`, skip Step C entirely — the B1 or B3 close-out gate already ended the turn. The only paths into Step C are: (a) `halt_mode == none` from kickoff or `execute`/`--resume=`; (b) the user explicitly flipped `halt_mode` to `none` via the B1 "Continue to plan now → Start execution now" or B3 "Start execution now" gate options.
+
 1. **Batched re-read.** Issue these as one parallel tool batch (not sequential):
    - Read the status file.
    - Read the referenced spec file.
