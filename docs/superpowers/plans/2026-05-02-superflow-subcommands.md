@@ -695,37 +695,37 @@ EOF
 
 **Codex:** ok    # mechanical grep matrix; no judgment
 
-- [ ] **Step 1: Routing-table sanity**
+- [x] **Step 1: Routing-table sanity**
 
 Run: `grep -n "^| _(empty)_\|^| .new <topic>\|^| .brainstorm\|^| .plan \|^| .plan --from-spec\|^| .execute \|^| .import\|^| .doctor\|^| .status\|^| .--resume=\|^| anything else" commands/superflow.md | head -20`
 Expected: at least 11 matched rows in the routing table (one per branch).
 
-- [ ] **Step 2: halt_mode references threaded through**
+- [x] **Step 2: halt_mode references threaded through**
 
 Run: `grep -n "halt_mode" commands/superflow.md`
 Expected: matches in Step 0 (table + subsection), Step B1 (variant gate), Step B2 (dispatch guard), Step B3 (variant gate), Step C (dispatch guard), Step P (closing note). At least 8 distinct line matches.
 
-- [ ] **Step 3: Verb-reserved-token warning visible in both places**
+- [x] **Step 3: Verb-reserved-token warning visible in both places**
 
 Run: `grep -n "Verb tokens are reserved\|Topics literally named after a verb" commands/superflow.md README.md`
 Expected: one match in `commands/superflow.md`, one in `README.md`.
 
-- [ ] **Step 4: Step P inserted and Step C still present**
+- [x] **Step 4: Step P inserted and Step C still present**
 
 Run: `grep -n "^## Step " commands/superflow.md`
 Expected: includes `## Step P — Plan-only no-args picker` AND `## Step C — Execute` (Step P precedes Step C in the file).
 
-- [ ] **Step 5: Frontmatter description updated**
+- [x] **Step 5: Frontmatter description updated**
 
 Run: `head -3 commands/superflow.md | grep "Verbs: new, brainstorm"`
 Expected: one match.
 
-- [ ] **Step 6: CHANGELOG and WORKLOG land**
+- [x] **Step 6: CHANGELOG and WORKLOG land**
 
 Run: `grep -n "^## \[0.3.0\]" CHANGELOG.md && grep -n "v0.3.0 explicit phase verbs" WORKLOG.md`
 Expected: both match.
 
-- [ ] **Step 7: Smoke-read the modified prompt for coherence**
+- [x] **Step 7: Smoke-read the modified prompt for coherence**
 
 Read `commands/superflow.md` end-to-end. Confirm:
 - Step 0's routing table flows naturally into the new "halt_mode and flag interactions" subsection.
@@ -738,7 +738,7 @@ Read `commands/superflow.md` end-to-end. Confirm:
 
 If any item above fails, open a new task to fix the issue. If all pass, no commit needed (this task is read-only).
 
-- [ ] **Step 8: Final summary**
+- [x] **Step 8: Final summary**
 
 Print a short summary of: total commits added by this plan (should be 11 — one per Task 1–11), files touched, lines added/removed (from `git diff main..HEAD --stat` if branched, else `git log <task-1-sha>^..HEAD --stat`).
 
