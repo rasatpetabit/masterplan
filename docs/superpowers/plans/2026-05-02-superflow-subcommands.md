@@ -469,17 +469,17 @@ EOF
 
 **Codex:** ok    # one-line edit
 
-- [ ] **Step 1: Read line 2**
+- [x] **Step 1: Read line 2**
 
 Run: `sed -n '1,4p' commands/superflow.md`
 
-- [ ] **Step 2: Replace the description line**
+- [x] **Step 2: Replace the description line**
 
 Use `Edit` to swap:
 - `old_string`: `description: Brainstorm → plan → execute development workflow that delegates work to bounded subagents, preserves orchestrator context for routing/state, and self-paces long runs across sessions`
 - `new_string`: `description: Brainstorm → plan → execute workflow. Verbs: new, brainstorm, plan, execute, import, doctor, status. Bare-topic shortcut still works.`
 
-- [ ] **Step 3: Verify**
+- [x] **Step 3: Verify**
 
 Run: `head -3 commands/superflow.md`
 Expected: line 2 contains the new description.
@@ -487,7 +487,7 @@ Expected: line 2 contains the new description.
 Run: `grep -c "Verbs: new, brainstorm, plan, execute" commands/superflow.md`
 Expected: `1`.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add commands/superflow.md

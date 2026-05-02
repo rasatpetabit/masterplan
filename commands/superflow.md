@@ -1,5 +1,5 @@
 ---
-description: Brainstorm → plan → execute development workflow that delegates work to bounded subagents, preserves orchestrator context for routing/state, and self-paces long runs across sessions
+description: Brainstorm → plan → execute workflow. Verbs: new, brainstorm, plan, execute, import, doctor, status. Bare-topic shortcut still works.
 ---
 
 # /superflow
