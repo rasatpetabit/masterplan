@@ -233,12 +233,12 @@ EOF
 
 **Codex:** no    # gate variant must align with existing autonomy/approval logic
 
-- [ ] **Step 1: Locate the existing B3 approval block**
+- [x] **Step 1: Locate the existing B3 approval block**
 
 Run: `grep -n "If .--autonomy != full.: present a one-paragraph plan summary\|Proceed to .Step C." commands/superflow.md`
 Expected: two consecutive matches near the end of Step B3.
 
-- [ ] **Step 2: Replace the existing approval block with halt_mode-aware variant**
+- [x] **Step 2: Replace the existing approval block with halt_mode-aware variant**
 
 Use `Edit` with `old_string` covering the line `If \`--autonomy != full\`: present a one-paragraph plan summary and the path to the plan file via \`AskUserQuestion\` with options "Start execution / Open plan to review / Cancel". Wait for approval. If \`--autonomy=full\`: skip approval.` AND the following line `Proceed to **Step C** with the new status path.`
 
@@ -258,7 +258,7 @@ Replace with:
 The status file's `autonomy`, `codex_routing`, `codex_review`, `loop_enabled` fields are populated from this run's flags per the post-plan flag-persistence rule in Step 0; they take effect on the eventual `execute` invocation.
 ```
 
-- [ ] **Step 3: Verify**
+- [x] **Step 3: Verify**
 
 Run: `grep -n "halt_mode == post-plan" commands/superflow.md`
 Expected: at least one match (in Step B3).
@@ -266,7 +266,7 @@ Expected: at least one match (in Step B3).
 Run: `grep -n "Discard plan + status file\|Resume later with /superflow execute" commands/superflow.md`
 Expected: both new option labels present.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add commands/superflow.md

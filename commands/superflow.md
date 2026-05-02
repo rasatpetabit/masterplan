@@ -327,9 +327,17 @@ Create the sibling status file at `docs/superpowers/plans/YYYY-MM-DD-<slug>-stat
 
 Then flip `compact_loop_recommended: true` in the status file. Whether or not the user pastes the command, the notice is suppressed for subsequent kickoffs/resumes of this plan.
 
-If `--autonomy != full`: present a one-paragraph plan summary and the path to the plan file via `AskUserQuestion` with options "Start execution / Open plan to review / Cancel". Wait for approval. If `--autonomy=full`: skip approval.
+**Close-out gate.** Consult `halt_mode`:
 
-Proceed to **Step C** with the new status path.
+- **`halt_mode == none`** (existing kickoff path, unchanged): if `--autonomy != full`, present a one-paragraph plan summary and the path to the plan file via `AskUserQuestion` with options "Start execution / Open plan to review / Cancel". Wait for approval. If `--autonomy=full`: skip approval. Proceed to **Step C** with the new status path.
+
+- **`halt_mode == post-plan`** (new, fires when invoked via `/superflow plan <topic>` or `/superflow plan --from-spec=<path>` or via Step P's pick): surface `AskUserQuestion("Plan written at <path>. Status file at <status-path>. What next?", options=["Done — resume later with /superflow execute <status-path> (Recommended)", "Start execution now — flip halt_mode to none and proceed to Step C", "Open plan to review before deciding", "Discard plan + status file (status file removed; spec kept)"])`.
+  - "Done" → end the turn. Status file persists with `status: in-progress` and `current_task` set to the first task. The user resumes later via `/superflow execute <status-path>`.
+  - "Start execution now" → flip in-session `halt_mode` to `none` and proceed to **Step C**.
+  - "Open plan" → end the turn. User re-invokes `/superflow execute <status-path>` later.
+  - "Discard" → `git rm` the plan file and the status file; commit (`superflow: discard plan <slug>` subject); end the turn. Spec is kept.
+
+The status file's `autonomy`, `codex_routing`, `codex_review`, `loop_enabled` fields are populated from this run's flags per the post-plan flag-persistence rule in Step 0; they take effect on the eventual `execute` invocation.
 
 ---
 
