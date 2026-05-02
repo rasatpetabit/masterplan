@@ -573,11 +573,11 @@ EOF
 
 **Codex:** ok    # standard changelog append
 
-- [ ] **Step 1: Read the changelog top**
+- [x] **Step 1: Read the changelog top**
 
 Run: `sed -n '1,20p' CHANGELOG.md`
 
-- [ ] **Step 2: Insert the v0.3.0 block**
+- [x] **Step 2: Insert the v0.3.0 block**
 
 Use `Edit` with `old_string` matching `## [Unreleased]\n\n## [0.2.2]` and `new_string`:
 
@@ -600,7 +600,7 @@ Use `Edit` with `old_string` matching `## [Unreleased]\n\n## [0.2.2]` and `new_s
 ## [0.2.2]
 ```
 
-- [ ] **Step 3: Verify**
+- [x] **Step 3: Verify**
 
 Run: `grep -n "^## \[0.3.0\]" CHANGELOG.md`
 Expected: one match.
@@ -608,7 +608,7 @@ Expected: one match.
 Run: `grep -nc "^## \[" CHANGELOG.md`
 Expected: count incremented by 1 vs. before this task.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add CHANGELOG.md
