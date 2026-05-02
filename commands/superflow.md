@@ -45,14 +45,40 @@ Steps A, B0, D consult the cache instead of re-running these. **Invalidate** the
 
 ### Subcommand routing (first token of `$ARGUMENTS`)
 
-| First token | Branch |
-|---|---|
-| _(empty)_ | **Step A** — list + pick across worktrees |
-| `import` (alone or with args) | **Step I** — legacy import |
-| `doctor` (alone or with `--fix`) | **Step D** — lint state |
-| `status` (alone or with `--plan=<slug>`) | **Step S** — situation report (read-only) |
-| `--resume=<path>` or `--resume <path>` | **Step C** — resume specific plan |
-| anything else | treat as a topic, **Step B** — kickoff |
+| First token | Branch | `halt_mode` |
+|---|---|---|
+| _(empty)_ | **Step A** — list+pick across worktrees | `none` |
+| `new <topic>` | **Step B** — full kickoff (B0→B1→B2→B3→C) | `none` |
+| `brainstorm` (no topic) | Prompt for topic, then Step B0+B1; halt at B1 close-out gate | `post-brainstorm` |
+| `brainstorm <topic>` | Step B0+B1; halt at B1 close-out gate | `post-brainstorm` |
+| `plan` (no args) | **Step P** — pick spec-without-plan; treat pick as `plan --from-spec=<picked>` | `post-plan` |
+| `plan <topic>` | Step B0+B1+B2+B3; halt at B3 close-out gate | `post-plan` |
+| `plan --from-spec=<path>` | cd into spec's worktree, run B2+B3 only; halt at B3 close-out gate | `post-plan` |
+| `execute` (no path) | **Step A** — same as bare empty | `none` |
+| `execute <status-path>` | **Step C** — resume that plan | `none` |
+| `import` (alone or with args) | **Step I** — legacy import | `none` |
+| `doctor` (alone or with `--fix`) | **Step D** — lint state | `none` |
+| `status` (alone or with `--plan=<slug>`) | **Step S** — situation report (read-only) | `none` |
+| `--resume=<path>` or `--resume <path>` | **Step C** — alias for `execute <path>` | `none` |
+| anything else | treat as a topic, **Step B** — kickoff (back-compat catch-all) | `none` |
+
+### `halt_mode` and flag interactions
+
+`halt_mode` is an internal orchestrator variable set in Step 0 from the verb match. Steps B1, B2, B3, and C consult it to choose between the existing gate behavior and a halt-aware variant.
+
+**Verb tokens are reserved.** Any topic literally named `new`, `brainstorm`, `plan`, or `execute` requires another word in front via the catch-all (e.g., `/superflow add brainstorm session timer`).
+
+**Argument-parse precedence (in Step 0, after config + git_state cache):**
+1. Match the first token against `{new, brainstorm, plan, execute, import, doctor, status}`. On match: set `halt_mode` per the table; consume the verb; pass remaining args to the matched step.
+2. If unmatched and the first arg starts with `--`: route to **Step A** (flag-only invocation).
+3. If unmatched and the first arg is a non-flag word: catch-all → **Step B** with the full arg string as the topic (existing behavior).
+
+**Flag-interaction rules** (warnings emitted at Step 0, not later):
+- `halt_mode == post-brainstorm` → `--autonomy=`, `--codex=`, `--codex-review=`, `--no-loop` are **ignored**. Emit one-line warning: `flags <list> ignored: brainstorm halts before execution`.
+- `halt_mode == post-plan` → those same flags are **persisted** to the status file (Step B3 records them in frontmatter) but do not fire this run. No warning.
+- `halt_mode == none` → flags fire as today.
+
+**`/loop /superflow <verb> ...` foot-gun.** When `halt_mode != none` AND `ScheduleWakeup` is available (i.e. invoked via `/loop`), emit one-line warning: `note: <verb> halts before execution; --no-loop recommended for this verb`. Do NOT auto-disable the loop; the user may have a reason.
 
 ### Recognized flags
 

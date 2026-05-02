@@ -41,12 +41,12 @@ No new files. No code. No automated tests — all verification is grep-based.
 
 **Codex:** no    # multi-section threading; must hold existing Step 0 structure in mind
 
-- [ ] **Step 1: Read the current routing table region**
+- [x] **Step 1: Read the current routing table region**
 
 Run: `grep -n "Subcommand routing\|^| First token\|^| _(empty)_\|anything else" commands/superflow.md`
 Expected: lines 46–55 region matched, confirming the existing 5-row table.
 
-- [ ] **Step 2: Replace the existing routing table with the 14-row verb table**
+- [x] **Step 2: Replace the existing routing table with the 14-row verb table**
 
 Use `Edit` with `old_string` covering the entire current table block (the heading line `### Subcommand routing (first token of \`$ARGUMENTS\`)` through the `| anything else | treat as a topic, **Step B** — kickoff |` row). New table:
 
@@ -71,7 +71,7 @@ Use `Edit` with `old_string` covering the entire current table block (the headin
 | anything else | treat as a topic, **Step B** — kickoff (back-compat catch-all) | `none` |
 ```
 
-- [ ] **Step 3: Insert the halt_mode + flag-interactions subsection directly below the table**
+- [x] **Step 3: Insert the halt_mode + flag-interactions subsection directly below the table**
 
 Use `Edit` with `old_string` matching the closing fence of Section 2 (the `### Recognized flags` heading) and `new_string` that prepends a new subsection BEFORE the `### Recognized flags` line. Content:
 
@@ -96,7 +96,7 @@ Use `Edit` with `old_string` matching the closing fence of Section 2 (the `### R
 
 ```
 
-- [ ] **Step 4: Verify routing table landed**
+- [x] **Step 4: Verify routing table landed**
 
 Run: `grep -nc "^| .new <topic>\| .brainstorm <topic>\| .plan --from-spec\| .execute <status-path>" commands/superflow.md`
 Expected: `4` (one row each for the four new verbs in the table).
@@ -107,7 +107,7 @@ Expected: ≥ 10 (table column references + new subsection contents).
 Run: `grep -n "Verb tokens are reserved" commands/superflow.md`
 Expected: matches the new subsection.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add commands/superflow.md
