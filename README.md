@@ -53,6 +53,51 @@ on track for multi-week projects.
 
 Deep design rationale lives in [`docs/internals.md`](./docs/internals.md).
 
+## Subagent dispatch model
+
+The most important design decision: **every substantive piece of work goes
+to a fresh subagent, and only digested results come back to the
+orchestrator**. A multi-task plan run in a single Claude session bloats
+context fast — failed experiments, big diffs, library docs, verification
+dumps. By task 10, the orchestrator is reasoning on cluttered, partially-
+stale state and quality drops. `/masterplan` solves this structurally.
+
+The dispatch model:
+
+| Phase | Model | Why |
+|---|---|---|
+| Discovery scans (Step I1) | Haiku | Mechanical extraction, parallel, bounded |
+| Per-task implementation | Sonnet | The default workhorse, via `superpowers:subagent-driven-development` |
+| Conversion / rewriting | Sonnet | Generation, not just extraction |
+| Architecture, ambiguous specs | Opus | Reserved for tasks that genuinely need deep reasoning |
+| Small well-defined coding tasks | Codex | Per the routing toggle, via `codex:codex-rescue` |
+| Asymmetric review of inline work | Codex (review mode) | When `codex_review: on`, fresh-eyes review of Sonnet/Claude diffs against the spec |
+| Completion inference | Haiku | One per task chunk, parallel, bounded |
+
+Every subagent gets a **bounded brief**: explicit goal, inputs, allowed
+scope, constraints, return shape. It doesn't inherit session history, and
+the orchestrator doesn't see its raw output — just a digest.
+
+Activity log entries illustrate the digest pattern:
+
+```text
+2026-04-22T16:14 task "Implement memory session adapter" complete, commit f4e5d6c [codex] (verify: 24 passed)
+```
+
+Enough to reconstruct state. Nothing more.
+
+This is what makes `ScheduleWakeup`'ing into a fresh session every ~3
+tasks lossless. The status file is the bridge; the orchestrator's
+mid-session context is disposable.
+
+v2.0.0+ extends this with **wave-mode dispatch**: contiguous read-only
+tasks sharing a `**parallel-group:**` annotation fire as one parallel
+batch of Sonnet subagents under a single wave-completion barrier, with a
+single-writer status update at wave end. Doctor checks (Step D),
+situation reports (Step S), and per-worktree frontmatter parsing (Step A)
+are also parallelized when N ≥ 2 worktrees. Full per-step model and
+parallelism table in [`docs/internals.md`](./docs/internals.md).
+
 ## Install
 
 ### Claude Code plugin marketplace
