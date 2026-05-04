@@ -6,13 +6,30 @@ It's a thin orchestrator over the [superpowers](https://github.com/obra/superpow
 
 ## What you get
 
-- **`/superflow <topic>`** — kick off a full brainstorm → plan → execute flow.
+`/superflow` is invoked as `/superflow <verb> [args] [flags]`. The full verb reference lives in [Verb reference](#verb-reference) below; here's the elevator pitch.
+
+**Phase verbs** (v0.3.0+) — address any pipeline phase directly at the call site:
+
+- **`/superflow new <topic>`** — kick off a full brainstorm → plan → execute flow. (Same as the bare-topic shortcut `/superflow <topic>`, which still works.)
+- **`/superflow brainstorm <topic>`** — brainstorm only; halt cleanly after the spec is written.
+- **`/superflow plan <topic>`** — brainstorm + plan; halt cleanly after the plan + status file are written.
+- **`/superflow plan --from-spec=<path>`** — plan only against an existing spec; halts after the plan is written.
+- **`/superflow plan`** *(no args)* — pick from specs that don't yet have a plan, then plan against the chosen spec.
+- **`/superflow execute [<status-path>]`** — resume a specific plan, or list+pick if no path given.
+
+**Operation verbs** — one-shot operations that aren't a pipeline phase:
+
+- **`/superflow`** *(no args)* — list in-progress plans across all worktrees of the current repo; pick one to resume or start fresh.
 - **`/superflow import`** — discover legacy planning artifacts (PLAN.md, GitHub issues, branches, orphan superpowers plans) and convert them to the unified schema with completion-state inference so already-done work isn't redone.
 - **`/superflow doctor`** — lint state across all worktrees of the current repo.
-- **`/superflow --resume=<path>`** — pick up a specific plan exactly where it left off.
+- **`/superflow status`** — read-only situation report across all worktrees: in-flight, blocked, stale, recently completed.
+- **`/superflow retro [<slug>]`** — generate a retrospective doc for a completed plan (picks one if no slug given).
+- **`/superflow --resume=<path>`** — alias for `/superflow execute <path>`.
+
+**Companion surfaces:**
+
 - **`/loop /superflow ...`** — self-paced cross-session execution; wakes itself every ~25 minutes to advance the plan a few tasks at a time.
 - **`superflow-detect` skill** — auto-suggests `/superflow import` when legacy planning artifacts are present in the repo. Never auto-runs.
-- **`superflow-retro` skill** — generates a structured retrospective doc when a plan completes.
 
 ## Why this exists
 
@@ -68,16 +85,17 @@ If you can answer "where did this work get to and what's next?" by reading the s
 
 ## Install
 
-### Option A — Claude Code plugin (recommended)
+### Option A — Claude Code plugin marketplace (recommended)
 
-```bash
-# Once Claude Code's plugin install supports github.com URLs:
-claude plugin install rasatpetabit/claude-superflow
+In a Claude Code session:
 
-# Or clone into your plugins directory manually:
-git clone https://github.com/rasatpetabit/claude-superflow.git \
-  ~/.claude/plugins/claude-superflow
 ```
+/plugin marketplace add rasatpetabit/claude-superflow
+/plugin install claude-superflow@rasatpetabit-claude-superflow
+/reload-plugins
+```
+
+Verify with `/plugin` — `claude-superflow` should appear under **Installed**. If the install command above doesn't match (Claude Code's plugin syntax has been iterating), the safe fallback is to run `/plugin marketplace add rasatpetabit/claude-superflow` and then pick `claude-superflow` from `/plugin`'s interactive Discover tab.
 
 ### Option B — manual
 
@@ -87,7 +105,6 @@ Drop the slash command into your user commands directory:
 mkdir -p ~/.claude/commands ~/.claude/skills
 cp commands/superflow.md ~/.claude/commands/
 cp -r skills/superflow-detect ~/.claude/skills/
-cp -r skills/superflow-retro ~/.claude/skills/
 ```
 
 ### Option C — opt into per-turn telemetry (optional)
@@ -123,6 +140,8 @@ Add this fragment to `~/.claude/settings.json`:
 
 The hook is **defensive** — it bails silently in any session that isn't operating on a `/superflow`-managed plan, so it's safe as a global Stop hook. Per-plan opt-out: add `telemetry: off` to a status file's frontmatter. Global opt-out: set `telemetry.enabled: false` in `.superflow.yaml`. Field shape and `jq` queries: see [`docs/design/telemetry-signals.md`](./docs/design/telemetry-signals.md).
 
+> Tested on Linux. The hook calls `find`, `stat`, and `date` with portable flags that should also work on macOS BSD utilities, but the macOS path hasn't been smoke-tested. If telemetry doesn't land for you on macOS, please [open an issue](https://github.com/rasatpetabit/claude-superflow/issues).
+
 ### Dependencies
 
 - **Required:** [`superpowers`](https://github.com/obra/superpowers) — `/superflow` delegates to its `brainstorming`, `writing-plans`, `subagent-driven-development`, `executing-plans`, `using-git-worktrees`, `systematic-debugging`, and `finishing-a-development-branch` skills.
@@ -135,24 +154,42 @@ The hook is **defensive** — it bails silently in any session that isn't operat
 ### Start a new feature
 
 ```
-/superflow add Stripe webhook handler
+/superflow new Stripe webhook handler
 ```
 
 Walks you through brainstorming (interactive), produces a spec at `docs/superpowers/specs/`, generates a plan at `docs/superpowers/plans/`, then executes task-by-task with subagents.
 
+The bare-topic shortcut (`/superflow Stripe webhook handler`) still works — `new` is the explicit form for the same flow.
+
+### Brainstorm or plan only — without executing
+
+When you want to think a feature through without committing to execution yet:
+
+```
+/superflow brainstorm Stripe webhook handler   # halts after spec is written
+/superflow plan Stripe webhook handler         # halts after plan is written
+/superflow plan --from-spec=docs/superpowers/specs/2026-05-02-webhooks-design.md
+/superflow plan                                # picks from specs that have no plan yet
+```
+
+When you're ready to ship the planned work, `/superflow execute <status-path>` (or the listing form below) picks it back up.
+
 ### Long autonomous run
 
 ```
-/loop /superflow refactor auth middleware --autonomy=loose
+/loop /superflow new refactor auth middleware --autonomy=loose
 ```
 
 Same flow, but execution runs autonomously with `ScheduleWakeup`-paced resumption. Stops on blockers (which get recorded in the status file's `## Blockers` section).
 
+> Note: `/loop /superflow brainstorm <topic>` or `/loop /superflow plan <topic>` will warn you at Step 0 — those verbs halt before execution, so a loop has nothing to advance. `--no-loop` is recommended in that case.
+
 ### Resume in-progress work
 
 ```
-/superflow                              # lists in-progress plans across worktrees
-/superflow --resume=docs/superpowers/plans/2026-04-15-auth-status.md
+/superflow                                                          # lists in-progress plans across worktrees
+/superflow execute docs/superpowers/plans/2026-04-15-auth-status.md # explicit verb
+/superflow --resume=docs/superpowers/plans/2026-04-15-auth-status.md # back-compat alias
 ```
 
 ### Migrate legacy plans
@@ -179,37 +216,45 @@ Scans for PLAN.md, TODO.md, ROADMAP.md, docs/plans/*.md, GitHub issues, draft PR
 
 Read-only synthesis: status frontmatter + last activity entries + blockers/notes + retro index + telemetry trends + recent commits. Useful as a daily SITREP before deciding what to pick back up.
 
-## Subcommand reference
+### Generate a retrospective
 
-### Verbs
+```
+/superflow retro                   # picks a completed plan that doesn't yet have a retro
+/superflow retro auth-refactor     # targets a specific slug
+```
 
-| Verb | Phases | Halts at |
+Reads the plan + status + spec + git log + PR (if `gh` is available), then writes `docs/superpowers/retros/YYYY-MM-DD-<slug>-retro.md` with outcomes, blockers, deviations, follow-ups, and Codex routing observations. Offers to `/schedule` time-bounded follow-ups one at a time.
+
+## Verb reference
+
+### Phase + operation verbs
+
+| Verb | Effect | Halts at |
 |---|---|---|
-| `new <topic>` | brainstorm + plan + execute | (runs through) |
-| `brainstorm <topic>` | brainstorm only | spec written |
-| `plan <topic>` | brainstorm + plan | plan written |
-| `plan --from-spec=<path>` | plan only (against existing spec) | plan written |
-| `execute [<status-path>]` | execute (list+pick or resume) | (runs through) |
-| `import [...]` | (unchanged) | n/a |
-| `doctor [--fix]` | (unchanged) | n/a |
-| `status [--plan=<slug>]` | (unchanged) | n/a |
+| `new <topic>` | Kickoff: brainstorm + plan + execute | (runs through) |
+| `brainstorm <topic>` | Brainstorm only | spec written |
+| `plan <topic>` | Brainstorm + plan | plan written |
+| `plan --from-spec=<path>` | Plan only against an existing spec | plan written |
+| `plan` (no args) | Pick from specs that have no plan yet, then plan against the chosen spec | plan written |
+| `execute [<status-path>]` | Resume a specific plan, or list+pick if no path given | (runs through) |
+| `import [...]` | Discover legacy planning artifacts and convert them (see Aliases and shortcuts below for the per-source flags) | n/a |
+| `doctor [--fix]` | Lint state across all worktrees of the current repo | n/a |
+| `status [--plan=<slug>]` | Read-only situation report across all worktrees: in-flight, blocked, stale, recently completed, telemetry signals, recent design notes. `--plan=<slug>` drills into one plan's blockers/notes/activity/telemetry. | n/a |
+| `retro [<slug>]` | Generate a retrospective doc for a completed plan (picks one if no slug given) | n/a |
 
-> Topics literally named after a verb (`new`, `brainstorm`, `plan`, `execute`) need to be prefixed with another word — e.g. `/superflow add brainstorm session timer` works because `add` isn't a verb.
+> Topics literally named after a verb (`new`, `brainstorm`, `plan`, `execute`, `retro`, `import`, `doctor`, `status`) need to be prefixed with another word — e.g. `/superflow add brainstorm session timer` works because `add` isn't a verb.
 
-### Invocation forms (back-compat detail)
+### Aliases and shortcuts
 
-| Invocation | Effect |
+| Invocation | Equivalent to |
 |---|---|
-| `/superflow` | List in-progress plans across all worktrees of the current repo; pick one to resume or start fresh |
-| `/superflow <topic>` | Kickoff: brainstorm → plan → execute |
-| `/superflow --resume=<status-path>` | Resume a specific plan from its status file |
-| `/superflow import` | Discover legacy planning artifacts and convert them |
-| `/superflow import --pr=<num>` | Import directly from a single GitHub PR |
-| `/superflow import --issue=<num>` | Import directly from a single GitHub issue |
-| `/superflow import --file=<path>` | Import directly from a single local file |
-| `/superflow import --branch=<name>` | Reverse-engineer a spec/plan from a single branch's history |
-| `/superflow doctor [--fix]` | Lint state across all worktrees |
-| `/superflow status [--plan=<slug>]` | Read-only situation report across all worktrees: in-flight, blocked, stale, recently completed, telemetry signals, recent design notes. `--plan=<slug>` drills into one plan's blockers/notes/activity/telemetry. |
+| `/superflow` *(no args)* | `/superflow execute` (list + pick across worktrees) |
+| `/superflow <topic>` | `/superflow new <topic>` (bare-topic shortcut for kickoff) |
+| `/superflow --resume=<status-path>` | `/superflow execute <status-path>` |
+| `/superflow import --pr=<num>` | Import directly from a single GitHub PR (skips discovery) |
+| `/superflow import --issue=<num>` | Import directly from a single GitHub issue (skips discovery) |
+| `/superflow import --file=<path>` | Import directly from a single local file (skips discovery) |
+| `/superflow import --branch=<name>` | Reverse-engineer a spec/plan from a single branch's history (skips discovery) |
 
 ## Flags
 
@@ -415,18 +460,20 @@ Most teams will want a `.superflow.yaml` at the repo root that encodes their con
 
 The plugin ships with sensible defaults; the YAML is for when you outgrow them.
 
-## Recent improvements (post-v0.1)
+## Path to v1.0.0
 
-Two follow-up passes have landed since the initial release, both focused on making long autonomous runs cheaper to operate:
+The journey from initial release to first stable public release:
 
-- **Speed — increased parallelism.** Step A frontmatter parsing, Step B0 git surveys, Step C step 1 re-reads, Step C 4a verification commands, Step I3 import (source-fetch wave + conversion wave), and Step D doctor checks now dispatch in parallel wherever the work is genuinely independent. New per-invocation caches (`git_state` for worktrees/branches, `eligibility_cache` for Codex routing) avoid redundant subagent dispatches and subprocess calls within a run.
-- **Context use — tighter prompt + smarter re-reads.** Orchestrator prompt trimmed of duplication (CD-rule restatements collapsed, operational rules de-duplicated against inline Step content, design notes relocated to `docs/design/`). Codex review brief now passes a `<task-start SHA>..HEAD` range instead of inlining full diffs (saves thousands of tokens per review on multi-file tasks). Activity logs in long-running plans rotate to a sibling archive when they exceed 100 entries (keeps last 50 inline). In-session mtime gating skips re-reads of unchanged spec/plan files within the same session.
+- **v0.2.0 — speed + context use.** Increased parallelism (Step A frontmatter parsing, Step B0 git surveys, Step C step 1 re-reads, Step C 4a verification commands, Step I3 import waves, Step D doctor checks all dispatch in parallel where work is independent) plus per-invocation caches (`git_state`, `eligibility_cache`) to avoid redundant dispatches. Tighter orchestrator prompt (CD-rule restatements collapsed, design notes relocated to `docs/design/`), Codex review brief now passes a `<task-start SHA>..HEAD` range instead of inlining diffs, and activity logs rotate to a sibling archive past 100 entries.
+- **v0.2.1 + v0.2.2 — silent-stop gates.** Five upstream-skill prompts that could stall `/superflow` mid-flow are now pre-empted with `AskUserQuestion`: brainstorming's "User reviews written spec," writing-plans' "Which approach?," `finishing-a-development-branch`'s 4-option close-out, `using-git-worktrees`' worktree-base picker, and SDD `BLOCKED`/`NEEDS_CONTEXT` escalation. Operational rule generalized from "Don't stop silently mid-kickoff" to "Don't stop silently anywhere."
+- **v0.3.0 — explicit phase verbs.** `new`, `brainstorm`, `plan`, and `execute` are now first-token verbs in `/superflow`, so the brainstorm-only and plan-only phases are addressable instead of being all-or-nothing. `plan --from-spec=<path>` plans against an existing spec; `plan` with no args picks from specs that don't have a plan yet. The bare-topic shortcut (`/superflow refactor auth middleware`) and `--resume=<path>` keep working unchanged.
+- **v1.0.0 — first stable public release.** Consolidates retrospective generation into the `/superflow retro` verb (the previously-auto-firing `superflow-retro` skill is gone). Standardizes terminology on "verbs" instead of mixing "subcommands" and "invocation forms." Applies a pre-release audit fix pass that closed 10 blockers and 13 polish items found by three parallel fresh-eyes audits of the orchestrator, telemetry hook, remaining skill, and docs (full list in CHANGELOG `[1.0.0]`).
 
-Both passes preserve the three design pillars (thin orchestrator, subagent + context-control, status file as only source of truth) and don't add user-facing flags. See [CHANGELOG.md](./CHANGELOG.md) under `[Unreleased]` for the full breakdown.
+All releases preserve the three design pillars (thin orchestrator, subagent + context-control, status file as only source of truth). See [CHANGELOG.md](./CHANGELOG.md) for the full breakdown.
 
 ## Project status
 
-This is a v0.2 release (current: v0.2.2). The orchestration logic is stable and used in real Petabit Scale workflows. v0.2 lands the first behavior-changing pass since v0.1: gated mode no longer prompts on pre-configured Codex automation by default (see CHANGELOG `[0.2.0]`). v0.2.1 patched a kickoff-pause bug at brainstorming's "User reviews written spec" gate; v0.2.2 closes four more silent-stop gates (finishing-branch, worktree-create, SDD escalation, blocker end-of-turn) and generalizes the operational rule to "Don't stop silently anywhere" (see CHANGELOG `[0.2.2]`). Expect the schema and flag surface to keep evolving; breaking changes are called out in the changelog and gated behind a `--legacy` flag where reasonable.
+This is the first stable public release (current: **v1.0.0**). The orchestration logic has been used in real Petabit Scale workflows since v0.1 and is stable. v1.0.0 consolidates retrospective generation under the `/superflow retro` verb (removing the previously-auto-firing `superflow-retro` skill), standardizes README terminology on "verbs," and lands a pre-release audit fix pass. The bare-topic shortcut, `--resume=<path>`, and all v0.3.0 phase verbs continue unchanged. The schema and flag surface continue to evolve under semver — additive changes and bug fixes land in v1.x; breaking changes (schema/flag/CLI) are called out in the changelog and gated behind a `--legacy` flag where reasonable.
 
 Issues and PRs welcome.
 

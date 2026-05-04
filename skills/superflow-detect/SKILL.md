@@ -35,7 +35,7 @@ Don't list more than 5 artifacts. If more exist, say "(plus N more — `/superfl
 ## What NOT to do
 
 - **Do not** invoke `/superflow` yourself. Only the user can.
-- **Do not** read or modify the legacy artifacts. Just `Glob` for their existence and stat for last-modified. The actual content reading happens during `/superflow import`.
+- **Do not** read or modify the legacy artifacts. Use `Glob` (always-available Claude Code tool) for their existence and stat for last-modified. The shell snippets in **Detection commands** below give richer matching (depth/exclude/ignore-dir semantics) where `fd` is installed; fall back to `Glob` when it isn't. The actual content reading happens during `/superflow import`.
 - **Do not** fire on every conversation in the repo — once per session is enough. If the user has already declined or run import this session, stay silent.
 - **Do not** fire if the user is mid-task on something unrelated. Wait for a natural break.
 

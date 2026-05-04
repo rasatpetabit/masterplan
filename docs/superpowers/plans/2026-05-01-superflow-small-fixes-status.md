@@ -3,7 +3,7 @@ slug: superflow-small-fixes
 status: complete
 spec: docs/superpowers/specs/2026-05-01-superflow-small-fixes-design.md
 plan: docs/superpowers/plans/2026-05-01-superflow-small-fixes.md
-worktree: /home/ras/dev/claude-superflow/.worktrees/superflow-small-fixes
+worktree: /home/you/dev/claude-superflow/.worktrees/superflow-small-fixes
 branch: feat/superflow-small-fixes
 started: 2026-05-01
 last_activity: 2026-05-01T15:45:00Z

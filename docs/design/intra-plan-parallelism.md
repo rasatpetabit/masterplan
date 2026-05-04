@@ -22,4 +22,4 @@ The per-task worktree subsystem is a meaningful undertaking and warrants its own
 
 ## When to revisit
 
-When real plans authored under `/superflow` show parallel-friendly task patterns and the latency cost becomes felt. Track this informally via retros (`superflow-retro` skill).
+When real plans authored under `/superflow` show parallel-friendly task patterns and the latency cost becomes felt. Track this informally via retros (`/superflow retro <slug>`).

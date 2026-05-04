@@ -1,5 +1,5 @@
 ---
-description: Brainstorm → plan → execute workflow. Verbs: new, brainstorm, plan, execute, import, doctor, status. Bare-topic shortcut still works.
+description: Brainstorm → plan → execute workflow. Verbs: new, brainstorm, plan, execute, import, doctor, status, retro. Bare-topic shortcut still works.
 ---
 
 # /superflow
@@ -43,13 +43,14 @@ Steps A, B0, D consult the cache instead of re-running these. **Invalidate** the
 
 **Never cache `git status --porcelain`.** Working-tree dirty state must always be live; CD-2 depends on accurate dirty detection. A stale value here could let the orchestrator overwrite user-owned uncommitted changes.
 
-### Subcommand routing (first token of `$ARGUMENTS`)
+### Verb routing (first token of `$ARGUMENTS`)
 
 | First token | Branch | `halt_mode` |
 |---|---|---|
 | _(empty)_ | **Step A** — list+pick across worktrees | `none` |
+| `new` (no topic) | Prompt for topic via `AskUserQuestion` (free-text Other), then **Step B** — full kickoff (B0→B1→B2→B3→C) | `none` |
 | `new <topic>` | **Step B** — full kickoff (B0→B1→B2→B3→C) | `none` |
-| `brainstorm` (no topic) | Prompt for topic, then Step B0+B1; halt at B1 close-out gate | `post-brainstorm` |
+| `brainstorm` (no topic) | Prompt for topic via `AskUserQuestion` (free-text Other), then Step B0+B1; halt at B1 close-out gate | `post-brainstorm` |
 | `brainstorm <topic>` | Step B0+B1; halt at B1 close-out gate | `post-brainstorm` |
 | `plan` (no args) | **Step P** — pick spec-without-plan; treat pick as `plan --from-spec=<picked>` | `post-plan` |
 | `plan <topic>` | Step B0+B1+B2+B3; halt at B3 close-out gate | `post-plan` |
@@ -59,6 +60,7 @@ Steps A, B0, D consult the cache instead of re-running these. **Invalidate** the
 | `import` (alone or with args) | **Step I** — legacy import | `none` |
 | `doctor` (alone or with `--fix`) | **Step D** — lint state | `none` |
 | `status` (alone or with `--plan=<slug>`) | **Step S** — situation report (read-only) | `none` |
+| `retro` (alone or with `<slug>`) | **Step R** — generate retrospective for a completed plan | `none` |
 | `--resume=<path>` or `--resume <path>` | **Step C** — alias for `execute <path>` | `none` |
 | anything else | treat as a topic, **Step B** — kickoff (back-compat catch-all) | `none` |
 
@@ -66,10 +68,10 @@ Steps A, B0, D consult the cache instead of re-running these. **Invalidate** the
 
 `halt_mode` is an internal orchestrator variable set in Step 0 from the verb match. Steps B1, B2, B3, and C consult it to choose between the existing gate behavior and a halt-aware variant.
 
-**Verb tokens are reserved.** Any topic literally named `new`, `brainstorm`, `plan`, or `execute` requires another word in front via the catch-all (e.g., `/superflow add brainstorm session timer`).
+**Verb tokens are reserved.** Any topic literally named `new`, `brainstorm`, `plan`, `execute`, `retro`, `import`, `doctor`, or `status` requires another word in front via the catch-all (e.g., `/superflow add brainstorm session timer`).
 
 **Argument-parse precedence (in Step 0, after config + git_state cache):**
-1. Match the first token against `{new, brainstorm, plan, execute, import, doctor, status}`. On match: set `halt_mode` per the table; consume the verb; pass remaining args to the matched step.
+1. Match the first token against `{new, brainstorm, plan, execute, retro, import, doctor, status}`. On match: set `halt_mode` per the table; consume the verb; pass remaining args to the matched step.
 2. If unmatched and the first arg starts with `--`: route to **Step A** (flag-only invocation).
 3. If unmatched and the first arg is a non-flag word: catch-all → **Step B** with the full arg string as the topic (existing behavior).
 
@@ -140,7 +142,7 @@ Dispatch substantive work to fresh subagents; consume only digests; lean on the 
 | Step I3 (source fetch) | parallel agents per candidate (Read / git diff / `gh issue view` / `gh pr view`) | Haiku — except branch reverse-engineering, which uses Sonnet | candidate metadata + source identifier | raw source content keyed by candidate id |
 | Step I3 (conversion) | parallel Sonnet agents, one per legacy candidate | Sonnet | source content + inference results + writing-plans format brief + target paths | new spec/plan paths + 1-paragraph summary |
 | Step C (plan-load eligibility) | one Haiku at Step C step 1 | Haiku | plan task list + plan annotations + Codex eligibility checklist | `{task_idx → {eligible, reason, annotated}}` cached for the run |
-| Step C (per-task implementation) | implementer subagents via `superpowers:subagent-driven-development` | Sonnet (default) | plan path + current task index + CD-1/2/3/6 brief + relevant spec excerpts | done/blocked + 1–3 lines of evidence + **`task_start_sha` (required)** + `tests_passed: bool` + `commands_run: [str]` (Step 4a consumes the latter two; see Task 2) |
+| Step C (per-task implementation) | implementer subagents via `superpowers:subagent-driven-development` | Sonnet (default) | plan path + current task index + CD-1/2/3/6 brief + relevant spec excerpts | done/blocked + 1–3 lines of evidence + **`task_start_sha` (required)** + `tests_passed: bool` + `commands_run: [str]` (Step 4a consumes the latter two) |
 | Step C 3a (codex execution) | `codex:codex-rescue` subagent in EXEC mode | Codex (out-of-process) | bounded brief: Scope/Allowed files/Goal/Acceptance/Verification/Return | diff + verification output |
 | Step C 4b (codex review of inline work) | `codex:codex-rescue` subagent in REVIEW mode | Codex (out-of-process) | bounded brief: task + acceptance + spec excerpt + diff range (`<task-start SHA>..HEAD`) + files in scope + verification; Scope=review-only; Constraints=CD-10 | severity-ordered findings (high/medium/low) grounded in file:line, OR `"no findings"` |
 | Completion-state inference | parallel Haiku agents per task chunk | Haiku | task description + workspace, no plan-wide context | classification (done/possibly_done/not_done) + evidence strings |
@@ -291,7 +293,7 @@ Invoke `superpowers:brainstorming` with the topic. **Brainstorming is always int
 2. **If spec missing:** brainstorming was aborted or failed. Surface `AskUserQuestion("Brainstorming did not complete (no spec at <path>). Re-invoke brainstorming with the same topic / Refine the topic and re-invoke / Abort kickoff")`.
 3. **If spec exists** (the normal case): consult `halt_mode`.
    - **`halt_mode == none`** (existing kickoff path, unchanged): under `--autonomy != full`, surface `AskUserQuestion("Spec written at <path>. Ready for writing-plans?", options=[Approve and run writing-plans (Recommended) / Open spec to review first then ping me / Request changes — describe what to change / Abort kickoff])`. Under `--autonomy=full`: auto-approve and proceed to Step B2 silently.
-   - **`halt_mode == post-brainstorm`** (new, fires when invoked via `/superflow brainstorm <topic>`): surface `AskUserQuestion("Spec written at <path>. What next?", options=["Done — close out this run (Recommended)", "Continue to plan now — run B2+B3 as if /superflow plan --from-spec=<path>", "Open spec to review before deciding — then ping me", "Re-run brainstorming to refine"])`.
+   - **`halt_mode == post-brainstorm`** (new, fires when invoked via `/superflow brainstorm <topic>`): surface `AskUserQuestion("Spec written at <path>. What next?", options=["Done — close out this run (Recommended)", "Continue to plan now — run B2+B3 as if /superflow plan --from-spec=<path> (the B0 worktree decision from earlier this session still holds; B0a is not re-run)", "Open spec to review before deciding — then ping me", "Re-run brainstorming to refine"])`.
      - "Done" → end the turn cleanly. No status file written, no plan written.
      - "Continue to plan now" → flip in-session `halt_mode` to `post-plan` and proceed to Step B2. The spec is reused.
      - "Open spec" → end the turn; user re-invokes whatever they want next.
@@ -301,7 +303,7 @@ Invoke `superpowers:brainstorming` with the topic. **Brainstorming is always int
 
 ### Step B2 — Plan
 
-**Dispatch guard.** If `halt_mode == post-brainstorm`, skip Step B2 and Step B3 entirely — the B1 close-out gate already ended the turn (or, if the user picked "Continue to plan now" there, flipped `halt_mode` to `post-plan` and we proceed normally below).
+**Dispatch guard.** If `halt_mode == post-brainstorm` *at this point*, skip Step B2 and Step B3 entirely — the B1 close-out gate already ended the turn. (B1's "Continue to plan now" option flips `halt_mode` to `post-plan` BEFORE control returns here, so the guard correctly does not fire on the flip case; B2+B3 run with their `post-plan` variants.)
 
 After Step B1's gate confirms approval, invoke `superpowers:writing-plans` against the spec. It will produce `docs/superpowers/plans/YYYY-MM-DD-<slug>.md`. Brief plan-writing with **CD-1 + CD-6**, plus:
 
@@ -346,7 +348,7 @@ Then flip `compact_loop_recommended: true` in the status file. Whether or not th
 
 - **`halt_mode == none`** (existing kickoff path, unchanged): if `--autonomy != full`, present a one-paragraph plan summary and the path to the plan file via `AskUserQuestion` with options "Start execution / Open plan to review / Cancel". Wait for approval. If `--autonomy=full`: skip approval. Proceed to **Step C** with the new status path.
 
-- **`halt_mode == post-plan`** (new, fires when invoked via `/superflow plan <topic>` or `/superflow plan --from-spec=<path>` or via Step P's pick): surface `AskUserQuestion("Plan written at <path>. Status file at <status-path>. What next?", options=["Done — resume later with /superflow execute <status-path> (Recommended)", "Start execution now — flip halt_mode to none and proceed to Step C", "Open plan to review before deciding", "Discard plan + status file (status file removed; spec kept)"])`.
+- **`halt_mode == post-plan`** (new, fires when invoked via `/superflow plan <topic>`, `/superflow plan --from-spec=<path>`, Step P's pick, or via B1's "Continue to plan now" flip from a `brainstorm` invocation): surface `AskUserQuestion("Plan written at <path>. Status file at <status-path>. What next?", options=["Done — resume later with /superflow execute <status-path> (Recommended)", "Start execution now — flip halt_mode to none and proceed to Step C", "Open plan to review before deciding", "Discard plan + status file (status file removed; spec kept)"])`.
   - "Done" → end the turn. Status file persists with `status: in-progress` and `current_task` set to the first task. The user resumes later via `/superflow execute <status-path>`.
   - "Start execution now" → flip in-session `halt_mode` to `none` and proceed to **Step C**.
   - "Open plan" → end the turn. User re-invokes `/superflow execute <status-path>` later.
@@ -363,7 +365,7 @@ Triggered by `/superflow plan` with no topic and no `--from-spec=`. Picks an exi
 1. Glob `<config.specs_path>/*-design.md` across all worktrees as one parallel Bash batch (read worktrees from `git_state.worktrees`).
 2. For each candidate spec, check whether a sibling plan exists at `<config.plans_path>/<same-slug>.md` (slug = filename minus `-design.md` suffix). Filter to specs **without** a plan.
 3. Sort the filtered list by mtime descending.
-4. **If ≥ 1 candidate:** present top 3 via `AskUserQuestion`. The 4th option is "Other — paste a path" (free-text). User picks → treat as `plan --from-spec=<picked>` and proceed to **plan --from-spec worktree handling** (Step B0a, below in Step B), then Step B2 + B3.
+4. **If ≥ 1 candidate:** present top 3 via `AskUserQuestion`. The 4th option is "Other — paste a path" (free-text). User picks → treat as `plan --from-spec=<picked>` and proceed to **plan --from-spec worktree handling** (Step B0a, above in Step B), then Step B2 + B3.
 5. **If zero candidates:** surface `AskUserQuestion("No specs without plans found across <N> worktrees. What next?", options=["Start a new feature — /superflow new <topic>", "Brainstorm-only — /superflow brainstorm <topic>", "Cancel"])`. The first two redirect into the corresponding verb's flow with a topic prompted next; "Cancel" ends the turn.
 
 `halt_mode` for this step's outputs is `post-plan` (already set in Step 0 when `plan` was matched). Step B3's close-out gate fires after the plan is written.
@@ -372,7 +374,7 @@ Triggered by `/superflow plan` with no topic and no `--from-spec=`. Picks an exi
 
 ## Step C — Execute
 
-**Dispatch guard.** If `halt_mode != none`, skip Step C entirely — the B1 or B3 close-out gate already ended the turn. The only paths into Step C are: (a) `halt_mode == none` from kickoff or `execute`/`--resume=`; (b) the user explicitly flipped `halt_mode` to `none` via the B1 "Continue to plan now → Start execution now" or B3 "Start execution now" gate options.
+**Dispatch guard.** If `halt_mode != none`, skip Step C entirely — the B1 or B3 close-out gate already ended the turn. The only paths into Step C are: (a) `halt_mode == none` from kickoff or `execute`/`--resume=`; (b) the user explicitly flipped `halt_mode` to `none` via B3's "Start execution now" gate option. B3's gate is reached directly from `/superflow plan` (and `plan --from-spec=`, Step P), or via `brainstorm` → B1's "Continue to plan now" → B2 → B3 (which still requires the user to pick "Start execution now" at B3 to enter Step C).
 
 1. **Batched re-read.** Issue these as one parallel tool batch (not sequential):
    - Read the status file.
@@ -433,14 +435,13 @@ Triggered by `/superflow plan` with no topic and no `--from-spec=`. Picks an exi
      options=[
        "Provide context and re-dispatch — I'll type the missing context, you re-dispatch the implementer with it",
        "Re-dispatch with a stronger model (Opus instead of Sonnet) — escalate model tier",
-       "Break this task into smaller pieces — pause so I can edit the plan to decompose, then continue",
        "Skip this task and continue with the next one — leave a `## Blockers` entry but keep status: in-progress",
        "Set status: blocked and end the turn — I'll resume manually later"
      ]
    )
    ```
 
-   The first four options KEEP the plan moving (status stays `in-progress`); only the fifth option matches the legacy "end-turn-on-blocker" behavior. Under `--autonomy=full` the orchestrator may pre-select option 5 silently after surfacing the gate ONCE per blocker (the gate fires, user gets ~10 seconds to override, then default fires) — but never under `loose` or `gated`, where the user must explicitly pick an option.
+   The first three options KEEP the plan moving (status stays `in-progress`); only the fourth option matches the legacy "end-turn-on-blocker" behavior. Under `--autonomy=full` the orchestrator may pre-select option 4 silently after surfacing the gate ONCE per blocker (the gate fires, user gets ~10 seconds to override, then default fires) — but never under `loose` or `gated`, where the user must explicitly pick an option. (Option count is capped at 4 per CD-9.)
 
    Activity log records which option was picked (e.g., `task X blocked, user chose: re-dispatch with Opus`).
 
@@ -451,12 +452,12 @@ Triggered by `/superflow plan` with no topic and no `--from-spec=`. Picks an exi
     - **`manual`** — present `eligibility_cache[task_idx]` via `AskUserQuestion(Delegate to Codex / Run inline / Skip)` before each task. User decides.
 
     **Eligibility checklist** (applied once at plan-load by the Step 1 cache builder, then reused per task — listed here for reference and so the cache builder's brief is reproducible):
-    - Task touches ≤ 3 files based on its description, OR plan annotates `codex: ok`.
+    - Task touches ≤ 3 files based on its description, OR plan annotates `**Codex:** ok`.
     - Task description is unambiguous (no "consider", "decide", "choose between", "design", "explore" verbs).
     - Verification commands are known (plan task includes a test or verify step).
     - Task does NOT involve: secrets, OAuth/browser auth, production deploys, destructive ops, schema migrations, broad design judgment, or modifying files outside the stated scope.
     - Task does NOT reference conversational context that isn't captured in the spec or plan.
-    - Plan does NOT annotate `codex: no` on this task.
+    - Plan does NOT annotate `**Codex:** no` on this task.
 
     **Plan annotations** (override the heuristic when present, recorded in cache as `annotated: "ok"|"no"`):
 
@@ -552,7 +553,7 @@ Triggered by `/superflow plan` with no topic and no `--from-spec=`. Picks an exi
       Return: severity-ordered findings (high/medium/low) grounded in file:line, OR the literal string "no findings" if clean.
       ```
 
-      Why diff-by-SHA: Codex agent runs in the worktree with full git access; passing a SHA range avoids inlining 5K–10K tokens of diff into the brief on multi-file tasks. If the implementer didn't capture a task-start SHA (zero-commit task), inline the diff via the existing fallback in step 1.
+      Why diff-by-SHA: Codex agent runs in the worktree with full git access; passing a SHA range avoids inlining 5K–10K tokens of diff into the brief on multi-file tasks. (Zero-commit tasks are handled in step 1, which skips 4b entirely.)
    3. Digest the response per output-digestion rules: parse into severity buckets, drop verbose prose. Don't pull the full review text into orchestrator context.
    4. **Decision matrix by autonomy** (retry caps come from `config.codex.review_max_fix_iterations`, default 2):
       - **`gated`** — auto-accept silently when severity is `clean` or strictly below `config.codex.review_prompt_at` (default `"medium"`). Activity log records the auto-accept; `## Notes` is not polluted (clean and low-only reviews don't need notes per Step 4b step 5). When severity is at or above the threshold, present findings via `AskUserQuestion` → `Accept / Fix and re-review (rerun inline with findings as briefing; capped at config.codex.review_max_fix_iterations) / Accept anyway / Stop`. Users who want every review prompted set `codex.review_prompt_at: "low"` in `.superflow.yaml`.
@@ -570,7 +571,7 @@ Triggered by `/superflow plan` with no topic and no `--from-spec=`. Picks an exi
 
    **4d — Status file update.** Update the status file: bump `last_activity` to the current ISO timestamp, set `current_task` to the next task name, set `next_action` to the next task's first step, append a one-line entry to `## Activity log` that includes 1–3 lines of relevant verification output (per **CD-8**) and the routing+review tags. For non-trivial decisions made during the task, also append to `## Notes` per **CD-7**.
 
-   **Activity log rotation.** Before appending the new entry, count entries under `## Activity log`. If count > 100, move all entries except the most recent 50 to `<slug>-status-archive.md` (create if missing; append in chronological order so the archive itself reads oldest-to-newest). Insert a one-line marker at the top of the active log: `*(N entries archived to <slug>-status-archive.md on YYYY-MM-DD)*`. Then append the new entry. Resume behavior is unchanged — Step C step 1 reads only the active log; the archive is consulted on demand by `superflow-retro` and by `/superflow doctor`.
+   **Activity log rotation.** Before appending the new entry, count entries under `## Activity log`. If count > 100, move all entries except the most recent 50 to `<slug>-status-archive.md` (create if missing; append in chronological order so the archive itself reads oldest-to-newest). Insert a one-line marker at the top of the active log: `*(N entries archived to <slug>-status-archive.md on YYYY-MM-DD)*`. Then append the new entry. Resume behavior is unchanged — Step C step 1 reads only the active log; the archive is consulted on demand by `/superflow retro` (Step R2).
 
    The invoked skill already commits per task — verify the commit landed; if not, commit the status file update (and any rotation-created archive file) separately.
 5. **Cross-session loop scheduling** (only if `--no-loop` is NOT set AND `ScheduleWakeup` is available — i.e. the session was launched via `/loop /superflow ...`):
@@ -611,7 +612,7 @@ Triggered by `/superflow import [args]`. Brings legacy planning artifacts under 
 
 ### Step I0 — Direct vs. discovery
 
-If `$ARGUMENTS` includes any of `--pr=<num>`, `--issue=<num>`, `--file=<path>`, `--branch=<name>`, skip discovery and jump to **Step I3** with that single candidate. Otherwise run **Step I1**.
+If `$ARGUMENTS` includes any of `--pr=<num>`, `--issue=<num>`, `--file=<path>`, `--branch=<name>`, skip discovery and jump to **Step I3** with that single candidate (Step I2 rank+pick is also skipped — the candidate is already determined). Otherwise run **Step I1**.
 
 ### Step I1 — Discover (parallel)
 
@@ -661,7 +662,7 @@ For each candidate that has a discernible task list, run completion-state infere
 
 Dispatch one Sonnet conversion subagent per candidate in a single Agent batch. Each agent owns unique target paths from I3.1 and writes only to its own slug's spec/plan/status — no contention. Brief per agent:
 
-> Rewrite this legacy planning artifact into superpowers spec format (`<spec-path>`) and plan format (`<plan-path>`) following the writing-plans skill conventions. Drop tasks classified `done`. Move `possibly_done` tasks into a `## Verify before continuing` checklist at the top of the plan, each with its evidence. Keep `not_done` tasks as the active task list, reformatted into bite-sized steps (writing-plans style). Preserve constraints, decisions, and stakeholder context in the spec's Background section. Discard pure status narration. Do not invent tasks the source didn't mention. Then write the status file at `<status-path>` populating **every** frontmatter field per the Step B3 field list (`slug`, `status: in-progress`, `spec`, `plan`, `worktree`, `branch`, `started` today, `last_activity` now, `current_task` = first `not_done` task, `next_action` = its first step, `autonomy`, `loop_enabled`, `codex_routing`, `codex_review` from current config + flags), and seed `## Notes` with: link back to source (path/URL/branch/issue#), inference evidence summary, list of `possibly_done` items the user should verify before execution.
+> Rewrite this legacy planning artifact into superpowers spec format (`<spec-path>`) and plan format (`<plan-path>`) following the writing-plans skill conventions. Drop tasks classified `done`. Move `possibly_done` tasks into a `## Verify before continuing` checklist at the top of the plan, each with its evidence. Keep `not_done` tasks as the active task list, reformatted into bite-sized steps (writing-plans style). Preserve constraints, decisions, and stakeholder context in the spec's Background section. Discard pure status narration. Do not invent tasks the source didn't mention. Then write the status file at `<status-path>` populating **every** frontmatter field per the Step B3 field list (`slug`, `status: in-progress`, `spec`, `plan`, `worktree`, `branch`, `started` today, `last_activity` now, `current_task` = first `not_done` task, `next_action` = its first step, `autonomy`, `loop_enabled`, `codex_routing`, `codex_review`, `compact_loop_recommended: false` from current config + flags), and seed `## Notes` with: link back to source (path/URL/branch/issue#), inference evidence summary, list of `possibly_done` items the user should verify before execution.
 
 Bounded scope per agent: writes only to its own `(spec_path, plan_path, status_path)`; do not touch other candidates' paths or the legacy source.
 
@@ -741,13 +742,118 @@ When `--plan=<slug>` is passed, skip S2's grouped synthesis and instead render a
 
 Read-only throughout. Cite each excerpt with `<file>:<line>` so the user can jump to source.
 
+---
+
+## Step R — Retro
+
+Triggered by `/superflow retro [<slug>]`. Generates a retrospective doc for a completed plan and writes it to `docs/superpowers/retros/YYYY-MM-DD-<slug>-retro.md`.
+
+This Step replaces the legacy `superflow-retro` skill (removed in v0.4.0). The verb is the only entry point; there is no auto-fire on plan completion.
+
+### Step R0 — Resolve target slug
+
+Parse the first remaining arg after `retro`:
+
+- **Arg present** — treat as `<slug>` (or substring match). Search across `git_state.worktrees` for status files at `<worktree>/<config.plans_path>/*<slug>*-status.md`:
+  - 0 matches → emit `no completed plan found matching '<slug>'. Try /superflow status to see slugs.` and exit.
+  - 1 match → use it.
+  - 2+ matches → `AskUserQuestion` with one option per candidate (label = slug, description = worktree + completion date).
+- **No arg** — scan all worktrees; collect status files where `status: complete` AND no sibling retro exists at `docs/superpowers/retros/*-<slug>-retro.md`:
+  - 0 candidates → emit `no completed plans without retros.` and exit.
+  - 1 candidate → use it (skip the picker; one-shot).
+  - 2+ candidates → `AskUserQuestion` with one option per candidate (label = slug, description = completion date + worktree).
+
+Apply CD-9 throughout: concrete options, recommended option (most-recently completed) first.
+
+### Step R1 — Pre-write guard
+
+Before any reads, glob `docs/superpowers/retros/*-<slug>-retro.md` (the file is date-prefixed; a fixed-path lookup will miss earlier-dated retros for the same slug).
+
+If a retro already exists for this slug, surface `AskUserQuestion(Open existing retro / Generate new with -v2 suffix / Abort)`. Default option: Abort.
+
+### Step R2 — Gather (parallel where possible)
+
+Dispatch a single Haiku agent (or run inline if `git_state` already cached the worktree) with this bounded brief:
+
+- **Goal:** Collect retro source material for slug `<slug>` in worktree `<wt>`.
+- **Inputs:** status path, plan path, spec path (from `status.spec`), branch (from `status.branch`), trunk (from `config.trunk_branches[0]`).
+- **Reads (one parallel batch):**
+  1. `<wt>/<config.plans_path>/<slug>-status.md` — frontmatter, full activity log (including any `<slug>-status-archive.md` if present), blockers, notes.
+  2. `<wt>/<config.plans_path>/<slug>.md` — task list, intended order.
+  3. `<wt>/<status.spec>` — original goals, scope, design decisions.
+  4. `git -C <wt> log --reverse --format='%h %ci %s' <trunk>..<branch>` — commits since plan started.
+  5. `gh pr list --search "head:<branch>" --state=all --json=number,title,url,mergedAt,additions,deletions` if `gh` is available; degrade gracefully if not.
+- **Return shape:** structured digest `{frontmatter, activity_entries, blockers, notes, task_list, spec_excerpt, commits, pr?}`.
+
+### Step R3 — Synthesize + write
+
+Write `docs/superpowers/retros/YYYY-MM-DD-<slug>-retro.md` (today's date) with this structure:
+
+```markdown
+# <Feature Name> — Retrospective
+
+**Slug:** <slug>
+**Started:** <status.started>
+**Completed:** <today>
+**Branch:** <status.branch>
+**PR:** <pr url if available>
+
+## Outcomes
+
+What shipped, in 2–3 bullet points. Tie back to the spec's stated goal.
+
+## Timeline
+
+Day-by-day or week-by-week from the activity log, summarized. One bullet per ~3 task completions.
+
+## What went well
+
+3–5 bullets. Cite commit SHAs, task names, and the routing tag (`[codex]` vs `[inline]`).
+
+## What blocked
+
+For each `## Blockers` entry: what blocked, what unblocked it, time lost. Pull CD-4 ladder citations from the activity log to show how the blocker was attacked before escalation.
+
+## Deviations from spec
+
+Tasks that ended up scoped differently from the spec. Cite spec section vs final commit. Was the change well-motivated? Did it get noted in `## Notes` at the time?
+
+## Codex routing observations
+
+Tally `[codex]` vs `[inline]` from the activity log. If routing was `auto`, did the eligibility heuristic make good calls? Any false positives (delegated → had to rerun inline) or false negatives? Feeds tuning of `config.codex.max_files_for_auto`.
+
+## Follow-ups
+
+For each follow-up identified during the run (TODOs in code, flags to remove later, monitoring to verify a launch):
+
+- [ ] **<action>** — <when> — `/schedule` candidate? (yes/no)
+
+## Lessons / pattern notes
+
+Specific, not platitudes. Anything worth promoting to project memory or to a CLAUDE.md update.
+```
+
+Apply **CD-3** (cite SHAs, file paths, concrete numbers — don't write vague retros) and **CD-10** (ground problems in `path:line` so they're actionable).
+
+### Step R4 — Offer follow-ups
+
+After the retro file is written:
+
+1. Show the user the retro path + a one-paragraph summary.
+2. For each follow-up marked as a `/schedule` candidate, surface ONE `AskUserQuestion` per candidate (don't batch a wall): "Want me to /schedule a one-time agent for `<action>` in `<N weeks>`?" with options `Yes / Skip / Abort follow-ups`.
+3. If the retro surfaced lessons that fit project memory, suggest saving them — don't save automatically (CD-7's status-file rule applies; project memory is an extra opt-in).
+
+---
+
+## Step D — Doctor
+
 Triggered by `/superflow doctor [--fix]`. Lints all superflow state across all worktrees of the current repo.
 
 ### Scope
 
 Read worktrees from `git_state.worktrees` (Step 0 cache). For each worktree, scan `<worktree>/<config.specs_path>/` and `<worktree>/<config.plans_path>/`.
 
-**Parallelization.** When worktrees ≥ 2, dispatch one Haiku agent per worktree in a single Agent batch (each agent runs all 10 checks for its worktree and returns findings as `[{check_id, severity, file, message}]` JSON). With 1 worktree, run inline — agent dispatch latency isn't worth it. The orchestrator merges results and applies the report ordering below.
+**Parallelization.** When worktrees ≥ 2, dispatch one Haiku agent per worktree in a single Agent batch (each agent runs all 14 checks for its worktree and returns findings as `[{check_id, severity, file, message}]` JSON). With 1 worktree, run inline — agent dispatch latency isn't worth it. The orchestrator merges results and applies the report ordering below.
 
 ### Checks
 
@@ -822,7 +928,7 @@ This file is the single source of truth for resumption. A future agent picking u
 
 ## Completion-state inference
 
-Used by **Step I3** (and optionally **Step C** on resume to validate the plan against current reality). For a list of plan tasks, classify each as `done`, `possibly_done`, or `not_done` with cited evidence.
+Used by **Step I3**. For a list of plan tasks, classify each as `done`, `possibly_done`, or `not_done` with cited evidence.
 
 ### Process
 
@@ -953,7 +1059,7 @@ These are command-specific rules covering cross-cutting policy not stated inline
 - **Inference is conservative by design.** When in doubt, classify `possibly_done`, not `done`. The cost of re-verifying is small; the cost of skipping real work is large.
 - **Don't stop silently anywhere — always close with AskUserQuestion if input might be needed.** ANY Step that ends a turn waiting on user input MUST close with `AskUserQuestion` offering 2-4 concrete options, never with free-text prose ("Wait for the user's response", "Which approach?", "Type 'X' to confirm"). Sessions can compact between turns and lose upstream-skill bodies; a free-text question becomes a dead end. This rule applies recursively when the orchestrator invokes upstream skills that have their own pre-existing free-text prompts — `superpowers:finishing-a-development-branch` ("1./2./3./4. Which option?"), `superpowers:using-git-worktrees` ("1./2. Which directory?"), `superpowers:writing-plans` ("Subagent-Driven / Inline Execution. Which approach?"), `superpowers:brainstorming` ("Wait for the user's response" at User Reviews Spec). For each, the orchestrator MUST present `AskUserQuestion` FIRST and brief the skill with the chosen option pre-decided so the skill's free-text prompt is bypassed. Canonical patterns: Step B0 step 4 (worktree directory), Step B1+B2 re-engagement gates (spec/plan review), Step C step 3's blocker re-engagement gate (CD-4-exhausted gate; SDD BLOCKED/NEEDS_CONTEXT escalation), Step C step 6 (finishing-branch wrap).
 - **External writes are gated.** Posting comments to GitHub issues/PRs, sending Slack messages, or closing issues during import always passes through `AskUserQuestion` first — even under `--autonomy=full`. Blast-radius actions.
-- **Codex routing is locked at kickoff, switchable on resume.** `codex_routing` and `codex_review` both land in the status file at Step B3 (or at first Step C invocation for imported plans). Mid-run flips happen by re-invoking `/superflow --resume=<path> --codex=<mode> --codex-review=<on|off>`. Per-task overrides come from plan annotations (`codex: ok` / `codex: no`), not inline edits.
+- **Codex routing is locked at kickoff, switchable on resume.** `codex_routing` and `codex_review` both land in the status file at Step B3 (or at first Step C invocation for imported plans). Mid-run flips happen by re-invoking `/superflow --resume=<path> --codex=<mode> --codex-review=<on|off>`. Per-task overrides come from plan annotations (`**Codex:** ok` / `**Codex:** no`), not inline edits.
 - **Never delegate non-eligible tasks under `auto`.** The eligibility checklist is conservative on purpose: a wrong delegation costs more than running inline. When uncertain, run inline. Plan annotations are the escape hatch when you need to override.
 - **Codex review is asymmetric — never self-review.** If a task was executed by Codex and `codex_review` is on, skip the review step for that task. Codex reviewing its own output adds no signal.
 - **Implementer must return `task_start_sha` (required).** Step C step 2's brief to the implementer subagent (whether dispatched directly or transitively via `superpowers:subagent-driven-development`) must include: "Capture `git rev-parse HEAD` BEFORE any work; return it as `task_start_sha` in your final report. This is required, not optional — the orchestrator's Step 4b (Codex review) and Step 4c (worktree integrity) both depend on it." If the implementer omits it, Step 4b blocks (see Step 4b process step 1).

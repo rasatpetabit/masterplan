@@ -47,10 +47,11 @@ When `$CLAUDE_SESSION_ID` isn't exposed by the harness AND the most-recent-jsonl
 
 ```bash
 jq -s '
-  [.[] | select(.turn_kind=="stop")]
-  | [foreach .[] as $r (null; $r; if . == null then null
-      else {ts: $r.ts, growth: ($r.transcript_bytes - .transcript_bytes)} end)]
-  | map(select(. != null and .growth >= 0))
+  [.[] | select(.turn_kind=="stop")] as $entries
+  | [range(1; $entries | length) as $i
+     | {ts: $entries[$i].ts,
+        growth: ($entries[$i].transcript_bytes - $entries[$i-1].transcript_bytes)}
+     | select(.growth >= 0)]
 ' <plan>-telemetry.jsonl
 ```
 

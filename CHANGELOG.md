@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] — 2026-05-03
+
+**First stable public release.** Consolidates retrospective generation into the `/superflow retro` verb (replacing the previously-auto-firing `superflow-retro` skill), standardizes terminology on "verbs" instead of mixing "subcommands" and "invocation forms," and applies a pre-release audit fix pass that closed 10 blockers and 13 polish items found by three parallel fresh-eyes Explore agents auditing the orchestrator, telemetry hook, remaining skill, and human-facing docs.
+
+### Added
+- **`/superflow retro [<slug>]` verb.** Generates a retrospective doc for a completed plan and writes it to `docs/superpowers/retros/YYYY-MM-DD-<slug>-retro.md` with outcomes, blockers, deviations, follow-ups, and Codex routing observations. With no slug, picks from completed plans that don't yet have a retro; with one candidate, runs without a picker. New `Step R` section in `commands/superflow.md` (R0 resolve target → R1 pre-write guard → R2 gather → R3 synthesize + write → R4 offer follow-ups). Pre-write guard globs `*-<slug>-retro.md` so re-runs surface `Open / Generate v2 / Abort` instead of silently duplicating.
+- **`new` (no topic) verb routing row.** `/superflow new` with no topic now prompts for a topic via `AskUserQuestion` before falling through to Step B, mirroring the established `brainstorm` (no topic) handling. Previously bare `new` silently passed empty args to brainstorming.
+
+### Removed
+- **`superflow-retro` skill removed.** Functionality consolidated into the `/superflow retro` verb. The skill's auto-fire-on-plan-completion behavior is gone — retro generation is now explicit. Users who relied on the auto-suggestion can run `/superflow retro` after a plan completes (it picks the most recent completed plan without a retro). The skill deletion drops one auto-trigger surface from the install footprint; `superflow-detect` (parallel-shape skill that suggests `/superflow import`) is retained.
+
+### Changed
+- **README terminology standardized on "verbs."** `## Subcommand reference` → `## Verb reference`. "Other subcommands" header in "What you get" → "Operation verbs" (paired with the existing "Phase verbs"). `### Invocation forms (back-compat detail)` → `### Aliases and shortcuts` (back-compat framing dropped — the bare-topic shortcut and `--resume=<path>` are documented aliases, not legacy forms). Slash command's `### Subcommand routing` → `### Verb routing`. CHANGELOG continues to use whatever term was historically there for prior entries.
+- **Verb reference table now uses "Effect" column instead of "Phases."** The previous "Phases" column was inaccurate for operation verbs (import/doctor/status/retro aren't pipeline phases). Each row now has a one-line effect description rather than `(unchanged)` placeholders.
+- **Reserved-verb list expanded.** Step 0's "Verb tokens are reserved" warning previously listed only the four phase verbs; now lists all eight (new, brainstorm, plan, execute, retro, import, doctor, status) — matches what the routing table actually consumes.
+- **README install (Option A) rewritten.** Previous text was gated on a future condition (`# Once Claude Code's plugin install supports github.com URLs:`). Replaced with the current `/plugin marketplace add rasatpetabit/claude-superflow` + `/plugin install` flow, with the interactive `/plugin` Discover tab documented as a syntax-drift fallback.
+- **CHANGELOG `[0.3.0]` had a non-standard `### Unchanged` subsection.** Renamed to `### Notes` (Keep-a-Changelog defines Added/Changed/Deprecated/Removed/Fixed/Security as the canonical six).
+
+### Fixed
+- **Doctor section was missing its `## Step D` header.** The section started directly with `### Scope` after Step S4. Restored the `## Step D — Doctor` heading.
+- **Doctor parallelization brief told each Haiku worker to run "all 10 checks"** but the doctor checks table has 14 entries (checks 11–14 added in v0.2.0). Workers were silently skipping orphan archive, telemetry growth, orphan telemetry, and orphan eligibility cache. Corrected to "all 14 checks."
+- **Step I3.4's status-file conversion brief omitted `compact_loop_recommended`** from its required frontmatter enumeration. Doctor check #9 requires the field; every imported plan would have failed schema validation immediately. Field added to the brief.
+- **Step 4b's zero-commit handling contradicted itself.** Step 1 said "skip 4b for zero-commit tasks"; step 2's rationale paragraph said "inline the diff via the existing fallback in step 1" (no such fallback existed). The stale fallback claim was removed.
+- **Step C dispatch guard misstated B1's "Continue to plan now" path.** The guard described a non-existent composite option `"Continue to plan now → Start execution now"` blending B1 (which flips `halt_mode` to `post-plan`) with B3 (which flips it to `none`). Rewrote to clarify the actual flow: B1's flip falls through B2 to B3, where the user explicitly picks "Start execution now" to enter Step C. B3's `post-plan` close-out gate description and B2's dispatch guard prose were updated to match.
+- **Blocker re-engagement gate had 5 options, violating CD-9's 2–4 cap.** Dropped option 3 ("Break this task into smaller pieces — pause so I can edit the plan to decompose, then continue") since it overlapped semantically with option 1 ("Provide context and re-dispatch"). Option 5 (the legacy `status: blocked` end-turn path) is preserved — resume-from-blocker depends on it being the only path to the legacy blocked state.
+- **Dispatch model table cell referenced a nonexistent "Task 2."** Stale draft pointer; removed.
+- **Codex annotation syntax was inconsistent across the orchestrator.** Eligibility checklist (lines ~455, 460) and the operational-rule mention (line ~1062) used lowercase `codex: ok|no`; the canonical syntax block (lines ~473–484) and the eligibility-cache builder used `**Codex:** ok|no` (bold, capital). Plan authors had no way to know which form the parser expected. Standardized on `**Codex:** ok|no` everywhere.
+- **README verb-table cell** pointed readers to "see invocation forms below" — that section was renamed to `### Aliases and shortcuts` in v0.4.0. Dangling anchor; updated.
+- **`docs/design/telemetry-signals.md`'s "Tokens-per-turn estimate"** `jq foreach` query was broken: the UPDATE expression `$r` overwrote the accumulator each iteration, so `growth = $r.transcript_bytes - $r.transcript_bytes = 0` for every record. Rewrote using `range`-based indexed access; verified against a 3-record fixture that growth values are now real (non-zero where expected).
+- **`hooks/superflow-telemetry.sh` used GNU-only `find -quit` and `find -printf`** — both silently break on macOS BSD `find`. The most-used transcript-resolution fallback returned no output on macOS. Rewrote with portable `head -n1` and a `stat -c '%Y' || stat -f '%m'` dual form. Verified end-to-end on Linux; the macOS path is portable-by-construction but not smoke-tested (call for issues added to the README).
+- **`hooks/superflow-telemetry.sh` had no `jq` presence check** despite declaring jq as Required in the header. Without jq, the hook silently wrote nothing forever. Added explicit `command -v jq` guard at startup that bails silently if jq is absent.
+- **`hooks/superflow-telemetry.sh` wakeup-count cutoff** could become empty in stripped or musl-libc environments where neither GNU `date -d` nor BSD `date -v` works. Awk's `ts > ""` is true for every non-empty timestamp, so `wakeup_count_24h` would over-count every wakeup ever recorded. Added a sentinel cutoff (`9999-12-31T23:59:59Z`) that produces zero matches when both date forms fail — safe degraded behavior beats silent over-counting.
+
+### Polish
+- **Step P note** said "(Step B0a, below in Step B)"; B0a is *above* Step P. Direction corrected.
+- **Completion-state inference header** claimed it was "(and optionally Step C on resume to validate the plan against current reality)"; no Step C site actually invokes it. Forward intention that was never wired up; claim removed.
+- **B1 "Continue to plan now" option** didn't note that B0a's worktree check is skipped (already settled by the earlier B0 run). Parenthetical added.
+- **Step I0 direct-import** ("skip discovery and jump to Step I3") didn't note that Step I2 (rank+pick) is also skipped — the candidate is already determined. Added.
+- **Activity log archive description** overstated `/superflow doctor`'s involvement — doctor only flags orphan archives via check #11, doesn't read content. Removed the misleading "and by `/superflow doctor`" clause.
+- **Telemetry hook had a dead `out_file` assignment** (line 80 was overwritten by line 82) with a comment that described line 82's behavior, not line 80's. Removed the dead line and the orphan comment.
+- **`superflow-detect` skill body** described two detection execution paths (Claude Code `Glob` tool vs shell `fd` snippets) as a single mechanism. Reframed as two layers: Glob is the always-available skill-tool path; the `fd` snippets in **Detection commands** give richer matching where `fd` is installed.
+- **Historical status-file example** at `docs/superpowers/plans/2026-05-01-superflow-small-fixes-status.md` had a real `/home/ras/...` worktree path. Anonymized to `/home/you/...` to match the README's status-file example convention.
+- **README hook section** softened to make the Linux-only smoke-test gap explicit: portable code paths are documented, but the macOS path hasn't been verified — readers are pointed at GitHub issues if telemetry doesn't land.
+
+### Migration notes
+- If you installed via Option B (manual copy) and copied `skills/superflow-retro/` into `~/.claude/skills/`, you can safely `rm -rf ~/.claude/skills/superflow-retro/`. The skill is no longer shipped or referenced.
+- If you installed as a plugin (Option A), pulling v1.0.0 removes the skill automatically.
+- No status-file or config schema changes. Existing plans, status files, and `.superflow.yaml` files work unchanged from v0.4.0.
+
 ## [0.3.0] — 2026-05-02
 
 ### Added
@@ -15,8 +64,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Step P — plan-only no-args picker. `/superflow plan` with no topic and no `--from-spec=` lists existing specs that don't yet have a plan and lets the user pick one.
 - `### Verbs` subsection at the top of `## Subcommand reference` in the README.
 
-### Unchanged
-- Bare-topic shortcut (`/superflow refactor auth middleware`) keeps working — same behavior as `/superflow new refactor auth middleware`. No deprecation notice.
+### Notes
+- Bare-topic shortcut (`/superflow refactor auth middleware`) keeps working unchanged — same behavior as `/superflow new refactor auth middleware`. No deprecation notice.
 - `--resume=<status-path>` keeps working as an alias for `/superflow execute <status-path>`.
 - Existing verbs `import`, `doctor`, `status` and their flags are unchanged.
 
