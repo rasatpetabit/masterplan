@@ -346,6 +346,7 @@ The autonomy and codex flags are designed to compose. Common pairs:
 | `/masterplan <topic> --codex=manual --codex-review=on` | User gets asked per task whether to delegate execution to Codex. Tasks that stay inline are reviewed by Codex afterward. |
 | `/masterplan <topic> --codex=off` | Claude does everything; no Codex involvement. Review is automatically disabled too (a routing-off plan never invokes Codex, even for review). |
 | `/masterplan <topic> --autonomy=full --codex-review=on` | Maximum autonomy with adversarial review as the safety rail — high-severity findings trigger one auto-fix retry, then block. |
+| `/masterplan <topic> --no-parallelism` | *(v2.0.0+)* Force serial execution of all tasks regardless of `**parallel-group:**` annotations. Useful for debugging wave-dispatch issues, or when running on a system where parallel `Agent` dispatch is rate-limited. Persisted to status file as `parallelism: off`. |
 
 CLI flags always override config for the run, and the resolved values land in the status file so resumes are deterministic.
 
@@ -448,9 +449,11 @@ Tasks in `/masterplan`-generated plans can carry an optional `**Codex:**` annota
 |---|---|
 | `**Codex:** ok` | `eligible: true`, `annotated: "ok"` — delegate even if the heuristic would reject |
 | `**Codex:** no` | `eligible: false`, `annotated: "no"` — never delegate |
-| (no annotation) | fall through to the heuristic checklist; `annotated: null` |
+| `**parallel-group:** <name>` *(v2.0.0+)* | Tasks sharing the same `<name>` dispatch as one parallel wave in Step C step 2. Read-only verification, inference, lint, type-check, doc-generation only. Mutually exclusive with `**Codex:** ok`. Requires complete `**Files:**` block (becomes exhaustive scope under wave). See [`docs/design/intra-plan-parallelism.md`](./docs/design/intra-plan-parallelism.md) for the failure-mode catalog and Slice β/γ deferral. |
+| `**non-committing: true**` *(v2.0.0+)* | Optional override for `**parallel-group:**` eligibility rule 3 — declares a task non-committing even if its `**Files:**` block lists tracked paths. Use when a task writes to a tracked path but doesn't intend to commit (rare). |
+| (no annotation) | fall through to the heuristic checklist; `annotated: null`; not parallel-eligible |
 
-Plans authored via `/masterplan`'s Step B2 get this guidance baked into the `writing-plans` brief: the planner adds `**Codex:** ok` for obviously well-bounded tasks (≤ 3 files, unambiguous, known verification) and `**Codex:** no` for tasks that require broader context. Plans without annotations behave exactly as before — annotations are an aid, never required.
+Plans authored via `/masterplan`'s Step B2 get this guidance baked into the `writing-plans` brief: the planner adds `**Codex:** ok` for obviously well-bounded tasks (≤ 3 files, unambiguous, known verification), `**Codex:** no` for tasks that require broader context, and `**parallel-group:**` for mutually-independent verification/inference/lint/type-check/doc-generation tasks (v2.0.0+). Plans without annotations behave exactly as before — annotations are an aid, never required.
 
 ## Status file (the source of truth)
 
@@ -521,20 +524,23 @@ Most teams will want a `.masterplan.yaml` at the repo root that encodes their co
 
 The plugin ships with sensible defaults; the YAML is for when you outgrow them.
 
-## Path to v1.0.0
+## Path to v2.0.0
 
-The journey from initial release to first stable public release:
+The journey from initial release to v2.0.0:
 
-- **v0.2.0 — speed + context use.** Increased parallelism (Step A frontmatter parsing, Step B0 git surveys, Step C step 1 re-reads, Step C 4a verification commands, Step I3 import waves, Step D doctor checks all dispatch in parallel where work is independent) plus per-invocation caches (`git_state`, `eligibility_cache`) to avoid redundant dispatches. Tighter orchestrator prompt (CD-rule restatements collapsed, design notes relocated to `docs/design/`), Codex review brief now passes a `<task-start SHA>..HEAD` range instead of inlining diffs, and activity logs rotate to a sibling archive past 100 entries.
-- **v0.2.1 + v0.2.2 — silent-stop gates.** Five upstream-skill prompts that could stall `/masterplan` mid-flow are now pre-empted with `AskUserQuestion`: brainstorming's "User reviews written spec," writing-plans' "Which approach?," `finishing-a-development-branch`'s 4-option close-out, `using-git-worktrees`' worktree-base picker, and SDD `BLOCKED`/`NEEDS_CONTEXT` escalation. Operational rule generalized from "Don't stop silently mid-kickoff" to "Don't stop silently anywhere."
-- **v0.3.0 — explicit phase verbs.** `new`, `brainstorm`, `plan`, and `execute` are now first-token verbs in `/masterplan`, so the brainstorm-only and plan-only phases are addressable instead of being all-or-nothing. `plan --from-spec=<path>` plans against an existing spec; `plan` with no args picks from specs that don't have a plan yet. The bare-topic shortcut (`/masterplan refactor auth middleware`) and `--resume=<path>` keep working unchanged.
-- **v1.0.0 — first stable public release.** Consolidates retrospective generation into the `/masterplan retro` verb (the previously-auto-firing `masterplan-retro` skill is gone). Standardizes terminology on "verbs" instead of mixing "subcommands" and "invocation forms." Applies a pre-release audit fix pass that closed 10 blockers and 13 polish items found by three parallel fresh-eyes audits of the orchestrator, telemetry hook, remaining skill, and docs (full list in CHANGELOG `[1.0.0]`).
+- **v0.2.0 — speed + context use.** Parallelism + caches at multiple Step C and Step D dispatch sites; orchestrator prompt token-trimmed; Codex review uses SHA-range instead of inlining diffs; activity logs rotate past 100 entries.
+- **v0.2.1 + v0.2.2 — silent-stop gates closed.** Five upstream-skill free-text prompts that could stall mid-flow are now pre-empted with `AskUserQuestion`. Operational rule generalized: "Don't stop silently anywhere."
+- **v0.3.0 — explicit phase verbs.** `new`, `brainstorm`, `plan`, `execute` as first-token verbs; `plan --from-spec=` and `plan` (no args) picker; `halt_mode` state machine cleanly handles "stop after spec" / "stop after plan."
+- **v1.0.0 — first stable public release** (under the prior `claude-superflow` name). Consolidated retrospective generation into the `retro` verb; standardized terminology on "verbs"; pre-release audit fix pass (10 blockers + 13 polish items).
+- **v2.0.0 — superpowers-masterplan rebrand + intra-plan parallelism Slice α + Codex defaults on.** Project renamed from `claude-superflow` to `superpowers-masterplan`; slash command `/superflow` → `/masterplan` (hard-cut, no backward-compat). Slice α of intra-plan parallelism ships: read-only parallel waves via `**parallel-group:**` annotation in Step C step 2 (verification, inference, lint, type-check, doc-generation only). Codex defaults flipped: `routing: auto` + `review: on` (auto-degrades when codex plugin not installed; new doctor check #18 surfaces persistent misconfiguration). New `## Codex integration` README section. Internal docs for LLM contributors: `CLAUDE.md` + `docs/internals.md`. Pre-v1.1.0 plan/spec/WORKLOG history pruned (institutional knowledge migrated to `docs/internals.md`). Slice β/γ of intra-plan parallelism (parallel committing tasks, full per-task worktree subsystem) deferred with sharpened, measurable revisit trigger in [`docs/design/intra-plan-parallelism.md`](./docs/design/intra-plan-parallelism.md).
 
 All releases preserve the three design pillars (thin orchestrator, subagent + context-control, status file as only source of truth). See [CHANGELOG.md](./CHANGELOG.md) for the full breakdown.
 
 ## Project status
 
-This is the first stable public release (current: **v1.0.0**). The orchestration logic has been used in real Petabit Scale workflows since v0.1 and is stable. v1.0.0 consolidates retrospective generation under the `/masterplan retro` verb (removing the previously-auto-firing `masterplan-retro` skill), standardizes README terminology on "verbs," and lands a pre-release audit fix pass. The bare-topic shortcut, `--resume=<path>`, and all v0.3.0 phase verbs continue unchanged. The schema and flag surface continue to evolve under semver — additive changes and bug fixes land in v1.x; breaking changes (schema/flag/CLI) are called out in the changelog and gated behind a `--legacy` flag where reasonable.
+This is a stable public release (current: **v2.0.0**). The orchestration logic has been used in real Petabit Scale workflows since v0.1 and is stable. v2.0.0 ships the project rebrand (claude-superflow → superpowers-masterplan; /superflow → /masterplan; hard-cut, no backward-compat — see [CHANGELOG `[2.0.0]`](./CHANGELOG.md) migration notes), Slice α of intra-plan task parallelism (read-only parallel waves), Codex defaults flipped to on with graceful-degrade, the `## Codex integration` README section, and internal docs (`CLAUDE.md` + `docs/internals.md`) for future LLM contributors.
+
+Schema and flag surface continue to evolve under semver — additive changes and bug fixes land in v2.x; breaking changes (schema/flag/CLI) are called out in the changelog with explicit migration notes. Slice β/γ of intra-plan parallelism (parallel committing tasks) remain deferred with a measurable revisit trigger.
 
 Issues and PRs welcome.
 
