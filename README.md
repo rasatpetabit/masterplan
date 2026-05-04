@@ -27,7 +27,7 @@ Concretely, `/masterplan` delivers:
 
 **Phase verbs** — address any pipeline phase directly at the call site:
 
-- **`/masterplan new <topic>`** — kick off a full brainstorm → plan → execute flow. (Same as the bare-topic shortcut `/masterplan <topic>`, which still works.)
+- **`/masterplan full <topic>`** — kick off a full brainstorm → plan → execute flow. (Same as the bare-topic shortcut `/masterplan <topic>`, which still works.)
 - **`/masterplan brainstorm <topic>`** — brainstorm only; halt cleanly after the spec is written.
 - **`/masterplan plan <topic>`** — brainstorm + plan; halt cleanly after the plan + status file are written.
 - **`/masterplan plan --from-spec=<path>`** — plan only against an existing spec; halts after the plan is written.
@@ -222,12 +222,12 @@ The hook is **defensive** — it bails silently in any session that isn't operat
 ### Start a new feature
 
 ```
-/masterplan new Stripe webhook handler
+/masterplan full Stripe webhook handler
 ```
 
 Walks you through brainstorming (interactive), produces a spec at `docs/superpowers/specs/`, generates a plan at `docs/superpowers/plans/`, then executes task-by-task with subagents.
 
-The bare-topic shortcut (`/masterplan Stripe webhook handler`) still works — `new` is the explicit form for the same flow.
+The bare-topic shortcut (`/masterplan Stripe webhook handler`) still works — `full` is the explicit form for the same flow.
 
 ### Brainstorm or plan only — without executing
 
@@ -245,7 +245,7 @@ When you're ready to ship the planned work, `/masterplan execute <status-path>` 
 ### Long autonomous run
 
 ```
-/loop /masterplan new refactor auth middleware --autonomy=loose
+/loop /masterplan full refactor auth middleware --autonomy=loose
 ```
 
 Same flow, but execution runs autonomously with `ScheduleWakeup`-paced resumption. Stops on blockers (which get recorded in the status file's `## Blockers` section).
@@ -299,7 +299,7 @@ Reads the plan + status + spec + git log + PR (if `gh` is available), then write
 
 | Verb | Effect | Halts at |
 |---|---|---|
-| `new <topic>` | Kickoff: brainstorm + plan + execute | (runs through) |
+| `full <topic>` | Kickoff: brainstorm + plan + execute | (runs through) |
 | `brainstorm <topic>` | Brainstorm only | spec written |
 | `plan <topic>` | Brainstorm + plan | plan written |
 | `plan --from-spec=<path>` | Plan only against an existing spec | plan written |
@@ -310,14 +310,14 @@ Reads the plan + status + spec + git log + PR (if `gh` is available), then write
 | `status [--plan=<slug>]` | Read-only situation report across all worktrees: in-flight, blocked, stale, recently completed, telemetry signals, recent design notes. `--plan=<slug>` drills into one plan's blockers/notes/activity/telemetry. | n/a |
 | `retro [<slug>]` | Generate a retrospective doc for a completed plan (picks one if no slug given) | n/a |
 
-> Topics literally named after a verb (`new`, `brainstorm`, `plan`, `execute`, `retro`, `import`, `doctor`, `status`) need to be prefixed with another word — e.g. `/masterplan add brainstorm session timer` works because `add` isn't a verb.
+> Topics literally named after a verb (`full`, `brainstorm`, `plan`, `execute`, `retro`, `import`, `doctor`, `status`) need to be prefixed with another word — e.g. `/masterplan add brainstorm session timer` works because `add` isn't a verb.
 
 ### Aliases and shortcuts
 
 | Invocation | Equivalent to |
 |---|---|
 | `/masterplan` *(no args)* | `/masterplan execute` (list + pick across worktrees) |
-| `/masterplan <topic>` | `/masterplan new <topic>` (bare-topic shortcut for kickoff) |
+| `/masterplan <topic>` | `/masterplan full <topic>` (bare-topic shortcut for kickoff) |
 | `/masterplan --resume=<status-path>` | `/masterplan execute <status-path>` |
 | `/masterplan import --pr=<num>` | Import directly from a single GitHub PR (skips discovery) |
 | `/masterplan import --issue=<num>` | Import directly from a single GitHub issue (skips discovery) |
