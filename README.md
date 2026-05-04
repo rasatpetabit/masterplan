@@ -1,14 +1,9 @@
 # superpowers-masterplan
 
-A Claude Code plugin that orchestrates a complete development workflow:
-**brainstorm -> plan -> execute**, with worktree management, legacy plan import,
-configurable autonomy, Codex routing/review, and self-paced cross-session loops.
-
-It is a thin orchestrator over the
-[superpowers](https://github.com/obra/superpowers) skills. `/masterplan`
-doesn't reimplement brainstorming, planning, or execution; it sequences those
-skills, persists state in a status file, and makes long-running work resumable
-across sessions and worktrees.
+**Masterplan** — a Claude Code plugin (built on
+[`obra/superpowers`](https://github.com/obra/superpowers)) for long-term
+brainstorm → plan → execute workflows that survive session boundaries and stay
+on track for multi-week projects.
 
 > **For LLMs working on this repo:** start with [`CLAUDE.md`](./CLAUDE.md),
 > then use [`docs/internals.md`](./docs/internals.md) for architecture,
@@ -16,25 +11,45 @@ across sessions and worktrees.
 > contributor pitfalls. The orchestrator source is
 > [`commands/masterplan.md`](./commands/masterplan.md).
 
-## Overview
+## Key benefits
 
-Long-running agent work tends to sprawl: a plan file here, a feature branch
-there, a half-finished task list in chat, and no durable answer to "what's next?"
-`/masterplan` makes the status file the source of truth for each plan: worktree,
-branch, current task, next action, blockers, notes, and activity history.
+### Long-term planning consistency
 
-What it provides:
+- Every plan writes to a well-defined status file that's the single source of
+  truth — current task, next action, full activity log — in YAML frontmatter +
+  markdown. `/masterplan` will find existing plans and documentation and bring
+  them into conformity with the masterplan format.
+- Resume any in-flight work with two file reads (plan + status). No
+  conversation context required, no compaction loss, no "what was I doing
+  again?"
+- Survives `/compact`, fresh sessions, and handoff between agents — pass a
+  plan to Codex or another Claude session and they pick up exactly where the
+  last one stopped.
+- Each plan runs in its own git worktree on its own branch, so parallel plans
+  don't collide.
 
-- **Resumable plans:** read the plan + status file and continue from any session.
-- **Phase control:** run the whole flow, or stop after brainstorm/spec or plan.
-- **Context discipline:** substantial work goes to bounded subagents; the
-  orchestrator keeps only digests and routing decisions.
-- **Cross-model routing:** optional Codex execution for small bounded tasks and
-  Codex review for inline Claude/Sonnet work.
-- **State operations:** import legacy plans, inspect status, lint state, and
-  generate retrospectives.
-- **Parallel read-only waves:** verification/lint/inference/doc tasks annotated
-  with `**parallel-group:**` can run concurrently.
+### Token efficiency
+
+- The orchestrator never does substantive work itself — it dispatches to
+  bounded subagents whose context never bleeds back into the orchestrator's
+  window.
+- Explicit model routing per task type: Haiku for mechanical extraction
+  (status parsing, log scraping, file enumeration), Sonnet for general
+  implementation, Opus reserved for genuine deep reasoning.
+- Wave dispatch runs independent tasks in parallel subagents, each with
+  isolated context, returning only digested results.
+- Orchestrator context stays clean for sequencing decisions — no raw file
+  contents, no verification dumps, no transcript noise.
+
+### Cross-checking via Codex
+
+- Optional cross-model review on every commit — catches what same-family
+  review misses. Claude reviewing Claude has blind spots that GPT-5 doesn't
+  share, and vice versa.
+- Codex routing for bounded, well-defined tasks hands subtasks to the model
+  best suited to them, not just whichever one is loaded.
+- Graceful degrade: if the Codex plugin isn't installed, runs Claude-only
+  with a one-line warning. Never fails a run on a missing optional dependency.
 
 Deep design rationale lives in [`docs/internals.md`](./docs/internals.md).
 
