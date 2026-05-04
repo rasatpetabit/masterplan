@@ -6,6 +6,21 @@ It's a thin orchestrator over the [superpowers](https://github.com/obra/superpow
 
 > **For LLMs working on this codebase:** start with [`CLAUDE.md`](./CLAUDE.md) (always-loaded project orientation, ~500 words) and [`docs/internals.md`](./docs/internals.md) (deep-dive: architecture, dispatch model, status file format, CD rules, operational rules, wave dispatch, failure modes, doctor checks, common dev recipes, anti-patterns; ~6500 words). The orchestrator's "source code" is `commands/masterplan.md`.
 
+## Why this exists
+
+Long-running development work tends to sprawl: a PLAN.md here, a feature branch there, a half-done docs/superpowers/plans/ from a previous session, a Linear ticket nobody's looked at in a week. After a session ends, the context evaporates and the next agent (or human) has to reconstruct what's done and what's left.
+
+`/masterplan` enforces a single source of truth — a status file alongside each plan — that captures: which worktree the work lives in, which branch, which task is current, what's been tried, what's blocked. Resume from anywhere, scan in-progress work across all your worktrees, and lint when something feels off.
+
+Concretely, `/masterplan` delivers:
+
+- **Long-term complex planning that survives sessions.** The status-file-as-source-of-truth invariant means any plan resumes with two reads (plan + status). Worktree, branch, current task, what was tried, what's blocked — all persistent. Sessions end, models change, weeks pass; the plan picks up exactly where it left off.
+- **Aggressive context discipline.** Every substantive piece of work goes to a fresh subagent (Haiku for mechanical extraction, Sonnet for general implementation, Opus for ambiguous design, Codex for bounded coding). Only digests come back to the orchestrator. Raw verification output, full diffs, and library docs never bloat the orchestrator's context — that's what makes long autonomous runs viable.
+- **Dramatic token reduction** through subagent dispatch + per-invocation caches (`git_state`, `eligibility_cache`) + activity log rotation past 100 entries + Codex review using SHA ranges instead of inlining diffs + mtime-gated file re-reads + ScheduleWakeup'd cross-session resumption that reads only the status file on resume. Every load-bearing optimization is documented in [`docs/internals.md`](./docs/internals.md) §3.
+- **Parallelism for faster operation** (v2.0.0+) — read-only tasks (verification, inference, lint, type-check, doc-generation) declared with `**parallel-group:**` annotations dispatch as concurrent waves in Step C step 2. Single-writer status funnel, files-filter, and per-task scope assertions keep the wave safe. Implementation tasks remain serial; Slice β/γ deferred per [Roadmap](#roadmap).
+- **Cross-session resume.** `/masterplan execute <status-path>` picks up any plan from any worktree. Bare `/masterplan` lists in-flight plans across all worktrees for pick-and-resume.
+- **Cross-model review.** With the optional [`codex`](https://github.com/obra/codex) plugin installed (default on in v2.0.0+), Claude/Sonnet inline work gets reviewed by Codex against the spec — asymmetrically (Codex never reviews its own diffs, no signal there). Codex executes small well-defined tasks; Sonnet handles complex ones; Sonnet reviews Codex output via the existing post-Codex gate. Each model plays to its strengths.
+
 ## What you get
 
 `/masterplan` is invoked as `/masterplan <verb> [args] [flags]`. The full verb reference lives in [Verb reference](#verb-reference) below; here's the elevator pitch.
@@ -32,12 +47,6 @@ It's a thin orchestrator over the [superpowers](https://github.com/obra/superpow
 
 - **`/loop /masterplan ...`** — self-paced cross-session execution; wakes itself every ~25 minutes to advance the plan a few tasks at a time.
 - **`masterplan-detect` skill** — auto-suggests `/masterplan import` when legacy planning artifacts are present in the repo. Never auto-runs.
-
-## Why this exists
-
-Long-running development work tends to sprawl: a PLAN.md here, a feature branch there, a half-done docs/superpowers/plans/ from a previous session, a Linear ticket nobody's looked at in a week. After a session ends, the context evaporates and the next agent (or human) has to reconstruct what's done and what's left.
-
-`/masterplan` enforces a single source of truth — a status file alongside each plan — that captures: which worktree the work lives in, which branch, which task is current, what's been tried, what's blocked. Resume from anywhere, scan in-progress work across all your worktrees, and lint when something feels off.
 
 ## Design philosophy
 
@@ -364,6 +373,70 @@ Run that in a separate Claude Code shell or session alongside your `/masterplan`
 
 Drop a `.masterplan.yaml` at your repo root (or `~/.masterplan.yaml` for global defaults). Four-tier precedence: CLI flags > repo-local > user-global > built-in defaults.
 
+### Defaults at a glance
+
+Quick reference of every default. Override any of these in `.masterplan.yaml` (per-repo) or `~/.masterplan.yaml` (per-user). Schema with explanations follows below.
+
+```yaml
+autonomy: gated                          # gated | loose | full
+
+loop_enabled: true                       # cross-session ScheduleWakeup pacing
+loop_interval_seconds: 1500              # 25 min
+loop_max_per_day: 24
+
+use_subagents: true                      # subagent-driven-development vs executing-plans
+
+specs_path: docs/superpowers/specs
+plans_path: docs/superpowers/plans
+worktree_base: ../                       # often customized per team
+trunk_branches: [main, master, trunk, dev, develop]
+
+cruft_policy: ask                        # ask | leave | archive | delete (for /masterplan import)
+archive_path: legacy/.archive
+
+doctor_autofix: false                    # --fix flag overrides
+
+codex:
+  routing: auto                          # off | auto | manual (default on since v2.0.0)
+  review: on                             # off | on (default on since v2.0.0; auto-degrade if codex plugin missing)
+  review_diff_under_full: false
+  max_files_for_auto: 3                  # eligibility heuristic threshold
+  review_max_fix_iterations: 2
+  confirm_auto_routing: false            # under gated, prompt per-task to confirm auto-routing (default off: silent)
+  review_prompt_at: medium               # under gated: low | medium | high | never severity threshold
+
+parallelism:                             # v2.0.0+
+  enabled: true                          # global kill switch (--no-parallelism overrides)
+  max_wave_size: 5                       # cap on concurrent Agent dispatches per wave
+  abort_wave_on_protocol_violation: true # suppress 4d batch on any protocol_violation
+
+autonomy:                                # v2.1.0+
+  gated_switch_offer_at_tasks: 15        # under gated, offer switch to loose when plan task count ≥ this
+                                         # set to 0 to disable the offer entirely
+
+auto_compact:
+  enabled: true                          # nudge user to /loop /compact in a sibling session
+  interval: 30m
+  focus: "focus on current task + active plan; drop tool output and old reasoning"
+
+telemetry:
+  enabled: true                          # per-turn JSONL records via Stop hook + inline snapshots
+  path_suffix: -telemetry.jsonl
+
+integrations:
+  github:
+    enabled: true                        # auto-detected via gh auth status if unset
+    auto_link_pr_to_plan: true
+  linear:
+    project: null                        # set to a Linear project id to enable
+  slack:
+    blocked_channel: null                # post blocker notifications to this channel
+```
+
+CLI flags always override config for the run; resolved values land in the status file so resumes are deterministic. See [Useful flag combinations](#useful-flag-combinations) for common patterns.
+
+### Full schema (with explanations)
+
 ```yaml
 # Default execution autonomy
 autonomy: gated  # gated | loose | full
@@ -543,6 +616,41 @@ This is a stable public release (current: **v2.0.0**). The orchestration logic h
 Schema and flag surface continue to evolve under semver — additive changes and bug fixes land in v2.x; breaking changes (schema/flag/CLI) are called out in the changelog with explicit migration notes. Slice β/γ of intra-plan parallelism (parallel committing tasks) remain deferred with a measurable revisit trigger.
 
 Issues and PRs welcome.
+
+## Roadmap
+
+What's deliberately deferred — and the conditions under which we'd revisit. Framed as "what we've decided NOT to ship yet, and why" so users can see the design trade-offs explicitly.
+
+### Slice β — parallel committing-task waves (~8-10d estimated)
+
+Wave members do work concurrently but the commit step is funneled serially through the orchestrator. Latency win is partial — work parallelizes, commits serialize. **Revisit trigger:** when a real `/masterplan` plan shows ≥3 parallel-grouped *committing* tasks where the wave's serial wall-clock cost exceeds 10 minutes AND the committed work is independent enough for the Slice α `**Files:**` exhaustive-scope rule to apply. Telemetry-derived: see [`docs/design/telemetry-signals.md`](./docs/design/telemetry-signals.md) "Average tasks-per-wave-turn" jq query for the data.
+
+### Slice γ — full per-task git worktree subsystem (~10-15d estimated)
+
+Each parallel implementation task dispatches into its own temp worktree; merge commits back to canonical branch at wave-end (fast-forward when possible, conflict-abort otherwise per CD-2). Real parallel committing-task execution. The original deferred design's full ambition. **Revisit trigger:** when ≥3 β-eligible waves accumulate within a single plan's lifecycle, indicating a structural pattern that warrants the full subsystem.
+
+### Doctor check for the Slice β/γ revisit trigger
+
+Telemetry-derived doctor check that scans completed-and-recent plans for the trigger condition above and surfaces a one-line note in `/masterplan status`. Lets the trigger fire automatically rather than relying on the user noticing.
+
+### Codex CLI/API concurrency model verification
+
+FM-4's mitigation (Codex-routed tasks fall out of waves) is conservative because Codex's actual concurrency model is unverified. If `codex:codex-rescue` agents run truly concurrent without resource-pool constraints, FM-4 weakens substantially and a future slice could reconsider. Worth verifying via the `codex:setup` skill before designing a slice that depends on this.
+
+### Canned `$ARGUMENTS` self-test specs for routing-table drift detection
+
+`/masterplan` has no automated test suite — the orchestrator is markdown, behavior emerges from a live agent reading it. Adding canned `$ARGUMENTS` strings (one per verb branch) that exercise every routing path would catch routing-table drift early. Spec lives in `docs/superpowers/specs/`; runs as part of the v2.x release verification.
+
+### macOS hook smoke verification
+
+`hooks/masterplan-telemetry.sh` is portable-by-construction (no GNU-only flags introduced in the v2.0.0 wave_groups extraction; uses portable `head -n1` + `stat -c '%Y' || stat -f '%m'` dual form). Linux smoke-tested only. Worth running the same fixture-based smoke test on macOS to confirm.
+
+### Documented non-features (people often ask for these)
+
+- **`/superflow` alias to `/masterplan`** — explicitly declined for v2.0.0 per "no backward-compat aliases" rule. Hard-cut renames keep the surface clean and avoid permanent maintenance burden. Users who need both can install both plugins until they migrate.
+- **Auto-detection of "obvious" parallel patterns without `**parallel-group:**` annotation** — annotations are explicit by design. Inference invites surprise. The planner's job (per Step B2 brief) is to identify and annotate parallel-friendly task patterns.
+- **Plan-task reordering to maximize wave size** — plan-order is authoritative. The wave-assembly walk is contiguous-only. If parallel-grouped tasks are interleaved with serial tasks, none parallelize. The planner handles ordering.
+- **Cross-worktree wave dispatch** — single-worktree, single-branch only. Cross-worktree parallelism would need a different concurrency model.
 
 ## Author
 
