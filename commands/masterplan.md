@@ -111,6 +111,8 @@ Steps A, B0, D consult the cache instead of re-running these. **Invalidate** the
 | `--no-codex` | C | Shorthand for `--codex=off` (also disables review) |
 | `--codex-review=on\|off` | C | Override `config.codex.review` for this run. When on, Codex reviews diffs from inline-completed tasks before they're marked done. Persisted to status file |
 | `--codex-review` | C | Shorthand for `--codex-review=on` |
+| `--parallelism=on\|off` | C | Override `config.parallelism.enabled` for this run. When `off`, wave dispatch in Step C step 2 is suppressed globally — every task runs serially regardless of `**parallel-group:**` annotations. Persisted to status file via the post-plan flag-persistence rule (does not fire under `halt_mode != none`). |
+| `--no-parallelism` | C | Shorthand for `--parallelism=off`. |
 
 ---
 
@@ -318,6 +320,8 @@ Invoke `superpowers:brainstorming` with the topic. **Brainstorming is always int
 After Step B1's gate confirms approval, invoke `superpowers:writing-plans` against the spec. It will produce `docs/superpowers/plans/YYYY-MM-DD-<slug>.md`. Brief plan-writing with **CD-1 + CD-6**, plus:
 
 > When you judge a task as obviously well-suited for Codex (≤ 3 files, unambiguous, has known verification commands, no design judgment) or obviously unsuited (requires understanding broader system context, design tradeoffs, or files outside the stated scope), add a `**Codex:** ok` or `**Codex:** no` line in the per-task `**Files:**` block. See the Plan annotations subsection in Step C 3a for the exact syntax. The orchestrator's eligibility cache parses these as overrides on the heuristic checklist.
+
+> **Parallel-group annotation (v2.0.0+).** When you identify mutually-independent verification, inference, lint, type-check, or doc-generation tasks, group them with `**parallel-group:** <thematic-name>` (e.g., `verification`, `lint-pass`, `inference-batch`). Each parallel-grouped task MUST have a complete `**Files:**` block declaring its exhaustive scope (no implicit additional paths). Codex-eligible tasks (those you'd mark `**Codex:** ok`) should NOT be parallel-grouped — they fall out of waves at dispatch time per the FM-4 mitigation. Use `**parallel-group:**` for tasks that are read-only or write to gitignored paths only (no commits). Place parallel-grouped tasks contiguously in plan-order — interleaved groups don't parallelize. The orchestrator's eligibility cache parses these annotations; the writing-plans skill just emits them.
 
 > **Skip your Execution Handoff prompt** ("Plan complete… Which approach?"). /masterplan has already decided execution mode based on the `--no-subagents` flag and config — do not ask the user. Just write the plan and return control.
 
@@ -954,6 +958,9 @@ For each worktree, run all checks. Report findings grouped by worktree → check
 | 12 | **Telemetry file growth** — `<slug>-telemetry.jsonl` > 5 MB. | Warning | Rotate to `<slug>-telemetry-archive.jsonl` (the active file becomes empty; new appends start fresh). |
 | 13 | **Orphan telemetry file** — `<slug>-telemetry.jsonl` (or `-telemetry-archive.jsonl`) exists with no sibling `<slug>-status.md`. | Warning | Suggest moving to `<config.archive_path>/<date>/`. No auto-fix. |
 | 14 | **Orphan eligibility cache** — `<slug>-eligibility-cache.json` exists with no sibling `<slug>-status.md`. (The cache is a sidecar of an active plan; it must always have a base status file.) | Warning | Suggest moving to `<config.archive_path>/<date>/`. No auto-fix. |
+| 15 | **`parallel-group:` set but `**Files:**` block missing/empty.** Section 2 eligibility rule 2 violated. Affects parallel-eligibility computation; task falls back to serial silently. | Warning | Report only. Author must add `**Files:**` block. |
+| 16 | **`parallel-group:` and `**Codex:** ok` both set on the same task.** Section 2 eligibility rule 4 violated; FM-4 mitigation conflict (mutually exclusive). | Warning | Report only. Author must remove one of the annotations. |
+| 17 | **File-path overlap detected within a `parallel-group:`.** Section 2 eligibility rule 5 violated. Multiple tasks in the same parallel-group declare overlapping `**Files:**` paths. | Warning | Report the overlapping task pairs. No auto-fix. |
 | 18 | **Codex config on but plugin missing.** Config has `codex.routing != off` OR `codex.review == on` AND no entry prefixed `codex:` is present in the system-reminder skills list at lint time. Step 0's codex-availability detection auto-degrades silently per-run; doctor surfaces the persistent misconfiguration as a Warning so the user notices and either installs codex or sets the defaults to `off`. | Warning | Suggest `/plugin install codex@anthropic` to enable, OR set `codex.routing: off` and `codex.review: off` in `.masterplan.yaml` to suppress this check. No auto-fix (changing user's config is out of scope per CD-2). |
 
 ### Output
@@ -1092,6 +1099,22 @@ codex:
                              # values: low | medium | high | never
                              # default `medium` (auto-accept clean and low-only; prompt at medium+)
                              # set `low` to prompt on every non-clean review; set `never` to auto-accept all
+
+# Intra-plan task parallelism (v2.0.0+) — Slice α (read-only parallel waves)
+# When enabled, contiguous tasks sharing the same `**parallel-group:**` annotation
+# in a plan dispatch as one parallel wave (verification, inference, lint,
+# type-check, doc-generation only — no committing work). Implementation tasks
+# remain serial under the existing per-task Step C loop.
+# See docs/design/intra-plan-parallelism.md for the failure-mode catalog
+# and the deferred Slice β/γ trigger.
+parallelism:
+  enabled: true                              # off | on — global kill switch for wave dispatch
+                                             # (overridden by --parallelism= / --no-parallelism flags)
+  max_wave_size: 5                           # cap on concurrent Agent dispatches per wave
+                                             # (tasks beyond cap roll into the next wave)
+  abort_wave_on_protocol_violation: true     # if true, suppress entire 4d batch when any wave
+                                             # member is reclassified as protocol_violation
+                                             # (false: standard partial-failure path applies)
 
 # Auto-compact loop nudge — Step B3 + Step C step 1 surface a passive notice
 # once per plan recommending /loop /compact in a sibling session for
