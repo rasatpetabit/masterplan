@@ -19,6 +19,8 @@ Both write the same field shape; orchestrator opt-out via `telemetry: off` in st
   "status_bytes": 4310,
   "activity_log_entries": 42,
   "wakeup_count_24h": 3,
+  "tasks_completed_this_turn": 1,
+  "wave_groups": ["verification"],
   "branch": "feat/auth-refactor",
   "cwd": "/home/.../wt"
 }
@@ -34,6 +36,8 @@ Both write the same field shape; orchestrator opt-out via `telemetry: off` in st
 | `status_bytes` | Bytes of the status file at this moment | Grows with activity log + notes |
 | `activity_log_entries` | Number of `- ` bullets under `## Activity log` | Tasks-completed proxy |
 | `wakeup_count_24h` | Wakeups recorded in `## Wakeup ledger` over the last 24h | Loop activity rate |
+| `tasks_completed_this_turn` *(v2.0.0+)* | Delta of `activity_log_entries` between this and previous Stop record | 1 for serial; N for wave; 0 for no-progress turns. **First-turn caveat:** when no previous record exists for a plan, this field reports `0` rather than the absolute entry count — first-record telemetry doesn't have a baseline to subtract. Activity log rotation (entries moved to `<slug>-status-archive.md`) can decrement `activity_log_entries` between records; the hook clamps to 0. |
+| `wave_groups` *(v2.0.0+)* | Distinct `[wave: <group>]` tags from the last `tasks_completed_this_turn` activity-log entries | Empty array `[]` for serial-only turns. Use to identify which parallel-group(s) dispatched this turn — useful for measuring per-group latency wins. |
 | `branch` | Current branch | Useful for cross-worktree analysis |
 | `cwd` | Working directory at hook fire | Distinguishes worktrees |
 
@@ -79,6 +83,24 @@ jq -c '{ts, wakeup_count_24h}' <plan>-telemetry.jsonl
 ```bash
 jq -c 'select(.turn_kind=="stop") | {ts, lines: .transcript_lines, bytes: .transcript_bytes, log: .activity_log_entries}' <plan>-telemetry.jsonl | tail -10
 ```
+
+### Average tasks-per-wave-turn (v2.0.0+)
+
+```bash
+jq -s '
+  [.[] | select(.turn_kind=="stop" and .tasks_completed_this_turn > 0)]
+  | {wave_turns: ([.[] | select(.tasks_completed_this_turn > 1)] | length),
+     serial_turns: ([.[] | select(.tasks_completed_this_turn == 1)] | length),
+     avg_tasks_per_wave_turn: (
+       ([.[] | select(.tasks_completed_this_turn > 1) | .tasks_completed_this_turn] | add // 0)
+       /
+       (([.[] | select(.tasks_completed_this_turn > 1)] | length) // 1)
+     ),
+     groups_seen: ([.[] | .wave_groups[]] | unique)}
+' <plan>-telemetry.jsonl
+```
+
+Returns `{wave_turns, serial_turns, avg_tasks_per_wave_turn, groups_seen}`. Use to evaluate whether `parallel-group:` annotations are being authored AND exercised in practice. Non-zero `wave_turns` is the candidate trigger for the deferred Slice β/γ revisit — see [`docs/design/intra-plan-parallelism.md`](./intra-plan-parallelism.md) for the sharpened trigger condition.
 
 ## Rotation
 
