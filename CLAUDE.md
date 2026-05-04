@@ -4,11 +4,12 @@ You are working in `superpowers-masterplan`, a Claude Code plugin that provides 
 
 ## What this codebase IS
 
-A single 1100-line markdown orchestrator prompt at **`commands/masterplan.md`** plus three sidecar files:
+A single 1100-line markdown orchestrator prompt at **`commands/masterplan.md`** plus a small plugin package:
 
 - `skills/masterplan-detect/SKILL.md` — auto-suggests `/masterplan import` when legacy planning artifacts are found
 - `hooks/masterplan-telemetry.sh` — opt-in Stop hook (~100 lines bash) that emits per-turn JSONL telemetry
 - `.claude-plugin/plugin.json` — plugin manifest (name, version, description, URL)
+- `.claude-plugin/marketplace.json` — marketplace catalog for direct `/plugin marketplace add rasatpetabit/superpowers-masterplan` installs
 
 There is **no code** in the conventional sense. The "program" is the markdown prompt. "Tests" are hand-crafted plans + grep verification + `bash -n` syntax checks + manual smoke runs.
 

@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.3] — 2026-05-04
+
+**Marketplace-readiness patch.** Fixes Claude Code plugin validation blockers
+and adds the missing repository marketplace catalog needed by the documented
+install path.
+
+### Added
+- **`.claude-plugin/marketplace.json`** — publishes this repository as a
+  self-contained marketplace named `rasatpetabit-superpowers-masterplan`, with
+  the `superpowers-masterplan` plugin sourced from the repository root.
+- **Dependency metadata** — declares `superpowers@claude-plugins-official` as
+  the required upstream plugin and allowlists the official marketplace for that
+  cross-marketplace dependency.
+- **`docs/release-submission.md`** — durable submission checklist and form-copy
+  draft for the Claude plugin directory / Anthropic Verified review request.
+
+### Fixed
+- **`plugin.json` schema drift** — `repository` is now the string form required
+  by current Claude Code validation, not an npm-style `{type,url}` object.
+- **`commands/masterplan.md` frontmatter** — quoted the description so the
+  colon in `Verbs:` parses as YAML instead of dropping metadata at runtime.
+- **Manifest description** — shortened to a marketplace-friendly summary rather
+  than embedding release-history detail in plugin metadata.
+
+### Verification
+- `claude plugin validate .`
+- `claude plugin validate .claude-plugin/plugin.json`
+- `jq empty .claude-plugin/plugin.json .claude-plugin/marketplace.json .claude/settings.local.json`
+- `bash -n hooks/masterplan-telemetry.sh`
+- `git diff --check`
+- Isolated clean install smoke with a temporary `HOME`, official marketplace
+  dependency resolution, local marketplace add, and
+  `claude plugin install superpowers-masterplan@rasatpetabit-superpowers-masterplan`.
+
 ## [2.2.2] — 2026-05-04
 
 **Removed standing "no backward-compat / hard-cut renames" rule.** Documentation-only patch. Going forward, decisions about migration aliases for breaking renames are made case-by-case rather than dictated by a project-level prohibition.

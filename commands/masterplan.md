@@ -1,5 +1,5 @@
 ---
-description: Brainstorm → plan → execute workflow. Verbs: full, brainstorm, plan, execute, import, doctor, status, retro. Bare-topic shortcut still works.
+description: "Brainstorm → plan → execute workflow. Verbs: full, brainstorm, plan, execute, import, doctor, status, retro. Bare-topic shortcut still works."
 ---
 
 # /masterplan

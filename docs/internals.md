@@ -50,7 +50,8 @@ superpowers-masterplan/
 ├── WORKLOG.md                      # append-only handoff for next session
 ├── LICENSE                         # MIT
 ├── .claude-plugin/
-│   └── plugin.json                 # plugin manifest (name, version, description, URL)
+│   ├── plugin.json                 # plugin manifest (name, version, description, URL)
+│   └── marketplace.json            # direct-install marketplace catalog
 ├── commands/
 │   └── masterplan.md               # THE orchestrator prompt (~1100 lines, single source of truth for behavior)
 ├── skills/
@@ -823,4 +824,4 @@ When updating, dispatch a fresh-eyes Explore subagent after a multi-section edit
 
 ---
 
-*End of internals.md. ~6500 words. Last updated for v2.2.0.*
+*End of internals.md. ~6500 words. Last updated for v2.2.3.*

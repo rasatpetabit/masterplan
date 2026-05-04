@@ -111,6 +111,13 @@ parallelism table in [`docs/internals.md`](./docs/internals.md).
 Verify with `/plugin`; `superpowers-masterplan` should appear under
 **Installed**. If Claude Code's plugin install syntax has drifted, add the
 marketplace and pick `superpowers-masterplan` from `/plugin`'s Discover tab.
+The marketplace entry declares the official `superpowers` plugin as a
+dependency, so Claude Code can resolve it automatically when the official
+marketplace is available. If dependency resolution says
+`superpowers@claude-plugins-official` is missing, refresh the official
+marketplace with `/plugin marketplace update claude-plugins-official`, or add it
+with `/plugin marketplace add anthropics/claude-plugins-official`, then retry
+the install.
 
 ### Manual install
 
@@ -386,7 +393,7 @@ The full schema and operational rules are documented in
 
 ## Project Status
 
-Current release: **v2.2.2**.
+Current release: **v2.2.3**.
 
 - Release history: [`CHANGELOG.md`](./CHANGELOG.md)
 - Contributor internals: [`docs/internals.md`](./docs/internals.md)
