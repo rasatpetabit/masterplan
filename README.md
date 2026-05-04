@@ -178,12 +178,6 @@ Start a complete brainstorm -> plan -> execute flow:
 /masterplan full Stripe webhook handler
 ```
 
-The bare-topic shortcut is equivalent:
-
-```text
-/masterplan Stripe webhook handler
-```
-
 Stop after earlier phases when you want review time:
 
 ```text
@@ -254,16 +248,16 @@ Topics literally named after a verb (`full`, `brainstorm`, `plan`, `execute`,
 
 | Flag | Effect |
 |---|---|
-| `--autonomy=gated|loose|full` | Control execution gating |
+| `--autonomy=gated\|loose\|full` | Control execution gating |
 | `--resume=<status-path>` | Resume a specific plan |
 | `--no-loop` | Disable ScheduleWakeup self-pacing |
 | `--no-subagents` | Use `executing-plans` instead of `subagent-driven-development` |
-| `--codex=off|auto|manual` | Control per-task Codex execution routing |
+| `--codex=off\|auto\|manual` | Control per-task Codex execution routing |
 | `--no-codex` | Shorthand for `--codex=off`; also disables review |
-| `--codex-review=on|off` | Control Codex review of inline-completed tasks |
+| `--codex-review=on\|off` | Control Codex review of inline-completed tasks |
 | `--codex-review` | Shorthand for `--codex-review=on` |
 | `--no-codex-review` | Shorthand for `--codex-review=off` |
-| `--parallelism=on|off` | Enable/disable read-only parallel waves for this run |
+| `--parallelism=on\|off` | Enable/disable read-only parallel waves for this run |
 | `--no-parallelism` | Shorthand for `--parallelism=off` |
 | `--archive` | Import: archive legacy artifacts after conversion |
 | `--keep-legacy` | Import: leave legacy artifacts in place |
