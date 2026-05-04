@@ -19,7 +19,7 @@ Concretely, `/masterplan` delivers:
 - **Dramatic token reduction** through subagent dispatch + per-invocation caches (`git_state`, `eligibility_cache`) + activity log rotation past 100 entries + Codex review using SHA ranges instead of inlining diffs + mtime-gated file re-reads + ScheduleWakeup'd cross-session resumption that reads only the status file on resume. Every load-bearing optimization is documented in [`docs/internals.md`](./docs/internals.md) §3.
 - **Parallelism for faster operation** (v2.0.0+) — read-only tasks (verification, inference, lint, type-check, doc-generation) declared with `**parallel-group:**` annotations dispatch as concurrent waves in Step C step 2. Single-writer status funnel, files-filter, and per-task scope assertions keep the wave safe. Implementation tasks remain serial; Slice β/γ deferred per [Roadmap](#roadmap).
 - **Cross-session resume.** `/masterplan execute <status-path>` picks up any plan from any worktree. Bare `/masterplan` lists in-flight plans across all worktrees for pick-and-resume.
-- **Cross-model review.** With the optional [`codex`](https://github.com/obra/codex) plugin installed (default on in v2.0.0+), Claude/Sonnet inline work gets reviewed by Codex against the spec — asymmetrically (Codex never reviews its own diffs, no signal there). Codex executes small well-defined tasks; Sonnet handles complex ones; Sonnet reviews Codex output via the existing post-Codex gate. Each model plays to its strengths.
+- **Cross-model review.** With the optional [`codex`](https://github.com/openai/codex-plugin-cc) plugin installed (default on in v2.0.0+), Claude/Sonnet inline work gets reviewed by Codex against the spec — asymmetrically (Codex never reviews its own diffs, no signal there). Codex executes small well-defined tasks; Sonnet handles complex ones; Sonnet reviews Codex output via the existing post-Codex gate. Each model plays to its strengths.
 
 ## What you get
 
@@ -96,7 +96,7 @@ If you can answer "where did this work get to and what's next?" by reading the s
 
 ## Codex integration
 
-`/masterplan` integrates with the optional [`codex`](https://github.com/obra/codex) plugin to make every plan a two-model collaboration. The integration is asymmetric and bounded: small well-defined coding tasks can delegate to Codex; inline (Sonnet/Claude) work can be cross-reviewed by Codex against the spec. Each model plays to its strengths — no overlap, no self-review.
+`/masterplan` integrates with the optional [`codex`](https://github.com/openai/codex-plugin-cc) plugin to make every plan a two-model collaboration. The integration is asymmetric and bounded: small well-defined coding tasks can delegate to Codex; inline (Sonnet/Claude) work can be cross-reviewed by Codex against the spec. Each model plays to its strengths — no overlap, no self-review.
 
 ### Why use Codex with /masterplan
 
@@ -124,8 +124,8 @@ Both default-on. If the codex plugin isn't installed, `/masterplan` detects this
 In a Claude Code session:
 
 ```
-/plugin marketplace add obra/codex
-/plugin install codex@obra-codex
+/plugin marketplace add openai/codex-plugin-cc
+/plugin install codex@openai-codex
 /reload-plugins
 ```
 

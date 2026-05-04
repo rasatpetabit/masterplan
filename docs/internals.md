@@ -502,7 +502,7 @@ Use the result to evaluate whether parallel-group annotations are being authored
 | 15 | `parallel-group:` set but `**Files:**` missing/empty | Warning | Report only | Eligibility rule 2 violated; falls back to serial silently — surface so author notices |
 | 16 | `parallel-group:` and `**Codex:** ok` both set | Warning | Report only | FM-4 mitigation conflict; mutually exclusive — surface |
 | 17 | File-path overlap within `parallel-group:` | Warning | Report overlapping pairs | Eligibility rule 5 violated; tasks fall back to serial |
-| 18 | Codex config on but plugin missing | Warning | Suggest `/plugin install codex@anthropic` or set defaults to off | Step 0 already auto-degrades silently; doctor surfaces persistent misconfiguration |
+| 18 | Codex config on but plugin missing | Warning | Suggest `/plugin marketplace add openai/codex-plugin-cc` then `/plugin install codex@openai-codex`, or set defaults to off | Step 0 already auto-degrades silently; doctor surfaces persistent misconfiguration |
 
 **Total: 18 checks (v2.0.0).** Step D's parallelization brief tells each Haiku worker to "run all 18 checks for its worktree." When adding a check, update both the table AND the brief count.
 
@@ -792,13 +792,13 @@ For a major release (breaking change / version 2.0.0+), include explicit `### Mi
 | Plan execution state | `docs/superpowers/plans/<slug>-status.md` (single source of truth per CD-7) |
 | Eligibility cache | `docs/superpowers/plans/<slug>-eligibility-cache.json` (mtime-invalidated) |
 | Telemetry data | `docs/superpowers/plans/<slug>-telemetry.jsonl` |
-| Codex plugin | `obra/codex` (cross-plugin dependency, optional) |
+| Codex plugin | `openai/codex-plugin-cc` (cross-plugin dependency, optional) |
 | Superpowers skills | `obra/superpowers` (cross-plugin dependency, required) |
 
 ### Outbound references (not in this repo)
 
 - **`obra/superpowers`** — `brainstorming`, `writing-plans`, `subagent-driven-development`, `executing-plans`, `using-git-worktrees`, `systematic-debugging`, `finishing-a-development-branch`. /masterplan is a thin orchestrator over these.
-- **`obra/codex`** — provides `codex:codex-rescue` subagent. Optional dependency; gracefully degrades when absent (Step 0 detection + doctor check #18).
+- **`openai/codex-plugin-cc`** — provides `codex:codex-rescue` subagent. Optional dependency; gracefully degrades when absent (Step 0 detection + doctor check #18).
 - **`context7` MCP** — used by the CD-4 ladder for library documentation lookups.
 - **`gh` CLI** — required for `/masterplan import` of GitHub issues and PRs.
 
