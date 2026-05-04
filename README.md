@@ -4,6 +4,8 @@ A Claude Code plugin that orchestrates a complete development workflow: **brains
 
 It's a thin orchestrator over the [superpowers](https://github.com/obra/superpowers) skills — `/superflow` doesn't reimplement brainstorming, planning, or execution. It sequences them, persists state in a single status file per plan, and adds the connective tissue that makes long-running development work survive across sessions and worktrees.
 
+> **For LLMs working on this codebase:** start with [`CLAUDE.md`](./CLAUDE.md) (always-loaded project orientation, ~500 words) and [`docs/internals.md`](./docs/internals.md) (deep-dive: architecture, dispatch model, status file format, CD rules, operational rules, wave dispatch, failure modes, doctor checks, common dev recipes, anti-patterns; ~6500 words). The orchestrator's "source code" is `commands/superflow.md`.
+
 ## What you get
 
 `/superflow` is invoked as `/superflow <verb> [args] [flags]`. The full verb reference lives in [Verb reference](#verb-reference) below; here's the elevator pitch.
