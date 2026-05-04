@@ -1,5 +1,5 @@
 ---
-description: Brainstorm → plan → execute workflow. Verbs: new, brainstorm, plan, execute, import, doctor, status, retro. Bare-topic shortcut still works.
+description: Brainstorm → plan → execute workflow. Verbs: full, brainstorm, plan, execute, import, doctor, status, retro. Bare-topic shortcut still works.
 ---
 
 # /masterplan
@@ -58,8 +58,8 @@ Steps A, B0, D consult the cache instead of re-running these. **Invalidate** the
 | First token | Branch | `halt_mode` |
 |---|---|---|
 | _(empty)_ | **Step A** — list+pick across worktrees | `none` |
-| `new` (no topic) | Prompt for topic via `AskUserQuestion` (free-text Other), then **Step B** — full kickoff (B0→B1→B2→B3→C) | `none` |
-| `new <topic>` | **Step B** — full kickoff (B0→B1→B2→B3→C) | `none` |
+| `full` (no topic) | Prompt for topic via `AskUserQuestion` (free-text Other), then **Step B** — full kickoff (B0→B1→B2→B3→C) | `none` |
+| `full <topic>` | **Step B** — full kickoff (B0→B1→B2→B3→C) | `none` |
 | `brainstorm` (no topic) | Prompt for topic via `AskUserQuestion` (free-text Other), then Step B0+B1; halt at B1 close-out gate | `post-brainstorm` |
 | `brainstorm <topic>` | Step B0+B1; halt at B1 close-out gate | `post-brainstorm` |
 | `plan` (no args) | **Step P** — pick spec-without-plan; treat pick as `plan --from-spec=<picked>` | `post-plan` |
@@ -78,10 +78,10 @@ Steps A, B0, D consult the cache instead of re-running these. **Invalidate** the
 
 `halt_mode` is an internal orchestrator variable set in Step 0 from the verb match. Steps B1, B2, B3, and C consult it to choose between the existing gate behavior and a halt-aware variant.
 
-**Verb tokens are reserved.** Any topic literally named `new`, `brainstorm`, `plan`, `execute`, `retro`, `import`, `doctor`, or `status` requires another word in front via the catch-all (e.g., `/masterplan add brainstorm session timer`).
+**Verb tokens are reserved.** Any topic literally named `full`, `brainstorm`, `plan`, `execute`, `retro`, `import`, `doctor`, or `status` requires another word in front via the catch-all (e.g., `/masterplan add brainstorm session timer`).
 
 **Argument-parse precedence (in Step 0, after config + git_state cache):**
-1. Match the first token against `{new, brainstorm, plan, execute, retro, import, doctor, status}`. On match: set `halt_mode` per the table; consume the verb; pass remaining args to the matched step.
+1. Match the first token against `{full, brainstorm, plan, execute, retro, import, doctor, status}`. On match: set `halt_mode` per the table; consume the verb; pass remaining args to the matched step.
 2. If unmatched and the first arg starts with `--`: route to **Step A** (flag-only invocation).
 3. If unmatched and the first arg is a non-flag word: catch-all → **Step B** with the full arg string as the topic (existing behavior).
 
@@ -380,7 +380,7 @@ Triggered by `/masterplan plan` with no topic and no `--from-spec=`. Picks an ex
 2. For each candidate spec, check whether a sibling plan exists at `<config.plans_path>/<same-slug>.md` (slug = filename minus `-design.md` suffix). Filter to specs **without** a plan.
 3. Sort the filtered list by mtime descending.
 4. **If ≥ 1 candidate:** present top 3 via `AskUserQuestion`. The 4th option is "Other — paste a path" (free-text). User picks → treat as `plan --from-spec=<picked>` and proceed to **plan --from-spec worktree handling** (Step B0a, above in Step B), then Step B2 + B3.
-5. **If zero candidates:** surface `AskUserQuestion("No specs without plans found across <N> worktrees. What next?", options=["Start a new feature — /masterplan new <topic>", "Brainstorm-only — /masterplan brainstorm <topic>", "Cancel"])`. The first two redirect into the corresponding verb's flow with a topic prompted next; "Cancel" ends the turn.
+5. **If zero candidates:** surface `AskUserQuestion("No specs without plans found across <N> worktrees. What next?", options=["Start a new feature — /masterplan full <topic>", "Brainstorm-only — /masterplan brainstorm <topic>", "Cancel"])`. The first two redirect into the corresponding verb's flow with a topic prompted next; "Cancel" ends the turn.
 
 `halt_mode` for this step's outputs is `post-plan` (already set in Step 0 when `plan` was matched). Step B3's close-out gate fires after the plan is written.
 
