@@ -514,7 +514,7 @@ Use the result to evaluate whether parallel-group annotations are being authored
 
 | First token | Branch | `halt_mode` |
 |---|---|---|
-| _(empty)_ | Step M — two-tier no-args picker, then routes to A / B / I / S / D / R or exits | `none` |
+| _(empty)_ | Step M0 → Step M — inline status orientation + tripwire check, then two-tier no-args picker (which routes to A / B / I / S / D / R or exits) | `none` |
 | `full` (no topic) | Prompt for topic, then Step B — full kickoff | `none` |
 | `full <topic>` | Step B — full kickoff (B0→B1→B2→B3→C) | `none` |
 | `brainstorm` (no topic) | Prompt for topic, then Step B0+B1; halt at B1 | `post-brainstorm` |
@@ -541,6 +541,8 @@ Since v2.2.0, empty `$ARGUMENTS` no longer jumps directly to Step A. Step M firs
 - **Cancel** — exits without further tool calls.
 
 This keeps the common resume path available while making all verbs discoverable without memorizing the table.
+
+**Step M0 inline orientation (added post-v2.2.0).** Before the Tier-1 picker fires, M0 emits a structured plain-text preamble: a one-line headline (`<N> in-flight, <M> blocked across <W> worktrees [· <K> issue(s) detected — consider /masterplan doctor]`), up to 3 in-flight/blocked plan bullets with `current_task` + age, and a truncation tail if there are more. It runs 7 cheap inline tripwire checks (subset of the 18 doctor checks: #2, #3, #4, #5, #6, #9, #10) — all derivable from frontmatter + the `git_state` cache already in memory. The full parsed plan list is cached in `step_m_plans_cache`; if the user picks "Resume in-flight", Step A's step 0 short-circuits to the cache and skips its own worktree scan + Haiku dispatch. The "Stay on script" guardrail explicitly bounds the preamble to this format — no prose tangents, no per-check enumeration (that's `doctor`'s job).
 
 ### Verb tokens are reserved
 

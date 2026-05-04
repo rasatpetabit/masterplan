@@ -57,7 +57,7 @@ Steps A, B0, D consult the cache instead of re-running these. **Invalidate** the
 
 | First token | Branch | `halt_mode` |
 |---|---|---|
-| _(empty)_ | **Step M** — two-tier no-args picker (then routes to A / B / I / S / D / R or exits) | `none` |
+| _(empty)_ | **Step M0 → Step M** — inline status orientation + tripwire check, then two-tier no-args picker (which routes to A / B / I / S / D / R or exits) | `none` |
 | `full` (no topic) | Prompt for topic via `AskUserQuestion` (free-text Other), then **Step B** — full kickoff (B0→B1→B2→B3→C) | `none` |
 | `full <topic>` | **Step B** — full kickoff (B0→B1→B2→B3→C) | `none` |
 | `brainstorm` (no topic) | Prompt for topic via `AskUserQuestion` (free-text Other), then Step B0+B1; halt at B1 close-out gate | `post-brainstorm` |
@@ -239,6 +239,58 @@ When to NOT parallelize:
 
 Fires when `/masterplan` is invoked with no args. Routes the user to the appropriate Step via a two-tier `AskUserQuestion` menu so first-touch users don't need to memorize the verb table.
 
+### Step M0 — Inline status orientation (runs before Tier 1)
+
+Before the Tier-1 picker fires, emit a structured plain-text orientation summarizing in-flight plans and any cheap-to-detect issues. Step 0 has already populated `git_state.worktrees` and `git_state.branches` by this point — M0 reuses both.
+
+**Procedure:**
+
+1. **Enumerate plan candidates.** From `git_state.worktrees`, issue one parallel Bash batch globbing `<worktree_path>/<config.plans_path>/*-status.md` per worktree. If the merged glob yields >20 status files, narrow to the 20 most recently modified (same short-circuit shape as Step A's >20-worktree mode).
+
+2. **Read frontmatter inline.** Issue parallel `Read` calls (one per status file). No Haiku dispatch — file count is bounded at 20 and frontmatter is small. Parse YAML frontmatter inline.
+
+3. **Run 7 cheap inline tripwire checks** per parsed entry. All inputs are already in memory (frontmatter + `git_state` cache):
+   - **#10 Unparseable** — frontmatter parse failure.
+   - **#9 Schema violation** — any of the 14 required fields missing (`slug`, `status`, `spec`, `plan`, `worktree`, `branch`, `started`, `last_activity`, `current_task`, `next_action`, `autonomy`, `loop_enabled`, `codex_routing`, `codex_review`).
+   - **#2 Orphan status** — `plan` field doesn't pass `test -f`. Issue all `test -f` calls as one parallel Bash batch.
+   - **#3 Wrong worktree** — `worktree` frontmatter value not present in `git_state.worktrees` paths.
+   - **#4 Wrong branch** — `branch` frontmatter value not present in `git_state.branches`.
+   - **#5 Stale in-progress** — `status: in-progress` AND `last_activity` more than 30 days ago.
+   - **#6 Stale blocked** — `status: blocked` AND `last_activity` more than 14 days ago.
+
+   Increment a `tripwire_count` for each tripped check. Do NOT enumerate which check fired — that is `/masterplan doctor`'s job. M0 only counts.
+
+4. **Compute summary.** `in_flight_count`, `blocked_count`, `stale_count`, `worktree_count`, `tripwire_count`. Sort plans by `last_activity` descending, filter to `status ∈ {in-progress, blocked}`, take the top 3.
+
+5. **Emit preamble** as plain inline text (NOT an `AskUserQuestion`). Three cases:
+
+   **Case A — at least one parseable plan exists:**
+   ```
+   <N> in-flight, <M> blocked across <W> worktrees[ · <K> issue(s) detected — consider /masterplan doctor]
+     - <slug> (active|blocked <age>) — current: <current_task>
+     - <slug> (active|blocked <age>) — current: <current_task>
+     - <slug> (active|blocked <age>) — current: <current_task>
+     [… and <R> more — pick "Resume in-flight" to see all]
+   ```
+   - The `· <K> issue(s) detected …` segment emits only when `tripwire_count > 0`.
+   - The `… and <R> more …` line emits only when `(in_flight_count + blocked_count) > 3`.
+   - Age format: round to nearest hour or day (`2h ago`, `1d ago`, `5d ago`).
+   - Truncate `current_task` at 60 chars with `…` if longer.
+
+   **Case B — zero parseable plans AND zero tripwires:**
+   ```
+   No active plans.
+   ```
+
+   **Case C — zero parseable plans BUT tripwires exist** (e.g., orphan archive files, unparseable status files):
+   ```
+   No parseable active plans · <K> issue(s) detected — consider /masterplan doctor
+   ```
+
+6. **Cache for Step A reuse.** Store the full parsed plan list (not just the top 3) in a transient `step_m_plans_cache`. If the user picks "Resume in-flight" in Tier 1 → Step A consults this cache first and skips its own worktree scan + Haiku dispatch. The cache is discarded at end-of-turn regardless of which Tier-1 option the user picks.
+
+7. **Fire Tier 1.** Proceed to Tier-1 `AskUserQuestion` immediately — no further prose between the M0 preamble and the picker.
+
 ### Tier 1 — Pick a category
 
 Surface `AskUserQuestion("What kind of work?", options=[
@@ -289,12 +341,13 @@ Routing:
 - Tier-1 "Resume in-flight" deliberately delegates to Step A's existing list+pick rather than re-implementing the worktree scan inline. One canonical site for the in-progress-plans logic.
 - The picker fires BEFORE Step 0's `halt_mode` and flag-interactions logic for verb-routed invocations. Picker-routed invocations set `halt_mode` based on the chosen verb (per Tier 2a above) — no CLI flags are passed from the empty bare invocation.
 - If the user wants to invoke a verb directly (e.g., `/masterplan full <topic>`), they can — Step 0's verb routing table still matches the first token before Step M fires. Step M is for the empty-args case only.
-- **Stay on script.** The Tier-1 `AskUserQuestion` call IS the user-facing surface for this turn. Do not preface it with prose status reports beyond a one-line orientation, and do NOT pivot into adjacent feature offers ("by the way, want me to open a browser visualization / install X / show a diagram?"). `/masterplan` is frequently invoked inside `/loop` and remote-control sessions where there is no human between turns; a turn that ends with a free-text question instead of an `AskUserQuestion` call stalls the loop. If you find yourself drafting a `?` outside an `AskUserQuestion`, delete it or move it into the picker as an option.
+- **Stay on script.** Step M0's structured preamble (headline + up-to-3 plan bullets + optional tripwire flag) IS the orientation; emit it exactly as specified above, then fire the Tier-1 `AskUserQuestion` immediately. Do NOT expand the preamble with prose commentary, do NOT enumerate which doctor checks tripped (that's `/masterplan doctor`'s job — M0 only counts), and do NOT pivot into adjacent feature offers ("by the way, want me to open a browser visualization / install X / show a diagram?"). `/masterplan` is frequently invoked inside `/loop` and remote-control sessions where there is no human between turns; a turn that ends with a free-text question instead of an `AskUserQuestion` call stalls the loop. The picker IS the user-facing surface; M0 is the data preface to it. Any `?` outside an `AskUserQuestion` is still a bug.
 
 ---
 
 ## Step A — List + pick (across worktrees)
 
+0. **`step_m_plans_cache` short-circuit.** If `step_m_plans_cache` is populated (i.e., this is a "Resume in-flight" pick from Step M's Tier-1 picker), skip steps 1–4 and use the cached list directly. Jump to step 5. The cache holds the same `[{path, frontmatter, parse_error?}]` shape that step 4 produces.
 1. Enumerate all worktrees of the current repo from `git_state.worktrees` (cached in Step 0). Parse into `(worktree_path, branch)` tuples. Include the current worktree.
 2. **Worktree-count short-circuit.** If more than 20 worktrees exist, surface a one-line warning and switch to a faster mode: scan only the current worktree plus any worktree with a status file modified in the last 14 days. Issue the per-worktree `find <worktree>/docs/superpowers/plans -name '*-status.md' -mtime -14` calls as **one parallel Bash batch**, not sequentially. Per CD-2, do not auto-prune worktrees — just narrow the scan.
 3. For each worktree (after any short-circuit), glob `<worktree_path>/docs/superpowers/plans/*-status.md`. Issue the per-worktree globs as one parallel Bash batch.
