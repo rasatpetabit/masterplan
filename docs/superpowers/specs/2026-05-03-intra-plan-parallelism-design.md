@@ -3,7 +3,7 @@
 **Slug:** `intra-plan-parallelism`
 **Date:** 2026-05-03
 **Status:** brainstorm complete; ready for plan
-**Targets:** /superflow v1.1.0
+**Targets:** /masterplan v1.1.0
 **Supersedes:** `docs/design/intra-plan-parallelism.md` (deferred-design notes from v0.1, retained as historical context; updated alongside v1.1.0 to reference this spec).
 
 ---
@@ -12,7 +12,7 @@
 
 Intra-plan task parallelism has been a deferred design item across v0.1 → v0.2 → v0.3 → v0.4 → v1.0.0. The original notes (`docs/design/intra-plan-parallelism.md`) sketched annotation schema (`parallel-group:`, `depends-on:`, `files:`), required machinery (per-task git worktree isolation, single-writer status file, per-task verification with rollback policy), and deferred the work because "the per-task worktree subsystem is a meaningful undertaking and warrants its own dedicated plan."
 
-This spec is the result of a fresh-eyes re-evaluation triggered by `/superflow revisit intra-plan task parallelism` immediately after the v1.0.0 stable public release. The brainstorm catalogued six v1.0.0-era failure modes (FM-1 through FM-6 below), did a depth-pass on candidate mitigations, and concluded that a substantially smaller slice — **read-only parallel waves only** — is shippable in days, ships value, and lands the supporting infrastructure that a future Slice β (parallel committing tasks) or Slice γ (full per-task worktree subsystem) can build on additively.
+This spec is the result of a fresh-eyes re-evaluation triggered by `/masterplan revisit intra-plan task parallelism` immediately after the v1.0.0 stable public release. The brainstorm catalogued six v1.0.0-era failure modes (FM-1 through FM-6 below), did a depth-pass on candidate mitigations, and concluded that a substantially smaller slice — **read-only parallel waves only** — is shippable in days, ships value, and lands the supporting infrastructure that a future Slice β (parallel committing tasks) or Slice γ (full per-task worktree subsystem) can build on additively.
 
 The key insight from the depth-pass: the central git-index-race problem from the prior notes is unchanged for committing work, but **read-only tasks (verification, inference, lint, type-check, doc-generation) sidestep it entirely**. Most of the supporting infrastructure (single-writer status funnel, scope-snapshot, files-filter) is reusable for the deferred slices.
 
@@ -70,7 +70,7 @@ SDD's per-task loop is `dispatch → wait → process digest → loop` — no pa
 
 **Old-design impact:** Partially in prior notes (per-task git worktree isolation framing implies this). Sharper now: SDD is a concrete shipping skill with a stable contract.
 
-**Slice α mitigation (M-4a SDD wrapper, restricted to non-committing work):** /superflow's wave-dispatch layer dispatches N concurrent SDD invocations via the `Agent` tool. Each SDD instance runs serial within itself; /superflow's wrapper waits for all to return. **Critical constraint:** wave members do not commit (Section 3 per-instance brief enforces this). This sidesteps the central git-index-race because no concurrent commits happen.
+**Slice α mitigation (M-4a SDD wrapper, restricted to non-committing work):** /masterplan's wave-dispatch layer dispatches N concurrent SDD invocations via the `Agent` tool. Each SDD instance runs serial within itself; /masterplan's wrapper waits for all to return. **Critical constraint:** wave members do not commit (Section 3 per-instance brief enforces this). This sidesteps the central git-index-race because no concurrent commits happen.
 
 > **Depth-pass correction:** The original catalog claimed the SDD wrapper alone was sufficient. The depth-pass found this was wrong for committing work — concurrent commits to the same branch race the git index even with the wrapper. The wrapper is sufficient ONLY for non-committing work. Slice β/γ inherits the unsolved committing-work problem; per-task git worktrees (the original deferred subsystem) is the cheapest known mitigation, ~10-15 days.
 
@@ -113,9 +113,9 @@ SDD's per-task loop is `dispatch → wait → process digest → loop` — no pa
 
 ### Section 1: Architecture overview
 
-A read-only parallel-wave dispatch primitive for Step C of /superflow's plan-execution loop. When a plan declares mutually-independent verification, inference, lint, type-check, or doc-generation tasks via `parallel-group:` annotations, /superflow dispatches them as a single concurrent wave instead of serial per-task execution. Implementation tasks (anything that commits) continue to run serially under the existing per-task Step C loop.
+A read-only parallel-wave dispatch primitive for Step C of /masterplan's plan-execution loop. When a plan declares mutually-independent verification, inference, lint, type-check, or doc-generation tasks via `parallel-group:` annotations, /masterplan dispatches them as a single concurrent wave instead of serial per-task execution. Implementation tasks (anything that commits) continue to run serially under the existing per-task Step C loop.
 
-**Where it lives in /superflow.** Inside Step C step 2 (per-task implementation dispatch). Today it's a serial loop calling `superpowers:subagent-driven-development` once per task. Gains a wave-detection pre-pass that groups parallel-eligible tasks. Each wave dispatches as N concurrent SDD invocations via the `Agent` tool. After a wave completes (barrier wait), the orchestrator applies a single batched Step C 4d update covering all wave members.
+**Where it lives in /masterplan.** Inside Step C step 2 (per-task implementation dispatch). Today it's a serial loop calling `superpowers:subagent-driven-development` once per task. Gains a wave-detection pre-pass that groups parallel-eligible tasks. Each wave dispatches as N concurrent SDD invocations via the `Agent` tool. After a wave completes (barrier wait), the orchestrator applies a single batched Step C 4d update covering all wave members.
 
 **v1.x roadmap slot.** v1.0.0 just shipped (2026-05-03). This is the first feature-pass on the v1.x track. Targets v1.1.0 — additive, no breaking changes to existing plans, status files, or skills. Plans authored before this lands fall back to serial execution naturally (no `parallel-group:` declarations means no waves).
 
@@ -137,7 +137,7 @@ Concrete syntax:
 **parallel-group:** verification
 ```
 
-The existing `**Files:**` block (already lists Create/Modify/Test/Lint paths in /superflow-authored plans) is repurposed: when `parallel-group:` is set, the file paths there are treated as the **exhaustive scope** of the task. The task may not read or modify any path outside this list (FM-5 mitigation). Glob support (`src/auth/*.py`). Tasks **without** `parallel-group:` retain the current informational treatment of `**Files:**` — no breaking change.
+The existing `**Files:**` block (already lists Create/Modify/Test/Lint paths in /masterplan-authored plans) is repurposed: when `parallel-group:` is set, the file paths there are treated as the **exhaustive scope** of the task. The task may not read or modify any path outside this list (FM-5 mitigation). Glob support (`src/auth/*.py`). Tasks **without** `parallel-group:` retain the current informational treatment of `**Files:**` — no breaking change.
 
 **Eligibility rules (computed by the eligibility cache builder Haiku at Step C step 1).** A task is parallel-eligible if ALL of:
 
@@ -184,7 +184,7 @@ This is a stronger contract than the existing per-task SDD brief — wave implem
 3. Activity log rotation pre-check: if `len(active_log) + N > 100`, rotate ONCE at end of batch append (wave-aware per FM-2).
 4. Update `last_activity` to wave-completion timestamp.
 5. Append `## Notes` entries for any partial-failure context.
-6. Single git commit for the status file update: `superflow: wave complete (group: <name>, N tasks)`.
+6. Single git commit for the status file update: `masterplan: wave complete (group: <name>, N tasks)`.
 
 **Step C 5 (wakeup scheduling) under wave.** Currently fires after every 3 completed tasks. Under wave: a wave-end counts as ONE completion (so a wave of 5 doesn't trigger 5 wakeups). The "every 3 completed tasks" threshold uses wave count, not task count.
 
@@ -232,13 +232,13 @@ If `config.parallelism.abort_wave_on_protocol_violation: false`, the standard pa
 
 **Sharpened revisit trigger for Slice β/γ:**
 
-> *"Revisit Slice β when a real /superflow plan shows ≥3 parallel-grouped committing tasks where the wave's serial wall-clock cost exceeds 10 minutes AND the committed work is independent enough for the Slice α `**Files:**` exhaustive-scope rule to apply. Revisit Slice γ when ≥3 such β-eligible waves accumulate within a single plan's lifecycle, indicating a structural pattern that warrants the full per-task worktree subsystem."*
+> *"Revisit Slice β when a real /masterplan plan shows ≥3 parallel-grouped committing tasks where the wave's serial wall-clock cost exceeds 10 minutes AND the committed work is independent enough for the Slice α `**Files:**` exhaustive-scope rule to apply. Revisit Slice γ when ≥3 such β-eligible waves accumulate within a single plan's lifecycle, indicating a structural pattern that warrants the full per-task worktree subsystem."*
 
-Doctor check candidate (deferred to v1.1.x): scan completed-and-recent plans for the trigger condition; surface as a one-line note in `/superflow status`.
+Doctor check candidate (deferred to v1.1.x): scan completed-and-recent plans for the trigger condition; surface as a one-line note in `/masterplan status`.
 
 **Why ship Slice α even if no current plan exercises it.**
 
-1. **Annotation availability changes plan-authoring behavior.** Without `parallel-group:` available, the `superpowers:writing-plans` skill (briefed by /superflow Step B2) doesn't think in terms of parallel-friendly task structure. With it available — and Step B2's brief explicitly mentioning verification/inference/lint as parallel-friendly — new plans may naturally surface parallel groups. Trigger may fire faster post-shipment than pre-shipment.
+1. **Annotation availability changes plan-authoring behavior.** Without `parallel-group:` available, the `superpowers:writing-plans` skill (briefed by /masterplan Step B2) doesn't think in terms of parallel-friendly task structure. With it available — and Step B2's brief explicitly mentioning verification/inference/lint as parallel-friendly — new plans may naturally surface parallel groups. Trigger may fire faster post-shipment than pre-shipment.
 2. **Infrastructure-on-the-shelf for Slice β/γ.** Single-writer funnel, scope-snapshot, files-filter, wave-aware activity log rotation — all reusable for Slice β/γ when (if) implemented. The expensive piece deferred (per-task worktree subsystem) becomes a smaller incremental cost on top.
 
 ### Section 6: Migration + integration
@@ -263,11 +263,11 @@ Doctor check candidate (deferred to v1.1.x): scan completed-and-recent plans for
 
 These are informational — Step C step 1 catches violations and degrades gracefully to serial; doctor surfaces them early.
 
-**Telemetry attribution (FM-3 sub-mitigation).** `hooks/superflow-telemetry.sh` gains two new fields: `tasks_completed_this_turn: int` (1 for serial, N for wave) and `wave_groups: [str]` (array of wave-group names dispatched this turn, empty for serial). Backward-compatible: existing telemetry consumers ignore unknown fields. `docs/design/telemetry-signals.md` updated with the new fields + a `jq` example for "average tasks-per-wave-turn."
+**Telemetry attribution (FM-3 sub-mitigation).** `hooks/masterplan-telemetry.sh` gains two new fields: `tasks_completed_this_turn: int` (1 for serial, N for wave) and `wave_groups: [str]` (array of wave-group names dispatched this turn, empty for serial). Backward-compatible: existing telemetry consumers ignore unknown fields. `docs/design/telemetry-signals.md` updated with the new fields + a `jq` example for "average tasks-per-wave-turn."
 
 **Step C 4b (Codex review of inline work) under wave.** Skipped entirely for wave members — wave members don't commit, so the diff range `<task_start_sha>..HEAD` is empty. 4b's existing skip-on-zero-commit branch (per the v1.0.0 audit fix B4) handles this naturally — no new code.
 
-**Config schema additions.** New top-level `parallelism:` block in `.superflow.yaml`:
+**Config schema additions.** New top-level `parallelism:` block in `.masterplan.yaml`:
 
 ```yaml
 parallelism:
@@ -288,16 +288,16 @@ Backward-compatible.
 
 A v1.1.0 release is ready when ALL of the following hold:
 
-1. `commands/superflow.md` Step C step 2 has a wave-detection pre-pass that groups parallel-eligible tasks per the eligibility rules in Section 2.
-2. `commands/superflow.md` Step C step 1's eligibility cache builder Haiku brief is updated to compute `parallel_eligible` per task.
-3. `commands/superflow.md` Step B2's `superpowers:writing-plans` brief has the new paragraph from Section 6.
-4. `commands/superflow.md` Step C 4d is the single writer for status updates during waves; per-instance briefs forbid wave members from writing to status file or committing.
-5. `commands/superflow.md` Step C 4c filters porcelain against the union of wave members' declared scopes during wave operations.
-6. `commands/superflow.md` Step C 5's wakeup-scheduling threshold uses wave count, not task count.
-7. `commands/superflow.md` Step D's parallelization brief updates "all 14 checks" → "all 17 checks" and the checks table includes #15, #16, #17.
-8. `hooks/superflow-telemetry.sh` emits `tasks_completed_this_turn` and `wave_groups` fields.
+1. `commands/masterplan.md` Step C step 2 has a wave-detection pre-pass that groups parallel-eligible tasks per the eligibility rules in Section 2.
+2. `commands/masterplan.md` Step C step 1's eligibility cache builder Haiku brief is updated to compute `parallel_eligible` per task.
+3. `commands/masterplan.md` Step B2's `superpowers:writing-plans` brief has the new paragraph from Section 6.
+4. `commands/masterplan.md` Step C 4d is the single writer for status updates during waves; per-instance briefs forbid wave members from writing to status file or committing.
+5. `commands/masterplan.md` Step C 4c filters porcelain against the union of wave members' declared scopes during wave operations.
+6. `commands/masterplan.md` Step C 5's wakeup-scheduling threshold uses wave count, not task count.
+7. `commands/masterplan.md` Step D's parallelization brief updates "all 14 checks" → "all 17 checks" and the checks table includes #15, #16, #17.
+8. `hooks/masterplan-telemetry.sh` emits `tasks_completed_this_turn` and `wave_groups` fields.
 9. `docs/design/telemetry-signals.md` documents the new telemetry fields.
-10. `.superflow.yaml` schema documentation in `commands/superflow.md` includes the new `parallelism:` block.
+10. `.masterplan.yaml` schema documentation in `commands/masterplan.md` includes the new `parallelism:` block.
 11. `docs/design/intra-plan-parallelism.md` is rewritten to reference this spec, the failure-mode catalog, and the sharpened revisit trigger.
 12. README.md updated: "Phase verbs" / "Operation verbs" sections in "What you get" mention `parallel-group:` annotation as a v1.1.0 addition; "Plan annotations" section gains a `**parallel-group:**` entry alongside `**Codex:**`.
 13. CHANGELOG.md `[1.1.0]` block documents the additive change with the failure-mode catalog as the canonical "why."
@@ -305,7 +305,7 @@ A v1.1.0 release is ready when ALL of the following hold:
 15. WORKLOG.md gains a v1.1.0 entry.
 16. Smoke verification: a hand-crafted test plan with 3 parallel-eligible verification tasks dispatches them concurrently in Step C, applies a single batched 4d update, and surfaces the wave-tag in the activity log. Doctor lint passes on the test plan. The test plan can be discarded after verification.
 
-The verification is hand-crafted because /superflow has no automated test suite (the orchestrator is markdown). Future v1.x candidate: canned-`$ARGUMENTS` self-test specs in `docs/superpowers/specs/` exercising every routing branch — would catch wave-detection drift.
+The verification is hand-crafted because /masterplan has no automated test suite (the orchestrator is markdown). Future v1.x candidate: canned-`$ARGUMENTS` self-test specs in `docs/superpowers/specs/` exercising every routing branch — would catch wave-detection drift.
 
 ---
 
@@ -321,19 +321,19 @@ The verification is hand-crafted because /superflow has no automated test suite 
 
 ## Implementation plan handoff
 
-Per /superflow's Step B2/B3 flow, this spec hands off to `superpowers:writing-plans` for plan generation. The plan will be written to `docs/superpowers/plans/2026-05-03-intra-plan-parallelism.md` with sibling status file at `docs/superpowers/plans/2026-05-03-intra-plan-parallelism-status.md`.
+Per /masterplan's Step B2/B3 flow, this spec hands off to `superpowers:writing-plans` for plan generation. The plan will be written to `docs/superpowers/plans/2026-05-03-intra-plan-parallelism.md` with sibling status file at `docs/superpowers/plans/2026-05-03-intra-plan-parallelism-status.md`.
 
 Status file frontmatter at handoff:
-- `worktree:` will record `main` (per the user's choice during /superflow Step B0).
+- `worktree:` will record `main` (per the user's choice during /masterplan Step B0).
 - `branch:` will record `main`.
-- Future `/superflow execute` will need to either (a) reconcile main-as-worktree (SDD will refuse), or (b) relocate the plan into a feature worktree first via the post-plan close-out gate's "Open plan to review" → user-led handoff path.
+- Future `/masterplan execute` will need to either (a) reconcile main-as-worktree (SDD will refuse), or (b) relocate the plan into a feature worktree first via the post-plan close-out gate's "Open plan to review" → user-led handoff path.
 
-The brainstorm halts at /superflow's Step B3 close-out gate (`halt_mode = post-plan`). The user can then choose: "Done — resume later" (recommended), "Start execution now" (will hit SDD's main-branch refusal — handle by relocating to a feature worktree first), "Open plan to review", or "Discard."
+The brainstorm halts at /masterplan's Step B3 close-out gate (`halt_mode = post-plan`). The user can then choose: "Done — resume later" (recommended), "Start execution now" (will hit SDD's main-branch refusal — handle by relocating to a feature worktree first), "Open plan to review", or "Discard."
 
 ---
 
 ## Codex review note (pre-shipment)
 
-The user added `--codex-review=on` to this /superflow run. The flag persisted to status frontmatter at Step B3 (`codex_review: on`). When `/superflow execute` eventually runs this plan, every inline-completed implementation task gets reviewed by `codex:codex-rescue` in REVIEW mode against this spec. Findings auto-accept under `gated` autonomy mode below severity `medium` (per the v1.0.0 default `codex.review_prompt_at: medium`). Higher-severity findings prompt with `Accept / Fix and re-review / Accept anyway / Stop`.
+The user added `--codex-review=on` to this /masterplan run. The flag persisted to status frontmatter at Step B3 (`codex_review: on`). When `/masterplan execute` eventually runs this plan, every inline-completed implementation task gets reviewed by `codex:codex-rescue` in REVIEW mode against this spec. Findings auto-accept under `gated` autonomy mode below severity `medium` (per the v1.0.0 default `codex.review_prompt_at: medium`). Higher-severity findings prompt with `Accept / Fix and re-review / Accept anyway / Stop`.
 
 This is appropriate for v1.1.0: the infrastructure changes (single-writer funnel, eligibility cache extension, wave dispatch) are correctness-sensitive, and Codex-as-fresh-eyes review will catch implementation drift from the spec.

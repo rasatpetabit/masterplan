@@ -1,59 +1,59 @@
-# claude-superflow
+# superpowers-masterplan
 
 A Claude Code plugin that orchestrates a complete development workflow: **brainstorm → plan → execute**, with worktree management, legacy plan import, configurable autonomy, Codex routing, and self-paced cross-session loops.
 
-It's a thin orchestrator over the [superpowers](https://github.com/obra/superpowers) skills — `/superflow` doesn't reimplement brainstorming, planning, or execution. It sequences them, persists state in a single status file per plan, and adds the connective tissue that makes long-running development work survive across sessions and worktrees.
+It's a thin orchestrator over the [superpowers](https://github.com/obra/superpowers) skills — `/masterplan` doesn't reimplement brainstorming, planning, or execution. It sequences them, persists state in a single status file per plan, and adds the connective tissue that makes long-running development work survive across sessions and worktrees.
 
-> **For LLMs working on this codebase:** start with [`CLAUDE.md`](./CLAUDE.md) (always-loaded project orientation, ~500 words) and [`docs/internals.md`](./docs/internals.md) (deep-dive: architecture, dispatch model, status file format, CD rules, operational rules, wave dispatch, failure modes, doctor checks, common dev recipes, anti-patterns; ~6500 words). The orchestrator's "source code" is `commands/superflow.md`.
+> **For LLMs working on this codebase:** start with [`CLAUDE.md`](./CLAUDE.md) (always-loaded project orientation, ~500 words) and [`docs/internals.md`](./docs/internals.md) (deep-dive: architecture, dispatch model, status file format, CD rules, operational rules, wave dispatch, failure modes, doctor checks, common dev recipes, anti-patterns; ~6500 words). The orchestrator's "source code" is `commands/masterplan.md`.
 
 ## What you get
 
-`/superflow` is invoked as `/superflow <verb> [args] [flags]`. The full verb reference lives in [Verb reference](#verb-reference) below; here's the elevator pitch.
+`/masterplan` is invoked as `/masterplan <verb> [args] [flags]`. The full verb reference lives in [Verb reference](#verb-reference) below; here's the elevator pitch.
 
 **Phase verbs** (v0.3.0+) — address any pipeline phase directly at the call site:
 
-- **`/superflow new <topic>`** — kick off a full brainstorm → plan → execute flow. (Same as the bare-topic shortcut `/superflow <topic>`, which still works.)
-- **`/superflow brainstorm <topic>`** — brainstorm only; halt cleanly after the spec is written.
-- **`/superflow plan <topic>`** — brainstorm + plan; halt cleanly after the plan + status file are written.
-- **`/superflow plan --from-spec=<path>`** — plan only against an existing spec; halts after the plan is written.
-- **`/superflow plan`** *(no args)* — pick from specs that don't yet have a plan, then plan against the chosen spec.
-- **`/superflow execute [<status-path>]`** — resume a specific plan, or list+pick if no path given.
+- **`/masterplan new <topic>`** — kick off a full brainstorm → plan → execute flow. (Same as the bare-topic shortcut `/masterplan <topic>`, which still works.)
+- **`/masterplan brainstorm <topic>`** — brainstorm only; halt cleanly after the spec is written.
+- **`/masterplan plan <topic>`** — brainstorm + plan; halt cleanly after the plan + status file are written.
+- **`/masterplan plan --from-spec=<path>`** — plan only against an existing spec; halts after the plan is written.
+- **`/masterplan plan`** *(no args)* — pick from specs that don't yet have a plan, then plan against the chosen spec.
+- **`/masterplan execute [<status-path>]`** — resume a specific plan, or list+pick if no path given.
 
 **Operation verbs** — one-shot operations that aren't a pipeline phase:
 
-- **`/superflow`** *(no args)* — list in-progress plans across all worktrees of the current repo; pick one to resume or start fresh.
-- **`/superflow import`** — discover legacy planning artifacts (PLAN.md, GitHub issues, branches, orphan superpowers plans) and convert them to the unified schema with completion-state inference so already-done work isn't redone.
-- **`/superflow doctor`** — lint state across all worktrees of the current repo.
-- **`/superflow status`** — read-only situation report across all worktrees: in-flight, blocked, stale, recently completed.
-- **`/superflow retro [<slug>]`** — generate a retrospective doc for a completed plan (picks one if no slug given).
-- **`/superflow --resume=<path>`** — alias for `/superflow execute <path>`.
+- **`/masterplan`** *(no args)* — list in-progress plans across all worktrees of the current repo; pick one to resume or start fresh.
+- **`/masterplan import`** — discover legacy planning artifacts (PLAN.md, GitHub issues, branches, orphan superpowers plans) and convert them to the unified schema with completion-state inference so already-done work isn't redone.
+- **`/masterplan doctor`** — lint state across all worktrees of the current repo.
+- **`/masterplan status`** — read-only situation report across all worktrees: in-flight, blocked, stale, recently completed.
+- **`/masterplan retro [<slug>]`** — generate a retrospective doc for a completed plan (picks one if no slug given).
+- **`/masterplan --resume=<path>`** — alias for `/masterplan execute <path>`.
 
 **Companion surfaces:**
 
-- **`/loop /superflow ...`** — self-paced cross-session execution; wakes itself every ~25 minutes to advance the plan a few tasks at a time.
-- **`superflow-detect` skill** — auto-suggests `/superflow import` when legacy planning artifacts are present in the repo. Never auto-runs.
+- **`/loop /masterplan ...`** — self-paced cross-session execution; wakes itself every ~25 minutes to advance the plan a few tasks at a time.
+- **`masterplan-detect` skill** — auto-suggests `/masterplan import` when legacy planning artifacts are present in the repo. Never auto-runs.
 
 ## Why this exists
 
 Long-running development work tends to sprawl: a PLAN.md here, a feature branch there, a half-done docs/superpowers/plans/ from a previous session, a Linear ticket nobody's looked at in a week. After a session ends, the context evaporates and the next agent (or human) has to reconstruct what's done and what's left.
 
-`/superflow` enforces a single source of truth — a status file alongside each plan — that captures: which worktree the work lives in, which branch, which task is current, what's been tried, what's blocked. Resume from anywhere, scan in-progress work across all your worktrees, and lint when something feels off.
+`/masterplan` enforces a single source of truth — a status file alongside each plan — that captures: which worktree the work lives in, which branch, which task is current, what's been tried, what's blocked. Resume from anywhere, scan in-progress work across all your worktrees, and lint when something feels off.
 
 ## Design philosophy
 
-Three principles shape every decision in `/superflow`:
+Three principles shape every decision in `/masterplan`:
 
 ### 1. Thin orchestrator over composable skills
 
-`/superflow` doesn't reimplement brainstorming, planning, execution, debugging, or branch-finishing. Those live in the [superpowers](https://github.com/obra/superpowers) skills. The slash command's job is to **sequence** them, persist state across phases, and route decisions.
+`/masterplan` doesn't reimplement brainstorming, planning, execution, debugging, or branch-finishing. Those live in the [superpowers](https://github.com/obra/superpowers) skills. The slash command's job is to **sequence** them, persist state across phases, and route decisions.
 
-This keeps the command surface small (one markdown file you can hold in your head) and means improvements to the underlying skills compound automatically. When `superpowers:writing-plans` gets sharper, `/superflow`'s plans get sharper — no changes here.
+This keeps the command surface small (one markdown file you can hold in your head) and means improvements to the underlying skills compound automatically. When `superpowers:writing-plans` gets sharper, `/masterplan`'s plans get sharper — no changes here.
 
 ### 2. Subagent-driven execution with strict context control
 
 This is the most important design goal, and the one that makes long autonomous runs viable.
 
-A multi-task plan run in a single Claude session bloats context fast: failed experiments, big diffs, library docs, verification dumps. By task 10, the orchestrator is reasoning on cluttered, partially-stale state and quality drops. `/superflow` solves this structurally: **every substantive piece of work goes to a fresh subagent, and only digested results come back to the orchestrator**.
+A multi-task plan run in a single Claude session bloats context fast: failed experiments, big diffs, library docs, verification dumps. By task 10, the orchestrator is reasoning on cluttered, partially-stale state and quality drops. `/masterplan` solves this structurally: **every substantive piece of work goes to a fresh subagent, and only digested results come back to the orchestrator**.
 
 The dispatch model:
 
@@ -92,12 +92,12 @@ If you can answer "where did this work get to and what's next?" by reading the s
 In a Claude Code session:
 
 ```
-/plugin marketplace add rasatpetabit/claude-superflow
-/plugin install claude-superflow@rasatpetabit-claude-superflow
+/plugin marketplace add rasatpetabit/superpowers-masterplan
+/plugin install superpowers-masterplan@rasatpetabit-superpowers-masterplan
 /reload-plugins
 ```
 
-Verify with `/plugin` — `claude-superflow` should appear under **Installed**. If the install command above doesn't match (Claude Code's plugin syntax has been iterating), the safe fallback is to run `/plugin marketplace add rasatpetabit/claude-superflow` and then pick `claude-superflow` from `/plugin`'s interactive Discover tab.
+Verify with `/plugin` — `superpowers-masterplan` should appear under **Installed**. If the install command above doesn't match (Claude Code's plugin syntax has been iterating), the safe fallback is to run `/plugin marketplace add rasatpetabit/superpowers-masterplan` and then pick `superpowers-masterplan` from `/plugin`'s interactive Discover tab.
 
 ### Option B — manual
 
@@ -105,18 +105,18 @@ Drop the slash command into your user commands directory:
 
 ```bash
 mkdir -p ~/.claude/commands ~/.claude/skills
-cp commands/superflow.md ~/.claude/commands/
-cp -r skills/superflow-detect ~/.claude/skills/
+cp commands/masterplan.md ~/.claude/commands/
+cp -r skills/masterplan-detect ~/.claude/skills/
 ```
 
 ### Option C — opt into per-turn telemetry (optional)
 
-`/superflow` can capture per-turn context-usage signals to `<plan>-telemetry.jsonl` via a Stop hook. The orchestrator also writes inline snapshots at every Step C entry, so the hook is optional — but the hook gives you per-turn cadence whereas inline snapshots only fire on resume.
+`/masterplan` can capture per-turn context-usage signals to `<plan>-telemetry.jsonl` via a Stop hook. The orchestrator also writes inline snapshots at every Step C entry, so the hook is optional — but the hook gives you per-turn cadence whereas inline snapshots only fire on resume.
 
 ```bash
 mkdir -p ~/.claude/hooks
-cp hooks/superflow-telemetry.sh ~/.claude/hooks/
-chmod +x ~/.claude/hooks/superflow-telemetry.sh
+cp hooks/masterplan-telemetry.sh ~/.claude/hooks/
+chmod +x ~/.claude/hooks/masterplan-telemetry.sh
 ```
 
 Add this fragment to `~/.claude/settings.json`:
@@ -129,7 +129,7 @@ Add this fragment to `~/.claude/settings.json`:
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$HOME/.claude/hooks/superflow-telemetry.sh\"",
+            "command": "bash \"$HOME/.claude/hooks/masterplan-telemetry.sh\"",
             "timeout": 3,
             "async": true
           }
@@ -140,64 +140,64 @@ Add this fragment to `~/.claude/settings.json`:
 }
 ```
 
-The hook is **defensive** — it bails silently in any session that isn't operating on a `/superflow`-managed plan, so it's safe as a global Stop hook. Per-plan opt-out: add `telemetry: off` to a status file's frontmatter. Global opt-out: set `telemetry.enabled: false` in `.superflow.yaml`. Field shape and `jq` queries: see [`docs/design/telemetry-signals.md`](./docs/design/telemetry-signals.md).
+The hook is **defensive** — it bails silently in any session that isn't operating on a `/masterplan`-managed plan, so it's safe as a global Stop hook. Per-plan opt-out: add `telemetry: off` to a status file's frontmatter. Global opt-out: set `telemetry.enabled: false` in `.masterplan.yaml`. Field shape and `jq` queries: see [`docs/design/telemetry-signals.md`](./docs/design/telemetry-signals.md).
 
-> Tested on Linux. The hook calls `find`, `stat`, and `date` with portable flags that should also work on macOS BSD utilities, but the macOS path hasn't been smoke-tested. If telemetry doesn't land for you on macOS, please [open an issue](https://github.com/rasatpetabit/claude-superflow/issues).
+> Tested on Linux. The hook calls `find`, `stat`, and `date` with portable flags that should also work on macOS BSD utilities, but the macOS path hasn't been smoke-tested. If telemetry doesn't land for you on macOS, please [open an issue](https://github.com/rasatpetabit/superpowers-masterplan/issues).
 
 ### Dependencies
 
-- **Required:** [`superpowers`](https://github.com/obra/superpowers) — `/superflow` delegates to its `brainstorming`, `writing-plans`, `subagent-driven-development`, `executing-plans`, `using-git-worktrees`, `systematic-debugging`, and `finishing-a-development-branch` skills.
+- **Required:** [`superpowers`](https://github.com/obra/superpowers) — `/masterplan` delegates to its `brainstorming`, `writing-plans`, `subagent-driven-development`, `executing-plans`, `using-git-worktrees`, `systematic-debugging`, and `finishing-a-development-branch` skills.
 - **Optional:** `codex` plugin (only needed if `codex_routing` is `auto` or `manual`) — provides the `codex:codex-rescue` subagent.
 - **Optional:** `context7` MCP server — used by the CD-4 ladder for library documentation lookups.
-- **Optional:** `gh` CLI — required for `/superflow import` of GitHub issues and PRs.
+- **Optional:** `gh` CLI — required for `/masterplan import` of GitHub issues and PRs.
 
 ## Quick start
 
 ### Start a new feature
 
 ```
-/superflow new Stripe webhook handler
+/masterplan new Stripe webhook handler
 ```
 
 Walks you through brainstorming (interactive), produces a spec at `docs/superpowers/specs/`, generates a plan at `docs/superpowers/plans/`, then executes task-by-task with subagents.
 
-The bare-topic shortcut (`/superflow Stripe webhook handler`) still works — `new` is the explicit form for the same flow.
+The bare-topic shortcut (`/masterplan Stripe webhook handler`) still works — `new` is the explicit form for the same flow.
 
 ### Brainstorm or plan only — without executing
 
 When you want to think a feature through without committing to execution yet:
 
 ```
-/superflow brainstorm Stripe webhook handler   # halts after spec is written
-/superflow plan Stripe webhook handler         # halts after plan is written
-/superflow plan --from-spec=docs/superpowers/specs/2026-05-02-webhooks-design.md
-/superflow plan                                # picks from specs that have no plan yet
+/masterplan brainstorm Stripe webhook handler   # halts after spec is written
+/masterplan plan Stripe webhook handler         # halts after plan is written
+/masterplan plan --from-spec=docs/superpowers/specs/2026-05-02-webhooks-design.md
+/masterplan plan                                # picks from specs that have no plan yet
 ```
 
-When you're ready to ship the planned work, `/superflow execute <status-path>` (or the listing form below) picks it back up.
+When you're ready to ship the planned work, `/masterplan execute <status-path>` (or the listing form below) picks it back up.
 
 ### Long autonomous run
 
 ```
-/loop /superflow new refactor auth middleware --autonomy=loose
+/loop /masterplan new refactor auth middleware --autonomy=loose
 ```
 
 Same flow, but execution runs autonomously with `ScheduleWakeup`-paced resumption. Stops on blockers (which get recorded in the status file's `## Blockers` section).
 
-> Note: `/loop /superflow brainstorm <topic>` or `/loop /superflow plan <topic>` will warn you at Step 0 — those verbs halt before execution, so a loop has nothing to advance. `--no-loop` is recommended in that case.
+> Note: `/loop /masterplan brainstorm <topic>` or `/loop /masterplan plan <topic>` will warn you at Step 0 — those verbs halt before execution, so a loop has nothing to advance. `--no-loop` is recommended in that case.
 
 ### Resume in-progress work
 
 ```
-/superflow                                                          # lists in-progress plans across worktrees
-/superflow execute docs/superpowers/plans/2026-04-15-auth-status.md # explicit verb
-/superflow --resume=docs/superpowers/plans/2026-04-15-auth-status.md # back-compat alias
+/masterplan                                                          # lists in-progress plans across worktrees
+/masterplan execute docs/superpowers/plans/2026-04-15-auth-status.md # explicit verb
+/masterplan --resume=docs/superpowers/plans/2026-04-15-auth-status.md # back-compat alias
 ```
 
 ### Migrate legacy plans
 
 ```
-/superflow import
+/masterplan import
 ```
 
 Scans for PLAN.md, TODO.md, ROADMAP.md, docs/plans/*.md, GitHub issues, draft PRs, open feature branches, and orphan superpowers plans. Pick which to import, get them rewritten in the canonical format with completion inference, and start executing.
@@ -205,15 +205,15 @@ Scans for PLAN.md, TODO.md, ROADMAP.md, docs/plans/*.md, GitHub issues, draft PR
 ### Audit your state
 
 ```
-/superflow doctor          # lint across all worktrees
-/superflow doctor --fix    # auto-fix safe issues
+/masterplan doctor          # lint across all worktrees
+/masterplan doctor --fix    # auto-fix safe issues
 ```
 
 ### Situation report
 
 ```
-/superflow status                  # what's in flight, blocked, stale across all worktrees
-/superflow status --plan=<slug>    # deep view of one plan
+/masterplan status                  # what's in flight, blocked, stale across all worktrees
+/masterplan status --plan=<slug>    # deep view of one plan
 ```
 
 Read-only synthesis: status frontmatter + last activity entries + blockers/notes + retro index + telemetry trends + recent commits. Useful as a daily SITREP before deciding what to pick back up.
@@ -221,8 +221,8 @@ Read-only synthesis: status frontmatter + last activity entries + blockers/notes
 ### Generate a retrospective
 
 ```
-/superflow retro                   # picks a completed plan that doesn't yet have a retro
-/superflow retro auth-refactor     # targets a specific slug
+/masterplan retro                   # picks a completed plan that doesn't yet have a retro
+/masterplan retro auth-refactor     # targets a specific slug
 ```
 
 Reads the plan + status + spec + git log + PR (if `gh` is available), then writes `docs/superpowers/retros/YYYY-MM-DD-<slug>-retro.md` with outcomes, blockers, deviations, follow-ups, and Codex routing observations. Offers to `/schedule` time-bounded follow-ups one at a time.
@@ -244,19 +244,19 @@ Reads the plan + status + spec + git log + PR (if `gh` is available), then write
 | `status [--plan=<slug>]` | Read-only situation report across all worktrees: in-flight, blocked, stale, recently completed, telemetry signals, recent design notes. `--plan=<slug>` drills into one plan's blockers/notes/activity/telemetry. | n/a |
 | `retro [<slug>]` | Generate a retrospective doc for a completed plan (picks one if no slug given) | n/a |
 
-> Topics literally named after a verb (`new`, `brainstorm`, `plan`, `execute`, `retro`, `import`, `doctor`, `status`) need to be prefixed with another word — e.g. `/superflow add brainstorm session timer` works because `add` isn't a verb.
+> Topics literally named after a verb (`new`, `brainstorm`, `plan`, `execute`, `retro`, `import`, `doctor`, `status`) need to be prefixed with another word — e.g. `/masterplan add brainstorm session timer` works because `add` isn't a verb.
 
 ### Aliases and shortcuts
 
 | Invocation | Equivalent to |
 |---|---|
-| `/superflow` *(no args)* | `/superflow execute` (list + pick across worktrees) |
-| `/superflow <topic>` | `/superflow new <topic>` (bare-topic shortcut for kickoff) |
-| `/superflow --resume=<status-path>` | `/superflow execute <status-path>` |
-| `/superflow import --pr=<num>` | Import directly from a single GitHub PR (skips discovery) |
-| `/superflow import --issue=<num>` | Import directly from a single GitHub issue (skips discovery) |
-| `/superflow import --file=<path>` | Import directly from a single local file (skips discovery) |
-| `/superflow import --branch=<name>` | Reverse-engineer a spec/plan from a single branch's history (skips discovery) |
+| `/masterplan` *(no args)* | `/masterplan execute` (list + pick across worktrees) |
+| `/masterplan <topic>` | `/masterplan new <topic>` (bare-topic shortcut for kickoff) |
+| `/masterplan --resume=<status-path>` | `/masterplan execute <status-path>` |
+| `/masterplan import --pr=<num>` | Import directly from a single GitHub PR (skips discovery) |
+| `/masterplan import --issue=<num>` | Import directly from a single GitHub issue (skips discovery) |
+| `/masterplan import --file=<path>` | Import directly from a single local file (skips discovery) |
+| `/masterplan import --branch=<name>` | Reverse-engineer a spec/plan from a single branch's history (skips discovery) |
 
 ## Flags
 
@@ -280,29 +280,29 @@ The autonomy and codex flags are designed to compose. Common pairs:
 
 | Combination | Behavior |
 |---|---|
-| `/superflow <topic>` | Default: `--autonomy=gated`, codex routing from config (default `auto`), no review. Per-task `(continue / skip / stop)` gate; auto-routing decisions execute silently (no per-task Codex confirmation prompt — set `codex.confirm_auto_routing: true` for the legacy chatty behavior). |
-| `/loop /superflow <topic> --autonomy=loose` | Long autonomous run with no per-task gating; ScheduleWakeup paces it across sessions; stops only on blockers. |
-| `/loop /superflow <topic> --autonomy=loose --codex-review=on` | Same long run, but Codex reviews each inline (Claude/Sonnet) task's diff before it counts as done. Under `loose`: low/clean → silent accept; medium → `## Notes`; high → block. (Same behavior under `gated` for non-prompting severities — auto-accepted silently below `codex.review_prompt_at`, default `medium`.) |
-| `/superflow <topic> --codex=auto --codex-review=on` | Codex executes simple well-defined tasks; Codex reviews the inline (complex) ones. Each model plays to its strengths, no overlap (no self-review). |
-| `/superflow <topic> --codex=manual --codex-review=on` | User gets asked per task whether to delegate execution to Codex. Tasks that stay inline are reviewed by Codex afterward. |
-| `/superflow <topic> --codex=off` | Claude does everything; no Codex involvement. Review is automatically disabled too (a routing-off plan never invokes Codex, even for review). |
-| `/superflow <topic> --autonomy=full --codex-review=on` | Maximum autonomy with adversarial review as the safety rail — high-severity findings trigger one auto-fix retry, then block. |
+| `/masterplan <topic>` | Default: `--autonomy=gated`, codex routing from config (default `auto`), no review. Per-task `(continue / skip / stop)` gate; auto-routing decisions execute silently (no per-task Codex confirmation prompt — set `codex.confirm_auto_routing: true` for the legacy chatty behavior). |
+| `/loop /masterplan <topic> --autonomy=loose` | Long autonomous run with no per-task gating; ScheduleWakeup paces it across sessions; stops only on blockers. |
+| `/loop /masterplan <topic> --autonomy=loose --codex-review=on` | Same long run, but Codex reviews each inline (Claude/Sonnet) task's diff before it counts as done. Under `loose`: low/clean → silent accept; medium → `## Notes`; high → block. (Same behavior under `gated` for non-prompting severities — auto-accepted silently below `codex.review_prompt_at`, default `medium`.) |
+| `/masterplan <topic> --codex=auto --codex-review=on` | Codex executes simple well-defined tasks; Codex reviews the inline (complex) ones. Each model plays to its strengths, no overlap (no self-review). |
+| `/masterplan <topic> --codex=manual --codex-review=on` | User gets asked per task whether to delegate execution to Codex. Tasks that stay inline are reviewed by Codex afterward. |
+| `/masterplan <topic> --codex=off` | Claude does everything; no Codex involvement. Review is automatically disabled too (a routing-off plan never invokes Codex, even for review). |
+| `/masterplan <topic> --autonomy=full --codex-review=on` | Maximum autonomy with adversarial review as the safety rail — high-severity findings trigger one auto-fix retry, then block. |
 
 CLI flags always override config for the run, and the resolved values land in the status file so resumes are deterministic.
 
 ### Auto-compact pairing
 
-Long-running plans benefit from periodic context compaction in a sibling session. `/superflow` can't auto-start a `/loop` for you (slash commands are user-typed), but it surfaces a one-line passive notice once per plan recommending the canonical pairing:
+Long-running plans benefit from periodic context compaction in a sibling session. `/masterplan` can't auto-start a `/loop` for you (slash commands are user-typed), but it surfaces a one-line passive notice once per plan recommending the canonical pairing:
 
 ```
 /loop 30m /compact focus on current task + active plan; drop tool output and old reasoning
 ```
 
-Run that in a separate Claude Code shell or session alongside your `/superflow` workflow. CronCreate-backed `/loop` and `/superflow`'s ScheduleWakeup-backed wakeups occupy different slots and don't conflict. Configure interval and focus prompt in `.superflow.yaml` under `auto_compact:`. Silence the notice with `auto_compact.enabled: false`.
+Run that in a separate Claude Code shell or session alongside your `/masterplan` workflow. CronCreate-backed `/loop` and `/masterplan`'s ScheduleWakeup-backed wakeups occupy different slots and don't conflict. Configure interval and focus prompt in `.masterplan.yaml` under `auto_compact:`. Silence the notice with `auto_compact.enabled: false`.
 
 ## Configuration
 
-Drop a `.superflow.yaml` at your repo root (or `~/.superflow.yaml` for global defaults). Four-tier precedence: CLI flags > repo-local > user-global > built-in defaults.
+Drop a `.masterplan.yaml` at your repo root (or `~/.masterplan.yaml` for global defaults). Four-tier precedence: CLI flags > repo-local > user-global > built-in defaults.
 
 ```yaml
 # Default execution autonomy
@@ -326,11 +326,11 @@ worktree_base: ../
 # Branch names that trigger "create new worktree" recommendation
 trunk_branches: [main, master, trunk, dev, develop]
 
-# Cruft handling on /superflow import
+# Cruft handling on /masterplan import
 cruft_policy: ask  # ask | leave | archive | delete
 archive_path: legacy/.archive
 
-# /superflow doctor auto-fix policy (overridden by --fix)
+# /masterplan doctor auto-fix policy (overridden by --fix)
 doctor_autofix: false
 
 # Codex routing + review
@@ -353,7 +353,7 @@ auto_compact:
   interval: 30m
   focus: "focus on current task + active plan; drop tool output and old reasoning"
 
-# Per-turn context telemetry — captured by hooks/superflow-telemetry.sh
+# Per-turn context telemetry — captured by hooks/masterplan-telemetry.sh
 # (Stop hook, manually installed) and Step C inline snapshots.
 # Per-plan opt-out: add `telemetry: off` to status frontmatter.
 telemetry:
@@ -373,7 +373,7 @@ integrations:
 
 ## Plan annotations
 
-Tasks in `/superflow`-generated plans can carry an optional `**Codex:**` annotation that overrides the eligibility heuristic for Codex routing:
+Tasks in `/masterplan`-generated plans can carry an optional `**Codex:**` annotation that overrides the eligibility heuristic for Codex routing:
 
 ```markdown
 ### Task 3: Add memory adapter
@@ -391,7 +391,7 @@ Tasks in `/superflow`-generated plans can carry an optional `**Codex:**` annotat
 | `**Codex:** no` | `eligible: false`, `annotated: "no"` — never delegate |
 | (no annotation) | fall through to the heuristic checklist; `annotated: null` |
 
-Plans authored via `/superflow`'s Step B2 get this guidance baked into the `writing-plans` brief: the planner adds `**Codex:** ok` for obviously well-bounded tasks (≤ 3 files, unambiguous, known verification) and `**Codex:** no` for tasks that require broader context. Plans without annotations behave exactly as before — annotations are an aid, never required.
+Plans authored via `/masterplan`'s Step B2 get this guidance baked into the `writing-plans` brief: the planner adds `**Codex:** ok` for obviously well-bounded tasks (≤ 3 files, unambiguous, known verification) and `**Codex:** no` for tasks that require broader context. Plans without annotations behave exactly as before — annotations are an aid, never required.
 
 ## Status file (the source of truth)
 
@@ -434,7 +434,7 @@ compact_loop_recommended: true
 
 ## Context discipline
 
-`/superflow` references a numbered list of context-discipline rules (CD-1 through CD-10) at high-leverage hook points in the loop:
+`/masterplan` references a numbered list of context-discipline rules (CD-1 through CD-10) at high-leverage hook points in the loop:
 
 | ID | Rule |
 |---|---|
@@ -453,7 +453,7 @@ Activity log entries cite which CD rule drove a decision (e.g., "applied CD-4 la
 
 ## Customizing for your team
 
-Most teams will want a `.superflow.yaml` at the repo root that encodes their conventions:
+Most teams will want a `.masterplan.yaml` at the repo root that encodes their conventions:
 
 - Typical autonomy mode for client work vs internal work
 - Where worktrees should live (often a sibling directory; sometimes a dedicated worktree base)
@@ -467,15 +467,15 @@ The plugin ships with sensible defaults; the YAML is for when you outgrow them.
 The journey from initial release to first stable public release:
 
 - **v0.2.0 — speed + context use.** Increased parallelism (Step A frontmatter parsing, Step B0 git surveys, Step C step 1 re-reads, Step C 4a verification commands, Step I3 import waves, Step D doctor checks all dispatch in parallel where work is independent) plus per-invocation caches (`git_state`, `eligibility_cache`) to avoid redundant dispatches. Tighter orchestrator prompt (CD-rule restatements collapsed, design notes relocated to `docs/design/`), Codex review brief now passes a `<task-start SHA>..HEAD` range instead of inlining diffs, and activity logs rotate to a sibling archive past 100 entries.
-- **v0.2.1 + v0.2.2 — silent-stop gates.** Five upstream-skill prompts that could stall `/superflow` mid-flow are now pre-empted with `AskUserQuestion`: brainstorming's "User reviews written spec," writing-plans' "Which approach?," `finishing-a-development-branch`'s 4-option close-out, `using-git-worktrees`' worktree-base picker, and SDD `BLOCKED`/`NEEDS_CONTEXT` escalation. Operational rule generalized from "Don't stop silently mid-kickoff" to "Don't stop silently anywhere."
-- **v0.3.0 — explicit phase verbs.** `new`, `brainstorm`, `plan`, and `execute` are now first-token verbs in `/superflow`, so the brainstorm-only and plan-only phases are addressable instead of being all-or-nothing. `plan --from-spec=<path>` plans against an existing spec; `plan` with no args picks from specs that don't have a plan yet. The bare-topic shortcut (`/superflow refactor auth middleware`) and `--resume=<path>` keep working unchanged.
-- **v1.0.0 — first stable public release.** Consolidates retrospective generation into the `/superflow retro` verb (the previously-auto-firing `superflow-retro` skill is gone). Standardizes terminology on "verbs" instead of mixing "subcommands" and "invocation forms." Applies a pre-release audit fix pass that closed 10 blockers and 13 polish items found by three parallel fresh-eyes audits of the orchestrator, telemetry hook, remaining skill, and docs (full list in CHANGELOG `[1.0.0]`).
+- **v0.2.1 + v0.2.2 — silent-stop gates.** Five upstream-skill prompts that could stall `/masterplan` mid-flow are now pre-empted with `AskUserQuestion`: brainstorming's "User reviews written spec," writing-plans' "Which approach?," `finishing-a-development-branch`'s 4-option close-out, `using-git-worktrees`' worktree-base picker, and SDD `BLOCKED`/`NEEDS_CONTEXT` escalation. Operational rule generalized from "Don't stop silently mid-kickoff" to "Don't stop silently anywhere."
+- **v0.3.0 — explicit phase verbs.** `new`, `brainstorm`, `plan`, and `execute` are now first-token verbs in `/masterplan`, so the brainstorm-only and plan-only phases are addressable instead of being all-or-nothing. `plan --from-spec=<path>` plans against an existing spec; `plan` with no args picks from specs that don't have a plan yet. The bare-topic shortcut (`/masterplan refactor auth middleware`) and `--resume=<path>` keep working unchanged.
+- **v1.0.0 — first stable public release.** Consolidates retrospective generation into the `/masterplan retro` verb (the previously-auto-firing `masterplan-retro` skill is gone). Standardizes terminology on "verbs" instead of mixing "subcommands" and "invocation forms." Applies a pre-release audit fix pass that closed 10 blockers and 13 polish items found by three parallel fresh-eyes audits of the orchestrator, telemetry hook, remaining skill, and docs (full list in CHANGELOG `[1.0.0]`).
 
 All releases preserve the three design pillars (thin orchestrator, subagent + context-control, status file as only source of truth). See [CHANGELOG.md](./CHANGELOG.md) for the full breakdown.
 
 ## Project status
 
-This is the first stable public release (current: **v1.0.0**). The orchestration logic has been used in real Petabit Scale workflows since v0.1 and is stable. v1.0.0 consolidates retrospective generation under the `/superflow retro` verb (removing the previously-auto-firing `superflow-retro` skill), standardizes README terminology on "verbs," and lands a pre-release audit fix pass. The bare-topic shortcut, `--resume=<path>`, and all v0.3.0 phase verbs continue unchanged. The schema and flag surface continue to evolve under semver — additive changes and bug fixes land in v1.x; breaking changes (schema/flag/CLI) are called out in the changelog and gated behind a `--legacy` flag where reasonable.
+This is the first stable public release (current: **v1.0.0**). The orchestration logic has been used in real Petabit Scale workflows since v0.1 and is stable. v1.0.0 consolidates retrospective generation under the `/masterplan retro` verb (removing the previously-auto-firing `masterplan-retro` skill), standardizes README terminology on "verbs," and lands a pre-release audit fix pass. The bare-topic shortcut, `--resume=<path>`, and all v0.3.0 phase verbs continue unchanged. The schema and flag surface continue to evolve under semver — additive changes and bug fixes land in v1.x; breaking changes (schema/flag/CLI) are called out in the changelog and gated behind a `--legacy` flag where reasonable.
 
 Issues and PRs welcome.
 

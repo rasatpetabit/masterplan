@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Land Slice α of intra-plan task parallelism in /superflow v1.1.0 — read-only parallel waves only (verification, inference, lint, type-check, doc-generation). Implementation tasks remain serial; that's deferred to Slice β/γ per the spec.
+**Goal:** Land Slice α of intra-plan task parallelism in /masterplan v1.1.0 — read-only parallel waves only (verification, inference, lint, type-check, doc-generation). Implementation tasks remain serial; that's deferred to Slice β/γ per the spec.
 
-**Architecture:** Markdown-only orchestrator (`commands/superflow.md`) gains a wave-detection pre-pass in Step C step 2, single-writer funnel in Step C 4d, files-filter in Step C 4c, and pinned eligibility cache in Step C step 1. Plus: bash hook (`hooks/superflow-telemetry.sh`) gains two new fields; design docs + README + CHANGELOG + WORKLOG bookkeeping; doctor gains 3 new checks; smoke-verified by hand-crafted test plan.
+**Architecture:** Markdown-only orchestrator (`commands/masterplan.md`) gains a wave-detection pre-pass in Step C step 2, single-writer funnel in Step C 4d, files-filter in Step C 4c, and pinned eligibility cache in Step C step 1. Plus: bash hook (`hooks/masterplan-telemetry.sh`) gains two new fields; design docs + README + CHANGELOG + WORKLOG bookkeeping; doctor gains 3 new checks; smoke-verified by hand-crafted test plan.
 
 **Tech Stack:** No build system. Markdown + bash. Verification = `grep` discriminators + `bash -n` syntax check + manual smoke runs (matches v1.0.0 release pass convention).
 
@@ -12,10 +12,10 @@
 
 ## Notes for implementers
 
-- **Implementation order matters.** Tasks 1–4 touch the Step C orchestration loop (step 1, step 2, 4-series, 5). Each must be done sequentially with the halt-mode discriminator suite re-grepped after each (per v1.0.0 audit convention): `grep -nE 'halt_mode|Continue to plan now|Start execution now|post-brainstorm|post-plan' commands/superflow.md` — should produce no orphan references.
+- **Implementation order matters.** Tasks 1–4 touch the Step C orchestration loop (step 1, step 2, 4-series, 5). Each must be done sequentially with the halt-mode discriminator suite re-grepped after each (per v1.0.0 audit convention): `grep -nE 'halt_mode|Continue to plan now|Start execution now|post-brainstorm|post-plan' commands/masterplan.md` — should produce no orphan references.
 - **Smoke verification (Task 14) requires ALL preceding tasks complete.** Don't run it earlier.
 - **Codex review is on for this plan.** The status file's `codex_review: on` was persisted at Step B3. When this plan executes, every inline-completed task gets reviewed by `codex:codex-rescue` against the spec. Findings auto-accept under `gated` autonomy below severity `medium` (default `codex.review_prompt_at: medium`); higher severity prompts.
-- **Per-task `**Codex:** ok|no` annotations** below tell the eligibility cache whether to delegate to Codex during execute. Most tasks touching `commands/superflow.md` are `**Codex:** no` (cross-section invariants need awareness of the whole orchestrator). Bounded single-file tasks (hook, telemetry-signals.md, plugin.json bump) are `**Codex:** ok`.
+- **Per-task `**Codex:** ok|no` annotations** below tell the eligibility cache whether to delegate to Codex during execute. Most tasks touching `commands/masterplan.md` are `**Codex:** no` (cross-section invariants need awareness of the whole orchestrator). Bounded single-file tasks (hook, telemetry-signals.md, plugin.json bump) are `**Codex:** ok`.
 - **Do NOT add `**parallel-group:**` annotations to tasks in THIS plan.** Meta-recursive: the spec being implemented introduces that annotation; it isn't recognized until v1.1.0 ships. Plans authored AFTER v1.1.0 ships can use it.
 - **Smoke test fixture cleanup:** Task 14's hand-crafted test plan files (`docs/superpowers/specs/2026-05-03-test-parallel-wave-design.md`, `docs/superpowers/plans/2026-05-03-test-parallel-wave.md`, `docs/superpowers/plans/2026-05-03-test-parallel-wave-status.md`) MUST be deleted before Task 14 commits, so the smoke artifacts don't ship in the v1.1.0 release.
 - **Map to spec acceptance criteria.** The spec has 16 acceptance criteria. Task → criteria coverage (Task IDs map to criteria IDs in spec):
@@ -40,7 +40,7 @@
 ## Task 1: Step C step 1 — extend eligibility cache for parallel-group support
 
 **Files:**
-- Modify: `commands/superflow.md` (Step C step 1 — eligibility cache section, ~lines 385–425)
+- Modify: `commands/masterplan.md` (Step C step 1 — eligibility cache section, ~lines 385–425)
 
 **Codex:** no
 
@@ -50,9 +50,9 @@
 
 ```bash
 # Negatives — should return current count; expect to drop after edit
-grep -c 'parallel_eligible' commands/superflow.md
-grep -c 'cache_pinned_for_wave' commands/superflow.md
-grep -c 'parallel-group' commands/superflow.md
+grep -c 'parallel_eligible' commands/masterplan.md
+grep -c 'cache_pinned_for_wave' commands/masterplan.md
+grep -c 'parallel-group' commands/masterplan.md
 ```
 
 Expected: all return `0` initially.
@@ -60,7 +60,7 @@ Expected: all return `0` initially.
 - [ ] **Step 2: Read current Step C step 1 eligibility cache section**
 
 ```bash
-sed -n '385,440p' commands/superflow.md
+sed -n '385,440p' commands/masterplan.md
 ```
 
 Expected: shows the current cache-load decision tree, JSON shape, and Haiku brief.
@@ -132,23 +132,23 @@ Find the **Operational rules** section (around line 1050). Add a new bullet (any
 echo "=== Negative greps (should be 0; we want NEW occurrences only) ===" 
 # (none for this task — fields are all-new)
 echo "=== Positive greps (each ≥1) ==="
-grep -c 'parallel_eligible' commands/superflow.md           # expect ≥3 (in JSON shape, brief, and somewhere else)
-grep -c 'cache_pinned_for_wave' commands/superflow.md        # expect ≥1
-grep -c 'parallel-group' commands/superflow.md               # expect ≥3 (brief mentions 3+ times)
-grep -c 'parallel_eligibility_reason' commands/superflow.md  # expect ≥2
-grep -c 'In-wave scope rule' commands/superflow.md           # expect 1
-grep -c 'cache_pinned_for_wave == true' commands/superflow.md # expect 1
+grep -c 'parallel_eligible' commands/masterplan.md           # expect ≥3 (in JSON shape, brief, and somewhere else)
+grep -c 'cache_pinned_for_wave' commands/masterplan.md        # expect ≥1
+grep -c 'parallel-group' commands/masterplan.md               # expect ≥3 (brief mentions 3+ times)
+grep -c 'parallel_eligibility_reason' commands/masterplan.md  # expect ≥2
+grep -c 'In-wave scope rule' commands/masterplan.md           # expect 1
+grep -c 'cache_pinned_for_wave == true' commands/masterplan.md # expect 1
 echo "=== Halt-mode discriminator suite (no orphans) ==="
-grep -nE 'halt_mode|Continue to plan now|Start execution now|post-brainstorm|post-plan' commands/superflow.md | wc -l
+grep -nE 'halt_mode|Continue to plan now|Start execution now|post-brainstorm|post-plan' commands/masterplan.md | wc -l
 # Expected count unchanged from before this task (~22 references)
 ```
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add commands/superflow.md
+git add commands/masterplan.md
 git commit -m "$(cat <<'EOF'
-superflow: extend eligibility cache for parallel-group annotations (v1.1.0 task 1)
+masterplan: extend eligibility cache for parallel-group annotations (v1.1.0 task 1)
 
 Step C step 1 cache schema gains parallel_group, files,
 parallel_eligible, parallel_eligibility_reason fields (optional;
@@ -175,7 +175,7 @@ EOF
 ## Task 2: Step C step 2 — wave dispatch infrastructure
 
 **Files:**
-- Modify: `commands/superflow.md` (Step C step 2, ~lines 460–510 area)
+- Modify: `commands/masterplan.md` (Step C step 2, ~lines 460–510 area)
 
 **Codex:** no
 
@@ -184,17 +184,17 @@ EOF
 - [ ] **Step 1: Define grep discriminators**
 
 ```bash
-grep -c 'wave assembly' commands/superflow.md          # expect 0 → ≥1
-grep -c 'wave-completion barrier' commands/superflow.md # expect 0 → ≥1
-grep -c 'DO NOT commit' commands/superflow.md           # expect 0 → ≥1
-grep -c 'WAVE CONTEXT' commands/superflow.md            # expect 0 → ≥1
-grep -c 'max_wave_size' commands/superflow.md           # expect 0 → ≥2
+grep -c 'wave assembly' commands/masterplan.md          # expect 0 → ≥1
+grep -c 'wave-completion barrier' commands/masterplan.md # expect 0 → ≥1
+grep -c 'DO NOT commit' commands/masterplan.md           # expect 0 → ≥1
+grep -c 'WAVE CONTEXT' commands/masterplan.md            # expect 0 → ≥1
+grep -c 'max_wave_size' commands/masterplan.md           # expect 0 → ≥2
 ```
 
 - [ ] **Step 2: Read current Step C step 2 section**
 
 ```bash
-sed -n '460,520p' commands/superflow.md
+sed -n '460,520p' commands/masterplan.md
 ```
 
 - [ ] **Step 3: Insert wave assembly pre-pass at Step C step 2**
@@ -229,25 +229,25 @@ Immediately after the per-instance brief paragraph:
 
 ```bash
 echo "=== Positive greps (each ≥1) ==="
-grep -c 'wave assembly' commands/superflow.md
-grep -c 'wave-completion barrier' commands/superflow.md
-grep -c 'WAVE CONTEXT' commands/superflow.md
-grep -c 'DO NOT commit' commands/superflow.md
-grep -c 'DO NOT update the status file' commands/superflow.md
-grep -c 'protocol_violation' commands/superflow.md
-grep -c 'cache_pinned_for_wave: true' commands/superflow.md
-grep -c 'parallel_group' commands/superflow.md  # expect ≥4 now
+grep -c 'wave assembly' commands/masterplan.md
+grep -c 'wave-completion barrier' commands/masterplan.md
+grep -c 'WAVE CONTEXT' commands/masterplan.md
+grep -c 'DO NOT commit' commands/masterplan.md
+grep -c 'DO NOT update the status file' commands/masterplan.md
+grep -c 'protocol_violation' commands/masterplan.md
+grep -c 'cache_pinned_for_wave: true' commands/masterplan.md
+grep -c 'parallel_group' commands/masterplan.md  # expect ≥4 now
 echo "=== Halt-mode discriminator suite ==="
-grep -nE 'halt_mode|Continue to plan now|Start execution now|post-brainstorm|post-plan' commands/superflow.md | wc -l
+grep -nE 'halt_mode|Continue to plan now|Start execution now|post-brainstorm|post-plan' commands/masterplan.md | wc -l
 # Expected count unchanged
 ```
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add commands/superflow.md
+git add commands/masterplan.md
 git commit -m "$(cat <<'EOF'
-superflow: Step C step 2 wave dispatch infrastructure (v1.1.0 task 2)
+masterplan: Step C step 2 wave dispatch infrastructure (v1.1.0 task 2)
 
 Adds wave-detection pre-pass to Step C step 2:
 - contiguous-plan-order walk groups parallel_eligible tasks
@@ -276,7 +276,7 @@ EOF
 ## Task 3: Step C 4-series under wave — single-writer funnel + union-filter
 
 **Files:**
-- Modify: `commands/superflow.md` (Step C 4a, 4b, 4c, 4d, ~lines 545–615 area)
+- Modify: `commands/masterplan.md` (Step C 4a, 4b, 4c, 4d, ~lines 545–615 area)
 
 **Codex:** no
 
@@ -285,17 +285,17 @@ EOF
 - [ ] **Step 1: Define grep discriminators**
 
 ```bash
-grep -c 'union of in-flight wave' commands/superflow.md   # expect 0 → 1
-grep -c 'wave-aware rotation' commands/superflow.md       # expect 0 → 1
-grep -c 'single-writer funnel' commands/superflow.md      # expect 0 → ≥1
-grep -c 'wave: <group>' commands/superflow.md             # expect 0 → ≥1
-grep -c 'lowest-indexed not-yet-complete' commands/superflow.md # expect 0 → 1
+grep -c 'union of in-flight wave' commands/masterplan.md   # expect 0 → 1
+grep -c 'wave-aware rotation' commands/masterplan.md       # expect 0 → 1
+grep -c 'single-writer funnel' commands/masterplan.md      # expect 0 → ≥1
+grep -c 'wave: <group>' commands/masterplan.md             # expect 0 → ≥1
+grep -c 'lowest-indexed not-yet-complete' commands/masterplan.md # expect 0 → 1
 ```
 
 - [ ] **Step 2: Read current Step C 4-series**
 
 ```bash
-sed -n '545,620p' commands/superflow.md
+sed -n '545,620p' commands/masterplan.md
 ```
 
 - [ ] **Step 3: Edit Step C 4a header to add wave-mode note**
@@ -329,7 +329,7 @@ Find the **4d — Status file update** paragraph. Add a paragraph immediately AF
 > 3. **Activity log rotation pre-check (wave-aware per FM-2).** If `len(active_log) + N > 100`, rotate ONCE at the END of the batch append (not mid-batch). Move all but the most recent 50 entries to `<slug>-status-archive.md` (create if missing); insert the marker at the top of the active log; then append the N new wave entries.
 > 4. **Update `last_activity`** to the wave-completion timestamp.
 > 5. **Append `## Notes` entries for any partial-failure context** per Task 4's failure-handling rules (next task in this plan).
-> 6. **Single git commit for the status file update** with subject `superflow: wave complete (group: <name>, N tasks)`.
+> 6. **Single git commit for the status file update** with subject `masterplan: wave complete (group: <name>, N tasks)`.
 >
 > This single-writer funnel is the M-1 / M-3 mitigation. Wave members do NOT write to the status file directly (per the per-instance brief in Step C step 2). The orchestrator is the canonical writer. Activity log rotation is wave-aware — fires at most once per wave (not per task in the wave) per FM-2.
 
@@ -337,23 +337,23 @@ Find the **4d — Status file update** paragraph. Add a paragraph immediately AF
 
 ```bash
 echo "=== Positive greps ==="
-grep -c 'union of in-flight wave\|union of all wave-task' commands/superflow.md
-grep -c 'single-writer funnel' commands/superflow.md
-grep -c 'wave: <group>' commands/superflow.md
-grep -c 'lowest-indexed not-yet-complete' commands/superflow.md
-grep -c 'plan-order (NOT completion-order' commands/superflow.md
-grep -c 'wave-aware per FM-2' commands/superflow.md
-grep -c 'NOT part of a parallel wave' commands/superflow.md
+grep -c 'union of in-flight wave\|union of all wave-task' commands/masterplan.md
+grep -c 'single-writer funnel' commands/masterplan.md
+grep -c 'wave: <group>' commands/masterplan.md
+grep -c 'lowest-indexed not-yet-complete' commands/masterplan.md
+grep -c 'plan-order (NOT completion-order' commands/masterplan.md
+grep -c 'wave-aware per FM-2' commands/masterplan.md
+grep -c 'NOT part of a parallel wave' commands/masterplan.md
 echo "=== Halt-mode discriminator suite ==="
-grep -nE 'halt_mode|Continue to plan now|Start execution now|post-brainstorm|post-plan' commands/superflow.md | wc -l
+grep -nE 'halt_mode|Continue to plan now|Start execution now|post-brainstorm|post-plan' commands/masterplan.md | wc -l
 ```
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add commands/superflow.md
+git add commands/masterplan.md
 git commit -m "$(cat <<'EOF'
-superflow: Step C 4-series single-writer funnel under wave (v1.1.0 task 3)
+masterplan: Step C 4-series single-writer funnel under wave (v1.1.0 task 3)
 
 4a: per-task verification trust contract still applies; orchestrator
 reads tests_passed + commands_run per wave member's digest.
@@ -371,7 +371,7 @@ computes current_task as lowest-indexed not-yet-complete, appends
 N entries to ## Activity log in plan-order with [wave: <group>]
 tag, runs wave-aware activity log rotation (fires once per wave
 per FM-2), commits status file once with subject
-"superflow: wave complete (group: <name>, N tasks)".
+"masterplan: wave complete (group: <name>, N tasks)".
 
 Mitigations: M-1 (single-writer funnel), M-3 (files-filter),
 FM-2 (wave-aware rotation).
@@ -384,7 +384,7 @@ EOF
 ## Task 4: Failure handling under wave + Step C 5 wave-count threshold
 
 **Files:**
-- Modify: `commands/superflow.md` (Step C step 3 blocker re-engagement gate area, ~line 535–595; Step C step 5 wakeup scheduling, ~line 615)
+- Modify: `commands/masterplan.md` (Step C step 3 blocker re-engagement gate area, ~line 535–595; Step C step 5 wakeup scheduling, ~line 615)
 
 **Codex:** no
 
@@ -393,18 +393,18 @@ EOF
 - [ ] **Step 1: Define grep discriminators**
 
 ```bash
-grep -c 'protocol_violation' commands/superflow.md           # expect ≥2 (already added in Task 2)
-grep -c 'abort_wave_on_protocol_violation' commands/superflow.md  # expect 0 → ≥2
-grep -c 'fires once at wave-end' commands/superflow.md       # expect 0 → 1
-grep -c 'idempotent by Slice α design' commands/superflow.md # expect 0 → 1
-grep -c 'wave-end counts as ONE completion' commands/superflow.md # expect 0 → 1
+grep -c 'protocol_violation' commands/masterplan.md           # expect ≥2 (already added in Task 2)
+grep -c 'abort_wave_on_protocol_violation' commands/masterplan.md  # expect 0 → ≥2
+grep -c 'fires once at wave-end' commands/masterplan.md       # expect 0 → 1
+grep -c 'idempotent by Slice α design' commands/masterplan.md # expect 0 → 1
+grep -c 'wave-end counts as ONE completion' commands/masterplan.md # expect 0 → 1
 ```
 
 - [ ] **Step 2: Read current Step C step 3 + step 5 sections**
 
 ```bash
-sed -n '535,600p' commands/superflow.md
-sed -n '615,640p' commands/superflow.md
+sed -n '535,600p' commands/masterplan.md
+sed -n '615,640p' commands/masterplan.md
 ```
 
 - [ ] **Step 3: Add per-member + wave-level outcome reconciliation paragraph after Step C step 3 blocker gate**
@@ -443,22 +443,22 @@ Find the **5. Cross-session loop scheduling** section. Find the line `Otherwise,
 
 ```bash
 echo "=== Positive greps ==="
-grep -c 'protocol_violation' commands/superflow.md
-grep -c 'abort_wave_on_protocol_violation' commands/superflow.md
-grep -c 'fires once at wave-end' commands/superflow.md
-grep -c 'wave-end counts as ONE completion' commands/superflow.md
-grep -c 'Idempotent by Slice α design' commands/superflow.md
-grep -c 'Wave-mode failure handling' commands/superflow.md
+grep -c 'protocol_violation' commands/masterplan.md
+grep -c 'abort_wave_on_protocol_violation' commands/masterplan.md
+grep -c 'fires once at wave-end' commands/masterplan.md
+grep -c 'wave-end counts as ONE completion' commands/masterplan.md
+grep -c 'Idempotent by Slice α design' commands/masterplan.md
+grep -c 'Wave-mode failure handling' commands/masterplan.md
 echo "=== Halt-mode discriminator suite ==="
-grep -nE 'halt_mode|Continue to plan now|Start execution now|post-brainstorm|post-plan' commands/superflow.md | wc -l
+grep -nE 'halt_mode|Continue to plan now|Start execution now|post-brainstorm|post-plan' commands/masterplan.md | wc -l
 ```
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add commands/superflow.md
+git add commands/masterplan.md
 git commit -m "$(cat <<'EOF'
-superflow: wave failure handling + Step C 5 wave-count (v1.1.0 task 4)
+masterplan: wave failure handling + Step C 5 wave-count (v1.1.0 task 4)
 
 Adds per-member outcome reconciliation:
   completed | blocked (returned by SDD)
@@ -488,7 +488,7 @@ EOF
 ## Task 5: Doctor checks #15-17 + parallelization brief count update
 
 **Files:**
-- Modify: `commands/superflow.md` (Step D — Doctor section, ~lines 850–880 area)
+- Modify: `commands/masterplan.md` (Step D — Doctor section, ~lines 850–880 area)
 
 **Codex:** no
 
@@ -497,11 +497,11 @@ EOF
 - [ ] **Step 1: Define grep discriminators**
 
 ```bash
-grep -c 'all 14 checks' commands/superflow.md   # expect 1 → 0
-grep -c 'all 17 checks' commands/superflow.md   # expect 0 → 1
-grep -c '^| 15 |' commands/superflow.md         # expect 0 → 1
-grep -c '^| 16 |' commands/superflow.md         # expect 0 → 1
-grep -c '^| 17 |' commands/superflow.md         # expect 0 → 1
+grep -c 'all 14 checks' commands/masterplan.md   # expect 1 → 0
+grep -c 'all 17 checks' commands/masterplan.md   # expect 0 → 1
+grep -c '^| 15 |' commands/masterplan.md         # expect 0 → 1
+grep -c '^| 16 |' commands/masterplan.md         # expect 0 → 1
+grep -c '^| 17 |' commands/masterplan.md         # expect 0 → 1
 ```
 
 - [ ] **Step 2: Update parallelization brief**
@@ -525,23 +525,23 @@ Find the existing checks table (rows 1–14). After the row for check 14 ("Orpha
 
 ```bash
 echo "=== Negative greps ==="
-grep -c 'all 14 checks' commands/superflow.md   # expect 0
+grep -c 'all 14 checks' commands/masterplan.md   # expect 0
 echo "=== Positive greps ==="
-grep -c 'all 17 checks' commands/superflow.md   # expect 1
-grep -c '^| 15 | \*\*' commands/superflow.md    # expect 1
-grep -c '^| 16 | \*\*' commands/superflow.md    # expect 1
-grep -c '^| 17 | \*\*' commands/superflow.md    # expect 1
+grep -c 'all 17 checks' commands/masterplan.md   # expect 1
+grep -c '^| 15 | \*\*' commands/masterplan.md    # expect 1
+grep -c '^| 16 | \*\*' commands/masterplan.md    # expect 1
+grep -c '^| 17 | \*\*' commands/masterplan.md    # expect 1
 echo "=== Doctor table size sanity ==="
-awk '/^### Checks/,/^### Auto-fix policy|^### Output/' commands/superflow.md | grep -cE '^\| [0-9]+ \|'
+awk '/^### Checks/,/^### Auto-fix policy|^### Output/' commands/masterplan.md | grep -cE '^\| [0-9]+ \|'
 # expect 17
 ```
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add commands/superflow.md
+git add commands/masterplan.md
 git commit -m "$(cat <<'EOF'
-superflow: doctor checks #15-17 for parallel-group annotations (v1.1.0 task 5)
+masterplan: doctor checks #15-17 for parallel-group annotations (v1.1.0 task 5)
 
 3 new doctor checks added to Step D:
   #15: parallel-group set but Files: block missing/empty
@@ -564,23 +564,23 @@ EOF
 ## Task 6: Step B2 writing-plans brief update
 
 **Files:**
-- Modify: `commands/superflow.md` (Step B2 — Plan section, ~lines 470–490 area)
+- Modify: `commands/masterplan.md` (Step B2 — Plan section, ~lines 470–490 area)
 
 **Codex:** no
 
-**What this does.** Adds the parallel-group authoring guidance paragraph to the bounded brief that /superflow's Step B2 sends to `superpowers:writing-plans`. The brief makes the planner aware of the new annotation so future plans (post-v1.1.0) can include it.
+**What this does.** Adds the parallel-group authoring guidance paragraph to the bounded brief that /masterplan's Step B2 sends to `superpowers:writing-plans`. The brief makes the planner aware of the new annotation so future plans (post-v1.1.0) can include it.
 
 - [ ] **Step 1: Define grep discriminators**
 
 ```bash
-grep -c 'parallel-group: <thematic-name>' commands/superflow.md  # expect 0 → 1
-grep -c 'mutually-independent verification' commands/superflow.md # expect 0 → 1
+grep -c 'parallel-group: <thematic-name>' commands/masterplan.md  # expect 0 → 1
+grep -c 'mutually-independent verification' commands/masterplan.md # expect 0 → 1
 ```
 
 - [ ] **Step 2: Read current Step B2 brief**
 
 ```bash
-sed -n '460,495p' commands/superflow.md
+sed -n '460,495p' commands/masterplan.md
 ```
 
 - [ ] **Step 3: Insert the parallel-group brief paragraph**
@@ -592,22 +592,22 @@ Find the existing Step B2 brief paragraph that begins with "When you judge a tas
 - [ ] **Step 4: Verify with grep**
 
 ```bash
-grep -c 'parallel-group: <thematic-name>' commands/superflow.md  # expect 1
-grep -c 'mutually-independent verification' commands/superflow.md # expect 1
-grep -c 'Place parallel-grouped tasks contiguously' commands/superflow.md # expect 1
+grep -c 'parallel-group: <thematic-name>' commands/masterplan.md  # expect 1
+grep -c 'mutually-independent verification' commands/masterplan.md # expect 1
+grep -c 'Place parallel-grouped tasks contiguously' commands/masterplan.md # expect 1
 echo "=== Halt-mode discriminator suite ==="
-grep -nE 'halt_mode|Continue to plan now|Start execution now|post-brainstorm|post-plan' commands/superflow.md | wc -l
+grep -nE 'halt_mode|Continue to plan now|Start execution now|post-brainstorm|post-plan' commands/masterplan.md | wc -l
 ```
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add commands/superflow.md
+git add commands/masterplan.md
 git commit -m "$(cat <<'EOF'
-superflow: Step B2 writing-plans brief — parallel-group guidance (v1.1.0 task 6)
+masterplan: Step B2 writing-plans brief — parallel-group guidance (v1.1.0 task 6)
 
 Adds the parallel-group annotation guidance paragraph to the bounded
-brief /superflow Step B2 sends to superpowers:writing-plans. Planner
+brief /masterplan Step B2 sends to superpowers:writing-plans. Planner
 becomes aware of the new annotation and the v1.1.0 conventions:
 - mutually-independent verification/inference/lint/typecheck/docgen
 - exhaustive Files: block required
@@ -625,7 +625,7 @@ EOF
 ## Task 7: Step 0 — `--no-parallelism` flag + recognized flags table
 
 **Files:**
-- Modify: `commands/superflow.md` (Step 0 — Recognized flags table, ~lines 84–105 area)
+- Modify: `commands/masterplan.md` (Step 0 — Recognized flags table, ~lines 84–105 area)
 
 **Codex:** no
 
@@ -634,14 +634,14 @@ EOF
 - [ ] **Step 1: Define grep discriminators**
 
 ```bash
-grep -c '\-\-no-parallelism' commands/superflow.md   # expect 0 → ≥2
-grep -c '\-\-parallelism=' commands/superflow.md     # expect 0 → ≥1
+grep -c '\-\-no-parallelism' commands/masterplan.md   # expect 0 → ≥2
+grep -c '\-\-parallelism=' commands/masterplan.md     # expect 0 → ≥1
 ```
 
 - [ ] **Step 2: Read current Recognized flags table**
 
 ```bash
-sed -n '84,105p' commands/superflow.md
+sed -n '84,105p' commands/masterplan.md
 ```
 
 - [ ] **Step 3: Insert two new rows in the recognized flags table**
@@ -656,18 +656,18 @@ Find the row for `--codex-review` (the last row in the recognized flags table). 
 - [ ] **Step 4: Verify with grep**
 
 ```bash
-grep -c '\-\-no-parallelism' commands/superflow.md   # expect ≥2 (one in this row, one in the shorthand definition)
-grep -c '\-\-parallelism=on\|off' commands/superflow.md # expect 1
+grep -c '\-\-no-parallelism' commands/masterplan.md   # expect ≥2 (one in this row, one in the shorthand definition)
+grep -c '\-\-parallelism=on\|off' commands/masterplan.md # expect 1
 echo "=== Halt-mode discriminator suite ==="
-grep -nE 'halt_mode|Continue to plan now|Start execution now|post-brainstorm|post-plan' commands/superflow.md | wc -l
+grep -nE 'halt_mode|Continue to plan now|Start execution now|post-brainstorm|post-plan' commands/masterplan.md | wc -l
 ```
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add commands/superflow.md
+git add commands/masterplan.md
 git commit -m "$(cat <<'EOF'
-superflow: --no-parallelism flag + recognized flags table (v1.1.0 task 7)
+masterplan: --no-parallelism flag + recognized flags table (v1.1.0 task 7)
 
 Adds two new flag rows to the Step 0 Recognized flags table:
   --parallelism=on|off  → override config.parallelism.enabled
@@ -684,24 +684,24 @@ EOF
 ## Task 8: Configuration schema — `parallelism:` block
 
 **Files:**
-- Modify: `commands/superflow.md` (Configuration: .superflow.yaml section — Schema with built-in defaults, ~lines 950–1010 area)
+- Modify: `commands/masterplan.md` (Configuration: .masterplan.yaml section — Schema with built-in defaults, ~lines 950–1010 area)
 
 **Codex:** no
 
-**What this does.** Adds the new `parallelism:` block to the Configuration schema documentation in commands/superflow.md, with three keys: `enabled`, `max_wave_size`, `abort_wave_on_protocol_violation`.
+**What this does.** Adds the new `parallelism:` block to the Configuration schema documentation in commands/masterplan.md, with three keys: `enabled`, `max_wave_size`, `abort_wave_on_protocol_violation`.
 
 - [ ] **Step 1: Define grep discriminators**
 
 ```bash
-grep -c '^parallelism:' commands/superflow.md       # expect 0 → 1
-grep -c 'max_wave_size:' commands/superflow.md      # expect 0 → 1
-grep -c 'abort_wave_on_protocol_violation' commands/superflow.md # expect ≥2 (already in spec via Task 4) → ≥3
+grep -c '^parallelism:' commands/masterplan.md       # expect 0 → 1
+grep -c 'max_wave_size:' commands/masterplan.md      # expect 0 → 1
+grep -c 'abort_wave_on_protocol_violation' commands/masterplan.md # expect ≥2 (already in spec via Task 4) → ≥3
 ```
 
 - [ ] **Step 2: Read current Configuration schema section**
 
 ```bash
-sed -n '950,1015p' commands/superflow.md
+sed -n '950,1015p' commands/masterplan.md
 ```
 
 - [ ] **Step 3: Insert parallelism block in the YAML schema example**
@@ -728,25 +728,25 @@ parallelism:
 - [ ] **Step 4: Verify with grep**
 
 ```bash
-grep -c '^parallelism:' commands/superflow.md
-grep -c 'max_wave_size: 5' commands/superflow.md
-grep -c 'abort_wave_on_protocol_violation: true' commands/superflow.md
-grep -c 'global kill switch for wave dispatch' commands/superflow.md
+grep -c '^parallelism:' commands/masterplan.md
+grep -c 'max_wave_size: 5' commands/masterplan.md
+grep -c 'abort_wave_on_protocol_violation: true' commands/masterplan.md
+grep -c 'global kill switch for wave dispatch' commands/masterplan.md
 ```
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add commands/superflow.md
+git add commands/masterplan.md
 git commit -m "$(cat <<'EOF'
-superflow: parallelism config block (v1.1.0 task 8)
+masterplan: parallelism config block (v1.1.0 task 8)
 
 Adds new top-level parallelism: block to the Configuration schema:
   enabled: true                       — global kill switch
   max_wave_size: 5                    — cap on concurrent dispatches
   abort_wave_on_protocol_violation: true — wave-abort policy
 
-Backward-compatible: existing .superflow.yaml files without
+Backward-compatible: existing .masterplan.yaml files without
 parallelism: block get the defaults.
 
 Documented inline in the YAML schema example for adopters.
@@ -759,7 +759,7 @@ EOF
 ## Task 9: Telemetry hook — FM-3 mitigation (`tasks_completed_this_turn` + `wave_groups`)
 
 **Files:**
-- Modify: `hooks/superflow-telemetry.sh`
+- Modify: `hooks/masterplan-telemetry.sh`
 
 **Codex:** ok
 
@@ -768,14 +768,14 @@ EOF
 - [ ] **Step 1: Define grep discriminators (script side)**
 
 ```bash
-grep -c 'tasks_completed_this_turn' hooks/superflow-telemetry.sh # expect 0 → ≥2
-grep -c 'wave_groups' hooks/superflow-telemetry.sh               # expect 0 → ≥2
+grep -c 'tasks_completed_this_turn' hooks/masterplan-telemetry.sh # expect 0 → ≥2
+grep -c 'wave_groups' hooks/masterplan-telemetry.sh               # expect 0 → ≥2
 ```
 
 - [ ] **Step 2: Read current hook**
 
 ```bash
-cat hooks/superflow-telemetry.sh
+cat hooks/masterplan-telemetry.sh
 ```
 
 - [ ] **Step 3: Add tasks_completed_this_turn computation**
@@ -850,9 +850,9 @@ jq -nc \
 - [ ] **Step 6: Verify syntax**
 
 ```bash
-bash -n hooks/superflow-telemetry.sh && echo "  syntax OK"
-grep -c 'tasks_completed_this_turn' hooks/superflow-telemetry.sh  # expect ≥3 (computation + argjson + JSON output)
-grep -c 'wave_groups' hooks/superflow-telemetry.sh                # expect ≥3
+bash -n hooks/masterplan-telemetry.sh && echo "  syntax OK"
+grep -c 'tasks_completed_this_turn' hooks/masterplan-telemetry.sh  # expect ≥3 (computation + argjson + JSON output)
+grep -c 'wave_groups' hooks/masterplan-telemetry.sh                # expect ≥3
 ```
 
 - [ ] **Step 7: Smoke-test on Linux**
@@ -898,23 +898,23 @@ git add -A
 git commit -q -m "init"
 
 # First run (no prior telemetry — delta is 0)
-bash /home/ras/dev/claude-superflow/hooks/superflow-telemetry.sh
+bash /home/ras/dev/superpowers-masterplan/hooks/masterplan-telemetry.sh
 echo "  exit: $?"
 echo "  Output 1:"
 cat docs/superpowers/plans/2026-05-03-test-telemetry.jsonl | jq .
 
 # Second run (delta is 0 since activity log unchanged — no new completions)
-bash /home/ras/dev/claude-superflow/hooks/superflow-telemetry.sh
+bash /home/ras/dev/superpowers-masterplan/hooks/masterplan-telemetry.sh
 echo "  Output 2:"
 tail -n1 docs/superpowers/plans/2026-05-03-test-telemetry.jsonl | jq .
 
 # Add an entry, then run again (delta should be 1)
 echo "- 2026-05-03T12:02 task 'final' complete [inline]" >> docs/superpowers/plans/2026-05-03-test-status.md
-bash /home/ras/dev/claude-superflow/hooks/superflow-telemetry.sh
+bash /home/ras/dev/superpowers-masterplan/hooks/masterplan-telemetry.sh
 echo "  Output 3 (expect tasks_completed_this_turn=1, wave_groups=[]):"
 tail -n1 docs/superpowers/plans/2026-05-03-test-telemetry.jsonl | jq '{tasks_completed_this_turn, wave_groups}'
 
-cd /home/ras/dev/claude-superflow
+cd /home/ras/dev/superpowers-masterplan
 rm -rf "$TMPREPO"
 ```
 
@@ -925,7 +925,7 @@ Expected: Output 1 shows `tasks_completed_this_turn: 3` (first record, all entri
 - [ ] **Step 8: Commit**
 
 ```bash
-git add hooks/superflow-telemetry.sh
+git add hooks/masterplan-telemetry.sh
 git commit -m "$(cat <<'EOF'
 hook: tasks_completed_this_turn + wave_groups telemetry (v1.1.0 task 9)
 
@@ -1099,11 +1099,11 @@ The choice between Slice β and Slice γ at next revisit is a function of how of
 
 The original v0.1 trigger was "real plans show parallel-friendly task patterns and the latency cost becomes felt" — unmeasurable. The v1.1.0 sharpened trigger:
 
-> **Revisit Slice β** when a real /superflow plan shows ≥3 parallel-grouped committing tasks where the wave's serial wall-clock cost exceeds 10 minutes AND the committed work is independent enough for the Slice α `**Files:**` exhaustive-scope rule to apply.
+> **Revisit Slice β** when a real /masterplan plan shows ≥3 parallel-grouped committing tasks where the wave's serial wall-clock cost exceeds 10 minutes AND the committed work is independent enough for the Slice α `**Files:**` exhaustive-scope rule to apply.
 >
 > **Revisit Slice γ** when ≥3 such β-eligible waves accumulate within a single plan's lifecycle, indicating a structural pattern that warrants the full per-task worktree subsystem.
 
-Doctor check candidate (deferred to v1.1.x): scan completed-and-recent plans for the trigger condition; surface as a one-line note in `/superflow status`. The telemetry fields `tasks_completed_this_turn` and `wave_groups` (added in v1.1.0) provide the data — see `telemetry-signals.md`'s "Average tasks-per-wave-turn" jq example.
+Doctor check candidate (deferred to v1.1.x): scan completed-and-recent plans for the trigger condition; surface as a one-line note in `/masterplan status`. The telemetry fields `tasks_completed_this_turn` and `wave_groups` (added in v1.1.0) provide the data — see `telemetry-signals.md`'s "Average tasks-per-wave-turn" jq example.
 
 ## Failure-mode catalog (capsule summary)
 
@@ -1118,7 +1118,7 @@ The full catalog with worked examples lives in the spec. Brief summary of the si
 
 ## Original v0.1 notes (preserved as historical context)
 
-The original `Future: intra-plan task parallelism (design notes)` lived inline in `commands/superflow.md` until v0.2.0, was relocated here, and held through v1.0.0. The original four sections — annotation schema, required machinery, why deferred, when to revisit — have been superseded by the v1.0.0-era catalog and the Slice α spec. Their substance is captured in:
+The original `Future: intra-plan task parallelism (design notes)` lived inline in `commands/masterplan.md` until v0.2.0, was relocated here, and held through v1.0.0. The original four sections — annotation schema, required machinery, why deferred, when to revisit — have been superseded by the v1.0.0-era catalog and the Slice α spec. Their substance is captured in:
 
 - `parallel-group:`, `**Files:**`-as-exhaustive-scope, optional `**non-committing:**` annotations (the spec's Section 2)
 - per-task git worktree isolation (deferred to Slice γ; documented as cheapest committing-work mitigation)
@@ -1206,7 +1206,7 @@ Find the existing **Plan annotations** section and its annotation table (the one
 Find the **Useful flag combinations** section. Add a new row:
 
 ```markdown
-| `/superflow <topic> --no-parallelism` | Force serial execution of all tasks regardless of `parallel-group:` annotations. Useful for debugging wave dispatch issues or when running on a system where parallel Agent dispatch is rate-limited. Persisted to status file as `parallelism: off`. |
+| `/masterplan <topic> --no-parallelism` | Force serial execution of all tasks regardless of `parallel-group:` annotations. Useful for debugging wave dispatch issues or when running on a system where parallel Agent dispatch is rate-limited. Persisted to status file as `parallelism: off`. |
 ```
 
 - [ ] **Step 5: Update "Path to v1.0.0" / "Recent improvements" with a v1.1.0 entry**
@@ -1300,14 +1300,14 @@ Find the `## [Unreleased]` section. Replace it with:
 - **Blocker re-engagement gate integration** — fires once at wave-end with the union of N-K blocked members; option semantics extend naturally.
 - **Step C 5 wave-count threshold** — wave-end counts as ONE completion regardless of N (a wave of 5 doesn't trigger 5 wakeup-threshold increments).
 - **3 new doctor checks (#15-17, total 14 → 17):** parallel-group without Files: block; parallel-group + Codex: ok mutual conflict; file-path overlap within parallel-group.
-- **`hooks/superflow-telemetry.sh` gains `tasks_completed_this_turn` (int) + `wave_groups` (array of strings) fields** — FM-3 mitigation. Linux smoke-tested; macOS portable-by-construction (not smoke-tested).
+- **`hooks/masterplan-telemetry.sh` gains `tasks_completed_this_turn` (int) + `wave_groups` (array of strings) fields** — FM-3 mitigation. Linux smoke-tested; macOS portable-by-construction (not smoke-tested).
 - **New `parallelism:` config block** — `enabled` (kill switch), `max_wave_size` (default 5), `abort_wave_on_protocol_violation` (default true).
 - **New `--parallelism=on|off` and `--no-parallelism` CLI flags.**
 - **Step B2 writing-plans brief paragraph** — guidance for the planner on emitting `parallel-group:` annotations.
 
 ### Changed
-- `commands/superflow.md` Step C step 1 eligibility cache schema extended with `parallel_group`, `files`, `parallel_eligible`, `parallel_eligibility_reason` (all optional; backward-compatible with pre-v1.1.0 cache files).
-- `commands/superflow.md` Step D parallelization brief: `each agent runs all 14 checks` → `each agent runs all 17 checks`.
+- `commands/masterplan.md` Step C step 1 eligibility cache schema extended with `parallel_group`, `files`, `parallel_eligible`, `parallel_eligibility_reason` (all optional; backward-compatible with pre-v1.1.0 cache files).
+- `commands/masterplan.md` Step D parallelization brief: `each agent runs all 14 checks` → `each agent runs all 17 checks`.
 - `docs/design/intra-plan-parallelism.md` rewritten — replaces v0.1 brief notes with v1.1.0 status doc (what ships in Slice α, what's deferred, sharpened trigger, failure-mode catalog summary).
 - `docs/design/telemetry-signals.md` — documents the two new fields with first-turn caveat; adds "Average tasks-per-wave-turn" jq example.
 - README.md — Plan annotations table adds parallel-group row; Useful flag combinations adds --no-parallelism row; Project status bumped; Path-to-v1.x section gains v1.1.0 entry.
@@ -1316,9 +1316,9 @@ Find the `## [Unreleased]` section. Replace it with:
 - (None this release — v1.0.0 audit fixes were the last fix-only pass.)
 
 ### Migration notes
-- **No breaking changes.** Existing plans without `parallel-group:` annotations behave unchanged (serial). Status files unchanged. `.superflow.yaml` files without the `parallelism:` block get defaults.
+- **No breaking changes.** Existing plans without `parallel-group:` annotations behave unchanged (serial). Status files unchanged. `.masterplan.yaml` files without the `parallelism:` block get defaults.
 - **Eligibility cache files (`<slug>-eligibility-cache.json`) lacking the new fields are valid** — load with `parallel_eligible: false` for every task. Cache rebuild fires on plan.md mtime change as today.
-- **Plans authored under v1.1.0+ may include `parallel-group:` annotations.** The writing-plans brief at /superflow Step B2 now mentions the convention so future plans can opt in naturally when the planner identifies parallel-friendly task patterns.
+- **Plans authored under v1.1.0+ may include `parallel-group:` annotations.** The writing-plans brief at /masterplan Step B2 now mentions the convention so future plans can opt in naturally when the planner identifies parallel-friendly task patterns.
 - **Doctor check count is now 17.** Existing `--fix` invocations that scoped to specific check IDs continue to work; the three new checks are Warning-only (no auto-fix).
 ```
 
@@ -1355,11 +1355,11 @@ Find the end of WORKLOG.md (after the v1.0.0 entry). Append:
 
 **Operational notes:**
 
-- 14 implementation tasks per the plan. Most touch `commands/superflow.md` (the orchestrator) and need cross-section consistency awareness — marked `**Codex:** no`. Hook + telemetry-signals.md + plugin.json bump + this WORKLOG entry are bounded single-file tasks — `**Codex:** ok`.
-- Halt-mode discriminator suite (`grep -nE 'halt_mode|Continue to plan now|Start execution now|post-brainstorm|post-plan' commands/superflow.md`) re-checked after every Step C / B1 / B2 / B3 edit — no orphans.
+- 14 implementation tasks per the plan. Most touch `commands/masterplan.md` (the orchestrator) and need cross-section consistency awareness — marked `**Codex:** no`. Hook + telemetry-signals.md + plugin.json bump + this WORKLOG entry are bounded single-file tasks — `**Codex:** ok`.
+- Halt-mode discriminator suite (`grep -nE 'halt_mode|Continue to plan now|Start execution now|post-brainstorm|post-plan' commands/masterplan.md`) re-checked after every Step C / B1 / B2 / B3 edit — no orphans.
 - Doctor checks-count discriminator after Task 5 should equal 17 (matches table size).
 - Telemetry hook smoke-tested on Linux with synthetic worktree fixture (3-record + delta verification). macOS path is portable-by-construction (no GNU-only flags introduced); not smoke-tested. Same gap as v1.0.0 release; documented in CHANGELOG and README.
-- Codex review of inline tasks: `--codex-review=on` was set on this /superflow run; persisted to status file at Step B3. Every inline-completed task gets reviewed by `codex:codex-rescue` against the spec during execute. Findings auto-accept under `gated` autonomy below severity `medium`.
+- Codex review of inline tasks: `--codex-review=on` was set on this /masterplan run; persisted to status file at Step B3. Every inline-completed task gets reviewed by `codex:codex-rescue` against the spec during execute. Findings auto-accept under `gated` autonomy below severity `medium`.
 - Smoke verification (Task 14): hand-crafted test plan with 3 parallel-eligible verification tasks. Confirms wave dispatch fires, single-writer 4d batch applies, activity log gets `[wave: <group>]` tags, 4c union-filter behaves. Test plan files deleted before commit so no smoke artifacts ship.
 
 **Open questions / followups (per spec Section: Open questions):**
@@ -1426,7 +1426,7 @@ EOF
 
 **Codex:** no
 
-**What this does.** Smoke-verifies that the v1.1.0 wave dispatch infrastructure works end-to-end. Hand-crafts a tiny test plan with 3 parallel-eligible verification tasks, runs `/superflow execute` against it (in this same session — no need for a separate worktree), confirms wave dispatch fires, single-writer 4d batch applies, activity log gets `[wave: <group>]` tags, 4c union-filter behaves. Deletes the test files after verification so no smoke artifacts ship.
+**What this does.** Smoke-verifies that the v1.1.0 wave dispatch infrastructure works end-to-end. Hand-crafts a tiny test plan with 3 parallel-eligible verification tasks, runs `/masterplan execute` against it (in this same session — no need for a separate worktree), confirms wave dispatch fires, single-writer 4d batch applies, activity log gets `[wave: <group>]` tags, 4c union-filter behaves. Deletes the test files after verification so no smoke artifacts ship.
 
 This is the canonical signal that acceptance criterion #16 is satisfied.
 
@@ -1500,7 +1500,7 @@ slug: test-parallel-wave
 status: in-progress
 spec: docs/superpowers/specs/2026-05-03-test-parallel-wave-design.md
 plan: docs/superpowers/plans/2026-05-03-test-parallel-wave.md
-worktree: /home/ras/dev/claude-superflow
+worktree: /home/ras/dev/superpowers-masterplan
 branch: main
 started: 2026-05-03
 last_activity: 2026-05-03T20:00:00Z
@@ -1525,12 +1525,12 @@ compact_loop_recommended: false
 - TEMPORARY smoke-test status file. Delete with the spec + plan after verification.
 ```
 
-- [ ] **Step 4: Run /superflow execute against the test plan**
+- [ ] **Step 4: Run /masterplan execute against the test plan**
 
-In a fresh /superflow invocation:
+In a fresh /masterplan invocation:
 
 ```
-/superflow execute docs/superpowers/plans/2026-05-03-test-parallel-wave-status.md
+/masterplan execute docs/superpowers/plans/2026-05-03-test-parallel-wave-status.md
 ```
 
 Expected behavior:
@@ -1540,7 +1540,7 @@ Expected behavior:
 - Per-instance bounded brief dispatched 3x in parallel via `Agent`.
 - Wave-completion barrier returns 3 digests (all `completed`).
 - Step C 4c union-filter runs once at wave-end; passes (no out-of-scope writes since all tasks are read-only).
-- Step C 4d single-writer funnel applies 3 entries to `## Activity log` in plan-order, each tagged `[inline][wave: smoke-verify]`. Single status file commit with subject `superflow: wave complete (group: smoke-verify, 3 tasks)`.
+- Step C 4d single-writer funnel applies 3 entries to `## Activity log` in plan-order, each tagged `[inline][wave: smoke-verify]`. Single status file commit with subject `masterplan: wave complete (group: smoke-verify, 3 tasks)`.
 - Step C 5: wave-end counts as one completion (not three).
 
 - [ ] **Step 5: Verify wave dispatch behavior**
@@ -1563,7 +1563,7 @@ grep -E '^(status|current_task|next_action):' docs/superpowers/plans/2026-05-03-
 
 echo "=== Single wave-commit check ==="
 git log --oneline | head -3
-# expect a recent commit subject like "superflow: wave complete (group: smoke-verify, 3 tasks)"
+# expect a recent commit subject like "masterplan: wave complete (group: smoke-verify, 3 tasks)"
 ```
 
 If any check fails, the wave dispatch implementation has a bug — DO NOT proceed to Step 6 (cleanup). File a blocker via the blocker re-engagement gate ("Provide context and re-dispatch") and iterate on the relevant Task 1-4 implementation.
@@ -1578,7 +1578,7 @@ git rm docs/superpowers/plans/2026-05-03-test-parallel-wave-status.md
 rm -f docs/superpowers/plans/2026-05-03-test-parallel-wave-eligibility-cache.json
 rm -f docs/superpowers/plans/2026-05-03-test-parallel-wave-telemetry.jsonl
 git status --short
-# expect only the three deletions staged + maybe the wave-commit from /superflow execute
+# expect only the three deletions staged + maybe the wave-commit from /masterplan execute
 ```
 
 - [ ] **Step 7: Commit cleanup**

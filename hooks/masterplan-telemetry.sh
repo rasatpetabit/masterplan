@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# superflow-telemetry.sh — Stop hook for /superflow context-usage telemetry.
+# masterplan-telemetry.sh — Stop hook for /masterplan context-usage telemetry.
 #
 # Defensive: bails silently in any session that isn't operating on a
-# /superflow-managed plan. Safe to wire as a global Stop hook in
+# /masterplan-managed plan. Safe to wire as a global Stop hook in
 # ~/.claude/settings.json.
 #
 # Append one JSONL record per turn to <plan>-telemetry.jsonl (sibling to

@@ -2,7 +2,7 @@
 
 **Status:** not enabled. Captured here so future-you has a starting point when a plan with embarrassingly parallel tasks (e.g. multiple "add interface for service X" tasks) makes the latency win obvious.
 
-These notes were originally inline in `commands/superflow.md` but moved here to keep the orchestrator prompt focused on operational logic.
+These notes were originally inline in `commands/masterplan.md` but moved here to keep the orchestrator prompt focused on operational logic.
 
 ## Annotation schema (proposed)
 
@@ -22,4 +22,4 @@ The per-task worktree subsystem is a meaningful undertaking and warrants its own
 
 ## When to revisit
 
-When real plans authored under `/superflow` show parallel-friendly task patterns and the latency cost becomes felt. Track this informally via retros (`/superflow retro <slug>`).
+When real plans authored under `/masterplan` show parallel-friendly task patterns and the latency cost becomes felt. Track this informally via retros (`/masterplan retro <slug>`).

@@ -713,7 +713,7 @@ Hand-craft a 3-task plan with `parallel-group: smoke-verify` annotations on all 
 - Three concurrent SDD dispatches via `Agent` tool.
 - Wave-completion barrier returns three digests.
 - Step C 4d single-writer applies three entries to `## Activity log` in plan-order, each tagged `[inline][wave: smoke-verify]`.
-- Single git commit: `superflow: wave complete (group: smoke-verify, 3 tasks)`.
+- Single git commit: `masterplan: wave complete (group: smoke-verify, 3 tasks)`.
 
 Delete the test plan files before commit.
 

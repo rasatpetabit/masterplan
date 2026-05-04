@@ -2,8 +2,8 @@
 
 Per-turn JSONL records appended to `<plan>-telemetry.jsonl` (sibling to the plan's status file). Two writers:
 
-- `hooks/superflow-telemetry.sh` — Stop hook (manually installed; per-turn cadence; `turn_kind: "stop"`)
-- `commands/superflow.md` Step C step 1 — inline orchestrator snapshot (every Step C entry; `turn_kind: "step_c_entry"`)
+- `hooks/masterplan-telemetry.sh` — Stop hook (manually installed; per-turn cadence; `turn_kind: "stop"`)
+- `commands/masterplan.md` Step C step 1 — inline orchestrator snapshot (every Step C entry; `turn_kind: "step_c_entry"`)
 
 Both write the same field shape; orchestrator opt-out via `telemetry: off` in status frontmatter; global toggle via `config.telemetry.enabled`.
 
