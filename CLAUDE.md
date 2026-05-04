@@ -28,11 +28,10 @@ There is **no code** in the conventional sense. The "program" is the markdown pr
 ## Top anti-patterns (don't do these)
 
 1. **Don't run substantive work in the orchestrator's own context.** Dispatch to subagents (Haiku for mechanical, Sonnet for general, Codex for bounded-well-defined). Orchestrator's context is reserved for sequencing decisions, not for raw file contents or verification dumps. See `docs/internals.md§Subagent and context-control architecture`.
-2. **Don't add backward-compatibility shims when renaming things.** The user's standing rule (CLAUDE.md global): hard-cut renames; communicate via CHANGELOG migration notes; don't build dual-load fallbacks or alias commands.
-3. **Don't end a turn with a free-text question.** Use `AskUserQuestion` with 2–4 concrete options. Sessions can compact between turns and lose upstream-skill bodies; a free-text question becomes a dead end. See CD-9.
-4. **Don't auto-commit or auto-write to the status file from inside a wave member.** Wave dispatch (Slice α, v2.0.0+) requires wave members to return digests only — orchestrator is the canonical writer per CD-7. See `docs/internals.md§Wave dispatch`.
-5. **Don't introduce a new verb or doctor check without updating all three sync'd locations.** Verb routing table at Step 0 line ~46, reserved-verbs warning at line ~70, frontmatter `description:` at line 2. Doctor checks: the parallelization brief's count must match the table size. Drift here breaks autocomplete or silently skips checks.
-6. **Don't trust your own confirmation bias on large markdown edits.** After a multi-edit pass, dispatch a fresh-eyes Explore subagent to read the file end-to-end for contradictions or dangling references. The v1.0.0 audit pass and the v2.0.0 work both caught second-order issues this way.
+2. **Don't end a turn with a free-text question.** Use `AskUserQuestion` with 2–4 concrete options. Sessions can compact between turns and lose upstream-skill bodies; a free-text question becomes a dead end. See CD-9.
+3. **Don't auto-commit or auto-write to the status file from inside a wave member.** Wave dispatch (Slice α, v2.0.0+) requires wave members to return digests only — orchestrator is the canonical writer per CD-7. See `docs/internals.md§Wave dispatch`.
+4. **Don't introduce a new verb or doctor check without updating all three sync'd locations.** Verb routing table at Step 0 line ~46, reserved-verbs warning at line ~70, frontmatter `description:` at line 2. Doctor checks: the parallelization brief's count must match the table size. Drift here breaks autocomplete or silently skips checks.
+5. **Don't trust your own confirmation bias on large markdown edits.** After a multi-edit pass, dispatch a fresh-eyes Explore subagent to read the file end-to-end for contradictions or dangling references. The v1.0.0 audit pass and the v2.0.0 work both caught second-order issues this way.
 
 ## Operating principles (always-applicable)
 

@@ -610,10 +610,6 @@ Original kickoff was all-or-nothing — the bare topic catch-all triggered full 
 
 Earlier default: `codex.review: off`. Most users who installed Codex wanted adversarial review by default but had to explicitly enable it. v2.0.0 flips both `codex.routing: auto` and `codex.review: on`. Graceful degrade on missing-codex makes this safe (one-line warning, run continues).
 
-### Why hard-cut name changes
-
-The user's standing rule: no backward-compat shims when changing names. Hard-cut at the major version bump. Communicate via CHANGELOG migration notes; users update their config files themselves. Permanent maintenance burden of dual-load fallback > migration cost users pay once.
-
 ### Why intra-plan parallelism Slice α first
 
 Three slices were considered:
@@ -756,7 +752,6 @@ For a major release (breaking change / version 2.0.0+), include explicit `### Mi
 - **Holding raw subagent output in the orchestrator's context.** Always digest. The dispatch model exists precisely so the orchestrator stays small.
 - **Ending a turn with a free-text prose question.** Sessions can compact; free-text becomes a dead end. Use `AskUserQuestion` with 2–4 concrete options (CD-9).
 - **Editing the orchestrator without re-running the halt_mode discriminator suite.** The flow has tendrils across B1/B2/B3/C/P. Drift here is hard to spot without targeted grep.
-- **Adding backward-compat shims for breaking name changes.** Hard-cut; CHANGELOG migration notes are the migration path.
 
 ### Codex anti-patterns
 
