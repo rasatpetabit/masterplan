@@ -57,7 +57,7 @@ Steps A, B0, D consult the cache instead of re-running these. **Invalidate** the
 
 | First token | Branch | `halt_mode` |
 |---|---|---|
-| _(empty)_ | **Step A** — list+pick across worktrees | `none` |
+| _(empty)_ | **Step M** — two-tier no-args picker (then routes to A / B / I / S / D / R or exits) | `none` |
 | `full` (no topic) | Prompt for topic via `AskUserQuestion` (free-text Other), then **Step B** — full kickoff (B0→B1→B2→B3→C) | `none` |
 | `full <topic>` | **Step B** — full kickoff (B0→B1→B2→B3→C) | `none` |
 | `brainstorm` (no topic) | Prompt for topic via `AskUserQuestion` (free-text Other), then Step B0+B1; halt at B1 close-out gate | `post-brainstorm` |
@@ -65,7 +65,7 @@ Steps A, B0, D consult the cache instead of re-running these. **Invalidate** the
 | `plan` (no args) | **Step P** — pick spec-without-plan; treat pick as `plan --from-spec=<picked>` | `post-plan` |
 | `plan <topic>` | Step B0+B1+B2+B3; halt at B3 close-out gate | `post-plan` |
 | `plan --from-spec=<path>` | cd into spec's worktree, run B2+B3 only; halt at B3 close-out gate | `post-plan` |
-| `execute` (no path) | **Step A** — same as bare empty | `none` |
+| `execute` (no path) | **Step A** — list+pick across worktrees | `none` |
 | `execute <status-path>` | **Step C** — resume that plan | `none` |
 | `import` (alone or with args) | **Step I** — legacy import | `none` |
 | `doctor` (alone or with `--fix`) | **Step D** — lint state | `none` |
@@ -231,6 +231,63 @@ When to NOT parallelize:
 - Per-task implementation in Step C — concurrent commits on the same branch race the git index. Intra-plan task parallelism is captured as a future-design note in operational rules; not enabled.
 - Shared-state writes (multiple agents modifying the same status file is a race).
 - When the orchestrator needs to react between agents (autonomy=gated checkpoints).
+
+---
+
+## Step M — Bare-invocation picker (two-tier menu)
+
+Fires when `/masterplan` is invoked with no args. Routes the user to the appropriate Step via a two-tier `AskUserQuestion` menu so first-touch users don't need to memorize the verb table.
+
+### Tier 1 — Pick a category
+
+Surface `AskUserQuestion("What kind of work?", options=[
+  "Phase work — brainstorm/plan/execute/full (Recommended for new tasks)",
+  "Operations — import/status/doctor/retro",
+  "Resume in-flight — list+pick across worktrees",
+  "Cancel"
+])`.
+
+Routing:
+- **Phase work** → Tier 2a below.
+- **Operations** → Tier 2b below.
+- **Resume in-flight** → fall through to **Step A** with no further prompt.
+- **Cancel** → emit one-line message ("Cancelled — no action taken.") and end the turn cleanly. No further tool calls.
+
+### Tier 2a — Phase work picker
+
+Surface `AskUserQuestion("Which phase verb?", options=[
+  "brainstorm <topic> — discovery + spec only (halts post-brainstorm)",
+  "plan <topic> — spec + plan (halts post-plan)",
+  "execute — pick a status file and run Step C",
+  "full <topic> — all three phases (B0→B1→B2→B3→C, no halts)"
+])`.
+
+Routing:
+- **brainstorm** → prompt for topic via `AskUserQuestion("What's the brainstorm topic?", options=[Other])` (Other forces free-text), set `halt_mode = post-brainstorm`, route to **Step B** with that topic.
+- **plan** → prompt for topic the same way, set `halt_mode = post-plan`, route to **Step B**.
+- **execute** → no topic needed; route directly to **Step A**.
+- **full** → prompt for topic the same way, set `halt_mode = none`, route to **Step B**.
+
+### Tier 2b — Operations picker
+
+Surface `AskUserQuestion("Which operation?", options=[
+  "import — discover legacy planning artifacts",
+  "status — situation report (read-only)",
+  "doctor — lint state across all worktrees",
+  "retro — generate retrospective for a completed plan"
+])`.
+
+Routing:
+- **import** → route to **Step I** (no further args; legacy import discovery).
+- **status** → route to **Step S** (no further args; cross-worktree report).
+- **doctor** → route to **Step D** (no further args; lint).
+- **retro** → route to **Step R** (no slug; Step R0 picks the most-recent completed plan without a retro).
+
+### Notes
+
+- Tier-1 "Resume in-flight" deliberately delegates to Step A's existing list+pick rather than re-implementing the worktree scan inline. One canonical site for the in-progress-plans logic.
+- The picker fires BEFORE Step 0's `halt_mode` and flag-interactions logic for verb-routed invocations. Picker-routed invocations set `halt_mode` based on the chosen verb (per Tier 2a above) — no CLI flags are passed from the empty bare invocation.
+- If the user wants to invoke a verb directly (e.g., `/masterplan full <topic>`), they can — Step 0's verb routing table still matches the first token before Step M fires. Step M is for the empty-args case only.
 
 ---
 
