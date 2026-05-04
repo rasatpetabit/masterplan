@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.1] — 2026-05-04
+
+### Changed
+- Bare `/masterplan` is now resume-first: it auto-continues the current/only
+  in-progress plan, opens the resume picker when active work is ambiguous, and
+  shows the broad phase/operations menu only when no active plan exists.
+- README install docs now include a Claude Desktop Code-tab path, scope guidance,
+  and the `/superpowers-masterplan:masterplan` collision fallback.
+
+### Fixed
+- Runtime telemetry sidecars are now protected from accidental commits. This
+  repo ignores generated `*-telemetry*.jsonl`, `*-subagents*.jsonl`, and
+  `*-subagents-cursor` files, and downstream hook/Step C telemetry writers add
+  matching patterns to `.git/info/exclude` before writing. If telemetry files
+  are tracked or cannot be ignored, telemetry is skipped instead of written.
+
 ## [2.3.0] — 2026-05-04
 
 **Model-dispatch contract + per-subagent telemetry layer.** Two threads bundled
@@ -38,9 +54,10 @@ into one minor release:
 - **`<plan>-subagents.jsonl`** stream — one record per subagent dispatch
   emitted by `hooks/masterplan-telemetry.sh`. Cursor-based incremental parsing
   via `<plan>-subagents-cursor` keeps the hook fast on long sessions.
-- **`DISPATCH-SITE:` tag convention** on every Agent brief — ~14 inline edits
-  to `commands/masterplan.md` so the hook can attribute cost to orchestrator-
-  step granularity (Step A vs Step C step 1 vs wave vs SDD vs etc.).
+- **`DISPATCH-SITE:` tag convention** for every Agent brief — a central
+  contract table in `commands/masterplan.md` enumerates the 14 dispatch-site
+  values so the hook can attribute cost to orchestrator-step granularity
+  (Step A vs Step C step 1 vs wave vs SDD vs etc.).
 - **Doctor check #19** — orphan `<plan>-subagents.jsonl` /
   `<plan>-subagents-cursor` files (sibling to a missing status file). Suggests
   archive on `--fix`. Doctor check #12 extended to also catch
@@ -89,9 +106,9 @@ into one minor release:
 ### Verification
 - 10 grep discriminators (contract section landed once, ≥14 `model:`
   parameters, Codex exemption notes ≥2, opus-on-blocker wire-up,
-  `<plan>-subagents.jsonl` referenced in hook, ≥14 `DISPATCH-SITE:` tags in
-  briefs, doctor check #19 + Step D brief at "all 19 checks", new schema in
-  telemetry-signals.md, version bumps consistent across
+  `<plan>-subagents.jsonl` referenced in hook, 14 `DISPATCH-SITE` values in
+  the contract table, doctor check #19 + Step D brief at "all 19 checks",
+  new schema in telemetry-signals.md, version bumps consistent across
   CHANGELOG/README/plugin.json/marketplace.json).
 - `claude plugin validate .` — clean.
 - `bash -n hooks/masterplan-telemetry.sh` — clean.

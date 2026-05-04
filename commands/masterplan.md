@@ -57,7 +57,7 @@ Steps A, B0, D consult the cache instead of re-running these. **Invalidate** the
 
 | First token | Branch | `halt_mode` |
 |---|---|---|
-| _(empty)_ | **Step M0 → Step M** — inline status orientation + tripwire check, then two-tier no-args picker (which routes to A / B / I / S / D / R or exits) | `none` |
+| _(empty)_ | **Step M0 → resume-first routing** — inline status orientation + tripwire check, then auto-resume the current/only in-progress plan, list+pick if ambiguous, or show the two-tier menu only when no active plan exists | `none` |
 | `full` (no topic) | Prompt for topic via `AskUserQuestion` (free-text Other), then **Step B** — full kickoff (B0→B1→B2→B3→C) | `none` |
 | `full <topic>` | **Step B** — full kickoff (B0→B1→B2→B3→C) | `none` |
 | `brainstorm` (no topic) | Prompt for topic via `AskUserQuestion` (free-text Other), then Step B0+B1; halt at B1 close-out gate | `post-brainstorm` |
@@ -274,13 +274,13 @@ When to NOT parallelize:
 
 ---
 
-## Step M — Bare-invocation picker (two-tier menu)
+## Step M — Bare-invocation resume-first router
 
-Fires when `/masterplan` is invoked with no args. Routes the user to the appropriate Step via a two-tier `AskUserQuestion` menu so first-touch users don't need to memorize the verb table.
+Fires when `/masterplan` is invoked with no args. Default behavior is **resume-first**: try to continue interrupted project work before showing any broad menu. The two-tier `AskUserQuestion` menu is now the empty-state fallback for repos with no active masterplan plan.
 
-### Step M0 — Inline status orientation (runs before Tier 1)
+### Step M0 — Inline status orientation (runs before resume-first routing)
 
-Before the Tier-1 picker fires, emit a structured plain-text orientation summarizing in-flight plans and any cheap-to-detect issues. Step 0 has already populated `git_state.worktrees` and `git_state.branches` by this point — M0 reuses both.
+Before resume-first routing, emit a structured plain-text orientation summarizing in-flight plans and any cheap-to-detect issues. Step 0 has already populated `git_state.worktrees` and `git_state.branches` by this point — M0 reuses both.
 
 **Procedure:**
 
@@ -309,7 +309,7 @@ Before the Tier-1 picker fires, emit a structured plain-text orientation summari
      - <slug> (active|blocked <age>) — current: <current_task>
      - <slug> (active|blocked <age>) — current: <current_task>
      - <slug> (active|blocked <age>) — current: <current_task>
-     [… and <R> more — pick "Resume in-flight" to see all]
+     [… and <R> more — list+pick shows all]
    ```
    - The `· <K> issue(s) detected …` segment emits only when `tripwire_count > 0`.
    - The `… and <R> more …` line emits only when `(in_flight_count + blocked_count) > 3`.
@@ -326,11 +326,27 @@ Before the Tier-1 picker fires, emit a structured plain-text orientation summari
    No parseable active plans · <K> issue(s) detected — consider /masterplan doctor
    ```
 
-6. **Cache for Step A reuse.** Store the full parsed plan list (not just the top 3) in a transient `step_m_plans_cache`. If the user picks "Resume in-flight" in Tier 1 → Step A consults this cache first and skips its own worktree scan + Haiku dispatch. The cache is discarded at end-of-turn regardless of which Tier-1 option the user picks.
+6. **Cache for resume-first routing and Step A reuse.** Store the full parsed plan list (not just the top 3) in a transient `step_m_plans_cache`. If routing falls through to Step A, Step A consults this cache first and skips its own worktree scan + Haiku dispatch. The cache is discarded at end-of-turn regardless of the route.
 
-7. **Fire Tier 1.** Proceed to Tier-1 `AskUserQuestion` immediately — no further prose between the M0 preamble and the picker.
+7. **Resolve auto-resume candidate.** Build:
+   - `active_plans = status ∈ {in-progress, blocked}`.
+   - `in_progress_plans = status == in-progress`.
+   - `current_worktree` from Step 0's repo root (or `pwd`/`git rev-parse --show-toplevel` if needed).
+   - `current_branch` from live `git rev-parse --abbrev-ref HEAD`.
 
-### Tier 1 — Pick a category
+   Choose `auto_resume_candidate` only when resumption is unambiguous:
+   - If exactly one `in_progress` plan matches BOTH `current_worktree` and `current_branch`, choose it.
+   - Else if exactly one `in_progress` plan exists across all worktrees, choose it.
+   - Else choose none.
+
+   Do **not** auto-resume `status: blocked` plans. Blocked plans need an explicit choice because the next action may require user context.
+
+8. **Route without the full menu when active work exists.**
+   - If `auto_resume_candidate` exists: emit `Resuming <slug> — current: <current_task>` and route directly to **Step C** with that status path. No picker.
+   - Else if `active_plans` is non-empty: route directly to **Step A** using `step_m_plans_cache`. Step A handles list+pick across ambiguous in-flight/blocked plans. No Phase/Operations menu.
+   - Else: fire Tier 1 below. This is the only route that shows the broad menu by default.
+
+### Tier 1 — Empty-state category picker
 
 Surface `AskUserQuestion("What kind of work?", options=[
   "Phase work — brainstorm/plan/execute/full (Recommended for new tasks)",
@@ -342,7 +358,7 @@ Surface `AskUserQuestion("What kind of work?", options=[
 Routing:
 - **Phase work** → Tier 2a below.
 - **Operations** → Tier 2b below.
-- **Resume in-flight** → fall through to **Step A** with no further prompt.
+- **Resume in-flight** → fall through to **Step A** with no further prompt. This appears mainly for empty-state users who deliberately want to inspect older or non-active state; active work routes to Step C/Step A before this menu.
 - **Cancel** → emit one-line message ("Cancelled — no action taken.") and end the turn cleanly. No further tool calls.
 
 ### Tier 2a — Phase work picker
@@ -377,16 +393,16 @@ Routing:
 
 ### Notes
 
-- Tier-1 "Resume in-flight" deliberately delegates to Step A's existing list+pick rather than re-implementing the worktree scan inline. One canonical site for the in-progress-plans logic.
-- The picker fires BEFORE Step 0's `halt_mode` and flag-interactions logic for verb-routed invocations. Picker-routed invocations set `halt_mode` based on the chosen verb (per Tier 2a above) — no CLI flags are passed from the empty bare invocation.
+- Resume-first routing deliberately delegates ambiguous cases to Step A's existing list+pick rather than re-implementing selection UI inline. One canonical site for the in-progress-plans picker.
+- The broad picker fires only after resume-first routing finds no active plans. Picker-routed invocations set `halt_mode` based on the chosen verb (per Tier 2a above) — no CLI flags are passed from the empty bare invocation.
 - If the user wants to invoke a verb directly (e.g., `/masterplan full <topic>`), they can — Step 0's verb routing table still matches the first token before Step M fires. Step M is for the empty-args case only.
-- **Stay on script.** Step M0's structured preamble (headline + up-to-3 plan bullets + optional tripwire flag) IS the orientation; emit it exactly as specified above, then fire the Tier-1 `AskUserQuestion` immediately. Do NOT expand the preamble with prose commentary, do NOT enumerate which doctor checks tripped (that's `/masterplan doctor`'s job — M0 only counts), and do NOT pivot into adjacent feature offers ("by the way, want me to open a browser visualization / install X / show a diagram?"). `/masterplan` is frequently invoked inside `/loop` and remote-control sessions where there is no human between turns; a turn that ends with a free-text question instead of an `AskUserQuestion` call stalls the loop. The picker IS the user-facing surface; M0 is the data preface to it. Any `?` outside an `AskUserQuestion` is still a bug.
+- **Stay on script.** Step M0's structured preamble (headline + up-to-3 plan bullets + optional tripwire flag) IS the orientation; emit it exactly as specified above, then route according to the resume-first rules. Do NOT expand the preamble with prose commentary, do NOT enumerate which doctor checks tripped (that's `/masterplan doctor`'s job — M0 only counts), and do NOT pivot into adjacent feature offers ("by the way, want me to open a browser visualization / install X / show a diagram?"). `/masterplan` is frequently invoked inside `/loop` and remote-control sessions where there is no human between turns; a turn that ends with a free-text question instead of Step C/Step A or an `AskUserQuestion` call stalls the loop. Any `?` outside an `AskUserQuestion` is still a bug.
 
 ---
 
 ## Step A — List + pick (across worktrees)
 
-0. **`step_m_plans_cache` short-circuit.** If `step_m_plans_cache` is populated (i.e., this is a "Resume in-flight" pick from Step M's Tier-1 picker), skip steps 1–4 and use the cached list directly. Jump to step 5. The cache holds the same `[{path, frontmatter, parse_error?}]` shape that step 4 produces.
+0. **`step_m_plans_cache` short-circuit.** If `step_m_plans_cache` is populated (i.e., this is a resume-first ambiguous case from Step M or a "Resume in-flight" pick from the empty-state menu), skip steps 1–4 and use the cached list directly. Jump to step 5. The cache holds the same `[{path, frontmatter, parse_error?}]` shape that step 4 produces.
 1. Enumerate all worktrees of the current repo from `git_state.worktrees` (cached in Step 0). Parse into `(worktree_path, branch)` tuples. Include the current worktree.
 2. **Worktree-count short-circuit.** If more than 20 worktrees exist, surface a one-line warning and switch to a faster mode: scan only the current worktree plus any worktree with a status file modified in the last 14 days. Issue the per-worktree `find <worktree>/docs/superpowers/plans -name '*-status.md' -mtime -14` calls as **one parallel Bash batch**, not sequentially. Per CD-2, do not auto-prune worktrees — just narrow the scan.
 3. For each worktree (after any short-circuit), glob `<worktree_path>/docs/superpowers/plans/*-status.md`. Issue the per-worktree globs as one parallel Bash batch.
@@ -600,7 +616,7 @@ Triggered by `/masterplan plan` with no topic and no `--from-spec=`. Picks an ex
 
    **CC-1 dismissal scan.** Scan `## Notes` for `compact_suggest: off`. If present, set `cc1_silenced: true` in orchestrator memory for this run. CC-1 (operational rules) honors this flag.
 
-   **Telemetry inline snapshot.** If `config.telemetry.enabled` and the status file's frontmatter does NOT include `telemetry: off`, append one JSONL record (kind=`step_c_entry`) to `<plan-without-suffix>-telemetry.jsonl` (sibling to status file). Fields per the format defined in `docs/design/telemetry-signals.md`. Per-subagent dispatch details — model, tokens, duration, dispatch_site — are captured separately by the Stop hook into `<plan>-subagents.jsonl` (per §Agent dispatch contract telemetry-capture clause); the inline `step_c_entry` record is the lightweight per-turn datapoint for installs without the Stop hook. Cheap (one append).
+   **Telemetry inline snapshot.** If `config.telemetry.enabled` and the status file's frontmatter does NOT include `telemetry: off`, first ensure local Git excludes protect all telemetry sidecars before writing: add a managed block to `.git/info/exclude` (not `.gitignore`, to avoid mutating user-owned tracked files) containing `**/*-telemetry.jsonl`, `**/*-telemetry-archive.jsonl`, `**/*-subagents.jsonl`, `**/*-subagents-archive.jsonl`, and `**/*-subagents-cursor`; then verify every would-be sidecar path for this plan is untracked and ignored with `git ls-files --error-unmatch` + `git check-ignore --no-index`. If any sidecar is tracked or cannot be ignored, skip telemetry for this turn and append a `## Notes` entry explaining that telemetry was suppressed to avoid committing local runtime data. Otherwise append one JSONL record (kind=`step_c_entry`) to `<plan-without-suffix>-telemetry.jsonl` (sibling to status file). Fields per the format defined in `docs/design/telemetry-signals.md`. Per-subagent dispatch details — model, tokens, duration, dispatch_site — are captured separately by the Stop hook into `<plan>-subagents.jsonl` (per §Agent dispatch contract telemetry-capture clause); the inline `step_c_entry` record is the lightweight per-turn datapoint for installs without the Stop hook. Cheap (one append).
 
    **Gated→loose switch offer (v2.1.0+).** When `autonomy == gated` AND `config.gated_switch_offer_at_tasks > 0`, check whether to offer the user a one-time switch to `--autonomy=loose` for the remainder of this plan. Skip conditions (any one suppresses the offer):
 
@@ -818,7 +834,7 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
 
    **4c — Worktree integrity check.** Apply CD-2: `git status --porcelain` should show only task-scope files. If unexpected files appear, surface to the user before continuing; never silently revert their work.
 
-   **Under wave (Slice α v2.0.0+).** Compute the union of all wave-task `**Files:**` declarations (post-glob-expansion). Run `git status --porcelain` once at wave-end. Filter: files matching the union are expected (they belong to a wave member); files outside ALL declared scopes are CD-2 violations — surface to user. Implicit-paths whitelist (`<slug>-status.md`, `<slug>-eligibility-cache.json`, `<slug>-status-archive.md`, `<slug>-telemetry.jsonl`, `.git/`) added to the union. The per-task per-wave-member 4c check is replaced by this single union-filter — runs once per wave, not N times.
+   **Under wave (Slice α v2.0.0+).** Compute the union of all wave-task `**Files:**` declarations (post-glob-expansion). Run `git status --porcelain` once at wave-end. Filter: files matching the union are expected (they belong to a wave member); files outside ALL declared scopes are CD-2 violations — surface to user. Implicit-paths whitelist (`<slug>-status.md`, `<slug>-eligibility-cache.json`, `<slug>-status-archive.md`, `.git/`) added to the union. Telemetry sidecars are intentionally NOT whitelisted here because they must be ignored and absent from porcelain; if `<slug>-telemetry.jsonl`, `<slug>-subagents.jsonl`, or `<slug>-subagents-cursor` appears in porcelain, stop and fix the local exclude guard before continuing. The per-task per-wave-member 4c check is replaced by this single union-filter — runs once per wave, not N times.
 
    **4d — Status file update.** Update the status file: bump `last_activity` to the current ISO timestamp, set `current_task` to the next task name, set `next_action` to the next task's first step, append a one-line entry to `## Activity log` that includes 1–3 lines of relevant verification output (per **CD-8**) and the routing+review tags. For non-trivial decisions made during the task, also append to `## Notes` per **CD-7**.
 

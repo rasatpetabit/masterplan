@@ -62,7 +62,7 @@ Step C 4c filters `git status --porcelain` against task-scope files. Under a par
 
 **Old-design impact:** Not in prior notes. The proposed `files: [...]` task annotation was meant to address this but the integration with 4c wasn't spelled out.
 
-**Slice α mitigation (M-3 files-filter):** Per-task `**Files:**` block becomes exhaustive scope for parallel-eligible tasks. 4c filters porcelain against the **union** of all in-flight wave members' declared files (post-glob-expansion). Implicit-paths whitelist (status file, eligibility cache, archive file, telemetry file, `.git/`) added to the union. Files outside ALL declared scopes remain real CD-2 violations.
+**Slice α mitigation (M-3 files-filter):** Per-task `**Files:**` block becomes exhaustive scope for parallel-eligible tasks. 4c filters porcelain against the **union** of all in-flight wave members' declared files (post-glob-expansion). Implicit-paths whitelist (status file, eligibility cache, archive file, `.git/`) added to the union. Telemetry sidecars must be ignored and absent from porcelain rather than whitelisted. Files outside ALL declared scopes remain real CD-2 violations.
 
 ### FM-6: Upstream `superpowers:subagent-driven-development` is structurally serial
 
@@ -175,7 +175,7 @@ This is a stronger contract than the existing per-task SDD brief — wave implem
 
 **Step C 4a (verification) under wave.** Each task's verification ran inside its SDD instance per the implementer-return trust contract. Orchestrator reads `tests_passed` + `commands_run` per-task. Step 4a's complementary-command check fires per-task; additional verifiers batch as one parallel Bash batch.
 
-**Step C 4c (worktree integrity) under wave.** Compute the union of all wave-task `**Files:**` declarations (post-glob-expansion). Run `git status --porcelain` once at wave-end. Filter: files matching the union are expected; files outside ALL declared scopes are CD-2 violations — surface to user. Implicit-paths whitelist (status file, eligibility cache, archive file, telemetry file, `.git/`) added to the union.
+**Step C 4c (worktree integrity) under wave.** Compute the union of all wave-task `**Files:**` declarations (post-glob-expansion). Run `git status --porcelain` once at wave-end. Filter: files matching the union are expected; files outside ALL declared scopes are CD-2 violations — surface to user. Implicit-paths whitelist (status file, eligibility cache, archive file, `.git/`) added to the union; telemetry sidecars are expected to be ignored and absent from porcelain.
 
 **Step C 4d (status file update) under wave — single-writer funnel.**
 

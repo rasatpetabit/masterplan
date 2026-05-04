@@ -100,7 +100,32 @@ parallelism table in [`docs/internals.md`](./docs/internals.md).
 
 ## Install
 
-### Claude Code plugin marketplace
+### Claude Desktop app (Code tab)
+
+This is a **Claude Code** plugin, so in the desktop app use the **Code** tab,
+not a regular Chat conversation. Start a Local or SSH coding session for the
+repository you want `/masterplan` to manage.
+
+Desktop-first install:
+
+1. Click the **+** button beside the prompt box.
+2. Choose **Plugins** → **Add plugin**.
+3. If `rasatpetabit-superpowers-masterplan` is not already listed, add this
+   repository as a marketplace from the plugin manager's **Marketplaces** tab,
+   or paste the marketplace command from the next section into the prompt.
+4. Install `superpowers-masterplan`. Use **User scope** for all projects,
+   **Project scope** to share through this repository's `.claude/settings.json`,
+   or **Local scope** for only the current repository.
+5. Run `/reload-plugins` or restart the session.
+6. Verify by typing `/` or opening **+** → **Slash commands**. Look for
+   `/masterplan`; if another command with the same name exists, use the
+   namespaced form `/superpowers-masterplan:masterplan`.
+
+Claude's desktop plugin browser only shows plugins from configured
+marketplaces. The slash-command flow below works inside the Desktop Code tab
+too, and is often the fastest way to add this marketplace the first time.
+
+### Slash-command install (CLI or Desktop Code tab)
 
 ```text
 /plugin marketplace add rasatpetabit/superpowers-masterplan
@@ -136,8 +161,11 @@ cp -r skills/masterplan-detect ~/.claude/skills/
 
 ### Optional telemetry hook
 
-`/masterplan` can append per-turn telemetry to `<plan>-telemetry.jsonl`. To
-install the Stop hook:
+`/masterplan` can append per-turn telemetry to `<plan>-telemetry.jsonl` and
+per-subagent cost records to `<plan>-subagents.jsonl`. These runtime sidecars
+are local-only: the hook and command add ignore patterns to `.git/info/exclude`
+before writing, and this repository's `.gitignore` ignores its own generated
+telemetry. To install the Stop hook:
 
 ```bash
 mkdir -p ~/.claude/hooks
@@ -201,6 +229,11 @@ Resume work:
 /masterplan --resume=docs/superpowers/plans/2026-04-15-auth-status.md
 ```
 
+With no args, `/masterplan` tries to resume interrupted work first: it
+auto-continues the current or only in-progress plan, opens the resume picker
+when active work is ambiguous, and shows the broader phase/operations menu only
+when no active plan exists.
+
 Inspect and maintain state:
 
 ```text
@@ -217,7 +250,7 @@ Inspect and maintain state:
 
 | Invocation | Effect | Halts |
 |---|---|---|
-| `/masterplan` | Two-tier picker: Phase work / Operations / Resume in-flight / Cancel | n/a |
+| `/masterplan` | Resume-first: auto-continue current/only in-progress plan, list+pick if ambiguous, menu if none | no |
 | `/masterplan full <topic>` | Brainstorm, plan, then execute | no |
 | `/masterplan <topic>` | Bare-topic shortcut for `full <topic>` | no |
 | `/masterplan brainstorm <topic>` | Brainstorm and write a spec | after spec |
@@ -387,7 +420,7 @@ The full schema and operational rules are documented in
 
 ## Project Status
 
-Current release: **v2.3.0**.
+Current release: **v2.3.1**.
 
 - Release history: [`CHANGELOG.md`](./CHANGELOG.md)
 - Contributor internals: [`docs/internals.md`](./docs/internals.md)

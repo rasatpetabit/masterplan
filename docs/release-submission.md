@@ -1,6 +1,6 @@
 # Claude Plugin Directory Submission
 
-Release target: `superpowers-masterplan` v2.2.3.
+Release target: `superpowers-masterplan` v2.3.1.
 
 ## Official submission path
 
@@ -43,7 +43,8 @@ Long description:
 > status files, worktrees, activity logs, resume points, doctor checks, and
 > retrospectives so long-running work survives compaction, restarts, and agent
 > handoff. It also supports optional Codex routing/review, read-only parallel
-> verification waves, legacy plan import, and an opt-in telemetry hook.
+> verification waves, legacy plan import, model-dispatch guardrails, and an
+> opt-in telemetry hook with per-subagent cost records.
 
 Why it should be considered for Anthropic Verified:
 
@@ -61,7 +62,7 @@ Category suggestion: development workflow / coding.
 
 ## Pre-submit verification
 
-Run from the repository root after committing the v2.2.3 changes:
+Run from the repository root after committing the current release changes:
 
 ```bash
 claude plugin validate .

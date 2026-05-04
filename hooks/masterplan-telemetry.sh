@@ -19,6 +19,35 @@ set -u
 # --- Bail-silent helper ---
 bail() { exit 0; }
 
+ensure_telemetry_excluded() {
+  local exclude_file rel
+  exclude_file=$(git rev-parse --git-path info/exclude 2>/dev/null) || return 1
+  [[ -n "$exclude_file" ]] || return 1
+  mkdir -p "$(dirname "$exclude_file")" 2>/dev/null || return 1
+  touch "$exclude_file" 2>/dev/null || return 1
+
+  if ! grep -q '^# BEGIN MASTERPLAN TELEMETRY IGNORE$' "$exclude_file" 2>/dev/null; then
+    {
+      printf '\n# BEGIN MASTERPLAN TELEMETRY IGNORE\n'
+      printf '# Local-only /masterplan runtime telemetry. Do not commit.\n'
+      printf '**/*-telemetry.jsonl\n'
+      printf '**/*-telemetry-archive.jsonl\n'
+      printf '**/*-subagents.jsonl\n'
+      printf '**/*-subagents-archive.jsonl\n'
+      printf '**/*-subagents-cursor\n'
+      printf '# END MASTERPLAN TELEMETRY IGNORE\n'
+    } >> "$exclude_file" 2>/dev/null || return 1
+  fi
+
+  for rel in \
+    "docs/superpowers/plans/${slug}-telemetry.jsonl" \
+    "docs/superpowers/plans/${slug}-subagents.jsonl" \
+    "docs/superpowers/plans/${slug}-subagents-cursor"; do
+    git ls-files --error-unmatch -- "$rel" >/dev/null 2>&1 && return 1
+    git check-ignore -q --no-index -- "$rel" 2>/dev/null || return 1
+  done
+}
+
 # 0. Required tool guard. If jq is missing, the JSONL append at step 7 would
 # silently produce nothing forever — bail explicitly so the user notices via
 # the absence rather than via gradually-empty telemetry files.
@@ -75,6 +104,7 @@ ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 slug=$(basename "$status_file" -status.md)
 status_bytes=$(wc -c <"$status_file" 2>/dev/null | tr -d ' ')
 activity_log_entries=$(awk '/^## Activity log/{in_log=1; next} /^## /{in_log=0} in_log && /^- /{c++} END{print c+0}' "$status_file" 2>/dev/null)
+ensure_telemetry_excluded || bail
 # GNU `date -d` first, then BSD `date -v` fallback. If both fail (e.g., a stripped
 # musl-libc container without either form), use a sentinel that produces zero
 # matches — over-counting every wakeup ever recorded would silently misrepresent

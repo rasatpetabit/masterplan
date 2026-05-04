@@ -6,7 +6,7 @@
 
 **Companion docs:**
 - [`CLAUDE.md`](../CLAUDE.md) — always-loaded short orientation + top anti-patterns.
-- [`commands/masterplan.md`](../commands/masterplan.md) — the orchestrator prompt (the "source code"; ~1100 lines).
+- [`commands/masterplan.md`](../commands/masterplan.md) — the orchestrator prompt (the "source code"; ~1370 lines).
 - [`README.md`](../README.md) — public-facing project overview, install, usage, configuration reference.
 - [`CHANGELOG.md`](../CHANGELOG.md) — release history with full per-version detail.
 - [`docs/design/intra-plan-parallelism.md`](./design/intra-plan-parallelism.md) — Slice α status doc + sharpened revisit trigger for Slice β/γ.
@@ -52,7 +52,7 @@ superpowers-masterplan/
 │   ├── plugin.json                 # plugin manifest (name, version, description, URL)
 │   └── marketplace.json            # direct-install marketplace catalog
 ├── commands/
-│   └── masterplan.md               # THE orchestrator prompt (~1100 lines, single source of truth for behavior)
+│   └── masterplan.md               # THE orchestrator prompt (~1370 lines, single source of truth for behavior)
 ├── skills/
 │   └── masterplan-detect/
 │       └── SKILL.md                # auto-suggest /masterplan import on legacy artifacts
@@ -246,7 +246,9 @@ Under wave dispatch (v2.0.0+), rotation is wave-aware — fires once per wave (n
 | `<slug>-status.md` | Canonical status file (this) |
 | `<slug>-status-archive.md` | Activity log overflow archive (created on demand) |
 | `<slug>-eligibility-cache.json` | Per-task Codex routing + parallel-eligibility cache (rebuilt on plan.md mtime change) |
-| `<slug>-telemetry.jsonl` | Per-turn JSONL records emitted by the Stop hook + Step C step 1 inline snapshots |
+| `<slug>-telemetry.jsonl` | Per-turn JSONL records emitted by the Stop hook + Step C step 1 inline snapshots; local-only and ignored before write |
+| `<slug>-subagents.jsonl` | Per-Agent-dispatch telemetry emitted by the Stop hook (v2.3.0+); local-only and ignored before write |
+| `<slug>-subagents-cursor` | Incremental transcript cursor for the per-subagent telemetry stream; local-only and ignored before write |
 
 ---
 
@@ -360,7 +362,7 @@ A wave with mixed Codex + inline tasks can't usefully parallelize: Codex executi
 
 Step C 4c filters `git status --porcelain` against task-scope files. Under a wave, after Task 1 completes, porcelain shows files from Tasks 2–5 (still in flight) as "unexpected." 4c either fires false positives (every wave triggers human review) or gets skipped (loses CD-2 guarantee).
 
-**Slice α mitigation:** Per-task `**Files:**` declared-scope filter. 4c filters against the union of in-flight wave members' files (post-glob-expansion). Implicit-paths whitelist (status file, eligibility cache, archive file, telemetry file, `.git/`) added to the union.
+**Slice α mitigation:** Per-task `**Files:**` declared-scope filter. 4c filters against the union of in-flight wave members' files (post-glob-expansion). Implicit-paths whitelist (status file, eligibility cache, archive file, `.git/`) added to the union. Telemetry sidecars must be ignored and absent from porcelain rather than whitelisted.
 
 #### FM-6: SDD is structurally serial
 
@@ -515,7 +517,7 @@ Use the result to evaluate whether parallel-group annotations are being authored
 
 | First token | Branch | `halt_mode` |
 |---|---|---|
-| _(empty)_ | Step M0 → Step M — inline status orientation + tripwire check, then two-tier no-args picker (which routes to A / B / I / S / D / R or exits) | `none` |
+| _(empty)_ | Step M0 → resume-first routing — inline status orientation + tripwire check, then auto-resume current/only in-progress plan, list+pick if ambiguous, or menu if none | `none` |
 | `full` (no topic) | Prompt for topic, then Step B — full kickoff | `none` |
 | `full <topic>` | Step B — full kickoff (B0→B1→B2→B3→C) | `none` |
 | `brainstorm` (no topic) | Prompt for topic, then Step B0+B1; halt at B1 | `post-brainstorm` |
@@ -532,18 +534,24 @@ Use the result to evaluate whether parallel-group annotations are being authored
 | `--resume=<path>` | Step C | `none` |
 | anything else | Step B (catch-all) | `none` |
 
-### Bare `/masterplan` picker
+### Bare `/masterplan` resume-first behavior
 
-Since v2.2.0, empty `$ARGUMENTS` no longer jumps directly to Step A. Step M first asks for a category:
+Since the post-v2.3.0 audit, empty `$ARGUMENTS` is resume-first. Step M0 emits the inline orientation and then:
+
+- Auto-routes directly to Step C when exactly one in-progress plan is unambiguous (current worktree+branch match wins; otherwise the only in-progress plan across worktrees wins).
+- Routes to Step A list+pick when active work exists but is ambiguous, including any blocked plan.
+- Shows the broad category menu only when no active plan exists.
+
+The empty-state broad menu asks for a category:
 
 - **Phase work** — choose `brainstorm`, `plan`, `execute`, or `full`.
 - **Operations** — choose `import`, `status`, `doctor`, or `retro`.
 - **Resume in-flight** — delegates to Step A's existing list+pick flow.
 - **Cancel** — exits without further tool calls.
 
-This keeps the common resume path available while making all verbs discoverable without memorizing the table.
+This keeps interrupted work one command away while preserving verb discovery for repos with no active plan.
 
-**Step M0 inline orientation (added post-v2.2.0).** Before the Tier-1 picker fires, M0 emits a structured plain-text preamble: a one-line headline (`<N> in-flight, <M> blocked across <W> worktrees [· <K> issue(s) detected — consider /masterplan doctor]`), up to 3 in-flight/blocked plan bullets with `current_task` + age, and a truncation tail if there are more. It runs 7 cheap inline tripwire checks (subset of the 18 doctor checks: #2, #3, #4, #5, #6, #9, #10) — all derivable from frontmatter + the `git_state` cache already in memory. The full parsed plan list is cached in `step_m_plans_cache`; if the user picks "Resume in-flight", Step A's step 0 short-circuits to the cache and skips its own worktree scan + Haiku dispatch. The "Stay on script" guardrail explicitly bounds the preamble to this format — no prose tangents, no per-check enumeration (that's `doctor`'s job).
+**Step M0 inline orientation (added post-v2.2.0).** Before resume-first routing, M0 emits a structured plain-text preamble: a one-line headline (`<N> in-flight, <M> blocked across <W> worktrees [· <K> issue(s) detected — consider /masterplan doctor]`), up to 3 in-flight/blocked plan bullets with `current_task` + age, and a truncation tail if there are more. It runs 7 cheap inline tripwire checks (a latency-bounded subset of doctor checks #2, #3, #4, #5, #6, #9, #10) — all derivable from frontmatter + the `git_state` cache already in memory. The full parsed plan list is cached in `step_m_plans_cache`; if routing falls through to Step A, Step A's step 0 short-circuits to the cache and skips its own worktree scan + Haiku dispatch. The "Stay on script" guardrail explicitly bounds the preamble to this format — no prose tangents, no per-check enumeration (that's `doctor`'s job).
 
 ### Verb tokens are reserved
 
@@ -799,7 +807,7 @@ For a major release (breaking change / version 2.0.0+), include explicit `### Mi
 | Active in-flight plans | `docs/superpowers/plans/*-status.md` |
 | Plan execution state | `docs/superpowers/plans/<slug>-status.md` (single source of truth per CD-7) |
 | Eligibility cache | `docs/superpowers/plans/<slug>-eligibility-cache.json` (mtime-invalidated) |
-| Telemetry data | `docs/superpowers/plans/<slug>-telemetry.jsonl` |
+| Telemetry data | `docs/superpowers/plans/<slug>-telemetry.jsonl` and `<slug>-subagents.jsonl` (local-only, ignored before write) |
 | Codex plugin | `openai/codex-plugin-cc` (cross-plugin dependency, optional) |
 | Superpowers skills | `obra/superpowers` (cross-plugin dependency, required) |
 
@@ -823,4 +831,4 @@ When updating, dispatch a fresh-eyes Explore subagent after a multi-section edit
 
 ---
 
-*End of internals.md. ~6500 words. Last updated for v2.2.3.*
+*End of internals.md. ~6500 words. Last updated for v2.3.1.*

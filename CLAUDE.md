@@ -4,10 +4,10 @@ You are working in `superpowers-masterplan`, a Claude Code plugin that provides 
 
 ## What this codebase IS
 
-A single 1100-line markdown orchestrator prompt at **`commands/masterplan.md`** plus a small plugin package:
+A single ~1370-line markdown orchestrator prompt at **`commands/masterplan.md`** plus a small plugin package:
 
 - `skills/masterplan-detect/SKILL.md` — auto-suggests `/masterplan import` when legacy planning artifacts are found
-- `hooks/masterplan-telemetry.sh` — opt-in Stop hook (~100 lines bash) that emits per-turn JSONL telemetry
+- `hooks/masterplan-telemetry.sh` — opt-in Stop hook (~260 lines bash) that emits per-turn and per-subagent JSONL telemetry
 - `.claude-plugin/plugin.json` — plugin manifest (name, version, description, URL)
 - `.claude-plugin/marketplace.json` — marketplace catalog for direct `/plugin marketplace add rasatpetabit/superpowers-masterplan` installs
 

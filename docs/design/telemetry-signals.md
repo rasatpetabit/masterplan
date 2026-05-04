@@ -1,6 +1,15 @@
 # Telemetry signals
 
-Three JSONL streams sit alongside each `/masterplan` plan's status file. Two carry per-turn aggregates (`<plan>-telemetry.jsonl`), one carries per-Agent-dispatch detail (`<plan>-subagents.jsonl`).
+Two JSONL telemetry files sit alongside each `/masterplan` plan's status file:
+one per-turn aggregate stream (`<plan>-telemetry.jsonl`) and one
+per-Agent-dispatch detail stream (`<plan>-subagents.jsonl`).
+
+Telemetry files are local runtime data, not project artifacts. Before writing,
+the hook and the Step C inline snapshot path ensure `.git/info/exclude` contains
+ignore rules for `**/*-telemetry.jsonl`, `**/*-telemetry-archive.jsonl`,
+`**/*-subagents.jsonl`, `**/*-subagents-archive.jsonl`, and
+`**/*-subagents-cursor`; if the target file is already tracked or cannot be
+ignored, telemetry is skipped rather than risk being committed.
 
 **Per-turn writers** (write to `<plan>-telemetry.jsonl`):
 
@@ -11,7 +20,7 @@ Three JSONL streams sit alongside each `/masterplan` plan's status file. Two car
 
 - `hooks/masterplan-telemetry.sh` — same Stop hook also parses the parent transcript at end-of-turn, emitting one record per Agent tool dispatch (subagent_type, model, dispatch_site, full token breakdown, duration, tool_stats)
 
-All three streams honor: per-plan opt-out via `telemetry: off` in status frontmatter; global toggle via `config.telemetry.enabled`.
+Both telemetry streams honor: per-plan opt-out via `telemetry: off` in status frontmatter; global toggle via `config.telemetry.enabled`.
 
 ## Per-turn record shape
 
@@ -165,6 +174,9 @@ Returns `{wave_turns, serial_turns, avg_tasks_per_wave_turn, groups_seen}`. Use 
 ## Rotation
 
 Doctor check #12 catches `<plan>-telemetry.jsonl` OR `<plan>-subagents.jsonl` files > 5 MB. `--fix` rotates to `<slug>-telemetry-archive.jsonl` / `<slug>-subagents-archive.jsonl` respectively. Active file becomes empty; new appends start fresh. Archives are append-only and never auto-deleted.
+
+Rotated archives use the same local-only ignore rules as active telemetry
+streams.
 
 ## Privacy
 

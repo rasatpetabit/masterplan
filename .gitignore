@@ -7,6 +7,14 @@
 node_modules/
 .worktrees/
 
+# /masterplan runtime telemetry is local-only. Keep generated cost/context
+# sidecars out of commits even when using broad git add commands.
+**/*-telemetry.jsonl
+**/*-telemetry-archive.jsonl
+**/*-subagents.jsonl
+**/*-subagents-archive.jsonl
+**/*-subagents-cursor
+
 # Internal handoff notes (kept local; not for public consumption).
 # See SessionStart-hook convention; LLMs collaborating on this repo
 # write decisions here for the next session, not the public.
