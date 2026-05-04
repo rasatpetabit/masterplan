@@ -326,7 +326,7 @@ The full schema and operational rules are documented in
 
 ## Project Status
 
-Current release: **v2.2.0**.
+Current release: **v2.2.1**.
 
 - Release history: [`CHANGELOG.md`](./CHANGELOG.md)
 - Contributor internals: [`docs/internals.md`](./docs/internals.md)
