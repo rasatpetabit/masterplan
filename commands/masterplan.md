@@ -356,7 +356,7 @@ Then proceed to **Step B2** (writing-plans). Step B1 is skipped because the spec
 
 Invoke `superpowers:brainstorming` with the topic. **Brainstorming is always interactive** — the `--autonomy` flag does not apply. Let it run through its design + writing phases.
 
-**Re-engagement gate (CRITICAL — fixes a v0.2.0 bug where the orchestrator stopped silently when brainstorming hit its "User reviews written spec" gate, leaving the session unable to continue after compaction).** After brainstorming returns control to /masterplan, the orchestrator MUST verify state and explicitly drive the next step — never end the turn waiting on the user's free-text response from brainstorming's gate:
+**Re-engagement gate (CRITICAL — fixes a class of bug where the orchestrator stops silently when brainstorming hits its "User reviews written spec" gate, leaving the session unable to continue after compaction).** After brainstorming returns control to /masterplan, the orchestrator MUST verify state and explicitly drive the next step — never end the turn waiting on the user's free-text response from brainstorming's gate:
 
 1. Check whether the expected spec file exists at `docs/superpowers/specs/YYYY-MM-DD-<slug>-design.md`.
 2. **If spec missing:** brainstorming was aborted or failed. Surface `AskUserQuestion("Brainstorming did not complete (no spec at <path>). Re-invoke brainstorming with the same topic / Refine the topic and re-invoke / Abort kickoff")`.
@@ -384,7 +384,7 @@ After Step B1's gate confirms approval, invoke `superpowers:writing-plans` again
 
 Plans without annotations behave exactly as before (heuristic-only). Annotations are an authoring aid; they're never required.
 
-**Re-engagement gate** (same v0.2.0 bug pattern as Step B1's gate — never end the turn silently waiting on a free-text question). After writing-plans returns:
+**Re-engagement gate** (same silent-stop bug pattern as Step B1's gate — never end the turn silently waiting on a free-text question). After writing-plans returns:
 
 1. Check whether the expected plan file exists at `docs/superpowers/plans/YYYY-MM-DD-<slug>.md`.
 2. **If plan missing:** writing-plans was aborted or failed. Surface `AskUserQuestion("writing-plans did not complete (no plan at <path>). Re-invoke against the existing spec / Edit the spec and re-invoke / Abort kickoff")`.
@@ -560,7 +560,7 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
    - **`loose`** — run autonomously. On a blocker, **apply CD-4** first; only after two rungs have failed, surface the **blocker re-engagement gate** below before setting `status: blocked` and ending the turn. Cite the rungs tried in the `## Blockers` entry. Do NOT reschedule a wakeup.
    - **`full`** — run autonomously, applying **CD-4** more aggressively before escalating: at least two ladder rungs, plus `superpowers:systematic-debugging` for test failures and spec reinterpretation cited in the activity log. Escalate to the **blocker re-engagement gate** only after the full ladder fails.
 
-   **Blocker re-engagement gate (CRITICAL — applies under all autonomy modes when a blocker surfaces).** Before setting `status: blocked` and ending the turn, the orchestrator MUST surface `AskUserQuestion` so the user has a clear continuation path. Never just write a `## Blockers` entry and end silently — the user wakes up later to a status update with no clear next move, the same UX the v0.2.1 spec/plan-gate fix addressed. Concrete pattern (covers SDD's BLOCKED/NEEDS_CONTEXT escalations AND CD-4-exhausted gates):
+   **Blocker re-engagement gate (CRITICAL — applies under all autonomy modes when a blocker surfaces).** Before setting `status: blocked` and ending the turn, the orchestrator MUST surface `AskUserQuestion` so the user has a clear continuation path. Never just write a `## Blockers` entry and end silently — the user wakes up later to a status update with no clear next move, the same UX the spec/plan-gate fix addressed. Concrete pattern (covers SDD's BLOCKED/NEEDS_CONTEXT escalations AND CD-4-exhausted gates):
 
    ```
    AskUserQuestion(
@@ -756,7 +756,7 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
      append the wakeup entry to the ledger, then end the turn. The next firing re-enters this command via Step C.
    - Do NOT reschedule when `status` is `complete` or `blocked`.
    - If `ScheduleWakeup` is not available (not running under `/loop`), skip scheduling silently — the user resumes manually with `/masterplan` (which lands in Step A) or `/masterplan --resume=<path>`.
-6. **On plan completion:** **pre-empt the skill's "Which option?" prompt.** `superpowers:finishing-a-development-branch` will otherwise present a free-text `1. Merge / 2. Push+PR / 3. Keep / 4. Discard — Which option?` question. That free-text prompt can stall a session if it compacts before the user answers (same v0.2.1-style bug pattern). Avoid this by surfacing `AskUserQuestion` FIRST:
+6. **On plan completion:** **pre-empt the skill's "Which option?" prompt.** `superpowers:finishing-a-development-branch` will otherwise present a free-text `1. Merge / 2. Push+PR / 3. Keep / 4. Discard — Which option?` question. That free-text prompt can stall a session if it compacts before the user answers (same silent-stop bug pattern). Avoid this by surfacing `AskUserQuestion` FIRST:
 
    ```
    AskUserQuestion(
@@ -916,7 +916,7 @@ Read-only throughout. Cite each excerpt with `<file>:<line>` so the user can jum
 
 Triggered by `/masterplan retro [<slug>]`. Generates a retrospective doc for a completed plan and writes it to `docs/superpowers/retros/YYYY-MM-DD-<slug>-retro.md`.
 
-This Step replaces the legacy `masterplan-retro` skill (removed in v0.4.0). The verb is the only entry point; there is no auto-fire on plan completion.
+This Step replaces the legacy `masterplan-retro` skill (removed prior to v1.0.0). The verb is the only entry point; there is no auto-fire on plan completion.
 
 ### Step R0 — Resolve target slug
 
