@@ -25,7 +25,7 @@ Concretely, `/masterplan` delivers:
 
 `/masterplan` is invoked as `/masterplan <verb> [args] [flags]`. The full verb reference lives in [Verb reference](#verb-reference) below; here's the elevator pitch.
 
-**Phase verbs** (v0.3.0+) — address any pipeline phase directly at the call site:
+**Phase verbs** — address any pipeline phase directly at the call site:
 
 - **`/masterplan new <topic>`** — kick off a full brainstorm → plan → execute flow. (Same as the bare-topic shortcut `/masterplan <topic>`, which still works.)
 - **`/masterplan brainstorm <topic>`** — brainstorm only; halt cleanly after the spec is written.
@@ -143,8 +143,6 @@ codex:
   routing: off
   review:  off
 ```
-
-> Note: `.superflow.yaml` from v1.x is **NOT** read by v2.0.0 — rename it to `.masterplan.yaml`. (Hard-cut rename per v2.0.0; no backward-compat shim.)
 
 ### Cross-references
 
@@ -598,21 +596,17 @@ Most teams will want a `.masterplan.yaml` at the repo root that encodes their co
 
 The plugin ships with sensible defaults; the YAML is for when you outgrow them.
 
-## Path to v2.0.0
+## Releases since v1.0.0
 
-The journey from initial release to v2.0.0:
-
-- **v0.2.0 — speed + context use.** Parallelism + caches at multiple Step C and Step D dispatch sites; orchestrator prompt token-trimmed; Codex review uses SHA-range instead of inlining diffs; activity logs rotate past 100 entries.
-- **v0.2.1 + v0.2.2 — silent-stop gates closed.** Five upstream-skill free-text prompts that could stall mid-flow are now pre-empted with `AskUserQuestion`. Operational rule generalized: "Don't stop silently anywhere."
-- **v0.3.0 — explicit phase verbs.** `new`, `brainstorm`, `plan`, `execute` as first-token verbs; `plan --from-spec=` and `plan` (no args) picker; `halt_mode` state machine cleanly handles "stop after spec" / "stop after plan."
-- **v1.0.0 — first stable public release** (under the prior `claude-superflow` name). Consolidated retrospective generation into the `retro` verb; standardized terminology on "verbs"; pre-release audit fix pass (10 blockers + 13 polish items).
-- **v2.0.0 — superpowers-masterplan rebrand + intra-plan parallelism Slice α + Codex defaults on.** Project renamed from `claude-superflow` to `superpowers-masterplan`; slash command `/superflow` → `/masterplan` (hard-cut, no backward-compat). Slice α of intra-plan parallelism ships: read-only parallel waves via `**parallel-group:**` annotation in Step C step 2 (verification, inference, lint, type-check, doc-generation only). Codex defaults flipped: `routing: auto` + `review: on` (auto-degrades when codex plugin not installed; new doctor check #18 surfaces persistent misconfiguration). New `## Codex integration` README section. Internal docs for LLM contributors: `CLAUDE.md` + `docs/internals.md`. Pre-v1.1.0 plan/spec/WORKLOG history pruned (institutional knowledge migrated to `docs/internals.md`). Slice β/γ of intra-plan parallelism (parallel committing tasks, full per-task worktree subsystem) deferred with sharpened, measurable revisit trigger in [`docs/design/intra-plan-parallelism.md`](./docs/design/intra-plan-parallelism.md).
+- **v1.0.0 — first stable public release.** Consolidated retrospective generation into the `retro` verb; standardized terminology on "verbs"; pre-release audit fix pass (10 blockers + 13 polish items).
+- **v2.0.0 — intra-plan parallelism Slice α + Codex defaults on.** Slice α of intra-plan parallelism ships: read-only parallel waves via `**parallel-group:**` annotation in Step C step 2 (verification, inference, lint, type-check, doc-generation only). Codex defaults flipped: `routing: auto` + `review: on` (auto-degrades when codex plugin not installed; new doctor check #18 surfaces persistent misconfiguration). New `## Codex integration` README section. Internal docs for LLM contributors: `CLAUDE.md` + `docs/internals.md`. Slice β/γ of intra-plan parallelism (parallel committing tasks, full per-task worktree subsystem) deferred with sharpened, measurable revisit trigger in [`docs/design/intra-plan-parallelism.md`](./docs/design/intra-plan-parallelism.md).
+- **v2.1.0 — README polish + gated→loose switch offer + Roadmap section.** Benefits paragraph + "Defaults at a glance" YAML block + "Roadmap" section. One-time AskUserQuestion at Step C step 1 offering to switch from `--autonomy=gated` to `--autonomy=loose` when a long plan (≥15 tasks by default) is in progress.
 
 All releases preserve the three design pillars (thin orchestrator, subagent + context-control, status file as only source of truth). See [CHANGELOG.md](./CHANGELOG.md) for the full breakdown.
 
 ## Project status
 
-This is a stable public release (current: **v2.0.0**). The orchestration logic has been used in real Petabit Scale workflows since v0.1 and is stable. v2.0.0 ships the project rebrand (claude-superflow → superpowers-masterplan; /superflow → /masterplan; hard-cut, no backward-compat — see [CHANGELOG `[2.0.0]`](./CHANGELOG.md) migration notes), Slice α of intra-plan task parallelism (read-only parallel waves), Codex defaults flipped to on with graceful-degrade, the `## Codex integration` README section, and internal docs (`CLAUDE.md` + `docs/internals.md`) for future LLM contributors.
+This is a stable public release (current: **v2.1.0**). The orchestration logic has been used in real Petabit Scale workflows and is stable. v2.0.0 shipped Slice α of intra-plan task parallelism (read-only parallel waves), Codex defaults flipped to on with graceful-degrade, the `## Codex integration` README section, and internal docs (`CLAUDE.md` + `docs/internals.md`) for future LLM contributors. v2.1.0 added the gated→loose switch offer for long plans plus README polish + a Roadmap section.
 
 Schema and flag surface continue to evolve under semver — additive changes and bug fixes land in v2.x; breaking changes (schema/flag/CLI) are called out in the changelog with explicit migration notes. Slice β/γ of intra-plan parallelism (parallel committing tasks) remain deferred with a measurable revisit trigger.
 
@@ -648,7 +642,6 @@ FM-4's mitigation (Codex-routed tasks fall out of waves) is conservative because
 
 ### Documented non-features (people often ask for these)
 
-- **`/superflow` alias to `/masterplan`** — explicitly declined for v2.0.0 per "no backward-compat aliases" rule. Hard-cut renames keep the surface clean and avoid permanent maintenance burden. Users who need both can install both plugins until they migrate.
 - **Auto-detection of "obvious" parallel patterns without `**parallel-group:**` annotation** — annotations are explicit by design. Inference invites surprise. The planner's job (per Step B2 brief) is to identify and annotate parallel-friendly task patterns.
 - **Plan-task reordering to maximize wave size** — plan-order is authoritative. The wave-assembly walk is contiguous-only. If parallel-grouped tasks are interleaved with serial tasks, none parallelize. The planner handles ordering.
 - **Cross-worktree wave dispatch** — single-worktree, single-branch only. Cross-worktree parallelism would need a different concurrency model.
