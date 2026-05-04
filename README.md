@@ -280,7 +280,7 @@ The autonomy and codex flags are designed to compose. Common pairs:
 
 | Combination | Behavior |
 |---|---|
-| `/masterplan <topic>` | Default: `--autonomy=gated`, codex routing from config (default `auto`), no review. Per-task `(continue / skip / stop)` gate; auto-routing decisions execute silently (no per-task Codex confirmation prompt — set `codex.confirm_auto_routing: true` for the legacy chatty behavior). |
+| `/masterplan <topic>` | Default: `--autonomy=gated`, codex routing from config (default `auto`), Codex review (default `on` since v2.0.0). Per-task `(continue / skip / stop)` gate; auto-routing decisions execute silently (no per-task Codex confirmation prompt — set `codex.confirm_auto_routing: true` for the legacy chatty behavior). If the codex plugin isn't installed, both `routing` and `review` auto-degrade to `off` for the run with a one-line warning at Step 0. |
 | `/loop /masterplan <topic> --autonomy=loose` | Long autonomous run with no per-task gating; ScheduleWakeup paces it across sessions; stops only on blockers. |
 | `/loop /masterplan <topic> --autonomy=loose --codex-review=on` | Same long run, but Codex reviews each inline (Claude/Sonnet) task's diff before it counts as done. Under `loose`: low/clean → silent accept; medium → `## Notes`; high → block. (Same behavior under `gated` for non-prompting severities — auto-accepted silently below `codex.review_prompt_at`, default `medium`.) |
 | `/masterplan <topic> --codex=auto --codex-review=on` | Codex executes simple well-defined tasks; Codex reviews the inline (complex) ones. Each model plays to its strengths, no overlap (no self-review). |

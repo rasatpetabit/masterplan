@@ -32,6 +32,16 @@ Before doing anything, internalize these. They shape every decision below:
 
 See **Configuration: .masterplan.yaml** below for the full schema and built-in defaults.
 
+### Codex availability detection (v2.0.0+)
+
+After config loading completes, if the merged config has `codex.routing != off` OR `codex.review == on` (the v2.0.0 defaults are `routing: auto` + `review: on` — both trigger this check), verify the codex plugin is available. Heuristic: scan the system-reminder skills list for any entry prefixed `codex:` (e.g., `codex:codex-rescue`, `codex:setup`, `codex:rescue`). If absent:
+
+1. Emit one-line warning (do not abort): *(Note: codex plugin not installed; `codex_routing` and `codex_review` degrade to `off` for this run. Install via `/plugin install codex@anthropic` to enable Codex routing + cross-model review. Persisted config is unchanged.)*
+2. In-memory only: treat `codex_routing` as `off` and `codex_review` as `off` for the run. The persisted config (in `.masterplan.yaml` or status frontmatter) is **not** modified — re-installing codex restores configured behavior on the next invocation.
+3. Activity log entry on the next status-file update: `(codex unavailable; routing+review degraded to off this run)`.
+
+This detection is the FM-4-class graceful-degrade path. It complements doctor check #18 (which surfaces the same misconfiguration as a Warning at lint time).
+
 ### Git state cache (per invocation)
 
 Several downstream steps consult the same git facts. Cache them once in Step 0 to avoid repeated subprocess overhead and keep latency predictable across A/B0/D fan-outs:
@@ -853,7 +863,7 @@ Triggered by `/masterplan doctor [--fix]`. Lints all masterplan state across all
 
 Read worktrees from `git_state.worktrees` (Step 0 cache). For each worktree, scan `<worktree>/<config.specs_path>/` and `<worktree>/<config.plans_path>/`.
 
-**Parallelization.** When worktrees ≥ 2, dispatch one Haiku agent per worktree in a single Agent batch (each agent runs all 14 checks for its worktree and returns findings as `[{check_id, severity, file, message}]` JSON). With 1 worktree, run inline — agent dispatch latency isn't worth it. The orchestrator merges results and applies the report ordering below.
+**Parallelization.** When worktrees ≥ 2, dispatch one Haiku agent per worktree in a single Agent batch (each agent runs all 18 checks for its worktree and returns findings as `[{check_id, severity, file, message}]` JSON). With 1 worktree, run inline — agent dispatch latency isn't worth it. The orchestrator merges results and applies the report ordering below.
 
 ### Checks
 
@@ -875,6 +885,7 @@ For each worktree, run all checks. Report findings grouped by worktree → check
 | 12 | **Telemetry file growth** — `<slug>-telemetry.jsonl` > 5 MB. | Warning | Rotate to `<slug>-telemetry-archive.jsonl` (the active file becomes empty; new appends start fresh). |
 | 13 | **Orphan telemetry file** — `<slug>-telemetry.jsonl` (or `-telemetry-archive.jsonl`) exists with no sibling `<slug>-status.md`. | Warning | Suggest moving to `<config.archive_path>/<date>/`. No auto-fix. |
 | 14 | **Orphan eligibility cache** — `<slug>-eligibility-cache.json` exists with no sibling `<slug>-status.md`. (The cache is a sidecar of an active plan; it must always have a base status file.) | Warning | Suggest moving to `<config.archive_path>/<date>/`. No auto-fix. |
+| 18 | **Codex config on but plugin missing.** Config has `codex.routing != off` OR `codex.review == on` AND no entry prefixed `codex:` is present in the system-reminder skills list at lint time. Step 0's codex-availability detection auto-degrades silently per-run; doctor surfaces the persistent misconfiguration as a Warning so the user notices and either installs codex or sets the defaults to `off`. | Warning | Suggest `/plugin install codex@anthropic` to enable, OR set `codex.routing: off` and `codex.review: off` in `.masterplan.yaml` to suppress this check. No auto-fix (changing user's config is out of scope per CD-2). |
 
 ### Output
 
@@ -1001,7 +1012,7 @@ doctor_autofix: false
 # (overridden by --codex= / --no-codex / --codex-review= flags)
 codex:
   routing: auto              # off | auto | manual — who executes a task
-  review: off                # off | on — Codex reviews diffs from inline-completed tasks
+  review: on                 # off | on — Codex reviews diffs from inline-completed tasks (v2.0.0+ default: on; auto-degrades to off if codex plugin not installed)
   review_diff_under_full: false  # if true, even autonomy=full pauses to show Codex output
   max_files_for_auto: 3      # eligibility heuristic threshold for `auto` routing
   review_max_fix_iterations: 2  # cap on "fix and re-review" retries before bailing
