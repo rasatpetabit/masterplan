@@ -111,7 +111,8 @@ Steps A, B0, D consult the cache instead of re-running these. **Invalidate** the
 | `--no-codex` | C | Shorthand for `--codex=off` (also disables review) |
 | `--codex-review=on\|off` | C | Override `config.codex.review` for this run. When on, Codex reviews diffs from inline-completed tasks before they're marked done. Persisted to status file |
 | `--codex-review` | C | Shorthand for `--codex-review=on` |
-| `--parallelism=on\|off` | C | Override `config.parallelism.enabled` for this run. When `off`, wave dispatch in Step C step 2 is suppressed globally — every task runs serially regardless of `**parallel-group:**` annotations. Persisted to status file via the post-plan flag-persistence rule (does not fire under `halt_mode != none`). |
+| `--no-codex-review` | C | Shorthand for `--codex-review=off` |
+| `--parallelism=on\|off` | C | Override `config.parallelism.enabled` for this run. When `off`, wave dispatch in Step C step 2 is suppressed globally — every task runs serially regardless of `**parallel-group:**` annotations. Not persisted to status frontmatter; use `.masterplan.yaml` for durable defaults. |
 | `--no-parallelism` | C | Shorthand for `--parallelism=off`. |
 
 ---
@@ -228,7 +229,7 @@ Parallel dispatch — whether multiple subagents in one Agent batch, multiple Ba
 
 When to NOT parallelize:
 - Per-candidate cruft handling and `git commit` in Step I3 — single-writer discipline avoids index races and keeps activity-log entries clean.
-- Per-task implementation in Step C — concurrent commits on the same branch race the git index. Intra-plan task parallelism is captured as a future-design note in operational rules; not enabled.
+- Committing implementation work in Step C — concurrent commits on the same branch race the git index. Slice α only parallelizes read-only waves; committing tasks stay serial until the deferred Slice β/γ design is implemented.
 - Shared-state writes (multiple agents modifying the same status file is a race).
 - When the orchestrator needs to react between agents (autonomy=gated checkpoints).
 
@@ -1181,7 +1182,7 @@ archive_path: legacy/.archive # relative to repo root
 doctor_autofix: false
 
 # Codex routing + review for Step C task execution
-# (overridden by --codex= / --no-codex / --codex-review= flags)
+# (overridden by --codex= / --no-codex / --codex-review= / --no-codex-review flags)
 codex:
   routing: auto              # off | auto | manual — who executes a task
   review: on                 # off | on — Codex reviews diffs from inline-completed tasks (v2.0.0+ default: on; auto-degrades to off if codex plugin not installed)

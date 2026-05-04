@@ -514,7 +514,7 @@ Use the result to evaluate whether parallel-group annotations are being authored
 
 | First token | Branch | `halt_mode` |
 |---|---|---|
-| _(empty)_ | Step A — list+pick across worktrees | `none` |
+| _(empty)_ | Step M — two-tier no-args picker, then routes to A / B / I / S / D / R or exits | `none` |
 | `full` (no topic) | Prompt for topic, then Step B — full kickoff | `none` |
 | `full <topic>` | Step B — full kickoff (B0→B1→B2→B3→C) | `none` |
 | `brainstorm` (no topic) | Prompt for topic, then Step B0+B1; halt at B1 | `post-brainstorm` |
@@ -530,6 +530,17 @@ Use the result to evaluate whether parallel-group annotations are being authored
 | `retro` (alone or with `<slug>`) | Step R | `none` |
 | `--resume=<path>` | Step C | `none` |
 | anything else | Step B (catch-all) | `none` |
+
+### Bare `/masterplan` picker
+
+Since v2.2.0, empty `$ARGUMENTS` no longer jumps directly to Step A. Step M first asks for a category:
+
+- **Phase work** — choose `brainstorm`, `plan`, `execute`, or `full`.
+- **Operations** — choose `import`, `status`, `doctor`, or `retro`.
+- **Resume in-flight** — delegates to Step A's existing list+pick flow.
+- **Cancel** — exits without further tool calls.
+
+This keeps the common resume path available while making all verbs discoverable without memorizing the table.
 
 ### Verb tokens are reserved
 
@@ -815,4 +826,4 @@ When updating, dispatch a fresh-eyes Explore subagent after a multi-section edit
 
 ---
 
-*End of internals.md. ~6500 words. Last updated for v2.0.0.*
+*End of internals.md. ~6500 words. Last updated for v2.2.0.*
