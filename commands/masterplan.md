@@ -289,6 +289,7 @@ Routing:
 - Tier-1 "Resume in-flight" deliberately delegates to Step A's existing list+pick rather than re-implementing the worktree scan inline. One canonical site for the in-progress-plans logic.
 - The picker fires BEFORE Step 0's `halt_mode` and flag-interactions logic for verb-routed invocations. Picker-routed invocations set `halt_mode` based on the chosen verb (per Tier 2a above) — no CLI flags are passed from the empty bare invocation.
 - If the user wants to invoke a verb directly (e.g., `/masterplan full <topic>`), they can — Step 0's verb routing table still matches the first token before Step M fires. Step M is for the empty-args case only.
+- **Stay on script.** The Tier-1 `AskUserQuestion` call IS the user-facing surface for this turn. Do not preface it with prose status reports beyond a one-line orientation, and do NOT pivot into adjacent feature offers ("by the way, want me to open a browser visualization / install X / show a diagram?"). `/masterplan` is frequently invoked inside `/loop` and remote-control sessions where there is no human between turns; a turn that ends with a free-text question instead of an `AskUserQuestion` call stalls the loop. If you find yourself drafting a `?` outside an `AskUserQuestion`, delete it or move it into the picker as an option.
 
 ---
 
