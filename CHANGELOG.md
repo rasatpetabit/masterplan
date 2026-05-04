@@ -7,6 +7,97 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.0] — 2026-05-04
+
+**Model-dispatch contract + per-subagent telemetry layer.** Two threads bundled
+into one minor release:
+
+1. **Cost-leak fix.** Subagent dispatches now structurally require the `model:`
+   parameter at every site (was prose-only). Without this, subagents inherited
+   the orchestrator's Opus 4.7 silently — a real 2-day /masterplan-heavy session
+   consumed 94% Opus ($458 of $487) despite the design intent of Haiku for
+   mechanical extraction and Sonnet for general implementation.
+2. **Per-subagent observability.** Stop hook now captures one record per Agent
+   dispatch into `<plan>-subagents.jsonl`, with full token breakdown
+   (`input/output/cache_creation/cache_read`), duration, dispatch-site
+   attribution, subagent_type, model, and tool_stats. Six jq cookbook recipes
+   added so "find the biggest token consumers and optimize them" is tractable
+   instead of guessing.
+
+### Added
+- **`### Agent dispatch contract` subsection** under `## Subagent and
+  context-control architecture` in `commands/masterplan.md`. Normative MUST
+  language plus a value-by-use table (`haiku` = mechanical, `sonnet` =
+  implementation, `opus` = user-escalated only). Includes a recursive-application
+  clause for skill invocations and a Codex exemption.
+- **Recursive override clause for SDD invocation** at Step C step 2. Tells
+  `superpowers:subagent-driven-development` to pass `model: "sonnet"` on its
+  inner Task calls (implementer / spec-reviewer / code-quality-reviewer) —
+  required because SDD's prompt-template files are upstream and don't carry
+  model parameters by default.
+- **`<plan>-subagents.jsonl`** stream — one record per subagent dispatch
+  emitted by `hooks/masterplan-telemetry.sh`. Cursor-based incremental parsing
+  via `<plan>-subagents-cursor` keeps the hook fast on long sessions.
+- **`DISPATCH-SITE:` tag convention** on every Agent brief — ~14 inline edits
+  to `commands/masterplan.md` so the hook can attribute cost to orchestrator-
+  step granularity (Step A vs Step C step 1 vs wave vs SDD vs etc.).
+- **Doctor check #19** — orphan `<plan>-subagents.jsonl` /
+  `<plan>-subagents-cursor` files (sibling to a missing status file). Suggests
+  archive on `--fix`. Doctor check #12 extended to also catch
+  `<plan>-subagents.jsonl > 5 MB`; rotates to `-archive.jsonl`.
+- **Six jq cookbook recipes** in `docs/design/telemetry-signals.md`:
+  top-N dispatches by total tokens, per-subagent_type aggregates,
+  per-dispatch-site aggregates, per-model breakdown by site,
+  anomaly detection (>2σ above type mean), cost trend over 14 days.
+- **First automated runtime smoke test** for the project: hand-crafted JSONL
+  fixture with three Agent dispatches verifies the hook's record emission,
+  cursor advancement, and idempotence under re-runs.
+
+### Fixed
+- **14 inline dispatch sites** in `commands/masterplan.md` now carry explicit
+  `model:` instructions: Step A status parse (`haiku`), Step B0 worktree scan
+  (`haiku`), Step C step 1 eligibility cache builder (`haiku`), Step C step 2
+  wave dispatch (`sonnet`), Step C step 2 SDD invocation (`sonnet`, recursive
+  override), Step C step 3 Codex EXEC (exempt note), Step C 4b Codex REVIEW
+  (exempt note), Step I1 discovery (`haiku`), Step I3.2 fetch (per-candidate
+  `haiku` / `sonnet` / no-Agent), Step I3.4 conversion (`sonnet`), Step S1
+  situation gather (`haiku`), Step R2 retro source (`haiku`), Step D doctor
+  (`haiku`), Completion-state inference (`haiku`).
+- **Blocker re-engagement gate option 2** ("Re-dispatch with a stronger model")
+  now actually dispatches with `model: "opus"` on the re-dispatch Agent call.
+  Previously a UI-only promise — the option label promised behavior the prompt
+  didn't structurally deliver.
+
+### Migration notes
+- **Hook re-install required.** `hooks/masterplan-telemetry.sh` gained ~120
+  lines (subagent-capture pipeline). Users with the hook installed at
+  `~/.claude/hooks/masterplan-telemetry.sh` must `cp` the new version per the
+  README install instructions. Old hook continues working (still emits
+  per-turn records) but doesn't capture per-dispatch data.
+- **Existing telemetry files keep working.** `<plan>-telemetry.jsonl` schema
+  is unchanged from v2.2.x. New `<plan>-subagents.jsonl` and
+  `<plan>-subagents-cursor` files appear once the new hook runs.
+- **No config or status schema change.** Status frontmatter unchanged. Doctor
+  table now 19 rows (was 18). CD-rule numbering (CD-1…CD-10) unchanged — the
+  dispatch contract lives under `## Subagent and context-control architecture`,
+  not as a new CD rule.
+- **SDD upstream not modified.** The model-passthrough override contains the
+  fix to `/masterplan`. If future upstream SDD changes ignore the override
+  clause, fallback is to wrap SDD invocation in an outer `Agent(subagent_type:
+  "general-purpose", model: "sonnet", ...)`.
+
+### Verification
+- 10 grep discriminators (contract section landed once, ≥14 `model:`
+  parameters, Codex exemption notes ≥2, opus-on-blocker wire-up,
+  `<plan>-subagents.jsonl` referenced in hook, ≥14 `DISPATCH-SITE:` tags in
+  briefs, doctor check #19 + Step D brief at "all 19 checks", new schema in
+  telemetry-signals.md, version bumps consistent across
+  CHANGELOG/README/plugin.json/marketplace.json).
+- `claude plugin validate .` — clean.
+- `bash -n hooks/masterplan-telemetry.sh` — clean.
+- Smoke fixture against the new hook (3 dispatches → 3 records, cursor
+  advancement, idempotence on re-run).
+
 ## [2.2.3] — 2026-05-04
 
 **Marketplace-readiness patch.** Fixes Claude Code plugin validation blockers

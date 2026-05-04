@@ -173,6 +173,45 @@ Pick the smallest model that can do the work. Wasted compute on overpowered mode
 
 Rule of thumb: if the task can be described in a 5-bullet bounded brief, Haiku probably handles it. If it needs design judgment or trades off competing concerns, escalate.
 
+### Agent dispatch contract
+
+**STRUCTURAL REQUIREMENT.** Every `Agent` tool call you issue from `/masterplan` MUST pass an explicit `model:` parameter. Inheriting the parent model (Opus) on a subagent is a billing error — subagents almost never need Opus. The phase-by-phase assignments are in the **Subagent dispatch model** table above; the **Model selection guide** above gives the heuristic when no table row applies.
+
+| Value | Use when |
+|---|---|
+| `model: "haiku"` | Mechanical extraction — parse, glob, grep, scan, structured-data fetch |
+| `model: "sonnet"` | General implementation, conversion, code review, debugging, reverse-engineering — the default workhorse |
+| `model: "opus"` | ONLY when the user picks "Re-dispatch with a stronger model" at the blocker re-engagement gate (Step C step 3) |
+
+**Default when uncertain:** `model: "sonnet"`.
+
+**Codex sites are exempt.** `codex:codex-rescue` is its own `subagent_type` and routes out-of-process. Do NOT pass `model:` to those calls.
+
+**Recursive application.** When invoking `superpowers:subagent-driven-development` (Step C step 2), `superpowers:executing-plans`, or any skill that itself dispatches inner Agent/Task calls, prepend a **model-passthrough override** clause to the briefing telling the skill to add `model: "sonnet"` to the inner Task tool calls it dispatches (implementer, spec-reviewer, code-quality-reviewer). The orchestrator-level contract does not propagate automatically through skill invocations — those skills' prompt templates are upstream and don't carry model parameters by default.
+
+**Telemetry capture.** Per-subagent dispatch details — `subagent_type`, `model`, `duration_ms`, full token breakdown (`input_tokens` / `output_tokens` / `cache_creation_tokens` / `cache_read_tokens`), `dispatch_site`, `tool_stats`, `prompt_first_line` — are captured by the Stop hook (`hooks/masterplan-telemetry.sh`) into `<plan>-subagents.jsonl` (sibling to status). The hook parses the parent session transcript at end-of-turn and emits one record per Agent dispatch. Cursor-based incremental parsing keeps the hook fast on long sessions. Cost-distribution health: aggregate `opus_share = sum(opus_tokens) / sum(all_tokens)`; healthy `< 0.1`, regression `> 0.3`. See `docs/design/telemetry-signals.md` for the record schema and the six jq cookbook recipes.
+
+**Dispatch-site tag.** For the hook to attribute cost to orchestrator-step granularity (Step A vs Step C step 1 vs wave vs SDD vs Step I vs etc.), every Agent dispatch from `/masterplan` MUST include a literal `DISPATCH-SITE: <site-name>` line as the FIRST LINE of the prompt sent to the subagent, followed by a blank line, then the bounded brief. The hook regex-extracts this tag from the captured `prompt` field. The mapping below is authoritative — use the matching value verbatim per dispatch site:
+
+| Dispatch site (Step) | DISPATCH-SITE value |
+|---|---|
+| Step A status frontmatter parse | `Step A status frontmatter parse` |
+| Step B0 related-plan scan | `Step B0 related-plan scan` |
+| Step C step 1 eligibility cache builder | `Step C step 1 eligibility cache` |
+| Step C step 2 wave dispatch (per wave member) | `Step C step 2 wave dispatch (group: <name>)` |
+| Step C step 2 SDD inner Task calls (implementer / spec-reviewer / code-quality-reviewer) | `Step C step 2 SDD <role> (task <idx>)` |
+| Step C step 3a Codex EXEC | `Step C 3a Codex EXEC (task <idx>)` |
+| Step C step 4b Codex REVIEW | `Step C 4b Codex REVIEW (task <idx>)` |
+| Step I1 discovery (per source class) | `Step I1 discovery (<source-class>)` |
+| Step I3.2 fetch wave (per candidate) | `Step I3.2 fetch (<source-class> <slug>)` |
+| Step I3.4 conversion wave (per candidate) | `Step I3.4 conversion (<slug>)` |
+| Step S1 situation gather | `Step S1 situation gather` |
+| Step R2 retro source gather | `Step R2 retro source gather` |
+| Step D doctor checks | `Step D doctor checks` |
+| Completion-state inference (per chunk) | `Step I completion-state inference` |
+
+A dispatch whose prompt lacks the tag still records to `<plan>-subagents.jsonl` but with `dispatch_site: null` — analysis can fall back to `subagent_type + description` fingerprinting, but per-step attribution is lost. New dispatch sites added in future revisions MUST extend this table AND emit the corresponding tag.
+
 ### Briefing rules — the bounded brief
 
 Every subagent dispatched from `/masterplan` (directly or transitively via the superpowers skills) receives a **bounded brief**:
@@ -352,7 +391,7 @@ Routing:
 2. **Worktree-count short-circuit.** If more than 20 worktrees exist, surface a one-line warning and switch to a faster mode: scan only the current worktree plus any worktree with a status file modified in the last 14 days. Issue the per-worktree `find <worktree>/docs/superpowers/plans -name '*-status.md' -mtime -14` calls as **one parallel Bash batch**, not sequentially. Per CD-2, do not auto-prune worktrees — just narrow the scan.
 3. For each worktree (after any short-circuit), glob `<worktree_path>/docs/superpowers/plans/*-status.md`. Issue the per-worktree globs as one parallel Bash batch.
 4. **Frontmatter parsing.**
-   - **When worktrees ≥ 2:** dispatch parallel Haiku agents (one per worktree, or one per ~10-file chunk if any single worktree holds many status files). Each agent's bounded brief: Goal=parse YAML frontmatter from these status files, Inputs=`[<status-file-path>...]`, Scope=read-only, Constraints=CD-7 (do not modify status files), Return=`[{path, frontmatter, parse_error?}]` JSON. Orchestrator merges results.
+   - **When worktrees ≥ 2:** dispatch parallel Haiku agents (pass `model: "haiku"` on each Agent call per §Agent dispatch contract; one per worktree, or one per ~10-file chunk if any single worktree holds many status files). Each agent's bounded brief: Goal=parse YAML frontmatter from these status files, Inputs=`[<status-file-path>...]`, Scope=read-only, Constraints=CD-7 (do not modify status files), Return=`[{path, frontmatter, parse_error?}]` JSON. Orchestrator merges results.
    - **When worktrees == 1:** read inline (Read tool) — agent dispatch latency is not worth it.
    - Keep entries where `status` is `in-progress` or `blocked`. Annotate each with the worktree path and branch it lives in. **If a status file fails to parse**, skip it and add a one-line note to the discovery report ("status file at `<path>` is malformed — run `/masterplan doctor` to inspect"). Do not abort the listing. Sort the parsed entries by `last_activity` descending.
 5. Use `AskUserQuestion` with options laid out as: 2 most recent plans + "Start fresh". If more than 2 in-progress plans exist, replace the lower plan slot with a "More…" option that, when picked, re-asks with the next batch — keeps total options at 3, never exceeds the AskUserQuestion 4-option cap.
@@ -371,7 +410,7 @@ The brainstorm/plan/status files will be committed inside whichever worktree you
    - `git status --porcelain` → cleanliness. (Always live per CD-2; never cached.)
    - Worktree list — read from `git_state.worktrees` (Step 0 cache). If unavailable, run `git worktree list --porcelain` in the same batch.
 
-   Then, for the per-worktree related-plan scan: when there are ≥ 2 non-current worktrees, dispatch parallel Haiku agents (one per worktree). Each agent's bounded brief: Goal=identify any in-progress plans whose slug or branch name overlaps with the topic's salient words (case-insensitive substring), Inputs=`<worktree-path>` + topic words, Scope=read-only, Return=`{worktree, branch, matching_slugs: [], matching_branch: bool}`. With 1 non-current worktree, do the glob+match inline.
+   Then, for the per-worktree related-plan scan: when there are ≥ 2 non-current worktrees, dispatch parallel Haiku agents (pass `model: "haiku"` on each Agent call per §Agent dispatch contract; one per worktree). Each agent's bounded brief: Goal=identify any in-progress plans whose slug or branch name overlaps with the topic's salient words (case-insensitive substring), Inputs=`<worktree-path>` + topic words, Scope=read-only, Return=`{worktree, branch, matching_slugs: [], matching_branch: bool}`. With 1 non-current worktree, do the glob+match inline.
 
 2. **Compute a recommendation** using these heuristics, in order of strength:
    - **Use an existing worktree** if any non-current worktree has a branch name or in-progress slug that overlaps with the topic. Likely the same work is already underway.
@@ -520,7 +559,7 @@ Triggered by `/masterplan plan` with no topic and no `--from-spec=`. Picks an ex
    **Build eligibility cache.** When `codex_routing` is `auto` or `manual`, the cache lives at `<slug>-eligibility-cache.json` (sibling to status, follows the `<slug>-*` sidecar convention). Decision tree for cache load:
 
    - **Skip entirely** when `codex_routing == off`.
-   - **Cache file missing** → dispatch one Haiku (see brief below); write `<slug>-eligibility-cache.json`; load into orchestrator memory as `eligibility_cache`.
+   - **Cache file missing** → dispatch one Haiku (pass `model: "haiku"` per §Agent dispatch contract; see brief below); write `<slug>-eligibility-cache.json`; load into orchestrator memory as `eligibility_cache`.
    - **Cache file present, `cache.mtime > plan.mtime`** → load JSON from disk into `eligibility_cache`; skip Haiku dispatch.
    - **Cache file present, `plan.mtime >= cache.mtime`** → dispatch Haiku, overwrite cache file, load result.
    - When Step 4d edits the plan inline, also `touch` the plan file so the mtime invariant holds for the next Step C entry's cache check.
@@ -561,7 +600,7 @@ Triggered by `/masterplan plan` with no topic and no `--from-spec=`. Picks an ex
 
    **CC-1 dismissal scan.** Scan `## Notes` for `compact_suggest: off`. If present, set `cc1_silenced: true` in orchestrator memory for this run. CC-1 (operational rules) honors this flag.
 
-   **Telemetry inline snapshot.** If `config.telemetry.enabled` and the status file's frontmatter does NOT include `telemetry: off`, append one JSONL record (kind=`step_c_entry`) to `<plan-without-suffix>-telemetry.jsonl` (sibling to status file). Fields per the format defined in `docs/design/telemetry-signals.md`. Cheap (one append). Provides cross-session datapoints for installs without the Stop hook.
+   **Telemetry inline snapshot.** If `config.telemetry.enabled` and the status file's frontmatter does NOT include `telemetry: off`, append one JSONL record (kind=`step_c_entry`) to `<plan-without-suffix>-telemetry.jsonl` (sibling to status file). Fields per the format defined in `docs/design/telemetry-signals.md`. Per-subagent dispatch details — model, tokens, duration, dispatch_site — are captured separately by the Stop hook into `<plan>-subagents.jsonl` (per §Agent dispatch contract telemetry-capture clause); the inline `step_c_entry` record is the lightweight per-turn datapoint for installs without the Stop hook. Cheap (one append).
 
    **Gated→loose switch offer (v2.1.0+).** When `autonomy == gated` AND `config.gated_switch_offer_at_tasks > 0`, check whether to offer the user a one-time switch to `--autonomy=loose` for the remainder of this plan. Skip conditions (any one suppresses the offer):
 
@@ -599,7 +638,7 @@ Triggered by `/masterplan plan` with no topic and no `--from-spec=`. Picks an ex
 5. **Interleaved groups do not parallelize.** Plan-order is authoritative; the contiguous-walk rule produces multiple single-task wave candidates if parallel-grouped tasks are interleaved with serial tasks. Planner is responsible for ordering parallel-grouped tasks contiguously to enable wave dispatch.
 6. **If `config.parallelism.enabled == false`** (global kill switch from `--no-parallelism` flag or config), skip wave assembly entirely — fall through to the standard serial loop.
 
-**When a wave assembles** (≥ 2 tasks): set `cache_pinned_for_wave: true`. Dispatch all N implementer subagents as parallel `Agent` tool calls in a single assistant turn (existing pattern in Step I3.2/I3.4). Each instance gets the standard implementer brief PLUS three wave-specific clauses:
+**When a wave assembles** (≥ 2 tasks): set `cache_pinned_for_wave: true`. Dispatch all N implementer subagents as parallel `Agent` tool calls in a single assistant turn (existing pattern in Step I3.2/I3.4). **Pass `model: "sonnet"` on each Agent call** per §Agent dispatch contract — wave members are general-purpose implementers, not Opus-grade reasoning. Each instance gets the standard implementer brief PLUS three wave-specific clauses:
 
 > *"WAVE CONTEXT: You are dispatched as part of a parallel wave of N tasks (group: `<name>`). Your declared scope is `**Files:**` (exhaustive — do not read or modify anything outside this list, including plan.md, status file, sibling tasks' scopes, or the eligibility cache). Capture `git rev-parse HEAD` BEFORE any work; return as `task_start_sha` (required per existing implementer-return contract). DO NOT commit your work — return staged-changes digest only. DO NOT update the status file — orchestrator handles batched wave-end updates. Failure handling: if you BLOCK or NEEDS_CONTEXT, return immediately; orchestrator's blocker re-engagement gate handles you alongside the rest of the wave."*
 
@@ -609,7 +648,7 @@ Triggered by `/masterplan plan` with no topic and no `--from-spec=`. Picks an ex
 
 After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for the wave per the wave-mode notes in those sub-steps. Then Step C step 5's wakeup-scheduling threshold uses wave count, not task count (a wave-end counts as ONE completion regardless of N).
 
-2. If `--no-subagents` is set: invoke `superpowers:executing-plans`. Otherwise: invoke `superpowers:subagent-driven-development`. Hand the invoked skill the plan path and the current task index. Brief the implementer subagent with **CD-1, CD-2, CD-3, CD-6**. (Wave-mode tasks bypass this step's serial dispatch — they were already dispatched in the wave assembly pre-pass above.)
+2. If `--no-subagents` is set: invoke `superpowers:executing-plans`. Otherwise: invoke `superpowers:subagent-driven-development`. Hand the invoked skill the plan path and the current task index. Brief the implementer subagent with **CD-1, CD-2, CD-3, CD-6** AND with this **model-passthrough override** (per §Agent dispatch contract recursive-application clause): *"When you dispatch inner Task/Agent calls (implementer, spec-reviewer, code-quality-reviewer), pass `model: "sonnet"` on every call. Use `model: "opus"` only if the user picked the blocker re-engagement gate's stronger-model option this turn."* This override is required because SDD's prompt-template files (`implementer-prompt.md`, `spec-reviewer-prompt.md`, `code-quality-reviewer-prompt.md`) are upstream and don't carry model parameters by default — without the override, the inner Task calls inherit the orchestrator's Opus and the wave's `model: "sonnet"` discipline doesn't propagate. (Wave-mode tasks bypass this step's serial dispatch — they were already dispatched in the wave assembly pre-pass above.)
 3. Layer the autonomy policy on top of the invoked skill's per-task loop:
    - **`gated`** — before each task, call `AskUserQuestion(continue / skip-this-task / stop)`. Honor the answer. **Routing decisions made via the eligibility cache (under `codex_routing == auto`) are honored silently** — the per-task question is NOT expanded with a Codex-override option, since the user pre-configured auto-routing and the activity log records every decision post-hoc. Users who want the legacy expanded prompt set `codex.confirm_auto_routing: true` in `.masterplan.yaml`; in that case the question expands to `(continue inline / continue via Codex / skip / stop)`. Under `codex_routing == manual`, do NOT expand here — Step 3a's per-task `AskUserQuestion` already handles routing.
    - **`loose`** — run autonomously. On a blocker, **apply CD-4** first; only after two rungs have failed, surface the **blocker re-engagement gate** below before setting `status: blocked` and ending the turn. Cite the rungs tried in the `## Blockers` entry. Do NOT reschedule a wakeup.
@@ -632,6 +671,8 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
    The first three options KEEP the plan moving (status stays `in-progress`); only the fourth option matches the legacy "end-turn-on-blocker" behavior. Under `--autonomy=full` the orchestrator may pre-select option 4 silently after surfacing the gate ONCE per blocker (the gate fires, user gets ~10 seconds to override, then default fires) — but never under `loose` or `gated`, where the user must explicitly pick an option. (Option count is capped at 4 per CD-9.)
 
    Activity log records which option was picked (e.g., `task X blocked, user chose: re-dispatch with Opus`).
+
+   **Re-dispatch handling for option 2 (stronger model).** When the user picks "Re-dispatch with a stronger model," the orchestrator re-dispatches the implementer with `model: "opus"` on the Agent call (overriding the default `model: "sonnet"` per §Agent dispatch contract). The override applies to ONE re-dispatch attempt per blocker pick; subsequent retries fall back to `model: "sonnet"` unless the user picks option 2 again. Activity log entry: `task X re-dispatched with model=opus per blocker gate`.
 
    **Wave-mode failure handling (Slice α v2.0.0+).** When Step C step 2's wave assembly dispatched a wave, blocker handling differs from serial:
 
@@ -694,7 +735,7 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
 
     The eligibility-cache builder Haiku (Step C step 1) parses these annotations: scan each task block's `**Files:**` section for a following `**Codex:**` line; record the annotation alongside the heuristic decision.
 
-    **Delegating:** dispatch the `codex:codex-rescue` subagent via the Agent tool with a bounded brief in this format (per CLAUDE.md):
+    **Delegating:** dispatch the `codex:codex-rescue` subagent via the Agent tool with a bounded brief in this format (per CLAUDE.md). **Codex sites are exempt from §Agent dispatch contract** — `codex:codex-rescue` is its own `subagent_type` with out-of-process routing; do NOT pass a `model:` parameter on these calls.
     ```
     Codex task:
     Scope: <task name from plan>
@@ -744,7 +785,7 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
    **Process:**
 
    1. Compute the task's diff against the **task-start commit SHA** captured by the implementer at task start (passed back as part of its return digest, where it is a **required** field — see the Subagent dispatch model table). If the implementer omitted it, treat as a protocol violation: surface a one-line blocker via `AskUserQuestion` ("Implementer subagent did not return `task_start_sha`. Re-dispatch with corrected brief / Skip 4b for this task / Abort"), and do NOT silently fall back to a SHA range — every fallback considered (`HEAD~1`, `git merge-base HEAD <status.branch>`, `git merge-base HEAD origin/<trunk>`) has a worse failure mode than blocking. If zero commits were made (task aborted before commit), there is no diff to review; skip 4b and let 4a's verification result drive the autonomy policy.
-   2. Dispatch the `codex:codex-rescue` subagent in REVIEW mode with this bounded brief (Goal/Inputs/Scope/Constraints/Return shape per the architecture section):
+   2. Dispatch the `codex:codex-rescue` subagent in REVIEW mode with this bounded brief (Goal/Inputs/Scope/Constraints/Return shape per the architecture section). **Codex sites are exempt from §Agent dispatch contract** — do NOT pass a `model:` parameter:
       ```
       Codex review:
       Goal: Adversarial review of this task's diff against the spec and acceptance criteria.
@@ -839,7 +880,7 @@ If `$ARGUMENTS` includes any of `--pr=<num>`, `--issue=<num>`, `--file=<path>`, 
 
 ### Step I1 — Discover (parallel)
 
-Dispatch four parallel `Explore` subagents (Haiku model — bounded mechanical extraction). Each returns a JSON list of candidates with: `source_type`, `identifier`, `title`, `last_modified`, `summary` (1–2 sentences), `confidence` (0–1, based on density of plan-like structure: numbered steps, checkboxes, "Phase N" headings, etc.).
+Dispatch four parallel `Explore` subagents (pass `model: "haiku"` on each Agent call per §Agent dispatch contract — bounded mechanical extraction). Each returns a JSON list of candidates with: `source_type`, `identifier`, `title`, `last_modified`, `summary` (1–2 sentences), `confidence` (0–1, based on density of plan-like structure: numbered steps, checkboxes, "Phase N" headings, etc.).
 
 Each agent's brief MUST include: "Issue all globs/finds/`gh` calls as one parallel tool batch — do not run them sequentially within your turn." Within-agent batching tightens latency on top of the cross-class parallelism.
 
@@ -867,13 +908,13 @@ This produces a `candidates[]` list with finalized `(slug, spec_path, plan_path,
 
 #### I3.2 — Parallel source-fetch wave
 
-Dispatch one fetch agent per candidate in a single Agent batch (Haiku — bounded mechanical extraction):
+Dispatch one fetch agent per candidate in a single Agent batch. **Per-candidate model assignment per §Agent dispatch contract:**
 
-- **Local file** → `Read`.
-- **Git branch** → Sonnet (not Haiku — needs reverse-engineering judgment); given the full diff vs trunk (`git diff <trunk>...<branch>`) and commit list (`git log --reverse <trunk>..<branch> --format='%h %s%n%b'`). Brief: "Reverse-engineer goal/scope/inferred-tasks/open-questions. Output structured sections."
-- **GH issue** → `gh issue view <num> --json=body,comments,labels`.
-- **GH PR** → `gh pr view <num> --json=body,commits,comments,headRefName`.
-- **Stale superpowers plan** → `Read`.
+- **Local file** → `Read` (no Agent dispatch — direct tool call).
+- **Git branch** → Agent dispatch with `model: "sonnet"` (reverse-engineering needs judgment); given the full diff vs trunk (`git diff <trunk>...<branch>`) and commit list (`git log --reverse <trunk>..<branch> --format='%h %s%n%b'`). Brief: "Reverse-engineer goal/scope/inferred-tasks/open-questions. Output structured sections."
+- **GH issue** → `gh issue view <num> --json=body,comments,labels` (no Agent dispatch — direct CLI call).
+- **GH PR** → `gh pr view <num> --json=body,commits,comments,headRefName` (no Agent dispatch — direct CLI call).
+- **Stale superpowers plan** → `Read` (no Agent dispatch — direct tool call).
 
 Each agent's bounded brief: Goal=fetch this candidate's source content, Inputs=candidate identifier, Scope=read-only, Return=raw source content + (for branches) reverse-engineered structure. The orchestrator collects the results keyed by candidate id.
 
@@ -883,7 +924,7 @@ For each candidate that has a discernible task list, run completion-state infere
 
 #### I3.4 — Parallel conversion wave
 
-Dispatch one Sonnet conversion subagent per candidate in a single Agent batch. Each agent owns unique target paths from I3.1 and writes only to its own slug's spec/plan/status — no contention. Brief per agent:
+Dispatch one Sonnet conversion subagent (pass `model: "sonnet"` per §Agent dispatch contract) per candidate in a single Agent batch. Each agent owns unique target paths from I3.1 and writes only to its own slug's spec/plan/status — no contention. Brief per agent:
 
 > Rewrite this legacy planning artifact into superpowers spec format (`<spec-path>`) and plan format (`<plan-path>`) following the writing-plans skill conventions. Drop tasks classified `done`. Move `possibly_done` tasks into a `## Verify before continuing` checklist at the top of the plan, each with its evidence. Keep `not_done` tasks as the active task list, reformatted into bite-sized steps (writing-plans style). Preserve constraints, decisions, and stakeholder context in the spec's Background section. Discard pure status narration. Do not invent tasks the source didn't mention. Then write the status file at `<status-path>` populating **every** frontmatter field per the Step B3 field list (`slug`, `status: in-progress`, `spec`, `plan`, `worktree`, `branch`, `started` today, `last_activity` now, `current_task` = first `not_done` task, `next_action` = its first step, `autonomy`, `loop_enabled`, `codex_routing`, `codex_review`, `compact_loop_recommended: false` from current config + flags), and seed `## Notes` with: link back to source (path/URL/branch/issue#), inference evidence summary, list of `possibly_done` items the user should verify before execution.
 
@@ -917,7 +958,7 @@ Triggered by `/masterplan status [--plan=<slug>]`. Pure read-only synthesis of e
 
 ### Step S1 — Gather (parallel)
 
-Read worktrees from `git_state.worktrees` (Step 0 cache). When N ≥ 2, dispatch one Haiku per worktree in a single Agent batch. With 1 worktree, run inline.
+Read worktrees from `git_state.worktrees` (Step 0 cache). When N ≥ 2, dispatch one Haiku (pass `model: "haiku"` per §Agent dispatch contract) per worktree in a single Agent batch. With 1 worktree, run inline.
 
 Each Haiku's bounded brief: Goal=collect this worktree's masterplan state, Inputs=worktree path + collection list (below), Scope=read-only (no writes, no `git status` modifications), Return=structured JSON digest. Per-worktree collection list:
 
@@ -996,7 +1037,7 @@ If a retro already exists for this slug, surface `AskUserQuestion(Open existing 
 
 ### Step R2 — Gather (parallel where possible)
 
-Dispatch a single Haiku agent (or run inline if `git_state` already cached the worktree) with this bounded brief:
+Dispatch a single Haiku agent (pass `model: "haiku"` per §Agent dispatch contract) — or run inline if `git_state` already cached the worktree — with this bounded brief:
 
 - **Goal:** Collect retro source material for slug `<slug>` in worktree `<wt>`.
 - **Inputs:** status path, plan path, spec path (from `status.spec`), branch (from `status.branch`), trunk (from `config.trunk_branches[0]`).
@@ -1076,7 +1117,7 @@ Triggered by `/masterplan doctor [--fix]`. Lints all masterplan state across all
 
 Read worktrees from `git_state.worktrees` (Step 0 cache). For each worktree, scan `<worktree>/<config.specs_path>/` and `<worktree>/<config.plans_path>/`.
 
-**Parallelization.** When worktrees ≥ 2, dispatch one Haiku agent per worktree in a single Agent batch (each agent runs all 18 checks for its worktree and returns findings as `[{check_id, severity, file, message}]` JSON). With 1 worktree, run inline — agent dispatch latency isn't worth it. The orchestrator merges results and applies the report ordering below.
+**Parallelization.** When worktrees ≥ 2, dispatch one Haiku agent (pass `model: "haiku"` per §Agent dispatch contract) per worktree in a single Agent batch (each agent runs all 19 checks for its worktree and returns findings as `[{check_id, severity, file, message}]` JSON). With 1 worktree, run inline — agent dispatch latency isn't worth it. The orchestrator merges results and applies the report ordering below.
 
 ### Checks
 
@@ -1095,13 +1136,14 @@ For each worktree, run all checks. Report findings grouped by worktree → check
 | 9 | **Schema violation** — status frontmatter missing required fields. Required set: `slug`, `status`, `spec`, `plan`, `worktree`, `branch`, `started`, `last_activity`, `current_task`, `next_action`, `autonomy`, `loop_enabled`, `codex_routing`, `codex_review`, `compact_loop_recommended`. (Step A and Step C both depend on the full set.) | Error | Add missing fields with sentinel/derived values where possible (e.g. `compact_loop_recommended: false`); report the rest. |
 | 10 | **Unparseable status file** — frontmatter or body is malformed YAML/Markdown. | Error | Report only (manual fix needed). Step A skips these silently, but doctor calls them out. |
 | 11 | **Orphan archive file** — `<slug>-status-archive.md` exists with no sibling `<slug>-status.md`. (The archive is created by Step C 4d's activity log rotation; it must always have a base status file.) | Warning | Suggest moving the archive to `<config.archive_path>/<date>/`. No auto-fix. |
-| 12 | **Telemetry file growth** — `<slug>-telemetry.jsonl` > 5 MB. | Warning | Rotate to `<slug>-telemetry-archive.jsonl` (the active file becomes empty; new appends start fresh). |
+| 12 | **Telemetry file growth** — `<slug>-telemetry.jsonl` OR `<slug>-subagents.jsonl` > 5 MB. | Warning | Rotate to `<slug>-telemetry-archive.jsonl` / `<slug>-subagents-archive.jsonl` (the active file becomes empty; new appends start fresh). |
 | 13 | **Orphan telemetry file** — `<slug>-telemetry.jsonl` (or `-telemetry-archive.jsonl`) exists with no sibling `<slug>-status.md`. | Warning | Suggest moving to `<config.archive_path>/<date>/`. No auto-fix. |
 | 14 | **Orphan eligibility cache** — `<slug>-eligibility-cache.json` exists with no sibling `<slug>-status.md`. (The cache is a sidecar of an active plan; it must always have a base status file.) | Warning | Suggest moving to `<config.archive_path>/<date>/`. No auto-fix. |
 | 15 | **`parallel-group:` set but `**Files:**` block missing/empty.** Section 2 eligibility rule 2 violated. Affects parallel-eligibility computation; task falls back to serial silently. | Warning | Report only. Author must add `**Files:**` block. |
 | 16 | **`parallel-group:` and `**Codex:** ok` both set on the same task.** Section 2 eligibility rule 4 violated; FM-4 mitigation conflict (mutually exclusive). | Warning | Report only. Author must remove one of the annotations. |
 | 17 | **File-path overlap detected within a `parallel-group:`.** Section 2 eligibility rule 5 violated. Multiple tasks in the same parallel-group declare overlapping `**Files:**` paths. | Warning | Report the overlapping task pairs. No auto-fix. |
 | 18 | **Codex config on but plugin missing.** Config has `codex.routing != off` OR `codex.review == on` AND no entry prefixed `codex:` is present in the system-reminder skills list at lint time. Step 0's codex-availability detection auto-degrades silently per-run; doctor surfaces the persistent misconfiguration as a Warning so the user notices and either installs codex or sets the defaults to `off`. | Warning | Suggest `/plugin marketplace add openai/codex-plugin-cc` then `/plugin install codex@openai-codex` to enable, OR set `codex.routing: off` and `codex.review: off` in `.masterplan.yaml` to suppress this check. No auto-fix (changing user's config is out of scope per CD-2). |
+| 19 | **Orphan subagents file** — `<slug>-subagents.jsonl` OR `<slug>-subagents-cursor` exists with no sibling `<slug>-status.md`. (The subagents file + cursor are sidecars of an active plan, written by `hooks/masterplan-telemetry.sh` per Agent dispatch.) | Warning | Suggest moving both to `<config.archive_path>/<date>/`. No auto-fix. |
 
 ### Output
 
@@ -1165,7 +1207,7 @@ For each task in the candidate's task list:
 
 1. **Extract keywords** — pull 2–5 distinctive tokens from the task description (function/file/symbol names, distinctive concept words). Drop stopwords and generic verbs ("add", "fix").
 
-2. **Gather signals.** For long task lists, dispatch a Haiku subagent per chunk so this step parallelizes. For each task, check:
+2. **Gather signals.** For long task lists, dispatch a Haiku subagent (pass `model: "haiku"` per §Agent dispatch contract) per chunk so this step parallelizes. For each task, check:
    - **Git log signal** — `git log --all --oneline --grep=<keyword>` and `git log --all -G<keyword> --oneline` (the latter searches diffs). Hit = signal, capture the commit SHA(s).
    - **Filesystem signal** — if the task names a file or symbol, `Glob` for the file or `Grep` for the symbol. Hit = signal.
    - **Test signal** — `Grep` for the keywords inside `test/`, `tests/`, `__tests__/`, `*.test.*`, `*.spec.*`. Hit + tests presumed passing = strong signal.

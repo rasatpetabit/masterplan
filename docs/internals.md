@@ -497,15 +497,16 @@ Use the result to evaluate whether parallel-group annotations are being authored
 | 9 | Schema violation — status frontmatter missing required fields | Error | Add missing with sentinel/derived values | Step A and Step C depend on full set; partial schemas break listing |
 | 10 | Unparseable status file — frontmatter or body is malformed YAML/Markdown | Error | Report only | Step A skips silently; doctor surfaces explicitly |
 | 11 | Orphan archive — `<slug>-status-archive.md` without sibling `<slug>-status.md` | Warning | Suggest moving to archive_path | Archive without base status is dead weight |
-| 12 | Telemetry growth — `<slug>-telemetry.jsonl` > 5 MB | Warning | Rotate to `<slug>-telemetry-archive.jsonl` | Long-running plans accumulate; rotation prevents unbounded growth |
+| 12 | Telemetry growth — `<slug>-telemetry.jsonl` OR `<slug>-subagents.jsonl` > 5 MB | Warning | Rotate to `<slug>-telemetry-archive.jsonl` / `<slug>-subagents-archive.jsonl` | Long-running plans accumulate; rotation prevents unbounded growth |
 | 13 | Orphan telemetry — `.jsonl` exists with no sibling status | Warning | Suggest moving to archive_path | Same shape as #11 for telemetry |
 | 14 | Orphan eligibility cache — `.json` exists with no sibling status | Warning | Suggest moving to archive_path | Same shape as #11/#13 for cache |
 | 15 | `parallel-group:` set but `**Files:**` missing/empty | Warning | Report only | Eligibility rule 2 violated; falls back to serial silently — surface so author notices |
 | 16 | `parallel-group:` and `**Codex:** ok` both set | Warning | Report only | FM-4 mitigation conflict; mutually exclusive — surface |
 | 17 | File-path overlap within `parallel-group:` | Warning | Report overlapping pairs | Eligibility rule 5 violated; tasks fall back to serial |
 | 18 | Codex config on but plugin missing | Warning | Suggest `/plugin marketplace add openai/codex-plugin-cc` then `/plugin install codex@openai-codex`, or set defaults to off | Step 0 already auto-degrades silently; doctor surfaces persistent misconfiguration |
+| 19 | Orphan subagents file — `<slug>-subagents.jsonl` / `-subagents-cursor` without sibling status | Warning | Suggest moving to archive_path | Same shape as #11/#13/#14 for the v2.3.0 per-subagent telemetry stream |
 
-**Total: 18 checks (v2.0.0).** Step D's parallelization brief tells each Haiku worker to "run all 18 checks for its worktree." When adding a check, update both the table AND the brief count.
+**Total: 19 checks (v2.3.0).** Step D's parallelization brief tells each Haiku worker to "run all 19 checks for its worktree." When adding a check, update both the table AND the brief count.
 
 ---
 

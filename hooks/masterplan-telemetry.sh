@@ -145,4 +145,119 @@ jq -nc \
   '{ts:$ts,plan:$plan,turn_kind:"stop",transcript_bytes:$transcript_bytes,transcript_lines:$transcript_lines,status_bytes:$status_bytes,activity_log_entries:$activity_log_entries,wakeup_count_24h:$wakeup_count_24h,tasks_completed_this_turn:$tasks_completed_this_turn,wave_groups:$wave_groups,branch:$branch,cwd:$cwd}' \
   >> "$out_file" 2>/dev/null
 
+# 8. Subagent dispatch capture (v2.3.0+).
+#
+# Parse the parent session transcript for Agent tool_use + toolUseResult pairs.
+# Emit one record per subagent dispatch to <plan>-subagents.jsonl.
+# Cursor-based incremental parsing (line-count) keeps the hook fast on long
+# sessions: only NEW toolUseResult lines emit records each turn, but the full
+# transcript is scanned to build the tool_use index (a tool_use earlier than
+# cursor can pair with a toolUseResult after cursor on long-running subagents).
+#
+# Bail conditions (subagent capture only — does NOT bail the per-turn record above):
+# - no transcript path resolved
+# - transcript file unreadable
+#
+# Cursor file <plan>-subagents-cursor stores the line count of the last
+# fully-processed transcript. Reset to 0 if the cursor exceeds the current
+# line count (transcript rotation / truncation case).
+if [[ -n "$transcript" && -r "$transcript" ]]; then
+  subagents_file="${plans_dir}/${slug}-subagents.jsonl"
+  cursor_file="${plans_dir}/${slug}-subagents-cursor"
+
+  cursor=0
+  if [[ -f "$cursor_file" ]]; then
+    raw=$(cat "$cursor_file" 2>/dev/null)
+    [[ "$raw" =~ ^[0-9]+$ ]] && cursor="$raw"
+  fi
+
+  total_lines=$(wc -l <"$transcript" 2>/dev/null | tr -d ' ')
+  total_lines=${total_lines:-0}
+  (( cursor > total_lines )) && cursor=0
+
+  if (( cursor < total_lines )); then
+    jq -c -s \
+      --argjson cursor "$cursor" \
+      --arg plan "$slug" \
+      --arg branch "$branch" \
+      --arg cwd "$PWD" \
+      --arg sid "${CLAUDE_SESSION_ID:-}" \
+      '
+      . as $all
+      | (
+          [ $all[]
+            | select(.type == "assistant")
+            | .timestamp as $ts
+            | (.message.content // [])[]?
+            | select(.type == "tool_use" and (.name == "Agent" or .name == "Task"))
+            | { (.id): {
+                  model: (.input.model // null),
+                  subagent_type: (.input.subagent_type // null),
+                  description: (.input.description // ""),
+                  dispatched_at: $ts
+                }}
+          ]
+          | add // {}
+        ) as $idx
+      | range($cursor; ($all | length)) as $i
+      | $all[$i]
+      | select(.type == "user" and ((.toolUseResult.agentId // null) != null))
+      | (
+          [ (.message.content // [])[]?
+            | select(.type == "tool_result")
+            | .tool_use_id ]
+          | first // null
+        ) as $tuid
+      | ($idx[$tuid] // {}) as $tu
+      | .toolUseResult as $r
+      | {
+          ts: (.timestamp // null),
+          plan: $plan,
+          session_id: (.sessionId // $sid),
+          tool_use_id: $tuid,
+          agent_id: ($r.agentId // null),
+          subagent_type: ($tu.subagent_type // $r.agentType // null),
+          model: ($tu.model // null),
+          description: ($tu.description // ""),
+          dispatch_site: (
+            try (
+              ($r.prompt // "")
+              | match("DISPATCH-SITE:[ \\t]*([^\\n]+)")
+              | .captures[0].string
+            ) // null
+          ),
+          status: ($r.status // null),
+          prompt_chars: (($r.prompt // "") | length),
+          prompt_first_line: (($r.prompt // "") | split("\n")[0] | .[0:200]),
+          duration_ms: ($r.totalDurationMs // 0),
+          total_tokens: ($r.totalTokens // 0),
+          input_tokens: ($r.usage.input_tokens // 0),
+          output_tokens: ($r.usage.output_tokens // 0),
+          cache_creation_tokens: ($r.usage.cache_creation_input_tokens // 0),
+          cache_read_tokens: ($r.usage.cache_read_input_tokens // 0),
+          tool_uses_in_subagent: ($r.totalToolUseCount // 0),
+          tool_stats: {
+            bash: ($r.toolStats.bashCount // 0),
+            edit: ($r.toolStats.editFileCount // 0),
+            read: ($r.toolStats.readCount // 0),
+            search: ($r.toolStats.searchCount // 0),
+            other: ($r.toolStats.otherToolCount // 0),
+            lines_added: ($r.toolStats.linesAdded // 0),
+            lines_removed: ($r.toolStats.linesRemoved // 0)
+          },
+          result_chars: (
+            ($r.content // null)
+            | if type == "string" then length
+              elif type == "array" then map(.text // "") | join("") | length
+              else 0 end
+          ),
+          branch: $branch,
+          cwd: $cwd
+        }
+      ' "$transcript" >> "$subagents_file" 2>/dev/null
+
+    echo "$total_lines" > "$cursor_file" 2>/dev/null
+  fi
+fi
+
 exit 0

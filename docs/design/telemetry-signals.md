@@ -1,13 +1,19 @@
 # Telemetry signals
 
-Per-turn JSONL records appended to `<plan>-telemetry.jsonl` (sibling to the plan's status file). Two writers:
+Three JSONL streams sit alongside each `/masterplan` plan's status file. Two carry per-turn aggregates (`<plan>-telemetry.jsonl`), one carries per-Agent-dispatch detail (`<plan>-subagents.jsonl`).
+
+**Per-turn writers** (write to `<plan>-telemetry.jsonl`):
 
 - `hooks/masterplan-telemetry.sh` — Stop hook (manually installed; per-turn cadence; `turn_kind: "stop"`)
 - `commands/masterplan.md` Step C step 1 — inline orchestrator snapshot (every Step C entry; `turn_kind: "step_c_entry"`)
 
-Both write the same field shape; orchestrator opt-out via `telemetry: off` in status frontmatter; global toggle via `config.telemetry.enabled`.
+**Per-subagent writer** (writes to `<plan>-subagents.jsonl`, v2.3.0+):
 
-## Record shape
+- `hooks/masterplan-telemetry.sh` — same Stop hook also parses the parent transcript at end-of-turn, emitting one record per Agent tool dispatch (subagent_type, model, dispatch_site, full token breakdown, duration, tool_stats)
+
+All three streams honor: per-plan opt-out via `telemetry: off` in status frontmatter; global toggle via `config.telemetry.enabled`.
+
+## Per-turn record shape
 
 ```json
 {
@@ -102,10 +108,158 @@ jq -s '
 
 Returns `{wave_turns, serial_turns, avg_tasks_per_wave_turn, groups_seen}`. Use to evaluate whether `parallel-group:` annotations are being authored AND exercised in practice. Non-zero `wave_turns` is the candidate trigger for the deferred Slice β/γ revisit — see [`docs/design/intra-plan-parallelism.md`](./intra-plan-parallelism.md) for the sharpened trigger condition.
 
+## Subagent dispatch records (v2.3.0+)
+
+`<plan>-subagents.jsonl` — one record per `Agent` tool dispatch. Written by the Stop hook from the parent session transcript's `tool_use` + `toolUseResult` pairs at end-of-turn. Cursor-based incremental parsing (`<plan>-subagents-cursor` stores last-processed line count) keeps the hook fast on long sessions.
+
+### Record shape
+
+```json
+{
+  "ts": "2026-05-02T06:11:44.420Z",
+  "plan": "foundations-spike",
+  "session_id": "32d22d35-6998-41f8-a8d5-1b44669be4da",
+  "tool_use_id": "toolu_01EJLiRes3EwM2u2BbT31uC4",
+  "agent_id": "af8ad97a75649d71a",
+  "subagent_type": "codex:codex-rescue",
+  "model": null,
+  "description": "T12 Yocto recipe stubs via Codex",
+  "dispatch_site": "Step C 3a Codex EXEC (task 12)",
+  "status": "completed",
+  "prompt_chars": 2890,
+  "prompt_first_line": "DISPATCH-SITE: Step C 3a Codex EXEC (task 12)",
+  "duration_ms": 172662,
+  "total_tokens": 15894,
+  "input_tokens": 1,
+  "output_tokens": 618,
+  "cache_creation_tokens": 4123,
+  "cache_read_tokens": 11152,
+  "tool_uses_in_subagent": 1,
+  "tool_stats": {"bash": 1, "edit": 0, "read": 0, "search": 0, "other": 0, "lines_added": 0, "lines_removed": 0},
+  "result_chars": 1284,
+  "branch": "main",
+  "cwd": "/home/.../petabit-junos"
+}
+```
+
+### Field semantics
+
+| Field | What it measures | Notes |
+|---|---|---|
+| `ts` | Toolresult timestamp (when the subagent returned) | ISO8601 |
+| `tool_use_id` | Parent transcript's tool_use id | Joins back to source line |
+| `agent_id` | Subagent's own id | Unique per dispatch; corresponds to `~/.claude/projects/<proj>/subagents/agent-<id>.jsonl` if you need the full subagent transcript |
+| `subagent_type` | The `subagent_type` parameter passed | `Explore` / `general-purpose` / `codex:codex-rescue` / `feature-dev:code-explorer` / etc. — many distinct values |
+| `model` | The `model` parameter passed (`haiku`/`sonnet`/`opus`) | `null` for `codex:codex-rescue` (its own routing — no `model:` parameter) |
+| `dispatch_site` | The `DISPATCH-SITE: <value>` tag extracted from the prompt's first line | `null` if the brief omitted the tag (legacy or non-/masterplan dispatches); fall back to `subagent_type + description` fingerprinting |
+| `status` | `completed` / `error` / etc. | From toolUseResult |
+| `prompt_chars` / `prompt_first_line` | Brief size + first line | First line is truncated at 200 chars |
+| `duration_ms` | Wall-clock duration | From `toolUseResult.totalDurationMs` |
+| `total_tokens` | `input + output + cache_creation + cache_read` summed | From `toolUseResult.totalTokens` |
+| `input_tokens` / `output_tokens` / `cache_creation_tokens` / `cache_read_tokens` | Full per-subagent token breakdown | From `toolUseResult.usage.*` — these are the SUBAGENT's tokens, not the parent's |
+| `tool_uses_in_subagent` | How many tool calls the subagent itself made | From `toolUseResult.totalToolUseCount` |
+| `tool_stats` | What the subagent did inside its session — `{bash, edit, read, search, other, lines_added, lines_removed}` | Useful for "did this subagent spend tokens reading or editing?" |
+| `result_chars` | Length of the result text | Sum of `.text` across content array |
+| `branch` / `cwd` | At hook fire | Distinguishes worktrees |
+
 ## Rotation
 
-Doctor check #12 catches `<plan>-telemetry.jsonl` files > 5 MB. `--fix` rotates to `<plan>-telemetry-archive.jsonl`. Active file becomes empty; new appends start fresh. Archives are append-only and never auto-deleted.
+Doctor check #12 catches `<plan>-telemetry.jsonl` OR `<plan>-subagents.jsonl` files > 5 MB. `--fix` rotates to `<slug>-telemetry-archive.jsonl` / `<slug>-subagents-archive.jsonl` respectively. Active file becomes empty; new appends start fresh. Archives are append-only and never auto-deleted.
 
 ## Privacy
 
-These records contain file paths and branch names — no message content. The transcript file itself is referenced by size only, not contents. If you publish a telemetry archive, redact `cwd` and `branch` if your branch names are sensitive.
+These records contain file paths, branch names, and the FIRST 200 CHARACTERS of each subagent brief (`prompt_first_line`). No full message content, no tool output, no source code. The transcript file itself is referenced by size only, not contents. If you publish a telemetry archive, redact `cwd`, `branch`, and `prompt_first_line` if any of those could be sensitive (branch names often leak product names; brief first lines often start with `DISPATCH-SITE: <step>` which is benign but the format is configurable).
+
+## Subagent dispatch jq recipes (v2.3.0+)
+
+Six recipes for `<plan>-subagents.jsonl`. Each returns a structured digest you can sort or eyeball.
+
+### 1. Top 10 most expensive single dispatches
+
+```bash
+jq -s 'sort_by(-.total_tokens) | .[:10] | .[] | {ts, dispatch_site, subagent_type, model, total_tokens, duration_ms}' <plan>-subagents.jsonl
+```
+
+The single dispatches that consumed the most tokens. If one dispatch consumed 50K+ tokens, that's where briefs should be tightened first.
+
+### 2. Per-subagent_type aggregates
+
+```bash
+jq -s '
+  group_by(.subagent_type)
+  | map({subagent_type: .[0].subagent_type,
+         dispatches: length,
+         total_tokens: ([.[].total_tokens] | add),
+         avg_tokens: (([.[].total_tokens] | add) / length | floor),
+         total_ms: ([.[].duration_ms] | add)})
+  | sort_by(-.total_tokens)
+' <plan>-subagents.jsonl
+```
+
+Which subagent_type costs most overall. `codex:codex-rescue` is usually highest by total because Codex tasks are heavier per-dispatch; `Explore` may have many cheap dispatches that aggregate.
+
+### 3. Per-dispatch-site aggregates (cost by Step)
+
+```bash
+jq -s '
+  group_by(.dispatch_site // "unattributed")
+  | map({dispatch_site: (.[0].dispatch_site // "unattributed"),
+         dispatches: length,
+         total_tokens: ([.[].total_tokens] | add),
+         avg_tokens: (([.[].total_tokens] | add) / length | floor)})
+  | sort_by(-.total_tokens)
+' <plan>-subagents.jsonl
+```
+
+The MAIN cost-optimization view. Tells you which orchestrator step (Step C step 2 SDD vs Step I3.4 conversion vs etc.) is consuming most of the budget. Optimize the brief at the top dispatch site for the biggest win.
+
+### 4. Per-model breakdown by site (verifies §Agent dispatch contract)
+
+```bash
+jq -s '
+  group_by(.dispatch_site // "unattributed")
+  | map({dispatch_site: (.[0].dispatch_site // "unattributed"),
+         haiku_tokens: ([.[] | select(.model == "haiku") | .total_tokens] | add // 0),
+         sonnet_tokens: ([.[] | select(.model == "sonnet") | .total_tokens] | add // 0),
+         opus_tokens: ([.[] | select(.model == "opus") | .total_tokens] | add // 0),
+         codex_tokens: ([.[] | select(.subagent_type == "codex:codex-rescue") | .total_tokens] | add // 0),
+         null_model_tokens: ([.[] | select(.model == null and .subagent_type != "codex:codex-rescue") | .total_tokens] | add // 0)})
+  | sort_by(-.opus_tokens)
+' <plan>-subagents.jsonl
+```
+
+`null_model_tokens > 0` at any non-codex site means the orchestrator dropped the `model:` parameter and the subagent inherited Opus — investigate per §Agent dispatch contract. `opus_tokens` should be 0 except at sites where the user explicitly escalated via the blocker re-engagement gate.
+
+### 5. Anomaly detection (>2σ above the type mean)
+
+```bash
+jq -s '
+  group_by(.subagent_type) as $by_type
+  | $by_type | map(
+      .[0].subagent_type as $t
+      | ([.[].total_tokens] | (add / length)) as $mean
+      | ([.[].total_tokens] | map(. - $mean | . * .) | add / length | sqrt) as $stddev
+      | .[] | select(.total_tokens > $mean + 2 * $stddev)
+      | {subagent_type: $t, dispatch_site, ts, total_tokens, deviation_factor: ((.total_tokens - $mean) / $stddev | (. * 10 | floor) / 10)}
+    )
+  | flatten
+  | sort_by(-.total_tokens)
+' <plan>-subagents.jsonl
+```
+
+Surfaces individual dispatches that consumed dramatically more tokens than peers. Useful for catching one-off blowups (e.g., a Step C step 2 SDD task that consumed 100K tokens because the brief accidentally included the full plan file).
+
+### 6. Cost trend over 14 days
+
+```bash
+jq -s '
+  map(.ts[:10] as $day | {day: $day, total_tokens, model, subagent_type})
+  | group_by(.day)
+  | map({day: .[0].day,
+         dispatches: length,
+         total_tokens: ([.[].total_tokens] | add)})
+  | sort_by(.day) | .[-14:]
+' <plan>-subagents.jsonl
+```
+
+Daily cost over the last 14 days. Watch for trend lines climbing — usually means the plan's brief footprint has grown without anyone noticing.

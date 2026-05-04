@@ -393,7 +393,7 @@ The full schema and operational rules are documented in
 
 ## Project Status
 
-Current release: **v2.2.3**.
+Current release: **v2.3.0**.
 
 - Release history: [`CHANGELOG.md`](./CHANGELOG.md)
 - Contributor internals: [`docs/internals.md`](./docs/internals.md)
