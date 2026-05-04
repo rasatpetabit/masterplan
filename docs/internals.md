@@ -47,7 +47,6 @@ superpowers-masterplan/
 ├── CLAUDE.md                       # always-loaded LLM orientation (~500 words)
 ├── README.md                       # public-facing project overview
 ├── CHANGELOG.md                    # release history (always preserved verbatim)
-├── WORKLOG.md                      # append-only handoff for next session
 ├── LICENSE                         # MIT
 ├── .claude-plugin/
 │   ├── plugin.json                 # plugin manifest (name, version, description, URL)
@@ -579,7 +578,7 @@ Doctor check candidate (deferred): scan for drift across these three locations.
 
 ## 12. Design decisions + deferred items
 
-This section captures the WHY of significant architectural decisions. Distilled from pre-v2.0.0 WORKLOG entries that were pruned in the v2.0.0 release.
+This section captures the WHY of significant architectural decisions. Distilled from pre-v2.0.0 internal handoff notes that were pruned in the v2.0.0 release.
 
 ### Why a thin orchestrator over re-implementation
 
@@ -795,7 +794,6 @@ For a major release (breaking change / version 2.0.0+), include explicit `### Mi
 | Behavior of any Step / verb / flag | [`commands/masterplan.md`](../commands/masterplan.md) |
 | Public-facing usage / install / config | [`README.md`](../README.md) |
 | Per-version what-changed | [`CHANGELOG.md`](../CHANGELOG.md) |
-| Recent decisions / handoff for next session | [`WORKLOG.md`](../WORKLOG.md) |
 | Slice α design + deferred Slice β/γ | [`docs/design/intra-plan-parallelism.md`](./design/intra-plan-parallelism.md) |
 | Telemetry record schema + queries | [`docs/design/telemetry-signals.md`](./design/telemetry-signals.md) |
 | Active in-flight plans | `docs/superpowers/plans/*-status.md` |

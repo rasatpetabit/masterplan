@@ -21,7 +21,6 @@ There is **no code** in the conventional sense. The "program" is the markdown pr
 | The orchestrator prompt itself (the "source code") | [`commands/masterplan.md`](./commands/masterplan.md) |
 | Public-facing project overview + install + usage | [`README.md`](./README.md) |
 | Release history + decision rationale per version | [`CHANGELOG.md`](./CHANGELOG.md) |
-| Recent decision notes + handoff for next session | [`WORKLOG.md`](./WORKLOG.md) — append-only |
 | Active plans (current work) | `docs/superpowers/plans/*-status.md` (status files are the source of truth per CD-7) |
 
 **Canonical reading order for a new session:** this file → `docs/internals.md` (skim the table of contents; deep-read sections relevant to the current task) → `commands/masterplan.md` (the source) → any active status file in `docs/superpowers/plans/`.
