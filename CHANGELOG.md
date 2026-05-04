@@ -5,7 +5,70 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+> **Note on the v2.0.0 rename:** This project was renamed from `claude-superflow` to `superpowers-masterplan` in v2.0.0; the `/superflow` slash command became `/masterplan`; `.superflow.yaml` became `.masterplan.yaml`. **Hard-cut, no backward-compat aliases.** Historical CHANGELOG entries (v0.x and v1.0.0) below are preserved verbatim; the names they reference are the names in use at the time of those releases. See `[2.0.0]` migration notes for the user-side rename steps.
+
 ## [Unreleased]
+
+## [2.0.0] — 2026-05-04
+
+**Project rename + intra-plan parallelism Slice α + Codex defaults on.** Single coherent v2.0.0 release bundling the rebrand (claude-superflow → superpowers-masterplan; /superflow → /masterplan; hard-cut, no backward-compat aliases per user instruction), Slice α of intra-plan task parallelism (read-only parallel waves only — verification, inference, lint, type-check, doc-generation; implementation tasks remain serial), Codex defaults flipped to on with graceful-degrade when codex plugin isn't installed, a new `## Codex integration` README section, internal documentation for LLM contributors (`CLAUDE.md` + `docs/internals.md`), and pruning of pre-v1.1.0 spec/plan/WORKLOG history (institutional knowledge migrated to `docs/internals.md`).
+
+### Renamed
+- **Project:** `claude-superflow` → `superpowers-masterplan`. Plugin manifest's `name`, `homepage`, and `repository.url` updated. **User-side step:** rename your local install path / GitHub remote.
+- **Slash command:** `/superflow` → `/masterplan`. **User-side step:** old `/superflow` command no longer exists. Install v2.0.0 to gain `/masterplan`.
+- **Config file:** `.superflow.yaml` → `.masterplan.yaml` (and `~/.superflow.yaml` → `~/.masterplan.yaml`). **User-side step:** rename your config files. v2.0.0 ONLY reads `.masterplan.yaml` — `.superflow.yaml` is silently ignored. (No dual-load fallback; hard-cut per user instruction.)
+- **File paths:** `commands/superflow.md` → `commands/masterplan.md`; `skills/superflow-detect/` → `skills/masterplan-detect/`; `hooks/superflow-telemetry.sh` → `hooks/masterplan-telemetry.sh`. Status files in user repos still reference the old paths if they were created pre-v2.0.0; they keep working but the new install path is masterplan-named.
+
+### Added
+- **`**parallel-group:** <name>` plan annotation.** Tasks sharing the same `<name>` value dispatch as one parallel wave in Step C step 2. Read-only only (verification, inference, lint, type-check, doc-generation). Mutually exclusive with `**Codex:** ok`. Requires complete `**Files:**` block (becomes exhaustive scope under wave). See [`docs/design/intra-plan-parallelism.md`](./docs/design/intra-plan-parallelism.md) for the failure-mode catalog and Slice β/γ deferral.
+- **Wave dispatch in Step C step 2** — contiguous-plan-order wave assembly; per-instance bounded brief (DO NOT commit, DO NOT update status); parallel `Agent` dispatch; wave-completion barrier.
+- **Single-writer status funnel in Step C 4d** — orchestrator aggregates wave digests, computes `current_task` as lowest-indexed not-yet-complete, appends N entries to `## Activity log` in plan-order with `[wave: <group>]` tag, runs wave-aware activity log rotation (fires once per wave per FM-2), commits status file once per wave with subject `masterplan: wave complete (group: <name>, N tasks)`.
+- **Files-filter in Step C 4c under wave** — single porcelain check filters against union of all wave-task `**Files:**` declarations (post-glob-expansion) plus implicit-paths whitelist.
+- **Eligibility cache pin (M-2 mitigation)** — `cache_pinned_for_wave` flag suppresses mtime invariant during wave; new CD-2 in-wave scope rule forbids wave members from modifying plan/status/cache.
+- **Per-member outcome reconciliation** — three outcomes (`completed` / `blocked` / `protocol_violation`); `protocol_violation` detected by orchestrator post-barrier (commits despite "DO NOT commit", out-of-scope writes, status file modification).
+- **Wave-level outcomes** — all-completed / all-blocked / partial. Partial preserves K completed digests UNLESS `parallelism.abort_wave_on_protocol_violation: true` (default), in which case the entire 4d batch is suppressed.
+- **Blocker re-engagement gate integration** — fires once at wave-end with the union of N-K blocked members; option semantics extend naturally.
+- **Step C 5 wave-count threshold** — wave-end counts as ONE completion regardless of N (a wave of 5 doesn't trigger 5 wakeup-threshold increments).
+- **3 new doctor checks (#15-17, total 14 → 18 with #18):** parallel-group without Files: block; parallel-group + Codex: ok mutual conflict; file-path overlap within parallel-group.
+- **Doctor check #18: Codex config on but plugin missing.** Flags persistent misconfiguration when `codex.routing != off` OR `codex.review == on` AND no `codex:` skill in scope at lint time. Step 0's auto-degrade handles per-run; doctor surfaces persistent state.
+- **Step 0 codex-availability detection (graceful degrade).** When config has codex on but plugin not installed, emit one-line warning and treat both routing + review as `off` for the run. Persisted config is unchanged.
+- **`hooks/masterplan-telemetry.sh` gains `tasks_completed_this_turn` (int) + `wave_groups` (array of strings) fields** — FM-3 mitigation. Linux smoke-tested; macOS portable-by-construction (not smoke-tested).
+- **New `parallelism:` config block** — `enabled` (kill switch, default true), `max_wave_size` (default 5), `abort_wave_on_protocol_violation` (default true).
+- **New `--parallelism=on|off` and `--no-parallelism` CLI flags.**
+- **Step B2 writing-plans brief paragraph** — guidance for the planner on emitting `parallel-group:` annotations.
+- **README `## Codex integration` section** (~490 words). Covers why/how/defaults/install/disable/cross-references.
+- **`CLAUDE.md` at repo root** (~620 words) — always-loaded project orientation for Claude Code sessions in this repo. Top anti-patterns, operating principles, doc index.
+- **`docs/internals.md`** (~8000 words, 15 sections) — comprehensive deep-dive for future LLM contributors: architecture, dispatch model, status format, CD rules, operational rules, wave dispatch + failure-mode catalog FM-1 to FM-6, Codex integration, telemetry, doctor checks, verb routing, design history, common dev recipes, anti-patterns, cross-references.
+
+### Changed
+- **`codex.review` default flipped: `off` → `on`.** Behavior change. Users who don't want Codex to review every inline-completed task should set `codex.review: off` in `.masterplan.yaml` or pass `--no-codex-review`. (Auto-degrades to `off` when codex plugin not installed — no impact on users without Codex.)
+- **Step C step 1 eligibility cache schema extended** with `parallel_group`, `files`, `parallel_eligible`, `parallel_eligibility_reason` (all optional; backward-compatible with pre-v2.0.0 cache files which load with `parallel_eligible: false`).
+- **Step D parallelization brief: `each agent runs all 14 checks` → `each agent runs all 18 checks`.**
+- **`docs/design/intra-plan-parallelism.md` rewritten** — replaces v0.1 brief notes with v2.0.0 status doc (what ships in Slice α, what's deferred, sharpened revisit trigger, failure-mode catalog summary, original v0.1 notes preserved as historical context).
+- **`docs/design/telemetry-signals.md`** — documents the two new fields with first-turn caveat; adds "Average tasks-per-wave-turn" jq example.
+- **README** — Plan annotations table adds `parallel-group:` + `non-committing:` rows; Useful flag combinations adds `--no-parallelism` row; "Path to v1.0.0" → "Path to v2.0.0" with new entry; Project status bumped; Useful flag combinations row for default invocation updated to mention `codex.review: on` v2.0.0 default + graceful-degrade.
+
+### Removed
+- **5 pre-v1.1.0 spec/plan files** pruned: `docs/superpowers/specs/2026-05-01-superflow-small-fixes-design.md`, `docs/superpowers/specs/2026-05-02-superflow-subcommands-design.md`, `docs/superpowers/plans/2026-05-01-superflow-small-fixes.md`, `docs/superpowers/plans/2026-05-01-superflow-small-fixes-status.md`, `docs/superpowers/plans/2026-05-02-superflow-subcommands.md`. Knowledge migrated to `docs/internals.md` §12 (Design decisions).
+- **Pre-v2.0.0 WORKLOG entries** trimmed (v0.2.0, v0.3.0, v0.4.0, v1.0.0 audit-pass). Only the v2.0.0 entry remains. CHANGELOG retains the full release history.
+- **Backward-compat aliases for the rename** — explicitly NOT shipped. No `/superflow` alias to `/masterplan`. No `.superflow.yaml` dual-load fallback. Hard-cut per user instruction.
+
+### Migration notes
+
+**Required user steps for v1.0.0 → v2.0.0 upgrade:**
+
+1. **Uninstall the old plugin** if you installed `claude-superflow` via Option A (plugin marketplace): `/plugin uninstall claude-superflow`.
+2. **Install v2.0.0:** `/plugin marketplace add rasatpetabit/superpowers-masterplan` then `/plugin install superpowers-masterplan@rasatpetabit-superpowers-masterplan`. Or per Option B (manual): `git clone` the new repo and copy `commands/masterplan.md`, `skills/masterplan-detect/`, `hooks/masterplan-telemetry.sh` into your `~/.claude/`.
+3. **Rename your config file.** `mv .superflow.yaml .masterplan.yaml` (and similarly for `~/.superflow.yaml` if you had one). v2.0.0 only reads `.masterplan.yaml` — your old `.superflow.yaml` will be silently ignored.
+4. **Re-install the Stop hook** (if you opted into telemetry): `cp hooks/masterplan-telemetry.sh ~/.claude/hooks/`. Update your `~/.claude/settings.json` Stop hook command to point at the renamed path.
+5. **Existing in-flight plans keep working** — status file paths inside `docs/superpowers/plans/` are unchanged; the orchestrator just lives at a different install path. Resume with `/masterplan execute <status-path>`.
+6. **Eligibility cache files** (`<slug>-eligibility-cache.json`) created pre-v2.0.0 are valid — load with `parallel_eligible: false` for every task. Cache rebuild fires on plan.md mtime change as today.
+7. **`codex.review` is now on by default.** If you don't have the codex plugin installed, this auto-degrades silently with a one-line warning at Step 0. If you have codex installed but DON'T want auto-review, set `codex.review: off` in `.masterplan.yaml`.
+8. **`/superflow` slash command no longer works.** Use `/masterplan`. No backward-compat alias.
+
+**No status-file schema changes** beyond the optional new eligibility cache fields. Existing status files load unchanged.
+
+---
 
 ## [1.0.0] — 2026-05-03
 
