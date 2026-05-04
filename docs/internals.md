@@ -267,7 +267,7 @@ These rules govern behavior throughout every Step. They mirror the user's global
 | **CD-9** | **Concrete-options questions.** `AskUserQuestion` with 2–4 concrete options; recommended option first marked `(Recommended)`. Avoid free-text "let me know how you want to proceed." | Sessions can compact between turns; free-text questions become dead ends. Concrete options are decidable. |
 | **CD-10** | **Severity-first review shape.** Lead with findings ordered by severity, grounded in `file_path:line_number`. Keep summaries short. | Reviewers parse severity tags faster than prose; line citations enable jump-to-source. |
 
-**Anti-pattern to watch for:** Long prose justifications inside the orchestrator that re-explain why CD-N matters. The canonical CD definitions block in `commands/masterplan.md` is the single source; cite by ID elsewhere. The v0.2.0 audit trimmed ~10 inline restatements for ~690 tokens saved per `/loop` wakeup.
+**Anti-pattern to watch for:** Long prose justifications inside the orchestrator that re-explain why CD-N matters. The canonical CD definitions block in `commands/masterplan.md` is the single source; cite by ID elsewhere. An earlier audit trimmed ~10 inline restatements for ~690 tokens saved per `/loop` wakeup.
 
 ---
 
@@ -487,7 +487,7 @@ Use the result to evaluate whether parallel-group annotations are being authored
 |---|---|---|---|---|
 | 1 | Orphan plan — plan file with no sibling `-status.md` | Warning | Suggest `/masterplan import --file=<path>` | Pre-status-file plans from earlier versions; surface for migration |
 | 2 | Orphan status — `status.md` whose `plan` field points at missing file | Error | Move to archive | Status without plan is unrecoverable; needs cleanup |
-| 3 | Wrong worktree path — status's `worktree` doesn't match `git worktree list` | Error | Try match by branch; rewrite if unique | Worktree was removed/renamed; resume would fail |
+| 3 | Wrong worktree path — status's `worktree` doesn't match `git worktree list` | Error | Try match by branch; rewrite if unique | Worktree was removed/relocated; resume would fail |
 | 4 | Wrong branch — status's `branch` doesn't exist | Error | Report only | Branch was deleted; manual recovery needed |
 | 5 | Stale in-progress — `last_activity` > 30 days | Warning | Report only | Long-stale plans likely abandoned; surface for triage |
 | 6 | Stale blocked — `last_activity` > 14 days while `status: blocked` | Warning | Report only | Blocker not being addressed; surface |
@@ -573,7 +573,7 @@ Brainstorming, planning, execution all live in `obra/superpowers`. /masterplan s
 - Smaller surface to maintain (one orchestrator prompt).
 - No re-implementation drift risk.
 
-Cost: dependencies on superpowers skills (their evolution can break /masterplan in subtle ways). Mitigation: pre-empt upstream skill prompts via `AskUserQuestion` so silent-stop bugs don't propagate (per the v0.2.1/v0.2.2 audit pass that closed five such gates).
+Cost: dependencies on superpowers skills (their evolution can break /masterplan in subtle ways). Mitigation: pre-empt upstream skill prompts via `AskUserQuestion` so silent-stop bugs don't propagate (per the audit pass that closed five such gates).
 
 ### Why subagent-driven by default
 
@@ -589,19 +589,19 @@ Conversation context evaporates between sessions, especially after compaction. A
 
 Original gate had 5 options, violating CD-9's 2–4 cap. Audit dropped option 3 ("Break this task into smaller pieces") because it overlapped semantically with option 1 ("Provide context and re-dispatch"). Option 5 (the legacy `status: blocked` end-turn) is preserved — resume-from-blocker depends on it being the only path to that state.
 
-### Why explicit phase verbs (v0.3.0)
+### Why explicit phase verbs
 
 Original kickoff was all-or-nothing — the bare topic catch-all triggered full B0→B1→B2→B3→C. Adding `brainstorm` / `plan` / `execute` as first-token verbs makes pipeline phases addressable. `halt_mode` state machine cleanly handles "stop after spec" / "stop after plan" without per-step boolean flags.
 
-### Why Codex defaults flipped to on (v2.0.0)
+### Why Codex defaults flipped to on
 
-Pre-v2.0.0 default: `codex.review: off`. Most users who installed Codex wanted adversarial review by default but had to explicitly enable it. v2.0.0 flips both `codex.routing: auto` and `codex.review: on`. Graceful degrade on missing-codex makes this safe (one-line warning, run continues).
+Earlier default: `codex.review: off`. Most users who installed Codex wanted adversarial review by default but had to explicitly enable it. v2.0.0 flips both `codex.routing: auto` and `codex.review: on`. Graceful degrade on missing-codex makes this safe (one-line warning, run continues).
 
-### Why hard-cut renames (v2.0.0)
+### Why hard-cut name changes
 
-The user's standing rule: no backward-compat shims when renaming. Hard-cut at the major version bump. Communicate via CHANGELOG migration notes; users rename their `.masterplan.yaml` config file themselves. Permanent maintenance burden of dual-load fallback > migration cost users pay once.
+The user's standing rule: no backward-compat shims when changing names. Hard-cut at the major version bump. Communicate via CHANGELOG migration notes; users update their config files themselves. Permanent maintenance burden of dual-load fallback > migration cost users pay once.
 
-### Why intra-plan parallelism Slice α first (v2.0.0)
+### Why intra-plan parallelism Slice α first
 
 Three slices were considered:
 - **Slice α — read-only parallel waves only.** ~5-7 days. Sidesteps git-index race. Ships supporting infrastructure (single-writer funnel, scope-snapshot, files-filter) reusable for β/γ.
@@ -731,7 +731,7 @@ The halt_mode flow is the highest-risk surface (tendrils across B1/B2/B3/C/P).
 
 `CHANGELOG.md` follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Section headings: Added / Changed / Deprecated / Removed / Fixed / Security. Subsections like `### Notes` or `### Migration notes` are accepted but don't claim Keep-a-Changelog conformance for them.
 
-For a major release (rename / breaking change / version 2.0.0+), include explicit `### Migration notes` enumerating user-facing changes that require action.
+For a major release (breaking change / version 2.0.0+), include explicit `### Migration notes` enumerating user-facing changes that require action.
 
 ---
 
@@ -743,7 +743,7 @@ For a major release (rename / breaking change / version 2.0.0+), include explici
 - **Holding raw subagent output in the orchestrator's context.** Always digest. The dispatch model exists precisely so the orchestrator stays small.
 - **Ending a turn with a free-text prose question.** Sessions can compact; free-text becomes a dead end. Use `AskUserQuestion` with 2–4 concrete options (CD-9).
 - **Editing the orchestrator without re-running the halt_mode discriminator suite.** The flow has tendrils across B1/B2/B3/C/P. Drift here is hard to spot without targeted grep.
-- **Adding backward-compat shims when renaming.** Hard-cut renames; CHANGELOG migration notes are the migration path.
+- **Adding backward-compat shims for breaking name changes.** Hard-cut; CHANGELOG migration notes are the migration path.
 
 ### Codex anti-patterns
 
@@ -767,7 +767,7 @@ For a major release (rename / breaking change / version 2.0.0+), include explici
 ### Verification anti-patterns
 
 - **Claiming "should work" without running the verification commands.** CD-3 violation. Cite real output.
-- **Re-running the implementer's tests in Step 4a.** v0.2.0 fixed this — trust the implementer's `tests_passed` + `commands_run` digest. Run only complementary verifiers.
+- **Re-running the implementer's tests in Step 4a.** Trust the implementer's `tests_passed` + `commands_run` digest. Run only complementary verifiers.
 - **Running noisy commands directly in the orchestrator's context.** CC-2 violation. Route via Haiku subagent that returns pass/fail + ≤3 evidence lines.
 
 ### Edit anti-patterns
@@ -805,7 +805,7 @@ For a major release (rename / breaking change / version 2.0.0+), include explici
 ### When this doc gets out of date
 
 The most likely sources of staleness:
-- Verb routing table (Section 11) — when verbs are added/renamed, sync this with `commands/masterplan.md` Step 0.
+- Verb routing table (Section 11) — when verbs change, sync this with `commands/masterplan.md` Step 0.
 - Doctor checks table (Section 10) — when checks are added, append a row + update the count.
 - Failure-mode catalog (Section 7) — when v2.0.x discovers new failure modes, append (don't renumber existing FMs).
 - CD rules (Section 5) — rare but possible. CD definitions live in `commands/masterplan.md`; this doc reflects them.
