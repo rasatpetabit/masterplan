@@ -98,6 +98,38 @@ fi
 # Lands at <plans_dir>/<slug>-telemetry.jsonl (sibling to the status file).
 out_file="${plans_dir}/${slug}-telemetry.jsonl"
 
+# tasks_completed_this_turn (v2.0.0+) — delta of activity_log_entries between
+# this and the previous Stop record. First-turn caveat: when no previous record
+# exists, reports 0 (no baseline to subtract; first-record telemetry can't
+# distinguish "this turn's work" from "all entries accumulated pre-telemetry").
+# Activity log rotation can decrement; clamp negatives to 0.
+if [[ -f "$out_file" ]]; then
+  prev_entries=$(tail -n1 "$out_file" 2>/dev/null | jq -r '.activity_log_entries // 0' 2>/dev/null || echo 0)
+  tasks_completed_this_turn=$(( activity_log_entries - prev_entries ))
+  [[ $tasks_completed_this_turn -lt 0 ]] && tasks_completed_this_turn=0
+else
+  tasks_completed_this_turn=0
+fi
+
+# wave_groups (v2.0.0+) — array of distinct [wave: <group>] tags from the last
+# tasks_completed_this_turn activity-log entries. Empty for serial-only turns.
+# Extracted via awk + grep (portable; gawk's match()-with-array is not available
+# under mawk / BSD awk).
+if [[ $tasks_completed_this_turn -gt 0 ]]; then
+  wave_groups_raw=$(awk '/^## Activity log/{in_log=1; next} /^## /{in_log=0} in_log && /^- /{print}' "$status_file" 2>/dev/null \
+    | tail -n "$tasks_completed_this_turn" \
+    | grep -oE '\[wave: [^]]+\]' \
+    | sed -E 's|\[wave: (.*)\]|\1|' \
+    | sort -u)
+  if [[ -n "$wave_groups_raw" ]]; then
+    wave_groups_json=$(echo "$wave_groups_raw" | jq -R . | jq -sc .)
+  else
+    wave_groups_json="[]"
+  fi
+else
+  wave_groups_json="[]"
+fi
+
 jq -nc \
   --arg ts "$ts" \
   --arg plan "$slug" \
@@ -107,8 +139,10 @@ jq -nc \
   --argjson transcript_lines "${transcript_lines:-0}" \
   --argjson status_bytes "${status_bytes:-0}" \
   --argjson activity_log_entries "${activity_log_entries:-0}" \
+  --argjson tasks_completed_this_turn "${tasks_completed_this_turn:-0}" \
+  --argjson wave_groups "${wave_groups_json}" \
   --argjson wakeup_count_24h "${wakeup_count_24h:-0}" \
-  '{ts:$ts,plan:$plan,turn_kind:"stop",transcript_bytes:$transcript_bytes,transcript_lines:$transcript_lines,status_bytes:$status_bytes,activity_log_entries:$activity_log_entries,wakeup_count_24h:$wakeup_count_24h,branch:$branch,cwd:$cwd}' \
+  '{ts:$ts,plan:$plan,turn_kind:"stop",transcript_bytes:$transcript_bytes,transcript_lines:$transcript_lines,status_bytes:$status_bytes,activity_log_entries:$activity_log_entries,wakeup_count_24h:$wakeup_count_24h,tasks_completed_this_turn:$tasks_completed_this_turn,wave_groups:$wave_groups,branch:$branch,cwd:$cwd}' \
   >> "$out_file" 2>/dev/null
 
 exit 0
