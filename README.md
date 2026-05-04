@@ -410,9 +410,8 @@ parallelism:                             # v2.0.0+
   max_wave_size: 5                       # cap on concurrent Agent dispatches per wave
   abort_wave_on_protocol_violation: true # suppress 4d batch on any protocol_violation
 
-autonomy:                                # v2.1.0+
-  gated_switch_offer_at_tasks: 15        # under gated, offer switch to loose when plan task count ≥ this
-                                         # set to 0 to disable the offer entirely
+gated_switch_offer_at_tasks: 15          # v2.1.0+: under autonomy=gated, offer switch to loose
+                                         # when plan task count ≥ this. Set to 0 to disable the offer.
 
 auto_compact:
   enabled: true                          # nudge user to /loop /compact in a sibling session
@@ -550,6 +549,8 @@ codex_routing: auto
 codex_review: on
 compact_loop_recommended: true
 # Optional: telemetry: off  # silences per-plan telemetry capture
+# Optional v2.1.0+: gated_switch_offer_dismissed: true  # permanent per-plan suppression of gated→loose offer
+# Optional v2.1.0+: gated_switch_offer_shown: true      # per-session suppression (re-fires on cross-session resume)
 ---
 
 # Auth Refactor — Status

@@ -205,6 +205,8 @@ codex_routing: off | auto | manual
 codex_review: off | on
 compact_loop_recommended: true | false
 # Optional: telemetry: off  # silences per-plan telemetry capture
+# Optional v2.1.0+: gated_switch_offer_dismissed: true  # permanent per-plan suppression of gated→loose offer (Step C step 1)
+# Optional v2.1.0+: gated_switch_offer_shown: true      # per-session suppression of gated→loose offer (re-fires on cross-session resume)
 ---
 
 # <Feature Name> — Status

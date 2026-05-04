@@ -450,6 +450,34 @@ Triggered by `/masterplan plan` with no topic and no `--from-spec=`. Picks an ex
    **CC-1 dismissal scan.** Scan `## Notes` for `compact_suggest: off`. If present, set `cc1_silenced: true` in orchestrator memory for this run. CC-1 (operational rules) honors this flag.
 
    **Telemetry inline snapshot.** If `config.telemetry.enabled` and the status file's frontmatter does NOT include `telemetry: off`, append one JSONL record (kind=`step_c_entry`) to `<plan-without-suffix>-telemetry.jsonl` (sibling to status file). Fields per the format defined in `docs/design/telemetry-signals.md`. Cheap (one append). Provides cross-session datapoints for installs without the Stop hook.
+
+   **Gated→loose switch offer (v2.1.0+).** When `autonomy == gated` AND `config.gated_switch_offer_at_tasks > 0`, check whether to offer the user a one-time switch to `--autonomy=loose` for the remainder of this plan. Skip conditions (any one suppresses the offer):
+
+   - Status frontmatter has `gated_switch_offer_dismissed: true` (per-plan permanent dismissal — set when user picks "Stay on gated AND don't ask again on this plan").
+   - Status frontmatter has `gated_switch_offer_shown: true` (per-session suppression — set when user picks "Stay on gated").
+   - Plan's task count < `config.gated_switch_offer_at_tasks` (default 15).
+
+   Otherwise, surface:
+
+   ```
+   AskUserQuestion(
+     question="This plan has <N> tasks under --autonomy=gated. Each task fires a continue/skip/stop gate. Switch to --autonomy=loose for the remainder?",
+     options=[
+       "Switch to --autonomy=loose (CD-4 ladder + blocker re-engagement gate handle surprises) (Recommended for trusted plans)",
+       "Stay on gated — I want to review each task",
+       "Switch to loose AND don't ask again on any plan",
+       "Stay on gated AND don't ask again on this plan"
+     ]
+   )
+   ```
+
+   On each option:
+   - **"Switch to --autonomy=loose"** → flip in-session `autonomy` to `loose`; persist to status frontmatter's `autonomy:` field; append `## Notes` entry: *"Switched from gated to loose at <ISO ts> (plan has <N> tasks; user accepted gated→loose offer)."* Continue Step C step 1.
+   - **"Stay on gated"** → set `gated_switch_offer_shown: true` in status frontmatter (suppresses the offer for this session; re-fires on cross-session resume by design — gives the user another chance after a break). Continue.
+   - **"Switch to loose AND don't ask again on any plan"** → flip autonomy to loose AND append `## Notes` entry: *"User opted out of gated→loose offer on all plans. Add `gated_switch_offer_at_tasks: 0` to your `~/.masterplan.yaml` to suppress permanently."* The orchestrator does NOT modify the user's config file (CD-2 — config files are user-owned). Continue.
+   - **"Stay on gated AND don't ask again on this plan"** → set `gated_switch_offer_dismissed: true` in status frontmatter (permanent for this plan). Continue.
+
+   Activity log records which option was picked: `gated→loose offer: <picked option>`.
 **Wave assembly pre-pass (Slice α v2.0.0+).** Before invoking the per-task implementer, scan the upcoming task list against the eligibility cache for parallel-eligible tasks (`parallel_eligible == true`).
 
 1. Read upcoming task pointer from status file (`current_task` + plan task list).
@@ -993,6 +1021,8 @@ codex_routing: off | auto | manual
 codex_review: off | on
 compact_loop_recommended: true | false
 # Optional: telemetry: off  # silences per-plan telemetry capture
+# Optional v2.1.0+: gated_switch_offer_dismissed: true  # permanent per-plan suppression of gated→loose offer
+# Optional v2.1.0+: gated_switch_offer_shown: true      # per-session suppression (re-fires on cross-session resume)
 ---
 
 # <Feature Name> — Status
@@ -1058,6 +1088,15 @@ Step 0 loads + merges these into a single `config` object referenced throughout 
 ```yaml
 # Default execution autonomy
 autonomy: gated  # gated | loose | full
+
+# Gated→loose switch offer (v2.1.0+). Under autonomy=gated, surface a one-time
+# AskUserQuestion offering to switch to loose for the remainder of the plan when
+# the plan's task count is at least this threshold. Set to 0 to disable the
+# offer entirely. Per-plan dismissal via `gated_switch_offer_dismissed: true`
+# in status frontmatter. Per-session suppression via `gated_switch_offer_shown:
+# true` in status frontmatter (re-fires across cross-session wakeups by default;
+# set the dismissed field to suppress permanently for a plan).
+gated_switch_offer_at_tasks: 15
 
 # Cross-session loop scheduling (Step C)
 loop_enabled: true
