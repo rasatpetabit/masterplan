@@ -515,8 +515,8 @@ Use the result to evaluate whether parallel-group annotations are being authored
 | First token | Branch | `halt_mode` |
 |---|---|---|
 | _(empty)_ | Step A — list+pick across worktrees | `none` |
-| `new` (no topic) | Prompt for topic, then Step B — full kickoff | `none` |
-| `new <topic>` | Step B — full kickoff (B0→B1→B2→B3→C) | `none` |
+| `full` (no topic) | Prompt for topic, then Step B — full kickoff | `none` |
+| `full <topic>` | Step B — full kickoff (B0→B1→B2→B3→C) | `none` |
 | `brainstorm` (no topic) | Prompt for topic, then Step B0+B1; halt at B1 | `post-brainstorm` |
 | `brainstorm <topic>` | Step B0+B1; halt at B1 | `post-brainstorm` |
 | `plan` (no args) | Step P — pick spec-without-plan; treat as `plan --from-spec=<picked>` | `post-plan` |
@@ -533,7 +533,7 @@ Use the result to evaluate whether parallel-group annotations are being authored
 
 ### Verb tokens are reserved
 
-Topics literally named `new`, `brainstorm`, `plan`, `execute`, `retro`, `import`, `doctor`, `status` need a leading word (e.g., `/masterplan add brainstorm session timer`).
+Topics literally named `full`, `brainstorm`, `plan`, `execute`, `retro`, `import`, `doctor`, `status` need a leading word (e.g., `/masterplan add brainstorm session timer`).
 
 ### `halt_mode` state machine
 
