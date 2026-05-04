@@ -6,7 +6,7 @@
 
 **Implementation reference:** [`docs/internals.md`](../internals.md) §7 (Wave dispatch + failure-mode catalog) for the always-loaded-after-CLAUDE.md deep-dive.
 
-## What ships in Slice α (v2.0.0)
+## What ships in Slice α
 
 Read-only parallel waves only — verification, inference, lint, type-check, doc-generation tasks declared via `parallel-group:` annotations dispatch as concurrent waves in Step C step 2. Implementation tasks (anything that commits) remain serial under the existing per-task Step C loop.
 
@@ -23,7 +23,7 @@ The choice between Slice β and Slice γ at next revisit is a function of how of
 
 ## Sharpened revisit trigger
 
-The original v0.1 trigger was *"real plans show parallel-friendly task patterns and the latency cost becomes felt"* — unmeasurable. The v2.0.0 sharpened trigger:
+An earlier trigger was *"real plans show parallel-friendly task patterns and the latency cost becomes felt"* — unmeasurable. The v2.0.0 sharpened trigger:
 
 > **Revisit Slice β** when a real `/masterplan` plan shows ≥3 parallel-grouped committing tasks where the wave's serial wall-clock cost exceeds 10 minutes AND the committed work is independent enough for the Slice α `**Files:**` exhaustive-scope rule to apply.
 >
@@ -42,9 +42,9 @@ The full catalog with worked examples lives in the spec. Brief summary of the si
 - **FM-5: Worktree integrity check ambiguity** — addressed by M-3 (files-filter union under wave).
 - **FM-6: SDD is structurally serial** — addressed for read-only work by M-4a (SDD wrapper). Committing work is the deferred concern; per-task worktree subsystem (Slice γ) is the cheapest mitigation.
 
-## Original v0.1 notes (preserved as historical context)
+## Earlier deferred-design notes (superseded)
 
-The original `Future: intra-plan task parallelism (design notes)` lived inline in `commands/masterplan.md` until v0.2.0, was relocated here, and held through v1.0.0. The original four sections — annotation schema, required machinery, why deferred, when to revisit — have been superseded by the v1.0.0-era catalog and the Slice α spec. Their substance is captured in:
+Prior to v1.0.0, this work was repeatedly deferred. Earlier notes sketched annotation schema, required machinery, why deferred, and when to revisit — all superseded by the v1.0.0-era catalog and the Slice α spec. Their substance is captured in:
 
 - `parallel-group:`, `**Files:**`-as-exhaustive-scope, optional `**non-committing:**` annotations (Slice α spec §2)
 - per-task git worktree isolation (deferred to Slice γ; documented as cheapest committing-work mitigation)
@@ -52,4 +52,4 @@ The original `Future: intra-plan task parallelism (design notes)` lived inline i
 - per-task verification with rollback policy (now Slice α failure handling, partial scope)
 - the original "when to revisit" trigger is sharpened and measurable in this doc (above)
 
-The deferral history (v0.1 → v0.2 → v0.3 → v0.4 → v1.0.0) ended in v2.0.0 with the Slice α release. Future deferrals (Slice β/γ) are tracked via the sharpened trigger above and the v2.0.x doctor check candidate.
+The pre-v1.0.0 deferral chain ended in v2.0.0 with the Slice α release. Future deferrals (Slice β/γ) are tracked via the sharpened trigger above and the v2.0.x doctor check candidate.

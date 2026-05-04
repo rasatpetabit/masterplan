@@ -4,13 +4,13 @@
 **Date:** 2026-05-03
 **Status:** brainstorm complete; ready for plan
 **Targets:** /masterplan v1.1.0
-**Supersedes:** `docs/design/intra-plan-parallelism.md` (deferred-design notes from v0.1, retained as historical context; updated alongside v1.1.0 to reference this spec).
+**Supersedes:** `docs/design/intra-plan-parallelism.md` (earlier deferred-design notes, retained as historical context).
 
 ---
 
 ## Background
 
-Intra-plan task parallelism has been a deferred design item across v0.1 → v0.2 → v0.3 → v0.4 → v1.0.0. The original notes (`docs/design/intra-plan-parallelism.md`) sketched annotation schema (`parallel-group:`, `depends-on:`, `files:`), required machinery (per-task git worktree isolation, single-writer status file, per-task verification with rollback policy), and deferred the work because "the per-task worktree subsystem is a meaningful undertaking and warrants its own dedicated plan."
+Intra-plan task parallelism was deferred prior to v1.0.0. Earlier notes (`docs/design/intra-plan-parallelism.md`) sketched annotation schema (`parallel-group:`, `depends-on:`, `files:`), required machinery (per-task git worktree isolation, single-writer status file, per-task verification with rollback policy), and deferred the work because "the per-task worktree subsystem is a meaningful undertaking and warrants its own dedicated plan."
 
 This spec is the result of a fresh-eyes re-evaluation triggered by `/masterplan revisit intra-plan task parallelism` immediately after the v1.0.0 stable public release. The brainstorm catalogued six v1.0.0-era failure modes (FM-1 through FM-6 below), did a depth-pass on candidate mitigations, and concluded that a substantially smaller slice — **read-only parallel waves only** — is shippable in days, ships value, and lands the supporting infrastructure that a future Slice β (parallel committing tasks) or Slice γ (full per-task worktree subsystem) can build on additively.
 
@@ -26,7 +26,7 @@ Six failure modes for parallel task execution under the v1.0.0 architecture. Sli
 
 A wave member edits `plan.md` mid-wave (e.g., adding a `**Codex:** ok` annotation to a sibling task). Step C step 1's `cache.mtime > plan.mtime` invariant is violated. Sibling tasks already in flight made routing decisions based on a now-stale cache.
 
-**Old-design impact:** Not in prior notes — the eligibility cache didn't exist (landed v0.2.0).
+**Old-design impact:** Not in prior notes — the eligibility cache didn't exist at the time.
 
 **Slice α mitigation (M-2 + CD-2 scope rule):** Snapshot the eligibility cache at wave-start; pin it for the wave's duration; declare in-wave plan edits out-of-scope (CD-2: implementer subagents in a parallel wave may not modify `plan.md`, status file, or eligibility cache).
 
@@ -34,7 +34,7 @@ A wave member edits `plan.md` mid-wave (e.g., adding a `**Codex:** ok` annotatio
 
 A wave produces N concurrent appends to `## Activity log`. If `len(active_log) + N > 100`, the rotation step (move all but most recent 50 to `<slug>-status-archive.md`, insert marker) is non-atomic. Concurrent writes can lose or duplicate entries.
 
-**Old-design impact:** Rotation didn't exist when prior notes were written (added v0.2.0). The "single-writer status file" requirement covered the family but didn't name this operation.
+**Old-design impact:** Rotation didn't exist when prior notes were written. The "single-writer status file" requirement covered the family but didn't name this operation.
 
 **Slice α mitigation (M-1 single-writer funnel):** Wave members return digests; do not write to status file directly. Orchestrator collects digests at wave-end and applies one batched update. Rotation fires once at end-of-batch (wave-aware), not mid-wave.
 
