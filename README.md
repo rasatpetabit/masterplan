@@ -85,6 +85,65 @@ The status file holds worktree path + branch (resume relocates if needed), curre
 
 If you can answer "where did this work get to and what's next?" by reading the status file alone, the design is working.
 
+## Codex integration
+
+`/masterplan` integrates with the optional [`codex`](https://github.com/obra/codex) plugin to make every plan a two-model collaboration. The integration is asymmetric and bounded: small well-defined coding tasks can delegate to Codex; inline (Sonnet/Claude) work can be cross-reviewed by Codex against the spec. Each model plays to its strengths — no overlap, no self-review.
+
+### Why use Codex with /masterplan
+
+Cross-model review catches blind spots that single-model review misses — Sonnet's preferred patterns and Codex's preferred patterns don't perfectly overlap. The asymmetry is deliberate: Codex never reviews its own diffs (no signal there), but it DOES review Sonnet/Claude inline work against the spec, and Sonnet reviews Codex output via the existing post-Codex `AskUserQuestion` gate. Codex is also a fast bounded executor for tasks tagged ≤3 files, unambiguous, with known verification commands and no design judgment — exactly the work that Sonnet finds tedious.
+
+### Defaults in v2.0.0
+
+```yaml
+codex:
+  routing: auto    # eligible tasks auto-delegate to Codex
+  review:  on      # every inline-completed task gets reviewed by Codex against the spec
+```
+
+Both default-on. If the codex plugin isn't installed, `/masterplan` detects this at Step 0 and auto-degrades both to `off` for the run with a one-line warning. **Persisted config is unchanged** — re-installing codex restores configured behavior. Doctor check #18 surfaces the persistent misconfiguration as a Warning during lint.
+
+### How it works
+
+1. **Eligibility cache (Step C step 1).** A Haiku scans the plan and computes per-task routing eligibility against a checklist (≤3 files, unambiguous task description, known verification, no scope-out, no `**Codex:** no` annotation). Caches to `<slug>-eligibility-cache.json`.
+2. **Per-task routing (Step C 3a).** Under `auto`: eligible tasks dispatch via `codex:codex-rescue` (EXEC mode); ineligible run inline. Under `manual`: ask the user per task. Under `off`: never delegate.
+3. **Codex review (Step C 4b).** When `review: on`, after a task completes inline, Codex reviews the diff `<task_start_sha>..HEAD` against the spec excerpt. Severity-bucketed findings (high/medium/low). Auto-accept under `gated` autonomy below severity `medium` (configurable via `codex.review_prompt_at`); higher severity prompts.
+4. **Plan annotations override the heuristic.** A planner can mark a task `**Codex:** ok` to force eligible (delegate even if heuristic rejects), or `**Codex:** no` to force ineligible. See [Plan annotations](#plan-annotations).
+
+### Install Codex
+
+In a Claude Code session:
+
+```
+/plugin marketplace add obra/codex
+/plugin install codex@obra-codex
+/reload-plugins
+```
+
+Verify: `/plugin` should list `codex` under **Installed**. Re-invoke `/masterplan` — Step 0's availability check now passes; routing + review fire per config.
+
+### Disabling Codex
+
+Per-run override:
+- `--no-codex` (or `--codex=off`)
+- `--no-codex-review` (or `--codex-review=off`)
+
+Persistent override in `.masterplan.yaml`:
+```yaml
+codex:
+  routing: off
+  review:  off
+```
+
+> Note: `.superflow.yaml` from v1.x is **NOT** read by v2.0.0 — rename it to `.masterplan.yaml`. (Hard-cut rename per v2.0.0; no backward-compat shim.)
+
+### Cross-references
+
+- [Configuration](#configuration) — full `codex:` config block schema with all keys
+- [Useful flag combinations](#useful-flag-combinations) — `--codex=` / `--codex-review=` patterns for common workflows
+- [Plan annotations](#plan-annotations) — `**Codex:** ok|no` per-task override syntax
+- [`docs/internals.md`](./docs/internals.md) §Codex integration — implementation deep-dive (eligibility cache schema, dispatch model, asymmetric-review rationale)
+
 ## Install
 
 ### Option A — Claude Code plugin marketplace (recommended)
