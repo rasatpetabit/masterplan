@@ -416,13 +416,28 @@ Triggered by `/masterplan plan` with no topic and no `--from-spec=`. Picks an ex
      "plan_mtime_at_compute": "2026-05-01T14:32:00Z",
      "generated_at": "2026-05-01T14:32:01Z",
      "tasks": [
-       {"idx": 1, "name": "...", "eligible": true,  "reason": "...", "annotated": null},
-       {"idx": 2, "name": "...", "eligible": false, "reason": "...", "annotated": "no"}
+       {"idx": 1, "name": "...", "eligible": true,  "reason": "...", "annotated": null,
+        "parallel_group": null, "files": [], "parallel_eligible": false, "parallel_eligibility_reason": "no parallel-group annotation"},
+       {"idx": 2, "name": "...", "eligible": false, "reason": "...", "annotated": "no",
+        "parallel_group": "verification", "files": ["src/auth/*.py"], "parallel_eligible": true, "parallel_eligibility_reason": "all rules satisfied"}
      ]
    }
    ```
 
-   **Bounded brief for the Haiku** (when dispatched): Goal=apply the Step C 3a checklist to each task and emit `{task_idx → {eligible: bool, reason: str, annotated: "ok"|"no"|null}}`. Inputs=full plan task list + plan annotations (per the `**Codex:**` syntax — see Step C 3a). Scope=read-only. Return=JSON only — no narration.
+   *Cache files lacking `parallel_group` / `files` / `parallel_eligible` / `parallel_eligibility_reason` (pre-v2.0.0 caches) are valid; load with `parallel_eligible: false` for every task. Cache rebuild fires on plan.md mtime change as today.*
+
+   **Bounded brief for the Haiku** (when dispatched): Goal=apply the Step C 3a Codex eligibility checklist AND the parallel-eligibility rules below to each task; emit `{task_idx → {eligible, reason, annotated, parallel_group, files, parallel_eligible, parallel_eligibility_reason}}`. Inputs=full plan task list + plan annotations (`**Codex:**`, `**parallel-group:**`, `**Files:**` blocks, optional `**non-committing:**` override). Scope=read-only. Return=JSON only — no narration.
+
+   **Parallel-eligibility rules** (apply per task; record `parallel_eligible: true` only when ALL hold):
+   1. `**parallel-group:** <name>` annotation is set.
+   2. `**Files:**` block is present and non-empty.
+   3. Task is non-committing — declared scope is read-only OR write-to-gitignored-paths only (`coverage/`, `.tsbuildinfo`, `dist/`, `build/`, `target/`, `out/`, `.next/`, `.nuxt/`, `node_modules/`, generated/codegen output dirs). Heuristic: no Create/Modify paths under tracked dirs. Edge case: explicit `**non-committing: true**` annotation overrides.
+   4. `**Codex:**` is NOT `ok` (FM-4 mitigation — Codex-routed tasks fall out of waves).
+   5. No file-path overlap with any other task in the same `parallel-group:`. Cache-build-time check across the parallel-group cohort.
+
+   When a rule fails, set `parallel_eligible: false` and `parallel_eligibility_reason` to a one-line explanation citing the failing rule. Overlap (rule 5) emits the involved task indices in the reason.
+
+   **Cache pin during parallel waves (M-2 mitigation, Slice α v2.0.0+).** Maintain an in-memory `cache_pinned_for_wave: bool` flag (default `false`). Set to `true` at the START of a parallel wave dispatch (Step C step 2 wave-mode entry). When `cache_pinned_for_wave == true`, the `cache.mtime > plan.mtime` invariant is suppressed — the loaded cache is reused for the wave's duration regardless of plan.md edits. Wave-end clears the pin (sets to `false`) and re-evaluates the invariant; cache rebuild fires if the user (not an implementer) edited plan.md mid-wave. Wave members are forbidden from editing plan.md per the in-wave scope rule in **Operational rules**.
 
    **Why persist:** the cache is a pure function of plan-file content. Recomputing on every wakeup (~10 wakeups for a 30-task plan under `loose`) burns Haiku calls for no signal change. Disk persistence with mtime invalidation costs one stat per Step C entry.
 
@@ -1079,5 +1094,6 @@ These are command-specific rules covering cross-cutting policy not stated inline
 - **Git state cache excludes `git status --porcelain`.** Step 0's `git_state` cache holds `worktrees` and `branches` only. Dirty state must always be live (CD-2). Invalidate worktrees after `git worktree add/remove`; invalidate branches after `git branch` create/delete.
 - **CC-1 — Compact-suggest on observable symptoms.** End-of-turn (before Step C step 5's wakeup scheduling), check whether any of these accumulated this session: (a) the in-session `file_cache` recorded ≥ 3 hits on the same path; (b) ≥ 3 consecutive tool failures on the same target; (c) activity log was rotated this session (>100 entries); (d) a subagent returned ≥ 5K characters that the orchestrator had to digest inline. On any trigger, surface a **non-blocking** one-line notice (not `AskUserQuestion`): `*(Context appears strained — symptom: <symptom>. Consider running /compact <config.auto_compact.focus> before next wakeup. To disable for this plan, append "compact_suggest: off" to the status file's ## Notes.)*`. Disable check: at Step C step 1, scan `## Notes` for `compact_suggest: off`; if present, CC-1 is silenced for this plan.
 - **CC-2 — Subagent-delegate triggers (concrete thresholds).** Make "Subagents do the work" enforceable: before issuing a Bash command expected to print > 100 lines, dispatch a Haiku subagent with a bounded brief and consume only its digest. Before reading a file > 300 lines as part of substantive work (orientation reads excepted), dispatch a Haiku to extract the relevant section. Self-check at Step C step 1: scan the upcoming task's verification commands; if any match a known-noisy list (`build`, `test --verbose`, `cargo build`, `npm run build`, full-tree `find`), route the verification through a subagent that returns only pass/fail + ≤ 3 evidence lines. Recursive: applies inside implementer subagents too.
+- **In-wave scope rule (Slice α v2.0.0+; FM-1 + FM-3 mitigation).** Wave members (implementer subagents dispatched as part of a parallel wave per Step C step 2) MUST NOT modify `plan.md`, the status file (`<slug>-status.md`), or the eligibility cache (`<slug>-eligibility-cache.json`). These files are orchestrator-canonical during a wave. Violating this constraint is a `protocol_violation` per Step C step 3's wave-mode failure handling — the orchestrator detects it post-barrier (via `git status --porcelain` + `git log <task_start_sha>..HEAD` per wave member) and reclassifies the wave member's outcome from `completed` to `protocol_violation`.
 
-Future-design notes (intra-plan task parallelism, etc.) live in `docs/design/`, not in this prompt — they're docs, not orchestration logic.
+Future-design notes for Slice β/γ (intra-plan task parallelism for committing work — per-task git worktree subsystem) live in `docs/design/intra-plan-parallelism.md`, not in this prompt — they're docs, not orchestration logic.
