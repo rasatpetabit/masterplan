@@ -446,7 +446,26 @@ Triggered by `/masterplan plan` with no topic and no `--from-spec=`. Picks an ex
    **CC-1 dismissal scan.** Scan `## Notes` for `compact_suggest: off`. If present, set `cc1_silenced: true` in orchestrator memory for this run. CC-1 (operational rules) honors this flag.
 
    **Telemetry inline snapshot.** If `config.telemetry.enabled` and the status file's frontmatter does NOT include `telemetry: off`, append one JSONL record (kind=`step_c_entry`) to `<plan-without-suffix>-telemetry.jsonl` (sibling to status file). Fields per the format defined in `docs/design/telemetry-signals.md`. Cheap (one append). Provides cross-session datapoints for installs without the Stop hook.
-2. If `--no-subagents` is set: invoke `superpowers:executing-plans`. Otherwise: invoke `superpowers:subagent-driven-development`. Hand the invoked skill the plan path and the current task index. Brief the implementer subagent with **CD-1, CD-2, CD-3, CD-6**.
+**Wave assembly pre-pass (Slice α v2.0.0+).** Before invoking the per-task implementer, scan the upcoming task list against the eligibility cache for parallel-eligible tasks (`parallel_eligible == true`).
+
+1. Read upcoming task pointer from status file (`current_task` + plan task list).
+2. Walk forward in plan-order from `current_task`. Collect contiguous tasks with the SAME `parallel_group` value into a wave candidate. Stop at the first task that has a different `parallel_group`, has no `parallel_group`, or has `parallel_eligible == false`.
+3. Wave size: ≥ 2 tasks, capped at `config.parallelism.max_wave_size` (default `5`). Tasks beyond cap roll into the next wave.
+4. Edge case: wave candidate of size 1 → execute serially (fall through to standard per-task dispatch).
+5. **Interleaved groups do not parallelize.** Plan-order is authoritative; the contiguous-walk rule produces multiple single-task wave candidates if parallel-grouped tasks are interleaved with serial tasks. Planner is responsible for ordering parallel-grouped tasks contiguously to enable wave dispatch.
+6. **If `config.parallelism.enabled == false`** (global kill switch from `--no-parallelism` flag or config), skip wave assembly entirely — fall through to the standard serial loop.
+
+**When a wave assembles** (≥ 2 tasks): set `cache_pinned_for_wave: true`. Dispatch all N implementer subagents as parallel `Agent` tool calls in a single assistant turn (existing pattern in Step I3.2/I3.4). Each instance gets the standard implementer brief PLUS three wave-specific clauses:
+
+> *"WAVE CONTEXT: You are dispatched as part of a parallel wave of N tasks (group: `<name>`). Your declared scope is `**Files:**` (exhaustive — do not read or modify anything outside this list, including plan.md, status file, sibling tasks' scopes, or the eligibility cache). Capture `git rev-parse HEAD` BEFORE any work; return as `task_start_sha` (required per existing implementer-return contract). DO NOT commit your work — return staged-changes digest only. DO NOT update the status file — orchestrator handles batched wave-end updates. Failure handling: if you BLOCK or NEEDS_CONTEXT, return immediately; orchestrator's blocker re-engagement gate handles you alongside the rest of the wave."*
+
+> *"Return shape: `{task_idx, status: completed|blocked, task_start_sha, files_changed: [paths], staged_changes_digest: 1-3 lines, tests_passed: bool, commands_run: [str], blocker_reason?: str}`. NO commits. NO status file writes. (The orchestrator's post-barrier reconciliation may reclassify `completed` to `protocol_violation` if it detects a commit, an out-of-scope write, or a status file modification.)"*
+
+**Wave-completion barrier.** Orchestrator waits for all N Agent calls to return before proceeding. Returns aggregate as a digest list. Wave-end clears `cache_pinned_for_wave` (sets to `false`).
+
+After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for the wave per the wave-mode notes in those sub-steps. Then Step C step 5's wakeup-scheduling threshold uses wave count, not task count (a wave-end counts as ONE completion regardless of N).
+
+2. If `--no-subagents` is set: invoke `superpowers:executing-plans`. Otherwise: invoke `superpowers:subagent-driven-development`. Hand the invoked skill the plan path and the current task index. Brief the implementer subagent with **CD-1, CD-2, CD-3, CD-6**. (Wave-mode tasks bypass this step's serial dispatch — they were already dispatched in the wave assembly pre-pass above.)
 3. Layer the autonomy policy on top of the invoked skill's per-task loop:
    - **`gated`** — before each task, call `AskUserQuestion(continue / skip-this-task / stop)`. Honor the answer. **Routing decisions made via the eligibility cache (under `codex_routing == auto`) are honored silently** — the per-task question is NOT expanded with a Codex-override option, since the user pre-configured auto-routing and the activity log records every decision post-hoc. Users who want the legacy expanded prompt set `codex.confirm_auto_routing: true` in `.masterplan.yaml`; in that case the question expands to `(continue inline / continue via Codex / skip / stop)`. Under `codex_routing == manual`, do NOT expand here — Step 3a's per-task `AskUserQuestion` already handles routing.
    - **`loose`** — run autonomously. On a blocker, **apply CD-4** first; only after two rungs have failed, surface the **blocker re-engagement gate** below before setting `status: blocked` and ending the turn. Cite the rungs tried in the `## Blockers` entry. Do NOT reschedule a wakeup.
@@ -469,6 +488,26 @@ Triggered by `/masterplan plan` with no topic and no `--from-spec=`. Picks an ex
    The first three options KEEP the plan moving (status stays `in-progress`); only the fourth option matches the legacy "end-turn-on-blocker" behavior. Under `--autonomy=full` the orchestrator may pre-select option 4 silently after surfacing the gate ONCE per blocker (the gate fires, user gets ~10 seconds to override, then default fires) — but never under `loose` or `gated`, where the user must explicitly pick an option. (Option count is capped at 4 per CD-9.)
 
    Activity log records which option was picked (e.g., `task X blocked, user chose: re-dispatch with Opus`).
+
+   **Wave-mode failure handling (Slice α v2.0.0+).** When Step C step 2's wave assembly dispatched a wave, blocker handling differs from serial:
+
+   **Per-member outcomes.** Two are returned by SDD instances; one is detected by the orchestrator post-barrier:
+
+   - `completed` — returned by SDD instance: task succeeded; verification passed; staged-changes digest captured.
+   - `blocked` — returned by SDD instance: task hit a blocker; reason returned.
+   - `protocol_violation` — **detected by orchestrator post-return** (not returned by SDD). After the wave-completion barrier, orchestrator runs `git status --porcelain` and `git log <task_start_sha>..HEAD` per wave member; if a member committed despite "DO NOT commit", wrote outside its `**Files:**` scope, or modified the status file directly, orchestrator reclassifies the SDD-reported `completed` outcome as `protocol_violation`. Treated as blocked + flagged for manual review.
+
+   **Wave-level outcome.** Computed from per-member outcomes:
+
+   - **All completed** → wave succeeds. Single-writer 4d update applies all N completions. Status remains `in-progress` (or flips to `complete` if last task in plan).
+   - **All blocked** → wave fails. 4d appends N blocker entries to `## Blockers`; status flips to `blocked`. Blocker re-engagement gate (above) fires ONCE, listing all N blocked tasks together. Each option's semantics extend naturally (Provide context: re-dispatch all N as a sub-wave; Stronger model: re-dispatch all N with Opus override; Skip: all N get `## Blockers` entries, wave-count advances; End turn: status remains `blocked`).
+   - **Partial (K completed, N-K blocked, K ≥ 1, N-K ≥ 1)** → wave completes-with-blockers. 4d appends K completed entries to `## Activity log` AND N-K blocker entries to `## Blockers`. Status flips to `blocked`. Blocker re-engagement gate fires once, listing the N-K blocked tasks. **The completed K tasks' digests are NOT discarded** — applied by the single-writer 4d update BEFORE the gate fires (standard partial-failure case).
+
+   **Protocol violation handling.** If `config.parallelism.abort_wave_on_protocol_violation: true` (default), orchestrator **suppresses the 4d batch entirely** when ANY wave member is reclassified as `protocol_violation` — none of the K completed digests are applied. Wave is treated as fully blocked; completed digests remain in orchestrator memory and become available to the gate's "Skip" branch (re-applied as `## Notes` entries when advancing past the wave). Append to `## Notes`: *"Protocol violation: task `<name>` committed `<commit-sha>` despite wave instruction. Verify manually before continuing — wave-end status update was suppressed."* If `abort_wave_on_protocol_violation: false`, the standard partial-failure path applies (K digests applied, N-K blockers including the violator).
+
+   **Edge case: SDD escalates BLOCKED/NEEDS_CONTEXT mid-wave.** When an SDD instance returns BLOCKED/NEEDS_CONTEXT BEFORE the wave-completion barrier, orchestrator does NOT immediately fire the blocker re-engagement gate — it waits for the rest of the wave. Gate fires once at wave-end with the union of all blocked members. Cleanest UX: one gate firing per wave, not N firings.
+
+   **Mid-wave orchestrator interruption.** If orchestrator crashes / context-resets after dispatch but before barrier returns, next session enters Step C step 1 with status file showing `current_task = <first wave task>` (unchanged — wave-end update never fired). Re-build cache, re-dispatch the wave from scratch. **Idempotent by Slice α design** — wave members are read-only, so re-dispatching is safe (no double-commits, no double-writes).
 
 3a. **Codex routing decision per task** (consult `config.codex.routing`, overridden by `--codex=` flag, persisted as `codex_routing` in the status file):
 
@@ -594,15 +633,30 @@ Triggered by `/masterplan plan` with no topic and no `--from-spec=`. Picks an ex
 
    **4c — Worktree integrity check.** Apply CD-2: `git status --porcelain` should show only task-scope files. If unexpected files appear, surface to the user before continuing; never silently revert their work.
 
+   **Under wave (Slice α v2.0.0+).** Compute the union of all wave-task `**Files:**` declarations (post-glob-expansion). Run `git status --porcelain` once at wave-end. Filter: files matching the union are expected (they belong to a wave member); files outside ALL declared scopes are CD-2 violations — surface to user. Implicit-paths whitelist (`<slug>-status.md`, `<slug>-eligibility-cache.json`, `<slug>-status-archive.md`, `<slug>-telemetry.jsonl`, `.git/`) added to the union. The per-task per-wave-member 4c check is replaced by this single union-filter — runs once per wave, not N times.
+
    **4d — Status file update.** Update the status file: bump `last_activity` to the current ISO timestamp, set `current_task` to the next task name, set `next_action` to the next task's first step, append a one-line entry to `## Activity log` that includes 1–3 lines of relevant verification output (per **CD-8**) and the routing+review tags. For non-trivial decisions made during the task, also append to `## Notes` per **CD-7**.
 
    **Activity log rotation.** Before appending the new entry, count entries under `## Activity log`. If count > 100, move all entries except the most recent 50 to `<slug>-status-archive.md` (create if missing; append in chronological order so the archive itself reads oldest-to-newest). Insert a one-line marker at the top of the active log: `*(N entries archived to <slug>-status-archive.md on YYYY-MM-DD)*`. Then append the new entry. Resume behavior is unchanged — Step C step 1 reads only the active log; the archive is consulted on demand by `/masterplan retro` (Step R2).
 
-   The invoked skill already commits per task — verify the commit landed; if not, commit the status file update (and any rotation-created archive file) separately.
+   **Under wave (Slice α v2.0.0+ — single-writer funnel).**
+
+   1. **Aggregate digest list.** Collect all wave members' digests from the wave-completion barrier. Compute `current_task` = lowest-indexed not-yet-complete task in the plan (across the union of completed wave members + remaining serial tasks).
+   2. **Append N entries to `## Activity log` in plan-order** (NOT completion-order — predictable for human readers). Each entry tags routing as `[inline][wave: <group>]`, includes verification result from the digest, references `task_start_sha`. (No completion SHA for read-only tasks — they don't commit.)
+   3. **Activity log rotation pre-check (wave-aware per FM-2).** If `len(active_log) + N > 100`, rotate ONCE at the END of the batch append (not mid-batch). Move all but the most recent 50 entries to `<slug>-status-archive.md` (create if missing); insert the marker at the top of the active log; then append the N new wave entries.
+   4. **Update `last_activity`** to the wave-completion timestamp.
+   5. **Append `## Notes` entries for any partial-failure context** per the wave-mode failure handling rules in Step C step 3.
+   6. **Single git commit for the status file update** with subject `masterplan: wave complete (group: <name>, N tasks)`.
+
+   This single-writer funnel is the M-1 / M-3 mitigation (FM-2 + FM-3). Wave members do NOT write to the status file directly (per the per-instance brief in the wave assembly pre-pass). The orchestrator is the canonical writer per CD-7.
+
+   **4b under wave.** Skipped entirely for wave members — they don't commit, so the diff range `<task_start_sha>..HEAD` is empty; existing zero-commit branch in 4b step 1 handles this naturally (no new code).
+
+   The invoked skill already commits per task (serial mode only) — verify the commit landed; if not, commit the status file update (and any rotation-created archive file) separately.
 5. **Cross-session loop scheduling** (only if `--no-loop` is NOT set AND `ScheduleWakeup` is available — i.e. the session was launched via `/loop /masterplan ...`):
    - **CC-1 check.** Before scheduling the wakeup, apply CC-1 (operational rules): if `cc1_silenced` is not set and any symptom (file_cache ≥3 hits same path, ≥3 consecutive same-target tool failures, activity log rotated this session, subagent ≥5K-char return) accumulated this session, surface the non-blocking compact-suggest notice. Continue with scheduling regardless — CC-1 is informational, never blocks.
    - **Daily quota check.** Track wakeup count for this plan in the status file under a `## Wakeup ledger` heading (one line per wakeup with timestamp). Before scheduling, count entries from the last 24 hours; if `>= config.loop_max_per_day` (default 24), do NOT schedule — set status to `blocked` with reason "loop quota exhausted; resume manually with `/masterplan --resume=<path>`" and end the turn. This prevents runaway scheduling under unexpected loop conditions.
-   - Otherwise, after every 3 completed tasks, OR when context usage looks tight, call:
+   - Otherwise, after every 3 completed tasks (where a wave-end counts as ONE completion regardless of N — so a wave of 5 doesn't trigger 5 wakeup-threshold increments), OR when context usage looks tight, call:
      ```
      ScheduleWakeup(
        delaySeconds=config.loop_interval_seconds,
