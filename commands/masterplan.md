@@ -124,6 +124,7 @@ Steps A, B0, D consult the cache instead of re-running these. **Invalidate** the
 | `--no-codex` | C | Shorthand for `--codex=off` (also disables review) |
 | `--codex-review=on\|off` | C | Override `config.codex.review` for this run. When on, Codex reviews diffs from inline-completed tasks before they're marked done. Persisted to status file |
 | `--codex-review` | C | Shorthand for `--codex-review=on` |
+| `--complexity=low\|medium\|high` | 0/B/C | Override `config.complexity` for this run. Persisted to status frontmatter at Step B3 (kickoff) or written to frontmatter at Step C step 1 (resume override, with a `## Notes` audit entry). |
 | `--no-codex-review` | C | Shorthand for `--codex-review=off` |
 | `--parallelism=on\|off` | C | Override `config.parallelism.enabled` for this run. When `off`, wave dispatch in Step C step 2 is suppressed globally — every task runs serially regardless of `**parallel-group:**` annotations. Not persisted to status frontmatter; use `.masterplan.yaml` for durable defaults. |
 | `--no-parallelism` | C | Shorthand for `--parallelism=off`. |
@@ -532,6 +533,7 @@ Create the sibling status file at `docs/superpowers/plans/YYYY-MM-DD-<slug>-stat
 - `codex_routing` — value of `--codex=` flag or `config.codex.routing`
 - `codex_review` — value of `--codex-review=` flag or `config.codex.review`
 - `compact_loop_recommended: false` — flips to `true` after the auto-compact nudge has been shown once for this plan
+- `complexity` — value of `--complexity=` flag, status frontmatter (resume), config tier, or built-in default `medium`. Set once at Step B3; updated on resume only when `--complexity=<new>` is passed (with `## Notes` audit entry).
 
 **Auto-compact nudge** (fires once per plan; respects `config.auto_compact.enabled`). If `config.auto_compact.enabled && compact_loop_recommended == false`, output one passive notice immediately before the kickoff approval prompt below:
 > *(Recommended: pair this run with `/loop {config.auto_compact.interval} /compact {config.auto_compact.focus}` in another shell or session for automatic context compaction. Set `auto_compact.enabled: false` in `.masterplan.yaml` to silence this notice.)*
@@ -1399,6 +1401,7 @@ loop_enabled: true | false
 codex_routing: off | auto | manual
 codex_review: off | on
 compact_loop_recommended: true | false
+complexity: low | medium | high
 # Optional: telemetry: off  # silences per-plan telemetry capture
 # Optional v2.1.0+: gated_switch_offer_dismissed: true  # permanent per-plan suppression of gated→loose offer
 # Optional v2.1.0+: gated_switch_offer_shown: true      # per-session suppression (re-fires on cross-session resume)
@@ -1468,6 +1471,13 @@ Step 0 loads + merges these into a single `config` object referenced throughout 
 ```yaml
 # Default execution autonomy
 autonomy: gated  # gated | loose | full
+
+# 3-level complexity meta-knob (low|medium|high). Sets defaults for several
+# other knobs; explicit settings (CLI flag, frontmatter, config) win over
+# complexity-derived defaults. medium = current behavior (back-compat).
+# See Step 0's "Complexity resolution" subsection for precedence and
+# Operational rules' "Complexity precedence" entry for the per-knob defaults.
+complexity: medium  # low | medium | high
 
 # Gated→loose switch offer (v2.1.0+). Under autonomy=gated, surface a one-time
 # AskUserQuestion offering to switch to loose for the remainder of the plan when
