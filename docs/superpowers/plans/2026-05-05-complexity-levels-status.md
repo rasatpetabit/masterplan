@@ -6,9 +6,9 @@ plan: docs/superpowers/plans/2026-05-05-complexity-levels.md
 worktree: /home/grojas/dev/superpowers-masterplan/.worktrees/complexity-levels
 branch: complexity-levels
 started: 2026-05-05
-last_activity: 2026-05-05T21:56:00Z
-current_task: "Task 4: Step B3 — kickoff prompt for complexity (when not set via flag/config)"
-next_action: "Insert 'Complexity kickoff prompt' subsection at top of Step B3, before the existing 'Create the sibling status file at...' line"
+last_activity: 2026-05-05T21:59:00Z
+current_task: "Task 5: Step C step 1 — resume-time complexity resolution + ## Notes audit on change"
+next_action: "Insert 'Complexity resolution on resume' subsection in Step C step 1, immediately before 'Verify the worktree' (retargeted from plan's original 'after Wakeup-ledger fired write' anchor — that anchor doesn't exist in v2.4.1 worktree)"
 autonomy: loose
 loop_enabled: true
 codex_routing: auto
@@ -32,6 +32,8 @@ compact_loop_recommended: true
 - 2026-05-05T21:56 Task 3 complete, commit 3551628 [codex] (verify: trusted; 4 grep matches; bullet placed before Future-design notes)
 - 2026-05-05T21:56 Notes: anchor "End-of-turn timer disclosure" cited in T3 brief is in system-prompt orchestrator only, not in v2.4.1 worktree file. Codex placed bullet correctly anyway (last bullet of Operational rules). Same-class mismatch may affect T5 (wakeup-ledger fired/armed) and T7 (telemetry block has Git-excludes prelude) — adapt briefs per task.
 - 2026-05-05T21:56 routing→CODEX (Task 4: Step B3 — kickoff prompt for complexity) [codex_routing=auto, decision_source=annotation]
+- 2026-05-05T21:59 Task 4 complete, commit 1af327c [codex] (verify: trusted; 2 grep matches)
+- 2026-05-05T21:59 routing→CODEX (Task 5: Step C step 1 — resume-time complexity resolution; anchor retargeted to "before Verify the worktree") [codex_routing=auto, decision_source=annotation]
 
 ## Blockers
 (none)
