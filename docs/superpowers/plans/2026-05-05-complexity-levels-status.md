@@ -6,9 +6,9 @@ plan: docs/superpowers/plans/2026-05-05-complexity-levels.md
 worktree: /home/grojas/dev/superpowers-masterplan/.worktrees/complexity-levels
 branch: complexity-levels
 started: 2026-05-05
-last_activity: 2026-05-05T21:46:00Z
-current_task: "Task 1: Declarations — config schema, flag table, frontmatter field list, status template"
-next_action: "Add `complexity` to the YAML schema block (Step 1 of Task 1) — insert after `autonomy: gated` line in the .masterplan.yaml schema"
+last_activity: 2026-05-05T21:50:00Z
+current_task: "Task 2: Step 0 — complexity resolver + activity log source line"
+next_action: "Insert the 'Complexity resolution (per invocation)' subsection in Step 0, between 'Git state cache' and 'Verb routing'"
 autonomy: loose
 loop_enabled: true
 codex_routing: auto
@@ -24,6 +24,9 @@ compact_loop_recommended: true
 - 2026-05-05T19:00 entering Step C under autonomy=gated, codex_routing=auto, codex_review=on
 - 2026-05-05T21:44 eligibility cache: built (16 tasks; 15 codex-eligible) — first build for this plan
 - 2026-05-05T21:46 gated→loose offer: switch to loose
+- 2026-05-05T21:47 routing→CODEX (Task 1: Declarations — config schema, flag table, frontmatter field list, status template) [codex_routing=auto, decision_source=annotation]
+- 2026-05-05T21:50 Task 1 complete, commit c113c1a [codex] (verify: trusted implementer; 4 grep matches as expected)
+- 2026-05-05T21:50 routing→CODEX (Task 2: Step 0 — complexity resolver + activity log source line) [codex_routing=auto, decision_source=annotation]
 
 ## Blockers
 (none)
