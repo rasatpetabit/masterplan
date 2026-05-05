@@ -6,9 +6,9 @@ plan: docs/superpowers/plans/2026-05-05-complexity-levels.md
 worktree: /home/grojas/dev/superpowers-masterplan/.worktrees/complexity-levels
 branch: complexity-levels
 started: 2026-05-05
-last_activity: 2026-05-05T21:59:00Z
-current_task: "Task 5: Step C step 1 — resume-time complexity resolution + ## Notes audit on change"
-next_action: "Insert 'Complexity resolution on resume' subsection in Step C step 1, immediately before 'Verify the worktree' (retargeted from plan's original 'after Wakeup-ledger fired write' anchor — that anchor doesn't exist in v2.4.1 worktree)"
+last_activity: 2026-05-05T22:02:00Z
+current_task: "Task 6: Step C step 1 — eligibility cache gate at low"
+next_action: "Wrap 'Build eligibility cache' subsection: at low, skip the entire decision tree (cache file not built)"
 autonomy: loose
 loop_enabled: true
 codex_routing: auto
@@ -34,6 +34,8 @@ compact_loop_recommended: true
 - 2026-05-05T21:56 routing→CODEX (Task 4: Step B3 — kickoff prompt for complexity) [codex_routing=auto, decision_source=annotation]
 - 2026-05-05T21:59 Task 4 complete, commit 1af327c [codex] (verify: trusted; 2 grep matches)
 - 2026-05-05T21:59 routing→CODEX (Task 5: Step C step 1 — resume-time complexity resolution; anchor retargeted to "before Verify the worktree") [codex_routing=auto, decision_source=annotation]
+- 2026-05-05T22:02 Task 5 complete, commit fd16b34 [codex] (verify: trusted; 2 grep matches)
+- 2026-05-05T22:02 routing→CODEX (Task 6: Step C step 1 — eligibility cache gate at low) [codex_routing=auto, decision_source=annotation]
 
 ## Blockers
 (none)
