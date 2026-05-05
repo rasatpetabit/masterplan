@@ -1419,6 +1419,15 @@ Read worktrees from `git_state.worktrees` (Step 0 cache). For each worktree, sca
 
 **Parallelization.** When worktrees ≥ 2, dispatch one Haiku agent (pass `model: "haiku"` per §Agent dispatch contract) per worktree in a single Agent batch (each agent runs all 21 checks for its worktree and returns findings as `[{check_id, severity, file, message}]` JSON). With 1 worktree, run inline — agent dispatch latency isn't worth it. The orchestrator merges results and applies the report ordering below.
 
+**Complexity-aware check set.** For each scanned plan, read `complexity` from its status frontmatter (default `medium` if absent — pre-feature plans). The active check set varies:
+
+- `low` plans: run only checks #1 (orphan plan), #2 (orphan status), #3 (wrong worktree), #4 (wrong branch), #5 (stale in-progress), #6 (stale blocked), #8 (missing spec), #9 (schema, against the standard 15-field set), #10 (unparseable), #18 (codex misconfig). SKIP #11 (orphan archive), #12 (telemetry growth), #13 (orphan telemetry), #14 (orphan eligibility cache), #15–#17 (parallel-group annotations), #19 (duplicate crons), #20 (wakeup-ledger inconsistency), #22 (high-only — see below). These all target sidecars / annotations / ledger entries that low does not produce.
+- `medium` plans: run all 21 current checks (no change from today).
+- `high` plans: run all 21 current checks PLUS new check #22 (added by Task 13).
+- Plans without a `complexity:` frontmatter field: treat as `medium`.
+
+The check-set gate is per-plan: a single `/masterplan doctor` run against worktrees containing a mix of low/medium/high plans honors each plan's complexity individually. Findings are reported with the same severity as today.
+
 ### Checks
 
 For each worktree, run all checks. Report findings grouped by worktree → check → file.
