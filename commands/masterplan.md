@@ -528,6 +528,12 @@ After Step B1's gate confirms approval, invoke `superpowers:writing-plans` again
 
 > **Skip your Execution Handoff prompt** ("Plan complete… Which approach?"). /masterplan has already decided execution mode based on the `--no-subagents` flag and config — do not ask the user. Just write the plan and return control.
 
+> **Complexity-aware brief.** The orchestrator passes `resolved_complexity` (one of `low`, `medium`, `high`) into the writing-plans brief. Adjust the brief shape accordingly:
+>
+> - complexity == low — brief writing-plans to: produce a flat task list of ~3–7 tasks; SKIP the `**Codex:**` annotation prelude; SKIP the `**parallel-group:**` annotation guidance; mark `**Files:**` blocks as OPTIONAL (best-effort, not required). Plan output is leaner.
+> - `complexity == medium` — current brief (above bullets are the canonical defaults; `**Files:**` encouraged, `**Codex:**` annotation optional, `**parallel-group:**` optional). No change.
+> - `complexity == high` — brief writing-plans to: REQUIRE `**Files:**` block per task (exhaustive); REQUIRE `**Codex:**` annotation per task (`ok` or `no`); ENCOURAGE `**parallel-group:**` for verification/lint/inference clusters. Eligibility cache will be validated against `**Files:**` declarations at Step C step 1 (per spec §Behavior matrix / Plan-writing / `eligibility cache` row at high).
+
 Plans without annotations behave exactly as before (heuristic-only). Annotations are an authoring aid; they're never required.
 
 **Re-engagement gate** (same silent-stop bug pattern as Step B1's gate — never end the turn silently waiting on a free-text question). After writing-plans returns:
