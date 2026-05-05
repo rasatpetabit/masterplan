@@ -630,6 +630,10 @@ Triggered by `/masterplan plan` with no topic and no `--from-spec=`. Picks an ex
    Reconcile `current_task` against the plan's task list if the plan has been edited since the status was written.
 
    - **Parse guard.** If the status file fails to parse as YAML+Markdown, surface this immediately via `AskUserQuestion`: "Status file at `<path>` is corrupted. Open it for manual fix / Run /masterplan doctor / Abort." Do NOT attempt to silently regenerate — the user's edits may have been intentional and partial.
+   - **Complexity resolution on resume.** Re-run the Step 0 complexity-resolution rules using the just-loaded status frontmatter as the new tier-2 input.
+     - If the resumed status file lacks a `complexity:` field (pre-feature plan), treat as `medium` and DO NOT write the field unless the user explicitly passes `--complexity=<level>` on this turn.
+     - If `--complexity=<new>` is on the CLI AND `<new>` differs from the frontmatter value: update frontmatter `complexity:` to `<new>`, append `## Notes` entry: *"Complexity changed from `<old>` to `<new>` at `<ISO ts>` via CLI override."*. The new value is used for this run AND persisted.
+     - On every Step C entry (kickoff first entry OR resume), emit ONE activity-log audit line per the format in Step 0's Complexity resolution subsection. Cite the resolved knob values that diverge from the complexity-derived defaults table (per Operational rules' Complexity precedence).
    - **Verify the worktree.** Compare the status file's `worktree` field to the current working directory (from the `pwd` above). If they differ, `cd` into the recorded worktree before continuing. If the recorded worktree no longer exists (e.g. removed via `git worktree remove`), surface this as a blocker via `AskUserQuestion`: "Worktree at `<path>` is missing. Recreate it / use the current worktree / abort."
    - **Verify the branch.** Compare the captured branch to the status file's `branch` field. If they differ, ask the user before continuing — the work was started on a different branch and silently switching could cause real problems.
 
