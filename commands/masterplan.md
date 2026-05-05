@@ -538,6 +538,30 @@ Plans without annotations behave exactly as before (heuristic-only). Annotations
 
 ### Step B3 — Status file + approval
 
+**Complexity kickoff prompt.** Fires once at kickoff (`/masterplan full <topic>`, `/masterplan plan <topic>`, `/masterplan brainstorm <topic>`) when:
+- `--complexity` is NOT on this turn's CLI args, AND
+- `complexity_source == default` (i.e., no config tier set it; built-in `medium` would be silently used).
+
+Surface ONE `AskUserQuestion` after Step B0's worktree decision and BEFORE Step B1's brainstorm:
+
+```
+AskUserQuestion(
+  question="What complexity for this project? Affects plan size, execution rigor, and doctor checks. Brainstorm runs full regardless.",
+  options=[
+    "medium — standard /masterplan flow (Recommended; current behavior)",
+    "low — small project, light treatment (skip codex review, simpler activity log, ~3-7 tasks, no eligibility cache)",
+    "high — high-stakes; codex review on every task, decision-source cited, retro required at completion",
+    "use config default — read from .masterplan.yaml; warn if not set, fall through to medium"
+  ]
+)
+```
+
+On the user's pick:
+- `medium` / `low` / `high` → flip in-session `resolved_complexity` to the chosen value; set `complexity_source = "flag"` (treated as user-explicit at this turn). Persist to status frontmatter's `complexity:` field.
+- `use config default` → no change to `resolved_complexity`; emit one-line warning if it would fall through to built-in default (`medium` — no config set complexity).
+
+If `--complexity` IS on the CLI, OR any config tier sets `complexity:`, this prompt is silenced (no AskUserQuestion fires). The Step B3 close-out gate at the end of B3 still fires as today.
+
 Create the sibling status file at `docs/superpowers/plans/YYYY-MM-DD-<slug>-status.md` using the format in **Status file format** below. **Populate every frontmatter field** (omitting any will fail doctor's schema check and break Step A's listing):
 
 - `slug` — the feature slug derived from the topic
