@@ -6,9 +6,9 @@ plan: docs/superpowers/plans/2026-05-05-complexity-levels.md
 worktree: /home/grojas/dev/superpowers-masterplan/.worktrees/complexity-levels
 branch: complexity-levels
 started: 2026-05-05
-last_activity: 2026-05-05T21:50:00Z
-current_task: "Task 2: Step 0 — complexity resolver + activity log source line"
-next_action: "Insert the 'Complexity resolution (per invocation)' subsection in Step 0, between 'Git state cache' and 'Verb routing'"
+last_activity: 2026-05-05T21:53:00Z
+current_task: "Task 3: Operational rules — complexity → defaults table + override precedence"
+next_action: "Append the 'Complexity precedence' bullet block to Operational rules (with per-knob defaults table)"
 autonomy: loose
 loop_enabled: true
 codex_routing: auto
@@ -27,6 +27,8 @@ compact_loop_recommended: true
 - 2026-05-05T21:47 routing→CODEX (Task 1: Declarations — config schema, flag table, frontmatter field list, status template) [codex_routing=auto, decision_source=annotation]
 - 2026-05-05T21:50 Task 1 complete, commit c113c1a [codex] (verify: trusted implementer; 4 grep matches as expected)
 - 2026-05-05T21:50 routing→CODEX (Task 2: Step 0 — complexity resolver + activity log source line) [codex_routing=auto, decision_source=annotation]
+- 2026-05-05T21:53 Task 2 complete, commit be24bda [codex] (verify: trusted; 4 grep matches)
+- 2026-05-05T21:53 routing→CODEX (Task 3: Operational rules — complexity → defaults table + override precedence) [codex_routing=auto, decision_source=annotation]
 
 ## Blockers
 (none)
