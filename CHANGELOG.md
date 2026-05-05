@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.1] — 2026-05-05
+
+### Added
+- **Competing-scheduler check** at Step C step 1. Defensive guard against an
+  externally-created cron (e.g., a stale `/schedule` one-shot, a leftover from
+  a prior session) that targets the same plan as `/loop`'s `ScheduleWakeup`
+  self-pacing. `/masterplan` itself never calls `CronCreate`, so this is not a
+  fix for an internal code path — it is a runtime guard against a footgun
+  introduced by other plugins or earlier user actions. When the orchestrator
+  detects a cron whose prompt starts with `/masterplan` AND contains the
+  status file's basename, it surfaces an `AskUserQuestion` with four options:
+  delete the cron (Recommended), suspend `/loop` wakeups for the session, keep
+  both (with a one-time acknowledgement that suppresses future warnings via
+  `competing_scheduler_acknowledged: true` in frontmatter), or abort. Skips
+  silently when `ScheduleWakeup` is unavailable, when `CronList`/`CronDelete`
+  schemas can't be loaded via `ToolSearch`, or when the acknowledgement flag
+  is set. Honest scope: the check fires after the current resume already
+  started, so it cannot prevent the very-next concurrent firing — only future
+  ones, after the user picks delete or acknowledges.
+
 ## [2.4.0] — 2026-05-04
 
 ### Added

@@ -713,6 +713,39 @@ Triggered by `/masterplan plan` with no topic and no `--from-spec=`. Picks an ex
    - **"Stay on gated AND don't ask again on this plan"** → set `gated_switch_offer_dismissed: true` in status frontmatter (permanent for this plan). Continue.
 
    Activity log records which option was picked: `gated→loose offer: <picked option>`.
+
+   **Competing-scheduler check.** Defends against the duplicate-pacer footgun where this plan has both a `/loop`-driven `ScheduleWakeup` AND a separate cron entry that targets `/masterplan` on the same status file (typically a stale `/schedule` one-shot, or a cron from a prior session). Two pacers race on the status file, double-write activity-log entries, and may trigger overlapping subagent dispatch. Note: this check fires AFTER the current resume already started — it cannot prevent the very-next concurrent firing, only future ones.
+
+   Skip conditions (any one suppresses the check):
+   - `ScheduleWakeup` is not available this session (not invoked under `/loop`, so there is no second pacer to compete with).
+   - Status frontmatter has `competing_scheduler_acknowledged: true` (per-plan permanent dismissal — set when user picks "Keep both" below). Note: this field is OPTIONAL; it is intentionally NOT in doctor check #9's required-fields list.
+
+   Otherwise: ensure the deferred-tool schemas are loaded — if `CronList` / `CronDelete` are not callable in this session, call `ToolSearch(query="select:CronList,CronDelete")` first. If `ToolSearch` itself fails or the schemas don't load, skip the check silently (graceful degrade).
+
+   Then call `CronList` once. **Match heuristic:** a cron is competing iff its prompt **starts with `/masterplan`** AND its prompt **contains the status file's basename** (e.g. `<slug>-status.md`). The basename is unique per plan and avoids brittle relative-vs-absolute path comparisons. If zero matches, no question is surfaced (silent skip).
+
+   On match, surface ONE `AskUserQuestion`:
+
+   ```
+   AskUserQuestion(
+     question="A cron entry (id <cron-id>, schedule <human-readable>, prompt <prompt>) is already scheduled to invoke /masterplan on this plan. Combined with /loop's ScheduleWakeup self-pacing, this resumes the plan twice on each firing — racing on the status file. How to proceed?",
+     options=[
+       "Delete the cron, keep /loop wakeups (Recommended)",
+       "Keep the cron, suspend wakeups this session",
+       "Keep both — I know what I'm doing",
+       "Abort — end turn so I can investigate manually"
+     ]
+   )
+   ```
+
+   On each option:
+   - **"Delete the cron, keep /loop wakeups"** → call `CronDelete(<cron-id>)`; append `## Notes` entry: *"Removed competing cron `<id>` (was: `<prompt>`) at <ISO ts> — /loop ScheduleWakeup is sole pacer."* Continue Step C step 1.
+   - **"Keep the cron, suspend wakeups this session"** → set in-memory `competing_scheduler_keep: true`. Step C step 5 reads this flag and skips its `ScheduleWakeup` call for the rest of the session. Cross-session resume re-fires this check, giving the user another chance to reconsider. Continue Step C step 1.
+   - **"Keep both — I know what I'm doing"** → append `## Notes` entry: *"⚠ Two pacers running for this plan: cron `<id>` + /loop ScheduleWakeup. Risk: status-file contention, double activity-log entries. User acknowledged at <ISO ts>."* AND set `competing_scheduler_acknowledged: true` in status frontmatter (suppresses this check on future resumes). Continue normally; both pacers run.
+   - **"Abort"** → end turn without further action; user resolves manually.
+
+   If multiple competing crons match (unusual), batch them into a single question — list each `<cron-id>: <prompt>` line in the question body, and apply the chosen option to ALL of them (e.g., delete all on option 1).
+
 **Wave assembly pre-pass (Slice α v2.0.0+).** Before invoking the per-task implementer, scan the upcoming task list against the eligibility cache for parallel-eligible tasks (`parallel_eligible == true`).
 
 1. Read upcoming task pointer from status file (`current_task` + plan task list).
@@ -1000,6 +1033,7 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
 
    The invoked skill already commits per task (serial mode only) — verify the commit landed; if not, commit the status file update (and any rotation-created archive file) separately.
 5. **Cross-session loop scheduling** (only if `--no-loop` is NOT set AND `ScheduleWakeup` is available — i.e. the session was launched via `/loop /masterplan ...`):
+   - **Competing-scheduler suppression.** If `competing_scheduler_keep == true` (in-memory flag set by Step C step 1's competing-scheduler check when the user picked "Keep the cron, suspend wakeups this session"), skip scheduling silently for the rest of the session. The user-acknowledged cron is the sole pacer.
    - **CC-1 check.** Before scheduling the wakeup, apply CC-1 (operational rules): if `cc1_silenced` is not set and any symptom (file_cache ≥3 hits same path, ≥3 consecutive same-target tool failures, activity log rotated this session, subagent ≥5K-char return) accumulated this session, surface the non-blocking compact-suggest notice. Continue with scheduling regardless — CC-1 is informational, never blocks.
    - **Daily quota check.** Track wakeup count for this plan in the status file under a `## Wakeup ledger` heading (one line per wakeup with timestamp). Before scheduling, count entries from the last 24 hours; if `>= config.loop_max_per_day` (default 24), do NOT schedule — set status to `blocked` with reason "loop quota exhausted; resume manually with `/masterplan --resume=<path>`" and end the turn. This prevents runaway scheduling under unexpected loop conditions.
    - Otherwise, after every 3 completed tasks (where a wave-end counts as ONE completion regardless of N — so a wave of 5 doesn't trigger 5 wakeup-threshold increments), OR when context usage looks tight, call:
@@ -1368,6 +1402,7 @@ compact_loop_recommended: true | false
 # Optional: telemetry: off  # silences per-plan telemetry capture
 # Optional v2.1.0+: gated_switch_offer_dismissed: true  # permanent per-plan suppression of gated→loose offer
 # Optional v2.1.0+: gated_switch_offer_shown: true      # per-session suppression (re-fires on cross-session resume)
+# Optional: competing_scheduler_acknowledged: true       # user accepted dual-pacer (cron + /loop) for this plan; suppresses the competing-scheduler check
 ---
 
 # <Feature Name> — Status
