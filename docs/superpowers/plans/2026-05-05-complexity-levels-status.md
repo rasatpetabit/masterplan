@@ -6,9 +6,9 @@ plan: docs/superpowers/plans/2026-05-05-complexity-levels.md
 worktree: /home/grojas/dev/superpowers-masterplan/.worktrees/complexity-levels
 branch: complexity-levels
 started: 2026-05-05
-last_activity: 2026-05-05T22:23:00Z
-current_task: "Task 13: Step D — new doctor check #22 (high-only rigor evidence)"
-next_action: "Append row #22 to checks table after row #21; update any '21 checks' citations to '22 checks'"
+last_activity: 2026-05-05T22:28:00Z
+current_task: "Task 15: Docs — CHANGELOG entry + Status file format hint + WORKLOG handoff"
+next_action: "Add CHANGELOG [Unreleased] Added entry; update Status file format complexity comment; append WORKLOG entry; commit CHANGELOG+masterplan only (WORKLOG gitignored)"
 autonomy: loose
 loop_enabled: true
 codex_routing: auto
@@ -50,6 +50,10 @@ compact_loop_recommended: true
 - 2026-05-05T22:20 routing→CODEX (Task 12: Step D — complexity-aware check-set gate) [codex_routing=auto, decision_source=annotation]
 - 2026-05-05T22:23 Task 12 complete, commit 9b14130 [codex] (verify: trusted; 2 grep matches)
 - 2026-05-05T22:23 routing→CODEX (Task 13: Step D — new doctor check #22) [codex_routing=auto, decision_source=annotation]
+- 2026-05-05T22:26 Task 13 complete, commit de5a1e1 [codex] (verify: trusted; 1 match for row 22; 0 stale "21 checks" citations)
+- 2026-05-05T22:26 routing→INLINE (Task 14: verification pass — read-only; running inline) [codex_routing=auto]
+- 2026-05-05T22:28 Task 14 complete, no commit [inline] (verify: 22 discriminators all pass; bash -n OK; wc=1708 within tolerance)
+- 2026-05-05T22:28 routing→INLINE (Task 15: docs — multi-file with markdown content; running inline for escaping) [codex_routing=auto, decision_source=heuristic-override]
 
 ## Blockers
 (none)

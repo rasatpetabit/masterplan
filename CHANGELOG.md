@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **3-level `complexity` variable** (`low | medium | high`) at every config tier
+  (CLI flag `--complexity=<level>`, `~/.masterplan.yaml`, repo `.masterplan.yaml`,
+  status frontmatter). Sets defaults for `autonomy`, `codex_routing`,
+  `codex_review`, `parallelism.enabled`, `gated_switch_offer_at_tasks`, and
+  `review_max_fix_iterations` per the precedence table in Operational rules.
+  Explicit overrides (CLI flag, frontmatter, config) win over complexity-derived
+  defaults. `medium` is the default and preserves all current behavior; existing
+  plans without the field are read as `medium` (no migration needed).
+- **`low` skips:** eligibility cache build, telemetry sidecar, wakeup ledger,
+  parallelism waves, codex routing + codex review. Activity log uses one-line
+  entries; rotation threshold drops to 50 (archives most recent 25). Plan-writing
+  brief produces leaner plans (~3–7 tasks, optional `**Files:**`, no annotations).
+  Doctor at low runs only checks #1–#10 + #18 (skips sidecar/annotation/ledger
+  checks that don't apply).
+- **`high` adds:** `codex_review` always on with `review_prompt_at: low`;
+  required `**Files:**` + `**Codex:**` annotations per task; eligibility cache
+  validated against the plan's `**Files:**` blocks; verification re-runs
+  implementer's tests; retro becomes a recommended option at plan completion;
+  new doctor check #22 (high-only) fires when a high plan lacks all three
+  rigor signals (retro reference, codex review pass, `[reviewed: …]` tags).
+- **Kickoff prompt:** when `--complexity` is not on the CLI and no config tier
+  sets it, /masterplan surfaces one `AskUserQuestion` between worktree decision
+  and brainstorm (kickoff verbs only). Setting any value in any config tier
+  silences the prompt.
+- **Activity-log audit line** at first Step C entry per session: cites the
+  resolved complexity, its source (`flag` / `frontmatter` / `repo_config` /
+  `user_config` / `default`), and any knobs whose final value differs from the
+  complexity-derived default.
+
 ## [2.4.1] — 2026-05-05
 
 ### Added
