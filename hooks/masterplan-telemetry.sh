@@ -61,21 +61,65 @@ worktree=$(git rev-parse --show-toplevel 2>/dev/null) || bail
 branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null) || bail
 [[ -n "$branch" && "$branch" != "HEAD" ]] || bail
 
-# 3. Find a status file whose frontmatter `branch:` matches.
-plans_dir="$worktree/docs/superpowers/plans"
-[[ -d "$plans_dir" ]] || bail
+# 3. Find candidate status files. Search the active worktree's plans/ dir AND
+#    every sibling linked worktree under .worktrees/*/docs/superpowers/plans/.
+#    Necessary because a Claude session can run from the main worktree while
+#    the active /masterplan plan lives in .worktrees/<feature>/ (e.g.,
+#    optoe-ng's project-review pattern). Without this fan-out the hook bails
+#    silently and the user sees zero telemetry for worktree-resident plans.
+candidates=()
+[[ -d "$worktree/docs/superpowers/plans" ]] && candidates+=("$worktree/docs/superpowers/plans")
+if [[ -d "$worktree/.worktrees" ]]; then
+  # Only fan out into directories that look like real git worktrees (have a
+  # `.git` file or directory). Stray directories under .worktrees/ — backups,
+  # unpacked archives, scratch dirs — would otherwise add bogus candidate
+  # plans/ paths and could (in pathological cases where a stray dir contains
+  # a *-status.md file by name coincidence) end up selected.
+  while IFS= read -r wt; do
+    [[ -e "$wt/.git" ]] || continue
+    plans="$wt/docs/superpowers/plans"
+    [[ -d "$plans" ]] && candidates+=("$plans")
+  done < <(find "$worktree/.worktrees" -mindepth 1 -maxdepth 1 -type d 2>/dev/null)
+fi
+[[ ${#candidates[@]} -gt 0 ]] || bail
 
+# 3b. Score every candidate status file. Preference order:
+#     (a) worktree: field matches `git rev-parse --show-toplevel` exactly OR
+#         current $PWD has the worktree: field as a path prefix
+#         (handles subdirectory invocations).
+#     (b) branch: field matches current branch.
+#     Among matches, pick the most-recently-modified file (deterministic when
+#     multiple plans share a branch — common in single-trunk workflows where
+#     every status file carries `branch: main`).
 status_file=""
-while IFS= read -r -d '' f; do
-  # Extract the branch field from the YAML frontmatter (between `---` markers).
-  fm_branch=$(awk '/^---$/{c++; next} c==1 && /^branch:/{sub(/^branch:[[:space:]]*/,""); print; exit}' "$f" 2>/dev/null)
-  if [[ "$fm_branch" == "$branch" ]]; then
-    status_file="$f"
-    break
-  fi
-done < <(find "$plans_dir" -maxdepth 1 -name '*-status.md' -print0 2>/dev/null)
+best_mtime=0
+pwd_path="${PWD%/}"
+for d in "${candidates[@]}"; do
+  while IFS= read -r -d '' f; do
+    fm_worktree=$(awk '/^---$/{c++; next} c==1 && /^worktree:/{sub(/^worktree:[[:space:]]*/,""); print; exit}' "$f" 2>/dev/null)
+    fm_branch=$(awk '/^---$/{c++; next} c==1 && /^branch:/{sub(/^branch:[[:space:]]*/,""); print; exit}' "$f" 2>/dev/null)
+    fm_worktree="${fm_worktree%/}"
+    matches=0
+    if [[ -n "$fm_worktree" ]]; then
+      [[ "$fm_worktree" == "$worktree" ]] && matches=1
+      [[ "$pwd_path" == "$fm_worktree"* ]] && matches=1
+    fi
+    [[ "$fm_branch" == "$branch" ]] && matches=1
+    [[ "$matches" -eq 1 ]] || continue
+    f_mtime=$(stat -c '%Y' "$f" 2>/dev/null || stat -f '%m' "$f" 2>/dev/null || echo 0)
+    if (( f_mtime > best_mtime )); then
+      best_mtime=$f_mtime
+      status_file="$f"
+    fi
+  done < <(find "$d" -maxdepth 1 -name '*-status.md' -print0 2>/dev/null)
+done
 
 [[ -n "$status_file" ]] || bail
+
+# 3c. Re-anchor plans_dir to the chosen status file's directory (sidecar
+#     telemetry/subagent JSONLs land alongside it, NOT under the active
+#     worktree if that's a different worktree).
+plans_dir="$(dirname "$status_file")"
 
 # 4. Per-plan opt-out: `telemetry: off` in frontmatter.
 opt_out=$(awk '/^---$/{c++; next} c==1 && /^telemetry:[[:space:]]*off/{print "off"; exit}' "$status_file" 2>/dev/null)
@@ -175,119 +219,140 @@ jq -nc \
   '{ts:$ts,plan:$plan,turn_kind:"stop",transcript_bytes:$transcript_bytes,transcript_lines:$transcript_lines,status_bytes:$status_bytes,activity_log_entries:$activity_log_entries,wakeup_count_24h:$wakeup_count_24h,tasks_completed_this_turn:$tasks_completed_this_turn,wave_groups:$wave_groups,branch:$branch,cwd:$cwd}' \
   >> "$out_file" 2>/dev/null
 
-# 8. Subagent dispatch capture (v2.3.0+).
+# 8. Subagent dispatch capture (v2.3.0+; v2.4.0 reworked to agent_id dedup).
 #
 # Parse the parent session transcript for Agent tool_use + toolUseResult pairs.
-# Emit one record per subagent dispatch to <plan>-subagents.jsonl.
-# Cursor-based incremental parsing (line-count) keeps the hook fast on long
-# sessions: only NEW toolUseResult lines emit records each turn, but the full
-# transcript is scanned to build the tool_use index (a tool_use earlier than
-# cursor can pair with a toolUseResult after cursor on long-running subagents).
+# Emit one record per subagent dispatch to <plan>-subagents.jsonl, deduped by
+# agentId (every Agent dispatch carries a unique 16-byte hex ID in the result
+# message's toolUseResult.agentId field — collisions would require a hash
+# collision across the random ID space).
+#
+# Why dedup by agent_id (replaces the v2.3.0 line-cursor approach):
+# - Cursor was plan-keyed, not transcript-keyed: when /masterplan ran across
+#   multiple Claude sessions for the same plan, the cursor advanced past line
+#   N of session-1's transcript, and session-2's transcript would start being
+#   processed from line N — silently skipping its first N lines including
+#   typically the first few dispatches.
+# - Cursor at end-of-transcript meant zero new processing every turn even in
+#   the same session unless new content landed *between* the dispatch and the
+#   stop hook firing; this routinely produced 0-line subagents.jsonl files
+#   for plans that obviously dispatched many subagents.
+# - agent_id dedup is O(N) in transcript length per turn but correct across
+#   sessions, transcript rotation, hook reinstalls, and resume after compaction.
+#   Typical transcript is 1K-50K lines; the cost is negligible vs the hook's
+#   3-second timeout.
+#
+# Adds routing_class field (Fix 5 telemetry-side observability):
+#   "codex"   -> subagent_type starts with "codex:"
+#   "sdd"     -> subagent_type contains "subagent-driven-development"
+#   "explore" -> subagent_type == "Explore"
+#   "general" -> everything else
+# Lets downstream queries do `grep '"routing_class":"codex"'` for codex-routing
+# distribution without re-parsing prompts.
 #
 # Bail conditions (subagent capture only — does NOT bail the per-turn record above):
 # - no transcript path resolved
 # - transcript file unreadable
-#
-# Cursor file <plan>-subagents-cursor stores the line count of the last
-# fully-processed transcript. Reset to 0 if the cursor exceeds the current
-# line count (transcript rotation / truncation case).
 if [[ -n "$transcript" && -r "$transcript" ]]; then
   subagents_file="${plans_dir}/${slug}-subagents.jsonl"
-  cursor_file="${plans_dir}/${slug}-subagents-cursor"
 
-  cursor=0
-  if [[ -f "$cursor_file" ]]; then
-    raw=$(cat "$cursor_file" 2>/dev/null)
-    [[ "$raw" =~ ^[0-9]+$ ]] && cursor="$raw"
+  # Build seen-agent-id set from existing subagents.jsonl (one ID per line).
+  # Empty file or missing file -> empty set.
+  if [[ -s "$subagents_file" ]]; then
+    seen_ids_json=$(jq -sc '[.[].agent_id // empty] | unique' "$subagents_file" 2>/dev/null || echo '[]')
+  else
+    seen_ids_json='[]'
   fi
+  [[ -z "$seen_ids_json" ]] && seen_ids_json='[]'
 
-  total_lines=$(wc -l <"$transcript" 2>/dev/null | tr -d ' ')
-  total_lines=${total_lines:-0}
-  (( cursor > total_lines )) && cursor=0
-
-  if (( cursor < total_lines )); then
-    jq -c -s \
-      --argjson cursor "$cursor" \
-      --arg plan "$slug" \
-      --arg branch "$branch" \
-      --arg cwd "$PWD" \
-      --arg sid "${CLAUDE_SESSION_ID:-}" \
-      '
-      . as $all
-      | (
-          [ $all[]
-            | select(.type == "assistant")
-            | .timestamp as $ts
-            | (.message.content // [])[]?
-            | select(.type == "tool_use" and (.name == "Agent" or .name == "Task"))
-            | { (.id): {
-                  model: (.input.model // null),
-                  subagent_type: (.input.subagent_type // null),
-                  description: (.input.description // ""),
-                  dispatched_at: $ts
-                }}
-          ]
-          | add // {}
-        ) as $idx
-      | range($cursor; ($all | length)) as $i
-      | $all[$i]
-      | select(.type == "user" and ((.toolUseResult.agentId // null) != null))
-      | (
-          [ (.message.content // [])[]?
-            | select(.type == "tool_result")
-            | .tool_use_id ]
-          | first // null
-        ) as $tuid
-      | ($idx[$tuid] // {}) as $tu
-      | .toolUseResult as $r
-      | {
-          ts: (.timestamp // null),
-          plan: $plan,
-          session_id: (.sessionId // $sid),
-          tool_use_id: $tuid,
-          agent_id: ($r.agentId // null),
-          subagent_type: ($tu.subagent_type // $r.agentType // null),
-          model: ($tu.model // null),
-          description: ($tu.description // ""),
-          dispatch_site: (
-            try (
-              ($r.prompt // "")
-              | match("DISPATCH-SITE:[ \\t]*([^\\n]+)")
-              | .captures[0].string
-            ) // null
-          ),
-          status: ($r.status // null),
-          prompt_chars: (($r.prompt // "") | length),
-          prompt_first_line: (($r.prompt // "") | split("\n")[0] | .[0:200]),
-          duration_ms: ($r.totalDurationMs // 0),
-          total_tokens: ($r.totalTokens // 0),
-          input_tokens: ($r.usage.input_tokens // 0),
-          output_tokens: ($r.usage.output_tokens // 0),
-          cache_creation_tokens: ($r.usage.cache_creation_input_tokens // 0),
-          cache_read_tokens: ($r.usage.cache_read_input_tokens // 0),
-          tool_uses_in_subagent: ($r.totalToolUseCount // 0),
-          tool_stats: {
-            bash: ($r.toolStats.bashCount // 0),
-            edit: ($r.toolStats.editFileCount // 0),
-            read: ($r.toolStats.readCount // 0),
-            search: ($r.toolStats.searchCount // 0),
-            other: ($r.toolStats.otherToolCount // 0),
-            lines_added: ($r.toolStats.linesAdded // 0),
-            lines_removed: ($r.toolStats.linesRemoved // 0)
-          },
-          result_chars: (
-            ($r.content // null)
-            | if type == "string" then length
-              elif type == "array" then map(.text // "") | join("") | length
-              else 0 end
-          ),
-          branch: $branch,
-          cwd: $cwd
-        }
-      ' "$transcript" >> "$subagents_file" 2>/dev/null
-
-    echo "$total_lines" > "$cursor_file" 2>/dev/null
-  fi
+  jq -c -s \
+    --argjson seen "$seen_ids_json" \
+    --arg plan "$slug" \
+    --arg branch "$branch" \
+    --arg cwd "$PWD" \
+    --arg sid "${CLAUDE_SESSION_ID:-}" \
+    '
+    . as $all
+    | ($seen | map({(.):true}) | add // {}) as $seen_set
+    | (
+        [ $all[]
+          | select(.type == "assistant")
+          | .timestamp as $ts
+          | (.message.content // [])[]?
+          | select(.type == "tool_use" and (.name == "Agent" or .name == "Task"))
+          | { (.id): {
+                model: (.input.model // null),
+                subagent_type: (.input.subagent_type // null),
+                description: (.input.description // ""),
+                dispatched_at: $ts
+              }}
+        ]
+        | add // {}
+      ) as $idx
+    | $all[]
+    | select(.type == "user" and ((.toolUseResult.agentId // null) != null))
+    | select(($seen_set[.toolUseResult.agentId] // false) | not)
+    | (
+        [ (.message.content // [])[]?
+          | select(.type == "tool_result")
+          | .tool_use_id ]
+        | first // null
+      ) as $tuid
+    | ($idx[$tuid] // {}) as $tu
+    | .toolUseResult as $r
+    | (($tu.subagent_type // $r.agentType // "") | tostring) as $stype
+    | (
+        if   ($stype | startswith("codex:"))                   then "codex"
+        elif ($stype | contains("subagent-driven-development")) then "sdd"
+        elif ($stype == "Explore")                              then "explore"
+        else "general" end
+      ) as $routing_class
+    | {
+        ts: (.timestamp // null),
+        plan: $plan,
+        session_id: (.sessionId // $sid),
+        tool_use_id: $tuid,
+        agent_id: ($r.agentId // null),
+        subagent_type: ($tu.subagent_type // $r.agentType // null),
+        routing_class: $routing_class,
+        model: ($tu.model // null),
+        description: ($tu.description // ""),
+        dispatch_site: (
+          try (
+            ($r.prompt // "")
+            | match("DISPATCH-SITE:[ \\t]*([^\\n]+)")
+            | .captures[0].string
+          ) // null
+        ),
+        status: ($r.status // null),
+        prompt_chars: (($r.prompt // "") | length),
+        prompt_first_line: (($r.prompt // "") | split("\n")[0] | .[0:200]),
+        duration_ms: ($r.totalDurationMs // 0),
+        total_tokens: ($r.totalTokens // 0),
+        input_tokens: ($r.usage.input_tokens // 0),
+        output_tokens: ($r.usage.output_tokens // 0),
+        cache_creation_tokens: ($r.usage.cache_creation_input_tokens // 0),
+        cache_read_tokens: ($r.usage.cache_read_input_tokens // 0),
+        tool_uses_in_subagent: ($r.totalToolUseCount // 0),
+        tool_stats: {
+          bash: ($r.toolStats.bashCount // 0),
+          edit: ($r.toolStats.editFileCount // 0),
+          read: ($r.toolStats.readCount // 0),
+          search: ($r.toolStats.searchCount // 0),
+          other: ($r.toolStats.otherToolCount // 0),
+          lines_added: ($r.toolStats.linesAdded // 0),
+          lines_removed: ($r.toolStats.linesRemoved // 0)
+        },
+        result_chars: (
+          ($r.content // null)
+          | if type == "string" then length
+            elif type == "array" then map(.text // "") | join("") | length
+            else 0 end
+        ),
+        branch: $branch,
+        cwd: $cwd
+      }
+    ' "$transcript" >> "$subagents_file" 2>/dev/null
 fi
 
 exit 0

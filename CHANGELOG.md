@@ -7,6 +7,85 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.0] — 2026-05-04
+
+### Added
+- New `/masterplan stats` verb (Step T) — codex-vs-inline routing distribution,
+  inline model breakdown (Sonnet/Haiku/Opus when activity logs carry
+  `[subagent: <model>]` tags or `<plan>-subagents.jsonl` is populated), token
+  totals by `routing_class`, decision-source breakdown, and per-plan health
+  flags (degraded / cache-missing / silent-skip-suspected). Backed by new
+  `bin/masterplan-routing-stats.sh` (~280-line bash + python3) supporting
+  `--plan=<slug>`, `--format=table|json|md`, `--all-repos`, `--since=<date>`.
+- New `unavailable_policy` config key under `codex:`. Default `degrade-loudly`
+  preserves Fix 1 behavior (warn + degrade). Opt-in `block` halts before B/C/I
+  with status: blocked when codex_routing != off and the codex plugin is
+  unavailable. For users who'd rather a stuck plan than silent-codex-skip.
+- Two new doctor checks. **#20**: codex_routing configured but eligibility
+  cache file missing AND activity log shows ≥1 routing/completion entry —
+  catches the cache-FILE footprint of silent codex degradation. **#21**: same
+  symptom from the activity-log angle (no `eligibility cache:` evidence
+  entries from Step C step 1) — catches the protocol-violation footprint.
+  Total checks: 21.
+- Pre-dispatch routing visibility. Step C step 3a now emits a `routing→CODEX`
+  or `routing→INLINE` activity-log entry BEFORE dispatching, plus a stdout
+  banner for real-time observability during /loop runs. Step 4b emits
+  `review→CODEX` or `review→SKIP` symmetrically. Eligibility cache extended
+  with `dispatched_to`/`dispatched_at`/`decision_source` runtime-audit fields.
+
+### Changed
+- Step 0 codex-availability detection no longer silently records degradation
+  "on the next status-file write." Degradation now writes immediately on the
+  next status update of the run (Step B3 close, Step C step 1's first write,
+  or Step I3) AND emits a visible stdout warning + `## Notes` one-liner. If
+  no status write would naturally happen this turn, the orchestrator forces a
+  `## Notes`-only update so the marker lands. Per-task pre-dispatch banners
+  (Fix 5) carry a `(codex degraded — plugin missing)` suffix when degradation
+  is in effect.
+- Step C step 1 now emits a mandatory `eligibility cache: <verdict>`
+  activity-log entry per Step C entry (built / rebuilt / loaded / skipped
+  variants + wave-pinned exception). Makes the silent-skip failure mode
+  impossible to hide; doctor check #21 surfaces the absence at lint time.
+- Step C step 3a now HALTS when codex_routing != off and eligibility_cache is
+  missing — no more silent fallthrough to inline. Branches on
+  `config.codex.unavailable_policy`: `degrade-loudly` surfaces a 4-option
+  AskUserQuestion (Rebuild cache / Run inline with degradation marker / Set
+  codex_routing: off / Abort); `block` sets status: blocked with a
+  wave-mode-aware single-writer exception.
+- Step C step 1 now performs a resume sanity check on every resume entry: scans
+  the activity log for `**Codex:** ok`-annotated tasks completed inline without
+  a `degraded-no-codex` decision_source. If found, surfaces a `## Notes`
+  warning + 4-option AskUserQuestion (Continue / Run doctor / Investigate
+  transcript / Suppress). Forensic recovery for plans that experienced silent
+  codex-skip in a prior session.
+- Stop hook (`hooks/masterplan-telemetry.sh`) now walks linked worktrees:
+  fans out across `<root>/.worktrees/*/docs/superpowers/plans/`, matches by
+  `worktree:` field equality OR `$PWD` prefix OR branch, picks
+  most-recently-modified candidate. Resolves `plans_dir` to the chosen status
+  file's parent so sidecar JSONLs land alongside worktree-resident plans
+  (previously invisible to the hook).
+- Stop hook subagent capture now dedups by `agent_id` (replacing the v2.3.0
+  plan-keyed line cursor). Old cursor was invisible to multi-session runs and
+  silently dropped dispatches — typical symptom: 0-line subagents.jsonl
+  despite many actual dispatches. New mechanism reads existing JSONL into a
+  seen-set and skips records already emitted. Each emission now carries a
+  `routing_class` field (`"codex"` / `"sdd"` / `"explore"` / `"general"`)
+  for greppable codex-routing distribution analytics.
+
+### Fixed
+- Codex degradation pattern silently bypassed all routing in optoe-ng
+  project-review (root cause pinned to a specific transcript: 7 agents
+  dispatched, zero codex-rescue, zero Step 0 warning text emitted, zero
+  eligibility cache writes). Fixes 1-5 + P1-P5 prevention layer ensure
+  silent recurrence is impossible: the orchestrator either has a populated
+  eligibility cache + visible routing tags OR it has loud user-facing
+  prompts + persistent markers — never quiet inline-bypass.
+- Stop hook telemetry/subagents JSONL siblings now land for worktree-resident
+  plans (previously invisible). Doctor check #19 description acknowledges the
+  legacy `<slug>-subagents-cursor` files (deprecated v2.4.0) as harmless.
+- Doctor table parallelization brief count synced across `commands/masterplan.md`
+  and `docs/internals.md` (20 → 21 with the two new checks).
+
 ## [2.3.1] — 2026-05-04
 
 ### Changed

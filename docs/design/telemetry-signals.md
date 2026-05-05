@@ -22,6 +22,8 @@ ignored, telemetry is skipped rather than risk being committed.
 
 Both telemetry streams honor: per-plan opt-out via `telemetry: off` in status frontmatter; global toggle via `config.telemetry.enabled`.
 
+**Aggregated cross-plan view** (v2.4.0+): the `bin/masterplan-routing-stats.sh` script combines per-plan signals from all three sources (activity-log routing tags, `<slug>-subagents.jsonl` token totals + `routing_class` field, `<slug>-eligibility-cache.json` `decision_source`) into a unified codex-vs-inline distribution + inline model breakdown + token totals report. Invoke via `/masterplan stats` (Step T) or directly. See `commands/masterplan.md` §Step T for the verb wiring; the script is the canonical implementation.
+
 ## Per-turn record shape
 
 ```json
@@ -119,7 +121,7 @@ Returns `{wave_turns, serial_turns, avg_tasks_per_wave_turn, groups_seen}`. Use 
 
 ## Subagent dispatch records (v2.3.0+)
 
-`<plan>-subagents.jsonl` — one record per `Agent` tool dispatch. Written by the Stop hook from the parent session transcript's `tool_use` + `toolUseResult` pairs at end-of-turn. Cursor-based incremental parsing (`<plan>-subagents-cursor` stores last-processed line count) keeps the hook fast on long sessions.
+`<plan>-subagents.jsonl` — one record per `Agent` tool dispatch. Written by the Stop hook from the parent session transcript's `tool_use` + `toolUseResult` pairs at end-of-turn. v2.4.0+ dedups by `agent_id` — each Agent dispatch carries a unique 16-byte hex ID in the result message's `toolUseResult.agentId`; the hook reads the existing JSONL into a seen-set and skips records already emitted. Replaces the v2.3.0 `<plan>-subagents-cursor` line-cursor approach which was plan-keyed (not transcript-keyed) and silently dropped dispatches across multi-session runs (typical symptom: 0-line subagents.jsonl despite many actual dispatches). Old cursor files lingering on disk are harmless and flagged by doctor check #19. Each record carries a `routing_class` field (`"codex"` / `"sdd"` / `"explore"` / `"general"`) for greppable codex-routing distribution.
 
 ### Record shape
 

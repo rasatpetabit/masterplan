@@ -1,5 +1,5 @@
 ---
-description: "Brainstorm → plan → execute workflow. Verbs: full, brainstorm, plan, execute, import, doctor, status, retro. Bare-topic shortcut still works."
+description: "Brainstorm → plan → execute workflow. Verbs: full, brainstorm, plan, execute, import, doctor, status, retro, stats. Bare-topic shortcut still works."
 ---
 
 # /masterplan
@@ -34,13 +34,25 @@ See **Configuration: .masterplan.yaml** below for the full schema and built-in d
 
 ### Codex availability detection (v2.0.0+)
 
-After config loading completes, if the merged config has `codex.routing != off` OR `codex.review == on` (the v2.0.0 defaults are `routing: auto` + `review: on` — both trigger this check), verify the codex plugin is available. Heuristic: scan the system-reminder skills list for any entry prefixed `codex:` (e.g., `codex:codex-rescue`, `codex:setup`, `codex:rescue`). If absent:
+After config loading completes, if the merged config has `codex.routing != off` OR `codex.review == on` (the v2.0.0 defaults are `routing: auto` + `review: on` — both trigger this check), verify the codex plugin is available. Heuristic: scan the system-reminder skills list for any entry prefixed `codex:` (e.g., `codex:codex-rescue`, `codex:setup`, `codex:rescue`). If absent, behavior depends on `config.codex.unavailable_policy` (default `degrade-loudly`; v2.4.0+ — see config schema below):
 
-1. Emit one-line warning (do not abort): *(Note: codex plugin not installed; `codex_routing` and `codex_review` degrade to `off` for this run. Install via `/plugin marketplace add openai/codex-plugin-cc` then `/plugin install codex@openai-codex` to enable Codex routing + cross-model review. Persisted config is unchanged.)*
+**`unavailable_policy: block`** — orchestrator does NOT degrade silently OR loudly. Instead: emit the same visible stdout warning (step 1 below), then HALT. Do not enter Step B/C/I — there's no plan execution to skip-codex through. For this halt, set: in-memory `halt_reason = "codex unavailable; unavailable_policy=block"`. If invoked via /loop, reschedule the next wakeup so resume can retry with codex installed; otherwise end the turn. The halting message includes: `⚠ HALT — codex plugin not detected and config.codex.unavailable_policy=block. Install codex (per the warning above) OR set codex.unavailable_policy: degrade-loudly in .masterplan.yaml to allow inline fallthrough.`. NO further steps from below run.
+
+**`unavailable_policy: degrade-loudly`** (default) — execute the full degradation path below:
+
+1. **Emit visible stdout warning** (do not abort) — must be a top-level user-facing line, not buried inside a tool call:
+
+   > ⚠ Codex plugin not detected — `codex_routing` and `codex_review` are degraded to `off` for this run. Install via `/plugin marketplace add openai/codex-plugin-cc` then `/plugin install codex@openai-codex`, then `/reload-plugins`, to restore configured Codex routing + cross-model review. Persisted config is unchanged.
+
 2. In-memory only: treat `codex_routing` as `off` and `codex_review` as `off` for the run. The persisted config (in `.masterplan.yaml` or status frontmatter) is **not** modified — re-installing codex restores configured behavior on the next invocation.
-3. Activity log entry on the next status-file update: `(codex unavailable; routing+review degraded to off this run)`.
+3. **Record the degradation in the status file immediately, on the very next status-file write of the run** (not "whenever the status updates next" — explicitly: at the close of Step B3 for kickoff flows, at Step C step 1's first status-file write for resume flows (auto-compact nudge / gated→loose offer / current_task refresh — whichever fires first), or at Step I3 for import flows; whichever lands first).
+   - **Activity log** entry: `<ISO-ts> codex degraded — plugin not detected; codex_routing+codex_review forced to off for this run (configured: routing=<configured>, review=<configured>). Re-install codex plugin to restore.`
+   - **`## Notes`** appended one-liner: `⚠ Codex degraded this run — install codex plugin to restore configured routing/review.` (Skip if a Notes line with the same `⚠ Codex degraded` prefix already exists this session — don't duplicate across resumes.)
+   - **No status-file write happens this turn?** Force one anyway: write a `## Notes`-only update with the degradation marker so the user's next `cat <status-file>` shows the warning. Rationale: the user's optoe-ng pattern was a session that did codex-eligible work but never wrote degradation evidence.
 
-This detection is the FM-4-class graceful-degrade path. It complements doctor check #18 (which surfaces the same misconfiguration as a Warning at lint time).
+4. Per-task safety net during Step C: at task-routing time (Step 3a), if the orchestrator finds itself routing inline because of Step 0 degradation rather than per-task ineligibility, the pre-dispatch banner (Fix 5 step 1) MUST suffix `(codex degraded — plugin missing)` so each task carries the degradation context, not just the kickoff write.
+
+This detection is the FM-4-class graceful-degrade path. It complements doctor check #18 (the persistent-misconfiguration warning at lint time), check #20 (catches the missing-eligibility-cache *file* footprint when Step 0 degrades silently between sessions), and check #21 (catches the missing activity-log *evidence* footprint of the same root cause from a different angle — the two checks are designed to fire together on the same degraded plan).
 
 ### Git state cache (per invocation)
 
@@ -71,6 +83,7 @@ Steps A, B0, D consult the cache instead of re-running these. **Invalidate** the
 | `doctor` (alone or with `--fix`) | **Step D** — lint state | `none` |
 | `status` (alone or with `--plan=<slug>`) | **Step S** — situation report (read-only) | `none` |
 | `retro` (alone or with `<slug>`) | **Step R** — generate retrospective for a completed plan | `none` |
+| `stats` (alone or with `--plan=<slug>` / `--format=table\|json\|md` / `--all-repos` / `--since=<ISO-date>`) | **Step T** — codex-vs-inline routing distribution + inline model breakdown + token totals across plans | `none` |
 | `--resume=<path>` or `--resume <path>` | **Step C** — alias for `execute <path>` | `none` |
 | anything else | treat as a topic, **Step B** — kickoff (back-compat catch-all) | `none` |
 
@@ -78,10 +91,10 @@ Steps A, B0, D consult the cache instead of re-running these. **Invalidate** the
 
 `halt_mode` is an internal orchestrator variable set in Step 0 from the verb match. Steps B1, B2, B3, and C consult it to choose between the existing gate behavior and a halt-aware variant.
 
-**Verb tokens are reserved.** Any topic literally named `full`, `brainstorm`, `plan`, `execute`, `retro`, `import`, `doctor`, or `status` requires another word in front via the catch-all (e.g., `/masterplan add brainstorm session timer`).
+**Verb tokens are reserved.** Any topic literally named `full`, `brainstorm`, `plan`, `execute`, `retro`, `import`, `doctor`, `status`, or `stats` requires another word in front via the catch-all (e.g., `/masterplan add brainstorm session timer`).
 
 **Argument-parse precedence (in Step 0, after config + git_state cache):**
-1. Match the first token against `{full, brainstorm, plan, execute, retro, import, doctor, status}`. On match: set `halt_mode` per the table; consume the verb; pass remaining args to the matched step.
+1. Match the first token against `{full, brainstorm, plan, execute, retro, import, doctor, status, stats}`. On match: set `halt_mode` per the table; consume the verb; pass remaining args to the matched step.
 2. If unmatched and the first arg starts with `--`: route to **Step A** (flag-only invocation).
 3. If unmatched and the first arg is a non-flag word: catch-all → **Step B** with the full arg string as the topic (existing behavior).
 
@@ -189,7 +202,7 @@ Rule of thumb: if the task can be described in a 5-bullet bounded brief, Haiku p
 
 **Recursive application.** When invoking `superpowers:subagent-driven-development` (Step C step 2), `superpowers:executing-plans`, or any skill that itself dispatches inner Agent/Task calls, prepend a **model-passthrough override** clause to the briefing telling the skill to add `model: "sonnet"` to the inner Task tool calls it dispatches (implementer, spec-reviewer, code-quality-reviewer). The orchestrator-level contract does not propagate automatically through skill invocations — those skills' prompt templates are upstream and don't carry model parameters by default.
 
-**Telemetry capture.** Per-subagent dispatch details — `subagent_type`, `model`, `duration_ms`, full token breakdown (`input_tokens` / `output_tokens` / `cache_creation_tokens` / `cache_read_tokens`), `dispatch_site`, `tool_stats`, `prompt_first_line` — are captured by the Stop hook (`hooks/masterplan-telemetry.sh`) into `<plan>-subagents.jsonl` (sibling to status). The hook parses the parent session transcript at end-of-turn and emits one record per Agent dispatch. Cursor-based incremental parsing keeps the hook fast on long sessions. Cost-distribution health: aggregate `opus_share = sum(opus_tokens) / sum(all_tokens)`; healthy `< 0.1`, regression `> 0.3`. See `docs/design/telemetry-signals.md` for the record schema and the six jq cookbook recipes.
+**Telemetry capture.** Per-subagent dispatch details — `subagent_type`, `routing_class` (v2.4.0+: `"codex"` / `"sdd"` / `"explore"` / `"general"`), `model`, `duration_ms`, full token breakdown (`input_tokens` / `output_tokens` / `cache_creation_tokens` / `cache_read_tokens`), `dispatch_site`, `tool_stats`, `prompt_first_line` — are captured by the Stop hook (`hooks/masterplan-telemetry.sh`) into `<plan>-subagents.jsonl` (sibling to status). The hook parses the parent session transcript at end-of-turn and emits one record per Agent dispatch. v2.4.0 dedups by `agent_id` against the existing JSONL (replaces v2.3.0's plan-keyed line cursor, which silently dropped dispatches across multi-session runs). Cost-distribution health: aggregate `opus_share = sum(opus_tokens) / sum(all_tokens)`; healthy `< 0.1`, regression `> 0.3`. See `docs/design/telemetry-signals.md` for the record schema and the six jq cookbook recipes.
 
 **Dispatch-site tag.** For the hook to attribute cost to orchestrator-step granularity (Step A vs Step C step 1 vs wave vs SDD vs Step I vs etc.), every Agent dispatch from `/masterplan` MUST include a literal `DISPATCH-SITE: <site-name>` line as the FIRST LINE of the prompt sent to the subagent, followed by a blank line, then the bounded brief. The hook regex-extracts this tag from the captured `prompt` field. The mapping below is authoritative — use the matching value verbatim per dispatch site:
 
@@ -580,6 +593,26 @@ Triggered by `/masterplan plan` with no topic and no `--from-spec=`. Picks an ex
    - **Cache file present, `plan.mtime >= cache.mtime`** → dispatch Haiku, overwrite cache file, load result.
    - When Step 4d edits the plan inline, also `touch` the plan file so the mtime invariant holds for the next Step C entry's cache check.
 
+   **Evidence-of-attempt entry (v2.4.0+, MANDATORY).** Step C step 1 MUST append exactly one line to `## Activity log` per Step C entry recording the cache-build outcome — including the trivial `codex_routing == off` skip. This makes the silent-skip failure mode (the optoe-ng project-review pattern, where Step C step 1 ran zero times across an entire plan and no evidence remained) impossible to hide. Doctor check #21 surfaces the absence as a Warning at lint time.
+
+   Format (one of these five variants per Step C entry):
+
+   ```
+   - <ISO-ts> eligibility cache: built (<N> tasks; <K> codex-eligible) — first build for this plan
+   - <ISO-ts> eligibility cache: rebuilt (<N> tasks; <K> codex-eligible) — plan.mtime > cache.mtime
+   - <ISO-ts> eligibility cache: loaded from disk (<N> tasks; <K> codex-eligible) — cache.mtime > plan.mtime
+   - <ISO-ts> eligibility cache: skipped (codex_routing=off)
+   - <ISO-ts> eligibility cache: skipped (codex degraded — plugin not detected this run; see ## Notes)
+   ```
+
+   The entry is appended ONCE per Step C entry, before any task-routing decisions. Subsequent re-entries (e.g., resume after compaction) emit a new entry per re-entry — that's intentional, the activity log becomes the canonical record of "did Step 1 run, when, and what did it conclude?" Cost is one line per Step C entry (~60-100 chars); negligible against the 100-entry rotation threshold.
+
+   **Skip-with-pinned-cache exception**: when `cache_pinned_for_wave == true` (M-2 mitigation; see below), Step C step 1 skips the entire decision tree for the duration of the wave. In that case emit:
+
+   ```
+   - <ISO-ts> eligibility cache: pinned for wave (<group-name>; cache.mtime <T>)
+   ```
+
    **Cache file shape** (JSON):
    ```json
    {
@@ -588,16 +621,31 @@ Triggered by `/masterplan plan` with no topic and no `--from-spec=`. Picks an ex
      "generated_at": "2026-05-01T14:32:01Z",
      "tasks": [
        {"idx": 1, "name": "...", "eligible": true,  "reason": "...", "annotated": null,
-        "parallel_group": null, "files": [], "parallel_eligible": false, "parallel_eligibility_reason": "no parallel-group annotation"},
+        "parallel_group": null, "files": [], "parallel_eligible": false, "parallel_eligibility_reason": "no parallel-group annotation",
+        "dispatched_to": null, "dispatched_at": null, "decision_source": null},
        {"idx": 2, "name": "...", "eligible": false, "reason": "...", "annotated": "no",
-        "parallel_group": "verification", "files": ["src/auth/*.py"], "parallel_eligible": true, "parallel_eligibility_reason": "all rules satisfied"}
+        "parallel_group": "verification", "files": ["src/auth/*.py"], "parallel_eligible": true, "parallel_eligibility_reason": "all rules satisfied",
+        "dispatched_to": "inline", "dispatched_at": "2026-05-01T14:33:12Z", "decision_source": "annotation"}
      ]
    }
    ```
 
    *Cache files lacking `parallel_group` / `files` / `parallel_eligible` / `parallel_eligibility_reason` (pre-v2.0.0 caches) are valid; load with `parallel_eligible: false` for every task. Cache rebuild fires on plan.md mtime change as today.*
 
-   **Bounded brief for the Haiku** (when dispatched): Goal=apply the Step C 3a Codex eligibility checklist AND the parallel-eligibility rules below to each task; emit `{task_idx → {eligible, reason, annotated, parallel_group, files, parallel_eligible, parallel_eligibility_reason}}`. Inputs=full plan task list + plan annotations (`**Codex:**`, `**parallel-group:**`, `**Files:**` blocks, optional `**non-committing:**` override). Scope=read-only. Return=JSON only — no narration.
+   **Runtime-audit fields** (v2.4.0+): `dispatched_to` / `dispatched_at` / `decision_source` start as `null` at cache build time and are stamped by Step 3a at task-routing time:
+   - `dispatched_to`: `"codex" | "inline" | "skipped" | null` — what the orchestrator actually did with this task. `null` until Step 3a routes the task.
+   - `dispatched_at`: ISO-8601 UTC timestamp when Step 3a stamped `dispatched_to` (banner emit time, not task-completion time).
+   - `decision_source`: `"annotation" | "heuristic" | "user-override-gated" | "user-override-manual" | "degraded-no-codex" | null` — *why* the routing decision was made.
+     - `"annotation"` — `**Codex:** ok` or `**Codex:** no` in plan
+     - `"heuristic"` — eligibility checklist made the call (no annotation)
+     - `"user-override-gated"` — gated autonomy: user picked the routing in the per-task gate question
+     - `"user-override-manual"` — manual codex_routing: user picked the routing in Step 3a's per-task `AskUserQuestion`
+     - `"degraded-no-codex"` — Step 0 detected codex unavailable; `dispatched_to` will always be `"inline"` in this case
+   Cache files lacking these fields (pre-v2.4.0 caches) are valid; treat as `null` and stamp on next routing.
+
+   **Cache write timing**: Step 3a stamps the three runtime-audit fields *before* dispatching the task (so a mid-task crash leaves an honest record of intent, not pretending the task never started). Persist via in-place atomic JSON write (write to `<slug>-eligibility-cache.json.tmp`, fsync, rename) so a partial write can't corrupt the cache.
+
+   **Bounded brief for the Haiku** (when dispatched): Goal=apply the Step C 3a Codex eligibility checklist AND the parallel-eligibility rules below to each task; emit `{task_idx → {eligible, reason, annotated, parallel_group, files, parallel_eligible, parallel_eligibility_reason, dispatched_to: null, dispatched_at: null, decision_source: null}}`. Inputs=full plan task list + plan annotations (`**Codex:**`, `**parallel-group:**`, `**Files:**` blocks, optional `**non-committing:**` override). Scope=read-only. Return=JSON only — no narration. Runtime-audit fields are always `null` at cache build time; Step 3a fills them.
 
    **Parallel-eligibility rules** (apply per task; record `parallel_eligible: true` only when ALL hold):
    1. `**parallel-group:** <name>` annotation is set.
@@ -609,6 +657,26 @@ Triggered by `/masterplan plan` with no topic and no `--from-spec=`. Picks an ex
    When a rule fails, set `parallel_eligible: false` and `parallel_eligibility_reason` to a one-line explanation citing the failing rule. Overlap (rule 5) emits the involved task indices in the reason.
 
    **Cache pin during parallel waves (M-2 mitigation, Slice α v2.0.0+).** Maintain an in-memory `cache_pinned_for_wave: bool` flag (default `false`). Set to `true` at the START of a parallel wave dispatch (Step C step 2 wave-mode entry). When `cache_pinned_for_wave == true`, the `cache.mtime > plan.mtime` invariant is suppressed — the loaded cache is reused for the wave's duration regardless of plan.md edits. Wave-end clears the pin (sets to `false`) and re-evaluates the invariant; cache rebuild fires if the user (not an implementer) edited plan.md mid-wave. Wave members are forbidden from editing plan.md per the in-wave scope rule in **Operational rules**.
+
+   **Resume sanity check (v2.4.0+, P3 from Fix 1-5 follow-up).** After cache load completes (whether built fresh, loaded from disk, or skipped per `codex_routing == off`), AND when this Step C entry is a *resume* (not first entry — detected by ≥1 prior task-completion entry in `## Activity log`), perform a **silent-skip footprint scan**:
+
+   1. Parse `## Activity log` for any task-completion entry that:
+      - Refers to a task whose plan annotation is `**Codex:** ok` (cross-reference: load plan, find the `**Codex:**` line in that task's `**Files:**` block).
+      - AND lacks both `[codex]` and `[inline]` post-completion tags (the optoe-ng pattern — no routing tag at all).
+      - OR carries `[inline]` BUT no preceding `routing→INLINE` pre-dispatch entry with `decision_source: degraded-no-codex` (the "ran inline silently with no degradation explanation" case).
+   2. Count matching entries as `silent_skip_count`.
+   3. If `silent_skip_count == 0`, no warning. Continue Step C.
+   4. If `silent_skip_count > 0` AND no prior `## Notes` entry already records the finding (suppress duplicate warnings across resumes — match prefix `⚠ Silent codex-skip footprint:`):
+      - Append one-line `## Notes` entry: `⚠ Silent codex-skip footprint: <N> previously-completed task(s) annotated **Codex:** ok ran inline without a recorded codex-degradation reason. Likely cause: an earlier session's Step 0 codex-availability detection silently bypassed routing. Tasks: <comma-separated task indices>.`
+      - Surface via `AskUserQuestion`:
+        - Question: `"Detected <N> previously-completed task(s) annotated **Codex:** ok that ran inline without a recorded codex-degradation reason. This usually means a prior session silently bypassed codex routing. How to proceed?"`
+        - Options:
+          1. `Continue, accept the gap` (Recommended for completed plans) — keeps the `## Notes` warning, proceeds with Step C.
+          2. `Run /masterplan doctor now` — exit Step C, route to Step D for repo-wide lint.
+          3. `Investigate transcript` — print the suspected session-id from the corresponding telemetry record (parse `<slug>-telemetry.jsonl` for the entry whose `tasks_completed_this_turn` delta covers the silent-skip task, emit `session_id` if present), then continue Step C.
+          4. `Suppress (this plan)` — append `silent_skip_warning_dismissed: true` to status frontmatter; future resumes skip this warning. For users who've decided the gap is acceptable.
+
+   **Why P3 exists**: even with P1's mandatory cache-build evidence entry (above) AND P2's Step 3a precondition (below), pre-v2.4.0 plans have no such evidence and would slip through forever without an explicit forensic pass. P3 catches them on the next resume — one-shot recovery, then suppress.
 
    **Why persist:** the cache is a pure function of plan-file content. Recomputing on every wakeup (~10 wakeups for a 30-task plan under `loose`) burns Haiku calls for no signal change. Disk persistence with mtime invalidation costs one stat per Step C entry.
 
@@ -712,9 +780,58 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
 
 3a. **Codex routing decision per task** (consult `config.codex.routing`, overridden by `--codex=` flag, persisted as `codex_routing` in the status file):
 
+    **Precondition (v2.4.0+; P2 from Fix 1-5 follow-up).** Before evaluating routing for ANY task, verify orchestrator runtime state. This is the **fail-loud-don't-fall-through** rule that catches the optoe-ng failure pattern (where Step C step 1 was silently skipped and routing fell through to inline forever).
+
+    - IF `codex_routing == off` → no precondition; skip the cache lookup; proceed to inline routing as today.
+    - ELIF `eligibility_cache` is loaded in orchestrator memory AND has an entry for this task (`eligibility_cache[task_idx]` exists) → proceed with routing per the bullets below.
+    - ELSE → **HALT.** This is a Failure-2 footprint (Step C step 1 was skipped, returned without building the cache, or the cache load failed silently). Do NOT silently fall through to inline. Behavior depends on `config.codex.unavailable_policy` (P4):
+      - **`degrade-loudly`** (default) — surface via `AskUserQuestion`:
+        - Question: `"Codex routing is set to '<routing>' but the eligibility cache is missing or has no entry for task <task_idx>. This usually means Step 0's codex-availability detection silently bypassed cache build. How to proceed?"`
+        - Options:
+          1. `Rebuild cache now` (Recommended) — re-enter Step C step 1's Haiku dispatch path; on success, retry routing for this task. Append the rebuild evidence entry per P1's format.
+          2. `Run inline this run with degradation marker` — behave as if Step 0 had detected codex unavailable: write the Fix 1 degradation marker (activity log + `## Notes`), set in-memory `codex_routing = off` for the rest of the session, proceed inline. Each subsequent task's pre-dispatch banner uses `decision_source: degraded-no-codex` per Fix 5 step 1.
+          3. `Set codex_routing: off in status frontmatter and proceed` — this IS a status-file modification beyond the hard-coded Step 4d writes; it requires explicit user opt-in via this question, and the change is announced via a `## Notes` line. Proceed without codex permanently for this plan. Future resumes won't see the precondition halt.
+          4. `Abort` — end the turn, status unchanged, no inline fallthrough. User investigates manually.
+      - **`block`** — skip the AskUserQuestion entirely. **Single-writer exception under explicit user opt-in**: this is one of the few status-file writes outside Step 4d. The opt-in is `config.codex.unavailable_policy: block` itself — the user explicitly chose hard-halt over silent inline. Wave-mode interaction: if currently dispatched within a parallel wave, defer the block-write until wave-end (when the wave-completion barrier returns) and apply it through Step 4d's same write path with the blocker entry appended to the wave-end batch. This preserves the single-writer rule for waves. For serial routing (no wave active), the block-write happens immediately as described.
+
+        Effects: Set `status: blocked`. Append `## Blockers` entry: *"Codex routing precondition failed: eligibility_cache missing under codex_routing=<routing>. config.codex.unavailable_policy=block; user opted into hard-halt over silent inline. Re-run with codex installed (orchestrator will rebuild cache) OR set codex_routing: off in status frontmatter."*. End the turn.
+
+    **Why P2 exists**: the orchestrator's previous default (silent fallthrough to inline when cache was missing) was the root cause of the optoe-ng project-review zero-codex pattern. P2 turns that silent failure into a loud one. Combined with P1's evidence-of-attempt entry, the orchestrator either has cache + tags OR has loud user-facing prompts + persistent markers — never quiet inline-bypass.
+
     - **`off`** — never delegate. Run every task inline (Claude or Claude subagent). Skip the cache lookup.
     - **`auto`** (default per CLAUDE.md "Codex Delegation Default") — look up `eligibility_cache[task_idx]` (computed in Step 1). If `eligible == true` → delegate. Otherwise run inline.
     - **`manual`** — present `eligibility_cache[task_idx]` via `AskUserQuestion(Delegate to Codex / Run inline / Skip)` before each task. User decides.
+
+    **Pre-dispatch routing visibility** (v2.4.0+, mandatory for every task whose status frontmatter has `codex_routing != off` AND every task affected by Step 0 codex degradation):
+
+    1. **Stdout banner** — emit ONE visible top-level line at the moment the routing decision is made, BEFORE any subagent or Codex dispatch:
+       ```
+       → Task T<idx> (<task name>) → CODEX (<one-line reason>)
+       → Task T<idx> (<task name>) → INLINE (<one-line reason>)
+       ```
+       Reason templates by `decision_source`:
+       - `"annotation"` → `annotated **Codex:** ok` or `annotated **Codex:** no — <reason text from plan if present>`
+       - `"heuristic"` → `heuristic: <eligibility checklist short-form, e.g. "small + bounded + clear acceptance" or "rejected: design-judgment-required">`
+       - `"user-override-gated"` → `gated gate: user chose <continue via Codex|continue inline>`
+       - `"user-override-manual"` → `manual mode: user picked <Delegate to Codex|Run inline>`
+       - `"degraded-no-codex"` → `inline (codex degraded — plugin missing)` — append the Step 0 degradation suffix per Fix 1 step 4
+
+       The banner exists because today /masterplan loops are observed via stdout/transcript with no other surface signal that a task is being routed; the post-completion `[codex]/[inline]` tag arrives after work is done, not before. The banner makes routing observable in real-time.
+
+    2. **Pre-dispatch activity-log entry** — append ONE line to `## Activity log` BEFORE dispatching:
+       ```
+       - <ISO-ts> task "<task name>" routing→CODEX (<decision_source>; <files-count> files in scope)
+       - <ISO-ts> task "<task name>" routing→INLINE (<decision_source>; <reason>)
+       ```
+       The post-completion entry is unchanged — it still appears as a SECOND activity-log line per task with the existing `[codex]` or `[inline]` tag and verification details. Two lines per task is the price for being able to grep `routing→` across status files for an unambiguous, searchable routing-decision audit independent of completion outcomes.
+
+    3. **Cache stamp** — before dispatching, update `eligibility_cache[task_idx]`:
+       - `dispatched_to: "codex" | "inline"` (matching the banner)
+       - `dispatched_at: <ISO-ts>` (matching the banner timestamp)
+       - `decision_source: <one of the values listed in §Cache file shape>`
+       Persist via atomic JSON write (see §Runtime-audit fields above). A mid-task crash leaves the cache truthful about routing intent.
+
+    **Skip rule**: when `codex_routing == off` (no codex consideration was ever in scope), the pre-dispatch banner and activity-log entry are SKIPPED — there's no routing decision to surface, only execution. The post-completion entry has no `[codex]/[inline]` tag in this mode either; current behavior is preserved.
 
     **Eligibility checklist** (applied once at plan-load by the Step 1 cache builder, then reused per task — listed here for reference and so the cache builder's brief is reproducible):
     - Task touches ≤ 3 files based on its description, OR plan annotates `**Codex:** ok`.
@@ -801,6 +918,32 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
    **Process:**
 
    1. Compute the task's diff against the **task-start commit SHA** captured by the implementer at task start (passed back as part of its return digest, where it is a **required** field — see the Subagent dispatch model table). If the implementer omitted it, treat as a protocol violation: surface a one-line blocker via `AskUserQuestion` ("Implementer subagent did not return `task_start_sha`. Re-dispatch with corrected brief / Skip 4b for this task / Abort"), and do NOT silently fall back to a SHA range — every fallback considered (`HEAD~1`, `git merge-base HEAD <status.branch>`, `git merge-base HEAD origin/<trunk>`) has a worse failure mode than blocking. If zero commits were made (task aborted before commit), there is no diff to review; skip 4b and let 4a's verification result drive the autonomy policy.
+
+   1a. **Pre-dispatch review-routing visibility** (v2.4.0+; symmetric with Step 3a's pre-dispatch visibility). When 4b's gate-conditions all hold and the orchestrator IS about to dispatch a Codex review, emit:
+       - **Stdout banner** (one top-level line):
+         ```
+         → Reviewing task T<idx> (<task name>) via CODEX (codex_review=on; diff <task-start SHA>..HEAD)
+         ```
+       - **Pre-dispatch activity-log entry** (one line):
+         ```
+         - <ISO-ts> task "<task name>" review→CODEX (codex_review=on)
+         ```
+       The post-review activity-log entry is unchanged — still tagged `[reviewed: <severity-summary or "no findings">]` per the decision matrix below. Two activity-log lines per reviewed task — the pre-dispatch line is greppable as `review→CODEX` independent of severity outcome.
+
+       **Skip-with-reason variants** — when 4b's gate-conditions cause the review to skip silently in current behavior, instead emit a one-line stdout AND activity-log entry so the user can tell skips from omissions:
+       ```
+       → Reviewing task T<idx> SKIPPED (<reason>)
+       - <ISO-ts> task "<task name>" review→SKIP (<reason>)
+       ```
+       Reason templates:
+       - `codex_review=off` (config or `--no-codex-review`)
+       - `task was codex-routed (asymmetric-review rule)`
+       - `codex plugin unavailable — Step 0 degradation`
+       - `codex_routing=off — review treated as no-op per Step 0 flag-conflict warning`
+       - `zero commits made — nothing to review`
+
+       This makes both the firing and not-firing of Codex review visible at the moment of decision, not after completion.
+
    2. Dispatch the `codex:codex-rescue` subagent in REVIEW mode with this bounded brief (Goal/Inputs/Scope/Constraints/Return shape per the architecture section). **Codex sites are exempt from §Agent dispatch contract** — do NOT pass a `model:` parameter:
       ```
       Codex review:
@@ -839,6 +982,8 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
    **4d — Status file update.** Update the status file: bump `last_activity` to the current ISO timestamp, set `current_task` to the next task name, set `next_action` to the next task's first step, append a one-line entry to `## Activity log` that includes 1–3 lines of relevant verification output (per **CD-8**) and the routing+review tags. For non-trivial decisions made during the task, also append to `## Notes` per **CD-7**.
 
    **Activity log rotation.** Before appending the new entry, count entries under `## Activity log`. If count > 100, move all entries except the most recent 50 to `<slug>-status-archive.md` (create if missing; append in chronological order so the archive itself reads oldest-to-newest). Insert a one-line marker at the top of the active log: `*(N entries archived to <slug>-status-archive.md on YYYY-MM-DD)*`. Then append the new entry. Resume behavior is unchanged — Step C step 1 reads only the active log; the archive is consulted on demand by `/masterplan retro` (Step R2).
+
+   **Two-entry-per-task accounting (v2.4.0+).** Step 3a's pre-dispatch `routing→CODEX|INLINE` entry and Step 4b's pre-dispatch `review→CODEX|SKIP` entry both count against the 100-entry rotation threshold. A typical inline task with codex_review on emits up to three entries: `routing→INLINE`, `review→CODEX`, then 4d's post-completion `[inline][reviewed: …]` entry. Rotation arithmetic still works (the most-recent-50 window will keep the post-completion entry and likely its sibling pre-dispatch entries), but plan re-readers should expect 2-3 lines per task in the active log, not 1.
 
    **Under wave (Slice α v2.0.0+ — single-writer funnel).**
 
@@ -1024,6 +1169,34 @@ Read-only throughout. Cite each excerpt with `<file>:<line>` so the user can jum
 
 ---
 
+## Step T — Routing stats
+
+Triggered by `/masterplan stats [args]`. Generates codex-vs-inline routing distribution, inline model breakdown (Sonnet/Haiku/Opus from subagents.jsonl + activity-log hints), token totals by `routing_class` (when subagents.jsonl is populated per v2.4.0+ Fix 4), eligibility-cache `decision_source` breakdown, and per-plan health flags (degraded / cache-missing / silent-skip-suspected).
+
+**Implementation**: shells out to `bin/masterplan-routing-stats.sh` from this plugin's installed location. Step T does not dispatch subagents — the script is bash + jq + python3 and runs locally in the orchestrator's Bash tool.
+
+**Process**:
+
+1. **Resolve script path.** The plugin's installed location is the directory containing the slash command file (typically `~/.claude/plugins/data/<owner>-<plugin>/<slug>/commands/masterplan.md`). Resolve `<plugin-root> = dirname(dirname(<this-prompt's-path>))`. Then `<script> = <plugin-root>/bin/masterplan-routing-stats.sh`. If the script is not found at the resolved path, surface a one-line error: `error: bin/masterplan-routing-stats.sh not found at <expected-path>. Reinstall the plugin or run from a development checkout.`. End the turn.
+2. **Pass through arguments.** Forward all post-verb arguments verbatim to the script (`--plan=<slug>`, `--format=table|json|md`, `--all-repos`, `--since=YYYY-MM-DD`). If the user passed no `--format=`, the script defaults to `table` for terminal-friendly output.
+3. **Run + stream output.** Invoke via the Bash tool with the resolved script path and forwarded args. Stream stdout to the user as-is. If the script exits non-zero, surface the stderr output, end the turn.
+4. **End the turn.** Stats are read-only; no status-file writes, no subagent dispatches, no scheduling. Do NOT follow up with `AskUserQuestion` — the user invoked stats to see the numbers, not to start a workflow.
+
+**No bounded brief**: there is no subagent dispatch in Step T. The script does ALL parsing and tabulation. The orchestrator's only job is path-resolution + arg-forwarding.
+
+**Discovery hook from Step M0** (resume-first menu, optional v2.4.0+ enhancement): when M0's tier-1 menu lists current actions, optionally include "View routing stats" as an entry that resolves to `/masterplan stats`. Surfaces the command for users who haven't seen it. Skip when no plans exist (the script returns "(no /masterplan plans found in scope)" anyway).
+
+**Sources** the script reads from per plan:
+
+- `<slug>-status.md` activity log (routing tags `[codex]`/`[inline]`, pre-dispatch `routing→` entries from Fix 5, inline model hints `[subagent: sonnet]`, timestamps for time-elapsed proxy)
+- `<slug>-subagents.jsonl` (token totals, exact `model`, `routing_class` field — v2.4.0+ Fix 4)
+- `<slug>-eligibility-cache.json` (`decision_source`, `dispatched_to` runtime audit fields — v2.4.0+ Fix 5)
+- `<slug>-status.md` `## Notes` (degradation markers `⚠ Codex degraded`, silent-skip footprint markers from P3)
+
+**Direct script invocation** (bypasses the orchestrator): users can invoke `bash <plugin-root>/bin/masterplan-routing-stats.sh ...` directly for cron / CI / loop integration. Same flags apply.
+
+---
+
 ## Step R — Retro
 
 Triggered by `/masterplan retro [<slug>]`. Generates a retrospective doc for a completed plan and writes it to `docs/superpowers/retros/YYYY-MM-DD-<slug>-retro.md`.
@@ -1133,7 +1306,7 @@ Triggered by `/masterplan doctor [--fix]`. Lints all masterplan state across all
 
 Read worktrees from `git_state.worktrees` (Step 0 cache). For each worktree, scan `<worktree>/<config.specs_path>/` and `<worktree>/<config.plans_path>/`.
 
-**Parallelization.** When worktrees ≥ 2, dispatch one Haiku agent (pass `model: "haiku"` per §Agent dispatch contract) per worktree in a single Agent batch (each agent runs all 19 checks for its worktree and returns findings as `[{check_id, severity, file, message}]` JSON). With 1 worktree, run inline — agent dispatch latency isn't worth it. The orchestrator merges results and applies the report ordering below.
+**Parallelization.** When worktrees ≥ 2, dispatch one Haiku agent (pass `model: "haiku"` per §Agent dispatch contract) per worktree in a single Agent batch (each agent runs all 21 checks for its worktree and returns findings as `[{check_id, severity, file, message}]` JSON). With 1 worktree, run inline — agent dispatch latency isn't worth it. The orchestrator merges results and applies the report ordering below.
 
 ### Checks
 
@@ -1159,7 +1332,9 @@ For each worktree, run all checks. Report findings grouped by worktree → check
 | 16 | **`parallel-group:` and `**Codex:** ok` both set on the same task.** Section 2 eligibility rule 4 violated; FM-4 mitigation conflict (mutually exclusive). | Warning | Report only. Author must remove one of the annotations. |
 | 17 | **File-path overlap detected within a `parallel-group:`.** Section 2 eligibility rule 5 violated. Multiple tasks in the same parallel-group declare overlapping `**Files:**` paths. | Warning | Report the overlapping task pairs. No auto-fix. |
 | 18 | **Codex config on but plugin missing.** Config has `codex.routing != off` OR `codex.review == on` AND no entry prefixed `codex:` is present in the system-reminder skills list at lint time. Step 0's codex-availability detection auto-degrades silently per-run; doctor surfaces the persistent misconfiguration as a Warning so the user notices and either installs codex or sets the defaults to `off`. | Warning | Suggest `/plugin marketplace add openai/codex-plugin-cc` then `/plugin install codex@openai-codex` to enable, OR set `codex.routing: off` and `codex.review: off` in `.masterplan.yaml` to suppress this check. No auto-fix (changing user's config is out of scope per CD-2). |
-| 19 | **Orphan subagents file** — `<slug>-subagents.jsonl` OR `<slug>-subagents-cursor` exists with no sibling `<slug>-status.md`. (The subagents file + cursor are sidecars of an active plan, written by `hooks/masterplan-telemetry.sh` per Agent dispatch.) | Warning | Suggest moving both to `<config.archive_path>/<date>/`. No auto-fix. |
+| 19 | **Orphan subagents file** — `<slug>-subagents.jsonl` OR (legacy, pre-v2.4.0) `<slug>-subagents-cursor` exists with no sibling `<slug>-status.md`. (The subagents file is a sidecar of an active plan, written by `hooks/masterplan-telemetry.sh` per Agent dispatch. The cursor file was the v2.3.0 dedup mechanism, deprecated in v2.4.0 in favor of `agent_id` dedup against the existing JSONL — old cursor files lingering on disk are harmless.) | Warning | Suggest moving the subagents file to `<config.archive_path>/<date>/`. Cursor file (if present) can simply be deleted. No auto-fix. |
+| 20 | **Codex routing configured but eligibility cache missing.** Status frontmatter has `codex_routing: auto` OR `codex_routing: manual` AND no sibling `<slug>-eligibility-cache.json` exists AND the activity log has at least one `routing→` or `[codex]`/`[inline]` entry (i.e., Step C ran at least once). Two failure modes both produce this: (a) Step 0's codex-availability detection silently degraded `routing` to `off` for the whole run and the orchestrator never built the cache (covered by check #18 if the plugin is also currently missing — but this check stands on its own when codex *was* uninstalled at kickoff and *was* re-installed later, where #18 wouldn't fire), or (b) the orchestrator skipped Step C step 1 entirely (a protocol violation worth reporting). | Warning | Suggest re-running the next task via `/masterplan execute <status-path>` with codex installed; the orchestrator will rebuild the cache on the next Step C invocation. If the user wants to formally surrender on codex for this plan, set `codex_routing: off` in the status frontmatter to suppress this check. No auto-fix. |
+| 21 | **Step C step 1 cache-build evidence missing.** Status frontmatter has `codex_routing: auto` OR `codex_routing: manual` AND `## Activity log` has at least one task-completion entry AND no entry matches the regex `eligibility cache:` (the v2.4.0+ P1 evidence-of-attempt entry format). This means Step C step 1 ran zero times in this plan's lifetime — protocol violation footprint, the optoe-ng project-review pattern. Distinct from #20 (which catches the cache-file footprint); #21 catches the activity-log footprint. Both can fire on the same plan (and should, for plans that pre-date both v2.4.0 fixes). | Warning | Suggest re-running the next task via `/masterplan execute <status-path>` with codex installed; orchestrator's Step C step 1 will rebuild the cache AND emit the evidence entry. If the user wants to formally surrender on codex for this plan, set `codex_routing: off` to suppress this check. No auto-fix. |
 
 ### Output
 
@@ -1308,6 +1483,12 @@ codex:
                              # values: low | medium | high | never
                              # default `medium` (auto-accept clean and low-only; prompt at medium+)
                              # set `low` to prompt on every non-clean review; set `never` to auto-accept all
+  unavailable_policy: degrade-loudly  # v2.4.0+: how to behave when codex_routing != off but plugin/cache unavailable
+                                      # values: degrade-loudly | block
+                                      # `degrade-loudly` (default): emit warning + write degradation marker + AskUserQuestion fallback
+                                      # path. Step 0's degradation block (above) and Step C step 3a's precondition halt both honor this.
+                                      # `block`: skip user prompts; set status: blocked + append ## Blockers entry; end the turn.
+                                      # For users who'd rather a stuck plan than a silent-codex-skip plan.
 
 # Intra-plan task parallelism (v2.0.0+) — Slice α (read-only parallel waves)
 # When enabled, contiguous tasks sharing the same `**parallel-group:**` annotation

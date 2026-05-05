@@ -505,9 +505,11 @@ Use the result to evaluate whether parallel-group annotations are being authored
 | 16 | `parallel-group:` and `**Codex:** ok` both set | Warning | Report only | FM-4 mitigation conflict; mutually exclusive — surface |
 | 17 | File-path overlap within `parallel-group:` | Warning | Report overlapping pairs | Eligibility rule 5 violated; tasks fall back to serial |
 | 18 | Codex config on but plugin missing | Warning | Suggest `/plugin marketplace add openai/codex-plugin-cc` then `/plugin install codex@openai-codex`, or set defaults to off | Step 0 already auto-degrades silently; doctor surfaces persistent misconfiguration |
-| 19 | Orphan subagents file — `<slug>-subagents.jsonl` / `-subagents-cursor` without sibling status | Warning | Suggest moving to archive_path | Same shape as #11/#13/#14 for the v2.3.0 per-subagent telemetry stream |
+| 19 | Orphan subagents file — `<slug>-subagents.jsonl` (or legacy `-subagents-cursor` from pre-v2.4.0 plans) without sibling status | Warning | Suggest moving to archive_path | Same shape as #11/#13/#14 for the v2.3.0 per-subagent telemetry stream. v2.4.0 dropped the cursor file in favor of agent_id dedup; old cursor files lingering on disk are harmless but flagged here for cleanup. |
+| 20 | Codex routing configured but eligibility cache missing — frontmatter has `codex_routing: auto`/`manual` AND no sibling `<slug>-eligibility-cache.json` AND activity log shows ≥1 `routing→` or `[codex]`/`[inline]` entry | Warning | Suggest re-running next task with codex installed (orchestrator rebuilds cache); or set `codex_routing: off` to suppress | Catches Step 0 silent-degradation footprint where codex was unavailable at kickoff and never came back, leaving the cache un-built and routing decisions invisible (the optoe-ng project-review failure mode). Stands on its own when #18 doesn't fire (codex re-installed by lint time). |
+| 21 | Step C step 1 cache-build evidence missing — frontmatter has `codex_routing: auto`/`manual` AND ≥1 task-completion entry AND no `eligibility cache:` entry in `## Activity log` | Warning | Suggest re-running next task with codex installed; orchestrator emits the evidence entry on next Step C step 1 invocation | Activity-log-footprint counterpart to #20: when the cache file is also absent #20+#21 both fire; when cache file was deleted but evidence remained #20 fires alone; when evidence is missing but cache is present (e.g. cache built externally / pre-v2.4.0 plan) #21 fires alone. Catches the optoe-ng pattern where Step C step 1 ran zero times across the whole plan. |
 
-**Total: 19 checks (v2.3.0).** Step D's parallelization brief tells each Haiku worker to "run all 19 checks for its worktree." When adding a check, update both the table AND the brief count.
+**Total: 21 checks (v2.4.0).** Step D's parallelization brief tells each Haiku worker to "run all 21 checks for its worktree." When adding a check, update both the table AND the brief count.
 
 ---
 
@@ -531,6 +533,7 @@ Use the result to evaluate whether parallel-group annotations are being authored
 | `doctor` (alone or with `--fix`) | Step D | `none` |
 | `status` (alone or with `--plan=<slug>`) | Step S | `none` |
 | `retro` (alone or with `<slug>`) | Step R | `none` |
+| `stats` (alone or with `--plan=<slug>` / `--format=table\|json\|md` / `--all-repos` / `--since=<date>`) | Step T — codex-vs-inline routing distribution; shells out to `bin/masterplan-routing-stats.sh` | `none` |
 | `--resume=<path>` | Step C | `none` |
 | anything else | Step B (catch-all) | `none` |
 
@@ -545,7 +548,9 @@ Since the post-v2.3.0 audit, empty `$ARGUMENTS` is resume-first. Step M0 emits t
 The empty-state broad menu asks for a category:
 
 - **Phase work** — choose `brainstorm`, `plan`, `execute`, or `full`.
-- **Operations** — choose `import`, `status`, `doctor`, or `retro`.
+- **Operations** — choose `import`, `status`, `doctor`, `retro`, or `stats`.
+
+The reserved verb tokens are: `full`, `brainstorm`, `plan`, `execute`, `retro`, `import`, `doctor`, `status`, `stats`. Topics literally named after a verb need a leading word (e.g. `/masterplan add brainstorm session timer`).
 - **Resume in-flight** — delegates to Step A's existing list+pick flow.
 - **Cancel** — exits without further tool calls.
 

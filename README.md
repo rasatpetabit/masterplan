@@ -263,10 +263,23 @@ Inspect and maintain state:
 | `/masterplan doctor [--fix]` | Lint masterplan state across worktrees | n/a |
 | `/masterplan status [--plan=<slug>]` | Read-only situation report or one-plan drilldown | n/a |
 | `/masterplan retro [<slug>]` | Generate a retrospective for a completed plan | n/a |
+| `/masterplan stats [--plan=<slug>] [--format=table\|json\|md] [--all-repos] [--since=<date>]` | Codex-vs-inline routing distribution + inline model breakdown + token totals across plans | n/a |
 
 Topics literally named after a verb (`full`, `brainstorm`, `plan`, `execute`,
-`retro`, `import`, `doctor`, `status`) need a leading word, for example:
+`retro`, `import`, `doctor`, `status`, `stats`) need a leading word, for example:
 `/masterplan add brainstorm session timer`.
+
+### Routing stats
+
+`/masterplan stats` (or directly: `bash <plugin-root>/bin/masterplan-routing-stats.sh`)
+reports codex-vs-inline routing distribution, inline model breakdown
+(Sonnet/Haiku/Opus), token totals by routing class (when `<plan>-subagents.jsonl`
+is populated), eligibility-cache decision-source breakdown, and per-plan health
+flags. By default it scans the current repo's main worktree + every linked
+worktree under `.worktrees/`; use `--all-repos` to aggregate across known repos
+(configurable via `MASTERPLAN_REPO_ROOTS` env var, default `~/dev`). Three
+output formats: `table` (default, terminal), `json` (jq-pipeable), `md`
+(GitHub-flavored, paste into PR descriptions).
 
 ### Import Shortcuts
 
