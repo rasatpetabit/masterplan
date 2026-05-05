@@ -1066,6 +1066,15 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
 
    **Under wave (Slice α v2.0.0+).** Compute the union of all wave-task `**Files:**` declarations (post-glob-expansion). Run `git status --porcelain` once at wave-end. Filter: files matching the union are expected (they belong to a wave member); files outside ALL declared scopes are CD-2 violations — surface to user. Implicit-paths whitelist (`<slug>-status.md`, `<slug>-eligibility-cache.json`, `<slug>-status-archive.md`, `.git/`) added to the union. Telemetry sidecars are intentionally NOT whitelisted here because they must be ignored and absent from porcelain; if `<slug>-telemetry.jsonl`, `<slug>-subagents.jsonl`, or `<slug>-subagents-cursor` appears in porcelain, stop and fix the local exclude guard before continuing. The per-task per-wave-member 4c check is replaced by this single union-filter — runs once per wave, not N times.
 
+   **Complexity gate (activity log density + rotation).**
+   - At `resolved_complexity == low`: each task-completion activity-log entry is ONE line: `<ISO-ts> <task-name> <pass|fail>`. No `[routing→...]`, `[review→...]`, or `[verification: ...]` tags. No `decision_source:` cite. The pre-dispatch `routing→` and `review→` entries from Step 3a/4b are SKIPPED entirely at low (codex is off; nothing to log).
+   - At `resolved_complexity == medium`: current entry shape (full tags as already documented below).
+   - At `resolved_complexity == high`: current entry shape PLUS an explicit `decision_source: <annotation|heuristic|cache>` cite when the task was Codex-eligible.
+
+   **Rotation threshold:**
+   - low: rotate when `## Activity log` exceeds 50 entries; archive all but the most recent 25.
+   - medium / high: rotate when log exceeds 100 entries; archive all but the most recent 50 (current behavior, unchanged).
+
    **4d — Status file update.** Update the status file: bump `last_activity` to the current ISO timestamp, set `current_task` to the next task name, set `next_action` to the next task's first step, append a one-line entry to `## Activity log` that includes 1–3 lines of relevant verification output (per **CD-8**) and the routing+review tags. For non-trivial decisions made during the task, also append to `## Notes` per **CD-7**.
 
    **Activity log rotation.** Before appending the new entry, count entries under `## Activity log`. If count > 100, move all entries except the most recent 50 to `<slug>-status-archive.md` (create if missing; append in chronological order so the archive itself reads oldest-to-newest). Insert a one-line marker at the top of the active log: `*(N entries archived to <slug>-status-archive.md on YYYY-MM-DD)*`. Then append the new entry. Resume behavior is unchanged — Step C step 1 reads only the active log; the archive is consulted on demand by `/masterplan retro` (Step R2).
