@@ -6,9 +6,9 @@ plan: docs/superpowers/plans/2026-05-05-complexity-levels.md
 worktree: /home/grojas/dev/superpowers-masterplan/.worktrees/complexity-levels
 branch: complexity-levels
 started: 2026-05-05
-last_activity: 2026-05-05T22:17:00Z
-current_task: "Task 11: Step C step 6 — retro requirement at high"
-next_action: "Insert complexity-aware retro option block before the existing 'Plan complete. How should I finish' AskUserQuestion in Step C step 6"
+last_activity: 2026-05-05T22:20:00Z
+current_task: "Task 12: Step D — complexity-aware doctor check-set gate"
+next_action: "Insert 'Complexity-aware check set' subsection in Step D's Scope, between existing scope paragraph and Checks subsection"
 autonomy: loose
 loop_enabled: true
 codex_routing: auto
@@ -46,6 +46,8 @@ compact_loop_recommended: true
 - 2026-05-05T22:14 routing→CODEX (Task 10: Step B2 — writing-plans brief parameterization) [codex_routing=auto, decision_source=annotation]
 - 2026-05-05T22:17 Task 10 complete, commit 20f762e [codex] (verify: trusted; 2 grep matches)
 - 2026-05-05T22:17 routing→CODEX (Task 11: Step C step 6 — retro requirement at high) [codex_routing=auto, decision_source=annotation]
+- 2026-05-05T22:20 Task 11 complete, commit 5320205 [codex] (verify: trusted; 2 grep matches)
+- 2026-05-05T22:20 routing→CODEX (Task 12: Step D — complexity-aware check-set gate) [codex_routing=auto, decision_source=annotation]
 
 ## Blockers
 (none)
