@@ -637,6 +637,8 @@ Triggered by `/masterplan plan` with no topic and no `--from-spec=`. Picks an ex
    - **Verify the worktree.** Compare the status file's `worktree` field to the current working directory (from the `pwd` above). If they differ, `cd` into the recorded worktree before continuing. If the recorded worktree no longer exists (e.g. removed via `git worktree remove`), surface this as a blocker via `AskUserQuestion`: "Worktree at `<path>` is missing. Recreate it / use the current worktree / abort."
    - **Verify the branch.** Compare the captured branch to the status file's `branch` field. If they differ, ask the user before continuing — the work was started on a different branch and silently switching could cause real problems.
 
+   **Complexity gate (eligibility cache).** When `resolved_complexity == low`, skip the entire eligibility-cache decision tree below — the cache file is NOT built and is NOT loaded. Step 3a's per-task lookup falls back to: `codex_routing` resolves to its complexity-derived default `off` at low (per Operational rules' Complexity precedence), so no delegation decision is needed per task. Doctor check #14 (orphan eligibility cache) does not flag absence on low plans (handled by Task 12's check-set gate).
+
    **Build eligibility cache.** When `codex_routing` is `auto` or `manual`, the cache lives at `<slug>-eligibility-cache.json` (sibling to status, follows the `<slug>-*` sidecar convention). Decision tree for cache load:
 
    - **Skip entirely** when `codex_routing == off`.
