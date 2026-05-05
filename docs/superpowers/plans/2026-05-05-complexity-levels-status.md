@@ -6,9 +6,9 @@ plan: docs/superpowers/plans/2026-05-05-complexity-levels.md
 worktree: /home/grojas/dev/superpowers-masterplan/.worktrees/complexity-levels
 branch: complexity-levels
 started: 2026-05-05
-last_activity: 2026-05-05T21:53:00Z
-current_task: "Task 3: Operational rules — complexity → defaults table + override precedence"
-next_action: "Append the 'Complexity precedence' bullet block to Operational rules (with per-knob defaults table)"
+last_activity: 2026-05-05T21:56:00Z
+current_task: "Task 4: Step B3 — kickoff prompt for complexity (when not set via flag/config)"
+next_action: "Insert 'Complexity kickoff prompt' subsection at top of Step B3, before the existing 'Create the sibling status file at...' line"
 autonomy: loose
 loop_enabled: true
 codex_routing: auto
@@ -29,6 +29,9 @@ compact_loop_recommended: true
 - 2026-05-05T21:50 routing→CODEX (Task 2: Step 0 — complexity resolver + activity log source line) [codex_routing=auto, decision_source=annotation]
 - 2026-05-05T21:53 Task 2 complete, commit be24bda [codex] (verify: trusted; 4 grep matches)
 - 2026-05-05T21:53 routing→CODEX (Task 3: Operational rules — complexity → defaults table + override precedence) [codex_routing=auto, decision_source=annotation]
+- 2026-05-05T21:56 Task 3 complete, commit 3551628 [codex] (verify: trusted; 4 grep matches; bullet placed before Future-design notes)
+- 2026-05-05T21:56 Notes: anchor "End-of-turn timer disclosure" cited in T3 brief is in system-prompt orchestrator only, not in v2.4.1 worktree file. Codex placed bullet correctly anyway (last bullet of Operational rules). Same-class mismatch may affect T5 (wakeup-ledger fired/armed) and T7 (telemetry block has Git-excludes prelude) — adapt briefs per task.
+- 2026-05-05T21:56 routing→CODEX (Task 4: Step B3 — kickoff prompt for complexity) [codex_routing=auto, decision_source=annotation]
 
 ## Blockers
 (none)
