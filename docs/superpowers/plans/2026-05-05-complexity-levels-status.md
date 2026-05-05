@@ -1,14 +1,14 @@
 ---
 slug: complexity-levels
-status: in-progress
+status: complete
 spec: docs/superpowers/specs/2026-05-05-complexity-levels-design.md
 plan: docs/superpowers/plans/2026-05-05-complexity-levels.md
 worktree: /home/grojas/dev/superpowers-masterplan/.worktrees/complexity-levels
 branch: complexity-levels
 started: 2026-05-05
-last_activity: 2026-05-05T22:28:00Z
-current_task: "Task 15: Docs — CHANGELOG entry + Status file format hint + WORKLOG handoff"
-next_action: "Add CHANGELOG [Unreleased] Added entry; update Status file format complexity comment; append WORKLOG entry; commit CHANGELOG+masterplan only (WORKLOG gitignored)"
+last_activity: 2026-05-05T22:35:00Z
+current_task: "(complete — v2.5.0 released)"
+next_action: "(none — plan complete)"
 autonomy: loose
 loop_enabled: true
 codex_routing: auto
@@ -54,6 +54,8 @@ compact_loop_recommended: true
 - 2026-05-05T22:26 routing→INLINE (Task 14: verification pass — read-only; running inline) [codex_routing=auto]
 - 2026-05-05T22:28 Task 14 complete, no commit [inline] (verify: 22 discriminators all pass; bash -n OK; wc=1708 within tolerance)
 - 2026-05-05T22:28 routing→INLINE (Task 15: docs — multi-file with markdown content; running inline for escaping) [codex_routing=auto, decision_source=heuristic-override]
+- 2026-05-05T22:33 Task 15 complete, commit 5b221b3 [inline] (verify: CHANGELOG entry + status template hint landed; WORKLOG appended gitignored)
+- 2026-05-05T22:35 Task 16 complete: v2.5.0 released — plugin.json + marketplace.json bumped, CHANGELOG cut, annotated tag created and pushed [inline] (user authorized via AskUserQuestion gate)
 
 ## Blockers
 (none)
