@@ -65,6 +65,28 @@ Steps A, B0, D consult the cache instead of re-running these. **Invalidate** the
 
 **Never cache `git status --porcelain`.** Working-tree dirty state must always be live; CD-2 depends on accurate dirty detection. A stale value here could let the orchestrator overwrite user-owned uncommitted changes.
 
+### Complexity resolution (per invocation)
+
+After config + flag merge completes, resolve the active `complexity` once and stash it on per-invocation state. Precedence (highest first):
+
+1. `--complexity=<level>` CLI flag (when present in this turn's args).
+2. Status frontmatter `complexity:` field (Step C resume only — empty during kickoff).
+3. Repo-local `<repo-root>/.masterplan.yaml`'s `complexity:`.
+4. User-global `~/.masterplan.yaml`'s `complexity:`.
+5. Built-in default: `medium`.
+
+Stash:
+- `resolved_complexity` — one of `low`, `medium`, `high`.
+- `complexity_source` — one of `flag`, `frontmatter`, `repo_config`, `user_config`, `default`.
+
+These two values are read by every downstream step that varies behavior on complexity. Use `resolved_complexity` for behavioral branching and `complexity_source` for attribution. The activity-log audit line written at Step C step 1's first entry uses both values, e.g.:
+
+```
+- 2026-05-05T19:32 complexity=low (source: repo_config); codex_review=on (source: cli_flag, overrides complexity-derived default)
+```
+
+This single line is the audit trail for "why did the orchestrator behave this way." Step C step 1 emits it once on kickoff entry and once per cross-session resume.
+
 ### Verb routing (first token of `$ARGUMENTS`)
 
 | First token | Branch | `halt_mode` |
