@@ -1119,6 +1119,13 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
    - If `ScheduleWakeup` is not available (not running under `/loop`), skip scheduling silently — the user resumes manually with `/masterplan` (which lands in Step A) or `/masterplan --resume=<path>`.
 6. **On plan completion:** **pre-empt the skill's "Which option?" prompt.** `superpowers:finishing-a-development-branch` will otherwise present a free-text `1. Merge / 2. Push+PR / 3. Keep / 4. Discard — Which option?` question. That free-text prompt can stall a session if it compacts before the user answers (same silent-stop bug pattern). Avoid this by surfacing `AskUserQuestion` FIRST:
 
+   **Complexity gate (retro at high).** When `resolved_complexity == high`, the AskUserQuestion below has a fifth option PREPENDED as the first/recommended choice:
+   - `"Generate retro now (Recommended) — invoke Step R0 with this slug, then finish the branch per the next picked option"`
+
+   Picking that option routes through Step R0 → R1 → R2 → R3 → R4 (the standard retro flow) FIRST, then re-surfaces the original 4-option AskUserQuestion (Merge / Push+PR / Keep / Discard) so the user can still pick a finish path. The retro file path is added to the activity log entry.
+
+   Under `resolved_complexity != high`, the retro option is NOT prepended; the existing 4-option AskUserQuestion fires as today (option count remains 4 per CD-9).
+
    ```
    AskUserQuestion(
      question="Plan complete. How should I finish the branch?",
