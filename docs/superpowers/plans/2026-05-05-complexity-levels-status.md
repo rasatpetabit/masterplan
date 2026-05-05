@@ -6,9 +6,9 @@ plan: docs/superpowers/plans/2026-05-05-complexity-levels.md
 worktree: /home/grojas/dev/superpowers-masterplan/.worktrees/complexity-levels
 branch: complexity-levels
 started: 2026-05-05
-last_activity: 2026-05-05T22:11:00Z
-current_task: "Task 9: Step C step 5 — wakeup-ledger gate at low"
-next_action: "Insert 'Complexity gate' as FIRST bullet under Step C step 5, before 'Competing-scheduler suppression'"
+last_activity: 2026-05-05T22:14:00Z
+current_task: "Task 10: Step B2 — writing-plans brief parameterization by complexity"
+next_action: "Insert complexity-aware briefing clause into Step B2 after 'Skip your Execution Handoff prompt' bullet"
 autonomy: loose
 loop_enabled: true
 codex_routing: auto
@@ -42,6 +42,8 @@ compact_loop_recommended: true
 - 2026-05-05T22:08 routing→CODEX (Task 8: Step C step 4d — log density + rotation by complexity) [codex_routing=auto, decision_source=annotation]
 - 2026-05-05T22:11 Task 8 complete, commit 6ace2af [codex] (verify: trusted; 2 grep matches)
 - 2026-05-05T22:11 routing→CODEX (Task 9: Step C step 5 — wakeup-ledger gate at low) [codex_routing=auto, decision_source=annotation]
+- 2026-05-05T22:14 Task 9 complete, commit f5eb035 [codex] (verify: trusted; 1 grep match)
+- 2026-05-05T22:14 routing→CODEX (Task 10: Step B2 — writing-plans brief parameterization) [codex_routing=auto, decision_source=annotation]
 
 ## Blockers
 (none)
