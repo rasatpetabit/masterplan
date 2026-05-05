@@ -6,9 +6,9 @@ plan: docs/superpowers/plans/2026-05-05-complexity-levels.md
 worktree: /home/grojas/dev/superpowers-masterplan/.worktrees/complexity-levels
 branch: complexity-levels
 started: 2026-05-05
-last_activity: 2026-05-05T22:14:00Z
-current_task: "Task 10: Step B2 — writing-plans brief parameterization by complexity"
-next_action: "Insert complexity-aware briefing clause into Step B2 after 'Skip your Execution Handoff prompt' bullet"
+last_activity: 2026-05-05T22:17:00Z
+current_task: "Task 11: Step C step 6 — retro requirement at high"
+next_action: "Insert complexity-aware retro option block before the existing 'Plan complete. How should I finish' AskUserQuestion in Step C step 6"
 autonomy: loose
 loop_enabled: true
 codex_routing: auto
@@ -44,6 +44,8 @@ compact_loop_recommended: true
 - 2026-05-05T22:11 routing→CODEX (Task 9: Step C step 5 — wakeup-ledger gate at low) [codex_routing=auto, decision_source=annotation]
 - 2026-05-05T22:14 Task 9 complete, commit f5eb035 [codex] (verify: trusted; 1 grep match)
 - 2026-05-05T22:14 routing→CODEX (Task 10: Step B2 — writing-plans brief parameterization) [codex_routing=auto, decision_source=annotation]
+- 2026-05-05T22:17 Task 10 complete, commit 20f762e [codex] (verify: trusted; 2 grep matches)
+- 2026-05-05T22:17 routing→CODEX (Task 11: Step C step 6 — retro requirement at high) [codex_routing=auto, decision_source=annotation]
 
 ## Blockers
 (none)
