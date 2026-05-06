@@ -28,6 +28,7 @@ Before doing anything, internalize these. They shape every decision below:
 4. Invalid YAML → abort with the file path and parser message. Missing files → skip that tier silently.
 5. **Flag-conflict warnings.** After merge, surface a one-line warning (do not abort) when:
    - `codex_routing == off` AND `codex_review == on` — review will not fire; the flag is ignored for this run.
+   - `auto_compact.enabled == true` AND `auto_compact.interval` is empty/null/missing — the substituted command would degrade to dynamic-mode `/loop` (no interval) which routes through `ScheduleWakeup` and cannot fire built-in `/compact`. Set in-memory `auto_compact_nudge_suppressed: true` (read by the Step B3 / Step C step 1 nudge logic to skip rendering this run) and emit: *"⚠️ auto_compact.enabled is true but auto_compact.interval is empty — auto-compact nudge skipped. Set a non-empty interval (e.g. `\"30m\"`) to re-enable."*
    - `--no-loop` is set AND `loop_enabled: true` is in config — the CLI flag wins; scheduling is disabled for this run.
 
 See **Configuration: .masterplan.yaml** below for the full schema and built-in defaults.
@@ -602,7 +603,7 @@ Create the sibling status file at `docs/superpowers/plans/YYYY-MM-DD-<slug>-stat
 - `compact_loop_recommended: false` — flips to `true` after the auto-compact nudge has been shown once for this plan
 - `complexity` — value of `--complexity=` flag, status frontmatter (resume), config tier, or built-in default `medium`. Set once at Step B3; updated on resume only when `--complexity=<new>` is passed (with `## Notes` audit entry).
 
-**Auto-compact nudge** (fires once per plan; respects `config.auto_compact.enabled`). If `config.auto_compact.enabled && compact_loop_recommended == false`, output one passive notice immediately before the kickoff approval prompt below:
+**Auto-compact nudge** (fires once per plan; respects `config.auto_compact.enabled`). If `config.auto_compact.enabled && compact_loop_recommended == false && !auto_compact_nudge_suppressed`, output one passive notice immediately before the kickoff approval prompt below:
 > *(Recommended: pair this run with `/loop {config.auto_compact.interval} /compact {config.auto_compact.focus}` in this same session. Note: this fires `/compact` every {config.auto_compact.interval} regardless of current context size, which may run unnecessary compactions on shorter plans. Set `auto_compact.enabled: false` in `.masterplan.yaml` to silence; consider `60m` or `90m` via `auto_compact.interval` for reduced waste.)*
 
 Then flip `compact_loop_recommended: true` in the status file. Whether or not the user pastes the command, the notice is suppressed for subsequent kickoffs/resumes of this plan.
@@ -766,7 +767,7 @@ Triggered by `/masterplan plan` with no topic and no `--from-spec=`. Picks an ex
 
    **Why persist:** the cache is a pure function of plan-file content. Recomputing on every wakeup (~10 wakeups for a 30-task plan under `loose`) burns Haiku calls for no signal change. Disk persistence with mtime invalidation costs one stat per Step C entry.
 
-   **Auto-compact nudge (resume).** If `config.auto_compact.enabled && compact_loop_recommended == false`, output the same one-line passive notice as Step B3, then flip `compact_loop_recommended: true` in the status file. Once-per-plan suppression catches kickoffs that didn't fire (e.g., imported plans).
+   **Auto-compact nudge (resume).** If `config.auto_compact.enabled && compact_loop_recommended == false && !auto_compact_nudge_suppressed`, output the same one-line passive notice as Step B3, then flip `compact_loop_recommended: true` in the status file. Once-per-plan suppression catches kickoffs that didn't fire (e.g., imported plans).
 
    **CC-1 dismissal scan.** Scan `## Notes` for `compact_suggest: off`. If present, set `cc1_silenced: true` in orchestrator memory for this run. CC-1 (operational rules) honors this flag.
 
