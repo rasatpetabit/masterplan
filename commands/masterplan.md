@@ -603,7 +603,7 @@ Create the sibling status file at `docs/superpowers/plans/YYYY-MM-DD-<slug>-stat
 - `complexity` — value of `--complexity=` flag, status frontmatter (resume), config tier, or built-in default `medium`. Set once at Step B3; updated on resume only when `--complexity=<new>` is passed (with `## Notes` audit entry).
 
 **Auto-compact nudge** (fires once per plan; respects `config.auto_compact.enabled`). If `config.auto_compact.enabled && compact_loop_recommended == false`, output one passive notice immediately before the kickoff approval prompt below:
-> *(Recommended: pair this run with `/loop {config.auto_compact.interval} /compact {config.auto_compact.focus}` in another shell or session for automatic context compaction. Set `auto_compact.enabled: false` in `.masterplan.yaml` to silence this notice.)*
+> *(Recommended: pair this run with `/loop {config.auto_compact.interval} /compact {config.auto_compact.focus}` in this same session. Note: this fires `/compact` every {config.auto_compact.interval} regardless of current context size, which may run unnecessary compactions on shorter plans. Set `auto_compact.enabled: false` in `.masterplan.yaml` to silence; consider `60m` or `90m` via `auto_compact.interval` for reduced waste.)*
 
 Then flip `compact_loop_recommended: true` in the status file. Whether or not the user pastes the command, the notice is suppressed for subsequent kickoffs/resumes of this plan.
 
