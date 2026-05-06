@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.9.1] — 2026-05-06 — auto-compact nudge fixes
+
+### Fixed
+
+- **Auto-compact nudge wording.** The kickoff/resume nudge previously advised running `/loop … /compact …` "in another shell or session" — backward, since `CronCreate` jobs are session-scoped and the cron fires into the session that *created* it. Reworded to "in this same session" and added disclosure of the unconditional-firing tradeoff so users on shorter plans can self-select longer intervals or opt out via `auto_compact.enabled: false`.
+
+### Added
+
+- **Config validator** for `auto_compact.interval` empty/null when `auto_compact.enabled == true`. Prevents the silent degrade-to-dynamic-mode failure (no-interval `/loop` routes through `ScheduleWakeup`, which cannot fire built-in `/compact`). Skips the nudge for this run and warns.
+- **Doctor check #26** `auto_compact_loop_attached`. Verifies a `/compact` cron is actually attached to the current session when one or more plans were nudged. Repo-scoped (runs once per doctor invocation), Warning severity. Surfaces the user error of running the loop in the wrong shell.
+
+### Notes
+
+- Mechanism critique resolved (no behavior change needed): fixed-interval `/loop 30m /compact …` does fire built-in compaction via the harness's `CronCreate`-mode interception path, per the documented `<<autonomous-loop>>` sentinel. Dynamic-mode `/loop /compact` (no interval) does NOT fire built-ins — the new validator is the guardrail against accidentally landing in dynamic mode.
+- See spec: `docs/superpowers/specs/2026-05-06-auto-compact-nudge-fixes-design.md`.
+
 ## [2.9.0] — 2026-05-06
 
 ### Added
