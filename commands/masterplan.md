@@ -847,6 +847,8 @@ Triggered by `/masterplan plan` with no topic and no `--from-spec=`. Picks an ex
 
 **Wave-completion barrier.** Orchestrator waits for all N Agent calls to return before proceeding. Returns aggregate as a digest list. Wave-end clears `cache_pinned_for_wave` (sets to `false`).
 
+**Post-hoc slow-member detection (E.1 mitigation, v2.8.0+).** The LLM orchestrator has no async/cancel primitive — it cannot actively kill a hung wave member while the harness is still gathering tool results. Instead, after the barrier returns, the orchestrator reads `<slug>-subagents.jsonl` (written by `hooks/masterplan-telemetry.sh` Stop hook on the *previous* turn — so this scan runs at the NEXT Step C entry, not in the current turn) and classifies each wave member with `duration_ms > config.parallelism.member_timeout_sec * 1000` as `slow_member` per `config.parallelism.on_member_timeout`. If the telemetry hook is not installed, the scan emits a one-line activity-log entry noting the gap (`slow-member scan skipped: hook not installed`) and otherwise no-ops. Detection is observability, not active cancellation: a truly hung member is bounded by the harness's own timeout, not by anything the orchestrator can write into this prompt.
+
 After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for the wave per the wave-mode notes in those sub-steps. Then Step C step 5's wakeup-scheduling threshold uses wave count, not task count (a wave-end counts as ONE completion regardless of N).
 
 2. If `--no-subagents` is set: invoke `superpowers:executing-plans`. Otherwise: invoke `superpowers:subagent-driven-development`. Hand the invoked skill the plan path and the current task index. Brief the implementer subagent with **CD-1, CD-2, CD-3, CD-6** AND with this **model-passthrough override** (per §Agent dispatch contract recursive-application clause): *"When you dispatch inner Task/Agent calls (implementer, spec-reviewer, code-quality-reviewer), pass `model: "sonnet"` on every call. Use `model: "opus"` only if the user picked the blocker re-engagement gate's stronger-model option this turn."* This override is required because SDD's prompt-template files (`implementer-prompt.md`, `spec-reviewer-prompt.md`, `code-quality-reviewer-prompt.md`) are upstream and don't carry model parameters by default — without the override, the inner Task calls inherit the orchestrator's Opus and the wave's `model: "sonnet"` discipline doesn't propagate. (Wave-mode tasks bypass this step's serial dispatch — they were already dispatched in the wave assembly pre-pass above.)
@@ -882,6 +884,7 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
    - `completed` — returned by SDD instance: task succeeded; verification passed; staged-changes digest captured.
    - `blocked` — returned by SDD instance: task hit a blocker; reason returned.
    - `protocol_violation` — **detected by orchestrator post-return** (not returned by SDD). After the wave-completion barrier, orchestrator runs `git status --porcelain` and `git log <task_start_sha>..HEAD` per wave member; if a member committed despite "DO NOT commit", wrote outside its `**Files:**` scope, or modified the status file directly, orchestrator reclassifies the SDD-reported `completed` outcome as `protocol_violation`. Treated as blocked + flagged for manual review.
+   - `slow_member` — **detected by orchestrator at the NEXT Step C entry** via the post-hoc scan above (E.1 mitigation, v2.8.0+). A member that returned `completed` or `blocked` but whose `duration_ms` exceeded `config.parallelism.member_timeout_sec * 1000` is annotated as `slow_member` *in addition to* its primary outcome (the digest is still honored — slow ≠ wrong). Wave-level outcome computation treats `slow_member` as a tag, not a state — see wave-level rules below for handling per `config.parallelism.on_member_timeout`.
 
    **Wave-level outcome.** Computed from per-member outcomes:
 
@@ -890,6 +893,10 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
    - **Partial (K completed, N-K blocked, K ≥ 1, N-K ≥ 1)** → wave completes-with-blockers. 4d appends K completed entries to `## Activity log` AND N-K blocker entries to `## Blockers`. Status flips to `blocked`. Blocker re-engagement gate fires once, listing the N-K blocked tasks. **The completed K tasks' digests are NOT discarded** — applied by the single-writer 4d update BEFORE the gate fires (standard partial-failure case).
 
    **Protocol violation handling.** If `config.parallelism.abort_wave_on_protocol_violation: true` (default), orchestrator **suppresses the 4d batch entirely** when ANY wave member is reclassified as `protocol_violation` — none of the K completed digests are applied. Wave is treated as fully blocked; completed digests remain in orchestrator memory and become available to the gate's "Skip" branch (re-applied as `## Notes` entries when advancing past the wave). Append to `## Notes`: *"Protocol violation: task `<name>` committed `<commit-sha>` despite wave instruction. Verify manually before continuing — wave-end status update was suppressed."* If `abort_wave_on_protocol_violation: false`, the standard partial-failure path applies (K digests applied, N-K blockers including the violator).
+
+   **Slow-member handling (E.1 mitigation, v2.8.0+).** Per the post-hoc scan in the per-member outcomes section, members with `duration_ms > config.parallelism.member_timeout_sec * 1000` get the `slow_member` tag at the NEXT Step C entry. Behavior depends on `config.parallelism.on_member_timeout`:
+   - **`warn`** (default) — emit one-line `## Notes` warning: *"Slow wave member: task `<name>` (idx `<i>`) ran `<dur>s` (member_timeout_sec=`<N>`s). Wave: `<group-name>`. Digest was honored normally; investigate the underlying task or raise the threshold."* AND one-line activity-log entry: `slow-member detected: task <name> (<dur>s; threshold <N>s). Wave continues per on_member_timeout=warn.`. The completed/blocked outcome is honored as-is — slow does not block forward progress.
+   - **`blocker`** — re-classify the slow member as blocked at the next Step C entry: revert the wave's already-applied digest for that task (delete the activity-log entry that wrote it; restore the prior `current_task` pointer to the slow member's index), append a `## Blockers` entry: *"Wave member `<name>` exceeded member_timeout_sec (`<dur>s` vs `<N>s`). Operator review required before continuing."*, and route through the blocker re-engagement gate. Use this when the plan's correctness depends on bounded wave times (e.g., CI-bounded plans where slow members would push downstream tasks past a deadline).
 
    **Edge case: SDD escalates BLOCKED/NEEDS_CONTEXT mid-wave.** When an SDD instance returns BLOCKED/NEEDS_CONTEXT BEFORE the wave-completion barrier, orchestrator does NOT immediately fire the blocker re-engagement gate — it waits for the rest of the wave. Gate fires once at wave-end with the union of all blocked members. Cleanest UX: one gate firing per wave, not N firings.
 
@@ -1817,6 +1824,24 @@ parallelism:
   abort_wave_on_protocol_violation: true     # if true, suppress entire 4d batch when any wave
                                              # member is reclassified as protocol_violation
                                              # (false: standard partial-failure path applies)
+  member_timeout_sec: 600                    # v2.8.0+: soft threshold for post-hoc slow-member detection
+                                             # The orchestrator cannot actively cancel a hung Agent call
+                                             # (no LLM-runtime cancel primitive); instead, after the
+                                             # wave-completion barrier returns, the orchestrator reads
+                                             # each member's duration_ms from <slug>-subagents.jsonl
+                                             # (recorded by hooks/masterplan-telemetry.sh) and classifies
+                                             # any whose duration_ms > member_timeout_sec * 1000 as
+                                             # slow_member per on_member_timeout below. Detection is
+                                             # observability, not active cancellation — the harness's
+                                             # own timeout still bounds true hangs.
+  on_member_timeout: warn                    # v2.8.0+: how to react to a post-hoc slow_member detection
+                                             # values: warn | blocker
+                                             # `warn` (default): emit one-line ## Notes warning + activity-log
+                                             #   entry; member's digest is otherwise honored normally.
+                                             # `blocker`: re-classify the slow member as blocked at the
+                                             #   next Step C entry and route through the blocker
+                                             #   re-engagement gate. Use for plans where slow waves
+                                             #   need explicit operator review before further progress.
 
 # Auto-compact loop nudge — Step B3 + Step C step 1 surface a passive notice
 # once per plan recommending /loop /compact in a sibling session for
