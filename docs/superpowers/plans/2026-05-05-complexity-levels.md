@@ -585,8 +585,6 @@ Single read-only sweep that confirms every prior task's edit landed and is refer
 
 **Codex:** ok
 
-**parallel-group:** verification
-
 - [ ] **Step 1: Confirm all complexity declarations + cross-references**
 
 Run as ONE parallel Bash batch:
