@@ -6,6 +6,11 @@
 # orchestrator but only fired inside this repo — moving them here keeps the user-facing
 # orchestrator (which ships to every /masterplan installation) clean of dev-only logic.
 #
+# Drift coverage: commands/masterplan.md, hooks/masterplan-telemetry.sh,
+# bin/masterplan-routing-stats.sh, AND skills/<name>/SKILL.md for every skill the plugin ships.
+# A user-level copy at ~/.claude/skills/<name>/ shadows the plugin's registration and shows up
+# as a duplicate slash command — caught here.
+#
 # Usage:
 #   bin/masterplan-self-host-audit.sh           # run both checks (default)
 #   bin/masterplan-self-host-audit.sh --fix     # also apply --fix actions for drift
@@ -125,6 +130,51 @@ check_drift() {
 }
 
 # ---------------------------------------------------------------------------------
+# Check: skills/ deployment drift — user-level copy shadows plugin registration
+# ---------------------------------------------------------------------------------
+check_skill_drift() {
+  local skills_dir="${REPO_ROOT}/skills"
+  if [[ ! -d "${skills_dir}" ]]; then
+    return
+  fi
+
+  for skill_path in "${skills_dir}"/*/SKILL.md; do
+    [[ -f "${skill_path}" ]] || continue
+    local skill_name
+    skill_name="$(basename "$(dirname "${skill_path}")")"
+
+    local user_skill="${HOME}/.claude/skills/${skill_name}/SKILL.md"
+    if [[ ! -f "${user_skill}" ]]; then
+      continue  # Plugin handles registration; user-level absence is correct.
+    fi
+
+    # Shim exemption (forward-compatible, same pattern as commands/).
+    if grep -qE "<!-- masterplan-shim: v[0-9]+ -->" "${user_skill}" 2>/dev/null; then
+      echo "✓ user-level skills/${skill_name}/SKILL.md is a shim — drift comparison skipped"
+      continue
+    fi
+
+    local user_md5 repo_md5
+    user_md5="$(md5sum "${user_skill}" | awk '{print $1}')"
+    repo_md5="$(md5sum "${skill_path}" | awk '{print $1}')"
+
+    if [[ "${user_md5}" == "${repo_md5}" ]]; then
+      echo "⚠️  skills/${skill_name}/SKILL.md — user-level copy is byte-identical to plugin's; duplicates the plugin registration"
+      if [[ "${FIX_MODE}" -eq 1 ]]; then
+        rm -r "${HOME}/.claude/skills/${skill_name}"
+        echo "    --fix: removed ~/.claude/skills/${skill_name}/"
+      else
+        echo "    Suggested: rm -r \"${HOME}/.claude/skills/${skill_name}\"  (or re-run with --fix)"
+      fi
+      EXIT=1
+    else
+      echo "⚠️  skills/${skill_name}/SKILL.md — user-level copy differs from plugin's; possibly an intentional customization (no auto-fix)"
+      EXIT=1
+    fi
+  done
+}
+
+# ---------------------------------------------------------------------------------
 # Check: orchestrator free-text user questions (was doctor check #27, v2.10.0)
 # ---------------------------------------------------------------------------------
 check_cd9() {
@@ -183,6 +233,7 @@ check_cd9() {
 # Run
 # ---------------------------------------------------------------------------------
 [[ "${RUN_DRIFT}" -eq 1 ]] && check_drift
+[[ "${RUN_DRIFT}" -eq 1 ]] && check_skill_drift
 [[ "${RUN_CD9}" -eq 1 ]] && check_cd9
 
 if [[ "${EXIT}" -eq 0 ]]; then

@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.11.1] — 2026-05-06 — workflow simplification + skills/ drift detection
+
+### Fixed
+
+- **`/masterplan-detect` slash-command duplication.** A May-3 manual copy at `~/.claude/skills/masterplan-detect/` was shadowing the plugin's own registration, surfacing two `/masterplan-detect` entries in the slash-command list (one user-level, one plugin-namespaced). Cleaned up the user-level copy. The plugin's `skills/masterplan-detect/SKILL.md` continues to provide the registration.
+- **`bin/masterplan-self-host-audit.sh` now detects `skills/` drift**, not just `commands/` and `hooks/`. New `check_skill_drift()` function iterates over every skill the plugin ships and warns on user-level shadow copies. Same shim-sentinel exemption pattern as the existing checks (skip if the user-level file contains `<!-- masterplan-shim: v[0-9]+ -->`). Closes the gap that allowed the masterplan-detect duplicate to slip past previous audits.
+
+### Changed
+
+- **Workflow simplification across `commands/masterplan.md`.** Ten sub-steps that existed primarily for documentation organization or pure routing have been inlined into their callers, flattening the structural surface from ~32 to ~21 distinct Step/sub-step headings (~30% reduction):
+  - **Step M0 empty-state picker** — Tier 1 / Tier 2a / Tier 2b collapsed into one inline empty-state sub-block with the same option text and routing.
+  - **Step P → Step A's spec-without-plan variant.** Step P had only one caller (the `plan` verb with no args/spec).
+  - **Step I0 → Step I entry inline.** The "if direct args, skip to I3; else I1" routing is a one-line condition.
+  - **Step I3.1 + I3.1.5 → Step I3's pre-flight collision checks.** Slug-collision and path-collision pre-passes combined under one section header.
+  - **Step C 4a/4b/4c/4d → "Post-task finalization"** with four labeled internal sub-blocks (Verify, Codex-review, Worktree-integrity, Status-update). Conditional/ordering logic preserved.
+  - **Step S4 → Step S3's `--plan` deep-dive branch.** The `--plan=<slug>` variant is a render-mode conditional, not a separate gather phase.
+  - **Step I3.3 → inlined into Step I3.4's brief** as a pre-convert phase.
+  - **Step I4 → inlined at end of Step I3.5.** The hand-off prompt was a single AskUserQuestion.
+  - **Step CL0 → Step CL1's pre-flight block.** Banner emission and worktree-scope narrowing fold naturally into CL1's processing.
+  - **Step CL4 → Step CL5's timer-status block.** Pure reporting; appended to the final report.
+
+  All cross-references updated. No user-visible behavior change. No features removed. Wave dispatch, telemetry, complexity meta-knob, `clean` verb, doctor checks, AskUserQuestion options, and config knobs all stay intact. Net file delta: -14 lines (the structural value is in flattening, not byte-count).
+
+### Notes
+
+- The `/masterplan-detect` cleanup is a one-time fix for one user; future installs with deployment-drift will surface via the new `check_skill_drift()` audit.
+- Step C's post-task finalization keeps its four internal sub-blocks clearly labeled — readability is preserved despite the flatter outer structure.
+- Plugin cache may still contain old version directories under `~/.claude/plugins/cache/.../`. These are managed by Claude Code's plugin install path; `/plugin update` should clean them.
+
 ## [2.11.0] — 2026-05-06 — extract self-host checks; shim v2; retro auto-archive; doctor #28
 
 ### Fixed

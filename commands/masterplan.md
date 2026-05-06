@@ -106,7 +106,7 @@ This single line is the audit trail for "why did the orchestrator behave this wa
 | `full <topic>` | **Step B** — full kickoff (B0→B1→B2→B3→C) | `none` |
 | `brainstorm` (no topic) | Prompt for topic via `AskUserQuestion` (free-text Other), then Step B0+B1; halt at B1 close-out gate | `post-brainstorm` |
 | `brainstorm <topic>` | Step B0+B1; halt at B1 close-out gate | `post-brainstorm` |
-| `plan` (no args) | **Step P** — pick spec-without-plan; treat pick as `plan --from-spec=<picked>` | `post-plan` |
+| `plan` (no args) | **Step A's spec-without-plan variant** — pick spec-without-plan; treat pick as `plan --from-spec=<picked>` | `post-plan` |
 | `plan <topic>` | Step B0+B1+B2+B3; halt at B3 close-out gate | `post-plan` |
 | `plan --from-spec=<path>` | cd into spec's worktree, run B2+B3 only; halt at B3 close-out gate | `post-plan` |
 | `execute` (no path) | **Step A** — list+pick across worktrees | `none` |
@@ -311,7 +311,7 @@ Parallel dispatch — whether multiple subagents in one Agent batch, multiple Ba
 - **Step A** dispatches one Haiku per worktree for status-frontmatter parsing when worktrees ≥ 2 (below that, inline reads beat agent-dispatch latency).
 - **Step B0** issues `git rev-parse` + `git status --porcelain` + `git worktree list` as one parallel Bash batch, then dispatches per-worktree name-match scans in parallel when there are ≥ 2 non-current worktrees.
 - **Step C step 1** re-reads status + spec + plan + `pwd` + current branch in one tool batch on every entry.
-- **Step C 4a** verification commands (lint / typecheck / unit tests) run in one Bash batch when they don't share mutable artifacts (see Step C 4a's exclusion list).
+- **Step C's post-task finalization (verify sub-block)** verification commands (lint / typecheck / unit tests) run in one Bash batch when they don't share mutable artifacts (see Step C's post-task finalization verify sub-block's exclusion list).
 - **Step I1** scans four source classes in parallel; each agent issues its own globs in a single batch.
 - **Step I3** runs the source-fetch wave and the conversion wave in parallel — each candidate has a unique slug and unique target paths, so writes don't contend. Cruft prompts and per-candidate commits run sequentially after the parallel waves.
 - **Step D** doctor checks dispatch one Haiku agent per worktree when N ≥ 2.
@@ -395,57 +395,59 @@ Before resume-first routing, emit a structured plain-text orientation summarizin
 8. **Route without the full menu when active work exists.**
    - If `auto_resume_candidate` exists: emit `Resuming <slug> — current: <current_task>` and route directly to **Step C** with that status path. No picker.
    - Else if `active_plans` is non-empty: route directly to **Step A** using `step_m_plans_cache`. Step A handles list+pick across ambiguous in-flight/blocked plans. No Phase/Operations menu.
-   - Else: fire Tier 1 below. This is the only route that shows the broad menu by default.
+   - Else: fire the **empty-state picker** below. This is the only route that shows the broad menu by default.
 
-### Tier 1 — Empty-state category picker
+   <!-- Previously the empty-state picker was three separate named sections (Tier 1, Tier 2a, Tier 2b); inlined here in v2.12.0 as a two-level nested picker. -->
 
-Surface `AskUserQuestion("What kind of work?", options=[
-  "Phase work — brainstorm/plan/execute/full (Recommended for new tasks)",
-  "Operations — import/status/doctor/retro",
-  "Resume in-flight — list+pick across worktrees",
-  "Cancel"
-])`.
+   **Empty-state picker (category level):**
 
-Routing:
-- **Phase work** → Tier 2a below.
-- **Operations** → Tier 2b below.
-- **Resume in-flight** → fall through to **Step A** with no further prompt. This appears mainly for empty-state users who deliberately want to inspect older or non-active state; active work routes to Step C/Step A before this menu.
-- **Cancel** → emit one-line message ("Cancelled — no action taken.") and end the turn cleanly. No further tool calls.
+   Surface `AskUserQuestion("What kind of work?", options=[
+     "Phase work — brainstorm/plan/execute/full (Recommended for new tasks)",
+     "Operations — import/status/doctor/retro",
+     "Resume in-flight — list+pick across worktrees",
+     "Cancel"
+   ])`.
 
-### Tier 2a — Phase work picker
+   Routing:
+   - **Phase work** → surface the phase work sub-picker below.
+   - **Operations** → surface the operations sub-picker below.
+   - **Resume in-flight** → fall through to **Step A** with no further prompt. This appears mainly for empty-state users who deliberately want to inspect older or non-active state; active work routes to Step C/Step A before this menu.
+   - **Cancel** → emit one-line message ("Cancelled — no action taken.") and end the turn cleanly. No further tool calls.
 
-Surface `AskUserQuestion("Which phase verb?", options=[
-  "brainstorm <topic> — discovery + spec only (halts post-brainstorm)",
-  "plan <topic> — spec + plan (halts post-plan)",
-  "execute — pick a status file and run Step C",
-  "full <topic> — all three phases (B0→B1→B2→B3→C, no halts)"
-])`.
+   **Empty-state picker (phase work sub-picker):**
 
-Routing:
-- **brainstorm** → prompt for topic via `AskUserQuestion("What's the brainstorm topic?", options=[Other])` (Other forces free-text), set `halt_mode = post-brainstorm`, route to **Step B** with that topic.
-- **plan** → prompt for topic the same way, set `halt_mode = post-plan`, route to **Step B**.
-- **execute** → no topic needed; route directly to **Step A**.
-- **full** → prompt for topic the same way, set `halt_mode = none`, route to **Step B**.
+   Surface `AskUserQuestion("Which phase verb?", options=[
+     "brainstorm <topic> — discovery + spec only (halts post-brainstorm)",
+     "plan <topic> — spec + plan (halts post-plan)",
+     "execute — pick a status file and run Step C",
+     "full <topic> — all three phases (B0→B1→B2→B3→C, no halts)"
+   ])`.
 
-### Tier 2b — Operations picker
+   Routing:
+   - **brainstorm** → prompt for topic via `AskUserQuestion("What's the brainstorm topic?", options=[Other])` (Other forces free-text), set `halt_mode = post-brainstorm`, route to **Step B** with that topic.
+   - **plan** → prompt for topic the same way, set `halt_mode = post-plan`, route to **Step B**.
+   - **execute** → no topic needed; route directly to **Step A**.
+   - **full** → prompt for topic the same way, set `halt_mode = none`, route to **Step B**.
 
-Surface `AskUserQuestion("Which operation?", options=[
-  "import — discover legacy planning artifacts",
-  "status — situation report (read-only)",
-  "doctor — lint state across all worktrees",
-  "retro — generate retrospective for a completed plan"
-])`.
+   **Empty-state picker (operations sub-picker):**
 
-Routing:
-- **import** → route to **Step I** (no further args; legacy import discovery).
-- **status** → route to **Step S** (no further args; cross-worktree report).
-- **doctor** → route to **Step D** (no further args; lint).
-- **retro** → route to **Step R** (no slug; Step R0 picks the most-recent completed plan without a retro).
+   Surface `AskUserQuestion("Which operation?", options=[
+     "import — discover legacy planning artifacts",
+     "status — situation report (read-only)",
+     "doctor — lint state across all worktrees",
+     "retro — generate retrospective for a completed plan"
+   ])`.
+
+   Routing:
+   - **import** → route to **Step I** (no further args; legacy import discovery).
+   - **status** → route to **Step S** (no further args; cross-worktree report).
+   - **doctor** → route to **Step D** (no further args; lint).
+   - **retro** → route to **Step R** (no slug; Step R0 picks the most-recent completed plan without a retro).
 
 ### Notes
 
 - Resume-first routing deliberately delegates ambiguous cases to Step A's existing list+pick rather than re-implementing selection UI inline. One canonical site for the in-progress-plans picker.
-- The broad picker fires only after resume-first routing finds no active plans. Picker-routed invocations set `halt_mode` based on the chosen verb (per Tier 2a above) — no CLI flags are passed from the empty bare invocation.
+- The broad picker fires only after resume-first routing finds no active plans. Picker-routed invocations set `halt_mode` based on the chosen verb (per the phase work sub-picker above) — no CLI flags are passed from the empty bare invocation.
 - If the user wants to invoke a verb directly (e.g., `/masterplan full <topic>`), they can — Step 0's verb routing table still matches the first token before Step M fires. Step M is for the empty-args case only.
 - **Stay on script.** Step M0's structured preamble (headline + up-to-3 plan bullets + optional tripwire flag) IS the orientation; emit it exactly as specified above, then route according to the resume-first rules. Do NOT expand the preamble with prose commentary, do NOT enumerate which doctor checks tripped (that's `/masterplan doctor`'s job — M0 only counts), and do NOT pivot into adjacent feature offers ("by the way, want me to open a browser visualization / install X / show a diagram?"). `/masterplan` is frequently invoked inside `/loop` and remote-control sessions where there is no human between turns; a turn that ends with a free-text question instead of Step C/Step A or an `AskUserQuestion` call stalls the loop. Any `?` outside an `AskUserQuestion` is still a bug.
 
@@ -463,6 +465,18 @@ Routing:
    - Keep entries where `status` is `in-progress` or `blocked`. Annotate each with the worktree path and branch it lives in. **If a status file fails to parse**, skip it and add a one-line note to the discovery report ("status file at `<path>` is malformed — run `/masterplan doctor` to inspect"). Do not abort the listing. Sort the parsed entries by `last_activity` descending.
 5. Use `AskUserQuestion` with options laid out as: 2 most recent plans + "Start fresh". If more than 2 in-progress plans exist, replace the lower plan slot with a "More…" option that, when picked, re-asks with the next batch — keeps total options at 3, never exceeds the AskUserQuestion 4-option cap.
 6. If user picks a plan → **Step C** with that status path. If the plan's worktree differs from the current working directory, `cd` to that worktree before continuing (run all subsequent commands from the plan's worktree). If "Start fresh" → ask for a one-line topic via `AskUserQuestion` (free-form Other), then **Step B**.
+
+#### Spec-without-plan variant (triggered by `/masterplan plan` with no topic and no `--from-spec=`)
+
+When the verb routing table in Step 0 matches `plan` with no args, Step A runs this variant instead of the standard in-progress picker above:
+
+1. Glob `<config.specs_path>/*-design.md` across all worktrees as one parallel Bash batch (read worktrees from `git_state.worktrees`).
+2. For each candidate spec, check whether a sibling plan exists at `<config.plans_path>/<same-slug>.md` (slug = filename minus `-design.md` suffix). Filter to specs **without** a plan.
+3. Sort the filtered list by mtime descending.
+4. **If ≥ 1 candidate:** present top 3 via `AskUserQuestion`. The 4th option is "Other — paste a path" (free-text). User picks → treat as `plan --from-spec=<picked>` and proceed to **plan --from-spec worktree handling** (Step B0a, above in Step B), then Step B2 + B3.
+5. **If zero candidates:** surface `AskUserQuestion("No specs without plans found across <N> worktrees. What next?", options=["Start a new feature — /masterplan full <topic>", "Brainstorm-only — /masterplan brainstorm <topic>", "Cancel"])`. The first two redirect into the corresponding verb's flow with a topic prompted next; "Cancel" ends the turn.
+
+`halt_mode` for this variant's outputs is `post-plan` (already set in Step 0 when `plan` was matched). Step B3's close-out gate fires after the plan is written.
 
 ---
 
@@ -500,7 +514,7 @@ The brainstorm/plan/status files will be committed inside whichever worktree you
 
 #### Step B0a — `plan --from-spec=<path>` worktree handling
 
-When the verb is `plan --from-spec=<path>` (directly, or via Step P's pick), Step B0's worktree-decision flow is **skipped** — the spec's location is authoritative. Run this short flow instead:
+When the verb is `plan --from-spec=<path>` (directly, or via Step A's spec-without-plan variant's pick), Step B0's worktree-decision flow is **skipped** — the spec's location is authoritative. Run this short flow instead:
 
 1. Resolve `<path>` to its containing git worktree via `git rev-parse --show-toplevel` from the spec's parent directory.
 2. `cd` into that worktree before invoking `superpowers:writing-plans` (Step B2).
@@ -613,7 +627,7 @@ Then flip `compact_loop_recommended: true` in the status file. Whether or not th
 
 - **`halt_mode == none`** (existing kickoff path, unchanged): if `--autonomy != full`, present a one-paragraph plan summary and the path to the plan file via `AskUserQuestion` with options "Start execution / Open plan to review / Cancel". Wait for approval. If `--autonomy=full`: skip approval. Proceed to **Step C** with the new status path.
 
-- **`halt_mode == post-plan`** (new, fires when invoked via `/masterplan plan <topic>`, `/masterplan plan --from-spec=<path>`, Step P's pick, or via B1's "Continue to plan now" flip from a `brainstorm` invocation): surface `AskUserQuestion("Plan written at <path>. Status file at <status-path>. What next?", options=["Done — resume later with /masterplan execute <status-path> (Recommended)", "Start execution now — flip halt_mode to none and proceed to Step C", "Open plan to review before deciding", "Discard plan + status file (status file removed; spec kept)"])`.
+- **`halt_mode == post-plan`** (new, fires when invoked via `/masterplan plan <topic>`, `/masterplan plan --from-spec=<path>`, Step A's spec-without-plan variant's pick, or via B1's "Continue to plan now" flip from a `brainstorm` invocation): surface `AskUserQuestion("Plan written at <path>. Status file at <status-path>. What next?", options=["Done — resume later with /masterplan execute <status-path> (Recommended)", "Start execution now — flip halt_mode to none and proceed to Step C", "Open plan to review before deciding", "Discard plan + status file (status file removed; spec kept)"])`.
   - "Done" → end the turn. Status file persists with `status: in-progress` and `current_task` set to the first task. The user resumes later via `/masterplan execute <status-path>`.
   - "Start execution now" → flip in-session `halt_mode` to `none` and proceed to **Step C**.
   - "Open plan" → end the turn. User re-invokes `/masterplan execute <status-path>` later.
@@ -623,23 +637,9 @@ The status file's `autonomy`, `codex_routing`, `codex_review`, `loop_enabled` fi
 
 ---
 
-## Step P — Plan-only no-args picker
-
-Triggered by `/masterplan plan` with no topic and no `--from-spec=`. Picks an existing spec without a plan and treats the pick as `plan --from-spec=<picked>`.
-
-1. Glob `<config.specs_path>/*-design.md` across all worktrees as one parallel Bash batch (read worktrees from `git_state.worktrees`).
-2. For each candidate spec, check whether a sibling plan exists at `<config.plans_path>/<same-slug>.md` (slug = filename minus `-design.md` suffix). Filter to specs **without** a plan.
-3. Sort the filtered list by mtime descending.
-4. **If ≥ 1 candidate:** present top 3 via `AskUserQuestion`. The 4th option is "Other — paste a path" (free-text). User picks → treat as `plan --from-spec=<picked>` and proceed to **plan --from-spec worktree handling** (Step B0a, above in Step B), then Step B2 + B3.
-5. **If zero candidates:** surface `AskUserQuestion("No specs without plans found across <N> worktrees. What next?", options=["Start a new feature — /masterplan full <topic>", "Brainstorm-only — /masterplan brainstorm <topic>", "Cancel"])`. The first two redirect into the corresponding verb's flow with a topic prompted next; "Cancel" ends the turn.
-
-`halt_mode` for this step's outputs is `post-plan` (already set in Step 0 when `plan` was matched). Step B3's close-out gate fires after the plan is written.
-
----
-
 ## Step C — Execute
 
-**Dispatch guard.** If `halt_mode != none`, skip Step C entirely — the B1 or B3 close-out gate already ended the turn. The only paths into Step C are: (a) `halt_mode == none` from kickoff or `execute`/`--resume=`; (b) the user explicitly flipped `halt_mode` to `none` via B3's "Start execution now" gate option. B3's gate is reached directly from `/masterplan plan` (and `plan --from-spec=`, Step P), or via `brainstorm` → B1's "Continue to plan now" → B2 → B3 (which still requires the user to pick "Start execution now" at B3 to enter Step C).
+**Dispatch guard.** If `halt_mode != none`, skip Step C entirely — the B1 or B3 close-out gate already ended the turn. The only paths into Step C are: (a) `halt_mode == none` from kickoff or `execute`/`--resume=`; (b) the user explicitly flipped `halt_mode` to `none` via B3's "Start execution now" gate option. B3's gate is reached directly from `/masterplan plan` (and `plan --from-spec=`, Step A's spec-without-plan variant), or via `brainstorm` → B1's "Continue to plan now" → B2 → B3 (which still requires the user to pick "Start execution now" at B3 to enter Step C).
 
 1. **Batched re-read.** Issue these as one parallel tool batch (not sequential):
    - Read the status file.
@@ -1014,9 +1014,9 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
 
     Append a `[codex]` or `[inline]` tag to the activity log entry for each completed task so future-you can see the routing distribution.
 
-4. **After every completed task** (sub-steps run in this fixed order):
+4. **Post-task finalization** — runs in this fixed order after every completed task:
 
-   **4a — CD-3 verification.** Run the task's verification commands (per CD-1) and capture output for 4b. Trust-but-verify the implementer: read `tests_passed`, `commands_run`, and `commands_run_excerpts` from the implementer's return digest (required fields per the dispatch model table) and skip what the implementer already ran cleanly **AND for which the excerpt validator passes (G.1 mitigation, v2.8.0+)**.
+   **4a — Verify (CD-3 verification).** Run the task's verification commands (per CD-1) and capture output for 4b. Trust-but-verify the implementer: read `tests_passed`, `commands_run`, and `commands_run_excerpts` from the implementer's return digest (required fields per the dispatch model table) and skip what the implementer already ran cleanly **AND for which the excerpt validator passes (G.1 mitigation, v2.8.0+)**.
 
    **Excerpt validator (G.1, v2.8.0+).** The trust-skip is no longer license alone — it requires evidence of execution. For each command in `commands_run`, look up its excerpt in `commands_run_excerpts[cmd]` (a list of 1–3 trailing output lines) and regex-match each excerpt against:
    - The plan task's `**verify-pattern:** <regex>` annotation if present (case-sensitive); OR
@@ -1038,7 +1038,7 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
 
    When in doubt, run sequentially — a wrong-batch race that corrupts a build artifact costs more than the seconds saved. Brief the implementer subagent on this rule when dispatching it for the task; the rule applies recursively if the implementer dispatches its own verification subagents.
 
-   **4b — Codex review of inline work** (consult `config.codex.review`, overridden by `--codex-review=` flag, persisted as `codex_review` in the status file).
+   **4b — Codex-review (Codex review of inline work)** (consult `config.codex.review`, overridden by `--codex-review=` flag, persisted as `codex_review` in the status file).
 
    Fires when ALL of the following hold, otherwise skip silently:
    - `codex_review` is `on`.
@@ -1108,7 +1108,7 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
         - High → attempt up to `config.codex.review_max_fix_iterations` fix iterations (rerun inline with findings as added briefing). If still high-severity afterward, set `status: blocked`. Each iteration counts as a CD-4 ladder rung.
    5. Activity log gets a review tag alongside the routing tag, e.g. `[inline][reviewed: clean]` or `[inline][reviewed: 2 medium, 1 low]`. Full findings digest goes to `## Notes` only when severity is medium or higher — clean and low-only reviews don't need notes pollution.
 
-   **4c — Worktree integrity check.** Apply CD-2: `git status --porcelain` should show only task-scope files. If unexpected files appear, surface to the user before continuing; never silently revert their work.
+   **4c — Worktree-integrity (CD-2 check).** Apply CD-2: `git status --porcelain` should show only task-scope files. If unexpected files appear, surface to the user before continuing; never silently revert their work.
 
    **Under wave (Slice α v2.0.0+).** Compute the union of all wave-task `**Files:**` declarations (post-glob-expansion). Run `git status --porcelain` once at wave-end. Filter: files matching the union are expected (they belong to a wave member); files outside ALL declared scopes are CD-2 violations — surface to user. Implicit-paths whitelist (`<slug>-status.md`, `<slug>-eligibility-cache.json`, `<slug>-status-archive.md`, `.git/`) added to the union. Telemetry sidecars are intentionally NOT whitelisted here because they must be ignored and absent from porcelain; if `<slug>-telemetry.jsonl`, `<slug>-subagents.jsonl`, or `<slug>-subagents-cursor` appears in porcelain, stop and fix the local exclude guard before continuing. The per-task per-wave-member 4c check is replaced by this single union-filter — runs once per wave, not N times.
 
@@ -1121,7 +1121,7 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
    - low: rotate when `## Activity log` exceeds 50 entries; archive all but the most recent 25.
    - medium / high: rotate when log exceeds 100 entries; archive all but the most recent 50 (current behavior, unchanged).
 
-   **4d — Status file update.** Update the status file: bump `last_activity` to the current ISO timestamp, set `current_task` to the next task name, set `next_action` to the next task's first step, append a one-line entry to `## Activity log` that includes 1–3 lines of relevant verification output (per **CD-8**) and the routing+review tags. For non-trivial decisions made during the task, also append to `## Notes` per **CD-7**.
+   **4d — Status-update (status file update + archive-and-schedule).** Update the status file: bump `last_activity` to the current ISO timestamp, set `current_task` to the next task name, set `next_action` to the next task's first step, append a one-line entry to `## Activity log` that includes 1–3 lines of relevant verification output (per **CD-8**) and the routing+review tags. For non-trivial decisions made during the task, also append to `## Notes` per **CD-7**.
 
    **Concurrent-write guard (F.4 mitigation, v2.8.0+).** Wrap the entire 4d update sequence (rotation + append + atomic temp+fsync+rename) in `flock <status-file> -c '<the-write-sequence>'` with a 5-second timeout. On contention (lock not acquired within 5s — typically a user-editor saving the status file in another window), do NOT block: instead append a single JSON-line entry describing this would-be update to `<slug>-status.queue.jsonl` (sibling to status), surface a one-line stdout warning *"Status write contention — entry queued; retry on next 4d cycle."*, and continue. The next 4d run drains the queue file BEFORE its own append: read each queued entry oldest-first, replay against the current status file, then truncate the queue file. Replays are idempotent — a queued entry whose state is already reflected in the active log is a no-op (match by `last_activity` + first 80 chars of the activity-log entry). On `flock` unavailable (Windows / hosts without util-linux), the orchestrator falls through to the unguarded write path AND emits one `## Notes` entry per session: *"flock unavailable on this host — status writes proceed without contention guard. Concurrent edits may interleave; close other editors before manual edits."* Doctor check #24 (below) surfaces non-empty queue files post-session.
 
@@ -1188,9 +1188,7 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
 
 Triggered by `/masterplan import [args]`. Brings legacy planning artifacts under the masterplan schema (spec + plan + status), with completion-state inference so already-done work isn't redone.
 
-### Step I0 — Direct vs. discovery
-
-If `$ARGUMENTS` includes any of `--pr=<num>`, `--issue=<num>`, `--file=<path>`, `--branch=<name>`, skip discovery and jump to **Step I3** with that single candidate (Step I2 rank+pick is also skipped — the candidate is already determined). Otherwise run **Step I1**.
+**Direct vs. discovery routing:** If `$ARGUMENTS` includes any of `--pr=<num>`, `--issue=<num>`, `--file=<path>`, `--branch=<name>`, skip discovery and jump to **Step I3** with that single candidate (Step I2 rank+pick is also skipped — the candidate is already determined). Otherwise run **Step I1**.
 
 ### Step I1 — Discover (parallel)
 
@@ -1214,20 +1212,18 @@ Dedupe across scans (the same project may appear as a PLAN.md AND an issue AND a
 
 Conversions parallelize across candidates because each candidate writes to unique target paths. Cruft handling and `git commit` run sequentially after the parallel waves to keep a single writer per commit (avoids git index races and keeps activity-log entries clean).
 
-#### I3.1 — Slug-collision pre-pass (sequential, fast)
+#### Pre-flight collision checks (sequential, fast)
 
-For all picked candidates, sanitize each title to a slug and group by slug. When two or more candidates resolve to the same slug, suffix later ones with `-2`, `-3`, etc. If multiple collisions are detected (≥ 2 collision groups), confirm the renames once via `AskUserQuestion(Apply auto-suffixed slugs / Show me the conflicts and let me rename / Abort import)`. Use today's date for all kickoff dates.
+**Slug-collision pass:** For all picked candidates, sanitize each title to a slug and group by slug. When two or more candidates resolve to the same slug, suffix later ones with `-2`, `-3`, etc. If multiple collisions are detected (≥ 2 collision groups), confirm the renames once via `AskUserQuestion(Apply auto-suffixed slugs / Show me the conflicts and let me rename / Abort import)`. Use today's date for all kickoff dates.
 
-This produces a `candidates[]` list with finalized `(slug, spec_path, plan_path, status_path)` tuples — guaranteed unique within this batch (but not yet checked against existing on-disk paths; see I3.1.5).
+This produces a `candidates[]` list with finalized `(slug, spec_path, plan_path, status_path)` tuples — guaranteed unique within this batch (but not yet checked against existing on-disk paths).
 
-#### I3.1.5 — Path-existence pre-pass (sequential, fast)
-
-For each candidate's `(spec_path, plan_path, status_path)` tuple from I3.1, check whether ANY of the three paths already exist on disk. Implements the operational rule "Import never overwrites existing masterplan state silently".
+**Path-existence pass:** For each candidate's `(spec_path, plan_path, status_path)` tuple, check whether ANY of the three paths already exist on disk. Implements the operational rule "Import never overwrites existing masterplan state silently".
 
 For each candidate with **≥ 1** pre-existing path collision, surface `AskUserQuestion` (one prompt per colliding candidate; sequential, not parallel — interactive prompts must not interleave): "Importing `<slug>` would overwrite existing masterplan state at: `<colliding-paths>`. What now?" with options:
 - **(1) Overwrite (Recommended)** — proceed with the original tuple; existing files will be rewritten by I3.4.
-- **(2) Write to `-v2` suffix** — append `-v2` to the slug and recompute the tuple; if `<slug>-v2` paths also collide, increment to `-v3`, `-v4`, etc. until all three target paths are free (mirrors I3.1's `-2`, `-3` slug-collision pattern).
-- **(3) Abort this candidate** — remove the candidate from `candidates[]` and skip its I3.2/I3.3/I3.4/I3.5 processing.
+- **(2) Write to `-v2` suffix** — append `-v2` to the slug and recompute the tuple; if `<slug>-v2` paths also collide, increment to `-v3`, `-v4`, etc. until all three target paths are free (mirrors the `-2`, `-3` slug-collision pattern above).
+- **(3) Abort this candidate** — remove the candidate from `candidates[]` and skip its I3.2/I3.4/I3.5 processing.
 
 Mutate `candidates[]` per the chosen action: aborted entries are removed; `-vN` entries have their `(slug, spec_path, plan_path, status_path)` tuple rewritten before I3.2 begins.
 
@@ -1245,13 +1241,11 @@ Dispatch one fetch agent per candidate in a single Agent batch. **Per-candidate 
 
 Each agent's bounded brief: Goal=fetch this candidate's source content, Inputs=candidate identifier, Scope=read-only, Return=raw source content + (for branches) reverse-engineered structure. The orchestrator collects the results keyed by candidate id.
 
-#### I3.3 — Parallel completion-state inference
+#### I3.4 — Parallel completion-state inference + conversion wave
 
-For each candidate that has a discernible task list, run completion-state inference (see **Completion-state inference** below) — these inference runs can themselves be dispatched in parallel since each candidate is independent.
+First, for each candidate that has a discernible task list, run completion-state inference (see **Completion-state inference** below) — these inference runs can themselves be dispatched in parallel since each candidate is independent. The inference results feed the conversion briefs below.
 
-#### I3.4 — Parallel conversion wave
-
-Dispatch one Sonnet conversion subagent (pass `model: "sonnet"` per §Agent dispatch contract) per candidate in a single Agent batch. Each agent owns unique target paths from I3.1 and writes only to its own slug's spec/plan/status — no contention. Brief per agent:
+Then dispatch one Sonnet conversion subagent (pass `model: "sonnet"` per §Agent dispatch contract) per candidate in a single Agent batch. Each agent owns unique target paths from I3.1 and writes only to its own slug's spec/plan/status — no contention. Brief per agent:
 
 > Rewrite this legacy planning artifact into superpowers spec format (`<spec-path>`) and plan format (`<plan-path>`) following the writing-plans skill conventions. Drop tasks classified `done`. Move `possibly_done` tasks into a `## Verify before continuing` checklist at the top of the plan, each with its evidence. Keep `not_done` tasks as the active task list, reformatted into bite-sized steps (writing-plans style). Preserve constraints, decisions, and stakeholder context in the spec's Background section. Discard pure status narration. Do not invent tasks the source didn't mention. Then write the status file at `<status-path>` populating **every** frontmatter field per the Step B3 field list (`slug`, `status: in-progress`, `spec`, `plan`, `worktree`, `branch`, `started` today, `last_activity` now, `current_task` = first `not_done` task, `next_action` = its first step, `autonomy`, `loop_enabled`, `codex_routing`, `codex_review`, `compact_loop_recommended: false` from current config + flags), and seed `## Notes` with: link back to source (path/URL/branch/issue#), inference evidence summary, list of `possibly_done` items the user should verify before execution.
 
@@ -1273,9 +1267,7 @@ After all parallel waves complete, iterate candidates one-by-one:
 
 Sequential here is deliberate: cruft prompts are user-interactive (parallel `AskUserQuestion` would scramble UX), and per-candidate `git commit` keeps the index clean.
 
-### Step I4 — Hand off
-
-After all candidates are converted, list the new status file paths. `AskUserQuestion`: "Resume one now? / All done — exit." If resume → jump to **Step C** with the chosen status path.
+**Hand off:** After all candidates are converted, list the new status file paths. `AskUserQuestion`: "Resume one now? / All done — exit." If resume → jump to **Step C** with the chosen status path.
 
 ---
 
@@ -1313,14 +1305,7 @@ Group findings into salience-ordered sections. Skip empty sections silently.
 
 ### Step S3 — Render
 
-Plain-text grouped report. Apply CD-10: severity-first within each section (blocked > stale > in-flight > completed). Each line grounded in `<worktree>:<path>` so the user can jump to the offender. End with a one-line summary:
-```
-<N> in-flight, <M> blocked, <K> stale, <C> recently completed across <W> worktrees
-```
-
-### Step S4 — Drill-down (`--plan=<slug>`)
-
-When `--plan=<slug>` is passed, skip S2's grouped synthesis and instead render a deep view of one plan:
+**If `--plan=<slug>` is set, render this single-plan deep-dive instead of the grouped report:**
 
 - Full frontmatter (status, branch, worktree, current_task, next_action, autonomy, codex_routing, codex_review, started, last_activity).
 - Full `## Blockers` section.
@@ -1331,7 +1316,12 @@ When `--plan=<slug>` is passed, skip S2's grouped synthesis and instead render a
 - Last 10 commits on the plan's branch.
 - Pointer to the plan + spec files (paths only).
 
-Read-only throughout. Cite each excerpt with `<file>:<line>` so the user can jump to source.
+Read-only throughout. Cite each excerpt with `<file>:<line>` so the user can jump to source. Skip S2's grouped synthesis entirely.
+
+**Otherwise (no `--plan=` flag), render the grouped report:** Plain-text grouped report. Apply CD-10: severity-first within each section (blocked > stale > in-flight > completed). Each line grounded in `<worktree>:<path>` so the user can jump to the offender. End with a one-line summary:
+```
+<N> in-flight, <M> blocked, <K> stale, <C> recently completed across <W> worktrees
+```
 
 ---
 
@@ -1518,7 +1508,7 @@ For each worktree, run all checks. Report findings grouped by worktree → check
 | 8 | **Missing spec** — status's `spec` field points at a missing spec doc. | Error | Report only. |
 | 9 | **Schema violation** — status frontmatter missing required fields. Required set: `slug`, `status`, `spec`, `plan`, `worktree`, `branch`, `started`, `last_activity`, `current_task`, `next_action`, `autonomy`, `loop_enabled`, `codex_routing`, `codex_review`, `compact_loop_recommended`. (Step A and Step C both depend on the full set.) | Error | Add missing fields with sentinel/derived values where possible (e.g. `compact_loop_recommended: false`); report the rest. |
 | 10 | **Unparseable status file** — frontmatter or body is malformed YAML/Markdown. | Error | Report only (manual fix needed). Step A skips these silently, but doctor calls them out. |
-| 11 | **Orphan archive file** — `<slug>-status-archive.md` exists with no sibling `<slug>-status.md`. (The archive is created by Step C 4d's activity log rotation; it must always have a base status file.) | Warning | Suggest moving the archive to `<config.archive_path>/<date>/`. No auto-fix. |
+| 11 | **Orphan archive file** — `<slug>-status-archive.md` exists with no sibling `<slug>-status.md`. (The archive is created by Step C's post-task finalization status-update sub-block's activity log rotation; it must always have a base status file.) | Warning | Suggest moving the archive to `<config.archive_path>/<date>/`. No auto-fix. |
 | 12 | **Telemetry file growth** — `<slug>-telemetry.jsonl` OR `<slug>-subagents.jsonl` > 5 MB. | Warning | Rotate to `<slug>-telemetry-archive.jsonl` / `<slug>-subagents-archive.jsonl` (the active file becomes empty; new appends start fresh). |
 | 13 | **Orphan telemetry file** — `<slug>-telemetry.jsonl` (or `-telemetry-archive.jsonl`) exists with no sibling `<slug>-status.md`. | Warning | Suggest moving to `<config.archive_path>/<date>/`. No auto-fix. |
 | 14 | **Orphan eligibility cache** — `<slug>-eligibility-cache.json` exists with no sibling `<slug>-status.md`. (The cache is a sidecar of an active plan; it must always have a base status file.) | Warning | Suggest moving to `<config.archive_path>/<date>/`. No auto-fix. |
@@ -1548,16 +1538,14 @@ Triggered by `/masterplan clean [--dry-run] [--delete] [--category=<name>] [--wo
 
 Reuses the orphan-detection predicates from Step D's checks #11 / #13 / #14 / #19 — the two verbs MUST agree on what's an orphan. When in doubt, run `/masterplan doctor` first to see what clean would target.
 
-### Step CL0 — Pre-flight banner + worktree scope
+### Step CL1 — Detection (parallel where possible)
 
-Read worktrees from `git_state.worktrees` (Step 0 cache). If `--worktree=<path>` is set, narrow to that single path (validate it appears in the cache; abort with one-line error if not). Emit a one-line banner:
+**Pre-flight:** Read worktrees from `git_state.worktrees` (Step 0 cache). If `--worktree=<path>` is set, narrow to that single path (validate it appears in the cache; abort with one-line error if not). Emit a one-line banner:
 
 - `--dry-run`: `*(dry-run mode — listing actions without executing; no files moved, no commits, no AskUserQuestion gate. Pass /masterplan clean (without --dry-run) to actually run.)*`
 - Otherwise: `*(clean mode — actions will be applied after the confirmation gate. Pass --dry-run to preview without changes.)*`
 
 Resolve the action mode for archival categories: `archive` (default) or `delete` (when `--delete` is set). OS-level categories (`crons`, `worktrees`) always `delete` regardless.
-
-### Step CL1 — Detection (parallel where possible)
 
 For each in-scope worktree, run the five category detectors. With ≥ 2 in-scope worktrees, dispatch one Haiku per worktree in a single Agent batch (mirrors Step D's parallelization rule; same per-worktree-Haiku contract). With 1 worktree, run inline.
 
@@ -1656,11 +1644,9 @@ For each action item from the resolved set, in this order (so commits are clean 
 
 If any individual action fails (e.g., `git mv` fails because target exists), do NOT abort the whole run — log the failure to the final report (CL5), continue with the remaining items, and report a non-zero exit summary.
 
-### Step CL4 — End-of-turn timer status (per Operational rules)
-
-Step CL ran `CronList` at Step 0 (cached) and may have called `CronDelete` in CL3. Per the End-of-turn timer disclosure rule, render the `### Timer status` block at the end of the user-facing report. If duplicates were detected at CL1 but the user picked Cancel at CL2, the block prepends the `⚠ duplicate-purpose crons detected — run /masterplan doctor` warning per the rule.
-
 ### Step CL5 — Final report
+
+**Timer status (per Operational rules):** Step CL ran `CronList` at Step 0 (cached) and may have called `CronDelete` in CL3. Per the End-of-turn timer disclosure rule, render the `### Timer status` block at the end of the user-facing report. If duplicates were detected at CL1 but the user picked Cancel at CL2, the block prepends the `⚠ duplicate-purpose crons detected — run /masterplan doctor` warning per the rule.
 
 Plain-text summary, applying CD-10 (severity-ordered if any failures, else just counts):
 
@@ -1937,7 +1923,7 @@ These are command-specific rules covering cross-cutting policy not stated inline
 - **Stay a thin wrapper.** Logic that belongs to brainstorming, planning, execution, debugging, or branch-finishing lives in those skills. This command's job is sequencing them and persisting the status file.
 - **Subagents do the work; orchestrator preserves context.** Every substantive piece of work goes to a bounded subagent, and only digests come back. Never let raw verification output, full diffs, or library docs accumulate in the orchestrator's context. When in doubt, digest and ScheduleWakeup.
 - **Bounded briefs, not implicit context.** Subagents receive Goal + Inputs + Scope + Constraints + Return shape. They do not inherit session history. If a subagent needs context from an earlier subagent's output, hand it the digest, not the raw return.
-- **Import never overwrites existing masterplan state silently.** Step I3.1.5 (path-existence pre-pass) surfaces `AskUserQuestion` per colliding candidate with options (1) Overwrite (Recommended) / (2) Write to `-v2` suffix / (3) Abort this candidate. Never clobber. The check runs before I3.2 fetch so aborted candidates skip the entire pipeline.
+- **Import never overwrites existing masterplan state silently.** Step I3's pre-flight collision checks (path-existence pass) surfaces `AskUserQuestion` per colliding candidate with options (1) Overwrite (Recommended) / (2) Write to `-v2` suffix / (3) Abort this candidate. Never clobber. The check runs before I3.2 fetch so aborted candidates skip the entire pipeline.
 - **Doctor is read-only by default.** Without `--fix` it only reports — even an obvious orphan stays in place. `--fix` only acts on errors marked auto-fixable in the checks table.
 - **Inference is conservative by design.** When in doubt, classify `possibly_done`, not `done`. The cost of re-verifying is small; the cost of skipping real work is large.
 - **Don't stop silently anywhere — always close with AskUserQuestion if input might be needed.** ANY Step that ends a turn waiting on user input MUST close with `AskUserQuestion` offering 2-4 concrete options, never with free-text prose ("Wait for the user's response", "Which approach?", "Type 'X' to confirm"). Sessions can compact between turns and lose upstream-skill bodies; a free-text question becomes a dead end. This rule applies recursively when the orchestrator invokes upstream skills that have their own pre-existing free-text prompts — `superpowers:finishing-a-development-branch` ("1./2./3./4. Which option?"), `superpowers:using-git-worktrees` ("1./2. Which directory?"), `superpowers:writing-plans` ("Subagent-Driven / Inline Execution. Which approach?"), `superpowers:brainstorming` ("Wait for the user's response" at User Reviews Spec). For each, the orchestrator MUST present `AskUserQuestion` FIRST and brief the skill with the chosen option pre-decided so the skill's free-text prompt is bypassed. Canonical patterns: Step B0 step 4 (worktree directory), Step B1+B2 re-engagement gates (spec/plan review), Step C step 3's blocker re-engagement gate (CD-4-exhausted gate; SDD BLOCKED/NEEDS_CONTEXT escalation), Step C step 6 (finishing-branch wrap).
@@ -1945,9 +1931,9 @@ These are command-specific rules covering cross-cutting policy not stated inline
 - **Codex routing is locked at kickoff, switchable on resume.** `codex_routing` and `codex_review` both land in the status file at Step B3 (or at first Step C invocation for imported plans). Mid-run flips happen by re-invoking `/masterplan --resume=<path> --codex=<mode> --codex-review=<on|off>`. Per-task overrides come from plan annotations (`**Codex:** ok` / `**Codex:** no`), not inline edits.
 - **Never delegate non-eligible tasks under `auto`.** The eligibility checklist is conservative on purpose: a wrong delegation costs more than running inline. When uncertain, run inline. Plan annotations are the escape hatch when you need to override.
 - **Codex review is asymmetric — never self-review.** If a task was executed by Codex and `codex_review` is on, skip the review step for that task. Codex reviewing its own output adds no signal.
-- **Implementer must return `task_start_sha` (required).** Step C step 2's brief to the implementer subagent (whether dispatched directly or transitively via `superpowers:subagent-driven-development`) must include: "Capture `git rev-parse HEAD` BEFORE any work; return it as `task_start_sha` in your final report. This is required, not optional — the orchestrator's Step 4b (Codex review) and Step 4c (worktree integrity) both depend on it." If the implementer omits it, Step 4b blocks (see Step 4b process step 1).
-- **Implementer-return trust contract.** When the implementer subagent reports `tests_passed: true`, lists `commands_run`, AND captures `commands_run_excerpts` whose lines match the verify-pattern (per task) or default PASS pattern, Step 4a's excerpt-validator licenses the trust-skip and avoids re-running redundant verification (see Step 4a decision logic). This makes SDD's TDD discipline first-class while requiring evidence of execution per command — closes audit finding G.1 (v2.8.0+). The contract is enforced by two layers: (a) the excerpt-validator at trust-skip time, and (b) the protocol-violation rule on re-run mismatch (if a Step 4a complementary check or a Step 4b Codex review surfaces a test failure despite a passing excerpt, the activity log records the discrepancy and Step C 4d notes it under `## Notes` for human attention).
-- **Eligibility cache persists to `<slug>-eligibility-cache.json`.** Step C step 1 loads from disk when `cache.mtime > plan.mtime`; dispatches Haiku otherwise. Step 4d's plan edits `touch` the plan file to invalidate. Per-task routing stays O(1) at lookup; the Haiku dispatch happens once per plan-file change, not per Step C entry. Doctor check #14 flags orphan caches.
+- **Implementer must return `task_start_sha` (required).** Step C step 2's brief to the implementer subagent (whether dispatched directly or transitively via `superpowers:subagent-driven-development`) must include: "Capture `git rev-parse HEAD` BEFORE any work; return it as `task_start_sha` in your final report. This is required, not optional — the orchestrator's Step C's post-task finalization codex-review sub-block (4b) and worktree-integrity sub-block (4c) both depend on it." If the implementer omits it, the codex-review sub-block blocks (see 4b process step 1 in Step C's post-task finalization).
+- **Implementer-return trust contract.** When the implementer subagent reports `tests_passed: true`, lists `commands_run`, AND captures `commands_run_excerpts` whose lines match the verify-pattern (per task) or default PASS pattern, Step C's post-task finalization verify sub-block (4a) excerpt-validator licenses the trust-skip and avoids re-running redundant verification (see the verify sub-block's decision logic). This makes SDD's TDD discipline first-class while requiring evidence of execution per command — closes audit finding G.1 (v2.8.0+). The contract is enforced by two layers: (a) the excerpt-validator at trust-skip time, and (b) the protocol-violation rule on re-run mismatch (if a verify sub-block complementary check or a codex-review sub-block surfaces a test failure despite a passing excerpt, the activity log records the discrepancy and the status-update sub-block (4d) notes it under `## Notes` for human attention).
+- **Eligibility cache persists to `<slug>-eligibility-cache.json`.** Step C step 1 loads from disk when `cache.mtime > plan.mtime`; dispatches Haiku otherwise. Step C's post-task finalization status-update sub-block (4d) plan edits `touch` the plan file to invalidate. Per-task routing stays O(1) at lookup; the Haiku dispatch happens once per plan-file change, not per Step C entry. Doctor check #14 flags orphan caches.
 - **Git state cache excludes `git status --porcelain`.** Step 0's `git_state` cache holds `worktrees` and `branches` only. Dirty state must always be live (CD-2). Invalidate worktrees after `git worktree add/remove`; invalidate branches after `git branch` create/delete.
 - **CC-1 — Compact-suggest on observable symptoms.** End-of-turn (before Step C step 5's wakeup scheduling), check whether any of these accumulated this session: (a) the in-session `file_cache` recorded ≥ 3 hits on the same path; (b) ≥ 3 consecutive tool failures on the same target; (c) activity log was rotated this session (>100 entries); (d) a subagent returned ≥ 5K characters that the orchestrator had to digest inline. On any trigger, surface a **non-blocking** one-line notice (not `AskUserQuestion`): `*(Context appears strained — symptom: <symptom>. Consider running /compact <config.auto_compact.focus> before next wakeup. To disable for this plan, append "compact_suggest: off" to the status file's ## Notes.)*`. Disable check: at Step C step 1, scan `## Notes` for `compact_suggest: off`; if present, CC-1 is silenced for this plan.
 - **CC-2 — Subagent-delegate triggers (concrete thresholds).** Make "Subagents do the work" enforceable: before issuing a Bash command expected to print > 100 lines, dispatch a Haiku subagent with a bounded brief and consume only its digest. Before reading a file > 300 lines as part of substantive work (orientation reads excepted), dispatch a Haiku to extract the relevant section. Self-check at Step C step 1: scan the upcoming task's verification commands; if any match a known-noisy list (`build`, `test --verbose`, `cargo build`, `npm run build`, full-tree `find`), route the verification through a subagent that returns only pass/fail + ≤ 3 evidence lines. Recursive: applies inside implementer subagents too.
