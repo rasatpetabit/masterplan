@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.6.0] — 2026-05-05
+
+### Added
+
+- **New `/masterplan clean` verb** (Step CL) — automates the cleanup that
+  previously required hand-running `git mv` + `mkdir` + commit per artifact.
+  Doctor detects orphans + cruft; clean remediates. Five categories:
+  - **Completed plans** — archive plan + status + every sidecar
+    (`<slug>-eligibility-cache.json`, `<slug>-telemetry.jsonl`,
+    `<slug>-subagents.jsonl`, `<slug>-status-archive.md`, etc.) to
+    `<config.archive_path>/<status.last_activity-date>/`.
+  - **Orphan sidecars** — reuses Step D check predicates (#11, #13, #14, #19)
+    to find sidecars whose sibling status file no longer exists; archives them.
+  - **Stale plans** — `status: in-progress | blocked` with `last_activity > 90
+    days`. Per-item `AskUserQuestion` (Archive / Keep / Skip) — never
+    auto-archives stale items because staleness is a judgment call.
+  - **Dead crons** — calls `CronList`, finds duplicates by exact prompt match,
+    `CronDelete`s the non-oldest. Same predicate as doctor #19 with `--fix`.
+  - **Dead worktrees** — `git worktree list` entries whose path is missing on
+    disk; `git worktree remove --force` per stale entry.
+- **Flags:** `--dry-run` (preview without changes; skips confirmation gate),
+  `--delete` (archival categories `git rm` instead of `git mv` to archive
+  path; OS-level categories always delete), `--category=<name>` (limit to one
+  or comma-separated subset of `completed|orphans|stale|crons|worktrees`),
+  `--worktree=<path>` (limit per-worktree scan to one path).
+- **Confirmation gate:** structured summary + `AskUserQuestion(Apply all /
+  Apply selected categories / Cancel)` before any execution. `--dry-run`
+  skips the gate. Mirrors `/masterplan import`'s cruft-handling pattern but
+  with a single up-front confirm rather than per-candidate prompts.
+- **Per-category atomic commits:** `clean: archive N completed plan(s)`,
+  `clean: archive M orphan sidecar(s)`, `clean: archive K stale plan(s)`.
+  OS-level categories (crons, worktrees) skip the commit step.
+- **Skip rule:** Step CL never touches files inside `<archive_path>/` —
+  re-running clean on an already-cleaned tree produces `clean: nothing to do`.
+
+### Changed
+
+- Doctor remains read-only by default. The destructive/archival path moved
+  to the new clean verb so doctor's `--fix` action stays scoped to its
+  current narrow set (auto-fix only on check #2 today). Future doctor `--fix`
+  expansions will defer to clean for archival categories.
+
 ## [2.5.0] — 2026-05-05
 
 ### Added

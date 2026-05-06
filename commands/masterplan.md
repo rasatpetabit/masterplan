@@ -106,6 +106,7 @@ This single line is the audit trail for "why did the orchestrator behave this wa
 | `status` (alone or with `--plan=<slug>`) | **Step S** — situation report (read-only) | `none` |
 | `retro` (alone or with `<slug>`) | **Step R** — generate retrospective for a completed plan | `none` |
 | `stats` (alone or with `--plan=<slug>` / `--format=table\|json\|md` / `--all-repos` / `--since=<ISO-date>`) | **Step T** — codex-vs-inline routing distribution + inline model breakdown + token totals across plans | `none` |
+| `clean` (alone or with `--dry-run` / `--delete` / `--category=<name>` / `--worktree=<path>`) | **Step CL** — archive completed plans + sidecars; prune orphan sidecars, stale plans, dead crons + worktrees | `none` |
 | `--resume=<path>` or `--resume <path>` | **Step C** — alias for `execute <path>` | `none` |
 | anything else | treat as a topic, **Step B** — kickoff (back-compat catch-all) | `none` |
 
@@ -113,7 +114,7 @@ This single line is the audit trail for "why did the orchestrator behave this wa
 
 `halt_mode` is an internal orchestrator variable set in Step 0 from the verb match. Steps B1, B2, B3, and C consult it to choose between the existing gate behavior and a halt-aware variant.
 
-**Verb tokens are reserved.** Any topic literally named `full`, `brainstorm`, `plan`, `execute`, `retro`, `import`, `doctor`, `status`, or `stats` requires another word in front via the catch-all (e.g., `/masterplan add brainstorm session timer`).
+**Verb tokens are reserved.** Any topic literally named `full`, `brainstorm`, `plan`, `execute`, `retro`, `import`, `doctor`, `status`, `stats`, or `clean` requires another word in front via the catch-all (e.g., `/masterplan add brainstorm session timer`).
 
 **Argument-parse precedence (in Step 0, after config + git_state cache):**
 1. Match the first token against `{full, brainstorm, plan, execute, retro, import, doctor, status, stats}`. On match: set `halt_mode` per the table; consume the verb; pass remaining args to the matched step.
@@ -150,6 +151,10 @@ This single line is the audit trail for "why did the orchestrator behave this wa
 | `--no-codex-review` | C | Shorthand for `--codex-review=off` |
 | `--parallelism=on\|off` | C | Override `config.parallelism.enabled` for this run. When `off`, wave dispatch in Step C step 2 is suppressed globally — every task runs serially regardless of `**parallel-group:**` annotations. Not persisted to status frontmatter; use `.masterplan.yaml` for durable defaults. |
 | `--no-parallelism` | C | Shorthand for `--parallelism=off`. |
+| `--dry-run` | CL | Print the cleanup plan + per-action `<src> → <dst>` lines without executing. Skip the confirmation gate. Does not affect any other step. |
+| `--delete` | CL | For archival categories (completed plans, orphan sidecars, stale plans), `git rm` instead of archiving to `<config.archive_path>/<date>/`. OS-level categories (dead crons, dead worktrees) always delete regardless of this flag. Default off. |
+| `--category=<name>` | CL | Limit Step CL to one category: `completed` / `orphans` / `stale` / `crons` / `worktrees` (or comma-separated subset). Default = all five. |
+| `--worktree=<path>` | CL | Limit Step CL's per-worktree scan to one absolute path. Default = all worktrees in `git_state.worktrees`. |
 
 ---
 
@@ -1462,6 +1467,155 @@ For each worktree, run all checks. Report findings grouped by worktree → check
 Plain-text grouped report. Apply **CD-10**: order findings by severity (errors first, then warnings), each line grounded in `<worktree>:<file>` so the user can jump straight to the offender. Summary line at the end with counts: `<E> errors, <W> warnings across <N> worktrees`. If `--fix` ran, include a list of files changed/moved.
 
 If no issues: `masterplan doctor: clean (<N> worktrees, <P> plans)`.
+
+---
+
+## Step CL — Clean
+
+Triggered by `/masterplan clean [--dry-run] [--delete] [--category=<name>] [--worktree=<path>]`. Archives completed plans + every sidecar, removes orphan sidecars, surfaces stale plans for confirm-then-archive, and prunes dead crons + missing worktrees. Doctor detects; clean remediates. **Doctor is read-only by default; clean owns the destructive/archival path with its own `--dry-run` + `AskUserQuestion` gate.**
+
+Reuses the orphan-detection predicates from Step D's checks #11 / #13 / #14 / #19 — the two verbs MUST agree on what's an orphan. When in doubt, run `/masterplan doctor` first to see what clean would target.
+
+### Step CL0 — Pre-flight banner + worktree scope
+
+Read worktrees from `git_state.worktrees` (Step 0 cache). If `--worktree=<path>` is set, narrow to that single path (validate it appears in the cache; abort with one-line error if not). Emit a one-line banner:
+
+- `--dry-run`: `*(dry-run mode — listing actions without executing; no files moved, no commits, no AskUserQuestion gate. Pass /masterplan clean (without --dry-run) to actually run.)*`
+- Otherwise: `*(clean mode — actions will be applied after the confirmation gate. Pass --dry-run to preview without changes.)*`
+
+Resolve the action mode for archival categories: `archive` (default) or `delete` (when `--delete` is set). OS-level categories (`crons`, `worktrees`) always `delete` regardless.
+
+### Step CL1 — Detection (parallel where possible)
+
+For each in-scope worktree, run the five category detectors. With ≥ 2 in-scope worktrees, dispatch one Haiku per worktree in a single Agent batch (mirrors Step D's parallelization rule; same per-worktree-Haiku contract). With 1 worktree, run inline.
+
+The Haiku's bounded brief: Goal=apply the five detectors below; Inputs=worktree path + `archive_path` glob to exclude (so already-archived files aren't re-targeted); Scope=read-only; Return=`{completed: [...], orphans: [...], stale: [...], crons: [...], worktrees: [...]}` JSON, where each item is `{src_path | cron_id | worktree_path, sibling_paths?, reason, archive_dst? | delete_only}`.
+
+**Per-category detection rules** (apply only when included by `--category=`; default = all five):
+
+1. **`completed`** — Scan `<plans_path>/*-status.md` per worktree. For each with `status: complete` in frontmatter, collect the sibling artifact set: the plan file (`<slug>.md`), `<slug>-status-archive.md` if present, `<slug>-eligibility-cache.json` if present, `<slug>-telemetry.jsonl` + `<slug>-telemetry-archive.jsonl` if present, `<slug>-subagents.jsonl` + `<slug>-subagents-archive.jsonl` + `<slug>-subagents-cursor` if present. Action = `archive` (or `delete`). Archive destination: `<archive_path>/<status.last_activity-date or today>/`.
+2. **`orphans`** — Reuse Step D check predicates: #11 (`<slug>-status-archive.md` without `<slug>-status.md`), #13 (`<slug>-telemetry.jsonl` or `-archive.jsonl` without status), #14 (`<slug>-eligibility-cache.json` without status), #19 (`<slug>-subagents.jsonl` / `<slug>-subagents-cursor` without status). Action = `archive` (or `delete`). Archive destination: `<archive_path>/<today>/`.
+3. **`stale`** — Scan `<plans_path>/*-status.md` for `status: in-progress | blocked` AND `last_activity > 90 days` (compare against the current ISO timestamp). Action = `surface for per-item confirm` (NOT auto-archive — staleness is a judgment call; an active-but-paused project should not be auto-archived). Each stale plan triggers one `AskUserQuestion` in CL2 below.
+4. **`crons`** — Use `cron_state` from Step 0. Group entries by exact `prompt` string; flag every group with ≥ 2 entries. Action = `delete` (call `CronDelete <id>` on duplicates, keeping the lexicographically-smallest `id` per group). Mirrors Doctor #19's `--fix` action but invocable on its own. No commit (crons aren't file-tracked).
+5. **`worktrees`** — Compare `git worktree list` paths to filesystem reality. Action = `delete` for any registered worktree whose path doesn't exist on disk (`git worktree remove --force <path>` per stale entry). Skip the current worktree even if its path is missing (impossible state, but defensive). No commit.
+
+If `--category=<name>` is set, run only the named categories; ignore the rest. Comma-separated multi-select is allowed.
+
+### Step CL2 — Per-item confirms + main confirmation gate
+
+**Stale-plan per-item confirms** (fire BEFORE the main gate; resolves stale items into `archive` / `keep` / `skip` up front so the main gate sees the resolved set):
+
+For each stale plan, surface ONE `AskUserQuestion`:
+
+```
+AskUserQuestion(
+  question="Plan `<slug>` is stale: status=<status>, last_activity=<date> (<N days ago>). What now?",
+  options=[
+    "Archive (Recommended) — move plan + status + sidecars to `<archive_path>/<today>/`",
+    "Keep — leave it; bump `last_activity` so it stops being stale",
+    "Skip — leave it untouched; stays stale and will surface again next clean run"
+  ]
+)
+```
+
+`Keep` rewrites the status file's `last_activity` to the current ISO timestamp (the orchestrator does this — it's a single-line frontmatter edit; commit subject `clean: bump last_activity on <slug> to clear staleness`). `Skip` does nothing.
+
+**Main confirmation gate** (after stale resolutions). Render a structured summary:
+
+```
+Clean plan (<archive | delete> mode, --delete=<yes|no>):
+  Completed plans (N):
+    <slug-1> (last_activity: <date>) → <archive_path>/<date>/
+    ...
+  Orphan sidecars (M):
+    <path> → <archive_path>/<today>/
+    ...
+  Stale plans archive-resolved (K of K-original):
+    <slug-1> → <archive_path>/<today>/
+    ...
+  Dead crons to delete (J):
+    <id-1>: `<prompt>` (kept: <oldest-id>)
+    ...
+  Dead worktrees to remove (W):
+    <path-1>: registered but missing on disk
+    ...
+
+  Total file moves: <N+M+K>
+  Total OS-level prunes: <J+W>
+```
+
+Then surface:
+
+```
+AskUserQuestion(
+  question="Proceed with the actions above?",
+  options=[
+    "Apply all (Recommended)",
+    "Apply selected categories only — I'll pick",
+    "Cancel"
+  ]
+)
+```
+
+- **Apply all** → CL3.
+- **Apply selected** → secondary `AskUserQuestion(multiSelect=true, options=[<one per category with non-zero count>])`. Apply only those at CL3.
+- **Cancel** → emit `clean: cancelled by user.` and end the turn.
+
+Under `--dry-run`: skip the confirmation gate entirely. After rendering the summary, end the turn with the line `*(dry-run — re-run without --dry-run to apply.)*`.
+
+### Step CL3 — Execute
+
+For each action item from the resolved set, in this order (so commits are clean and per-category):
+
+1. **Archival categories** (`completed`, `orphans`, `stale`-archive-picks):
+   - For each item: ensure `<archive_path>/<date>/` exists (`mkdir -p`).
+   - Tracked file: `git mv <src> <archive_path>/<date>/<basename>`.
+   - Untracked file: `mv <src> <archive_path>/<date>/<basename>` then `git add <archive_path>/<date>/<basename>`.
+   - Apply CD-2: do NOT touch any unrelated dirty files in the worktree; verify `git status --porcelain` after the moves shows ONLY the moved-file pairs (R: rename markers) and any newly-added untracked-now-tracked files. If extra files appear, abort the category, surface to user, and do not commit.
+   - Per-category commit (one per non-empty category):
+     - `clean: archive N completed plan(s) (<slug-list>)`
+     - `clean: archive M orphan sidecar(s)`
+     - `clean: archive K stale plan(s) (<slug-list>)`
+   - **Delete mode** (`--delete`): replace `git mv` with `git rm` for tracked, `rm` for untracked. Commit subject changes verb to `clean: delete N completed plan(s) (<slug-list>)`, etc.
+2. **Stale-plan `Keep` resolutions**: orchestrator-direct frontmatter edit + commit (subject `clean: bump last_activity on <slug> to clear staleness`). One commit per Keep.
+3. **OS-level categories** (`crons`, `worktrees`):
+   - `crons`: call `CronDelete <id>` per duplicate. No commit.
+   - `worktrees`: call `git worktree remove --force <path>` per stale entry. Then `git worktree prune`. No commit.
+
+If any individual action fails (e.g., `git mv` fails because target exists), do NOT abort the whole run — log the failure to the final report (CL5), continue with the remaining items, and report a non-zero exit summary.
+
+### Step CL4 — End-of-turn timer status (per Operational rules)
+
+Step CL ran `CronList` at Step 0 (cached) and may have called `CronDelete` in CL3. Per the End-of-turn timer disclosure rule, render the `### Timer status` block at the end of the user-facing report. If duplicates were detected at CL1 but the user picked Cancel at CL2, the block prepends the `⚠ duplicate-purpose crons detected — run /masterplan doctor` warning per the rule.
+
+### Step CL5 — Final report
+
+Plain-text summary, applying CD-10 (severity-ordered if any failures, else just counts):
+
+```
+clean: <successes> action(s) applied across <N> worktree(s) (<failures> failed)
+  Completed plans archived: <N>
+  Orphan sidecars archived: <M>
+  Stale plans archived: <K-archived> / <K-resolved-keep> / <K-skipped> of <K-original>
+  Crons pruned: <J>
+  Worktrees removed: <W>
+
+Failures (if any):
+  <category>: <src>: <error>
+  ...
+
+Commits: <list of subject lines created>
+```
+
+If no failures and no actions: `clean: nothing to do (worktrees scanned: <N>)`.
+
+### Skip rule (don't double-archive)
+
+Step CL never touches files inside `<archive_path>/`. Detection (CL1) excludes that path from all globs. This guards against re-running clean on a tree that was already cleaned — re-running should produce `clean: nothing to do`.
+
+### Recursive applicability
+
+Step CL is itself a verb — it does NOT run inside Step C's per-task loop. It does NOT run inside Step D. It is invoked directly by the user via `/masterplan clean`. There is no auto-clean trigger anywhere in the orchestrator (out of scope for v1; revisit if usage data warrants).
 
 ---
 
