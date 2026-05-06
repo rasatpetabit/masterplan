@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.9.0] — 2026-05-06
+
+### Added
+
+- **Doctor check #25 — Self-host deployment drift.** Repo-scoped check that
+  fires once per `/masterplan doctor` run when `git config --get
+  remote.origin.url` matches `superpowers-masterplan`. Compares md5 of
+  three runtime files the user's Claude Code session loads against
+  project HEAD: `~/.claude/commands/masterplan.md`,
+  `~/.claude/hooks/masterplan-telemetry.sh`,
+  `~/.claude/bin/masterplan-routing-stats.sh`. Each file flagged when md5
+  differs OR is missing user-side AND the plugin is NOT registered in
+  `~/.claude/plugins/installed_plugins.json` (plugin install is the
+  legitimate "no legacy file" case). With `--fix`: per-file, backup as
+  `<path>.bak-pre-<utc-ts>` and `cp` from HEAD; `chmod +x` on the hook +
+  bin script; `mkdir -p ~/.claude/bin/` if absent; verify md5 match.
+  Surfaces as Warning. Severity is intentional — drift doesn't break
+  anything immediately; it just means recently-shipped fixes aren't
+  loaded yet, which is exactly the foot-gun this check exists to catch.
+
+### Why
+
+In v2.8.0's release session we discovered that ~593 lines of fixes
+shipped across v2.0.0 → v2.8.0 (model: passthrough contract, /masterplan
+stats verb, opus_share telemetry metric, doctor check #23 model-leakage
+detection) had been sitting at HEAD in the project repo without ever
+reaching the user's runtime. Claude Code was loading the slash command
+from `~/.claude/commands/masterplan.md` — a manual copy made before the
+plugin system existed and never re-synced. The user reported "100% Opus
+utilization" that prior fix attempts didn't dent; root cause was that
+none of the fixes had actually deployed. Check #25 surfaces this drift
+at lint time rather than at the next time the symptom recurs.
+
+Companion cleanup: the parallelization brief now correctly says "all 24
+plan-scoped checks" (was incorrectly "all 22 current checks PLUS new
+check #22 (added by Task 13)" — leftover wording from the
+complexity-levels plan that wasn't updated when v2.8.0 added checks #23
+and #24). Repo-scoped #25 is called out separately in the brief since
+it doesn't fit the per-plan complexity-aware check-set gate.
+
 ## [2.8.0] — 2026-05-05
 
 ### Added
