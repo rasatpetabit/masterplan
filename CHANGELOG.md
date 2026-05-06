@@ -7,6 +7,94 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.0] — 2026-05-05
+
+### Added
+
+- **Eligibility cache schema versioning (closes audit finding D.2).** The
+  cache JSON now carries a top-level `cache_schema_version: "1.0"` field
+  emitted on every write (inline-build path, Haiku brief, atomic rotate).
+  Load-side validation rebuilds on missing-or-mismatch field with a new
+  activity-log variant: `eligibility cache: rebuilt — schema version
+  mismatch`. Pre-v2.8.0 caches lacking the field rebuild on next Step C
+  entry. Closes the gap where a stale cache from a prior plugin version
+  could silently consume routing decisions made under different
+  eligibility rules.
+
+- **Step 4b mid-plan codex availability re-check (closes D.4).** Step 4b's
+  third gate condition now triggers an inline availability re-check (per
+  the Step 0 detection heuristic) at gate time. On miss: writes the
+  standard degradation marker (activity log + `## Notes`), flips in-memory
+  `codex_review = off` for the rest of the session, and skips 4b. Catches
+  the mid-plan plugin-uninstall case where Step 0 saw codex present but
+  the plugin was removed before review fired.
+
+- **Ping-based codex availability detection (closes D.1).** Step 0's
+  fragile `codex:` prefix string-scan is replaced by an actual no-op
+  dispatch ping that exercises the codex subagent_type. Result is cached
+  as `codex_ping_result` per invocation; subsequent steps consult the
+  cache. New config flag `codex.detection_mode` (`ping` | `scan` | `trust`,
+  default `ping`) lets users opt into the legacy scan or the
+  detection-skipping `trust` mode for locked-down accounts. New
+  activity-log variant differentiates plugin-missing from
+  plugin-present-but-broken.
+
+- **Doctor check #23 — Opus on bounded-mechanical dispatch sites (closes
+  C.1).** Telemetry-driven post-mortem detection of model-passthrough
+  leakage. Scans the most recent 20 records in `<slug>-subagents.jsonl`
+  for SDD/wave/Step-C-step-1 dispatches running on Opus, excluding the
+  intentional-Opus-re-dispatch case (matched against
+  `prompt_first_line`). Surfaces as Warning with mitigation advice
+  pointing at `commands/masterplan.md:217-235` (the §Agent dispatch
+  contract). Parallelization brief check-count bumps to 24.
+
+- **Post-hoc slow-member detection (closes E.1, reframed).** The original
+  E.1 design called for active wave-member cancellation at a 600s
+  timeout, but an LLM orchestrator has no async/cancel primitive for
+  in-flight Agent calls — the prose would have been runtime-unenforceable.
+  Reframed as post-hoc detection: after the wave-completion barrier
+  returns, the orchestrator reads each member's `duration_ms` from
+  `<slug>-subagents.jsonl` (already captured by the telemetry hook) and
+  tags any whose duration exceeds `config.parallelism.member_timeout_sec`
+  (default 600s) as `slow_member` at the NEXT Step C entry. Behavior per
+  `config.parallelism.on_member_timeout`: `warn` (default — Notes
+  warning) or `blocker` (re-classify and route through the blocker gate).
+  No-op when the telemetry hook is not installed. Detection is
+  observability, not active cancellation.
+
+- **Step 4d concurrent-write guard via `flock` (closes F.4).** The Step
+  4d update sequence (rotation + append + atomic temp+fsync+rename) now
+  wraps in `flock <status-file> -c '...'` with a 5s timeout. On
+  contention (typically a user-editor saving the status file in another
+  window), the would-be entry queues to `<slug>-status.queue.jsonl` and
+  the next 4d cycle drains it BEFORE its own append; replays are
+  idempotent (match-by `last_activity` + first 80 chars). flock-
+  unavailable hosts (Windows / no util-linux) fall through to unguarded
+  write with a once-per-session warning. New doctor check #24 surfaces
+  non-empty queue files post-session; `--fix` replays the queue.
+
+- **Step 4a excerpt-validator on the trust contract (closes G.1).** The
+  trust-skip is no longer license alone — it requires evidence of
+  execution. New required field `commands_run_excerpts: {cmd → [str]}` on
+  the implementer's return digest carries 1–3 trailing output lines per
+  command. The orchestrator regex-matches each excerpt against the plan
+  task's `**verify-pattern:** <regex>` annotation (if present) or a
+  default PASS pattern (`PASSED?|OK|0 errors|0 failures|exit 0|✓`). On
+  miss, that command falls through to inline re-run with a tagged
+  activity-log entry; on missing field entirely, all commands re-run with
+  a once-per-session `## Notes` warning. Closes the gap where a
+  fabricated `tests_passed: true` would silently pass.
+
+### Why
+
+The v2.8.0 cycle is the first defensive-correctness pass driven by
+`docs/audit-2026-05-05-subagent-execution.md`, an end-to-end audit of the
+orchestrator's subagent-dispatch and verification surfaces. Each closed
+finding had a documented gap between "convention" and "structurally
+enforceable"; this release converts the seven highest-severity cases.
+The remaining audit findings (G.2-G.6, A.1, F.1-F.3, H-class, E.2-E.5)
+are catalogued for v2.9.0+ as scoped follow-ups.
+
 ## [2.7.0] — 2026-05-05
 
 ### Added
