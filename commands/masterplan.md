@@ -1019,7 +1019,7 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
    Fires when ALL of the following hold, otherwise skip silently:
    - `codex_review` is `on`.
    - The task just completed was **inline** (Sonnet/Claude did the work — not Codex). Codex-delegated tasks are reviewed by Step 3a's post-Codex flow, not here. Skipping for those is the asymmetric-review rule.
-   - The codex plugin is available (`codex:codex-rescue` is installed).
+   - The codex plugin is available (re-check inline at gate time per the heuristic in Step 0). On miss, write the same degradation marker as Step 0's degrade-loudly path (one-line activity-log entry + `## Notes` one-liner identifying the run and the missing plugin), set in-memory `codex_review = off` for the rest of the session, and skip 4b. This catches mid-plan plugin uninstall (D.4 mitigation).
    - `codex_routing` is not `off`. (See Step 0's flag-conflict warning — `--codex=off --codex-review=on` is treated as a no-op for review.)
 
    Why this exists: even when a task is too complex or context-heavy to delegate execution to Codex, Codex can usefully review the resulting diff. The reviewer didn't do the work, so it's a fresh pair of eyes against the spec.
