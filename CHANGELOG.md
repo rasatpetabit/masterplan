@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.10.0] — 2026-05-06 — codify CD-9 (no free-text user questions) + plugin-shim recognition
+
+### Fixed
+
+- **Line 660 branch-mismatch on resume.** Replaced free-text "ask the user before continuing" with explicit `AskUserQuestion` (3 options: switch / continue / abort), mirroring the line-659 worktree-mismatch precedent. CD-9 violation #1 of 2 in the orchestrator.
+- **Line 1900 import collision rule + Step I3.1.5 implementation.** Replaced free-text "ask the user: overwrite / write to a -v2 slug / abort" with `AskUserQuestion` syntax. Added new sequential pre-pass step I3.1.5 (path-existence check) between I3.1 (slug-collision) and I3.2 (parallel fetch) — implements the rule (previously the rule had no actual call site). Aborted candidates skip the entire pipeline. CD-9 violation #2 of 2.
+
+### Added
+
+- **Design goal #4 — Structured questions, never free-text.** Promoted CD-9 from a deep-file rule (line 182) to a peer-level architectural goal at the top of the orchestrator (lines 9-16, "Three design goals" → "Four design goals"). First-time readers see the rule without scrolling.
+- **Doctor check #27 `orchestrator_free_text_user_question`.** Repo-scoped Warning. Greps `commands/masterplan.md` for forbidden free-text patterns ("ask the user", "prompt the user", etc.) and scans ±20 lines for paired `AskUserQuestion` or `<!-- cd9-exempt: <reason> -->` exemption marker. Skips matches inside the CD-9 rule definitions themselves. Regression guard for Goal #4.
+- **Shim exemption in doctor check #25 (self-host deployment drift).** When the user-level `~/.claude/commands/masterplan.md` contains the literal sentinel `<!-- masterplan-shim: v1 -->`, treat it as a managed plugin shim and skip the md5 comparison for that path (emits an info-line note instead of a drift Warning). Hook and bin/ script have no shim concept and compare normally. Closes Phase B from the prior planning session.
+
+### Notes
+
+- Investigation found CD-9 was *already* baked into the project (lines 182, 1903) and not actually dependent on user-level `~/.claude/` settings as initially suspected. The two known violations were within the orchestrator itself; doctor #27 is the regression guard.
+- See plan: `~/.claude/plans/curious-coalescing-rose.md` (v2.10.0).
+
 ## [2.9.1] — 2026-05-06 — auto-compact nudge fixes
 
 ### Fixed
