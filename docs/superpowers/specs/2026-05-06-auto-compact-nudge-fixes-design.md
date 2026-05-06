@@ -71,7 +71,7 @@ Implementation: 1 added bullet to the existing warnings block. Does NOT abort. S
 
 ## Change 3 — Doctor check `auto_compact_loop_attached`
 
-Add to the doctor section. Use the next available check number (implementation-time `grep -c '^### #' commands/masterplan.md` in the doctor section, +1). Anti-pattern #4 in CLAUDE.md (sync three locations) applies — update the parallelization-brief count to match.
+Add to the doctor section as **check #26**, **repo-scoped** (same pattern as #25 — runs ONCE per doctor invocation regardless of worktree/plan count, since `CronList` returns session-level state, not per-plan state). Update the parallelization brief at line 1460 to reference both repo-scoped checks (#25 and #26) rather than #25 alone. The plan-scoped count (currently 24) is unchanged.
 
 **When it runs:** every `/masterplan doctor` invocation. Skips silently if not in a project with plans.
 
