@@ -1,7 +1,7 @@
 ---
 slug: auto-compact-nudge-fixes
 date: 2026-05-06
-status: draft
+status: shipped
 target-version: v2.9.1
 ---
 
@@ -79,7 +79,7 @@ Add to the doctor section as **check #26**, **repo-scoped** (same pattern as #25
 
 **Implementation:**
 
-1. `ToolSearch(query="select:CronList")` to load the deferred tool's schema. If unavailable, emit a single-line note (`auto_compact_loop_attached check skipped — CronList tool unavailable in this session`) and return. Mirrors the competing-scheduler check pattern at line 803.
+1. `ToolSearch(query="select:CronList")` to load the deferred tool's schema. If unavailable, emit a single-line note (`auto_compact_loop_attached check skipped — CronList tool unavailable in this session`) and return. Mirrors the competing-scheduler check pattern in Step C step 1.
 2. Call `CronList()` and read the returned entries.
 3. Filter for entries whose `prompt` field contains `/compact` (case-sensitive substring match, like the existing competing-scheduler basename match at Step C step 5).
 4. **If zero matches:** emit warning finding:
