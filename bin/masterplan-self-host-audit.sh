@@ -12,10 +12,11 @@
 # as a duplicate slash command — caught here.
 #
 # Usage:
-#   bin/masterplan-self-host-audit.sh           # run both checks (default)
+#   bin/masterplan-self-host-audit.sh           # run all checks (default)
 #   bin/masterplan-self-host-audit.sh --fix     # also apply --fix actions for drift
 #   bin/masterplan-self-host-audit.sh --drift   # only check deployment drift
 #   bin/masterplan-self-host-audit.sh --cd9     # only check free-text user questions
+#   bin/masterplan-self-host-audit.sh --models  # only check model-passthrough preamble (check #23)
 #
 # Exit code: 0 if clean, 1 if any check fires, 2 on usage error.
 
@@ -37,13 +38,15 @@ MODE="${1:-}"
 FIX_MODE=0
 RUN_DRIFT=1
 RUN_CD9=1
+RUN_MODELS=1
 
 case "${MODE}" in
-  --fix)   FIX_MODE=1 ;;
-  --drift) RUN_CD9=0 ;;
-  --cd9)   RUN_DRIFT=0 ;;
-  "")      : ;;
-  *)       echo "Usage: $0 [--fix|--drift|--cd9]" >&2; exit 2 ;;
+  --fix)    FIX_MODE=1 ;;
+  --drift)  RUN_CD9=0; RUN_MODELS=0 ;;
+  --cd9)    RUN_DRIFT=0; RUN_MODELS=0 ;;
+  --models) RUN_DRIFT=0; RUN_CD9=0 ;;
+  "")       : ;;
+  *)        echo "Usage: $0 [--fix|--drift|--cd9|--models]" >&2; exit 2 ;;
 esac
 
 EXIT=0
@@ -175,6 +178,61 @@ check_skill_drift() {
 }
 
 # ---------------------------------------------------------------------------------
+# Check: model-passthrough preamble enforcement (doctor check #23 audit surface, v2.12.0)
+# ---------------------------------------------------------------------------------
+check_model_passthrough() {
+  local file="${REPO_ROOT}/commands/masterplan.md"
+  if [[ ! -f "${file}" ]]; then
+    echo "Skipping model-passthrough check: ${file} not found"
+    return
+  fi
+
+  # 1. Verify the verbatim preamble sentinel is present (canonical definition in §Agent dispatch contract).
+  local sentinel="For every inner Task / Agent invocation you make"
+  local sentinel_count
+  sentinel_count="$(grep -c "${sentinel}" "${file}" || true)"
+  if [[ "${sentinel_count}" -eq 0 ]]; then
+    echo "⚠️  commands/masterplan.md — verbatim SDD preamble sentinel not found (expected ≥1 occurrence of: '${sentinel}')"
+    echo "    Contract drift: §Agent dispatch contract recursive-application preamble is missing."
+    EXIT=1
+  else
+    echo "✓ model-passthrough preamble sentinel found (${sentinel_count} occurrence(s))"
+  fi
+
+  # 2. Informational: count lines carrying model: "haiku"|"sonnet"|"opus" — dispatch attribution sites.
+  local model_lines
+  model_lines="$(grep -cE 'model: "(haiku|sonnet|opus)"' "${file}" || true)"
+  echo "  Info: ${model_lines} line(s) with explicit model: \"haiku\"|\"sonnet\"|\"opus\" in orchestrator source"
+
+  # 3. Warn on model: "opus" occurrences outside the blocker-stronger-model context.
+  local opus_lines
+  opus_lines="$(grep -n 'model: "opus"' "${file}" || true)"
+  if [[ -n "${opus_lines}" ]]; then
+    local warned=0
+    while IFS= read -r line; do
+      local lineno="${line%%:*}"
+      local context_start=$((lineno - 5))
+      local context_end=$((lineno + 5))
+      [[ "${context_start}" -lt 1 ]] && context_start=1
+      local context
+      context="$(sed -n "${context_start},${context_end}p" "${file}")"
+      # Suppress if near blocker gate context or config table (expected opus sites).
+      if echo "${context}" | grep -qE 'blocker|stronger.model|re-dispatch|ONLY exception|config table|dispatch contract'; then
+        continue
+      fi
+      echo "⚠️  commands/masterplan.md:${lineno} — model: \"opus\" outside blocker-stronger-model context (cost regression site; should be sonnet)"
+      warned=$((warned + 1))
+      EXIT=1
+    done <<< "${opus_lines}"
+    if [[ "${warned}" -eq 0 && -n "${opus_lines}" ]]; then
+      echo "✓ all model: \"opus\" occurrences are within blocker-stronger-model or config-table context"
+    fi
+  else
+    echo "✓ no bare model: \"opus\" dispatch sites found"
+  fi
+}
+
+# ---------------------------------------------------------------------------------
 # Check: orchestrator free-text user questions (was doctor check #27, v2.10.0)
 # ---------------------------------------------------------------------------------
 check_cd9() {
@@ -235,6 +293,7 @@ check_cd9() {
 [[ "${RUN_DRIFT}" -eq 1 ]] && check_drift
 [[ "${RUN_DRIFT}" -eq 1 ]] && check_skill_drift
 [[ "${RUN_CD9}" -eq 1 ]] && check_cd9
+[[ "${RUN_MODELS}" -eq 1 ]] && check_model_passthrough
 
 if [[ "${EXIT}" -eq 0 ]]; then
   echo "✓ self-host audit clean"

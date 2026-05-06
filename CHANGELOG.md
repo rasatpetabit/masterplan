@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.12.0] — 2026-05-06 — per-turn subagent summary + model attribution enforcement
+
+### Added
+
+- **Per-turn subagent dispatch summary (`commands/masterplan.md`).** A new sub-section "Per-turn dispatch tracking and summary" mandates the orchestrator track every `Agent` invocation in a session-local list `subagents_this_turn` (reset at every top-level Step entry) and emit a one-line summary at end of every turn that dispatched ≥ 1 subagent. Format: `Subagents this turn: <N> dispatched (<count by model>) • <site> (<model>)`. Zero-dispatch turns emit nothing. The summary surfaces as plain stdout, NOT inside an `AskUserQuestion`, so the user has immediate visibility into what models were used. Cross-validation at next-turn-entry compares the in-memory tracker to the prior turn's `<plan>-subagents.jsonl` records and surfaces a `## Notes` warning on divergence (which would indicate the model-passthrough preamble was paraphrased or dropped by an upstream skill template). New operational rule **CC-3** at line 1981 codifies the end-of-turn render requirement.
+- **Verbatim SDD model-passthrough preamble (Recursive application clause).** §Agent dispatch contract's recursive-application paragraph now requires the orchestrator to insert a literal fenced text block as the FIRST paragraph of every `superpowers:subagent-driven-development` and `superpowers:executing-plans` brief — not paraphrase it. The signature string `For every inner Task / Agent invocation you make` is the verifiable sentinel. This closes the gap where prose-only override clauses were being silently dropped, which is the root cause of the `model: "opus"` leakage on inner SDD Task calls.
+- **`bin/masterplan-self-host-audit.sh --models` mode.** New `check_model_passthrough()` function: greps `commands/masterplan.md` for the verbatim preamble's signature string (must find ≥ 1), counts explicit `model:` attribution lines, warns on any `model: "opus"` occurrence outside blocker-stronger-model context. Run `bin/masterplan-self-host-audit.sh --models` to lint dispatch-site model attribution before commits.
+- **`bin/masterplan-routing-stats.sh --models` mode.** New flag surfaces ONLY the model breakdown section (skips the routing table). Default render now also includes a "Model breakdown" section showing dispatches + token share per model (haiku / sonnet / opus / codex / unknown), plus the existing `opus_share` health metric. Users can run `bin/masterplan-routing-stats.sh --models` at any time to spot-check actual model distribution against the orchestrator's design intent.
+
+### Fixed
+
+- **Doctor check #23 (`Opus on bounded-mechanical dispatch sites`) now uses `AskUserQuestion` per CD-9.** The check itself shipped in v2.8.0 but its auto-fix cell printed plain text — violating the CD-9 rule introduced in later versions. Replaced with a 4-option `AskUserQuestion`: run audit script (Recommended) / investigate transcript / suppress for this plan / skip this finding. Stale `commands/masterplan.md:217-235` line citation also removed (post-merge drift); replaced with section-name reference (`§Agent dispatch contract recursive-application`).
+
+### Notes
+
+- **Why this exists.** User reported seeing nearly 100% Opus usage in `/masterplan` runs. Investigation found: telemetry hook captures the data correctly; Stop hook is wired; default models at each dispatch site are specified. **The gap was that recursive model passthrough through `superpowers:subagent-driven-development` was prose-only with zero programmatic enforcement** — if SDD's upstream prompt template stops parsing the override clause, every inner Task call silently inherits Opus from the parent, and there was no per-turn summary anywhere to surface this to the user. The verbatim-preamble + sentinel-grep pattern (Section 2 of the plan) closes the enforcement gap; the per-turn summary (Section 1) closes the visibility gap.
+- **No telemetry data is required for the per-turn summary to work.** Tracking is in-orchestrator-memory; the JSONL cross-check is a safety net that runs only when the Stop hook is installed and a JSONL exists. Users without the hook still get accurate per-turn summaries.
+- **Manual smoke-test deferred.** The cross-validation drift detection requires a real `/masterplan execute` turn against an existing plan to populate the JSONL. If the per-turn summary or drift detection misbehaves under real use, file as v2.12.1.
+- **Upgrade hint for users with manual `~/.claude/bin/` copies.** v2.12.0 modified `bin/masterplan-routing-stats.sh` (added `--models` flag + Model breakdown render). After plugin update, run `bin/masterplan-self-host-audit.sh --fix` to re-sync the user-level copy, OR manually `cp` the new version over the stale user-level shim.
+
 ## [2.11.1] — 2026-05-06 — workflow simplification + skills/ drift detection
 
 ### Fixed

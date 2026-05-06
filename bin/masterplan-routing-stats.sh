@@ -9,6 +9,7 @@
 #   bin/masterplan-routing-stats.sh --format=table|json|md # output format (default: table)
 #   bin/masterplan-routing-stats.sh --all-repos            # scan every repo under $MASTERPLAN_REPO_ROOTS (default: $HOME/dev)
 #   bin/masterplan-routing-stats.sh --since=YYYY-MM-DD     # only count log entries on/after this date
+#   bin/masterplan-routing-stats.sh --models               # show only the model breakdown section (skips routing table)
 #
 # Data sources per plan:
 #   - <slug>-status.md activity log (routing tags, inline model hints, timestamps)
@@ -28,6 +29,7 @@ plan_filter=""
 format="table"
 all_repos=0
 since=""
+models_only=0
 
 usage() {
   sed -n '2,15p' "$0" | sed 's|^# \?||'
@@ -40,6 +42,7 @@ for arg in "$@"; do
     --format=*)   format="${arg#--format=}" ;;
     --all-repos)  all_repos=1 ;;
     --since=*)    since="${arg#--since=}" ;;
+    --models)     models_only=1 ;;
     -h|--help)    usage 0 ;;
     *)            echo "unknown arg: $arg" >&2; usage 2 ;;
   esac
@@ -95,12 +98,13 @@ fi
 # Per-plan analysis (delegated to python3 — bash + jq + awk would be too gnarly
 # for the cross-source aggregation. Python is in the existing tool-guard set.)
 # ------------------------------------------------------------------
-python3 - "$format" "$plan_filter" "$since" "${plans_dirs[@]}" <<'PY'
+python3 - "$format" "$plan_filter" "$since" "$models_only" "${plans_dirs[@]}" <<'PY'
 import json, os, re, sys, glob
 from datetime import datetime
 from collections import defaultdict
 
-format_kind, plan_filter, since_str, *plans_dirs = sys.argv[1:]
+format_kind, plan_filter, since_str, models_only_str, *plans_dirs = sys.argv[1:]
+models_only = models_only_str == '1'
 since_dt = None
 if since_str:
     try: since_dt = datetime.fromisoformat(since_str + ('T00:00:00+00:00' if 'T' not in since_str else ''))
@@ -221,6 +225,7 @@ def analyze_plan(status_path):
     sub_path = os.path.join(plans_dir, slug + '-subagents.jsonl')
     tokens_by_class = defaultdict(lambda: {'total_tokens':0,'duration_ms':0,'count':0,'input':0,'output':0})
     tokens_by_model = defaultdict(int)
+    dispatches_by_model = defaultdict(int)
     sub_records = 0
     if os.path.isfile(sub_path) and os.path.getsize(sub_path) > 0:
         with open(sub_path) as f:
@@ -239,6 +244,7 @@ def analyze_plan(status_path):
                 tokens_by_class[rc]['output']       += rec.get('output_tokens',0) or 0
                 m = (rec.get('model') or 'unknown').lower()
                 tokens_by_model[m] += rec.get('total_tokens',0) or 0
+                dispatches_by_model[m] += 1
 
     # eligibility-cache decision_source breakdown
     cache_path = os.path.join(plans_dir, slug + '-eligibility-cache.json')
@@ -271,6 +277,7 @@ def analyze_plan(status_path):
         'durations_min': {k: round(v/60,1) for k,v in durations.items()},
         'tokens_by_class': dict(tokens_by_class),
         'tokens_by_model': dict(tokens_by_model),
+        'dispatches_by_model': dict(dispatches_by_model),
         'subagents_records': sub_records,
         'decision_sources': dict(decisions),
         'health': health,
@@ -326,12 +333,17 @@ aggregate['tokens_by_class_total'] = dict(class_token_totals)
 # opus_share — defined per docs/design/telemetry-signals.md
 opus_token_sum = 0
 all_token_sum = 0
+dispatches_by_model_total = defaultdict(int)
 for r in results:
     if 'error' in r: continue
     for m, t in (r.get('tokens_by_model') or {}).items():
         all_token_sum += t
         if m == 'opus': opus_token_sum += t
+    for m, c in (r.get('dispatches_by_model') or {}).items():
+        dispatches_by_model_total[m] += c
 aggregate['opus_share'] = round(opus_token_sum / all_token_sum, 3) if all_token_sum else None
+aggregate['attributed_tokens_total'] = all_token_sum
+aggregate['dispatches_by_model_total'] = dict(dispatches_by_model_total)
 aggregate['opus_share_health'] = (
     'healthy' if aggregate['opus_share'] is not None and aggregate['opus_share'] < 0.10 else
     'regression' if aggregate['opus_share'] is not None and aggregate['opus_share'] > 0.30 else
@@ -341,6 +353,50 @@ aggregate['opus_share_health'] = (
 # ------------------------------------------------------------------
 # Output rendering
 # ------------------------------------------------------------------
+def _note_no_subagents():
+    print("\nNote: zero subagents.jsonl records found. Token data unavailable.")
+    print("v2.4.0's agent_id dedup populates subagents.jsonl on the next /masterplan turn — re-run after to see token breakdowns.")
+
+def render_models():
+    a = aggregate
+    n = a['plans_count']
+    since_label = f", since {since_str}" if since_str else ''
+    print(f"\nModel breakdown ({n} plan{'s' if n != 1 else ''}{since_label}):")
+    dbt = a.get('dispatches_by_model_total') or {}
+    tbt_total = a.get('attributed_tokens_total') or 0
+    codex_calls = a.get('codex_total', 0)
+    # Known model ordering: haiku, sonnet, opus, then remaining sorted, then codex, then unknown
+    known_order = ['haiku', 'sonnet', 'opus']
+    all_dispatch_models = set(dbt.keys()) - {'unknown'}
+    extra_models = sorted(all_dispatch_models - set(known_order))
+    model_order = known_order + extra_models
+    for m in model_order:
+        dispatches = dbt.get(m, 0)
+        tokens = 0
+        for r in results:
+            if 'error' in r: continue
+            tokens += (r.get('tokens_by_model') or {}).get(m, 0)
+        pct_str = f"({round(100*tokens/tbt_total)}% of attributed tokens)" if tbt_total else ''
+        print(f"  {m:<8} {dispatches:>4} dispatches  {tokens:>10,} tokens   {pct_str}")
+    # codex is out-of-process — no token attribution
+    print(f"  {'codex':<8} {codex_calls:>4} calls         (out-of-process, no token attribution)")
+    # unknown — records with missing model field
+    unknown_dispatches = dbt.get('unknown', 0)
+    unknown_tokens = sum(
+        (r.get('tokens_by_model') or {}).get('unknown', 0)
+        for r in results if 'error' not in r
+    )
+    pct_str = f"({round(100*unknown_tokens/tbt_total)}% of attributed tokens)" if tbt_total and unknown_tokens else ''
+    print(f"  {'unknown':<8} {unknown_dispatches:>4} dispatches  {unknown_tokens:>10,} tokens   {pct_str}")
+    # opus_share summary line
+    opus_share = a.get('opus_share')
+    health = a.get('opus_share_health', 'no-data')
+    health_label = ' (regression — target < 0.10)' if health == 'regression' else f' ({health})'
+    opus_share_str = f"{opus_share:.3f}" if opus_share is not None else 'n/a'
+    print(f"\n  opus_share: {opus_share_str}{health_label}")
+    if a.get('subagents_records_total', 0) == 0:
+        _note_no_subagents()
+
 def render_table():
     print(f"{'Plan':50} {'codex#':>6} {'inline#':>7} {'%cdx':>4}  {'inline-models':25} {'sub#':>5}  health")
     print('-'*135)
@@ -367,12 +423,10 @@ def render_table():
     models = ' '.join(f"{m}:{c}" for m,c in sorted(a['inline_models_total'].items())) or '(none)'
     if len(models) > 25: models = models[:22] + '…'
     print(f"{'AGGREGATE ('+str(a['plans_count'])+' plans)':50} {a['codex_total']:>6} {a['inline_total']:>7} {pct:>4}  {models:25} {a['subagents_records_total']:>5}  opus_share={a['opus_share']} ({a['opus_share_health']})")
+    render_models()
     if a['untagged_total']:
         print(f"\nNote: {a['untagged_total']} untagged completion entries across all plans (no [codex]/[inline] tag).")
         print("These predate v2.4.0's mandatory routing tags OR were skipped via the silent-fallthrough bug Fixes 1-5+P1-P5 prevent.")
-    if a['subagents_records_total'] == 0:
-        print("\nNote: zero subagents.jsonl records found. Token data unavailable.")
-        print("v2.4.0's agent_id dedup populates subagents.jsonl on the next /masterplan turn — re-run after to see token breakdowns.")
 
 def render_md():
     print(f"# /masterplan routing stats\n")
@@ -403,5 +457,8 @@ if format_kind == 'json':
 elif format_kind == 'md':
     render_md()
 else:
-    render_table()
+    if models_only:
+        render_models()
+    else:
+        render_table()
 PY
