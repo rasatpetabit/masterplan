@@ -34,7 +34,13 @@ See **Configuration: .masterplan.yaml** below for the full schema and built-in d
 
 ### Codex availability detection (v2.0.0+)
 
-After config loading completes, if the merged config has `codex.routing != off` OR `codex.review == on` (the v2.0.0 defaults are `routing: auto` + `review: on` — both trigger this check), verify the codex plugin is available. Heuristic: scan the system-reminder skills list for any entry prefixed `codex:` (e.g., `codex:codex-rescue`, `codex:setup`, `codex:rescue`). If absent, behavior depends on `config.codex.unavailable_policy` (default `degrade-loudly`; v2.4.0+ — see config schema below):
+After config loading completes, if the merged config has `codex.routing != off` OR `codex.review == on` (the v2.0.0 defaults are `routing: auto` + `review: on` — both trigger this check), verify the codex plugin is available. Detection mode is governed by `config.codex.detection_mode` (default `ping`; v2.8.0+ — see config schema below):
+
+- **`ping` (default, D.1 mitigation)** — dispatch a 5-token bounded ping to `codex:codex-rescue` with brief `Goal=health-check`, `Inputs=none`, `Scope=read-only`, `Constraints=return only "ok"`, `Return shape={status:"ok"}`. On dispatch error (subagent_type not found, plugin uninstalled, API error) → codex unavailable; preserve the error string for the activity-log marker. On successful return → codex available. Cache result on per-invocation state as `codex_ping_result` (one of `"ok" | {"error": "<message>"}`); subsequent steps consult the cache, never re-ping. Ping cost: ~5 tokens; runs once per `/masterplan` invocation. This is the most accurate signal — actually exercising the dispatch path catches plugin-present-but-broken cases that the legacy prefix scan would miss.
+- **`scan`** — legacy heuristic: scan the system-reminder skills list for any entry prefixed `codex:` (e.g., `codex:codex-rescue`, `codex:setup`, `codex:rescue`). Faster (no dispatch), but fragile — survives only as long as the skills-list format keeps the `codex:` prefix convention.
+- **`trust`** — assume codex is available; skip detection entirely. For users on locked-down accounts where the ping itself fails for unrelated infrastructure reasons (sandbox-blocked subagent dispatch, etc.) and any per-task failure is acceptable as the loudly-degraded signal.
+
+If detection concludes codex is **absent**, behavior depends on `config.codex.unavailable_policy` (default `degrade-loudly`; v2.4.0+ — see config schema below):
 
 **`unavailable_policy: block`** — orchestrator does NOT degrade silently OR loudly. Instead: emit the same visible stdout warning (step 1 below), then HALT. Do not enter Step B/C/I — there's no plan execution to skip-codex through. For this halt, set: in-memory `halt_reason = "codex unavailable; unavailable_policy=block"`. If invoked via /loop, reschedule the next wakeup so resume can retry with codex installed; otherwise end the turn. The halting message includes: `⚠ HALT — codex plugin not detected and config.codex.unavailable_policy=block. Install codex (per the warning above) OR set codex.unavailable_policy: degrade-loudly in .masterplan.yaml to allow inline fallthrough.`. NO further steps from below run.
 
@@ -46,7 +52,9 @@ After config loading completes, if the merged config has `codex.routing != off` 
 
 2. In-memory only: treat `codex_routing` as `off` and `codex_review` as `off` for the run. The persisted config (in `.masterplan.yaml` or status frontmatter) is **not** modified — re-installing codex restores configured behavior on the next invocation.
 3. **Record the degradation in the status file immediately, on the very next status-file write of the run** (not "whenever the status updates next" — explicitly: at the close of Step B3 for kickoff flows, at Step C step 1's first status-file write for resume flows (auto-compact nudge / gated→loose offer / current_task refresh — whichever fires first), or at Step I3 for import flows; whichever lands first).
-   - **Activity log** entry: `<ISO-ts> codex degraded — plugin not detected; codex_routing+codex_review forced to off for this run (configured: routing=<configured>, review=<configured>). Re-install codex plugin to restore.`
+   - **Activity log** entry (one of):
+     - `<ISO-ts> codex degraded — plugin not detected; codex_routing+codex_review forced to off for this run (configured: routing=<configured>, review=<configured>). Re-install codex plugin to restore.` *(detection_mode=`scan` or `ping` reporting plugin-missing)*
+     - `<ISO-ts> codex degraded — ping returned error: <error-message-from-codex_ping_result>; codex_routing+codex_review forced to off for this run (configured: routing=<configured>, review=<configured>). Re-install or repair codex plugin to restore.` *(detection_mode=`ping`, dispatch returned an error — distinguishes "plugin missing" from "plugin present but dispatch broken")*
    - **`## Notes`** appended one-liner: `⚠ Codex degraded this run — install codex plugin to restore configured routing/review.` (Skip if a Notes line with the same `⚠ Codex degraded` prefix already exists this session — don't duplicate across resumes.)
    - **No status-file write happens this turn?** Force one anyway: write a `## Notes`-only update with the degradation marker so the user's next `cat <status-file>` shows the warning. Rationale: the user's optoe-ng pattern was a session that did codex-eligible work but never wrote degradation evidence.
 
@@ -1784,6 +1792,14 @@ codex:
                                       # path. Step 0's degradation block (above) and Step C step 3a's precondition halt both honor this.
                                       # `block`: skip user prompts; set status: blocked + append ## Blockers entry; end the turn.
                                       # For users who'd rather a stuck plan than a silent-codex-skip plan.
+  detection_mode: ping                # v2.8.0+: how Step 0 detects codex availability
+                                      # values: ping | scan | trust
+                                      # `ping` (default): dispatch a 5-token bounded ping to codex:codex-rescue; most accurate
+                                      #   (catches plugin-present-but-broken). Cost: ~5 tokens per /masterplan invocation.
+                                      # `scan`: legacy heuristic — look for any `codex:` prefix in the system-reminder skills list.
+                                      #   Faster but fragile; survives only as long as that prefix convention holds.
+                                      # `trust`: assume available; skip detection entirely. For locked-down accounts where the
+                                      #   ping itself fails for unrelated reasons (sandbox-blocked subagent dispatch, etc.).
 
 # Intra-plan task parallelism (v2.0.0+) — Slice α (read-only parallel waves)
 # When enabled, contiguous tasks sharing the same `**parallel-group:**` annotation
