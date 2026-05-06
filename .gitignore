@@ -7,6 +7,12 @@
 node_modules/
 .worktrees/
 
+# Claude Code session-local state (per-user settings + scheduled-task locks).
+# To later track a project-shared file under .claude/, switch this rule to
+# `.claude/*` plus explicit `!.claude/<file>` allow lines (gitignore can't
+# re-include a file once its parent directory is excluded).
+.claude/
+
 # /masterplan runtime telemetry is local-only. Keep generated cost/context
 # sidecars out of commits even when using broad git add commands.
 **/*-telemetry.jsonl
