@@ -1217,7 +1217,20 @@ Conversions parallelize across candidates because each candidate writes to uniqu
 
 For all picked candidates, sanitize each title to a slug and group by slug. When two or more candidates resolve to the same slug, suffix later ones with `-2`, `-3`, etc. If multiple collisions are detected (≥ 2 collision groups), confirm the renames once via `AskUserQuestion(Apply auto-suffixed slugs / Show me the conflicts and let me rename / Abort import)`. Use today's date for all kickoff dates.
 
-This produces a `candidates[]` list with finalized `(slug, spec_path, plan_path, status_path)` tuples — guaranteed unique.
+This produces a `candidates[]` list with finalized `(slug, spec_path, plan_path, status_path)` tuples — guaranteed unique within this batch (but not yet checked against existing on-disk paths; see I3.1.5).
+
+#### I3.1.5 — Path-existence pre-pass (sequential, fast)
+
+For each candidate's `(spec_path, plan_path, status_path)` tuple from I3.1, check whether ANY of the three paths already exist on disk. Implements the operational rule "Import never overwrites existing masterplan state silently".
+
+For each candidate with **≥ 1** pre-existing path collision, surface `AskUserQuestion` (one prompt per colliding candidate; sequential, not parallel — interactive prompts must not interleave): "Importing `<slug>` would overwrite existing masterplan state at: `<colliding-paths>`. What now?" with options:
+- **(1) Overwrite (Recommended)** — proceed with the original tuple; existing files will be rewritten by I3.4.
+- **(2) Write to `-v2` suffix** — append `-v2` to the slug and recompute the tuple; if `<slug>-v2` paths also collide, increment to `-v3`, `-v4`, etc. until all three target paths are free (mirrors I3.1's `-2`, `-3` slug-collision pattern).
+- **(3) Abort this candidate** — remove the candidate from `candidates[]` and skip its I3.2/I3.3/I3.4/I3.5 processing.
+
+Mutate `candidates[]` per the chosen action: aborted entries are removed; `-vN` entries have their `(slug, spec_path, plan_path, status_path)` tuple rewritten before I3.2 begins.
+
+When no candidate has any pre-existing collision, this step is silent (no prompt, no log line) and `candidates[]` is unchanged.
 
 #### I3.2 — Parallel source-fetch wave
 
@@ -1897,7 +1910,7 @@ These are command-specific rules covering cross-cutting policy not stated inline
 - **Stay a thin wrapper.** Logic that belongs to brainstorming, planning, execution, debugging, or branch-finishing lives in those skills. This command's job is sequencing them and persisting the status file.
 - **Subagents do the work; orchestrator preserves context.** Every substantive piece of work goes to a bounded subagent, and only digests come back. Never let raw verification output, full diffs, or library docs accumulate in the orchestrator's context. When in doubt, digest and ScheduleWakeup.
 - **Bounded briefs, not implicit context.** Subagents receive Goal + Inputs + Scope + Constraints + Return shape. They do not inherit session history. If a subagent needs context from an earlier subagent's output, hand it the digest, not the raw return.
-- **Import never overwrites existing masterplan state silently.** If a target spec/plan/status path already exists at Step I3, ask the user: overwrite / write to a `-v2` slug / abort. Never clobber.
+- **Import never overwrites existing masterplan state silently.** Step I3.1.5 (path-existence pre-pass) surfaces `AskUserQuestion` per colliding candidate with options (1) Overwrite (Recommended) / (2) Write to `-v2` suffix / (3) Abort this candidate. Never clobber. The check runs before I3.2 fetch so aborted candidates skip the entire pipeline.
 - **Doctor is read-only by default.** Without `--fix` it only reports — even an obvious orphan stays in place. `--fix` only acts on errors marked auto-fixable in the checks table.
 - **Inference is conservative by design.** When in doubt, classify `possibly_done`, not `done`. The cost of re-verifying is small; the cost of skipping real work is large.
 - **Don't stop silently anywhere — always close with AskUserQuestion if input might be needed.** ANY Step that ends a turn waiting on user input MUST close with `AskUserQuestion` offering 2-4 concrete options, never with free-text prose ("Wait for the user's response", "Which approach?", "Type 'X' to confirm"). Sessions can compact between turns and lose upstream-skill bodies; a free-text question becomes a dead end. This rule applies recursively when the orchestrator invokes upstream skills that have their own pre-existing free-text prompts — `superpowers:finishing-a-development-branch` ("1./2./3./4. Which option?"), `superpowers:using-git-worktrees` ("1./2. Which directory?"), `superpowers:writing-plans` ("Subagent-Driven / Inline Execution. Which approach?"), `superpowers:brainstorming` ("Wait for the user's response" at User Reviews Spec). For each, the orchestrator MUST present `AskUserQuestion` FIRST and brief the skill with the chosen option pre-decided so the skill's free-text prompt is bypassed. Canonical patterns: Step B0 step 4 (worktree directory), Step B1+B2 re-engagement gates (spec/plan review), Step C step 3's blocker re-engagement gate (CD-4-exhausted gate; SDD BLOCKED/NEEDS_CONTEXT escalation), Step C step 6 (finishing-branch wrap).
