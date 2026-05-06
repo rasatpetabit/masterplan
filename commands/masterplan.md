@@ -537,7 +537,7 @@ After Step B1's gate confirms approval, invoke `superpowers:writing-plans` again
 >
 > - complexity == low — brief writing-plans to: produce a flat task list of ~3–7 tasks; SKIP the `**Codex:**` annotation prelude; SKIP the `**parallel-group:**` annotation guidance; mark `**Files:**` blocks as OPTIONAL (best-effort, not required). Plan output is leaner.
 > - `complexity == medium` — current brief (above bullets are the canonical defaults; `**Files:**` encouraged, `**Codex:**` annotation optional, `**parallel-group:**` optional). No change.
-> - `complexity == high` — brief writing-plans to: REQUIRE `**Files:**` block per task (exhaustive); REQUIRE `**Codex:**` annotation per task (`ok` or `no`); ENCOURAGE `**parallel-group:**` for verification/lint/inference clusters. Eligibility cache will be validated against `**Files:**` declarations at Step C step 1 (per spec §Behavior matrix / Plan-writing / `eligibility cache` row at high).
+> - `complexity == high` — brief writing-plans to: REQUIRE `**Files:**` block per task (exhaustive); REQUIRE `**Codex:**` annotation per task (`ok` or `no`); ENCOURAGE `**parallel-group:**` for verification/lint/inference clusters. Eligibility cache will be validated against `**Files:**` declarations at Step C step 1 (per spec §Behavior matrix / Plan-writing / `eligibility cache` row at high). Because every task carries a well-formed annotation pair by construction, Step C step 1's Build path always takes the inline fast-path at `high` (no Haiku dispatch); see **Inline-build verifier** in Step C step 1.
 
 Plans without annotations behave exactly as before (heuristic-only). Annotations are an authoring aid; they're never required.
 
@@ -650,27 +650,34 @@ Triggered by `/masterplan plan` with no topic and no `--from-spec=`. Picks an ex
 
    **Complexity gate (eligibility cache).** When `resolved_complexity == low`, skip the entire eligibility-cache decision tree below — the cache file is NOT built and is NOT loaded. Step 3a's per-task lookup falls back to: `codex_routing` resolves to its complexity-derived default `off` at low (per Operational rules' Complexity precedence), so no delegation decision is needed per task. Doctor check #14 (orphan eligibility cache) does not flag absence on low plans (handled by Task 12's check-set gate).
 
-   **Build eligibility cache.** When `codex_routing` is `auto` or `manual`, the cache lives at `<slug>-eligibility-cache.json` (sibling to status, follows the `<slug>-*` sidecar convention). Decision tree for cache load:
+   **Build eligibility cache.** When `codex_routing` is `auto` or `manual`, the cache lives at `<slug>-eligibility-cache.json` (sibling to status, follows the `<slug>-*` sidecar convention). Decision tree for cache load (evaluated in order; first matching bullet wins):
 
+   - **Wave-pin short-circuit.** If `cache_pinned_for_wave == true` (set by Step C step 2's wave dispatch), skip the rest of this decision tree — the in-memory cache is already loaded and reused for the wave's duration. Emit the **Skip-with-pinned-cache** activity-log variant (see below). The annotation-completeness scan does NOT run under wave pin.
    - **Skip entirely** when `codex_routing == off`.
-   - **Cache file missing** → dispatch one Haiku (pass `model: "haiku"` per §Agent dispatch contract; see brief below); write `<slug>-eligibility-cache.json`; load into orchestrator memory as `eligibility_cache`.
-   - **Cache file present, `cache.mtime > plan.mtime`** → load JSON from disk into `eligibility_cache`; skip Haiku dispatch.
-   - **Cache file present, `plan.mtime >= cache.mtime`** → dispatch Haiku, overwrite cache file, load result.
+   - **Cache file present, `cache.mtime > plan.mtime`** → load JSON from disk into `eligibility_cache`; skip both inline and Haiku paths.
+   - **Cache file missing OR (present AND `plan.mtime >= cache.mtime`)** → enter the Build path:
+     1. **Annotation-completeness scan** (orchestrator inline). For every `### Task N:` block in the plan, confirm BOTH (a) a `**Files:**` block is present and non-empty, AND (b) a `**Codex:** ok|no` line is present (case-sensitive on the literal tokens `ok` / `no`; any other value disqualifies — including `ok ` with trailing whitespace, `OK`, or `maybe`).
+     2. **If the scan returns "complete"** → orchestrator builds cache **inline**: parse `**Codex:**`, `**parallel-group:**`, `**Files:**`, optional `**non-committing:**` annotations per task; apply the parallel-eligibility rules 1-5 below; emit the cache JSON shape (see schema below); atomic-write per the **Cache write timing** contract below; load into `eligibility_cache`. Every task's `decision_source` field is stamped `"annotation"` by Step 3a (no heuristic was used, by construction). Inline path skips Haiku dispatch entirely.
+     3. **If the scan returns "incomplete"** (any task lacks a well-formed annotation pair) → dispatch one Haiku (pass `model: "haiku"` per §Agent dispatch contract; see brief below); write `<slug>-eligibility-cache.json`; load into orchestrator memory as `eligibility_cache`. Reason: tasks without annotations require heuristic application (judgment), which belongs in a subagent per the context-control architecture.
    - When Step 4d edits the plan inline, also `touch` the plan file so the mtime invariant holds for the next Step C entry's cache check.
 
    **Evidence-of-attempt entry (v2.4.0+, MANDATORY).** Step C step 1 MUST append exactly one line to `## Activity log` per Step C entry recording the cache-build outcome — including the trivial `codex_routing == off` skip. This makes the silent-skip failure mode (the optoe-ng project-review pattern, where Step C step 1 ran zero times across an entire plan and no evidence remained) impossible to hide. Doctor check #21 surfaces the absence as a Warning at lint time.
 
-   Format (one of these five variants per Step C entry):
+   Format (one of these seven variants per Step C entry):
 
    ```
    - <ISO-ts> eligibility cache: built (<N> tasks; <K> codex-eligible) — first build for this plan
+   - <ISO-ts> eligibility cache: built inline (<N> tasks; <K> codex-eligible) — all tasks annotated; first build for this plan
    - <ISO-ts> eligibility cache: rebuilt (<N> tasks; <K> codex-eligible) — plan.mtime > cache.mtime
+   - <ISO-ts> eligibility cache: rebuilt inline (<N> tasks; <K> codex-eligible) — all tasks annotated; plan.mtime > cache.mtime
    - <ISO-ts> eligibility cache: loaded from disk (<N> tasks; <K> codex-eligible) — cache.mtime > plan.mtime
    - <ISO-ts> eligibility cache: skipped (codex_routing=off)
    - <ISO-ts> eligibility cache: skipped (codex degraded — plugin not detected this run; see ## Notes)
    ```
 
    The entry is appended ONCE per Step C entry, before any task-routing decisions. Subsequent re-entries (e.g., resume after compaction) emit a new entry per re-entry — that's intentional, the activity log becomes the canonical record of "did Step 1 run, when, and what did it conclude?" Cost is one line per Step C entry (~60-100 chars); negligible against the 100-entry rotation threshold.
+
+   **Inline-build verifier (CD-3 evidence anchor).** The annotation-completeness scan in the Build path step 1 IS the verifier that licenses the inline shortcut — analogous to Step 4a's implementer-return trust contract (see line ~996), where structured fields gate skipping redundant verification. The scan must pass for ALL tasks before the inline path activates: any malformed annotation, missing `**Files:**` block, or unknown `**Codex:**` value (e.g., `**Codex:** maybe`, `OK`, `ok ` with trailing whitespace) disqualifies the inline path and silently falls back to Haiku dispatch. Silent fallback is correct here — the Haiku is the standard path, not an error path; the orchestrator never trusts data it can't structurally validate. At `complexity == high`, writing-plans guarantees every task carries a well-formed `**Codex:**` annotation pair (see line ~540), so the inline path activates by construction; at `medium`, it activates opportunistically when annotations happen to be complete; at `low`, the entire decision tree is skipped per the **Complexity gate** above. Doctor #21's regex (`eligibility cache:`) matches both inline and Haiku-built variants — no doctor-side change is required.
 
    **Skip-with-pinned-cache exception**: when `cache_pinned_for_wave == true` (M-2 mitigation; see below), Step C step 1 skips the entire decision tree for the duration of the wave. In that case emit:
 

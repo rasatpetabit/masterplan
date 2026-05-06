@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Step C step 1 inline fast-path for the eligibility cache.** When every plan
+  task carries a well-formed `**Codex:** ok|no` annotation paired with a
+  non-empty `**Files:**` block, the orchestrator now builds the eligibility
+  cache inline (parsing annotations + applying the parallel-eligibility rules
+  directly) instead of dispatching the Haiku subagent. Two new activity-log
+  variants distinguish the path: `eligibility cache: built inline (...)` and
+  `eligibility cache: rebuilt inline (...)`. The Haiku is preserved for plans
+  with under-annotated tasks, where heuristic application (judgment) still
+  belongs in a subagent per the context-control architecture. Doctor #21's
+  regex (`eligibility cache:`) matches both inline and Haiku-built variants —
+  no doctor-side change required.
+- **Annotation-completeness verifier (CD-3 evidence anchor).** The inline
+  shortcut activates only when ALL tasks pass a structural validation: any
+  malformed annotation, missing `**Files:**` block, or unknown `**Codex:**`
+  value silently falls back to Haiku dispatch. Analogous to Step 4a's
+  implementer-return trust contract — the orchestrator never trusts data it
+  can't structurally validate.
+- **Wave-pin precedence note (decision-tree clarification).** The Step C step
+  1 decision tree now explicitly lists `cache_pinned_for_wave == true` as the
+  first short-circuit, before any other bullet evaluates. Behavior is
+  unchanged from prior (the **Skip-with-pinned-cache exception** block already
+  documented this normatively); the new ordering removes ambiguity for
+  readers landing in the imperative "step 1, 2, 3" Build-path structure.
+
+### Why
+
+Most measurable win: at `complexity == high`, every Step C step 1 cache build
+is now mechanical extraction (no Haiku dispatch). Saves the Haiku roundtrip
+(~10–30s wall + tokens) on every fresh build and every plan-edit-driven
+rebuild. At `medium`, kicks in opportunistically when writing-plans happens to
+annotate every task. At `low`, irrelevant — the cache is skipped entirely.
+
+The change resolves feedback that called out the Step C step 1 Haiku as
+re-derivation of structured data already present in the plan file. The
+trust-contract anchor (plan-file annotations as the structured return)
+generalizes the Step 4a `tests_passed` / `commands_run` pattern to
+cache-build.
+
 ## [2.6.0] — 2026-05-05
 
 ### Added
