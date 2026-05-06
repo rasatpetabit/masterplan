@@ -654,10 +654,10 @@ Triggered by `/masterplan plan` with no topic and no `--from-spec=`. Picks an ex
 
    - **Wave-pin short-circuit.** If `cache_pinned_for_wave == true` (set by Step C step 2's wave dispatch), skip the rest of this decision tree — the in-memory cache is already loaded and reused for the wave's duration. Emit the **Skip-with-pinned-cache** activity-log variant (see below). The annotation-completeness scan does NOT run under wave pin.
    - **Skip entirely** when `codex_routing == off`.
-   - **Cache file present, `cache.mtime > plan.mtime`** → load JSON from disk into `eligibility_cache`; skip both inline and Haiku paths.
+   - **Cache file present, `cache.mtime > plan.mtime`** → load JSON from disk; **schema-version validate** (D.2 mitigation): if the loaded JSON lacks `cache_schema_version` OR `cache_schema_version != "1.0"`, treat as cache-miss → enter the Build path AND emit the **rebuilt — schema version mismatch** activity-log variant (see below). Otherwise load into `eligibility_cache`; skip both inline and Haiku paths.
    - **Cache file missing OR (present AND `plan.mtime >= cache.mtime`)** → enter the Build path:
      1. **Annotation-completeness scan** (orchestrator inline). For every `### Task N:` block in the plan, confirm BOTH (a) a `**Files:**` block is present and non-empty, AND (b) a `**Codex:** ok|no` line is present (case-sensitive on the literal tokens `ok` / `no`; any other value disqualifies — including `ok ` with trailing whitespace, `OK`, or `maybe`).
-     2. **If the scan returns "complete"** → orchestrator builds cache **inline**: parse `**Codex:**`, `**parallel-group:**`, `**Files:**`, optional `**non-committing:**` annotations per task; apply the parallel-eligibility rules 1-5 below; emit the cache JSON shape (see schema below); atomic-write per the **Cache write timing** contract below; load into `eligibility_cache`. Every task's `decision_source` field is stamped `"annotation"` by Step 3a (no heuristic was used, by construction). Inline path skips Haiku dispatch entirely.
+     2. **If the scan returns "complete"** → orchestrator builds cache **inline**: parse `**Codex:**`, `**parallel-group:**`, `**Files:**`, optional `**non-committing:**` annotations per task; apply the parallel-eligibility rules 1-5 below; emit the cache JSON shape including top-level `cache_schema_version: "1.0"` (see schema below); atomic-write per the **Cache write timing** contract below; load into `eligibility_cache`. Every task's `decision_source` field is stamped `"annotation"` by Step 3a (no heuristic was used, by construction). Inline path skips Haiku dispatch entirely.
      3. **If the scan returns "incomplete"** (any task lacks a well-formed annotation pair) → dispatch one Haiku (pass `model: "haiku"` per §Agent dispatch contract; see brief below); write `<slug>-eligibility-cache.json`; load into orchestrator memory as `eligibility_cache`. Reason: tasks without annotations require heuristic application (judgment), which belongs in a subagent per the context-control architecture.
    - When Step 4d edits the plan inline, also `touch` the plan file so the mtime invariant holds for the next Step C entry's cache check.
 
@@ -673,6 +673,7 @@ Triggered by `/masterplan plan` with no topic and no `--from-spec=`. Picks an ex
    - <ISO-ts> eligibility cache: loaded from disk (<N> tasks; <K> codex-eligible) — cache.mtime > plan.mtime
    - <ISO-ts> eligibility cache: skipped (codex_routing=off)
    - <ISO-ts> eligibility cache: skipped (codex degraded — plugin not detected this run; see ## Notes)
+   - <ISO-ts> eligibility cache: rebuilt — schema version mismatch (<found>; expected 1.0)
    ```
 
    The entry is appended ONCE per Step C entry, before any task-routing decisions. Subsequent re-entries (e.g., resume after compaction) emit a new entry per re-entry — that's intentional, the activity log becomes the canonical record of "did Step 1 run, when, and what did it conclude?" Cost is one line per Step C entry (~60-100 chars); negligible against the 100-entry rotation threshold.
@@ -688,6 +689,7 @@ Triggered by `/masterplan plan` with no topic and no `--from-spec=`. Picks an ex
    **Cache file shape** (JSON):
    ```json
    {
+     "cache_schema_version": "1.0",
      "plan_path": "docs/superpowers/plans/<slug>.md",
      "plan_mtime_at_compute": "2026-05-01T14:32:00Z",
      "generated_at": "2026-05-01T14:32:01Z",
@@ -704,6 +706,8 @@ Triggered by `/masterplan plan` with no topic and no `--from-spec=`. Picks an ex
 
    *Cache files lacking `parallel_group` / `files` / `parallel_eligible` / `parallel_eligibility_reason` (pre-v2.0.0 caches) are valid; load with `parallel_eligible: false` for every task. Cache rebuild fires on plan.md mtime change as today.*
 
+   *`cache_schema_version` is bumped when the eligibility checklist or annotation parser changes; mismatch triggers rebuild. Current version: `1.0`. Pre-v2.8.0 caches lacking the field are treated as mismatch and rebuilt on next Step C entry per the schema-version validate rule above.*
+
    **Runtime-audit fields** (v2.4.0+): `dispatched_to` / `dispatched_at` / `decision_source` start as `null` at cache build time and are stamped by Step 3a at task-routing time:
    - `dispatched_to`: `"codex" | "inline" | "skipped" | null` — what the orchestrator actually did with this task. `null` until Step 3a routes the task.
    - `dispatched_at`: ISO-8601 UTC timestamp when Step 3a stamped `dispatched_to` (banner emit time, not task-completion time).
@@ -717,7 +721,7 @@ Triggered by `/masterplan plan` with no topic and no `--from-spec=`. Picks an ex
 
    **Cache write timing**: Step 3a stamps the three runtime-audit fields *before* dispatching the task (so a mid-task crash leaves an honest record of intent, not pretending the task never started). Persist via in-place atomic JSON write (write to `<slug>-eligibility-cache.json.tmp`, fsync, rename) so a partial write can't corrupt the cache.
 
-   **Bounded brief for the Haiku** (when dispatched): Goal=apply the Step C 3a Codex eligibility checklist AND the parallel-eligibility rules below to each task; emit `{task_idx → {eligible, reason, annotated, parallel_group, files, parallel_eligible, parallel_eligibility_reason, dispatched_to: null, dispatched_at: null, decision_source: null}}`. Inputs=full plan task list + plan annotations (`**Codex:**`, `**parallel-group:**`, `**Files:**` blocks, optional `**non-committing:**` override). Scope=read-only. Return=JSON only — no narration. Runtime-audit fields are always `null` at cache build time; Step 3a fills them.
+   **Bounded brief for the Haiku** (when dispatched): Goal=apply the Step C 3a Codex eligibility checklist AND the parallel-eligibility rules below to each task; emit a JSON object with top-level `cache_schema_version: "1.0"` and a `tasks` array of `{idx, name, eligible, reason, annotated, parallel_group, files, parallel_eligible, parallel_eligibility_reason, dispatched_to: null, dispatched_at: null, decision_source: null}` records. Inputs=full plan task list + plan annotations (`**Codex:**`, `**parallel-group:**`, `**Files:**` blocks, optional `**non-committing:**` override). Scope=read-only. Return=JSON only — no narration. Runtime-audit fields are always `null` at cache build time; Step 3a fills them.
 
    **Parallel-eligibility rules** (apply per task; record `parallel_eligible: true` only when ALL hold):
    1. `**parallel-group:** <name>` annotation is set.
