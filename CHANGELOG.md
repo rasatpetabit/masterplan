@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.11.0] — 2026-05-06 — extract self-host checks; shim v2; retro auto-archive; doctor #28
+
+### Fixed
+
+- **`/masterplan` shim now uses slash-command re-invocation (sentinel `<!-- masterplan-shim: v2 -->`).** The v1 shim's body said "Invoke the `superpowers-masterplan:masterplan` skill with $ARGUMENTS", which routed through Claude Code's Skill tool. The Skill tool requires the skill to appear in the session's available-skills list — in some sessions it does not, and `/masterplan` returned "missing skill" forcing users to type the long form (`/superpowers-masterplan:masterplan`) manually. The v2 shim's body is just `/superpowers-masterplan:masterplan $ARGUMENTS`; Claude Code's slash-command resolver intercepts the qualified path at message-receive time, bypassing the Skill tool entirely. Forward-compatible: `bin/masterplan-self-host-audit.sh` matches any `<!-- masterplan-shim: v\d+ -->` sentinel so future shim revisions don't trigger drift warnings.
+- **Architectural conflation: doctor checks #25 + #27 moved out of the runtime orchestrator.** Both checks silently skipped outside the `superpowers-masterplan` repo — they only fired when the developer was editing the orchestrator source. Living inside `commands/masterplan.md` meant they consumed prompt-token weight for every `/masterplan` invocation in every user's session despite never producing findings for end users. Extracted to `bin/masterplan-self-host-audit.sh` (developer-only shell script, mirrors the existing `bin/masterplan-routing-stats.sh` pattern). Run with `--fix` to apply drift repairs, `--drift` to scope to deployment-drift only, `--cd9` to scope to free-text-question grep only.
+
+### Added
+
+- **Step R3.5 — auto-archive after retro generation.** When `/masterplan retro` writes a retrospective, the source plan is now `git mv`'d to `docs/superpowers/archived-plans/` and the paired spec to `docs/superpowers/archived-specs/`. Spec collision avoidance: if other plans still reference the same spec, the user is prompted via `AskUserQuestion` whether to archive anyway (rewriting sibling status files), leave the spec, or abort. Behavior is opt-out via `retro.auto_archive_after_retro: false` config or `--no-archive` flag. Step R4 gains a commit-now option that bundles the retro file with the staged archive moves.
+- **Doctor check #28 — `completed_plan_without_retro`.** Plan-scoped Warning that detects plans which look complete (status `complete`, OR all task checkboxes are `- [x]`, OR the activity log mentions `final ship` / `release v` / `merged`) but have no sibling retro file. For each finding, surfaces `AskUserQuestion`: "Generate retro + archive (Recommended) / Generate retro only / Skip / Skip all". The "Generate retro + archive" option chains into Step R + Step R3.5. A secondary stale-plan trigger (mtime > 30 days, status: in-progress, no recent activity) offers "Mark complete + retro + archive / Just archive without retro / Skip" so genuinely-abandoned plans can be cleaned without going through the full retro flow.
+- **`bin/masterplan-self-host-audit.sh` — developer-only audit script** (new). Implements the deployment-drift comparison and CD-9 free-text-question grep that previously lived as doctor checks #25 and #27. Auto-skips when not run inside the `superpowers-masterplan` repo. Run before commits to catch regressions in the orchestrator source.
+
+### Changed
+
+- **Goal #4 (`Structured questions, never free-text`)** now references `bin/masterplan-self-host-audit.sh --cd9` for the regression guard instead of the (removed) doctor check #27.
+- **Doctor parallelization brief** updated: only check #26 remains repo-scoped. Plan-scoped check count is **25** (was 24, +1 for the new check #28). Check #28 is interactive (surfaces `AskUserQuestion` per finding), so per-worktree Haiku doctors return candidate-lists rather than running the prompt themselves; the orchestrator drives the prompts inline after the parallel detection completes.
+- **Doctor numbering gap.** Check #25 is removed (extracted to bin/) and check #27 is removed (extracted to bin/). Renumbering would invalidate CHANGELOG/retro references; leaving gaps. Active checks: #1–#24, #26, #28.
+
+### Notes
+
+- Ship sequence today: v2.9.1 (auto-compact nudge fixes) → v2.10.0 (codify CD-9, plugin-shim sentinel recognition for #25) → v2.11.0 (architectural correction + new automation features). v2.10.0's #25/#27 were stepping stones; v2.11.0 finishes the refactor by moving them out of the user-facing orchestrator entirely.
+- Migration for users still on shim v1: edit `~/.claude/commands/masterplan.md` to replace the body. The bin script's regex matches both v1 and v2 sentinels, so drift detection won't fire either way.
+
 ## [2.10.0] — 2026-05-06 — codify CD-9 (no free-text user questions) + plugin-shim recognition
 
 ### Fixed
