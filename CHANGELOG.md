@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.15.0] — 2026-05-07 — doctor end-gate (`AskUserQuestion` offer `--fix`) + noargs resume-first routing fix
+
+### Added
+
+- **Doctor end-gate: offer `--fix` via `AskUserQuestion` after lint-only runs (`commands/masterplan.md`).** When `/masterplan doctor` (without `--fix`) finds at least one auto-fixable issue (checks #1a, #2, #3, #9, #12, #20, #21, #24), it now closes the turn with `AskUserQuestion` asking whether to run `--fix` inline. Picking "Run --fix now" re-executes Step D with `--fix` semantics, emitting only the changed-files list and updated summary (not the full detection report again). Gate is suppressed when `--fix` was already passed, when no auto-fixable findings exist, or when the report is clean. Previously, a lint-only run that found fixable issues was a dead end — the user had to manually type the `--fix` invocation.
+
+### Fixed
+
+- **Bare-invoke argument-parse missing step 0 (`commands/masterplan.md`).** The argument-parse precedence section (in Step 0) listed three match cases (known verb / `--` flag / non-flag word) but had no case for zero-token invocation. A Claude instance reading only this section could fall through all three without a match and route unpredictably (catch-all / Step B / Step A) on a bare `/masterplan` call. Added explicit step 0: "If no args → route to Step M (resume-first)." The verb routing table already had the `_(empty)_` row and Step M0 step 8 already implemented the correct resume-first logic — this closes the prose gap that caused intermittent wrong-step routing.
+
 ## [2.14.1] — 2026-05-07 — Step I1 brief tightening: filter symbolic `refs/remotes/<remote>/HEAD` by full refname
 
 Follow-up to v2.14.0 issue #3 fix, surfaced by smoke-testing the v2.14.0 brief against `petabit-os-mgmt` with a Haiku Explore subagent.

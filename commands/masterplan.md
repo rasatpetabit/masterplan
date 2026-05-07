@@ -127,6 +127,7 @@ This single line is the audit trail for "why did the orchestrator behave this wa
 **Verb tokens are reserved.** Any topic literally named `full`, `brainstorm`, `plan`, `execute`, `retro`, `import`, `doctor`, `status`, `stats`, or `clean` requires another word in front via the catch-all (e.g., `/masterplan add brainstorm session timer`).
 
 **Argument-parse precedence (in Step 0, after config + git_state cache):**
+0. If invoked with no args (zero tokens after the command name): route directly to **Step M** — resume-first routing (see § Step M).
 1. Match the first token against `{full, brainstorm, plan, execute, retro, import, doctor, status, stats}`. On match: set `halt_mode` per the table; consume the verb; pass remaining args to the matched step.
 2. If unmatched and the first arg starts with `--`: route to **Step A** (flag-only invocation).
 3. If unmatched and the first arg is a non-flag word: catch-all → **Step B** with the full arg string as the topic (existing behavior).
@@ -1593,6 +1594,20 @@ Plain-text grouped report. Apply **CD-10**: order findings by severity (errors f
 Suppress this top-line warning when ≥ 1 file change occurred (in that case the changed-files list IS the evidence; no extra diagnostic needed) and when no `--fix` flag was passed (no-`--fix` runs are read-only by definition). Without this diagnostic, the historical UX failure (issue #1) was: user ran `--fix`, got 10 warnings + a buried "0 files changed/moved" line, and concluded `--fix` was broken. The diagnostic makes "all your findings are in the no-auto-fix set" loud, so the gap between detected and remediable is explicit.
 
 If no issues: `masterplan doctor: clean (<N> worktrees, <P> plans)`.
+
+**End-of-run gate (no `--fix` flag).** After emitting the report, when `--fix` was NOT passed AND at least one finding maps to an auto-fix action (checks with a non-"Report only" fix cell: #1a, #2, #3, #9, #12, #20, #21, #24) — fixable count F > 0:
+
+```
+AskUserQuestion(
+  question="doctor found <E> error(s), <W> warning(s) — <F> are auto-fixable. Run --fix to apply?",
+  options=[
+    "Run --fix now (Recommended) — repairs schema gaps, rebuilds missing caches, rotates oversized telemetry, removes stale-duplicate snapshots; 'report only' findings left for manual resolution",
+    "Leave as-is — exit now; run /masterplan doctor --fix whenever ready"
+  ]
+)
+```
+
+When the user picks "Run --fix now": execute Step D with `--fix` semantics inline — skip re-emitting the detection report; emit only the changed-files list + updated summary line. Omit this gate when `--fix` was already passed, when F = 0 (nothing auto-fixable), or when the report is clean.
 
 ---
 
