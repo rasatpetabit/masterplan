@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "{ [ -L \"$HOME/.claude/commands/masterplan.md\" ] && [ -e \"$HOME/.claude/commands/masterplan.md\" ]; } || ln -sf \"$HOME/.claude/plugins/marketplaces/rasatpetabit-superpowers-masterplan/commands/masterplan.md\" \"$HOME/.claude/commands/masterplan.md\"",
+            "timeout": 2,
+            "async": true
+          }
+        ]
+      }
+    ]
+  }
+}

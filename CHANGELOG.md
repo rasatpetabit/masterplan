@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.13.1] — 2026-05-07 — marketplace install self-healing: auto-symlink `/masterplan` slash command
+
+### Fixed
+
+- **`/masterplan` not found after marketplace install.** The Claude Code marketplace installer deploys command files to `~/.claude/plugins/marketplaces/rasatpetabit-superpowers-masterplan/commands/` but Claude Code's slash-command discovery only scans `~/.claude/commands/`. When the marketplace installer ran, it backed up any prior direct-install copy of `masterplan.md` but did not create a replacement in `~/.claude/commands/`, causing `/masterplan` to vanish from autocomplete.
+
+### Added
+
+- **`hooks/hooks.json` — self-healing SessionStart hook.** On each session start, checks whether `~/.claude/commands/masterplan.md` is a live symlink to the marketplace copy; if missing or dangling, recreates it silently. Mirrors the `hooks/hooks.json` convention used by `obra/superpowers`. Prevents the "upgrade broke /masterplan" class of failures for future reinstalls.
+
 ## [2.13.0] — 2026-05-06 — CC-2 threshold tightening + CC-3-TRAMPOLINE close-turn discipline + stats `--plan` slug fix
 
 ### Fixed
