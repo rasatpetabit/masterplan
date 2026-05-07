@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.14.0] — 2026-05-07 — Step I1 ref enumeration fix + doctor `--fix` actionability (cache rebuild, stray-orphan rm, no-fix diagnostic)
+
+Closes GitHub issues #1 and #3.
+
+### Fixed
+
+- **Step I1 git artifact scan misses remote-only branches (issue #3).** The Haiku brief's `git branch -avv` instruction was being silently downgraded to `git branch -v` (or to local-only iteration) by some agent runs, producing false negatives where remote branches with diverged commits were never flagged. Replaced with explicit `git for-each-ref refs/heads/ refs/remotes/ --format='%(refname:short)'` enumeration in `commands/masterplan.md` Step I1 source class 2. `git for-each-ref` returns one ref per line in a stable format (no parsing ambiguity), and the brief now mandates this command verbatim. Also clarified that the check is topology-based (`git log <trunk>..<ref>` non-empty SHA reachability), not content-based — rebased-equivalent branches are still flagged because the cleanup action is deleting the stale ref, not re-importing the content. Reproducer was petabit-os-mgmt `origin/phase-5-southbound-ipc` (3 commits ahead of main), silently skipped across two consecutive import sessions.
+
+### Added
+
+- **`doctor --fix` extends to checks #20 and #21 (eligibility cache rebuild) — issue #1 Fix 1.** Cache rebuild is deterministic from plan annotations (mirrors Step C step 1's Build path) — no judgment call. The new `--fix` action runs the annotation-completeness scan inline; if complete, the orchestrator builds the cache inline (no subagent dispatch); if incomplete, dispatches one Haiku per the existing fallback path. Writes `<slug>-eligibility-cache.json`, appends `eligibility cache: rebuilt (...) — via doctor --fix` to the status's `## Activity log`, and commits as `masterplan: rebuild eligibility cache for <slug> via doctor --fix`. When both #20 and #21 fire on the same plan (the common case — same root cause, different footprint), one `--fix` invocation resolves both. Closes the largest "10 warnings, 0 fixes" hole in steady-state mature-repo doctor runs.
+- **`doctor --fix` extends to check #1 sub-class #1a (stray-duplicate-orphan plans) — issue #1 Fix 2.** New sub-classification fires when an orphan plan has an in-status counterpart in another worktree of the same repo, the orphan is at-or-behind the canonical copy (mtime/hash check), and the orphan's worktree is NOT the worktree the in-status frontmatter points at. The orphan is provably a stale snapshot from a sibling worktree (common after creating a worktree and finalizing the plan elsewhere); `--fix` runs `git rm <stale-path>` per stray plus one commit per affected worktree (`masterplan: remove <N> stray-duplicate orphan plan(s) via doctor --fix`). The original #1 (true orphan, no in-status counterpart anywhere) still has "no auto-fix" — judgment call: the user may have intentional rough notes that aren't ready for masterplan schema.
+- **`doctor --fix` actionability diagnostic — issue #1 Fix 3.** When `--fix` ran but produced 0 file changes despite N > 0 findings, surface a top-line warning BEFORE the per-finding details: `⚠ doctor --fix found <N> warnings, 0 of which match the auto-fix action set.` followed by check-grouped one-line remediation hints. Suppresses when ≥ 1 file change occurred (the changed-files list is its own evidence) and when `--fix` was not passed (no-`--fix` runs are read-only by definition). Closes the historical UX failure where users would run `--fix`, get 10 warnings + a buried "0 files changed/moved" line, and conclude `--fix` was broken.
+
 ## [2.13.1] — 2026-05-07 — marketplace install self-healing: auto-symlink `/masterplan` slash command
 
 ### Fixed
