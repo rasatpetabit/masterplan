@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.14.1] — 2026-05-07 — Step I1 brief tightening: filter symbolic `refs/remotes/<remote>/HEAD` by full refname
+
+Follow-up to v2.14.0 issue #3 fix, surfaced by smoke-testing the v2.14.0 brief against `petabit-os-mgmt` with a Haiku Explore subagent.
+
+### Fixed
+
+- **Step I1 source class 2 brief — symbolic-HEAD ambiguity (`commands/masterplan.md`).** v2.14.0's brief said "exclude `HEAD`" but `git for-each-ref refs/remotes/ --format='%(refname:short)'` renders `refs/remotes/origin/HEAD` as the **bare token `origin`** — NOT catchable by `grep -v HEAD` on the short form. A Haiku running the v2.14.0 brief self-reported the ambiguity verbatim during smoke test: *"the brief says to exclude 'HEAD' but doesn't specify whether to filter on the literal substring 'HEAD' in refname:short output (doesn't appear here), [or] the `refs/remotes/<remote>/HEAD` symbolic ref nature."* It guessed right by interpretation, but a worse-luck run would either drop the bare `origin` (false negative) or flag it (phantom finding when HEAD diverges from `<trunk>`). New brief uses `--format='%(refname)|%(refname:short)'` to emit both forms in one line, instructs Haiku to **filter on the full refname** (drop any line whose full path ends in `/HEAD`), and **use the short name** for display + topology check. Removes the ambiguity at the source.
+
 ## [2.14.0] — 2026-05-07 — Step I1 ref enumeration fix + doctor `--fix` actionability (cache rebuild, stray-orphan rm, no-fix diagnostic)
 
 Closes GitHub issues #1 and #3.
