@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.13.0] — 2026-05-06 — CC-2 threshold tightening + CC-3-TRAMPOLINE close-turn discipline + stats `--plan` slug fix
+
+### Fixed
+
+- **`/masterplan stats --plan=<bare-slug>`** silently returned zero records when callers passed a human-readable slug (e.g., `phase-4-cli-engine-mvp`) because the on-disk status filename includes a `YYYY-MM-DD-` prefix that the equality check never stripped. `bin/masterplan-routing-stats.sh` now falls back to a date-prefix-stripped match when the literal equality fails. Surfaced from real petabit-os-mgmt usage.
+
+### Changed
+
+- **CC-2 — Subagent-delegate triggers tightened (`commands/masterplan.md`).** Bash-output threshold lowered from `> 100 lines` → `> 50 lines`; file-read threshold lowered from `> 300 lines` → `> 50 lines` (orientation reads ≤ 50 still excepted; cumulative reads of the same file count). Added two new triggers: **coordinated edits to ≥ 2 files** for one conceptual change → dispatch a single Sonnet subagent with the full edit-set as the bounded brief; **cumulative inline Edits > 5 within a single turn** for any single file → at the 5th Edit, stop and dispatch Sonnet to complete the rest as a batched edit. Root cause: petabit-os-mgmt Phase 4 telemetry showed Opus consuming ~70%+ of session tokens via inline tool calls that the prior thresholds never caught — the v2.12.0 model-passthrough enforcement only governed *explicitly dispatched* subagents, not the inline work the orchestrator was doing itself.
+
+### Added
+
+- **CC-3-TRAMPOLINE — Canonical turn-close sequence (`commands/masterplan.md`).** New ~20-line operational rule defines a single enforcement point for CC-3. Every turn-close routes through: (1) CC-3 summary if `subagents_this_turn` is non-empty, (2) site-specific pre-close action (commit, status-file write, ledger append, etc.), (3) closer (`AskUserQuestion` / `ScheduleWakeup` / terminal render). Authoring convention: new turn-close sites write `→ CLOSE-TURN`; bare `"end the turn"` reserved for negation contexts ("never end the turn waiting on..."), AskUserQuestion option labels, and YAML/comment blocks. 19 existing turn-close sites converted to the new convention across Steps A/B/C/T/CL (Cancel/Abort/Done/Open spec/Open plan/Discard, blocker policies, daily quota exhaust, wakeup-ledger append, `stats` verb, `clean` verb).
+
+### Notes
+
+- Underlying fix landed in marketplace install copy as commit `24e6546d` during in-session work in `petabit-os-mgmt`; this release brings it into project HEAD with a proper version bump so subsequent plugin updates carry it everywhere.
+- Followup for v2.14.0: extend `bin/masterplan-self-host-audit.sh` with a CD-style grep that flags non-negated `"end the turn"` occurrences in `commands/masterplan.md` (per CC-3-TRAMPOLINE's authoring rule).
+
 ## [2.12.0] — 2026-05-06 — per-turn subagent summary + model attribution enforcement
 
 ### Added

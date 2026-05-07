@@ -44,7 +44,7 @@ After config loading completes, if the merged config has `codex.routing != off` 
 
 If detection concludes codex is **absent**, behavior depends on `config.codex.unavailable_policy` (default `degrade-loudly`; v2.4.0+ — see config schema below):
 
-**`unavailable_policy: block`** — orchestrator does NOT degrade silently OR loudly. Instead: emit the same visible stdout warning (step 1 below), then HALT. Do not enter Step B/C/I — there's no plan execution to skip-codex through. For this halt, set: in-memory `halt_reason = "codex unavailable; unavailable_policy=block"`. If invoked via /loop, reschedule the next wakeup so resume can retry with codex installed; otherwise end the turn. The halting message includes: `⚠ HALT — codex plugin not detected and config.codex.unavailable_policy=block. Install codex (per the warning above) OR set codex.unavailable_policy: degrade-loudly in .masterplan.yaml to allow inline fallthrough.`. NO further steps from below run.
+**`unavailable_policy: block`** — orchestrator does NOT degrade silently OR loudly. Instead: emit the same visible stdout warning (step 1 below), then HALT. Do not enter Step B/C/I — there's no plan execution to skip-codex through. For this halt, set: in-memory `halt_reason = "codex unavailable; unavailable_policy=block"`. If invoked via /loop, reschedule the next wakeup so resume can retry with codex installed; otherwise → CLOSE-TURN. The halting message includes: `⚠ HALT — codex plugin not detected and config.codex.unavailable_policy=block. Install codex (per the warning above) OR set codex.unavailable_policy: degrade-loudly in .masterplan.yaml to allow inline fallthrough.`. NO further steps from below run.
 
 **`unavailable_policy: degrade-loudly`** (default) — execute the full degradation path below:
 
@@ -313,7 +313,7 @@ Enough to reconstruct state. Nothing more.
 Even with disciplined subagent use, the orchestrator's own context grows during a session. Specific triggers for action:
 
 - **After every 3 completed tasks** — call `ScheduleWakeup` to resume in a fresh session (already in **Step C step 5**). The status file is the bridge.
-- **If context feels tight** — finish the current task, ScheduleWakeup, end the turn. Do not push through. A wakeup is cheap; a confused orchestrator is expensive.
+- **If context feels tight** — finish the current task, ScheduleWakeup, → CLOSE-TURN. Do not push through. A wakeup is cheap; a confused orchestrator is expensive.
 - **If a subagent returns a wall of text** — digest immediately before continuing. Do not carry the wall into the next task.
 - **Before invoking brainstorming, conversion, or systematic-debugging** — check whether you're already deep in a session. If so, bookmark and wakeup; let the fresh session start that phase clean.
 
@@ -464,7 +464,7 @@ Before resume-first routing, emit a structured plain-text orientation summarizin
    - **Phase work** → surface the phase work sub-picker below.
    - **Operations** → surface the operations sub-picker below.
    - **Resume in-flight** → fall through to **Step A** with no further prompt. This appears mainly for empty-state users who deliberately want to inspect older or non-active state; active work routes to Step C/Step A before this menu.
-   - **Cancel** → emit one-line message ("Cancelled — no action taken.") and end the turn cleanly. No further tool calls.
+   - **Cancel** → emit one-line message ("Cancelled — no action taken.") and → CLOSE-TURN
 
    **Empty-state picker (phase work sub-picker):**
 
@@ -575,7 +575,7 @@ When the verb is `plan --from-spec=<path>` (directly, or via Step A's spec-witho
 5. If the resolved worktree's current branch is in `config.trunk_branches`, surface `AskUserQuestion("Spec lives on \`<branch>\` (a trunk branch). superpowers:subagent-driven-development will refuse to start on this branch at execute time. What now?", options=["Create a new worktree for the plan and copy the spec into it (Recommended)", "Continue on \`<branch>\` anyway — I'll handle SDD's refusal manually later", "Abort"])`.
    - "Create a new worktree" → run the same flow as B0 step 4's "Create new" branch (with the directory pre-decided per the existing AskUserQuestion + `superpowers:using-git-worktrees` pattern), then `git mv` the spec into the new worktree's `<config.specs_path>/`, commit (`masterplan: relocate spec for <slug> to feature worktree`), then proceed to Step B2 in the new worktree.
    - "Continue" → proceed to Step B2 on the trunk branch; flag this in the status file's `## Notes` so the future `execute` invocation surfaces the SDD refusal up front.
-   - "Abort" → end the turn.
+   - "Abort" → → CLOSE-TURN.
 
 Then proceed to **Step B2** (writing-plans). Step B1 is skipped because the spec already exists.
 
@@ -590,9 +590,9 @@ Invoke `superpowers:brainstorming` with the topic. **Brainstorming is always int
 3. **If spec exists** (the normal case): consult `halt_mode`.
    - **`halt_mode == none`** (existing kickoff path, unchanged): under `--autonomy != full`, surface `AskUserQuestion("Spec written at <path>. Ready for writing-plans?", options=[Approve and run writing-plans (Recommended) / Open spec to review first then ping me / Request changes — describe what to change / Abort kickoff])`. Under `--autonomy=full`: auto-approve and proceed to Step B2 silently.
    - **`halt_mode == post-brainstorm`** (new, fires when invoked via `/masterplan brainstorm <topic>`): surface `AskUserQuestion("Spec written at <path>. What next?", options=["Done — close out this run (Recommended)", "Continue to plan now — run B2+B3 as if /masterplan plan --from-spec=<path> (the B0 worktree decision from earlier this session still holds; B0a is not re-run)", "Open spec to review before deciding — then ping me", "Re-run brainstorming to refine"])`.
-     - "Done" → end the turn cleanly. No status file written, no plan written.
+     - "Done" → → CLOSE-TURN. No status file written, no plan written.
      - "Continue to plan now" → flip in-session `halt_mode` to `post-plan` and proceed to Step B2. The spec is reused.
-     - "Open spec" → end the turn; user re-invokes whatever they want next.
+     - "Open spec" → → CLOSE-TURN; user re-invokes whatever they want next.
      - "Re-run brainstorming to refine" → re-invoke `superpowers:brainstorming` against the same topic; the previous spec is overwritten.
 
 **Why this gate exists:** brainstorming's own "User reviews written spec" step ends with "Wait for the user's response" — open-ended prose that causes the session to stop. When the user comes back in a fresh turn (especially after a recap/compact), the brainstorming skill body may not be in active context, and the orchestrator has no breadcrumb telling it what to do. The re-engagement gate above is the orchestrator owning the transition explicitly so a session compact between turns doesn't lose the workflow. This pattern repeats in Step B2 for the same reason.
@@ -680,10 +680,10 @@ Then flip `compact_loop_recommended: true` in the status file. Whether or not th
 - **`halt_mode == none`** (existing kickoff path, unchanged): if `--autonomy != full`, present a one-paragraph plan summary and the path to the plan file via `AskUserQuestion` with options "Start execution / Open plan to review / Cancel". Wait for approval. If `--autonomy=full`: skip approval. Proceed to **Step C** with the new status path.
 
 - **`halt_mode == post-plan`** (new, fires when invoked via `/masterplan plan <topic>`, `/masterplan plan --from-spec=<path>`, Step A's spec-without-plan variant's pick, or via B1's "Continue to plan now" flip from a `brainstorm` invocation): surface `AskUserQuestion("Plan written at <path>. Status file at <status-path>. What next?", options=["Done — resume later with /masterplan execute <status-path> (Recommended)", "Start execution now — flip halt_mode to none and proceed to Step C", "Open plan to review before deciding", "Discard plan + status file (status file removed; spec kept)"])`.
-  - "Done" → end the turn. Status file persists with `status: in-progress` and `current_task` set to the first task. The user resumes later via `/masterplan execute <status-path>`.
+  - "Done" → → CLOSE-TURN. Status file persists with `status: in-progress` and `current_task` set to the first task. The user resumes later via `/masterplan execute <status-path>`.
   - "Start execution now" → flip in-session `halt_mode` to `none` and proceed to **Step C**.
-  - "Open plan" → end the turn. User re-invokes `/masterplan execute <status-path>` later.
-  - "Discard" → `git rm` the plan file and the status file; commit (`masterplan: discard plan <slug>` subject); end the turn. Spec is kept.
+  - "Open plan" → → CLOSE-TURN. User re-invokes `/masterplan execute <status-path>` later.
+  - "Discard" → `git rm` the plan file and the status file; commit (`masterplan: discard plan <slug>` subject); → CLOSE-TURN [pre-close: git rm + commit done above]. Spec is kept.
 
 The status file's `autonomy`, `codex_routing`, `codex_review`, `loop_enabled` fields are populated from this run's flags per the post-plan flag-persistence rule in Step 0; they take effect on the eventual `execute` invocation.
 
@@ -971,10 +971,10 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
           1. `Rebuild cache now` (Recommended) — re-enter Step C step 1's Haiku dispatch path; on success, retry routing for this task. Append the rebuild evidence entry per P1's format.
           2. `Run inline this run with degradation marker` — behave as if Step 0 had detected codex unavailable: write the Fix 1 degradation marker (activity log + `## Notes`), set in-memory `codex_routing = off` for the rest of the session, proceed inline. Each subsequent task's pre-dispatch banner uses `decision_source: degraded-no-codex` per Fix 5 step 1.
           3. `Set codex_routing: off in status frontmatter and proceed` — this IS a status-file modification beyond the hard-coded Step 4d writes; it requires explicit user opt-in via this question, and the change is announced via a `## Notes` line. Proceed without codex permanently for this plan. Future resumes won't see the precondition halt.
-          4. `Abort` — end the turn, status unchanged, no inline fallthrough. User investigates manually.
+          4. `Abort` — → CLOSE-TURN, status unchanged, no inline fallthrough. User investigates manually.
       - **`block`** — skip the AskUserQuestion entirely. **Single-writer exception under explicit user opt-in**: this is one of the few status-file writes outside Step 4d. The opt-in is `config.codex.unavailable_policy: block` itself — the user explicitly chose hard-halt over silent inline. Wave-mode interaction: if currently dispatched within a parallel wave, defer the block-write until wave-end (when the wave-completion barrier returns) and apply it through Step 4d's same write path with the blocker entry appended to the wave-end batch. This preserves the single-writer rule for waves. For serial routing (no wave active), the block-write happens immediately as described.
 
-        Effects: Set `status: blocked`. Append `## Blockers` entry: *"Codex routing precondition failed: eligibility_cache missing under codex_routing=<routing>. config.codex.unavailable_policy=block; user opted into hard-halt over silent inline. Re-run with codex installed (orchestrator will rebuild cache) OR set codex_routing: off in status frontmatter."*. End the turn.
+        Effects: Set `status: blocked`. Append `## Blockers` entry: *"Codex routing precondition failed: eligibility_cache missing under codex_routing=<routing>. config.codex.unavailable_policy=block; user opted into hard-halt over silent inline. Re-run with codex installed (orchestrator will rebuild cache) OR set codex_routing: off in status frontmatter."*. → CLOSE-TURN [pre-close: status flip + ## Blockers append done above].
 
     **Why P2 exists**: the orchestrator's previous default (silent fallthrough to inline when cache was missing) was the root cause of the optoe-ng project-review zero-codex pattern. P2 turns that silent failure into a loud one. Combined with P1's evidence-of-attempt entry, the orchestrator either has cache + tags OR has loud user-facing prompts + persistent markers — never quiet inline-bypass.
 
@@ -1153,7 +1153,7 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
       - **`loose`**:
         - No or low-severity → auto-accept; tag activity log.
         - Medium → append digest to `## Notes` for human attention later; accept and continue.
-        - High → set `status: blocked`, append findings to `## Blockers` with file:line cites, end the turn (no reschedule per the existing blocker policy).
+        - High → set `status: blocked`, append findings to `## Blockers` with file:line cites, → CLOSE-TURN [pre-close: status: blocked + ## Blockers append done above] (no reschedule per the existing blocker policy).
       - **`full`**:
         - No or low → auto-accept.
         - Medium → log to `## Notes`; continue.
@@ -1199,7 +1199,7 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
    - **Complexity gate.** If `resolved_complexity == low`, the `## Wakeup ledger` section is NOT maintained (per Operational rules' Complexity precedence: `loop_enabled` defaults to `false` at low, so no `ScheduleWakeup` is even called; however, if the user explicitly enabled the loop via override, `ScheduleWakeup` runs but the ledger entry write below is SKIPPED). Doctor checks #19 + #20 do not fire on low plans (handled by Task 12's check-set gate).
    - **Competing-scheduler suppression.** If `competing_scheduler_keep == true` (in-memory flag set by Step C step 1's competing-scheduler check when the user picked "Keep the cron, suspend wakeups this session"), skip scheduling silently for the rest of the session. The user-acknowledged cron is the sole pacer.
    - **CC-1 check.** Before scheduling the wakeup, apply CC-1 (operational rules): if `cc1_silenced` is not set and any symptom (file_cache ≥3 hits same path, ≥3 consecutive same-target tool failures, activity log rotated this session, subagent ≥5K-char return) accumulated this session, surface the non-blocking compact-suggest notice. Continue with scheduling regardless — CC-1 is informational, never blocks.
-   - **Daily quota check.** Track wakeup count for this plan in the status file under a `## Wakeup ledger` heading (one line per wakeup with timestamp). Before scheduling, count entries from the last 24 hours; if `>= config.loop_max_per_day` (default 24), do NOT schedule — set status to `blocked` with reason "loop quota exhausted; resume manually with `/masterplan --resume=<path>`" and end the turn. This prevents runaway scheduling under unexpected loop conditions.
+   - **Daily quota check.** Track wakeup count for this plan in the status file under a `## Wakeup ledger` heading (one line per wakeup with timestamp). Before scheduling, count entries from the last 24 hours; if `>= config.loop_max_per_day` (default 24), do NOT schedule — set status to `blocked` with reason "loop quota exhausted; resume manually with `/masterplan --resume=<path>`" and → CLOSE-TURN [pre-close: status flip done above]. This prevents runaway scheduling under unexpected loop conditions.
    - Otherwise, after every 3 completed tasks (where a wave-end counts as ONE completion regardless of N — so a wave of 5 doesn't trigger 5 wakeup-threshold increments), OR when context usage looks tight, call:
      ```
      ScheduleWakeup(
@@ -1208,7 +1208,7 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
        reason="Continuing <slug> at task <next-task-name>"
      )
      ```
-     append the wakeup entry to the ledger, then end the turn. The next firing re-enters this command via Step C.
+     append the wakeup entry to the ledger, then → CLOSE-TURN [pre-close: ScheduleWakeup + ledger append done above]. The next firing re-enters this command via Step C.
    - Do NOT reschedule when `status` is `complete` or `blocked`.
    - If `ScheduleWakeup` is not available (not running under `/loop`), skip scheduling silently — the user resumes manually with `/masterplan` (which lands in Step A) or `/masterplan --resume=<path>`.
 6. **On plan completion:** **pre-empt the skill's "Which option?" prompt.** `superpowers:finishing-a-development-branch` will otherwise present a free-text `1. Merge / 2. Push+PR / 3. Keep / 4. Discard — Which option?` question. That free-text prompt can stall a session if it compacts before the user answers (same silent-stop bug pattern). Avoid this by surfacing `AskUserQuestion` FIRST:
@@ -1385,10 +1385,10 @@ Triggered by `/masterplan stats [args]`. Generates codex-vs-inline routing distr
 
 **Process**:
 
-1. **Resolve script path.** The plugin's installed location is the directory containing the slash command file (typically `~/.claude/plugins/data/<owner>-<plugin>/<slug>/commands/masterplan.md`). Resolve `<plugin-root> = dirname(dirname(<this-prompt's-path>))`. Then `<script> = <plugin-root>/bin/masterplan-routing-stats.sh`. If the script is not found at the resolved path, surface a one-line error: `error: bin/masterplan-routing-stats.sh not found at <expected-path>. Reinstall the plugin or run from a development checkout.`. End the turn.
+1. **Resolve script path.** The plugin's installed location is the directory containing the slash command file (typically `~/.claude/plugins/data/<owner>-<plugin>/<slug>/commands/masterplan.md`). Resolve `<plugin-root> = dirname(dirname(<this-prompt's-path>))`. Then `<script> = <plugin-root>/bin/masterplan-routing-stats.sh`. If the script is not found at the resolved path, surface a one-line error: `error: bin/masterplan-routing-stats.sh not found at <expected-path>. Reinstall the plugin or run from a development checkout.`. → CLOSE-TURN.
 2. **Pass through arguments.** Forward all post-verb arguments verbatim to the script (`--plan=<slug>`, `--format=table|json|md`, `--all-repos`, `--since=YYYY-MM-DD`). If the user passed no `--format=`, the script defaults to `table` for terminal-friendly output.
-3. **Run + stream output.** Invoke via the Bash tool with the resolved script path and forwarded args. Stream stdout to the user as-is. If the script exits non-zero, surface the stderr output, end the turn.
-4. **End the turn.** Stats are read-only; no status-file writes, no subagent dispatches, no scheduling. Do NOT follow up with `AskUserQuestion` — the user invoked stats to see the numbers, not to start a workflow.
+3. **Run + stream output.** Invoke via the Bash tool with the resolved script path and forwarded args. Stream stdout to the user as-is. If the script exits non-zero, surface the stderr output, → CLOSE-TURN.
+4. **→ CLOSE-TURN.** Stats are read-only; no status-file writes, no subagent dispatches, no scheduling. Do NOT follow up with `AskUserQuestion` — the user invoked stats to see the numbers, not to start a workflow.
 
 **No bounded brief**: there is no subagent dispatch in Step T. The script does ALL parsing and tabulation. The orchestrator's only job is path-resolution + arg-forwarding.
 
@@ -1671,9 +1671,9 @@ AskUserQuestion(
 
 - **Apply all** → CL3.
 - **Apply selected** → secondary `AskUserQuestion(multiSelect=true, options=[<one per category with non-zero count>])`. Apply only those at CL3.
-- **Cancel** → emit `clean: cancelled by user.` and end the turn.
+- **Cancel** → emit `clean: cancelled by user.` and → CLOSE-TURN.
 
-Under `--dry-run`: skip the confirmation gate entirely. After rendering the summary, end the turn with the line `*(dry-run — re-run without --dry-run to apply.)*`.
+Under `--dry-run`: skip the confirmation gate entirely. After rendering the summary, → CLOSE-TURN with the line `*(dry-run — re-run without --dry-run to apply.)*`.
 
 ### Step CL3 — Execute
 
@@ -1988,8 +1988,26 @@ These are command-specific rules covering cross-cutting policy not stated inline
 - **Eligibility cache persists to `<slug>-eligibility-cache.json`.** Step C step 1 loads from disk when `cache.mtime > plan.mtime`; dispatches Haiku otherwise. Step C's post-task finalization status-update sub-block (4d) plan edits `touch` the plan file to invalidate. Per-task routing stays O(1) at lookup; the Haiku dispatch happens once per plan-file change, not per Step C entry. Doctor check #14 flags orphan caches.
 - **Git state cache excludes `git status --porcelain`.** Step 0's `git_state` cache holds `worktrees` and `branches` only. Dirty state must always be live (CD-2). Invalidate worktrees after `git worktree add/remove`; invalidate branches after `git branch` create/delete.
 - **CC-1 — Compact-suggest on observable symptoms.** End-of-turn (before Step C step 5's wakeup scheduling), check whether any of these accumulated this session: (a) the in-session `file_cache` recorded ≥ 3 hits on the same path; (b) ≥ 3 consecutive tool failures on the same target; (c) activity log was rotated this session (>100 entries); (d) a subagent returned ≥ 5K characters that the orchestrator had to digest inline. On any trigger, surface a **non-blocking** one-line notice (not `AskUserQuestion`): `*(Context appears strained — symptom: <symptom>. Consider running /compact <config.auto_compact.focus> before next wakeup. To disable for this plan, append "compact_suggest: off" to the status file's ## Notes.)*`. Disable check: at Step C step 1, scan `## Notes` for `compact_suggest: off`; if present, CC-1 is silenced for this plan.
-- **CC-2 — Subagent-delegate triggers (concrete thresholds).** Make "Subagents do the work" enforceable: before issuing a Bash command expected to print > 100 lines, dispatch a Haiku subagent with a bounded brief and consume only its digest. Before reading a file > 300 lines as part of substantive work (orientation reads excepted), dispatch a Haiku to extract the relevant section. Self-check at Step C step 1: scan the upcoming task's verification commands; if any match a known-noisy list (`build`, `test --verbose`, `cargo build`, `npm run build`, full-tree `find`), route the verification through a subagent that returns only pass/fail + ≤ 3 evidence lines. Recursive: applies inside implementer subagents too.
+- **CC-2 — Subagent-delegate triggers (concrete thresholds).** Make "Subagents do the work" enforceable. The orchestrator (typically Opus) MUST dispatch a subagent rather than do the work inline when ANY of these triggers fire:
+  - **Bash output expected > 50 lines** — dispatch a Haiku subagent with a bounded brief; consume only its digest.
+  - **Reading a file > 50 lines** as part of substantive work (orientation reads ≤ 50 lines excepted; cumulative reads of the same file count) — dispatch a Haiku to extract the relevant section.
+  - **Coordinated edits to ≥ 2 files** for a single conceptual change (rename pivot, refactor touching symbol + tests + docs in lockstep, multi-file annotation update) — dispatch a single Sonnet subagent with the full edit-set as the bounded brief; return digest + commit.
+  - **Cumulative inline Edits > 5 within a single turn** for any single file — at the 5th Edit, stop and dispatch a Sonnet subagent to complete the rest as a batched edit.
+  - **Self-check at Step C step 1**: scan the upcoming task's verification commands; if any match a known-noisy list (`build`, `test --verbose`, `cargo build`, `npm run build`, full-tree `find`), route the verification through a subagent that returns only pass/fail + ≤ 3 evidence lines.
+  - **Recursive**: applies inside implementer subagents too.
+
+  Why the thresholds tightened from prior versions (>100 → >50 lines; new edit-count and multi-file triggers): observed pattern where orchestrator-as-Opus consumed 70%+ of session tokens via inline reads/edits/Q&A even when subagent dispatches were correctly routed to Sonnet/Haiku. Tightening shifts more work off the Opus parent.
 - **CC-3 — End-of-turn subagent summary.** Before closing any turn, if `subagents_this_turn` is non-empty, emit a plain-text summary block (see §Per-turn dispatch tracking and summary for format). The summary IS NOT an `AskUserQuestion` — it's an ordinary stdout block printed before the closing AskUserQuestion or terminal action. Zero-dispatch turns emit nothing. The summary survives session compact: it's emitted to the user-visible turn output, not to the in-memory tracker which resets at next Step entry.
+- **CC-3-TRAMPOLINE — Canonical turn-close sequence.** Every turn-close in this orchestrator MUST route through the following sequence. This is the single enforcement point for CC-3 (and the documented exclusion point for CC-1 / Step CL5 timer-disclosure, which have narrower scope). Replace any bare "end the turn" or "end the turn cleanly" directive in the Steps below with "→ CLOSE-TURN" to signal that this sequence runs before yielding.
+
+  **Sequence (execute in order, skip silently if condition not met):**
+  1. **CC-3 check** — if `subagents_this_turn` is non-empty, emit the plain-text summary block per §Per-turn dispatch tracking and summary. Emit BEFORE any AskUserQuestion or terminal render. Zero-dispatch turns: skip silently.
+  2. **Pre-close action** (site-specific) — any commit, status-file write, or ledger append that the calling site mandates BEFORE yielding (e.g., Step C step 5's ledger append, Step B3 "Discard"'s git-rm commit). These are documented at the call site.
+  3. **Closer** — fire the AskUserQuestion, ScheduleWakeup, or terminal render that ends the turn.
+
+  **Scope note:** CC-1 (compact-suggest) fires only before Step C step 5's ScheduleWakeup and is NOT part of this trampoline — it has its own inline position in Step C step 5. The CL5 timer-disclosure render is scoped to Step CL only and is NOT part of this trampoline. Adding new end-of-turn obligations: add them to this sequence, not to individual close sites.
+
+  **Authoring rule:** when adding a new turn-close site to the spec, write `→ CLOSE-TURN` as the close directive. The string `end the turn` should appear ONLY in negation contexts ("never end the turn waiting on..."), AskUserQuestion option labels, or YAML/comment blocks. `bin/masterplan-self-host-audit.sh` should grep for non-negated "end the turn" occurrences as a CD-style violation check.
 - **In-wave scope rule (Slice α v2.0.0+; FM-1 + FM-3 mitigation).** Wave members (implementer subagents dispatched as part of a parallel wave per Step C step 2) MUST NOT modify `plan.md`, the status file (`<slug>-status.md`), or the eligibility cache (`<slug>-eligibility-cache.json`). These files are orchestrator-canonical during a wave. Violating this constraint is a `protocol_violation` per Step C step 3's wave-mode failure handling — the orchestrator detects it post-barrier (via `git status --porcelain` + `git log <task_start_sha>..HEAD` per wave member) and reclassifies the wave member's outcome from `completed` to `protocol_violation`.
 - **Complexity precedence (per-knob defaults table).** When `resolved_complexity != null`, the following knobs receive complexity-derived defaults. Explicit overrides at any tier above the complexity-derived default win (resolution order per knob: explicit CLI flag > status frontmatter > repo config > user config > **complexity-derived default** > built-in default).
 

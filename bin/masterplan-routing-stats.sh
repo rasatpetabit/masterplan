@@ -301,7 +301,11 @@ plan_files = sorted(slug_to_path.values())
 results = []
 for pf in plan_files:
     slug = os.path.basename(pf).removesuffix('-status.md')
-    if plan_filter and slug != plan_filter: continue
+    if plan_filter and slug != plan_filter:
+        # Also accept a bare slug that matches the date-stripped suffix
+        # (e.g. "phase-5-southbound-ipc" matching "2026-05-06-phase-5-southbound-ipc").
+        bare = re.sub(r'^\d{4}-\d{2}-\d{2}-', '', slug)
+        if bare != plan_filter: continue
     try:
         results.append(analyze_plan(pf))
     except Exception as e:
