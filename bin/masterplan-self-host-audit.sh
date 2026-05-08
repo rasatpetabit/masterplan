@@ -242,7 +242,7 @@ check_cd9() {
     return
   fi
 
-  local pattern_re='ask the user|prompt the user|request that the user|request the user|confirm with the user|wait for the user'\''?s? (response|to)|the user must (confirm|choose|decide|pick)'
+  local pattern_re='ask the user|prompt the user|request that the user|request the user|confirm with the user|wait for the user'\''?s? (response|to)|the user must (confirm|choose|decide|pick)|[Ww]ant me to (continue|proceed|advance|run|execute)|[Ss]hould I (continue|proceed|advance)|[Ss]hall I (continue|proceed)|[Ll]et me know (when|if|how)|(when|after) you'\''?re ready,? (let me|I'\''?ll)|[Cc]ontinue to T[0-9]+\?'
 
   local matches
   matches="$(grep -nE "${pattern_re}" "${file}" || true)"

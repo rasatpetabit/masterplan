@@ -431,9 +431,18 @@ activity. This file is the durable resume surface; conversation history is not.
 The full schema and operational rules are documented in
 [`docs/internals.md`](./docs/internals.md).
 
+## Troubleshooting
+
+If `/masterplan` produces no output (zero assistant response) after `/reload-plugins`,
+the harness has likely de-registered the slash command. Confirm by checking whether
+the first line of the turn was `→ /masterplan v… args: …` (the v2.16.0+ invocation
+sentinel) — if absent, re-install via `/plugin` (uninstall + install
+`superpowers-masterplan`) and re-invoke. See [`CHANGELOG.md`](./CHANGELOG.md) v2.16.0
+for details and the upstream issue link.
+
 ## Project Status
 
-Current release: **v2.5.0**.
+Current release: **v2.16.0**.
 
 - Release history: [`CHANGELOG.md`](./CHANGELOG.md)
 - Contributor internals: [`docs/internals.md`](./docs/internals.md)

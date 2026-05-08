@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.16.0] — 2026-05-07 — May 7 failure resolution: per-task CD-9 hole, verb-explicit routing, compaction notice, invocation sentinel
+
+Synthesizes findings from a transcript audit of every May 7, 2026 `/masterplan` session across `~/dev` (16 transcripts, ~36 MB). Two parallel Sonnet survey agents plus a deep-read of `commands/masterplan.md` triangulated four root causes that survived v2.10.x–v2.15.x. Three are orchestrator bugs with prompt-level fixes; one is a Claude Code harness bug we mitigate with a sentinel + docs.
+
+### Fixed
+
+- **Per-task CD-9 hole at Step C step 4→5 (Bug A; `commands/masterplan.md`).** When `/loop` was not active, Step C's post-task finalization fell into step 5's `"skip scheduling silently — the user resumes manually"` branch with no positive directive on what to do next. The orchestrator improvised free-text gates like *"Want me to continue to T11 (per-page content rendering …)? It's a bigger task"* and ended the turn (`stop_reason: end_turn`), violating CD-9. Reproducer: petabit-www 2026-05-07 23:26 (T10→T11 boundary). New **Step C step 4e — Post-task router** routes deterministically by autonomy + `ScheduleWakeup` availability:
+  - `/loop` active → step 5 (existing wakeup scheduling, every 3 tasks).
+  - `/loop` inactive AND `--autonomy=full` → re-enter step 2 silently with `current_task` updated.
+  - `/loop` inactive AND `--autonomy ∈ {gated, loose}` → fire structured per-task gate via `AskUserQuestion(Continue (Recommended) / Pause here / Schedule wakeup)`. Continue dispatches the next task in the same turn; Pause here closes turn via CC-3-TRAMPOLINE; Schedule wakeup calls `ScheduleWakeup` honoring `loop_max_per_day`.
+  - All-tasks-done → step 6 (finishing-branch wrap, unchanged).
+  - Status flipped to `blocked` → → CLOSE-TURN (4a/4b/4c already wrote `## Blockers`).
+  - Wave-end variant: gate fires once per wave (not N times), with task name = `<wave-group> wave (<N> tasks)`.
+
+  New operational rule reinforces this at the top level: *"Per-task boundaries are not natural stopping points. Step C step 4e is the only legal close site between tasks."*
+
+- **`/masterplan execute <topic>` silently routes to brainstorm (Bug B; `commands/masterplan.md`).** When the user typed `/masterplan execute phase 7 restconf`, the routing table only matched `execute <status-path>` — non-path arguments fell into Step A which discarded the explicit `execute` verb when no status files matched. Step A then routed to "Start fresh → Step B" (brainstorm). Reproducer: petabit-os-mgmt 2026-05-07 00:53 (`/masterplan execute phase 7 restconf --complexity=high` produced *"Routing: Step A → no active plans → fresh start → Step B1 (brainstorm)"*; the word "execute" never appeared in any orchestrator output). Three changes:
+  - **New routing-table row.** `execute <topic-or-fuzzy-slug>` → Step A with `requested_verb=execute`, `topic_hint=<remaining args>`. The path-vs-topic disambiguation is `test -e <remaining>`.
+  - **Argument-parse precedence stash.** Step 0's verb-match step now stashes `requested_verb = <matched-verb>` for downstream steps to consult.
+  - **Step A verb-explicit override (new step 7).** Before the existing "Start fresh → Step B" branch, consult `requested_verb`. When `requested_verb == 'execute'` AND user picked Start fresh OR `topic_hint` did not match: surface `AskUserQuestion(Run full kickoff (Recommended) / Pick from existing / Brainstorm-only / Cancel)`. The user's explicit `execute` verb is no longer silently discarded.
+
+- **Compaction-recent state ignored on re-entry (Bug C; `commands/masterplan.md`).** After `/compact` fired, `/masterplan` re-derived state from the filesystem (status files via Step M0) and discarded the compaction summary's workflow position. Reproducer: petabit-os-mgmt 2026-05-07 00:46→00:54 (compaction summary said *"interrupted before Step B1"*; orchestrator at 00:54 re-ran Step 0 + Step A from scratch, output *"Zero status files found across all worktrees"*). New **Step 0 Compaction-recent notice** detects (a) `"session was compacted"` / `"post-compaction"` in the first system reminder, (b) literal `/compact` in the preceding user message, (c) optional best-effort: a `type:summary` jsonl message ≤ 30 minutes old. When detected, emits a single non-blocking line: *"↻ Compaction detected this session — verifying plan state from filesystem. If you intended to resume specific work: `/masterplan --resume=<status-path>`. Otherwise this run will route per the args you typed."* Pairs with Bug B's verb-explicit override — together they catch the case where the user expected to resume but the filesystem disagrees. Conservative by design: no JSONL parsing in the hot path, no pre-routing prompts.
+
+### Added
+
+- **Invocation sentinel (Bug D mitigation; `commands/masterplan.md`).** Before config load, before git_state cache, before verb routing, every `/masterplan` turn emits ONE plain-text first line: *"→ /masterplan v\<version-from-plugin.json\> args: '\<$ARGUMENTS or empty\>' cwd: \<repo-root or pwd\>"*. Makes "did `/masterplan` run?" trivially observable. Reproducer: optoe-ng 2026-05-07 23:14→23:19 (sequence `/compact` → `/plugin` → `/reload-plugins` → `/masterplan --complexity=high` produced **zero assistant response** — last record was a queue-operation, no orchestrator output at all). The sentinel makes the harness-level command-de-registration visible: if the user sees no `→ /masterplan` line, they know to re-install via `/plugin`. CC-3-TRAMPOLINE does not apply — the sentinel is an unconditional first-line render.
+
+- **Self-host audit catches the new free-text gate phrasings (`bin/masterplan-self-host-audit.sh`).** `check_cd9`'s regex extended to flag: `Want me to (continue|proceed|advance|run|execute)`, `Should I (continue|proceed|advance)`, `Shall I (continue|proceed)`, `Let me know (when|if|how)`, `(when|after) you're ready, (let me|I'll)`, `Continue to T<N>?`. Existing exemption logic (cd9-exempt marker, AskUserQuestion proximity, CD-9 rule definition skip, "Don't stop silently" restatement) unchanged — auto-skips legitimate restatements inside the rule-definition section. Catches future regressions of Bug A at audit time before commit.
+
+### Notes
+
+- **Known issue: `/reload-plugins` may de-register `/masterplan`.** After `/reload-plugins`, the next `/masterplan` invocation can produce zero output (observed once on 2026-05-07 in optoe-ng session 0cbe737f). The Step 0 invocation sentinel introduced here makes this observable: if you don't see `→ /masterplan v…` on the first line, the harness has de-registered the command. **Workaround:** re-install via the marketplace (`/plugin` → uninstall → install `superpowers-masterplan`) and re-invoke. v2.13.1's marketplace install self-healing covers fresh installs but does not fire on `/reload-plugins`. Upstream tracking will be filed at the Claude Code repo with the optoe-ng transcript as the reproducer; the URL will be added to this note in a follow-up.
+- **No regressions of v2.14.x or v2.15.0.** v2.14.0/2.14.1's `git for-each-ref` import discovery is preserved; v2.14.0's `doctor --fix` for checks #20/#21/#1a is preserved; v2.15.0's doctor end-gate `AskUserQuestion` and noargs precedence rule are preserved. The v2.16.0 fixes are additive.
+- **Per-task gate is autonomy-aware by contract.** Under `--autonomy=full` the gate is suppressed (silent advance). Under `/loop` step 5 takes precedence (wakeup scheduling). Under `gated` and `loose` without `/loop`, every task boundary is a structured AskUserQuestion checkpoint per the user's chosen contract from the May 7 review.
+
 ## [2.15.0] — 2026-05-07 — doctor end-gate (`AskUserQuestion` offer `--fix`) + noargs resume-first routing fix
 
 ### Added

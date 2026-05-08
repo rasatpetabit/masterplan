@@ -21,6 +21,18 @@ Before doing anything, internalize these. They shape every decision below:
 
 ## Step 0 — Parse args + load config
 
+### Invocation sentinel (always emit first)
+
+Before doing anything else — before config load, before git_state cache, before verb routing — emit ONE plain-text line so the user can confirm `/masterplan` is alive. This is the FIRST output of every `/masterplan` turn:
+
+```
+→ /masterplan v<version-from-plugin.json> args: '<$ARGUMENTS or "(empty)">' cwd: <repo-root or pwd>
+```
+
+Read `<version>` from `.claude-plugin/plugin.json` (`{"version": "..."}`) using a single Read tool call against the plugin-root path (resolve via `dirname(dirname(<this-prompt's-path>))` per the §Stats verb's existing convention). If the file is unreadable, render `vUNKNOWN`. Truncate `args` at 120 chars with `…`; total sentinel length ≤ 200 chars. The sentinel is plain stdout, NOT inside an `AskUserQuestion`, NOT inside a tool call — it must appear in the user-visible turn output.
+
+**Why:** when `/masterplan` is invoked after `/reload-plugins` and the harness has not re-registered the slash command, the orchestrator's turn produces zero output (observed: optoe-ng 2026-05-07 23:19, sequence `/compact` → `/plugin` → `/reload-plugins` → `/masterplan` → empty turn). The sentinel makes "did `/masterplan` run?" trivially observable. If the user sees no `→ /masterplan` line, they know the harness ate the invocation — re-register via `/plugin` (uninstall + reinstall) and re-invoke. CC-3-TRAMPOLINE does not apply to the sentinel; it's an unconditional first-line render.
+
 ### Config loading (always runs first)
 
 1. Read `~/.masterplan.yaml` if it exists.
@@ -75,6 +87,29 @@ Steps A, B0, D consult the cache instead of re-running these. **Invalidate** the
 
 **Never cache `git status --porcelain`.** Working-tree dirty state must always be live; CD-2 depends on accurate dirty detection. A stale value here could let the orchestrator overwrite user-owned uncommitted changes.
 
+### Compaction-recent notice (per invocation)
+
+A `/masterplan` invocation that follows a `/compact` within the same session can re-derive state from the filesystem only and inadvertently discard workflow position from the compaction summary (observed: petabit-os-mgmt 2026-05-07 00:46→00:54, where the compaction summary said *"interrupted before Step B1"* but the orchestrator routed to fresh start because no status files existed yet). To make this visible:
+
+1. **Detect.** If any of these signals are present, set in-memory `compaction_recent = true`:
+   - The current turn's first system reminder mentions `"session was compacted"` or `"post-compaction"` (case-insensitive substring match).
+   - The user's preceding message (immediately before this `/masterplan` invocation) contains `<command-name>/compact</command-name>` or the literal token `/compact` as command output.
+   - (Best-effort, opt-in) The session jsonl exists at `~/.claude/projects/<encoded-cwd>/<session-id>.jsonl` AND a `type: "summary"` message was written within the last 30 minutes. If the jsonl path is not resolvable from inside the orchestrator (no session-id in scope), skip — this signal is informational, not load-bearing.
+
+2. **Render.** When `compaction_recent == true`, emit a single non-blocking line AFTER the invocation sentinel (above) and BEFORE the verb routing table fires:
+
+   ```
+   ↻ Compaction detected this session — verifying plan state from filesystem.
+     If you intended to resume specific work: /masterplan --resume=<status-path> (or paste the slug).
+     Otherwise this run will route per the args you typed.
+   ```
+
+   This is plain stdout, NOT an `AskUserQuestion`. The user can ignore it; CC-3-TRAMPOLINE does not apply. The notice exists so the user can self-correct with `--resume=<path>` if the filesystem-derived routing differs from their intent.
+
+3. **Pair with verb-explicit routing (Bug B).** When `compaction_recent == true` AND `requested_verb in {execute, full, plan}` AND no status file matches `topic_hint`: Step A's verb-explicit override (step 7 of Step A) becomes the gate that catches the case where the user expected to resume but the filesystem disagrees. The compaction notice + the AskUserQuestion together cover the transition.
+
+This is conservative by design — no JSONL parsing in the hot path, no pre-routing prompts.
+
 ### Complexity resolution (per invocation)
 
 After config + flag merge completes, resolve the active `complexity` once and stash it on per-invocation state. Precedence (highest first):
@@ -109,8 +144,9 @@ This single line is the audit trail for "why did the orchestrator behave this wa
 | `plan` (no args) | **Step A's spec-without-plan variant** — pick spec-without-plan; treat pick as `plan --from-spec=<picked>` | `post-plan` |
 | `plan <topic>` | Step B0+B1+B2+B3; halt at B3 close-out gate | `post-plan` |
 | `plan --from-spec=<path>` | cd into spec's worktree, run B2+B3 only; halt at B3 close-out gate | `post-plan` |
-| `execute` (no path) | **Step A** — list+pick across worktrees | `none` |
+| `execute` (no args) | **Step A** — list+pick across worktrees; set `requested_verb=execute` | `none` |
 | `execute <status-path>` | **Step C** — resume that plan | `none` |
+| `execute <topic-or-fuzzy-slug>` | **Step A** — list+pick with topic-match preference; set `requested_verb=execute`, `topic_hint=<remaining args>` | `none` |
 | `import` (alone or with args) | **Step I** — legacy import | `none` |
 | `doctor` (alone or with `--fix`) | **Step D** — lint state | `none` |
 | `status` (alone or with `--plan=<slug>`) | **Step S** — situation report (read-only) | `none` |
@@ -128,7 +164,7 @@ This single line is the audit trail for "why did the orchestrator behave this wa
 
 **Argument-parse precedence (in Step 0, after config + git_state cache):**
 0. If invoked with no args (zero tokens after the command name): route directly to **Step M** — resume-first routing (see § Step M).
-1. Match the first token against `{full, brainstorm, plan, execute, retro, import, doctor, status, stats}`. On match: set `halt_mode` per the table; consume the verb; pass remaining args to the matched step.
+1. Match the first token against `{full, brainstorm, plan, execute, retro, import, doctor, status, stats}`. On match: set `halt_mode` per the table; **stash `requested_verb = <matched-verb>` for downstream steps to consult** (Step A's verb-explicit override reads it; Step B/C ignore it); consume the verb; pass remaining args to the matched step. **`execute <topic>` special case:** when `requested_verb == 'execute'` AND remaining args is non-empty AND remaining args does NOT resolve to an existing file path (`test -e <remaining>`), set `topic_hint = <remaining args>` and route to Step A (the table's third `execute` row). This carries the explicit verb intent into Step A so a missing-status-file does not silently route to brainstorm.
 2. If unmatched and the first arg starts with `--`: route to **Step A** (flag-only invocation).
 3. If unmatched and the first arg is a non-flag word: catch-all → **Step B** with the full arg string as the topic (existing behavior).
 
@@ -517,7 +553,31 @@ Before resume-first routing, emit a structured plain-text orientation summarizin
    - **When worktrees == 1:** read inline (Read tool) — agent dispatch latency is not worth it.
    - Keep entries where `status` is `in-progress` or `blocked`. Annotate each with the worktree path and branch it lives in. **If a status file fails to parse**, skip it and add a one-line note to the discovery report ("status file at `<path>` is malformed — run `/masterplan doctor` to inspect"). Do not abort the listing. Sort the parsed entries by `last_activity` descending.
 5. Use `AskUserQuestion` with options laid out as: 2 most recent plans + "Start fresh". If more than 2 in-progress plans exist, replace the lower plan slot with a "More…" option that, when picked, re-asks with the next batch — keeps total options at 3, never exceeds the AskUserQuestion 4-option cap.
-6. If user picks a plan → **Step C** with that status path. If the plan's worktree differs from the current working directory, `cd` to that worktree before continuing (run all subsequent commands from the plan's worktree). If "Start fresh" → ask for a one-line topic via `AskUserQuestion` (free-form Other), then **Step B**.
+6. If user picks a plan → **Step C** with that status path. If the plan's worktree differs from the current working directory, `cd` to that worktree before continuing (run all subsequent commands from the plan's worktree). If "Start fresh" → consult **Verb-explicit override** below; if it does not divert, ask for a one-line topic via `AskUserQuestion` (free-form Other), then **Step B**.
+
+7. **Verb-explicit override** (Bug B fix; never silently brainstorm when user typed `execute`). Before executing the "Start fresh → Step B" branch from step 6, consult `requested_verb` (set by Step 0's argument-parse precedence):
+
+   - **If `requested_verb == 'execute'` AND user picked "Start fresh"** (or step 5's list+pick produced zero matching candidates because `topic_hint` did not match any in-progress plan): surface
+     ```
+     AskUserQuestion(
+       question="No in-progress plan matches '<topic_hint or topic words>'. You typed `execute` explicitly — what now?",
+       options=[
+         "Run full kickoff: brainstorm + plan + execute as one flow (Recommended)",
+         "Pick from existing in-progress plans (ignore my topic)",
+         "Brainstorm-only — discovery + spec, no plan/execute yet",
+         "Cancel"
+       ]
+     )
+     ```
+     Routing of choices:
+     - **Run full kickoff** → set `halt_mode = none`, route to **Step B** with `topic_hint` as topic.
+     - **Pick from existing** → re-fire step 5's list+pick `AskUserQuestion`, omitting the "Start fresh" option this time (forces a real plan choice).
+     - **Brainstorm-only** → set `halt_mode = post-brainstorm`, route to **Step B** with `topic_hint` as topic.
+     - **Cancel** → → CLOSE-TURN.
+
+   - **If `requested_verb in {full, brainstorm, plan}` OR is unset** (existing kickoff paths and bare/empty-args paths via Step M0): use the existing step 6 "Start fresh → Step B" routing unchanged. The override only catches the `execute`-with-no-matching-plan case.
+
+   This honors the user's explicit verb intent — `/masterplan execute <topic>` should never silently mean `/masterplan brainstorm <topic>`. Reproducer: petabit-os-mgmt 2026-05-07 00:53 — `/masterplan execute phase 7 restconf --complexity=high` was silently routed to brainstorm because no status files existed.
 
 #### Spec-without-plan variant (triggered by `/masterplan plan` with no topic and no `--from-spec=`)
 
@@ -1196,7 +1256,38 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
    **4b under wave.** Skipped entirely for wave members — they don't commit, so the diff range `<task_start_sha>..HEAD` is empty; existing zero-commit branch in 4b step 1 handles this naturally (no new code).
 
    The invoked skill already commits per task (serial mode only) — verify the commit landed; if not, commit the status file update (and any rotation-created archive file) separately.
-5. **Cross-session loop scheduling** (only if `--no-loop` is NOT set AND `ScheduleWakeup` is available — i.e. the session was launched via `/loop /masterplan ...`):
+
+   **4e — Post-task router (CD-9 hot-spot; never improvise a gate).** After 4d's status commit, route the next action deterministically using THIS table — do not emit free-text "Want me to continue?" / "Should I proceed?" / "Continue to T<N>?" / similar phrasings, and do not stop without dispatching either step 5 or step 6 or the per-task gate below.
+
+   | Condition | Route |
+   |---|---|
+   | All tasks in plan are `done` | → Step C step 6 (finishing-branch wrap) |
+   | Status was just flipped to `blocked` (from 4a / 4b high severity / 4c CD-2 violation) | → CLOSE-TURN [pre-close: 4a/4b/4c already wrote ## Blockers + status flip] |
+   | `ScheduleWakeup` available (running under `/loop`) | → Step C step 5 (loop scheduling — fires every 3 tasks or when context tight) |
+   | `ScheduleWakeup` unavailable AND `resolved_autonomy == full` | → re-enter Step C step 2 with `current_task` = next not-done task. Do NOT close turn. Same-turn dispatch. |
+   | `ScheduleWakeup` unavailable AND `resolved_autonomy ∈ {gated, loose}` | → fire **per-task gate** (below) |
+
+   **Per-task gate (autonomy ∈ {gated, loose}, no /loop).** Surface:
+   ```
+   AskUserQuestion(
+     question="Task <T-idx> (<task name>) complete. Continue to <next-task name>?",
+     options=[
+       "Continue (Recommended) — dispatch <next-task name> now",
+       "Pause here — re-invoke /masterplan --resume=<status-path> when ready",
+       "Schedule wakeup — set up /loop /masterplan --resume=<status-path> at the configured interval"
+     ]
+   )
+   ```
+   Routing of choices:
+   - **Continue** → re-enter Step C step 2 with `current_task` updated. Same-turn dispatch.
+   - **Pause here** → → CLOSE-TURN [pre-close: 4d already committed].
+   - **Schedule wakeup** → call `ScheduleWakeup(delaySeconds=config.loop_interval_seconds, prompt="/masterplan --resume=<status-path>", reason="Continuing <slug> at task <next-task name>")`, append the wakeup-ledger entry, → CLOSE-TURN. (Honors `config.loop_max_per_day` quota — same check as step 5's daily-quota branch.)
+
+   **Why this gate uses AskUserQuestion, not silent-continue.** Per-user contract (May 7 2026 review of the petabit-www T10→T11 free-text exit): under `gated` and `loose` autonomy without `/loop`, every task boundary is a checkpoint. Free-text gates ("Want me to continue?") are forbidden by CD-9; structured AskUserQuestion is the only legal close at this site. Under `--autonomy=full` the gate is suppressed and tasks advance silently — that's the explicit autonomy contract. Under `/loop`, step 5's wakeup-scheduling runs instead — that's the explicit cross-session contract.
+
+   **Wave-end variant.** When 4d ran in single-writer wave-funnel mode, the per-task gate fires ONCE at wave-end (not N times), with task name = `<wave-group> wave (<N> tasks)` and `<next-task name>` = the lowest-indexed not-yet-complete task remaining in the plan.
+
+5. **Cross-session loop scheduling** (entered only via Step C step 4e's "ScheduleWakeup available" route — i.e. `--no-loop` is NOT set AND `ScheduleWakeup` IS available because the session was launched via `/loop /masterplan ...`):
    - **Complexity gate.** If `resolved_complexity == low`, the `## Wakeup ledger` section is NOT maintained (per Operational rules' Complexity precedence: `loop_enabled` defaults to `false` at low, so no `ScheduleWakeup` is even called; however, if the user explicitly enabled the loop via override, `ScheduleWakeup` runs but the ledger entry write below is SKIPPED). Doctor checks #19 + #20 do not fire on low plans (handled by Task 12's check-set gate).
    - **Competing-scheduler suppression.** If `competing_scheduler_keep == true` (in-memory flag set by Step C step 1's competing-scheduler check when the user picked "Keep the cron, suspend wakeups this session"), skip scheduling silently for the rest of the session. The user-acknowledged cron is the sole pacer.
    - **CC-1 check.** Before scheduling the wakeup, apply CC-1 (operational rules): if `cc1_silenced` is not set and any symptom (file_cache ≥3 hits same path, ≥3 consecutive same-target tool failures, activity log rotated this session, subagent ≥5K-char return) accumulated this session, surface the non-blocking compact-suggest notice. Continue with scheduling regardless — CC-1 is informational, never blocks.
@@ -1211,7 +1302,7 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
      ```
      append the wakeup entry to the ledger, then → CLOSE-TURN [pre-close: ScheduleWakeup + ledger append done above]. The next firing re-enters this command via Step C.
    - Do NOT reschedule when `status` is `complete` or `blocked`.
-   - If `ScheduleWakeup` is not available (not running under `/loop`), skip scheduling silently — the user resumes manually with `/masterplan` (which lands in Step A) or `/masterplan --resume=<path>`.
+   - If `ScheduleWakeup` is not available (not running under `/loop`), step 5 is **not the entry point** — Step C step 4e's post-task router has already routed to the per-task gate or to silent-continue under `--autonomy=full`. This bullet exists for documentation only; step 5's body is reachable only when 4e selects it.
 6. **On plan completion:** **pre-empt the skill's "Which option?" prompt.** `superpowers:finishing-a-development-branch` will otherwise present a free-text `1. Merge / 2. Push+PR / 3. Keep / 4. Discard — Which option?` question. That free-text prompt can stall a session if it compacts before the user answers (same silent-stop bug pattern). Avoid this by surfacing `AskUserQuestion` FIRST:
 
    **Complexity gate (retro at high).** When `resolved_complexity == high`, the AskUserQuestion below has a fifth option PREPENDED as the first/recommended choice:
@@ -2005,6 +2096,7 @@ These are command-specific rules covering cross-cutting policy not stated inline
 - **Import never overwrites existing masterplan state silently.** Step I3's pre-flight collision checks (path-existence pass) surfaces `AskUserQuestion` per colliding candidate with options (1) Overwrite (Recommended) / (2) Write to `-v2` suffix / (3) Abort this candidate. Never clobber. The check runs before I3.2 fetch so aborted candidates skip the entire pipeline.
 - **Doctor is read-only by default.** Without `--fix` it only reports — even an obvious orphan stays in place. `--fix` only acts on errors marked auto-fixable in the checks table.
 - **Inference is conservative by design.** When in doubt, classify `possibly_done`, not `done`. The cost of re-verifying is small; the cost of skipping real work is large.
+- **Per-task boundaries are not natural stopping points.** Step C step 4e (post-task router) is the only legal close site between tasks. Any free-text variant of "Want me to continue?" / "Should I proceed?" / "Shall I advance?" / "Let me know when you're ready to continue" / "Continue to T<N>?" — emitted at any post-task boundary, in any phrasing — is a CD-9 violation. Use the structured AskUserQuestion in 4e; under `/loop` or `--autonomy=full`, do not pause at all.
 - **Don't stop silently anywhere — always close with AskUserQuestion if input might be needed.** ANY Step that ends a turn waiting on user input MUST close with `AskUserQuestion` offering 2-4 concrete options, never with free-text prose ("Wait for the user's response", "Which approach?", "Type 'X' to confirm"). Sessions can compact between turns and lose upstream-skill bodies; a free-text question becomes a dead end. This rule applies recursively when the orchestrator invokes upstream skills that have their own pre-existing free-text prompts — `superpowers:finishing-a-development-branch` ("1./2./3./4. Which option?"), `superpowers:using-git-worktrees` ("1./2. Which directory?"), `superpowers:writing-plans` ("Subagent-Driven / Inline Execution. Which approach?"), `superpowers:brainstorming` ("Wait for the user's response" at User Reviews Spec). For each, the orchestrator MUST present `AskUserQuestion` FIRST and brief the skill with the chosen option pre-decided so the skill's free-text prompt is bypassed. Canonical patterns: Step B0 step 4 (worktree directory), Step B1+B2 re-engagement gates (spec/plan review), Step C step 3's blocker re-engagement gate (CD-4-exhausted gate; SDD BLOCKED/NEEDS_CONTEXT escalation), Step C step 6 (finishing-branch wrap).
 - **External writes are gated.** Posting comments to GitHub issues/PRs, sending Slack messages, or closing issues during import always passes through `AskUserQuestion` first — even under `--autonomy=full`. Blast-radius actions.
 - **Codex routing is locked at kickoff, switchable on resume.** `codex_routing` and `codex_review` both land in the status file at Step B3 (or at first Step C invocation for imported plans). Mid-run flips happen by re-invoking `/masterplan --resume=<path> --codex=<mode> --codex-review=<on|off>`. Per-task overrides come from plan annotations (`**Codex:** ok` / `**Codex:** no`), not inline edits.
