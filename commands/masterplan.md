@@ -29,7 +29,12 @@ Before doing anything else — before config load, before git_state cache, befor
 → /masterplan v<version-from-plugin.json> args: '<$ARGUMENTS or "(empty)">' cwd: <repo-root or pwd>
 ```
 
-Read `<version>` from `.claude-plugin/plugin.json` (`{"version": "..."}`) using a single Read tool call against the plugin-root path (resolve via `dirname(dirname(<this-prompt's-path>))` per the §Stats verb's existing convention). If the file is unreadable, render `vUNKNOWN`. Truncate `args` at 120 chars with `…`; total sentinel length ≤ 200 chars. The sentinel is plain stdout, NOT inside an `AskUserQuestion`, NOT inside a tool call — it must appear in the user-visible turn output.
+Read `<version>` from `.claude-plugin/plugin.json` (`{"version": "..."}`) using a single Read tool call. Try these candidate paths in order, using the first that succeeds:
+1. `~/.claude/plugins/marketplaces/rasatpetabit-superpowers-masterplan/.claude-plugin/plugin.json` — canonical installed location
+2. `<cwd>/.claude-plugin/plugin.json` — dev checkout (works when CWD is the plugin source repo)
+3. `~/.claude/plugins/cache/rasatpetabit-superpowers-masterplan/superpowers-masterplan/<latest-version>/.claude-plugin/plugin.json` — last resort; glob `~/.claude/plugins/cache/rasatpetabit-superpowers-masterplan/superpowers-masterplan/*/` and pick the highest semver
+
+If all candidates are unreadable, render `vUNKNOWN`. Truncate `args` at 120 chars with `…`; total sentinel length ≤ 200 chars. The sentinel is plain stdout, NOT inside an `AskUserQuestion`, NOT inside a tool call — it must appear in the user-visible turn output.
 
 **Why:** when `/masterplan` is invoked after `/reload-plugins` and the harness has not re-registered the slash command, the orchestrator's turn produces zero output (observed: optoe-ng 2026-05-07 23:19, sequence `/compact` → `/plugin` → `/reload-plugins` → `/masterplan` → empty turn). The sentinel makes "did `/masterplan` run?" trivially observable. If the user sees no `→ /masterplan` line, they know the harness ate the invocation — re-register via `/plugin` (uninstall + reinstall) and re-invoke. CC-3-TRAMPOLINE does not apply to the sentinel; it's an unconditional first-line render.
 
@@ -1551,7 +1556,12 @@ Triggered by `/masterplan stats [args]`. Generates codex-vs-inline routing distr
 
 **Process**:
 
-1. **Resolve script path.** The plugin's installed location is the directory containing the slash command file (typically `~/.claude/plugins/data/<owner>-<plugin>/<slug>/commands/masterplan.md`). Resolve `<plugin-root> = dirname(dirname(<this-prompt's-path>))`. Then `<script> = <plugin-root>/bin/masterplan-routing-stats.sh`. If the script is not found at the resolved path, surface a one-line error: `error: bin/masterplan-routing-stats.sh not found at <expected-path>. Reinstall the plugin or run from a development checkout.`. → CLOSE-TURN.
+1. **Resolve script path.** Try these candidate plugin roots in order, checking that `<plugin-root>/bin/masterplan-routing-stats.sh` exists:
+   - `~/.claude/plugins/marketplaces/rasatpetabit-superpowers-masterplan` — canonical installed location
+   - `<cwd>` — dev checkout (when CWD is the plugin source repo)
+   - `~/.claude/plugins/cache/rasatpetabit-superpowers-masterplan/superpowers-masterplan/<latest-semver>` — glob and pick highest version
+
+   Use the first root where the script exists as `<plugin-root>`. Then `<script> = <plugin-root>/bin/masterplan-routing-stats.sh`. If no candidate yields a readable script, surface a one-line error: `error: bin/masterplan-routing-stats.sh not found. Reinstall the plugin or run from a development checkout.`. → CLOSE-TURN.
 2. **Pass through arguments.** Forward all post-verb arguments verbatim to the script (`--plan=<slug>`, `--format=table|json|md`, `--all-repos`, `--since=YYYY-MM-DD`). If the user passed no `--format=`, the script defaults to `table` for terminal-friendly output.
 3. **Run + stream output.** Invoke via the Bash tool with the resolved script path and forwarded args. Stream stdout to the user as-is. If the script exits non-zero, surface the stderr output, → CLOSE-TURN.
 4. **→ CLOSE-TURN.** Stats are read-only; no state writes, no subagent dispatches, no scheduling. Do NOT follow up with `AskUserQuestion` — the user invoked stats to see the numbers, not to start a workflow.
