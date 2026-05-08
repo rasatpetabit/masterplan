@@ -327,6 +327,7 @@ defaults. Precedence is CLI flags > repo-local > user-global > built-in defaults
 
 ```yaml
 autonomy: gated
+complexity: medium
 gated_switch_offer_at_tasks: 15
 
 loop_enabled: true
@@ -352,16 +353,23 @@ codex:
   review_max_fix_iterations: 2
   confirm_auto_routing: false
   review_prompt_at: medium
+  unavailable_policy: degrade-loudly
+  detection_mode: ping
 
 parallelism:
   enabled: true
   max_wave_size: 5
   abort_wave_on_protocol_violation: true
+  member_timeout_sec: 600
+  on_member_timeout: warn
 
 auto_compact:
   enabled: true
   interval: 30m
   focus: "focus on current task + active plan; drop tool output and old reasoning"
+
+retro:
+  auto_archive_after_retro: true
 
 telemetry:
   enabled: true
