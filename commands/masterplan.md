@@ -168,6 +168,21 @@ This single line is the audit trail for "why did the orchestrator behave this wa
 2. If unmatched and the first arg starts with `--`: route to **Step A** (flag-only invocation).
 3. If unmatched and the first arg is a non-flag word: catch-all → **Step B** with the full arg string as the topic (existing behavior).
 
+**`--resume=<path>` worktree-aware path resolution (v2.17.0+).** When `--resume=<path>` (or `--resume <path>` / `execute <path>`) is given AND `<path>` is relative AND `test -e <path>` is false against the current working directory, do NOT fall through to the catch-all or fail silently. Instead, search worktree subdirectories for the file before erroring:
+
+1. **Build the candidate set.** Collect paths that match either of these globs (using shell globbing, no shell-out for find):
+   - `<cwd>/.worktrees/*/<path>`
+   - `<repo-root>/.worktrees/*/<path>` (when `<repo-root>` differs from `<cwd>`; resolve via `git rev-parse --show-toplevel` from `git_state` cache).
+   Filter to existing files (`test -e <candidate>` per match).
+2. **Resolve.**
+   - **Exactly one match** → before entering Step C, `cd` to that match's worktree (the directory containing the matched path's nearest ancestor that is itself a registered worktree per `git_state.worktrees`). Re-resolve the relative path against the new cwd (it now exists). Emit one stdout line: `↻ --resume path resolved into worktree <worktree-path>; cd'd before Step C config load.` Then proceed to Step C step 1's batched re-read with the resolved path. The repo-local `<worktree>/.masterplan.yaml` is now picked up by Step 0's config-loading reload (re-run the repo-local config read post-cd; user-global + CLI flags merged on top, unchanged).
+   - **Zero matches** → surface `AskUserQuestion("--resume path '<path>' not found at cwd or in any .worktrees/*/ subdirectory of <cwd> or <repo-root>. What now?", options=["Abort and let me re-run with a correct path (Recommended)", "Search the entire repo for matching status files (slower; uses find . -path '*/<path>')", "Treat <path> as a topic and route to Step A"])`. The third option preserves the existing `execute <topic>` fallback semantics for paths that look like topics rather than relative paths.
+   - **Multiple matches** → surface `AskUserQuestion("--resume path '<path>' matches multiple candidates. Which one?", options=[<one option per candidate, label = '<worktree-path>/<path>', up to 4>, ...])`. If more than 4 candidates, show the first 3 ordered by `last_activity` from each matching status file's frontmatter (descending) plus a fourth "List all in stdout and abort" option.
+
+This rule applies ONLY to relative paths. Absolute paths (`<path>` starts with `/`) bypass the search and use the existing direct-load behavior — if absolute paths don't exist, Step C step 1's parse guard catches them at file-read time.
+
+**Why:** a user re-resuming work in a parent directory of a worktree (typical `optoe-ng` / `xcvr-tools-fresh` layout) would otherwise get a silent fall-through to Step A or a confusing parse error. The auto-cd resolves the common single-match case immediately; the AUQ branches handle ambiguity instead of guessing.
+
 **Flag-interaction rules** (warnings emitted at Step 0, not later):
 - `halt_mode == post-brainstorm` → `--autonomy=`, `--codex=`, `--codex-review=`, `--no-loop` are **ignored**. Emit one-line warning: `flags <list> ignored: brainstorm halts before execution`.
 - `halt_mode == post-plan` → those same flags are **persisted** to the status file (Step B3 records them in frontmatter) but do not fire this run. No warning.

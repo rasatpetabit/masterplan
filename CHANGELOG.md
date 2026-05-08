@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.17.0] — 2026-05-07 — `--resume=<path>` worktree-aware path resolution
+
+Folds in a fix surfaced during the AUQ-violation investigation (see WORKLOG `2026-05-07 (PM)`). When `/masterplan --resume=<rel-path>` is invoked from a parent of the worktree containing the status file (typical `xcvr-tools-fresh` / `optoe-ng` layout — repo root has `.worktrees/<feature>/docs/superpowers/plans/...`), the path doesn't resolve at cwd and Step 0 previously had no fallback. The user had to manually `cd` into the worktree before re-invoking.
+
+### Added
+
+- **`--resume=<path>` worktree-aware path resolution (`commands/masterplan.md` Step 0; v2.17.0+).** When `--resume=<path>` (or `--resume <path>` / `execute <path>`) is given AND `<path>` is relative AND `test -e <path>` is false against the current working directory, the orchestrator now searches `.worktrees/*/<path>` glob candidates against both `<cwd>` and `<repo-root>` before erroring. Resolution rules:
+  - **Exactly one match** → `cd` to that worktree before Step 0's repo-local config reload, emit a one-line stdout notice (`↻ --resume path resolved into worktree <path>; cd'd before Step C config load.`), then proceed to Step C step 1's batched re-read with the resolved absolute path. The repo-local `<worktree>/.masterplan.yaml` is now picked up.
+  - **Zero matches** → surface `AskUserQuestion("--resume path '<path>' not found at cwd or in any .worktrees/*/ subdirectory of <cwd> or <repo-root>. What now?", options=["Abort and let me re-run with a correct path (Recommended)", "Search the entire repo for matching status files (slower; uses find . -path '*/<path>')", "Treat <path> as a topic and route to Step A"])`. Preserves the existing `execute <topic>` fallback semantics.
+  - **Multiple matches** → surface `AskUserQuestion("--resume path '<path>' matches multiple candidates. Which one?", options=[<one option per candidate, label = '<worktree-path>/<path>', up to 4>, ...])`. If more than 4 candidates, the first 3 are ordered by `last_activity` from each matching status file's frontmatter (descending), plus a fourth "List all in stdout and abort" option.
+
+  Absolute paths bypass the search (existing direct-load behavior unchanged — Step C step 1's parse guard catches missing absolute paths at file-read time).
+
+### Notes
+
+- The orchestrator-side fix complements an out-of-orchestrator hardening pass landing in the same release window: a new `~/.claude/skills/auq-override/SKILL.md` user-level skill plus `hooks/auq-guard.sh` Stop hook (registered in `~/.claude/settings.json`) that warn when an assistant turn ends on a prose question outside an `AskUserQuestion` tool call. These pieces live outside the plugin (user-config territory) and are not shipped via the marketplace; the orchestrator change in this version is the only plugin-side delta.
+
 ## [2.16.0] — 2026-05-07 — May 7 failure resolution: per-task CD-9 hole, verb-explicit routing, compaction notice, invocation sentinel
 
 Synthesizes findings from a transcript audit of every May 7, 2026 `/masterplan` session across `~/dev` (16 transcripts, ~36 MB). Two parallel Sonnet survey agents plus a deep-read of `commands/masterplan.md` triangulated four root causes that survived v2.10.x–v2.15.x. Three are orchestrator bugs with prompt-level fixes; one is a Claude Code harness bug we mitigate with a sentinel + docs.
