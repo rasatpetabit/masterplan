@@ -19,10 +19,11 @@ You are working in `superpowers-masterplan`, a Claude Code plugin that provides 
 
 ## What this codebase IS
 
-A single ~1370-line markdown orchestrator prompt at **`commands/masterplan.md`** plus a small plugin package:
+A single ~2150-line markdown orchestrator prompt at **`commands/masterplan.md`** plus a small plugin package:
 
 - `skills/masterplan-detect/SKILL.md` — auto-suggests `/masterplan import` when legacy planning artifacts are found
-- `hooks/masterplan-telemetry.sh` — opt-in Stop hook (~260 lines bash) that emits per-turn and per-subagent JSONL telemetry
+- `hooks/masterplan-telemetry.sh` — opt-in Stop hook (~360 lines bash) that emits per-turn and per-subagent JSONL telemetry
+- `bin/masterplan-state.sh` — inventory/migration helper for `docs/masterplan/<slug>/state.yml` run bundles and legacy `docs/superpowers/...` artifacts
 - `.claude-plugin/plugin.json` — plugin manifest (name, version, description, URL)
 - `.claude-plugin/marketplace.json` — marketplace catalog for direct `/plugin marketplace add rasatpetabit/superpowers-masterplan` installs
 
@@ -36,21 +37,22 @@ There is **no code** in the conventional sense. The "program" is the markdown pr
 | The orchestrator prompt itself (the "source code") | [`commands/masterplan.md`](./commands/masterplan.md) |
 | Public-facing project overview + install + usage | [`README.md`](./README.md) |
 | Release history + decision rationale per version | [`CHANGELOG.md`](./CHANGELOG.md) |
-| Active plans (current work) | `docs/superpowers/plans/*-status.md` (status files are the source of truth per CD-7) |
+| Active plans (current work) | `docs/masterplan/*/state.yml` (state files are the source of truth per CD-7); legacy `docs/superpowers/plans/*-status.md` must be migrated or treated as compatibility input |
 
-**Canonical reading order for a new session:** this file → `docs/internals.md` (skim the table of contents; deep-read sections relevant to the current task) → `commands/masterplan.md` (the source) → any active status file in `docs/superpowers/plans/`.
+**Canonical reading order for a new session:** this file → `docs/internals.md` (skim the table of contents; deep-read sections relevant to the current task) → `commands/masterplan.md` (the source) → any active run state in `docs/masterplan/*/state.yml`.
 
 ## Top anti-patterns (don't do these)
 
 1. **Don't run substantive work in the orchestrator's own context.** Dispatch to subagents (Haiku for mechanical, Sonnet for general, Codex for bounded-well-defined). Orchestrator's context is reserved for sequencing decisions, not for raw file contents or verification dumps. See `docs/internals.md§Subagent and context-control architecture`.
 2. **Don't end a turn with a free-text question.** Use `AskUserQuestion` with 2–4 concrete options. Sessions can compact between turns and lose upstream-skill bodies; a free-text question becomes a dead end. See CD-9.
-3. **Don't auto-commit or auto-write to the status file from inside a wave member.** Wave dispatch (Slice α, v2.0.0+) requires wave members to return digests only — orchestrator is the canonical writer per CD-7. See `docs/internals.md§Wave dispatch`.
-4. **Don't introduce a new verb or doctor check without updating all three sync'd locations.** Verb routing table at Step 0 line ~46, reserved-verbs warning at line ~70, frontmatter `description:` at line 2. Doctor checks: the parallelization brief's count must match the table size. Drift here breaks autocomplete or silently skips checks.
+3. **Don't auto-commit or auto-write to run state from inside a wave member.** Wave dispatch (Slice α, v2.0.0+) requires wave members to return digests only — orchestrator is the canonical writer per CD-7. See `docs/internals.md§Wave dispatch`.
+4. **Don't introduce a new verb or doctor check without updating all sync'd locations.** Verb routing table at Step 0, argument-precedence match set, reserved-verbs warning, README command table, internals routing table, and frontmatter `description:` must agree. Doctor checks: the parallelization brief's count must match the table size. Drift here breaks autocomplete or silently skips checks.
 5. **Don't trust your own confirmation bias on large markdown edits.** After a multi-edit pass, dispatch a fresh-eyes Explore subagent to read the file end-to-end for contradictions or dangling references. The v1.0.0 audit pass and the v2.0.0 work both caught second-order issues this way.
 
 ## Operating principles (always-applicable)
 
-- **Status file is the only source of truth.** Two reads (status + plan) should be enough to resume any work. See `docs/internals.md§Status file format`.
+- **Run bundle is the only source of truth.** `docs/masterplan/<slug>/state.yml` plus bundled artifacts should be enough to resume any work. See `docs/internals.md§Run bundle state`.
+- **Completion is durable by default.** A successful Step C completion writes `retro.md`, archives the run in `state.yml`, and archives verified legacy/orphan state unless explicitly disabled.
 - **Subagents do the work.** Bounded brief: Goal/Inputs/Scope/Constraints/Return shape. They don't inherit session history.
 - **Verification before completion (CD-3).** Cite real command output. "Should work" is not evidence.
 - **Don't stop silently.** Always close with `AskUserQuestion` if input might be needed.
@@ -62,4 +64,4 @@ There aren't any. Verification uses:
 - `bash -n hooks/masterplan-telemetry.sh` for syntax check on the hook
 - Hand-crafted test plans for runtime smoke (see `docs/internals.md§Common dev recipes`)
 
-When you complete a task, append the activity log entry to the status file per the wave-aware update rules. Never silently mark a task done.
+When you complete a task, append the activity event to the run bundle per the wave-aware update rules. Never silently mark a task done.

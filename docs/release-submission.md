@@ -1,6 +1,6 @@
 # Claude Plugin Directory Submission
 
-Release target: `superpowers-masterplan` v2.3.1.
+Release target: `superpowers-masterplan` v3.0.0.
 
 ## Official submission path
 
@@ -34,17 +34,18 @@ Plugin name: `superpowers-masterplan`
 Short description:
 
 > Brainstorm, plan, execute, resume, import, lint, and retrospect long-running
-> Claude Code work with durable status files and strict context control.
+> Claude Code work with durable run bundles and strict context control.
 
 Long description:
 
 > superpowers-masterplan adds a `/masterplan` workflow on top of the official
 > Superpowers plugin. It turns large coding efforts into durable specs, plans,
-> status files, worktrees, activity logs, resume points, doctor checks, and
-> retrospectives so long-running work survives compaction, restarts, and agent
-> handoff. It also supports optional Codex routing/review, read-only parallel
-> verification waves, legacy plan import, model-dispatch guardrails, and an
-> opt-in telemetry hook with per-subagent cost records.
+> run bundles, worktrees, activity logs, resume points, doctor checks,
+> automatic retrospectives, and safe legacy-state cleanup so long-running work
+> survives compaction, restarts, and agent handoff. It also supports optional
+> Codex routing/review, read-only parallel verification waves, legacy plan
+> import, model-dispatch guardrails, and an opt-in telemetry hook with
+> per-subagent cost records.
 
 Why it should be considered for Anthropic Verified:
 

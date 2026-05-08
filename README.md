@@ -15,11 +15,15 @@ on track for multi-week projects.
 
 ### Long-term planning consistency
 
-- Every plan writes to a well-defined status file that's the single source of
-  truth — current task, next action, full activity log — in YAML frontmatter +
-  markdown. `/masterplan` will find existing plans and documentation and bring
-  them into conformity with the masterplan format.
-- Resume any in-flight work with two file reads (plan + status). No
+- Every plan writes to a well-defined run bundle under `docs/masterplan/<slug>/`.
+  `state.yml` is the single source of truth — current phase, current task,
+  next action, artifact paths, and pending structured gate. `events.jsonl`
+  carries the activity log. `/masterplan` will find existing plans and
+  documentation and bring them into conformity with the masterplan format.
+- Successful completion now writes the retrospective into the same run bundle,
+  archives the run state, and safely archives migrated legacy/orphan state by
+  default. Completed work should not leave plan/spec/retro fragments behind.
+- Resume any in-flight work from `state.yml` plus bundled artifacts. No
   conversation context required, no compaction loss, no "what was I doing
   again?"
 - Survives `/compact`, fresh sessions, and handoff between agents — pass a
@@ -87,7 +91,7 @@ Activity log entries illustrate the digest pattern:
 Enough to reconstruct state. Nothing more.
 
 This is what makes `ScheduleWakeup`'ing into a fresh session every ~3
-tasks lossless. The status file is the bridge; the orchestrator's
+tasks lossless. `state.yml` is the bridge; the orchestrator's
 mid-session context is disposable.
 
 v2.0.0+ extends this with **wave-mode dispatch**: contiguous read-only
@@ -161,8 +165,8 @@ cp -r skills/masterplan-detect ~/.claude/skills/
 
 ### Optional telemetry hook
 
-`/masterplan` can append per-turn telemetry to `<plan>-telemetry.jsonl` and
-per-subagent cost records to `<plan>-subagents.jsonl`. These runtime sidecars
+`/masterplan` can append per-turn telemetry to `docs/masterplan/<slug>/telemetry.jsonl` and
+per-subagent cost records to `docs/masterplan/<slug>/subagents.jsonl`. These runtime sidecars
 are local-only: the hook and command add ignore patterns to `.git/info/exclude`
 before writing, and this repository's `.gitignore` ignores its own generated
 telemetry. To install the Stop hook:
@@ -195,7 +199,7 @@ Add this hook command to `~/.claude/settings.json`:
 ```
 
 The hook bails silently outside `/masterplan`-managed plans. Per-plan opt-out:
-add `telemetry: off` to the status file frontmatter. Field details and `jq`
+add `telemetry: off` to `state.yml`. Field details and `jq`
 queries are in [`docs/design/telemetry-signals.md`](./docs/design/telemetry-signals.md).
 
 ## Quick Start
@@ -211,7 +215,7 @@ Stop after earlier phases when you want review time:
 ```text
 /masterplan brainstorm Stripe webhook handler
 /masterplan plan Stripe webhook handler
-/masterplan plan --from-spec=docs/superpowers/specs/2026-05-02-webhooks-design.md
+/masterplan plan --from-spec=docs/masterplan/webhooks/spec.md
 /masterplan plan
 ```
 
@@ -225,14 +229,41 @@ Resume work:
 
 ```text
 /masterplan
-/masterplan execute docs/superpowers/plans/2026-04-15-auth-status.md
-/masterplan --resume=docs/superpowers/plans/2026-04-15-auth-status.md
+/masterplan execute docs/masterplan/auth-refactor/state.yml
+/masterplan --resume=docs/masterplan/auth-refactor/state.yml
 ```
 
 With no args, `/masterplan` tries to resume interrupted work first: it
 auto-continues the current or only in-progress plan, opens the resume picker
 when active work is ambiguous, and shows the broader phase/operations menu only
 when no active plan exists.
+
+Every run lives in one directory:
+
+```text
+docs/masterplan/<slug>/
+  state.yml
+  spec.md
+  plan.md
+  retro.md
+  events.jsonl
+  events-archive.jsonl
+  eligibility-cache.json
+  telemetry.jsonl
+  subagents.jsonl
+  state.queue.jsonl
+```
+
+`state.yml` is created before brainstorming starts, so compaction or a stopped
+session can resume from a durable phase pointer. Older `docs/superpowers/...`
+layouts are discovered by `bin/masterplan-state.sh inventory` and copied into
+this bundle layout by `bin/masterplan-state.sh migrate --write`.
+
+When the last task completes, `/masterplan` marks the run complete, generates
+`retro.md`, archives the run state in `state.yml`, and runs an archive-only
+completion cleanup for verified legacy/orphan state. Use `--no-retro` or
+`--no-cleanup` for a one-off opt-out, or config defaults to disable either
+behavior.
 
 Inspect and maintain state:
 
@@ -244,6 +275,9 @@ Inspect and maintain state:
 /masterplan status --plan=<slug>
 /masterplan retro
 /masterplan retro auth-refactor
+/masterplan clean --dry-run
+bin/masterplan-state.sh inventory
+bin/masterplan-state.sh migrate --write
 ```
 
 ## Command Reference
@@ -254,26 +288,27 @@ Inspect and maintain state:
 | `/masterplan full <topic>` | Brainstorm, plan, then execute | no |
 | `/masterplan <topic>` | Bare-topic shortcut for `full <topic>` | no |
 | `/masterplan brainstorm <topic>` | Brainstorm and write a spec | after spec |
-| `/masterplan plan <topic>` | Brainstorm and write a plan/status file | after plan |
+| `/masterplan plan <topic>` | Brainstorm and write a run bundle | after plan |
 | `/masterplan plan --from-spec=<path>` | Plan against an existing spec | after plan |
 | `/masterplan plan` | Pick a spec without a plan, then plan it | after plan |
-| `/masterplan execute [<status-path>]` | Resume a plan, or list+pick if no path | no |
-| `/masterplan --resume=<status-path>` | Alias for `execute <status-path>` | no |
-| `/masterplan import [...]` | Convert legacy planning artifacts into spec/plan/status | n/a |
+| `/masterplan execute [<state-path>]` | Resume a plan, or list+pick if no path | no |
+| `/masterplan --resume=<state-path>` | Alias for `execute <state-path>` | no |
+| `/masterplan import [...]` | Convert legacy planning artifacts into bundled spec/plan/state | n/a |
 | `/masterplan doctor [--fix]` | Lint masterplan state across worktrees | n/a |
 | `/masterplan status [--plan=<slug>]` | Read-only situation report or one-plan drilldown | n/a |
-| `/masterplan retro [<slug>]` | Generate a retrospective for a completed plan | n/a |
+| `/masterplan retro [<slug>]` | Generate or re-run a retrospective for a completed plan | n/a |
 | `/masterplan stats [--plan=<slug>] [--format=table\|json\|md] [--all-repos] [--since=<date>]` | Codex-vs-inline routing distribution + inline model breakdown + token totals across plans | n/a |
+| `/masterplan clean [--dry-run]` | Archive completed bundles, retire migrated legacy artifacts, and prune orphan state | n/a |
 
 Topics literally named after a verb (`full`, `brainstorm`, `plan`, `execute`,
-`retro`, `import`, `doctor`, `status`, `stats`) need a leading word, for example:
+`retro`, `import`, `doctor`, `status`, `stats`, `clean`) need a leading word, for example:
 `/masterplan add brainstorm session timer`.
 
 ### Routing stats
 
 `/masterplan stats` (or directly: `bash <plugin-root>/bin/masterplan-routing-stats.sh`)
 reports codex-vs-inline routing distribution, inline model breakdown
-(Sonnet/Haiku/Opus), token totals by routing class (when `<plan>-subagents.jsonl`
+(Sonnet/Haiku/Opus), token totals by routing class (when `docs/masterplan/<slug>/subagents.jsonl`
 is populated), eligibility-cache decision-source breakdown, and per-plan health
 flags. By default it scans the current repo's main worktree + every linked
 worktree under `.worktrees/`; use `--all-repos` to aggregate across known repos
@@ -295,9 +330,11 @@ output formats: `table` (default, terminal), `json` (jq-pipeable), `md`
 | Flag | Effect |
 |---|---|
 | `--autonomy=gated\|loose\|full` | Control execution gating |
-| `--resume=<status-path>` | Resume a specific plan |
+| `--resume=<state-path>` | Resume a specific plan |
 | `--no-loop` | Disable ScheduleWakeup self-pacing |
 | `--no-subagents` | Use `executing-plans` instead of `subagent-driven-development` |
+| `--no-retro` | Skip the default completion retro for this run |
+| `--no-cleanup` | Skip the default completion cleanup for this run |
 | `--codex=off\|auto\|manual` | Control per-task Codex execution routing |
 | `--no-codex` | Shorthand for `--codex=off`; also disables review |
 | `--codex-review=on\|off` | Control Codex review of inline-completed tasks |
@@ -308,6 +345,7 @@ output formats: `table` (default, terminal), `json` (jq-pipeable), `md`
 | `--archive` | Import: archive legacy artifacts after conversion |
 | `--keep-legacy` | Import: leave legacy artifacts in place |
 | `--fix` | Doctor: apply safe auto-fixes |
+| `--no-archive` | Retro: write `retro.md` without archiving the run state |
 
 Common combinations:
 
@@ -316,8 +354,8 @@ Common combinations:
 - `/masterplan <topic> --codex=off` for Claude-only execution/review.
 - `/masterplan <topic> --no-parallelism` to debug wave-dispatch issues.
 
-CLI flags override config for the run. Status-schema values such as `autonomy`,
-`loop_enabled`, `codex_routing`, and `codex_review` land in the status file;
+CLI flags override config for the run. State-schema values such as `autonomy`,
+`loop_enabled`, `codex_routing`, and `codex_review` land in `state.yml`;
 durable defaults such as `parallelism.enabled` belong in `.masterplan.yaml`.
 
 ## Configuration
@@ -336,8 +374,9 @@ loop_max_per_day: 24
 
 use_subagents: true
 
-specs_path: docs/superpowers/specs
-plans_path: docs/superpowers/plans
+runs_path: docs/masterplan
+specs_path: docs/superpowers/specs   # legacy migration input
+plans_path: docs/superpowers/plans   # legacy migration input
 worktree_base: ../
 trunk_branches: [main, master, trunk, dev, develop]
 
@@ -367,6 +406,10 @@ auto_compact:
   enabled: true
   interval: 30m
   focus: "focus on current task + active plan; drop tool output and old reasoning"
+
+completion:
+  auto_retro: true
+  cleanup_old_state: true
 
 retro:
   auto_archive_after_retro: true
@@ -429,12 +472,13 @@ verification, inference, lint, type-check, and doc-generation tasks. Slice beta
 and gamma for committing-task parallelism are deferred; see
 [`docs/design/intra-plan-parallelism.md`](./docs/design/intra-plan-parallelism.md).
 
-### Status Files
+### Run State
 
-Each plan has a sibling status file at
-`docs/superpowers/plans/<slug>-status.md`. It records the worktree, branch,
-current task, next action, autonomy, Codex settings, blockers, notes, and recent
-activity. This file is the durable resume surface; conversation history is not.
+Each plan has a run bundle at `docs/masterplan/<slug>/`. `state.yml` records
+the worktree, branch, phase, current task, next action, autonomy, Codex settings,
+artifact paths, and any pending structured gate. `events.jsonl` records recent
+activity, with cache/telemetry/subagent/queue sidecars kept inside the same run
+directory. This bundle is the durable resume surface; conversation history is not.
 
 The full schema and operational rules are documented in
 [`docs/internals.md`](./docs/internals.md).
@@ -450,7 +494,7 @@ for details and the upstream issue link.
 
 ## Project Status
 
-Current release: **v2.16.0**.
+Current release: **v3.0.0**.
 
 - Release history: [`CHANGELOG.md`](./CHANGELOG.md)
 - Contributor internals: [`docs/internals.md`](./docs/internals.md)

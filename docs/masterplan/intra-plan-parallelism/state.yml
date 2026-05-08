@@ -1,0 +1,37 @@
+schema_version: 2
+slug: intra-plan-parallelism
+status: archived
+phase: archived
+worktree: /home/ras/dev/superpowers-masterplan
+branch: ""
+started: ""
+last_activity: 2026-05-08T20:15:55+00:00
+current_task: ""
+next_action: "archived legacy spec migrated"
+autonomy: gated
+loop_enabled: false
+codex_routing: off
+codex_review: off
+compact_loop_recommended: false
+complexity: medium
+pending_gate: null
+artifacts:
+  spec: docs/masterplan/intra-plan-parallelism/spec.md
+  plan: ""
+  retro: ""
+  events: docs/masterplan/intra-plan-parallelism/events.jsonl
+  events_archive: ""
+  eligibility_cache: ""
+  telemetry: ""
+  telemetry_archive: ""
+  subagents: ""
+  subagents_archive: ""
+  state_queue: ""
+legacy:
+  migrated_at: 2026-05-08T20:15:55+00:00
+  source: archived-spec
+  status: ""
+  plan: ""
+  spec: docs/superpowers/archived-specs/2026-05-03-intra-plan-parallelism-design.md
+  retro: ""
+  sidecars: {}

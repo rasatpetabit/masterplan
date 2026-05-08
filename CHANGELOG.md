@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0] — 2026-05-08 — run bundles, migration, and default completion finalization
+
+Major release that moves `/masterplan` state to run bundles and makes successful completion durable by default.
+
+### Added
+
+- **Run bundles under `docs/masterplan/<slug>/`.** `state.yml`, `spec.md`, `plan.md`, `retro.md`, `events.jsonl`, archives, telemetry, subagent records, eligibility cache, and queued state writes now live together. `state.yml` is created before brainstorming so compaction or a stopped session has a durable resume pointer from the start.
+- **Legacy migration helper.** New `bin/masterplan-state.sh` inventories and copy-migrates pre-v3 `docs/superpowers/...` plans, standalone specs, standalone retros, archives, and sidecars into run bundles. Migration is copy-only and preserves source paths under `legacy:`.
+- **Default completion finalizer.** When Step C finishes all tasks, `/masterplan` now marks the run complete, generates `retro.md`, archives the run state in `state.yml`, and then runs a completion-safe archive-only cleanup for verified legacy/orphan state. Use `--no-retro`, `--no-cleanup`, `completion.auto_retro: false`, or `completion.cleanup_old_state: false` to opt out.
+- **Run-bundle-aware tooling.** Routing stats, telemetry capture, detect skill guidance, internals docs, and README examples now read/write the new layout while retaining legacy compatibility where needed.
+
+### Changed
+
+- `/masterplan retro` remains available manually, but successful completion auto-invokes the retro path by default for low, medium, and high complexity plans.
+- `/masterplan clean` remains the broad manual cleanup verb. Step C's automatic cleanup uses only the safe subset: `legacy` and `orphans`, archive mode, current worktree, no prompts, no deletes, no stale/crons/worktrees.
+
+### Migration Notes
+
+- Existing pre-v3 artifacts are not deleted by migration. Run `bin/masterplan-state.sh migrate --write` or `/masterplan import` to copy them into bundles, then let completion cleanup or `/masterplan clean --category=legacy` archive verified originals. This release dogfooded that path: six legacy records were migrated to `docs/masterplan/`, and verified originals were archived under `legacy/.archive/2026-05-08/`.
+- Archived legacy records with no original spec keep `artifacts.spec` empty; consumers must tolerate empty artifact values for migrated archived records.
+
 ## [2.17.1] — 2026-05-08 — version bump (no functional changes)
 
 Patch release to advance version numbering; no functional changes since v2.17.0.

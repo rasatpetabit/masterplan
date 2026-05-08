@@ -1,0 +1,37 @@
+schema_version: 2
+slug: complexity-levels
+status: archived
+phase: archived
+worktree: /home/ras/dev/superpowers-masterplan
+branch: ""
+started: ""
+last_activity: 2026-05-08T18:46:34+00:00
+current_task: ""
+next_action: "archived legacy plan migrated"
+autonomy: gated
+loop_enabled: false
+codex_routing: off
+codex_review: off
+compact_loop_recommended: false
+complexity: medium
+pending_gate: null
+artifacts:
+  spec: docs/masterplan/complexity-levels/spec.md
+  plan: docs/masterplan/complexity-levels/plan.md
+  retro: docs/masterplan/complexity-levels/retro.md
+  events: docs/masterplan/complexity-levels/events.jsonl
+  events_archive: ""
+  eligibility_cache: ""
+  telemetry: ""
+  telemetry_archive: ""
+  subagents: ""
+  subagents_archive: ""
+  state_queue: ""
+legacy:
+  migrated_at: 2026-05-08T18:46:34+00:00
+  source: archived-plan
+  status: ""
+  plan: docs/superpowers/archived-plans/2026-05-05-complexity-levels.md
+  spec: docs/superpowers/archived-specs/2026-05-05-complexity-levels-design.md
+  retro: docs/superpowers/retros/2026-05-06-complexity-levels-retro.md
+  sidecars: {}

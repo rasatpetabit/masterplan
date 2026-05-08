@@ -7,7 +7,7 @@
 # orchestrator (which ships to every /masterplan installation) clean of dev-only logic.
 #
 # Drift coverage: commands/masterplan.md, hooks/masterplan-telemetry.sh,
-# bin/masterplan-routing-stats.sh, AND skills/<name>/SKILL.md for every skill the plugin ships.
+# bin/masterplan-routing-stats.sh, bin/masterplan-state.sh, AND skills/<name>/SKILL.md for every skill the plugin ships.
 # A user-level copy at ~/.claude/skills/<name>/ shadows the plugin's registration and shows up
 # as a duplicate slash command — caught here.
 #
@@ -58,9 +58,11 @@ check_drift() {
   local user_cmds="${HOME}/.claude/commands/masterplan.md"
   local user_hook="${HOME}/.claude/hooks/masterplan-telemetry.sh"
   local user_bin="${HOME}/.claude/bin/masterplan-routing-stats.sh"
+  local user_state_bin="${HOME}/.claude/bin/masterplan-state.sh"
   local repo_cmds="${REPO_ROOT}/commands/masterplan.md"
   local repo_hook="${REPO_ROOT}/hooks/masterplan-telemetry.sh"
   local repo_bin="${REPO_ROOT}/bin/masterplan-routing-stats.sh"
+  local repo_state_bin="${REPO_ROOT}/bin/masterplan-state.sh"
 
   local plugin_registry="${HOME}/.claude/plugins/installed_plugins.json"
   local plugin_registered=0
@@ -87,6 +89,7 @@ check_drift() {
     "commands/masterplan.md|${user_cmds}|${repo_cmds}"
     "hooks/masterplan-telemetry.sh|${user_hook}|${repo_hook}"
     "bin/masterplan-routing-stats.sh|${user_bin}|${repo_bin}"
+    "bin/masterplan-state.sh|${user_state_bin}|${repo_state_bin}"
   )
 
   for entry in "${files_to_check[@]}"; do

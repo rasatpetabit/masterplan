@@ -1,0 +1,2 @@
+{"message": "legacy artifact migrated into run bundle", "schema_version": 1, "source": "legacy-retro", "ts": "2026-05-08T20:15:55+00:00", "type": "migration"}
+{"message":"completion cleanup archived verified legacy original","schema_version":1,"type":"completion_cleanup_archived","ts":"2026-05-08T20:17:06Z","archived_paths":["legacy/.archive/2026-05-08/docs/superpowers/retros/2026-05-06-cd-9-enforcement-retro.md"]}

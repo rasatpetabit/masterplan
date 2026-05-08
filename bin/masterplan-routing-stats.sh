@@ -12,10 +12,10 @@
 #   bin/masterplan-routing-stats.sh --models               # show only the model breakdown section (skips routing table)
 #
 # Data sources per plan:
-#   - <slug>-status.md activity log (routing tags, inline model hints, timestamps)
-#   - <slug>-subagents.jsonl (token totals, exact model, routing_class — v2.4.0+)
-#   - <slug>-eligibility-cache.json (decision_source, dispatched_to runtime audit)
-#   - <slug>-status.md `## Notes` (degradation markers, silent-skip footprint)
+#   - docs/masterplan/<slug>/state.yml + events.jsonl (v3+)
+#   - docs/masterplan/<slug>/subagents.jsonl + eligibility-cache.json (v3+)
+#   - legacy <slug>-status.md activity log / notes (pre-v3)
+#   - legacy <slug>-subagents.jsonl + <slug>-eligibility-cache.json (pre-v3)
 #
 # Required: bash, jq, awk, python3, git.
 # License: MIT (matches parent plugin).
@@ -60,11 +60,13 @@ plans_dirs=()
 
 discover_plans_dirs_in_repo() {
   local root="$1"
-  [[ -d "$root/docs/superpowers/plans" ]] && plans_dirs+=("$root/docs/superpowers/plans")
+  [[ -d "$root/docs/masterplan" ]] && plans_dirs+=("new:$root/docs/masterplan")
+  [[ -d "$root/docs/superpowers/plans" ]] && plans_dirs+=("old:$root/docs/superpowers/plans")
   if [[ -d "$root/.worktrees" ]]; then
     while IFS= read -r wt; do
       [[ -e "$wt/.git" ]] || continue
-      [[ -d "$wt/docs/superpowers/plans" ]] && plans_dirs+=("$wt/docs/superpowers/plans")
+      [[ -d "$wt/docs/masterplan" ]] && plans_dirs+=("new:$wt/docs/masterplan")
+      [[ -d "$wt/docs/superpowers/plans" ]] && plans_dirs+=("old:$wt/docs/superpowers/plans")
     done < <(find "$root/.worktrees" -mindepth 1 -maxdepth 1 -type d 2>/dev/null)
   fi
 }
@@ -76,8 +78,10 @@ if (( all_repos )); then
     [[ -d "$root" ]] || continue
     while IFS= read -r repo; do
       discover_plans_dirs_in_repo "$repo"
-    done < <(find "$root" -maxdepth 4 -type d -name plans -path '*/docs/superpowers/plans' 2>/dev/null \
-             | sed 's|/docs/superpowers/plans$||' \
+    done < <({ find "$root" -maxdepth 4 -type d -path '*/docs/superpowers/plans' 2>/dev/null \
+             | sed 's|/docs/superpowers/plans$||'; \
+             find "$root" -maxdepth 4 -type d -path '*/docs/masterplan' 2>/dev/null \
+             | sed 's|/docs/masterplan$||'; } \
              | sort -u)
   done
 else
@@ -139,19 +143,70 @@ def parse_frontmatter(text):
             k,v = line.split(':',1); fm[k.strip()] = v.strip().strip('"').strip("'")
     return fm
 
+def parse_state_yaml(text):
+    fm = {}
+    in_artifacts = False
+    for line in text.splitlines():
+        if not line.strip() or line.lstrip().startswith('#'):
+            continue
+        if line.startswith('artifacts:'):
+            in_artifacts = True
+            continue
+        if line and not line.startswith(' '):
+            in_artifacts = False
+        if ':' not in line:
+            continue
+        k, v = line.split(':', 1)
+        key = k.strip()
+        val = v.strip().strip('"').strip("'")
+        if in_artifacts and line.startswith('  '):
+            fm[f'artifacts.{key}'] = val
+        elif not line.startswith(' '):
+            fm[key] = val
+    return fm
+
 def section(text, name):
     m = re.search(rf'^##\s+{re.escape(name)}\s*\n(.*?)(?=\n##\s+|\Z)', text, re.M | re.S)
     return m.group(1) if m else ''
 
-def analyze_plan(status_path):
-    slug = os.path.basename(status_path).removesuffix('-status.md')
-    plans_dir = os.path.dirname(status_path)
-    with open(status_path) as f: text = f.read()
-    fm = parse_frontmatter(text)
-    activity = section(text, 'Activity log')
-    notes    = section(text, 'Notes')
+def load_events(run_dir):
+    events_path = os.path.join(run_dir, 'events.jsonl')
+    lines = []
+    notes = []
+    if not os.path.isfile(events_path):
+        return '', ''
+    with open(events_path) as f:
+        for line in f:
+            try:
+                rec = json.loads(line)
+            except Exception:
+                continue
+            ts = rec.get('ts') or rec.get('timestamp') or rec.get('at') or ''
+            msg = rec.get('message') or rec.get('event') or rec.get('type') or ''
+            if msg:
+                lines.append(f"- {ts} {msg}".rstrip())
+            if rec.get('type') in ('note', 'blocker') or rec.get('source') == 'legacy-activity-log':
+                notes.append(msg)
+    return '\n'.join(lines), '\n'.join(notes)
 
-    plan_path = os.path.join(plans_dir, slug + '.md')
+def analyze_plan(status_path):
+    is_new = os.path.basename(status_path) == 'state.yml'
+    if is_new:
+        run_dir = os.path.dirname(status_path)
+        slug = os.path.basename(run_dir)
+        plans_dir = run_dir
+        with open(status_path) as f: text = f.read()
+        fm = parse_state_yaml(text)
+        activity, notes = load_events(run_dir)
+        plan_path = os.path.join(run_dir, 'plan.md')
+    else:
+        slug = os.path.basename(status_path).removesuffix('-status.md')
+        plans_dir = os.path.dirname(status_path)
+        with open(status_path) as f: text = f.read()
+        fm = parse_frontmatter(text)
+        activity = section(text, 'Activity log')
+        notes    = section(text, 'Notes')
+        plan_path = os.path.join(plans_dir, slug + '.md')
     plan_text = open(plan_path).read() if os.path.isfile(plan_path) else ''
     codex_ok_tasks = set()
     if plan_text:
@@ -222,7 +277,7 @@ def analyze_plan(status_path):
         if ts: last_ts = ts
 
     # subagents.jsonl — token totals + routing_class breakdown (v2.4.0+)
-    sub_path = os.path.join(plans_dir, slug + '-subagents.jsonl')
+    sub_path = os.path.join(plans_dir, 'subagents.jsonl' if is_new else slug + '-subagents.jsonl')
     tokens_by_class = defaultdict(lambda: {'total_tokens':0,'duration_ms':0,'count':0,'input':0,'output':0})
     tokens_by_model = defaultdict(int)
     dispatches_by_model = defaultdict(int)
@@ -247,7 +302,7 @@ def analyze_plan(status_path):
                 dispatches_by_model[m] += 1
 
     # eligibility-cache decision_source breakdown
-    cache_path = os.path.join(plans_dir, slug + '-eligibility-cache.json')
+    cache_path = os.path.join(plans_dir, 'eligibility-cache.json' if is_new else slug + '-eligibility-cache.json')
     decisions = defaultdict(int)
     cache_present = os.path.isfile(cache_path)
     if cache_present:
@@ -270,6 +325,7 @@ def analyze_plan(status_path):
     return {
         'plan': slug,
         'plans_dir': plans_dir,
+        'state_format': 'bundle' if is_new else 'legacy-status',
         'frontmatter': {k:fm.get(k) for k in ('status','codex_routing','codex_review','autonomy','branch')},
         'routing': dict(routing),
         'codex_share_pct': round(100*routing['codex']/total_tagged, 1) if total_tagged else None,
@@ -283,24 +339,33 @@ def analyze_plan(status_path):
         'health': health,
     }
 
-# Discover all status files across the requested plans dirs.
-# Dedup by slug — linked worktrees check out the same plans/ files at different
-# absolute paths, but each plan-slug must be counted once. Keep the most-recently-
+# Discover all state/status files across the requested dirs.
+# Dedup by slug — linked worktrees check out the same files at different
+# absolute paths, but each plan-slug must be counted once. Prefer the v3 bundle
+# layout over legacy status when both exist; otherwise keep the most-recently-
 # modified copy per slug (likely the active worktree).
 slug_to_path = {}
-for d in plans_dirs:
-    for pf in glob.glob(os.path.join(d, '*-status.md')):
-        slug = os.path.basename(pf).removesuffix('-status.md')
+slug_to_kind = {}
+for entry in plans_dirs:
+    if ':' in entry:
+        kind, d = entry.split(':', 1)
+    else:
+        kind, d = 'old', entry
+    pattern = os.path.join(d, '*', 'state.yml') if kind == 'new' else os.path.join(d, '*-status.md')
+    for pf in glob.glob(pattern):
+        slug = os.path.basename(os.path.dirname(pf)) if kind == 'new' else os.path.basename(pf).removesuffix('-status.md')
         try: pf_mtime = os.path.getmtime(pf)
         except OSError: continue
         existing = slug_to_path.get(slug)
-        if existing is None or pf_mtime > os.path.getmtime(existing):
+        existing_kind = slug_to_kind.get(slug)
+        if existing is None or (kind == 'new' and existing_kind != 'new') or (kind == existing_kind and pf_mtime > os.path.getmtime(existing)):
             slug_to_path[slug] = pf
+            slug_to_kind[slug] = kind
 plan_files = sorted(slug_to_path.values())
 
 results = []
 for pf in plan_files:
-    slug = os.path.basename(pf).removesuffix('-status.md')
+    slug = os.path.basename(os.path.dirname(pf)) if os.path.basename(pf) == 'state.yml' else os.path.basename(pf).removesuffix('-status.md')
     if plan_filter and slug != plan_filter:
         # Also accept a bare slug that matches the date-stripped suffix
         # (e.g. "phase-5-southbound-ipc" matching "2026-05-06-phase-5-southbound-ipc").

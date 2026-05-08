@@ -1,12 +1,12 @@
 # superpowers-masterplan — internal documentation for LLM contributors
 
-**Audience:** Future LLMs (Claude, Codex, others) that pick up this codebase to develop features, fix bugs, debug stuck plans, or extend the orchestrator. The intent is that this document, plus `commands/masterplan.md` and the per-plan status files, is enough to operate without reading deleted history (pre-v1.1.0 plans/specs were pruned in the v2.0.0 release).
+**Audience:** Future LLMs (Claude, Codex, others) that pick up this codebase to develop features, fix bugs, debug stuck plans, or extend the orchestrator. The intent is that this document, plus `commands/masterplan.md` and `docs/masterplan/<slug>/state.yml` run bundles, is enough to operate without reading deleted history (pre-v1.1.0 plans/specs were pruned in the v2.0.0 release).
 
 **Token budget warning:** This doc is ~6000 words. It's not always-loaded. CLAUDE.md (always-loaded, ~500 words) points here for deep-dive when needed. Read selectively — use the table of contents.
 
 **Companion docs:**
 - [`CLAUDE.md`](../CLAUDE.md) — always-loaded short orientation + top anti-patterns.
-- [`commands/masterplan.md`](../commands/masterplan.md) — the orchestrator prompt (the "source code"; ~1370 lines).
+- [`commands/masterplan.md`](../commands/masterplan.md) — the orchestrator prompt (the "source code"; ~2250 lines).
 - [`README.md`](../README.md) — public-facing project overview, install, usage, configuration reference.
 - [`CHANGELOG.md`](../CHANGELOG.md) — release history with full per-version detail.
 - [`docs/design/intra-plan-parallelism.md`](./design/intra-plan-parallelism.md) — Slice α status doc + sharpened revisit trigger for Slice β/γ.
@@ -19,7 +19,7 @@
 1. [Project orientation](#1-project-orientation)
 2. [The three design pillars](#2-the-three-design-pillars)
 3. [Subagent + context-control architecture](#3-subagent--context-control-architecture)
-4. [Status file format (the only source of truth)](#4-status-file-format-the-only-source-of-truth)
+4. [Run bundle format (the only source of truth)](#4-run-bundle-format-the-only-source-of-truth)
 5. [Context discipline rules (CD-1 through CD-10)](#5-context-discipline-rules-cd-1-through-cd-10)
 6. [Operational rules](#6-operational-rules)
 7. [Wave dispatch (Slice α) + failure-mode catalog (FM-1 to FM-6)](#7-wave-dispatch-slice-α--failure-mode-catalog-fm-1-to-fm-6)
@@ -38,7 +38,7 @@
 
 `superpowers-masterplan` is a Claude Code plugin that ships one slash command: `/masterplan`. The command orchestrates a complete development workflow — brainstorm a spec, plan the implementation, execute task-by-task, generate a retrospective when complete — by sequencing the upstream `superpowers` skills (`brainstorming`, `writing-plans`, `subagent-driven-development`, `executing-plans`, `using-git-worktrees`, `systematic-debugging`, `finishing-a-development-branch`).
 
-**It's a thin orchestrator, not a re-implementation.** The pipeline phases live in superpowers; `/masterplan` sequences them, persists state in a single status file per plan, and routes decisions (which model executes a task; whether Codex reviews; whether a wave dispatches in parallel; etc.).
+**It's a thin orchestrator, not a re-implementation.** The pipeline phases live in superpowers; `/masterplan` sequences them, persists state in `docs/masterplan/<slug>/state.yml`, and routes decisions (which model executes a task; whether Codex reviews; whether a wave dispatches in parallel; etc.).
 
 ### What's in the repo
 
@@ -52,7 +52,7 @@ superpowers-masterplan/
 │   ├── plugin.json                 # plugin manifest (name, version, description, URL)
 │   └── marketplace.json            # direct-install marketplace catalog
 ├── commands/
-│   └── masterplan.md               # THE orchestrator prompt (~1370 lines, single source of truth for behavior)
+│   └── masterplan.md               # THE orchestrator prompt (~2250 lines, single source of truth for behavior)
 ├── skills/
 │   └── masterplan-detect/
 │       └── SKILL.md                # auto-suggest /masterplan import on legacy artifacts
@@ -63,20 +63,23 @@ superpowers-masterplan/
     ├── design/
     │   ├── intra-plan-parallelism.md   # Slice α status + Slice β/γ deferral notes
     │   └── telemetry-signals.md        # Stop hook record schema + jq queries
-    └── superpowers/
-        ├── specs/                  # design docs per major feature
-        └── plans/                  # implementation plans + sibling status files
+    └── masterplan/                 # self-hosted run bundles for this repo
+        └── <slug>/
+            ├── state.yml
+            ├── spec.md
+            ├── plan.md
+            └── events.jsonl
 ```
 
 ### What this codebase IS NOT
 
 - Not a code project in the conventional sense — there is no compile/build/test pipeline.
 - Not a runtime — the plugin's logic IS the prompt that Claude Code loads when the user types `/masterplan`.
-- Not stateful at the plugin level — every plan's state lives in its sibling status file in the user's repo, not in the plugin install.
+- Not stateful at the plugin level — every plan's state lives in a run bundle in the user's repo, not in the plugin install.
 
 ### How to operate
 
-When the user types `/masterplan <args>`, Claude Code loads `commands/masterplan.md` as the system prompt with `$ARGUMENTS` bound to `<args>`. The prompt directs the orchestrator (Claude itself) through Steps 0 → A or B or C or D or I or P or R or S, depending on the verb. Each Step has bounded responsibilities documented inline.
+When the user types `/masterplan <args>`, Claude Code loads `commands/masterplan.md` as the system prompt with `$ARGUMENTS` bound to `<args>`. The prompt directs the orchestrator (Claude itself) through Steps 0 → A or B or C or D or I or R or S or T or CL, depending on the verb. Each Step has bounded responsibilities documented inline.
 
 ---
 
@@ -96,11 +99,33 @@ The orchestrator's context is a finite, expensive resource. Substantive work goe
 
 **Implication:** Every Step that reads files, runs verification, performs analysis, or generates content does so via a subagent dispatch with a bounded brief. The orchestrator consumes only the digest. See [Section 3](#3-subagent--context-control-architecture).
 
-### Pillar 3: Status file as the only source of truth
+### Pillar 3: Run bundle as the only source of truth
 
-Future-you (or another agent) must be able to resume any plan with two reads: the plan file and its sibling status file. Conversation context is discarded by design.
+Future-you (or another agent) must be able to resume any plan from `docs/masterplan/<slug>/state.yml` plus the bundled `plan.md`, `spec.md`, and recent `events.jsonl` entries. Conversation context is discarded by design.
 
-**Implication:** Decisions, blockers, scope changes, and surprises that future-you would need go into `## Notes` of the status file. Don't bury load-bearing context in conversation alone (CD-7).
+**Implication:** Decisions, blockers, scope changes, and surprises that future-you would need go into explicit state fields or `events.jsonl`. Don't bury load-bearing context in conversation alone (CD-7).
+
+### Run bundle state (v3.0.0+)
+
+The canonical runtime layout is:
+
+```text
+docs/masterplan/<slug>/
+  state.yml
+  spec.md
+  plan.md
+  retro.md
+  events.jsonl
+  eligibility-cache.json
+  telemetry.jsonl
+  subagents.jsonl
+```
+
+`state.yml` is created immediately after worktree selection, before brainstorming. This fixes earlier compaction failures where no durable state existed yet and the orchestrator could only guess from conversation context. Every `AskUserQuestion` gate must first persist `pending_gate` in `state.yml`; the selected option clears it and appends a `gate_closed` event.
+
+Legacy state from earlier versions remains supported. `bin/masterplan-state.sh inventory` discovers old `docs/superpowers/{plans,specs,retros,archived-*}` artifacts, and `bin/masterplan-state.sh migrate --write` copies them into the new run-bundle layout while preserving old paths under `legacy:`. Migration is copy-only; `/masterplan clean` owns broad archive/delete of legacy files after the bundle has been verified.
+
+Successful Step C completion now runs a default finalizer: mark the run complete, generate `retro.md`, archive the run by updating `state.yml`, and run an archive-only cleanup subset for verified legacy/orphan state. That subset never deletes, never moves the current `docs/masterplan/<slug>/` bundle, and skips stale/crons/worktrees; manual `/masterplan clean` remains the broad maintenance surface.
 
 ---
 
@@ -110,7 +135,7 @@ This is the most important architectural surface. The dispatch model below tells
 
 ### What the orchestrator holds vs. discards
 
-**Hold:** status frontmatter + recent activity log; plan task list + current task pointer; this-session user decisions; next action.
+**Hold:** `state.yml` fields + recent `events.jsonl` tail; plan task list + current task pointer; this-session user decisions; next action.
 
 **Never hold:** raw verification output (in test logs / git), full file contents (re-read on demand), earlier subagent working notes (scratch), library docs (look up via `context7`, then drop).
 
@@ -118,7 +143,7 @@ This is the most important architectural surface. The dispatch model below tells
 
 | Phase | Subagent type | Model | Why this model |
 |---|---|---|---|
-| Step A status frontmatter parse | parallel Haiku per worktree (when worktrees ≥ 2) | Haiku | Mechanical YAML extraction; bounded |
+| Step A state parse | parallel Haiku per worktree (when worktrees ≥ 2) | Haiku | Mechanical YAML extraction; bounded |
 | Step I1 discovery | parallel `Explore`, one per source class | Haiku | Mechanical glob + grep + `gh` calls |
 | Step I3 source fetch | parallel agents per candidate | Haiku (Sonnet for branch reverse-engineering) | Read / git diff / gh issue view; reverse-engineering needs judgment |
 | Step I3 conversion | parallel Sonnet per candidate | Sonnet | Generation, not just extraction |
@@ -128,7 +153,7 @@ This is the most important architectural surface. The dispatch model below tells
 | Step C 4b Codex review | `codex:codex-rescue` in REVIEW mode | Codex (out-of-process) | Asymmetric review — fresh eyes on Sonnet's diff |
 | Completion-state inference (Step I3.3) | parallel Haiku per task chunk | Haiku | Classify done/possibly_done/not_done per task |
 | Step D doctor checks | parallel Haiku per worktree (when N ≥ 2) | Haiku | Apply checks per worktree; return findings JSON |
-| Step S situation report | parallel Haiku per worktree (when N ≥ 2) | Haiku | Collect status + recent commits + telemetry tails |
+| Step S situation report | parallel Haiku per worktree (when N ≥ 2) | Haiku | Collect run state + recent commits + telemetry tails |
 
 ### The bounded brief contract
 
@@ -146,7 +171,7 @@ Every subagent dispatched from `/masterplan` (directly OR transitively via upstr
 
 When a subagent returns:
 - Pull only load-bearing fields: pass/fail, commit SHA, key file paths, blocker description, classification result.
-- Write the digest into the status file (per CD-7), not the raw output.
+- Write the digest into `events.jsonl` or explicit `state.yml` fields (per CD-7), not the raw output.
 - Discard verbose output — it lives in git history, test logs, or source files.
 
 Activity log convention illustrates the digest pattern:
@@ -157,7 +182,7 @@ Enough to reconstruct state. Nothing more.
 
 ### Context budget triggers
 
-- **After every 3 completed tasks** — call `ScheduleWakeup` to resume in a fresh session (already in Step C step 5). The status file is the bridge.
+- **After every 3 completed tasks** — call `ScheduleWakeup` to resume in a fresh session (already in Step C step 5). `state.yml` + `events.jsonl` are the bridge.
 - **If context feels tight** — finish the current task, ScheduleWakeup, end the turn. A wakeup is cheap; a confused orchestrator is expensive.
 - **If a subagent returns ≥ 5K characters** — digest immediately before continuing.
 - **Before invoking brainstorming, conversion, or systematic-debugging** — check whether you're already deep in a session. If so, bookmark and wakeup; let the fresh session start that phase clean.
@@ -165,9 +190,9 @@ Enough to reconstruct state. Nothing more.
 ### Parallelism guidance — when YES, when NO
 
 **YES (independent work):**
-- Step A status-frontmatter parsing per worktree
+- Step A state parsing per worktree
 - Step B0 git surveys (one parallel Bash batch)
-- Step C step 1 re-reads (status + spec + plan + pwd + branch as one tool batch)
+- Step C step 1 re-reads (state + spec + plan + pwd + branch as one tool batch)
 - Step C 4a verification commands (when no shared mutable artifacts)
 - Step I1 discovery (4 source classes in parallel)
 - Step I3 source-fetch + conversion waves
@@ -178,21 +203,20 @@ Enough to reconstruct state. Nothing more.
 **NO (intentional sequencing):**
 - Per-candidate cruft handling and `git commit` in Step I3 (single-writer git index)
 - Per-task implementation in Step C for committing tasks (concurrent commits race the git index — Slice β/γ deferred per [Section 7](#7-wave-dispatch-slice-α--failure-mode-catalog-fm-1-to-fm-6))
-- Shared-state writes (multiple agents modifying the same status file is a race)
+- Shared-state writes (multiple agents modifying `state.yml` or `events.jsonl` is a race)
 - When the orchestrator needs to react between agents (autonomy=gated checkpoints)
 
 ---
 
-## 4. Status file format (the only source of truth)
+## 4. Run bundle format (the only source of truth)
 
-Every plan has a sibling status file at `docs/superpowers/plans/<slug>-status.md`. It is the **only** thing a future agent needs to resume work — never assume conversational context carries over.
+Every plan has a run bundle at `docs/masterplan/<slug>/`. `state.yml` is the durable phase pointer and `events.jsonl` is the append-only activity log. A future agent resumes from the bundle, not from conversation context.
 
 ```yaml
----
+schema_version: 2
 slug: <feature-slug>
-status: in-progress | blocked | complete
-spec: docs/superpowers/specs/<slug>-design.md
-plan: docs/superpowers/plans/<slug>.md
+status: in-progress | blocked | complete | archived
+phase: worktree_decided | brainstorming | spec_gate | planning | plan_gate | executing | task_gate | blocked | complete | retro_gate | archived
 worktree: /absolute/path/to/worktree
 branch: <git-branch-name>
 started: YYYY-MM-DD
@@ -204,38 +228,39 @@ loop_enabled: true | false
 codex_routing: off | auto | manual
 codex_review: off | on
 compact_loop_recommended: true | false
+complexity: low | medium | high
+pending_gate: null
+artifacts:
+  spec: docs/masterplan/<slug>/spec.md
+  plan: docs/masterplan/<slug>/plan.md
+  retro: docs/masterplan/<slug>/retro.md
+  events: docs/masterplan/<slug>/events.jsonl
+  events_archive: docs/masterplan/<slug>/events-archive.jsonl
+  eligibility_cache: docs/masterplan/<slug>/eligibility-cache.json
+  telemetry: docs/masterplan/<slug>/telemetry.jsonl
+  telemetry_archive: docs/masterplan/<slug>/telemetry-archive.jsonl
+  subagents: docs/masterplan/<slug>/subagents.jsonl
+  subagents_archive: docs/masterplan/<slug>/subagents-archive.jsonl
+  state_queue: docs/masterplan/<slug>/state.queue.jsonl
 # Optional: telemetry: off  # silences per-plan telemetry capture
 # Optional v2.1.0+: gated_switch_offer_dismissed: true  # permanent per-plan suppression of gated→loose offer (Step C step 1)
 # Optional v2.1.0+: gated_switch_offer_shown: true      # per-session suppression of gated→loose offer (re-fires on cross-session resume)
----
-
-# <Feature Name> — Status
-
-## Activity log
-- 2026-05-01T14:00 brainstorm complete, spec at docs/superpowers/specs/<slug>-design.md
-- 2026-05-01T14:15 plan written, beginning execution under autonomy=loose
-- 2026-05-01T14:32 task "Add foo helper" complete, commit abc123 [inline] (verify: 12 passed)
-
-## Blockers
-(empty unless status: blocked)
-
-## Notes
-(append-only context for the next session — decisions, scope changes, surprises a fresh agent should know)
+legacy: {}
 ```
 
 ### Required fields
 
-All 15 fields above are required. Doctor check #9 enforces this. Step A and Step C both depend on the full set.
+Core required fields above are enforced by doctor check #9. Step A and Step C both depend on that set. Archive/sidecar artifact keys are stable optional addresses; migrated archived records may leave values empty when the legacy source never had that artifact.
 
-### Activity log entry format
+### Events format
 
-`<ISO timestamp> task "<name>" <state>, commit <sha> [<routing tag>] (verify: <result>)`
+`events.jsonl` records one JSON object per line. Required fields are `ts`, `type`, and `message` or type-specific fields. Task-completion events preserve the same searchable routing tags (`[codex]`, `[inline]`, `[wave: <group>]`) in `message`.
 
-For wave-completed tasks (Slice α v2.0.0+): `<ISO timestamp> task "<name>" complete [inline][wave: <group>] (verify: <result>)` — note no commit SHA for read-only wave members (they don't commit).
+For wave-completed tasks (Slice α v2.0.0+), emit one task event per completed member and one wave summary event; read-only wave members still do not commit.
 
-### Activity log rotation
+### Event retention
 
-When `## Activity log` exceeds 100 entries, the orchestrator moves all but the most recent 50 to `<slug>-status-archive.md` (oldest-first), inserts a one-line marker `*(N entries archived to <slug>-status-archive.md on YYYY-MM-DD)*`, then appends the new entry. Resume behavior is unchanged — Step C step 1 reads only the active log; the archive is consulted on demand by `/masterplan retro`.
+When `events.jsonl` exceeds the retention threshold, rotate older entries to `events-archive.jsonl` and keep the most recent entries active. Resume behavior is unchanged because Step C reads `state.yml` plus the active event tail; retros may read the archive.
 
 Under wave dispatch (v2.0.0+), rotation is wave-aware — fires once per wave (not per task) per FM-2 mitigation.
 
@@ -243,12 +268,15 @@ Under wave dispatch (v2.0.0+), rotation is wave-aware — fires once per wave (n
 
 | Path | Purpose |
 |---|---|
-| `<slug>-status.md` | Canonical status file (this) |
-| `<slug>-status-archive.md` | Activity log overflow archive (created on demand) |
-| `<slug>-eligibility-cache.json` | Per-task Codex routing + parallel-eligibility cache (rebuilt on plan.md mtime change) |
-| `<slug>-telemetry.jsonl` | Per-turn JSONL records emitted by the Stop hook + Step C step 1 inline snapshots; local-only and ignored before write |
-| `<slug>-subagents.jsonl` | Per-Agent-dispatch telemetry emitted by the Stop hook (v2.3.0+); local-only and ignored before write |
-| `<slug>-subagents-cursor` | Incremental transcript cursor for the per-subagent telemetry stream; local-only and ignored before write |
+| `state.yml` | Canonical run state and phase pointer |
+| `spec.md` | Design/spec artifact |
+| `plan.md` | Execution plan |
+| `retro.md` | Retrospective, when generated |
+| `events.jsonl` | Activity and decision log |
+| `events-archive.jsonl` | Event overflow archive (created on demand) |
+| `eligibility-cache.json` | Per-task Codex routing + parallel-eligibility cache (rebuilt on plan.md mtime change) |
+| `telemetry.jsonl` | Per-turn JSONL records emitted by the Stop hook + Step C step 1 inline snapshots; local-only and ignored before write |
+| `subagents.jsonl` | Per-Agent-dispatch telemetry emitted by the Stop hook; local-only and ignored before write |
 
 ---
 
@@ -264,7 +292,7 @@ These rules govern behavior throughout every Step. They mirror the user's global
 | **CD-4** | **Persistence — work the ladder.** When a tool fails: (1) read the error; (2) try alternate tool; (3) narrow scope; (4) grep prior art; (5) consult `context7`. Hand off only after 2+ rungs failed. | Premature handoff trains the user to expect handoff; hides root causes. |
 | **CD-5** | **Self-service default.** Execute actions yourself. Hand off only when the action is truly user-only (secrets, OAuth, 2FA, destructive ops). | Friction-free agent work is the value prop. |
 | **CD-6** | **Tooling preference order.** (1) MCP > (2) installed skill/plugin > (3) project-local convention > (4) generic Bash. Check `/mcp` and the system-reminder skills list before reaching for generic. | Specific tools encode safety and convenience the generic path lacks. |
-| **CD-7** | **Durable handoff state.** Status file is the persistence surface. Decisions, blockers, scope changes, surprises that future-you needs go into `## Notes`. | Conversation context is volatile; status file persists. |
+| **CD-7** | **Durable handoff state.** `state.yml` and `events.jsonl` are the persistence surface. Decisions, blockers, scope changes, surprises that future-you needs go into explicit state fields or events. | Conversation context is volatile; run state persists. |
 | **CD-8** | **Command output reporting.** When command output is load-bearing for a decision, relay 1–3 relevant lines. | The user may not have your terminal visible. Don't assume they can see what you saw. |
 | **CD-9** | **Concrete-options questions.** `AskUserQuestion` with 2–4 concrete options; recommended option first marked `(Recommended)`. Avoid free-text "let me know how you want to proceed." | Sessions can compact between turns; free-text questions become dead ends. Concrete options are decidable. |
 | **CD-10** | **Severity-first review shape.** Lead with findings ordered by severity, grounded in `file_path:line_number`. Keep summaries short. | Reviewers parse severity tags faster than prose; line citations enable jump-to-source. |
@@ -279,23 +307,23 @@ These are command-specific rules covering cross-cutting policy not stated inline
 
 ### The non-negotiables
 
-- **Stay a thin wrapper.** Logic that belongs to brainstorming, planning, execution, debugging, or branch-finishing lives in those skills. The command's job is sequencing them and persisting the status file.
+- **Stay a thin wrapper.** Logic that belongs to brainstorming, planning, execution, debugging, or branch-finishing lives in those skills. The command's job is sequencing them and persisting run state.
 - **Subagents do the work; orchestrator preserves context.** Every substantive piece of work goes to a bounded subagent. Only digests come back. When in doubt, digest and ScheduleWakeup.
 - **Bounded briefs, not implicit context.** Goal + Inputs + Scope + Constraints + Return shape. Subagents do not inherit session history.
-- **Import never overwrites existing masterplan state silently.** If a target spec/plan/status path already exists at Step I3, ask the user: overwrite / write to a `-v2` slug / abort.
+- **Import never overwrites existing masterplan state silently.** If a target run bundle already exists at Step I3, ask the user: overwrite / write to a `-v2` slug / abort.
 - **Doctor is read-only by default.** Without `--fix` it only reports — even an obvious orphan stays in place. `--fix` only acts on errors marked auto-fixable.
 - **Inference is conservative by design.** When in doubt, classify `possibly_done`, not `done`. Cost of re-verifying < cost of skipping real work.
 - **Don't stop silently anywhere.** Always close with `AskUserQuestion` if input might be needed. Recursively pre-empt upstream-skill free-text prompts (`finishing-a-development-branch`'s "Which option?", `using-git-worktrees`' "Which directory?", `writing-plans`' "Which approach?", `brainstorming`'s "Wait for the user's response").
 - **External writes are gated.** Posting comments to GitHub issues/PRs, Slack messages, closing issues during import always passes through `AskUserQuestion` first — even under `--autonomy=full`.
-- **Codex routing is locked at kickoff, switchable on resume.** `codex_routing` and `codex_review` land in the status file at Step B3 (or first Step C invocation for imported plans). Mid-run flips happen via re-invocation: `/masterplan --resume=<path> --codex=<mode> --codex-review=<on|off>`.
+- **Codex routing is locked at kickoff, switchable on resume.** `codex_routing` and `codex_review` land in `state.yml` at Step B3 (or first Step C invocation for imported plans). Mid-run flips happen via re-invocation: `/masterplan --resume=<path> --codex=<mode> --codex-review=<on|off>`.
 - **Never delegate non-eligible tasks under `auto`.** The eligibility checklist is conservative on purpose: a wrong delegation costs more than running inline. When uncertain, run inline.
 - **Codex review is asymmetric — never self-review.** If a task was executed by Codex and `codex_review` is on, skip the review for that task. Codex reviewing its own output adds no signal.
 - **Implementer must return `task_start_sha` (required).** Step C step 2's brief includes: "Capture `git rev-parse HEAD` BEFORE any work; return as `task_start_sha`." Step 4b (Codex review) and Step 4c (worktree integrity) depend on it.
-- **Implementer-return trust contract.** When the implementer reports `tests_passed: true` and lists `commands_run`, Step 4a trusts the report and skips redundant verification. SDD's TDD discipline is first-class. Protocol violation: if `tests_passed: true` but a complementary check or Codex review surfaces a test failure, the discrepancy goes to `## Notes`.
-- **Eligibility cache persists to `<slug>-eligibility-cache.json`.** Step C step 1 loads from disk when `cache.mtime > plan.mtime`; dispatches Haiku otherwise. Step 4d's plan edits `touch` the plan file to invalidate.
+- **Implementer-return trust contract.** When the implementer reports `tests_passed: true` and lists `commands_run`, Step 4a trusts the report and skips redundant verification. SDD's TDD discipline is first-class. Protocol violation: if `tests_passed: true` but a complementary check or Codex review surfaces a test failure, the discrepancy goes into `events.jsonl`.
+- **Eligibility cache persists to `docs/masterplan/<slug>/eligibility-cache.json`.** Step C step 1 loads from disk when `cache.mtime > plan.mtime`; dispatches Haiku otherwise. Step 4d's plan edits `touch` the plan file to invalidate.
 - **Git state cache excludes `git status --porcelain`.** Step 0's `git_state` cache holds `worktrees` and `branches` only. Dirty state must always be live (CD-2).
-- **In-wave scope rule (Slice α).** Wave members MUST NOT modify `plan.md`, status file, or eligibility cache. Violating is a `protocol_violation` (orchestrator detects post-barrier and reclassifies). See [Section 7](#7-wave-dispatch-slice-α--failure-mode-catalog-fm-1-to-fm-6).
-- **CC-1 — Compact-suggest on observable symptoms.** End-of-turn check (before next wakeup) for: (a) `file_cache` ≥3 hits same path; (b) ≥3 consecutive tool failures same target; (c) activity log rotated this session; (d) subagent returned ≥5K characters. On trigger: surface a non-blocking one-line notice. Per-plan dismissal via `compact_suggest: off` in `## Notes`.
+- **In-wave scope rule (Slice α).** Wave members MUST NOT modify `plan.md`, `state.yml`, `events.jsonl`, or the eligibility cache. Violating is a `protocol_violation` (orchestrator detects post-barrier and reclassifies). See [Section 7](#7-wave-dispatch-slice-α--failure-mode-catalog-fm-1-to-fm-6).
+- **CC-1 — Compact-suggest on observable symptoms.** End-of-turn check (before next wakeup) for: (a) `file_cache` ≥3 hits same path; (b) ≥3 consecutive tool failures same target; (c) events rotated this session; (d) subagent returned ≥5K characters. On trigger: surface a non-blocking one-line notice. Per-plan dismissal via `compact_suggest: off` in `state.yml`.
 - **CC-2 — Subagent-delegate triggers.** Before issuing a Bash command expected to print >100 lines, dispatch a Haiku. Before reading a file >300 lines as part of substantive work, dispatch a Haiku to extract the relevant section. Self-check: scan upcoming task verification for known-noisy commands (`build`, `test --verbose`, `cargo build`, `npm run build`, full-tree `find`); route through subagent that returns pass/fail + ≤3 evidence lines.
 
 ---
@@ -338,15 +366,15 @@ A wave member edits `plan.md` mid-wave (e.g., adding `**Codex:** ok` to a siblin
 
 **Slice α mitigation:** Snapshot `eligibility_cache` at wave-start; pin it for the wave's duration via `cache_pinned_for_wave: true`; declare in-wave plan edits out-of-scope per CD-2 (in-wave scope rule).
 
-#### FM-2: Activity log rotation race
+#### FM-2: Event rotation race
 
-A wave produces N concurrent appends to `## Activity log`. If `len(active_log) + N > 100`, rotation (move 50 entries to archive, insert marker) is non-atomic. Concurrent writes lose or duplicate entries.
+A wave produces N concurrent appends to `events.jsonl`. If `len(active_events) + N > 100`, rotation to `events-archive.jsonl` is non-atomic. Concurrent writes lose or duplicate entries.
 
-**Slice α mitigation:** Wave members return digests; do not write to status file. Orchestrator collects digests at wave-end and applies one batched update. Rotation fires once at end-of-batch (wave-aware).
+**Slice α mitigation:** Wave members return digests; do not write run state. Orchestrator collects digests at wave-end and applies one batched update. Rotation fires once at end-of-batch (wave-aware).
 
-#### FM-3: Status file write contention
+#### FM-3: State write contention
 
-Concurrent updates from N wave members race on `current_task` (single-pointer field), `last_activity`, log appends. Even with file locking, semantics break — `current_task` is single-valued.
+Concurrent updates from N wave members race on `current_task` (single-pointer field), `last_activity`, and event appends. Even with file locking, semantics break — `current_task` is single-valued.
 
 **Slice α mitigation:** Single-writer funnel via Step C 4d. `current_task` semantics: lowest-indexed not-yet-complete task. Telemetry attribution via two new fields (`tasks_completed_this_turn`, `wave_groups`) in the Stop hook.
 
@@ -362,7 +390,7 @@ A wave with mixed Codex + inline tasks can't usefully parallelize: Codex executi
 
 Step C 4c filters `git status --porcelain` against task-scope files. Under a wave, after Task 1 completes, porcelain shows files from Tasks 2–5 (still in flight) as "unexpected." 4c either fires false positives (every wave triggers human review) or gets skipped (loses CD-2 guarantee).
 
-**Slice α mitigation:** Per-task `**Files:**` declared-scope filter. 4c filters against the union of in-flight wave members' files (post-glob-expansion). Implicit-paths whitelist (status file, eligibility cache, archive file, `.git/`) added to the union. Telemetry sidecars must be ignored and absent from porcelain rather than whitelisted.
+**Slice α mitigation:** Per-task `**Files:**` declared-scope filter. 4c filters against the union of in-flight wave members' files (post-glob-expansion). Implicit-paths whitelist (`state.yml`, `events.jsonl`, eligibility cache, `.git/`) added to the union only for orchestrator writes. Telemetry sidecars must be ignored and absent from porcelain rather than whitelisted.
 
 #### FM-6: SDD is structurally serial
 
@@ -374,12 +402,12 @@ Step C 4c filters `git status --porcelain` against task-scope files. Under a wav
 
 - **All completed** → wave succeeds. Single-writer 4d update applies all N completions.
 - **All blocked** → wave fails. Blocker re-engagement gate fires once at wave-end with the union of all N blocked.
-- **Partial (K completed, N-K blocked)** → wave completes-with-blockers. K completions applied to status; N-K blockers appended to `## Blockers`; status flips to `blocked`. Gate fires once with the N-K subset.
-- **Protocol violation detected** (orchestrator's post-barrier reconciliation finds a wave member that committed despite "DO NOT commit", wrote outside `**Files:**` scope, or modified status): if `config.parallelism.abort_wave_on_protocol_violation: true` (default), the entire 4d batch is suppressed.
+- **Partial (K completed, N-K blocked)** → wave completes-with-blockers. K completions applied to run state; N-K blocker events appended; status flips to `blocked`. Gate fires once with the N-K subset.
+- **Protocol violation detected** (orchestrator's post-barrier reconciliation finds a wave member that committed despite "DO NOT commit", wrote outside `**Files:**` scope, or modified run state): if `config.parallelism.abort_wave_on_protocol_violation: true` (default), the entire 4d batch is suppressed.
 
 ### Mid-wave interruption recovery
 
-If the orchestrator crashes mid-wave (after dispatch, before barrier returns), the next session re-enters Step C step 1 with status file showing `current_task = <first wave task>` (unchanged). Re-build cache (mtime invariant kicks in); re-dispatch the wave from scratch. **Idempotent by Slice α design** — read-only members can be safely re-run.
+If the orchestrator crashes mid-wave (after dispatch, before barrier returns), the next session re-enters Step C step 1 with `state.yml` showing `current_task = <first wave task>` (unchanged). Re-build cache (mtime invariant kicks in); re-dispatch the wave from scratch. **Idempotent by Slice α design** — read-only members can be safely re-run.
 
 ---
 
@@ -398,7 +426,7 @@ If the codex plugin isn't installed, both default to off-for-the-run with a one-
 
 ### How it works
 
-1. **Step C step 1 — eligibility cache build.** A Haiku scans the plan and computes `eligible: bool` per task per the eligibility checklist (≤3 files, unambiguous, known verification, no scope-out, no `**Codex:** no`). Caches to `<slug>-eligibility-cache.json`. Loaded from disk when `cache.mtime > plan.mtime`.
+1. **Step C step 1 — eligibility cache build.** A Haiku scans the plan and computes `eligible: bool` per task per the eligibility checklist (≤3 files, unambiguous, known verification, no scope-out, no `**Codex:** no`). Caches to `docs/masterplan/<slug>/eligibility-cache.json`. Loaded from disk when `cache.mtime > plan.mtime`.
 2. **Step C 3a — routing decision per task.** Under `auto`: if `eligible: true`, dispatch via `codex:codex-rescue` (EXEC mode); else inline. Under `manual`: ask the user per task.
 3. **Step C 4b — Codex review of inline work.** When `codex_review: on`, after a task completes inline, dispatch `codex:codex-rescue` (REVIEW mode) with the spec excerpt + diff range `<task_start_sha>..HEAD`. Severity-bucketed findings (high/medium/low). Decision matrix per autonomy mode.
 4. **Plan annotations override the heuristic.** `**Codex:** ok` forces eligible (delegate even if heuristic rejects); `**Codex:** no` forces ineligible.
@@ -418,7 +446,7 @@ If `codex:codex-rescue` is not installed but config has `codex.routing != off` O
 
 ### Stop hook record schema
 
-Each Stop turn while `/masterplan` is operating on a managed plan, the hook (`hooks/masterplan-telemetry.sh`) appends one JSONL record to `<slug>-telemetry.jsonl`:
+Each Stop turn while `/masterplan` is operating on a managed plan, the hook (`hooks/masterplan-telemetry.sh`) appends one JSONL record to `docs/masterplan/<slug>/telemetry.jsonl`:
 
 ```json
 {
@@ -483,33 +511,19 @@ Use the result to evaluate whether parallel-group annotations are being authored
 
 ## 10. Doctor checks (full table with rationale)
 
-`/masterplan doctor [--fix]` lints state across all worktrees. Read-only by default; `--fix` only acts on Error-class checks marked auto-fixable.
+`/masterplan doctor [--fix]` lints run bundles and legacy state across all worktrees. Read-only by default; `--fix` only acts on checks marked auto-fixable in `commands/masterplan.md`.
 
-| # | Check | Severity | `--fix` action | Why this exists |
-|---|---|---|---|---|
-| 1 | Orphan plan — plan file with no sibling `-status.md` | Warning | Suggest `/masterplan import --file=<path>` | Pre-status-file plans from earlier versions; surface for migration |
-| 2 | Orphan status — `status.md` whose `plan` field points at missing file | Error | Move to archive | Status without plan is unrecoverable; needs cleanup |
-| 3 | Wrong worktree path — status's `worktree` doesn't match `git worktree list` | Error | Try match by branch; rewrite if unique | Worktree was removed/relocated; resume would fail |
-| 4 | Wrong branch — status's `branch` doesn't exist | Error | Report only | Branch was deleted; manual recovery needed |
-| 5 | Stale in-progress — `last_activity` > 30 days | Warning | Report only | Long-stale plans likely abandoned; surface for triage |
-| 6 | Stale blocked — `last_activity` > 14 days while `status: blocked` | Warning | Report only | Blocker not being addressed; surface |
-| 7 | Plan/log drift — plan task count vs activity-log task references differ >50% | Warning | Report only | Likely the plan was re-written without resetting status; manual reconcile |
-| 8 | Missing spec — status's `spec` field points at missing file | Error | Report only | Spec deleted/moved; manual fix |
-| 9 | Schema violation — status frontmatter missing required fields | Error | Add missing with sentinel/derived values | Step A and Step C depend on full set; partial schemas break listing |
-| 10 | Unparseable status file — frontmatter or body is malformed YAML/Markdown | Error | Report only | Step A skips silently; doctor surfaces explicitly |
-| 11 | Orphan archive — `<slug>-status-archive.md` without sibling `<slug>-status.md` | Warning | Suggest moving to archive_path | Archive without base status is dead weight |
-| 12 | Telemetry growth — `<slug>-telemetry.jsonl` OR `<slug>-subagents.jsonl` > 5 MB | Warning | Rotate to `<slug>-telemetry-archive.jsonl` / `<slug>-subagents-archive.jsonl` | Long-running plans accumulate; rotation prevents unbounded growth |
-| 13 | Orphan telemetry — `.jsonl` exists with no sibling status | Warning | Suggest moving to archive_path | Same shape as #11 for telemetry |
-| 14 | Orphan eligibility cache — `.json` exists with no sibling status | Warning | Suggest moving to archive_path | Same shape as #11/#13 for cache |
-| 15 | `parallel-group:` set but `**Files:**` missing/empty | Warning | Report only | Eligibility rule 2 violated; falls back to serial silently — surface so author notices |
-| 16 | `parallel-group:` and `**Codex:** ok` both set | Warning | Report only | FM-4 mitigation conflict; mutually exclusive — surface |
-| 17 | File-path overlap within `parallel-group:` | Warning | Report overlapping pairs | Eligibility rule 5 violated; tasks fall back to serial |
-| 18 | Codex config on but plugin missing | Warning | Suggest `/plugin marketplace add openai/codex-plugin-cc` then `/plugin install codex@openai-codex`, or set defaults to off | Step 0 already auto-degrades silently; doctor surfaces persistent misconfiguration |
-| 19 | Orphan subagents file — `<slug>-subagents.jsonl` (or legacy `-subagents-cursor` from pre-v2.4.0 plans) without sibling status | Warning | Suggest moving to archive_path | Same shape as #11/#13/#14 for the v2.3.0 per-subagent telemetry stream. v2.4.0 dropped the cursor file in favor of agent_id dedup; old cursor files lingering on disk are harmless but flagged here for cleanup. |
-| 20 | Codex routing configured but eligibility cache missing — frontmatter has `codex_routing: auto`/`manual` AND no sibling `<slug>-eligibility-cache.json` AND activity log shows ≥1 `routing→` or `[codex]`/`[inline]` entry | Warning | Suggest re-running next task with codex installed (orchestrator rebuilds cache); or set `codex_routing: off` to suppress | Catches Step 0 silent-degradation footprint where codex was unavailable at kickoff and never came back, leaving the cache un-built and routing decisions invisible (the optoe-ng project-review failure mode). Stands on its own when #18 doesn't fire (codex re-installed by lint time). |
-| 21 | Step C step 1 cache-build evidence missing — frontmatter has `codex_routing: auto`/`manual` AND ≥1 task-completion entry AND no `eligibility cache:` entry in `## Activity log` | Warning | Suggest re-running next task with codex installed; orchestrator emits the evidence entry on next Step C step 1 invocation | Activity-log-footprint counterpart to #20: when the cache file is also absent #20+#21 both fire; when cache file was deleted but evidence remained #20 fires alone; when evidence is missing but cache is present (e.g. cache built externally / pre-v2.4.0 plan) #21 fires alone. Catches the optoe-ng pattern where Step C step 1 ran zero times across the whole plan. |
+The authoritative check table is in Step D of `commands/masterplan.md`. Keep that table and the Step D worker brief in sync first; this section is orientation only.
 
-**Total: 21 checks (v2.4.0).** Step D's parallelization brief tells each Haiku worker to "run all 21 checks for its worktree." When adding a check, update both the table AND the brief count.
+Current check families:
+
+- **Migration and orphan cleanup:** legacy `docs/superpowers/...` artifacts not migrated, orphan legacy statuses, orphan events archives, orphan telemetry/subagents/cache files. Step C's completion-safe cleanup archives the verified subset automatically; full cleanup remains manual.
+- **State integrity:** malformed `state.yml`, missing required fields, bad worktree/branch, missing phase-required `spec.md` or `plan.md`.
+- **Execution drift:** stale in-progress/blocked plans, plan/log drift, cache-build evidence missing, routing configured but eligibility cache absent.
+- **Parallelism safety:** malformed `parallel-group` tasks, overlapping file scopes, wave protocol violations, model attribution drift in `subagents.jsonl`.
+- **Operational hygiene:** telemetry growth, non-empty `state.queue.jsonl`, missing compact loop for plans that requested it, completed plan without retro.
+
+When adding a check, update the Step D table, the Step D parallelization brief count, and this family list if the new check creates a new class.
 
 ---
 
@@ -528,12 +542,13 @@ Use the result to evaluate whether parallel-group annotations are being authored
 | `plan <topic>` | Step B0+B1+B2+B3; halt at B3 | `post-plan` |
 | `plan --from-spec=<path>` | cd into spec's worktree, run B2+B3 only; halt at B3 | `post-plan` |
 | `execute` (no path) | Step A | `none` |
-| `execute <status-path>` | Step C — resume that plan | `none` |
+| `execute <state-path>` | Step C — resume that plan | `none` |
 | `import` (alone or with args) | Step I | `none` |
 | `doctor` (alone or with `--fix`) | Step D | `none` |
 | `status` (alone or with `--plan=<slug>`) | Step S | `none` |
 | `retro` (alone or with `<slug>`) | Step R | `none` |
 | `stats` (alone or with `--plan=<slug>` / `--format=table\|json\|md` / `--all-repos` / `--since=<date>`) | Step T — codex-vs-inline routing distribution; shells out to `bin/masterplan-routing-stats.sh` | `none` |
+| `clean` (alone or with args) | Step CL | `none` |
 | `--resume=<path>` | Step C | `none` |
 | anything else | Step B (catch-all) | `none` |
 
@@ -548,9 +563,9 @@ Since the post-v2.3.0 audit, empty `$ARGUMENTS` is resume-first. Step M0 emits t
 The empty-state broad menu asks for a category:
 
 - **Phase work** — choose `brainstorm`, `plan`, `execute`, or `full`.
-- **Operations** — choose `import`, `status`, `doctor`, `retro`, or `stats`.
+- **Operations** — choose `import`, `status`, `doctor`, `retro`, `stats`, or `clean`.
 
-The reserved verb tokens are: `full`, `brainstorm`, `plan`, `execute`, `retro`, `import`, `doctor`, `status`, `stats`. Topics literally named after a verb need a leading word (e.g. `/masterplan add brainstorm session timer`).
+The reserved verb tokens are: `full`, `brainstorm`, `plan`, `execute`, `retro`, `import`, `doctor`, `status`, `stats`, `clean`. Topics literally named after a verb need a leading word (e.g. `/masterplan add brainstorm session timer`).
 - **Resume in-flight** — delegates to Step A's existing list+pick flow.
 - **Cancel** — exits without further tool calls.
 
@@ -560,7 +575,7 @@ This keeps interrupted work one command away while preserving verb discovery for
 
 ### Verb tokens are reserved
 
-Topics literally named `full`, `brainstorm`, `plan`, `execute`, `retro`, `import`, `doctor`, `status` need a leading word (e.g., `/masterplan add brainstorm session timer`).
+Topics literally named `full`, `brainstorm`, `plan`, `execute`, `retro`, `import`, `doctor`, `status`, `stats`, or `clean` need a leading word (e.g., `/masterplan add brainstorm session timer`).
 
 ### `halt_mode` state machine
 
@@ -568,7 +583,7 @@ Set in Step 0 from the verb match. Read by Steps B1, B2, B3, C to choose between
 
 - **`halt_mode == none`** — full kickoff or execute path. Existing behavior.
 - **`halt_mode == post-brainstorm`** — fires when invoked via `/masterplan brainstorm <topic>`. B1's close-out gate ends the turn after spec is written. B2 + B3 dispatch guards skip themselves.
-- **`halt_mode == post-plan`** — fires when invoked via `/masterplan plan ...` or via Step P's pick. B3's close-out gate ends the turn after status file is written. Step C's dispatch guard skips Step C.
+- **`halt_mode == post-plan`** — fires when invoked via `/masterplan plan ...` or via Step P's pick. B3's close-out gate ends the turn after `state.yml` and bundled artifacts are written. Step C's dispatch guard skips Step C.
 
 ### In-session halt_mode flips
 
@@ -604,13 +619,13 @@ Cost: dependencies on superpowers skills (their evolution can break /masterplan 
 
 ### Why subagent-driven by default
 
-Long autonomous runs accumulate context (failed experiments, big diffs, library docs, verification dumps). By task 10, the orchestrator reasons on cluttered state and quality drops. Solution: every substantive piece of work goes to a fresh subagent; only digests come back. Status file is the persistence bridge.
+Long autonomous runs accumulate context (failed experiments, big diffs, library docs, verification dumps). By task 10, the orchestrator reasons on cluttered state and quality drops. Solution: every substantive piece of work goes to a fresh subagent; only digests come back. The run bundle is the persistence bridge.
 
 This is what makes ScheduleWakeup'ing into a fresh session every ~3 tasks lossless.
 
-### Why status file as only source of truth
+### Why run bundle as only source of truth
 
-Conversation context evaporates between sessions, especially after compaction. A future agent (or future-you) needs deterministic resume — two file reads (plan + status) and they're operational. Anything in conversation is bonus, not load-bearing.
+Conversation context evaporates between sessions, especially after compaction. A future agent (or future-you) needs deterministic resume — `state.yml`, `plan.md`, `spec.md`, and recent `events.jsonl` entries are enough to continue. Anything in conversation is bonus, not load-bearing.
 
 ### Why the 4-option blocker re-engagement gate (v1.0.0 audit)
 
@@ -676,20 +691,20 @@ Other deferrals:
 
 ### Recipe: Debug a stuck plan
 
-1. Read the status file: `cat docs/superpowers/plans/<slug>-status.md`. Look at `current_task`, `next_action`, last 5 activity log entries, `## Blockers`, `## Notes`.
+1. Read the run state: `cat docs/masterplan/<slug>/state.yml` and `tail -20 docs/masterplan/<slug>/events.jsonl`. Look at `current_task`, `next_action`, pending gates, recent blockers, and warning/decision events.
 2. Verify worktree integrity: `cd <worktree>; git status --porcelain`. Files outside the current task's `**Files:**` scope are CD-2 violations or in-flight wave members.
-3. Verify branch matches: `git rev-parse --abbrev-ref HEAD` should equal status's `branch:`.
-4. Check eligibility cache freshness: compare `<slug>-eligibility-cache.json` mtime to `<slug>.md` mtime. If cache.mtime < plan.mtime, cache rebuild is overdue (next Step C entry will rebuild).
+3. Verify branch matches: `git rev-parse --abbrev-ref HEAD` should equal `state.yml`'s `branch:`.
+4. Check eligibility cache freshness: compare `docs/masterplan/<slug>/eligibility-cache.json` mtime to `docs/masterplan/<slug>/plan.md` mtime. If cache.mtime < plan.mtime, cache rebuild is overdue (next Step C entry will rebuild).
 5. Run `/masterplan doctor` for the worktree. Errors blocking resumption surface here.
-6. If a wave appears stuck mid-execution: check whether the wave-completion barrier returned by inspecting the activity log for partial completions. If yes, the resume path is "re-dispatch the wave from scratch" (Slice α is idempotent for read-only work).
+6. If a wave appears stuck mid-execution: check whether the wave-completion barrier returned by inspecting events for partial completions. If yes, the resume path is "re-dispatch the wave from scratch" (Slice α is idempotent for read-only work).
 
 ### Recipe: Write a new spec via /masterplan
 
 1. From a clean worktree: `/masterplan brainstorm <topic>`. Halts at the spec-written gate.
-2. Review the spec at `docs/superpowers/specs/YYYY-MM-DD-<slug>-design.md`. Edit if needed.
-3. Continue: `/masterplan plan --from-spec=docs/superpowers/specs/YYYY-MM-DD-<slug>-design.md`. Halts at the plan-written gate.
-4. Review plan at `docs/superpowers/plans/YYYY-MM-DD-<slug>.md`. Edit if needed (but don't break the writing-plans format).
-5. Execute when ready: `/masterplan execute docs/superpowers/plans/YYYY-MM-DD-<slug>-status.md`.
+2. Review the spec at `docs/masterplan/<slug>/spec.md`. Edit if needed.
+3. Continue: `/masterplan plan --from-spec=docs/masterplan/<slug>/spec.md`. Halts at the plan-written gate.
+4. Review plan at `docs/masterplan/<slug>/plan.md`. Edit if needed (but don't break the writing-plans format).
+5. Execute when ready: `/masterplan execute docs/masterplan/<slug>/state.yml`.
 
 ### Recipe: Run smoke verification on the telemetry hook
 
@@ -698,13 +713,16 @@ TMPREPO=$(mktemp -d)
 cd "$TMPREPO"
 git init -q && git checkout -q -b feat/test
 git config user.email test@example.com && git config user.name "Test"
-mkdir -p docs/superpowers/plans
-cat > docs/superpowers/plans/2026-05-04-test-status.md <<'EOF'
----
+mkdir -p docs/masterplan/test
+cat > docs/masterplan/test/state.yml <<'EOF'
+schema_version: 2
 slug: test
 status: in-progress
-spec: docs/superpowers/specs/2026-05-04-test-design.md
-plan: docs/superpowers/plans/2026-05-04-test.md
+phase: executing
+artifacts:
+  spec: docs/masterplan/test/spec.md
+  plan: docs/masterplan/test/plan.md
+  events: docs/masterplan/test/events.jsonl
 worktree: /tmp/dummy
 branch: feat/test
 started: 2026-05-04
@@ -716,18 +734,18 @@ loop_enabled: true
 codex_routing: off
 codex_review: off
 compact_loop_recommended: false
----
-# Test
-## Activity log
-- 2026-05-04T12:00 task complete
+complexity: medium
+pending_gate: null
+legacy: {}
 EOF
+printf '%s\n' '{"ts":"2026-05-04T12:00:00Z","type":"task_completed","message":"task complete"}' > docs/masterplan/test/events.jsonl
 git add -A && git commit -q -m "init"
 bash /path/to/superpowers-masterplan/hooks/masterplan-telemetry.sh
-cat docs/superpowers/plans/2026-05-04-test-telemetry.jsonl | jq .
+cat docs/masterplan/test/telemetry.jsonl | jq .
 cd / && rm -rf "$TMPREPO"
 ```
 
-Expected: a JSONL record with all 11 fields populated. Defensive bail confirmed if branch doesn't match any status file.
+Expected: a JSONL record with all fields populated. Defensive bail confirmed if branch doesn't match any state file.
 
 ### Recipe: Run smoke verification on wave dispatch
 
@@ -737,7 +755,7 @@ Hand-craft a 3-task plan with `parallel-group: smoke-verify` annotations on all 
 - Step C step 2 wave assembly gathers all three into one wave.
 - Three concurrent SDD dispatches via `Agent` tool.
 - Wave-completion barrier returns three digests.
-- Step C 4d single-writer applies three entries to `## Activity log` in plan-order, each tagged `[inline][wave: smoke-verify]`.
+- Step C 4d single-writer applies three events in plan-order, each tagged `[inline][wave: smoke-verify]`.
 - Single git commit: `masterplan: wave complete (group: smoke-verify, 3 tasks)`.
 
 Delete the test plan files before commit.
@@ -775,16 +793,16 @@ For a major release (breaking change / version 2.0.0+), include explicit `### Mi
 
 ### Wave dispatch anti-patterns (Slice α)
 
-- **Letting a wave member modify plan.md, status file, or eligibility cache.** Detected as `protocol_violation`. CD-2 in-wave scope rule forbids this.
+- **Letting a wave member modify plan.md, state.yml, events.jsonl, or eligibility cache.** Detected as `protocol_violation`. CD-2 in-wave scope rule forbids this.
 - **Letting a wave member commit.** For Slice α, wave members are read-only by design. Committing is a `protocol_violation`. The default `abort_wave_on_protocol_violation: true` suppresses the entire 4d batch when this happens.
 - **Reordering plan tasks to make a wave bigger.** Plan-order is authoritative; the wave-assembly walk is contiguous-only. If parallel-grouped tasks are interleaved with serial tasks, none parallelize. Authors are responsible for ordering.
 - **Adding `parallel-group:` to a task without `**Files:**`.** Eligibility rule 2 violated; falls back to serial. Doctor check #15 surfaces this.
 
-### Status file anti-patterns
+### Run-state anti-patterns
 
-- **Writing to status file from inside an implementer subagent.** Orchestrator is the canonical writer (CD-7). Implementers return digests; orchestrator updates.
-- **Burying decisions in conversation instead of `## Notes`.** Future agents have no access to your conversation. `## Notes` is the persistence surface.
-- **Letting `current_task` go out of sync with the plan.** Step C step 1 reconciles on every entry; if you see drift, trust the plan and update status.
+- **Writing to `state.yml` or `events.jsonl` from inside an implementer subagent.** Orchestrator is the canonical writer (CD-7). Implementers return digests; orchestrator updates.
+- **Burying decisions in conversation instead of events.** Future agents have no access to your conversation. `events.jsonl` and explicit `state.yml` fields are the persistence surface.
+- **Letting `current_task` go out of sync with the plan.** Step C step 1 reconciles on every entry; if you see drift, trust the plan and update `state.yml`.
 
 ### Verification anti-patterns
 
@@ -809,10 +827,10 @@ For a major release (breaking change / version 2.0.0+), include explicit `### Mi
 | Per-version what-changed | [`CHANGELOG.md`](../CHANGELOG.md) |
 | Slice α design + deferred Slice β/γ | [`docs/design/intra-plan-parallelism.md`](./design/intra-plan-parallelism.md) |
 | Telemetry record schema + queries | [`docs/design/telemetry-signals.md`](./design/telemetry-signals.md) |
-| Active in-flight plans | `docs/superpowers/plans/*-status.md` |
-| Plan execution state | `docs/superpowers/plans/<slug>-status.md` (single source of truth per CD-7) |
-| Eligibility cache | `docs/superpowers/plans/<slug>-eligibility-cache.json` (mtime-invalidated) |
-| Telemetry data | `docs/superpowers/plans/<slug>-telemetry.jsonl` and `<slug>-subagents.jsonl` (local-only, ignored before write) |
+| Active in-flight plans | `docs/masterplan/*/state.yml` |
+| Plan execution state | `docs/masterplan/<slug>/state.yml` + `events.jsonl` (single source of truth per CD-7) |
+| Eligibility cache | `docs/masterplan/<slug>/eligibility-cache.json` (mtime-invalidated) |
+| Telemetry data | `docs/masterplan/<slug>/telemetry.jsonl` and `subagents.jsonl` (local-only, ignored before write) |
 | Codex plugin | `openai/codex-plugin-cc` (cross-plugin dependency, optional) |
 | Superpowers skills | `obra/superpowers` (cross-plugin dependency, required) |
 

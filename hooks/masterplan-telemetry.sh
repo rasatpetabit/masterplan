@@ -5,9 +5,10 @@
 # /masterplan-managed plan. Safe to wire as a global Stop hook in
 # ~/.claude/settings.json.
 #
-# Append one JSONL record per turn to <plan>-telemetry.jsonl (sibling to
-# the status file). Per-plan opt-out: add `telemetry: off` to status
-# frontmatter.
+# Append one JSONL record per turn to the active plan's telemetry file. v3+
+# bundles write docs/masterplan/<slug>/telemetry.jsonl; legacy pre-v3 status
+# files still write <slug>-telemetry.jsonl beside the status file. Per-plan
+# opt-out: add `telemetry: off` to state/status.
 #
 # Required: bash, jq, git, awk. Optional: $CLAUDE_SESSION_ID for
 # transcript-resolution accuracy.
@@ -35,6 +36,8 @@ ensure_telemetry_excluded() {
       printf '**/*-subagents.jsonl\n'
       printf '**/*-subagents-archive.jsonl\n'
       printf '**/*-subagents-cursor\n'
+      printf '**/docs/masterplan/*/telemetry.jsonl\n'
+      printf '**/docs/masterplan/*/subagents.jsonl\n'
       printf '# END MASTERPLAN TELEMETRY IGNORE\n'
     } >> "$exclude_file" 2>/dev/null || return 1
   fi
@@ -42,7 +45,9 @@ ensure_telemetry_excluded() {
   for rel in \
     "docs/superpowers/plans/${slug}-telemetry.jsonl" \
     "docs/superpowers/plans/${slug}-subagents.jsonl" \
-    "docs/superpowers/plans/${slug}-subagents-cursor"; do
+    "docs/superpowers/plans/${slug}-subagents-cursor" \
+    "docs/masterplan/${slug}/telemetry.jsonl" \
+    "docs/masterplan/${slug}/subagents.jsonl"; do
     git ls-files --error-unmatch -- "$rel" >/dev/null 2>&1 && return 1
     git check-ignore -q --no-index -- "$rel" 2>/dev/null || return 1
   done
@@ -61,13 +66,14 @@ worktree=$(git rev-parse --show-toplevel 2>/dev/null) || bail
 branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null) || bail
 [[ -n "$branch" && "$branch" != "HEAD" ]] || bail
 
-# 3. Find candidate status files. Search the active worktree's plans/ dir AND
-#    every sibling linked worktree under .worktrees/*/docs/superpowers/plans/.
+# 3. Find candidate state/status files. Search the active worktree's
+#    docs/masterplan/ and legacy plans/ dir, plus sibling linked worktrees.
 #    Necessary because a Claude session can run from the main worktree while
 #    the active /masterplan plan lives in .worktrees/<feature>/ (e.g.,
 #    optoe-ng's project-review pattern). Without this fan-out the hook bails
 #    silently and the user sees zero telemetry for worktree-resident plans.
 candidates=()
+[[ -d "$worktree/docs/masterplan" ]] && candidates+=("$worktree/docs/masterplan")
 [[ -d "$worktree/docs/superpowers/plans" ]] && candidates+=("$worktree/docs/superpowers/plans")
 if [[ -d "$worktree/.worktrees" ]]; then
   # Only fan out into directories that look like real git worktrees (have a
@@ -78,12 +84,14 @@ if [[ -d "$worktree/.worktrees" ]]; then
   while IFS= read -r wt; do
     [[ -e "$wt/.git" ]] || continue
     plans="$wt/docs/superpowers/plans"
+    runs="$wt/docs/masterplan"
+    [[ -d "$runs" ]] && candidates+=("$runs")
     [[ -d "$plans" ]] && candidates+=("$plans")
   done < <(find "$worktree/.worktrees" -mindepth 1 -maxdepth 1 -type d 2>/dev/null)
 fi
 [[ ${#candidates[@]} -gt 0 ]] || bail
 
-# 3b. Score every candidate status file. Preference order:
+# 3b. Score every candidate state/status file. Preference order:
 #     (a) worktree: field matches `git rev-parse --show-toplevel` exactly OR
 #         current $PWD has the worktree: field as a path prefix
 #         (handles subdirectory invocations).
@@ -96,8 +104,13 @@ best_mtime=0
 pwd_path="${PWD%/}"
 for d in "${candidates[@]}"; do
   while IFS= read -r -d '' f; do
-    fm_worktree=$(awk '/^---$/{c++; next} c==1 && /^worktree:/{sub(/^worktree:[[:space:]]*/,""); print; exit}' "$f" 2>/dev/null)
-    fm_branch=$(awk '/^---$/{c++; next} c==1 && /^branch:/{sub(/^branch:[[:space:]]*/,""); print; exit}' "$f" 2>/dev/null)
+    if [[ "$(basename "$f")" == "state.yml" ]]; then
+      fm_worktree=$(awk '/^worktree:/{sub(/^worktree:[[:space:]]*/,""); print; exit}' "$f" 2>/dev/null)
+      fm_branch=$(awk '/^branch:/{sub(/^branch:[[:space:]]*/,""); print; exit}' "$f" 2>/dev/null)
+    else
+      fm_worktree=$(awk '/^---$/{c++; next} c==1 && /^worktree:/{sub(/^worktree:[[:space:]]*/,""); print; exit}' "$f" 2>/dev/null)
+      fm_branch=$(awk '/^---$/{c++; next} c==1 && /^branch:/{sub(/^branch:[[:space:]]*/,""); print; exit}' "$f" 2>/dev/null)
+    fi
     fm_worktree="${fm_worktree%/}"
     matches=0
     if [[ -n "$fm_worktree" ]]; then
@@ -111,18 +124,26 @@ for d in "${candidates[@]}"; do
       best_mtime=$f_mtime
       status_file="$f"
     fi
-  done < <(find "$d" -maxdepth 1 -name '*-status.md' -print0 2>/dev/null)
+  done < <(find "$d" \( -path '*/state.yml' -o -name '*-status.md' \) -print0 2>/dev/null)
 done
 
 [[ -n "$status_file" ]] || bail
 
-# 3c. Re-anchor plans_dir to the chosen status file's directory (sidecar
+# 3c. Re-anchor plans_dir to the chosen state/status file's directory (sidecar
 #     telemetry/subagent JSONLs land alongside it, NOT under the active
 #     worktree if that's a different worktree).
 plans_dir="$(dirname "$status_file")"
+is_bundle=0
+if [[ "$(basename "$status_file")" == "state.yml" ]]; then
+  is_bundle=1
+fi
 
-# 4. Per-plan opt-out: `telemetry: off` in frontmatter.
-opt_out=$(awk '/^---$/{c++; next} c==1 && /^telemetry:[[:space:]]*off/{print "off"; exit}' "$status_file" 2>/dev/null)
+# 4. Per-plan opt-out: `telemetry: off`.
+if [[ "$is_bundle" -eq 1 ]]; then
+  opt_out=$(awk '/^telemetry:[[:space:]]*off/{print "off"; exit}' "$status_file" 2>/dev/null)
+else
+  opt_out=$(awk '/^---$/{c++; next} c==1 && /^telemetry:[[:space:]]*off/{print "off"; exit}' "$status_file" 2>/dev/null)
+fi
 [[ "$opt_out" == "off" ]] && bail
 
 # 5. Resolve transcript path. Prefer $CLAUDE_SESSION_ID; fall back to most-recent jsonl.
@@ -145,9 +166,17 @@ fi
 
 # 6. Compute signal fields. Tolerate missing transcript (degraded record still useful).
 ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-slug=$(basename "$status_file" -status.md)
+if [[ "$is_bundle" -eq 1 ]]; then
+  slug=$(basename "$plans_dir")
+else
+  slug=$(basename "$status_file" -status.md)
+fi
 status_bytes=$(wc -c <"$status_file" 2>/dev/null | tr -d ' ')
-activity_log_entries=$(awk '/^## Activity log/{in_log=1; next} /^## /{in_log=0} in_log && /^- /{c++} END{print c+0}' "$status_file" 2>/dev/null)
+if [[ "$is_bundle" -eq 1 ]]; then
+  activity_log_entries=$(wc -l <"${plans_dir}/events.jsonl" 2>/dev/null | tr -d ' ')
+else
+  activity_log_entries=$(awk '/^## Activity log/{in_log=1; next} /^## /{in_log=0} in_log && /^- /{c++} END{print c+0}' "$status_file" 2>/dev/null)
+fi
 ensure_telemetry_excluded || bail
 # GNU `date -d` first, then BSD `date -v` fallback. If both fail (e.g., a stripped
 # musl-libc container without either form), use a sentinel that produces zero
@@ -159,6 +188,9 @@ wakeup_count_24h=$(awk -v cutoff="$cutoff" '
   /^## Wakeup ledger/{in_w=1; next} /^## /{in_w=0}
   in_w && /^- / { ts=$2; if (ts > cutoff) c++ }
   END{print c+0}' "$status_file" 2>/dev/null)
+if [[ "$is_bundle" -eq 1 ]]; then
+  wakeup_count_24h=0
+fi
 
 if [[ -n "$transcript" && -f "$transcript" ]]; then
   transcript_bytes=$(wc -c <"$transcript" 2>/dev/null | tr -d ' ')
@@ -169,8 +201,12 @@ else
 fi
 
 # 7. Append JSONL record.
-# Lands at <plans_dir>/<slug>-telemetry.jsonl (sibling to the status file).
-out_file="${plans_dir}/${slug}-telemetry.jsonl"
+# Lands inside the v3 bundle or beside the legacy status file.
+if [[ "$is_bundle" -eq 1 ]]; then
+  out_file="${plans_dir}/telemetry.jsonl"
+else
+  out_file="${plans_dir}/${slug}-telemetry.jsonl"
+fi
 
 # tasks_completed_this_turn (v2.0.0+) — delta of activity_log_entries between
 # this and the previous Stop record. First-turn caveat: when no previous record
@@ -186,15 +222,22 @@ else
 fi
 
 # wave_groups (v2.0.0+) — array of distinct [wave: <group>] tags from the last
-# tasks_completed_this_turn activity-log entries. Empty for serial-only turns.
+# tasks_completed_this_turn activity/event entries. Empty for serial-only turns.
 # Extracted via awk + grep (portable; gawk's match()-with-array is not available
 # under mawk / BSD awk).
 if [[ $tasks_completed_this_turn -gt 0 ]]; then
-  wave_groups_raw=$(awk '/^## Activity log/{in_log=1; next} /^## /{in_log=0} in_log && /^- /{print}' "$status_file" 2>/dev/null \
-    | tail -n "$tasks_completed_this_turn" \
-    | grep -oE '\[wave: [^]]+\]' \
-    | sed -E 's|\[wave: (.*)\]|\1|' \
-    | sort -u)
+  if [[ "$is_bundle" -eq 1 ]]; then
+    wave_groups_raw=$(tail -n "$tasks_completed_this_turn" "${plans_dir}/events.jsonl" 2>/dev/null \
+      | grep -oE '\[wave: [^]]+\]' \
+      | sed -E 's|\[wave: (.*)\]|\1|' \
+      | sort -u)
+  else
+    wave_groups_raw=$(awk '/^## Activity log/{in_log=1; next} /^## /{in_log=0} in_log && /^- /{print}' "$status_file" 2>/dev/null \
+      | tail -n "$tasks_completed_this_turn" \
+      | grep -oE '\[wave: [^]]+\]' \
+      | sed -E 's|\[wave: (.*)\]|\1|' \
+      | sort -u)
+  fi
   if [[ -n "$wave_groups_raw" ]]; then
     wave_groups_json=$(echo "$wave_groups_raw" | jq -R . | jq -sc .)
   else
@@ -254,7 +297,11 @@ jq -nc \
 # - no transcript path resolved
 # - transcript file unreadable
 if [[ -n "$transcript" && -r "$transcript" ]]; then
-  subagents_file="${plans_dir}/${slug}-subagents.jsonl"
+  if [[ "$is_bundle" -eq 1 ]]; then
+    subagents_file="${plans_dir}/subagents.jsonl"
+  else
+    subagents_file="${plans_dir}/${slug}-subagents.jsonl"
+  fi
 
   # Build seen-agent-id set from existing subagents.jsonl (one ID per line).
   # Empty file or missing file -> empty set.

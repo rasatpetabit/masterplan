@@ -1,5 +1,5 @@
 ---
-description: "Brainstorm → plan → execute workflow. Verbs: full, brainstorm, plan, execute, import, doctor, status, retro, stats. Bare-topic shortcut still works."
+description: "Brainstorm → plan → execute workflow. Verbs: full, brainstorm, plan, execute, import, doctor, status, retro, stats, clean. Bare-topic shortcut still works."
 ---
 
 # /masterplan
@@ -12,7 +12,7 @@ Before doing anything, internalize these. They shape every decision below:
 
 1. **Thin orchestrator over superpowers.** Brainstorming, planning, execution, debugging, branch-finishing — all live in skills. This command sequences them.
 2. **Subagent-driven execution with strict context control.** Substantive work happens in subagents whose context never bleeds back. The orchestrator only consumes digested results. See **Subagent and context-control architecture** below for the dispatch model, model selection, briefing rules, and output digestion.
-3. **Status file as the only source of truth.** Future-you (or another agent) must be able to resume any plan with two reads: the plan and its sibling status file. Conversation context is discarded by design.
+3. **Run bundle as the only source of truth.** Future-you (or another agent) must be able to resume any plan from `docs/masterplan/<slug>/state.yml` plus the bundled `plan.md` / `spec.md` artifacts. Conversation context is discarded by design.
 4. **Structured questions, never free-text.** Every interactive gate — kickoff, resume, gate prompts, blocker recovery, finish, doctor findings, import collisions — uses `AskUserQuestion` with 2–4 concrete options. Free-text prompts are a dead-end: sessions can compact between turns and lose upstream-skill bodies, leaving the user staring at "what now?" with no recoverable state. See **CD-9** below for the rule definition. Contributors editing this orchestrator can run `bin/masterplan-self-host-audit.sh --cd9` to grep for free-text regressions before commit.
 
 **Args received:** `$ARGUMENTS`
@@ -64,13 +64,12 @@ If detection concludes codex is **absent**, behavior depends on `config.codex.un
 
    > ⚠ Codex plugin not detected — `codex_routing` and `codex_review` are degraded to `off` for this run. Install via `/plugin marketplace add openai/codex-plugin-cc` then `/plugin install codex@openai-codex`, then `/reload-plugins`, to restore configured Codex routing + cross-model review. Persisted config is unchanged.
 
-2. In-memory only: treat `codex_routing` as `off` and `codex_review` as `off` for the run. The persisted config (in `.masterplan.yaml` or status frontmatter) is **not** modified — re-installing codex restores configured behavior on the next invocation.
-3. **Record the degradation in the status file immediately, on the very next status-file write of the run** (not "whenever the status updates next" — explicitly: at the close of Step B3 for kickoff flows, at Step C step 1's first status-file write for resume flows (auto-compact nudge / gated→loose offer / current_task refresh — whichever fires first), or at Step I3 for import flows; whichever lands first).
-   - **Activity log** entry (one of):
+2. In-memory only: treat `codex_routing` as `off` and `codex_review` as `off` for the run. The persisted defaults (in `.masterplan.yaml`) and run fields (in `state.yml`) are **not** rewritten to `off` — re-installing codex restores configured behavior on the next invocation.
+3. **Record the degradation in `state.yml` immediately, on the very next state write of the run** (not "whenever the status updates next" — explicitly: at the close of Step B3 for kickoff flows, at Step C step 1's first state write for resume flows (auto-compact nudge / gated→loose offer / current_task refresh — whichever fires first), or at Step I3 for import flows; whichever lands first).
+   - **`events.jsonl`** entry (one of):
      - `<ISO-ts> codex degraded — plugin not detected; codex_routing+codex_review forced to off for this run (configured: routing=<configured>, review=<configured>). Re-install codex plugin to restore.` *(detection_mode=`scan` or `ping` reporting plugin-missing)*
      - `<ISO-ts> codex degraded — ping returned error: <error-message-from-codex_ping_result>; codex_routing+codex_review forced to off for this run (configured: routing=<configured>, review=<configured>). Re-install or repair codex plugin to restore.` *(detection_mode=`ping`, dispatch returned an error — distinguishes "plugin missing" from "plugin present but dispatch broken")*
-   - **`## Notes`** appended one-liner: `⚠ Codex degraded this run — install codex plugin to restore configured routing/review.` (Skip if a Notes line with the same `⚠ Codex degraded` prefix already exists this session — don't duplicate across resumes.)
-   - **No status-file write happens this turn?** Force one anyway: write a `## Notes`-only update with the degradation marker so the user's next `cat <status-file>` shows the warning. Rationale: the user's optoe-ng pattern was a session that did codex-eligible work but never wrote degradation evidence.
+   - **No other state write happens this turn?** Force one anyway: append the degradation event, update `last_activity`, and set `last_warning: codex degraded this run — install codex plugin to restore configured routing/review` so the user's next `cat <state.yml>` shows the warning. Rationale: the user's optoe-ng pattern was a session that did codex-eligible work but never wrote degradation evidence.
 
 4. Per-task safety net during Step C: at task-routing time (Step 3a), if the orchestrator finds itself routing inline because of Step 0 degradation rather than per-task ineligibility, the pre-dispatch banner (Fix 5 step 1) MUST suffix `(codex degraded — plugin missing)` so each task carries the degradation context, not just the kickoff write.
 
@@ -87,9 +86,70 @@ Steps A, B0, D consult the cache instead of re-running these. **Invalidate** the
 
 **Never cache `git status --porcelain`.** Working-tree dirty state must always be live; CD-2 depends on accurate dirty detection. A stale value here could let the orchestrator overwrite user-owned uncommitted changes.
 
+### Run bundle state model (v3.0.0+)
+
+The canonical runtime state is a per-plan run bundle:
+
+```text
+docs/masterplan/<slug>/
+  state.yml          # durable source of truth and current phase pointer
+  spec.md            # design/spec artifact, if created
+  plan.md            # task plan artifact, if created
+  retro.md           # retrospective artifact, if generated
+  events.jsonl       # append-only activity log and decision audit trail
+  eligibility-cache.json
+  telemetry.jsonl
+  subagents.jsonl
+```
+
+`state.yml` is the resumption contract. It MUST exist as soon as Step B0 has selected a worktree and derived a slug; do not wait for brainstorming or plan generation. Minimum fields:
+
+```yaml
+schema_version: 2
+slug: <feature-slug>
+status: in-progress | blocked | complete | archived
+phase: worktree_decided | brainstorming | spec_gate | planning | plan_gate | executing | task_gate | blocked | complete | retro_gate | archived
+worktree: /absolute/path/to/worktree
+branch: <git-branch-name>
+started: 2026-05-01
+last_activity: 2026-05-01T14:32:00Z
+current_task: ""
+next_action: brainstorm spec
+autonomy: gated | loose | full
+loop_enabled: true | false
+codex_routing: off | auto | manual
+codex_review: off | on
+compact_loop_recommended: true | false
+complexity: low | medium | high
+pending_gate: null
+artifacts:
+  spec: docs/masterplan/<slug>/spec.md
+  plan: docs/masterplan/<slug>/plan.md
+  retro: docs/masterplan/<slug>/retro.md
+  events: docs/masterplan/<slug>/events.jsonl
+  events_archive: docs/masterplan/<slug>/events-archive.jsonl
+  eligibility_cache: docs/masterplan/<slug>/eligibility-cache.json
+  telemetry: docs/masterplan/<slug>/telemetry.jsonl
+  telemetry_archive: docs/masterplan/<slug>/telemetry-archive.jsonl
+  subagents: docs/masterplan/<slug>/subagents.jsonl
+  subagents_archive: docs/masterplan/<slug>/subagents-archive.jsonl
+  state_queue: docs/masterplan/<slug>/state.queue.jsonl
+legacy: {}
+```
+
+**Persist every gate before asking.** Immediately before any `AskUserQuestion`, write a `pending_gate` object to `state.yml` with `{id, phase, question, options, recommended, continuation}` and append a matching `gate_opened` event. Immediately after applying the selected option, clear `pending_gate: null`, append `gate_closed`, then continue. If a later invocation finds `pending_gate` still set, resume by re-rendering that exact structured question instead of re-deriving a new one from conversation context.
+
+**Legacy migration.** Previous versions wrote state under `docs/superpowers/{plans,specs,retros,archived-*}` with `<slug>-status.md` plus sibling sidecars. Step 0 treats legacy status paths as resolvable inputs. Before listing, doctoring, cleaning, status reporting, or executing a legacy plan, run the same inventory logic as `bin/masterplan-state.sh inventory`. If a legacy record has no matching `docs/masterplan/<slug>/state.yml`, surface an `AskUserQuestion` with options:
+
+1. `Migrate to docs/masterplan/<slug>/state.yml now (Recommended)` — copy legacy plan/spec/retro/sidecars into the bundle, convert the legacy activity log into `events.jsonl`, preserve old paths under `legacy:`, then continue against the new `state.yml`.
+2. `Use the legacy status path for this invocation only` — read legacy state but do not write new architecture fields except when explicitly requested by the user.
+3. `Abort` — close without modifying files.
+
+The migration is copy-only. Never delete legacy artifacts during migration; Step CL owns archive/delete after the new bundle is verified.
+
 ### Compaction-recent notice (per invocation)
 
-A `/masterplan` invocation that follows a `/compact` within the same session can re-derive state from the filesystem only and inadvertently discard workflow position from the compaction summary (observed: petabit-os-mgmt 2026-05-07 00:46→00:54, where the compaction summary said *"interrupted before Step B1"* but the orchestrator routed to fresh start because no status files existed yet). To make this visible:
+A `/masterplan` invocation that follows a `/compact` within the same session can re-derive state from the filesystem only and inadvertently discard workflow position from the compaction summary (observed: petabit-os-mgmt 2026-05-07 00:46→00:54, where the compaction summary said *"interrupted before Step B1"* but the orchestrator routed to fresh start because no durable run state existed yet). To make this visible:
 
 1. **Detect.** If any of these signals are present, set in-memory `compaction_recent = true`:
    - The current turn's first system reminder mentions `"session was compacted"` or `"post-compaction"` (case-insensitive substring match).
@@ -100,13 +160,13 @@ A `/masterplan` invocation that follows a `/compact` within the same session can
 
    ```
    ↻ Compaction detected this session — verifying plan state from filesystem.
-     If you intended to resume specific work: /masterplan --resume=<status-path> (or paste the slug).
+    If you intended to resume specific work: /masterplan --resume=<state-path> (or paste the slug).
      Otherwise this run will route per the args you typed.
    ```
 
    This is plain stdout, NOT an `AskUserQuestion`. The user can ignore it; CC-3-TRAMPOLINE does not apply. The notice exists so the user can self-correct with `--resume=<path>` if the filesystem-derived routing differs from their intent.
 
-3. **Pair with verb-explicit routing (Bug B).** When `compaction_recent == true` AND `requested_verb in {execute, full, plan}` AND no status file matches `topic_hint`: Step A's verb-explicit override (step 7 of Step A) becomes the gate that catches the case where the user expected to resume but the filesystem disagrees. The compaction notice + the AskUserQuestion together cover the transition.
+3. **Pair with verb-explicit routing (Bug B).** When `compaction_recent == true` AND `requested_verb in {execute, full, plan}` AND no `state.yml` or legacy status matches `topic_hint`: Step A's verb-explicit override (step 7 of Step A) becomes the gate that catches the case where the user expected to resume but the filesystem disagrees. The compaction notice + the AskUserQuestion together cover the transition.
 
 This is conservative by design — no JSONL parsing in the hot path, no pre-routing prompts.
 
@@ -145,7 +205,7 @@ This single line is the audit trail for "why did the orchestrator behave this wa
 | `plan <topic>` | Step B0+B1+B2+B3; halt at B3 close-out gate | `post-plan` |
 | `plan --from-spec=<path>` | cd into spec's worktree, run B2+B3 only; halt at B3 close-out gate | `post-plan` |
 | `execute` (no args) | **Step A** — list+pick across worktrees; set `requested_verb=execute` | `none` |
-| `execute <status-path>` | **Step C** — resume that plan | `none` |
+| `execute <state-path>` | **Step C** — resume that plan | `none` |
 | `execute <topic-or-fuzzy-slug>` | **Step A** — list+pick with topic-match preference; set `requested_verb=execute`, `topic_hint=<remaining args>` | `none` |
 | `import` (alone or with args) | **Step I** — legacy import | `none` |
 | `doctor` (alone or with `--fix`) | **Step D** — lint state | `none` |
@@ -164,7 +224,7 @@ This single line is the audit trail for "why did the orchestrator behave this wa
 
 **Argument-parse precedence (in Step 0, after config + git_state cache):**
 0. If invoked with no args (zero tokens after the command name): route directly to **Step M** — resume-first routing (see § Step M).
-1. Match the first token against `{full, brainstorm, plan, execute, retro, import, doctor, status, stats}`. On match: set `halt_mode` per the table; **stash `requested_verb = <matched-verb>` for downstream steps to consult** (Step A's verb-explicit override reads it; Step B/C ignore it); consume the verb; pass remaining args to the matched step. **`execute <topic>` special case:** when `requested_verb == 'execute'` AND remaining args is non-empty AND remaining args does NOT resolve to an existing file path (`test -e <remaining>`), set `topic_hint = <remaining args>` and route to Step A (the table's third `execute` row). This carries the explicit verb intent into Step A so a missing-status-file does not silently route to brainstorm.
+1. Match the first token against `{full, brainstorm, plan, execute, retro, import, doctor, status, stats, clean}`. On match: set `halt_mode` per the table; **stash `requested_verb = <matched-verb>` for downstream steps to consult** (Step A's verb-explicit override reads it; Step B/C ignore it); consume the verb; pass remaining args to the matched step. **`execute <topic>` special case:** when `requested_verb == 'execute'` AND remaining args is non-empty AND remaining args does NOT resolve to an existing file path (`test -e <remaining>`), set `topic_hint = <remaining args>` and route to Step A (the table's third `execute` row). This carries the explicit verb intent into Step A so a missing state file does not silently route to brainstorm.
 2. If unmatched and the first arg starts with `--`: route to **Step A** (flag-only invocation).
 3. If unmatched and the first arg is a non-flag word: catch-all → **Step B** with the full arg string as the topic (existing behavior).
 
@@ -176,8 +236,8 @@ This single line is the audit trail for "why did the orchestrator behave this wa
    Filter to existing files (`test -e <candidate>` per match).
 2. **Resolve.**
    - **Exactly one match** → before entering Step C, `cd` to that match's worktree (the directory containing the matched path's nearest ancestor that is itself a registered worktree per `git_state.worktrees`). Re-resolve the relative path against the new cwd (it now exists). Emit one stdout line: `↻ --resume path resolved into worktree <worktree-path>; cd'd before Step C config load.` Then proceed to Step C step 1's batched re-read with the resolved path. The repo-local `<worktree>/.masterplan.yaml` is now picked up by Step 0's config-loading reload (re-run the repo-local config read post-cd; user-global + CLI flags merged on top, unchanged).
-   - **Zero matches** → surface `AskUserQuestion("--resume path '<path>' not found at cwd or in any .worktrees/*/ subdirectory of <cwd> or <repo-root>. What now?", options=["Abort and let me re-run with a correct path (Recommended)", "Search the entire repo for matching status files (slower; uses find . -path '*/<path>')", "Treat <path> as a topic and route to Step A"])`. The third option preserves the existing `execute <topic>` fallback semantics for paths that look like topics rather than relative paths.
-   - **Multiple matches** → surface `AskUserQuestion("--resume path '<path>' matches multiple candidates. Which one?", options=[<one option per candidate, label = '<worktree-path>/<path>', up to 4>, ...])`. If more than 4 candidates, show the first 3 ordered by `last_activity` from each matching status file's frontmatter (descending) plus a fourth "List all in stdout and abort" option.
+   - **Zero matches** → surface `AskUserQuestion("--resume path '<path>' not found at cwd or in any .worktrees/*/ subdirectory of <cwd> or <repo-root>. What now?", options=["Abort and let me re-run with a correct path (Recommended)", "Search the entire repo for matching state files (slower; uses find . -path '*/<path>')", "Treat <path> as a topic and route to Step A"])`. The third option preserves the existing `execute <topic>` fallback semantics for paths that look like topics rather than relative paths.
+   - **Multiple matches** → surface `AskUserQuestion("--resume path '<path>' matches multiple candidates. Which one?", options=[<one option per candidate, label = '<worktree-path>/<path>', up to 4>, ...])`. If more than 4 candidates, show the first 3 ordered by `last_activity` from each matching `state.yml` or legacy status adapter (descending) plus a fourth "List all in stdout and abort" option.
 
 This rule applies ONLY to relative paths. Absolute paths (`<path>` starts with `/`) bypass the search and use the existing direct-load behavior — if absolute paths don't exist, Step C step 1's parse guard catches them at file-read time.
 
@@ -185,7 +245,7 @@ This rule applies ONLY to relative paths. Absolute paths (`<path>` starts with `
 
 **Flag-interaction rules** (warnings emitted at Step 0, not later):
 - `halt_mode == post-brainstorm` → `--autonomy=`, `--codex=`, `--codex-review=`, `--no-loop` are **ignored**. Emit one-line warning: `flags <list> ignored: brainstorm halts before execution`.
-- `halt_mode == post-plan` → those same flags are **persisted** to the status file (Step B3 records them in frontmatter) but do not fire this run. No warning.
+- `halt_mode == post-plan` → those same flags are **persisted** to `state.yml` (Step B3 records them) but do not fire this run. No warning.
 - `halt_mode == none` → flags fire as today.
 
 **`/loop /masterplan <verb> ...` foot-gun.** When `halt_mode != none` AND `ScheduleWakeup` is available (i.e. invoked via `/loop`), emit one-line warning: `note: <verb> halts before execution; --no-loop recommended for this verb`. Do NOT auto-disable the loop; the user may have a reason.
@@ -195,9 +255,11 @@ This rule applies ONLY to relative paths. Absolute paths (`<path>` starts with `
 | Flag | Used by | Effect |
 |---|---|---|
 | `--autonomy=gated\|loose\|full` | B/C | Override `config.autonomy`. Default from config, fallback `gated` |
-| `--resume=<status-path>` | 0 | Resume a specific plan; skip Step A/B |
+| `--resume=<state-path>` | 0 | Resume a specific plan; skip Step A/B |
 | `--no-loop` | C | Disable cross-session ScheduleWakeup self-pacing |
 | `--no-subagents` | C | Use `superpowers:executing-plans` instead of `superpowers:subagent-driven-development` |
+| `--no-retro` | C | Disable the default completion retro for this run; leaves `status: complete` unless a manual `/masterplan retro` runs later |
+| `--no-cleanup` | C | Disable the default completion cleanup pass for this run; legacy/orphan state remains for a later `/masterplan clean` |
 | `--archive` | I | Override `config.cruft_policy` to `archive` for this import |
 | `--keep-legacy` | I | Override `config.cruft_policy` to `leave` for this import |
 | `--fix` | D | Auto-fix safe issues found by doctor (otherwise lint-only) |
@@ -205,18 +267,19 @@ This rule applies ONLY to relative paths. Absolute paths (`<path>` starts with `
 | `--issue=<num>` | I | Direct import of one issue — skip discovery |
 | `--file=<path>` | I | Direct import of one local file — skip discovery |
 | `--branch=<name>` | I | Direct reverse-engineer from one branch — skip discovery |
-| `--codex=off\|auto\|manual` | C | Override `config.codex.routing` for this run. Persisted to status file |
+| `--codex=off\|auto\|manual` | C | Override `config.codex.routing` for this run. Persisted to `state.yml` |
 | `--no-codex` | C | Shorthand for `--codex=off` (also disables review) |
-| `--codex-review=on\|off` | C | Override `config.codex.review` for this run. When on, Codex reviews diffs from inline-completed tasks before they're marked done. Persisted to status file |
+| `--codex-review=on\|off` | C | Override `config.codex.review` for this run. When on, Codex reviews diffs from inline-completed tasks before they're marked done. Persisted to `state.yml` |
 | `--codex-review` | C | Shorthand for `--codex-review=on` |
-| `--complexity=low\|medium\|high` | 0/B/C | Override `config.complexity` for this run. Persisted to status frontmatter at Step B3 (kickoff) or written to frontmatter at Step C step 1 (resume override, with a `## Notes` audit entry). |
+| `--complexity=low\|medium\|high` | 0/B/C | Override `config.complexity` for this run. Persisted to `state.yml` at Step B3 (kickoff) or updated at Step C step 1 (resume override, with an events audit entry). |
 | `--no-codex-review` | C | Shorthand for `--codex-review=off` |
-| `--parallelism=on\|off` | C | Override `config.parallelism.enabled` for this run. When `off`, wave dispatch in Step C step 2 is suppressed globally — every task runs serially regardless of `**parallel-group:**` annotations. Not persisted to status frontmatter; use `.masterplan.yaml` for durable defaults. |
+| `--parallelism=on\|off` | C | Override `config.parallelism.enabled` for this run. When `off`, wave dispatch in Step C step 2 is suppressed globally — every task runs serially regardless of `**parallel-group:**` annotations. Not persisted to `state.yml`; use `.masterplan.yaml` for durable defaults. |
 | `--no-parallelism` | C | Shorthand for `--parallelism=off`. |
 | `--dry-run` | CL | Print the cleanup plan + per-action `<src> → <dst>` lines without executing. Skip the confirmation gate. Does not affect any other step. |
 | `--delete` | CL | For archival categories (completed plans, orphan sidecars, stale plans), `git rm` instead of archiving to `<config.archive_path>/<date>/`. OS-level categories (dead crons, dead worktrees) always delete regardless of this flag. Default off. |
-| `--category=<name>` | CL | Limit Step CL to one category: `completed` / `orphans` / `stale` / `crons` / `worktrees` (or comma-separated subset). Default = all five. |
+| `--category=<name>` | CL | Limit Step CL to one category: `completed` / `legacy` / `orphans` / `stale` / `crons` / `worktrees` (or comma-separated subset). Default = all six. |
 | `--worktree=<path>` | CL | Limit Step CL's per-worktree scan to one absolute path. Default = all worktrees in `git_state.worktrees`. |
+| `--no-archive` | R | For manual `/masterplan retro`, write `retro.md` but skip Step R3.5's archive-state update |
 
 ---
 
@@ -230,7 +293,7 @@ These rules govern behavior throughout every step below. They mirror the user's 
 - **CD-4 — Persistence (work the ladder).** When a tool fails or a result surprises, walk this ladder before escalating to the user: (1) read the error carefully; (2) try an alternate tool/endpoint for the same goal; (3) narrow scope; (4) grep the codebase or recent git history for prior art; (5) consult docs via the `context7` MCP. Hand off only after at least two rungs failed, citing what was tried.
 - **CD-5 — Self-service default.** Execute actions yourself. Only hand off to the user when the action is truly user-only: pasting secrets, granting external permissions, approving destructive/production-visible operations, providing 2FA/biometric input.
 - **CD-6 — Tooling preference order.** Pick the most specific tool that fits: (1) MCP tool targeting the API directly; (2) installed skill or plugin; (3) project-local convention (repo script, runbook); (4) generic tooling (Bash + curl + custom). Check `/mcp` and the system-reminder skills list before reaching for the generic option.
-- **CD-7 — Durable handoff state.** The status file is the persistence surface. Decisions, blockers, scope changes, and surprises that future-you (or another agent) would need go into `## Notes` of the status file. Don't bury load-bearing context in conversation alone.
+- **CD-7 — Durable handoff state.** `state.yml` and `events.jsonl` are the persistence surface. Decisions, blockers, scope changes, and surprises that future-you (or another agent) would need go into events or explicit state fields. Don't bury load-bearing context in conversation alone.
 - **CD-8 — Command output reporting.** When command output is load-bearing for a decision, relay 1–3 relevant lines or summarize the concrete result. Don't assume the user can see your terminal.
 - **CD-9 — Concrete-options questions.** Use `AskUserQuestion` with 2–4 concrete options, recommended option first marked `(Recommended)`. Avoid trailing "let me know how you want to proceed" prose. Use the `preview` field for visual artifacts.
 - **CD-10 — Severity-first review shape.** When reviewing code (Codex output, subagent output, plan tasks), lead with findings ordered by severity, grounded in `file_path:line_number`. Keep summaries secondary and short.
@@ -243,17 +306,17 @@ This is a core design pillar of `/masterplan`, not an implementation detail. The
 
 ### What the orchestrator holds vs. discards
 
-Dispatch substantive work to fresh subagents; consume only digests; lean on the status file as the persistence bridge.
+Dispatch substantive work to fresh subagents; consume only digests; lean on `state.yml` and `events.jsonl` as the persistence bridge.
 
 **Never hold:** raw verification output (in test logs / git), full file contents (re-read on demand), earlier subagent working notes (scratch), library docs (look up via `context7`, then drop).
 
-**Hold:** status frontmatter + recent activity log; plan task list + current task pointer; this-session user decisions; next action.
+**Hold:** state fields + recent event tail; plan task list + current task pointer; this-session user decisions; next action.
 
 ### Subagent dispatch model (per phase)
 
 | Phase | Subagent type | Model | Bounded inputs | Return shape |
 |---|---|---|---|---|
-| Step A (status frontmatter parse) | parallel Haiku per worktree (or per ~10-file chunk if many) when worktrees ≥ 2 | Haiku | worktree path + status-file glob pattern | `[{path, frontmatter, parse_error?}]` JSON |
+| Step A (state parse) | parallel Haiku per worktree (or per ~10-file chunk if many) when worktrees ≥ 2 | Haiku | worktree path + state/status glob pattern | `[{path, format, frontmatter, parse_error?}]` JSON |
 | Step I1 (discovery) | parallel `Explore` agents, one per source class | Haiku | source-class scope (e.g. "scan local plan files only") | structured candidate list (JSON-shaped) |
 | Step I3 (source fetch) | parallel agents per candidate (Read / git diff / `gh issue view` / `gh pr view`) | Haiku — except branch reverse-engineering, which uses Sonnet | candidate metadata + source identifier | raw source content keyed by candidate id |
 | Step I3 (conversion) | parallel Sonnet agents, one per legacy candidate | Sonnet | source content + inference results + writing-plans format brief + target paths | new spec/plan paths + 1-paragraph summary |
@@ -263,7 +326,7 @@ Dispatch substantive work to fresh subagents; consume only digests; lean on the 
 | Step C 4b (codex review of inline work) | `codex:codex-rescue` subagent in REVIEW mode | Codex (out-of-process) | bounded brief: task + acceptance + spec excerpt + diff range (`<task-start SHA>..HEAD`) + files in scope + verification; Scope=review-only; Constraints=CD-10 | severity-ordered findings (high/medium/low) grounded in file:line, OR `"no findings"` |
 | Completion-state inference | parallel Haiku agents per task chunk | Haiku | task description + workspace, no plan-wide context | classification (done/possibly_done/not_done) + evidence strings |
 | Step D (doctor checks) | parallel Haiku per worktree when N ≥ 2 | Haiku | worktree path + checks list | findings list grounded in `<file>:<issue>` |
-| Step S (situation report) | parallel Haiku per worktree when N ≥ 2 | Haiku | worktree path + collection list (status files, retros, telemetry tails, recent commits) | structured JSON digest per worktree |
+| Step S (situation report) | parallel Haiku per worktree when N ≥ 2 | Haiku | worktree path + collection list (run bundles, retros, telemetry tails, recent commits) | structured JSON digest per worktree |
 
 ### Model selection guide
 
@@ -309,7 +372,7 @@ The signature string `For every inner Task / Agent invocation you make` is the v
 
 | Dispatch site (Step) | DISPATCH-SITE value |
 |---|---|
-| Step A status frontmatter parse | `Step A status frontmatter parse` |
+| Step A state parse | `Step A state parse` |
 | Step B0 related-plan scan | `Step B0 related-plan scan` |
 | Step C step 1 eligibility cache builder | `Step C step 1 eligibility cache` |
 | Step C step 2 wave dispatch (per wave member) | `Step C step 2 wave dispatch (group: <name>)` |
@@ -351,7 +414,7 @@ This bounding is what makes the system survive long runs. A subagent that spawns
 When a subagent returns, **digest before storing**:
 
 - Pull only load-bearing fields: pass/fail status, commit SHA, key file paths, blocker description, classification result.
-- Write the digest into the status file (per CD-7), not the raw output.
+- Write the digest into `events.jsonl` / `state.yml` (per CD-7), not the raw output.
 - Discard verbose output — it lives in git history, test logs, or the source files; the orchestrator doesn't need it inline.
 
 Activity log convention illustrates the digest pattern:
@@ -364,7 +427,7 @@ Enough to reconstruct state. Nothing more.
 
 Even with disciplined subagent use, the orchestrator's own context grows during a session. Specific triggers for action:
 
-- **After every 3 completed tasks** — call `ScheduleWakeup` to resume in a fresh session (already in **Step C step 5**). The status file is the bridge.
+- **After every 3 completed tasks** — call `ScheduleWakeup` to resume in a fresh session (already in **Step C step 5**). `state.yml` is the bridge.
 - **If context feels tight** — finish the current task, ScheduleWakeup, → CLOSE-TURN. Do not push through. A wakeup is cheap; a confused orchestrator is expensive.
 - **If a subagent returns a wall of text** — digest immediately before continuing. Do not carry the wall into the next task.
 - **Before invoking brainstorming, conversion, or systematic-debugging** — check whether you're already deep in a session. If so, bookmark and wakeup; let the fresh session start that phase clean.
@@ -385,7 +448,7 @@ Parallel dispatch — whether multiple subagents in one Agent batch, multiple Ba
 When to NOT parallelize:
 - Per-candidate cruft handling and `git commit` in Step I3 — single-writer discipline avoids index races and keeps activity-log entries clean.
 - Committing implementation work in Step C — concurrent commits on the same branch race the git index. Slice α only parallelizes read-only waves; committing tasks stay serial until the deferred Slice β/γ design is implemented.
-- Shared-state writes (multiple agents modifying the same status file is a race).
+- Shared-state writes (multiple agents modifying `state.yml` or `events.jsonl` is a race).
 - When the orchestrator needs to react between agents (autonomy=gated checkpoints).
 
 ### Per-turn dispatch tracking and summary
@@ -419,10 +482,10 @@ Subagents this turn: 6 dispatched (2 haiku, 3 sonnet, 1 codex)
 
 Zero-dispatch turns emit nothing — quiet resumes don't need summary noise.
 
-**Cross-validation at next-turn entry** — at the start of every Step C entry's batched re-read (Step C step 1), if a `<plan>-subagents.jsonl` exists, read the most-recent N records written by the prior turn's Stop hook and compare model values to what the in-memory tracker reported. On any divergence — for example, the orchestrator's tracker said `sdd:sonnet` for a dispatch_site but the JSONL recorded `model: opus` for the same site — append a `## Notes` warning:
+**Cross-validation at next-turn entry** — at the start of every Step C entry's batched re-read (Step C step 1), if `<run-dir>/subagents.jsonl` exists (or legacy `<plan>-subagents.jsonl` for a pre-v3 one-invocation fallback), read the most-recent N records written by the prior turn's Stop hook and compare model values to what the in-memory tracker reported. On any divergence — for example, the orchestrator's tracker said `sdd:sonnet` for a dispatch_site but the JSONL recorded `model: opus` for the same site — append a `model_attribution_drift` event:
 
 ```
-⚠ Subagent model attribution drift: turn at <ts> dispatched <site> with model:<tracker-value>, but `<plan>-subagents.jsonl` recorded model:<jsonl-value>. Likely cause: the brief preamble's verbatim model-passthrough text (see §Agent dispatch contract recursive-application) was paraphrased or dropped by the upstream skill template. Run `bin/masterplan-self-host-audit.sh --models` to lint dispatch sites for missing model parameters, OR `bin/masterplan-routing-stats.sh --models` to see plan-wide model distribution.
+⚠ Subagent model attribution drift: turn at <ts> dispatched <site> with model:<tracker-value>, but `subagents.jsonl` recorded model:<jsonl-value>. Likely cause: the brief preamble's verbatim model-passthrough text (see §Agent dispatch contract recursive-application) was paraphrased or dropped by the upstream skill template. Run `bin/masterplan-self-host-audit.sh --models` to lint dispatch sites for missing model parameters, OR `bin/masterplan-routing-stats.sh --models` to see plan-wide model distribution.
 ```
 
 If the JSONL doesn't exist (no Stop hook installed, or first turn on this plan), skip the cross-validation silently.
@@ -439,14 +502,14 @@ Before resume-first routing, emit a structured plain-text orientation summarizin
 
 **Procedure:**
 
-1. **Enumerate plan candidates.** From `git_state.worktrees`, issue one parallel Bash batch globbing `<worktree_path>/<config.plans_path>/*-status.md` per worktree. If the merged glob yields >20 status files, narrow to the 20 most recently modified (same short-circuit shape as Step A's >20-worktree mode).
+1. **Enumerate run candidates.** From `git_state.worktrees`, issue one parallel Bash batch globbing `<worktree_path>/<config.runs_path>/*/state.yml` per worktree. Also collect legacy `<worktree_path>/<config.plans_path>/*-status.md` records for migration prompts. If the merged glob yields >20 state/status files, narrow to the 20 most recently modified (same short-circuit shape as Step A's >20-worktree mode).
 
-2. **Read frontmatter inline.** Issue parallel `Read` calls (one per status file). No Haiku dispatch — file count is bounded at 20 and frontmatter is small. Parse YAML frontmatter inline.
+2. **Read state inline.** Issue parallel `Read` calls (one per state/status file). No Haiku dispatch — file count is bounded at 20 and YAML is small. Parse `state.yml` directly; parse legacy status frontmatter through the migration adapter described in Step 0.
 
 3. **Run 7 cheap inline tripwire checks** per parsed entry. All inputs are already in memory (frontmatter + `git_state` cache):
    - **#10 Unparseable** — frontmatter parse failure.
-   - **#9 Schema violation** — any of the 14 required fields missing (`slug`, `status`, `spec`, `plan`, `worktree`, `branch`, `started`, `last_activity`, `current_task`, `next_action`, `autonomy`, `loop_enabled`, `codex_routing`, `codex_review`).
-   - **#2 Orphan status** — `plan` field doesn't pass `test -f`. Issue all `test -f` calls as one parallel Bash batch.
+   - **#9 Schema violation** — any required state fields missing (`slug`, `status`, `phase`, `worktree`, `branch`, `started`, `last_activity`, `current_task`, `next_action`, `autonomy`, `loop_enabled`, `codex_routing`, `codex_review`, `compact_loop_recommended`, `complexity`, `artifacts.plan`, `artifacts.spec`, `artifacts.events`).
+   - **#2 Orphan state** — `artifacts.plan` points at a missing plan when `phase` is `plan_gate | executing | task_gate | blocked | complete | retro_gate | archived`. Issue all `test -f` calls as one parallel Bash batch.
    - **#3 Wrong worktree** — `worktree` frontmatter value not present in `git_state.worktrees` paths.
    - **#4 Wrong branch** — `branch` frontmatter value not present in `git_state.branches`.
    - **#5 Stale in-progress** — `status: in-progress` AND `last_activity` more than 30 days ago.
@@ -476,7 +539,7 @@ Before resume-first routing, emit a structured plain-text orientation summarizin
    No active plans.
    ```
 
-   **Case C — zero parseable plans BUT tripwires exist** (e.g., orphan archive files, unparseable status files):
+   **Case C — zero parseable plans BUT tripwires exist** (e.g., orphan sidecars, unparseable state/status files):
    ```
    No parseable active plans · <K> issue(s) detected — consider /masterplan doctor
    ```
@@ -497,7 +560,7 @@ Before resume-first routing, emit a structured plain-text orientation summarizin
    Do **not** auto-resume `status: blocked` plans. Blocked plans need an explicit choice because the next action may require user context.
 
 8. **Route without the full menu when active work exists.**
-   - If `auto_resume_candidate` exists: emit `Resuming <slug> — current: <current_task>` and route directly to **Step C** with that status path. No picker.
+   - If `auto_resume_candidate` exists: emit `Resuming <slug> — current: <current_task>` and route directly to **Step C** with that `state.yml` path. No picker.
    - Else if `active_plans` is non-empty: route directly to **Step A** using `step_m_plans_cache`. Step A handles list+pick across ambiguous in-flight/blocked plans. No Phase/Operations menu.
    - Else: fire the **empty-state picker** below. This is the only route that shows the broad menu by default.
 
@@ -523,7 +586,7 @@ Before resume-first routing, emit a structured plain-text orientation summarizin
    Surface `AskUserQuestion("Which phase verb?", options=[
      "brainstorm <topic> — discovery + spec only (halts post-brainstorm)",
      "plan <topic> — spec + plan (halts post-plan)",
-     "execute — pick a status file and run Step C",
+    "execute — pick a state file and run Step C",
      "full <topic> — all three phases (B0→B1→B2→B3→C, no halts)"
    ])`.
 
@@ -561,14 +624,14 @@ Before resume-first routing, emit a structured plain-text orientation summarizin
 
 0. **`step_m_plans_cache` short-circuit.** If `step_m_plans_cache` is populated (i.e., this is a resume-first ambiguous case from Step M or a "Resume in-flight" pick from the empty-state menu), skip steps 1–4 and use the cached list directly. Jump to step 5. The cache holds the same `[{path, frontmatter, parse_error?}]` shape that step 4 produces.
 1. Enumerate all worktrees of the current repo from `git_state.worktrees` (cached in Step 0). Parse into `(worktree_path, branch)` tuples. Include the current worktree.
-2. **Worktree-count short-circuit.** If more than 20 worktrees exist, surface a one-line warning and switch to a faster mode: scan only the current worktree plus any worktree with a status file modified in the last 14 days. Issue the per-worktree `find <worktree>/docs/superpowers/plans -name '*-status.md' -mtime -14` calls as **one parallel Bash batch**, not sequentially. Per CD-2, do not auto-prune worktrees — just narrow the scan.
-3. For each worktree (after any short-circuit), glob `<worktree_path>/docs/superpowers/plans/*-status.md`. Issue the per-worktree globs as one parallel Bash batch.
-4. **Frontmatter parsing.**
-   - **When worktrees ≥ 2:** dispatch parallel Haiku agents (pass `model: "haiku"` on each Agent call per §Agent dispatch contract; one per worktree, or one per ~10-file chunk if any single worktree holds many status files). Each agent's bounded brief: Goal=parse YAML frontmatter from these status files, Inputs=`[<status-file-path>...]`, Scope=read-only, Constraints=CD-7 (do not modify status files), Return=`[{path, frontmatter, parse_error?}]` JSON. Orchestrator merges results.
+2. **Worktree-count short-circuit.** If more than 20 worktrees exist, surface a one-line warning and switch to a faster mode: scan only the current worktree plus any worktree with a `state.yml` or legacy status file modified in the last 14 days. Issue the per-worktree `find <worktree> \( -path '*/docs/masterplan/*/state.yml' -o -path '*/docs/superpowers/plans/*-status.md' \) -mtime -14` calls as **one parallel Bash batch**, not sequentially. Per CD-2, do not auto-prune worktrees — just narrow the scan.
+3. For each worktree (after any short-circuit), glob `<worktree_path>/<config.runs_path>/*/state.yml` plus legacy `<worktree_path>/<config.plans_path>/*-status.md`. Issue the per-worktree globs as one parallel Bash batch.
+4. **State parsing.**
+   - **When worktrees ≥ 2:** dispatch parallel Haiku agents (pass `model: "haiku"` on each Agent call per §Agent dispatch contract; one per worktree, or one per ~10-file chunk if any single worktree holds many state/status files). Each agent's bounded brief: Goal=parse YAML state from these files, Inputs=`[<state-or-status-path>...]`, Scope=read-only, Constraints=CD-7 (do not modify state files), Return=`[{path, format: "bundle"|"legacy-status", frontmatter, parse_error?}]` JSON. Orchestrator merges results.
    - **When worktrees == 1:** read inline (Read tool) — agent dispatch latency is not worth it.
-   - Keep entries where `status` is `in-progress` or `blocked`. Annotate each with the worktree path and branch it lives in. **If a status file fails to parse**, skip it and add a one-line note to the discovery report ("status file at `<path>` is malformed — run `/masterplan doctor` to inspect"). Do not abort the listing. Sort the parsed entries by `last_activity` descending.
+   - Keep entries where `status` is `in-progress` or `blocked`. Annotate each with the worktree path and branch it lives in. **If a state/status file fails to parse**, skip it and add a one-line note to the discovery report ("state file at `<path>` is malformed — run `/masterplan doctor` to inspect"). Do not abort the listing. Sort the parsed entries by `last_activity` descending.
 5. Use `AskUserQuestion` with options laid out as: 2 most recent plans + "Start fresh". If more than 2 in-progress plans exist, replace the lower plan slot with a "More…" option that, when picked, re-asks with the next batch — keeps total options at 3, never exceeds the AskUserQuestion 4-option cap.
-6. If user picks a plan → **Step C** with that status path. If the plan's worktree differs from the current working directory, `cd` to that worktree before continuing (run all subsequent commands from the plan's worktree). If "Start fresh" → consult **Verb-explicit override** below; if it does not divert, ask for a one-line topic via `AskUserQuestion` (free-form Other), then **Step B**.
+6. If user picks a plan → **Step C** with that `state.yml` path. If the picked item is a legacy status path, run the Step 0 legacy migration prompt first and continue against the migrated `state.yml` unless the user explicitly chooses one-invocation legacy mode. If the plan's worktree differs from the current working directory, `cd` to that worktree before continuing (run all subsequent commands from the plan's worktree). If "Start fresh" → consult **Verb-explicit override** below; if it does not divert, ask for a one-line topic via `AskUserQuestion` (free-form Other), then **Step B**.
 
 7. **Verb-explicit override** (Bug B fix; never silently brainstorm when user typed `execute`). Before executing the "Start fresh → Step B" branch from step 6, consult `requested_verb` (set by Step 0's argument-parse precedence):
 
@@ -592,14 +655,14 @@ Before resume-first routing, emit a structured plain-text orientation summarizin
 
    - **If `requested_verb in {full, brainstorm, plan}` OR is unset** (existing kickoff paths and bare/empty-args paths via Step M0): use the existing step 6 "Start fresh → Step B" routing unchanged. The override only catches the `execute`-with-no-matching-plan case.
 
-   This honors the user's explicit verb intent — `/masterplan execute <topic>` should never silently mean `/masterplan brainstorm <topic>`. Reproducer: petabit-os-mgmt 2026-05-07 00:53 — `/masterplan execute phase 7 restconf --complexity=high` was silently routed to brainstorm because no status files existed.
+   This honors the user's explicit verb intent — `/masterplan execute <topic>` should never silently mean `/masterplan brainstorm <topic>`. Reproducer: petabit-os-mgmt 2026-05-07 00:53 — `/masterplan execute phase 7 restconf --complexity=high` was silently routed to brainstorm because no matching state/status files existed.
 
 #### Spec-without-plan variant (triggered by `/masterplan plan` with no topic and no `--from-spec=`)
 
 When the verb routing table in Step 0 matches `plan` with no args, Step A runs this variant instead of the standard in-progress picker above:
 
-1. Glob `<config.specs_path>/*-design.md` across all worktrees as one parallel Bash batch (read worktrees from `git_state.worktrees`).
-2. For each candidate spec, check whether a sibling plan exists at `<config.plans_path>/<same-slug>.md` (slug = filename minus `-design.md` suffix). Filter to specs **without** a plan.
+1. Glob `<config.runs_path>/*/spec.md` plus legacy `<config.specs_path>/*-design.md` across all worktrees as one parallel Bash batch (read worktrees from `git_state.worktrees`).
+2. For each candidate spec, check whether the same run directory has `plan.md`; for legacy specs, check whether a matching run bundle exists or a legacy plan exists at `<config.plans_path>/<same-slug>.md`. Filter to specs **without** a plan.
 3. Sort the filtered list by mtime descending.
 4. **If ≥ 1 candidate:** present top 3 via `AskUserQuestion`. The 4th option is "Other — paste a path" (free-text). User picks → treat as `plan --from-spec=<picked>` and proceed to **plan --from-spec worktree handling** (Step B0a, above in Step B), then Step B2 + B3.
 5. **If zero candidates:** surface `AskUserQuestion("No specs without plans found across <N> worktrees. What next?", options=["Start a new feature — /masterplan full <topic>", "Brainstorm-only — /masterplan brainstorm <topic>", "Cancel"])`. The first two redirect into the corresponding verb's flow with a topic prompted next; "Cancel" ends the turn.
@@ -612,7 +675,7 @@ When the verb routing table in Step 0 matches `plan` with no args, Step A runs t
 
 ### Step B0 — Worktree decision (do this BEFORE invoking brainstorming)
 
-The brainstorm/plan/status files will be committed inside whichever worktree you're in when brainstorming runs. Decide first. **Apply CD-2.**
+The run bundle will be committed inside whichever worktree you're in when brainstorming runs. Decide first. **Apply CD-2.**
 
 1. **Survey the current state.** Issue these as **one parallel Bash batch** (not sequential):
    - `git rev-parse --abbrev-ref HEAD` → current branch.
@@ -638,7 +701,9 @@ The brainstorm/plan/status files will be committed inside whichever worktree you
    - Use existing → `cd` into that worktree path, then proceed to Step B1.
    - Create new → **pre-empt the skill's directory prompt.** `superpowers:using-git-worktrees` will otherwise issue a free-text `(1. .worktrees/ / 2. ~/.config/superpowers/worktrees/<project>/) — Which would you prefer?` question if no `.worktrees/`/`worktrees/` dir exists and no CLAUDE.md preference is set. That free-text prompt can stall a session if it compacts before the user answers. Avoid this by asking via `AskUserQuestion` FIRST: detect existing `.worktrees/`/`worktrees/` dirs and any CLAUDE.md `worktree.*director` preference; if neither exists, surface `AskUserQuestion("Where should the worktree live?", options=[Project-local .worktrees/ (Recommended) / Global ~/.config/superpowers/worktrees/<project>/ / Cancel kickoff])`. Then invoke `superpowers:using-git-worktrees` with the topic slug AND a brief that pre-decides the directory: `"Use directory <chosen> — do not ask. Proceed to safety verification + creation."` After it completes, `cd` into the new worktree, then proceed to Step B1.
 
-5. Record the chosen worktree path and branch — they go into the status file in Step B3.
+5. Record the chosen worktree path and branch — they go into `state.yml` before Step B1.
+
+6. **Create the run bundle immediately.** Derive `<slug>` from the topic (stable slug, no date prefix; the date lives in `started`). Create `<config.runs_path>/<slug>/state.yml` and `<config.runs_path>/<slug>/events.jsonl` before invoking brainstorming. If the directory already exists, surface `AskUserQuestion("Run docs/masterplan/<slug>/ already exists. What now?", options=["Resume existing run (Recommended)", "Use <slug>-v2", "Abort kickoff"])`. Initial state: `status: in-progress`, `phase: worktree_decided`, `current_task: ""`, `next_action: brainstorm spec`, `pending_gate: null`, artifact paths under `docs/masterplan/<slug>/`, and `legacy: {}`. Append an event: `{"type":"run_created","phase":"worktree_decided",...}`.
 
 #### Step B0a — `plan --from-spec=<path>` worktree handling
 
@@ -649,8 +714,8 @@ When the verb is `plan --from-spec=<path>` (directly, or via Step A's spec-witho
 3. Verify the worktree appears in `git_state.worktrees` (Step 0 cache). If it doesn't, surface `AskUserQuestion("Worktree at <resolved-path> not in git_state cache. What now?", options=["Refresh git_state and retry (Recommended)", "Abort"])`.
 4. If the spec is outside any git worktree (resolution fails), error with: `Spec at <path> is not inside a git worktree. Move it under a worktree, or run /masterplan brainstorm <topic> to recreate.`
 5. If the resolved worktree's current branch is in `config.trunk_branches`, surface `AskUserQuestion("Spec lives on \`<branch>\` (a trunk branch). superpowers:subagent-driven-development will refuse to start on this branch at execute time. What now?", options=["Create a new worktree for the plan and copy the spec into it (Recommended)", "Continue on \`<branch>\` anyway — I'll handle SDD's refusal manually later", "Abort"])`.
-   - "Create a new worktree" → run the same flow as B0 step 4's "Create new" branch (with the directory pre-decided per the existing AskUserQuestion + `superpowers:using-git-worktrees` pattern), then `git mv` the spec into the new worktree's `<config.specs_path>/`, commit (`masterplan: relocate spec for <slug> to feature worktree`), then proceed to Step B2 in the new worktree.
-   - "Continue" → proceed to Step B2 on the trunk branch; flag this in the status file's `## Notes` so the future `execute` invocation surfaces the SDD refusal up front.
+   - "Create a new worktree" → run the same flow as B0 step 4's "Create new" branch (with the directory pre-decided per the existing AskUserQuestion + `superpowers:using-git-worktrees` pattern), then copy or `git mv` the spec into the new worktree's `<config.runs_path>/<slug>/spec.md`, update `state.yml`, commit (`masterplan: relocate spec for <slug> to feature worktree`), then proceed to Step B2 in the new worktree.
+   - "Continue" → proceed to Step B2 on the trunk branch; append a `note` event to `events.jsonl` so the future `execute` invocation surfaces the SDD refusal up front.
    - "Abort" → → CLOSE-TURN.
 
 Then proceed to **Step B2** (writing-plans). Step B1 is skipped because the spec already exists.
@@ -661,12 +726,13 @@ Invoke `superpowers:brainstorming` with the topic. **Brainstorming is always int
 
 **Re-engagement gate (CRITICAL — fixes a class of bug where the orchestrator stops silently when brainstorming hits its "User reviews written spec" gate, leaving the session unable to continue after compaction).** After brainstorming returns control to /masterplan, the orchestrator MUST verify state and explicitly drive the next step — never end the turn waiting on the user's free-text response from brainstorming's gate:
 
-1. Check whether the expected spec file exists at `docs/superpowers/specs/YYYY-MM-DD-<slug>-design.md`.
-2. **If spec missing:** brainstorming was aborted or failed. Surface `AskUserQuestion("Brainstorming did not complete (no spec at <path>). Re-invoke brainstorming with the same topic / Refine the topic and re-invoke / Abort kickoff")`.
-3. **If spec exists** (the normal case): consult `halt_mode`.
-   - **`halt_mode == none`** (existing kickoff path, unchanged): under `--autonomy != full`, surface `AskUserQuestion("Spec written at <path>. Ready for writing-plans?", options=[Approve and run writing-plans (Recommended) / Open spec to review first then ping me / Request changes — describe what to change / Abort kickoff])`. Under `--autonomy=full`: auto-approve and proceed to Step B2 silently.
-   - **`halt_mode == post-brainstorm`** (new, fires when invoked via `/masterplan brainstorm <topic>`): surface `AskUserQuestion("Spec written at <path>. What next?", options=["Done — close out this run (Recommended)", "Continue to plan now — run B2+B3 as if /masterplan plan --from-spec=<path> (the B0 worktree decision from earlier this session still holds; B0a is not re-run)", "Open spec to review before deciding — then ping me", "Re-run brainstorming to refine"])`.
-     - "Done" → → CLOSE-TURN. No status file written, no plan written.
+1. Before invoking the skill, update `state.yml`: `phase: brainstorming`, `next_action: write spec`, `pending_gate: null`; append `brainstorm_started` to `events.jsonl`.
+2. Check whether the expected spec file exists at `<config.runs_path>/<slug>/spec.md`. If the upstream brainstorming skill writes to a legacy path (`docs/superpowers/specs/YYYY-MM-DD-<slug>-design.md`), copy it into `<config.runs_path>/<slug>/spec.md`, record the old path under `legacy.spec`, and continue against the bundled spec.
+3. **If spec missing:** brainstorming was aborted or failed. Persist `pending_gate` with `id: brainstorm_missing`, `phase: brainstorming`, the exact options below, then surface `AskUserQuestion("Brainstorming did not complete (no spec at <path>). Re-invoke brainstorming with the same topic / Refine the topic and re-invoke / Abort kickoff")`.
+4. **If spec exists** (the normal case): update `state.yml`: `phase: spec_gate`, `artifacts.spec: <config.runs_path>/<slug>/spec.md`, `next_action: approve spec for planning`; append `spec_written` to `events.jsonl`, then consult `halt_mode`.
+   - **`halt_mode == none`** (existing kickoff path, unchanged): under `--autonomy != full`, persist `pending_gate` with `id: spec_approval` and then surface `AskUserQuestion("Spec written at <path>. Ready for writing-plans?", options=[Approve and run writing-plans (Recommended) / Open spec to review first then ping me / Request changes — describe what to change / Abort kickoff])`. Under `--autonomy=full`: auto-approve, clear `pending_gate`, and proceed to Step B2 silently.
+   - **`halt_mode == post-brainstorm`** (new, fires when invoked via `/masterplan brainstorm <topic>`): persist `pending_gate` with `id: brainstorm_closeout` and then surface `AskUserQuestion("Spec written at <path>. What next?", options=["Done — close out this run (Recommended)", "Continue to plan now — run B2+B3 as if /masterplan plan --from-spec=<path> (the B0 worktree decision from earlier this session still holds; B0a is not re-run)", "Open spec to review before deciding — then ping me", "Re-run brainstorming to refine"])`.
+     - "Done" → clear `pending_gate`, set `phase: spec_gate`, append `gate_closed`, → CLOSE-TURN. The run bundle remains resumable from `state.yml` even though no plan exists yet.
      - "Continue to plan now" → flip in-session `halt_mode` to `post-plan` and proceed to Step B2. The spec is reused.
      - "Open spec" → → CLOSE-TURN; user re-invokes whatever they want next.
      - "Re-run brainstorming to refine" → re-invoke `superpowers:brainstorming` against the same topic; the previous spec is overwritten.
@@ -677,7 +743,7 @@ Invoke `superpowers:brainstorming` with the topic. **Brainstorming is always int
 
 **Dispatch guard.** If `halt_mode == post-brainstorm` *at this point*, skip Step B2 and Step B3 entirely — the B1 close-out gate already ended the turn. (B1's "Continue to plan now" option flips `halt_mode` to `post-plan` BEFORE control returns here, so the guard correctly does not fire on the flip case; B2+B3 run with their `post-plan` variants.)
 
-After Step B1's gate confirms approval, invoke `superpowers:writing-plans` against the spec. It will produce `docs/superpowers/plans/YYYY-MM-DD-<slug>.md`. Brief plan-writing with **CD-1 + CD-6**, plus:
+After Step B1's gate confirms approval, update `state.yml` to `phase: planning`, clear `pending_gate`, append `planning_started`, then invoke `superpowers:writing-plans` against `<config.runs_path>/<slug>/spec.md`. It should produce `<config.runs_path>/<slug>/plan.md`. If the upstream writing skill writes to a legacy path (`docs/superpowers/plans/YYYY-MM-DD-<slug>.md`), copy it into `<config.runs_path>/<slug>/plan.md`, record the old path under `legacy.plan`, and continue against the bundled plan. Brief plan-writing with **CD-1 + CD-6**, plus:
 
 > When you judge a task as obviously well-suited for Codex (≤ 3 files, unambiguous, has known verification commands, no design judgment) or obviously unsuited (requires understanding broader system context, design tradeoffs, or files outside the stated scope), add a `**Codex:** ok` or `**Codex:** no` line in the per-task `**Files:**` block. See the Plan annotations subsection in Step C 3a for the exact syntax. The orchestrator's eligibility cache parses these as overrides on the heuristic checklist.
 
@@ -697,11 +763,11 @@ Plans without annotations behave exactly as before (heuristic-only). Annotations
 
 **Re-engagement gate** (same silent-stop bug pattern as Step B1's gate — never end the turn silently waiting on a free-text question). After writing-plans returns:
 
-1. Check whether the expected plan file exists at `docs/superpowers/plans/YYYY-MM-DD-<slug>.md`.
-2. **If plan missing:** writing-plans was aborted or failed. Surface `AskUserQuestion("writing-plans did not complete (no plan at <path>). Re-invoke against the existing spec / Edit the spec and re-invoke / Abort kickoff")`.
-3. **If plan exists** (the normal case): proceed to Step B3 silently. B3's existing AskUserQuestion handles the final plan-approval gate before Step C, so no separate B2 gate is needed in the success case.
+1. Check whether the expected plan file exists at `<config.runs_path>/<slug>/plan.md`.
+2. **If plan missing:** writing-plans was aborted or failed. Persist `pending_gate` with `id: plan_missing`, then surface `AskUserQuestion("writing-plans did not complete (no plan at <path>). Re-invoke against the existing spec / Edit the spec and re-invoke / Abort kickoff")`.
+3. **If plan exists** (the normal case): update `state.yml`: `phase: plan_gate`, `artifacts.plan: <config.runs_path>/<slug>/plan.md`, `current_task` = first task from the plan, `next_action` = first step of that task; append `plan_written`; proceed to Step B3 silently. B3's existing AskUserQuestion handles the final plan-approval gate before Step C, so no separate B2 gate is needed in the success case.
 
-### Step B3 — Status file + approval
+### Step B3 — State update + approval
 
 **Complexity kickoff prompt.** Fires once at kickoff (`/masterplan full <topic>`, `/masterplan plan <topic>`, `/masterplan brainstorm <topic>`) when:
 - `--complexity` is NOT on this turn's CLI args, AND
@@ -715,53 +781,36 @@ AskUserQuestion(
   options=[
     "medium — standard /masterplan flow (Recommended; current behavior)",
     "low — small project, light treatment (skip codex review, simpler activity log, ~3-7 tasks, no eligibility cache)",
-    "high — high-stakes; codex review on every task, decision-source cited, retro required at completion",
+    "high — high-stakes; codex review on every task, decision-source cited, completion retro treated as required evidence",
     "use config default — read from .masterplan.yaml; warn if not set, fall through to medium"
   ]
 )
 ```
 
 On the user's pick:
-- `medium` / `low` / `high` → flip in-session `resolved_complexity` to the chosen value; set `complexity_source = "flag"` (treated as user-explicit at this turn). Persist to status frontmatter's `complexity:` field.
+- `medium` / `low` / `high` → flip in-session `resolved_complexity` to the chosen value; set `complexity_source = "flag"` (treated as user-explicit at this turn). Persist to `state.yml`'s `complexity:` field.
 - `use config default` → no change to `resolved_complexity`; emit one-line warning if it would fall through to built-in default (`medium` — no config set complexity).
 
 If `--complexity` IS on the CLI, OR any config tier sets `complexity:`, this prompt is silenced (no AskUserQuestion fires). The Step B3 close-out gate at the end of B3 still fires as today.
 
-Create the sibling status file at `docs/superpowers/plans/YYYY-MM-DD-<slug>-status.md` using the format in **Status file format** below. **Populate every frontmatter field** (omitting any will fail doctor's schema check and break Step A's listing):
-
-- `slug` — the feature slug derived from the topic
-- `status: in-progress`
-- `spec` — relative path to the design doc from Step B1
-- `plan` — relative path to the plan from Step B2
-- `worktree` — absolute path recorded in Step B0
-- `branch` — current branch in that worktree
-- `started` — today's date (YYYY-MM-DD)
-- `last_activity` — current ISO timestamp
-- `current_task` — first task from the plan
-- `next_action` — first step of `current_task`
-- `autonomy` — value of `--autonomy=` flag or `config.autonomy`
-- `loop_enabled` — `true` unless `--no-loop` is set
-- `codex_routing` — value of `--codex=` flag or `config.codex.routing`
-- `codex_review` — value of `--codex-review=` flag or `config.codex.review`
-- `compact_loop_recommended: false` — flips to `true` after the auto-compact nudge has been shown once for this plan
-- `complexity` — value of `--complexity=` flag, status frontmatter (resume), config tier, or built-in default `medium`. Set once at Step B3; updated on resume only when `--complexity=<new>` is passed (with `## Notes` audit entry).
+Update the existing `state.yml` created in Step B0 using the format in **Run bundle state format** below. **Populate every required field** (omitting any will fail doctor's schema check and break Step A's listing). Step B3 is not allowed to create state from scratch; if `state.yml` is missing here, that is a protocol violation and the run must halt with a recovery question.
 
 **Auto-compact nudge** (fires once per plan; respects `config.auto_compact.enabled`). If `config.auto_compact.enabled && compact_loop_recommended == false && !auto_compact_nudge_suppressed`, output one passive notice immediately before the kickoff approval prompt below:
 > *(Recommended: pair this run with `/loop {config.auto_compact.interval} /compact {config.auto_compact.focus}` in this same session. Note: this fires `/compact` every {config.auto_compact.interval} regardless of current context size, which may run unnecessary compactions on shorter plans. Set `auto_compact.enabled: false` in `.masterplan.yaml` to silence; consider `60m` or `90m` via `auto_compact.interval` for reduced waste.)*
 
-Then flip `compact_loop_recommended: true` in the status file. Whether or not the user pastes the command, the notice is suppressed for subsequent kickoffs/resumes of this plan.
+Then flip `compact_loop_recommended: true` in `state.yml`. Whether or not the user pastes the command, the notice is suppressed for subsequent kickoffs/resumes of this plan.
 
 **Close-out gate.** Consult `halt_mode`:
 
-- **`halt_mode == none`** (existing kickoff path, unchanged): if `--autonomy != full`, present a one-paragraph plan summary and the path to the plan file via `AskUserQuestion` with options "Start execution / Open plan to review / Cancel". Wait for approval. If `--autonomy=full`: skip approval. Proceed to **Step C** with the new status path.
+- **`halt_mode == none`** (existing kickoff path, unchanged): if `--autonomy != full`, persist `pending_gate` with `id: plan_approval`, then present a one-paragraph plan summary and the path to the plan file via `AskUserQuestion` with options "Start execution / Open plan to review / Cancel". Wait for approval. If `--autonomy=full`: clear `pending_gate` and skip approval. Proceed to **Step C** with the new `state.yml` path.
 
-- **`halt_mode == post-plan`** (new, fires when invoked via `/masterplan plan <topic>`, `/masterplan plan --from-spec=<path>`, Step A's spec-without-plan variant's pick, or via B1's "Continue to plan now" flip from a `brainstorm` invocation): surface `AskUserQuestion("Plan written at <path>. Status file at <status-path>. What next?", options=["Done — resume later with /masterplan execute <status-path> (Recommended)", "Start execution now — flip halt_mode to none and proceed to Step C", "Open plan to review before deciding", "Discard plan + status file (status file removed; spec kept)"])`.
-  - "Done" → → CLOSE-TURN. Status file persists with `status: in-progress` and `current_task` set to the first task. The user resumes later via `/masterplan execute <status-path>`.
+- **`halt_mode == post-plan`** (new, fires when invoked via `/masterplan plan <topic>`, `/masterplan plan --from-spec=<path>`, Step A's spec-without-plan variant's pick, or via B1's "Continue to plan now" flip from a `brainstorm` invocation): persist `pending_gate` with `id: plan_closeout`, then surface `AskUserQuestion("Plan written at <path>. State file at <state-path>. What next?", options=["Done — resume later with /masterplan execute <state-path> (Recommended)", "Start execution now — flip halt_mode to none and proceed to Step C", "Open plan to review before deciding", "Discard plan + state file (spec kept)"])`.
+  - "Done" → clear `pending_gate`, → CLOSE-TURN. `state.yml` persists with `status: in-progress`, `phase: plan_gate`, and `current_task` set to the first task. The user resumes later via `/masterplan execute <state-path>`.
   - "Start execution now" → flip in-session `halt_mode` to `none` and proceed to **Step C**.
-  - "Open plan" → → CLOSE-TURN. User re-invokes `/masterplan execute <status-path>` later.
-  - "Discard" → `git rm` the plan file and the status file; commit (`masterplan: discard plan <slug>` subject); → CLOSE-TURN [pre-close: git rm + commit done above]. Spec is kept.
+  - "Open plan" → clear `pending_gate`, → CLOSE-TURN. User re-invokes `/masterplan execute <state-path>` later.
+  - "Discard" → `git rm` the plan file and `state.yml`; commit (`masterplan: discard plan <slug>` subject); → CLOSE-TURN [pre-close: git rm + commit done above]. Spec is kept.
 
-The status file's `autonomy`, `codex_routing`, `codex_review`, `loop_enabled` fields are populated from this run's flags per the post-plan flag-persistence rule in Step 0; they take effect on the eventual `execute` invocation.
+The state file's `autonomy`, `codex_routing`, `codex_review`, `loop_enabled` fields are populated from this run's flags per the post-plan flag-persistence rule in Step 0; they take effect on the eventual `execute` invocation.
 
 ---
 
@@ -770,27 +819,28 @@ The status file's `autonomy`, `codex_routing`, `codex_review`, `loop_enabled` fi
 **Dispatch guard.** If `halt_mode != none`, skip Step C entirely — the B1 or B3 close-out gate already ended the turn. The only paths into Step C are: (a) `halt_mode == none` from kickoff or `execute`/`--resume=`; (b) the user explicitly flipped `halt_mode` to `none` via B3's "Start execution now" gate option. B3's gate is reached directly from `/masterplan plan` (and `plan --from-spec=`, Step A's spec-without-plan variant), or via `brainstorm` → B1's "Continue to plan now" → B2 → B3 (which still requires the user to pick "Start execution now" at B3 to enter Step C).
 
 1. **Batched re-read.** Issue these as one parallel tool batch (not sequential):
-   - Read the status file.
-   - Read the referenced spec file.
-   - Read the referenced plan file.
+   - Read `state.yml` (or a legacy status file only when the user explicitly chose one-invocation legacy mode).
+   - Read the referenced bundled spec file.
+   - Read the referenced bundled plan file.
    - `pwd` (Bash).
    - `git rev-parse --abbrev-ref HEAD` (Bash).
 
-   **In-session mtime gating.** Maintain an orchestrator-memory cache `file_cache: {path → (mtime, content)}`. On a Step C entry within the **same session**, if a file's current mtime matches the cached mtime, reuse the cached content and skip the Read for that file. Cross-session entries (i.e. after a `ScheduleWakeup` resumption) start with an empty cache and always re-read. The status file is **never** mtime-gated — always re-read live, since the orchestrator wrote it last and the user may have edited it between turns. Fail-safe: re-read on any doubt.
+   **In-session mtime gating.** Maintain an orchestrator-memory cache `file_cache: {path → (mtime, content)}`. On a Step C entry within the **same session**, if a file's current mtime matches the cached mtime, reuse the cached content and skip the Read for that file. Cross-session entries (i.e. after a `ScheduleWakeup` resumption) start with an empty cache and always re-read. `state.yml` is **never** mtime-gated — always re-read live, since the orchestrator wrote it last and the user may have edited it between turns. Fail-safe: re-read on any doubt.
 
    Reconcile `current_task` against the plan's task list if the plan has been edited since the status was written.
 
-   - **Parse guard.** If the status file fails to parse as YAML+Markdown, surface this immediately via `AskUserQuestion`: "Status file at `<path>` is corrupted. Open it for manual fix / Run /masterplan doctor / Abort." Do NOT attempt to silently regenerate — the user's edits may have been intentional and partial.
-   - **Complexity resolution on resume.** Re-run the Step 0 complexity-resolution rules using the just-loaded status frontmatter as the new tier-2 input.
-     - If the resumed status file lacks a `complexity:` field (pre-feature plan), treat as `medium` and DO NOT write the field unless the user explicitly passes `--complexity=<level>` on this turn.
-     - If `--complexity=<new>` is on the CLI AND `<new>` differs from the frontmatter value: update frontmatter `complexity:` to `<new>`, append `## Notes` entry: *"Complexity changed from `<old>` to `<new>` at `<ISO ts>` via CLI override."*. The new value is used for this run AND persisted.
-     - On every Step C entry (kickoff first entry OR resume), emit ONE activity-log audit line per the format in Step 0's Complexity resolution subsection. Cite the resolved knob values that diverge from the complexity-derived defaults table (per Operational rules' Complexity precedence).
-   - **Verify the worktree.** Compare the status file's `worktree` field to the current working directory (from the `pwd` above). If they differ, `cd` into the recorded worktree before continuing. If the recorded worktree no longer exists (e.g. removed via `git worktree remove`), surface this as a blocker via `AskUserQuestion`: "Worktree at `<path>` is missing. Recreate it / use the current worktree / abort."
-   - **Verify the branch.** Compare the captured branch to the status file's `branch` field. If they differ, surface `AskUserQuestion`: "HEAD is on `<current-branch>` but the plan was started on `<recorded-branch>`. Switching silently could lose work." with options: **(1) Switch to `<recorded-branch>` first (Recommended)**, **(2) Continue on `<current-branch>` — I accept the divergence risk**, **(3) Abort the resume**. Apply the chosen action before proceeding to Step C step 1.
+   - **Parse guard.** If `state.yml` fails to parse as YAML, surface this immediately via `AskUserQuestion`: "State file at `<path>` is corrupted. Open it for manual fix / Run /masterplan doctor / Abort." Do NOT attempt to silently regenerate — the user's edits may have been intentional and partial.
+   - **Pending-gate resume.** If `pending_gate` is non-null, re-render that exact structured question before doing any new routing. Clear it only after applying the selected option and appending `gate_closed` to `events.jsonl`.
+   - **Complexity resolution on resume.** Re-run the Step 0 complexity-resolution rules using the just-loaded `state.yml` fields as the new tier-2 input.
+     - If the resumed state lacks a `complexity:` field (legacy or hand-authored state), treat as `medium` and DO NOT write the field unless the user explicitly passes `--complexity=<level>` on this turn.
+     - If `--complexity=<new>` is on the CLI AND `<new>` differs from the state value: update `complexity:` in `state.yml`, append a `complexity_changed` event with old/new/source, and use the new value for this run.
+     - On every Step C entry (kickoff first entry OR resume), emit ONE `complexity_resolved` event per the format in Step 0's Complexity resolution subsection. Cite the resolved knob values that diverge from the complexity-derived defaults table (per Operational rules' Complexity precedence).
+   - **Verify the worktree.** Compare `state.yml`'s `worktree` field to the current working directory (from the `pwd` above). If they differ, `cd` into the recorded worktree before continuing. If the recorded worktree no longer exists (e.g. removed via `git worktree remove`), persist `pending_gate`, then surface this as a blocker via `AskUserQuestion`: "Worktree at `<path>` is missing. Recreate it / use the current worktree / abort."
+   - **Verify the branch.** Compare the captured branch to `state.yml`'s `branch` field. If they differ, persist `pending_gate`, then surface `AskUserQuestion`: "HEAD is on `<current-branch>` but the plan was started on `<recorded-branch>`. Switching silently could lose work." with options: **(1) Switch to `<recorded-branch>` first (Recommended)**, **(2) Continue on `<current-branch>` — I accept the divergence risk**, **(3) Abort the resume**. Apply the chosen action before proceeding to Step C step 1.
 
    **Complexity gate (eligibility cache).** When `resolved_complexity == low`, skip the entire eligibility-cache decision tree below — the cache file is NOT built and is NOT loaded. Step 3a's per-task lookup falls back to: `codex_routing` resolves to its complexity-derived default `off` at low (per Operational rules' Complexity precedence), so no delegation decision is needed per task. Doctor check #14 (orphan eligibility cache) does not flag absence on low plans (handled by Task 12's check-set gate).
 
-   **Build eligibility cache.** When `codex_routing` is `auto` or `manual`, the cache lives at `<slug>-eligibility-cache.json` (sibling to status, follows the `<slug>-*` sidecar convention). Decision tree for cache load (evaluated in order; first matching bullet wins):
+   **Build eligibility cache.** When `codex_routing` is `auto` or `manual`, the cache lives at `<config.runs_path>/<slug>/eligibility-cache.json`. Decision tree for cache load (evaluated in order; first matching bullet wins):
 
    - **Wave-pin short-circuit.** If `cache_pinned_for_wave == true` (set by Step C step 2's wave dispatch), skip the rest of this decision tree — the in-memory cache is already loaded and reused for the wave's duration. Emit the **Skip-with-pinned-cache** activity-log variant (see below). The annotation-completeness scan does NOT run under wave pin.
    - **Skip entirely** when `codex_routing == off`.
@@ -798,10 +848,10 @@ The status file's `autonomy`, `codex_routing`, `codex_review`, `loop_enabled` fi
    - **Cache file missing OR (present AND `plan.mtime >= cache.mtime`)** → enter the Build path:
      1. **Annotation-completeness scan** (orchestrator inline). For every `### Task N:` block in the plan, confirm BOTH (a) a `**Files:**` block is present and non-empty, AND (b) a `**Codex:** ok|no` line is present (case-sensitive on the literal tokens `ok` / `no`; any other value disqualifies — including `ok ` with trailing whitespace, `OK`, or `maybe`).
      2. **If the scan returns "complete"** → orchestrator builds cache **inline**: parse `**Codex:**`, `**parallel-group:**`, `**Files:**`, optional `**non-committing:**` annotations per task; apply the parallel-eligibility rules 1-5 below; emit the cache JSON shape including top-level `cache_schema_version: "1.0"` (see schema below); atomic-write per the **Cache write timing** contract below; load into `eligibility_cache`. Every task's `decision_source` field is stamped `"annotation"` by Step 3a (no heuristic was used, by construction). Inline path skips Haiku dispatch entirely.
-     3. **If the scan returns "incomplete"** (any task lacks a well-formed annotation pair) → dispatch one Haiku (pass `model: "haiku"` per §Agent dispatch contract; see brief below); write `<slug>-eligibility-cache.json`; load into orchestrator memory as `eligibility_cache`. Reason: tasks without annotations require heuristic application (judgment), which belongs in a subagent per the context-control architecture.
+     3. **If the scan returns "incomplete"** (any task lacks a well-formed annotation pair) → dispatch one Haiku (pass `model: "haiku"` per §Agent dispatch contract; see brief below); write `eligibility-cache.json`; load into orchestrator memory as `eligibility_cache`. Reason: tasks without annotations require heuristic application (judgment), which belongs in a subagent per the context-control architecture.
    - When Step 4d edits the plan inline, also `touch` the plan file so the mtime invariant holds for the next Step C entry's cache check.
 
-   **Evidence-of-attempt entry (v2.4.0+, MANDATORY).** Step C step 1 MUST append exactly one line to `## Activity log` per Step C entry recording the cache-build outcome — including the trivial `codex_routing == off` skip. This makes the silent-skip failure mode (the optoe-ng project-review pattern, where Step C step 1 ran zero times across an entire plan and no evidence remained) impossible to hide. Doctor check #21 surfaces the absence as a Warning at lint time.
+   **Evidence-of-attempt event (v2.4.0+, MANDATORY).** Step C step 1 MUST append exactly one `eligibility_cache` event to `events.jsonl` per Step C entry recording the cache-build outcome — including the trivial `codex_routing == off` skip. This makes the silent-skip failure mode (the optoe-ng project-review pattern, where Step C step 1 ran zero times across an entire plan and no evidence remained) impossible to hide. Doctor check #21 surfaces the absence as a Warning at lint time.
 
    Format (one of these seven variants per Step C entry):
 
@@ -812,11 +862,11 @@ The status file's `autonomy`, `codex_routing`, `codex_review`, `loop_enabled` fi
    - <ISO-ts> eligibility cache: rebuilt inline (<N> tasks; <K> codex-eligible) — all tasks annotated; plan.mtime > cache.mtime
    - <ISO-ts> eligibility cache: loaded from disk (<N> tasks; <K> codex-eligible) — cache.mtime > plan.mtime
    - <ISO-ts> eligibility cache: skipped (codex_routing=off)
-   - <ISO-ts> eligibility cache: skipped (codex degraded — plugin not detected this run; see ## Notes)
+   - <ISO-ts> eligibility cache: skipped (codex degraded — plugin not detected this run; see codex_degraded event)
    - <ISO-ts> eligibility cache: rebuilt — schema version mismatch (<found>; expected 1.0)
    ```
 
-   The entry is appended ONCE per Step C entry, before any task-routing decisions. Subsequent re-entries (e.g., resume after compaction) emit a new entry per re-entry — that's intentional, the activity log becomes the canonical record of "did Step 1 run, when, and what did it conclude?" Cost is one line per Step C entry (~60-100 chars); negligible against the 100-entry rotation threshold.
+   The event is appended ONCE per Step C entry, before any task-routing decisions. Subsequent re-entries (e.g., resume after compaction) emit a new event per re-entry — that's intentional, `events.jsonl` becomes the canonical record of "did Step 1 run, when, and what did it conclude?" Cost is one small JSON object per Step C entry; negligible against the rotation threshold.
 
    **Inline-build verifier (CD-3 evidence anchor).** The annotation-completeness scan in the Build path step 1 IS the verifier that licenses the inline shortcut — analogous to Step 4a's implementer-return trust contract (see line ~996), where structured fields gate skipping redundant verification. The scan must pass for ALL tasks before the inline path activates: any malformed annotation, missing `**Files:**` block, or unknown `**Codex:**` value (e.g., `**Codex:** maybe`, `OK`, `ok ` with trailing whitespace) disqualifies the inline path and silently falls back to Haiku dispatch. Silent fallback is correct here — the Haiku is the standard path, not an error path; the orchestrator never trusts data it can't structurally validate. At `complexity == high`, writing-plans guarantees every task carries a well-formed `**Codex:**` annotation pair (see line ~540), so the inline path activates by construction; at `medium`, it activates opportunistically when annotations happen to be complete; at `low`, the entire decision tree is skipped per the **Complexity gate** above. Doctor #21's regex (`eligibility cache:`) matches both inline and Haiku-built variants — no doctor-side change is required.
 
@@ -830,7 +880,7 @@ The status file's `autonomy`, `codex_routing`, `codex_review`, `loop_enabled` fi
    ```json
    {
      "cache_schema_version": "1.0",
-     "plan_path": "docs/superpowers/plans/<slug>.md",
+     "plan_path": "docs/masterplan/<slug>/plan.md",
      "plan_mtime_at_compute": "2026-05-01T14:32:00Z",
      "generated_at": "2026-05-01T14:32:01Z",
      "tasks": [
@@ -859,7 +909,7 @@ The status file's `autonomy`, `codex_routing`, `codex_review`, `loop_enabled` fi
      - `"degraded-no-codex"` — Step 0 detected codex unavailable; `dispatched_to` will always be `"inline"` in this case
    Cache files lacking these fields (pre-v2.4.0 caches) are valid; treat as `null` and stamp on next routing.
 
-   **Cache write timing**: Step 3a stamps the three runtime-audit fields *before* dispatching the task (so a mid-task crash leaves an honest record of intent, not pretending the task never started). Persist via in-place atomic JSON write (write to `<slug>-eligibility-cache.json.tmp`, fsync, rename) so a partial write can't corrupt the cache.
+   **Cache write timing**: Step 3a stamps the three runtime-audit fields *before* dispatching the task (so a mid-task crash leaves an honest record of intent, not pretending the task never started). Persist via in-place atomic JSON write (write to `<run-dir>/eligibility-cache.json.tmp`, fsync, rename) so a partial write can't corrupt the cache.
 
    **Bounded brief for the Haiku** (when dispatched): Goal=apply the Step C 3a Codex eligibility checklist AND the parallel-eligibility rules below to each task; emit a JSON object with top-level `cache_schema_version: "1.0"` and a `tasks` array of `{idx, name, eligible, reason, annotated, parallel_group, files, parallel_eligible, parallel_eligibility_reason, dispatched_to: null, dispatched_at: null, decision_source: null}` records. Inputs=full plan task list + plan annotations (`**Codex:**`, `**parallel-group:**`, `**Files:**` blocks, optional `**non-committing:**` override). Scope=read-only. Return=JSON only — no narration. Runtime-audit fields are always `null` at cache build time; Step 3a fills them.
 
@@ -874,38 +924,38 @@ The status file's `autonomy`, `codex_routing`, `codex_review`, `loop_enabled` fi
 
    **Cache pin during parallel waves (M-2 mitigation, Slice α v2.0.0+).** Maintain an in-memory `cache_pinned_for_wave: bool` flag (default `false`). Set to `true` at the START of a parallel wave dispatch (Step C step 2 wave-mode entry). When `cache_pinned_for_wave == true`, the `cache.mtime > plan.mtime` invariant is suppressed — the loaded cache is reused for the wave's duration regardless of plan.md edits. Wave-end clears the pin (sets to `false`) and re-evaluates the invariant; cache rebuild fires if the user (not an implementer) edited plan.md mid-wave. Wave members are forbidden from editing plan.md per the in-wave scope rule in **Operational rules**.
 
-   **Resume sanity check (v2.4.0+, P3 from Fix 1-5 follow-up).** After cache load completes (whether built fresh, loaded from disk, or skipped per `codex_routing == off`), AND when this Step C entry is a *resume* (not first entry — detected by ≥1 prior task-completion entry in `## Activity log`), perform a **silent-skip footprint scan**:
+   **Resume sanity check (v2.4.0+, P3 from Fix 1-5 follow-up).** After cache load completes (whether built fresh, loaded from disk, or skipped per `codex_routing == off`), AND when this Step C entry is a *resume* (not first entry — detected by ≥1 prior task-completion event in `events.jsonl` or the legacy status adapter), perform a **silent-skip footprint scan**:
 
-   1. Parse `## Activity log` for any task-completion entry that:
+   1. Parse task-completion events for any entry that:
       - Refers to a task whose plan annotation is `**Codex:** ok` (cross-reference: load plan, find the `**Codex:**` line in that task's `**Files:**` block).
       - AND lacks both `[codex]` and `[inline]` post-completion tags (the optoe-ng pattern — no routing tag at all).
       - OR carries `[inline]` BUT no preceding `routing→INLINE` pre-dispatch entry with `decision_source: degraded-no-codex` (the "ran inline silently with no degradation explanation" case).
    2. Count matching entries as `silent_skip_count`.
    3. If `silent_skip_count == 0`, no warning. Continue Step C.
-   4. If `silent_skip_count > 0` AND no prior `## Notes` entry already records the finding (suppress duplicate warnings across resumes — match prefix `⚠ Silent codex-skip footprint:`):
-      - Append one-line `## Notes` entry: `⚠ Silent codex-skip footprint: <N> previously-completed task(s) annotated **Codex:** ok ran inline without a recorded codex-degradation reason. Likely cause: an earlier session's Step 0 codex-availability detection silently bypassed routing. Tasks: <comma-separated task indices>.`
+   4. If `silent_skip_count > 0` AND no prior `silent_codex_skip_warning` event already records the finding (suppress duplicate warnings across resumes):
+      - Append one `silent_codex_skip_warning` event: `<N> previously-completed task(s) annotated **Codex:** ok ran inline without a recorded codex-degradation reason. Likely cause: an earlier session's Step 0 codex-availability detection silently bypassed routing. Tasks: <comma-separated task indices>.`
       - Surface via `AskUserQuestion`:
         - Question: `"Detected <N> previously-completed task(s) annotated **Codex:** ok that ran inline without a recorded codex-degradation reason. This usually means a prior session silently bypassed codex routing. How to proceed?"`
         - Options:
-          1. `Continue, accept the gap` (Recommended for completed plans) — keeps the `## Notes` warning, proceeds with Step C.
+          1. `Continue, accept the gap` (Recommended for completed plans) — keeps the warning event, proceeds with Step C.
           2. `Run /masterplan doctor now` — exit Step C, route to Step D for repo-wide lint.
-          3. `Investigate transcript` — print the suspected session-id from the corresponding telemetry record (parse `<slug>-telemetry.jsonl` for the entry whose `tasks_completed_this_turn` delta covers the silent-skip task, emit `session_id` if present), then continue Step C.
-          4. `Suppress (this plan)` — append `silent_skip_warning_dismissed: true` to status frontmatter; future resumes skip this warning. For users who've decided the gap is acceptable.
+          3. `Investigate transcript` — print the suspected session-id from the corresponding telemetry record (parse `<run-dir>/telemetry.jsonl` or the legacy telemetry path for the entry whose `tasks_completed_this_turn` delta covers the silent-skip task, emit `session_id` if present), then continue Step C.
+          4. `Suppress (this plan)` — set `silent_skip_warning_dismissed: true` in `state.yml`; future resumes skip this warning. For users who've decided the gap is acceptable.
 
    **Why P3 exists**: even with P1's mandatory cache-build evidence entry (above) AND P2's Step 3a precondition (below), pre-v2.4.0 plans have no such evidence and would slip through forever without an explicit forensic pass. P3 catches them on the next resume — one-shot recovery, then suppress.
 
    **Why persist:** the cache is a pure function of plan-file content. Recomputing on every wakeup (~10 wakeups for a 30-task plan under `loose`) burns Haiku calls for no signal change. Disk persistence with mtime invalidation costs one stat per Step C entry.
 
-   **Auto-compact nudge (resume).** If `config.auto_compact.enabled && compact_loop_recommended == false && !auto_compact_nudge_suppressed`, output the same one-line passive notice as Step B3, then flip `compact_loop_recommended: true` in the status file. Once-per-plan suppression catches kickoffs that didn't fire (e.g., imported plans).
+   **Auto-compact nudge (resume).** If `config.auto_compact.enabled && compact_loop_recommended == false && !auto_compact_nudge_suppressed`, output the same one-line passive notice as Step B3, then flip `compact_loop_recommended: true` in `state.yml`. Once-per-plan suppression catches kickoffs that didn't fire (e.g., imported plans).
 
-   **CC-1 dismissal scan.** Scan `## Notes` for `compact_suggest: off`. If present, set `cc1_silenced: true` in orchestrator memory for this run. CC-1 (operational rules) honors this flag.
+   **CC-1 dismissal scan.** Scan state/events for `compact_suggest: off`. If present, set `cc1_silenced: true` in orchestrator memory for this run. CC-1 (operational rules) honors this flag.
 
-   **Telemetry inline snapshot.** If `resolved_complexity == low`, skip telemetry entirely (no JSONL append regardless of `config.telemetry.enabled` or frontmatter `telemetry:` setting; doctor #13 (orphan telemetry) does not flag absence on low plans, handled by Task 12's check-set gate). Otherwise: if `config.telemetry.enabled` and the status file's frontmatter does NOT include `telemetry: off`, first ensure local Git excludes protect all telemetry sidecars before writing: add a managed block to `.git/info/exclude` (not `.gitignore`, to avoid mutating user-owned tracked files) containing `**/*-telemetry.jsonl`, `**/*-telemetry-archive.jsonl`, `**/*-subagents.jsonl`, `**/*-subagents-archive.jsonl`, and `**/*-subagents-cursor`; then verify every would-be sidecar path for this plan is untracked and ignored with `git ls-files --error-unmatch` + `git check-ignore --no-index`. If any sidecar is tracked or cannot be ignored, skip telemetry for this turn and append a `## Notes` entry explaining that telemetry was suppressed to avoid committing local runtime data. Otherwise append one JSONL record (kind=`step_c_entry`) to `<plan-without-suffix>-telemetry.jsonl` (sibling to status file). Fields per the format defined in `docs/design/telemetry-signals.md`. Per-subagent dispatch details — model, tokens, duration, dispatch_site — are captured separately by the Stop hook into `<plan>-subagents.jsonl` (per §Agent dispatch contract telemetry-capture clause); the inline `step_c_entry` record is the lightweight per-turn datapoint for installs without the Stop hook. Cheap (one append).
+   **Telemetry inline snapshot.** If `resolved_complexity == low`, skip telemetry entirely (no JSONL append regardless of `config.telemetry.enabled` or `telemetry: off`; doctor #13 does not flag absence on low plans). Otherwise: if `config.telemetry.enabled` and `state.yml` does NOT include `telemetry: off`, first ensure local Git excludes protect all telemetry sidecars before writing, including `**/docs/masterplan/*/telemetry.jsonl` and `**/docs/masterplan/*/subagents.jsonl`; then verify the would-be sidecar path is untracked and ignored. If any sidecar is tracked or cannot be ignored, skip telemetry for this turn and append a `telemetry_suppressed` event explaining why. Otherwise append one JSONL record (kind=`step_c_entry`) to `<config.runs_path>/<slug>/telemetry.jsonl`. Per-subagent dispatch details are captured separately by the Stop hook into `<config.runs_path>/<slug>/subagents.jsonl`. Cheap (one append).
 
    **Gated→loose switch offer (v2.1.0+).** When `autonomy == gated` AND `config.gated_switch_offer_at_tasks > 0`, check whether to offer the user a one-time switch to `--autonomy=loose` for the remainder of this plan. Skip conditions (any one suppresses the offer):
 
-   - Status frontmatter has `gated_switch_offer_dismissed: true` (per-plan permanent dismissal — set when user picks "Stay on gated AND don't ask again on this plan").
-   - Status frontmatter has `gated_switch_offer_shown: true` (per-session suppression — set when user picks "Stay on gated").
+   - `state.yml` has `gated_switch_offer_dismissed: true` (per-plan permanent dismissal — set when user picks "Stay on gated AND don't ask again on this plan").
+   - `state.yml` has `gated_switch_offer_shown: true` (per-session suppression — set when user picks "Stay on gated").
    - Plan's task count < `config.gated_switch_offer_at_tasks` (default 15).
 
    Otherwise, surface:
@@ -923,28 +973,28 @@ The status file's `autonomy`, `codex_routing`, `codex_review`, `loop_enabled` fi
    ```
 
    On each option:
-   - **"Switch to --autonomy=loose"** → flip in-session `autonomy` to `loose`; persist to status frontmatter's `autonomy:` field; append `## Notes` entry: *"Switched from gated to loose at <ISO ts> (plan has <N> tasks; user accepted gated→loose offer)."* Continue Step C step 1.
-   - **"Stay on gated"** → set `gated_switch_offer_shown: true` in status frontmatter (suppresses the offer for this session; re-fires on cross-session resume by design — gives the user another chance after a break). Continue.
-   - **"Switch to loose AND don't ask again on any plan"** → flip autonomy to loose AND append `## Notes` entry: *"User opted out of gated→loose offer on all plans. Add `gated_switch_offer_at_tasks: 0` to your `~/.masterplan.yaml` to suppress permanently."* The orchestrator does NOT modify the user's config file (CD-2 — config files are user-owned). Continue.
-   - **"Stay on gated AND don't ask again on this plan"** → set `gated_switch_offer_dismissed: true` in status frontmatter (permanent for this plan). Continue.
+   - **"Switch to --autonomy=loose"** → flip in-session `autonomy` to `loose`; persist to `state.yml`'s `autonomy:` field; append a `gated_loose_offer` event. Continue Step C step 1.
+   - **"Stay on gated"** → set `gated_switch_offer_shown: true` in `state.yml` (suppresses the offer for this session; re-fires on cross-session resume by design — gives the user another chance after a break). Continue.
+   - **"Switch to loose AND don't ask again on any plan"** → flip autonomy to loose AND append an event: *"User opted out of gated->loose offer on all plans. Add `gated_switch_offer_at_tasks: 0` to your `~/.masterplan.yaml` to suppress permanently."* The orchestrator does NOT modify the user's config file (CD-2 — config files are user-owned). Continue.
+   - **"Stay on gated AND don't ask again on this plan"** → set `gated_switch_offer_dismissed: true` in `state.yml` (permanent for this plan). Continue.
 
-   Activity log records which option was picked: `gated→loose offer: <picked option>`.
+   `events.jsonl` records which option was picked: `gated->loose offer: <picked option>`.
 
-   **Competing-scheduler check.** Defends against the duplicate-pacer footgun where this plan has both a `/loop`-driven `ScheduleWakeup` AND a separate cron entry that targets `/masterplan` on the same status file (typically a stale `/schedule` one-shot, or a cron from a prior session). Two pacers race on the status file, double-write activity-log entries, and may trigger overlapping subagent dispatch. Note: this check fires AFTER the current resume already started — it cannot prevent the very-next concurrent firing, only future ones.
+   **Competing-scheduler check.** Defends against the duplicate-pacer footgun where this plan has both a `/loop`-driven `ScheduleWakeup` AND a separate cron entry that targets `/masterplan` on the same `state.yml` (typically a stale `/schedule` one-shot, or a cron from a prior session). Two pacers race on the state file, double-write event entries, and may trigger overlapping subagent dispatch. Note: this check fires AFTER the current resume already started — it cannot prevent the very-next concurrent firing, only future ones.
 
    Skip conditions (any one suppresses the check):
    - `ScheduleWakeup` is not available this session (not invoked under `/loop`, so there is no second pacer to compete with).
-   - Status frontmatter has `competing_scheduler_acknowledged: true` (per-plan permanent dismissal — set when user picks "Keep both" below). Note: this field is OPTIONAL; it is intentionally NOT in doctor check #9's required-fields list.
+   - `state.yml` has `competing_scheduler_acknowledged: true` (per-plan permanent dismissal — set when user picks "Keep both" below). Note: this field is OPTIONAL; it is intentionally NOT in doctor check #9's required-fields list.
 
    Otherwise: ensure the deferred-tool schemas are loaded — if `CronList` / `CronDelete` are not callable in this session, call `ToolSearch(query="select:CronList,CronDelete")` first. If `ToolSearch` itself fails or the schemas don't load, skip the check silently (graceful degrade).
 
-   Then call `CronList` once. **Match heuristic:** a cron is competing iff its prompt **starts with `/masterplan`** AND its prompt **contains the status file's basename** (e.g. `<slug>-status.md`). The basename is unique per plan and avoids brittle relative-vs-absolute path comparisons. If zero matches, no question is surfaced (silent skip).
+   Then call `CronList` once. **Match heuristic:** a cron is competing iff its prompt **starts with `/masterplan`** AND its prompt contains either the `state.yml` path, the legacy status basename, or the run slug. If zero matches, no question is surfaced (silent skip).
 
    On match, surface ONE `AskUserQuestion`:
 
    ```
    AskUserQuestion(
-     question="A cron entry (id <cron-id>, schedule <human-readable>, prompt <prompt>) is already scheduled to invoke /masterplan on this plan. Combined with /loop's ScheduleWakeup self-pacing, this resumes the plan twice on each firing — racing on the status file. How to proceed?",
+     question="A cron entry (id <cron-id>, schedule <human-readable>, prompt <prompt>) is already scheduled to invoke /masterplan on this plan. Combined with /loop's ScheduleWakeup self-pacing, this resumes the plan twice on each firing — racing on the state file. How to proceed?",
      options=[
        "Delete the cron, keep /loop wakeups (Recommended)",
        "Keep the cron, suspend wakeups this session",
@@ -955,16 +1005,16 @@ The status file's `autonomy`, `codex_routing`, `codex_review`, `loop_enabled` fi
    ```
 
    On each option:
-   - **"Delete the cron, keep /loop wakeups"** → call `CronDelete(<cron-id>)`; append `## Notes` entry: *"Removed competing cron `<id>` (was: `<prompt>`) at <ISO ts> — /loop ScheduleWakeup is sole pacer."* Continue Step C step 1.
+   - **"Delete the cron, keep /loop wakeups"** → call `CronDelete(<cron-id>)`; append a `competing_scheduler_removed` event with the cron id/prompt and timestamp. Continue Step C step 1.
    - **"Keep the cron, suspend wakeups this session"** → set in-memory `competing_scheduler_keep: true`. Step C step 5 reads this flag and skips its `ScheduleWakeup` call for the rest of the session. Cross-session resume re-fires this check, giving the user another chance to reconsider. Continue Step C step 1.
-   - **"Keep both — I know what I'm doing"** → append `## Notes` entry: *"⚠ Two pacers running for this plan: cron `<id>` + /loop ScheduleWakeup. Risk: status-file contention, double activity-log entries. User acknowledged at <ISO ts>."* AND set `competing_scheduler_acknowledged: true` in status frontmatter (suppresses this check on future resumes). Continue normally; both pacers run.
+   - **"Keep both — I know what I'm doing"** → append a `competing_scheduler_acknowledged` event noting the cron id/prompt and risk, AND set `competing_scheduler_acknowledged: true` in `state.yml` (suppresses this check on future resumes). Continue normally; both pacers run.
    - **"Abort"** → end turn without further action; user resolves manually.
 
    If multiple competing crons match (unusual), batch them into a single question — list each `<cron-id>: <prompt>` line in the question body, and apply the chosen option to ALL of them (e.g., delete all on option 1).
 
 **Wave assembly pre-pass (Slice α v2.0.0+).** Before invoking the per-task implementer, scan the upcoming task list against the eligibility cache for parallel-eligible tasks (`parallel_eligible == true`).
 
-1. Read upcoming task pointer from status file (`current_task` + plan task list).
+1. Read upcoming task pointer from `state.yml` (`current_task` + plan task list).
 2. Walk forward in plan-order from `current_task`. Collect contiguous tasks with the SAME `parallel_group` value into a wave candidate. Stop at the first task that has a different `parallel_group`, has no `parallel_group`, or has `parallel_eligible == false`.
 3. Wave size: ≥ 2 tasks, capped at `config.parallelism.max_wave_size` (default `5`). Tasks beyond cap roll into the next wave.
 4. Edge case: wave candidate of size 1 → execute serially (fall through to standard per-task dispatch).
@@ -973,23 +1023,23 @@ The status file's `autonomy`, `codex_routing`, `codex_review`, `loop_enabled` fi
 
 **When a wave assembles** (≥ 2 tasks): set `cache_pinned_for_wave: true`. Dispatch all N implementer subagents as parallel `Agent` tool calls in a single assistant turn (existing pattern in Step I3.2/I3.4). **Pass `model: "sonnet"` on each Agent call** per §Agent dispatch contract — wave members are general-purpose implementers, not Opus-grade reasoning. Each instance gets the standard implementer brief PLUS three wave-specific clauses:
 
-> *"WAVE CONTEXT: You are dispatched as part of a parallel wave of N tasks (group: `<name>`). Your declared scope is `**Files:**` (exhaustive — do not read or modify anything outside this list, including plan.md, status file, sibling tasks' scopes, or the eligibility cache). Capture `git rev-parse HEAD` BEFORE any work; return as `task_start_sha` (required per existing implementer-return contract). DO NOT commit your work — return staged-changes digest only. DO NOT update the status file — orchestrator handles batched wave-end updates. Failure handling: if you BLOCK or NEEDS_CONTEXT, return immediately; orchestrator's blocker re-engagement gate handles you alongside the rest of the wave."*
+> *"WAVE CONTEXT: You are dispatched as part of a parallel wave of N tasks (group: `<name>`). Your declared scope is `**Files:**` (exhaustive — do not read or modify anything outside this list, including plan.md, state.yml, events.jsonl, sibling tasks' scopes, or the eligibility cache). Capture `git rev-parse HEAD` BEFORE any work; return as `task_start_sha` (required per existing implementer-return contract). DO NOT commit your work — return staged-changes digest only. DO NOT update run state — orchestrator handles batched wave-end updates. Failure handling: if you BLOCK or NEEDS_CONTEXT, return immediately; orchestrator's blocker re-engagement gate handles you alongside the rest of the wave."*
 
-> *"Return shape: `{task_idx, status: completed|blocked, task_start_sha, files_changed: [paths], staged_changes_digest: 1-3 lines, tests_passed: bool, commands_run: [str], commands_run_excerpts: {cmd → [str]}, blocker_reason?: str}`. NO commits. NO status file writes. `commands_run_excerpts` is REQUIRED (v2.8.0+, G.1 mitigation): 1–3 trailing output lines per executed command, used by Step 4a's excerpt-validator before honoring the trust-skip. (The orchestrator's post-barrier reconciliation may reclassify `completed` to `protocol_violation` if it detects a commit, an out-of-scope write, or a status file modification.)"*
+> *"Return shape: `{task_idx, status: completed|blocked, task_start_sha, files_changed: [paths], staged_changes_digest: 1-3 lines, tests_passed: bool, commands_run: [str], commands_run_excerpts: {cmd → [str]}, blocker_reason?: str}`. NO commits. NO run-state writes. `commands_run_excerpts` is REQUIRED (v2.8.0+, G.1 mitigation): 1–3 trailing output lines per executed command, used by Step 4a's excerpt-validator before honoring the trust-skip. (The orchestrator's post-barrier reconciliation may reclassify `completed` to `protocol_violation` if it detects a commit, an out-of-scope write, or a state modification.)"*
 
 **Wave-completion barrier.** Orchestrator waits for all N Agent calls to return before proceeding. Returns aggregate as a digest list. Wave-end clears `cache_pinned_for_wave` (sets to `false`).
 
-**Post-hoc slow-member detection (E.1 mitigation, v2.8.0+).** The LLM orchestrator has no async/cancel primitive — it cannot actively kill a hung wave member while the harness is still gathering tool results. Instead, after the barrier returns, the orchestrator reads `<slug>-subagents.jsonl` (written by `hooks/masterplan-telemetry.sh` Stop hook on the *previous* turn — so this scan runs at the NEXT Step C entry, not in the current turn) and classifies each wave member with `duration_ms > config.parallelism.member_timeout_sec * 1000` as `slow_member` per `config.parallelism.on_member_timeout`. If the telemetry hook is not installed, the scan emits a one-line activity-log entry noting the gap (`slow-member scan skipped: hook not installed`) and otherwise no-ops. Detection is observability, not active cancellation: a truly hung member is bounded by the harness's own timeout, not by anything the orchestrator can write into this prompt.
+**Post-hoc slow-member detection (E.1 mitigation, v2.8.0+).** The LLM orchestrator has no async/cancel primitive — it cannot actively kill a hung wave member while the harness is still gathering tool results. Instead, after the barrier returns, the orchestrator reads `<run-dir>/subagents.jsonl` (written by `hooks/masterplan-telemetry.sh` Stop hook on the *previous* turn — so this scan runs at the NEXT Step C entry, not in the current turn) and classifies each wave member with `duration_ms > config.parallelism.member_timeout_sec * 1000` as `slow_member` per `config.parallelism.on_member_timeout`. If the telemetry hook is not installed, the scan emits a `slow_member_scan_skipped` event and otherwise no-ops. Detection is observability, not active cancellation: a truly hung member is bounded by the harness's own timeout, not by anything the orchestrator can write into this prompt.
 
 After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for the wave per the wave-mode notes in those sub-steps. Then Step C step 5's wakeup-scheduling threshold uses wave count, not task count (a wave-end counts as ONE completion regardless of N).
 
 2. If `--no-subagents` is set: invoke `superpowers:executing-plans`. Otherwise: invoke `superpowers:subagent-driven-development`. Hand the invoked skill the plan path and the current task index. Brief the implementer subagent with **CD-1, CD-2, CD-3, CD-6** AND prepend the verbatim SDD model-passthrough preamble (defined in §Agent dispatch contract recursive-application — copy the fenced text block literally; do not paraphrase). The preamble's signature string `For every inner Task / Agent invocation you make` is what the audit script and downstream tools key on. This preamble is required because SDD's prompt-template files (`implementer-prompt.md`, `spec-reviewer-prompt.md`, `code-quality-reviewer-prompt.md`) are upstream and don't carry model parameters by default — without the override, the inner Task calls inherit the orchestrator's Opus and the wave's `model: "sonnet"` discipline doesn't propagate. (Wave-mode tasks bypass this step's serial dispatch — they were already dispatched in the wave assembly pre-pass above.)
 3. Layer the autonomy policy on top of the invoked skill's per-task loop:
-   - **`gated`** — before each task, call `AskUserQuestion(continue / skip-this-task / stop)`. Honor the answer. **Routing decisions made via the eligibility cache (under `codex_routing == auto`) are honored silently** — the per-task question is NOT expanded with a Codex-override option, since the user pre-configured auto-routing and the activity log records every decision post-hoc. Users who want the legacy expanded prompt set `codex.confirm_auto_routing: true` in `.masterplan.yaml`; in that case the question expands to `(continue inline / continue via Codex / skip / stop)`. Under `codex_routing == manual`, do NOT expand here — Step 3a's per-task `AskUserQuestion` already handles routing.
-   - **`loose`** — run autonomously. On a blocker, **apply CD-4** first; only after two rungs have failed, surface the **blocker re-engagement gate** below before setting `status: blocked` and ending the turn. Cite the rungs tried in the `## Blockers` entry. Do NOT reschedule a wakeup.
-   - **`full`** — run autonomously, applying **CD-4** more aggressively before escalating: at least two ladder rungs, plus `superpowers:systematic-debugging` for test failures and spec reinterpretation cited in the activity log. Escalate to the **blocker re-engagement gate** only after the full ladder fails.
+   - **`gated`** — before each task, call `AskUserQuestion(continue / skip-this-task / stop).` Honor the answer. **Routing decisions made via the eligibility cache (under `codex_routing == auto`) are honored silently** — the per-task question is NOT expanded with a Codex-override option, since the user pre-configured auto-routing and `events.jsonl` records every decision post-hoc. Users who want the legacy expanded prompt set `codex.confirm_auto_routing: true` in `.masterplan.yaml`; in that case the question expands to `(continue inline / continue via Codex / skip / stop)`. Under `codex_routing == manual`, do NOT expand here — Step 3a's per-task `AskUserQuestion` already handles routing.
+   - **`loose`** — run autonomously. On a blocker, **apply CD-4** first; only after two rungs have failed, persist a blocker event and surface the **blocker re-engagement gate** below before setting `status: blocked` and ending the turn. Cite the rungs tried in the blocker event. Do NOT reschedule a wakeup.
+   - **`full`** — run autonomously, applying **CD-4** more aggressively before escalating: at least two ladder rungs, plus `superpowers:systematic-debugging` for test failures and spec reinterpretation cited in `events.jsonl`. Escalate to the **blocker re-engagement gate** only after the full ladder fails.
 
-   **Blocker re-engagement gate (CRITICAL — applies under all autonomy modes when a blocker surfaces).** Before setting `status: blocked` and ending the turn, the orchestrator MUST surface `AskUserQuestion` so the user has a clear continuation path. Never just write a `## Blockers` entry and end silently — the user wakes up later to a status update with no clear next move, the same UX the spec/plan-gate fix addressed. Concrete pattern (covers SDD's BLOCKED/NEEDS_CONTEXT escalations AND CD-4-exhausted gates):
+   **Blocker re-engagement gate (CRITICAL — applies under all autonomy modes when a blocker surfaces).** Before setting `status: blocked` and ending the turn, the orchestrator MUST persist `pending_gate` and surface `AskUserQuestion` so the user has a clear continuation path. Never just write a blocker event and end silently — the user wakes up later to a state update with no clear next move, the same UX the spec/plan-gate fix addressed. Concrete pattern (covers SDD's BLOCKED/NEEDS_CONTEXT escalations AND CD-4-exhausted gates):
 
    ```
    AskUserQuestion(
@@ -997,13 +1047,13 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
      options=[
        "Provide context and re-dispatch — I'll type the missing context, you re-dispatch the implementer with it",
        "Re-dispatch with a stronger model (Opus instead of Sonnet) — escalate model tier",
-       "Skip this task and continue with the next one — leave a `## Blockers` entry but keep status: in-progress",
+       "Skip this task and continue with the next one — append a blocker event but keep status: in-progress",
        "Set status: blocked and end the turn — I'll resume manually later"
      ]
    )
    ```
 
-   The first three options KEEP the plan moving (status stays `in-progress`); only the fourth option matches the legacy "end-turn-on-blocker" behavior. Under `--autonomy=full` the orchestrator may pre-select option 4 silently after surfacing the gate ONCE per blocker (the gate fires, user gets ~10 seconds to override, then default fires) — but never under `loose` or `gated`, where the user must explicitly pick an option. (Option count is capped at 4 per CD-9.)
+   The first three options KEEP the plan moving (status stays `in-progress`); only the fourth option matches the legacy "end-turn-on-blocker" behavior. Under `--autonomy=full` the orchestrator may pre-select option 4 after surfacing the persisted gate ONCE per blocker (the gate fires, user gets ~10 seconds to override, then default fires) — but never under `loose` or `gated`, where the user must explicitly pick an option. (Option count is capped at 4 per CD-9.)
 
    Activity log records which option was picked (e.g., `task X blocked, user chose: re-dispatch with Opus`).
 
@@ -1015,26 +1065,26 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
 
    - `completed` — returned by SDD instance: task succeeded; verification passed; staged-changes digest captured.
    - `blocked` — returned by SDD instance: task hit a blocker; reason returned.
-   - `protocol_violation` — **detected by orchestrator post-return** (not returned by SDD). After the wave-completion barrier, orchestrator runs `git status --porcelain` and `git log <task_start_sha>..HEAD` per wave member; if a member committed despite "DO NOT commit", wrote outside its `**Files:**` scope, or modified the status file directly, orchestrator reclassifies the SDD-reported `completed` outcome as `protocol_violation`. Treated as blocked + flagged for manual review.
+   - `protocol_violation` — **detected by orchestrator post-return** (not returned by SDD). After the wave-completion barrier, orchestrator runs `git status --porcelain` and `git log <task_start_sha>..HEAD` per wave member; if a member committed despite "DO NOT commit", wrote outside its `**Files:**` scope, or modified `state.yml` / `events.jsonl` directly, orchestrator reclassifies the SDD-reported `completed` outcome as `protocol_violation`. Treated as blocked + flagged for manual review.
    - `slow_member` — **detected by orchestrator at the NEXT Step C entry** via the post-hoc scan above (E.1 mitigation, v2.8.0+). A member that returned `completed` or `blocked` but whose `duration_ms` exceeded `config.parallelism.member_timeout_sec * 1000` is annotated as `slow_member` *in addition to* its primary outcome (the digest is still honored — slow ≠ wrong). Wave-level outcome computation treats `slow_member` as a tag, not a state — see wave-level rules below for handling per `config.parallelism.on_member_timeout`.
 
    **Wave-level outcome.** Computed from per-member outcomes:
 
    - **All completed** → wave succeeds. Single-writer 4d update applies all N completions. Status remains `in-progress` (or flips to `complete` if last task in plan).
-   - **All blocked** → wave fails. 4d appends N blocker entries to `## Blockers`; status flips to `blocked`. Blocker re-engagement gate (above) fires ONCE, listing all N blocked tasks together. Each option's semantics extend naturally (Provide context: re-dispatch all N as a sub-wave; Stronger model: re-dispatch all N with Opus override; Skip: all N get `## Blockers` entries, wave-count advances; End turn: status remains `blocked`).
-   - **Partial (K completed, N-K blocked, K ≥ 1, N-K ≥ 1)** → wave completes-with-blockers. 4d appends K completed entries to `## Activity log` AND N-K blocker entries to `## Blockers`. Status flips to `blocked`. Blocker re-engagement gate fires once, listing the N-K blocked tasks. **The completed K tasks' digests are NOT discarded** — applied by the single-writer 4d update BEFORE the gate fires (standard partial-failure case).
+   - **All blocked** → wave fails. 4d appends N blocker events; status flips to `blocked`. Blocker re-engagement gate (above) fires ONCE, listing all N blocked tasks together. Each option's semantics extend naturally (Provide context: re-dispatch all N as a sub-wave; Stronger model: re-dispatch all N with Opus override; Skip: all N get blocker events, wave-count advances; End turn: status remains `blocked`).
+   - **Partial (K completed, N-K blocked, K ≥ 1, N-K ≥ 1)** → wave completes-with-blockers. 4d appends K completed events AND N-K blocker events. Status flips to `blocked`. Blocker re-engagement gate fires once, listing the N-K blocked tasks. **The completed K tasks' digests are NOT discarded** — applied by the single-writer 4d update BEFORE the gate fires (standard partial-failure case).
 
-   **Protocol violation handling.** If `config.parallelism.abort_wave_on_protocol_violation: true` (default), orchestrator **suppresses the 4d batch entirely** when ANY wave member is reclassified as `protocol_violation` — none of the K completed digests are applied. Wave is treated as fully blocked; completed digests remain in orchestrator memory and become available to the gate's "Skip" branch (re-applied as `## Notes` entries when advancing past the wave). Append to `## Notes`: *"Protocol violation: task `<name>` committed `<commit-sha>` despite wave instruction. Verify manually before continuing — wave-end status update was suppressed."* If `abort_wave_on_protocol_violation: false`, the standard partial-failure path applies (K digests applied, N-K blockers including the violator).
+   **Protocol violation handling.** If `config.parallelism.abort_wave_on_protocol_violation: true` (default), orchestrator **suppresses the 4d batch entirely** when ANY wave member is reclassified as `protocol_violation` — none of the K completed digests are applied. Wave is treated as fully blocked; completed digests remain in orchestrator memory and become available to the gate's "Skip" branch (re-applied as events when advancing past the wave). Append a `protocol_violation` event: *"task `<name>` committed `<commit-sha>` despite wave instruction. Verify manually before continuing — wave-end state update was suppressed."* If `abort_wave_on_protocol_violation: false`, the standard partial-failure path applies (K digests applied, N-K blockers including the violator).
 
    **Slow-member handling (E.1 mitigation, v2.8.0+).** Per the post-hoc scan in the per-member outcomes section, members with `duration_ms > config.parallelism.member_timeout_sec * 1000` get the `slow_member` tag at the NEXT Step C entry. Behavior depends on `config.parallelism.on_member_timeout`:
-   - **`warn`** (default) — emit one-line `## Notes` warning: *"Slow wave member: task `<name>` (idx `<i>`) ran `<dur>s` (member_timeout_sec=`<N>`s). Wave: `<group-name>`. Digest was honored normally; investigate the underlying task or raise the threshold."* AND one-line activity-log entry: `slow-member detected: task <name> (<dur>s; threshold <N>s). Wave continues per on_member_timeout=warn.`. The completed/blocked outcome is honored as-is — slow does not block forward progress.
-   - **`blocker`** — re-classify the slow member as blocked at the next Step C entry: revert the wave's already-applied digest for that task (delete the activity-log entry that wrote it; restore the prior `current_task` pointer to the slow member's index), append a `## Blockers` entry: *"Wave member `<name>` exceeded member_timeout_sec (`<dur>s` vs `<N>s`). Operator review required before continuing."*, and route through the blocker re-engagement gate. Use this when the plan's correctness depends on bounded wave times (e.g., CI-bounded plans where slow members would push downstream tasks past a deadline).
+   - **`warn`** (default) — append a `slow_member` warning event: *"Slow wave member: task `<name>` (idx `<i>`) ran `<dur>s` (member_timeout_sec=`<N>`s). Wave: `<group-name>`. Digest was honored normally; investigate the underlying task or raise the threshold."* The completed/blocked outcome is honored as-is — slow does not block forward progress.
+   - **`blocker`** — re-classify the slow member as blocked at the next Step C entry: append a corrective event that supersedes the prior completion, restore the prior `current_task` pointer to the slow member's index, append a blocker event: *"Wave member `<name>` exceeded member_timeout_sec (`<dur>s` vs `<N>s`). Operator review required before continuing."*, and route through the blocker re-engagement gate. Use this when the plan's correctness depends on bounded wave times (e.g., CI-bounded plans where slow members would push downstream tasks past a deadline).
 
    **Edge case: SDD escalates BLOCKED/NEEDS_CONTEXT mid-wave.** When an SDD instance returns BLOCKED/NEEDS_CONTEXT BEFORE the wave-completion barrier, orchestrator does NOT immediately fire the blocker re-engagement gate — it waits for the rest of the wave. Gate fires once at wave-end with the union of all blocked members. Cleanest UX: one gate firing per wave, not N firings.
 
-   **Mid-wave orchestrator interruption.** If orchestrator crashes / context-resets after dispatch but before barrier returns, next session enters Step C step 1 with status file showing `current_task = <first wave task>` (unchanged — wave-end update never fired). Re-build cache, re-dispatch the wave from scratch. **Idempotent by Slice α design** — wave members are read-only, so re-dispatching is safe (no double-commits, no double-writes).
+   **Mid-wave orchestrator interruption.** If orchestrator crashes / context-resets after dispatch but before barrier returns, next session enters Step C step 1 with `state.yml` showing `current_task = <first wave task>` (unchanged — wave-end update never fired). Re-build cache, re-dispatch the wave from scratch. **Idempotent by Slice α design** — wave members are read-only, so re-dispatching is safe (no double-commits, no double-writes).
 
-3a. **Codex routing decision per task** (consult `config.codex.routing`, overridden by `--codex=` flag, persisted as `codex_routing` in the status file):
+3a. **Codex routing decision per task** (consult `config.codex.routing`, overridden by `--codex=` flag, persisted as `codex_routing` in `state.yml`):
 
     **Precondition (v2.4.0+; P2 from Fix 1-5 follow-up).** Before evaluating routing for ANY task, verify orchestrator runtime state. This is the **fail-loud-don't-fall-through** rule that catches the optoe-ng failure pattern (where Step C step 1 was silently skipped and routing fell through to inline forever).
 
@@ -1045,12 +1095,12 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
         - Question: `"Codex routing is set to '<routing>' but the eligibility cache is missing or has no entry for task <task_idx>. This usually means Step 0's codex-availability detection silently bypassed cache build. How to proceed?"`
         - Options:
           1. `Rebuild cache now` (Recommended) — re-enter Step C step 1's Haiku dispatch path; on success, retry routing for this task. Append the rebuild evidence entry per P1's format.
-          2. `Run inline this run with degradation marker` — behave as if Step 0 had detected codex unavailable: write the Fix 1 degradation marker (activity log + `## Notes`), set in-memory `codex_routing = off` for the rest of the session, proceed inline. Each subsequent task's pre-dispatch banner uses `decision_source: degraded-no-codex` per Fix 5 step 1.
-          3. `Set codex_routing: off in status frontmatter and proceed` — this IS a status-file modification beyond the hard-coded Step 4d writes; it requires explicit user opt-in via this question, and the change is announced via a `## Notes` line. Proceed without codex permanently for this plan. Future resumes won't see the precondition halt.
+          2. `Run inline this run with degradation marker` — behave as if Step 0 had detected codex unavailable: write the Fix 1 degradation event, set in-memory `codex_routing = off` for the rest of the session, proceed inline. Each subsequent task's pre-dispatch banner uses `decision_source: degraded-no-codex` per Fix 5 step 1.
+          3. `Set codex_routing: off in state.yml and proceed` — this IS a state-file modification beyond the hard-coded Step 4d writes; it requires explicit user opt-in via this question, and the change is announced via an event. Proceed without codex permanently for this plan. Future resumes won't see the precondition halt.
           4. `Abort` — → CLOSE-TURN, status unchanged, no inline fallthrough. User investigates manually.
-      - **`block`** — skip the AskUserQuestion entirely. **Single-writer exception under explicit user opt-in**: this is one of the few status-file writes outside Step 4d. The opt-in is `config.codex.unavailable_policy: block` itself — the user explicitly chose hard-halt over silent inline. Wave-mode interaction: if currently dispatched within a parallel wave, defer the block-write until wave-end (when the wave-completion barrier returns) and apply it through Step 4d's same write path with the blocker entry appended to the wave-end batch. This preserves the single-writer rule for waves. For serial routing (no wave active), the block-write happens immediately as described.
+      - **`block`** — skip the AskUserQuestion entirely. **Single-writer exception under explicit user opt-in**: this is one of the few state writes outside Step 4d. The opt-in is `config.codex.unavailable_policy: block` itself — the user explicitly chose hard-halt over silent inline. Wave-mode interaction: if currently dispatched within a parallel wave, defer the block-write until wave-end (when the wave-completion barrier returns) and apply it through Step 4d's same write path with the blocker event appended to the wave-end batch. This preserves the single-writer rule for waves. For serial routing (no wave active), the block-write happens immediately as described.
 
-        Effects: Set `status: blocked`. Append `## Blockers` entry: *"Codex routing precondition failed: eligibility_cache missing under codex_routing=<routing>. config.codex.unavailable_policy=block; user opted into hard-halt over silent inline. Re-run with codex installed (orchestrator will rebuild cache) OR set codex_routing: off in status frontmatter."*. → CLOSE-TURN [pre-close: status flip + ## Blockers append done above].
+        Effects: Set `status: blocked`. Append a blocker event: *"Codex routing precondition failed: eligibility_cache missing under codex_routing=<routing>. config.codex.unavailable_policy=block; user opted into hard-halt over silent inline. Re-run with codex installed (orchestrator will rebuild cache) OR set codex_routing: off in state.yml."*. → CLOSE-TURN [pre-close: status flip + blocker event done above].
 
     **Why P2 exists**: the orchestrator's previous default (silent fallthrough to inline when cache was missing) was the root cause of the optoe-ng project-review zero-codex pattern. P2 turns that silent failure into a loud one. Combined with P1's evidence-of-attempt entry, the orchestrator either has cache + tags OR has loud user-facing prompts + persistent markers — never quiet inline-bypass.
 
@@ -1058,7 +1108,7 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
     - **`auto`** (default per CLAUDE.md "Codex Delegation Default") — look up `eligibility_cache[task_idx]` (computed in Step 1). If `eligible == true` → delegate. Otherwise run inline.
     - **`manual`** — present `eligibility_cache[task_idx]` via `AskUserQuestion(Delegate to Codex / Run inline / Skip)` before each task. User decides.
 
-    **Pre-dispatch routing visibility** (v2.4.0+, mandatory for every task whose status frontmatter has `codex_routing != off` AND every task affected by Step 0 codex degradation):
+    **Pre-dispatch routing visibility** (v2.4.0+, mandatory for every task whose `state.yml` has `codex_routing != off` AND every task affected by Step 0 codex degradation):
 
     1. **Stdout banner** — emit ONE visible top-level line at the moment the routing decision is made, BEFORE any subagent or Codex dispatch:
        ```
@@ -1074,12 +1124,12 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
 
        The banner exists because today /masterplan loops are observed via stdout/transcript with no other surface signal that a task is being routed; the post-completion `[codex]/[inline]` tag arrives after work is done, not before. The banner makes routing observable in real-time.
 
-    2. **Pre-dispatch activity-log entry** — append ONE line to `## Activity log` BEFORE dispatching:
+    2. **Pre-dispatch event** — append ONE event to `events.jsonl` BEFORE dispatching:
        ```
        - <ISO-ts> task "<task name>" routing→CODEX (<decision_source>; <files-count> files in scope)
        - <ISO-ts> task "<task name>" routing→INLINE (<decision_source>; <reason>)
        ```
-       The post-completion entry is unchanged — it still appears as a SECOND activity-log line per task with the existing `[codex]` or `[inline]` tag and verification details. Two lines per task is the price for being able to grep `routing→` across status files for an unambiguous, searchable routing-decision audit independent of completion outcomes.
+       The post-completion event is unchanged — it still appears as a SECOND event per task with the existing `[codex]` or `[inline]` tag and verification details in `message`. Two events per task is the price for being able to grep `routing→` across state bundles for an unambiguous, searchable routing-decision audit independent of completion outcomes.
 
     3. **Cache stamp** — before dispatching, update `eligibility_cache[task_idx]`:
        - `dispatched_to: "codex" | "inline"` (matching the banner)
@@ -1087,7 +1137,7 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
        - `decision_source: <one of the values listed in §Cache file shape>`
        Persist via atomic JSON write (see §Runtime-audit fields above). A mid-task crash leaves the cache truthful about routing intent.
 
-    **Skip rule**: when `codex_routing == off` (no codex consideration was ever in scope), the pre-dispatch banner and activity-log entry are SKIPPED — there's no routing decision to surface, only execution. The post-completion entry has no `[codex]/[inline]` tag in this mode either; current behavior is preserved.
+    **Skip rule**: when `codex_routing == off` (no codex consideration was ever in scope), the pre-dispatch banner and event are SKIPPED — there's no routing decision to surface, only execution. The post-completion event has no `[codex]/[inline]` tag in this mode either; current behavior is preserved.
 
     **Eligibility checklist** (applied once at plan-load by the Step 1 cache builder, then reused per task — listed here for reference and so the cache builder's brief is reproducible):
     - Task touches ≤ 3 files based on its description, OR plan annotates `**Codex:** ok`.
@@ -1140,7 +1190,7 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
     - **`gated`** — present diff + verification output via `AskUserQuestion(Accept / Reject and rerun inline / Reject and rerun in Codex with feedback)`.
     - **`loose` / `full`** — auto-accept if verification passed cleanly. If verification failed, fall back to inline rerun under `superpowers:systematic-debugging` and apply the autonomy's blocker policy from above (which itself triggers **CD-4** ladder work).
 
-    Append a `[codex]` or `[inline]` tag to the activity log entry for each completed task so future-you can see the routing distribution.
+    Append a `[codex]` or `[inline]` tag to the completion event for each completed task so future-you can see the routing distribution.
 
 4. **Post-task finalization** — runs in this fixed order after every completed task:
 
@@ -1149,12 +1199,12 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
    **Excerpt validator (G.1, v2.8.0+).** The trust-skip is no longer license alone — it requires evidence of execution. For each command in `commands_run`, look up its excerpt in `commands_run_excerpts[cmd]` (a list of 1–3 trailing output lines) and regex-match each excerpt against:
    - The plan task's `**verify-pattern:** <regex>` annotation if present (case-sensitive); OR
    - The default PASS pattern: `(PASSED?|OK|0 errors|0 failures|exit 0|✓|^all tests passed)` (case-insensitive).
-   A command's trust-skip activates ONLY when ≥1 excerpt line matches. On miss, that command falls through to inline re-run AND an activity-log entry tags `(verify: excerpt missed for <cmd>; re-ran inline)`. On `commands_run_excerpts` missing entirely (pre-v2.8.0 implementer brief, or buggy SDD), all commands fall through to re-run AND a one-line `## Notes` warning fires once per session: *"⚠ Implementer return missing `commands_run_excerpts` — Step 4a excerpt-validator skipped; running full re-verification. Update SDD prompt to capture command output excerpts."*
+   A command's trust-skip activates ONLY when ≥1 excerpt line matches. On miss, that command falls through to inline re-run AND a verification event tags `(verify: excerpt missed for <cmd>; re-ran inline)`. On `commands_run_excerpts` missing entirely (pre-v2.8.0 implementer brief, or buggy SDD), all commands fall through to re-run AND an `implementer_excerpt_missing` event fires once per session: *"⚠ Implementer return missing `commands_run_excerpts` — Step 4a excerpt-validator skipped; running full re-verification. Update SDD prompt to capture command output excerpts."*
 
    **Decision logic:**
-   - If `tests_passed == true` AND every verification command in the plan task is in `commands_run` AND the excerpt validator passes for each: skip 4a's command execution entirely. Activity log entry records `(verify: trusted implementer; <N> commands; excerpts validated)`. 4b still consumes the implementer's captured output.
-   - If `tests_passed == true` AND the plan task lists additional verification commands the implementer didn't run (lint, typecheck, etc.): run only the *complementary* commands. The trust-skip for the implementer-run subset still requires excerpt-validator pass; commands whose excerpts miss fall through to re-run alongside the complement. Activity log records `(verify: trusted implementer for <subset>; ran <complement>; excerpts validated for <subset>)`.
-   - If `tests_passed == false` OR `tests_passed` is missing OR the excerpt validator misses for any command: run the full verification per CD-1 (or the complement of validated commands). Activity log records `(verify: full re-run)` or `(verify: excerpt-validator miss; partial re-run)`. If the implementer claimed done but tests fail on re-run, treat as a protocol violation (block per autonomy policy).
+   - If `tests_passed == true` AND every verification command in the plan task is in `commands_run` AND the excerpt validator passes for each: skip 4a's command execution entirely. Completion event records `(verify: trusted implementer; <N> commands; excerpts validated)`. 4b still consumes the implementer's captured output.
+   - If `tests_passed == true` AND the plan task lists additional verification commands the implementer didn't run (lint, typecheck, etc.): run only the *complementary* commands. The trust-skip for the implementer-run subset still requires excerpt-validator pass; commands whose excerpts miss fall through to re-run alongside the complement. Completion event records `(verify: trusted implementer for <subset>; ran <complement>; excerpts validated for <subset>)`.
+   - If `tests_passed == false` OR `tests_passed` is missing OR the excerpt validator misses for any command: run the full verification per CD-1 (or the complement of validated commands). Completion event records `(verify: full re-run)` or `(verify: excerpt-validator miss; partial re-run)`. If the implementer claimed done but tests fail on re-run, treat as a protocol violation (block per autonomy policy).
 
    **Why:** SDD's implementer subagent runs project tests as part of TDD discipline. Re-running them in 4a duplicates token cost and CI time without adding signal — but trust-without-evidence (the pre-v2.8.0 contract) opened a gap where a fabricated `tests_passed: true` would silently pass. The excerpt-validator closes that gap with one line of regex per command: cheap to compute, cheap for the implementer to capture (`tail -3` of each command), and the ground truth lives in real terminal output rather than implementer self-report.
 
@@ -1166,12 +1216,12 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
 
    When in doubt, run sequentially — a wrong-batch race that corrupts a build artifact costs more than the seconds saved. Brief the implementer subagent on this rule when dispatching it for the task; the rule applies recursively if the implementer dispatches its own verification subagents.
 
-   **4b — Codex-review (Codex review of inline work)** (consult `config.codex.review`, overridden by `--codex-review=` flag, persisted as `codex_review` in the status file).
+   **4b — Codex-review (Codex review of inline work)** (consult `config.codex.review`, overridden by `--codex-review=` flag, persisted as `codex_review` in `state.yml`).
 
    Fires when ALL of the following hold, otherwise skip silently:
    - `codex_review` is `on`.
    - The task just completed was **inline** (Sonnet/Claude did the work — not Codex). Codex-delegated tasks are reviewed by Step 3a's post-Codex flow, not here. Skipping for those is the asymmetric-review rule.
-   - The codex plugin is available (re-check inline at gate time per the heuristic in Step 0). On miss, write the same degradation marker as Step 0's degrade-loudly path (one-line activity-log entry + `## Notes` one-liner identifying the run and the missing plugin), set in-memory `codex_review = off` for the rest of the session, and skip 4b. This catches mid-plan plugin uninstall (D.4 mitigation).
+   - The codex plugin is available (re-check inline at gate time per the heuristic in Step 0). On miss, write the same degradation event as Step 0's degrade-loudly path, set in-memory `codex_review = off` for the rest of the session, and skip 4b. This catches mid-plan plugin uninstall (D.4 mitigation).
    - `codex_routing` is not `off`. (See Step 0's flag-conflict warning — `--codex=off --codex-review=on` is treated as a no-op for review.)
 
    Why this exists: even when a task is too complex or context-heavy to delegate execution to Codex, Codex can usefully review the resulting diff. The reviewer didn't do the work, so it's a fresh pair of eyes against the spec.
@@ -1185,13 +1235,13 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
          ```
          → Reviewing task T<idx> (<task name>) via CODEX (codex_review=on; diff <task-start SHA>..HEAD)
          ```
-       - **Pre-dispatch activity-log entry** (one line):
+       - **Pre-dispatch event**:
          ```
          - <ISO-ts> task "<task name>" review→CODEX (codex_review=on)
          ```
-       The post-review activity-log entry is unchanged — still tagged `[reviewed: <severity-summary or "no findings">]` per the decision matrix below. Two activity-log lines per reviewed task — the pre-dispatch line is greppable as `review→CODEX` independent of severity outcome.
+       The post-review event is unchanged — still tagged `[reviewed: <severity-summary or "no findings">]` per the decision matrix below. Two events per reviewed task — the pre-dispatch event is greppable as `review→CODEX` independent of severity outcome.
 
-       **Skip-with-reason variants** — when 4b's gate-conditions cause the review to skip silently in current behavior, instead emit a one-line stdout AND activity-log entry so the user can tell skips from omissions:
+       **Skip-with-reason variants** — when 4b's gate-conditions cause the review to skip silently in current behavior, instead emit a one-line stdout AND event so the user can tell skips from omissions:
        ```
        → Reviewing task T<idx> SKIPPED (<reason>)
        - <ISO-ts> task "<task name>" review→SKIP (<reason>)
@@ -1225,59 +1275,59 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
       Why diff-by-SHA: Codex agent runs in the worktree with full git access; passing a SHA range avoids inlining 5K–10K tokens of diff into the brief on multi-file tasks. (Zero-commit tasks are handled in step 1, which skips 4b entirely.)
    3. Digest the response per output-digestion rules: parse into severity buckets, drop verbose prose. Don't pull the full review text into orchestrator context.
    4. **Decision matrix by autonomy** (retry caps come from `config.codex.review_max_fix_iterations`, default 2):
-      - **`gated`** — auto-accept silently when severity is `clean` or strictly below `config.codex.review_prompt_at` (default `"medium"`). Activity log records the auto-accept; `## Notes` is not polluted (clean and low-only reviews don't need notes per Step 4b step 5). When severity is at or above the threshold, present findings via `AskUserQuestion` → `Accept / Fix and re-review (rerun inline with findings as briefing; capped at config.codex.review_max_fix_iterations) / Accept anyway / Stop`. Users who want every review prompted set `codex.review_prompt_at: "low"` in `.masterplan.yaml`.
+      - **`gated`** — auto-accept silently when severity is `clean` or strictly below `config.codex.review_prompt_at` (default `"medium"`). `events.jsonl` records the auto-accept; clean and low-only reviews don't need extra state. When severity is at or above the threshold, persist `pending_gate` and present findings via `AskUserQuestion` → `Accept / Fix and re-review (rerun inline with findings as briefing; capped at config.codex.review_max_fix_iterations) / Accept anyway / Stop`. Users who want every review prompted set `codex.review_prompt_at: "low"` in `.masterplan.yaml`.
       - **`loose`**:
-        - No or low-severity → auto-accept; tag activity log.
-        - Medium → append digest to `## Notes` for human attention later; accept and continue.
-        - High → set `status: blocked`, append findings to `## Blockers` with file:line cites, → CLOSE-TURN [pre-close: status: blocked + ## Blockers append done above] (no reschedule per the existing blocker policy).
+        - No or low-severity → auto-accept; tag events.
+        - Medium → append a `review_medium_findings` event for human attention later; accept and continue.
+        - High → set `status: blocked`, append a blocker event with file:line cites, → CLOSE-TURN [pre-close: status: blocked + blocker event done above] (no reschedule per the existing blocker policy).
       - **`full`**:
         - No or low → auto-accept.
-        - Medium → log to `## Notes`; continue.
+        - Medium → append a `review_medium_findings` event; continue.
         - High → attempt up to `config.codex.review_max_fix_iterations` fix iterations (rerun inline with findings as added briefing). If still high-severity afterward, set `status: blocked`. Each iteration counts as a CD-4 ladder rung.
-   5. Activity log gets a review tag alongside the routing tag, e.g. `[inline][reviewed: clean]` or `[inline][reviewed: 2 medium, 1 low]`. Full findings digest goes to `## Notes` only when severity is medium or higher — clean and low-only reviews don't need notes pollution.
+   5. Completion events get a review tag alongside the routing tag, e.g. `[inline][reviewed: clean]` or `[inline][reviewed: 2 medium, 1 low]`. Full findings digest goes to events only when severity is medium or higher — clean and low-only reviews don't need extra event noise.
 
    **4c — Worktree-integrity (CD-2 check).** Apply CD-2: `git status --porcelain` should show only task-scope files. If unexpected files appear, surface to the user before continuing; never silently revert their work.
 
-   **Under wave (Slice α v2.0.0+).** Compute the union of all wave-task `**Files:**` declarations (post-glob-expansion). Run `git status --porcelain` once at wave-end. Filter: files matching the union are expected (they belong to a wave member); files outside ALL declared scopes are CD-2 violations — surface to user. Implicit-paths whitelist (`<slug>-status.md`, `<slug>-eligibility-cache.json`, `<slug>-status-archive.md`, `.git/`) added to the union. Telemetry sidecars are intentionally NOT whitelisted here because they must be ignored and absent from porcelain; if `<slug>-telemetry.jsonl`, `<slug>-subagents.jsonl`, or `<slug>-subagents-cursor` appears in porcelain, stop and fix the local exclude guard before continuing. The per-task per-wave-member 4c check is replaced by this single union-filter — runs once per wave, not N times.
+   **Under wave (Slice α v2.0.0+).** Compute the union of all wave-task `**Files:**` declarations (post-glob-expansion). Run `git status --porcelain` once at wave-end. Filter: files matching the union are expected (they belong to a wave member); files outside ALL declared scopes are CD-2 violations — surface to user. Implicit-paths whitelist (`docs/masterplan/<slug>/state.yml`, `docs/masterplan/<slug>/events.jsonl`, `docs/masterplan/<slug>/eligibility-cache.json`, `.git/`) added to the union only for orchestrator writes. Telemetry sidecars are intentionally NOT whitelisted here because they must be ignored and absent from porcelain; if `telemetry.jsonl`, `subagents.jsonl`, or legacy telemetry/subagent sidecars appear in porcelain, stop and fix the local exclude guard before continuing. The per-task per-wave-member 4c check is replaced by this single union-filter — runs once per wave, not N times.
 
-   **Complexity gate (activity log density + rotation).**
-   - At `resolved_complexity == low`: each task-completion activity-log entry is ONE line: `<ISO-ts> <task-name> <pass|fail>`. No `[routing→...]`, `[review→...]`, or `[verification: ...]` tags. No `decision_source:` cite. The pre-dispatch `routing→` and `review→` entries from Step 3a/4b are SKIPPED entirely at low (codex is off; nothing to log).
+   **Complexity gate (event density + rotation).**
+   - At `resolved_complexity == low`: each task-completion event has a compact `message`: `<task-name> <pass|fail>`. No `[routing→...]`, `[review→...]`, or `[verification: ...]` tags. No `decision_source:` cite. The pre-dispatch `routing→` and `review→` events from Step 3a/4b are SKIPPED entirely at low (codex is off; nothing to log).
    - At `resolved_complexity == medium`: current entry shape (full tags as already documented below).
    - At `resolved_complexity == high`: current entry shape PLUS an explicit `decision_source: <annotation|heuristic|cache>` cite when the task was Codex-eligible.
 
    **Rotation threshold:**
-   - low: rotate when `## Activity log` exceeds 50 entries; archive all but the most recent 25.
+   - low: rotate when `events.jsonl` exceeds 50 entries; archive all but the most recent 25.
    - medium / high: rotate when log exceeds 100 entries; archive all but the most recent 50 (current behavior, unchanged).
 
-   **4d — Status-update (status file update + archive-and-schedule).** Update the status file: bump `last_activity` to the current ISO timestamp, set `current_task` to the next task name, set `next_action` to the next task's first step, append a one-line entry to `## Activity log` that includes 1–3 lines of relevant verification output (per **CD-8**) and the routing+review tags. For non-trivial decisions made during the task, also append to `## Notes` per **CD-7**.
+   **4d — State update (single-writer run-state update + archive-and-schedule).** Update `state.yml`: bump `last_activity` to the current ISO timestamp, set `current_task` to the next task name, set `next_action` to the next task's first step, and append a task-completion event to `events.jsonl` that includes 1–3 lines of relevant verification output (per **CD-8**) and the routing+review tags. For non-trivial decisions made during the task, add dedicated events per **CD-7**.
 
-   **Concurrent-write guard (F.4 mitigation, v2.8.0+).** Wrap the entire 4d update sequence (rotation + append + atomic temp+fsync+rename) in `flock <status-file> -c '<the-write-sequence>'` with a 5-second timeout. On contention (lock not acquired within 5s — typically a user-editor saving the status file in another window), do NOT block: instead append a single JSON-line entry describing this would-be update to `<slug>-status.queue.jsonl` (sibling to status), surface a one-line stdout warning *"Status write contention — entry queued; retry on next 4d cycle."*, and continue. The next 4d run drains the queue file BEFORE its own append: read each queued entry oldest-first, replay against the current status file, then truncate the queue file. Replays are idempotent — a queued entry whose state is already reflected in the active log is a no-op (match by `last_activity` + first 80 chars of the activity-log entry). On `flock` unavailable (Windows / hosts without util-linux), the orchestrator falls through to the unguarded write path AND emits one `## Notes` entry per session: *"flock unavailable on this host — status writes proceed without contention guard. Concurrent edits may interleave; close other editors before manual edits."* Doctor check #24 (below) surfaces non-empty queue files post-session.
+   **Concurrent-write guard (F.4 mitigation, v2.8.0+).** Wrap the entire 4d update sequence (rotation + append + atomic temp+fsync+rename) in `flock <run-dir>/state.lock -c '<the-write-sequence>'` with a 5-second timeout. On contention (lock not acquired within 5s — typically a user-editor saving `state.yml` in another window or an overlapping pacer), do NOT block: instead append a single JSON-line entry describing this would-be update to `<run-dir>/state.queue.jsonl`, surface a one-line stdout warning *"State write contention — entry queued; retry on next 4d cycle."*, and continue. The next 4d run drains the queue file BEFORE its own append: read each queued entry oldest-first, replay against the current `state.yml` and `events.jsonl`, then truncate the queue file. Replays are idempotent — a queued entry whose state is already reflected in events is a no-op (match by `last_activity` + event `id` or first 80 chars of the message). On `flock` unavailable (Windows / hosts without util-linux), the orchestrator falls through to the unguarded write path AND emits one `state_lock_unavailable` event per session. Doctor check #24 (below) surfaces non-empty queue files post-session.
 
-   **Activity log rotation.** Before appending the new entry, count entries under `## Activity log`. If count > 100, move all entries except the most recent 50 to `<slug>-status-archive.md` (create if missing; append in chronological order so the archive itself reads oldest-to-newest). Insert a one-line marker at the top of the active log: `*(N entries archived to <slug>-status-archive.md on YYYY-MM-DD)*`. Then append the new entry. Resume behavior is unchanged — Step C step 1 reads only the active log; the archive is consulted on demand by `/masterplan retro` (Step R2).
+   **Event rotation.** Before appending the new entry, count lines in `events.jsonl`. If count exceeds the threshold, move older entries to `events-archive.jsonl` (create if missing; append in chronological order so the archive itself reads oldest-to-newest), keep the most recent active tail, then append one `events_rotated` marker event. Resume behavior is unchanged — Step C step 1 reads only the active event tail; the archive is consulted on demand by `/masterplan retro` (Step R2).
 
-   **Two-entry-per-task accounting (v2.4.0+).** Step 3a's pre-dispatch `routing→CODEX|INLINE` entry and Step 4b's pre-dispatch `review→CODEX|SKIP` entry both count against the 100-entry rotation threshold. A typical inline task with codex_review on emits up to three entries: `routing→INLINE`, `review→CODEX`, then 4d's post-completion `[inline][reviewed: …]` entry. Rotation arithmetic still works (the most-recent-50 window will keep the post-completion entry and likely its sibling pre-dispatch entries), but plan re-readers should expect 2-3 lines per task in the active log, not 1.
+   **Two-entry-per-task accounting (v2.4.0+).** Step 3a's pre-dispatch `routing→CODEX|INLINE` event and Step 4b's pre-dispatch `review→CODEX|SKIP` event both count against the rotation threshold. A typical inline task with codex_review on emits up to three events: `routing→INLINE`, `review→CODEX`, then 4d's post-completion `[inline][reviewed: …]` event. Rotation arithmetic still works (the active tail will keep the post-completion event and likely its sibling pre-dispatch events), but plan re-readers should expect 2-3 events per task, not 1.
 
    **Under wave (Slice α v2.0.0+ — single-writer funnel).**
 
    1. **Aggregate digest list.** Collect all wave members' digests from the wave-completion barrier. Compute `current_task` = lowest-indexed not-yet-complete task in the plan (across the union of completed wave members + remaining serial tasks).
-   2. **Append N entries to `## Activity log` in plan-order** (NOT completion-order — predictable for human readers). Each entry tags routing as `[inline][wave: <group>]`, includes verification result from the digest, references `task_start_sha`. (No completion SHA for read-only tasks — they don't commit.)
-   3. **Activity log rotation pre-check (wave-aware per FM-2).** If `len(active_log) + N > 100`, rotate ONCE at the END of the batch append (not mid-batch). Move all but the most recent 50 entries to `<slug>-status-archive.md` (create if missing); insert the marker at the top of the active log; then append the N new wave entries.
+   2. **Append N events in plan-order** (NOT completion-order — predictable for human readers). Each event tags routing as `[inline][wave: <group>]`, includes verification result from the digest, references `task_start_sha`. (No completion SHA for read-only tasks — they don't commit.)
+   3. **Event rotation pre-check (wave-aware per FM-2).** If `len(active_events) + N` exceeds the threshold, rotate ONCE at the END of the batch append (not mid-batch). Move older entries to `events-archive.jsonl`; append an `events_rotated` marker; then append the N new wave events.
    4. **Update `last_activity`** to the wave-completion timestamp.
-   5. **Append `## Notes` entries for any partial-failure context** per the wave-mode failure handling rules in Step C step 3.
-   6. **Single git commit for the status file update** with subject `masterplan: wave complete (group: <name>, N tasks)`.
+   5. **Append decision/blocker events for any partial-failure context** per the wave-mode failure handling rules in Step C step 3.
+   6. **Single git commit for the run-state update** with subject `masterplan: wave complete (group: <name>, N tasks)`.
 
-   This single-writer funnel is the M-1 / M-3 mitigation (FM-2 + FM-3). Wave members do NOT write to the status file directly (per the per-instance brief in the wave assembly pre-pass). The orchestrator is the canonical writer per CD-7.
+   This single-writer funnel is the M-1 / M-3 mitigation (FM-2 + FM-3). Wave members do NOT write to run state directly (per the per-instance brief in the wave assembly pre-pass). The orchestrator is the canonical writer per CD-7.
 
    **4b under wave.** Skipped entirely for wave members — they don't commit, so the diff range `<task_start_sha>..HEAD` is empty; existing zero-commit branch in 4b step 1 handles this naturally (no new code).
 
-   The invoked skill already commits per task (serial mode only) — verify the commit landed; if not, commit the status file update (and any rotation-created archive file) separately.
+   The invoked skill already commits per task (serial mode only) — verify the commit landed; if not, commit the run-state update (and any rotation-created archive file) separately.
 
-   **4e — Post-task router (CD-9 hot-spot; never improvise a gate).** After 4d's status commit, route the next action deterministically using THIS table — do not emit free-text "Want me to continue?" / "Should I proceed?" / "Continue to T<N>?" / similar phrasings, and do not stop without dispatching either step 5 or step 6 or the per-task gate below.
+   **4e — Post-task router (CD-9 hot-spot; never improvise a gate).** After 4d's state commit, route the next action deterministically using THIS table — do not emit free-text "Want me to continue?" / "Should I proceed?" / "Continue to T<N>?" / similar phrasings, and do not stop without dispatching either step 5 or step 6 or the per-task gate below.
 
    | Condition | Route |
    |---|---|
    | All tasks in plan are `done` | → Step C step 6 (finishing-branch wrap) |
-   | Status was just flipped to `blocked` (from 4a / 4b high severity / 4c CD-2 violation) | → CLOSE-TURN [pre-close: 4a/4b/4c already wrote ## Blockers + status flip] |
+   | Status was just flipped to `blocked` (from 4a / 4b high severity / 4c CD-2 violation) | → CLOSE-TURN [pre-close: 4a/4b/4c already wrote blocker event + status flip] |
    | `ScheduleWakeup` available (running under `/loop`) | → Step C step 5 (loop scheduling — fires every 3 tasks or when context tight) |
    | `ScheduleWakeup` unavailable AND `resolved_autonomy == full` | → re-enter Step C step 2 with `current_task` = next not-done task. Do NOT close turn. Same-turn dispatch. |
    | `ScheduleWakeup` unavailable AND `resolved_autonomy ∈ {gated, loose}` | → fire **per-task gate** (below) |
@@ -1288,44 +1338,52 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
      question="Task <T-idx> (<task name>) complete. Continue to <next-task name>?",
      options=[
        "Continue (Recommended) — dispatch <next-task name> now",
-       "Pause here — re-invoke /masterplan --resume=<status-path> when ready",
-       "Schedule wakeup — set up /loop /masterplan --resume=<status-path> at the configured interval"
+       "Pause here — re-invoke /masterplan --resume=<state-path> when ready",
+       "Schedule wakeup — set up /loop /masterplan --resume=<state-path> at the configured interval"
      ]
    )
    ```
    Routing of choices:
    - **Continue** → re-enter Step C step 2 with `current_task` updated. Same-turn dispatch.
    - **Pause here** → → CLOSE-TURN [pre-close: 4d already committed].
-   - **Schedule wakeup** → call `ScheduleWakeup(delaySeconds=config.loop_interval_seconds, prompt="/masterplan --resume=<status-path>", reason="Continuing <slug> at task <next-task name>")`, append the wakeup-ledger entry, → CLOSE-TURN. (Honors `config.loop_max_per_day` quota — same check as step 5's daily-quota branch.)
+   - **Schedule wakeup** → call `ScheduleWakeup(delaySeconds=config.loop_interval_seconds, prompt="/masterplan --resume=<state-path>", reason="Continuing <slug> at task <next-task name>")`, append a `wakeup_scheduled` event, → CLOSE-TURN. (Honors `config.loop_max_per_day` quota — same check as step 5's daily-quota branch.)
 
    **Why this gate uses AskUserQuestion, not silent-continue.** Per-user contract (May 7 2026 review of the petabit-www T10→T11 free-text exit): under `gated` and `loose` autonomy without `/loop`, every task boundary is a checkpoint. Free-text gates ("Want me to continue?") are forbidden by CD-9; structured AskUserQuestion is the only legal close at this site. Under `--autonomy=full` the gate is suppressed and tasks advance silently — that's the explicit autonomy contract. Under `/loop`, step 5's wakeup-scheduling runs instead — that's the explicit cross-session contract.
 
    **Wave-end variant.** When 4d ran in single-writer wave-funnel mode, the per-task gate fires ONCE at wave-end (not N times), with task name = `<wave-group> wave (<N> tasks)` and `<next-task name>` = the lowest-indexed not-yet-complete task remaining in the plan.
 
 5. **Cross-session loop scheduling** (entered only via Step C step 4e's "ScheduleWakeup available" route — i.e. `--no-loop` is NOT set AND `ScheduleWakeup` IS available because the session was launched via `/loop /masterplan ...`):
-   - **Complexity gate.** If `resolved_complexity == low`, the `## Wakeup ledger` section is NOT maintained (per Operational rules' Complexity precedence: `loop_enabled` defaults to `false` at low, so no `ScheduleWakeup` is even called; however, if the user explicitly enabled the loop via override, `ScheduleWakeup` runs but the ledger entry write below is SKIPPED). Doctor checks #19 + #20 do not fire on low plans (handled by Task 12's check-set gate).
+   - **Complexity gate.** If `resolved_complexity == low`, wakeup ledger events are NOT maintained (per Operational rules' Complexity precedence: `loop_enabled` defaults to `false` at low, so no `ScheduleWakeup` is even called; however, if the user explicitly enabled the loop via override, `ScheduleWakeup` runs but the ledger event below is SKIPPED). Doctor checks #19 + #20 do not fire on low plans (handled by Task 12's check-set gate).
    - **Competing-scheduler suppression.** If `competing_scheduler_keep == true` (in-memory flag set by Step C step 1's competing-scheduler check when the user picked "Keep the cron, suspend wakeups this session"), skip scheduling silently for the rest of the session. The user-acknowledged cron is the sole pacer.
-   - **CC-1 check.** Before scheduling the wakeup, apply CC-1 (operational rules): if `cc1_silenced` is not set and any symptom (file_cache ≥3 hits same path, ≥3 consecutive same-target tool failures, activity log rotated this session, subagent ≥5K-char return) accumulated this session, surface the non-blocking compact-suggest notice. Continue with scheduling regardless — CC-1 is informational, never blocks.
-   - **Daily quota check.** Track wakeup count for this plan in the status file under a `## Wakeup ledger` heading (one line per wakeup with timestamp). Before scheduling, count entries from the last 24 hours; if `>= config.loop_max_per_day` (default 24), do NOT schedule — set status to `blocked` with reason "loop quota exhausted; resume manually with `/masterplan --resume=<path>`" and → CLOSE-TURN [pre-close: status flip done above]. This prevents runaway scheduling under unexpected loop conditions.
+   - **CC-1 check.** Before scheduling the wakeup, apply CC-1 (operational rules): if `cc1_silenced` is not set and any symptom (file_cache ≥3 hits same path, ≥3 consecutive same-target tool failures, events rotated this session, subagent ≥5K-char return) accumulated this session, surface the non-blocking compact-suggest notice. Continue with scheduling regardless — CC-1 is informational, never blocks.
+   - **Daily quota check.** Track wakeup count for this plan via `wakeup_scheduled` events in `events.jsonl`. Before scheduling, count entries from the last 24 hours; if `>= config.loop_max_per_day` (default 24), do NOT schedule — set status to `blocked` with reason "loop quota exhausted; resume manually with `/masterplan --resume=<state-path>`" and → CLOSE-TURN [pre-close: status flip + blocker event done above]. This prevents runaway scheduling under unexpected loop conditions.
    - Otherwise, after every 3 completed tasks (where a wave-end counts as ONE completion regardless of N — so a wave of 5 doesn't trigger 5 wakeup-threshold increments), OR when context usage looks tight, call:
      ```
      ScheduleWakeup(
        delaySeconds=config.loop_interval_seconds,
-       prompt="/masterplan --resume=<status-path>",
+       prompt="/masterplan --resume=<state-path>",
        reason="Continuing <slug> at task <next-task-name>"
      )
      ```
-     append the wakeup entry to the ledger, then → CLOSE-TURN [pre-close: ScheduleWakeup + ledger append done above]. The next firing re-enters this command via Step C.
+     append the `wakeup_scheduled` event, then → CLOSE-TURN [pre-close: ScheduleWakeup + event append done above]. The next firing re-enters this command via Step C.
    - Do NOT reschedule when `status` is `complete` or `blocked`.
    - If `ScheduleWakeup` is not available (not running under `/loop`), step 5 is **not the entry point** — Step C step 4e's post-task router has already routed to the per-task gate or to silent-continue under `--autonomy=full`. This bullet exists for documentation only; step 5's body is reachable only when 4e selects it.
-6. **On plan completion:** **pre-empt the skill's "Which option?" prompt.** `superpowers:finishing-a-development-branch` will otherwise present a free-text `1. Merge / 2. Push+PR / 3. Keep / 4. Discard — Which option?` question. That free-text prompt can stall a session if it compacts before the user answers (same silent-stop bug pattern). Avoid this by surfacing `AskUserQuestion` FIRST:
+6. **On plan completion:** run the completion finalizer, then pre-empt the skill's "Which option?" prompt. `superpowers:finishing-a-development-branch` will otherwise present a free-text `1. Merge / 2. Push+PR / 3. Keep / 4. Discard — Which option?` question. That free-text prompt can stall a session if it compacts before the user answers (same silent-stop bug pattern). Avoid this by handling durable completion state first, then surfacing `AskUserQuestion` for the branch-finish choice.
 
-   **Complexity gate (retro at high).** When `resolved_complexity == high`, the AskUserQuestion below has a fifth option PREPENDED as the first/recommended choice:
-   - `"Generate retro now (Recommended) — invoke Step R0 with this slug, then finish the branch per the next picked option"`
+   **6a — Mark the run complete before any follow-up work.** Under `<run-dir>/state.lock`, set `status: complete`, `phase: complete`, `current_task: ""`, `next_action: completion finalizer`, `pending_gate: null`, and `last_activity: <now>`. Append a `plan_completed` event to `events.jsonl` with the final task count, final verification summary, and completion SHA if available. Commit this state update with subject `masterplan: complete <slug>` unless the same commit already contains the final task's state update. Do not reschedule.
 
-   Picking that option routes through Step R0 → R1 → R2 → R3 → R4 (the standard retro flow) FIRST, then re-surfaces the original 4-option AskUserQuestion (Merge / Push+PR / Keep / Discard) so the user can still pick a finish path. The retro file path is added to the activity log entry.
+   **6b — Auto-retro by default.** Unless `--no-retro` was passed OR `config.completion.auto_retro == false`, invoke Step R internally with the resolved slug and `completion_auto=true`. This is not an `AskUserQuestion` option and does not depend on `resolved_complexity`: low, medium, and high plans all get a retro by default. Step R writes `docs/masterplan/<slug>/retro.md`; Step R3.5 archives the run state when `config.retro.auto_archive_after_retro != false`; Step R4 commits the retro/state/events directly in internal mode. If retro generation fails, append a `completion_retro_failed` event, leave `status: complete`, and continue to the branch-finish gate; do NOT lose the completed run.
 
-   Under `resolved_complexity != high`, the retro option is NOT prepended; the existing 4-option AskUserQuestion fires as today (option count remains 4 per CD-9).
+   **6c — Completion cleanup by default.** Unless `--no-cleanup` was passed OR `config.completion.cleanup_old_state == false`, run Step CL in **completion-safe mode** after the retro attempt:
+   - Categories: `legacy` and `orphans` only.
+   - Action mode: `archive` only; never delete.
+   - Worktree scope: the current plan's worktree only.
+   - Prompts: none. This mode is noninteractive and skips stale plans, crons, worktrees, and completed-run bundle archival.
+   - Legacy safety: archive a legacy file only when a matching bundle exists and that bundle's `legacy:` pointers match the source path. If verification is ambiguous, leave the legacy file in place and append a `completion_cleanup_skipped` event with the reason.
+   - CD-2 safety: before staging archive moves, capture `git status --porcelain`. After moves, verify the only new changes are the expected archive moves/additions. If unrelated dirty files appear, abort cleanup, append `completion_cleanup_aborted`, and leave the run otherwise complete.
+   - Idempotence: a second completion finalizer pass should report `completion cleanup: nothing to archive`.
+
+   **6d — Branch finish gate.** After 6a-6c, surface the existing branch-finish `AskUserQuestion`:
 
    ```
    AskUserQuestion(
@@ -1339,13 +1397,13 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
    )
    ```
 
-   Then invoke `superpowers:finishing-a-development-branch` with a brief that pre-decides the option: `"Skip Step 1's test verification (this repo has no test suite — verification done by other means; cite [briefly]) IF that's true, otherwise let it run normally. User has chosen Option <N>: <description>. Skip Step 3's free-text 'Which option?' prompt; execute Step 4's chosen-option branch directly. For Option 4 (Discard), still require the typed 'discard' confirmation per the skill's safety rule."` After the skill completes its chosen option's branch, set `status: complete` in the status file, append a final activity log line, commit. Do not reschedule.
+   Then invoke `superpowers:finishing-a-development-branch` with a brief that pre-decides the option: `"Skip Step 1's test verification (this repo has no test suite — verification done by other means; cite [briefly]) IF that's true, otherwise let it run normally. User has chosen Option <N>: <description>. Skip Step 3's free-text 'Which option?' prompt; execute Step 4's chosen-option branch directly. For Option 4 (Discard), still require the typed 'discard' confirmation per the skill's safety rule."` After the skill completes its chosen option's branch, append a `branch_finish_<choice>` event when the run directory still exists. Do not flip archived runs back to complete, and do not reschedule.
 
 ---
 
 ## Step I — Import legacy artifacts
 
-Triggered by `/masterplan import [args]`. Brings legacy planning artifacts under the masterplan schema (spec + plan + status), with completion-state inference so already-done work isn't redone.
+Triggered by `/masterplan import [args]`. Brings legacy planning artifacts under the masterplan run-bundle schema (`docs/masterplan/<slug>/state.yml` + bundled spec/plan/events), with completion-state inference so already-done work isn't redone.
 
 **Direct vs. discovery routing:** If `$ARGUMENTS` includes any of `--pr=<num>`, `--issue=<num>`, `--file=<path>`, `--branch=<name>`, skip discovery and jump to **Step I3** with that single candidate (Step I2 rank+pick is also skipped — the candidate is already determined). Otherwise run **Step I1**.
 
@@ -1355,13 +1413,13 @@ Dispatch four parallel `Explore` subagents (pass `model: "haiku"` on each Agent 
 
 Each agent's brief MUST include: "Issue all globs/finds/`gh` calls as one parallel tool batch — do not run them sequentially within your turn." Within-agent batching tightens latency on top of the cross-class parallelism.
 
-1. **Local plan files** — find `PLAN.md`, `TODO.md`, `ROADMAP.md`, `WORKLOG.md`, `docs/plans/*.md`, `docs/design/*.md`, `docs/rfcs/*.md`, `architecture/*.md`, `specs/*.md`, branch READMEs. Skip files inside `node_modules/`, `vendor/`, `.git/`, `legacy/.archive/`, and any path already under `config.specs_path` or `config.plans_path`.
+1. **Local plan files** — find `PLAN.md`, `TODO.md`, `ROADMAP.md`, `WORKLOG.md`, `docs/plans/*.md`, `docs/design/*.md`, `docs/rfcs/*.md`, `architecture/*.md`, `specs/*.md`, branch READMEs. Skip files inside `node_modules/`, `vendor/`, `.git/`, `legacy/.archive/`, and any path already under `config.runs_path`, `config.specs_path`, or `config.plans_path`.
 
 2. **Git artifacts** — local + remote-tracking branches not yet merged into the trunk. **Enumerate refs explicitly via `git for-each-ref`, NOT `git branch -avv`** (more reliable: `git for-each-ref` returns one ref per line in a stable format, while `git branch -avv` parsing has tripped Haiku into emitting local-only commands like `git branch -v` that silently miss remote-only branches — issue #3, root cause of the petabit-os-mgmt false-negative). Brief MUST instruct: run `git for-each-ref refs/heads/ refs/remotes/ --format='%(refname)|%(refname:short)'` to list every local and remote-tracking ref with **both** its full and short forms (separated by `|`). Filter on the **full refname** (left of `|`) — drop any line whose full path ends in `/HEAD` (this catches `refs/remotes/origin/HEAD` cleanly; note that `git for-each-ref`'s `:short` formatter renders that symbolic ref as the bare token `origin`, which is NOT catchable by `grep -v HEAD` on the short form alone — v2.14.1 tightening, observed Haiku ambiguity on petabit-os-mgmt smoke test). Also drop the trunk ref itself (`refs/heads/<trunk>` and `refs/remotes/origin/<trunk>`). Use the short name (right of `|`) for display, the `git log` topology check, and the `gh` cross-reference. For each remaining ref, check `git log <trunk>..<short-name> --oneline` and keep refs whose output is non-empty. The check is **topology-based** (SHA reachability), not content-based: a rebased-equivalent branch whose content already landed on `<trunk>` via different SHAs is still flagged, because the cleanup action is deleting the stale ref, not re-importing the content (operator's call: `git push origin --delete <branch>` for remote, `git branch -D <branch>` for local). Cross-reference `gh pr list --state=all --head=<branch-name>` (strip `origin/` prefix from remote-tracking refs before the `--head=` query) to flag branches with no merged PR. Also include named git stashes (`git stash list`).
 
 3. **GitHub issues + PRs** — only if `gh` is authenticated. `gh issue list --state=open --limit=50 --json=number,title,body,updatedAt,labels` and `gh pr list --state=open --limit=50 --json=number,title,body,updatedAt,headRefName`. Filter to entries whose body contains a task list (`- [ ]`/`- [x]`/numbered steps) OR whose labels include planning-shaped strings (`design`, `planning`, `epic`, `roadmap`, `in-progress`).
 
-4. **Stale superpowers state** — glob `<config.plans_path>/*.md` and find files with no sibling `-status.md`. These are pre-status-file plans from earlier superpowers versions.
+4. **Stale superpowers state** — run the same discovery logic as `bin/masterplan-state.sh inventory`: legacy `docs/superpowers/{plans,specs,retros,archived-*}` records, orphan legacy plans with no sibling `-status.md`, and legacy records that lack a matching `docs/masterplan/<slug>/state.yml`.
 
 ### Step I2 — Rank + pick
 
@@ -1375,16 +1433,16 @@ Conversions parallelize across candidates because each candidate writes to uniqu
 
 **Slug-collision pass:** For all picked candidates, sanitize each title to a slug and group by slug. When two or more candidates resolve to the same slug, suffix later ones with `-2`, `-3`, etc. If multiple collisions are detected (≥ 2 collision groups), confirm the renames once via `AskUserQuestion(Apply auto-suffixed slugs / Show me the conflicts and let me rename / Abort import)`. Use today's date for all kickoff dates.
 
-This produces a `candidates[]` list with finalized `(slug, spec_path, plan_path, status_path)` tuples — guaranteed unique within this batch (but not yet checked against existing on-disk paths).
+This produces a `candidates[]` list with finalized `(slug, run_dir, spec_path, plan_path, state_path, events_path)` tuples — guaranteed unique within this batch (but not yet checked against existing on-disk paths). New paths are always inside `<config.runs_path>/<slug>/`.
 
-**Path-existence pass:** For each candidate's `(spec_path, plan_path, status_path)` tuple, check whether ANY of the three paths already exist on disk. Implements the operational rule "Import never overwrites existing masterplan state silently".
+**Path-existence pass:** For each candidate's `(run_dir, spec_path, plan_path, state_path, events_path)` tuple, check whether ANY target path already exists on disk. Implements the operational rule "Import never overwrites existing masterplan state silently".
 
 For each candidate with **≥ 1** pre-existing path collision, surface `AskUserQuestion` (one prompt per colliding candidate; sequential, not parallel — interactive prompts must not interleave): "Importing `<slug>` would overwrite existing masterplan state at: `<colliding-paths>`. What now?" with options:
 - **(1) Overwrite (Recommended)** — proceed with the original tuple; existing files will be rewritten by I3.4.
-- **(2) Write to `-v2` suffix** — append `-v2` to the slug and recompute the tuple; if `<slug>-v2` paths also collide, increment to `-v3`, `-v4`, etc. until all three target paths are free (mirrors the `-2`, `-3` slug-collision pattern above).
+- **(2) Write to `-v2` suffix** — append `-v2` to the slug and recompute the tuple; if `<slug>-v2` paths also collide, increment to `-v3`, `-v4`, etc. until all bundle target paths are free (mirrors the `-2`, `-3` slug-collision pattern above).
 - **(3) Abort this candidate** — remove the candidate from `candidates[]` and skip its I3.2/I3.4/I3.5 processing.
 
-Mutate `candidates[]` per the chosen action: aborted entries are removed; `-vN` entries have their `(slug, spec_path, plan_path, status_path)` tuple rewritten before I3.2 begins.
+Mutate `candidates[]` per the chosen action: aborted entries are removed; `-vN` entries have their `(slug, run_dir, spec_path, plan_path, state_path, events_path)` tuple rewritten before I3.2 begins.
 
 When no candidate has any pre-existing collision, this step is silent (no prompt, no log line) and `candidates[]` is unchanged.
 
@@ -1404,11 +1462,11 @@ Each agent's bounded brief: Goal=fetch this candidate's source content, Inputs=c
 
 First, for each candidate that has a discernible task list, run completion-state inference (see **Completion-state inference** below) — these inference runs can themselves be dispatched in parallel since each candidate is independent. The inference results feed the conversion briefs below.
 
-Then dispatch one Sonnet conversion subagent (pass `model: "sonnet"` per §Agent dispatch contract) per candidate in a single Agent batch. Each agent owns unique target paths from I3.1 and writes only to its own slug's spec/plan/status — no contention. Brief per agent:
+Then dispatch one Sonnet conversion subagent (pass `model: "sonnet"` per §Agent dispatch contract) per candidate in a single Agent batch. Each agent owns unique target paths from I3.1 and writes only inside its own run directory — no contention. Brief per agent:
 
-> Rewrite this legacy planning artifact into superpowers spec format (`<spec-path>`) and plan format (`<plan-path>`) following the writing-plans skill conventions. Drop tasks classified `done`. Move `possibly_done` tasks into a `## Verify before continuing` checklist at the top of the plan, each with its evidence. Keep `not_done` tasks as the active task list, reformatted into bite-sized steps (writing-plans style). Preserve constraints, decisions, and stakeholder context in the spec's Background section. Discard pure status narration. Do not invent tasks the source didn't mention. Then write the status file at `<status-path>` populating **every** frontmatter field per the Step B3 field list (`slug`, `status: in-progress`, `spec`, `plan`, `worktree`, `branch`, `started` today, `last_activity` now, `current_task` = first `not_done` task, `next_action` = its first step, `autonomy`, `loop_enabled`, `codex_routing`, `codex_review`, `compact_loop_recommended: false` from current config + flags), and seed `## Notes` with: link back to source (path/URL/branch/issue#), inference evidence summary, list of `possibly_done` items the user should verify before execution.
+> Rewrite this legacy planning artifact into superpowers spec format (`<spec-path>`) and plan format (`<plan-path>`) following the writing-plans skill conventions. Drop tasks classified `done`. Move `possibly_done` tasks into a `## Verify before continuing` checklist at the top of the plan, each with its evidence. Keep `not_done` tasks as the active task list, reformatted into bite-sized steps (writing-plans style). Preserve constraints, decisions, and stakeholder context in the spec's Background section. Discard pure status narration. Do not invent tasks the source didn't mention. Then write `state.yml` at `<state-path>` populating **every** required run-state field per the Step B3 field list (`schema_version: 2`, `slug`, `status: in-progress`, `phase: executing`, `artifacts.spec`, `artifacts.plan`, `artifacts.events`, `worktree`, `branch`, `started` today, `last_activity` now, `current_task` = first `not_done` task, `next_action` = its first step, `autonomy`, `loop_enabled`, `codex_routing`, `codex_review`, `compact_loop_recommended: false`, `complexity`, `pending_gate: null`, `legacy:` source pointers), and seed `events.jsonl` with: link back to source (path/URL/branch/issue#), inference evidence summary, list of `possibly_done` items the user should verify before execution.
 
-Bounded scope per agent: writes only to its own `(spec_path, plan_path, status_path)`; do not touch other candidates' paths or the legacy source.
+Bounded scope per agent: writes only inside its own `(run_dir, spec_path, plan_path, state_path, events_path)`; do not touch other candidates' paths or the legacy source.
 
 #### I3.5 — Sequential cruft handling + commit (per candidate)
 
@@ -1422,11 +1480,11 @@ After all parallel waves complete, iterate candidates one-by-one:
 
    Apply the chosen action.
 
-2. **Commit.** `git add` the new spec, plan, status file (and any banner edits or moves). Commit with: `masterplan: import <slug> from <source-type>`.
+2. **Commit.** `git add` the new run bundle (`spec.md`, `plan.md`, `state.yml`, `events.jsonl`) and any banner edits or moves. Commit with: `masterplan: import <slug> from <source-type>`.
 
 Sequential here is deliberate: cruft prompts are user-interactive (parallel `AskUserQuestion` would scramble UX), and per-candidate `git commit` keeps the index clean.
 
-**Hand off:** After all candidates are converted, list the new status file paths. `AskUserQuestion`: "Resume one now? / All done — exit." If resume → jump to **Step C** with the chosen status path.
+**Hand off:** After all candidates are converted, list the new `state.yml` paths. `AskUserQuestion`: "Resume one now? / All done — exit." If resume → jump to **Step C** with the chosen state path.
 
 ---
 
@@ -1440,11 +1498,12 @@ Read worktrees from `git_state.worktrees` (Step 0 cache). When N ≥ 2, dispatch
 
 Each Haiku's bounded brief: Goal=collect this worktree's masterplan state, Inputs=worktree path + collection list (below), Scope=read-only (no writes, no `git status` modifications), Return=structured JSON digest. Per-worktree collection list:
 
-- All `<plans-path>/*-status.md` files: parse frontmatter + last 10 entries of `## Activity log` + entire `## Blockers` section + entire `## Notes` section.
-- Linked plan + spec paths from each status: verify existence only (don't read full content).
-- Sibling `<slug>-status-archive.md` files: count entries (don't read full).
-- Sibling `<slug>-telemetry.jsonl` files: count of records in last 24h + last record's snapshot fields.
-- Recent retros in `docs/superpowers/retros/*.md` modified in last 7 days: frontmatter + first paragraph.
+- All `<runs-path>/*/state.yml` files: parse YAML + last 10 events from sibling `events.jsonl`.
+- For compatibility, all legacy `<plans-path>/*-status.md` files: parse through the migration adapter and mark `state_format: legacy-status`.
+- Linked plan + spec paths from each state: verify existence only (don't read full content).
+- Sibling `events-archive.jsonl` files: count entries (don't read full).
+- Sibling `telemetry.jsonl` files: count of records in last 24h + last record's snapshot fields.
+- Recent bundled `retro.md` files modified in last 7 days, plus legacy retros in `docs/superpowers/retros/*.md`: frontmatter + first paragraph.
 - Recent design notes in `docs/design/*.md` modified in last 14 days: path + first H1 heading.
 - Last 5 commits on the worktree's branch: `git log -5 --format='%h %ci %s' <branch>`.
 
@@ -1454,11 +1513,11 @@ The orchestrator merges per-worktree digests into a single in-memory model.
 
 Group findings into salience-ordered sections. Skip empty sections silently.
 
-1. **In-flight** — `status: in-progress` plans, sorted by `last_activity` desc. For each: slug, branch, worktree (relative-from-current if applicable), `current_task`, `next_action`, age (e.g. "active 2h ago"), last 3 activity-log entries.
-2. **Blocked** — `status: blocked` plans, sorted by oldest blocker first. For each: slug, blocker summary (first non-empty line of `## Blockers`), how long blocked.
+1. **In-flight** — `status: in-progress` plans, sorted by `last_activity` desc. For each: slug, branch, worktree (relative-from-current if applicable), `current_task`, `next_action`, age (e.g. "active 2h ago"), last 3 events.
+2. **Blocked** — `status: blocked` plans, sorted by oldest blocker first. For each: slug, blocker summary (first blocker event), how long blocked.
 3. **Recently completed** — `status: complete` modified in last 7 days. Slug + completion date + retro link if present + commit count since branch start.
 4. **Stale** — `status: in-progress` with `last_activity` > 14 days. Triage candidates.
-5. **Telemetry signals** — for plans with telemetry: turns/day trend (last 7 days), transcript-bytes growth rate (proxy for tokens-per-turn), activity-log throughput. One short line per plan.
+5. **Telemetry signals** — for plans with telemetry: turns/day trend (last 7 days), transcript-bytes growth rate (proxy for tokens-per-turn), event throughput. One short line per plan.
 6. **Worktree state** — current branch + dirty status (live `git status --porcelain` — NOT cached, per CD-2) + total worktree count + per-worktree branch list.
 7. **Recent design notes** — path + first heading for each file from S1's design-notes collection.
 
@@ -1466,10 +1525,10 @@ Group findings into salience-ordered sections. Skip empty sections silently.
 
 **If `--plan=<slug>` is set, render this single-plan deep-dive instead of the grouped report:**
 
-- Full frontmatter (status, branch, worktree, current_task, next_action, autonomy, codex_routing, codex_review, started, last_activity).
-- Full `## Blockers` section.
-- Full `## Notes` section.
-- Last 20 entries of `## Activity log` (or all if fewer).
+- Full state (status, branch, worktree, current_task, next_action, autonomy, codex_routing, codex_review, started, last_activity, pending_gate).
+- Blocker events.
+- Note/warning/decision events.
+- Last 20 events from `events.jsonl` (or all if fewer).
 - Last 7 days of telemetry: turns count, growth rate, last record snapshot.
 - Latest retro for this slug if present (path + first paragraph).
 - Last 10 commits on the plan's branch.
@@ -1495,7 +1554,7 @@ Triggered by `/masterplan stats [args]`. Generates codex-vs-inline routing distr
 1. **Resolve script path.** The plugin's installed location is the directory containing the slash command file (typically `~/.claude/plugins/data/<owner>-<plugin>/<slug>/commands/masterplan.md`). Resolve `<plugin-root> = dirname(dirname(<this-prompt's-path>))`. Then `<script> = <plugin-root>/bin/masterplan-routing-stats.sh`. If the script is not found at the resolved path, surface a one-line error: `error: bin/masterplan-routing-stats.sh not found at <expected-path>. Reinstall the plugin or run from a development checkout.`. → CLOSE-TURN.
 2. **Pass through arguments.** Forward all post-verb arguments verbatim to the script (`--plan=<slug>`, `--format=table|json|md`, `--all-repos`, `--since=YYYY-MM-DD`). If the user passed no `--format=`, the script defaults to `table` for terminal-friendly output.
 3. **Run + stream output.** Invoke via the Bash tool with the resolved script path and forwarded args. Stream stdout to the user as-is. If the script exits non-zero, surface the stderr output, → CLOSE-TURN.
-4. **→ CLOSE-TURN.** Stats are read-only; no status-file writes, no subagent dispatches, no scheduling. Do NOT follow up with `AskUserQuestion` — the user invoked stats to see the numbers, not to start a workflow.
+4. **→ CLOSE-TURN.** Stats are read-only; no state writes, no subagent dispatches, no scheduling. Do NOT follow up with `AskUserQuestion` — the user invoked stats to see the numbers, not to start a workflow.
 
 **No bounded brief**: there is no subagent dispatch in Step T. The script does ALL parsing and tabulation. The orchestrator's only job is path-resolution + arg-forwarding.
 
@@ -1503,10 +1562,11 @@ Triggered by `/masterplan stats [args]`. Generates codex-vs-inline routing distr
 
 **Sources** the script reads from per plan:
 
-- `<slug>-status.md` activity log (routing tags `[codex]`/`[inline]`, pre-dispatch `routing→` entries from Fix 5, inline model hints `[subagent: sonnet]`, timestamps for time-elapsed proxy)
-- `<slug>-subagents.jsonl` (token totals, exact `model`, `routing_class` field — v2.4.0+ Fix 4)
-- `<slug>-eligibility-cache.json` (`decision_source`, `dispatched_to` runtime audit fields — v2.4.0+ Fix 5)
-- `<slug>-status.md` `## Notes` (degradation markers `⚠ Codex degraded`, silent-skip footprint markers from P3)
+- `docs/masterplan/<slug>/events.jsonl` (routing tags `[codex]`/`[inline]`, pre-dispatch `routing→` entries from Fix 5, inline model hints `[subagent: sonnet]`, timestamps for time-elapsed proxy)
+- `docs/masterplan/<slug>/subagents.jsonl` (token totals, exact `model`, `routing_class` field — v2.4.0+ Fix 4)
+- `docs/masterplan/<slug>/eligibility-cache.json` (`decision_source`, `dispatched_to` runtime audit fields — v2.4.0+ Fix 5)
+- `docs/masterplan/<slug>/state.yml` + events (degradation markers, silent-skip footprint markers from P3)
+- Legacy `<slug>-status.md` / sidecars when no bundle exists, through the parser's compatibility path.
 
 **Direct script invocation** (bypasses the orchestrator): users can invoke `bash <plugin-root>/bin/masterplan-routing-stats.sh ...` directly for cron / CI / loop integration. Same flags apply.
 
@@ -1514,19 +1574,20 @@ Triggered by `/masterplan stats [args]`. Generates codex-vs-inline routing distr
 
 ## Step R — Retro
 
-Triggered by `/masterplan retro [<slug>]`. Generates a retrospective doc for a completed plan and writes it to `docs/superpowers/retros/YYYY-MM-DD-<slug>-retro.md`.
+Triggered by `/masterplan retro [<slug>]`, or internally by Step C's completion finalizer with `completion_auto=true`. Generates a retrospective doc for a completed plan and writes it to `docs/masterplan/<slug>/retro.md`.
 
-This Step replaces the legacy `masterplan-retro` skill (removed prior to v1.0.0). The verb is the only entry point; there is no auto-fire on plan completion.
+This Step replaces the legacy `masterplan-retro` skill (removed prior to v1.0.0). Manual `/masterplan retro` remains available; successful Step C completion auto-invokes this step by default so completed work does not sit without a retro.
 
 ### Step R0 — Resolve target slug
 
 Parse the first remaining arg after `retro`:
 
-- **Arg present** — treat as `<slug>` (or substring match). Search across `git_state.worktrees` for status files at `<worktree>/<config.plans_path>/*<slug>*-status.md`:
+- **Internal completion invocation (`completion_auto=true`)** — use the `state.yml` path already loaded by Step C. Do not scan or prompt. Require `status: complete`; if the state is already `archived` and `retro.md` exists, treat the retro as already satisfied and return success.
+- **Arg present** — treat as `<slug>` (or substring match). Search across `git_state.worktrees` for state files at `<worktree>/<config.runs_path>/*<slug>*/state.yml`, plus legacy status files through the migration adapter:
   - 0 matches → emit `no completed plan found matching '<slug>'. Try /masterplan status to see slugs.` and exit.
   - 1 match → use it.
   - 2+ matches → `AskUserQuestion` with one option per candidate (label = slug, description = worktree + completion date).
-- **No arg** — scan all worktrees; collect status files where `status: complete` AND no sibling retro exists at `docs/superpowers/retros/*-<slug>-retro.md`:
+- **No arg** — scan all worktrees; collect state files where `status: complete` AND no bundled `retro.md` exists:
   - 0 candidates → emit `no completed plans without retros.` and exit.
   - 1 candidate → use it (skip the picker; one-shot).
   - 2+ candidates → `AskUserQuestion` with one option per candidate (label = slug, description = completion date + worktree).
@@ -1535,35 +1596,38 @@ Apply CD-9 throughout: concrete options, recommended option (most-recently compl
 
 ### Step R1 — Pre-write guard
 
-Before any reads, glob `docs/superpowers/retros/*-<slug>-retro.md` (the file is date-prefixed; a fixed-path lookup will miss earlier-dated retros for the same slug).
+Before any reads, check `<run-dir>/retro.md` and legacy `docs/superpowers/retros/*-<slug>-retro.md` so migrated plans do not duplicate an older retro.
 
 If a retro already exists for this slug, surface `AskUserQuestion(Open existing retro / Generate new with -v2 suffix / Abort)`. Default option: Abort.
+
+In `completion_auto=true` mode, do not prompt. If `<run-dir>/retro.md` already exists, reuse it and proceed to Step R3.5 so the run can still be archived. If only a matching legacy retro exists, copy it into `<run-dir>/retro.md`, append `retro_copied_from_legacy`, and proceed.
 
 ### Step R2 — Gather (parallel where possible)
 
 Dispatch a single Haiku agent (pass `model: "haiku"` per §Agent dispatch contract) — or run inline if `git_state` already cached the worktree — with this bounded brief:
 
 - **Goal:** Collect retro source material for slug `<slug>` in worktree `<wt>`.
-- **Inputs:** status path, plan path, spec path (from `status.spec`), branch (from `status.branch`), trunk (from `config.trunk_branches[0]`).
+- **Inputs:** state path, plan path, spec path (from `artifacts.spec`), branch (from `state.branch`), trunk (from `config.trunk_branches[0]`).
 - **Reads (one parallel batch):**
-  1. `<wt>/<config.plans_path>/<slug>-status.md` — frontmatter, full activity log (including any `<slug>-status-archive.md` if present), blockers, notes.
-  2. `<wt>/<config.plans_path>/<slug>.md` — task list, intended order.
-  3. `<wt>/<status.spec>` — original goals, scope, design decisions.
+  1. `<run-dir>/state.yml` — state fields.
+  2. `<run-dir>/events.jsonl` plus `events-archive.jsonl` if present — full activity timeline, blockers, notes/warnings.
+  3. `<run-dir>/plan.md` — task list, intended order.
+  4. `<run-dir>/spec.md` — original goals, scope, design decisions.
   4. `git -C <wt> log --reverse --format='%h %ci %s' <trunk>..<branch>` — commits since plan started.
   5. `gh pr list --search "head:<branch>" --state=all --json=number,title,url,mergedAt,additions,deletions` if `gh` is available; degrade gracefully if not.
-- **Return shape:** structured digest `{frontmatter, activity_entries, blockers, notes, task_list, spec_excerpt, commits, pr?}`.
+- **Return shape:** structured digest `{state, events, blockers, notes, task_list, spec_excerpt, commits, pr?}`.
 
 ### Step R3 — Synthesize + write
 
-Write `docs/superpowers/retros/YYYY-MM-DD-<slug>-retro.md` (today's date) with this structure:
+Write `<run-dir>/retro.md` with this structure:
 
 ```markdown
 # <Feature Name> — Retrospective
 
 **Slug:** <slug>
-**Started:** <status.started>
+**Started:** <state.started>
 **Completed:** <today>
-**Branch:** <status.branch>
+**Branch:** <state.branch>
 **PR:** <pr url if available>
 
 ## Outcomes
@@ -1572,7 +1636,7 @@ What shipped, in 2–3 bullet points. Tie back to the spec's stated goal.
 
 ## Timeline
 
-Day-by-day or week-by-week from the activity log, summarized. One bullet per ~3 task completions.
+Day-by-day or week-by-week from `events.jsonl`, summarized. One bullet per ~3 task completions.
 
 ## What went well
 
@@ -1580,15 +1644,15 @@ Day-by-day or week-by-week from the activity log, summarized. One bullet per ~3 
 
 ## What blocked
 
-For each `## Blockers` entry: what blocked, what unblocked it, time lost. Pull CD-4 ladder citations from the activity log to show how the blocker was attacked before escalation.
+For each blocker event: what blocked, what unblocked it, time lost. Pull CD-4 ladder citations from events to show how the blocker was attacked before escalation.
 
 ## Deviations from spec
 
-Tasks that ended up scoped differently from the spec. Cite spec section vs final commit. Was the change well-motivated? Did it get noted in `## Notes` at the time?
+Tasks that ended up scoped differently from the spec. Cite spec section vs final commit. Was the change well-motivated? Did it get captured in events at the time?
 
 ## Codex routing observations
 
-Tally `[codex]` vs `[inline]` from the activity log. If routing was `auto`, did the eligibility heuristic make good calls? Any false positives (delegated → had to rerun inline) or false negatives? Feeds tuning of `config.codex.max_files_for_auto`.
+Tally `[codex]` vs `[inline]` from events. If routing was `auto`, did the eligibility heuristic make good calls? Any false positives (delegated → had to rerun inline) or false negatives? Feeds tuning of `config.codex.max_files_for_auto`.
 
 ## Follow-ups
 
@@ -1603,32 +1667,31 @@ Specific, not platitudes. Anything worth promoting to project memory or to a CLA
 
 Apply **CD-3** (cite SHAs, file paths, concrete numbers — don't write vague retros) and **CD-10** (ground problems in `path:line` so they're actionable).
 
-### Step R3.5 — Auto-archive plan + spec (v2.11.0+)
+### Step R3.5 — Archive run bundle (v3.0.0+)
 
-After Step R3 writes the retro file, automate the cleanup that was previously manual: move the source plan and its paired spec out of the active `docs/superpowers/{plans,specs}/` directories into `docs/superpowers/{archived-plans,archived-specs}/` so they don't keep showing up in masterplan-detect's orphan-plan grep.
+After Step R3 writes `retro.md`, archive the run by updating the bundle state instead of moving individual artifacts across unrelated directories. The run directory remains intact at `docs/masterplan/<slug>/`; `state.yml` becomes the single archived pointer.
 
-**Skip this step entirely** when `config.auto_archive_after_retro == false` OR when the user passed `--no-archive` to the retro verb. In those cases, jump to Step R4 with no archive activity.
+**Skip this step entirely** when `config.retro.auto_archive_after_retro == false` OR when the user passed `--no-archive` to the retro verb. In those cases, jump to Step R4 with no archive activity.
 
 Otherwise:
 
-1. Read `plan` and `spec` paths from the status frontmatter (set at kickoff in Step B3 / on import in Step I3).
-2. **Create archive directories if missing.** `mkdir -p docs/superpowers/archived-plans docs/superpowers/archived-specs` (idempotent).
-3. **Move plan.** If the plan path resolves under `docs/superpowers/plans/`, run `git mv <plan-path> docs/superpowers/archived-plans/<basename>`. If it's already under `archived-plans/` (e.g., the retro was generated for an already-archived plan), skip — no-op.
-4. **Move spec.** If the spec path is set AND resolves under `docs/superpowers/specs/`, run `git mv <spec-path> docs/superpowers/archived-specs/<basename>`. **Spec collision avoidance:** before moving, scan `docs/superpowers/plans/*-status.md` for any other status file referencing this same spec path. If ≥ 1 other plan still references it, surface `AskUserQuestion`: "Spec `<basename>` is shared by other plan(s): `<slug-list>`. What now?" with options **(1) Archive anyway and update sibling plans' references (Recommended)**, **(2) Leave spec in place (only archive the plan)**, **(3) Skip the entire archive step for this retro**. Apply choice. If "Archive anyway", after the move sweep through the sibling status files and rewrite the `spec:` frontmatter line to point to the new path.
-5. **Update the status file.** Set `archived_at: <today ISO date>` in frontmatter and append `## Activity log` entry: *"Archived plan + spec at <ts> after retro generation."* Use the existing Step 4d flock-guarded write contract.
-6. **Stage but do NOT commit.** The moves are `git mv`'d (which stages them). Step R4 below offers a commit-now option that includes the retro file + the staged moves.
-7. **Emit a one-line summary** to stdout: `✓ Archived: <plan-path> → <new-plan-path>` and (if spec moved) `✓ Archived: <spec-path> → <new-spec-path>`.
+1. Read `state.yml` and confirm `artifacts.plan`, `artifacts.spec`, and `artifacts.retro` point inside the same run directory.
+2. Set `status: archived`, `phase: archived`, `archived_at: <today ISO date>`, `pending_gate: null`, and `next_action: archived`.
+3. Append an `archived_after_retro` event to `events.jsonl`.
+4. Stage but do NOT commit. Step R4 below offers a commit-now option that includes `retro.md`, `state.yml`, and `events.jsonl`.
+5. Emit a one-line summary to stdout: `Archived run bundle: docs/masterplan/<slug>/`.
 
-If the plan or spec path doesn't resolve to an actual file (e.g., the status file references a path that was deleted or moved before the retro), emit a warning and continue without aborting: *"⚠️ Could not archive `<path>` — file not found. Retro is written; archive step skipped for this artifact."*
+If the run was migrated from a legacy layout and still has active legacy files under `docs/superpowers/...`, do not delete or move them here. Report: `legacy artifacts preserved; run /masterplan clean --category=legacy after verifying migration` so cleanup is an explicit second action.
 
 ### Step R4 — Offer follow-ups
 
 After the retro file is written (and Step R3.5 has staged any archive moves):
 
 1. Show the user the retro path + a one-paragraph summary. If R3.5 moved files, list those as `Archived: <old-path> → <new-path>` lines.
-2. **Commit prompt (v2.11.0+)** — surface `AskUserQuestion`: "Commit retro + archive moves now?" with options **(1) Yes, commit as `docs(retro): <slug> + archive`** (Recommended), **(2) Leave staged for next commit** (e.g., the user wants to bundle with other changes), **(3) Unstage the archive moves and revert** (the user opted-in to retro but not the archive). On choice (3), reverse the `git mv` operations from R3.5 and unstage. On choice (1), run the commit. Skip this prompt entirely if R3.5 was skipped (no archive activity) — in that case just commit the retro alone, or leave it staged.
+2. **Commit prompt (v2.11.0+)** — in manual mode, surface `AskUserQuestion`: "Commit retro + archive moves now?" with options **(1) Yes, commit as `docs(retro): <slug> + archive`** (Recommended), **(2) Leave staged for next commit** (e.g., the user wants to bundle with other changes), **(3) Unstage the archive moves and revert** (the user opted-in to retro but not the archive). On choice (3), reverse the `git mv` operations from R3.5 and unstage. On choice (1), run the commit. Skip this prompt entirely if R3.5 was skipped (no archive activity) — in that case just commit the retro alone, or leave it staged.
+   - In `completion_auto=true` mode, do not prompt: stage `retro.md`, `state.yml`, and `events.jsonl`, then commit as `docs(retro): <slug> completion retro`. If there are no file changes because the retro/archive state already exists, append no duplicate event and report `retro already current`.
 3. For each follow-up marked as a `/schedule` candidate, surface ONE `AskUserQuestion` per candidate (don't batch a wall): "Want me to /schedule a one-time agent for `<action>` in `<N weeks>`?" with options `Yes / Skip / Abort follow-ups`.
-4. If the retro surfaced lessons that fit project memory, suggest saving them — don't save automatically (CD-7's status-file rule applies; project memory is an extra opt-in).
+4. If the retro surfaced lessons that fit project memory, suggest saving them — don't save automatically (CD-7's run-state rule applies; project memory is an extra opt-in).
 
 ---
 
@@ -1638,16 +1701,16 @@ Triggered by `/masterplan doctor [--fix]`. Lints all masterplan state across all
 
 ### Scope
 
-Read worktrees from `git_state.worktrees` (Step 0 cache). For each worktree, scan `<worktree>/<config.specs_path>/` and `<worktree>/<config.plans_path>/`.
+Read worktrees from `git_state.worktrees` (Step 0 cache). For each worktree, scan `<worktree>/<config.runs_path>/` plus legacy `<worktree>/<config.specs_path>/` and `<worktree>/<config.plans_path>/`.
 
 **Parallelization.** When worktrees ≥ 2, dispatch one Haiku agent (pass `model: "haiku"` per §Agent dispatch contract) per worktree in a single Agent batch (each agent runs all 25 plan-scoped checks for its worktree and returns findings as `[{check_id, severity, file, message}]` JSON). With 1 worktree, run inline — agent dispatch latency isn't worth it. The orchestrator merges results and applies the report ordering below. Repo-scoped check #26 (`auto_compact_loop_attached`, v2.9.1+) fires ONCE per doctor run regardless of worktree/plan count and runs inline at the orchestrator. Its input is session-level state (`CronList` output), not per-plan state. (Self-host audits — deployment-drift detection and CD-9 free-text-question grep — moved to `bin/masterplan-self-host-audit.sh` in v2.11.0; that script is developer-only and runs against the project repo, not the user's working repo.) Plan-scoped check #28 (`completed_plan_without_retro`, v2.11.0+) is interactive: when it fires it surfaces `AskUserQuestion` to the user, so it can NOT be parallelized inside Haiku worktree dispatchers — instead each worktree's Haiku returns the candidate-list, and the orchestrator drives the prompts inline (sequentially) after the parallel detection completes.
 
-**Complexity-aware check set.** For each scanned plan, read `complexity` from its status frontmatter (default `medium` if absent — pre-feature plans). The active check set varies:
+**Complexity-aware check set.** For each scanned plan, read `complexity` from `state.yml` (default `medium` if absent — legacy/pre-feature plans). The active check set varies:
 
 - `low` plans: run only checks #1 (orphan plan), #2 (orphan status), #3 (wrong worktree), #4 (wrong branch), #5 (stale in-progress), #6 (stale blocked), #8 (missing spec), #9 (schema, against the standard 15-field set), #10 (unparseable), #18 (codex misconfig). SKIP all sidecar / annotation / ledger / cache / queue / per-subagent-telemetry checks (#11–#17, #19–#21, #23, #24) — low plans do not produce those artifacts. Also skip #22 (high-only — see below).
 - `medium` plans: run all 25 plan-scoped checks except #22 (high-only).
 - `high` plans: run all 25 plan-scoped checks INCLUDING #22 (high-complexity rigor evidence).
-- Plans without a `complexity:` frontmatter field: treat as `medium`.
+- Plans without a `complexity:` state field: treat as `medium`.
 
 The check-set gate is per-plan: a single `/masterplan doctor` run against worktrees containing a mix of low/medium/high plans honors each plan's complexity individually. Findings are reported with the same severity as today. (Self-host audits — deployment-drift comparison vs HEAD and CD-9 free-text-question grep — moved out of doctor in v2.11.0; those run via the developer-only `bin/masterplan-self-host-audit.sh` script when working on the orchestrator source.)
 
@@ -1657,32 +1720,32 @@ For each worktree, run all checks. Report findings grouped by worktree → check
 
 | # | Check | Severity | `--fix` action |
 |---|---|---|---|
-| 1 | **Orphan plan** — plan file with no sibling `-status.md`. **Sub-classification #1a (stray-duplicate-orphan, v2.14.0+):** when ALL three hold — (a) the orphan plan's slug matches an in-status plan (`<slug>` + `<slug>-status.md` pair) in another worktree of the same repo, (b) the orphan plan's mtime ≤ the in-status copy's mtime OR the file content hashes match (orphan is at-or-behind the canonical copy), AND (c) the orphan's worktree path is NOT the worktree path recorded in the in-status copy's frontmatter — the orphan is provably a stale snapshot from a sibling worktree (common after creating a worktree and then importing/finalizing the plan in a different worktree); safe to delete. | Warning | **#1 (true orphan, no in-status copy elsewhere)**: Suggest `/masterplan import --file=<path>`. No auto-fix (judgment call: the user may have intentional rough notes that aren't ready for masterplan schema). **#1a (stray-duplicate-orphan)**: `--fix`: `git rm <stale-path>` per detected stale snapshot; one commit per worktree containing stray duplicates: `masterplan: remove <N> stray-duplicate orphan plan(s) via doctor --fix`. No-`--fix`: report each stray-duplicate finding with a line like `<worktree>:<plan-path> — stale snapshot of <slug> (canonical at <other-worktree>:<plan-path>); safe to remove with --fix`. The cross-worktree duplicate test is cheap: check the orphan's slug against `<plans_path>/<slug>.md` + `<plans_path>/<slug>-status.md` in every other worktree from `git worktree list`. |
-| 2 | **Orphan status** — `status.md` whose `plan` field points at a missing file. | Error | Move status to `<config.archive_path>/<date>/`. |
-| 3 | **Wrong worktree path** — status's `worktree` doesn't match any current `git worktree list` entry. | Error | Try to match by branch name; rewrite if unique match. Otherwise report. |
-| 4 | **Wrong branch** — status's `branch` doesn't exist in `git branch --list`. | Error | Report only (manual fix). |
+| 1 | **Legacy plan not migrated** — pre-v3 plan/spec/status/retro exists under `docs/superpowers/...` and no matching `docs/masterplan/<slug>/state.yml` exists. | Warning | `--fix`: run `bin/masterplan-state.sh migrate --write --slug=<slug>` (copy-only; no legacy delete). |
+| 2 | **Orphan state** — `state.yml` points at a missing `artifacts.plan` / `artifacts.spec` required for its current `phase`, or a legacy status points at a missing plan. | Error | For bundle state: prompt to repair artifact path or mark archived. For legacy status: migrate if possible, otherwise move to `<config.archive_path>/<date>/`. |
+| 3 | **Wrong worktree path** — `state.yml`'s `worktree` doesn't match any current `git worktree list` entry. | Error | Try to match by branch name; rewrite if unique match. Otherwise report. |
+| 4 | **Wrong branch** — `state.yml`'s `branch` doesn't exist in `git branch --list`. | Error | Report only (manual fix). |
 | 5 | **Stale in-progress** — `status: in-progress` with `last_activity` > 30 days. | Warning | Report only. |
 | 6 | **Stale blocked** — `status: blocked` with `last_activity` > 14 days. | Warning | Report only. |
 | 7 | **Plan/log drift** — plan task count differs from activity-log task references by >50%. | Warning | Report only. |
-| 8 | **Missing spec** — status's `spec` field points at a missing spec doc. | Error | Report only. |
-| 9 | **Schema violation** — status frontmatter missing required fields. Required set: `slug`, `status`, `spec`, `plan`, `worktree`, `branch`, `started`, `last_activity`, `current_task`, `next_action`, `autonomy`, `loop_enabled`, `codex_routing`, `codex_review`, `compact_loop_recommended`. (Step A and Step C both depend on the full set.) | Error | Add missing fields with sentinel/derived values where possible (e.g. `compact_loop_recommended: false`); report the rest. |
-| 10 | **Unparseable status file** — frontmatter or body is malformed YAML/Markdown. | Error | Report only (manual fix needed). Step A skips these silently, but doctor calls them out. |
-| 11 | **Orphan archive file** — `<slug>-status-archive.md` exists with no sibling `<slug>-status.md`. (The archive is created by Step C's post-task finalization status-update sub-block's activity log rotation; it must always have a base status file.) | Warning | Suggest moving the archive to `<config.archive_path>/<date>/`. No auto-fix. |
-| 12 | **Telemetry file growth** — `<slug>-telemetry.jsonl` OR `<slug>-subagents.jsonl` > 5 MB. | Warning | Rotate to `<slug>-telemetry-archive.jsonl` / `<slug>-subagents-archive.jsonl` (the active file becomes empty; new appends start fresh). |
-| 13 | **Orphan telemetry file** — `<slug>-telemetry.jsonl` (or `-telemetry-archive.jsonl`) exists with no sibling `<slug>-status.md`. | Warning | Suggest moving to `<config.archive_path>/<date>/`. No auto-fix. |
-| 14 | **Orphan eligibility cache** — `<slug>-eligibility-cache.json` exists with no sibling `<slug>-status.md`. (The cache is a sidecar of an active plan; it must always have a base status file.) | Warning | Suggest moving to `<config.archive_path>/<date>/`. No auto-fix. |
+| 8 | **Missing spec** — `state.yml`'s `artifacts.spec` points at a missing spec doc when the phase requires one. | Error | Report only; if `legacy.spec` exists, suggest re-copying it into the bundle. |
+| 9 | **Schema violation** — `state.yml` missing required fields. Required set: `schema_version`, `slug`, `status`, `phase`, `artifacts.spec`, `artifacts.plan`, `artifacts.events`, `worktree`, `branch`, `started`, `last_activity`, `current_task`, `next_action`, `autonomy`, `loop_enabled`, `codex_routing`, `codex_review`, `compact_loop_recommended`, `complexity`, `pending_gate`. | Error | Add missing fields with sentinel/derived values where possible (e.g. `pending_gate: null`, `compact_loop_recommended: false`); report the rest. |
+| 10 | **Unparseable state file** — `state.yml` YAML is malformed, or legacy status frontmatter/body is malformed. | Error | Report only (manual fix needed). Step A skips these silently, but doctor calls them out. |
+| 11 | **Orphan events archive** — `events-archive.jsonl` exists without sibling `state.yml`, or legacy `<slug>-status-archive.md` exists without legacy status. | Warning | Suggest moving the archive to `<config.archive_path>/<date>/`. No auto-fix. |
+| 12 | **Telemetry file growth** — `telemetry.jsonl` OR `subagents.jsonl` (or legacy equivalents) > 5 MB. | Warning | Rotate to `telemetry-archive.jsonl` / `subagents-archive.jsonl` (the active file becomes empty; new appends start fresh). |
+| 13 | **Orphan telemetry file** — `telemetry.jsonl` (or archive) exists without sibling `state.yml`, or legacy telemetry exists without legacy status. | Warning | Suggest moving to `<config.archive_path>/<date>/`. No auto-fix. |
+| 14 | **Orphan eligibility cache** — `eligibility-cache.json` exists without sibling `state.yml`, or legacy cache exists without legacy status. | Warning | Suggest moving to `<config.archive_path>/<date>/`. No auto-fix. |
 | 15 | **`parallel-group:` set but `**Files:**` block missing/empty.** Section 2 eligibility rule 2 violated. Affects parallel-eligibility computation; task falls back to serial silently. | Warning | Report only. Author must add `**Files:**` block. |
 | 16 | **`parallel-group:` and `**Codex:** ok` both set on the same task.** Section 2 eligibility rule 4 violated; FM-4 mitigation conflict (mutually exclusive). | Warning | Report only. Author must remove one of the annotations. |
 | 17 | **File-path overlap detected within a `parallel-group:`.** Section 2 eligibility rule 5 violated. Multiple tasks in the same parallel-group declare overlapping `**Files:**` paths. | Warning | Report the overlapping task pairs. No auto-fix. |
 | 18 | **Codex config on but plugin missing.** Config has `codex.routing != off` OR `codex.review == on` AND no entry prefixed `codex:` is present in the system-reminder skills list at lint time. Step 0's codex-availability detection auto-degrades silently per-run; doctor surfaces the persistent misconfiguration as a Warning so the user notices and either installs codex or sets the defaults to `off`. | Warning | Suggest `/plugin marketplace add openai/codex-plugin-cc` then `/plugin install codex@openai-codex` to enable, OR set `codex.routing: off` and `codex.review: off` in `.masterplan.yaml` to suppress this check. No auto-fix (changing user's config is out of scope per CD-2). |
-| 19 | **Orphan subagents file** — `<slug>-subagents.jsonl` OR (legacy, pre-v2.4.0) `<slug>-subagents-cursor` exists with no sibling `<slug>-status.md`. (The subagents file is a sidecar of an active plan, written by `hooks/masterplan-telemetry.sh` per Agent dispatch. The cursor file was the v2.3.0 dedup mechanism, deprecated in v2.4.0 in favor of `agent_id` dedup against the existing JSONL — old cursor files lingering on disk are harmless.) | Warning | Suggest moving the subagents file to `<config.archive_path>/<date>/`. Cursor file (if present) can simply be deleted. No auto-fix. |
-| 20 | **Codex routing configured but eligibility cache missing.** Status frontmatter has `codex_routing: auto` OR `codex_routing: manual` AND no sibling `<slug>-eligibility-cache.json` exists AND the activity log has at least one `routing→` or `[codex]`/`[inline]` entry (i.e., Step C ran at least once). Two failure modes both produce this: (a) Step 0's codex-availability detection silently degraded `routing` to `off` for the whole run and the orchestrator never built the cache (covered by check #18 if the plugin is also currently missing — but this check stands on its own when codex *was* uninstalled at kickoff and *was* re-installed later, where #18 wouldn't fire), or (b) the orchestrator skipped Step C step 1 entirely (a protocol violation worth reporting). | Warning | `--fix`: Rebuild the eligibility cache deterministically (mirrors Step C step 1's Build path). Run the annotation-completeness scan inline; if every task in the plan has the required annotations (`**Codex:**` and `**Files:**` per Section 2 eligibility rules), the orchestrator builds the cache inline (no subagent dispatch) — for each task, evaluate the eligibility checklist against config (`codex.routing`, `codex.max_files_for_auto`, plan annotations); produce `<slug>-eligibility-cache.json` with one entry per task `{task_id, eligible: bool, reason}`. If any task's annotations are incomplete, dispatch one Haiku per the existing Step C step 1 fallback path (bounded brief: "classify these N tasks for codex eligibility; return JSON array") and merge results into the cache. Append `- <ISO-ts> eligibility cache: rebuilt (<N> tasks; <K> codex-eligible) — via doctor --fix` to the status's `## Activity log`. Single commit per fixed plan: `masterplan: rebuild eligibility cache for <slug> via doctor --fix`. When both #20 and #21 fire on the same plan (the common case — same root cause, different footprint), one `--fix` invocation resolves both. No-`--fix`: Suggest re-running the next task via `/masterplan execute <status-path>` with codex installed; the orchestrator will rebuild the cache on the next Step C invocation. If the user wants to formally surrender on codex for this plan, set `codex_routing: off` in the status frontmatter to suppress this check. |
-| 21 | **Step C step 1 cache-build evidence missing.** Status frontmatter has `codex_routing: auto` OR `codex_routing: manual` AND `## Activity log` has at least one task-completion entry AND no entry matches the regex `eligibility cache:` (the v2.4.0+ P1 evidence-of-attempt entry format). This means Step C step 1 ran zero times in this plan's lifetime — protocol violation footprint, the optoe-ng project-review pattern. Distinct from #20 (which catches the cache-file footprint); #21 catches the activity-log footprint. Both can fire on the same plan (and should, for plans that pre-date both v2.4.0 fixes). | Warning | `--fix`: Same action as #20 (rebuild eligibility cache + activity-log entry + commit). When both #20 and #21 fire on the same plan, one `--fix` invocation resolves both — emit the cache file (clears #20) AND the `eligibility cache: rebuilt (...) — via doctor --fix` activity-log entry (clears #21). No-`--fix`: Suggest re-running the next task via `/masterplan execute <status-path>` with codex installed; orchestrator's Step C step 1 will rebuild the cache AND emit the evidence entry. If the user wants to formally surrender on codex for this plan, set `codex_routing: off` to suppress this check. |
-| 22 | **High-complexity plan missing rigor evidence.** Fires when status frontmatter has  AND the plan's status file lacks ALL THREE of: (a) a  entry referencing a retro file, (b) at least one  reference in the activity log indicating a review pass, (c)  tags in ≥ 50% of activity-log task-completion entries. Severity: Warning. Rationale: high complexity is opt-in to rigor; if the rigor signals are completely absent on a completed/in-progress high plan, either the plan should be re-classified as medium or the missing rigor steps should be added (the plan executes today but the auditor should know). Skipped on  and  plans by Task 12's check-set gate. | Warning | No auto-fix. Suggest re-running the most recent task with  if the user has decided high is overkill, OR running  to generate the retro reference. |
-| 23 | **Opus on bounded-mechanical dispatch sites** (C.1 mitigation, v2.8.0+). Scans the most recent `min(20, len(jsonl))` entries in `<slug>-subagents.jsonl` for records whose **EITHER** `dispatch_site` substring-matches `Step C step 1`, `Step C step 2 wave dispatch`, or `Step C step 2 SDD` (per the §Agent dispatch contract dispatch-site mapping table) **OR** `routing_class == "sdd"` (the hook's classification when `subagent_type` contains `subagent-driven-development`) **AND** whose `model` field is `opus`. Excludes records whose `prompt_first_line` matches `re-dispatched with model=opus per blocker gate` (intentional escalation per the wave-member retry path). Indicates the model-passthrough override clause leaked or was missing in the orchestrator's SDD/wave brief — cost regression today; potentially a correctness issue if it indicates upstream skill-prompt drift. | Warning | Surface `AskUserQuestion` per finding: "Detected `<N>` SDD/wave/eligibility dispatch(es) with `model: opus` (cost contract calls for sonnet). How to proceed? — `Run \`bin/masterplan-self-host-audit.sh --models\` to lint orchestrator dispatch sites (Recommended)` / `Investigate transcript: print suspected session prompts from JSONL` / `Suppress for this plan (sets model_attribution_suppressed: true in frontmatter)` / `Skip this finding only`". The first option chains into running the audit script and surfacing its output. See §Agent dispatch contract recursive-application for the verbatim preamble that should be present in SDD invocations. |
-| 24 | **Status-write queue file present and non-empty** (F.4 mitigation, v2.8.0+). `<slug>-status.queue.jsonl` exists with non-zero size, AND the sibling status file shows no `last_activity` update within the last `config.loop_interval_seconds` (i.e., the orchestrator did not run a Step 4d drain after the queue was written). Indicates a previous session hit status-write contention via the F.4 flock guard but was killed (or abandoned) before the queue could drain on a subsequent 4d cycle. | Warning | `--fix`: replay each queued entry into the active log (idempotent; match-by `last_activity` + first 80 chars), then truncate the queue file. No-`--fix`: report the queued-entry count + suggest `/masterplan --resume=<status-path>` to trigger drain naturally. |
-| 26 | **`auto_compact_loop_attached`** (v2.9.1+; **repo-scoped** — fires once per doctor run, NOT per plan). Skipped silently when `config.auto_compact.enabled == false` after Step 0 merge, or when no plan in `docs/superpowers/plans/*-status.md` has `compact_loop_recommended: true`. Otherwise calls `ToolSearch(query="select:CronList")` to load the deferred-tool schema (mirrors the competing-scheduler check pattern in Step C step 1 — silent skip with a one-line note if `CronList` is unavailable in this session). Calls `CronList()` and filters returned entries for any whose `prompt` field contains the substring `/compact` (case-sensitive). Zero matches indicates the user saw the auto-compact nudge for one or more plans but did not run `/loop … /compact …` in this session — a likely user error (ran the loop in a different shell, or copy-pasted into the wrong terminal). | Warning | No `--fix` available — the resolution is for the user to run the loop in this session, and an automated fix would risk creating multiple competing crons. Report includes the exact copy-pasteable command derived from current config: `/loop {config.auto_compact.interval} /compact {config.auto_compact.focus}`, plus the list of plan slugs whose status files have `compact_loop_recommended: true`. Suggest setting `auto_compact.enabled: false` to silence the nudge if the user intentionally opted out. |
-| 28 | **`completed_plan_without_retro`** (v2.11.0+; plan-scoped). Detects plans that look complete but have no paired retrospective. Trigger conditions (any one): (a) status frontmatter has `status: complete`, (b) the plan file's task checkboxes are all `- [x]` with zero `- [ ]` (counted via grep), (c) the activity log includes a `final ship` / `release v` / `merged` entry within the last 30 days, AND no sibling retro exists at `docs/superpowers/retros/*-<slug>-retro.md` (date-prefixed glob; older retros for the same slug also satisfy). Secondary stale-plan trigger: plan file `mtime > 30 days` AND status frontmatter shows `status: in-progress` AND no activity-log entry within the last 14 days — surface as a separate sub-finding. Goal: catch the orphan-plan case (plan written + work done + retro never generated → masterplan-detect keeps flagging it as orphan) before it becomes long-lived noise. | Warning | No silent `--fix`. Surface `AskUserQuestion` per finding (CD-9): for the "looks complete" case, options **(1) Generate retro + archive plan & spec (Recommended)** — invoke Step R inline for this slug, including Step R3.5's auto-archive flow; **(2) Generate retro only (`--no-archive`)** — skip R3.5; **(3) Skip this plan** — silence for this run only; **(4) Skip all `completed_plan_without_retro` findings this run** — silence the rest of doctor's plan iterations. For the stale-plan secondary case, options **(1) Mark complete + generate retro + archive (Recommended)**, **(2) Just archive without retro** — `git mv` plan + spec into archived-* dirs without writing a retro file (used for genuinely-abandoned plans), **(3) Skip**. Apply chosen action inline before continuing to the next finding. |
+| 19 | **Orphan subagents file** — `subagents.jsonl` exists with no sibling `state.yml`, or legacy `<slug>-subagents.jsonl` / `<slug>-subagents-cursor` exists with no legacy status. | Warning | Suggest moving the subagents file to `<config.archive_path>/<date>/`. Cursor file (if present) can simply be deleted. No auto-fix. |
+| 20 | **Codex routing configured but eligibility cache missing.** `state.yml` has `codex_routing: auto` OR `codex_routing: manual` AND no bundled `eligibility-cache.json` exists AND `events.jsonl` has at least one `routing→` or `[codex]`/`[inline]` entry. | Warning | `--fix`: Rebuild `eligibility-cache.json` deterministically (mirrors Step C step 1's Build path), append an event `eligibility cache: rebuilt (...) -- via doctor --fix`, and commit the cache/state update. |
+| 21 | **Step C step 1 cache-build evidence missing.** `state.yml` has `codex_routing: auto` OR `codex_routing: manual` AND task-completion events exist AND no event contains `eligibility cache:`. | Warning | Same action as #20. No-`--fix`: suggest re-running the next task via `/masterplan execute <state-path>` with codex installed, or setting `codex_routing: off` in `state.yml` if codex is intentionally disabled for this plan. |
+| 22 | **High-complexity plan missing rigor evidence.** Fires when `state.yml` has `complexity: high` AND the run lacks ALL THREE of: (a) a retro artifact/event, (b) at least one `Codex review:` event indicating a review pass, (c) `[reviewed: ...]` tags in >= 50% of task-completion events. Skipped on `complexity: low` and `complexity: medium`. | Warning | No auto-fix. Suggest re-running the most recent task with `--complexity=medium` if high is overkill, OR running `/masterplan retro` to generate the retro reference. |
+| 23 | **Opus on bounded-mechanical dispatch sites** (C.1 mitigation, v2.8.0+). Scans the most recent `min(20, len(jsonl))` entries in `subagents.jsonl` for records whose **EITHER** `dispatch_site` substring-matches `Step C step 1`, `Step C step 2 wave dispatch`, or `Step C step 2 SDD` (per the §Agent dispatch contract dispatch-site mapping table) **OR** `routing_class == "sdd"` (the hook's classification when `subagent_type` contains `subagent-driven-development`) **AND** whose `model` field is `opus`. Excludes records whose `prompt_first_line` matches `re-dispatched with model=opus per blocker gate` (intentional escalation per the wave-member retry path). Indicates the model-passthrough override clause leaked or was missing in the orchestrator's SDD/wave brief — cost regression today; potentially a correctness issue if it indicates upstream skill-prompt drift. | Warning | Surface `AskUserQuestion` per finding: "Detected `<N>` SDD/wave/eligibility dispatch(es) with `model: opus` (cost contract calls for sonnet). How to proceed? — `Run \`bin/masterplan-self-host-audit.sh --models\` to lint orchestrator dispatch sites (Recommended)` / `Investigate transcript: print suspected session prompts from JSONL` / `Suppress for this plan (sets model_attribution_suppressed: true in state.yml)` / `Skip this finding only`". The first option chains into running the audit script and surfacing its output. See §Agent dispatch contract recursive-application for the verbatim preamble that should be present in SDD invocations. |
+| 24 | **State-write queue file present and non-empty** (F.4 mitigation, v2.8.0+). `state.queue.jsonl` exists with non-zero size, AND `state.yml` shows no `last_activity` update within the last `config.loop_interval_seconds`. | Warning | `--fix`: replay each queued entry into `events.jsonl` / `state.yml` idempotently, then truncate the queue file. No-`--fix`: report queued-entry count + suggest `/masterplan --resume=<state-path>` to trigger drain naturally. |
+| 26 | **`auto_compact_loop_attached`** (repo-scoped). Skipped silently when `config.auto_compact.enabled == false`, or when no `docs/masterplan/*/state.yml` has `compact_loop_recommended: true`. Otherwise calls `CronList()` and filters entries whose `prompt` contains `/compact`. | Warning | No `--fix` available; report the copy-pasteable `/loop {config.auto_compact.interval} /compact {config.auto_compact.focus}` command and the run slugs whose `state.yml` has `compact_loop_recommended: true`. |
+| 28 | **`completed_plan_without_retro`** (plan-scoped). Detects completed run bundles with no `retro.md`, or legacy completed plans without a migrated bundle/retro. | Warning | Surface `AskUserQuestion` per finding: generate retro + archive run bundle (Recommended), generate retro only, skip this plan, or skip all findings this run. |
 ### Output
 
 Plain-text grouped report. Apply **CD-10**: order findings by severity (errors first, then warnings), each line grounded in `<worktree>:<file>` so the user can jump straight to the offender. Summary line at the end with counts: `<E> errors, <W> warnings across <N> worktrees`. If `--fix` ran, include a list of files changed/moved.
@@ -1719,9 +1782,23 @@ When the user picks "Run --fix now": execute Step D with `--fix` semantics inlin
 
 ## Step CL — Clean
 
-Triggered by `/masterplan clean [--dry-run] [--delete] [--category=<name>] [--worktree=<path>]`. Archives completed plans + every sidecar, removes orphan sidecars, surfaces stale plans for confirm-then-archive, and prunes dead crons + missing worktrees. Doctor detects; clean remediates. **Doctor is read-only by default; clean owns the destructive/archival path with its own `--dry-run` + `AskUserQuestion` gate.**
+Triggered by `/masterplan clean [--dry-run] [--delete] [--category=<name>] [--worktree=<path>]`, or internally by Step C's completion finalizer in completion-safe mode. Archives completed run bundles, migrates or retires legacy `docs/superpowers/...` artifacts, removes orphan sidecars, surfaces stale plans for confirm-then-archive, and prunes dead crons + missing worktrees. Doctor detects; clean remediates. **Doctor is read-only by default; manual clean owns the broad destructive/archival path with its own `--dry-run` + `AskUserQuestion` gate.**
 
 Reuses the orphan-detection predicates from Step D's checks #11 / #13 / #14 / #19 — the two verbs MUST agree on what's an orphan. When in doubt, run `/masterplan doctor` first to see what clean would target.
+
+### Completion-safe mode
+
+Step C invokes Step CL with `completion_safe=true` after a successful plan completion unless disabled by `--no-cleanup` or `config.completion.cleanup_old_state == false`.
+
+Completion-safe mode is deliberately narrower than manual `/masterplan clean`:
+
+- Force `--category=legacy,orphans`, archive mode, current worktree only.
+- Skip `completed`, `stale`, `crons`, and `worktrees` categories.
+- Skip all `AskUserQuestion` gates, including stale-plan and main confirmation gates.
+- Never use `--delete`, even if a global or inherited argument contains it.
+- Archive legacy records only when `docs/masterplan/<slug>/state.yml` exists and its `legacy:` pointers match the old source path.
+- Emit one `completion_cleanup_*` event per action group: `archived`, `skipped`, `aborted`, or `nothing_to_archive`.
+- Abort the cleanup subset if CD-2 status checks reveal unrelated dirty files, but leave the run complete/archived.
 
 ### Step CL1 — Detection (parallel where possible)
 
@@ -1732,19 +1809,20 @@ Reuses the orphan-detection predicates from Step D's checks #11 / #13 / #14 / #1
 
 Resolve the action mode for archival categories: `archive` (default) or `delete` (when `--delete` is set). OS-level categories (`crons`, `worktrees`) always `delete` regardless.
 
-For each in-scope worktree, run the five category detectors. With ≥ 2 in-scope worktrees, dispatch one Haiku per worktree in a single Agent batch (mirrors Step D's parallelization rule; same per-worktree-Haiku contract). With 1 worktree, run inline.
+For each in-scope worktree, run the six category detectors. With ≥ 2 in-scope worktrees, dispatch one Haiku per worktree in a single Agent batch (mirrors Step D's parallelization rule; same per-worktree-Haiku contract). With 1 worktree, run inline.
 
-The Haiku's bounded brief: Goal=apply the five detectors below; Inputs=worktree path + `archive_path` glob to exclude (so already-archived files aren't re-targeted); Scope=read-only; Return=`{completed: [...], orphans: [...], stale: [...], crons: [...], worktrees: [...]}` JSON, where each item is `{src_path | cron_id | worktree_path, sibling_paths?, reason, archive_dst? | delete_only}`.
+The Haiku's bounded brief: Goal=apply the detectors below; Inputs=worktree path + `archive_path` glob to exclude (so already-archived files aren't re-targeted); Scope=read-only; Return=`{completed: [...], legacy: [...], orphans: [...], stale: [...], crons: [...], worktrees: [...]}` JSON, where each item is `{src_path | cron_id | worktree_path, sibling_paths?, reason, archive_dst? | delete_only}`.
 
-**Per-category detection rules** (apply only when included by `--category=`; default = all five):
+**Per-category detection rules** (apply only when included by `--category=`; default = all six):
 
-1. **`completed`** — Scan `<plans_path>/*-status.md` per worktree. For each with `status: complete` in frontmatter, collect the sibling artifact set: the plan file (`<slug>.md`), `<slug>-status-archive.md` if present, `<slug>-eligibility-cache.json` if present, `<slug>-telemetry.jsonl` + `<slug>-telemetry-archive.jsonl` if present, `<slug>-subagents.jsonl` + `<slug>-subagents-archive.jsonl` + `<slug>-subagents-cursor` if present. Action = `archive` (or `delete`). Archive destination: `<archive_path>/<status.last_activity-date or today>/`.
-2. **`orphans`** — Reuse Step D check predicates: #11 (`<slug>-status-archive.md` without `<slug>-status.md`), #13 (`<slug>-telemetry.jsonl` or `-archive.jsonl` without status), #14 (`<slug>-eligibility-cache.json` without status), #19 (`<slug>-subagents.jsonl` / `<slug>-subagents-cursor` without status). Action = `archive` (or `delete`). Archive destination: `<archive_path>/<today>/`.
-3. **`stale`** — Scan `<plans_path>/*-status.md` for `status: in-progress | blocked` AND `last_activity > 90 days` (compare against the current ISO timestamp). Action = `surface for per-item confirm` (NOT auto-archive — staleness is a judgment call; an active-but-paused project should not be auto-archived). Each stale plan triggers one `AskUserQuestion` in CL2 below.
-4. **`crons`** — Use `cron_state` from Step 0. Group entries by exact `prompt` string; flag every group with ≥ 2 entries. Action = `delete` (call `CronDelete <id>` on duplicates, keeping the lexicographically-smallest `id` per group). Mirrors Doctor #19's `--fix` action but invocable on its own. No commit (crons aren't file-tracked).
-5. **`worktrees`** — Compare `git worktree list` paths to filesystem reality. Action = `delete` for any registered worktree whose path doesn't exist on disk (`git worktree remove --force <path>` per stale entry). Skip the current worktree even if its path is missing (impossible state, but defensive). No commit.
+1. **`completed`** — Scan `<runs_path>/*/state.yml` per worktree. For each with `status: complete`, collect the whole run directory (`docs/masterplan/<slug>/`) as the artifact set. Action = `archive` (or `delete`). Archive destination: `<archive_path>/<status.last_activity-date or today>/<slug>/`.
+2. **`legacy`** — Run `bin/masterplan-state.sh inventory --format=json` logic. For any legacy `docs/superpowers/...` record with no matching `docs/masterplan/<slug>/state.yml`, offer migration first. For any legacy record whose bundle already exists and whose `legacy:` pointers match the source paths, action = `archive` (or `delete`) for the old legacy files only. This is the explicit cleanup path for previous-version invocations.
+3. **`orphans`** — Reuse Step D sidecar predicates against both layouts: legacy sidecars without legacy status, and run-bundle sidecars (`eligibility-cache.json`, `telemetry.jsonl`, `subagents.jsonl`) whose sibling `state.yml` is missing. Action = `archive` (or `delete`). Archive destination: `<archive_path>/<today>/`.
+4. **`stale`** — Scan `<runs_path>/*/state.yml` and legacy `<plans_path>/*-status.md` for `status: in-progress | blocked` AND `last_activity > 90 days` (compare against the current ISO timestamp). Action = `surface for per-item confirm` (NOT auto-archive — staleness is a judgment call; an active-but-paused project should not be auto-archived). Each stale plan triggers one `AskUserQuestion` in CL2 below.
+5. **`crons`** — Call `CronList` in CL1 (do not rely on Step 0 cache). Group entries by exact `prompt` string; flag every group with ≥ 2 entries. Action = `delete` (call `CronDelete <id>` on duplicates, keeping the lexicographically-smallest `id` per group). No commit (crons aren't file-tracked).
+6. **`worktrees`** — Compare `git worktree list` paths to filesystem reality. Action = `delete` for any registered worktree whose path doesn't exist on disk (`git worktree remove --force <path>` per stale entry). Skip the current worktree even if its path is missing (impossible state, but defensive). No commit.
 
-If `--category=<name>` is set, run only the named categories; ignore the rest. Comma-separated multi-select is allowed.
+If `--category=<name>` is set, run only the named categories; ignore the rest. Comma-separated multi-select is allowed. Valid categories: `completed`, `legacy`, `orphans`, `stale`, `crons`, `worktrees`.
 
 ### Step CL2 — Per-item confirms + main confirmation gate
 
@@ -1756,14 +1834,14 @@ For each stale plan, surface ONE `AskUserQuestion`:
 AskUserQuestion(
   question="Plan `<slug>` is stale: status=<status>, last_activity=<date> (<N days ago>). What now?",
   options=[
-    "Archive (Recommended) — move plan + status + sidecars to `<archive_path>/<today>/`",
+    "Archive (Recommended) — move the run bundle to `<archive_path>/<today>/<slug>/`",
     "Keep — leave it; bump `last_activity` so it stops being stale",
     "Skip — leave it untouched; stays stale and will surface again next clean run"
   ]
 )
 ```
 
-`Keep` rewrites the status file's `last_activity` to the current ISO timestamp (the orchestrator does this — it's a single-line frontmatter edit; commit subject `clean: bump last_activity on <slug> to clear staleness`). `Skip` does nothing.
+`Keep` rewrites `state.yml`'s `last_activity` to the current ISO timestamp and appends a `staleness_kept` event (commit subject `clean: bump last_activity on <slug> to clear staleness`). `Skip` does nothing.
 
 **Main confirmation gate** (after stale resolutions). Render a structured summary:
 
@@ -1858,20 +1936,27 @@ Step CL never touches files inside `<archive_path>/`. Detection (CL1) excludes t
 
 ### Recursive applicability
 
-Step CL is itself a verb — it does NOT run inside Step C's per-task loop. It does NOT run inside Step D. It is invoked directly by the user via `/masterplan clean`. There is no auto-clean trigger anywhere in the orchestrator (out of scope for v1; revisit if usage data warrants).
+Manual Step CL is itself a verb — it does NOT run inside Step D and does NOT run between Step C tasks. The only automatic invocation is Step C's completion-safe mode after all tasks are complete; that path is archive-only and limited to legacy/orphan state cleanup. Re-running the automatic subset must be idempotent and should converge to `completion cleanup: nothing to archive`.
 
 ---
 
-## Status file format
+## Run bundle state format
 
-Path: `docs/superpowers/plans/<slug>-status.md` (sibling to the plan file).
+Path: `docs/masterplan/<slug>/state.yml` (sibling to the run artifacts).
 
-```markdown
----
+```yaml
+schema_version: 2
 slug: <feature-slug>
-status: in-progress | blocked | complete
-spec: docs/superpowers/specs/<slug>-design.md
-plan: docs/superpowers/plans/<slug>.md
+status: in-progress | blocked | complete | archived
+phase: worktree_decided | brainstorming | spec_gate | planning | plan_gate | executing | task_gate | blocked | complete | retro_gate | archived
+artifacts:
+  spec: docs/masterplan/<slug>/spec.md
+  plan: docs/masterplan/<slug>/plan.md
+  retro: docs/masterplan/<slug>/retro.md
+  events: docs/masterplan/<slug>/events.jsonl
+  eligibility_cache: docs/masterplan/<slug>/eligibility-cache.json
+  telemetry: docs/masterplan/<slug>/telemetry.jsonl
+  subagents: docs/masterplan/<slug>/subagents.jsonl
 worktree: /absolute/path/to/worktree
 branch: <git-branch-name>
 started: 2026-05-01
@@ -1883,28 +1968,19 @@ loop_enabled: true | false
 codex_routing: off | auto | manual
 codex_review: off | on
 compact_loop_recommended: true | false
-complexity: low | medium | high  # Required at execution; set by Step B3 kickoff prompt or --complexity flag. Pre-feature plans without this field are read as medium.
+complexity: low | medium | high
+pending_gate: null
 # Optional: telemetry: off  # silences per-plan telemetry capture
 # Optional v2.1.0+: gated_switch_offer_dismissed: true  # permanent per-plan suppression of gated→loose offer
 # Optional v2.1.0+: gated_switch_offer_shown: true      # per-session suppression (re-fires on cross-session resume)
 # Optional: competing_scheduler_acknowledged: true       # user accepted dual-pacer (cron + /loop) for this plan; suppresses the competing-scheduler check
----
-
-# <Feature Name> — Status
-
-## Activity log
-- 2026-05-01T14:00 brainstorm complete, spec at docs/superpowers/specs/<slug>-design.md
-- 2026-05-01T14:15 plan written, beginning execution under autonomy=loose
-- 2026-05-01T14:32 task "Add foo helper" complete, commit abc123
-
-## Blockers
-(empty unless status: blocked)
-
-## Notes
-(append-only context for the next session — decisions, scope changes, surprises a fresh agent should know)
+legacy:
+  # Populated by bin/masterplan-state.sh migrate when importing pre-v3 layouts.
 ```
 
-This file is the single source of truth for resumption. A future agent picking up this work should be able to read this file plus the spec and plan and have everything they need — never assume conversational context carries over.
+Core artifact keys (`spec`, `plan`, `events`) are required so consumers have stable addresses. Archive/sidecar keys are stable optional addresses, and any artifact value may be empty for migrated archived records where the legacy source never had that artifact.
+
+`events.jsonl` is the append-only activity log. A future agent picking up this work should be able to read `state.yml`, `plan.md`, `spec.md`, and recent `events.jsonl` entries and have everything needed — never assume conversational context carries over.
 
 ---
 
@@ -1965,8 +2041,8 @@ complexity: medium  # low | medium | high
 # AskUserQuestion offering to switch to loose for the remainder of the plan when
 # the plan's task count is at least this threshold. Set to 0 to disable the
 # offer entirely. Per-plan dismissal via `gated_switch_offer_dismissed: true`
-# in status frontmatter. Per-session suppression via `gated_switch_offer_shown:
-# true` in status frontmatter (re-fires across cross-session wakeups by default;
+# in state.yml. Per-session suppression via `gated_switch_offer_shown:
+# true` in state.yml (re-fires across cross-session wakeups by default;
 # set the dismissed field to suppress permanently for a plan).
 gated_switch_offer_at_tasks: 15
 
@@ -1978,7 +2054,11 @@ loop_max_per_day: 24          # cap to prevent runaway scheduling
 # Subagent execution mode (Step C)
 use_subagents: true           # false → fall back to executing-plans
 
-# Doc paths (relative to worktree root)
+# Run/state paths (relative to worktree root)
+runs_path: docs/masterplan
+
+# Legacy doc paths (relative to worktree root). Step 0 migration reads these
+# from pre-v3 invocations; new writes go under runs_path.
 specs_path: docs/superpowers/specs
 plans_path: docs/superpowers/plans
 
@@ -2004,7 +2084,7 @@ codex:
   max_files_for_auto: 3      # eligibility heuristic threshold for `auto` routing
   review_max_fix_iterations: 2  # cap on "fix and re-review" retries before bailing
   confirm_auto_routing: false  # under `gated`, prompt per-task to confirm auto-routing decisions
-                               # (default false: honor cache silently; activity log records every decision)
+                               # (default false: honor cache silently; events.jsonl records every decision)
                                # set true to restore the legacy expanded per-task prompt
   review_prompt_at: medium   # under `gated`, severity threshold at which Codex review findings prompt
                              # values: low | medium | high | never
@@ -2014,7 +2094,7 @@ codex:
                                       # values: degrade-loudly | block
                                       # `degrade-loudly` (default): emit warning + write degradation marker + AskUserQuestion fallback
                                       # path. Step 0's degradation block (above) and Step C step 3a's precondition halt both honor this.
-                                      # `block`: skip user prompts; set status: blocked + append ## Blockers entry; end the turn.
+                                      # `block`: skip user prompts; set status: blocked + append blocker event; end the turn.
                                       # For users who'd rather a stuck plan than a silent-codex-skip plan.
   detection_mode: ping                # v2.8.0+: how Step 0 detects codex availability
                                       # values: ping | scan | trust
@@ -2044,7 +2124,7 @@ parallelism:
                                              # The orchestrator cannot actively cancel a hung Agent call
                                              # (no LLM-runtime cancel primitive); instead, after the
                                              # wave-completion barrier returns, the orchestrator reads
-                                             # each member's duration_ms from <slug>-subagents.jsonl
+                                             # each member's duration_ms from subagents.jsonl
                                              # (recorded by hooks/masterplan-telemetry.sh) and classifies
                                              # any whose duration_ms > member_timeout_sec * 1000 as
                                              # slow_member per on_member_timeout below. Detection is
@@ -2052,8 +2132,8 @@ parallelism:
                                              # own timeout still bounds true hangs.
   on_member_timeout: warn                    # v2.8.0+: how to react to a post-hoc slow_member detection
                                              # values: warn | blocker
-                                             # `warn` (default): emit one-line ## Notes warning + activity-log
-                                             #   entry; member's digest is otherwise honored normally.
+                                             # `warn` (default): emit one slow_member event;
+                                             #   member's digest is otherwise honored normally.
                                              # `blocker`: re-classify the slow member as blocked at the
                                              #   next Step C entry and route through the blocker
                                              #   re-engagement gate. Use for plans where slow waves
@@ -2062,27 +2142,36 @@ parallelism:
 # Auto-compact loop nudge — Step B3 + Step C step 1 surface a passive notice
 # once per plan recommending /loop /compact in a sibling session for
 # automatic context compaction. Once-per-plan suppression via
-# compact_loop_recommended status field. /masterplan itself never starts the loop.
+# compact_loop_recommended state field. /masterplan itself never starts the loop.
 auto_compact:
   enabled: true              # nudge user to start compact loop
   interval: 30m              # passed verbatim into the suggested command
   focus: "focus on current task + active plan; drop tool output and old reasoning"
 
-# Retro auto-archive (v2.11.0+) — after Step R3 writes a retro, Step R3.5 moves
-# the source plan to docs/superpowers/archived-plans/ and the paired spec to
-# docs/superpowers/archived-specs/, then Step R4 offers a commit-now prompt.
-# Set `false` to keep plans in place after retro (manual archive).
+# Completion finalizer (v3.0.0+) — when Step C marks all tasks done,
+# /masterplan writes completion state, generates a retro, archives the run
+# state, and archives safely-migrated legacy/orphan state by default.
+# Per-invocation overrides: --no-retro and --no-cleanup.
+completion:
+  auto_retro: true           # false → leave status: complete until manual /masterplan retro
+  cleanup_old_state: true    # false → leave legacy/orphan state for manual /masterplan clean
+
+# Retro archive (v3.0.0+) — after Step R3 writes retro.md into the run bundle,
+# Step R3.5 sets status: archived and phase: archived in state.yml. Legacy
+# docs/superpowers plan/spec moves happen during explicit migration/clean or
+# Step C's completion-safe cleanup subset.
+# Set `false` to keep completed plans active after retro (manual archive).
 # Per-invocation override: pass `--no-archive` to /masterplan retro.
 retro:
   auto_archive_after_retro: true
 
 # Per-turn context telemetry — captured by hooks/masterplan-telemetry.sh
 # (Stop hook, manually installed) and by Step C step 1 inline snapshots.
-# JSONL appended to <plan-without-suffix>-telemetry.jsonl sibling to status.
-# Per-plan opt-out: add `telemetry: off` to status frontmatter.
+# JSONL appended to docs/masterplan/<slug>/telemetry.jsonl.
+# Per-plan opt-out: add `telemetry: off` to state.yml.
 telemetry:
   enabled: true              # on by default
-  path_suffix: -telemetry.jsonl  # appended to status-file-without-suffix
+  path_suffix: -telemetry.jsonl  # legacy fallback only; v3 bundles use telemetry.jsonl
 
 # External integration refs (NEVER secrets — secrets live in env or MCP config)
 integrations:
@@ -2105,7 +2194,7 @@ Treat the schema as additive — new keys land in built-in defaults first, then 
 
 These are command-specific rules covering cross-cutting policy not stated inline in any single Step. CD-rules cover general execution; these cover masterplan's own state machine.
 
-- **Stay a thin wrapper.** Logic that belongs to brainstorming, planning, execution, debugging, or branch-finishing lives in those skills. This command's job is sequencing them and persisting the status file.
+- **Stay a thin wrapper.** Logic that belongs to brainstorming, planning, execution, debugging, or branch-finishing lives in those skills. This command's job is sequencing them and persisting run state in `state.yml` and `events.jsonl`.
 - **Subagents do the work; orchestrator preserves context.** Every substantive piece of work goes to a bounded subagent, and only digests come back. Never let raw verification output, full diffs, or library docs accumulate in the orchestrator's context. When in doubt, digest and ScheduleWakeup.
 - **Bounded briefs, not implicit context.** Subagents receive Goal + Inputs + Scope + Constraints + Return shape. They do not inherit session history. If a subagent needs context from an earlier subagent's output, hand it the digest, not the raw return.
 - **Import never overwrites existing masterplan state silently.** Step I3's pre-flight collision checks (path-existence pass) surfaces `AskUserQuestion` per colliding candidate with options (1) Overwrite (Recommended) / (2) Write to `-v2` suffix / (3) Abort this candidate. Never clobber. The check runs before I3.2 fetch so aborted candidates skip the entire pipeline.
@@ -2114,14 +2203,14 @@ These are command-specific rules covering cross-cutting policy not stated inline
 - **Per-task boundaries are not natural stopping points.** Step C step 4e (post-task router) is the only legal close site between tasks. Any free-text variant of "Want me to continue?" / "Should I proceed?" / "Shall I advance?" / "Let me know when you're ready to continue" / "Continue to T<N>?" — emitted at any post-task boundary, in any phrasing — is a CD-9 violation. Use the structured AskUserQuestion in 4e; under `/loop` or `--autonomy=full`, do not pause at all.
 - **Don't stop silently anywhere — always close with AskUserQuestion if input might be needed.** ANY Step that ends a turn waiting on user input MUST close with `AskUserQuestion` offering 2-4 concrete options, never with free-text prose ("Wait for the user's response", "Which approach?", "Type 'X' to confirm"). Sessions can compact between turns and lose upstream-skill bodies; a free-text question becomes a dead end. This rule applies recursively when the orchestrator invokes upstream skills that have their own pre-existing free-text prompts — `superpowers:finishing-a-development-branch` ("1./2./3./4. Which option?"), `superpowers:using-git-worktrees` ("1./2. Which directory?"), `superpowers:writing-plans` ("Subagent-Driven / Inline Execution. Which approach?"), `superpowers:brainstorming` ("Wait for the user's response" at User Reviews Spec). For each, the orchestrator MUST present `AskUserQuestion` FIRST and brief the skill with the chosen option pre-decided so the skill's free-text prompt is bypassed. Canonical patterns: Step B0 step 4 (worktree directory), Step B1+B2 re-engagement gates (spec/plan review), Step C step 3's blocker re-engagement gate (CD-4-exhausted gate; SDD BLOCKED/NEEDS_CONTEXT escalation), Step C step 6 (finishing-branch wrap).
 - **External writes are gated.** Posting comments to GitHub issues/PRs, sending Slack messages, or closing issues during import always passes through `AskUserQuestion` first — even under `--autonomy=full`. Blast-radius actions.
-- **Codex routing is locked at kickoff, switchable on resume.** `codex_routing` and `codex_review` both land in the status file at Step B3 (or at first Step C invocation for imported plans). Mid-run flips happen by re-invoking `/masterplan --resume=<path> --codex=<mode> --codex-review=<on|off>`. Per-task overrides come from plan annotations (`**Codex:** ok` / `**Codex:** no`), not inline edits.
+- **Codex routing is locked at kickoff, switchable on resume.** `codex_routing` and `codex_review` both land in `state.yml` at Step B3 (or at first Step C invocation for imported plans). Mid-run flips happen by re-invoking `/masterplan --resume=<path> --codex=<mode> --codex-review=<on|off>`. Per-task overrides come from plan annotations (`**Codex:** ok` / `**Codex:** no`), not inline edits.
 - **Never delegate non-eligible tasks under `auto`.** The eligibility checklist is conservative on purpose: a wrong delegation costs more than running inline. When uncertain, run inline. Plan annotations are the escape hatch when you need to override.
 - **Codex review is asymmetric — never self-review.** If a task was executed by Codex and `codex_review` is on, skip the review step for that task. Codex reviewing its own output adds no signal.
 - **Implementer must return `task_start_sha` (required).** Step C step 2's brief to the implementer subagent (whether dispatched directly or transitively via `superpowers:subagent-driven-development`) must include: "Capture `git rev-parse HEAD` BEFORE any work; return it as `task_start_sha` in your final report. This is required, not optional — the orchestrator's Step C's post-task finalization codex-review sub-block (4b) and worktree-integrity sub-block (4c) both depend on it." If the implementer omits it, the codex-review sub-block blocks (see 4b process step 1 in Step C's post-task finalization).
-- **Implementer-return trust contract.** When the implementer subagent reports `tests_passed: true`, lists `commands_run`, AND captures `commands_run_excerpts` whose lines match the verify-pattern (per task) or default PASS pattern, Step C's post-task finalization verify sub-block (4a) excerpt-validator licenses the trust-skip and avoids re-running redundant verification (see the verify sub-block's decision logic). This makes SDD's TDD discipline first-class while requiring evidence of execution per command — closes audit finding G.1 (v2.8.0+). The contract is enforced by two layers: (a) the excerpt-validator at trust-skip time, and (b) the protocol-violation rule on re-run mismatch (if a verify sub-block complementary check or a codex-review sub-block surfaces a test failure despite a passing excerpt, the activity log records the discrepancy and the status-update sub-block (4d) notes it under `## Notes` for human attention).
-- **Eligibility cache persists to `<slug>-eligibility-cache.json`.** Step C step 1 loads from disk when `cache.mtime > plan.mtime`; dispatches Haiku otherwise. Step C's post-task finalization status-update sub-block (4d) plan edits `touch` the plan file to invalidate. Per-task routing stays O(1) at lookup; the Haiku dispatch happens once per plan-file change, not per Step C entry. Doctor check #14 flags orphan caches.
+- **Implementer-return trust contract.** When the implementer subagent reports `tests_passed: true`, lists `commands_run`, AND captures `commands_run_excerpts` whose lines match the verify-pattern (per task) or default PASS pattern, Step C's post-task finalization verify sub-block (4a) excerpt-validator licenses the trust-skip and avoids re-running redundant verification (see the verify sub-block's decision logic). This makes SDD's TDD discipline first-class while requiring evidence of execution per command — closes audit finding G.1 (v2.8.0+). The contract is enforced by two layers: (a) the excerpt-validator at trust-skip time, and (b) the protocol-violation rule on re-run mismatch (if a verify sub-block complementary check or a codex-review sub-block surfaces a test failure despite a passing excerpt, `events.jsonl` records the discrepancy and the status-update sub-block (4d) adds a human-attention event).
+- **Eligibility cache persists to `docs/masterplan/<slug>/eligibility-cache.json`.** Step C step 1 loads from disk when `cache.mtime > plan.mtime`; dispatches Haiku otherwise. Step C's post-task finalization state-update sub-block (4d) plan edits `touch` the plan file to invalidate. Per-task routing stays O(1) at lookup; the Haiku dispatch happens once per plan-file change, not per Step C entry. Doctor check #14 flags orphan caches.
 - **Git state cache excludes `git status --porcelain`.** Step 0's `git_state` cache holds `worktrees` and `branches` only. Dirty state must always be live (CD-2). Invalidate worktrees after `git worktree add/remove`; invalidate branches after `git branch` create/delete.
-- **CC-1 — Compact-suggest on observable symptoms.** End-of-turn (before Step C step 5's wakeup scheduling), check whether any of these accumulated this session: (a) the in-session `file_cache` recorded ≥ 3 hits on the same path; (b) ≥ 3 consecutive tool failures on the same target; (c) activity log was rotated this session (>100 entries); (d) a subagent returned ≥ 5K characters that the orchestrator had to digest inline. On any trigger, surface a **non-blocking** one-line notice (not `AskUserQuestion`): `*(Context appears strained — symptom: <symptom>. Consider running /compact <config.auto_compact.focus> before next wakeup. To disable for this plan, append "compact_suggest: off" to the status file's ## Notes.)*`. Disable check: at Step C step 1, scan `## Notes` for `compact_suggest: off`; if present, CC-1 is silenced for this plan.
+- **CC-1 — Compact-suggest on observable symptoms.** End-of-turn (before Step C step 5's wakeup scheduling), check whether any of these accumulated this session: (a) the in-session `file_cache` recorded ≥ 3 hits on the same path; (b) ≥ 3 consecutive tool failures on the same target; (c) `events.jsonl` was rotated this session (>100 entries); (d) a subagent returned ≥ 5K characters that the orchestrator had to digest inline. On any trigger, surface a **non-blocking** one-line notice (not `AskUserQuestion`): `*(Context appears strained — symptom: <symptom>. Consider running /compact <config.auto_compact.focus> before next wakeup. To disable for this plan, set compact_suggest: off in state.yml.)*`. Disable check: at Step C step 1, check `state.yml` or events for `compact_suggest: off`; if present, CC-1 is silenced for this plan.
 - **CC-2 — Subagent-delegate triggers (concrete thresholds).** Make "Subagents do the work" enforceable. The orchestrator (typically Opus) MUST dispatch a subagent rather than do the work inline when ANY of these triggers fire:
   - **Bash output expected > 50 lines** — dispatch a Haiku subagent with a bounded brief; consume only its digest.
   - **Reading a file > 50 lines** as part of substantive work (orientation reads ≤ 50 lines excepted; cumulative reads of the same file count) — dispatch a Haiku to extract the relevant section.
@@ -2136,14 +2225,14 @@ These are command-specific rules covering cross-cutting policy not stated inline
 
   **Sequence (execute in order, skip silently if condition not met):**
   1. **CC-3 check** — if `subagents_this_turn` is non-empty, emit the plain-text summary block per §Per-turn dispatch tracking and summary. Emit BEFORE any AskUserQuestion or terminal render. Zero-dispatch turns: skip silently.
-  2. **Pre-close action** (site-specific) — any commit, status-file write, or ledger append that the calling site mandates BEFORE yielding (e.g., Step C step 5's ledger append, Step B3 "Discard"'s git-rm commit). These are documented at the call site.
+  2. **Pre-close action** (site-specific) — any commit, state write, or ledger append that the calling site mandates BEFORE yielding (e.g., Step C step 5's ledger append, Step B3 "Discard"'s git-rm commit). These are documented at the call site.
   3. **Closer** — fire the AskUserQuestion, ScheduleWakeup, or terminal render that ends the turn.
 
   **Scope note:** CC-1 (compact-suggest) fires only before Step C step 5's ScheduleWakeup and is NOT part of this trampoline — it has its own inline position in Step C step 5. The CL5 timer-disclosure render is scoped to Step CL only and is NOT part of this trampoline. Adding new end-of-turn obligations: add them to this sequence, not to individual close sites.
 
   **Authoring rule:** when adding a new turn-close site to the spec, write `→ CLOSE-TURN` as the close directive. The string `end the turn` should appear ONLY in negation contexts ("never end the turn waiting on..."), AskUserQuestion option labels, or YAML/comment blocks. `bin/masterplan-self-host-audit.sh` should grep for non-negated "end the turn" occurrences as a CD-style violation check.
-- **In-wave scope rule (Slice α v2.0.0+; FM-1 + FM-3 mitigation).** Wave members (implementer subagents dispatched as part of a parallel wave per Step C step 2) MUST NOT modify `plan.md`, the status file (`<slug>-status.md`), or the eligibility cache (`<slug>-eligibility-cache.json`). These files are orchestrator-canonical during a wave. Violating this constraint is a `protocol_violation` per Step C step 3's wave-mode failure handling — the orchestrator detects it post-barrier (via `git status --porcelain` + `git log <task_start_sha>..HEAD` per wave member) and reclassifies the wave member's outcome from `completed` to `protocol_violation`.
-- **Complexity precedence (per-knob defaults table).** When `resolved_complexity != null`, the following knobs receive complexity-derived defaults. Explicit overrides at any tier above the complexity-derived default win (resolution order per knob: explicit CLI flag > status frontmatter > repo config > user config > **complexity-derived default** > built-in default).
+- **In-wave scope rule (Slice α v2.0.0+; FM-1 + FM-3 mitigation).** Wave members (implementer subagents dispatched as part of a parallel wave per Step C step 2) MUST NOT modify `plan.md`, `state.yml`, `events.jsonl`, or `eligibility-cache.json`. These files are orchestrator-canonical during a wave. Violating this constraint is a `protocol_violation` per Step C step 3's wave-mode failure handling — the orchestrator detects it post-barrier (via `git status --porcelain` + `git log <task_start_sha>..HEAD` per wave member) and reclassifies the wave member's outcome from `completed` to `protocol_violation`.
+- **Complexity precedence (per-knob defaults table).** When `resolved_complexity != null`, the following knobs receive complexity-derived defaults. Explicit overrides at any tier above the complexity-derived default win (resolution order per knob: explicit CLI flag > state.yml > repo config > user config > **complexity-derived default** > built-in default).
 
   | Knob | low | medium (default) | high |
   |---|---|---|---|
@@ -2154,6 +2243,6 @@ These are command-specific rules covering cross-cutting policy not stated inline
   | `gated_switch_offer_at_tasks` | `999` (effectively suppressed) | `15` | `25` |
   | `review_max_fix_iterations` | `0` | `2` | `4` |
 
-  When the activity log audit line at Step C step 1's first entry is emitted, every knob whose final value differs from the complexity-derived default cites its source (e.g., `codex_review=on (source: cli_flag, overrides complexity-derived default)`). This is the 'why did the orchestrator behave this way' forensic trail. Knobs whose final value matches the complexity-derived default are NOT cited individually — that would bloat the line. Cite only divergences from the table above.
+  When the `complexity_resolved` event at Step C step 1's first entry is emitted, every knob whose final value differs from the complexity-derived default cites its source (e.g., `codex_review=on (source: cli_flag, overrides complexity-derived default)`). This is the 'why did the orchestrator behave this way' forensic trail. Knobs whose final value matches the complexity-derived default are NOT cited individually — that would bloat the event. Cite only divergences from the table above.
 
 Future-design notes for Slice β/γ (intra-plan task parallelism for committing work — per-task git worktree subsystem) live in `docs/design/intra-plan-parallelism.md`, not in this prompt — they're docs, not orchestration logic.
