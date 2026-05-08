@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.17.1] — 2026-05-08 — version bump (no functional changes)
+
+Patch release to advance version numbering; no functional changes since v2.17.0.
+
 ## [2.17.0] — 2026-05-07 — `--resume=<path>` worktree-aware path resolution
 
 Folds in a fix surfaced during the AUQ-violation investigation (see WORKLOG `2026-05-07 (PM)`). When `/masterplan --resume=<rel-path>` is invoked from a parent of the worktree containing the status file (typical `xcvr-tools-fresh` / `optoe-ng` layout — repo root has `.worktrees/<feature>/docs/superpowers/plans/...`), the path doesn't resolve at cwd and Step 0 previously had no fallback. The user had to manually `cd` into the worktree before re-invoking.
