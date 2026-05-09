@@ -1,6 +1,6 @@
 # Claude Plugin Directory Submission
 
-Release target: `superpowers-masterplan` v3.0.0.
+Release target: `superpowers-masterplan` v3.1.0.
 
 ## Official submission path
 
@@ -17,8 +17,11 @@ Anthropic's current plugin directory submission docs say:
 ## Current package state
 
 - Public repo: <https://github.com/rasatpetabit/superpowers-masterplan>
-- Plugin manifest: `.claude-plugin/plugin.json`
-- Marketplace catalog: `.claude-plugin/marketplace.json`
+- Claude plugin manifest: `.claude-plugin/plugin.json`
+- Claude marketplace catalog: `.claude-plugin/marketplace.json`
+- Codex plugin manifest: `.codex-plugin/plugin.json`
+- Codex marketplace catalog: `.agents/plugins/marketplace.json`
+- Codex marketplace plugin path: `plugins/superpowers-masterplan -> ..`
 - Independent install path:
 
 ```text
@@ -26,6 +29,23 @@ Anthropic's current plugin directory submission docs say:
 /plugin install superpowers-masterplan@rasatpetabit-superpowers-masterplan
 /reload-plugins
 ```
+
+Codex install path:
+
+```bash
+codex plugin marketplace add rasatpetabit/superpowers-masterplan
+```
+
+Portable Codex invocation:
+
+```text
+/superpowers-masterplan:masterplan
+```
+
+Codex host behavior: when invoked inside Codex, the orchestrator suppresses the
+separate Claude Code `codex:codex-rescue` companion routing/review path for that
+invocation to avoid recursive Codex dispatch. Persisted routing/review config is
+unchanged for future Claude Code runs.
 
 ## Submission form copy
 
@@ -43,8 +63,9 @@ Long description:
 > run bundles, worktrees, activity logs, resume points, doctor checks,
 > automatic retrospectives, and safe legacy-state cleanup so long-running work
 > survives compaction, restarts, and agent handoff. It also supports optional
-> Codex routing/review, read-only parallel verification waves, legacy plan
-> import, model-dispatch guardrails, and an opt-in telemetry hook with
+> Codex routing/review from Claude Code, Codex-native marketplace packaging with
+> recursion-safe host behavior, read-only parallel verification waves, legacy
+> plan import, model-dispatch guardrails, and an opt-in telemetry hook with
 > per-subagent cost records.
 
 Why it should be considered for Anthropic Verified:
@@ -68,7 +89,7 @@ Run from the repository root after committing the current release changes:
 ```bash
 claude plugin validate .
 claude plugin validate .claude-plugin/plugin.json
-jq empty .claude-plugin/plugin.json .claude-plugin/marketplace.json .claude/settings.local.json
+jq empty .claude-plugin/plugin.json .claude-plugin/marketplace.json .codex-plugin/plugin.json .agents/plugins/marketplace.json .claude/settings.local.json
 bash -n hooks/masterplan-telemetry.sh
 git diff --check
 claude plugin tag --dry-run .

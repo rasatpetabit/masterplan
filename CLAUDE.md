@@ -26,6 +26,15 @@ A single ~2150-line markdown orchestrator prompt at **`commands/masterplan.md`**
 - `bin/masterplan-state.sh` — inventory/migration helper for `docs/masterplan/<slug>/state.yml` run bundles and legacy `docs/superpowers/...` artifacts
 - `.claude-plugin/plugin.json` — plugin manifest (name, version, description, URL)
 - `.claude-plugin/marketplace.json` — marketplace catalog for direct `/plugin marketplace add rasatpetabit/superpowers-masterplan` installs
+- `.codex-plugin/plugin.json` — Codex plugin manifest for the same command surface
+- `.agents/plugins/marketplace.json` — Codex marketplace catalog for `codex plugin marketplace add rasatpetabit/superpowers-masterplan`
+- `plugins/superpowers-masterplan -> ..` — Codex marketplace path symlink back to the repo root
+
+Codex can host the command through `/superpowers-masterplan:masterplan`. When it
+does, the orchestrator must suppress the separate Claude Code
+`codex:codex-rescue` companion route for that invocation to avoid recursive
+Codex dispatch; persisted `codex.routing` / `codex.review` config remains for
+Claude Code runs.
 
 There is **no code** in the conventional sense. The "program" is the markdown prompt. "Tests" are hand-crafted plans + grep verification + `bash -n` syntax checks + manual smoke runs.
 

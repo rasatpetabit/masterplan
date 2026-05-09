@@ -7,14 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.0] — 2026-05-09 — Codex host compatibility
+
 ### Added
 
 - **`next` verb — "what's next?" router (Step N).** `/masterplan next` now intercepts the word "next" before it can fall through to the bare-topic catch-all. Without this, typing "next" after a completed phase launched a new `/masterplan full next` brainstorm cycle, bloated context, triggered auto-compaction, wrote `last-prompt: next` metadata, and replayed "next" into a cascade. Step N scans state files inline (no subagent dispatch) and presents an `AskUserQuestion` gate: resume an active plan, start a new plan, or check status. Routing to Step C / Step A / Step B / Step S / Step M as appropriate. Updated all six sync'd locations per the anti-pattern #4 rule: routing table, arg-parse match set, reserved-verbs warning, README command table, internals routing table, and frontmatter `description:`.
 - **Codex-native plugin packaging.** Added `.codex-plugin/plugin.json`, `.agents/plugins/marketplace.json`, and the `plugins/superpowers-masterplan -> ..` symlink so Codex can discover the repository as a plugin marketplace while keeping `commands/masterplan.md` as the single behavior source. The portable Codex invocation is `/superpowers-masterplan:masterplan`.
+- **Codex host suppression.** Step 0 now detects when `/masterplan` is already running inside Codex and suppresses `codex:codex-rescue` ping/routing/review for that invocation. Step C routes inline with `decision_source: host-suppressed`, skips eligibility-cache requirements, and records a host-suppression event instead of misreporting the Claude Code companion as missing.
 
 ### Changed
 
 - README, internals, release notes, and the orchestrator prompt now distinguish Codex as a plugin host from the separate Claude Code `codex:codex-rescue` companion used for delegated execution/review.
+- Codex compatibility docs now state that Codex-hosted runs use `/superpowers-masterplan:masterplan` directly, while Claude Code-hosted runs may still use the optional `openai/codex-plugin-cc` companion for cross-model execution/review.
 
 ## [3.0.0] — 2026-05-08 — run bundles, migration, and default completion finalization
 

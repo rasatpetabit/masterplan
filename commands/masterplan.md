@@ -68,9 +68,26 @@ If all candidates are unreadable, render `vUNKNOWN`. Truncate `args` at 120 char
 
 See **Configuration: .masterplan.yaml** below for the full schema and built-in defaults.
 
+### Codex host suppression (v3.1.0+)
+
+Before running any Codex availability detection, determine whether this orchestrator is already running inside Codex. Treat the active system/developer prompt and tool contracts as the host signal: if the session identifies the agent as Codex, exposes Codex-native tools such as `apply_patch` / `update_plan` / `request_user_input`, or uses an `AGENTS.md` compatibility map rather than Claude Code's native tool names, set in-memory `codex_host_suppressed = true`.
+
+When `codex_host_suppressed == true`:
+
+1. **Do not call `codex:codex-rescue` for health checks.** Skip the `ping`, `scan`, and `trust` availability modes below entirely. The issue is not plugin absence; it is recursive Codex dispatch.
+2. **Emit visible stdout notice** (do not abort):
+
+   > Running inside Codex — skipping `codex:codex-rescue` routing/review to avoid recursive Codex dispatch. Persisted config is unchanged.
+
+3. In-memory only: treat effective `codex_routing` as `off` and `codex_review` as `off` for this invocation. Preserve the configured values for state fields and future Claude Code invocations unless the user explicitly changes config/state.
+4. Record the suppression in `events.jsonl` on the next state write:
+   - `<ISO-ts> codex host suppression — running inside Codex; codex_routing+codex_review forced off for this invocation (configured: routing=<configured>, review=<configured>).`
+   If no other state write happens this turn, force the same small state write pattern as the degradation path: append the event, update `last_activity`, and set `last_warning: codex host suppression this run — recursive codex dispatch disabled`.
+5. Downstream Step C must use `decision_source: host-suppressed` whenever a task would otherwise have considered Codex routing/review.
+
 ### Codex availability detection (v2.0.0+)
 
-After config loading completes, if the merged config has `codex.routing != off` OR `codex.review == on` (the v2.0.0 defaults are `routing: auto` + `review: on` — both trigger this check), verify the codex plugin is available. Detection mode is governed by `config.codex.detection_mode` (default `ping`; v2.8.0+ — see config schema below):
+After config loading completes, if `codex_host_suppressed != true` and the merged config has `codex.routing != off` OR `codex.review == on` (the v2.0.0 defaults are `routing: auto` + `review: on` — both trigger this check), verify the codex plugin is available. Detection mode is governed by `config.codex.detection_mode` (default `ping`; v2.8.0+ — see config schema below):
 
 - **`ping` (default, D.1 mitigation)** — dispatch a 5-token bounded ping to `codex:codex-rescue` with brief `Goal=health-check`, `Inputs=none`, `Scope=read-only`, `Constraints=return only "ok"`, `Return shape={status:"ok"}`. On dispatch error (subagent_type not found, plugin uninstalled, API error) → codex unavailable; preserve the error string for the activity-log marker. On successful return → codex available. Cache result on per-invocation state as `codex_ping_result` (one of `"ok" | {"error": "<message>"}`); subsequent steps consult the cache, never re-ping. Ping cost: ~5 tokens; runs once per `/masterplan` invocation. This is the most accurate signal — actually exercising the dispatch path catches plugin-present-but-broken cases that the legacy prefix scan would miss.
 - **`scan`** — legacy heuristic: scan the system-reminder skills list for any entry prefixed `codex:` (e.g., `codex:codex-rescue`, `codex:setup`, `codex:rescue`). Faster (no dispatch), but fragile — survives only as long as the skills-list format keeps the `codex:` prefix convention.
@@ -919,6 +936,8 @@ The state file's `autonomy`, `codex_routing`, `codex_review`, `loop_enabled` fie
 
    **Complexity gate (eligibility cache).** When `resolved_complexity == low`, skip the entire eligibility-cache decision tree below — the cache file is NOT built and is NOT loaded. Step 3a's per-task lookup falls back to: `codex_routing` resolves to its complexity-derived default `off` at low (per Operational rules' Complexity precedence), so no delegation decision is needed per task. Doctor check #14 (orphan eligibility cache) does not flag absence on low plans (handled by Task 12's check-set gate).
 
+   **Codex-host gate (eligibility cache).** When `codex_host_suppressed == true`, skip the entire eligibility-cache decision tree below — the cache file is NOT built, loaded, or required. Step 3a routes inline with `decision_source: host-suppressed`; Step 4b skips Codex review for the same reason. This is distinct from missing-plugin degradation: the Codex host is available, but recursive `codex:codex-rescue` dispatch is disabled by design.
+
    **Build eligibility cache.** When `codex_routing` is `auto` or `manual`, the cache lives at `<config.runs_path>/<slug>/eligibility-cache.json`. Decision tree for cache load (evaluated in order; first matching bullet wins):
 
    - **Wave-pin short-circuit.** If `cache_pinned_for_wave == true` (set by Step C step 2's wave dispatch), skip the rest of this decision tree — the in-memory cache is already loaded and reused for the wave's duration. Emit the **Skip-with-pinned-cache** activity-log variant (see below). The annotation-completeness scan does NOT run under wave pin.
@@ -942,6 +961,7 @@ The state file's `autonomy`, `codex_routing`, `codex_review`, `loop_enabled` fie
    - <ISO-ts> eligibility cache: loaded from disk (<N> tasks; <K> codex-eligible) — cache.mtime > plan.mtime
    - <ISO-ts> eligibility cache: skipped (codex_routing=off)
    - <ISO-ts> eligibility cache: skipped (codex degraded — plugin not detected this run; see codex_degraded event)
+   - <ISO-ts> eligibility cache: skipped (running inside Codex — recursive codex dispatch disabled; see codex_host_suppressed event)
    - <ISO-ts> eligibility cache: rebuilt — schema version mismatch (<found>; expected 1.0)
    ```
 
@@ -1167,6 +1187,7 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
 
     **Precondition (v2.4.0+; P2 from Fix 1-5 follow-up).** Before evaluating routing for ANY task, verify orchestrator runtime state. This is the **fail-loud-don't-fall-through** rule that catches the optoe-ng failure pattern (where Step C step 1 was silently skipped and routing fell through to inline forever).
 
+    - IF `codex_host_suppressed == true` → no precondition; skip the cache lookup; proceed inline with `decision_source: host-suppressed`. This branch is mandatory even when persisted `codex_routing` is `auto` or `manual`, because running inside Codex must never recursively call `codex:codex-rescue`.
     - IF `codex_routing == off` → no precondition; skip the cache lookup; proceed to inline routing as today.
     - ELIF `eligibility_cache` is loaded in orchestrator memory AND has an entry for this task (`eligibility_cache[task_idx]` exists) → proceed with routing per the bullets below.
     - ELSE → **HALT.** This is a Failure-2 footprint (Step C step 1 was skipped, returned without building the cache, or the cache load failed silently). Do NOT silently fall through to inline. Behavior depends on `config.codex.unavailable_policy` (P4):
@@ -1183,6 +1204,7 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
 
     **Why P2 exists**: the orchestrator's previous default (silent fallthrough to inline when cache was missing) was the root cause of the optoe-ng project-review zero-codex pattern. P2 turns that silent failure into a loud one. Combined with P1's evidence-of-attempt entry, the orchestrator either has cache + tags OR has loud user-facing prompts + persistent markers — never quiet inline-bypass.
 
+    - **Host-suppressed** (`codex_host_suppressed == true`) — never delegate. Run every task inline in the current Codex host and record `decision_source: host-suppressed`; do not consult or build `eligibility_cache`.
     - **`off`** — never delegate. Run every task inline (Claude or Claude subagent). Skip the cache lookup.
     - **`auto`** (default per CLAUDE.md "Codex Delegation Default") — look up `eligibility_cache[task_idx]` (computed in Step 1). If `eligible == true` → delegate. Otherwise run inline.
     - **`manual`** — present `eligibility_cache[task_idx]` via `AskUserQuestion(Delegate to Codex / Run inline / Skip)` before each task. User decides.
@@ -1200,6 +1222,7 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
        - `"user-override-gated"` → `gated gate: user chose <continue via Codex|continue inline>`
        - `"user-override-manual"` → `manual mode: user picked <Delegate to Codex|Run inline>`
        - `"degraded-no-codex"` → `inline (codex degraded — plugin missing)` — append the Step 0 degradation suffix per Fix 1 step 4
+       - `"host-suppressed"` → `inline (running inside Codex — recursive codex:codex-rescue disabled)`
 
        The banner exists because today /masterplan loops are observed via stdout/transcript with no other surface signal that a task is being routed; the post-completion `[codex]/[inline]` tag arrives after work is done, not before. The banner makes routing observable in real-time.
 
@@ -1253,6 +1276,8 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
 
     The eligibility-cache builder Haiku (Step C step 1) parses these annotations: scan each task block's `**Files:**` section for a following `**Codex:**` line; record the annotation alongside the heuristic decision.
 
+    **Host-suppressed override:** if `codex_host_suppressed == true`, do NOT dispatch the `codex:codex-rescue` subagent even when the task is annotated `**Codex:** ok`, the eligibility cache says `eligible: true`, or manual mode would normally ask. Route inline and record `decision_source: host-suppressed`.
+
     **Delegating:** dispatch the `codex:codex-rescue` subagent via the Agent tool with a bounded brief in this format (per CLAUDE.md). **Codex sites are exempt from §Agent dispatch contract** — `codex:codex-rescue` is its own `subagent_type` with out-of-process routing; do NOT pass a `model:` parameter on these calls.
     ```
     Codex task:
@@ -1298,6 +1323,7 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
    **4b — Codex-review (Codex review of inline work)** (consult `config.codex.review`, overridden by `--codex-review=` flag, persisted as `codex_review` in `state.yml`).
 
    Fires when ALL of the following hold, otherwise skip silently:
+   - `codex_host_suppressed` is not `true`. When running inside Codex, skip 4b with reason `running inside Codex — recursive Codex review disabled`; do not run the mid-plan Codex availability re-check in this branch.
    - `codex_review` is `on`.
    - The task just completed was **inline** (Sonnet/Claude did the work — not Codex). Codex-delegated tasks are reviewed by Step 3a's post-Codex flow, not here. Skipping for those is the asymmetric-review rule.
    - The codex plugin is available (re-check inline at gate time per the heuristic in Step 0). On miss, write the same degradation event as Step 0's degrade-loudly path, set in-memory `codex_review = off` for the rest of the session, and skip 4b. This catches mid-plan plugin uninstall (D.4 mitigation).
@@ -1328,6 +1354,7 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
        Reason templates:
        - `codex_review=off` (config or `--no-codex-review`)
        - `task was codex-routed (asymmetric-review rule)`
+       - `running inside Codex — recursive Codex review disabled`
        - `codex plugin unavailable — Step 0 degradation`
        - `codex_routing=off — review treated as no-op per Step 0 flag-conflict warning`
        - `zero commits made — nothing to review`

@@ -425,6 +425,8 @@ Codex support is packaged by `.codex-plugin/plugin.json` plus `.agents/plugins/m
 
 The portable Codex invocation is `/superpowers-masterplan:masterplan`. A bare `/masterplan` alias is host-dependent and must not be documented as required unless a live smoke proves it.
 
+When Codex is the host, the orchestrator suppresses the separate Claude Code `codex:codex-rescue` companion path for that invocation. Step 0 sets `codex_host_suppressed=true`, skips the ping/scan/trust availability checks, and treats effective `codex_routing` / `codex_review` as off without rewriting persisted config. This prevents recursive Codex-on-Codex dispatch while preserving the same command surface.
+
 ### Why Codex with /masterplan
 
 Cross-model review catches blind spots — Sonnet's preferred patterns and Codex's preferred patterns don't perfectly overlap. Codex is bounded for small well-defined tasks (≤3 files, unambiguous, known verification, no design judgment). The combination is asymmetric: Codex doesn't review its own work (no signal there), but it DOES review Sonnet/Claude inline work and vice versa via routing.
@@ -438,9 +440,9 @@ If the codex plugin isn't installed, both default to off-for-the-run with a one-
 
 ### How it works
 
-1. **Step C step 1 — eligibility cache build.** A Haiku scans the plan and computes `eligible: bool` per task per the eligibility checklist (≤3 files, unambiguous, known verification, no scope-out, no `**Codex:** no`). Caches to `docs/masterplan/<slug>/eligibility-cache.json`. Loaded from disk when `cache.mtime > plan.mtime`.
-2. **Step C 3a — routing decision per task.** Under `auto`: if `eligible: true`, dispatch via `codex:codex-rescue` (EXEC mode); else inline. Under `manual`: ask the user per task.
-3. **Step C 4b — Codex review of inline work.** When `codex_review: on`, after a task completes inline, dispatch `codex:codex-rescue` (REVIEW mode) with the spec excerpt + diff range `<task_start_sha>..HEAD`. Severity-bucketed findings (high/medium/low). Decision matrix per autonomy mode.
+1. **Step C step 1 — eligibility cache build.** A Haiku scans the plan and computes `eligible: bool` per task per the eligibility checklist (≤3 files, unambiguous, known verification, no scope-out, no `**Codex:** no`). Caches to `docs/masterplan/<slug>/eligibility-cache.json`. Loaded from disk when `cache.mtime > plan.mtime`. Skipped when `codex_host_suppressed=true`.
+2. **Step C 3a — routing decision per task.** Under `auto`: if `eligible: true`, dispatch via `codex:codex-rescue` (EXEC mode); else inline. Under `manual`: ask the user per task. Under Codex host suppression: route inline with `decision_source: host-suppressed`.
+3. **Step C 4b — Codex review of inline work.** When `codex_review: on`, after a task completes inline, dispatch `codex:codex-rescue` (REVIEW mode) with the spec excerpt + diff range `<task_start_sha>..HEAD`. Severity-bucketed findings (high/medium/low). Decision matrix per autonomy mode. Skipped inside Codex with reason `running inside Codex — recursive Codex review disabled`.
 4. **Plan annotations override the heuristic.** `**Codex:** ok` forces eligible (delegate even if heuristic rejects); `**Codex:** no` forces ineligible.
 
 ### Disabling
@@ -451,6 +453,8 @@ If the codex plugin isn't installed, both default to off-for-the-run with a one-
 ### Graceful degrade
 
 If `codex:codex-rescue` is not installed but config has `codex.routing != off` OR `codex.review == on`, Step 0 emits one-line warning and degrades both to `off` for the run. Doctor check #18 surfaces this misconfiguration as a Warning during lint. Persisted config is unchanged — re-installing codex restores configured behavior.
+
+Host suppression is not plugin-missing degradation. Inside Codex, Step 0 emits a different notice, records a `codex host suppression` event on the next state write, and does not tell users to install the Claude Code companion plugin.
 
 ---
 

@@ -130,6 +130,12 @@ form is the portable contract. The same `commands/masterplan.md` orchestrator is
 used for Claude Code and Codex; Codex follows the compatibility block at the top
 of that prompt plus the local `AGENTS.md` tool mapping.
 
+When running inside Codex, `/superpowers-masterplan:masterplan` disables the
+separate Claude Code `codex:codex-rescue` companion path for that invocation.
+This avoids recursive Codex-on-Codex dispatch: execution stays inside the active
+Codex session, while persisted `codex.routing` / `codex.review` settings remain
+unchanged for future Claude Code runs.
+
 ### Claude Desktop app (Code tab)
 
 This is a **Claude Code** plugin, so in the desktop app use the **Code** tab,
@@ -467,6 +473,11 @@ By default, `codex.routing: auto` delegates eligible small tasks to Codex, and
 missing, both settings auto-degrade to `off` for that run and persisted config is
 unchanged.
 
+This section applies to Claude Code hosting `/masterplan`. When the same
+orchestrator is hosted by Codex through `/superpowers-masterplan:masterplan`,
+`codex:codex-rescue` routing/review is suppressed automatically to avoid
+recursive Codex dispatch.
+
 Install the Codex companion plugin in Claude Code:
 
 ```text
@@ -521,7 +532,7 @@ for details and the upstream issue link.
 
 ## Project Status
 
-Current release: **v3.0.0**.
+Current release: **v3.1.0**.
 
 - Release history: [`CHANGELOG.md`](./CHANGELOG.md)
 - Contributor internals: [`docs/internals.md`](./docs/internals.md)

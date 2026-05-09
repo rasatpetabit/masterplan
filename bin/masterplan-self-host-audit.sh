@@ -17,6 +17,7 @@
 #   bin/masterplan-self-host-audit.sh --drift   # only check deployment drift
 #   bin/masterplan-self-host-audit.sh --cd9     # only check free-text user questions
 #   bin/masterplan-self-host-audit.sh --models  # only check model-passthrough preamble (check #23)
+#   bin/masterplan-self-host-audit.sh --codex   # only check Codex plugin packaging
 #
 # Exit code: 0 if clean, 1 if any check fires, 2 on usage error.
 
@@ -39,17 +40,41 @@ FIX_MODE=0
 RUN_DRIFT=1
 RUN_CD9=1
 RUN_MODELS=1
+RUN_CODEX=1
 
 case "${MODE}" in
   --fix)    FIX_MODE=1 ;;
-  --drift)  RUN_CD9=0; RUN_MODELS=0 ;;
-  --cd9)    RUN_DRIFT=0; RUN_MODELS=0 ;;
-  --models) RUN_DRIFT=0; RUN_CD9=0 ;;
+  --drift)  RUN_CD9=0; RUN_MODELS=0; RUN_CODEX=0 ;;
+  --cd9)    RUN_DRIFT=0; RUN_MODELS=0; RUN_CODEX=0 ;;
+  --models) RUN_DRIFT=0; RUN_CD9=0; RUN_CODEX=0 ;;
+  --codex)  RUN_DRIFT=0; RUN_CD9=0; RUN_MODELS=0 ;;
   "")       : ;;
-  *)        echo "Usage: $0 [--fix|--drift|--cd9|--models]" >&2; exit 2 ;;
+  *)        echo "Usage: $0 [--fix|--drift|--cd9|--models|--codex]" >&2; exit 2 ;;
 esac
 
 EXIT=0
+
+json_value() {
+  local file="$1"
+  local expr="$2"
+
+  if command -v jq >/dev/null 2>&1; then
+    jq -r "${expr} // empty" "${file}" 2>/dev/null
+    return
+  fi
+
+  case "${expr}" in
+    .name)
+      sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${file}" | head -1
+      ;;
+    .version)
+      sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${file}" | head -1
+      ;;
+    *)
+      echo ""
+      ;;
+  esac
+}
 
 # ---------------------------------------------------------------------------------
 # Check: self-host deployment drift (was orchestrator doctor check #25, v2.9.0+)
@@ -181,6 +206,113 @@ check_skill_drift() {
 }
 
 # ---------------------------------------------------------------------------------
+# Check: Codex plugin packaging
+# ---------------------------------------------------------------------------------
+check_codex_packaging() {
+  local claude_manifest="${REPO_ROOT}/.claude-plugin/plugin.json"
+  local codex_manifest="${REPO_ROOT}/.codex-plugin/plugin.json"
+  local codex_marketplace="${REPO_ROOT}/.agents/plugins/marketplace.json"
+  local command_file="${REPO_ROOT}/commands/masterplan.md"
+  local skills_dir="${REPO_ROOT}/skills"
+
+  local missing=0
+  for file in "${claude_manifest}" "${codex_manifest}" "${codex_marketplace}" "${command_file}"; do
+    if [[ ! -f "${file}" ]]; then
+      echo "⚠️  Codex packaging — missing ${file#${REPO_ROOT}/}"
+      EXIT=1
+      missing=1
+    fi
+  done
+  if [[ ! -d "${skills_dir}" ]]; then
+    echo "⚠️  Codex packaging — missing skills/ directory"
+    EXIT=1
+    missing=1
+  fi
+  if [[ ! -L "${REPO_ROOT}/plugins/superpowers-masterplan" ]]; then
+    echo "⚠️  Codex packaging — missing plugins/superpowers-masterplan symlink"
+    EXIT=1
+    missing=1
+  fi
+  [[ "${missing}" -eq 1 ]] && return
+
+  local claude_version codex_version codex_name marketplace_name marketplace_plugin marketplace_source marketplace_path
+  claude_version="$(json_value "${claude_manifest}" '.version')"
+  codex_version="$(json_value "${codex_manifest}" '.version')"
+  codex_name="$(json_value "${codex_manifest}" '.name')"
+
+  if command -v jq >/dev/null 2>&1; then
+    marketplace_name="$(jq -r '.name // empty' "${codex_marketplace}" 2>/dev/null)"
+    marketplace_plugin="$(jq -r '.plugins[0].name // empty' "${codex_marketplace}" 2>/dev/null)"
+    marketplace_source="$(jq -r '.plugins[0].source.source // empty' "${codex_marketplace}" 2>/dev/null)"
+    marketplace_path="$(jq -r '.plugins[0].source.path // empty' "${codex_marketplace}" 2>/dev/null)"
+  else
+    marketplace_name="$(json_value "${codex_marketplace}" '.name')"
+    marketplace_plugin="$(grep -A20 '"plugins"' "${codex_marketplace}" | sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+    marketplace_source="$(grep -A20 '"source"' "${codex_marketplace}" | sed -n 's/.*"source"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+    marketplace_path="$(sed -n 's/.*"path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${codex_marketplace}" | head -1)"
+  fi
+
+  if [[ "${codex_name}" != "superpowers-masterplan" ]]; then
+    echo "⚠️  .codex-plugin/plugin.json — name is '${codex_name}', expected 'superpowers-masterplan'"
+    EXIT=1
+  fi
+
+  if [[ -z "${claude_version}" || -z "${codex_version}" || "${claude_version}" != "${codex_version}" ]]; then
+    echo "⚠️  Codex packaging — version mismatch (claude: ${claude_version:-missing}, codex: ${codex_version:-missing})"
+    EXIT=1
+  fi
+
+  if [[ "${marketplace_name}" != "rasatpetabit-superpowers-masterplan" ]]; then
+    echo "⚠️  .agents/plugins/marketplace.json — marketplace name is '${marketplace_name}', expected 'rasatpetabit-superpowers-masterplan'"
+    EXIT=1
+  fi
+
+  if [[ "${marketplace_plugin}" != "superpowers-masterplan" ]]; then
+    echo "⚠️  .agents/plugins/marketplace.json — plugin name is '${marketplace_plugin}', expected 'superpowers-masterplan'"
+    EXIT=1
+  fi
+
+  if [[ "${marketplace_source}" != "local" || "${marketplace_path}" != "./plugins/superpowers-masterplan" ]]; then
+    echo "⚠️  .agents/plugins/marketplace.json — source must be local path './plugins/superpowers-masterplan' (got source='${marketplace_source}', path='${marketplace_path}')"
+    EXIT=1
+  fi
+
+  if ! grep -q '/superpowers-masterplan:masterplan' "${REPO_ROOT}/README.md" 2>/dev/null; then
+    echo "⚠️  README.md — missing documented Codex invocation /superpowers-masterplan:masterplan"
+    EXIT=1
+  fi
+
+  if ! grep -q 'codex_host_suppressed' "${command_file}" 2>/dev/null; then
+    echo "⚠️  commands/masterplan.md — missing codex_host_suppressed runtime guard"
+    EXIT=1
+  fi
+
+  if ! grep -q 'host-suppressed' "${command_file}" 2>/dev/null; then
+    echo "⚠️  commands/masterplan.md — missing host-suppressed routing decision source"
+    EXIT=1
+  fi
+
+  if ! grep -qi 'recursive Codex' "${command_file}" 2>/dev/null; then
+    echo "⚠️  commands/masterplan.md — missing recursive Codex dispatch suppression text"
+    EXIT=1
+  fi
+
+  if ! grep -qi 'recursive Codex' "${REPO_ROOT}/README.md" 2>/dev/null; then
+    echo "⚠️  README.md — missing Codex-host recursive dispatch documentation"
+    EXIT=1
+  fi
+
+  if ! grep -q 'codex_host_suppressed' "${REPO_ROOT}/docs/internals.md" 2>/dev/null; then
+    echo "⚠️  docs/internals.md — missing codex_host_suppressed documentation"
+    EXIT=1
+  fi
+
+  if [[ "${EXIT}" -eq 0 ]]; then
+    echo "✓ Codex plugin packaging clean"
+  fi
+}
+
+# ---------------------------------------------------------------------------------
 # Check: model-passthrough preamble enforcement (doctor check #23 audit surface, v2.12.0)
 # ---------------------------------------------------------------------------------
 check_model_passthrough() {
@@ -295,6 +427,7 @@ check_cd9() {
 # ---------------------------------------------------------------------------------
 [[ "${RUN_DRIFT}" -eq 1 ]] && check_drift
 [[ "${RUN_DRIFT}" -eq 1 ]] && check_skill_drift
+[[ "${RUN_CODEX}" -eq 1 ]] && check_codex_packaging
 [[ "${RUN_CD9}" -eq 1 ]] && check_cd9
 [[ "${RUN_MODELS}" -eq 1 ]] && check_model_passthrough
 
