@@ -36,7 +36,7 @@
 
 ## 1. Project orientation
 
-`superpowers-masterplan` is a Claude Code plugin that ships one slash command: `/masterplan`. The command orchestrates a complete development workflow — brainstorm a spec, plan the implementation, execute task-by-task, generate a retrospective when complete — by sequencing the upstream `superpowers` skills (`brainstorming`, `writing-plans`, `subagent-driven-development`, `executing-plans`, `using-git-worktrees`, `systematic-debugging`, `finishing-a-development-branch`).
+`superpowers-masterplan` ships one orchestrator command for Claude Code and Codex. In Claude Code the command is `/masterplan`; in Codex the portable invocation is `/superpowers-masterplan:masterplan` unless the host exposes a bare alias. The command orchestrates a complete development workflow — brainstorm a spec, plan the implementation, execute task-by-task, generate a retrospective when complete — by sequencing the upstream `superpowers` skills (`brainstorming`, `writing-plans`, `subagent-driven-development`, `executing-plans`, `using-git-worktrees`, `systematic-debugging`, `finishing-a-development-branch`).
 
 **It's a thin orchestrator, not a re-implementation.** The pipeline phases live in superpowers; `/masterplan` sequences them, persists state in `docs/masterplan/<slug>/state.yml`, and routes decisions (which model executes a task; whether Codex reviews; whether a wave dispatches in parallel; etc.).
 
@@ -51,6 +51,12 @@ superpowers-masterplan/
 ├── .claude-plugin/
 │   ├── plugin.json                 # plugin manifest (name, version, description, URL)
 │   └── marketplace.json            # direct-install marketplace catalog
+├── .codex-plugin/
+│   └── plugin.json                 # Codex plugin manifest
+├── .agents/
+│   └── plugins/marketplace.json    # Codex marketplace catalog
+├── plugins/
+│   └── superpowers-masterplan -> .. # Codex marketplace path symlink back to repo root
 ├── commands/
 │   └── masterplan.md               # THE orchestrator prompt (~2250 lines, single source of truth for behavior)
 ├── skills/
@@ -79,7 +85,7 @@ superpowers-masterplan/
 
 ### How to operate
 
-When the user types `/masterplan <args>`, Claude Code loads `commands/masterplan.md` as the system prompt with `$ARGUMENTS` bound to `<args>`. The prompt directs the orchestrator (Claude itself) through Steps 0 → A or B or C or D or I or R or S or T or CL, depending on the verb. Each Step has bounded responsibilities documented inline.
+When the user types `/masterplan <args>` in Claude Code or `/superpowers-masterplan:masterplan <args>` in Codex, the host loads `commands/masterplan.md` as the command prompt with `$ARGUMENTS` bound to `<args>`. The prompt directs the orchestrator through Steps 0 → A or B or C or D or I or R or S or T or CL, depending on the verb. Each Step has bounded responsibilities documented inline. Codex-specific tool substitutions live in the runtime compatibility block near the top of the command.
 
 ---
 
@@ -413,6 +419,12 @@ If the orchestrator crashes mid-wave (after dispatch, before barrier returns), t
 
 ## 8. Codex integration
 
+### Codex as a plugin host
+
+Codex support is packaged by `.codex-plugin/plugin.json` plus `.agents/plugins/marketplace.json`. The Codex marketplace entry points at `./plugins/superpowers-masterplan`, a Git symlink back to the repo root, so the existing `commands/`, `skills/`, `bin/`, and docs stay single-source while satisfying Codex's plugin-path convention. Do not duplicate `commands/masterplan.md` under `plugins/`; if Codex packaging changes, update the packaging manifests and self-host audit instead.
+
+The portable Codex invocation is `/superpowers-masterplan:masterplan`. A bare `/masterplan` alias is host-dependent and must not be documented as required unless a live smoke proves it.
+
 ### Why Codex with /masterplan
 
 Cross-model review catches blind spots — Sonnet's preferred patterns and Codex's preferred patterns don't perfectly overlap. Codex is bounded for small well-defined tasks (≤3 files, unambiguous, known verification, no design judgment). The combination is asymmetric: Codex doesn't review its own work (no signal there), but it DOES review Sonnet/Claude inline work and vice versa via routing.
@@ -549,6 +561,7 @@ When adding a check, update the Step D table, the Step D parallelization brief c
 | `retro` (alone or with `<slug>`) | Step R | `none` |
 | `stats` (alone or with `--plan=<slug>` / `--format=table\|json\|md` / `--all-repos` / `--since=<date>`) | Step T — codex-vs-inline routing distribution; shells out to `bin/masterplan-routing-stats.sh` | `none` |
 | `clean` (alone or with args) | Step CL | `none` |
+| `next` | Step N — "what's next?" router; scans state files inline, surfaces AUQ with resume/new-plan/status options | `none` |
 | `--resume=<path>` | Step C | `none` |
 | anything else | Step B (catch-all) | `none` |
 
@@ -565,7 +578,7 @@ The empty-state broad menu asks for a category:
 - **Phase work** — choose `brainstorm`, `plan`, `execute`, or `full`.
 - **Operations** — choose `import`, `status`, `doctor`, `retro`, `stats`, or `clean`.
 
-The reserved verb tokens are: `full`, `brainstorm`, `plan`, `execute`, `retro`, `import`, `doctor`, `status`, `stats`, `clean`. Topics literally named after a verb need a leading word (e.g. `/masterplan add brainstorm session timer`).
+The reserved verb tokens are: `full`, `brainstorm`, `plan`, `execute`, `retro`, `import`, `doctor`, `status`, `stats`, `clean`, `next`. Topics literally named after a verb need a leading word (e.g. `/masterplan add brainstorm session timer`).
 - **Resume in-flight** — delegates to Step A's existing list+pick flow.
 - **Cancel** — exits without further tool calls.
 
@@ -575,7 +588,7 @@ This keeps interrupted work one command away while preserving verb discovery for
 
 ### Verb tokens are reserved
 
-Topics literally named `full`, `brainstorm`, `plan`, `execute`, `retro`, `import`, `doctor`, `status`, `stats`, or `clean` need a leading word (e.g., `/masterplan add brainstorm session timer`).
+Topics literally named `full`, `brainstorm`, `plan`, `execute`, `retro`, `import`, `doctor`, `status`, `stats`, `clean`, or `next` need a leading word (e.g., `/masterplan add brainstorm session timer`).
 
 ### `halt_mode` state machine
 

@@ -104,6 +104,32 @@ parallelism table in [`docs/internals.md`](./docs/internals.md).
 
 ## Install
 
+### Codex
+
+Add the repository as a Codex marketplace:
+
+```bash
+codex plugin marketplace add rasatpetabit/superpowers-masterplan
+```
+
+The marketplace is configured to install `superpowers-masterplan` by default.
+If your Codex build registers the marketplace but does not expose the command,
+enable `superpowers-masterplan@rasatpetabit-superpowers-masterplan` in Codex's
+plugin UI or config.
+
+After install, invoke the command by its namespaced Codex command name:
+
+```text
+/superpowers-masterplan:masterplan
+/superpowers-masterplan:masterplan full Stripe webhook handler
+/superpowers-masterplan:masterplan status
+```
+
+Codex may expose a bare `/masterplan` alias in some hosts, but the namespaced
+form is the portable contract. The same `commands/masterplan.md` orchestrator is
+used for Claude Code and Codex; Codex follows the compatibility block at the top
+of that prompt plus the local `AGENTS.md` tool mapping.
+
 ### Claude Desktop app (Code tab)
 
 This is a **Claude Code** plugin, so in the desktop app use the **Code** tab,
@@ -129,7 +155,7 @@ Claude's desktop plugin browser only shows plugins from configured
 marketplaces. The slash-command flow below works inside the Desktop Code tab
 too, and is often the fastest way to add this marketplace the first time.
 
-### Slash-command install (CLI or Desktop Code tab)
+### Claude slash-command install (CLI or Desktop Code tab)
 
 ```text
 /plugin marketplace add rasatpetabit/superpowers-masterplan
@@ -148,7 +174,7 @@ marketplace with `/plugin marketplace update claude-plugins-official`, or add it
 with `/plugin marketplace add anthropics/claude-plugins-official`, then retry
 the install.
 
-### Manual install
+### Claude manual install
 
 ```bash
 mkdir -p ~/.claude/commands ~/.claude/skills
@@ -299,9 +325,10 @@ bin/masterplan-state.sh migrate --write
 | `/masterplan retro [<slug>]` | Generate or re-run a retrospective for a completed plan | n/a |
 | `/masterplan stats [--plan=<slug>] [--format=table\|json\|md] [--all-repos] [--since=<date>]` | Codex-vs-inline routing distribution + inline model breakdown + token totals across plans | n/a |
 | `/masterplan clean [--dry-run]` | Archive completed bundles, retire migrated legacy artifacts, and prune orphan state | n/a |
+| `/masterplan next` | "What's next?" router — scans active plans and offers resume/new-plan/status options via AUQ; never starts a brainstorm about the topic "next" | n/a |
 
 Topics literally named after a verb (`full`, `brainstorm`, `plan`, `execute`,
-`retro`, `import`, `doctor`, `status`, `stats`, `clean`) need a leading word, for example:
+`retro`, `import`, `doctor`, `status`, `stats`, `clean`, `next`) need a leading word, for example:
 `/masterplan add brainstorm session timer`.
 
 ### Routing stats
@@ -433,14 +460,14 @@ The canonical behavior and schema details live in
 
 ## Advanced Features
 
-### Codex
+### Codex delegation from Claude
 
 By default, `codex.routing: auto` delegates eligible small tasks to Codex, and
 `codex.review: on` reviews inline Claude/Sonnet diffs. If the Codex plugin is
 missing, both settings auto-degrade to `off` for that run and persisted config is
 unchanged.
 
-Install Codex in Claude Code:
+Install the Codex companion plugin in Claude Code:
 
 ```text
 /plugin marketplace add openai/codex-plugin-cc

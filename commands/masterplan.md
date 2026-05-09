@@ -1,5 +1,5 @@
 ---
-description: "Brainstorm → plan → execute workflow. Verbs: full, brainstorm, plan, execute, import, doctor, status, retro, stats, clean. Bare-topic shortcut still works."
+description: "Brainstorm → plan → execute workflow. Verbs: full, brainstorm, plan, execute, import, doctor, status, retro, stats, clean, next. Bare-topic shortcut still works."
 ---
 
 # /masterplan
@@ -16,6 +16,23 @@ Before doing anything, internalize these. They shape every decision below:
 4. **Structured questions, never free-text.** Every interactive gate — kickoff, resume, gate prompts, blocker recovery, finish, doctor findings, import collisions — uses `AskUserQuestion` with 2–4 concrete options. Free-text prompts are a dead-end: sessions can compact between turns and lose upstream-skill bodies, leaving the user staring at "what now?" with no recoverable state. See **CD-9** below for the rule definition. Contributors editing this orchestrator can run `bin/masterplan-self-host-audit.sh --cd9` to grep for free-text regressions before commit.
 
 **Args received:** `$ARGUMENTS`
+
+## Runtime compatibility
+
+This prompt is maintained as one source for both Claude Code and Codex plugin hosts.
+
+- In Claude Code, use the native slash-command, `AskUserQuestion`, `Agent`, `Task`,
+  `Read`, `Edit`, `Bash`, and plugin-management primitives named below.
+- In Codex, follow the active system/developer tool contracts and the repository's
+  `AGENTS.md` tool mapping. In particular: `AskUserQuestion` maps to Codex
+  `request_user_input` when available; `Read`/`Grep`/`Glob`/`LS` map to shell
+  reads, `rg`, `rg --files`, and `ls`; `Edit`/`Write` map to `apply_patch`;
+  `Task`/`Agent` dispatch maps to Codex subagents only when the active harness
+  permits them, otherwise keep the work bounded in the main thread and record
+  the deviation in `events.jsonl`.
+- Codex invokes this command as the namespaced slash command
+  `/superpowers-masterplan:masterplan` unless the host explicitly exposes a bare
+  `/masterplan` alias. Treat both invocations as this same orchestrator.
 
 ---
 
@@ -218,6 +235,7 @@ This single line is the audit trail for "why did the orchestrator behave this wa
 | `retro` (alone or with `<slug>`) | **Step R** — generate retrospective for a completed plan | `none` |
 | `stats` (alone or with `--plan=<slug>` / `--format=table\|json\|md` / `--all-repos` / `--since=<ISO-date>`) | **Step T** — codex-vs-inline routing distribution + inline model breakdown + token totals across plans | `none` |
 | `clean` (alone or with `--dry-run` / `--delete` / `--category=<name>` / `--worktree=<path>`) | **Step CL** — archive completed plans + sidecars; prune orphan sidecars, stale plans, dead crons + worktrees | `none` |
+| `next` | **Step N** — "what's next?" router: scan state files inline, present AUQ with resume/new-plan/status options. Never starts a new brainstorm cycle around the topic "next". | `none` |
 | `--resume=<path>` or `--resume <path>` | **Step C** — alias for `execute <path>` | `none` |
 | anything else | treat as a topic, **Step B** — kickoff (back-compat catch-all) | `none` |
 
@@ -225,11 +243,11 @@ This single line is the audit trail for "why did the orchestrator behave this wa
 
 `halt_mode` is an internal orchestrator variable set in Step 0 from the verb match. Steps B1, B2, B3, and C consult it to choose between the existing gate behavior and a halt-aware variant.
 
-**Verb tokens are reserved.** Any topic literally named `full`, `brainstorm`, `plan`, `execute`, `retro`, `import`, `doctor`, `status`, `stats`, or `clean` requires another word in front via the catch-all (e.g., `/masterplan add brainstorm session timer`).
+**Verb tokens are reserved.** Any topic literally named `full`, `brainstorm`, `plan`, `execute`, `retro`, `import`, `doctor`, `status`, `stats`, `clean`, or `next` requires another word in front via the catch-all (e.g., `/masterplan add brainstorm session timer`).
 
 **Argument-parse precedence (in Step 0, after config + git_state cache):**
 0. If invoked with no args (zero tokens after the command name): route directly to **Step M** — resume-first routing (see § Step M).
-1. Match the first token against `{full, brainstorm, plan, execute, retro, import, doctor, status, stats, clean}`. On match: set `halt_mode` per the table; **stash `requested_verb = <matched-verb>` for downstream steps to consult** (Step A's verb-explicit override reads it; Step B/C ignore it); consume the verb; pass remaining args to the matched step. **`execute <topic>` special case:** when `requested_verb == 'execute'` AND remaining args is non-empty AND remaining args does NOT resolve to an existing file path (`test -e <remaining>`), set `topic_hint = <remaining args>` and route to Step A (the table's third `execute` row). This carries the explicit verb intent into Step A so a missing state file does not silently route to brainstorm.
+1. Match the first token against `{full, brainstorm, plan, execute, retro, import, doctor, status, stats, clean, next}`. On match: set `halt_mode` per the table; **stash `requested_verb = <matched-verb>` for downstream steps to consult** (Step A's verb-explicit override reads it; Step B/C ignore it); consume the verb; pass remaining args to the matched step. **`execute <topic>` special case:** when `requested_verb == 'execute'` AND remaining args is non-empty AND remaining args does NOT resolve to an existing file path (`test -e <remaining>`), set `topic_hint = <remaining args>` and route to Step A (the table's third `execute` row). This carries the explicit verb intent into Step A so a missing state file does not silently route to brainstorm.
 2. If unmatched and the first arg starts with `--`: route to **Step A** (flag-only invocation).
 3. If unmatched and the first arg is a non-flag word: catch-all → **Step B** with the full arg string as the topic (existing behavior).
 
@@ -622,6 +640,62 @@ Before resume-first routing, emit a structured plain-text orientation summarizin
 - The broad picker fires only after resume-first routing finds no active plans. Picker-routed invocations set `halt_mode` based on the chosen verb (per the phase work sub-picker above) — no CLI flags are passed from the empty bare invocation.
 - If the user wants to invoke a verb directly (e.g., `/masterplan full <topic>`), they can — Step 0's verb routing table still matches the first token before Step M fires. Step M is for the empty-args case only.
 - **Stay on script.** Step M0's structured preamble (headline + up-to-3 plan bullets + optional tripwire flag) IS the orientation; emit it exactly as specified above, then route according to the resume-first rules. Do NOT expand the preamble with prose commentary, do NOT enumerate which doctor checks tripped (that's `/masterplan doctor`'s job — M0 only counts), and do NOT pivot into adjacent feature offers ("by the way, want me to open a browser visualization / install X / show a diagram?"). `/masterplan` is frequently invoked inside `/loop` and remote-control sessions where there is no human between turns; a turn that ends with a free-text question instead of Step C/Step A or an `AskUserQuestion` call stalls the loop. Any `?` outside an `AskUserQuestion` is still a bug.
+
+---
+
+## Step N — "what's next?" router
+
+Fires on `/masterplan next`. Treats "next" as a **continuation signal**, not a topic. Never starts a new brainstorm/plan/execute cycle about the literal subject "next".
+
+**Why this step exists.** Without it, "next" falls through to the catch-all and launches `/masterplan full next` — a brainstorm run about a topic called "next." That consumes context, triggers auto-compaction, writes `last-prompt: next` metadata, and the replayed "next" re-enters masterplan again (cascade). Step N intercepts and routes correctly.
+
+1. **Scan state files inline** — parallel `Read` calls across `docs/masterplan/*/state.yml` and legacy status paths (same as Step M0 step 2). No subagent dispatch — file count is bounded at 20 and YAML is small.
+
+2. **Categorize findings:**
+   - `active` — `status: in-progress` OR `status: blocked`
+   - `retro_pending` — `status: complete` with no bundled `retro.md`
+   - `recently_complete` — `status: complete`, modified in last 7 days, retro present
+   - `archived` — everything else
+
+3. **If ≥1 active plan exists** — persist `pending_gate` per CD-7, then surface:
+   ```
+   AskUserQuestion(
+     question="What's next?",
+     options=[
+       "Resume <slug> (Recommended) — continue in-progress plan",
+       "Resume a different plan — show full list",   // include only if ≥2 active plans
+       "Start a new plan — brainstorm a fresh topic",
+       "Check full status — /masterplan status"
+     ]
+   )
+   ```
+   - **Resume `<slug>`** → Step C with that `state.yml` path.
+   - **Resume a different plan** → Step A (list+pick, `requested_verb=execute`).
+   - **Start a new plan** → prompt for topic via `AskUserQuestion("What topic?", options=[Other])`, then Step B.
+   - **Check full status** → Step S.
+
+   When exactly one active plan exists, omit the "Resume a different plan" option (only 3 options; keeps the picker clean and within AUQ's 4-option cap).
+
+4. **If no active plans, but retro_pending or recently_complete exist** — surface:
+   ```
+   AskUserQuestion(
+     question="All plans are complete. What next?",
+     options=[
+       "Start a new plan (Recommended) — brainstorm a fresh topic",
+       "Write retro for <most-recent-slug>",   // only if retro_pending; omit if all retros done
+       "Run doctor — lint repo state",
+       "Check full status"
+     ]
+   )
+   ```
+   - **Start a new plan** → `AskUserQuestion("What topic?", options=[Other])`, then Step B.
+   - **Write retro** → Step R with `<most-recent-slug>`.
+   - **Run doctor** → Step D.
+   - **Check full status** → Step S.
+
+5. **If no plans at all** — route directly to Step M (same behavior as bare `/masterplan` invocation).
+
+**Step N never does any work itself** — it is pure routing to the appropriate step.
 
 ---
 
