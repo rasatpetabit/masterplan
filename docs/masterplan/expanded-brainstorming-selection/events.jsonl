@@ -1,0 +1,9 @@
+{"type":"run_created","phase":"worktree_decided","timestamp":"2026-05-10","detail":"existing worktree reused for expanded-brainstorming-selection"}
+{"type":"prior_direction_superseded","phase":"brainstorming","timestamp":"2026-05-10","detail":"individual selection pages no longer primary fix; Step B1 intent anchor selected"}
+{"type":"brainstorm_started","phase":"brainstorming","timestamp":"2026-05-10","topic":"fix masterplan brainstorming drift"}
+{"type":"brainstorm_anchor_resolved","phase":"brainstorming","timestamp":"2026-05-10","mode":"implementation-design","repo_role":"masterplan-orchestrator-plugin","verification_ceiling":"local-static"}
+{"type":"spec_written","phase":"spec_gate","timestamp":"2026-05-10","path":"docs/masterplan/expanded-brainstorming-selection/spec.md"}
+{"type":"plan_written","phase":"plan_gate","timestamp":"2026-05-10","path":"docs/masterplan/expanded-brainstorming-selection/plan.md"}
+{"type":"execution_started","phase":"executing","timestamp":"2026-05-10","current_task":"Implement Step B1 brainstorm intent anchor"}
+{"type":"manual_dry_run_passed","phase":"executing","timestamp":"2026-05-10","detail":"four regression fixtures classify before spec writing; event order keeps brainstorm_anchor_resolved immediately after brainstorm_started"}
+{"type":"verification_passed","phase":"complete","timestamp":"2026-05-10","commands":["git diff --check","bash bin/masterplan-self-host-audit.sh --cd9","bash bin/masterplan-self-host-audit.sh --codex","bash bin/masterplan-self-host-audit.sh --brainstorm-anchor","jq empty plugin manifests and regressions.json","jq -s empty events.jsonl","bash -n bin/masterplan-self-host-audit.sh"]}

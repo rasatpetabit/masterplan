@@ -25,6 +25,24 @@ Resolve the command file in this order:
 If none exists, say the local masterplan command file is missing and stop before
 inventing behavior.
 
+## Config bootstrap
+
+Before deriving defaults, selecting a route, creating state, or asking any
+workflow question, load the same config tiers as Step 0 in
+`commands/masterplan.md`:
+
+1. Read `$HOME/.masterplan.yaml` (`~/.masterplan.yaml`) if it exists.
+2. Resolve the current repo root with `git rev-parse --show-toplevel`, then read
+   `<repo-root>/.masterplan.yaml` if it exists.
+3. Shallow-merge in this order:
+   built-in defaults < user-global < repo-local < invocation flags.
+
+Use the merged config for Codex-hosted runs too. Codex host suppression only
+forces the effective `codex.routing` / `codex.review` behavior off for the
+current invocation to avoid recursive dispatch; it does not bypass or rewrite
+user-global defaults such as `autonomy`, `complexity`, `runs_path`, or
+`parallelism`.
+
 ## Invocation mapping
 
 Treat these user inputs as this skill:

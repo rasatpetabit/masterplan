@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.2.0] — 2026-05-10 — anchored brainstorming and Codex config bootstrap
+
+### Added
+
+- **Brainstorm intent anchor.** Step B1 now reads cheap repo truth before invoking `superpowers:brainstorming`, classifies the topic (`feature-ideas`, `implementation-design`, `audit-review`, `deferred-task`, `execution-resume`, or `unclear`), persists `brainstorm_anchor` in `state.yml`, and records `brainstorm_anchor_resolved` before spec writing.
+- **Anchor regression fixtures and audit coverage.** The self-host audit now checks the prompt contract and the transcript-derived fixtures for meta-petabit Yocto review drift, deferred ERROR_QA work, image/package policy scoping, and the one feature-ideas case that should still use an idea funnel.
+
+### Fixed
+
+- **Broad brainstorming drift.** Audit/review prompts, deferred task prompts, and cross-repo Yocto layer prompts now get structured anchor gates and scope boundaries before spec writing instead of immediately expanding into unconstrained feature planning.
+- **Codex config bootstrap.** The Codex-visible `masterplan` skill now explicitly loads `~/.masterplan.yaml` and repo-local `.masterplan.yaml` before deriving defaults, so Codex-hosted invocations preserve user-global settings like `autonomy` and `complexity` while still suppressing recursive `codex:codex-rescue` routing/review inside Codex.
+
 ## [3.1.1] — 2026-05-09 — continuation and Codex prompt exposure fixes
 
 ### Fixed

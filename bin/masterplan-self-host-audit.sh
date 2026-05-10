@@ -18,6 +18,7 @@
 #   bin/masterplan-self-host-audit.sh --cd9     # only check free-text user questions
 #   bin/masterplan-self-host-audit.sh --models  # only check model-passthrough preamble (check #23)
 #   bin/masterplan-self-host-audit.sh --codex   # only check Codex plugin packaging
+#   bin/masterplan-self-host-audit.sh --brainstorm-anchor  # only check Step B1 brainstorm anchoring
 #
 # Exit code: 0 if clean, 1 if any check fires, 2 on usage error.
 
@@ -41,15 +42,17 @@ RUN_DRIFT=1
 RUN_CD9=1
 RUN_MODELS=1
 RUN_CODEX=1
+RUN_ANCHOR=1
 
 case "${MODE}" in
   --fix)    FIX_MODE=1 ;;
-  --drift)  RUN_CD9=0; RUN_MODELS=0; RUN_CODEX=0 ;;
-  --cd9)    RUN_DRIFT=0; RUN_MODELS=0; RUN_CODEX=0 ;;
-  --models) RUN_DRIFT=0; RUN_CD9=0; RUN_CODEX=0 ;;
-  --codex)  RUN_DRIFT=0; RUN_CD9=0; RUN_MODELS=0 ;;
+  --drift)  RUN_CD9=0; RUN_MODELS=0; RUN_CODEX=0; RUN_ANCHOR=0 ;;
+  --cd9)    RUN_DRIFT=0; RUN_MODELS=0; RUN_CODEX=0; RUN_ANCHOR=0 ;;
+  --models) RUN_DRIFT=0; RUN_CD9=0; RUN_CODEX=0; RUN_ANCHOR=0 ;;
+  --codex)  RUN_DRIFT=0; RUN_CD9=0; RUN_MODELS=0; RUN_ANCHOR=0 ;;
+  --brainstorm-anchor) RUN_DRIFT=0; RUN_CD9=0; RUN_MODELS=0; RUN_CODEX=0 ;;
   "")       : ;;
-  *)        echo "Usage: $0 [--fix|--drift|--cd9|--models|--codex]" >&2; exit 2 ;;
+  *)        echo "Usage: $0 [--fix|--drift|--cd9|--models|--codex|--brainstorm-anchor]" >&2; exit 2 ;;
 esac
 
 EXIT=0
@@ -299,6 +302,11 @@ check_codex_packaging() {
     EXIT=1
   fi
 
+  if ! grep -q '~/.masterplan.yaml' "${codex_entry_skill}" 2>/dev/null; then
+    echo "⚠️  skills/masterplan/SKILL.md — must explicitly load user-global ~/.masterplan.yaml config"
+    EXIT=1
+  fi
+
   if ! grep -qE '`masterplan` skill|masterplan skill' "${REPO_ROOT}/README.md" 2>/dev/null; then
     echo "⚠️  README.md — missing Codex masterplan skill entrypoint documentation"
     EXIT=1
@@ -336,6 +344,90 @@ check_codex_packaging() {
 
   if [[ "${EXIT}" -eq 0 ]]; then
     echo "✓ Codex plugin packaging clean"
+  fi
+}
+
+# ---------------------------------------------------------------------------------
+# Check: Step B1 brainstorm intent anchor
+# ---------------------------------------------------------------------------------
+check_brainstorm_anchor() {
+  local command_file="${REPO_ROOT}/commands/masterplan.md"
+  local fixture_file="${REPO_ROOT}/docs/masterplan/expanded-brainstorming-selection/regressions.json"
+
+  if [[ ! -f "${command_file}" ]]; then
+    echo "Skipping brainstorm-anchor check: ${command_file} not found"
+    return
+  fi
+
+  local patterns=(
+    "brainstorm_anchor:"
+    "brainstorm_anchor_resolved"
+    "feature-ideas | implementation-design | audit-review | deferred-task | execution-resume | unclear"
+    "brainstorm_anchor_audit_mode"
+    "brainstorm_anchor_scope_boundary"
+    "Intent Anchor"
+    "Scope Boundary"
+    "verification_ceiling"
+    "feature-idea funnels unless"
+    "native multi-select UI or arbitrary free-form ID entry"
+  )
+
+  local pattern
+  for pattern in "${patterns[@]}"; do
+    if ! grep -qF "${pattern}" "${command_file}" 2>/dev/null; then
+      echo "⚠️  commands/masterplan.md — missing Step B1 brainstorm anchor contract text: ${pattern}"
+      EXIT=1
+    fi
+  done
+
+  if [[ ! -f "${fixture_file}" ]]; then
+    echo "⚠️  brainstorm anchor fixtures — missing ${fixture_file#${REPO_ROOT}/}"
+    EXIT=1
+    return
+  fi
+
+  if command -v jq >/dev/null 2>&1; then
+    local count
+    count="$(jq 'length' "${fixture_file}" 2>/dev/null || echo 0)"
+    if [[ "${count}" -ne 4 ]]; then
+      echo "⚠️  brainstorm anchor fixtures — expected 4 cases, found ${count}"
+      EXIT=1
+    fi
+
+    local cases=(
+      "meta-petabit-yocto-config-review|audit-review"
+      "meta-petabit-error-qa|deferred-task"
+      "meta-petabit-image-package-policy|implementation-design"
+      "superpowers-masterplan-feature-ideas|feature-ideas"
+    )
+
+    local entry
+    for entry in "${cases[@]}"; do
+      local id="${entry%%|*}"
+      local mode="${entry#*|}"
+      if ! jq -e --arg id "${id}" --arg mode "${mode}" '.[] | select(.id == $id and .expected_mode == $mode)' "${fixture_file}" >/dev/null; then
+        echo "⚠️  brainstorm anchor fixtures — missing case ${id} with mode ${mode}"
+        EXIT=1
+      fi
+    done
+  else
+    local ids=(
+      "meta-petabit-yocto-config-review"
+      "meta-petabit-error-qa"
+      "meta-petabit-image-package-policy"
+      "superpowers-masterplan-feature-ideas"
+    )
+    local id
+    for id in "${ids[@]}"; do
+      if ! grep -qF "\"id\": \"${id}\"" "${fixture_file}" 2>/dev/null; then
+        echo "⚠️  brainstorm anchor fixtures — missing case ${id}"
+        EXIT=1
+      fi
+    done
+  fi
+
+  if [[ "${EXIT}" -eq 0 ]]; then
+    echo "✓ brainstorm anchor contract clean"
   fi
 }
 
@@ -423,18 +515,18 @@ check_cd9() {
     context="$(sed -n "${context_start},${context_end}p" "${file}")"
 
     # Skip if paired AskUserQuestion is nearby.
-    if echo "${context}" | grep -qF "AskUserQuestion"; then
+    if grep -qF "AskUserQuestion" <<< "${context}"; then
       continue
     fi
     # Skip if inline cd9-exempt marker is nearby.
-    if echo "${context}" | grep -qF "cd9-exempt"; then
+    if grep -qF "cd9-exempt" <<< "${context}"; then
       continue
     fi
     # Skip if inside CD-9 rule definition or "Don't stop silently" restatement.
-    if echo "${context}" | grep -qF "**CD-9**"; then
+    if grep -qF "**CD-9**" <<< "${context}"; then
       continue
     fi
-    if echo "${context}" | grep -qF "Don't stop silently"; then
+    if grep -qF "Don't stop silently" <<< "${context}"; then
       continue
     fi
 
@@ -457,6 +549,7 @@ check_cd9() {
 [[ "${RUN_CODEX}" -eq 1 ]] && check_codex_packaging
 [[ "${RUN_CD9}" -eq 1 ]] && check_cd9
 [[ "${RUN_MODELS}" -eq 1 ]] && check_model_passthrough
+[[ "${RUN_ANCHOR}" -eq 1 ]] && check_brainstorm_anchor
 
 if [[ "${EXIT}" -eq 0 ]]; then
   echo "✓ self-host audit clean"

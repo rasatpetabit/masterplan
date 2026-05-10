@@ -860,13 +860,59 @@ Then proceed to **Step B2** (writing-plans). Step B1 is skipped because the spec
 
 ### Step B1 — Brainstorm
 
-Invoke `superpowers:brainstorming` with the topic. **Brainstorming is always interactive** — the `--autonomy` flag does not apply. Let it run through its design + writing phases.
+**Intent anchor (CRITICAL — prevents broad/audit-shaped prompts from turning into unconstrained feature ideation).** Before invoking `superpowers:brainstorming`, /masterplan owns a short repository-grounding pass. Brainstorming is still interactive, but it is briefed with durable intent, scope, and verification limits instead of receiving only the raw topic string.
+
+1. Update `state.yml`: `phase: brainstorming`, `next_action: resolve brainstorm intent anchor`, `pending_gate: null`; append `brainstorm_started` to `events.jsonl`.
+2. Read cheap local truth in one bounded batch: `AGENTS.md`, `CLAUDE.md`, `WORKLOG.md`, the most recent relevant `docs/masterplan/*/{state.yml,events.jsonl,spec.md}` bundles, and an obvious repo-structure sketch from `rg --files` / `find`. Do not do deep source analysis at this stage.
+3. Classify `brainstorm_anchor.mode` as exactly one of: `feature-ideas | implementation-design | audit-review | deferred-task | execution-resume | unclear`.
+   - `feature-ideas` — the user explicitly wants new ideas, options, or a broad product/feature funnel.
+   - `implementation-design` — the user wants a buildable design for known work.
+   - `audit-review` — the user asks to reevaluate, review, inspect, audit, simplify, or find problems.
+   - `deferred-task` — the topic names a task, phase, TODO, skipped item, plan task, prior error, or worklog entry.
+   - `execution-resume` — the user wants to continue already-planned work.
+   - `unclear` — no safe classification after the cheap reads.
+4. Classify repository role and scope boundary. For Yocto layer repositories, also classify ownership as one of `distro/image policy`, `BSP/machine`, `app recipes`, `kas composition`, `builder orchestration`, or `cross-repo`. Record in-scope paths and out-of-scope sibling repos when local guidance names them.
+5. Record 3-8 `evidence` strings. Each string is a short path-backed fact such as `AGENTS.md: meta-petabit owns distro/image policy` or `WORKLOG.md: Task 6 deferred ERROR_QA build-backed audit`. Do not paste large file excerpts.
+6. Set a `verification_ceiling` such as `local-static`, `repo-local-tests`, `requires-build-host`, `requires-runtime`, or `requires-external-service`.
+7. Persist the object under `brainstorm_anchor:` in `state.yml` and append `brainstorm_anchor_resolved` to `events.jsonl` before any spec-writing call. Minimum shape:
+
+```yaml
+brainstorm_anchor:
+  mode: audit-review
+  repo_role: yocto-distro-policy-layer
+  yocto_ownership: distro/image policy
+  in_scope_paths:
+    - conf/distro/
+    - recipes-*/images/
+  out_of_scope_repos:
+    - meta-petabit-bsp
+    - meta-petabit-apps
+  evidence:
+    - "AGENTS.md: current repo owns distro and image policy"
+  verification_ceiling: requires-build-host
+  gate_selection: null
+```
+
+**Anchor gates.** Fire only when the anchor prevents likely drift, and always persist `pending_gate` before surfacing `AskUserQuestion`:
+
+- Audit/review prompts with ambiguous execution semantics (for example "reevaluate Yocto configuration") persist `pending_gate.id: brainstorm_anchor_audit_mode`, then surface `AskUserQuestion("This looks like an audit/review. How should the spec behave?", options=["Fix-as-you-go audit (Recommended) — identify problems and implement safe repo-local fixes as they are found", "Report-only audit — write findings and recommendations, no code edits", "Narrow deferred task — use prior plan/worklog evidence and stay task-scoped", "Abort"])`.
+- Cross-repo or sibling-owned scope persists `pending_gate.id: brainstorm_anchor_scope_boundary`, then surface `AskUserQuestion("The topic crosses this repo's ownership boundary. What scope should this run use?", options=["Stay in current repo (Recommended) — plan only in-scope paths and record sibling follow-ups", "Split sibling follow-up runs — create separate masterplan runs for each repo boundary", "Abort and restate scope"])`.
+- Deferred-task prompts do not ask broad feature-idea questions. Reuse prior plan/worklog evidence, keep the spec task-scoped, and only gate if the task's verification ceiling or repo boundary is genuinely ambiguous.
+- `unclear` prompts gate only when a wrong default would be materially unsafe. Prefer one foundational `AskUserQuestion` with concrete options over exploratory prose.
+
+**Invoke brainstorming with the anchor.** Invoke `superpowers:brainstorming` with the original topic plus a compact anchor brief containing `mode`, `repo_role`, `yocto_ownership` when present, `in_scope_paths`, `out_of_scope_repos`, `evidence`, `verification_ceiling`, and any `gate_selection`. **Brainstorming is always interactive** — the `--autonomy` flag does not apply. The brief MUST instruct the skill to:
+
+- Include a short `Intent Anchor` / `Scope Boundary` section in `<config.runs_path>/<slug>/spec.md`.
+- Avoid broad feature-idea funnels unless `brainstorm_anchor.mode == feature-ideas`.
+- Forbid out-of-scope sibling repo implementation unless the anchor gate selected split follow-up runs.
+- Carry the `verification_ceiling` into the spec so execution does not promise unavailable proof.
+- For Codex hosts, avoid designs that depend on native multi-select UI or arbitrary free-form ID entry; offer concrete structured gates instead.
 
 **Re-engagement gate (CRITICAL — fixes a class of bug where the orchestrator stops silently when brainstorming hits its "User reviews written spec" gate, leaving the session unable to continue after compaction).** After brainstorming returns control to /masterplan, the orchestrator MUST verify state and explicitly drive the next step — never end the turn waiting on the user's free-text response from brainstorming's gate:
 
-1. Before invoking the skill, update `state.yml`: `phase: brainstorming`, `next_action: write spec`, `pending_gate: null`; append `brainstorm_started` to `events.jsonl`.
-2. Check whether the expected spec file exists at `<config.runs_path>/<slug>/spec.md`. If the upstream brainstorming skill writes to a legacy path (`docs/superpowers/specs/YYYY-MM-DD-<slug>-design.md`), copy it into `<config.runs_path>/<slug>/spec.md`, record the old path under `legacy.spec`, and continue against the bundled spec.
-3. **If spec missing:** brainstorming was aborted or failed. Persist `pending_gate` with `id: brainstorm_missing`, `phase: brainstorming`, the exact options below, then surface `AskUserQuestion("Brainstorming did not complete (no spec at <path>). Re-invoke brainstorming with the same topic / Refine the topic and re-invoke / Abort kickoff")`.
+1. Check whether the expected spec file exists at `<config.runs_path>/<slug>/spec.md`. If the upstream brainstorming skill writes to a legacy path (`docs/superpowers/specs/YYYY-MM-DD-<slug>-design.md`), copy it into `<config.runs_path>/<slug>/spec.md`, record the old path under `legacy.spec`, and continue against the bundled spec.
+2. **If spec missing:** brainstorming was aborted or failed. Persist `pending_gate` with `id: brainstorm_missing`, `phase: brainstorming`, the exact options below, then surface `AskUserQuestion("Brainstorming did not complete (no spec at <path>). Re-invoke brainstorming with the same topic / Refine the topic and re-invoke / Abort kickoff")`.
+3. Check that the spec contains an `Intent Anchor` or `Scope Boundary` section. If missing, update `state.yml`: `pending_gate.id: brainstorm_anchor_missing`, `phase: brainstorming`, then surface `AskUserQuestion("Spec is missing the brainstorm intent anchor. What now?", options=["Re-run brainstorming with the saved anchor (Recommended)", "Patch the spec anchor now", "Abort kickoff"])`.
 4. **If spec exists** (the normal case): update `state.yml`: `phase: spec_gate`, `artifacts.spec: <config.runs_path>/<slug>/spec.md`, `next_action: approve spec for planning`; append `spec_written` to `events.jsonl`, then consult `halt_mode`.
    - **`halt_mode == none`** (existing kickoff path, unchanged): under `--autonomy != full`, persist `pending_gate` with `id: spec_approval` and then surface `AskUserQuestion("Spec written at <path>. Ready for writing-plans?", options=[Approve and run writing-plans (Recommended) / Open spec to review first then ping me / Request changes — describe what to change / Abort kickoff])`. Under `--autonomy=full`: auto-approve, clear `pending_gate`, and proceed to Step B2 silently.
    - **`halt_mode == post-brainstorm`** (new, fires when invoked via `/masterplan brainstorm <topic>`): persist `pending_gate` with `id: brainstorm_closeout` and then surface `AskUserQuestion("Spec written at <path>. What next?", options=["Done — close out this run (Recommended)", "Continue to plan now — run B2+B3 as if /masterplan plan --from-spec=<path> (the B0 worktree decision from earlier this session still holds; B0a is not re-run)", "Open spec to review before deciding — then ping me", "Re-run brainstorming to refine"])`.

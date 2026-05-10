@@ -1,6 +1,6 @@
 # Claude Plugin Directory Submission
 
-Release target: `superpowers-masterplan` v3.1.1.
+Release target: `superpowers-masterplan` v3.2.0.
 
 ## Official submission path
 

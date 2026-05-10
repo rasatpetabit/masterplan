@@ -34,6 +34,21 @@ on track for multi-week projects.
 - Each plan runs in its own git worktree on its own branch, so parallel plans
   don't collide.
 
+### Anchored brainstorming
+
+- Before brainstorming writes a spec, `/masterplan` reads cheap repo truth
+  (`AGENTS.md`, `CLAUDE.md`, `WORKLOG.md`, recent run bundles, and the obvious
+  file layout), classifies the topic as feature ideation, implementation
+  design, audit/review, deferred task, execution resume, or unclear, and
+  persists that `brainstorm_anchor` in `state.yml`.
+- Audit/review prompts, deferred plan tasks, and cross-repo scope get structured
+  gates before spec writing. Yocto layer repos carry explicit ownership
+  boundaries, so a distro/image policy review does not silently turn into BSP,
+  app recipe, builder, or kas-composition work.
+- Specs include an `Intent Anchor` / `Scope Boundary` section plus the
+  verification ceiling, which keeps downstream planning honest about what can
+  be proven locally versus on a build host or runtime system.
+
 ### Token efficiency
 
 - The orchestrator never does substantive work itself — it dispatches to
@@ -118,7 +133,9 @@ The marketplace is configured to install `superpowers-masterplan` by default.
 New Codex sessions should see a `masterplan` skill in their available-skills
 list. That skill is the portable Codex entrypoint: it loads
 `commands/masterplan.md` and recognizes run bundles created by Claude Code under
-`docs/masterplan/<slug>/`.
+`docs/masterplan/<slug>/`. Before it derives defaults or creates state, it must
+load the same config tiers as Claude Code: `~/.masterplan.yaml`, then
+`<repo-root>/.masterplan.yaml`, then invocation flags.
 
 After install, invoke masterplan in Codex with either natural language or the
 slash-style text form:
@@ -145,7 +162,8 @@ When running inside Codex, masterplan disables the separate Claude Code
 `codex:codex-rescue` companion path for that invocation.
 This avoids recursive Codex-on-Codex dispatch: execution stays inside the active
 Codex session, while persisted `codex.routing` / `codex.review` settings remain
-unchanged for future Claude Code runs.
+unchanged for future Claude Code runs. Other global defaults such as `autonomy`,
+`complexity`, `runs_path`, and `parallelism` still come from `.masterplan.yaml`.
 
 ### Claude Desktop app (Code tab)
 
@@ -546,7 +564,7 @@ for details and the upstream issue link.
 
 ## Project Status
 
-Current release: **v3.1.1**.
+Current release: **v3.2.0**.
 
 - Release history: [`CHANGELOG.md`](./CHANGELOG.md)
 - Contributor internals: [`docs/internals.md`](./docs/internals.md)

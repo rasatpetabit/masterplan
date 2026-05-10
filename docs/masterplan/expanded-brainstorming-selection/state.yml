@@ -1,0 +1,43 @@
+status: complete
+phase: complete
+current_task: ""
+next_action: "ready for review"
+pending_gate: null
+started: "2026-05-10"
+updated: "2026-05-10"
+worktree:
+  branch: worktree-expanded-brainstorming-selection
+  path: /home/ras/dev/superpowers-masterplan/.worktrees/expanded-brainstorming-selection
+artifacts:
+  spec: docs/masterplan/expanded-brainstorming-selection/spec.md
+  plan: docs/masterplan/expanded-brainstorming-selection/plan.md
+  regressions: docs/masterplan/expanded-brainstorming-selection/regressions.json
+legacy:
+  superseded_direction: "individual selection pages for expanded brainstorming"
+brainstorm_anchor:
+  mode: implementation-design
+  repo_role: masterplan-orchestrator-plugin
+  yocto_ownership: null
+  in_scope_paths:
+    - commands/masterplan.md
+    - docs/internals.md
+    - README.md
+    - CHANGELOG.md
+    - bin/masterplan-self-host-audit.sh
+    - docs/masterplan/expanded-brainstorming-selection/
+  out_of_scope_repos: []
+  evidence:
+    - "commands/masterplan.md: Step B1 previously briefed brainstorming with only the topic"
+    - "docs/masterplan/expanded-brainstorming-selection/events.jsonl: prior direction stalled around idea selection gates"
+    - "meta-petabit transcripts: Yocto audit/deferred prompts crossed repo boundaries before scope was anchored"
+  verification_ceiling: local-static
+  gate_selection: null
+verification:
+  - "git diff --check"
+  - "bash bin/masterplan-self-host-audit.sh --cd9"
+  - "bash bin/masterplan-self-host-audit.sh --codex"
+  - "bash bin/masterplan-self-host-audit.sh --brainstorm-anchor"
+  - "jq empty plugin manifests and regressions.json"
+  - "jq -s empty events.jsonl"
+  - "bash -n bin/masterplan-self-host-audit.sh"
+  - "static dry-run of four regression fixtures"

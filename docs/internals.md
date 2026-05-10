@@ -131,6 +131,8 @@ docs/masterplan/<slug>/
 
 `state.yml` is created immediately after worktree selection, before brainstorming. This fixes earlier compaction failures where no durable state existed yet and the orchestrator could only guess from conversation context. Every `AskUserQuestion` gate must first persist `pending_gate` in `state.yml`; the selected option clears it and appends a `gate_closed` event. Any Agent/Codex handoff that keeps running after the turn must persist `background:` plus an exact poll/review `next_action`; the next Step C entry polls that marker before redispatching.
 
+Brainstorming now has its own grounding record before the upstream skill runs. Step B1 reads cheap repo truth (`AGENTS.md`, `CLAUDE.md`, `WORKLOG.md`, recent `docs/masterplan/*` bundles, and a repo-structure sketch), classifies `brainstorm_anchor.mode`, persists `brainstorm_anchor` in `state.yml`, and appends `brainstorm_anchor_resolved` before spec writing. This prevents audit/review prompts, deferred plan tasks, and cross-repo Yocto layer work from drifting into broad feature ideation. The generated spec must include an `Intent Anchor` / `Scope Boundary` section and carry any verification ceiling into the plan path.
+
 Legacy state from earlier versions remains supported. `bin/masterplan-state.sh inventory` discovers old `docs/superpowers/{plans,specs,retros,archived-*}` artifacts, and `bin/masterplan-state.sh migrate --write` copies them into the new run-bundle layout while preserving old paths under `legacy:`. Migration is copy-only; `/masterplan clean` owns broad archive/delete of legacy files after the bundle has been verified.
 
 Successful Step C completion now runs a default finalizer: first check live `git status --porcelain`, keep the run in `finish_gate` when task-scope work is still dirty, then mark the run complete, generate `retro.md`, archive the run by updating `state.yml`, and run an archive-only cleanup subset for verified legacy/orphan state. That subset never deletes, never moves the current `docs/masterplan/<slug>/` bundle, and skips stale/crons/worktrees; manual `/masterplan clean` remains the broad maintenance surface.
@@ -317,6 +319,7 @@ These are command-specific rules covering cross-cutting policy not stated inline
 ### The non-negotiables
 
 - **Stay a thin wrapper.** Logic that belongs to brainstorming, planning, execution, debugging, or branch-finishing lives in those skills. The command's job is sequencing them and persisting run state.
+- **Brainstorming starts with an intent anchor.** Step B1 must persist `brainstorm_anchor` and a `brainstorm_anchor_resolved` event before invoking the upstream brainstorming skill. Audit/review, deferred-task, and cross-repo prompts get structured gates instead of broad feature-idea funnels.
 - **Subagents do the work; orchestrator preserves context.** Every substantive piece of work goes to a bounded subagent. Only digests come back. When in doubt, digest and ScheduleWakeup.
 - **Bounded briefs, not implicit context.** Goal + Inputs + Scope + Constraints + Return shape. Subagents do not inherit session history.
 - **Import never overwrites existing masterplan state silently.** If a target run bundle already exists at Step I3, ask the user: overwrite / write to a `-v2` slug / abort.
@@ -428,7 +431,9 @@ Codex support is packaged by `.codex-plugin/plugin.json`, `.agents/plugins/marke
 
 The portable Codex contract is prompt exposure through the `masterplan` skill. New Codex sessions should list `masterplan` in available skills and should route `/masterplan <args>`, `/superpowers-masterplan:masterplan <args>`, or natural-language masterplan requests through that skill. Native slash-command registration is host-dependent and must not be treated as the only smoke test.
 
-When Codex is the host, the orchestrator suppresses the separate Claude Code `codex:codex-rescue` companion path for that invocation. Step 0 sets `codex_host_suppressed=true`, skips the ping/scan/trust availability checks, and treats effective `codex_routing` / `codex_review` as off without rewriting persisted config. This prevents recursive Codex-on-Codex dispatch while preserving the same command surface. The skill entrypoint also makes Codex scan existing `docs/masterplan/*/state.yml` bundles, including ones originally created by Claude Code.
+The Codex skill entrypoint has its own config bootstrap before any workflow routing: read `~/.masterplan.yaml`, then `<repo-root>/.masterplan.yaml`, then shallow-merge invocation flags on top. This duplicates Step 0's config contract deliberately so Codex-hosted runs do not fall back to built-in defaults before they have loaded the canonical command prompt.
+
+When Codex is the host, the orchestrator suppresses the separate Claude Code `codex:codex-rescue` companion path for that invocation. Step 0 sets `codex_host_suppressed=true`, skips the ping/scan/trust availability checks, and treats effective `codex_routing` / `codex_review` as off without rewriting persisted config. This prevents recursive Codex-on-Codex dispatch while preserving the same command surface. Host suppression does not disable other merged config defaults such as `autonomy`, `complexity`, `runs_path`, or `parallelism`. The skill entrypoint also makes Codex scan existing `docs/masterplan/*/state.yml` bundles, including ones originally created by Claude Code.
 
 ### Why Codex with /masterplan
 

@@ -1,0 +1,54 @@
+[
+  {
+    "id": "meta-petabit-yocto-config-review",
+    "repo": "meta-petabit",
+    "prompt": "full reevaluate yocto configuration in extensive detail",
+    "expected_mode": "audit-review",
+    "expected_repo_role": "yocto-distro-policy-layer",
+    "expected_gate": "brainstorm_anchor_audit_mode",
+    "expected_scope_notes": [
+      "meta-petabit owns distro/image policy",
+      "meta-petabit-bsp owns MACHINE/kernel/U-Boot/WIC",
+      "meta-petabit-apps owns app recipes/defaults",
+      "petabit-os owns kas composition",
+      "petabit-builder owns build orchestration"
+    ]
+  },
+  {
+    "id": "meta-petabit-error-qa",
+    "repo": "meta-petabit",
+    "prompt": "Yocto Task 6 - ERROR_QA audit",
+    "expected_mode": "deferred-task",
+    "expected_repo_role": "yocto-distro-policy-layer",
+    "expected_gate": "none-unless-build-scope-unclear",
+    "expected_verification_ceiling": "requires-build-host for upstream recipe triggers; local-static for first-party recipe audit",
+    "expected_scope_notes": [
+      "reuse prior plan/worklog evidence",
+      "do not ask broad feature-idea questions"
+    ]
+  },
+  {
+    "id": "meta-petabit-image-package-policy",
+    "repo": "meta-petabit",
+    "prompt": "Image/package policy",
+    "expected_mode": "implementation-design",
+    "expected_repo_role": "yocto-distro-policy-layer",
+    "expected_gate": "policy_vs_scaffold_choice",
+    "expected_scope_notes": [
+      "explicitly choose docs-only policy vs minimal scaffold before planning",
+      "keep BSP/machine and app recipes out of current-repo scope unless split follow-up runs are selected"
+    ]
+  },
+  {
+    "id": "superpowers-masterplan-feature-ideas",
+    "repo": "superpowers-masterplan",
+    "prompt": "do a lot more brainstorming for feature ideas in one cycle, allow multiple item selections, offer more items",
+    "expected_mode": "feature-ideas",
+    "expected_repo_role": "masterplan-orchestrator-plugin",
+    "expected_gate": "none",
+    "expected_scope_notes": [
+      "feature-ideas mode may offer an idea funnel",
+      "Codex fallback must not require native multi-select or arbitrary free-form ID entry"
+    ]
+  }
+]
