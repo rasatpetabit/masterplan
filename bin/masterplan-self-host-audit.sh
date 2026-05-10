@@ -214,9 +214,11 @@ check_codex_packaging() {
   local codex_marketplace="${REPO_ROOT}/.agents/plugins/marketplace.json"
   local command_file="${REPO_ROOT}/commands/masterplan.md"
   local skills_dir="${REPO_ROOT}/skills"
+  local codex_entry_skill="${skills_dir}/masterplan/SKILL.md"
+  local detect_skill="${skills_dir}/masterplan-detect/SKILL.md"
 
   local missing=0
-  for file in "${claude_manifest}" "${codex_manifest}" "${codex_marketplace}" "${command_file}"; do
+  for file in "${claude_manifest}" "${codex_manifest}" "${codex_marketplace}" "${command_file}" "${codex_entry_skill}" "${detect_skill}"; do
     if [[ ! -f "${file}" ]]; then
       echo "⚠️  Codex packaging — missing ${file#${REPO_ROOT}/}"
       EXIT=1
@@ -278,7 +280,32 @@ check_codex_packaging() {
   fi
 
   if ! grep -q '/superpowers-masterplan:masterplan' "${REPO_ROOT}/README.md" 2>/dev/null; then
-    echo "⚠️  README.md — missing documented Codex invocation /superpowers-masterplan:masterplan"
+    echo "⚠️  README.md — missing documented Codex compatibility input /superpowers-masterplan:masterplan"
+    EXIT=1
+  fi
+
+  if ! grep -q '^name: masterplan$' "${codex_entry_skill}" 2>/dev/null; then
+    echo "⚠️  skills/masterplan/SKILL.md — missing Codex-visible skill name 'masterplan'"
+    EXIT=1
+  fi
+
+  if ! grep -q 'commands/masterplan.md' "${codex_entry_skill}" 2>/dev/null; then
+    echo "⚠️  skills/masterplan/SKILL.md — must load commands/masterplan.md as the behavior source of truth"
+    EXIT=1
+  fi
+
+  if ! grep -q 'docs/masterplan' "${codex_entry_skill}" 2>/dev/null; then
+    echo "⚠️  skills/masterplan/SKILL.md — must mention existing docs/masterplan run bundles"
+    EXIT=1
+  fi
+
+  if ! grep -qE '`masterplan` skill|masterplan skill' "${REPO_ROOT}/README.md" 2>/dev/null; then
+    echo "⚠️  README.md — missing Codex masterplan skill entrypoint documentation"
+    EXIT=1
+  fi
+
+  if ! grep -q 'skills/masterplan/SKILL.md' "${REPO_ROOT}/docs/internals.md" 2>/dev/null; then
+    echo "⚠️  docs/internals.md — missing Codex entrypoint skill documentation"
     EXIT=1
   fi
 

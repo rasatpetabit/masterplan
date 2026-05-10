@@ -161,6 +161,7 @@ codex_review: off | on
 compact_loop_recommended: true | false
 complexity: low | medium | high
 pending_gate: null
+background: null
 artifacts:
   spec: docs/masterplan/<slug>/spec.md
   plan: docs/masterplan/<slug>/plan.md
@@ -177,6 +178,20 @@ legacy: {}
 ```
 
 **Persist every gate before asking.** Immediately before any `AskUserQuestion`, write a `pending_gate` object to `state.yml` with `{id, phase, question, options, recommended, continuation}` and append a matching `gate_opened` event. Immediately after applying the selected option, clear `pending_gate: null`, append `gate_closed`, then continue. If a later invocation finds `pending_gate` still set, resume by re-rendering that exact structured question instead of re-deriving a new one from conversation context.
+
+**Persist every background continuation.** If an Agent/Codex/subagent handoff returns "running in background" or otherwise leaves work executing after the current turn, write a `background` object before closing:
+
+```yaml
+background:
+  kind: codex | agent | shell
+  task: <current task name or range>
+  agent_id: <id if available>
+  output_path: <path if available>
+  dispatched_at: 2026-05-01T14:32:00Z
+  poll_action: review returned output, then resume Step C 4a
+```
+
+Also set `next_action` to the exact poll/review action and append `background_started` to `events.jsonl`. Clear `background: null` only after Step C has ingested the result or the user explicitly discards the background marker.
 
 **Legacy migration.** Previous versions wrote state under `docs/superpowers/{plans,specs,retros,archived-*}` with `<slug>-status.md` plus sibling sidecars. Step 0 treats legacy status paths as resolvable inputs. Before listing, doctoring, cleaning, status reporting, or executing a legacy plan, run the same inventory logic as `bin/masterplan-state.sh inventory`. If a legacy record has no matching `docs/masterplan/<slug>/state.yml`, surface an `AskUserQuestion` with options:
 
@@ -670,9 +685,12 @@ Fires on `/masterplan next`. Treats "next" as a **continuation signal**, not a t
 
 2. **Categorize findings:**
    - `active` — `status: in-progress` OR `status: blocked`
+   - `follow_up_pending` — `status: complete` AND `next_action` is non-empty after trimming AND is not a terminal/sentinel value (`completion finalizer`, `complete`, `done`, `archived`, `none`)
    - `retro_pending` — `status: complete` with no bundled `retro.md`
    - `recently_complete` — `status: complete`, modified in last 7 days, retro present
    - `archived` — everything else
+
+   For `status: complete`, treat `plan.md` task checkboxes as advisory only. The durable truth is `state.yml` + `events.jsonl` + live git status. Do not send a completed plan back through task execution solely because stale unchecked boxes remain in `plan.md`.
 
 3. **If ≥1 active plan exists** — persist `pending_gate` per CD-7, then surface:
    ```
@@ -693,7 +711,31 @@ Fires on `/masterplan next`. Treats "next" as a **continuation signal**, not a t
 
    When exactly one active plan exists, omit the "Resume a different plan" option (only 3 options; keeps the picker clean and within AUQ's 4-option cap).
 
-4. **If no active plans, but retro_pending or recently_complete exist** — surface:
+4. **If no active plans, but follow_up_pending exists** — surface:
+   ```
+   AskUserQuestion(
+     question="Completed plans have follow-up actions. What next?",
+     options=[
+       "Run follow-up for <most-recent-slug> (Recommended) — <next_action>",
+       "Show all follow-ups",
+       "Start a new plan — brainstorm a fresh topic",
+       "Check full status"
+     ]
+   )
+   ```
+   - **Run follow-up** → re-read that plan's `state.yml`, run `git status --porcelain` in its recorded `worktree`, then route by the concrete `next_action`:
+     - merge / land / push / PR / branch / worktree cleanup → Step C step 6d (branch finish gate) with the completed plan context.
+     - retro → Step R with that slug.
+     - doctor / status / audit → Step D or Step S as named.
+     - background / poll / review output → Step C step 1's background-resume check for that state path.
+     - anything else → present one more `AskUserQuestion` that shows the exact `next_action` and asks whether to execute it now, mark it handled (`next_action: none`), or route to status. Do not silently start a fresh plan.
+   - **Show all follow-ups** → list all `follow_up_pending` entries sorted by `last_activity` desc, then re-ask this same gate for the selected entry.
+   - **Start a new plan** → prompt for topic via `AskUserQuestion("What topic?", options=[Other])`, then Step B.
+   - **Check full status** → Step S.
+
+   After a follow-up succeeds, clear stale `next_action` to `none` unless there is exactly one true deferred action remaining. Append a `next_followup_completed` event with the old and new `next_action` values.
+
+5. **If no active or follow-up plans, but retro_pending or recently_complete exist** — surface:
    ```
    AskUserQuestion(
      question="All plans are complete. What next?",
@@ -710,9 +752,9 @@ Fires on `/masterplan next`. Treats "next" as a **continuation signal**, not a t
    - **Run doctor** → Step D.
    - **Check full status** → Step S.
 
-5. **If no plans at all** — route directly to Step M (same behavior as bare `/masterplan` invocation).
+6. **If no plans at all** — route directly to Step M (same behavior as bare `/masterplan` invocation).
 
-**Step N never does any work itself** — it is pure routing to the appropriate step.
+**Step N never does plan-task work itself** — it routes to the appropriate finalizer, retro, doctor/status, or background-resume path. The only state mutation it may perform is clearing a completed plan's stale `next_action` after the follow-up has actually completed.
 
 ---
 
@@ -927,6 +969,11 @@ The state file's `autonomy`, `codex_routing`, `codex_review`, `loop_enabled` fie
 
    - **Parse guard.** If `state.yml` fails to parse as YAML, surface this immediately via `AskUserQuestion`: "State file at `<path>` is corrupted. Open it for manual fix / Run /masterplan doctor / Abort." Do NOT attempt to silently regenerate — the user's edits may have been intentional and partial.
    - **Pending-gate resume.** If `pending_gate` is non-null, re-render that exact structured question before doing any new routing. Clear it only after applying the selected option and appending `gate_closed` to `events.jsonl`.
+   - **Background-dispatch resume.** If `background` is non-null, poll/re-read the recorded `agent_id` or `output_path` before any new task dispatch. Do not redispatch the current task until this check resolves:
+     - If the background task is still running, persist `pending_gate` and surface `AskUserQuestion("Background task for <task> is still running. What next?", options=["Poll again now (Recommended)", "Schedule wakeup — resume this state later", "Pause here"])`. Under `/loop`, scheduling is allowed; outside `/loop`, a plain pause is valid.
+     - If the background task finished successfully, ingest the returned digest, append `background_finished`, set `background: null`, and continue at Step C step 4a/4d with that digest as the implementer result.
+     - If the background task failed, timed out, or produced no readable output, append `background_failed`, clear or keep the marker according to an `AskUserQuestion("Background task did not return usable output. What next?", options=["Rerun inline (Recommended)", "Keep waiting", "Clear marker and pause"])`, then route accordingly.
+     - If the recorded output path is missing, treat that as ambiguous rather than success. The default route is inline rerun only after the user picks it.
    - **Complexity resolution on resume.** Re-run the Step 0 complexity-resolution rules using the just-loaded `state.yml` fields as the new tier-2 input.
      - If the resumed state lacks a `complexity:` field (legacy or hand-authored state), treat as `medium` and DO NOT write the field unless the user explicitly passes `--complexity=<level>` on this turn.
      - If `--complexity=<new>` is on the CLI AND `<new>` differs from the state value: update `complexity:` in `state.yml`, append a `complexity_changed` event with old/new/source, and use the new value for this run.
@@ -1291,6 +1338,10 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
     ```
 
     **After Codex returns** — always review (apply **CD-10**):
+    - **Background return** — if Codex returns a background handle instead of a final digest, do not close with free text like "when it finishes I'll review." Under `<run-dir>/state.lock`, keep `status: in-progress`, keep `current_task` on the dispatched task, set `phase: executing`, set `next_action: poll background task for <task>`, write the `background:` object described in the run-bundle contract, and append `background_started`.
+      - If `ScheduleWakeup` is available, schedule `/masterplan --resume=<state-path>` and append `wakeup_scheduled`, then close.
+      - If `ScheduleWakeup` is unavailable, persist `pending_gate` and surface `AskUserQuestion("Codex is still running <task>. What next?", options=["Poll now (Recommended)", "Pause here — resume later", "Schedule wakeup"])`.
+      - The next Step C entry MUST execute the Background-dispatch resume check before any new routing or redispatch.
     - **`gated`** — present diff + verification output via `AskUserQuestion(Accept / Reject and rerun inline / Reject and rerun in Codex with feedback)`.
     - **`loose` / `full`** — auto-accept if verification passed cleanly. If verification failed, fall back to inline rerun under `superpowers:systematic-debugging` and apply the autonomy's blocker policy from above (which itself triggers **CD-4** ladder work).
 
@@ -1407,6 +1458,8 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
 
    **4d — State update (single-writer run-state update + archive-and-schedule).** Update `state.yml`: bump `last_activity` to the current ISO timestamp, set `current_task` to the next task name, set `next_action` to the next task's first step, and append a task-completion event to `events.jsonl` that includes 1–3 lines of relevant verification output (per **CD-8**) and the routing+review tags. For non-trivial decisions made during the task, add dedicated events per **CD-7**.
 
+   When Step 4d can identify the completed task's checkbox in `plan.md` without fuzzy matching, update it from unchecked to checked in the same state-update commit. If it cannot do this mechanically, leave `plan.md` unchanged and rely on `state.yml` + `events.jsonl`; never let stale checkboxes override a completed `state.yml`.
+
    **Concurrent-write guard (F.4 mitigation, v2.8.0+).** Wrap the entire 4d update sequence (rotation + append + atomic temp+fsync+rename) in `flock <run-dir>/state.lock -c '<the-write-sequence>'` with a 5-second timeout. On contention (lock not acquired within 5s — typically a user-editor saving `state.yml` in another window or an overlapping pacer), do NOT block: instead append a single JSON-line entry describing this would-be update to `<run-dir>/state.queue.jsonl`, surface a one-line stdout warning *"State write contention — entry queued; retry on next 4d cycle."*, and continue. The next 4d run drains the queue file BEFORE its own append: read each queued entry oldest-first, replay against the current `state.yml` and `events.jsonl`, then truncate the queue file. Replays are idempotent — a queued entry whose state is already reflected in events is a no-op (match by `last_activity` + event `id` or first 80 chars of the message). On `flock` unavailable (Windows / hosts without util-linux), the orchestrator falls through to the unguarded write path AND emits one `state_lock_unavailable` event per session. Doctor check #24 (below) surfaces non-empty queue files post-session.
 
    **Event rotation.** Before appending the new entry, count lines in `events.jsonl`. If count exceeds the threshold, move older entries to `events-archive.jsonl` (create if missing; append in chronological order so the archive itself reads oldest-to-newest), keep the most recent active tail, then append one `events_rotated` marker event. Resume behavior is unchanged — Step C step 1 reads only the active event tail; the archive is consulted on demand by `/masterplan retro` (Step R2).
@@ -1476,7 +1529,25 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
    - If `ScheduleWakeup` is not available (not running under `/loop`), step 5 is **not the entry point** — Step C step 4e's post-task router has already routed to the per-task gate or to silent-continue under `--autonomy=full`. This bullet exists for documentation only; step 5's body is reachable only when 4e selects it.
 6. **On plan completion:** run the completion finalizer, then pre-empt the skill's "Which option?" prompt. `superpowers:finishing-a-development-branch` will otherwise present a free-text `1. Merge / 2. Push+PR / 3. Keep / 4. Discard — Which option?` question. That free-text prompt can stall a session if it compacts before the user answers (same silent-stop bug pattern). Avoid this by handling durable completion state first, then surfacing `AskUserQuestion` for the branch-finish choice.
 
-   **6a — Mark the run complete before any follow-up work.** Under `<run-dir>/state.lock`, set `status: complete`, `phase: complete`, `current_task: ""`, `next_action: completion finalizer`, `pending_gate: null`, and `last_activity: <now>`. Append a `plan_completed` event to `events.jsonl` with the final task count, final verification summary, and completion SHA if available. Commit this state update with subject `masterplan: complete <slug>` unless the same commit already contains the final task's state update. Do not reschedule.
+   **6a — Pre-completion dirty check, then mark complete.** Before writing `status: complete`, run live `git status --porcelain` in the plan's recorded worktree. Classify output into task-scope changes (files touched by the plan, run-bundle state, generated artifacts that belong to this plan) and unrelated dirty user work.
+
+   - If task-scope changes are dirty/uncommitted, do NOT mark complete. Under `<run-dir>/state.lock`, keep `status: in-progress`, set `phase: finish_gate`, set `current_task: "finish branch"`, set `next_action: commit remaining task-scope work before completion`, set `pending_gate` for the finish choice, append `completion_dirty_gate`, and surface:
+     ```
+     AskUserQuestion(
+       question="All plan tasks are done, but task-scope work is still uncommitted. What next?",
+       options=[
+         "Commit remaining task-scope work and rerun completion finalizer (Recommended)",
+         "Show status and pause",
+         "Keep plan in-progress; I'll handle manually",
+         "Abort completion"
+       ]
+     )
+     ```
+     The recommended path commits only task-scope files, reruns the relevant verification if the commit contents changed code, then re-enters Step C step 6a. Never hide this as a completed plan with `next_action: completion finalizer`.
+   - If unrelated dirty user work exists but task-scope work is clean, mark the plan complete but include the unrelated paths in `plan_completed` as ignored dirt. Do not stage or clean unrelated files.
+   - If the worktree is clean for task scope, proceed.
+
+   Under `<run-dir>/state.lock`, set `status: complete`, `phase: complete`, `current_task: ""`, `next_action: none`, `pending_gate: null`, `background: null`, and `last_activity: <now>`. Append a `plan_completed` event to `events.jsonl` with the final task count, final verification summary, completion SHA if available, and the dirty-check summary. Commit this state update with subject `masterplan: complete <slug>` unless the same commit already contains the final task's state update. Do not reschedule.
 
    **6b — Auto-retro by default.** Unless `--no-retro` was passed OR `config.completion.auto_retro == false`, invoke Step R internally with the resolved slug and `completion_auto=true`. This is not an `AskUserQuestion` option and does not depend on `resolved_complexity`: low, medium, and high plans all get a retro by default. Step R writes `docs/masterplan/<slug>/retro.md`; Step R3.5 archives the run state when `config.retro.auto_archive_after_retro != false`; Step R4 commits the retro/state/events directly in internal mode. If retro generation fails, append a `completion_retro_failed` event, leave `status: complete`, and continue to the branch-finish gate; do NOT lose the completed run.
 
@@ -1503,7 +1574,7 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
    )
    ```
 
-   Then invoke `superpowers:finishing-a-development-branch` with a brief that pre-decides the option: `"Skip Step 1's test verification (this repo has no test suite — verification done by other means; cite [briefly]) IF that's true, otherwise let it run normally. User has chosen Option <N>: <description>. Skip Step 3's free-text 'Which option?' prompt; execute Step 4's chosen-option branch directly. For Option 4 (Discard), still require the typed 'discard' confirmation per the skill's safety rule."` After the skill completes its chosen option's branch, append a `branch_finish_<choice>` event when the run directory still exists. Do not flip archived runs back to complete, and do not reschedule.
+   Then invoke `superpowers:finishing-a-development-branch` with a brief that pre-decides the option: `"Skip Step 1's test verification (this repo has no test suite — verification done by other means; cite [briefly]) IF that's true, otherwise let it run normally. User has chosen Option <N>: <description>. Skip Step 3's free-text 'Which option?' prompt; execute Step 4's chosen-option branch directly. For Option 4 (Discard), still require the typed 'discard' confirmation per the skill's safety rule."` After the skill completes its chosen option's branch, append a `branch_finish_<choice>` event when the run directory still exists. Also clear stale `next_action` to `none`, or set it to exactly one real deferred item if the branch-finish skill intentionally left one (for example, "push branch after network returns"). Do not flip archived runs back to complete, and do not reschedule.
 
 ---
 

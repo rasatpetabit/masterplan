@@ -60,6 +60,8 @@ superpowers-masterplan/
 ├── commands/
 │   └── masterplan.md               # THE orchestrator prompt (~2250 lines, single source of truth for behavior)
 ├── skills/
+│   ├── masterplan/
+│   │   └── SKILL.md                # Codex-visible entrypoint that loads commands/masterplan.md
 │   └── masterplan-detect/
 │       └── SKILL.md                # auto-suggest /masterplan import on legacy artifacts
 ├── hooks/
@@ -85,7 +87,7 @@ superpowers-masterplan/
 
 ### How to operate
 
-When the user types `/masterplan <args>` in Claude Code or `/superpowers-masterplan:masterplan <args>` in Codex, the host loads `commands/masterplan.md` as the command prompt with `$ARGUMENTS` bound to `<args>`. The prompt directs the orchestrator through Steps 0 → A or B or C or D or I or R or S or T or CL, depending on the verb. Each Step has bounded responsibilities documented inline. Codex-specific tool substitutions live in the runtime compatibility block near the top of the command.
+When the user types `/masterplan <args>` in Claude Code, the host loads `commands/masterplan.md` as the command prompt with `$ARGUMENTS` bound to `<args>`. In Codex, the `skills/masterplan/SKILL.md` entrypoint makes new Codex sessions aware of the workflow, maps `/masterplan <args>` or natural-language "use masterplan" requests to the same command prompt, and scans existing Claude-created `docs/masterplan/<slug>/state.yml` run bundles before starting fresh work. The prompt directs the orchestrator through Steps 0 → A or B or C or D or I or R or S or T or CL, depending on the verb. Codex-specific tool substitutions live in the runtime compatibility block near the top of the command and in the Codex skill entrypoint.
 
 ---
 
@@ -127,11 +129,11 @@ docs/masterplan/<slug>/
   subagents.jsonl
 ```
 
-`state.yml` is created immediately after worktree selection, before brainstorming. This fixes earlier compaction failures where no durable state existed yet and the orchestrator could only guess from conversation context. Every `AskUserQuestion` gate must first persist `pending_gate` in `state.yml`; the selected option clears it and appends a `gate_closed` event.
+`state.yml` is created immediately after worktree selection, before brainstorming. This fixes earlier compaction failures where no durable state existed yet and the orchestrator could only guess from conversation context. Every `AskUserQuestion` gate must first persist `pending_gate` in `state.yml`; the selected option clears it and appends a `gate_closed` event. Any Agent/Codex handoff that keeps running after the turn must persist `background:` plus an exact poll/review `next_action`; the next Step C entry polls that marker before redispatching.
 
 Legacy state from earlier versions remains supported. `bin/masterplan-state.sh inventory` discovers old `docs/superpowers/{plans,specs,retros,archived-*}` artifacts, and `bin/masterplan-state.sh migrate --write` copies them into the new run-bundle layout while preserving old paths under `legacy:`. Migration is copy-only; `/masterplan clean` owns broad archive/delete of legacy files after the bundle has been verified.
 
-Successful Step C completion now runs a default finalizer: mark the run complete, generate `retro.md`, archive the run by updating `state.yml`, and run an archive-only cleanup subset for verified legacy/orphan state. That subset never deletes, never moves the current `docs/masterplan/<slug>/` bundle, and skips stale/crons/worktrees; manual `/masterplan clean` remains the broad maintenance surface.
+Successful Step C completion now runs a default finalizer: first check live `git status --porcelain`, keep the run in `finish_gate` when task-scope work is still dirty, then mark the run complete, generate `retro.md`, archive the run by updating `state.yml`, and run an archive-only cleanup subset for verified legacy/orphan state. That subset never deletes, never moves the current `docs/masterplan/<slug>/` bundle, and skips stale/crons/worktrees; manual `/masterplan clean` remains the broad maintenance surface.
 
 ---
 
@@ -236,6 +238,7 @@ codex_review: off | on
 compact_loop_recommended: true | false
 complexity: low | medium | high
 pending_gate: null
+background: null
 artifacts:
   spec: docs/masterplan/<slug>/spec.md
   plan: docs/masterplan/<slug>/plan.md
@@ -421,11 +424,11 @@ If the orchestrator crashes mid-wave (after dispatch, before barrier returns), t
 
 ### Codex as a plugin host
 
-Codex support is packaged by `.codex-plugin/plugin.json` plus `.agents/plugins/marketplace.json`. The Codex marketplace entry points at `./plugins/superpowers-masterplan`, a Git symlink back to the repo root, so the existing `commands/`, `skills/`, `bin/`, and docs stay single-source while satisfying Codex's plugin-path convention. Do not duplicate `commands/masterplan.md` under `plugins/`; if Codex packaging changes, update the packaging manifests and self-host audit instead.
+Codex support is packaged by `.codex-plugin/plugin.json`, `.agents/plugins/marketplace.json`, and `skills/masterplan/SKILL.md`. The Codex marketplace entry points at `./plugins/superpowers-masterplan`, a Git symlink back to the repo root, so the existing `commands/`, `skills/`, `bin/`, and docs stay single-source while satisfying Codex's plugin-path convention. Do not duplicate `commands/masterplan.md` under `plugins/`; if Codex packaging changes, update the packaging manifests and self-host audit instead.
 
-The portable Codex invocation is `/superpowers-masterplan:masterplan`. A bare `/masterplan` alias is host-dependent and must not be documented as required unless a live smoke proves it.
+The portable Codex contract is prompt exposure through the `masterplan` skill. New Codex sessions should list `masterplan` in available skills and should route `/masterplan <args>`, `/superpowers-masterplan:masterplan <args>`, or natural-language masterplan requests through that skill. Native slash-command registration is host-dependent and must not be treated as the only smoke test.
 
-When Codex is the host, the orchestrator suppresses the separate Claude Code `codex:codex-rescue` companion path for that invocation. Step 0 sets `codex_host_suppressed=true`, skips the ping/scan/trust availability checks, and treats effective `codex_routing` / `codex_review` as off without rewriting persisted config. This prevents recursive Codex-on-Codex dispatch while preserving the same command surface.
+When Codex is the host, the orchestrator suppresses the separate Claude Code `codex:codex-rescue` companion path for that invocation. Step 0 sets `codex_host_suppressed=true`, skips the ping/scan/trust availability checks, and treats effective `codex_routing` / `codex_review` as off without rewriting persisted config. This prevents recursive Codex-on-Codex dispatch while preserving the same command surface. The skill entrypoint also makes Codex scan existing `docs/masterplan/*/state.yml` bundles, including ones originally created by Claude Code.
 
 ### Why Codex with /masterplan
 
@@ -565,7 +568,7 @@ When adding a check, update the Step D table, the Step D parallelization brief c
 | `retro` (alone or with `<slug>`) | Step R | `none` |
 | `stats` (alone or with `--plan=<slug>` / `--format=table\|json\|md` / `--all-repos` / `--since=<date>`) | Step T — codex-vs-inline routing distribution; shells out to `bin/masterplan-routing-stats.sh` | `none` |
 | `clean` (alone or with args) | Step CL | `none` |
-| `next` | Step N — "what's next?" router; scans state files inline, surfaces AUQ with resume/new-plan/status options | `none` |
+| `next` | Step N — "what's next?" router; scans state files inline, routes active plans or completed-plan follow-ups, and surfaces AUQ with resume/new-plan/status options | `none` |
 | `--resume=<path>` | Step C | `none` |
 | anything else | Step B (catch-all) | `none` |
 
@@ -708,12 +711,14 @@ Other deferrals:
 
 ### Recipe: Debug a stuck plan
 
-1. Read the run state: `cat docs/masterplan/<slug>/state.yml` and `tail -20 docs/masterplan/<slug>/events.jsonl`. Look at `current_task`, `next_action`, pending gates, recent blockers, and warning/decision events.
+1. Read the run state: `cat docs/masterplan/<slug>/state.yml` and `tail -20 docs/masterplan/<slug>/events.jsonl`. Look at `current_task`, `next_action`, `background`, pending gates, recent blockers, and warning/decision events.
 2. Verify worktree integrity: `cd <worktree>; git status --porcelain`. Files outside the current task's `**Files:**` scope are CD-2 violations or in-flight wave members.
 3. Verify branch matches: `git rev-parse --abbrev-ref HEAD` should equal `state.yml`'s `branch:`.
 4. Check eligibility cache freshness: compare `docs/masterplan/<slug>/eligibility-cache.json` mtime to `docs/masterplan/<slug>/plan.md` mtime. If cache.mtime < plan.mtime, cache rebuild is overdue (next Step C entry will rebuild).
 5. Run `/masterplan doctor` for the worktree. Errors blocking resumption surface here.
-6. If a wave appears stuck mid-execution: check whether the wave-completion barrier returned by inspecting events for partial completions. If yes, the resume path is "re-dispatch the wave from scratch" (Slice α is idempotent for read-only work).
+6. If `status: complete` still has a concrete `next_action`, use `/masterplan next`; Step N treats it as a follow-up, not a new plan.
+7. If `background` is set, poll the recorded handle/output before redispatching. A missing output path is ambiguous, not success.
+8. If a wave appears stuck mid-execution: check whether the wave-completion barrier returned by inspecting events for partial completions. If yes, the resume path is "re-dispatch the wave from scratch" (Slice α is idempotent for read-only work).
 
 ### Recipe: Write a new spec via /masterplan
 

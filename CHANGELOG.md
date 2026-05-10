@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.1] — 2026-05-09 — continuation and Codex prompt exposure fixes
+
+### Fixed
+
+- **Codex masterplan entrypoint.** Added a Codex-visible `masterplan` skill so fresh Codex sessions can see the workflow, load `commands/masterplan.md`, and recognize Claude-created `docs/masterplan/<slug>/state.yml` run bundles. The previous packaging only proved marketplace registration; it did not prove prompt exposure.
+- **`next` follow-up hardening.** Step N now treats completed plans with a concrete `next_action` as follow-up work instead of routing straight to "start a new plan." Follow-ups route to the branch finish gate, retro, doctor/status, or background polling as appropriate, and stale `plan.md` checkboxes no longer override completed `state.yml`.
+- **Background dispatch continuations.** Codex/Agent returns that keep running in the background must persist a `background:` marker plus an exact poll `next_action`; the next Step C entry polls that marker before any redispatch instead of ending on an informal "I'll review when it finishes" handoff.
+- **Completion dirty gate.** Step C now runs live `git status --porcelain` before writing `status: complete`. Task-scope dirt keeps the run in `finish_gate` with a concrete commit/finish action, preventing "complete" state from hiding uncommitted work.
+
 ## [3.1.0] — 2026-05-09 — Codex host compatibility
 
 ### Added

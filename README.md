@@ -17,12 +17,14 @@ on track for multi-week projects.
 
 - Every plan writes to a well-defined run bundle under `docs/masterplan/<slug>/`.
   `state.yml` is the single source of truth — current phase, current task,
-  next action, artifact paths, and pending structured gate. `events.jsonl`
+  next action, artifact paths, pending structured gate, and any background
+  dispatch marker. `events.jsonl`
   carries the activity log. `/masterplan` will find existing plans and
   documentation and bring them into conformity with the masterplan format.
-- Successful completion now writes the retrospective into the same run bundle,
-  archives the run state, and safely archives migrated legacy/orphan state by
-  default. Completed work should not leave plan/spec/retro fragments behind.
+- Successful completion now checks live git status before marking the run
+  complete, writes the retrospective into the same run bundle, archives the run
+  state, and safely archives migrated legacy/orphan state by default. Completed
+  work should not leave plan/spec/retro fragments behind.
 - Resume any in-flight work from `state.yml` plus bundled artifacts. No
   conversation context required, no compaction loss, no "what was I doing
   again?"
@@ -113,25 +115,34 @@ codex plugin marketplace add rasatpetabit/superpowers-masterplan
 ```
 
 The marketplace is configured to install `superpowers-masterplan` by default.
-If your Codex build registers the marketplace but does not expose the command,
-enable `superpowers-masterplan@rasatpetabit-superpowers-masterplan` in Codex's
-plugin UI or config.
+New Codex sessions should see a `masterplan` skill in their available-skills
+list. That skill is the portable Codex entrypoint: it loads
+`commands/masterplan.md` and recognizes run bundles created by Claude Code under
+`docs/masterplan/<slug>/`.
 
-After install, invoke the command by its namespaced Codex command name:
+After install, invoke masterplan in Codex with either natural language or the
+slash-style text form:
 
 ```text
-/superpowers-masterplan:masterplan
-/superpowers-masterplan:masterplan full Stripe webhook handler
-/superpowers-masterplan:masterplan status
+Use masterplan status for this repo
+/masterplan
+/masterplan full Stripe webhook handler
+/masterplan status
 ```
 
-Codex may expose a bare `/masterplan` alias in some hosts, but the namespaced
-form is the portable contract. The same `commands/masterplan.md` orchestrator is
-used for Claude Code and Codex; Codex follows the compatibility block at the top
-of that prompt plus the local `AGENTS.md` tool mapping.
+Codex may expose plugin slash commands differently across builds. The reliable
+contract is prompt exposure through the `masterplan` skill; `/masterplan` is
+treated as skill input when the host passes it to the model. If your Codex build
+registers the marketplace but a fresh prompt does not list `masterplan`, enable
+`superpowers-masterplan@rasatpetabit-superpowers-masterplan` in Codex's plugin
+UI or config, or install a user-level bridge at
+`~/.codex/skills/masterplan/SKILL.md` from this repo's `skills/masterplan/`
+directory. The same `commands/masterplan.md` orchestrator is used for Claude Code
+and Codex; Codex follows the compatibility block at the top of that prompt plus
+the local `AGENTS.md` tool mapping.
 
-When running inside Codex, `/superpowers-masterplan:masterplan` disables the
-separate Claude Code `codex:codex-rescue` companion path for that invocation.
+When running inside Codex, masterplan disables the separate Claude Code
+`codex:codex-rescue` companion path for that invocation.
 This avoids recursive Codex-on-Codex dispatch: execution stays inside the active
 Codex session, while persisted `codex.routing` / `codex.review` settings remain
 unchanged for future Claude Code runs.
@@ -291,11 +302,13 @@ session can resume from a durable phase pointer. Older `docs/superpowers/...`
 layouts are discovered by `bin/masterplan-state.sh inventory` and copied into
 this bundle layout by `bin/masterplan-state.sh migrate --write`.
 
-When the last task completes, `/masterplan` marks the run complete, generates
-`retro.md`, archives the run state in `state.yml`, and runs an archive-only
-completion cleanup for verified legacy/orphan state. Use `--no-retro` or
-`--no-cleanup` for a one-off opt-out, or config defaults to disable either
-behavior.
+When the last task completes, `/masterplan` checks live git status before
+marking the run complete. If task-scope work is still dirty, it keeps the run in
+`finish_gate` with a concrete commit/finish `next_action`; otherwise it
+generates `retro.md`, archives the run state in `state.yml`, and runs an
+archive-only completion cleanup for verified legacy/orphan state. Use
+`--no-retro` or `--no-cleanup` for a one-off opt-out, or config defaults to
+disable either behavior.
 
 Inspect and maintain state:
 
@@ -331,7 +344,7 @@ bin/masterplan-state.sh migrate --write
 | `/masterplan retro [<slug>]` | Generate or re-run a retrospective for a completed plan | n/a |
 | `/masterplan stats [--plan=<slug>] [--format=table\|json\|md] [--all-repos] [--since=<date>]` | Codex-vs-inline routing distribution + inline model breakdown + token totals across plans | n/a |
 | `/masterplan clean [--dry-run]` | Archive completed bundles, retire migrated legacy artifacts, and prune orphan state | n/a |
-| `/masterplan next` | "What's next?" router — scans active plans and offers resume/new-plan/status options via AUQ; never starts a brainstorm about the topic "next" | n/a |
+| `/masterplan next` | "What's next?" router — scans active plans and completed-plan follow-ups, then offers resume/follow-up/new-plan/status options via AUQ; never starts a brainstorm about the topic "next" | n/a |
 
 Topics literally named after a verb (`full`, `brainstorm`, `plan`, `execute`,
 `retro`, `import`, `doctor`, `status`, `stats`, `clean`, `next`) need a leading word, for example:
@@ -514,7 +527,8 @@ and gamma for committing-task parallelism are deferred; see
 
 Each plan has a run bundle at `docs/masterplan/<slug>/`. `state.yml` records
 the worktree, branch, phase, current task, next action, autonomy, Codex settings,
-artifact paths, and any pending structured gate. `events.jsonl` records recent
+artifact paths, any pending structured gate, and any background dispatch marker.
+`events.jsonl` records recent
 activity, with cache/telemetry/subagent/queue sidecars kept inside the same run
 directory. This bundle is the durable resume surface; conversation history is not.
 
@@ -532,7 +546,7 @@ for details and the upstream issue link.
 
 ## Project Status
 
-Current release: **v3.1.0**.
+Current release: **v3.1.1**.
 
 - Release history: [`CHANGELOG.md`](./CHANGELOG.md)
 - Contributor internals: [`docs/internals.md`](./docs/internals.md)
