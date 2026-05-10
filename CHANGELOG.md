@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.2.1] — 2026-05-10 — Codex gate-consent hardening
+
+### Fixed
+
+- **Codex recommended-answer guard.** Codex-hosted `request_user_input` results that select only the first/recommended option with no `user_note` are now treated as weak evidence, not consent. Masterplan preserves `pending_gate`, avoids phase/artifact mutation, and renders a no-action terminal message instead of writing `gate_closed`.
+- **Doctor legacy-reference false positives.** Legacy `docs/superpowers/...` artifacts referenced from bundle `state.yml` `artifacts.*` or `legacy.*` entries no longer report as unmigrated just because the legacy filename slug differs from the bundle slug.
+
+### Added
+
+- **Self-host Codex audit coverage.** `bin/masterplan-self-host-audit.sh --codex` now verifies the recommended-answer guard remains present in the shipped orchestrator prompt.
+
 ## [3.2.0] — 2026-05-10 — anchored brainstorming and Codex config bootstrap
 
 ### Added

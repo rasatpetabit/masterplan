@@ -332,6 +332,16 @@ check_codex_packaging() {
     EXIT=1
   fi
 
+  if ! grep -q 'Codex recommended-answer guard' "${command_file}" 2>/dev/null; then
+    echo "⚠️  commands/masterplan.md — missing Codex recommended-answer guard"
+    EXIT=1
+  fi
+
+  if ! grep -q 'recommended option was not treated as consent' "${command_file}" 2>/dev/null; then
+    echo "⚠️  commands/masterplan.md — missing Codex recommended-answer no-consent terminal render"
+    EXIT=1
+  fi
+
   if ! grep -qi 'recursive Codex' "${REPO_ROOT}/README.md" 2>/dev/null; then
     echo "⚠️  README.md — missing Codex-host recursive dispatch documentation"
     EXIT=1

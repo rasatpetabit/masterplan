@@ -564,7 +564,7 @@ for details and the upstream issue link.
 
 ## Project Status
 
-Current release: **v3.2.0**.
+Current release: **v3.2.1**.
 
 - Release history: [`CHANGELOG.md`](./CHANGELOG.md)
 - Contributor internals: [`docs/internals.md`](./docs/internals.md)
