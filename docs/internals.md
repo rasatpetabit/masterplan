@@ -66,6 +66,10 @@ superpowers-masterplan/
 │       └── SKILL.md                # auto-suggest /masterplan import on legacy artifacts
 ├── hooks/
 │   └── masterplan-telemetry.sh     # opt-in Stop hook for per-turn JSONL telemetry
+├── bin/
+│   ├── masterplan-routing-stats.sh # codex-vs-inline routing distribution
+│   ├── masterplan-session-audit.sh # redacted Claude/Codex/session telemetry audit
+│   └── masterplan-state.sh         # run-bundle inventory + migration helper
 └── docs/
     ├── internals.md                # THIS FILE
     ├── design/
@@ -88,6 +92,13 @@ superpowers-masterplan/
 ### How to operate
 
 When the user types `/masterplan <args>` in Claude Code, the host loads `commands/masterplan.md` as the command prompt with `$ARGUMENTS` bound to `<args>`. In Codex, the `skills/masterplan/SKILL.md` entrypoint makes new Codex sessions aware of the workflow, maps `/masterplan <args>` or natural-language "use masterplan" requests to the same command prompt, and scans existing Claude-created `docs/masterplan/<slug>/state.yml` run bundles before starting fresh work. The prompt directs the orchestrator through Steps 0 → A or B or C or D or I or R or S or T or CL, depending on the verb. Codex-specific tool substitutions live in the runtime compatibility block near the top of the command and in the Codex skill entrypoint.
+
+Claude's SessionStart hook must keep the user-level `/masterplan` command as a
+compact shim (`<!-- masterplan-shim: v3 -->`) that delegates to
+`/superpowers-masterplan:masterplan $ARGUMENTS`. Do not symlink or copy the full
+`commands/masterplan.md` into `~/.claude/commands/masterplan.md`; doing so makes
+startup payloads inherit the full orchestrator prompt before the user invokes
+the command.
 
 ---
 
@@ -435,6 +446,12 @@ The Codex skill entrypoint has its own config bootstrap before any workflow rout
 
 When Codex is the host, the orchestrator suppresses the separate Claude Code `codex:codex-rescue` companion path for that invocation. Step 0 sets `codex_host_suppressed=true`, skips the ping/scan/trust availability checks, and treats effective `codex_routing` / `codex_review` as off without rewriting persisted config. This prevents recursive Codex-on-Codex dispatch while preserving the same command surface. Host suppression does not disable other merged config defaults such as `autonomy`, `complexity`, `runs_path`, or `parallelism`. The skill entrypoint also makes Codex scan existing `docs/masterplan/*/state.yml` bundles, including ones originally created by Claude Code.
 
+Host suppression also does not mean "stop after any gate." Step 0 budgets weak
+or unresolved Codex gates, large reads, and automatic phase transitions, but an
+explicit continuation answer from `request_user_input` sets
+`codex_host_gate_continuation=true` and lets `full` / `execute` flows keep moving
+until a true halt gate, sensitive live-auth blocker, or actual budget stop.
+
 ### Why Codex with /masterplan
 
 Cross-model review catches blind spots — Sonnet's preferred patterns and Codex's preferred patterns don't perfectly overlap. Codex is bounded for small well-defined tasks (≤3 files, unambiguous, known verification, no design judgment). The combination is asymmetric: Codex doesn't review its own work (no signal there), but it DOES review Sonnet/Claude inline work and vice versa via routing.
@@ -494,6 +511,19 @@ Each Stop turn while `/masterplan` is operating on a managed plan, the hook (`ho
 - `tasks_completed_this_turn` (v2.0.0+): delta of `activity_log_entries` between this and previous Stop record. **First-turn caveat:** when no previous record exists, reports 0 (no baseline). Activity log rotation can decrement; clamps to 0.
 - `wave_groups` (v2.0.0+): distinct `[wave: <group>]` tags from the last `tasks_completed_this_turn` log entries. Empty for serial turns.
 - See [`docs/design/telemetry-signals.md`](./design/telemetry-signals.md) for the canonical field reference.
+
+### Redacted session audit
+
+`bin/masterplan-session-audit.sh` is the incident-response view across raw
+Claude JSONL, raw Codex JSONL, and `docs/masterplan/*/telemetry*.jsonl`. It is
+read-only and content-redacted by design: reports include repo labels, short
+session IDs, counters, tool names, command roots, and telemetry sizes, but never
+prompt text, shell commands, tool results, credentials, or transcript excerpts.
+
+Default scope is the last 24 hours under `$HOME/.claude/projects`,
+`$HOME/.codex/sessions`, and `$MASTERPLAN_REPO_ROOTS` (default `$HOME/dev`).
+Use `--since=<ISO>` for fixed-window incident reproduction and `--format=json`
+for downstream analysis.
 
 ### Useful jq queries
 

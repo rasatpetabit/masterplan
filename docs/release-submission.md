@@ -1,6 +1,6 @@
 # Claude Plugin Directory Submission
 
-Release target: `superpowers-masterplan` v3.2.1.
+Release target: `superpowers-masterplan` v3.2.2.
 
 ## Official submission path
 
@@ -45,7 +45,9 @@ Portable Codex invocation:
 Codex host behavior: when invoked inside Codex, the orchestrator suppresses the
 separate Claude Code `codex:codex-rescue` companion routing/review path for that
 invocation to avoid recursive Codex dispatch. Persisted routing/review config is
-unchanged for future Claude Code runs.
+unchanged for future Claude Code runs. Explicit continuation answers from Codex
+structured gates still advance `full` / `execute` flows until a real halt or
+budget stop.
 
 ## Submission form copy
 

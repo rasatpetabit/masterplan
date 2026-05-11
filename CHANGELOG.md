@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.2.2] — 2026-05-11 — Codex host budget and telemetry audit fixes
+
+### Added
+
+- **Redacted session telemetry audit.** Added `bin/masterplan-session-audit.sh`, a read-only audit over Claude JSONL, Codex JSONL, and `docs/masterplan/*/telemetry*.jsonl` that reports repo-level totals, top offending sessions, Codex runaway thresholds, Claude fanout/SessionStart payload warnings, telemetry-size warnings, and missing-telemetry coverage gaps without printing prompts, commands, tool results, or secrets.
+
+### Fixed
+
+- **Codex-host runaway execution.** Codex-hosted `/masterplan` now has explicit performance budgets, summary-first loading, unresolved-gate/phase budget checkpoints, and a sensitive live-auth stop rule so host-suppressed runs do not turn a status/audit request into hundreds of inline tool calls.
+- **Codex post-gate continuation.** Explicit Codex `request_user_input` continuation answers now keep `full` / `execute` flows moving after `gate_closed`; host suppression blocks recursive Codex dispatch, not same-turn continuation requested by the user.
+- **Codex entrypoint prompt loading.** The Codex-visible `masterplan` skill now instructs Codex to load targeted sections of `commands/masterplan.md` instead of dumping the full canonical prompt on ordinary runtime invocations.
+- **Claude SessionStart prompt exposure.** The SessionStart self-healing hook now installs a compact `/masterplan` shim (`<!-- masterplan-shim: v3 -->`) instead of symlinking the full orchestrator prompt into `~/.claude/commands/masterplan.md`; the full prompt is loaded only when the plugin command is invoked.
+
 ## [3.2.1] — 2026-05-10 — Codex gate-consent hardening
 
 ### Fixed

@@ -10,8 +10,9 @@ to load the canonical command prompt and adapt it to the current Codex runtime.
 
 ## Source of truth
 
-Before acting, read `commands/masterplan.md` from the Superpowers Masterplan
-plugin/repo and follow it as the behavior source of truth.
+`commands/masterplan.md` is the behavior source of truth, but Codex-hosted
+runs must load it by targeted section reads. Do not read the whole command file
+unless the user is editing/auditing the masterplan implementation itself.
 
 Resolve the command file in this order:
 
@@ -24,6 +25,23 @@ Resolve the command file in this order:
 
 If none exists, say the local masterplan command file is missing and stop before
 inventing behavior.
+
+For ordinary runtime invocations, first locate headings with `rg -n '^### |^## '`
+and then read only the sections needed for the requested verb:
+
+- Always read the Step 0 / Codex host suppression rules and command-specific
+  cross-cutting rules.
+- Bare `/masterplan` and "what next/status" requests read only Step M, Step N,
+  Step S, and state-model snippets needed to render the next gate/status.
+- Resume/execute requests read Step C plus the current run's `state.yml` and the
+  specific current task block from `plan.md`.
+- Brainstorm/plan/import/doctor/clean/retro requests read only their named
+  sections plus the shared gate rules.
+
+In Codex, prefer summary-first inventory (`bin/masterplan-state.sh inventory`
+when present, otherwise `rg --files docs/masterplan`) before opening plan/spec
+artifacts. Avoid exploratory full-file dumps of large prompt, plan, transcript,
+or event-log files.
 
 ## Config bootstrap
 
@@ -93,3 +111,9 @@ When the command prompt names Claude Code tools, use the local Codex equivalents
 
 Follow the command prompt's Codex-host suppression rules: do not recursively
 dispatch to Codex from inside a Codex-hosted masterplan run.
+
+Codex host suppression is only about recursive dispatch and review. When a
+Codex `request_user_input` gate returns an explicit continuation answer, follow
+the command prompt's `codex_host_gate_continuation` rule and keep moving for
+`full` / `execute` flows until a true halt gate, sensitive live-auth blocker, or
+actual Codex host budget stop fires.

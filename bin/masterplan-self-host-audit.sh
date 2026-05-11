@@ -7,7 +7,8 @@
 # orchestrator (which ships to every /masterplan installation) clean of dev-only logic.
 #
 # Drift coverage: commands/masterplan.md, hooks/masterplan-telemetry.sh,
-# bin/masterplan-routing-stats.sh, bin/masterplan-state.sh, AND skills/<name>/SKILL.md for every skill the plugin ships.
+# bin/masterplan-routing-stats.sh, bin/masterplan-session-audit.sh,
+# bin/masterplan-state.sh, AND skills/<name>/SKILL.md for every skill the plugin ships.
 # A user-level copy at ~/.claude/skills/<name>/ shadows the plugin's registration and shows up
 # as a duplicate slash command — caught here.
 #
@@ -86,10 +87,13 @@ check_drift() {
   local user_cmds="${HOME}/.claude/commands/masterplan.md"
   local user_hook="${HOME}/.claude/hooks/masterplan-telemetry.sh"
   local user_bin="${HOME}/.claude/bin/masterplan-routing-stats.sh"
+  local user_session_audit_bin="${HOME}/.claude/bin/masterplan-session-audit.sh"
   local user_state_bin="${HOME}/.claude/bin/masterplan-state.sh"
   local repo_cmds="${REPO_ROOT}/commands/masterplan.md"
   local repo_hook="${REPO_ROOT}/hooks/masterplan-telemetry.sh"
+  local repo_hooks_json="${REPO_ROOT}/hooks/hooks.json"
   local repo_bin="${REPO_ROOT}/bin/masterplan-routing-stats.sh"
+  local repo_session_audit_bin="${REPO_ROOT}/bin/masterplan-session-audit.sh"
   local repo_state_bin="${REPO_ROOT}/bin/masterplan-state.sh"
 
   local plugin_registry="${HOME}/.claude/plugins/installed_plugins.json"
@@ -117,6 +121,7 @@ check_drift() {
     "commands/masterplan.md|${user_cmds}|${repo_cmds}"
     "hooks/masterplan-telemetry.sh|${user_hook}|${repo_hook}"
     "bin/masterplan-routing-stats.sh|${user_bin}|${repo_bin}"
+    "bin/masterplan-session-audit.sh|${user_session_audit_bin}|${repo_session_audit_bin}"
     "bin/masterplan-state.sh|${user_state_bin}|${repo_state_bin}"
   )
 
@@ -161,6 +166,20 @@ check_drift() {
       EXIT=1
     fi
   done
+
+  if [[ -f "${repo_hooks_json}" ]]; then
+    if ! grep -q '<!-- masterplan-shim: v3 -->' "${repo_hooks_json}" 2>/dev/null; then
+      echo "⚠️  hooks/hooks.json — SessionStart hook must install the compact masterplan-shim v3"
+      EXIT=1
+    fi
+    if grep -q 'ln -sf .*commands/masterplan.md' "${repo_hooks_json}" 2>/dev/null; then
+      echo "⚠️  hooks/hooks.json — SessionStart hook must not symlink the full orchestrator prompt"
+      EXIT=1
+    fi
+  else
+    echo "⚠️  hooks/hooks.json — missing SessionStart hook config"
+    EXIT=1
+  fi
 }
 
 # ---------------------------------------------------------------------------------
@@ -339,6 +358,46 @@ check_codex_packaging() {
 
   if ! grep -q 'recommended option was not treated as consent' "${command_file}" 2>/dev/null; then
     echo "⚠️  commands/masterplan.md — missing Codex recommended-answer no-consent terminal render"
+    EXIT=1
+  fi
+
+  if ! grep -q 'Codex host performance guard' "${command_file}" 2>/dev/null; then
+    echo "⚠️  commands/masterplan.md — missing Codex host performance guard"
+    EXIT=1
+  fi
+
+  if ! grep -q 'codex_host_perf_guard' "${command_file}" 2>/dev/null; then
+    echo "⚠️  commands/masterplan.md — missing codex_host_perf_guard budget variable"
+    EXIT=1
+  fi
+
+  if ! grep -q 'codex_host_gate_continuation' "${command_file}" 2>/dev/null; then
+    echo "⚠️  commands/masterplan.md — missing Codex answered-gate continuation rule"
+    EXIT=1
+  fi
+
+  if grep -q 'then → CLOSE-TURN instead of continuing into the next phase' "${command_file}" 2>/dev/null; then
+    echo "⚠️  commands/masterplan.md — Codex answered gates must not force-close full-flow runs"
+    EXIT=1
+  fi
+
+  if grep -q 'Because this is a Codex-hosted Masterplan run, I closed after the structured gate' "${command_file}" 2>/dev/null; then
+    echo "⚠️  commands/masterplan.md — forbidden Codex post-gate close rationale is present"
+    EXIT=1
+  fi
+
+  if ! grep -q 'Sensitive live-auth stop' "${command_file}" 2>/dev/null; then
+    echo "⚠️  commands/masterplan.md — missing sensitive live-auth stop rule"
+    EXIT=1
+  fi
+
+  if ! grep -q 'targeted section reads' "${codex_entry_skill}" 2>/dev/null; then
+    echo "⚠️  skills/masterplan/SKILL.md — missing targeted section reads guidance"
+    EXIT=1
+  fi
+
+  if ! grep -q 'codex_host_gate_continuation' "${codex_entry_skill}" 2>/dev/null; then
+    echo "⚠️  skills/masterplan/SKILL.md — missing Codex gate-continuation guidance"
     EXIT=1
   fi
 

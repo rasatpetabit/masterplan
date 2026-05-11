@@ -213,7 +213,7 @@ the install.
 
 ```bash
 mkdir -p ~/.claude/commands ~/.claude/skills
-cp commands/masterplan.md ~/.claude/commands/
+printf '%s\n' '---' 'description: "Delegate to the installed superpowers-masterplan plugin."' '---' '<!-- masterplan-shim: v3 -->' '/superpowers-masterplan:masterplan $ARGUMENTS' > ~/.claude/commands/masterplan.md
 cp -r skills/masterplan-detect ~/.claude/skills/
 ```
 
@@ -379,6 +379,23 @@ worktree under `.worktrees/`; use `--all-repos` to aggregate across known repos
 (configurable via `MASTERPLAN_REPO_ROOTS` env var, default `~/dev`). Three
 output formats: `table` (default, terminal), `json` (jq-pipeable), `md`
 (GitHub-flavored, paste into PR descriptions).
+
+### Session audit
+
+`bash <plugin-root>/bin/masterplan-session-audit.sh` is the read-only incident
+audit for recent Claude, Codex, and `/masterplan` telemetry logs. It scans a
+configurable time window, prints repo-level totals and top offending sessions,
+and warns on runaway Codex tool calls, repeated shell-tool loops, Claude
+AskUserQuestion/Agent fanout, SessionStart payload bloat, oversized transcript
+telemetry, and missing telemetry for active masterplan-like sessions. The output
+is content-redacted: it reports counters, repo labels, session IDs, tool names,
+and telemetry sizes, not user prompts, shell commands, credentials, or tool
+results.
+
+```bash
+bin/masterplan-session-audit.sh --hours=24
+bin/masterplan-session-audit.sh --since=2026-05-10T15:51:23Z --format=json
+```
 
 ### Import Shortcuts
 
@@ -564,7 +581,7 @@ for details and the upstream issue link.
 
 ## Project Status
 
-Current release: **v3.2.1**.
+Current release: **v3.2.2**.
 
 - Release history: [`CHANGELOG.md`](./CHANGELOG.md)
 - Contributor internals: [`docs/internals.md`](./docs/internals.md)

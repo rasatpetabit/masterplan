@@ -24,6 +24,15 @@ Both telemetry streams honor: per-plan opt-out via `telemetry: off` in status fr
 
 **Aggregated cross-plan view** (v2.4.0+): the `bin/masterplan-routing-stats.sh` script combines per-plan signals from all three sources (activity-log routing tags, `<slug>-subagents.jsonl` token totals + `routing_class` field, `<slug>-eligibility-cache.json` `decision_source`) into a unified codex-vs-inline distribution + inline model breakdown + token totals report. Invoke via `/masterplan stats` (Step T) or directly. See `commands/masterplan.md` §Step T for the verb wiring; the script is the canonical implementation.
 
+**Redacted incident audit**: `bin/masterplan-session-audit.sh` scans raw Claude
+JSONL, raw Codex JSONL, and `docs/masterplan/*/telemetry*.jsonl` over a
+configurable time window. It warns on Codex call/question loops, repeated
+`git`/`date`/`sed`/`rg` shell roots, Claude AskUserQuestion/Agent fanout,
+SessionStart payload bloat, oversized transcript telemetry, and missing
+telemetry for active masterplan-like sessions. It intentionally reports only
+counters and labels, never transcript text, shell commands, tool results, or
+credentials.
+
 ## Per-turn record shape
 
 ```json
