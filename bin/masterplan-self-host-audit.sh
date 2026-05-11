@@ -439,6 +439,10 @@ check_brainstorm_anchor() {
     "verification_ceiling"
     "feature-idea funnels unless"
     "native multi-select UI or arbitrary free-form ID entry"
+    "Problem Interview Contract"
+    "interview_depth"
+    "target_question_count"
+    "understanding_level"
   )
 
   local pattern

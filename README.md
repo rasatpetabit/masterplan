@@ -45,6 +45,9 @@ on track for multi-week projects.
   gates before spec writing. Yocto layer repos carry explicit ownership
   boundaries, so a distro/image policy review does not silently turn into BSP,
   app recipe, builder, or kas-composition work.
+- Every spec-creating kickoff runs an adaptive interview before approaches or
+  spec writing. Question depth follows resolved complexity, issue seriousness,
+  and how much repo evidence already answers.
 - Specs include an `Intent Anchor` / `Scope Boundary` section plus the
   verification ceiling, which keeps downstream planning honest about what can
   be proven locally versus on a build host or runtime system.
@@ -581,7 +584,7 @@ for details and the upstream issue link.
 
 ## Project Status
 
-Current release: **v3.2.2**.
+Current release: **v3.2.3**.
 
 - Release history: [`CHANGELOG.md`](./CHANGELOG.md)
 - Contributor internals: [`docs/internals.md`](./docs/internals.md)

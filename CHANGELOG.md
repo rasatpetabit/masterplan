@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.2.3] — 2026-05-11 — adaptive brainstorm interviews
+
+### Added
+
+- **Adaptive brainstorm interview contract.** Step B1 now briefs every spec-creating kickoff (`brainstorm`, `plan`, and `full`) to ask enough structured interview questions before approaches/spec writing, scaling depth by resolved complexity, issue seriousness, and current understanding.
+
 ## [3.2.2] — 2026-05-11 — Codex host budget and telemetry audit fixes
 
 ### Added

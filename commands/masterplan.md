@@ -902,6 +902,11 @@ brainstorm_anchor:
     - "AGENTS.md: current repo owns distro and image policy"
   verification_ceiling: requires-build-host
   gate_selection: null
+  interview_depth:
+    complexity: high
+    seriousness: serious
+    understanding_level: partial
+    target_question_count: "12-20"
 ```
 
 **Anchor gates.** Fire only when the anchor prevents likely drift, and always persist `pending_gate` before surfacing `AskUserQuestion`:
@@ -911,9 +916,17 @@ brainstorm_anchor:
 - Deferred-task prompts do not ask broad feature-idea questions. Reuse prior plan/worklog evidence, keep the spec task-scoped, and only gate if the task's verification ceiling or repo boundary is genuinely ambiguous.
 - `unclear` prompts gate only when a wrong default would be materially unsafe. Prefer one foundational `AskUserQuestion` with concrete options over exploratory prose.
 
-**Invoke brainstorming with the anchor.** Invoke `superpowers:brainstorming` with the original topic plus a compact anchor brief containing `mode`, `repo_role`, `yocto_ownership` when present, `in_scope_paths`, `out_of_scope_repos`, `evidence`, `verification_ceiling`, and any `gate_selection`. **Brainstorming is always interactive** — the `--autonomy` flag does not apply. The brief MUST instruct the skill to:
+**Problem Interview Contract.** Every spec-creating kickoff (`brainstorm`, `plan`, and `full`) MUST run an adaptive interview before approach selection, design approval, or spec writing. Derive `interview_depth` from the resolved `--complexity` value, the seriousness/blast radius of the issue, and `understanding_level` after the cheap local truth pass (`strong`, `partial`, or `weak`). Persist the chosen values in `brainstorm_anchor.interview_depth`, including `target_question_count`.
+
+- Baseline question counts: `low` asks 2-4 questions when well understood and 4-6 when serious or unclear; `medium` asks 5-8 normally and 8-12 when serious or poorly understood; `high` asks 8-12 normally and 12-20 for critical, risky, cross-system, auth/security, production, data-loss, or poorly understood work.
+- Adjust within the range: decrease only when repo evidence already answers the topic; increase when the issue has user-visible impact, security/auth scope, production state, persistent data, external services, hardware/runtime dependency, or unclear ownership.
+- Cover these areas before approaches: problem statement, affected user/audience, desired outcome, success criteria, current workflow, scope boundaries, constraints, data/interfaces, risks and failure modes, verification path, rollout/acceptance path, and remaining unknowns. Mark genuinely irrelevant areas `not-applicable` in the brief/spec rather than silently skipping them.
+- Keep questions structured and concrete per CD-9. Batch only tightly related choices; otherwise ask sequentially so the next question can use the user's previous answer.
+
+**Invoke brainstorming with the anchor.** Invoke `superpowers:brainstorming` with the original topic plus a compact anchor brief containing `mode`, `repo_role`, `yocto_ownership` when present, `in_scope_paths`, `out_of_scope_repos`, `evidence`, `verification_ceiling`, `interview_depth`, and any `gate_selection`. **Brainstorming is always interactive** — the `--autonomy` flag does not apply. The brief MUST instruct the skill to:
 
 - Include a short `Intent Anchor` / `Scope Boundary` section in `<config.runs_path>/<slug>/spec.md`.
+- Complete the Problem Interview Contract before proposing approaches or writing the spec.
 - Avoid broad feature-idea funnels unless `brainstorm_anchor.mode == feature-ideas`.
 - Forbid out-of-scope sibling repo implementation unless the anchor gate selected split follow-up runs.
 - Carry the `verification_ceiling` into the spec so execution does not promise unavailable proof.
