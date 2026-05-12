@@ -1,0 +1,24 @@
+schema_version: 2
+slug: archived-audit
+status: complete
+phase: complete
+worktree: /tmp/dev/followup-gap
+branch: main
+started: 2026-05-11
+last_activity: 2026-05-11T12:00:00Z
+current_task: complete
+next_action: "Create focused follow-up plans for gap-late-005 and gap-late-008/gap-late-009"
+autonomy: loose
+loop_enabled: false
+codex_routing: auto
+codex_review: "on"
+compact_loop_recommended: false
+complexity: high
+pending_gate: null
+background: null
+stop_reason: complete
+critical_error: null
+artifacts:
+  spec: docs/masterplan/archived-audit/spec.md
+  plan: docs/masterplan/archived-audit/plan.md
+  events: docs/masterplan/archived-audit/events.jsonl

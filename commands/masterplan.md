@@ -90,14 +90,15 @@ When `codex_host_suppressed == true`:
    If no other state write happens this turn, force the same small state write pattern as the degradation path: append the event, update `last_activity`, and set `last_warning: codex host suppression this run — recursive codex dispatch disabled`.
 5. Downstream Step C must use `decision_source: host-suppressed` whenever a task would otherwise have considered Codex routing/review.
 6. **Codex user-facing resume syntax.** Set in-memory `codex_user_entrypoint = "Use masterplan"` for visible Codex close-out instructions. `Use masterplan ...` means a normal Codex chat message, not a shell command. Any user-facing resume, next, pause, blocker, or budget-stop hint rendered while `codex_host_suppressed == true` MUST use the normal-chat form, e.g. `Use masterplan next`, `Use masterplan execute <state-path>`, or `Use masterplan --resume=<state-path>`. Do not surface `$masterplan ...` as the primary hint: in Codex TUI shell-command mode it is logged as `<user_shell_command>` and Bash expands `$masterplan` before trying to execute the remaining text. Do not call `Bash`/`exec_command` with `$masterplan ...`, `masterplan ...`, or `/masterplan ...`; Bash treats `$masterplan` as environment-variable expansion and `masterplan` as an executable name. Do not tell a Codex user to resume with Claude Code's `/masterplan ...` form unless the user explicitly asks for Claude Code instructions.
-7. **Codex host performance guard.** Host-suppressed mode is a bounded interactive mode, not a license to execute the whole workflow inline and not a blanket halt after every answered gate. Set in-memory `codex_host_perf_guard = {tool_budget: 40, gate_budget: 1, large_read_budget: 2, phase_budget: 1}` for the invocation unless the user explicitly supplied both `/loop` and `--autonomy=full`. These budgets are hard close checkpoints, not persisted config.
+7. **Codex shell-trap recovery.** If the latest user turn is a Codex shell transcript such as `<user_shell_command><command>masterplan next</command> ... command not found` or `<user_shell_command><command>$masterplan next</command> ... next: command not found`, reinterpret it as a normal-chat invocation: `Use masterplan <args>`. Append `shell_invocation_trap_recovered` to `events.jsonl` on the next state write when a plan bundle is available. Render one visible warning line, then continue through the normal verb router. Stop for re-entry only when the arguments cannot be recovered.
+8. **Codex host performance guard.** Host-suppressed mode is a bounded interactive mode, not a license to execute the whole workflow inline and not a blanket halt after every answered gate. Set in-memory `codex_host_perf_guard = {tool_budget: 40, gate_budget: 1, large_read_budget: 2, phase_budget: 1}` for the invocation unless the user explicitly supplied both `/loop` and `--autonomy=full`. These budgets are hard close checkpoints, not persisted config.
    - Count shell/tool calls made by the orchestrator itself, unresolved structured gates surfaced by this command, large reads of prompt/plan/spec/transcript/event-log files (roughly >500 lines or >20k chars), and automatic top-level phase transitions. An explicit gate answer that directly asks to keep moving (`full`, `continue`, `approve and run`, `start execution`, `run full kickoff`) does not consume the gate close checkpoint or the phase checkpoint for the transition it authorizes; set in-memory `codex_host_gate_continuation = true` for that answered gate.
    - When any budget is reached, write the smallest durable state update available (`last_activity`, `next_action`, `pending_gate` or `background` if present), set `stop_reason: scheduled_yield`, append `continuation_scheduled`, render `Codex host budget reached: <reason>; state preserved; send a normal Codex chat message: Use masterplan next or Use masterplan execute <state-path>.`, then → CLOSE-TURN.
    - After any Codex `request_user_input`, resolve that gate result before doing anything else. If the result contains no answer, use the no-selection terminal render and → CLOSE-TURN. If it returns an answer label or free-form text, including the first/recommended option, treat that as explicit interactive selection evidence: apply the selected option and persist `gate_closed`. Then continue when `halt_mode == none`, `requested_verb in {full, execute}`, `codex_host_gate_continuation == true`, or the selected option itself is a continuation option (`Continue to plan now`, `Approve and run writing-plans`, `Start execution now`, `Run full kickoff`). Close only for true halt gates (`post-brainstorm`, `post-plan`, resume/status/doctor/clean/retro pickers), no-selection gates, sensitive live-auth blockers, or an actual budget hit.
    - Never close with a generic Codex-hosted structured-gate rationale as the sole reason. Codex host suppression disables recursive Codex dispatch; it does not override explicit full-flow or continuation intent in the same turn.
-8. **Codex host summary-first loading.** For bare, `next`, `status`, `doctor`, `audit`, and transcript-review-style invocations, inspect run state through summary commands first (`bin/masterplan-state.sh inventory` when available, otherwise `rg --files docs/masterplan` plus targeted `state.yml` reads). Do not read the full `commands/masterplan.md`, full plans/specs, full transcripts, or full event logs unless the user explicitly asked to edit/audit that file or the targeted summary proves the full file is required.
-9. **Sensitive live-auth stop.** For workflows involving credentials, MFA, browser login, tax/finance/government portals, or other sensitive live-auth surfaces, Codex-hosted masterplan may perform at most one login/auth attempt per explicit user instruction. Never echo, store, or summarize secret values from transcripts. If auth blocks, persist/return a blocker with the next required user action and → CLOSE-TURN; do not loop through additional prompts or retries.
-10. **Codex native goal pursuit.** When running inside Codex and the native goal tools are available, Masterplan uses them as the cross-turn pursuit wrapper around the durable run bundle. Do NOT add `goal` as a Masterplan verb and do NOT send `/goal`, `$goal`, or `goal` to Bash. On plan-ready and Step C resume paths, call `get_goal` once. If no active goal exists for an in-progress plan, call `create_goal` with objective `Complete Masterplan plan <slug>: <plan title or first task summary>`; set `token_budget` only when the user explicitly supplied one. Persist advisory `codex_goal: {objective, linked_at, created_by_masterplan}` in `state.yml` and append `codex_goal_created` or `codex_goal_linked` to `events.jsonl`. If a different active goal exists, persist `pending_gate` and ask whether to continue that goal, switch by ending/clearing it outside Masterplan, or pause; do not overwrite it silently. On verified Step C completion, call `update_goal(status="complete")` only if the active goal still matches `codex_goal.objective`; otherwise append `codex_goal_complete_skipped` and leave the native goal untouched.
+9. **Codex host summary-first loading.** For bare, `next`, `status`, `doctor`, `audit`, and transcript-review-style invocations, inspect run state through summary commands first (`bin/masterplan-state.sh inventory` when available, otherwise `rg --files docs/masterplan` plus targeted `state.yml` reads). Do not read the full `commands/masterplan.md`, full plans/specs, full transcripts, or full event logs unless the user explicitly asked to edit/audit that file or the targeted summary proves the full file is required.
+10. **Sensitive live-auth stop.** For workflows involving credentials, MFA, browser login, tax/finance/government portals, or other sensitive live-auth surfaces, Codex-hosted masterplan may perform at most one login/auth attempt per explicit user instruction. Never echo, store, or summarize secret values from transcripts. If auth blocks, persist/return a blocker with the next required user action and → CLOSE-TURN; do not loop through additional prompts or retries.
+11. **Codex native goal pursuit.** When running inside Codex and the native goal tools are available, Masterplan uses them as the cross-turn pursuit wrapper around the durable run bundle. Do NOT add `goal` as a Masterplan verb and do NOT send `/goal`, `$goal`, or `goal` to Bash. On plan-ready and Step C resume paths, call `get_goal` once. If no active goal exists for an in-progress plan, call `create_goal` with objective `Complete Masterplan plan <slug>: <plan title or first task summary>`; set `token_budget` only when the user explicitly supplied one. Persist advisory `codex_goal: {objective, linked_at, created_by_masterplan}` in `state.yml` and append `codex_goal_created` or `codex_goal_linked` to `events.jsonl`. If a different active goal exists, persist `pending_gate` and ask whether to continue that goal, switch by ending/clearing it outside Masterplan, or pause; do not overwrite it silently. On verified Step C completion, call `update_goal(status="complete")` only if the active goal still matches `codex_goal.objective`; otherwise append `codex_goal_complete_skipped` and leave the native goal untouched.
 
 ### Codex availability detection (v2.0.0+)
 
@@ -168,6 +169,8 @@ started: 2026-05-01
 last_activity: 2026-05-01T14:32:00Z
 current_task: ""
 next_action: brainstorm spec
+plan_kind: implementation | audit | doctor | import | cleanup | retro | status
+follow_ups: []  # structured routing records for follow-up work discovered by completed meta-plans
 autonomy: gated | loose | full
 loop_enabled: true | false
 codex_routing: off | auto | manual
@@ -196,6 +199,23 @@ legacy: {}
 **Persist every gate before asking.** Immediately before any `AskUserQuestion`, write a `pending_gate` object to `state.yml` with `{id, phase, question, options, recommended, continuation}` and append a matching `gate_opened` event. Immediately after applying an explicitly selected option, clear `pending_gate: null`, append `gate_closed`, then continue. If a later invocation finds `pending_gate` still set, resume by re-rendering that exact structured question instead of re-deriving a new one from conversation context.
 
 **Gate selection evidence is mandatory.** A recommended option is presentation, not consent before the gate is answered. After any `AskUserQuestion` / Codex `request_user_input`, continue only when the current turn has explicit selection evidence: a user reply, a structured input payload, a tool result that identifies a selected option label, or free-form `Other` text. If the host resumes without visible selection evidence, do NOT choose the recommended/default option, do NOT clear `pending_gate`, do NOT append `gate_closed`, and do NOT mutate phase/artifacts. Instead render `Gate pending: <pending_gate.id> — no selection received; no action taken.` and → CLOSE-TURN. Any `gate_closed` event whose detail says "user selected" or "user chose" MUST be backed by explicit selection evidence from the current turn.
+
+**Structured follow-ups are the only routable follow-ups.** `next_action` is a short human-readable summary, not a routing substrate. Any completed `audit`, `doctor`, `import`, `cleanup`, `status`, or `retro` plan that discovers implementation work MUST persist `follow_ups:` records before completion:
+
+```yaml
+follow_ups:
+  - id: dns-oper-reporting-cleanup
+    kind: implementation
+    title: DNS operational reporting cleanup
+    source_plan: archived-plans-application-audit
+    source_refs: [gap-late-008, gap-late-009]
+    priority: high
+    confidence: high
+    recommended_action: create_plan
+    status: pending
+```
+
+Fields `id`, `kind`, `title`, `source_plan`, `source_refs`, `priority`, `confidence`, `recommended_action`, and `status` are required. Valid `kind` values: `implementation | cleanup | retro | status | doctor`. Valid `status` values: `pending | materialized | handled | dismissed`. If the only remaining action is prose like "create focused follow-up plans", that is NOT a valid completion state; materialize concrete `follow_ups` first or keep the plan in `finish_gate`.
 
 **Codex interactive-selection evidence.** In Codex, `request_user_input` is the interactive question UI. If its tool result returns an answer label, that answer is explicit selection evidence even when it is the first/recommended option and even when there is no free-form `user_note`. Treat the returned answer as the user-selected option, clear `pending_gate`, append `gate_closed`, and continue according to that option. Only preserve the gate with `Gate pending: <pending_gate.id> — no selection received; no action taken.` when the tool result lacks an answer entirely, the host errors, or a later user message contradicts the returned selection.
 
@@ -647,12 +667,15 @@ Before resume-first routing, emit a structured plain-text orientation summarizin
    - `current_worktree` from Step 0's repo root (or `pwd`/`git rev-parse --show-toplevel` if needed).
    - `current_branch` from live `git rev-parse --abbrev-ref HEAD`.
 
-   Choose `auto_resume_candidate` only when resumption is unambiguous:
-   - If exactly one `in_progress` plan matches BOTH `current_worktree` and `current_branch`, choose it.
-   - Else if exactly one `in_progress` plan exists across all worktrees, choose it.
+   Build `implementation_in_progress = in_progress_plans` filtered to `plan_kind` missing or `implementation`.
+
+   Choose `auto_resume_candidate` only when resumption is unambiguous and product-directed:
+   - If exactly one `implementation_in_progress` plan matches BOTH `current_worktree` and `current_branch`, choose it.
+   - Else if exactly one `implementation_in_progress` plan exists across all worktrees, choose it.
    - Else choose none.
 
    Do **not** auto-resume `status: blocked` plans. Blocked plans need an explicit recovery choice because continuing may be unsafe.
+   Do **not** auto-resume completed plans, even when `next_action` is non-empty; Step N owns completed-plan follow-up materialization. Do **not** auto-resume `audit`, `doctor`, `import`, `cleanup`, `retro`, or `status` plans when any implementation plan or pending implementation follow-up exists. Meta-plans can resume only by explicit path/slug or when there is no implementation work to route.
 
 8. **Route without the full menu when active work exists.**
    - If `auto_resume_candidate` exists: emit `Resuming <slug> — current: <current_task>` and route directly to **Step C** with that `state.yml` path. No picker.
@@ -725,12 +748,20 @@ Fires on `/masterplan next`. Treats "next" as a **continuation signal**, not a t
 
 2. **Categorize findings:**
    - `active` — `status: in-progress` OR `status: blocked` (`blocked` is a critical-error recovery gate, not an ordinary pause)
-   - `follow_up_pending` — `status: complete` AND `next_action` is non-empty after trimming AND is not a terminal/sentinel value (`completion finalizer`, `complete`, `done`, `archived`, `none`)
+   - `follow_up_pending` — `status: complete` AND either:
+     - `follow_ups` has at least one record with `status: pending`; OR
+     - `next_action` is non-empty after trimming AND is not a terminal/sentinel value (`completion finalizer`, `complete`, `done`, `archived`, `none`).
    - `retro_pending` — `status: complete` with no bundled `retro.md`
    - `recently_complete` — `status: complete`, modified in last 7 days, retro present
    - `archived` — everything else
 
    For `status: complete`, treat `plan.md` task checkboxes as advisory only. The durable truth is `state.yml` + `events.jsonl` + live git status. Do not send a completed plan back through task execution solely because stale unchecked boxes remain in `plan.md`.
+
+   **Completed meta-plan adapter.** For `plan_kind in {audit, doctor, import, cleanup, status, retro}` with `status: complete`, Step N must not route the plan back into Step C. If `follow_ups` is missing but a bundled `gap-register.md` contains `confirmed_gap` rows, materialize structured follow-up candidates before asking the user:
+   - Group DNS operational rows `gap-late-008` and `gap-late-009` into `dns-oper-reporting-cleanup` with `kind: implementation`, `priority: high`, and `recommended_action: create_plan`.
+   - Group datastore list-key merge row `gap-late-005` into `datastore-list-key-merge` with `kind: implementation`, `priority: medium`, and `recommended_action: create_plan`.
+   - For other confirmed rows, derive `<source-id>-follow-up` using the row ID, `kind: implementation`, and `recommended_action: create_plan`.
+   Write the `follow_ups` array to `state.yml`, set `next_action: materialize pending implementation follow-ups`, append `followups_materialized` with `progress_kind: implementation_plan_created`, and then continue categorization. This is a compatibility adapter for completed audit bundles created before structured follow-ups existed; future meta-plans must write `follow_ups` before completion.
 
 3. **If ≥1 active plan exists** — persist `pending_gate` per CD-7, then surface:
    ```
@@ -763,12 +794,14 @@ Fires on `/masterplan next`. Treats "next" as a **continuation signal**, not a t
      ]
    )
    ```
-   - **Run follow-up** → re-read that plan's `state.yml`, run `git status --porcelain` in its recorded `worktree`, then route by the concrete `next_action`:
+   - **Run follow-up** → re-read that plan's `state.yml`, run `git status --porcelain` in its recorded `worktree`, then route by structured follow-up first and `next_action` only as a legacy fallback:
+     - `follow_ups[0].kind == implementation` and `recommended_action == create_plan` → create a new run bundle whose topic is the follow-up title plus source refs; seed the spec with the completed plan's `source_plan`, `source_refs`, and evidence pointers; set `plan_kind: implementation`; append `followup_materialized_to_plan` to the source plan and `run_created_from_followup` to the new plan. Then route into Step B2/Step B3 to write the implementation plan and execute according to the selected/halt mode.
+     - `follow_ups[0].kind == doctor | status | retro | cleanup` → route to the named Step.
      - merge / land / push / PR / branch / worktree cleanup → Step C step 6d (branch finish gate) with the completed plan context.
      - retro → Step R with that slug.
      - doctor / status / audit → Step D or Step S as named.
      - background / poll / review output → Step C step 1's background-resume check for that state path.
-     - anything else → present one more `AskUserQuestion` that shows the exact `next_action` and asks whether to execute it now, mark it handled (`next_action: none`), or route to status. Do not silently start a fresh plan.
+     - anything else → present one more `AskUserQuestion` that shows the exact `next_action` and asks whether to convert it into a structured follow-up now, mark it handled (`next_action: none`), or route to status. Do not silently start a fresh plan.
    - **Show all follow-ups** → list all `follow_up_pending` entries sorted by `last_activity` desc, then re-ask this same gate for the selected entry.
    - **Start a new plan** → prompt for topic via `AskUserQuestion("What topic?", options=[Other])`, then Step B.
    - **Check full status** → Step S.
@@ -881,7 +914,7 @@ The run bundle will be committed inside whichever worktree you're in when brains
 
 5. Record the chosen worktree path and branch — they go into `state.yml` before Step B1.
 
-6. **Create the run bundle immediately.** Derive `<slug>` from the topic (stable slug, no date prefix; the date lives in `started`). Create `<config.runs_path>/<slug>/state.yml` and `<config.runs_path>/<slug>/events.jsonl` before invoking brainstorming. If the directory already exists, surface `AskUserQuestion("Run docs/masterplan/<slug>/ already exists. What now?", options=["Resume existing run (Recommended)", "Use <slug>-v2", "Abort kickoff"])`. Initial state: `status: in-progress`, `phase: worktree_decided`, `current_task: ""`, `next_action: brainstorm spec`, `pending_gate: null`, `background: null`, `stop_reason: null`, `critical_error: null`, artifact paths under `docs/masterplan/<slug>/`, and `legacy: {}`. Append an event: `{"type":"run_created","phase":"worktree_decided",...}`.
+6. **Create the run bundle immediately.** Derive `<slug>` from the topic (stable slug, no date prefix; the date lives in `started`). Create `<config.runs_path>/<slug>/state.yml` and `<config.runs_path>/<slug>/events.jsonl` before invoking brainstorming. If the directory already exists, surface `AskUserQuestion("Run docs/masterplan/<slug>/ already exists. What now?", options=["Resume existing run (Recommended)", "Use <slug>-v2", "Abort kickoff"])`. Initial state: `status: in-progress`, `phase: worktree_decided`, `current_task: ""`, `next_action: brainstorm spec`, `plan_kind: implementation`, `follow_ups: []`, `pending_gate: null`, `background: null`, `stop_reason: null`, `critical_error: null`, artifact paths under `docs/masterplan/<slug>/`, and `legacy: {}`. Append an event: `{"type":"run_created","phase":"worktree_decided","progress_kind":"implementation_plan_created",...}`.
 
 #### Step B0a — `plan --from-spec=<path>` worktree handling
 
@@ -911,6 +944,7 @@ Then proceed to **Step B2** (writing-plans). Step B1 is skipped because the spec
    - `deferred-task` — the topic names a task, phase, TODO, skipped item, plan task, prior error, or worklog entry.
    - `execution-resume` — the user wants to continue already-planned work.
    - `unclear` — no safe classification after the cheap reads.
+   Also set `plan_kind` from this mode before the next state write: `audit-review -> audit`, `execution-resume -> implementation`, `deferred-task -> implementation`, and all other modes default to `implementation` unless the requested verb is explicitly `doctor`, `import`, `status`, `clean`, or `retro`.
 4. Classify repository role and scope boundary. For Yocto layer repositories, also classify ownership as one of `distro/image policy`, `BSP/machine`, `app recipes`, `kas composition`, `builder orchestration`, or `cross-repo`. Record in-scope paths and out-of-scope sibling repos when local guidance names them.
 5. Record 3-8 `evidence` strings. Each string is a short path-backed fact such as `AGENTS.md: meta-petabit owns distro/image policy` or `WORKLOG.md: Task 6 deferred ERROR_QA build-backed audit`. Do not paste large file excerpts.
 6. Set a `verification_ceiling` such as `local-static`, `repo-local-tests`, `requires-build-host`, `requires-runtime`, or `requires-external-service`.
@@ -1558,7 +1592,16 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
    - low: rotate when `events.jsonl` exceeds 50 entries; archive all but the most recent 25.
    - medium / high: rotate when log exceeds 100 entries; archive all but the most recent 50 (current behavior, unchanged).
 
-   **4d — State update (single-writer run-state update + archive-and-schedule).** Update `state.yml`: bump `last_activity` to the current ISO timestamp, set `current_task` to the next task name, set `next_action` to the next task's first step, and append a task-completion event to `events.jsonl` that includes 1–3 lines of relevant verification output (per **CD-8**) and the routing+review tags. For non-trivial decisions made during the task, add dedicated events per **CD-7**.
+   **4d — State update (single-writer run-state update + archive-and-schedule).** Update `state.yml`: bump `last_activity` to the current ISO timestamp, set `current_task` to the next task name, set `next_action` to the next task's first step, and append a task-completion event to `events.jsonl` that includes 1–3 lines of relevant verification output (per **CD-8**), the routing+review tags, and `progress_kind`. For non-trivial decisions made during the task, add dedicated events per **CD-7**.
+
+   `progress_kind` is mandatory on every Step C close. Values:
+   - `product_change` — runtime/source/docs behavior requested by the user changed.
+   - `implementation_plan_created` — the task converted a finding/follow-up into a runnable implementation plan or structured follow-up.
+   - `verification` — no product change, but the task performed acceptance verification that changes the durable confidence state.
+   - `metadata_only` — state, audit, import, status, or hygiene changed without creating an implementation path.
+   - `no_progress` — inspection happened but no durable state advanced.
+
+   If a completed meta-plan (`plan_kind != implementation`) has confirmed implementation gaps and the next event would be `metadata_only`, do not advance to completion until Step C writes structured `follow_ups` and records `progress_kind: implementation_plan_created`.
 
    When Step 4d can identify the completed task's checkbox in `plan.md` without fuzzy matching, update it from unchecked to checked in the same state-update commit. If it cannot do this mechanically, leave `plan.md` unchanged and rely on `state.yml` + `events.jsonl`; never let stale checkboxes override a completed `state.yml`.
 
@@ -1650,7 +1693,9 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
    - If unrelated dirty user work exists but task-scope work is clean, mark the plan complete but include the unrelated paths in `plan_completed` as ignored dirt. Do not stage or clean unrelated files.
    - If the worktree is clean for task scope, proceed.
 
-   Under `<run-dir>/state.lock`, set `status: complete`, `phase: complete`, `current_task: ""`, `next_action: none`, `pending_gate: null`, `background: null`, `stop_reason: complete`, `critical_error: null`, and `last_activity: <now>`. Append a `plan_completed` event to `events.jsonl` with the final task count, final verification summary, completion SHA if available, and the dirty-check summary. Commit this state update with subject `masterplan: complete <slug>` unless the same commit already contains the final task's state update. Do not reschedule.
+   Before the completion write, if `plan_kind != implementation`, scan bundled artifacts for implementation gaps using the same adapter as Step N: `gap-register.md` rows with verdict `confirmed_gap`, explicit "confirmed implementation gaps" sections in `audit-report.md`, or existing pending `follow_ups`. If confirmed implementation gaps exist and `follow_ups` is empty, write concrete structured follow-up records first, set `next_action: materialize pending implementation follow-ups`, append `followups_materialized` with `progress_kind: implementation_plan_created`, and only then continue the completion write. The `petabit-os-mgmt` archived-plans audit pattern is the regression target: DNS operational rows `gap-late-008`/`gap-late-009` become `dns-oper-reporting-cleanup`, and datastore row `gap-late-005` becomes `datastore-list-key-merge`.
+
+   Under `<run-dir>/state.lock`, set `status: complete`, `phase: complete`, `current_task: ""`, `next_action: none` unless pending `follow_ups` remain, `pending_gate: null`, `background: null`, `stop_reason: complete`, `critical_error: null`, and `last_activity: <now>`. Append a `plan_completed` event to `events.jsonl` with the final task count, final verification summary, completion SHA if available, the dirty-check summary, and `progress_kind: product_change | implementation_plan_created | verification` as appropriate. Commit this state update with subject `masterplan: complete <slug>` unless the same commit already contains the final task's state update. Do not reschedule.
 
    **Codex native goal completion.** If `codex_host_suppressed == true` and `state.yml` has `codex_goal.objective`, call `get_goal` immediately after the state update. If the active goal objective matches, call `update_goal(status="complete")`, then append `codex_goal_completed` to `events.jsonl`. If no active goal exists or the objective differs, do not mark any native goal complete; append `codex_goal_complete_skipped` with the observed/missing objective.
 

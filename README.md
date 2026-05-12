@@ -408,8 +408,10 @@ output formats: `table` (default, terminal), `json` (jq-pipeable), `md`
 audit for recent Claude, Codex, and `/masterplan` telemetry logs. It scans a
 configurable time window, prints repo-level totals and top offending sessions,
 prints a primary-session "Started goals at risk" table, and warns on runaway
-Codex tool calls, unclassified active Masterplan stops, repeated shell-tool
-loops, Claude
+Codex tool calls, meta-resume loops with no outcome progress, completed
+audit/doctor plans that found confirmed gaps but did not create structured
+implementation follow-ups, shell invocations such as `$masterplan next`,
+unclassified active Masterplan stops, repeated shell-tool loops, Claude
 AskUserQuestion/Agent fanout, SessionStart payload bloat, oversized transcript
 telemetry, and missing telemetry for sessions with explicit `/masterplan`
 invocation/runtime markers. Codex guardian approval sub-sessions are classified
@@ -425,7 +427,15 @@ warning contract.
 ```bash
 bin/masterplan-session-audit.sh --hours=24
 bin/masterplan-session-audit.sh --since=2026-05-10T15:51:23Z --format=json
+bin/masterplan-recurring-audit.sh
+bin/masterplan-audit-schedule.sh install
 ```
+
+The recurring wrapper stores `latest.json`, `latest.txt`, `history.jsonl`, and
+`findings.jsonl` under
+`${MASTERPLAN_AUDIT_STATE_DIR:-$XDG_STATE_HOME/superpowers-masterplan/audits}`
+or `$HOME/.local/state/superpowers-masterplan/audits`. The scheduler installs a
+managed cron block only; unrelated crontab entries are preserved.
 
 ### Import Shortcuts
 
@@ -611,7 +621,7 @@ for details and the upstream issue link.
 
 ## Project Status
 
-Current release: **v3.2.6**.
+Current release: **v3.2.7**.
 
 - Release history: [`CHANGELOG.md`](./CHANGELOG.md)
 - Contributor internals: [`docs/internals.md`](./docs/internals.md)

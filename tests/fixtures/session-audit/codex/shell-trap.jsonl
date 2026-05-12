@@ -1,0 +1,3 @@
+{"type":"session_meta","payload":{"id":"cccccccc-0000-0000-0000-000000000010","cwd":"/tmp/dev/shell-trap","timestamp":"2026-05-11T12:00:00Z"}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"text":"<user_shell_command>\n<command>$masterplan next</command>\n<result>Exit code: 127\nOutput: /bin/bash: line 1: next: command not found</result>\n</user_shell_command>"}],"timestamp":"2026-05-11T12:00:01Z"}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"text":"→ /masterplan v3.2.6 args: 'next' cwd: /tmp/dev/shell-trap\nRecovered Codex shell invocation trap and routed through normal-chat Masterplan next."}],"timestamp":"2026-05-11T12:00:02Z"}}

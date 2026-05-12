@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.2.7] — 2026-05-12 — Forward-progress audit instrumentation
+
+### Added
+
+- **Structured follow-up routing for completed meta-plans.** Run state now
+  carries `plan_kind` and `follow_ups` so audit/doctor/import/status work that
+  discovers confirmed implementation gaps must materialize routable follow-up
+  records instead of leaving prose `next_action` text behind. The archived
+  petabit-os-mgmt audit class is explicitly mapped to implementation follow-ups
+  for DNS/oper reporting cleanup and datastore list-key merging.
+- **Forward-progress session audit warnings.** `bin/masterplan-session-audit.sh`
+  now scans run state in addition to Claude/Codex transcripts and telemetry,
+  reporting stable warning codes for meta-resume loops, shell invocation traps,
+  activity without outcome events, unroutable prose next actions, and completed
+  meta-plans whose confirmed gaps were not materialized as structured
+  follow-ups.
+- **Recurring local audit loop.** Added `bin/masterplan-recurring-audit.sh` to
+  persist redacted audit snapshots and `bin/masterplan-audit-schedule.sh` to
+  install/status/uninstall a managed cron block without touching unrelated
+  crontab entries.
+
+### Fixed
+
+- **Codex shell-trap recovery.** Codex-hosted Masterplan now treats
+  `<user_shell_command>` transcripts for `$masterplan ...` or `masterplan ...`
+  as recoverable normal-chat invocations, records the recovery on the next state
+  write, and routes through the normal verb handler instead of asking the user
+  to retype.
+- **Implementation work outranks completed audit resumption.** Resume selection
+  prefers in-progress implementation plans and pending implementation
+  follow-ups over completed meta-plans, preventing the orchestrator from looping
+  on an already-finished audit.
+
 ## [3.2.6] — 2026-05-12 — Codex native goal pursuit
 
 ### Added

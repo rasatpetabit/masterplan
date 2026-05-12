@@ -170,6 +170,55 @@ class SessionAuditTests(unittest.TestCase):
         self.assertEqual("complete", session["goal_outcome"])
         self.assertEqual([], session["goal_failure_reasons"])
 
+    def test_codex_shell_invocation_trap_warns(self):
+        data = self.run_fixture_audit()
+        sessions = {session["repo"]: session for session in data["codex_sessions"]}
+        session = sessions["shell-trap"]
+
+        self.assertTrue(session["shell_invocation_trap"])
+        self.assertIn("shell_invocation_trap", session["warning_codes"])
+
+    def test_meta_resume_loop_has_stable_warning_code(self):
+        original_limit = audit.CODEX_ACTIVITY_WITHOUT_OUTCOME_LIMIT
+        try:
+            audit.CODEX_ACTIVITY_WITHOUT_OUTCOME_LIMIT = 5
+            data = self.run_fixture_audit()
+        finally:
+            audit.CODEX_ACTIVITY_WITHOUT_OUTCOME_LIMIT = original_limit
+
+        sessions = {session["repo"]: session for session in data["codex_sessions"]}
+        session = sessions["meta-loop"]
+
+        self.assertIn("meta_resume_loop", session["warning_codes"])
+        self.assertIn("activity_without_outcome", session["warning_codes"])
+
+    def test_completed_audit_with_confirmed_gaps_requires_structured_followups(self):
+        data = self.run_fixture_audit()
+        plans = {(plan["repo"], plan["slug"]): plan for plan in data["plans"]}
+        plan = plans[("followup-gap", "archived-audit")]
+
+        self.assertEqual(3, plan["confirmed_gap_count"])
+        self.assertEqual(0, plan["follow_up_count"])
+        self.assertIn("completed_followup_not_materialized", plan["warning_codes"])
+        self.assertIn("prose_next_action_unroutable", plan["warning_codes"])
+        self.assertIn("meta_resume_loop", plan["warning_codes"])
+
+    def test_structured_followups_suppress_completed_gap_warnings(self):
+        data = self.run_fixture_audit()
+        plans = {(plan["repo"], plan["slug"]): plan for plan in data["plans"]}
+        plan = plans[("structured-followup", "archived-audit")]
+
+        self.assertEqual(1, plan["confirmed_gap_count"])
+        self.assertEqual(1, plan["follow_up_count"])
+        self.assertNotIn("completed_followup_not_materialized", plan["warning_codes"])
+        self.assertNotIn("prose_next_action_unroutable", plan["warning_codes"])
+
+    def test_broad_repo_scans_skip_nested_test_fixtures(self):
+        path = Path("/tmp/project/tests/fixtures/session-audit/repos/example/docs/masterplan/audit/state.yml")
+
+        self.assertTrue(audit.is_nested_test_fixture(path, Path("/tmp/project")))
+        self.assertFalse(audit.is_nested_test_fixture(path, Path("/tmp/project/tests/fixtures/session-audit/repos")))
+
     def test_parse_args_preserves_environment_default_paths(self):
         with patch.dict(
             "os.environ",

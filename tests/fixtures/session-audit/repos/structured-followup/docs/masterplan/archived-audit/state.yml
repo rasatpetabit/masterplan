@@ -1,0 +1,37 @@
+schema_version: 2
+slug: archived-audit
+status: complete
+phase: complete
+plan_kind: audit
+worktree: /tmp/dev/structured-followup
+branch: main
+started: 2026-05-11
+last_activity: 2026-05-11T12:00:00Z
+current_task: complete
+next_action: "implementation follow-ups materialized"
+follow_ups:
+  - id: dns-oper-reporting-cleanup
+    kind: implementation
+    title: DNS operational reporting cleanup
+    source_plan: archived-audit
+    source_refs:
+      - gap-late-008
+      - gap-late-009
+    priority: high
+    confidence: high
+    recommended_action: create_plan
+    status: pending
+autonomy: loose
+loop_enabled: false
+codex_routing: auto
+codex_review: "on"
+compact_loop_recommended: false
+complexity: high
+pending_gate: null
+background: null
+stop_reason: complete
+critical_error: null
+artifacts:
+  spec: docs/masterplan/archived-audit/spec.md
+  plan: docs/masterplan/archived-audit/plan.md
+  events: docs/masterplan/archived-audit/events.jsonl

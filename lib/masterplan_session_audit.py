@@ -16,6 +16,7 @@ from pathlib import Path
 CODEX_CALL_LIMIT = 100
 CODEX_QUESTION_LIMIT = 5
 CODEX_LOOP_LIMIT = 10
+CODEX_ACTIVITY_WITHOUT_OUTCOME_LIMIT = 80
 CLAUDE_AUQ_LIMIT = 10
 CLAUDE_AGENT_LIMIT = 20
 SESSIONSTART_LIMIT = 64 * 1024
@@ -24,6 +25,16 @@ TELEMETRY_LINES_LIMIT = 1000
 LOOP_ROOTS = {"git", "date", "sed", "rg"}
 QUESTION_TOOLS = {"AskUserQuestion", "Question", "request_user_input"}
 AGENT_TOOLS = {"Agent", "Task"}
+TERMINAL_NEXT_ACTIONS = {"", "none", "complete", "done", "archived", "completion finalizer"}
+META_PLAN_KINDS = {"audit", "doctor", "import", "cleanup", "status", "retro"}
+ROUTABLE_NEXT_ACTION_RE = re.compile(
+    r"(?i)\b(merge|land|push|pull request|pr\b|branch|worktree|retro|doctor|status|audit|background|poll|review output)\b"
+)
+SHELL_MASTERPLAN_TRAP_RE = re.compile(
+    r"(?is)<user_shell_command>.*?<command>\s*(?:\$?masterplan|/masterplan)\b.*?</command>"
+)
+META_PROGRESS_RE = re.compile(r"(?i)\b(audit|audit-report|gap-register|state hygiene|doctor|import|metadata)\b")
+OUTCOME_PROGRESS_RE = re.compile(r"(?i)\b(progress_kind:\s*(?:product_change|implementation_plan_created)|implementation_plan_created|product_change)\b")
 STOP_KIND_UNKNOWN = "unknown"
 SESSION_ROLE_PRIMARY = "primary"
 SESSION_ROLE_GUARDIAN = "guardian"
@@ -85,6 +96,9 @@ class SessionStats:
     session_role: str = SESSION_ROLE_PRIMARY
     native_goal_created: bool = False
     native_goal_completed: bool = False
+    shell_invocation_trap: bool = False
+    meta_progress_markers: int = 0
+    outcome_progress_markers: int = 0
     tool_counts: Counter = field(default_factory=Counter)
     command_roots: Counter = field(default_factory=Counter)
     warnings: list[WarningItem] = field(default_factory=list)
@@ -115,6 +129,28 @@ class TelemetryStats:
 
 
 @dataclass
+class PlanStats:
+    repo: str
+    slug: str
+    file_label: str
+    status: str = ""
+    phase: str = ""
+    plan_kind: str = ""
+    next_action: str = ""
+    current_task: str = ""
+    follow_up_count: int = 0
+    confirmed_gap_count: int = 0
+    recent_meta_events: int = 0
+    recent_outcome_events: int = 0
+    event_count: int = 0
+    latest_ts: str = ""
+    warnings: list[WarningItem] = field(default_factory=list)
+
+    def add_warning(self, code: str, text: str) -> None:
+        self.warnings.append(WarningItem(code, text))
+
+
+@dataclass
 class RepoTotals:
     codex_calls: int = 0
     codex_questions: int = 0
@@ -124,6 +160,8 @@ class RepoTotals:
     sessionstart_bytes: int = 0
     telemetry_max_bytes: int = 0
     telemetry_max_lines: int = 0
+    plan_followups: int = 0
+    confirmed_gaps: int = 0
     warnings: int = 0
 
 
@@ -240,6 +278,23 @@ def iter_jsonl_files(root, cutoff_epoch):
         return
 
 
+def is_nested_test_fixture(path, root_path):
+    try:
+        root_parts = Path(root_path).resolve().parts
+        path_parts = Path(path).resolve().parts
+    except OSError:
+        root_parts = Path(root_path).parts
+        path_parts = Path(path).parts
+
+    if "fixtures" in root_parts:
+        return False
+
+    for idx in range(0, max(0, len(path_parts) - 1)):
+        if path_parts[idx : idx + 2] == ("tests", "fixtures"):
+            return True
+    return False
+
+
 def json_lines(path):
     try:
         with path.open("r", encoding="utf-8", errors="replace") as handle:
@@ -329,6 +384,18 @@ def has_masterplan_activity(text, role=""):
         USER_MASTERPLAN_ACTIVITY_RE.search(text) is not None
         or ASSISTANT_MASTERPLAN_ACTIVITY_RE.search(text) is not None
     )
+
+
+def has_shell_masterplan_trap(text):
+    return SHELL_MASTERPLAN_TRAP_RE.search(str(text or "")) is not None
+
+
+def note_progress_markers(stats, text):
+    text = str(text or "")
+    if META_PROGRESS_RE.search(text):
+        stats.meta_progress_markers += 1
+    if OUTCOME_PROGRESS_RE.search(text):
+        stats.outcome_progress_markers += 1
 
 
 def classify_stop_text(text):
@@ -481,8 +548,15 @@ def analyze_codex_file(path, cutoff):
             if ptype == "message":
                 role = payload.get("role")
                 text = stringify_content(payload.get("content"))
+                if role == "user" and has_shell_masterplan_trap(text):
+                    stats.shell_invocation_trap = True
+                    stats.add_warning(
+                        "shell_invocation_trap",
+                        "masterplan was invoked through Codex shell mode instead of normal chat",
+                    )
                 if role == "assistant":
                     record_stop_signal(stats, classify_stop_text(text))
+                    note_progress_markers(stats, text)
                     for name, body in extract_codex_tool_markers(text):
                         count_codex_tool(stats, name, body)
                 if role in {"user", "assistant"} and has_masterplan_activity(text, role):
@@ -508,6 +582,26 @@ def analyze_codex_file(path, cutoff):
         stats.add_warning("codex_questions_high", f"codex questions {stats.questions} > {CODEX_QUESTION_LIMIT}")
     if root and root_count >= CODEX_LOOP_LIMIT:
         stats.add_warning("repeated_command_root", f"repeated {root} calls {root_count} >= {CODEX_LOOP_LIMIT}")
+    if (
+        stats.masterplan_like
+        and stats.calls > CODEX_ACTIVITY_WITHOUT_OUTCOME_LIMIT
+        and stats.meta_progress_markers >= 3
+        and stats.outcome_progress_markers == 0
+    ):
+        stats.add_warning(
+            "meta_resume_loop",
+            "masterplan session spent substantial work on audit/status metadata without recording implementation progress",
+        )
+    if (
+        stats.masterplan_like
+        and stats.calls > CODEX_ACTIVITY_WITHOUT_OUTCOME_LIMIT
+        and stats.outcome_progress_markers == 0
+        and stats.stop_kind != "complete"
+    ):
+        stats.add_warning(
+            "activity_without_outcome",
+            "high-activity masterplan session ended without product_change or implementation_plan_created evidence",
+        )
     if (
         not is_auxiliary_session(stats)
         and stats.masterplan_like
@@ -587,6 +681,7 @@ def analyze_claude_file(path, cutoff):
                 stats.masterplan_like = True
             if role == "assistant":
                 record_stop_signal(stats, classify_stop_text(text))
+                note_progress_markers(stats, text)
             if role == "assistant" and isinstance(content, list):
                 for item in content:
                     if isinstance(item, dict) and item.get("type") == "tool_use":
@@ -602,6 +697,26 @@ def analyze_claude_file(path, cutoff):
     if stats.sessionstart_bytes > SESSIONSTART_LIMIT:
         kb = stats.sessionstart_bytes // 1024
         stats.add_warning("sessionstart_payload_high", f"SessionStart payload {kb}KB > {SESSIONSTART_LIMIT // 1024}KB")
+    if (
+        stats.masterplan_like
+        and stats.calls > CODEX_ACTIVITY_WITHOUT_OUTCOME_LIMIT
+        and stats.meta_progress_markers >= 3
+        and stats.outcome_progress_markers == 0
+    ):
+        stats.add_warning(
+            "meta_resume_loop",
+            "masterplan session spent substantial work on audit/status metadata without recording implementation progress",
+        )
+    if (
+        stats.masterplan_like
+        and stats.calls > CODEX_ACTIVITY_WITHOUT_OUTCOME_LIMIT
+        and stats.outcome_progress_markers == 0
+        and stats.stop_kind != "complete"
+    ):
+        stats.add_warning(
+            "activity_without_outcome",
+            "high-activity masterplan session ended without product_change or implementation_plan_created evidence",
+        )
     if (
         not is_auxiliary_session(stats)
         and stats.masterplan_like
@@ -622,6 +737,8 @@ def iter_telemetry_files(repo_roots, cutoff_epoch):
         if not root_path.exists():
             continue
         for path in root_path.glob("**/docs/masterplan/*/telemetry*.jsonl"):
+            if is_nested_test_fixture(path, root_path):
+                continue
             try:
                 if not path.is_file():
                     continue
@@ -687,6 +804,182 @@ def analyze_telemetry_file(path, cutoff, root_path=None):
     return stats
 
 
+def iter_plan_state_files(repo_roots, cutoff_epoch):
+    seen = set()
+    for root in repo_roots.split(":"):
+        root = root.strip()
+        if not root:
+            continue
+        root_path = Path(root).expanduser()
+        if not root_path.exists():
+            continue
+        for path in root_path.glob("**/docs/masterplan/*/state.yml"):
+            if is_nested_test_fixture(path, root_path):
+                continue
+            try:
+                if not path.is_file():
+                    continue
+                run_dir = path.parent
+                related_mtime = path.stat().st_mtime
+                for rel in ("events.jsonl", "gap-register.md"):
+                    sidecar = run_dir / rel
+                    if sidecar.exists():
+                        related_mtime = max(related_mtime, sidecar.stat().st_mtime)
+                if related_mtime < cutoff_epoch:
+                    continue
+            except OSError:
+                continue
+            resolved = str(path.resolve())
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            yield path, root_path
+
+
+def read_text(path):
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def yaml_scalar(text, key):
+    match = re.search(rf"(?m)^{re.escape(key)}:\s*(.*?)\s*$", text or "")
+    if not match:
+        return ""
+    value = match.group(1).strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        value = value[1:-1]
+    return value
+
+
+def yaml_block_nonempty(text, key):
+    lines = (text or "").splitlines()
+    for idx, line in enumerate(lines):
+        if re.match(rf"^{re.escape(key)}:\s*(.*)$", line):
+            after = line.split(":", 1)[1].strip()
+            if after and after not in {"[]", "null", "{}"}:
+                return True
+            for child in lines[idx + 1 :]:
+                if not child.startswith((" ", "\t")):
+                    break
+                stripped = child.strip()
+                if stripped and not stripped.startswith("#"):
+                    return True
+            return False
+    return False
+
+
+def count_confirmed_gap_rows(text):
+    return sum(1 for line in (text or "").splitlines() if re.search(r"\|\s*confirmed_gap\s*\|", line))
+
+
+def classify_plan_kind(state_text, run_dir):
+    explicit = yaml_scalar(state_text, "plan_kind")
+    if explicit:
+        return explicit
+    slug = run_dir.name.lower()
+    if "audit" in slug:
+        return "audit"
+    if "doctor" in slug:
+        return "doctor"
+    if "import" in slug or "migration" in slug:
+        return "import"
+    return "implementation"
+
+
+def next_action_is_routable(next_action):
+    text = str(next_action or "").strip()
+    if text.lower() in TERMINAL_NEXT_ACTIONS:
+        return True
+    return ROUTABLE_NEXT_ACTION_RE.search(text) is not None
+
+
+def analyze_plan_state(path, cutoff, root_path=None):
+    run_dir = path.parent
+    state_text = read_text(path)
+    stats = PlanStats(
+        repo_from_telemetry_path(path, root_path),
+        run_dir.name,
+        f"{run_dir.name}/state.yml",
+    )
+    stats.status = yaml_scalar(state_text, "status")
+    stats.phase = yaml_scalar(state_text, "phase")
+    stats.plan_kind = classify_plan_kind(state_text, run_dir)
+    stats.next_action = yaml_scalar(state_text, "next_action")
+    stats.current_task = yaml_scalar(state_text, "current_task")
+    stats.follow_up_count = 1 if yaml_block_nonempty(state_text, "follow_ups") else 0
+
+    latest = None
+    last_activity = parse_ts(yaml_scalar(state_text, "last_activity"))
+    if last_activity:
+        latest = last_activity
+
+    gap_register = read_text(run_dir / "gap-register.md")
+    stats.confirmed_gap_count = count_confirmed_gap_rows(gap_register)
+
+    events_path = run_dir / "events.jsonl"
+    for rec in json_lines(events_path):
+        stats.event_count += 1
+        ts = record_ts(rec)
+        if ts and (latest is None or ts > latest):
+            latest = ts
+        message = stringify_content(rec.get("message") or rec.get("detail") or rec.get("summary") or "")
+        event_type = str(rec.get("type") or "")
+        combined = f"{event_type} {message}"
+        if META_PROGRESS_RE.search(combined):
+            stats.recent_meta_events += 1
+        if OUTCOME_PROGRESS_RE.search(combined):
+            stats.recent_outcome_events += 1
+
+    if latest:
+        stats.latest_ts = latest.isoformat().replace("+00:00", "Z")
+
+    if (
+        stats.status == "complete"
+        and stats.plan_kind in META_PLAN_KINDS
+        and stats.confirmed_gap_count > 0
+        and stats.follow_up_count == 0
+    ):
+        stats.add_warning(
+            "completed_followup_not_materialized",
+            f"complete plan has {stats.confirmed_gap_count} confirmed gap(s) but no structured follow_ups",
+        )
+    if (
+        stats.status == "complete"
+        and stats.plan_kind in META_PLAN_KINDS
+        and stats.next_action.strip()
+        and not next_action_is_routable(stats.next_action)
+        and stats.follow_up_count == 0
+    ):
+        stats.add_warning(
+            "prose_next_action_unroutable",
+            "complete plan next_action is prose and cannot be routed deterministically",
+        )
+    if (
+        stats.plan_kind in META_PLAN_KINDS
+        and stats.recent_meta_events >= 3
+        and stats.confirmed_gap_count > 0
+        and stats.follow_up_count == 0
+    ):
+        stats.add_warning(
+            "meta_resume_loop",
+            "meta-work found confirmed gaps but did not materialize implementation follow-ups",
+        )
+    if (
+        stats.plan_kind in META_PLAN_KINDS
+        and stats.event_count >= 5
+        and stats.recent_outcome_events == 0
+        and stats.confirmed_gap_count > 0
+        and stats.follow_up_count == 0
+    ):
+        stats.add_warning(
+            "activity_without_outcome",
+            "plan has substantial state activity but no product_change or implementation_plan_created outcome event",
+        )
+    return stats
+
+
 def warning_texts(warnings):
     return [warning.text for warning in warnings]
 
@@ -704,6 +997,14 @@ def run_audit(since_arg, hours_arg, fmt, claude_dir, codex_dir, repo_roots, now=
             for path, root_path in iter_telemetry_files(repo_roots, cutoff_epoch)
         )
         if t
+    ]
+    plans = [
+        p
+        for p in (
+            analyze_plan_state(path, cutoff, root_path)
+            for path, root_path in iter_plan_state_files(repo_roots, cutoff_epoch)
+        )
+        if p
     ]
 
     telemetry_repos = {t.repo for t in telemetry}
@@ -731,6 +1032,10 @@ def run_audit(since_arg, hours_arg, fmt, claude_dir, codex_dir, repo_roots, now=
         total = repo_totals[item.repo]
         total.telemetry_max_bytes = max(total.telemetry_max_bytes, item.max_bytes)
         total.telemetry_max_lines = max(total.telemetry_max_lines, item.max_lines)
+    for plan in plans:
+        total = repo_totals[plan.repo]
+        total.plan_followups += plan.follow_up_count
+        total.confirmed_gaps += plan.confirmed_gap_count
 
     warnings = []
     seen_warnings = set()
@@ -755,6 +1060,9 @@ def run_audit(since_arg, hours_arg, fmt, claude_dir, codex_dir, repo_roots, now=
     for item in telemetry:
         for warning in item.warnings:
             add_warning("telemetry", item.repo, item.file_label, warning)
+    for plan in plans:
+        for warning in plan.warnings:
+            add_warning("plan", plan.repo, plan.slug, warning)
     for warning in warnings:
         repo_totals[warning["repo"]].warnings += 1
 
@@ -773,6 +1081,9 @@ def run_audit(since_arg, hours_arg, fmt, claude_dir, codex_dir, repo_roots, now=
             "masterplan_like": session.masterplan_like,
             "session_role": session.session_role,
             "stop_kind": session.stop_kind,
+            "shell_invocation_trap": session.shell_invocation_trap,
+            "meta_progress_markers": session.meta_progress_markers,
+            "outcome_progress_markers": session.outcome_progress_markers,
             "native_goal_created": session.native_goal_created,
             "native_goal_completed": session.native_goal_completed,
             "goal_outcome": goal_outcome(session),
@@ -801,6 +1112,8 @@ def run_audit(since_arg, hours_arg, fmt, claude_dir, codex_dir, repo_roots, now=
                 "sessionstart_bytes": total.sessionstart_bytes,
                 "telemetry_max_bytes": total.telemetry_max_bytes,
                 "telemetry_max_lines": total.telemetry_max_lines,
+                "plan_followups": total.plan_followups,
+                "confirmed_gaps": total.confirmed_gaps,
                 "warnings": total.warnings,
             }
             for repo, total in sorted(repo_totals.items())
@@ -821,6 +1134,27 @@ def run_audit(since_arg, hours_arg, fmt, claude_dir, codex_dir, repo_roots, now=
             }
             for item in sorted(telemetry, key=lambda item: item.max_bytes, reverse=True)
         ],
+        "plans": [
+            {
+                "repo": item.repo,
+                "slug": item.slug,
+                "file": item.file_label,
+                "status": item.status,
+                "phase": item.phase,
+                "plan_kind": item.plan_kind,
+                "current_task": item.current_task,
+                "next_action": item.next_action,
+                "follow_up_count": item.follow_up_count,
+                "confirmed_gap_count": item.confirmed_gap_count,
+                "recent_meta_events": item.recent_meta_events,
+                "recent_outcome_events": item.recent_outcome_events,
+                "event_count": item.event_count,
+                "latest_ts": item.latest_ts,
+                "warnings": warning_texts(item.warnings),
+                "warning_codes": [warning.code for warning in item.warnings],
+            }
+            for item in sorted(plans, key=lambda item: (len(item.warnings), item.confirmed_gap_count, item.latest_ts), reverse=True)
+        ],
         "warnings": warnings,
     }
 
@@ -829,16 +1163,17 @@ def print_table(data):
     codex_sessions = data["codex_sessions"]
     claude_sessions = data["claude_sessions"]
     telemetry = data["telemetry"]
+    plans = data.get("plans", [])
     repo_totals = data["repo_totals"]
     warnings = data["warnings"]
 
     print("Masterplan session audit")
     print(f"cutoff: {data['cutoff']}")
-    print(f"sources: codex_sessions={len(codex_sessions)} claude_sessions={len(claude_sessions)} telemetry_files={len(telemetry)}")
+    print(f"sources: codex_sessions={len(codex_sessions)} claude_sessions={len(claude_sessions)} telemetry_files={len(telemetry)} plans={len(plans)}")
     print("")
     print("Repo totals")
-    print("repo                         codex  cq  claude auq agent ss_kb telem_mb telem_ln warn")
-    print("---------------------------- ------ --- ------ --- ----- ----- -------- -------- ----")
+    print("repo                         codex  cq  claude auq agent ss_kb telem_mb telem_ln gaps fup warn")
+    print("---------------------------- ------ --- ------ --- ----- ----- -------- -------- ---- --- ----")
     rows = sorted(
         repo_totals.items(),
         key=lambda kv: (
@@ -853,7 +1188,8 @@ def print_table(data):
             f"{repo[:28]:28} {total['codex_calls']:6d} {total['codex_questions']:3d} "
             f"{total['claude_tools']:6d} {total['claude_auq']:3d} {total['claude_agents']:5d} "
             f"{total['sessionstart_bytes'] // 1024:5d} {total['telemetry_max_bytes'] / (1024*1024):8.1f} "
-            f"{total['telemetry_max_lines']:8d} {total['warnings']:4d}"
+            f"{total['telemetry_max_lines']:8d} {total.get('confirmed_gaps', 0):4d} "
+            f"{total.get('plan_followups', 0):3d} {total['warnings']:4d}"
         )
 
     print("")
@@ -912,6 +1248,20 @@ def print_table(data):
             continue
         shown = True
         print(f"{item['repo']}/{item['plan']}: max={item['max_bytes'] / (1024*1024):.1f}MB lines={item['max_lines']} - {'; '.join(item['warnings'])}")
+    if not shown:
+        print("(none)")
+
+    print("")
+    print("Plan follow-up warnings")
+    shown = False
+    for item in plans:
+        if not item["warnings"]:
+            continue
+        shown = True
+        print(
+            f"{item['repo']}/{item['slug']}: status={item['status']} kind={item['plan_kind']} "
+            f"gaps={item['confirmed_gap_count']} followups={item['follow_up_count']} - {'; '.join(item['warnings'])}"
+        )
     if not shown:
         print("(none)")
 

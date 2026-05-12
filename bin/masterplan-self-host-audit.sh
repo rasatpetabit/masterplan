@@ -8,6 +8,7 @@
 #
 # Drift coverage: commands/masterplan.md, hooks/masterplan-telemetry.sh,
 # bin/masterplan-routing-stats.sh, bin/masterplan-session-audit.sh,
+# bin/masterplan-recurring-audit.sh, bin/masterplan-audit-schedule.sh,
 # bin/masterplan-state.sh, AND skills/<name>/SKILL.md for every skill the plugin ships.
 # A user-level copy at ~/.claude/skills/<name>/ shadows the plugin's registration and shows up
 # as a duplicate slash command — caught here.
@@ -94,12 +95,16 @@ check_drift() {
   local user_hook="${HOME}/.claude/hooks/masterplan-telemetry.sh"
   local user_bin="${HOME}/.claude/bin/masterplan-routing-stats.sh"
   local user_session_audit_bin="${HOME}/.claude/bin/masterplan-session-audit.sh"
+  local user_recurring_audit_bin="${HOME}/.claude/bin/masterplan-recurring-audit.sh"
+  local user_audit_schedule_bin="${HOME}/.claude/bin/masterplan-audit-schedule.sh"
   local user_state_bin="${HOME}/.claude/bin/masterplan-state.sh"
   local repo_cmds="${REPO_ROOT}/commands/masterplan.md"
   local repo_hook="${REPO_ROOT}/hooks/masterplan-telemetry.sh"
   local repo_hooks_json="${REPO_ROOT}/hooks/hooks.json"
   local repo_bin="${REPO_ROOT}/bin/masterplan-routing-stats.sh"
   local repo_session_audit_bin="${REPO_ROOT}/bin/masterplan-session-audit.sh"
+  local repo_recurring_audit_bin="${REPO_ROOT}/bin/masterplan-recurring-audit.sh"
+  local repo_audit_schedule_bin="${REPO_ROOT}/bin/masterplan-audit-schedule.sh"
   local repo_state_bin="${REPO_ROOT}/bin/masterplan-state.sh"
 
   local plugin_registry="${HOME}/.claude/plugins/installed_plugins.json"
@@ -128,6 +133,8 @@ check_drift() {
     "hooks/masterplan-telemetry.sh|${user_hook}|${repo_hook}"
     "bin/masterplan-routing-stats.sh|${user_bin}|${repo_bin}"
     "bin/masterplan-session-audit.sh|${user_session_audit_bin}|${repo_session_audit_bin}"
+    "bin/masterplan-recurring-audit.sh|${user_recurring_audit_bin}|${repo_recurring_audit_bin}"
+    "bin/masterplan-audit-schedule.sh|${user_audit_schedule_bin}|${repo_audit_schedule_bin}"
     "bin/masterplan-state.sh|${user_state_bin}|${repo_state_bin}"
   )
 
@@ -680,6 +687,7 @@ check_cd9() {
 # ---------------------------------------------------------------------------------
 check_session_audit() {
   local test_file="${REPO_ROOT}/tests/test_masterplan_session_audit.py"
+  local schedule_test_file="${REPO_ROOT}/tests/test_masterplan_audit_schedule.py"
   local module_file="${REPO_ROOT}/lib/masterplan_session_audit.py"
   local fixture_dir="${REPO_ROOT}/tests/fixtures/session-audit"
 
@@ -693,17 +701,22 @@ check_session_audit() {
     EXIT=1
     return
   fi
+  if [[ ! -f "${schedule_test_file}" ]]; then
+    echo "⚠️  session audit — missing tests/test_masterplan_audit_schedule.py"
+    EXIT=1
+    return
+  fi
   if [[ ! -d "${fixture_dir}" ]]; then
     echo "⚠️  session audit — missing tests/fixtures/session-audit/"
     EXIT=1
     return
   fi
 
-  if python3 -m unittest tests/test_masterplan_session_audit.py >/dev/null; then
+  if python3 -m unittest tests/test_masterplan_session_audit.py tests/test_masterplan_audit_schedule.py >/dev/null; then
     echo "✓ session audit regression tests clean"
   else
     echo "⚠️  session audit regression tests failed"
-    python3 -m unittest tests/test_masterplan_session_audit.py
+    python3 -m unittest tests/test_masterplan_session_audit.py tests/test_masterplan_audit_schedule.py
     EXIT=1
   fi
 }

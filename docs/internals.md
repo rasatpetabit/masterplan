@@ -67,9 +67,11 @@ superpowers-masterplan/
 ├── hooks/
 │   └── masterplan-telemetry.sh     # opt-in Stop hook for per-turn JSONL telemetry
 ├── bin/
-│   ├── masterplan-routing-stats.sh # codex-vs-inline routing distribution
-│   ├── masterplan-session-audit.sh # redacted Claude/Codex/session telemetry audit
-│   └── masterplan-state.sh         # run-bundle inventory + migration helper
+│   ├── masterplan-audit-schedule.sh   # install/remove the recurring audit cron
+│   ├── masterplan-recurring-audit.sh  # persisted recurring session audit wrapper
+│   ├── masterplan-routing-stats.sh    # codex-vs-inline routing distribution
+│   ├── masterplan-session-audit.sh    # redacted Claude/Codex/session telemetry audit
+│   └── masterplan-state.sh            # run-bundle inventory + migration helper
 └── docs/
     ├── internals.md                # THIS FILE
     ├── design/
@@ -542,6 +544,9 @@ Claude JSONL, raw Codex JSONL, and `docs/masterplan/*/telemetry*.jsonl`. It is
 read-only and content-redacted by design: reports include repo labels, short
 session IDs, counters, tool names, command roots, and telemetry sizes, but never
 prompt text, shell commands, tool results, credentials, or transcript excerpts.
+It also scans `docs/masterplan/*/state.yml` and nearby run artifacts for
+completed meta-plans that found confirmed gaps but did not materialize
+structured implementation follow-ups.
 
 Default scope is the last 24 hours under `$HOME/.claude/projects`,
 `$HOME/.codex/sessions`, and `$MASTERPLAN_REPO_ROOTS` (default `$HOME/dev`).
@@ -564,11 +569,34 @@ also expose `goal_outcome` and `goal_failure_reasons` in JSON output, and the
 table output includes a "Started goals at risk" section derived from those
 redacted fields.
 
+Forward-progress checks are explicit warning codes, not prose heuristics:
+`shell_invocation_trap` catches Codex shell transcripts for `$masterplan` or
+`masterplan`, `meta_resume_loop` catches repeated audit/doctor/import/status
+activity without implementation outcomes, `activity_without_outcome` catches
+substantial activity that never records `product_change` or
+`implementation_plan_created`, `completed_followup_not_materialized` catches
+complete meta-plans whose confirmed gaps were left as prose, and
+`prose_next_action_unroutable` catches completed plans with non-terminal
+`next_action` text that the router cannot execute.
+
+`bin/masterplan-recurring-audit.sh` persists the redacted audit to
+`latest.json`, `latest.txt`, `history.jsonl`, and `findings.jsonl` under
+`${MASTERPLAN_AUDIT_STATE_DIR:-$XDG_STATE_HOME/superpowers-masterplan/audits}`
+or `$HOME/.local/state/superpowers-masterplan/audits`. It takes a lock, keeps a
+rolling report history, and can fail on findings when
+`MASTERPLAN_AUDIT_FAIL_ON_WARNINGS=1`.
+
+`bin/masterplan-audit-schedule.sh install|status|uninstall|run-now` owns a
+single managed cron block for that wrapper. It preserves unrelated crontab
+entries and supports `CRONTAB_FILE` for regression tests.
+
 The implementation lives in `lib/masterplan_session_audit.py`; the shell script
-is only the CLI wrapper. `tests/test_masterplan_session_audit.py` and
-`tests/fixtures/session-audit/` pin the classifier, warning de-duplication,
-stable JSON warning codes, telemetry repo attribution, and env-var defaults.
-`bin/masterplan-self-host-audit.sh --session-audit` runs that regression suite.
+is only the CLI wrapper. `tests/test_masterplan_session_audit.py`,
+`tests/test_masterplan_audit_schedule.py`, and `tests/fixtures/session-audit/`
+pin the classifier, warning de-duplication, stable JSON warning codes,
+telemetry repo attribution, recurring-schedule safety, and env-var defaults.
+`bin/masterplan-self-host-audit.sh --session-audit` runs the session-audit
+regression suite.
 
 ### Useful jq queries
 
