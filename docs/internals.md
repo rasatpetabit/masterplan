@@ -254,6 +254,11 @@ pending_gate: null
 background: null
 stop_reason: null | question | critical_error | complete | scheduled_yield
 critical_error: null
+# Optional Codex host advisory:
+# codex_goal:
+#   objective: Complete Masterplan plan <slug>: <plan summary>
+#   linked_at: YYYY-MM-DDTHH:MM:SSZ
+#   created_by_masterplan: true
 artifacts:
   spec: docs/masterplan/<slug>/spec.md
   plan: docs/masterplan/<slug>/plan.md
@@ -458,6 +463,8 @@ The portable Codex contract is prompt exposure through the `masterplan` skill. N
 The Codex skill entrypoint has its own config bootstrap before any workflow routing: read `~/.masterplan.yaml`, then `<repo-root>/.masterplan.yaml`, then shallow-merge invocation flags on top. This duplicates Step 0's config contract deliberately so Codex-hosted runs do not fall back to built-in defaults before they have loaded the canonical command prompt.
 
 When Codex is the host, the orchestrator suppresses the separate Claude Code `codex:codex-rescue` companion path for that invocation. Step 0 sets `codex_host_suppressed=true`, skips the ping/scan/trust availability checks, and treats effective `codex_routing` / `codex_review` as off without rewriting persisted config. This prevents recursive Codex-on-Codex dispatch while preserving the same command surface. Host suppression does not disable other merged config defaults such as `autonomy`, `complexity`, `runs_path`, or `parallelism`. The skill entrypoint also makes Codex scan existing `docs/masterplan/*/state.yml` bundles, including ones originally created by Claude Code.
+
+Codex's native goal tools are a host-level pursuit wrapper, not a Masterplan verb. Once a Codex-hosted run has a plan, the orchestrator reconciles `get_goal` against the run bundle, creates a matching goal with `create_goal` when no active goal exists, records advisory `codex_goal` metadata in `state.yml`, and calls `update_goal(status="complete")` only after Masterplan's completion finalizer marks the run bundle complete. The run bundle remains authoritative for phase, task, next action, blockers, and cleanup.
 
 Host suppression also does not mean "stop after any gate." Step 0 budgets
 unresolved Codex gates, large reads, and automatic phase transitions, but an

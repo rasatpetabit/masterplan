@@ -83,6 +83,8 @@ class SessionStats:
     stop_kind: str = STOP_KIND_UNKNOWN
     stop_signal_seen: bool = False
     session_role: str = SESSION_ROLE_PRIMARY
+    native_goal_created: bool = False
+    native_goal_completed: bool = False
     tool_counts: Counter = field(default_factory=Counter)
     command_roots: Counter = field(default_factory=Counter)
     warnings: list[WarningItem] = field(default_factory=list)
@@ -365,6 +367,8 @@ def is_auxiliary_session(stats):
 def goal_outcome(stats):
     if is_auxiliary_session(stats):
         return "auxiliary"
+    if stats.native_goal_completed:
+        return "complete"
     if stats.stop_kind != STOP_KIND_UNKNOWN:
         return stats.stop_kind
     return STOP_KIND_UNKNOWN
@@ -376,6 +380,8 @@ def goal_failure_reasons(stats):
 
     warning_codes = {warning.code for warning in stats.warnings}
     reasons = []
+    if stats.native_goal_created and not stats.native_goal_completed:
+        reasons.append("native_goal_incomplete")
     if (
         stats.stop_kind != "complete"
         and ("codex_calls_high" in warning_codes or "repeated_command_root" in warning_codes)
@@ -383,9 +389,9 @@ def goal_failure_reasons(stats):
         reasons.append("tool_loop")
     if stats.stop_kind != "complete" and "codex_questions_high" in warning_codes:
         reasons.append("question_loop")
-    if "active_masterplan_missing_telemetry" in warning_codes:
+    if goal_outcome(stats) != "complete" and "active_masterplan_missing_telemetry" in warning_codes:
         reasons.append("missing_telemetry")
-    if "active_masterplan_unclassified_stop" in warning_codes:
+    if goal_outcome(stats) != "complete" and "active_masterplan_unclassified_stop" in warning_codes:
         reasons.append("unclassified_stop")
     return reasons
 
@@ -405,16 +411,36 @@ def add_latest(stats, ts):
             stats.latest_ts = iso
 
 
+def normalize_tool_arguments(arguments):
+    if isinstance(arguments, dict):
+        return arguments
+    if isinstance(arguments, str):
+        try:
+            parsed = json.loads(arguments)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            return {}
+    return {}
+
+
 def count_codex_tool(stats, name, body="", arguments=None):
     name = str(name or "unknown").strip() or "unknown"
+    normalized_name = name.rsplit(".", 1)[-1]
+    arguments_dict = normalize_tool_arguments(arguments)
     stats.calls += 1
     stats.tool_counts[name] += 1
     if name in QUESTION_TOOLS:
         stats.questions += 1
         record_stop_signal(stats, "question")
+    if normalized_name == "create_goal":
+        stats.native_goal_created = True
+    if normalized_name == "update_goal" and arguments_dict.get("status") == "complete":
+        stats.native_goal_completed = True
+        record_stop_signal(stats, "complete")
     command = ""
-    if isinstance(arguments, dict):
-        command = arguments.get("cmd") or arguments.get("command") or ""
+    if arguments_dict:
+        command = arguments_dict.get("cmd") or arguments_dict.get("command") or ""
     if not command:
         command = extract_command_from_marker(body)
     if name.lower() in {"bash", "shell", "exec_command", "command", "local_shell_call"} or command:
@@ -747,6 +773,8 @@ def run_audit(since_arg, hours_arg, fmt, claude_dir, codex_dir, repo_roots, now=
             "masterplan_like": session.masterplan_like,
             "session_role": session.session_role,
             "stop_kind": session.stop_kind,
+            "native_goal_created": session.native_goal_created,
+            "native_goal_completed": session.native_goal_completed,
             "goal_outcome": goal_outcome(session),
             "goal_failure_reasons": goal_failure_reasons(session),
             "top_loop_root": root,

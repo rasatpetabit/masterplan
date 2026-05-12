@@ -87,6 +87,17 @@ chat instruction, e.g.
 do not surface Claude-only `/masterplan ...` or shell-looking `$masterplan ...`
 as the primary Codex resume command.
 
+## Codex native goal bridge
+
+Codex native goal support is a pursuit wrapper for Masterplan plans, not a
+Masterplan verb. After a plan exists, follow the command prompt's Codex native
+goal pursuit contract: use `get_goal` to inspect the active thread goal, create
+one with `create_goal` when an in-progress `state.yml` has no matching goal, and
+call `update_goal(status="complete")` only after Masterplan's own completion
+finalizer proves the plan is complete. Do not run `/goal`, `$goal`, or `goal` in
+shell-command mode; those are host UI inputs, not executables. `state.yml`
+remains authoritative for task position and recovery.
+
 ## Existing Claude-created projects
 
 Codex must recognize plans created by Claude Code. Before starting a new plan,

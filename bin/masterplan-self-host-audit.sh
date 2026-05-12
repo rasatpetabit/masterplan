@@ -442,6 +442,21 @@ check_codex_packaging() {
     EXIT=1
   fi
 
+  if ! grep -q 'Codex native goal pursuit' "${command_file}" 2>/dev/null; then
+    echo "⚠️  commands/masterplan.md — missing Codex native goal pursuit contract"
+    EXIT=1
+  fi
+
+  if ! grep -q 'create_goal' "${command_file}" 2>/dev/null || ! grep -q 'get_goal' "${command_file}" 2>/dev/null || ! grep -q 'update_goal' "${command_file}" 2>/dev/null; then
+    echo "⚠️  commands/masterplan.md — missing Codex goal tool lifecycle calls"
+    EXIT=1
+  fi
+
+  if ! grep -q 'completed_with_follow_up' "${command_file}" 2>/dev/null; then
+    echo "⚠️  commands/masterplan.md — clean must skip completed plans with follow-up next_action"
+    EXIT=1
+  fi
+
   if ! grep -qi 'recursive Codex' "${REPO_ROOT}/README.md" 2>/dev/null; then
     echo "⚠️  README.md — missing Codex-host recursive dispatch documentation"
     EXIT=1
@@ -449,6 +464,11 @@ check_codex_packaging() {
 
   if ! grep -q 'codex_host_suppressed' "${REPO_ROOT}/docs/internals.md" 2>/dev/null; then
     echo "⚠️  docs/internals.md — missing codex_host_suppressed documentation"
+    EXIT=1
+  fi
+
+  if ! grep -q 'Codex native goal' "${codex_entry_skill}" 2>/dev/null; then
+    echo "⚠️  skills/masterplan/SKILL.md — missing Codex native goal guidance"
     EXIT=1
   fi
 

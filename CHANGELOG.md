@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.2.6] — 2026-05-12 — Codex native goal pursuit
+
+### Added
+
+- **Codex native goal bridge.** Codex-hosted Masterplan runs now use Codex's
+  native goal tools as the cross-turn pursuit wrapper after a plan exists:
+  reconcile with `get_goal`, create a matching plan goal with `create_goal` when
+  needed, and call `update_goal(status="complete")` only after Masterplan's own
+  completion finalizer succeeds. `/goal` remains a Codex host feature, not a
+  Masterplan verb or shell command.
+
+### Fixed
+
+- **Cleanup preserves completed plans with follow-up work.** The `completed`
+  clean detector now skips `status: complete` bundles whose `next_action` still
+  names concrete follow-up work, classifying them as `completed_with_follow_up`
+  for Step N instead of archiving them as done.
+- **Session audit detects unfinished native goals.** The Codex session audit now
+  recognizes `create_goal` and `update_goal(status="complete")` tool calls and
+  reports native goals that were created but never completed.
+
 ## [3.2.5] — 2026-05-12 — Codex normal-chat resume hints
 
 ### Fixed

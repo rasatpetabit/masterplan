@@ -1,0 +1,4 @@
+{"type":"session_meta","payload":{"id":"88888888-0000-0000-0000-000000000088","cwd":"/tmp/dev/native-goal-active","timestamp":"2026-05-11T12:00:00Z"}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"text":"Use masterplan execute docs/masterplan/native-goal-active/state.yml"}],"timestamp":"2026-05-11T12:00:01Z"}}
+{"type":"response_item","payload":{"type":"function_call","name":"create_goal","arguments":{"objective":"Complete Masterplan plan native-goal-active"},"timestamp":"2026-05-11T12:00:02Z"}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"text":"continuation_scheduled: state preserved; send a normal Codex chat message: Use masterplan next."}],"timestamp":"2026-05-11T12:00:03Z"}}

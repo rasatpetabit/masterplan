@@ -177,6 +177,11 @@ This avoids recursive Codex-on-Codex dispatch: execution stays inside the active
 Codex session, while persisted `codex.routing` / `codex.review` settings remain
 unchanged for future Claude Code runs. Other global defaults such as `autonomy`,
 `complexity`, `runs_path`, and `parallelism` still come from `.masterplan.yaml`.
+After a plan exists, Codex-hosted masterplan also bridges to Codex's native
+goal tools: it inspects the active goal, creates a matching plan pursuit goal
+when needed, and marks that native goal complete only after the run bundle's own
+completion finalizer succeeds. This is not a Masterplan `goal` verb and not a
+shell command; `/goal` remains a Codex host feature.
 
 ### Claude Desktop app (Code tab)
 
@@ -606,7 +611,7 @@ for details and the upstream issue link.
 
 ## Project Status
 
-Current release: **v3.2.5**.
+Current release: **v3.2.6**.
 
 - Release history: [`CHANGELOG.md`](./CHANGELOG.md)
 - Contributor internals: [`docs/internals.md`](./docs/internals.md)

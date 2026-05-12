@@ -150,6 +150,26 @@ class SessionAuditTests(unittest.TestCase):
         self.assertIn("stop-unknown", section)
         self.assertNotIn("guardian-repo", section)
 
+    def test_codex_native_goal_created_but_unfinished_is_at_risk(self):
+        data = self.run_fixture_audit()
+        sessions = {session["repo"]: session for session in data["codex_sessions"]}
+        session = sessions["native-goal-active"]
+
+        self.assertTrue(session["native_goal_created"])
+        self.assertFalse(session["native_goal_completed"])
+        self.assertEqual("scheduled_yield", session["goal_outcome"])
+        self.assertIn("native_goal_incomplete", session["goal_failure_reasons"])
+
+    def test_codex_native_goal_completion_marks_goal_complete(self):
+        data = self.run_fixture_audit()
+        sessions = {session["repo"]: session for session in data["codex_sessions"]}
+        session = sessions["native-goal-complete"]
+
+        self.assertTrue(session["native_goal_created"])
+        self.assertTrue(session["native_goal_completed"])
+        self.assertEqual("complete", session["goal_outcome"])
+        self.assertEqual([], session["goal_failure_reasons"])
+
     def test_parse_args_preserves_environment_default_paths(self):
         with patch.dict(
             "os.environ",
