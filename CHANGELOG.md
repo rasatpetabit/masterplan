@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.2.9] — 2026-05-12 — `/masterplan import` dedup false-positive fix
+
+### Fixed
+
+- **Already-migrated legacy records were being flagged for re-import.** A user
+  ran `/masterplan import` in a repo where every legacy plan had a sibling
+  `docs/masterplan/<slug>/state.yml` and got back `skip: 34, would-migrate: 1`
+  — the one "would-migrate" candidate was a date-prefixed legacy plan
+  (`2026-05-09-phase-10-cli-parity`) whose canonical bundle
+  (`docs/masterplan/phase-10-cli-parity/state.yml`) already existed and
+  recorded `migrated_from_legacy` in its events log. Accepting the dry-run
+  would have created a second, date-prefixed bundle duplicating completed
+  work.
+
+  Two independent bugs in `bin/masterplan-state.sh`'s dedup predicate caused
+  this:
+  1. `canonical_slug()` was applied to legacy directory names but not to the
+     explicit `slug:` field of legacy `-status.md` frontmatter. When a legacy
+     record's frontmatter retained the date prefix (`slug:
+     2026-05-09-foo`), it was compared verbatim against canonical bundle dir
+     names (`foo`), so the string-equal check always missed.
+  2. Existing bundles' `legacy:` pointers (the `legacy.{status,plan,spec,
+     retro}` paths recorded in state.yml at migration time) were never read
+     back during a subsequent import. A user who had renamed a migrated
+     bundle's slug after the fact would still have its `legacy:` block
+     pointing at the source legacy files, but the import script had no way
+     to consult that pointer.
+
+  Fix: rewrote the dedup logic in `bin/masterplan-state.sh` to build two
+  parallel indices — `by_canonical` (canonical slug of every bundle dir name)
+  and `by_legacy_path` (every `legacy.{status,plan,spec,retro}` value parsed
+  out of existing state.yml files) — and check both before declaring a legacy
+  record "would-migrate". Skip-reason strings now distinguish which check
+  fired (`canonical slug match` vs `legacy: pointer reference`) for
+  debuggability of dry-run output.
+
+  Also tightened the Step I documentation in `commands/masterplan.md`:
+  Step I1.4 ("Stale superpowers state") now spells out the two-part dedup
+  predicate explicitly so future edits don't drift back to the broken
+  string-equal behavior; the Step I3 pre-flight collision pass now
+  acknowledges that "pre-existing collision" covers both target-path
+  collisions and legacy-pointer/canonical-slug matches (defense-in-depth
+  against `--file=`/`--branch=` direct-routing invocations that skip
+  discovery).
+
+### Unchanged
+
+- The migration script remains copy-only (legacy files are never deleted).
+- `state.yml` schema is unchanged.
+- The orchestrator's Step I conversion flow (Step I3.2/I3.4/I3.5) is unchanged.
+
 ## [3.2.8] — 2026-05-11 — User-facing scrub of `bin/masterplan-state.sh`
 
 ### Fixed

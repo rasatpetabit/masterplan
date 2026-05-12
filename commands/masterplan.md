@@ -1746,7 +1746,7 @@ Each agent's brief MUST include: "Issue all globs/finds/`gh` calls as one parall
 
 3. **GitHub issues + PRs** — only if `gh` is authenticated. `gh issue list --state=open --limit=50 --json=number,title,body,updatedAt,labels` and `gh pr list --state=open --limit=50 --json=number,title,body,updatedAt,headRefName`. Filter to entries whose body contains a task list (`- [ ]`/`- [x]`/numbered steps) OR whose labels include planning-shaped strings (`design`, `planning`, `epic`, `roadmap`, `in-progress`).
 
-4. **Stale superpowers state** — run the legacy-state discovery logic from Step I1: legacy `docs/superpowers/{plans,specs,retros,archived-*}` records, orphan legacy plans with no sibling `-status.md`, and legacy records that lack a matching `docs/masterplan/<slug>/state.yml`.
+4. **Stale superpowers state** — legacy `docs/superpowers/{plans,specs,retros,archived-*}` records that have **neither** (a) a sibling `docs/masterplan/<slug>/state.yml` where `canonical_slug(legacy-slug) == canonical_slug(new-bundle-dir-name)` (date-prefix and `-status`/`-design`/`-retro` suffix stripped on both sides), **nor** (b) any existing `docs/masterplan/*/state.yml` whose `legacy.{status,plan,spec,retro}` pointers reference the legacy record's status/plan/spec/retro paths. Records matching either condition are already migrated and must be filtered from the candidate list. Frontmatter-supplied `slug:` fields that retain the date prefix (e.g., `slug: 2026-05-09-foo`) must be normalized through `canonical_slug()` before comparison — string-equal dedup against raw frontmatter slugs is a known false-positive source.
 
 ### Step I2 — Rank + pick
 
@@ -1762,7 +1762,7 @@ Conversions parallelize across candidates because each candidate writes to uniqu
 
 This produces a `candidates[]` list with finalized `(slug, run_dir, spec_path, plan_path, state_path, events_path)` tuples — guaranteed unique within this batch (but not yet checked against existing on-disk paths). New paths are always inside `<config.runs_path>/<slug>/`.
 
-**Path-existence pass:** For each candidate's `(run_dir, spec_path, plan_path, state_path, events_path)` tuple, check whether ANY target path already exists on disk. Implements the operational rule "Import never overwrites existing masterplan state silently".
+**Path-existence pass:** For each candidate's `(run_dir, spec_path, plan_path, state_path, events_path)` tuple, check whether ANY target path already exists on disk. Implements the operational rule "Import never overwrites existing masterplan state silently". "Pre-existing collision" here covers two cases: (a) a target path already exists on disk, AND (b) the candidate matches an already-migrated bundle by `canonical_slug` or by `legacy.{status,plan,spec,retro}` pointer reference. Case (b) should normally be filtered upstream in Step I1.4, but the defense-in-depth check here catches direct-routing invocations (`--file=`, `--branch=`, `--pr=`, `--issue=`) that skip discovery entirely.
 
 For each candidate with **≥ 1** pre-existing path collision, surface `AskUserQuestion` (one prompt per colliding candidate; sequential, not parallel — interactive prompts must not interleave): "Importing `<slug>` would overwrite existing masterplan state at: `<colliding-paths>`. What now?" with options:
 - **(1) Overwrite (Recommended)** — proceed with the original tuple; existing files will be rewritten by I3.4.

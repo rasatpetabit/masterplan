@@ -156,6 +156,51 @@ def existing_new_runs():
     return runs
 
 
+def parse_state_legacy(state_path):
+    text = read_text(state_path)
+    if not text:
+        return {}
+    result = {}
+    in_block = False
+    for line in text.splitlines():
+        if line.rstrip() == "legacy:":
+            in_block = True
+            continue
+        if in_block:
+            if line and not line[0].isspace():
+                break
+            m = re.match(r"^  (status|plan|spec|retro):\s*(.*)$", line)
+            if m:
+                val = m.group(2).strip().strip('"').strip("'")
+                if val:
+                    result[m.group(1)] = val
+    return result
+
+
+def build_dedup_indices(new_runs):
+    by_canonical = {}
+    by_legacy_path = {}
+    for slug, record in new_runs.items():
+        by_canonical[canonical_slug(slug)] = record
+        state_path = repo / record["state"]
+        for legacy_path in parse_state_legacy(state_path).values():
+            by_legacy_path[legacy_path] = record
+    return {"by_canonical": by_canonical, "by_legacy_path": by_legacy_path}
+
+
+def find_existing_match(record, indices):
+    canonical = canonical_slug(record["slug"])
+    if canonical in indices["by_canonical"]:
+        return ("canonical slug match", indices["by_canonical"][canonical])
+    for legacy_key in ("status_path", "plan", "spec", "retro"):
+        path = record.get(legacy_key)
+        if path:
+            path_str = rel(path)
+            if path_str in indices["by_legacy_path"]:
+                return ("legacy: pointer reference", indices["by_legacy_path"][path_str])
+    return None
+
+
 def find_by_canonical(directory, slug, suffix="*.md"):
     root = repo / directory
     if not root.is_dir():
@@ -497,15 +542,17 @@ def write_state(target, record, copied):
 
 
 def migrate():
-    new_runs = existing_new_runs()
+    indices = build_dedup_indices(existing_new_runs())
     records = legacy_status_records()
     records += archived_only_records({r["slug"] for r in records})
     records += standalone_artifact_records({r["slug"] for r in records})
     actions = []
     for record in records:
         slug = record["slug"]
-        if slug in new_runs:
-            actions.append({"slug": slug, "action": "skip", "reason": "state.yml already exists", "target": new_runs[slug]["state"]})
+        match = find_existing_match(record, indices)
+        if match is not None:
+            reason_detail, existing = match
+            actions.append({"slug": slug, "action": "skip", "reason": f"state.yml already exists ({reason_detail})", "target": existing["state"]})
             continue
         target = repo / NEW_ROOT / slug
         if not write_mode:
