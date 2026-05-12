@@ -45,18 +45,30 @@ This prompt is maintained as one source for both Claude Code and Codex plugin ho
 
 ### Invocation sentinel (always emit first)
 
-Before doing anything else — before config load, before git_state cache, before verb routing — emit ONE plain-text line so the user can confirm `/masterplan` is alive. This is the FIRST output of every `/masterplan` turn:
+Before doing anything else — before config load, before git_state cache, before verb routing — emit ONE plain-text line so the user can confirm `/masterplan` is alive. This is the FIRST output of every `/masterplan` turn.
 
-```
-→ /masterplan v<version-from-plugin.json> args: '<$ARGUMENTS or "(empty)">' cwd: <repo-root or pwd>
-```
+**Step 1 — Resolve the version.** Use the **Read tool** to load `.claude-plugin/plugin.json` from the FIRST readable candidate path below, then parse the JSON and extract the `version` field. The Read tool call is mandatory — do not skip it, do not paraphrase its result, do not infer a version from session memory:
 
-Read `<version>` from `.claude-plugin/plugin.json` (`{"version": "..."}`) using a single Read tool call. Try these candidate paths in order, using the first that succeeds:
 1. `~/.claude/plugins/marketplaces/rasatpetabit-superpowers-masterplan/.claude-plugin/plugin.json` — canonical installed location
 2. `<cwd>/.claude-plugin/plugin.json` — dev checkout (works when CWD is the plugin source repo)
 3. `~/.claude/plugins/cache/rasatpetabit-superpowers-masterplan/superpowers-masterplan/<latest-version>/.claude-plugin/plugin.json` — last resort; glob `~/.claude/plugins/cache/rasatpetabit-superpowers-masterplan/superpowers-masterplan/*/` and pick the highest semver
 
-If all candidates are unreadable, render `vUNKNOWN`. Truncate `args` at 120 chars with `…`; total sentinel length ≤ 200 chars. The sentinel is plain stdout, NOT inside an `AskUserQuestion`, NOT inside a tool call — it must appear in the user-visible turn output.
+**Step 2 — Render the sentinel.** Emit exactly one line in this shape, prefixed with `v` plus the parsed semver (no angle brackets, no placeholder tokens):
+
+```
+→ /masterplan v3.3.0 args: 'doctor --fix' cwd: /home/grojas/dev/optoe-ng
+```
+
+The shape is `→ /masterplan v<parsed-semver> args: '<truncated-args-or-(empty)>' cwd: <repo-root-or-pwd>`. Substitute the actual parsed semver (e.g. `v3.3.0`, `v3.2.9`), the actual `$ARGUMENTS` string (or the literal text `(empty)` when no arguments), and the actual cwd.
+
+**Fallback (ONLY when ALL three Read attempts fail).** Render the exact six-character literal string `vUNKNOWN`. No other fallback value is permitted.
+
+**Strict prohibitions on the version slot.** The version slot in the rendered sentinel must be either a parsed semver from `plugin.json` or the literal `vUNKNOWN`. You MUST NOT emit:
+- `v?`, `v??`, `v???`, `vTBD`, `vXXX`, `v-`, `v<unknown>`, or any other abbreviated/handwaved fallback.
+- The angle-bracket template token `v<version-from-plugin.json>` itself — that token is a shape-description in this prompt, not output. If you find yourself about to emit angle brackets in the sentinel, stop: you skipped the Read tool call.
+- A semver from an older message, the conversation history, or a previous turn. Always Read fresh on every `/masterplan` invocation.
+
+Truncate `args` at 120 chars with `…`; total sentinel length ≤ 200 chars. The sentinel is plain stdout, NOT inside an `AskUserQuestion`, NOT inside a tool call — it must appear in the user-visible turn output.
 
 **Why:** when `/masterplan` is invoked after `/reload-plugins` and the harness has not re-registered the slash command, the orchestrator's turn produces zero output (observed: optoe-ng 2026-05-07 23:19, sequence `/compact` → `/plugin` → `/reload-plugins` → `/masterplan` → empty turn). The sentinel makes "did `/masterplan` run?" trivially observable. If the user sees no `→ /masterplan` line, they know the harness ate the invocation — re-register via `/plugin` (uninstall + reinstall) and re-invoke. CC-3-TRAMPOLINE does not apply to the sentinel; it's an unconditional first-line render.
 
@@ -936,19 +948,65 @@ Then proceed to **Step B2** (writing-plans). Step B1 is skipped because the spec
 **Intent anchor (CRITICAL — prevents broad/audit-shaped prompts from turning into unconstrained feature ideation).** Before invoking `superpowers:brainstorming`, /masterplan owns a short repository-grounding pass. Brainstorming is still interactive, but it is briefed with durable intent, scope, and verification limits instead of receiving only the raw topic string.
 
 1. Update `state.yml`: `phase: brainstorming`, `next_action: resolve brainstorm intent anchor`, `pending_gate: null`; append `brainstorm_started` to `events.jsonl`.
-2. Read cheap local truth in one bounded batch: `AGENTS.md`, `CLAUDE.md`, `WORKLOG.md`, the most recent relevant `docs/masterplan/*/{state.yml,events.jsonl,spec.md}` bundles, and an obvious repo-structure sketch from `rg --files` / `find`. Do not do deep source analysis at this stage.
-3. Classify `brainstorm_anchor.mode` as exactly one of: `feature-ideas | implementation-design | audit-review | deferred-task | execution-resume | unclear`.
-   - `feature-ideas` — the user explicitly wants new ideas, options, or a broad product/feature funnel.
-   - `implementation-design` — the user wants a buildable design for known work.
-   - `audit-review` — the user asks to reevaluate, review, inspect, audit, simplify, or find problems.
-   - `deferred-task` — the topic names a task, phase, TODO, skipped item, plan task, prior error, or worklog entry.
-   - `execution-resume` — the user wants to continue already-planned work.
-   - `unclear` — no safe classification after the cheap reads.
-   Also set `plan_kind` from this mode before the next state write: `audit-review -> audit`, `execution-resume -> implementation`, `deferred-task -> implementation`, and all other modes default to `implementation` unless the requested verb is explicitly `doctor`, `import`, `status`, `clean`, or `retro`.
-4. Classify repository role and scope boundary. For Yocto layer repositories, also classify ownership as one of `distro/image policy`, `BSP/machine`, `app recipes`, `kas composition`, `builder orchestration`, or `cross-repo`. Record in-scope paths and out-of-scope sibling repos when local guidance names them.
-5. Record 3-8 `evidence` strings. Each string is a short path-backed fact such as `AGENTS.md: meta-petabit owns distro/image policy` or `WORKLOG.md: Task 6 deferred ERROR_QA build-backed audit`. Do not paste large file excerpts.
-6. Set a `verification_ceiling` such as `local-static`, `repo-local-tests`, `requires-build-host`, `requires-runtime`, or `requires-external-service`.
-7. Persist the object under `brainstorm_anchor:` in `state.yml` and append `brainstorm_anchor_resolved` to `events.jsonl` before any spec-writing call. Minimum shape:
+
+2. **Dispatch the intent-anchor read pass to a Haiku subagent.** The orchestrator MUST NOT inline-Read AGENTS.md, CLAUDE.md, WORKLOG.md, or recent state bundles at this step — large logs (observed: 81KB / 861-line WORKLOG.md) blow the Opus parent context before any real work has started. Use the Agent tool with `subagent_type: "general-purpose"` (or `"Explore"` if available in the host) and `model: "haiku"`. Pass this bounded brief:
+
+   > **Goal.** Produce the `brainstorm_anchor` JSON object the orchestrator will persist verbatim. Read the source files listed below — bounded per-file caps — and classify mode, repo role, evidence, and verification ceiling. Return JSON ONLY; do NOT paste file content in the return.
+   >
+   > **Inputs (provided by orchestrator).** Topic string (verbatim from the user), `requested_verb`, repo root path, `config.runs_path`.
+   >
+   > **Read source (each Read tool call MUST pass `limit`).**
+   > - `<repo-root>/AGENTS.md` — limit 500
+   > - `<repo-root>/CLAUDE.md` — limit 500
+   > - `<repo-root>/WORKLOG.md` — limit 200 (newest-at-top convention; first 200 lines are sufficient for recent activity)
+   > - The most recent `<config.runs_path>/<slug>/state.yml` — limit 300
+   > - That slug's `events.jsonl` — limit 300
+   > - That slug's `spec.md` — limit 300
+   > - `rg --files <repo-root>` for the repo-structure sketch — pipe through `head -200`; exclude `node_modules/`, `vendor/`, `.git/`, `legacy/.archive/`, `<config.runs_path>`, `<config.specs_path>`, `<config.plans_path>`.
+   >
+   > **Constraints.**
+   > - No file read may exceed 500 lines (WORKLOG.md is capped at 200). If a file's tail beyond the cap is needed, note it in `notes_for_orchestrator` instead of reading more.
+   > - Do NOT paste any file content in the return — only short path-backed facts.
+   > - Read-only scope. Do NOT write to `state.yml`, `events.jsonl`, or any file.
+   >
+   > **Classification — `mode` (exactly one).**
+   > - `feature-ideas` — the user explicitly wants new ideas, options, or a broad product/feature funnel.
+   > - `implementation-design` — the user wants a buildable design for known work.
+   > - `audit-review` — the user asks to reevaluate, review, inspect, audit, simplify, or find problems.
+   > - `deferred-task` — the topic names a task, phase, TODO, skipped item, plan task, prior error, or worklog entry.
+   > - `execution-resume` — the user wants to continue already-planned work.
+   > - `unclear` — no safe classification after the cheap reads.
+   >
+   > **Classification — `plan_kind`.** Derive from mode: `audit-review -> audit`, `execution-resume -> implementation`, `deferred-task -> implementation`, all other modes default to `implementation`. (When the requested verb is `doctor`, `import`, `status`, `clean`, or `retro`, the orchestrator overrides this downstream — leave the mode-derived value here.)
+   >
+   > **Classification — `repo_role` and scope.** Classify the repository's role (short string, e.g. `yocto-distro-policy-layer`, `bigcommerce-storefront`, `cloudflare-worker`, `python-cli-tool`). For Yocto layer repositories, also classify `yocto_ownership` as one of `distro/image policy`, `BSP/machine`, `app recipes`, `kas composition`, `builder orchestration`, or `cross-repo`. Record `in_scope_paths` and `out_of_scope_repos` when local guidance names them.
+   >
+   > **Evidence.** Record 3-8 short path-backed facts in `evidence[]`, e.g. `"AGENTS.md: meta-petabit owns distro/image policy"` or `"WORKLOG.md: Task 6 deferred ERROR_QA build-backed audit"`. Each entry MUST cite its source path. Do not paste large file excerpts.
+   >
+   > **Verification ceiling.** Set `verification_ceiling` to exactly one of: `local-static`, `repo-local-tests`, `requires-build-host`, `requires-runtime`, `requires-external-service`.
+   >
+   > **Return shape (JSON only).**
+   > ```json
+   > {
+   >   "mode": "feature-ideas|implementation-design|audit-review|deferred-task|execution-resume|unclear",
+   >   "plan_kind": "audit|implementation",
+   >   "repo_role": "<short string>",
+   >   "yocto_ownership": "<distro/image policy|BSP/machine|app recipes|kas composition|builder orchestration|cross-repo|null>",
+   >   "in_scope_paths": ["..."],
+   >   "out_of_scope_repos": ["..."],
+   >   "evidence": ["AGENTS.md: ...", "WORKLOG.md: ...", "..."],
+   >   "verification_ceiling": "local-static|repo-local-tests|requires-build-host|requires-runtime|requires-external-service",
+   >   "notes_for_orchestrator": "<optional short string; e.g. 'WORKLOG.md tail beyond line 200 may contain older context'>"
+   > }
+   > ```
+   >
+   > **Escape hatch.** If no safe classification is possible after the bounded reads, return `mode: "unclear"` and explain in `notes_for_orchestrator`. The orchestrator will surface an `AskUserQuestion` gate instead of guessing.
+
+3. **Validate + persist (orchestrator owns this).** Parse the Haiku return as JSON.
+   - **Validation failure** (malformed JSON, missing required fields `mode`/`plan_kind`/`repo_role`/`evidence`/`verification_ceiling`, OR `mode == "unclear"`) → fall through to the existing `AskUserQuestion` audit-mode gate (below) with `pending_gate.id: brainstorm_anchor_audit_mode`. Do NOT silently default to `implementation-design`.
+   - **Validation success** → persist the object verbatim under `brainstorm_anchor:` in `state.yml` and append `brainstorm_anchor_resolved` to `events.jsonl` before any spec-writing call. The orchestrator is the canonical writer per CD-7; the Haiku subagent never writes state.
+
+   Minimum shape:
 
 ```yaml
 brainstorm_anchor:

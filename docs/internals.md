@@ -167,6 +167,7 @@ This is the most important architectural surface. The dispatch model below tells
 | Phase | Subagent type | Model | Why this model |
 |---|---|---|---|
 | Step A state parse | parallel Haiku per worktree (when worktrees ≥ 2) | Haiku | Mechanical YAML extraction; bounded |
+| Step B1 brainstorm intent-anchor | one Haiku for cheap-local-truth reads | Haiku | Read AGENTS.md / CLAUDE.md / WORKLOG.md / latest run bundle (each capped) + classify mode + extract 3–8 evidence strings; keeps large logs out of Opus parent context (v3.3.0+) |
 | Step I1 discovery | parallel `Explore`, one per source class | Haiku | Mechanical glob + grep + `gh` calls |
 | Step I3 source fetch | parallel agents per candidate | Haiku (Sonnet for branch reverse-engineering) | Read / git diff / gh issue view; reverse-engineering needs judgment |
 | Step I3 conversion | parallel Sonnet per candidate | Sonnet | Generation, not just extraction |
@@ -209,6 +210,17 @@ Enough to reconstruct state. Nothing more.
 - **If context feels tight** — finish the current task, ScheduleWakeup, end the turn. A wakeup is cheap; a confused orchestrator is expensive.
 - **If a subagent returns ≥ 5K characters** — digest immediately before continuing.
 - **Before invoking brainstorming, conversion, or systematic-debugging** — check whether you're already deep in a session. If so, bookmark and wakeup; let the fresh session start that phase clean.
+
+### Brainstorm intent-anchor dispatch (v3.3.0+)
+
+Step B1's "cheap local truth" read pass (Step 939.2 in `commands/masterplan.md`) runs in a Haiku subagent, not in the Opus parent. Motivation: an observed optoe-ng session ran out of context partly because `WORKLOG.md` was 81KB / 861 lines and the orchestrator inline-Read it (alongside AGENTS.md, CLAUDE.md, and the latest run bundle) before any real work started. The original "bounded batch" wording bounded the file *list*, not per-file size.
+
+The split is:
+- **Orchestrator (Step 939.1)** — state-write entry: `phase: brainstorming`, `next_action: resolve brainstorm intent anchor`, `pending_gate: null`, append `brainstorm_started`.
+- **Haiku subagent (Step 939.2)** — bounded reads (per-file caps: 500 lines default, 200 for `WORKLOG.md` because the convention is newest-at-top so the first 200 lines cover recent activity); classifies `mode`, `plan_kind`, `repo_role`, `yocto_ownership`; extracts 3–8 path-backed `evidence` strings; sets `verification_ceiling`. Returns JSON only — never writes state.
+- **Orchestrator (Step 939.3)** — validates the Haiku return. On `mode: "unclear"` or malformed JSON → fall through to the existing `brainstorm_anchor_audit_mode` `AskUserQuestion` gate; on success → persist verbatim under `brainstorm_anchor:` in `state.yml` and append `brainstorm_anchor_resolved` to `events.jsonl`.
+
+The pattern follows CD-7 (orchestrator is canonical state writer) and CLAUDE.md anti-pattern #1 ("subagents do the work"). Step I1's import-flow inline-Reads (line 1743 + 1780 area) stay as-is because they already feed Sonnet conversion subagents and the optoe-ng complaint was about brainstorm, not import.
 
 ### Parallelism guidance — when YES, when NO
 

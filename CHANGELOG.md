@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.3.0] — 2026-05-12 — sentinel hardening + brainstorm intent-anchor Haiku dispatch
+
+### Fixed
+
+- **Invocation-sentinel version rendered as `v?` or as the unsubstituted template
+  `v<version-from-plugin.json>`.** Observed in the optoe-ng session
+  `d7dfc481-…` (May 12 16:29): the Step 0 sentinel emitted both `v?`
+  (paraphrased fallback) and the literal angle-bracket template across
+  adjacent turns, even though both candidate `plugin.json` files contained a
+  valid `"version": "3.2.9"`. Root cause: the angle-bracket syntax
+  `<version-from-plugin.json>` was used for both the template placeholder and
+  the Read instruction, and the LLM treated it as a literal placeholder to
+  emit instead of as an instruction to call the Read tool; the documented
+  fallback `vUNKNOWN` was being paraphrased to `v?`.
+
+  Rewrote the sentinel block in `commands/masterplan.md`:
+  - Imperative Read-tool language: "Use the Read tool to load
+    `.claude-plugin/plugin.json` from the FIRST readable candidate path. The
+    Read tool call is mandatory — do not skip it, do not paraphrase its
+    result, do not infer a version from session memory."
+  - Concrete rendered example using a real semver
+    (`→ /masterplan v3.3.0 args: 'doctor --fix' cwd: /home/grojas/dev/optoe-ng`)
+    so the LLM has a pattern to emit, not a template to render literally.
+  - Explicit prohibition: the version slot must be either a parsed semver or
+    the literal six-character string `vUNKNOWN`. `v?`, `v??`, `vTBD`,
+    `v<unknown>`, and the angle-bracket template token itself are all banned.
+
+- **Brainstorm intent-anchor read pass blew Opus context.** Step 939.2
+  previously instructed the orchestrator to "Read cheap local truth in one
+  bounded batch: `AGENTS.md`, `CLAUDE.md`, `WORKLOG.md`, the most recent
+  relevant `docs/masterplan/*/{state.yml,events.jsonl,spec.md}` bundles".
+  "Bounded" applied to the file list, not per-file size — the optoe-ng
+  `WORKLOG.md` is 81KB / 861 lines, costing ~25K Opus tokens alone before
+  any real work. The optoe-ng transcript reported "this session is being
+  continued from a previous conversation that ran out of context",
+  confirming exhaustion in the prior session.
+
+  Refactored Step 939 to dispatch a `model: "haiku"` subagent that performs
+  the cheap-local-truth reads (each Read capped at 500 lines; WORKLOG.md
+  capped at 200 lines under the newest-at-top convention) and returns the
+  `brainstorm_anchor` JSON object directly. The orchestrator owns state-write
+  entry (939.1) and persistence (939.3); the Haiku subagent owns reads +
+  classification + evidence extraction (939.2). When Haiku returns
+  `mode: "unclear"` or invalid JSON, the orchestrator falls through to the
+  existing `brainstorm_anchor_audit_mode` `AskUserQuestion` gate instead of
+  silently defaulting.
+
+  This aligns with CLAUDE.md anti-pattern #1 ("Don't run substantive work in
+  the orchestrator's own context. Dispatch to subagents…") and reuses the
+  CD-7 invariant that only the orchestrator writes state.
+
+### Out of scope
+
+- Step I1 import flow's inline-Read of `WORKLOG.md` candidates (line 1743 +
+  1780 area) remains unchanged. Import already routes raw bytes to Sonnet
+  conversion subagents, and the optoe-ng complaint was about the brainstorm
+  path, not import.
+
 ## [3.2.9] — 2026-05-12 — `/masterplan import` dedup false-positive fix
 
 ### Fixed
