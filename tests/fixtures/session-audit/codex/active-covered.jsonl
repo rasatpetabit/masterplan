@@ -1,0 +1,2 @@
+{"type":"session_meta","payload":{"id":"cccccccc-0000-0000-0000-000000000003","cwd":"/tmp/dev/active-with-telemetry","timestamp":"2026-05-11T12:00:00Z"}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"text":"→ /masterplan v3.2.3 args: 'status' cwd: /tmp/dev/active-with-telemetry"}],"timestamp":"2026-05-11T12:00:01Z"}}

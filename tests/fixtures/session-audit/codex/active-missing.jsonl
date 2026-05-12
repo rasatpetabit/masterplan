@@ -1,0 +1,2 @@
+{"type":"session_meta","payload":{"id":"bbbbbbbb-0000-0000-0000-000000000002","cwd":"/tmp/dev/active-missing","timestamp":"2026-05-11T12:00:00Z"}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"text":"/masterplan status"}],"timestamp":"2026-05-11T12:00:01Z"}}

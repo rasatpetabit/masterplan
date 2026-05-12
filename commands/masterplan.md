@@ -30,9 +30,11 @@ This prompt is maintained as one source for both Claude Code and Codex plugin ho
   `Task`/`Agent` dispatch maps to Codex subagents only when the active harness
   permits them, otherwise keep the work bounded in the main thread and record
   the deviation in `events.jsonl`.
-- Codex invokes this command as the namespaced slash command
-  `/superpowers-masterplan:masterplan` unless the host explicitly exposes a bare
-  `/masterplan` alias. Treat both invocations as this same orchestrator.
+- Codex invokes this command through the `masterplan` skill. The portable
+  user-facing form is `$masterplan <args>`; some builds may also pass
+  `/masterplan` or `/superpowers-masterplan:masterplan` text through to the same
+  skill. Treat all three as this same orchestrator, but when closing a
+  Codex-hosted turn, print `$masterplan ...` resume hints.
 
 ---
 
@@ -84,13 +86,14 @@ When `codex_host_suppressed == true`:
    - `<ISO-ts> codex host suppression — running inside Codex; codex_routing+codex_review forced off for this invocation (configured: routing=<configured>, review=<configured>).`
    If no other state write happens this turn, force the same small state write pattern as the degradation path: append the event, update `last_activity`, and set `last_warning: codex host suppression this run — recursive codex dispatch disabled`.
 5. Downstream Step C must use `decision_source: host-suppressed` whenever a task would otherwise have considered Codex routing/review.
-6. **Codex host performance guard.** Host-suppressed mode is a bounded interactive mode, not a license to execute the whole workflow inline and not a blanket halt after every answered gate. Set in-memory `codex_host_perf_guard = {tool_budget: 40, gate_budget: 1, large_read_budget: 2, phase_budget: 1}` for the invocation unless the user explicitly supplied both `/loop` and `--autonomy=full`. These budgets are hard close checkpoints, not persisted config.
-   - Count shell/tool calls made by the orchestrator itself, unresolved or weak structured gates surfaced by this command, large reads of prompt/plan/spec/transcript/event-log files (roughly >500 lines or >20k chars), and automatic top-level phase transitions. An explicit gate answer that directly asks to keep moving (`full`, `continue`, `approve and run`, `start execution`, `run full kickoff`) does not consume the gate close checkpoint or the phase checkpoint for the transition it authorizes; set in-memory `codex_host_gate_continuation = true` for that answered gate.
-   - When any budget is reached, write the smallest durable state update available (`last_activity`, `next_action`, `pending_gate` or `background` if present), render `Codex host budget reached: <reason>; state preserved; resume with /masterplan next or /masterplan --resume=<state-path>.`, then → CLOSE-TURN.
-   - After any Codex `request_user_input`, resolve that gate result before doing anything else. If the result is weak/no evidence, use the recommended-answer/no-selection terminal render and → CLOSE-TURN. If it is explicit, apply the selected option and persist `gate_closed`. Then continue when `halt_mode == none`, `requested_verb in {full, execute}`, `codex_host_gate_continuation == true`, or the selected option itself is a continuation option (`Continue to plan now`, `Approve and run writing-plans`, `Start execution now`, `Run full kickoff`). Close only for true halt gates (`post-brainstorm`, `post-plan`, resume/status/doctor/clean/retro pickers), weak/no-selection gates, sensitive live-auth blockers, or an actual budget hit.
+6. **Codex user-facing resume syntax.** Set in-memory `codex_user_entrypoint = "$masterplan"` for visible Codex close-out instructions. Any user-facing resume, next, pause, blocker, or budget-stop hint rendered while `codex_host_suppressed == true` MUST use `$masterplan ...`, e.g. `$masterplan next`, `$masterplan execute <state-path>`, or `$masterplan --resume=<state-path>`. Do not tell a Codex user to resume with Claude Code's `/masterplan ...` form unless the user explicitly asks for Claude Code instructions.
+7. **Codex host performance guard.** Host-suppressed mode is a bounded interactive mode, not a license to execute the whole workflow inline and not a blanket halt after every answered gate. Set in-memory `codex_host_perf_guard = {tool_budget: 40, gate_budget: 1, large_read_budget: 2, phase_budget: 1}` for the invocation unless the user explicitly supplied both `/loop` and `--autonomy=full`. These budgets are hard close checkpoints, not persisted config.
+   - Count shell/tool calls made by the orchestrator itself, unresolved structured gates surfaced by this command, large reads of prompt/plan/spec/transcript/event-log files (roughly >500 lines or >20k chars), and automatic top-level phase transitions. An explicit gate answer that directly asks to keep moving (`full`, `continue`, `approve and run`, `start execution`, `run full kickoff`) does not consume the gate close checkpoint or the phase checkpoint for the transition it authorizes; set in-memory `codex_host_gate_continuation = true` for that answered gate.
+   - When any budget is reached, write the smallest durable state update available (`last_activity`, `next_action`, `pending_gate` or `background` if present), set `stop_reason: scheduled_yield`, append `continuation_scheduled`, render `Codex host budget reached: <reason>; state preserved; resume with $masterplan next or $masterplan execute <state-path>.`, then → CLOSE-TURN.
+   - After any Codex `request_user_input`, resolve that gate result before doing anything else. If the result contains no answer, use the no-selection terminal render and → CLOSE-TURN. If it returns an answer label or free-form text, including the first/recommended option, treat that as explicit interactive selection evidence: apply the selected option and persist `gate_closed`. Then continue when `halt_mode == none`, `requested_verb in {full, execute}`, `codex_host_gate_continuation == true`, or the selected option itself is a continuation option (`Continue to plan now`, `Approve and run writing-plans`, `Start execution now`, `Run full kickoff`). Close only for true halt gates (`post-brainstorm`, `post-plan`, resume/status/doctor/clean/retro pickers), no-selection gates, sensitive live-auth blockers, or an actual budget hit.
    - Never close with a generic Codex-hosted structured-gate rationale as the sole reason. Codex host suppression disables recursive Codex dispatch; it does not override explicit full-flow or continuation intent in the same turn.
-7. **Codex host summary-first loading.** For bare, `next`, `status`, `doctor`, `audit`, and transcript-review-style invocations, inspect run state through summary commands first (`bin/masterplan-state.sh inventory` when available, otherwise `rg --files docs/masterplan` plus targeted `state.yml` reads). Do not read the full `commands/masterplan.md`, full plans/specs, full transcripts, or full event logs unless the user explicitly asked to edit/audit that file or the targeted summary proves the full file is required.
-8. **Sensitive live-auth stop.** For workflows involving credentials, MFA, browser login, tax/finance/government portals, or other sensitive live-auth surfaces, Codex-hosted masterplan may perform at most one login/auth attempt per explicit user instruction. Never echo, store, or summarize secret values from transcripts. If auth blocks, persist/return a blocker with the next required user action and → CLOSE-TURN; do not loop through additional prompts or retries.
+8. **Codex host summary-first loading.** For bare, `next`, `status`, `doctor`, `audit`, and transcript-review-style invocations, inspect run state through summary commands first (`bin/masterplan-state.sh inventory` when available, otherwise `rg --files docs/masterplan` plus targeted `state.yml` reads). Do not read the full `commands/masterplan.md`, full plans/specs, full transcripts, or full event logs unless the user explicitly asked to edit/audit that file or the targeted summary proves the full file is required.
+9. **Sensitive live-auth stop.** For workflows involving credentials, MFA, browser login, tax/finance/government portals, or other sensitive live-auth surfaces, Codex-hosted masterplan may perform at most one login/auth attempt per explicit user instruction. Never echo, store, or summarize secret values from transcripts. If auth blocks, persist/return a blocker with the next required user action and → CLOSE-TURN; do not loop through additional prompts or retries.
 
 ### Codex availability detection (v2.0.0+)
 
@@ -153,8 +156,8 @@ docs/masterplan/<slug>/
 ```yaml
 schema_version: 2
 slug: <feature-slug>
-status: in-progress | blocked | complete | archived
-phase: worktree_decided | brainstorming | spec_gate | planning | plan_gate | executing | task_gate | blocked | complete | retro_gate | archived
+status: in-progress | blocked | complete | archived  # blocked is reserved for critical_error only
+phase: worktree_decided | brainstorming | spec_gate | planning | plan_gate | executing | task_gate | finish_gate | critical_error | complete | retro_gate | archived
 worktree: /absolute/path/to/worktree
 branch: <git-branch-name>
 started: 2026-05-01
@@ -169,6 +172,8 @@ compact_loop_recommended: true | false
 complexity: low | medium | high
 pending_gate: null
 background: null
+stop_reason: null | question | critical_error | complete | scheduled_yield
+critical_error: null
 artifacts:
   spec: docs/masterplan/<slug>/spec.md
   plan: docs/masterplan/<slug>/plan.md
@@ -186,9 +191,9 @@ legacy: {}
 
 **Persist every gate before asking.** Immediately before any `AskUserQuestion`, write a `pending_gate` object to `state.yml` with `{id, phase, question, options, recommended, continuation}` and append a matching `gate_opened` event. Immediately after applying an explicitly selected option, clear `pending_gate: null`, append `gate_closed`, then continue. If a later invocation finds `pending_gate` still set, resume by re-rendering that exact structured question instead of re-deriving a new one from conversation context.
 
-**Gate selection evidence is mandatory.** A recommended option is presentation, not consent. After any `AskUserQuestion` / Codex `request_user_input`, continue only when the current turn has explicit selection evidence: a user reply, a structured input payload, or a tool result that identifies a deliberately chosen option or free-form `Other` text. If the host resumes without visible selection evidence, do NOT choose the recommended/default option, do NOT clear `pending_gate`, do NOT append `gate_closed`, and do NOT mutate phase/artifacts. Instead render `Gate pending: <pending_gate.id> — no selection received; no action taken.` and → CLOSE-TURN. Any `gate_closed` event whose detail says "user selected" or "user chose" MUST be backed by explicit selection evidence from the current turn.
+**Gate selection evidence is mandatory.** A recommended option is presentation, not consent before the gate is answered. After any `AskUserQuestion` / Codex `request_user_input`, continue only when the current turn has explicit selection evidence: a user reply, a structured input payload, a tool result that identifies a selected option label, or free-form `Other` text. If the host resumes without visible selection evidence, do NOT choose the recommended/default option, do NOT clear `pending_gate`, do NOT append `gate_closed`, and do NOT mutate phase/artifacts. Instead render `Gate pending: <pending_gate.id> — no selection received; no action taken.` and → CLOSE-TURN. Any `gate_closed` event whose detail says "user selected" or "user chose" MUST be backed by explicit selection evidence from the current turn.
 
-**Codex recommended-answer guard.** In Codex, a `request_user_input` tool result that selects only the first/recommended option and includes no free-form `user_note` is weak evidence, not explicit selection evidence. Treat it as if no selection was received: preserve `pending_gate`, perform no state/artifact mutation, and render `Gate pending: <pending_gate.id> — recommended option was not treated as consent; no action taken.` then → CLOSE-TURN. This guard exists because Codex transcripts have recorded recommended-option outputs even when the user later stated they had not been able to select anything. Non-recommended selections and answers with `user_note` may be treated as explicit selection evidence unless contradicted by a later user message.
+**Codex interactive-selection evidence.** In Codex, `request_user_input` is the interactive question UI. If its tool result returns an answer label, that answer is explicit selection evidence even when it is the first/recommended option and even when there is no free-form `user_note`. Treat the returned answer as the user-selected option, clear `pending_gate`, append `gate_closed`, and continue according to that option. Only preserve the gate with `Gate pending: <pending_gate.id> — no selection received; no action taken.` when the tool result lacks an answer entirely, the host errors, or a later user message contradicts the returned selection.
 
 **Persist every background continuation.** If an Agent/Codex/subagent handoff returns "running in background" or otherwise leaves work executing after the current turn, write a `background` object before closing:
 
@@ -203,6 +208,26 @@ background:
 ```
 
 Also set `next_action` to the exact poll/review action and append `background_started` to `events.jsonl`. Clear `background: null` only after Step C has ingested the result or the user explicitly discards the background marker.
+
+**Loop-first stop contract.** Masterplan is a resumable controller, not a checklist the operator must remember. Every active-run turn may close only through one of these persisted reasons:
+
+- `question` — write `pending_gate`, set `stop_reason: question`, append `question_opened` (or the matching `gate_opened`) before asking. A later invocation re-renders the gate before any new work.
+- `critical_error` — set `status: blocked`, `phase: critical_error`, `stop_reason: critical_error`, populate `critical_error: {code, summary, attempted_recovery, safe_next_options}`, append `critical_error_opened`, then ask for recovery or close.
+- `complete` — set `status: complete`, `phase: complete`, `stop_reason: complete`, clear `pending_gate`, `background`, and `critical_error`, append `plan_completed`, and do not reschedule.
+- `scheduled_yield` — set `stop_reason: scheduled_yield`, write the exact scheduled continuation in `next_action` or `background`, append `continuation_scheduled` or `wakeup_scheduled`, then close.
+
+Ordinary task blockers, weak/no gate evidence, Codex host budget limits, background polling, loop quotas, and context pressure are resumable conditions. They MUST keep `status: in-progress` and either persist a `pending_gate` (`stop_reason: question`) or persist a scheduled continuation (`stop_reason: scheduled_yield`). Do not flip `status: blocked` for routine "come back later" states.
+
+Safety-only critical errors are limited to conditions where continuing without user input risks corruption or irreversible damage: malformed or contradictory state that cannot be safely interpreted, missing or mismatched worktree/branch where automatic correction risks user work, destructive or production-visible approval required, missing auth/secrets required to continue, repeated verification/review failure after the documented recovery ladder, or a protocol violation that leaves the worktree/state provenance untrustworthy.
+
+**Resume controller.** At the start of bare `/masterplan`, `$masterplan`, `execute`, `next`, and `--resume` flows, after Step 0 config parsing and before any broad menu or fresh-start routing, run this controller against live `state.yml`:
+
+1. If `pending_gate` is non-null, re-render that exact gate and do not infer a default answer.
+2. Else if `critical_error` is non-null or `status: blocked`, render the recorded recovery gate; do not auto-resume unsafe work.
+3. Else if `background` is non-null, poll or review the recorded background continuation before dispatching any new work.
+4. Else if `status: complete`, route only to completion follow-up, retro, archive, or status flows.
+5. Else if one active `status: in-progress` plan is unambiguous, resume it automatically from `phase`, `current_task`, and `next_action`.
+6. Else if multiple active plans are present, show a structured picker; never fall back to a broad feature menu while active work exists.
 
 **Legacy migration.** Previous versions wrote state under `docs/superpowers/{plans,specs,retros,archived-*}` with `<slug>-status.md` plus sibling sidecars. Step 0 treats legacy status paths as resolvable inputs. Before listing, doctoring, cleaning, status reporting, or executing a legacy plan, run the same inventory logic as `bin/masterplan-state.sh inventory`. If a legacy record has no matching `docs/masterplan/<slug>/state.yml`, surface an `AskUserQuestion` with options:
 
@@ -560,7 +585,7 @@ If the JSONL doesn't exist (no Stop hook installed, or first turn on this plan),
 
 ## Step M — Bare-invocation resume-first router
 
-Fires when `/masterplan` is invoked with no args. Default behavior is **resume-first**: try to continue interrupted project work before showing any broad menu. The two-tier `AskUserQuestion` menu is now the empty-state fallback for repos with no active masterplan plan.
+Fires when `/masterplan` (Claude Code) or `$masterplan` (Codex) is invoked with no args. Default behavior is **resume-first**: try to continue interrupted project work before showing any broad menu. The two-tier `AskUserQuestion` menu is now the empty-state fallback for repos with no active masterplan plan.
 
 ### Step M0 — Inline status orientation (runs before resume-first routing)
 
@@ -574,12 +599,12 @@ Before resume-first routing, emit a structured plain-text orientation summarizin
 
 3. **Run 7 cheap inline tripwire checks** per parsed entry. All inputs are already in memory (frontmatter + `git_state` cache):
    - **#10 Unparseable** — frontmatter parse failure.
-   - **#9 Schema violation** — any required state fields missing (`slug`, `status`, `phase`, `worktree`, `branch`, `started`, `last_activity`, `current_task`, `next_action`, `autonomy`, `loop_enabled`, `codex_routing`, `codex_review`, `compact_loop_recommended`, `complexity`, `artifacts.plan`, `artifacts.spec`, `artifacts.events`).
-   - **#2 Orphan state** — `artifacts.plan` points at a missing plan when `phase` is `plan_gate | executing | task_gate | blocked | complete | retro_gate | archived`. Issue all `test -f` calls as one parallel Bash batch.
+   - **#9 Schema violation** — any required state fields missing (`slug`, `status`, `phase`, `worktree`, `branch`, `started`, `last_activity`, `current_task`, `next_action`, `autonomy`, `loop_enabled`, `codex_routing`, `codex_review`, `compact_loop_recommended`, `complexity`, `pending_gate`, `stop_reason`, `critical_error`, `artifacts.plan`, `artifacts.spec`, `artifacts.events`).
+   - **#2 Orphan state** — `artifacts.plan` points at a missing plan when `phase` is `plan_gate | executing | task_gate | finish_gate | critical_error | complete | retro_gate | archived`. Issue all `test -f` calls as one parallel Bash batch.
    - **#3 Wrong worktree** — `worktree` frontmatter value not present in `git_state.worktrees` paths.
    - **#4 Wrong branch** — `branch` frontmatter value not present in `git_state.branches`.
    - **#5 Stale in-progress** — `status: in-progress` AND `last_activity` more than 30 days ago.
-   - **#6 Stale blocked** — `status: blocked` AND `last_activity` more than 14 days ago.
+   - **#6 Stale critical error** — `status: blocked` AND `stop_reason: critical_error` AND `last_activity` more than 14 days ago.
 
    Increment a `tripwire_count` for each tripped check. Do NOT enumerate which check fired — that is `/masterplan doctor`'s job. M0 only counts.
 
@@ -613,7 +638,7 @@ Before resume-first routing, emit a structured plain-text orientation summarizin
 6. **Cache for resume-first routing and Step A reuse.** Store the full parsed plan list (not just the top 3) in a transient `step_m_plans_cache`. If routing falls through to Step A, Step A consults this cache first and skips its own worktree scan + Haiku dispatch. The cache is discarded at end-of-turn regardless of the route.
 
 7. **Resolve auto-resume candidate.** Build:
-   - `active_plans = status ∈ {in-progress, blocked}`.
+   - `active_plans = status ∈ {in-progress, blocked}`. `status: blocked` means a persisted `critical_error` recovery gate, not ordinary task pause.
    - `in_progress_plans = status == in-progress`.
    - `current_worktree` from Step 0's repo root (or `pwd`/`git rev-parse --show-toplevel` if needed).
    - `current_branch` from live `git rev-parse --abbrev-ref HEAD`.
@@ -623,7 +648,7 @@ Before resume-first routing, emit a structured plain-text orientation summarizin
    - Else if exactly one `in_progress` plan exists across all worktrees, choose it.
    - Else choose none.
 
-   Do **not** auto-resume `status: blocked` plans. Blocked plans need an explicit choice because the next action may require user context.
+   Do **not** auto-resume `status: blocked` plans. Blocked plans need an explicit recovery choice because continuing may be unsafe.
 
 8. **Route without the full menu when active work exists.**
    - If `auto_resume_candidate` exists: emit `Resuming <slug> — current: <current_task>` and route directly to **Step C** with that `state.yml` path. No picker.
@@ -695,7 +720,7 @@ Fires on `/masterplan next`. Treats "next" as a **continuation signal**, not a t
 1. **Scan state files inline** — parallel `Read` calls across `docs/masterplan/*/state.yml` and legacy status paths (same as Step M0 step 2). No subagent dispatch — file count is bounded at 20 and YAML is small.
 
 2. **Categorize findings:**
-   - `active` — `status: in-progress` OR `status: blocked`
+   - `active` — `status: in-progress` OR `status: blocked` (`blocked` is a critical-error recovery gate, not an ordinary pause)
    - `follow_up_pending` — `status: complete` AND `next_action` is non-empty after trimming AND is not a terminal/sentinel value (`completion finalizer`, `complete`, `done`, `archived`, `none`)
    - `retro_pending` — `status: complete` with no bundled `retro.md`
    - `recently_complete` — `status: complete`, modified in last 7 days, retro present
@@ -852,7 +877,7 @@ The run bundle will be committed inside whichever worktree you're in when brains
 
 5. Record the chosen worktree path and branch — they go into `state.yml` before Step B1.
 
-6. **Create the run bundle immediately.** Derive `<slug>` from the topic (stable slug, no date prefix; the date lives in `started`). Create `<config.runs_path>/<slug>/state.yml` and `<config.runs_path>/<slug>/events.jsonl` before invoking brainstorming. If the directory already exists, surface `AskUserQuestion("Run docs/masterplan/<slug>/ already exists. What now?", options=["Resume existing run (Recommended)", "Use <slug>-v2", "Abort kickoff"])`. Initial state: `status: in-progress`, `phase: worktree_decided`, `current_task: ""`, `next_action: brainstorm spec`, `pending_gate: null`, artifact paths under `docs/masterplan/<slug>/`, and `legacy: {}`. Append an event: `{"type":"run_created","phase":"worktree_decided",...}`.
+6. **Create the run bundle immediately.** Derive `<slug>` from the topic (stable slug, no date prefix; the date lives in `started`). Create `<config.runs_path>/<slug>/state.yml` and `<config.runs_path>/<slug>/events.jsonl` before invoking brainstorming. If the directory already exists, surface `AskUserQuestion("Run docs/masterplan/<slug>/ already exists. What now?", options=["Resume existing run (Recommended)", "Use <slug>-v2", "Abort kickoff"])`. Initial state: `status: in-progress`, `phase: worktree_decided`, `current_task: ""`, `next_action: brainstorm spec`, `pending_gate: null`, `background: null`, `stop_reason: null`, `critical_error: null`, artifact paths under `docs/masterplan/<slug>/`, and `legacy: {}`. Append an event: `{"type":"run_created","phase":"worktree_decided",...}`.
 
 #### Step B0a — `plan --from-spec=<path>` worktree handling
 
@@ -939,8 +964,8 @@ brainstorm_anchor:
 3. Check that the spec contains an `Intent Anchor` or `Scope Boundary` section. If missing, update `state.yml`: `pending_gate.id: brainstorm_anchor_missing`, `phase: brainstorming`, then surface `AskUserQuestion("Spec is missing the brainstorm intent anchor. What now?", options=["Re-run brainstorming with the saved anchor (Recommended)", "Patch the spec anchor now", "Abort kickoff"])`.
 4. **If spec exists** (the normal case): update `state.yml`: `phase: spec_gate`, `artifacts.spec: <config.runs_path>/<slug>/spec.md`, `next_action: approve spec for planning`; append `spec_written` to `events.jsonl`, then consult `halt_mode`.
    - **`halt_mode == none`** (existing kickoff path, unchanged): under `--autonomy != full`, persist `pending_gate` with `id: spec_approval` and then surface `AskUserQuestion("Spec written at <path>. Ready for writing-plans?", options=[Approve and run writing-plans (Recommended) / Open spec to review first then ping me / Request changes — describe what to change / Abort kickoff])`. Under `--autonomy=full`: auto-approve, clear `pending_gate`, and proceed to Step B2 silently.
-   - **`halt_mode == post-brainstorm`** (new, fires when invoked via `/masterplan brainstorm <topic>`): persist `pending_gate` with `id: brainstorm_closeout` and then surface `AskUserQuestion("Spec written at <path>. What next?", options=["Done — close out this run (Recommended)", "Continue to plan now — run B2+B3 as if /masterplan plan --from-spec=<path> (the B0 worktree decision from earlier this session still holds; B0a is not re-run)", "Open spec to review before deciding — then ping me", "Re-run brainstorming to refine"])`.
-     - "Done" → clear `pending_gate`, set `phase: spec_gate`, append `gate_closed`, → CLOSE-TURN. The run bundle remains resumable from `state.yml` even though no plan exists yet.
+   - **`halt_mode == post-brainstorm`** (new, fires when invoked via `/masterplan brainstorm <topic>`): persist `pending_gate` with `id: brainstorm_closeout`, set `stop_reason: question`, and then surface `AskUserQuestion("Spec written at <path>. What next?", options=["Done — close out this run (Recommended)", "Continue to plan now — run B2+B3 as if /masterplan plan --from-spec=<path> (the B0 worktree decision from earlier this session still holds; B0a is not re-run)", "Open spec to review before deciding — then ping me", "Re-run brainstorming to refine"])`.
+     - "Done" → clear `pending_gate`, leave `stop_reason: question`, set `phase: spec_gate`, append `gate_closed`, → CLOSE-TURN. The next bare `/masterplan` or `$masterplan` invocation resumes from `state.yml` even though no plan exists yet.
      - "Continue to plan now" → flip in-session `halt_mode` to `post-plan` and proceed to Step B2. The spec is reused.
      - "Open spec" → → CLOSE-TURN; user re-invokes whatever they want next.
      - "Re-run brainstorming to refine" → re-invoke `superpowers:brainstorming` against the same topic; the previous spec is overwritten.
@@ -1012,10 +1037,10 @@ Then flip `compact_loop_recommended: true` in `state.yml`. Whether or not the us
 
 - **`halt_mode == none`** (existing kickoff path, unchanged): if `--autonomy != full`, persist `pending_gate` with `id: plan_approval`, then present a one-paragraph plan summary and the path to the plan file via `AskUserQuestion` with options "Start execution / Open plan to review / Cancel". Wait for approval. If `--autonomy=full`: clear `pending_gate` and skip approval. Proceed to **Step C** with the new `state.yml` path.
 
-- **`halt_mode == post-plan`** (new, fires when invoked via `/masterplan plan <topic>`, `/masterplan plan --from-spec=<path>`, Step A's spec-without-plan variant's pick, or via B1's "Continue to plan now" flip from a `brainstorm` invocation): persist `pending_gate` with `id: plan_closeout`, then surface `AskUserQuestion("Plan written at <path>. State file at <state-path>. What next?", options=["Done — resume later with /masterplan execute <state-path> (Recommended)", "Start execution now — flip halt_mode to none and proceed to Step C", "Open plan to review before deciding", "Discard plan + state file (spec kept)"])`.
-  - "Done" → clear `pending_gate`, → CLOSE-TURN. `state.yml` persists with `status: in-progress`, `phase: plan_gate`, and `current_task` set to the first task. The user resumes later via `/masterplan execute <state-path>`.
+- **`halt_mode == post-plan`** (new, fires when invoked via `/masterplan plan <topic>`, `/masterplan plan --from-spec=<path>`, Step A's spec-without-plan variant's pick, or via B1's "Continue to plan now" flip from a `brainstorm` invocation): persist `pending_gate` with `id: plan_closeout`, set `stop_reason: question`, then surface `AskUserQuestion("Plan written at <path>. State file at <state-path>. What next?", options=["Done — resume later with <manual-resume-command> (Recommended)", "Start execution now — flip halt_mode to none and proceed to Step C", "Open plan to review before deciding", "Discard plan + state file (spec kept)"])`. Resolve `<manual-resume-command>` by host: Claude Code uses `/masterplan execute <state-path>`; Codex uses `$masterplan execute <state-path>`.
+  - "Done" → clear `pending_gate`, leave `stop_reason: question`, → CLOSE-TURN. `state.yml` persists with `status: in-progress`, `phase: plan_gate`, and `current_task` set to the first task. The next bare `/masterplan` or `$masterplan` invocation resumes from this state without requiring the operator to remember the command.
   - "Start execution now" → flip in-session `halt_mode` to `none` and proceed to **Step C**.
-  - "Open plan" → clear `pending_gate`, → CLOSE-TURN. User re-invokes `/masterplan execute <state-path>` later.
+  - "Open plan" → clear `pending_gate`, leave `stop_reason: question`, → CLOSE-TURN. The next bare `/masterplan` or `$masterplan` invocation resumes from this state.
   - "Discard" → `git rm` the plan file and `state.yml`; commit (`masterplan: discard plan <slug>` subject); → CLOSE-TURN [pre-close: git rm + commit done above]. Spec is kept.
 
 The state file's `autonomy`, `codex_routing`, `codex_review`, `loop_enabled` fields are populated from this run's flags per the post-plan flag-persistence rule in Step 0; they take effect on the eventual `execute` invocation.
@@ -1037,19 +1062,19 @@ The state file's `autonomy`, `codex_routing`, `codex_review`, `loop_enabled` fie
 
    Reconcile `current_task` against the plan's task list if the plan has been edited since the status was written.
 
-   - **Parse guard.** If `state.yml` fails to parse as YAML, surface this immediately via `AskUserQuestion`: "State file at `<path>` is corrupted. Open it for manual fix / Run /masterplan doctor / Abort." Do NOT attempt to silently regenerate — the user's edits may have been intentional and partial.
-   - **Pending-gate resume.** If `pending_gate` is non-null, re-render that exact structured question before doing any new routing. Clear it only after CD-7's explicit selection-evidence rule is satisfied, applying the selected option, and appending `gate_closed` to `events.jsonl`.
+   - **Parse guard.** If `state.yml` fails to parse as YAML, treat this as a safety-only critical error. If `events.jsonl` is still addressable from the path, append `critical_error_opened` with `code: state_parse_failed`; if not, render the recovery gate without writing. Surface immediately via `AskUserQuestion`: "State file at `<path>` is corrupted. Open it for manual fix / Run /masterplan doctor / Abort." Do NOT attempt to silently regenerate — the user's edits may have been intentional and partial.
+   - **Pending-gate resume.** If `pending_gate` is non-null, set `stop_reason: question` if it is missing or stale, then re-render that exact structured question before doing any new routing. Clear it only after CD-7's explicit selection-evidence rule is satisfied, applying the selected option, appending `gate_closed` to `events.jsonl`, and clearing `stop_reason` unless the chosen option itself closes the turn.
    - **Background-dispatch resume.** If `background` is non-null, poll/re-read the recorded `agent_id` or `output_path` before any new task dispatch. Do not redispatch the current task until this check resolves:
-     - If the background task is still running, persist `pending_gate` and surface `AskUserQuestion("Background task for <task> is still running. What next?", options=["Poll again now (Recommended)", "Schedule wakeup — resume this state later", "Pause here"])`. Under `/loop`, scheduling is allowed; outside `/loop`, a plain pause is valid.
+     - If the background task is still running, persist `pending_gate`, set `stop_reason: question`, and surface `AskUserQuestion("Background task for <task> is still running. What next?", options=["Poll again now (Recommended)", "Schedule wakeup — resume this state later", "Pause here"])`. Under `/loop`, scheduling sets `stop_reason: scheduled_yield` after `wakeup_scheduled`; outside `/loop`, a plain pause remains resumable from the same `background` marker.
      - If the background task finished successfully, ingest the returned digest, append `background_finished`, set `background: null`, and continue at Step C step 4a/4d with that digest as the implementer result.
-     - If the background task failed, timed out, or produced no readable output, append `background_failed`, clear or keep the marker according to an `AskUserQuestion("Background task did not return usable output. What next?", options=["Rerun inline (Recommended)", "Keep waiting", "Clear marker and pause"])`, then route accordingly.
+     - If the background task failed, timed out, or produced no readable output, append `background_failed`, persist `pending_gate`, set `stop_reason: question`, clear or keep the marker according to an `AskUserQuestion("Background task did not return usable output. What next?", options=["Rerun inline (Recommended)", "Keep waiting", "Clear marker and pause"])`, then route accordingly.
      - If the recorded output path is missing, treat that as ambiguous rather than success. The default route is inline rerun only after the user picks it.
    - **Complexity resolution on resume.** Re-run the Step 0 complexity-resolution rules using the just-loaded `state.yml` fields as the new tier-2 input.
      - If the resumed state lacks a `complexity:` field (legacy or hand-authored state), treat as `medium` and DO NOT write the field unless the user explicitly passes `--complexity=<level>` on this turn.
      - If `--complexity=<new>` is on the CLI AND `<new>` differs from the state value: update `complexity:` in `state.yml`, append a `complexity_changed` event with old/new/source, and use the new value for this run.
      - On every Step C entry (kickoff first entry OR resume), emit ONE `complexity_resolved` event per the format in Step 0's Complexity resolution subsection. Cite the resolved knob values that diverge from the complexity-derived defaults table (per Operational rules' Complexity precedence).
-   - **Verify the worktree.** Compare `state.yml`'s `worktree` field to the current working directory (from the `pwd` above). If they differ, `cd` into the recorded worktree before continuing. If the recorded worktree no longer exists (e.g. removed via `git worktree remove`), persist `pending_gate`, then surface this as a blocker via `AskUserQuestion`: "Worktree at `<path>` is missing. Recreate it / use the current worktree / abort."
-   - **Verify the branch.** Compare the captured branch to `state.yml`'s `branch` field. If they differ, persist `pending_gate`, then surface `AskUserQuestion`: "HEAD is on `<current-branch>` but the plan was started on `<recorded-branch>`. Switching silently could lose work." with options: **(1) Switch to `<recorded-branch>` first (Recommended)**, **(2) Continue on `<current-branch>` — I accept the divergence risk**, **(3) Abort the resume**. Apply the chosen action before proceeding to Step C step 1.
+   - **Verify the worktree.** Compare `state.yml`'s `worktree` field to the current working directory (from the `pwd` above). If they differ, `cd` into the recorded worktree before continuing. If the recorded worktree no longer exists (e.g. removed via `git worktree remove`), persist `pending_gate`, set `stop_reason: question`, append `question_opened`, then surface this as a safety gate via `AskUserQuestion`: "Worktree at `<path>` is missing. Recreate it / use the current worktree / abort."
+   - **Verify the branch.** Compare the captured branch to `state.yml`'s `branch` field. If they differ, persist `pending_gate`, set `stop_reason: question`, append `question_opened`, then surface `AskUserQuestion`: "HEAD is on `<current-branch>` but the plan was started on `<recorded-branch>`. Switching silently could lose work." with options: **(1) Switch to `<recorded-branch>` first (Recommended)**, **(2) Continue on `<current-branch>` — I accept the divergence risk**, **(3) Abort the resume**. Apply the chosen action before proceeding to Step C step 1.
 
    **Complexity gate (eligibility cache).** When `resolved_complexity == low`, skip the entire eligibility-cache decision tree below — the cache file is NOT built and is NOT loaded. Step 3a's per-task lookup falls back to: `codex_routing` resolves to its complexity-derived default `off` at low (per Operational rules' Complexity precedence), so no delegation decision is needed per task. Doctor check #14 (orphan eligibility cache) does not flag absence on low plans (handled by Task 12's check-set gate).
 
@@ -1252,10 +1277,10 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
 2. If `--no-subagents` is set: invoke `superpowers:executing-plans`. Otherwise: invoke `superpowers:subagent-driven-development`. Hand the invoked skill the plan path and the current task index. Brief the implementer subagent with **CD-1, CD-2, CD-3, CD-6** AND prepend the verbatim SDD model-passthrough preamble (defined in §Agent dispatch contract recursive-application — copy the fenced text block literally; do not paraphrase). The preamble's signature string `For every inner Task / Agent invocation you make` is what the audit script and downstream tools key on. This preamble is required because SDD's prompt-template files (`implementer-prompt.md`, `spec-reviewer-prompt.md`, `code-quality-reviewer-prompt.md`) are upstream and don't carry model parameters by default — without the override, the inner Task calls inherit the orchestrator's Opus and the wave's `model: "sonnet"` discipline doesn't propagate. (Wave-mode tasks bypass this step's serial dispatch — they were already dispatched in the wave assembly pre-pass above.)
 3. Layer the autonomy policy on top of the invoked skill's per-task loop:
    - **`gated`** — before each task, call `AskUserQuestion(continue / skip-this-task / stop).` Honor the answer. **Routing decisions made via the eligibility cache (under `codex_routing == auto`) are honored silently** — the per-task question is NOT expanded with a Codex-override option, since the user pre-configured auto-routing and `events.jsonl` records every decision post-hoc. Users who want the legacy expanded prompt set `codex.confirm_auto_routing: true` in `.masterplan.yaml`; in that case the question expands to `(continue inline / continue via Codex / skip / stop)`. Under `codex_routing == manual`, do NOT expand here — Step 3a's per-task `AskUserQuestion` already handles routing.
-   - **`loose`** — run autonomously. On a blocker, **apply CD-4** first; only after two rungs have failed, persist a blocker event and surface the **blocker re-engagement gate** below before setting `status: blocked` and ending the turn. Cite the rungs tried in the blocker event. Do NOT reschedule a wakeup.
+   - **`loose`** — run autonomously. On a blocker, **apply CD-4** first; only after two rungs have failed, persist a blocker event and surface the **blocker re-engagement gate** below. Keep `status: in-progress` unless the user explicitly marks the condition as a critical error. Cite the rungs tried in the blocker event. Do NOT reschedule a wakeup unless the gate option selected is a scheduled continuation.
    - **`full`** — run autonomously, applying **CD-4** more aggressively before escalating: at least two ladder rungs, plus `superpowers:systematic-debugging` for test failures and spec reinterpretation cited in `events.jsonl`. Escalate to the **blocker re-engagement gate** only after the full ladder fails.
 
-   **Blocker re-engagement gate (CRITICAL — applies under all autonomy modes when a blocker surfaces).** Before setting `status: blocked` and ending the turn, the orchestrator MUST persist `pending_gate` and surface `AskUserQuestion` so the user has a clear continuation path. Never just write a blocker event and end silently — the user wakes up later to a state update with no clear next move, the same UX the spec/plan-gate fix addressed. Concrete pattern (covers SDD's BLOCKED/NEEDS_CONTEXT escalations AND CD-4-exhausted gates):
+   **Blocker re-engagement gate (applies under all autonomy modes when a blocker surfaces).** Before closing the turn for an ordinary blocker, the orchestrator MUST persist `pending_gate`, set `stop_reason: question`, append `question_opened`, and surface `AskUserQuestion` so the user has a clear continuation path. Never just write a blocker event and end silently — the user wakes up later to a state update with no clear next move, the same UX the spec/plan-gate fix addressed. Concrete pattern (covers SDD's BLOCKED/NEEDS_CONTEXT escalations AND CD-4-exhausted gates):
 
    ```
    AskUserQuestion(
@@ -1264,12 +1289,12 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
        "Provide context and re-dispatch — I'll type the missing context, you re-dispatch the implementer with it",
        "Re-dispatch with a stronger model (Opus instead of Sonnet) — escalate model tier",
        "Skip this task and continue with the next one — append a blocker event but keep status: in-progress",
-       "Set status: blocked and end the turn — I'll resume manually later"
+       "Record critical error and stop — continuing would risk user work or invalid state"
      ]
    )
    ```
 
-   The first three options KEEP the plan moving (status stays `in-progress`); only the fourth option matches the legacy "end-turn-on-blocker" behavior. Under `--autonomy=full` the orchestrator may pre-select option 4 after surfacing the persisted gate ONCE per blocker (the gate fires, user gets ~10 seconds to override, then default fires) — but never under `loose` or `gated`, where the user must explicitly pick an option. (Option count is capped at 4 per CD-9.)
+   The first three options KEEP the plan moving (`status: in-progress`). The fourth option is safety-only: set `status: blocked`, `phase: critical_error`, `stop_reason: critical_error`, populate `critical_error`, append `critical_error_opened`, then close. Under `--autonomy=full`, do not pre-select the fourth option; a critical-error stop requires explicit evidence or one of the safety-only critical-error classes listed in the Loop-first stop contract. (Option count is capped at 4 per CD-9.)
 
    Activity log records which option was picked (e.g., `task X blocked, user chose: re-dispatch with Opus`).
 
@@ -1287,14 +1312,14 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
    **Wave-level outcome.** Computed from per-member outcomes:
 
    - **All completed** → wave succeeds. Single-writer 4d update applies all N completions. Status remains `in-progress` (or flips to `complete` if last task in plan).
-   - **All blocked** → wave fails. 4d appends N blocker events; status flips to `blocked`. Blocker re-engagement gate (above) fires ONCE, listing all N blocked tasks together. Each option's semantics extend naturally (Provide context: re-dispatch all N as a sub-wave; Stronger model: re-dispatch all N with Opus override; Skip: all N get blocker events, wave-count advances; End turn: status remains `blocked`).
-   - **Partial (K completed, N-K blocked, K ≥ 1, N-K ≥ 1)** → wave completes-with-blockers. 4d appends K completed events AND N-K blocker events. Status flips to `blocked`. Blocker re-engagement gate fires once, listing the N-K blocked tasks. **The completed K tasks' digests are NOT discarded** — applied by the single-writer 4d update BEFORE the gate fires (standard partial-failure case).
+   - **All blocked** → wave pauses for recovery. 4d appends N blocker events; status remains `in-progress`; the blocker re-engagement gate (above) fires ONCE, listing all N blocked tasks together. Each option's semantics extend naturally (Provide context: re-dispatch all N as a sub-wave; Stronger model: re-dispatch all N with Opus override; Skip: all N get blocker events, wave-count advances; Record critical error: status flips to `blocked` with `stop_reason: critical_error`).
+   - **Partial (K completed, N-K blocked, K ≥ 1, N-K ≥ 1)** → wave completes-with-blockers. 4d appends K completed events AND N-K blocker events. Status remains `in-progress`; the blocker re-engagement gate fires once, listing the N-K blocked tasks. **The completed K tasks' digests are NOT discarded** — applied by the single-writer 4d update BEFORE the gate fires (standard partial-failure case).
 
    **Protocol violation handling.** If `config.parallelism.abort_wave_on_protocol_violation: true` (default), orchestrator **suppresses the 4d batch entirely** when ANY wave member is reclassified as `protocol_violation` — none of the K completed digests are applied. Wave is treated as fully blocked; completed digests remain in orchestrator memory and become available to the gate's "Skip" branch (re-applied as events when advancing past the wave). Append a `protocol_violation` event: *"task `<name>` committed `<commit-sha>` despite wave instruction. Verify manually before continuing — wave-end state update was suppressed."* If `abort_wave_on_protocol_violation: false`, the standard partial-failure path applies (K digests applied, N-K blockers including the violator).
 
    **Slow-member handling (E.1 mitigation, v2.8.0+).** Per the post-hoc scan in the per-member outcomes section, members with `duration_ms > config.parallelism.member_timeout_sec * 1000` get the `slow_member` tag at the NEXT Step C entry. Behavior depends on `config.parallelism.on_member_timeout`:
    - **`warn`** (default) — append a `slow_member` warning event: *"Slow wave member: task `<name>` (idx `<i>`) ran `<dur>s` (member_timeout_sec=`<N>`s). Wave: `<group-name>`. Digest was honored normally; investigate the underlying task or raise the threshold."* The completed/blocked outcome is honored as-is — slow does not block forward progress.
-   - **`blocker`** — re-classify the slow member as blocked at the next Step C entry: append a corrective event that supersedes the prior completion, restore the prior `current_task` pointer to the slow member's index, append a blocker event: *"Wave member `<name>` exceeded member_timeout_sec (`<dur>s` vs `<N>s`). Operator review required before continuing."*, and route through the blocker re-engagement gate. Use this when the plan's correctness depends on bounded wave times (e.g., CI-bounded plans where slow members would push downstream tasks past a deadline).
+   - **`blocker`** — re-classify the slow member as blocked at the next Step C entry: append a corrective event that supersedes the prior completion, restore the prior `current_task` pointer to the slow member's index, append a blocker event: *"Wave member `<name>` exceeded member_timeout_sec (`<dur>s` vs `<N>s`). Operator review required before continuing."*, keep `status: in-progress`, and route through the blocker re-engagement gate. Use this when the plan's correctness depends on bounded wave times (e.g., CI-bounded plans where slow members would push downstream tasks past a deadline).
 
    **Edge case: SDD escalates BLOCKED/NEEDS_CONTEXT mid-wave.** When an SDD instance returns BLOCKED/NEEDS_CONTEXT BEFORE the wave-completion barrier, orchestrator does NOT immediately fire the blocker re-engagement gate — it waits for the rest of the wave. Gate fires once at wave-end with the union of all blocked members. Cleanest UX: one gate firing per wave, not N firings.
 
@@ -1317,7 +1342,7 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
           4. `Abort` — → CLOSE-TURN, status unchanged, no inline fallthrough. User investigates manually.
       - **`block`** — skip the AskUserQuestion entirely. **Single-writer exception under explicit user opt-in**: this is one of the few state writes outside Step 4d. The opt-in is `config.codex.unavailable_policy: block` itself — the user explicitly chose hard-halt over silent inline. Wave-mode interaction: if currently dispatched within a parallel wave, defer the block-write until wave-end (when the wave-completion barrier returns) and apply it through Step 4d's same write path with the blocker event appended to the wave-end batch. This preserves the single-writer rule for waves. For serial routing (no wave active), the block-write happens immediately as described.
 
-        Effects: Set `status: blocked`. Append a blocker event: *"Codex routing precondition failed: eligibility_cache missing under codex_routing=<routing>. config.codex.unavailable_policy=block; user opted into hard-halt over silent inline. Re-run with codex installed (orchestrator will rebuild cache) OR set codex_routing: off in state.yml."*. → CLOSE-TURN [pre-close: status flip + blocker event done above].
+        Effects: Set `status: blocked`, `phase: critical_error`, `stop_reason: critical_error`, and `critical_error.code: codex_routing_precondition_failed`. Append `critical_error_opened`: *"Codex routing precondition failed: eligibility_cache missing under codex_routing=<routing>. config.codex.unavailable_policy=block; user opted into hard-halt over silent inline. Re-run with codex installed (orchestrator will rebuild cache) OR set codex_routing: off in state.yml."*. → CLOSE-TURN [pre-close: critical-error state + event done above].
 
     **Why P2 exists**: the orchestrator's previous default (silent fallthrough to inline when cache was missing) was the root cause of the optoe-ng project-review zero-codex pattern. P2 turns that silent failure into a loud one. Combined with P1's evidence-of-attempt entry, the orchestrator either has cache + tags OR has loud user-facing prompts + persistent markers — never quiet inline-bypass.
 
@@ -1506,11 +1531,11 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
       - **`loose`**:
         - No or low-severity → auto-accept; tag events.
         - Medium → append a `review_medium_findings` event for human attention later; accept and continue.
-        - High → set `status: blocked`, append a blocker event with file:line cites, → CLOSE-TURN [pre-close: status: blocked + blocker event done above] (no reschedule per the existing blocker policy).
+        - High → run the CD-4 recovery ladder first. If the finding still reproduces after the allowed fix/re-review attempt, set `status: blocked`, `phase: critical_error`, `stop_reason: critical_error`, populate `critical_error.code: codex_review_high_severity`, append `critical_error_opened` with file:line cites, → CLOSE-TURN. High-severity review stops are critical errors because continuing would knowingly advance broken or unsafe code.
       - **`full`**:
         - No or low → auto-accept.
         - Medium → append a `review_medium_findings` event; continue.
-        - High → attempt up to `config.codex.review_max_fix_iterations` fix iterations (rerun inline with findings as added briefing). If still high-severity afterward, set `status: blocked`. Each iteration counts as a CD-4 ladder rung.
+        - High → attempt up to `config.codex.review_max_fix_iterations` fix iterations (rerun inline with findings as added briefing). If still high-severity afterward, set `status: blocked`, `phase: critical_error`, `stop_reason: critical_error`, populate `critical_error.code: codex_review_high_severity`, and append `critical_error_opened`. Each iteration counts as a CD-4 ladder rung.
    5. Completion events get a review tag alongside the routing tag, e.g. `[inline][reviewed: clean]` or `[inline][reviewed: 2 medium, 1 low]`. Full findings digest goes to events only when severity is medium or higher — clean and low-only reviews don't need extra event noise.
 
    **4c — Worktree-integrity (CD-2 check).** Apply CD-2: `git status --porcelain` should show only task-scope files. If unexpected files appear, surface to the user before continuing; never silently revert their work.
@@ -1556,7 +1581,7 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
    | Condition | Route |
    |---|---|
    | All tasks in plan are `done` | → Step C step 6 (finishing-branch wrap) |
-   | Status was just flipped to `blocked` (from 4a / 4b high severity / 4c CD-2 violation) | → CLOSE-TURN [pre-close: 4a/4b/4c already wrote blocker event + status flip] |
+   | `critical_error` was just populated (from 4a / 4b high severity / 4c CD-2 violation) | → CLOSE-TURN [pre-close: 4a/4b/4c already wrote `critical_error_opened` + critical-error state] |
    | `ScheduleWakeup` available (running under `/loop`) | → Step C step 5 (loop scheduling — fires every 3 tasks or when context tight) |
    | `ScheduleWakeup` unavailable AND `resolved_autonomy == full` | → re-enter Step C step 2 with `current_task` = next not-done task. Do NOT close turn. Same-turn dispatch. |
    | `ScheduleWakeup` unavailable AND `resolved_autonomy ∈ {gated, loose}` | → fire **per-task gate** (below) |
@@ -1567,15 +1592,16 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
      question="Task <T-idx> (<task name>) complete. Continue to <next-task name>?",
      options=[
        "Continue (Recommended) — dispatch <next-task name> now",
-       "Pause here — re-invoke /masterplan --resume=<state-path> when ready",
-       "Schedule wakeup — set up /loop /masterplan --resume=<state-path> at the configured interval"
+       "Pause here — re-invoke <manual-resume-command> when ready",
+       "Schedule wakeup — set up <loop-resume-command> at the configured interval"
      ]
    )
    ```
+   Resolve `<manual-resume-command>` by host: Claude Code uses `/masterplan --resume=<state-path>`; Codex uses `$masterplan execute <state-path>`. Resolve `<loop-resume-command>` as `/loop /masterplan --resume=<state-path>` only when the host actually supports `/loop`/`ScheduleWakeup`. Do not surface `/masterplan --resume=<state-path>` as the manual Codex resume command.
    Routing of choices:
    - **Continue** → re-enter Step C step 2 with `current_task` updated. Same-turn dispatch.
-   - **Pause here** → → CLOSE-TURN [pre-close: 4d already committed].
-   - **Schedule wakeup** → call `ScheduleWakeup(delaySeconds=config.loop_interval_seconds, prompt="/masterplan --resume=<state-path>", reason="Continuing <slug> at task <next-task name>")`, append a `wakeup_scheduled` event, → CLOSE-TURN. (Honors `config.loop_max_per_day` quota — same check as step 5's daily-quota branch.)
+   - **Pause here** → set `stop_reason: question` and → CLOSE-TURN [pre-close: 4d already committed].
+   - **Schedule wakeup** → call `ScheduleWakeup(delaySeconds=config.loop_interval_seconds, prompt="/masterplan --resume=<state-path>", reason="Continuing <slug> at task <next-task name>")`, set `stop_reason: scheduled_yield`, append a `wakeup_scheduled` event, → CLOSE-TURN. (Honors `config.loop_max_per_day` quota — same check as step 5's daily-quota branch.)
 
    **Why this gate uses AskUserQuestion, not silent-continue.** Per-user contract (May 7 2026 review of the petabit-www T10→T11 free-text exit): under `gated` and `loose` autonomy without `/loop`, every task boundary is a checkpoint. Free-text gates ("Want me to continue?") are forbidden by CD-9; structured AskUserQuestion is the only legal close at this site. Under `--autonomy=full` the gate is suppressed and tasks advance silently — that's the explicit autonomy contract. Under `/loop`, step 5's wakeup-scheduling runs instead — that's the explicit cross-session contract.
 
@@ -1585,7 +1611,7 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
    - **Complexity gate.** If `resolved_complexity == low`, wakeup ledger events are NOT maintained (per Operational rules' Complexity precedence: `loop_enabled` defaults to `false` at low, so no `ScheduleWakeup` is even called; however, if the user explicitly enabled the loop via override, `ScheduleWakeup` runs but the ledger event below is SKIPPED). Doctor checks #19 + #20 do not fire on low plans (handled by Task 12's check-set gate).
    - **Competing-scheduler suppression.** If `competing_scheduler_keep == true` (in-memory flag set by Step C step 1's competing-scheduler check when the user picked "Keep the cron, suspend wakeups this session"), skip scheduling silently for the rest of the session. The user-acknowledged cron is the sole pacer.
    - **CC-1 check.** Before scheduling the wakeup, apply CC-1 (operational rules): if `cc1_silenced` is not set and any symptom (file_cache ≥3 hits same path, ≥3 consecutive same-target tool failures, events rotated this session, subagent ≥5K-char return) accumulated this session, surface the non-blocking compact-suggest notice. Continue with scheduling regardless — CC-1 is informational, never blocks.
-   - **Daily quota check.** Track wakeup count for this plan via `wakeup_scheduled` events in `events.jsonl`. Before scheduling, count entries from the last 24 hours; if `>= config.loop_max_per_day` (default 24), do NOT schedule — set status to `blocked` with reason "loop quota exhausted; resume manually with `/masterplan --resume=<state-path>`" and → CLOSE-TURN [pre-close: status flip + blocker event done above]. This prevents runaway scheduling under unexpected loop conditions.
+   - **Daily quota check.** Track wakeup count for this plan via `wakeup_scheduled` events in `events.jsonl`. Before scheduling, count entries from the last 24 hours; if `>= config.loop_max_per_day` (default 24), do NOT schedule another wakeup. Keep `status: in-progress`, persist `pending_gate` with `id: loop_quota_exhausted`, set `stop_reason: question`, append `question_opened`, and ask whether to extend quota, pause until manual resume, or disable loop for this plan. This prevents runaway scheduling under unexpected loop conditions without converting quota exhaustion into a false critical error.
    - Otherwise, after every 3 completed tasks (where a wave-end counts as ONE completion regardless of N — so a wave of 5 doesn't trigger 5 wakeup-threshold increments), OR when context usage looks tight, call:
      ```
      ScheduleWakeup(
@@ -1594,14 +1620,14 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
        reason="Continuing <slug> at task <next-task-name>"
      )
      ```
-     append the `wakeup_scheduled` event, then → CLOSE-TURN [pre-close: ScheduleWakeup + event append done above]. The next firing re-enters this command via Step C.
+     set `stop_reason: scheduled_yield`, append the `wakeup_scheduled` event, then → CLOSE-TURN [pre-close: ScheduleWakeup + event append done above]. The next firing re-enters this command via Step C.
    - Do NOT reschedule when `status` is `complete` or `blocked`.
    - If `ScheduleWakeup` is not available (not running under `/loop`), step 5 is **not the entry point** — Step C step 4e's post-task router has already routed to the per-task gate or to silent-continue under `--autonomy=full`. This bullet exists for documentation only; step 5's body is reachable only when 4e selects it.
 6. **On plan completion:** run the completion finalizer, then pre-empt the skill's "Which option?" prompt. `superpowers:finishing-a-development-branch` will otherwise present a free-text `1. Merge / 2. Push+PR / 3. Keep / 4. Discard — Which option?` question. That free-text prompt can stall a session if it compacts before the user answers (same silent-stop bug pattern). Avoid this by handling durable completion state first, then surfacing `AskUserQuestion` for the branch-finish choice.
 
    **6a — Pre-completion dirty check, then mark complete.** Before writing `status: complete`, run live `git status --porcelain` in the plan's recorded worktree. Classify output into task-scope changes (files touched by the plan, run-bundle state, generated artifacts that belong to this plan) and unrelated dirty user work.
 
-   - If task-scope changes are dirty/uncommitted, do NOT mark complete. Under `<run-dir>/state.lock`, keep `status: in-progress`, set `phase: finish_gate`, set `current_task: "finish branch"`, set `next_action: commit remaining task-scope work before completion`, set `pending_gate` for the finish choice, append `completion_dirty_gate`, and surface:
+   - If task-scope changes are dirty/uncommitted, do NOT mark complete. Under `<run-dir>/state.lock`, keep `status: in-progress`, set `phase: finish_gate`, set `current_task: "finish branch"`, set `next_action: commit remaining task-scope work before completion`, set `pending_gate` for the finish choice, set `stop_reason: question`, append `completion_dirty_gate`, and surface:
      ```
      AskUserQuestion(
        question="All plan tasks are done, but task-scope work is still uncommitted. What next?",
@@ -1617,7 +1643,7 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
    - If unrelated dirty user work exists but task-scope work is clean, mark the plan complete but include the unrelated paths in `plan_completed` as ignored dirt. Do not stage or clean unrelated files.
    - If the worktree is clean for task scope, proceed.
 
-   Under `<run-dir>/state.lock`, set `status: complete`, `phase: complete`, `current_task: ""`, `next_action: none`, `pending_gate: null`, `background: null`, and `last_activity: <now>`. Append a `plan_completed` event to `events.jsonl` with the final task count, final verification summary, completion SHA if available, and the dirty-check summary. Commit this state update with subject `masterplan: complete <slug>` unless the same commit already contains the final task's state update. Do not reschedule.
+   Under `<run-dir>/state.lock`, set `status: complete`, `phase: complete`, `current_task: ""`, `next_action: none`, `pending_gate: null`, `background: null`, `stop_reason: complete`, `critical_error: null`, and `last_activity: <now>`. Append a `plan_completed` event to `events.jsonl` with the final task count, final verification summary, completion SHA if available, and the dirty-check summary. Commit this state update with subject `masterplan: complete <slug>` unless the same commit already contains the final task's state update. Do not reschedule.
 
    **6b — Auto-retro by default.** Unless `--no-retro` was passed OR `config.completion.auto_retro == false`, invoke Step R internally with the resolved slug and `completion_auto=true`. This is not an `AskUserQuestion` option and does not depend on `resolved_complexity`: low, medium, and high plans all get a retro by default. Step R writes `docs/masterplan/<slug>/retro.md`; Step R3.5 archives the run state when `config.retro.auto_archive_after_retro != false`; Step R4 commits the retro/state/events directly in internal mode. If retro generation fails, append a `completion_retro_failed` event, leave `status: complete`, and continue to the branch-finish gate; do NOT lose the completed run.
 
@@ -1711,7 +1737,7 @@ First, for each candidate that has a discernible task list, run completion-state
 
 Then dispatch one Sonnet conversion subagent (pass `model: "sonnet"` per §Agent dispatch contract) per candidate in a single Agent batch. Each agent owns unique target paths from I3.1 and writes only inside its own run directory — no contention. Brief per agent:
 
-> Rewrite this legacy planning artifact into superpowers spec format (`<spec-path>`) and plan format (`<plan-path>`) following the writing-plans skill conventions. Drop tasks classified `done`. Move `possibly_done` tasks into a `## Verify before continuing` checklist at the top of the plan, each with its evidence. Keep `not_done` tasks as the active task list, reformatted into bite-sized steps (writing-plans style). Preserve constraints, decisions, and stakeholder context in the spec's Background section. Discard pure status narration. Do not invent tasks the source didn't mention. Then write `state.yml` at `<state-path>` populating **every** required run-state field per the Step B3 field list (`schema_version: 2`, `slug`, `status: in-progress`, `phase: executing`, `artifacts.spec`, `artifacts.plan`, `artifacts.events`, `worktree`, `branch`, `started` today, `last_activity` now, `current_task` = first `not_done` task, `next_action` = its first step, `autonomy`, `loop_enabled`, `codex_routing`, `codex_review`, `compact_loop_recommended: false`, `complexity`, `pending_gate: null`, `legacy:` source pointers), and seed `events.jsonl` with: link back to source (path/URL/branch/issue#), inference evidence summary, list of `possibly_done` items the user should verify before execution.
+> Rewrite this legacy planning artifact into superpowers spec format (`<spec-path>`) and plan format (`<plan-path>`) following the writing-plans skill conventions. Drop tasks classified `done`. Move `possibly_done` tasks into a `## Verify before continuing` checklist at the top of the plan, each with its evidence. Keep `not_done` tasks as the active task list, reformatted into bite-sized steps (writing-plans style). Preserve constraints, decisions, and stakeholder context in the spec's Background section. Discard pure status narration. Do not invent tasks the source didn't mention. Then write `state.yml` at `<state-path>` populating **every** required run-state field per the Step B3 field list (`schema_version: 2`, `slug`, `status: in-progress`, `phase: executing`, `artifacts.spec`, `artifacts.plan`, `artifacts.events`, `worktree`, `branch`, `started` today, `last_activity` now, `current_task` = first `not_done` task, `next_action` = its first step, `autonomy`, `loop_enabled`, `codex_routing`, `codex_review`, `compact_loop_recommended: false`, `complexity`, `pending_gate: null`, `background: null`, `stop_reason: null`, `critical_error: null`, `legacy:` source pointers), and seed `events.jsonl` with: link back to source (path/URL/branch/issue#), inference evidence summary, list of `possibly_done` items the user should verify before execution.
 
 Bounded scope per agent: writes only inside its own `(run_dir, spec_path, plan_path, state_path, events_path)`; do not touch other candidates' paths or the legacy source.
 
@@ -1761,7 +1787,7 @@ The orchestrator merges per-worktree digests into a single in-memory model.
 Group findings into salience-ordered sections. Skip empty sections silently.
 
 1. **In-flight** — `status: in-progress` plans, sorted by `last_activity` desc. For each: slug, branch, worktree (relative-from-current if applicable), `current_task`, `next_action`, age (e.g. "active 2h ago"), last 3 events.
-2. **Blocked** — `status: blocked` plans, sorted by oldest blocker first. For each: slug, blocker summary (first blocker event), how long blocked.
+2. **Critical errors** — `status: blocked` plans, sorted by oldest critical-error first. For each: slug, critical-error summary (first `critical_error_opened` event or `critical_error.summary`), how long blocked.
 3. **Recently completed** — `status: complete` modified in last 7 days. Slug + completion date + retro link if present + commit count since branch start.
 4. **Stale** — `status: in-progress` with `last_activity` > 14 days. Triage candidates.
 5. **Telemetry signals** — for plans with telemetry: turns/day trend (last 7 days), transcript-bytes growth rate (proxy for tokens-per-turn), event throughput. One short line per plan.
@@ -1961,7 +1987,7 @@ Read worktrees from `git_state.worktrees` (Step 0 cache). For each worktree, sca
 
 **Complexity-aware check set.** For each scanned plan, read `complexity` from `state.yml` (default `medium` if absent — legacy/pre-feature plans). The active check set varies:
 
-- `low` plans: run only checks #1 (orphan plan), #2 (orphan status), #3 (wrong worktree), #4 (wrong branch), #5 (stale in-progress), #6 (stale blocked), #8 (missing spec), #9 (schema, against the standard 15-field set), #10 (unparseable), #18 (codex misconfig). SKIP all sidecar / annotation / ledger / cache / queue / per-subagent-telemetry checks (#11–#17, #19–#21, #23, #24) — low plans do not produce those artifacts. Also skip #22 (high-only — see below).
+- `low` plans: run only checks #1 (orphan plan), #2 (orphan status), #3 (wrong worktree), #4 (wrong branch), #5 (stale in-progress), #6 (stale critical error), #8 (missing spec), #9 (schema, against the standard run-state field set), #10 (unparseable), #18 (codex misconfig). SKIP all sidecar / annotation / ledger / cache / queue / per-subagent-telemetry checks (#11–#17, #19–#21, #23, #24) — low plans do not produce those artifacts. Also skip #22 (high-only — see below).
 - `medium` plans: run all 25 plan-scoped checks except #22 (high-only).
 - `high` plans: run all 25 plan-scoped checks INCLUDING #22 (high-complexity rigor evidence).
 - Plans without a `complexity:` state field: treat as `medium`.
@@ -1979,10 +2005,10 @@ For each worktree, run all checks. Report findings grouped by worktree → check
 | 3 | **Wrong worktree path** — `state.yml`'s `worktree` doesn't match any current `git worktree list` entry. | Error | Try to match by branch name; rewrite if unique match. Otherwise report. |
 | 4 | **Wrong branch** — `state.yml`'s `branch` doesn't exist in `git branch --list`. | Error | Report only (manual fix). |
 | 5 | **Stale in-progress** — `status: in-progress` with `last_activity` > 30 days. | Warning | Report only. |
-| 6 | **Stale blocked** — `status: blocked` with `last_activity` > 14 days. | Warning | Report only. |
+| 6 | **Stale critical error** — `status: blocked` or `stop_reason: critical_error` with `last_activity` > 14 days. | Warning | Report only. |
 | 7 | **Plan/log drift** — plan task count differs from activity-log task references by >50%. | Warning | Report only. |
 | 8 | **Missing spec** — `state.yml`'s `artifacts.spec` points at a missing spec doc when the phase requires one. | Error | Report only; if `legacy.spec` exists, suggest re-copying it into the bundle. |
-| 9 | **Schema violation** — `state.yml` missing required fields. Required set: `schema_version`, `slug`, `status`, `phase`, `artifacts.spec`, `artifacts.plan`, `artifacts.events`, `worktree`, `branch`, `started`, `last_activity`, `current_task`, `next_action`, `autonomy`, `loop_enabled`, `codex_routing`, `codex_review`, `compact_loop_recommended`, `complexity`, `pending_gate`. | Error | Add missing fields with sentinel/derived values where possible (e.g. `pending_gate: null`, `compact_loop_recommended: false`); report the rest. |
+| 9 | **Schema violation** — `state.yml` missing required fields. Required set: `schema_version`, `slug`, `status`, `phase`, `artifacts.spec`, `artifacts.plan`, `artifacts.events`, `worktree`, `branch`, `started`, `last_activity`, `current_task`, `next_action`, `autonomy`, `loop_enabled`, `codex_routing`, `codex_review`, `compact_loop_recommended`, `complexity`, `pending_gate`, `stop_reason`, `critical_error`. | Error | Add missing fields with sentinel/derived values where possible (e.g. `pending_gate: null`, `stop_reason: null`, `critical_error: null`, `compact_loop_recommended: false`); report the rest. |
 | 10 | **Unparseable state file** — `state.yml` YAML is malformed, or legacy status frontmatter/body is malformed. | Error | Report only (manual fix needed). Step A skips these silently, but doctor calls them out. |
 | 11 | **Orphan events archive** — `events-archive.jsonl` exists without sibling `state.yml`, or legacy `<slug>-status-archive.md` exists without legacy status. | Warning | Suggest moving the archive to `<config.archive_path>/<date>/`. No auto-fix. |
 | 12 | **Telemetry file growth** — `telemetry.jsonl` OR `subagents.jsonl` (or legacy equivalents) > 5 MB. | Warning | Rotate to `telemetry-archive.jsonl` / `subagents-archive.jsonl` (the active file becomes empty; new appends start fresh). |
@@ -2201,8 +2227,8 @@ Path: `docs/masterplan/<slug>/state.yml` (sibling to the run artifacts).
 ```yaml
 schema_version: 2
 slug: <feature-slug>
-status: in-progress | blocked | complete | archived
-phase: worktree_decided | brainstorming | spec_gate | planning | plan_gate | executing | task_gate | blocked | complete | retro_gate | archived
+status: in-progress | blocked | complete | archived  # blocked is reserved for critical_error only
+phase: worktree_decided | brainstorming | spec_gate | planning | plan_gate | executing | task_gate | finish_gate | critical_error | complete | retro_gate | archived
 artifacts:
   spec: docs/masterplan/<slug>/spec.md
   plan: docs/masterplan/<slug>/plan.md
@@ -2224,6 +2250,9 @@ codex_review: off | on
 compact_loop_recommended: true | false
 complexity: low | medium | high
 pending_gate: null
+background: null
+stop_reason: null | question | critical_error | complete | scheduled_yield
+critical_error: null
 # Optional: telemetry: off  # silences per-plan telemetry capture
 # Optional v2.1.0+: gated_switch_offer_dismissed: true  # permanent per-plan suppression of gated→loose offer
 # Optional v2.1.0+: gated_switch_offer_shown: true      # per-session suppression (re-fires on cross-session resume)
@@ -2348,7 +2377,7 @@ codex:
                                       # values: degrade-loudly | block
                                       # `degrade-loudly` (default): emit warning + write degradation marker + AskUserQuestion fallback
                                       # path. Step 0's degradation block (above) and Step C step 3a's precondition halt both honor this.
-                                      # `block`: skip user prompts; set status: blocked + append blocker event; end the turn.
+                                      # `block`: skip user prompts; record a critical_error, set status: blocked, and end the turn.
                                       # For users who'd rather a stuck plan than a silent-codex-skip plan.
   detection_mode: ping                # v2.8.0+: how Step 0 detects codex availability
                                       # values: ping | scan | trust
@@ -2435,7 +2464,7 @@ integrations:
   linear:
     project: null             # e.g. INGEST; requires Linear MCP
   slack:
-    blocked_channel: null     # post here when status: blocked, requires Slack MCP
+    blocked_channel: null     # post here when critical_error/status: blocked, requires Slack MCP
 ```
 
 ### Adding new keys
@@ -2456,8 +2485,8 @@ These are command-specific rules covering cross-cutting policy not stated inline
 - **Inference is conservative by design.** When in doubt, classify `possibly_done`, not `done`. The cost of re-verifying is small; the cost of skipping real work is large.
 - **Per-task boundaries are not natural stopping points.** Step C step 4e (post-task router) is the only legal close site between tasks. Any free-text variant of "Want me to continue?" / "Should I proceed?" / "Shall I advance?" / "Let me know when you're ready to continue" / "Continue to T<N>?" — emitted at any post-task boundary, in any phrasing — is a CD-9 violation. Use the structured AskUserQuestion in 4e; under `/loop` or `--autonomy=full`, do not pause at all.
 - **Don't stop silently anywhere — always close with AskUserQuestion if input might be needed.** ANY Step that ends a turn waiting on user input MUST close with `AskUserQuestion` offering 2-4 concrete options, never with free-text prose ("Wait for the user's response", "Which approach?", "Type 'X' to confirm"). Sessions can compact between turns and lose upstream-skill bodies; a free-text question becomes a dead end. This rule applies recursively when the orchestrator invokes upstream skills that have their own pre-existing free-text prompts — `superpowers:finishing-a-development-branch` ("1./2./3./4. Which option?"), `superpowers:using-git-worktrees` ("1./2. Which directory?"), `superpowers:writing-plans` ("Subagent-Driven / Inline Execution. Which approach?"), `superpowers:brainstorming` ("Wait for the user's response" at User Reviews Spec). For each, the orchestrator MUST present `AskUserQuestion` FIRST and brief the skill with the chosen option pre-decided so the skill's free-text prompt is bypassed. Canonical patterns: Step B0 step 4 (worktree directory), Step B1+B2 re-engagement gates (spec/plan review), Step C step 3's blocker re-engagement gate (CD-4-exhausted gate; SDD BLOCKED/NEEDS_CONTEXT escalation), Step C step 6 (finishing-branch wrap).
-- **Structured-gate answers must be real answers.** A recommended option is never an implicit answer. If `AskUserQuestion` / Codex `request_user_input` returns control without explicit selection evidence, the only legal close is the CD-7 `Gate pending: <id> — no selection received; no action taken.` terminal render with the existing `pending_gate` preserved. In Codex, a recommended-only `request_user_input` answer with no `user_note` is also weak evidence and must close via the CD-7 recommended-answer guard. Do not run the recommended branch, do not write `gate_closed`, and do not claim the user chose anything.
-- **Codex host work is budgeted.** When `codex_host_suppressed == true`, the orchestrator is running inside the same Codex context that would otherwise receive delegated work. Keep that context small: summary-first state inspection, targeted section reads, limited unresolved/weak structured gates, and no full transcript/event-log ingestion unless the user explicitly asked for that file-level audit. Do not close solely because a Codex `request_user_input` gate was answered explicitly; full-flow and continuation selections authorize the next phase transition and continue until a true halt gate, sensitive live-auth blocker, or Step 0 Codex host performance budget is actually hit.
+- **Structured-gate answers must be real answers.** A recommended option is never an implicit answer before the gate is answered. If `AskUserQuestion` / Codex `request_user_input` returns control without explicit selection evidence, the only legal close is the CD-7 `Gate pending: <id> — no selection received; no action taken.` terminal render with the existing `pending_gate` preserved. In Codex, a `request_user_input` tool result that identifies an answer label is explicit selection evidence even when the label is first/recommended and no `user_note` is present. Run the selected branch, write `gate_closed`, and record the selected label.
+- **Codex host work is budgeted.** When `codex_host_suppressed == true`, the orchestrator is running inside the same Codex context that would otherwise receive delegated work. Keep that context small: summary-first state inspection, targeted section reads, limited unresolved structured gates, and no full transcript/event-log ingestion unless the user explicitly asked for that file-level audit. Do not close solely because a Codex `request_user_input` gate was answered explicitly; full-flow and continuation selections authorize the next phase transition and continue until a true halt gate, sensitive live-auth blocker, or Step 0 Codex host performance budget is actually hit.
 - **Sensitive live-auth workflows stop at the first blocker.** For tax, finance, government, browser-login, MFA, or credential-bearing workflows, do not cycle through repeated gates or attempts. Redact secrets from any transcript-derived summary, ask only for the next concrete non-secret action when needed, and close once auth prevents further progress.
 - **External writes are gated.** Posting comments to GitHub issues/PRs, sending Slack messages, or closing issues during import always passes through `AskUserQuestion` first — even under `--autonomy=full`. Blast-radius actions.
 - **Codex routing is locked at kickoff, switchable on resume.** `codex_routing` and `codex_review` both land in `state.yml` at Step B3 (or at first Step C invocation for imported plans). Mid-run flips happen by re-invoking `/masterplan --resume=<path> --codex=<mode> --codex-review=<on|off>`. Per-task overrides come from plan annotations (`**Codex:** ok` / `**Codex:** no`), not inline edits.

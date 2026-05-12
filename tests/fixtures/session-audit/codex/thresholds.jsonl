@@ -1,0 +1,6 @@
+{"type":"session_meta","payload":{"id":"eeeeeeee-0000-0000-0000-000000000005","cwd":"/tmp/dev/threshold-repo","timestamp":"2026-05-11T12:00:00Z"}}
+{"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":{"cmd":"git status --short"},"timestamp":"2026-05-11T12:00:01Z"}}
+{"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":{"cmd":"git branch --show-current"},"timestamp":"2026-05-11T12:00:02Z"}}
+{"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":{"cmd":"git log -1"},"timestamp":"2026-05-11T12:00:03Z"}}
+{"type":"response_item","payload":{"type":"function_call","name":"request_user_input","arguments":{},"timestamp":"2026-05-11T12:00:04Z"}}
+{"type":"response_item","payload":{"type":"function_call","name":"request_user_input","arguments":{},"timestamp":"2026-05-11T12:00:05Z"}}

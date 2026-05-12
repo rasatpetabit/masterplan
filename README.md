@@ -28,6 +28,10 @@ on track for multi-week projects.
 - Resume any in-flight work from `state.yml` plus bundled artifacts. No
   conversation context required, no compaction loss, no "what was I doing
   again?"
+- Bare `/masterplan` and Codex `$masterplan` invocations are loop-first: they
+  re-render pending structured gates, poll recorded background work, recover
+  critical errors explicitly, or continue the only unambiguous in-progress plan
+  without requiring the operator to track state manually.
 - Survives `/compact`, fresh sessions, and handoff between agents — pass a
   plan to Codex or another Claude session and they pick up exactly where the
   last one stopped.
@@ -141,21 +145,24 @@ load the same config tiers as Claude Code: `~/.masterplan.yaml`, then
 `<repo-root>/.masterplan.yaml`, then invocation flags.
 
 After install, invoke masterplan in Codex with either natural language or the
-slash-style text form:
+portable skill form:
 
 ```text
 Use masterplan status for this repo
-/masterplan
-/masterplan full Stripe webhook handler
-/masterplan status
+$masterplan
+$masterplan full Stripe webhook handler
+$masterplan status
+$masterplan execute docs/masterplan/auth-refactor/state.yml
 ```
 
 Codex may expose plugin slash commands differently across builds. The reliable
-contract is prompt exposure through the `masterplan` skill; `/masterplan` is
-treated as skill input when the host passes it to the model. If your Codex build
-registers the marketplace but a fresh prompt does not list `masterplan`, enable
-`superpowers-masterplan@rasatpetabit-superpowers-masterplan` in Codex's plugin
-UI or config, or install a user-level bridge at
+contract is prompt exposure through the `masterplan` skill, so Codex-facing
+resume hints use `$masterplan ...`. Slash-style text such as `/masterplan` or
+`/superpowers-masterplan:masterplan` is accepted when the host passes it to the
+model, but it is not the portable resume instruction for Codex. If your Codex
+build registers the marketplace but a fresh prompt does not list `masterplan`,
+enable `superpowers-masterplan@rasatpetabit-superpowers-masterplan` in Codex's
+plugin UI or config, or install a user-level bridge at
 `~/.codex/skills/masterplan/SKILL.md` from this repo's `skills/masterplan/`
 directory. The same `commands/masterplan.md` orchestrator is used for Claude Code
 and Codex; Codex follows the compatibility block at the top of that prompt plus
@@ -297,10 +304,11 @@ Resume work:
 /masterplan --resume=docs/masterplan/auth-refactor/state.yml
 ```
 
-With no args, `/masterplan` tries to resume interrupted work first: it
-auto-continues the current or only in-progress plan, opens the resume picker
-when active work is ambiguous, and shows the broader phase/operations menu only
-when no active plan exists.
+With no args, `/masterplan` or `$masterplan` tries to resume interrupted work
+first: it re-renders pending gates, handles recorded critical errors, polls
+background continuations, auto-continues the current or only in-progress plan,
+opens the resume picker when active work is ambiguous, and shows the broader
+phase/operations menu only when no active plan exists.
 
 Every run lives in one directory:
 
@@ -319,9 +327,12 @@ docs/masterplan/<slug>/
 ```
 
 `state.yml` is created before brainstorming starts, so compaction or a stopped
-session can resume from a durable phase pointer. Older `docs/superpowers/...`
-layouts are discovered by `bin/masterplan-state.sh inventory` and copied into
-this bundle layout by `bin/masterplan-state.sh migrate --write`.
+session can resume from a durable phase pointer. It records `stop_reason` and
+`critical_error` separately: ordinary pauses stay `in-progress` with a question
+or scheduled continuation, while `blocked` is reserved for safety-critical
+recovery. Older `docs/superpowers/...` layouts are discovered by
+`bin/masterplan-state.sh inventory` and copied into this bundle layout by
+`bin/masterplan-state.sh migrate --write`.
 
 When the last task completes, `/masterplan` checks live git status before
 marking the run complete. If task-scope work is still dirty, it keeps the run in
@@ -388,12 +399,16 @@ output formats: `table` (default, terminal), `json` (jq-pipeable), `md`
 `bash <plugin-root>/bin/masterplan-session-audit.sh` is the read-only incident
 audit for recent Claude, Codex, and `/masterplan` telemetry logs. It scans a
 configurable time window, prints repo-level totals and top offending sessions,
-and warns on runaway Codex tool calls, repeated shell-tool loops, Claude
+and warns on runaway Codex tool calls, unclassified active Masterplan stops,
+repeated shell-tool loops, Claude
 AskUserQuestion/Agent fanout, SessionStart payload bloat, oversized transcript
-telemetry, and missing telemetry for active masterplan-like sessions. The output
+telemetry, and missing telemetry for sessions with explicit `/masterplan`
+invocation/runtime markers. The output
 is content-redacted: it reports counters, repo labels, session IDs, tool names,
 and telemetry sizes, not user prompts, shell commands, credentials, or tool
-results.
+results. JSON output includes stable warning `code` fields for downstream
+automation, and the self-host audit runs fixture-backed regressions for the
+classifier and warning contract.
 
 ```bash
 bin/masterplan-session-audit.sh --hours=24
@@ -509,7 +524,7 @@ integrations:
   linear:
     project: null
   slack:
-    blocked_channel: null
+    blocked_channel: null  # critical_error/status: blocked notifications
 ```
 
 The canonical behavior and schema details live in
@@ -584,7 +599,7 @@ for details and the upstream issue link.
 
 ## Project Status
 
-Current release: **v3.2.3**.
+Current release: **v3.2.4**.
 
 - Release history: [`CHANGELOG.md`](./CHANGELOG.md)
 - Contributor internals: [`docs/internals.md`](./docs/internals.md)

@@ -1,6 +1,6 @@
 ---
 name: masterplan
-description: Use when the user invokes /masterplan, /superpowers-masterplan:masterplan, asks to brainstorm, plan, execute, resume, import, doctor, status, next, retro, or clean masterplan work, or asks about existing docs/masterplan run bundles created by Claude.
+description: Use when the user invokes $masterplan, /masterplan, /superpowers-masterplan:masterplan, asks to brainstorm, plan, execute, resume, import, doctor, status, next, retro, or clean masterplan work, or asks about existing docs/masterplan run bundles created by Claude.
 ---
 
 # Codex entrypoint for Superpowers Masterplan
@@ -65,6 +65,8 @@ user-global defaults such as `autonomy`, `complexity`, `runs_path`, or
 
 Treat these user inputs as this skill:
 
+- `$masterplan`
+- `$masterplan <args>`
 - `/masterplan`
 - `/masterplan <args>`
 - `/superpowers-masterplan:masterplan`
@@ -73,7 +75,13 @@ Treat these user inputs as this skill:
   masterplan work.
 
 The arguments are the text after the command name. If there are no arguments,
-follow the command's bare invocation flow.
+follow the command's bare invocation flow: resume active `state.yml` first,
+re-render pending gates, poll background continuations, and treat `status:
+blocked` as critical-error recovery rather than an ordinary pause. When Codex
+renders a manual resume hint or close-out instruction, prefer the portable
+skill form, e.g.
+`$masterplan execute docs/masterplan/<slug>/state.yml`; do not surface
+Claude-only `/masterplan ...` as the primary Codex resume command.
 
 ## Existing Claude-created projects
 
@@ -113,7 +121,9 @@ Follow the command prompt's Codex-host suppression rules: do not recursively
 dispatch to Codex from inside a Codex-hosted masterplan run.
 
 Codex host suppression is only about recursive dispatch and review. When a
-Codex `request_user_input` gate returns an explicit continuation answer, follow
-the command prompt's `codex_host_gate_continuation` rule and keep moving for
+Codex `request_user_input` gate returns an answer label, treat that as explicit
+interactive selection evidence even when it is the first/recommended option and
+no free-form note is present. Follow the command prompt's
+`codex_host_gate_continuation` rule for continuation answers and keep moving for
 `full` / `execute` flows until a true halt gate, sensitive live-auth blocker, or
 actual Codex host budget stop fires.

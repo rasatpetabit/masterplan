@@ -1,0 +1,3 @@
+{"type":"session_meta","payload":{"id":"aaaaaaaa-0000-0000-0000-000000000001","cwd":"/tmp/dev/ambient-repo","timestamp":"2026-05-11T12:00:00Z"}}
+{"type":"response_item","payload":{"type":"message","role":"developer","content":[{"text":"Repository docs mention superpowers-masterplan and docs/masterplan/state.yml."}],"timestamp":"2026-05-11T12:00:01Z"}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"text":"I inspected docs/masterplan/example/state.yml and bin/masterplan-session-audit.sh."}],"timestamp":"2026-05-11T12:00:02Z"}}

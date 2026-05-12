@@ -1,0 +1,3 @@
+{"type":"session_meta","payload":{"id":"44444444-0000-0000-0000-000000000044","cwd":"/tmp/dev/stop-scheduled","timestamp":"2026-05-11T12:00:00Z"}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"text":"/masterplan execute docs/masterplan/stop-scheduled/state.yml"}],"timestamp":"2026-05-11T12:00:01Z"}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"text":"continuation_scheduled: wakeup_scheduled for docs/masterplan/stop-scheduled/state.yml."}],"timestamp":"2026-05-11T12:00:02Z"}}

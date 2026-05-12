@@ -1,0 +1,3 @@
+{"type":"session_meta","payload":{"id":"55555555-0000-0000-0000-000000000055","cwd":"/tmp/dev/stop-unknown","timestamp":"2026-05-11T12:00:00Z"}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"text":"/masterplan execute docs/masterplan/stop-unknown/state.yml"}],"timestamp":"2026-05-11T12:00:01Z"}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"text":"Resume at Task 3 with: $masterplan execute docs/masterplan/stop-unknown/state.yml"}],"timestamp":"2026-05-11T12:00:02Z"}}

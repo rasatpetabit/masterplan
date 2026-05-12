@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.2.4] — 2026-05-12 — loop-first resume contract
+
+### Added
+
+- **Session audit regression harness.** `bin/masterplan-session-audit.sh` is now
+  a thin wrapper around `lib/masterplan_session_audit.py`, with fixture-backed
+  unit tests covering ambient `/masterplan` mentions, active sessions with and
+  without telemetry, duplicate warning collapse, stable JSON warning codes, and
+  legacy environment-variable defaults. `bin/masterplan-self-host-audit.sh`
+  also includes a `--session-audit` gate so future prompt/docs changes cannot
+  silently regress the incident-audit contract.
+- **Loop-first resume contract.** `state.yml` now distinguishes
+  `stop_reason` from execution `status`, reserves `status: blocked` for
+  safety-only `critical_error` recovery, and documents the resume controller
+  that re-renders gates, polls background work, or continues the active plan
+  without operator-maintained state.
+
+### Fixed
+
+- **Codex interactive gate selections.** Codex-hosted `request_user_input`
+  results now count as explicit interactive selection evidence whenever the
+  tool returns an answer label, including the first/recommended option with no
+  free-form note. Masterplan no longer preserves `pending_gate` or emits a
+  no-action terminal response solely because the selected option was marked
+  recommended.
+- **Session audit masterplan classification.** `bin/masterplan-session-audit.sh`
+  now treats `/masterplan` telemetry coverage as active only when a user
+  invocation or orchestrator runtime marker is present, avoiding false missing-
+  telemetry warnings from ambient repo names, skill listings, docs, and
+  developer prompt text. The warning report also de-duplicates identical
+  source/repo/session/code warning entries before computing repo warning totals,
+  and JSON output exposes stable `code` fields for automation.
+- **Codex resume hints.** Codex-hosted close-out and budget-stop text now uses
+  the portable `$masterplan ...` skill form, such as
+  `$masterplan execute <state-path>`, instead of telling Codex users to resume
+  with Claude Code's `/masterplan ...` slash command. The Codex self-host audit
+  now checks that command prompt, README, and skill docs keep this contract.
+- **Session audit stop classification.** Active Masterplan sessions now report
+  `stop_kind` (`question`, `critical_error`, `complete`, `scheduled_yield`, or
+  `unknown`) and warn with `active_masterplan_unclassified_stop` when a session
+  closes without a classified loop-first stop signal.
+
 ## [3.2.3] — 2026-05-11 — adaptive brainstorm interviews
 
 ### Added

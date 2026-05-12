@@ -1,0 +1,3 @@
+{"type":"session_meta","payload":{"id":"22222222-0000-0000-0000-000000000022","cwd":"/tmp/dev/stop-critical","timestamp":"2026-05-11T12:00:00Z"}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"text":"/masterplan execute docs/masterplan/stop-critical/state.yml"}],"timestamp":"2026-05-11T12:00:01Z"}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"text":"critical_error_opened: state.yml parse failed; recovery options persisted."}],"timestamp":"2026-05-11T12:00:02Z"}}

@@ -5,6 +5,8 @@
 .idea/
 .vscode/
 node_modules/
+__pycache__/
+*.py[cod]
 .worktrees/
 
 # Claude Code session-local state (per-user settings + scheduled-task locks).

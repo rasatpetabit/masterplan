@@ -20,6 +20,8 @@
 #   bin/masterplan-self-host-audit.sh --models  # only check model-passthrough preamble (check #23)
 #   bin/masterplan-self-host-audit.sh --codex   # only check Codex plugin packaging
 #   bin/masterplan-self-host-audit.sh --brainstorm-anchor  # only check Step B1 brainstorm anchoring
+#   bin/masterplan-self-host-audit.sh --session-audit  # only check session-audit regression tests
+#   bin/masterplan-self-host-audit.sh --loop-first  # only check loop-first resume/stop contract
 #
 # Exit code: 0 if clean, 1 if any check fires, 2 on usage error.
 
@@ -44,16 +46,20 @@ RUN_CD9=1
 RUN_MODELS=1
 RUN_CODEX=1
 RUN_ANCHOR=1
+RUN_SESSION_AUDIT=1
+RUN_LOOP_FIRST=1
 
 case "${MODE}" in
   --fix)    FIX_MODE=1 ;;
-  --drift)  RUN_CD9=0; RUN_MODELS=0; RUN_CODEX=0; RUN_ANCHOR=0 ;;
-  --cd9)    RUN_DRIFT=0; RUN_MODELS=0; RUN_CODEX=0; RUN_ANCHOR=0 ;;
-  --models) RUN_DRIFT=0; RUN_CD9=0; RUN_CODEX=0; RUN_ANCHOR=0 ;;
-  --codex)  RUN_DRIFT=0; RUN_CD9=0; RUN_MODELS=0; RUN_ANCHOR=0 ;;
-  --brainstorm-anchor) RUN_DRIFT=0; RUN_CD9=0; RUN_MODELS=0; RUN_CODEX=0 ;;
+  --drift)  RUN_CD9=0; RUN_MODELS=0; RUN_CODEX=0; RUN_ANCHOR=0; RUN_SESSION_AUDIT=0; RUN_LOOP_FIRST=0 ;;
+  --cd9)    RUN_DRIFT=0; RUN_MODELS=0; RUN_CODEX=0; RUN_ANCHOR=0; RUN_SESSION_AUDIT=0; RUN_LOOP_FIRST=0 ;;
+  --models) RUN_DRIFT=0; RUN_CD9=0; RUN_CODEX=0; RUN_ANCHOR=0; RUN_SESSION_AUDIT=0; RUN_LOOP_FIRST=0 ;;
+  --codex)  RUN_DRIFT=0; RUN_CD9=0; RUN_MODELS=0; RUN_ANCHOR=0; RUN_SESSION_AUDIT=0; RUN_LOOP_FIRST=0 ;;
+  --brainstorm-anchor) RUN_DRIFT=0; RUN_CD9=0; RUN_MODELS=0; RUN_CODEX=0; RUN_SESSION_AUDIT=0; RUN_LOOP_FIRST=0 ;;
+  --session-audit) RUN_DRIFT=0; RUN_CD9=0; RUN_MODELS=0; RUN_CODEX=0; RUN_ANCHOR=0; RUN_LOOP_FIRST=0 ;;
+  --loop-first) RUN_DRIFT=0; RUN_CD9=0; RUN_MODELS=0; RUN_CODEX=0; RUN_ANCHOR=0; RUN_SESSION_AUDIT=0 ;;
   "")       : ;;
-  *)        echo "Usage: $0 [--fix|--drift|--cd9|--models|--codex|--brainstorm-anchor]" >&2; exit 2 ;;
+  *)        echo "Usage: $0 [--fix|--drift|--cd9|--models|--codex|--brainstorm-anchor|--session-audit|--loop-first]" >&2; exit 2 ;;
 esac
 
 EXIT=0
@@ -351,13 +357,18 @@ check_codex_packaging() {
     EXIT=1
   fi
 
-  if ! grep -q 'Codex recommended-answer guard' "${command_file}" 2>/dev/null; then
-    echo "⚠️  commands/masterplan.md — missing Codex recommended-answer guard"
+  if ! grep -q 'Codex interactive-selection evidence' "${command_file}" 2>/dev/null; then
+    echo "⚠️  commands/masterplan.md — missing Codex interactive-selection evidence rule"
     EXIT=1
   fi
 
-  if ! grep -q 'recommended option was not treated as consent' "${command_file}" 2>/dev/null; then
-    echo "⚠️  commands/masterplan.md — missing Codex recommended-answer no-consent terminal render"
+  if grep -q 'recommended option was not treated as consent' "${command_file}" 2>/dev/null; then
+    echo "⚠️  commands/masterplan.md — still rejects Codex interactive recommended-option selections"
+    EXIT=1
+  fi
+
+  if grep -q 'recommended-only `request_user_input` answer.*weak evidence' "${command_file}" 2>/dev/null; then
+    echo "⚠️  commands/masterplan.md — still classifies recommended-only Codex answers as weak evidence"
     EXIT=1
   fi
 
@@ -398,6 +409,31 @@ check_codex_packaging() {
 
   if ! grep -q 'codex_host_gate_continuation' "${codex_entry_skill}" 2>/dev/null; then
     echo "⚠️  skills/masterplan/SKILL.md — missing Codex gate-continuation guidance"
+    EXIT=1
+  fi
+
+  if ! grep -q '\$masterplan' "${codex_entry_skill}" 2>/dev/null; then
+    echo '⚠️  skills/masterplan/SKILL.md — missing Codex $masterplan invocation mapping'
+    EXIT=1
+  fi
+
+  if ! grep -q '\$masterplan' "${command_file}" 2>/dev/null; then
+    echo '⚠️  commands/masterplan.md — missing Codex $masterplan resume-hint contract'
+    EXIT=1
+  fi
+
+  if ! grep -q '\$masterplan' "${REPO_ROOT}/README.md" 2>/dev/null; then
+    echo '⚠️  README.md — missing Codex $masterplan invocation documentation'
+    EXIT=1
+  fi
+
+  if grep -q 'Codex host budget reached: .*resume with /masterplan' "${command_file}" 2>/dev/null; then
+    echo "⚠️  commands/masterplan.md — Codex budget close text must not suggest Claude-only /masterplan resume commands"
+    EXIT=1
+  fi
+
+  if grep -q 're-invoke /masterplan' "${command_file}" 2>/dev/null; then
+    echo "⚠️  commands/masterplan.md — user-facing resume gate examples must use host-specific placeholders, not hard-coded /masterplan"
     EXIT=1
   fi
 
@@ -615,6 +651,131 @@ check_cd9() {
 }
 
 # ---------------------------------------------------------------------------------
+# Check: session-audit regression suite
+# ---------------------------------------------------------------------------------
+check_session_audit() {
+  local test_file="${REPO_ROOT}/tests/test_masterplan_session_audit.py"
+  local module_file="${REPO_ROOT}/lib/masterplan_session_audit.py"
+  local fixture_dir="${REPO_ROOT}/tests/fixtures/session-audit"
+
+  if [[ ! -f "${module_file}" ]]; then
+    echo "⚠️  session audit — missing lib/masterplan_session_audit.py"
+    EXIT=1
+    return
+  fi
+  if [[ ! -f "${test_file}" ]]; then
+    echo "⚠️  session audit — missing tests/test_masterplan_session_audit.py"
+    EXIT=1
+    return
+  fi
+  if [[ ! -d "${fixture_dir}" ]]; then
+    echo "⚠️  session audit — missing tests/fixtures/session-audit/"
+    EXIT=1
+    return
+  fi
+
+  if python3 -m unittest tests/test_masterplan_session_audit.py >/dev/null; then
+    echo "✓ session audit regression tests clean"
+  else
+    echo "⚠️  session audit regression tests failed"
+    python3 -m unittest tests/test_masterplan_session_audit.py
+    EXIT=1
+  fi
+}
+
+# ---------------------------------------------------------------------------------
+# Check: loop-first resume/stop contract
+# ---------------------------------------------------------------------------------
+check_loop_first_contract() {
+  local command_file="${REPO_ROOT}/commands/masterplan.md"
+  local internals_file="${REPO_ROOT}/docs/internals.md"
+  local readme_file="${REPO_ROOT}/README.md"
+  local audit_module="${REPO_ROOT}/lib/masterplan_session_audit.py"
+  local audit_tests="${REPO_ROOT}/tests/test_masterplan_session_audit.py"
+
+  local missing=0
+  for file in "${command_file}" "${internals_file}" "${readme_file}" "${audit_module}" "${audit_tests}"; do
+    if [[ ! -f "${file}" ]]; then
+      echo "⚠️  loop-first contract — missing ${file#${REPO_ROOT}/}"
+      EXIT=1
+      missing=1
+    fi
+  done
+  [[ "${missing}" -eq 1 ]] && return
+
+  local command_patterns=(
+    "Loop-first stop contract"
+    "Resume controller"
+    "stop_reason: null | question | critical_error | complete | scheduled_yield"
+    "critical_error: null"
+    "blocked is reserved for critical_error only"
+    "Ordinary task blockers, weak/no gate evidence, Codex host budget limits, background polling, loop quotas, and context pressure are resumable conditions"
+    "Record critical error and stop"
+    "loop_quota_exhausted"
+  )
+
+  local pattern
+  for pattern in "${command_patterns[@]}"; do
+    if ! grep -qF "${pattern}" "${command_file}" 2>/dev/null; then
+      echo "⚠️  commands/masterplan.md — missing loop-first contract text: ${pattern}"
+      EXIT=1
+    fi
+  done
+
+  if grep -qF "Set status: blocked and end the turn" "${command_file}" 2>/dev/null; then
+    echo "⚠️  commands/masterplan.md — legacy manual-block option is still present"
+    EXIT=1
+  fi
+
+  if grep -qF "loop quota exhausted; resume manually" "${command_file}" 2>/dev/null; then
+    echo "⚠️  commands/masterplan.md — loop quota exhaustion must be a persisted question, not manual blocked state"
+    EXIT=1
+  fi
+
+  if ! grep -qF "Blocked means critical error only" "${internals_file}" 2>/dev/null; then
+    echo "⚠️  docs/internals.md — missing blocked-is-critical-only operational rule"
+    EXIT=1
+  fi
+
+  if ! grep -qF "loop-first" "${readme_file}" 2>/dev/null; then
+    echo "⚠️  README.md — missing user-facing loop-first resume documentation"
+    EXIT=1
+  fi
+
+  local audit_patterns=(
+    "stop_kind"
+    "active_masterplan_unclassified_stop"
+    "STOP_KIND_UNKNOWN"
+    "critical_error"
+    "scheduled_yield"
+  )
+  for pattern in "${audit_patterns[@]}"; do
+    if ! grep -qF "${pattern}" "${audit_module}" 2>/dev/null; then
+      echo "⚠️  lib/masterplan_session_audit.py — missing stop classifier text: ${pattern}"
+      EXIT=1
+    fi
+  done
+
+  local fixture_patterns=(
+    "stop-question"
+    "stop-critical"
+    "stop-complete"
+    "stop-scheduled"
+    "stop-unknown"
+  )
+  for pattern in "${fixture_patterns[@]}"; do
+    if ! grep -qF "${pattern}" "${audit_tests}" 2>/dev/null; then
+      echo "⚠️  tests/test_masterplan_session_audit.py — missing stop fixture coverage: ${pattern}"
+      EXIT=1
+    fi
+  done
+
+  if [[ "${EXIT}" -eq 0 ]]; then
+    echo "✓ loop-first resume contract clean"
+  fi
+}
+
+# ---------------------------------------------------------------------------------
 # Run
 # ---------------------------------------------------------------------------------
 [[ "${RUN_DRIFT}" -eq 1 ]] && check_drift
@@ -623,6 +784,8 @@ check_cd9() {
 [[ "${RUN_CD9}" -eq 1 ]] && check_cd9
 [[ "${RUN_MODELS}" -eq 1 ]] && check_model_passthrough
 [[ "${RUN_ANCHOR}" -eq 1 ]] && check_brainstorm_anchor
+[[ "${RUN_SESSION_AUDIT}" -eq 1 ]] && check_session_audit
+[[ "${RUN_LOOP_FIRST}" -eq 1 ]] && check_loop_first_contract
 
 if [[ "${EXIT}" -eq 0 ]]; then
   echo "✓ self-host audit clean"

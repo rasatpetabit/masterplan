@@ -1,0 +1,2 @@
+{"sessionId":"ffffffff-0000-0000-0000-000000000006","cwd":"/tmp/dev/claude-ambient","timestamp":"2026-05-11T12:00:00Z","attachment":{"type":"skill_listing","content":"masterplan skill available; docs/masterplan exists"}}
+{"sessionId":"ffffffff-0000-0000-0000-000000000006","cwd":"/tmp/dev/claude-ambient","timestamp":"2026-05-11T12:00:01Z","message":{"role":"assistant","content":[{"type":"text","text":"I read README masterplan references."}]}}

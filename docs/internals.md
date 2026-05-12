@@ -36,7 +36,7 @@
 
 ## 1. Project orientation
 
-`superpowers-masterplan` ships one orchestrator command for Claude Code and Codex. In Claude Code the command is `/masterplan`; in Codex the portable invocation is `/superpowers-masterplan:masterplan` unless the host exposes a bare alias. The command orchestrates a complete development workflow — brainstorm a spec, plan the implementation, execute task-by-task, generate a retrospective when complete — by sequencing the upstream `superpowers` skills (`brainstorming`, `writing-plans`, `subagent-driven-development`, `executing-plans`, `using-git-worktrees`, `systematic-debugging`, `finishing-a-development-branch`).
+`superpowers-masterplan` ships one orchestrator command for Claude Code and Codex. In Claude Code the command is `/masterplan`; in Codex the portable invocation is `$masterplan` through the `masterplan` skill, with slash-style text accepted only when the host passes it through. The command orchestrates a complete development workflow — brainstorm a spec, plan the implementation, execute task-by-task, generate a retrospective when complete — by sequencing the upstream `superpowers` skills (`brainstorming`, `writing-plans`, `subagent-driven-development`, `executing-plans`, `using-git-worktrees`, `systematic-debugging`, `finishing-a-development-branch`).
 
 **It's a thin orchestrator, not a re-implementation.** The pipeline phases live in superpowers; `/masterplan` sequences them, persists state in `docs/masterplan/<slug>/state.yml`, and routes decisions (which model executes a task; whether Codex reviews; whether a wave dispatches in parallel; etc.).
 
@@ -91,7 +91,7 @@ superpowers-masterplan/
 
 ### How to operate
 
-When the user types `/masterplan <args>` in Claude Code, the host loads `commands/masterplan.md` as the command prompt with `$ARGUMENTS` bound to `<args>`. In Codex, the `skills/masterplan/SKILL.md` entrypoint makes new Codex sessions aware of the workflow, maps `/masterplan <args>` or natural-language "use masterplan" requests to the same command prompt, and scans existing Claude-created `docs/masterplan/<slug>/state.yml` run bundles before starting fresh work. The prompt directs the orchestrator through Steps 0 → A or B or C or D or I or R or S or T or CL, depending on the verb. Codex-specific tool substitutions live in the runtime compatibility block near the top of the command and in the Codex skill entrypoint.
+When the user types `/masterplan <args>` in Claude Code, the host loads `commands/masterplan.md` as the command prompt with `$ARGUMENTS` bound to `<args>`. In Codex, the `skills/masterplan/SKILL.md` entrypoint makes new Codex sessions aware of the workflow, maps `$masterplan <args>`, slash-style text when available, or natural-language "use masterplan" requests to the same command prompt, and scans existing Claude-created `docs/masterplan/<slug>/state.yml` run bundles before starting fresh work. The prompt directs the orchestrator through Steps 0 → A or B or C or D or I or R or S or T or CL, depending on the verb. Codex-specific tool substitutions live in the runtime compatibility block near the top of the command and in the Codex skill entrypoint.
 
 Claude's SessionStart hook must keep the user-level `/masterplan` command as a
 compact shim (`<!-- masterplan-shim: v3 -->`) that delegates to
@@ -236,8 +236,8 @@ Every plan has a run bundle at `docs/masterplan/<slug>/`. `state.yml` is the dur
 ```yaml
 schema_version: 2
 slug: <feature-slug>
-status: in-progress | blocked | complete | archived
-phase: worktree_decided | brainstorming | spec_gate | planning | plan_gate | executing | task_gate | blocked | complete | retro_gate | archived
+status: in-progress | blocked | complete | archived  # blocked is reserved for critical_error only
+phase: worktree_decided | brainstorming | spec_gate | planning | plan_gate | executing | task_gate | finish_gate | critical_error | complete | retro_gate | archived
 worktree: /absolute/path/to/worktree
 branch: <git-branch-name>
 started: YYYY-MM-DD
@@ -252,6 +252,8 @@ compact_loop_recommended: true | false
 complexity: low | medium | high
 pending_gate: null
 background: null
+stop_reason: null | question | critical_error | complete | scheduled_yield
+critical_error: null
 artifacts:
   spec: docs/masterplan/<slug>/spec.md
   plan: docs/masterplan/<slug>/plan.md
@@ -273,6 +275,15 @@ legacy: {}
 ### Required fields
 
 Core required fields above are enforced by doctor check #9. Step A and Step C both depend on that set. Archive/sidecar artifact keys are stable optional addresses; migrated archived records may leave values empty when the legacy source never had that artifact.
+
+The loop-first resume contract is part of the schema, not presentation polish:
+
+- `question` means a structured gate is persisted and must be re-rendered on resume before new work.
+- `critical_error` is the only reason to set `status: blocked`; it records the code, summary, recovery already attempted, and safe next options.
+- `complete` is terminal for execution and routes only to completion follow-up, retro, archive, or status.
+- `scheduled_yield` means Masterplan intentionally yielded to a wakeup, background result, or host budget boundary and should resume automatically on the next invocation.
+
+Ordinary task blockers, loop quotas, context pressure, weak gate evidence, and background polling do not become `status: blocked`. They stay `status: in-progress` with a persisted question or scheduled continuation so the operator does not need to track state manually.
 
 ### Events format
 
@@ -337,6 +348,8 @@ These are command-specific rules covering cross-cutting policy not stated inline
 - **Doctor is read-only by default.** Without `--fix` it only reports — even an obvious orphan stays in place. `--fix` only acts on errors marked auto-fixable.
 - **Inference is conservative by design.** When in doubt, classify `possibly_done`, not `done`. Cost of re-verifying < cost of skipping real work.
 - **Don't stop silently anywhere.** Always close with `AskUserQuestion` if input might be needed. Recursively pre-empt upstream-skill free-text prompts (`finishing-a-development-branch`'s "Which option?", `using-git-worktrees`' "Which directory?", `writing-plans`' "Which approach?", `brainstorming`'s "Wait for the user's response").
+- **Loop-first resume is the default.** A bare `/masterplan` or `$masterplan` invocation must prefer active `state.yml` over menus, re-render pending gates first, poll background continuations before redispatch, and resume the only unambiguous `in-progress` plan automatically.
+- **Blocked means critical error only.** Routine blockers, quota exhaustion, weak gate evidence, host budget yields, and background polling stay `status: in-progress` with `stop_reason: question` or `scheduled_yield`. Set `status: blocked` only with `stop_reason: critical_error` and a populated `critical_error` object.
 - **External writes are gated.** Posting comments to GitHub issues/PRs, Slack messages, closing issues during import always passes through `AskUserQuestion` first — even under `--autonomy=full`.
 - **Codex routing is locked at kickoff, switchable on resume.** `codex_routing` and `codex_review` land in `state.yml` at Step B3 (or first Step C invocation for imported plans). Mid-run flips happen via re-invocation: `/masterplan --resume=<path> --codex=<mode> --codex-review=<on|off>`.
 - **Never delegate non-eligible tasks under `auto`.** The eligibility checklist is conservative on purpose: a wrong delegation costs more than running inline. When uncertain, run inline.
@@ -424,8 +437,8 @@ Step C 4c filters `git status --porcelain` against task-scope files. Under a wav
 ### Wave-level outcomes (failure handling)
 
 - **All completed** → wave succeeds. Single-writer 4d update applies all N completions.
-- **All blocked** → wave fails. Blocker re-engagement gate fires once at wave-end with the union of all N blocked.
-- **Partial (K completed, N-K blocked)** → wave completes-with-blockers. K completions applied to run state; N-K blocker events appended; status flips to `blocked`. Gate fires once with the N-K subset.
+- **All blocked** → wave pauses for recovery. Blocker re-engagement gate fires once at wave-end with the union of all N blocked; status stays `in-progress` unless the user records a critical error.
+- **Partial (K completed, N-K blocked)** → wave completes-with-blockers. K completions applied to run state; N-K blocker events appended; status stays `in-progress`. Gate fires once with the N-K subset.
 - **Protocol violation detected** (orchestrator's post-barrier reconciliation finds a wave member that committed despite "DO NOT commit", wrote outside `**Files:**` scope, or modified run state): if `config.parallelism.abort_wave_on_protocol_violation: true` (default), the entire 4d batch is suppressed.
 
 ### Mid-wave interruption recovery
@@ -440,17 +453,20 @@ If the orchestrator crashes mid-wave (after dispatch, before barrier returns), t
 
 Codex support is packaged by `.codex-plugin/plugin.json`, `.agents/plugins/marketplace.json`, and `skills/masterplan/SKILL.md`. The Codex marketplace entry points at `./plugins/superpowers-masterplan`, a Git symlink back to the repo root, so the existing `commands/`, `skills/`, `bin/`, and docs stay single-source while satisfying Codex's plugin-path convention. Do not duplicate `commands/masterplan.md` under `plugins/`; if Codex packaging changes, update the packaging manifests and self-host audit instead.
 
-The portable Codex contract is prompt exposure through the `masterplan` skill. New Codex sessions should list `masterplan` in available skills and should route `/masterplan <args>`, `/superpowers-masterplan:masterplan <args>`, or natural-language masterplan requests through that skill. Native slash-command registration is host-dependent and must not be treated as the only smoke test.
+The portable Codex contract is prompt exposure through the `masterplan` skill. New Codex sessions should list `masterplan` in available skills and should route `$masterplan <args>`, slash-style text when the host supports it, or natural-language masterplan requests through that skill. Native slash-command registration is host-dependent and must not be treated as the only smoke test. Codex-facing close-out and resume hints should use `$masterplan execute <state-path>` rather than Claude Code's `/masterplan ...` form.
 
 The Codex skill entrypoint has its own config bootstrap before any workflow routing: read `~/.masterplan.yaml`, then `<repo-root>/.masterplan.yaml`, then shallow-merge invocation flags on top. This duplicates Step 0's config contract deliberately so Codex-hosted runs do not fall back to built-in defaults before they have loaded the canonical command prompt.
 
 When Codex is the host, the orchestrator suppresses the separate Claude Code `codex:codex-rescue` companion path for that invocation. Step 0 sets `codex_host_suppressed=true`, skips the ping/scan/trust availability checks, and treats effective `codex_routing` / `codex_review` as off without rewriting persisted config. This prevents recursive Codex-on-Codex dispatch while preserving the same command surface. Host suppression does not disable other merged config defaults such as `autonomy`, `complexity`, `runs_path`, or `parallelism`. The skill entrypoint also makes Codex scan existing `docs/masterplan/*/state.yml` bundles, including ones originally created by Claude Code.
 
-Host suppression also does not mean "stop after any gate." Step 0 budgets weak
-or unresolved Codex gates, large reads, and automatic phase transitions, but an
+Host suppression also does not mean "stop after any gate." Step 0 budgets
+unresolved Codex gates, large reads, and automatic phase transitions, but an
 explicit continuation answer from `request_user_input` sets
 `codex_host_gate_continuation=true` and lets `full` / `execute` flows keep moving
 until a true halt gate, sensitive live-auth blocker, or actual budget stop.
+Codex `request_user_input` is the interactive question UI: when it returns an
+answer label, that label is explicit selection evidence even if it is the
+first/recommended option and no free-form note is present.
 
 ### Why Codex with /masterplan
 
@@ -523,7 +539,21 @@ prompt text, shell commands, tool results, credentials, or transcript excerpts.
 Default scope is the last 24 hours under `$HOME/.claude/projects`,
 `$HOME/.codex/sessions`, and `$MASTERPLAN_REPO_ROOTS` (default `$HOME/dev`).
 Use `--since=<ISO>` for fixed-window incident reproduction and `--format=json`
-for downstream analysis.
+for downstream analysis. The historical environment overrides
+`CLAUDE_PROJECTS_DIR`, `CODEX_SESSIONS_DIR`, and `MASTERPLAN_REPO_ROOTS` remain
+supported.
+
+Missing-telemetry coverage is deliberately narrower than a substring search:
+the audit requires an explicit `/masterplan` user invocation or orchestrator
+runtime marker, so ambient references from the plugin repo name, docs,
+SessionStart skill listings, or developer prompt text do not trigger coverage
+warnings.
+
+The implementation lives in `lib/masterplan_session_audit.py`; the shell script
+is only the CLI wrapper. `tests/test_masterplan_session_audit.py` and
+`tests/fixtures/session-audit/` pin the classifier, warning de-duplication,
+stable JSON warning codes, telemetry repo attribution, and env-var defaults.
+`bin/masterplan-self-host-audit.sh --session-audit` runs that regression suite.
 
 ### Useful jq queries
 
@@ -573,7 +603,7 @@ Current check families:
 
 - **Migration and orphan cleanup:** legacy `docs/superpowers/...` artifacts not migrated, orphan legacy statuses, orphan events archives, orphan telemetry/subagents/cache files. Step C's completion-safe cleanup archives the verified subset automatically; full cleanup remains manual.
 - **State integrity:** malformed `state.yml`, missing required fields, bad worktree/branch, missing phase-required `spec.md` or `plan.md`.
-- **Execution drift:** stale in-progress/blocked plans, plan/log drift, cache-build evidence missing, routing configured but eligibility cache absent.
+- **Execution drift:** stale in-progress plans, stale critical-error stops, plan/log drift, cache-build evidence missing, routing configured but eligibility cache absent.
 - **Parallelism safety:** malformed `parallel-group` tasks, overlapping file scopes, wave protocol violations, model attribution drift in `subagents.jsonl`.
 - **Operational hygiene:** telemetry growth, non-empty `state.queue.jsonl`, missing compact loop for plans that requested it, completed plan without retro.
 
@@ -612,7 +642,7 @@ When adding a check, update the Step D table, the Step D parallelization brief c
 Since the post-v2.3.0 audit, empty `$ARGUMENTS` is resume-first. Step M0 emits the inline orientation and then:
 
 - Auto-routes directly to Step C when exactly one in-progress plan is unambiguous (current worktree+branch match wins; otherwise the only in-progress plan across worktrees wins).
-- Routes to Step A list+pick when active work exists but is ambiguous, including any blocked plan.
+- Routes to Step A list+pick when active work exists but is ambiguous, including any critical-error recovery plan.
 - Shows the broad category menu only when no active plan exists.
 
 The empty-state broad menu asks for a category:
@@ -684,7 +714,7 @@ Conversation context evaporates between sessions, especially after compaction. A
 
 ### Why the 4-option blocker re-engagement gate (v1.0.0 audit)
 
-Original gate had 5 options, violating CD-9's 2–4 cap. Audit dropped option 3 ("Break this task into smaller pieces") because it overlapped semantically with option 1 ("Provide context and re-dispatch"). Option 5 (the legacy `status: blocked` end-turn) is preserved — resume-from-blocker depends on it being the only path to that state.
+Original gate had 5 options, violating CD-9's 2–4 cap. Audit dropped option 3 ("Break this task into smaller pieces") because it overlapped semantically with option 1 ("Provide context and re-dispatch"). The stop option now records a safety-only `critical_error`; ordinary blockers remain `in-progress` with a persisted question so resume does not depend on the operator remembering a manual next step.
 
 ### Why explicit phase verbs
 
@@ -793,6 +823,9 @@ codex_review: off
 compact_loop_recommended: false
 complexity: medium
 pending_gate: null
+background: null
+stop_reason: null
+critical_error: null
 legacy: {}
 EOF
 printf '%s\n' '{"ts":"2026-05-04T12:00:00Z","type":"task_completed","message":"task complete"}' > docs/masterplan/test/events.jsonl

@@ -29,9 +29,15 @@ JSONL, raw Codex JSONL, and `docs/masterplan/*/telemetry*.jsonl` over a
 configurable time window. It warns on Codex call/question loops, repeated
 `git`/`date`/`sed`/`rg` shell roots, Claude AskUserQuestion/Agent fanout,
 SessionStart payload bloat, oversized transcript telemetry, and missing
-telemetry for active masterplan-like sessions. It intentionally reports only
-counters and labels, never transcript text, shell commands, tool results, or
-credentials.
+telemetry for sessions with explicit `/masterplan` invocation/runtime markers.
+For active Masterplan sessions, it also classifies the final stop as
+`question`, `critical_error`, `complete`, `scheduled_yield`, or `unknown` and
+warns when an active session closes without one of the loop-first stop signals.
+Ambient mentions from repo names, skill listings, docs, or developer prompt text
+do not make a session telemetry-eligible. It intentionally reports only counters
+and labels, never transcript text, shell commands, tool results, or credentials.
+JSON warnings include stable `code` fields so automation can key off behavior
+classes instead of brittle warning prose.
 
 ## Per-turn record shape
 
