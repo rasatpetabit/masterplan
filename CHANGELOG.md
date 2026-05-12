@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.2.8] — 2026-05-11 — User-facing scrub of `bin/masterplan-state.sh`
+
+### Fixed
+
+- **Broken path recommendations in user-facing surfaces.** The plugin runs in
+  *other* projects, so `bin/masterplan-state.sh` does not exist in the user's
+  CWD — it lives inside the plugin install dir
+  (`~/.claude/plugins/marketplaces/rasatpetabit-superpowers-masterplan/bin/...`).
+  Suggesting that path to end-users (or to the orchestrator running in the
+  user's CWD) always 404s. Removed every user-facing reference and replaced
+  with the corresponding slash-command flow:
+  - `skills/masterplan-detect/SKILL.md` — frontmatter and the rendered legacy
+    artifact suggestion now recommend only `/masterplan import`.
+  - `skills/masterplan/SKILL.md` — Codex summary-first inventory phrasing now
+    uses `rg --files docs/masterplan` plus targeted `state.yml` reads; removed
+    the "if `bin/masterplan-state.sh` is present, prefer" fallback block.
+  - `commands/masterplan.md` — Step 0 host loading, legacy migration prose,
+    Step D next-feature discovery, the doctor `--fix` action for
+    "Legacy plan not migrated", the clean `legacy` category detector, and the
+    state.yml schema-example comment all stop pointing at the script. The
+    doctor `--fix` action now reads "invoke `/masterplan import` and select
+    `<slug>` from the picker" (Step I itself is unchanged — no new `--slug`
+    short-circuit was introduced).
+  - `README.md` — removed `bin/masterplan-state.sh inventory` /
+    `migrate --write` from the prose paragraph and from the user-runnable
+    command block (`/masterplan import` was already listed there).
+  - `docs/masterplan/README.md` — the run-bundle README now recommends
+    `/masterplan import` for legacy migration.
+
+### Unchanged
+
+- `bin/masterplan-state.sh` itself stays in the repo as plugin-internal dev
+  tooling. Repo-internal references in `CLAUDE.md`, `docs/internals.md`,
+  earlier `CHANGELOG.md` entries, and `bin/masterplan-self-host-audit.sh` are
+  preserved — they describe the plugin's own dev surfaces for plugin
+  developers, not end-user instructions.
+
 ## [3.2.7] — 2026-05-12 — Forward-progress audit instrumentation
 
 ### Added

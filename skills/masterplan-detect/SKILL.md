@@ -1,6 +1,6 @@
 ---
 name: masterplan-detect
-description: Suggest `/masterplan import` or `bin/masterplan-state.sh migrate` when legacy planning artifacts (PLAN.md, TODO.md, ROADMAP.md, pre-v3 superpowers plans/status files, branches without merged PRs, draft PRs with task lists) exist in the repo. Surfaces a one-line suggestion only — never auto-runs.
+description: Suggest `/masterplan import` when legacy planning artifacts (PLAN.md, TODO.md, ROADMAP.md, pre-v3 superpowers plans/status files, branches without merged PRs, draft PRs with task lists) exist in the repo. Surfaces a one-line suggestion only — never auto-runs.
 ---
 
 # Suggesting /masterplan import for legacy planning artifacts
@@ -29,7 +29,7 @@ A short message — no prose, no editorialization. Format:
 > - `<path>` — last modified <date>
 > - `<path>` — last modified <date>
 >
-> If you'd like to bring them under the `/masterplan` schema (`docs/masterplan/<slug>/state.yml` + bundled spec/plan/events, so already-done tasks aren't redone), run `/masterplan import` or `bin/masterplan-state.sh migrate --write`. Successful v3 completions archive verified legacy/orphan state by default after migration. This is a suggestion only — no action taken.
+> If you'd like to bring them under the `/masterplan` schema (`docs/masterplan/<slug>/state.yml` + bundled spec/plan/events, so already-done tasks aren't redone), run `/masterplan import`. Successful v3 completions archive verified legacy/orphan state by default after migration. This is a suggestion only — no action taken.
 
 Don't list more than 5 artifacts. If more exist, say "(plus N more — `/masterplan import` will discover them all)".
 

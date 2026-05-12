@@ -38,10 +38,10 @@ and then read only the sections needed for the requested verb:
 - Brainstorm/plan/import/doctor/clean/retro requests read only their named
   sections plus the shared gate rules.
 
-In Codex, prefer summary-first inventory (`bin/masterplan-state.sh inventory`
-when present, otherwise `rg --files docs/masterplan`) before opening plan/spec
-artifacts. Avoid exploratory full-file dumps of large prompt, plan, transcript,
-or event-log files.
+In Codex, prefer summary-first inventory (`rg --files docs/masterplan` plus
+targeted `state.yml` reads) before opening plan/spec artifacts. Avoid
+exploratory full-file dumps of large prompt, plan, transcript, or event-log
+files.
 
 ## Config bootstrap
 
@@ -107,12 +107,6 @@ inspect the current repo/worktree for:
 - `docs/masterplan/*/{spec.md,plan.md,retro.md,events.jsonl}`
 - legacy `docs/superpowers/plans/*-status.md`
 - legacy `docs/superpowers/{plans,specs,retros,archived-plans,archived-specs}/*.md`
-
-If `bin/masterplan-state.sh` is present, prefer:
-
-```bash
-bin/masterplan-state.sh inventory
-```
 
 Do not assume there is no active work because Codex did not create the run
 bundle. `state.yml` is the durable source of truth.

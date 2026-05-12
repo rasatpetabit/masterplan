@@ -29,7 +29,5 @@ legacy/orphan state. The completed run directory stays intact here; old
 match this bundle.
 
 Older `/masterplan` versions wrote artifacts under `docs/superpowers/...`.
-Use `bin/masterplan-state.sh inventory` to discover them and
-`bin/masterplan-state.sh migrate --write` to copy them into this layout. The
-migration preserves old paths under `legacy:` and does not delete the original
-files.
+Use `/masterplan import` to migrate them into this layout. The migration
+preserves old paths under `legacy:` and does not delete the original files.

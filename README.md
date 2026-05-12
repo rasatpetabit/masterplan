@@ -338,9 +338,9 @@ docs/masterplan/<slug>/
 session can resume from a durable phase pointer. It records `stop_reason` and
 `critical_error` separately: ordinary pauses stay `in-progress` with a question
 or scheduled continuation, while `blocked` is reserved for safety-critical
-recovery. Older `docs/superpowers/...` layouts are discovered by
-`bin/masterplan-state.sh inventory` and copied into this bundle layout by
-`bin/masterplan-state.sh migrate --write`.
+recovery. Older `docs/superpowers/...` layouts are migrated into this bundle
+layout by `/masterplan import` (copy-only; preserves source paths under
+`legacy:`).
 
 When the last task completes, `/masterplan` checks live git status before
 marking the run complete. If task-scope work is still dirty, it keeps the run in
@@ -361,8 +361,6 @@ Inspect and maintain state:
 /masterplan retro
 /masterplan retro auth-refactor
 /masterplan clean --dry-run
-bin/masterplan-state.sh inventory
-bin/masterplan-state.sh migrate --write
 ```
 
 ## Command Reference
