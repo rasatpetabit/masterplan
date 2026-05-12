@@ -28,7 +28,7 @@ on track for multi-week projects.
 - Resume any in-flight work from `state.yml` plus bundled artifacts. No
   conversation context required, no compaction loss, no "what was I doing
   again?"
-- Bare `/masterplan` and Codex `$masterplan` invocations are loop-first: they
+- Bare `/masterplan` and Codex `Use masterplan` invocations are loop-first: they
   re-render pending structured gates, poll recorded background work, recover
   critical errors explicitly, or continue the only unambiguous in-progress plan
   without requiring the operator to track state manually.
@@ -144,23 +144,26 @@ list. That skill is the portable Codex entrypoint: it loads
 load the same config tiers as Claude Code: `~/.masterplan.yaml`, then
 `<repo-root>/.masterplan.yaml`, then invocation flags.
 
-After install, invoke masterplan in Codex with either natural language or the
-portable skill form:
+After install, invoke masterplan in Codex with a normal chat message. Do not use
+Codex shell-command mode for these examples:
 
 ```text
 Use masterplan status for this repo
-$masterplan
-$masterplan full Stripe webhook handler
-$masterplan status
-$masterplan execute docs/masterplan/auth-refactor/state.yml
+Use masterplan next
+Use masterplan full Stripe webhook handler
+Use masterplan status
+Use masterplan execute docs/masterplan/auth-refactor/state.yml
 ```
 
 Codex may expose plugin slash commands differently across builds. The reliable
 contract is prompt exposure through the `masterplan` skill, so Codex-facing
-resume hints use `$masterplan ...`. Slash-style text such as `/masterplan` or
-`/superpowers-masterplan:masterplan` is accepted when the host passes it to the
-model, but it is not the portable resume instruction for Codex. If your Codex
-build registers the marketplace but a fresh prompt does not list `masterplan`,
+resume hints use normal chat text such as `Use masterplan ...`. `$masterplan ...`
+is not the portable resume instruction for Codex because shell-command mode sends
+it to Bash, where `$masterplan` is environment-variable expansion. Slash-style
+text such as `/masterplan` or `/superpowers-masterplan:masterplan` is accepted
+when the host passes it to the model, but it is not the portable resume
+instruction for Codex. If your Codex build registers the marketplace but a fresh
+prompt does not list `masterplan`,
 enable `superpowers-masterplan@rasatpetabit-superpowers-masterplan` in Codex's
 plugin UI or config, or install a user-level bridge at
 `~/.codex/skills/masterplan/SKILL.md` from this repo's `skills/masterplan/`
@@ -304,7 +307,7 @@ Resume work:
 /masterplan --resume=docs/masterplan/auth-refactor/state.yml
 ```
 
-With no args, `/masterplan` or `$masterplan` tries to resume interrupted work
+With no args, `/masterplan` or Codex `Use masterplan` tries to resume interrupted work
 first: it re-renders pending gates, handles recorded critical errors, polls
 background continuations, auto-continues the current or only in-progress plan,
 opens the resume picker when active work is ambiguous, and shows the broader
@@ -399,16 +402,20 @@ output formats: `table` (default, terminal), `json` (jq-pipeable), `md`
 `bash <plugin-root>/bin/masterplan-session-audit.sh` is the read-only incident
 audit for recent Claude, Codex, and `/masterplan` telemetry logs. It scans a
 configurable time window, prints repo-level totals and top offending sessions,
-and warns on runaway Codex tool calls, unclassified active Masterplan stops,
-repeated shell-tool loops, Claude
+prints a primary-session "Started goals at risk" table, and warns on runaway
+Codex tool calls, unclassified active Masterplan stops, repeated shell-tool
+loops, Claude
 AskUserQuestion/Agent fanout, SessionStart payload bloat, oversized transcript
 telemetry, and missing telemetry for sessions with explicit `/masterplan`
-invocation/runtime markers. The output
+invocation/runtime markers. Codex guardian approval sub-sessions are classified
+as auxiliary so they do not pollute started-goal or missing-telemetry reports.
+The output
 is content-redacted: it reports counters, repo labels, session IDs, tool names,
 and telemetry sizes, not user prompts, shell commands, credentials, or tool
-results. JSON output includes stable warning `code` fields for downstream
-automation, and the self-host audit runs fixture-backed regressions for the
-classifier and warning contract.
+results. JSON output includes stable warning `code`, `session_role`,
+`goal_outcome`, and `goal_failure_reasons` fields for downstream automation,
+and the self-host audit runs fixture-backed regressions for the classifier and
+warning contract.
 
 ```bash
 bin/masterplan-session-audit.sh --hours=24
@@ -599,7 +606,7 @@ for details and the upstream issue link.
 
 ## Project Status
 
-Current release: **v3.2.4**.
+Current release: **v3.2.5**.
 
 - Release history: [`CHANGELOG.md`](./CHANGELOG.md)
 - Contributor internals: [`docs/internals.md`](./docs/internals.md)

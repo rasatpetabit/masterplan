@@ -412,23 +412,28 @@ check_codex_packaging() {
     EXIT=1
   fi
 
-  if ! grep -q '\$masterplan' "${codex_entry_skill}" 2>/dev/null; then
-    echo '⚠️  skills/masterplan/SKILL.md — missing Codex $masterplan invocation mapping'
+  if ! grep -q 'Use masterplan' "${codex_entry_skill}" 2>/dev/null; then
+    echo '⚠️  skills/masterplan/SKILL.md — missing Codex normal-chat invocation mapping'
     EXIT=1
   fi
 
-  if ! grep -q '\$masterplan' "${command_file}" 2>/dev/null; then
-    echo '⚠️  commands/masterplan.md — missing Codex $masterplan resume-hint contract'
+  if ! grep -q 'codex_user_entrypoint = "Use masterplan"' "${command_file}" 2>/dev/null; then
+    echo '⚠️  commands/masterplan.md — missing Codex normal-chat resume-hint contract'
     EXIT=1
   fi
 
-  if ! grep -q '\$masterplan' "${REPO_ROOT}/README.md" 2>/dev/null; then
-    echo '⚠️  README.md — missing Codex $masterplan invocation documentation'
+  if ! grep -q 'Use masterplan' "${REPO_ROOT}/README.md" 2>/dev/null; then
+    echo '⚠️  README.md — missing Codex normal-chat invocation documentation'
     EXIT=1
   fi
 
-  if grep -q 'Codex host budget reached: .*resume with /masterplan' "${command_file}" 2>/dev/null; then
-    echo "⚠️  commands/masterplan.md — Codex budget close text must not suggest Claude-only /masterplan resume commands"
+  if grep -Eq 'Codex host budget reached: .*(resume with /masterplan|resume with \$masterplan)' "${command_file}" 2>/dev/null; then
+    echo "⚠️  commands/masterplan.md — Codex budget close text must not suggest shell/slash resume commands"
+    EXIT=1
+  fi
+
+  if grep -q 'MUST use \$masterplan' "${command_file}" 2>/dev/null; then
+    echo '⚠️  commands/masterplan.md — Codex resume hints must not require $masterplan'
     EXIT=1
   fi
 

@@ -1,6 +1,6 @@
 ---
 name: masterplan
-description: Use when the user invokes $masterplan, /masterplan, /superpowers-masterplan:masterplan, asks to brainstorm, plan, execute, resume, import, doctor, status, next, retro, or clean masterplan work, or asks about existing docs/masterplan run bundles created by Claude.
+description: Use when the user invokes masterplan as a normal Codex chat request, $masterplan, /masterplan, /superpowers-masterplan:masterplan, asks to brainstorm, plan, execute, resume, import, doctor, status, next, retro, or clean masterplan work, or asks about existing docs/masterplan run bundles created by Claude.
 ---
 
 # Codex entrypoint for Superpowers Masterplan
@@ -65,8 +65,11 @@ user-global defaults such as `autonomy`, `complexity`, `runs_path`, or
 
 Treat these user inputs as this skill:
 
+- `Use masterplan <args>` as a normal Codex chat message
+- `masterplan <args>` when it appears as natural-language chat, not shell input
 - `$masterplan`
-- `$masterplan <args>`
+- `$masterplan <args>` when it appears as normal chat; do not recommend this
+  form because Codex TUI shell-command mode sends it to Bash
 - `/masterplan`
 - `/masterplan <args>`
 - `/superpowers-masterplan:masterplan`
@@ -78,10 +81,11 @@ The arguments are the text after the command name. If there are no arguments,
 follow the command's bare invocation flow: resume active `state.yml` first,
 re-render pending gates, poll background continuations, and treat `status:
 blocked` as critical-error recovery rather than an ordinary pause. When Codex
-renders a manual resume hint or close-out instruction, prefer the portable
-skill form, e.g.
-`$masterplan execute docs/masterplan/<slug>/state.yml`; do not surface
-Claude-only `/masterplan ...` as the primary Codex resume command.
+renders a manual resume hint or close-out instruction, use an explicit normal
+chat instruction, e.g.
+`send a normal Codex chat message: Use masterplan execute docs/masterplan/<slug>/state.yml`;
+do not surface Claude-only `/masterplan ...` or shell-looking `$masterplan ...`
+as the primary Codex resume command.
 
 ## Existing Claude-created projects
 
@@ -119,6 +123,13 @@ When the command prompt names Claude Code tools, use the local Codex equivalents
 
 Follow the command prompt's Codex-host suppression rules: do not recursively
 dispatch to Codex from inside a Codex-hosted masterplan run.
+
+`Use masterplan ...` is the primary Codex chat/skill trigger for user-facing
+resume hints. `$masterplan ...` can work only when the host records it as normal
+chat; Codex TUI shell-command mode sends it to Bash. Never pass
+`$masterplan ...`, `masterplan ...`, or `/masterplan ...` to `exec_command`;
+Bash will either expand `$masterplan` as an environment variable or look for a
+nonexistent executable.
 
 Codex host suppression is only about recursive dispatch and review. When a
 Codex `request_user_input` gate returns an answer label, treat that as explicit

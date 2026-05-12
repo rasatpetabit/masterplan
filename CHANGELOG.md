@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.2.5] — 2026-05-12 — Codex normal-chat resume hints
+
+### Fixed
+
+- **Codex resume hints avoid shell mode.** Codex-facing close-out and
+  budget-stop text now tells users to send a normal chat message such as
+  `Use masterplan execute <state-path>` instead of printing `$masterplan ...`,
+  which Codex TUI shell-command mode sends to Bash as environment-variable
+  expansion.
+- **Codex goal outcome audit.** `bin/masterplan-session-audit.sh` now classifies
+  Codex guardian approval sub-sessions as auxiliary, reads Codex
+  `task_complete.last_agent_message` stop signals, exposes `session_role`,
+  `goal_outcome`, and `goal_failure_reasons` in JSON output, and prints a
+  redacted "Started goals at risk" section for primary sessions.
+
 ## [3.2.4] — 2026-05-12 — loop-first resume contract
 
 ### Added

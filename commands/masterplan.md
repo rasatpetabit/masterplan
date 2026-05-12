@@ -31,10 +31,13 @@ This prompt is maintained as one source for both Claude Code and Codex plugin ho
   permits them, otherwise keep the work bounded in the main thread and record
   the deviation in `events.jsonl`.
 - Codex invokes this command through the `masterplan` skill. The portable
-  user-facing form is `$masterplan <args>`; some builds may also pass
-  `/masterplan` or `/superpowers-masterplan:masterplan` text through to the same
-  skill. Treat all three as this same orchestrator, but when closing a
-  Codex-hosted turn, print `$masterplan ...` resume hints.
+  user-facing form is a normal chat message such as `Use masterplan <args>`;
+  some builds may also pass `/masterplan` or
+  `/superpowers-masterplan:masterplan` text through to the same skill. Treat
+  those forms as this same orchestrator, but when closing a Codex-hosted turn,
+  print normal-chat resume hints. Do not print `$masterplan ...` as the primary
+  resume form; Codex TUI shell-command mode records it as Bash input, where
+  `$masterplan` becomes environment-variable expansion.
 
 ---
 
@@ -86,10 +89,10 @@ When `codex_host_suppressed == true`:
    - `<ISO-ts> codex host suppression — running inside Codex; codex_routing+codex_review forced off for this invocation (configured: routing=<configured>, review=<configured>).`
    If no other state write happens this turn, force the same small state write pattern as the degradation path: append the event, update `last_activity`, and set `last_warning: codex host suppression this run — recursive codex dispatch disabled`.
 5. Downstream Step C must use `decision_source: host-suppressed` whenever a task would otherwise have considered Codex routing/review.
-6. **Codex user-facing resume syntax.** Set in-memory `codex_user_entrypoint = "$masterplan"` for visible Codex close-out instructions. Any user-facing resume, next, pause, blocker, or budget-stop hint rendered while `codex_host_suppressed == true` MUST use `$masterplan ...`, e.g. `$masterplan next`, `$masterplan execute <state-path>`, or `$masterplan --resume=<state-path>`. Do not tell a Codex user to resume with Claude Code's `/masterplan ...` form unless the user explicitly asks for Claude Code instructions.
+6. **Codex user-facing resume syntax.** Set in-memory `codex_user_entrypoint = "Use masterplan"` for visible Codex close-out instructions. `Use masterplan ...` means a normal Codex chat message, not a shell command. Any user-facing resume, next, pause, blocker, or budget-stop hint rendered while `codex_host_suppressed == true` MUST use the normal-chat form, e.g. `Use masterplan next`, `Use masterplan execute <state-path>`, or `Use masterplan --resume=<state-path>`. Do not surface `$masterplan ...` as the primary hint: in Codex TUI shell-command mode it is logged as `<user_shell_command>` and Bash expands `$masterplan` before trying to execute the remaining text. Do not call `Bash`/`exec_command` with `$masterplan ...`, `masterplan ...`, or `/masterplan ...`; Bash treats `$masterplan` as environment-variable expansion and `masterplan` as an executable name. Do not tell a Codex user to resume with Claude Code's `/masterplan ...` form unless the user explicitly asks for Claude Code instructions.
 7. **Codex host performance guard.** Host-suppressed mode is a bounded interactive mode, not a license to execute the whole workflow inline and not a blanket halt after every answered gate. Set in-memory `codex_host_perf_guard = {tool_budget: 40, gate_budget: 1, large_read_budget: 2, phase_budget: 1}` for the invocation unless the user explicitly supplied both `/loop` and `--autonomy=full`. These budgets are hard close checkpoints, not persisted config.
    - Count shell/tool calls made by the orchestrator itself, unresolved structured gates surfaced by this command, large reads of prompt/plan/spec/transcript/event-log files (roughly >500 lines or >20k chars), and automatic top-level phase transitions. An explicit gate answer that directly asks to keep moving (`full`, `continue`, `approve and run`, `start execution`, `run full kickoff`) does not consume the gate close checkpoint or the phase checkpoint for the transition it authorizes; set in-memory `codex_host_gate_continuation = true` for that answered gate.
-   - When any budget is reached, write the smallest durable state update available (`last_activity`, `next_action`, `pending_gate` or `background` if present), set `stop_reason: scheduled_yield`, append `continuation_scheduled`, render `Codex host budget reached: <reason>; state preserved; resume with $masterplan next or $masterplan execute <state-path>.`, then → CLOSE-TURN.
+   - When any budget is reached, write the smallest durable state update available (`last_activity`, `next_action`, `pending_gate` or `background` if present), set `stop_reason: scheduled_yield`, append `continuation_scheduled`, render `Codex host budget reached: <reason>; state preserved; send a normal Codex chat message: Use masterplan next or Use masterplan execute <state-path>.`, then → CLOSE-TURN.
    - After any Codex `request_user_input`, resolve that gate result before doing anything else. If the result contains no answer, use the no-selection terminal render and → CLOSE-TURN. If it returns an answer label or free-form text, including the first/recommended option, treat that as explicit interactive selection evidence: apply the selected option and persist `gate_closed`. Then continue when `halt_mode == none`, `requested_verb in {full, execute}`, `codex_host_gate_continuation == true`, or the selected option itself is a continuation option (`Continue to plan now`, `Approve and run writing-plans`, `Start execution now`, `Run full kickoff`). Close only for true halt gates (`post-brainstorm`, `post-plan`, resume/status/doctor/clean/retro pickers), no-selection gates, sensitive live-auth blockers, or an actual budget hit.
    - Never close with a generic Codex-hosted structured-gate rationale as the sole reason. Codex host suppression disables recursive Codex dispatch; it does not override explicit full-flow or continuation intent in the same turn.
 8. **Codex host summary-first loading.** For bare, `next`, `status`, `doctor`, `audit`, and transcript-review-style invocations, inspect run state through summary commands first (`bin/masterplan-state.sh inventory` when available, otherwise `rg --files docs/masterplan` plus targeted `state.yml` reads). Do not read the full `commands/masterplan.md`, full plans/specs, full transcripts, or full event logs unless the user explicitly asked to edit/audit that file or the targeted summary proves the full file is required.
@@ -220,7 +223,7 @@ Ordinary task blockers, weak/no gate evidence, Codex host budget limits, backgro
 
 Safety-only critical errors are limited to conditions where continuing without user input risks corruption or irreversible damage: malformed or contradictory state that cannot be safely interpreted, missing or mismatched worktree/branch where automatic correction risks user work, destructive or production-visible approval required, missing auth/secrets required to continue, repeated verification/review failure after the documented recovery ladder, or a protocol violation that leaves the worktree/state provenance untrustworthy.
 
-**Resume controller.** At the start of bare `/masterplan`, `$masterplan`, `execute`, `next`, and `--resume` flows, after Step 0 config parsing and before any broad menu or fresh-start routing, run this controller against live `state.yml`:
+**Resume controller.** At the start of bare `/masterplan`, Codex `Use masterplan`, `execute`, `next`, and `--resume` flows, after Step 0 config parsing and before any broad menu or fresh-start routing, run this controller against live `state.yml`:
 
 1. If `pending_gate` is non-null, re-render that exact gate and do not infer a default answer.
 2. Else if `critical_error` is non-null or `status: blocked`, render the recorded recovery gate; do not auto-resume unsafe work.
@@ -585,7 +588,7 @@ If the JSONL doesn't exist (no Stop hook installed, or first turn on this plan),
 
 ## Step M — Bare-invocation resume-first router
 
-Fires when `/masterplan` (Claude Code) or `$masterplan` (Codex) is invoked with no args. Default behavior is **resume-first**: try to continue interrupted project work before showing any broad menu. The two-tier `AskUserQuestion` menu is now the empty-state fallback for repos with no active masterplan plan.
+Fires when `/masterplan` (Claude Code) or `Use masterplan` (Codex normal chat) is invoked with no args. Default behavior is **resume-first**: try to continue interrupted project work before showing any broad menu. The two-tier `AskUserQuestion` menu is now the empty-state fallback for repos with no active masterplan plan.
 
 ### Step M0 — Inline status orientation (runs before resume-first routing)
 
@@ -965,7 +968,7 @@ brainstorm_anchor:
 4. **If spec exists** (the normal case): update `state.yml`: `phase: spec_gate`, `artifacts.spec: <config.runs_path>/<slug>/spec.md`, `next_action: approve spec for planning`; append `spec_written` to `events.jsonl`, then consult `halt_mode`.
    - **`halt_mode == none`** (existing kickoff path, unchanged): under `--autonomy != full`, persist `pending_gate` with `id: spec_approval` and then surface `AskUserQuestion("Spec written at <path>. Ready for writing-plans?", options=[Approve and run writing-plans (Recommended) / Open spec to review first then ping me / Request changes — describe what to change / Abort kickoff])`. Under `--autonomy=full`: auto-approve, clear `pending_gate`, and proceed to Step B2 silently.
    - **`halt_mode == post-brainstorm`** (new, fires when invoked via `/masterplan brainstorm <topic>`): persist `pending_gate` with `id: brainstorm_closeout`, set `stop_reason: question`, and then surface `AskUserQuestion("Spec written at <path>. What next?", options=["Done — close out this run (Recommended)", "Continue to plan now — run B2+B3 as if /masterplan plan --from-spec=<path> (the B0 worktree decision from earlier this session still holds; B0a is not re-run)", "Open spec to review before deciding — then ping me", "Re-run brainstorming to refine"])`.
-     - "Done" → clear `pending_gate`, leave `stop_reason: question`, set `phase: spec_gate`, append `gate_closed`, → CLOSE-TURN. The next bare `/masterplan` or `$masterplan` invocation resumes from `state.yml` even though no plan exists yet.
+     - "Done" → clear `pending_gate`, leave `stop_reason: question`, set `phase: spec_gate`, append `gate_closed`, → CLOSE-TURN. The next bare `/masterplan` or Codex `Use masterplan` invocation resumes from `state.yml` even though no plan exists yet.
      - "Continue to plan now" → flip in-session `halt_mode` to `post-plan` and proceed to Step B2. The spec is reused.
      - "Open spec" → → CLOSE-TURN; user re-invokes whatever they want next.
      - "Re-run brainstorming to refine" → re-invoke `superpowers:brainstorming` against the same topic; the previous spec is overwritten.
@@ -1037,10 +1040,10 @@ Then flip `compact_loop_recommended: true` in `state.yml`. Whether or not the us
 
 - **`halt_mode == none`** (existing kickoff path, unchanged): if `--autonomy != full`, persist `pending_gate` with `id: plan_approval`, then present a one-paragraph plan summary and the path to the plan file via `AskUserQuestion` with options "Start execution / Open plan to review / Cancel". Wait for approval. If `--autonomy=full`: clear `pending_gate` and skip approval. Proceed to **Step C** with the new `state.yml` path.
 
-- **`halt_mode == post-plan`** (new, fires when invoked via `/masterplan plan <topic>`, `/masterplan plan --from-spec=<path>`, Step A's spec-without-plan variant's pick, or via B1's "Continue to plan now" flip from a `brainstorm` invocation): persist `pending_gate` with `id: plan_closeout`, set `stop_reason: question`, then surface `AskUserQuestion("Plan written at <path>. State file at <state-path>. What next?", options=["Done — resume later with <manual-resume-command> (Recommended)", "Start execution now — flip halt_mode to none and proceed to Step C", "Open plan to review before deciding", "Discard plan + state file (spec kept)"])`. Resolve `<manual-resume-command>` by host: Claude Code uses `/masterplan execute <state-path>`; Codex uses `$masterplan execute <state-path>`.
-  - "Done" → clear `pending_gate`, leave `stop_reason: question`, → CLOSE-TURN. `state.yml` persists with `status: in-progress`, `phase: plan_gate`, and `current_task` set to the first task. The next bare `/masterplan` or `$masterplan` invocation resumes from this state without requiring the operator to remember the command.
+- **`halt_mode == post-plan`** (new, fires when invoked via `/masterplan plan <topic>`, `/masterplan plan --from-spec=<path>`, Step A's spec-without-plan variant's pick, or via B1's "Continue to plan now" flip from a `brainstorm` invocation): persist `pending_gate` with `id: plan_closeout`, set `stop_reason: question`, then surface `AskUserQuestion("Plan written at <path>. State file at <state-path>. What next?", options=["Done — resume later with <manual-resume-command> (Recommended)", "Start execution now — flip halt_mode to none and proceed to Step C", "Open plan to review before deciding", "Discard plan + state file (spec kept)"])`. Resolve `<manual-resume-command>` by host: Claude Code uses `/masterplan execute <state-path>`; Codex uses `normal Codex chat: Use masterplan execute <state-path>`.
+  - "Done" → clear `pending_gate`, leave `stop_reason: question`, → CLOSE-TURN. `state.yml` persists with `status: in-progress`, `phase: plan_gate`, and `current_task` set to the first task. The next bare `/masterplan` or Codex `Use masterplan` invocation resumes from this state without requiring the operator to remember the command.
   - "Start execution now" → flip in-session `halt_mode` to `none` and proceed to **Step C**.
-  - "Open plan" → clear `pending_gate`, leave `stop_reason: question`, → CLOSE-TURN. The next bare `/masterplan` or `$masterplan` invocation resumes from this state.
+  - "Open plan" → clear `pending_gate`, leave `stop_reason: question`, → CLOSE-TURN. The next bare `/masterplan` or Codex `Use masterplan` invocation resumes from this state.
   - "Discard" → `git rm` the plan file and `state.yml`; commit (`masterplan: discard plan <slug>` subject); → CLOSE-TURN [pre-close: git rm + commit done above]. Spec is kept.
 
 The state file's `autonomy`, `codex_routing`, `codex_review`, `loop_enabled` fields are populated from this run's flags per the post-plan flag-persistence rule in Step 0; they take effect on the eventual `execute` invocation.
@@ -1597,7 +1600,7 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
      ]
    )
    ```
-   Resolve `<manual-resume-command>` by host: Claude Code uses `/masterplan --resume=<state-path>`; Codex uses `$masterplan execute <state-path>`. Resolve `<loop-resume-command>` as `/loop /masterplan --resume=<state-path>` only when the host actually supports `/loop`/`ScheduleWakeup`. Do not surface `/masterplan --resume=<state-path>` as the manual Codex resume command.
+   Resolve `<manual-resume-command>` by host: Claude Code uses `/masterplan --resume=<state-path>`; Codex uses `normal Codex chat: Use masterplan execute <state-path>`. Resolve `<loop-resume-command>` as `/loop /masterplan --resume=<state-path>` only when the host actually supports `/loop`/`ScheduleWakeup`. Do not surface `/masterplan --resume=<state-path>` as the manual Codex resume command.
    Routing of choices:
    - **Continue** → re-enter Step C step 2 with `current_task` updated. Same-turn dispatch.
    - **Pause here** → set `stop_reason: question` and → CLOSE-TURN [pre-close: 4d already committed].

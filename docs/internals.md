@@ -36,7 +36,7 @@
 
 ## 1. Project orientation
 
-`superpowers-masterplan` ships one orchestrator command for Claude Code and Codex. In Claude Code the command is `/masterplan`; in Codex the portable invocation is `$masterplan` through the `masterplan` skill, with slash-style text accepted only when the host passes it through. The command orchestrates a complete development workflow — brainstorm a spec, plan the implementation, execute task-by-task, generate a retrospective when complete — by sequencing the upstream `superpowers` skills (`brainstorming`, `writing-plans`, `subagent-driven-development`, `executing-plans`, `using-git-worktrees`, `systematic-debugging`, `finishing-a-development-branch`).
+`superpowers-masterplan` ships one orchestrator command for Claude Code and Codex. In Claude Code the command is `/masterplan`; in Codex the portable invocation is a normal chat request such as `Use masterplan next` through the `masterplan` skill, with slash-style text accepted only when the host passes it through. The command orchestrates a complete development workflow — brainstorm a spec, plan the implementation, execute task-by-task, generate a retrospective when complete — by sequencing the upstream `superpowers` skills (`brainstorming`, `writing-plans`, `subagent-driven-development`, `executing-plans`, `using-git-worktrees`, `systematic-debugging`, `finishing-a-development-branch`).
 
 **It's a thin orchestrator, not a re-implementation.** The pipeline phases live in superpowers; `/masterplan` sequences them, persists state in `docs/masterplan/<slug>/state.yml`, and routes decisions (which model executes a task; whether Codex reviews; whether a wave dispatches in parallel; etc.).
 
@@ -91,7 +91,7 @@ superpowers-masterplan/
 
 ### How to operate
 
-When the user types `/masterplan <args>` in Claude Code, the host loads `commands/masterplan.md` as the command prompt with `$ARGUMENTS` bound to `<args>`. In Codex, the `skills/masterplan/SKILL.md` entrypoint makes new Codex sessions aware of the workflow, maps `$masterplan <args>`, slash-style text when available, or natural-language "use masterplan" requests to the same command prompt, and scans existing Claude-created `docs/masterplan/<slug>/state.yml` run bundles before starting fresh work. The prompt directs the orchestrator through Steps 0 → A or B or C or D or I or R or S or T or CL, depending on the verb. Codex-specific tool substitutions live in the runtime compatibility block near the top of the command and in the Codex skill entrypoint.
+When the user types `/masterplan <args>` in Claude Code, the host loads `commands/masterplan.md` as the command prompt with `$ARGUMENTS` bound to `<args>`. In Codex, the `skills/masterplan/SKILL.md` entrypoint makes new Codex sessions aware of the workflow, maps normal chat requests such as `Use masterplan <args>`, slash-style text when available, or other natural-language masterplan requests to the same command prompt, and scans existing Claude-created `docs/masterplan/<slug>/state.yml` run bundles before starting fresh work. The prompt directs the orchestrator through Steps 0 → A or B or C or D or I or R or S or T or CL, depending on the verb. Codex-specific tool substitutions live in the runtime compatibility block near the top of the command and in the Codex skill entrypoint.
 
 Claude's SessionStart hook must keep the user-level `/masterplan` command as a
 compact shim (`<!-- masterplan-shim: v3 -->`) that delegates to
@@ -348,7 +348,7 @@ These are command-specific rules covering cross-cutting policy not stated inline
 - **Doctor is read-only by default.** Without `--fix` it only reports — even an obvious orphan stays in place. `--fix` only acts on errors marked auto-fixable.
 - **Inference is conservative by design.** When in doubt, classify `possibly_done`, not `done`. Cost of re-verifying < cost of skipping real work.
 - **Don't stop silently anywhere.** Always close with `AskUserQuestion` if input might be needed. Recursively pre-empt upstream-skill free-text prompts (`finishing-a-development-branch`'s "Which option?", `using-git-worktrees`' "Which directory?", `writing-plans`' "Which approach?", `brainstorming`'s "Wait for the user's response").
-- **Loop-first resume is the default.** A bare `/masterplan` or `$masterplan` invocation must prefer active `state.yml` over menus, re-render pending gates first, poll background continuations before redispatch, and resume the only unambiguous `in-progress` plan automatically.
+- **Loop-first resume is the default.** A bare `/masterplan` or Codex `Use masterplan` invocation must prefer active `state.yml` over menus, re-render pending gates first, poll background continuations before redispatch, and resume the only unambiguous `in-progress` plan automatically.
 - **Blocked means critical error only.** Routine blockers, quota exhaustion, weak gate evidence, host budget yields, and background polling stay `status: in-progress` with `stop_reason: question` or `scheduled_yield`. Set `status: blocked` only with `stop_reason: critical_error` and a populated `critical_error` object.
 - **External writes are gated.** Posting comments to GitHub issues/PRs, Slack messages, closing issues during import always passes through `AskUserQuestion` first — even under `--autonomy=full`.
 - **Codex routing is locked at kickoff, switchable on resume.** `codex_routing` and `codex_review` land in `state.yml` at Step B3 (or first Step C invocation for imported plans). Mid-run flips happen via re-invocation: `/masterplan --resume=<path> --codex=<mode> --codex-review=<on|off>`.
@@ -453,7 +453,7 @@ If the orchestrator crashes mid-wave (after dispatch, before barrier returns), t
 
 Codex support is packaged by `.codex-plugin/plugin.json`, `.agents/plugins/marketplace.json`, and `skills/masterplan/SKILL.md`. The Codex marketplace entry points at `./plugins/superpowers-masterplan`, a Git symlink back to the repo root, so the existing `commands/`, `skills/`, `bin/`, and docs stay single-source while satisfying Codex's plugin-path convention. Do not duplicate `commands/masterplan.md` under `plugins/`; if Codex packaging changes, update the packaging manifests and self-host audit instead.
 
-The portable Codex contract is prompt exposure through the `masterplan` skill. New Codex sessions should list `masterplan` in available skills and should route `$masterplan <args>`, slash-style text when the host supports it, or natural-language masterplan requests through that skill. Native slash-command registration is host-dependent and must not be treated as the only smoke test. Codex-facing close-out and resume hints should use `$masterplan execute <state-path>` rather than Claude Code's `/masterplan ...` form.
+The portable Codex contract is prompt exposure through the `masterplan` skill. New Codex sessions should list `masterplan` in available skills and should route normal chat requests such as `Use masterplan <args>`, slash-style text when the host supports it, or other natural-language masterplan requests through that skill. Native slash-command registration is host-dependent and must not be treated as the only smoke test. Codex-facing close-out and resume hints should say to send a normal Codex chat message such as `Use masterplan execute <state-path>` rather than Claude Code's `/masterplan ...` form or shell-looking `$masterplan ...`.
 
 The Codex skill entrypoint has its own config bootstrap before any workflow routing: read `~/.masterplan.yaml`, then `<repo-root>/.masterplan.yaml`, then shallow-merge invocation flags on top. This duplicates Step 0's config contract deliberately so Codex-hosted runs do not fall back to built-in defaults before they have loaded the canonical command prompt.
 
@@ -548,6 +548,14 @@ the audit requires an explicit `/masterplan` user invocation or orchestrator
 runtime marker, so ambient references from the plugin repo name, docs,
 SessionStart skill listings, or developer prompt text do not trigger coverage
 warnings.
+
+Codex session role classification separates primary user sessions from guardian
+approval sub-sessions. Guardian sessions can still contribute auxiliary
+counters, but they do not count as started user goals and do not trigger active
+Masterplan missing-telemetry or unclassified-stop warnings. Primary sessions
+also expose `goal_outcome` and `goal_failure_reasons` in JSON output, and the
+table output includes a "Started goals at risk" section derived from those
+redacted fields.
 
 The implementation lives in `lib/masterplan_session_audit.py`; the shell script
 is only the CLI wrapper. `tests/test_masterplan_session_audit.py` and

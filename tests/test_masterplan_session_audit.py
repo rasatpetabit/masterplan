@@ -1,4 +1,6 @@
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -101,6 +103,52 @@ class SessionAuditTests(unittest.TestCase):
         ]
 
         self.assertEqual(1, len(warnings))
+
+    def test_guardian_sessions_are_auxiliary_and_do_not_require_masterplan_telemetry(self):
+        data = self.run_fixture_audit()
+        sessions = {session["repo"]: session for session in data["codex_sessions"]}
+        guardian = sessions["guardian-repo"]
+
+        self.assertEqual("guardian", guardian["session_role"])
+        self.assertEqual("auxiliary", guardian["goal_outcome"])
+        self.assertEqual([], guardian["goal_failure_reasons"])
+
+        warning_codes = {
+            warning["code"]
+            for warning in data["warnings"]
+            if warning["repo"] == "guardian-repo"
+        }
+        self.assertNotIn("active_masterplan_missing_telemetry", warning_codes)
+        self.assertNotIn("active_masterplan_unclassified_stop", warning_codes)
+
+    def test_codex_task_complete_event_classifies_primary_goal_complete(self):
+        data = self.run_fixture_audit()
+        sessions = {session["repo"]: session for session in data["codex_sessions"]}
+        session = sessions["task-complete"]
+
+        self.assertEqual("primary", session["session_role"])
+        self.assertEqual("complete", session["stop_kind"])
+        self.assertEqual("complete", session["goal_outcome"])
+
+        warning_codes = {
+            warning["code"]
+            for warning in data["warnings"]
+            if warning["repo"] == "task-complete"
+        }
+        self.assertNotIn("active_masterplan_unclassified_stop", warning_codes)
+
+    def test_table_reports_started_primary_goals_at_risk(self):
+        data = self.run_fixture_audit()
+        buffer = StringIO()
+
+        with redirect_stdout(buffer):
+            audit.print_table(data)
+
+        output = buffer.getvalue()
+        self.assertIn("Started goals at risk", output)
+        section = output.split("Started goals at risk", 1)[1].split("\n\n", 1)[0]
+        self.assertIn("stop-unknown", section)
+        self.assertNotIn("guardian-repo", section)
 
     def test_parse_args_preserves_environment_default_paths(self):
         with patch.dict(

@@ -25,12 +25,18 @@ LOOP_ROOTS = {"git", "date", "sed", "rg"}
 QUESTION_TOOLS = {"AskUserQuestion", "Question", "request_user_input"}
 AGENT_TOOLS = {"Agent", "Task"}
 STOP_KIND_UNKNOWN = "unknown"
+SESSION_ROLE_PRIMARY = "primary"
+SESSION_ROLE_GUARDIAN = "guardian"
+SESSION_ROLE_SUBAGENT = "subagent"
+AUXILIARY_SESSION_ROLES = {SESSION_ROLE_GUARDIAN, SESSION_ROLE_SUBAGENT}
 STOP_SIGNAL_RE = {
     "question": re.compile(r"(?i)\b(Gate pending:|AskUserQuestion\(|request_user_input|pending_gate\b|question_opened)\b"),
     "critical_error": re.compile(r"(?i)\b(critical_error|critical error|status:\s*blocked|phase:\s*blocked|critical_error_opened)\b"),
-    "complete": re.compile(r"(?i)\b(status:\s*complete|phase:\s*complete|status\s+is\s+complete|run complete|marked .*complete)\b"),
+    "complete": re.compile(r"(?i)\b(status:\s*complete|phase:\s*complete|status\s+is\s+complete|run complete|marked .*complete|(?:task\s+)?(?:T\d+\s+)?is\s+complete)\b"),
     "scheduled_yield": re.compile(r"(?i)\b(continuation_scheduled|wakeup_scheduled|ScheduleWakeup\(|scheduled wakeup)\b"),
-    "resumable_yield": re.compile(r"(?i)\b(Codex host budget reached:|state preserved; resume with|\$masterplan execute|/masterplan --resume=)\b"),
+    "resumable_yield": re.compile(
+        r"(?i)\b(Codex host budget reached:|state preserved; (?:resume with|send a normal Codex chat message)|Use masterplan (?:next|execute|--resume=)|/masterplan --resume=)\b"
+    ),
 }
 
 USER_MASTERPLAN_ACTIVITY_RE = re.compile(
@@ -76,6 +82,7 @@ class SessionStats:
     masterplan_like: bool = False
     stop_kind: str = STOP_KIND_UNKNOWN
     stop_signal_seen: bool = False
+    session_role: str = SESSION_ROLE_PRIMARY
     tool_counts: Counter = field(default_factory=Counter)
     command_roots: Counter = field(default_factory=Counter)
     warnings: list[WarningItem] = field(default_factory=list)
@@ -330,6 +337,59 @@ def classify_stop_text(text):
     return ""
 
 
+def classify_codex_session_role(meta):
+    source = meta.get("source")
+    thread_source = meta.get("thread_source")
+    model = str(meta.get("model") or "")
+
+    if model == "codex-auto-review":
+        return SESSION_ROLE_GUARDIAN
+
+    if isinstance(source, dict):
+        subagent = source.get("subagent")
+        if isinstance(subagent, dict):
+            if subagent.get("other") == "guardian":
+                return SESSION_ROLE_GUARDIAN
+            return SESSION_ROLE_SUBAGENT
+
+    if thread_source == "subagent":
+        return SESSION_ROLE_SUBAGENT
+
+    return SESSION_ROLE_PRIMARY
+
+
+def is_auxiliary_session(stats):
+    return stats.session_role in AUXILIARY_SESSION_ROLES
+
+
+def goal_outcome(stats):
+    if is_auxiliary_session(stats):
+        return "auxiliary"
+    if stats.stop_kind != STOP_KIND_UNKNOWN:
+        return stats.stop_kind
+    return STOP_KIND_UNKNOWN
+
+
+def goal_failure_reasons(stats):
+    if is_auxiliary_session(stats):
+        return []
+
+    warning_codes = {warning.code for warning in stats.warnings}
+    reasons = []
+    if (
+        stats.stop_kind != "complete"
+        and ("codex_calls_high" in warning_codes or "repeated_command_root" in warning_codes)
+    ):
+        reasons.append("tool_loop")
+    if stats.stop_kind != "complete" and "codex_questions_high" in warning_codes:
+        reasons.append("question_loop")
+    if "active_masterplan_missing_telemetry" in warning_codes:
+        reasons.append("missing_telemetry")
+    if "active_masterplan_unclassified_stop" in warning_codes:
+        reasons.append("unclassified_stop")
+    return reasons
+
+
 def record_stop_signal(stats, kind):
     if not kind:
         stats.stop_signal_seen = True
@@ -375,6 +435,7 @@ def analyze_codex_file(path, cutoff):
             meta = payload
             session_id = meta.get("id") or session_id
             cwd = meta.get("cwd") or cwd
+            stats.session_role = classify_codex_session_role(meta)
         cwd = payload.get("cwd") or rec.get("cwd") or cwd
         if cwd:
             stats.repo = repo_from_path(cwd, stats.repo)
@@ -407,6 +468,9 @@ def analyze_codex_file(path, cutoff):
                 event_role = "user"
             if has_masterplan_activity(msg, event_role):
                 stats.masterplan_like = True
+            if payload.get("type") == "task_complete":
+                final_text = stringify_content(payload.get("last_agent_message") or payload.get("message"))
+                record_stop_signal(stats, classify_stop_text(final_text))
 
     if not active:
         return None
@@ -418,7 +482,12 @@ def analyze_codex_file(path, cutoff):
         stats.add_warning("codex_questions_high", f"codex questions {stats.questions} > {CODEX_QUESTION_LIMIT}")
     if root and root_count >= CODEX_LOOP_LIMIT:
         stats.add_warning("repeated_command_root", f"repeated {root} calls {root_count} >= {CODEX_LOOP_LIMIT}")
-    if stats.masterplan_like and stats.stop_signal_seen and stats.stop_kind == STOP_KIND_UNKNOWN:
+    if (
+        not is_auxiliary_session(stats)
+        and stats.masterplan_like
+        and stats.stop_signal_seen
+        and stats.stop_kind == STOP_KIND_UNKNOWN
+    ):
         stats.add_warning("active_masterplan_unclassified_stop", "active masterplan session closed without classified stop reason")
     return stats
 
@@ -507,7 +576,12 @@ def analyze_claude_file(path, cutoff):
     if stats.sessionstart_bytes > SESSIONSTART_LIMIT:
         kb = stats.sessionstart_bytes // 1024
         stats.add_warning("sessionstart_payload_high", f"SessionStart payload {kb}KB > {SESSIONSTART_LIMIT // 1024}KB")
-    if stats.masterplan_like and stats.stop_signal_seen and stats.stop_kind == STOP_KIND_UNKNOWN:
+    if (
+        not is_auxiliary_session(stats)
+        and stats.masterplan_like
+        and stats.stop_signal_seen
+        and stats.stop_kind == STOP_KIND_UNKNOWN
+    ):
         stats.add_warning("active_masterplan_unclassified_stop", "active masterplan session closed without classified stop reason")
     return stats
 
@@ -609,7 +683,11 @@ def run_audit(since_arg, hours_arg, fmt, claude_dir, codex_dir, repo_roots, now=
     telemetry_repos = {t.repo for t in telemetry}
     all_sessions = codex_sessions + claude_sessions
     for session in all_sessions:
-        if session.masterplan_like and session.repo not in telemetry_repos:
+        if (
+            not is_auxiliary_session(session)
+            and session.masterplan_like
+            and session.repo not in telemetry_repos
+        ):
             session.add_warning("active_masterplan_missing_telemetry", "active masterplan session has no telemetry in window")
 
     repo_totals = defaultdict(RepoTotals)
@@ -667,7 +745,10 @@ def run_audit(since_arg, hours_arg, fmt, claude_dir, codex_dir, repo_roots, now=
             "sessionstart_bytes": session.sessionstart_bytes,
             "latest_ts": session.latest_ts,
             "masterplan_like": session.masterplan_like,
+            "session_role": session.session_role,
             "stop_kind": session.stop_kind,
+            "goal_outcome": goal_outcome(session),
+            "goal_failure_reasons": goal_failure_reasons(session),
             "top_loop_root": root,
             "top_loop_count": root_count,
             "top_tools": session.tool_counts.most_common(8),
@@ -746,6 +827,37 @@ def print_table(data):
             f"{total['sessionstart_bytes'] // 1024:5d} {total['telemetry_max_bytes'] / (1024*1024):8.1f} "
             f"{total['telemetry_max_lines']:8d} {total['warnings']:4d}"
         )
+
+    print("")
+    print("Started goals at risk")
+    print("repo                         session      outcome         calls q loop     reasons")
+    print("---------------------------- ------------ --------------- ----- - -------- ------------------------------")
+    risk_sessions = [
+        session
+        for session in codex_sessions + claude_sessions
+        if session.get("session_role") == SESSION_ROLE_PRIMARY and session.get("goal_failure_reasons")
+    ]
+    risk_sessions = sorted(
+        risk_sessions,
+        key=lambda item: (
+            len(item["goal_failure_reasons"]),
+            item["calls"],
+            item["questions"],
+            item["latest_ts"],
+        ),
+        reverse=True,
+    )
+    if not risk_sessions:
+        print("(none)")
+    else:
+        for session in risk_sessions[:12]:
+            loop = f"{session['top_loop_root']}:{session['top_loop_count']}" if session["top_loop_root"] else "-"
+            reasons = ",".join(session["goal_failure_reasons"])
+            print(
+                f"{session['repo'][:28]:28} {session['session'][:12]:12} "
+                f"{session['goal_outcome'][:15]:15} {session['calls']:5d} {session['questions']:1d} "
+                f"{loop[:8]:8} {reasons[:80]}"
+            )
 
     print("")
     print("Top Codex sessions")
