@@ -22,3 +22,5 @@
 {"ts":"2026-05-13T11:08:00Z","event":"task_complete","task":"T14","note":"retro.md written"}
 {"ts":"2026-05-13T11:08:00Z","event":"retro_complete","slug":"v4-2-1-doctor-checks","path":"docs/masterplan/v4-2-1-doctor-checks/retro.md"}
 {"ts":"2026-05-13T11:08:00Z","event":"plan_complete","slug":"v4-2-1-doctor-checks","feature_commit_sha":"87b8d6a","bundle_commit_sha":"d553cce","release_commit_sha":"f565739"}
+{"ts":"2026-05-13T11:09:00Z","event":"final_state_push_landed","branch":"v4.2.1-doctor-checks","retro_commit":"549905a","note":"retro commit pushed to origin"}
+{"ts":"2026-05-13T11:09:30Z","event":"local_tag_created","tag":"v4.2.1","target":"f565739","pushed":false,"note":"matches v4.1.1 / v4.2.0 convention — local annotated tag, not pushed; user-authorized push only"}
