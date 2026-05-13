@@ -1390,6 +1390,17 @@ If `TaskCreate` / `TaskUpdate` dispatch errors at any point, append `taskcreate_
 
 **Mirror every state.yml task-transition to TaskList (Claude Code only).** Throughout Step C, every write that changes `current_task`, dispatches a wave, records a wave-member digest, or flips `status` to `pending_retro` / `complete` / `blocked` MUST be followed by a `TaskUpdate` call per the transition table in *TaskCreate projection layer — Lifecycle mirror hooks*. The mirror call comes AFTER the `state.yml` write and the `events.jsonl` append, never before. If the `TaskUpdate` call errors, append `taskcreate_mirror_failed` to `events.jsonl` with `{call, task_idx, error}` and continue; **do NOT roll back the `state.yml` write** — `state.yml` is canonical and the next rehydration reconciles. Skip the entire mirror when `codex_host_suppressed == true`. The transition sites in Step C are: step 4 task-advance, step 3a wave dispatch, step 4b wave-member digest, step 6a-guard `pending_retro` flip, step 6 (post-retro) `complete` flip, and any `status: blocked` / `critical_error` write throughout the section.
 
+**Per-state-write priming (v4.1.1, Claude Code only).** In addition to the per-transition mirror above, every Step C `state.yml` write — including writes that do NOT change `current_task` or wave state (e.g. `last_activity` bumps, `pending_gate` writes, `background` marker writes, `next_action` updates) — MUST be followed by:
+
+```
+if codex_host_suppressed == false AND state.current_task != "":
+    TaskUpdate(task_id=<state.current_task's TaskList id>, status="in_progress")
+```
+
+This is an idempotent re-stamp; the task is already `in_progress` if the session is healthy. The purpose is to refresh the harness's recent-`Task*`-usage signal so the per-turn `<system-reminder>` is suppressed during idle-turn gaps between true transitions. The touch runs AFTER the `state.yml` write and AFTER the corresponding `events.jsonl` append. Failures append `taskcreate_mirror_failed` with `{call: "TaskUpdate-priming", task_idx, error}` and do NOT roll back the state write. Skip silently when `codex_host_suppressed == true` OR `current_task == ""` (between-task and pre-wave gaps).
+
+The touch is **NOT** applied outside Step C (brainstorm, plan, halt-gate, doctor, import, audit, etc.) — those phases legitimately benefit from the harness reminder.
+
 1. **Batched re-read.** Issue these as one parallel tool batch (not sequential):
    - Read `state.yml` (or a legacy status file only when the user explicitly chose one-invocation legacy mode).
    - Read the referenced bundled spec file.
