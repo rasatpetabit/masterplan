@@ -2716,6 +2716,15 @@ Core artifact keys (`spec`, `plan`, `events`) are required so consumers have sta
 
 `events.jsonl` is the append-only activity log. A future agent picking up this work should be able to read `state.yml`, `plan.md`, `spec.md`, and recent `events.jsonl` entries and have everything needed — never assume conversational context carries over.
 
+### TaskCreate projection events (Claude Code only)
+
+Emitted only when `codex_host_suppressed == false` (i.e., running inside Claude Code with the harness TaskList available):
+
+- `taskcreate_projection_rehydrated` — emitted once per session when the orchestrator (Claude Code host only) rebuilds the harness TaskList from `state.yml` + `plan.md`. Payload: `{count_created, count_completed_at_rehydrate, count_in_progress}`.
+- `taskcreate_mirror_failed` — emitted when a `TaskUpdate` or `TaskCreate` call returns an error during a transition mirror or rehydration. Payload: `{call: "TaskCreate|TaskUpdate", task_idx: <int or null>, error: "<message>"}`. `state.yml` is NOT rolled back; reconciliation happens at next rehydration.
+- `taskcreate_drift_corrected` — emitted when rehydration / re-entry detects TaskList disagreeing with `state.yml` and corrects TaskList. Payload: `{direction: "tasklist_wrong", task_idx: <int>, from: "<status>", to: "<status>"}`.
+- `taskcreate_orphan_cancelled` — emitted when a TaskList task with `metadata.masterplan.*` has a `task_idx` outside the current `plan.md` range. Payload: `{task_idx: <int>}`.
+
 ---
 
 ## Completion-state inference
