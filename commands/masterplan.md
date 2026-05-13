@@ -8,32 +8,40 @@ description: Lazy-loading orchestrator router for /masterplan. Dispatches verbs 
 
 ## CC-1 — Arg-lock guard
 
-**Verb tokens are reserved.** Any topic literally named `full`, `brainstorm`, `plan`, `execute`, `retro`, `import`, `doctor`, `status`, `stats`, `clean`, or `next` requires another word in front via the catch-all (for example, `/masterplan add brainstorm session timer`).
+**Verb tokens are reserved.** Any topic literally named `full`, `brainstorm`, `plan`, `execute`, `retro`, `import`, `doctor`, `status`, `stats`, `clean`, `validate`, or `next` requires another word in front via the catch-all (for example, `/masterplan add brainstorm session timer`).
 
-**Argument-parse precedence (in step-0.md, after config + git_state cache):**
-0. If invoked with no args (zero tokens after the command name): route to the resume-first controller in `parts/step-0.md`.
-1. Match the first token against `{start, resume, status, doctor, import, archive, validate, retry}`. On match: set `requested_verb = <matched-verb>`, consume the verb, and pass remaining args to the route in the dispatch table below.
-2. If unmatched and the first arg starts with `--`: load `parts/step-0.md` and let bootstrap resolve flag-only resume/start behavior.
-3. If unmatched and the first arg is a non-flag word: treat the full arg string as the topic and route as `start`.
-4. If the first token is a legacy reserved verb from v4 (`full`, `brainstorm`, `plan`, `execute`, `retro`, `stats`, `clean`, or `next`), reject it as reserved unless `parts/import.md` is explicitly running a legacy migration path.
+**Argument-parse precedence (in parts/step-0.md, after config + git_state cache):**
+0. If invoked with no args (zero tokens after the command name): route to the resume-first controller in `parts/step-0.md` (Step M0).
+1. Match the first token against `{full, brainstorm, plan, execute, retro, import, doctor, status, stats, clean, validate, next}`. On match: set `requested_verb = <matched-verb>`, set `halt_mode` per the routing table in `parts/step-0.md`, consume the verb, and pass remaining args to the route in the dispatch table below.
+2. If unmatched and the first arg starts with `--`: load `parts/step-0.md` and let bootstrap resolve flag-only behavior (notably `--resume=<path>` / `--resume <path>`, which alias to `execute <path>`).
+3. If unmatched and the first arg is a non-flag word: treat the full arg string as the topic and route to Step B via `parts/step-0.md` (back-compat catch-all).
 
 ## CC-2 — Boot banner
 
-Before doing anything else, before config load, before git_state cache, before verb routing, emit ONE plain-text line so the user can confirm `/masterplan` is alive. This is the FIRST output of every `/masterplan` turn.
+Before doing anything else — before config load, before git_state cache, before verb routing — emit ONE plain-text line so the user can confirm `/masterplan` is alive. This is the FIRST output of every `/masterplan` turn.
 
-Resolve the version by reading `.claude-plugin/plugin.json` from the first readable candidate path:
+**Step 1 — Resolve the version.** Use the **Read tool** to load `.claude-plugin/plugin.json` from the FIRST readable candidate path below, then parse the JSON and extract the `version` field. The Read tool call is mandatory — do not skip it, do not paraphrase its result, do not infer a version from session memory:
 
-1. `~/.claude/plugins/marketplaces/rasatpetabit-superpowers-masterplan/.claude-plugin/plugin.json`
-2. `<cwd>/.claude-plugin/plugin.json`
-3. `~/.claude/plugins/cache/rasatpetabit-superpowers-masterplan/superpowers-masterplan/<latest-version>/.claude-plugin/plugin.json`
+1. `~/.claude/plugins/marketplaces/rasatpetabit-superpowers-masterplan/.claude-plugin/plugin.json` — canonical installed location
+2. `<cwd>/.claude-plugin/plugin.json` — dev checkout (works when CWD is the plugin source repo)
+3. `~/.claude/plugins/cache/rasatpetabit-superpowers-masterplan/superpowers-masterplan/<latest-version>/.claude-plugin/plugin.json` — last resort; glob and pick the highest semver
 
-Render exactly one line in this shape, prefixed with `v` plus the parsed semver:
+**Step 2 — Render the sentinel.** Emit exactly one line in this shape, prefixed with `v` plus the parsed semver (no angle brackets, no placeholder tokens):
 
 ```
--> /masterplan v3.3.0 args: 'doctor --fix' cwd: /home/grojas/dev/optoe-ng
+-> /masterplan v5.0.0 args: 'doctor --fix' cwd: <repo-root-or-pwd>
 ```
 
-The shape is `-> /masterplan v<parsed-semver> args: '<truncated-args-or-(empty)>' cwd: <repo-root-or-pwd>`. If every read attempt fails, render the literal version slot `vUNKNOWN`. Do not emit `v?`, `v??`, `v???`, `vTBD`, `vXXX`, `v-`, `v<unknown>`, or the angle-bracket template token itself. Truncate `args` at 120 chars; total sentinel length <= 200 chars. The sentinel is plain stdout, not an `AskUserQuestion`, not inside a tool call, and not part of CC-3-trampoline.
+The shape is `-> /masterplan v<parsed-semver> args: '<truncated-args-or-(empty)>' cwd: <repo-root-or-pwd>`. Substitute the actual parsed semver, the actual `$ARGUMENTS` string (or the literal text `(empty)` when no arguments), and the actual cwd.
+
+**Fallback (ONLY when ALL three Read attempts fail).** Render the literal version slot `vUNKNOWN`. No other fallback value is permitted.
+
+**Strict prohibitions on the version slot.** The version slot must be either a parsed semver from `plugin.json` or the literal `vUNKNOWN`. You MUST NOT emit:
+- `v?`, `v??`, `v???`, `vTBD`, `vXXX`, `v-`, `v<unknown>`, or any other abbreviated/handwaved fallback.
+- The angle-bracket template token `v<version-from-plugin.json>` itself — that token is a shape-description in this prompt, not output. If you find yourself about to emit angle brackets in the sentinel, stop: you skipped the Read tool call.
+- A semver from an older message, the conversation history, or a previous turn. **Always Read fresh on every `/masterplan` invocation.**
+
+Truncate `args` at 120 chars; total sentinel length <= 200 chars. The sentinel is plain stdout, NOT inside an `AskUserQuestion`, NOT inside a tool call, and NOT part of CC-3-trampoline.
 
 ## CC-3-trampoline
 
@@ -53,14 +61,20 @@ Every turn-close in this orchestrator MUST route through the following sequence.
 
 | Verb | Routes to | Notes |
 |---|---|---|
-| start | parts/step-0.md -> step-a.md -> step-b.md -> step-c.md | full flow |
-| resume | parts/step-0.md -> parts/step-{state.current_phase}.md | re-entry |
-| status | parts/step-0.md (status subroutine) | no mutation |
-| doctor | parts/step-0.md -> parts/doctor.md | all 36 checks |
-| import | parts/step-0.md -> parts/import.md | legacy migration |
-| archive | parts/step-0.md -> parts/step-c.md (archive subroutine) | |
-| validate | parts/step-0.md -> docs/config-schema.md | config-only |
-| retry | parts/step-0.md -> parts/step-c.md (wave-dispatch subroutine) | |
+| _(empty)_ | parts/step-0.md (Step M0 resume-first) | inline status orientation + auto-resume |
+| `full` | parts/step-0.md → parts/step-b.md → parts/step-c.md | full kickoff (B0→B1→B2→B3→C) |
+| `brainstorm` | parts/step-0.md → parts/step-b.md | halts at B1 close-out gate (halt_mode=post-brainstorm) |
+| `plan` | parts/step-0.md → parts/step-a.md (spec-pick) or parts/step-b.md | halts at B3 close-out gate (halt_mode=post-plan) |
+| `execute` | parts/step-0.md → parts/step-c.md (resume) or parts/step-a.md (picker) | state-path resumes; topic/no-args picks |
+| `retro` | parts/step-0.md → parts/step-c.md (Step R subroutine) | generate retrospective |
+| `import` | parts/step-0.md → parts/import.md | legacy migration (Step I) |
+| `doctor` | parts/step-0.md → parts/doctor.md | all 36 checks (Step D) |
+| `status` | parts/step-0.md (Step S subroutine) | read-only situation report |
+| `validate` | parts/step-0.md (reads docs/config-schema.md inline) | config + state schema check |
+| `stats` | parts/step-0.md (Step T subroutine) | telemetry roll-up |
+| `clean` | parts/step-0.md (Step CL subroutine) | archive + prune |
+| `next` | parts/step-0.md (Step N subroutine) | what's-next router |
+| `--resume=<path>` | parts/step-0.md → parts/step-c.md | alias for `execute <path>` |
 
 ## Codex host detection
 
@@ -68,11 +82,11 @@ If invoked via `/superpowers-masterplan:masterplan` (Codex host), set `codex.hos
 
 ## Phase-prompt loader
 
-After step-0.md completes bootstrap, route by verb. For start/resume/retry, load `parts/step-{state.yml.current_phase}.md`. The phase file is self-contained; it loads contracts on demand.
+After step-0.md completes bootstrap, route by verb. For `full`, `brainstorm`, `plan`, `execute`, `retro`, and `--resume=<path>`, load `parts/step-{state.yml.current_phase}.md`. The phase file is self-contained; it loads contracts on demand. Subroutine verbs (`status`, `stats`, `clean`, `next`, `validate`) execute inline within step-0.md and do not load additional phase files.
 
 ## Doctor entry point
 
-For doctor verb: after step-0.md bootstrap, load `parts/doctor.md` and run all checks. Check #36 verifies this router stays <=20KB.
+For doctor verb: after step-0.md bootstrap, load `parts/doctor.md` and run all checks. Check #36 verifies this router stays ≤20480 bytes.
 
 ## Config reference
 
@@ -80,4 +94,4 @@ Schema documented in `docs/config-schema.md`. Loaded only on validate verb.
 
 ## Reserved verbs warning
 
-The following verbs are reserved and will be rejected: full, brainstorm, plan, execute, retro, import, doctor, status, stats, clean, next.
+The following verbs are reserved and require another word in front when used as topics (e.g., `/masterplan add brainstorm session timer`): `full`, `brainstorm`, `plan`, `execute`, `retro`, `import`, `doctor`, `status`, `stats`, `clean`, `validate`, `next`.
