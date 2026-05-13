@@ -1,14 +1,16 @@
 schema_version: 2
 slug: v4-lifecycle-redesign
-status: in_progress
-phase: wave_7_acceptance_verified
+status: complete
+phase: complete
+pending_retro_attempts: 0
 worktree: ""
 branch: main
 started: 2026-05-13T01:58:40Z
-last_activity: 2026-05-13T04:30:00Z
+last_activity: 2026-05-13T05:35:00Z
 task_start_sha: daa9fbc344b85fe5ae3eff2661a57ccd6dd5a447
-current_task: phase_4_commit_and_retro
-next_action: "Phase 4 single commit covering all v4.0.0 changes; then retro + completion via FM-A flow; tag v4.0.0 gated on explicit user approval"
+completion_sha: 5629df3
+current_task: ""
+next_action: "Triage codex adversarial review findings on P4 (TaskCreate projection) before tagging/pushing v4.1.0"
 autonomy: loose
 loop_enabled: false
 codex_routing: auto
@@ -19,7 +21,7 @@ pending_gate: null
 artifacts:
   spec: docs/masterplan/v4-lifecycle-redesign/spec.md
   plan: docs/masterplan/v4-lifecycle-redesign/plan.md
-  retro: ""
+  retro: docs/masterplan/v4-lifecycle-redesign/retro.md
   events: docs/masterplan/v4-lifecycle-redesign/events.jsonl
   events_archive: ""
   eligibility_cache: ""
@@ -32,5 +34,5 @@ legacy:
   approved_plan: /home/grojas/.claude/plans/evaluate-recent-transcripts-from-staged-aurora.md
   codex_review_target: docs/masterplan/v4-lifecycle-redesign/codex-review.md
 halt_mode: none
-stop_reason: null
+stop_reason: complete
 critical_error: null
