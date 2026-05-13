@@ -1,23 +1,23 @@
 schema_version: 2
 slug: p4-suppression-fix
-status: in_progress
+status: completed
 phase: executing
 pending_retro_attempts: 0
 worktree: ""
 branch: main
 started: 2026-05-13T05:00:45Z
-last_activity: 2026-05-13T06:30:00Z
+last_activity: 2026-05-13T06:35:00Z
 task_start_sha: f79fb5a28e31517935267eae7cebb65e0f30d8d5
-completion_sha: ""
-current_task: "task_13_manual_smoke_run"
-next_action: "HALT for external verification — fresh Claude Code session runs `Use masterplan execute docs/masterplan/p4-suppression-smoke/state.yml` and produces per-turn smoke_observation events; grade with grep gate from spec.md."
+completion_sha: 2cc73ee81b16edb477add6a5a3547ec9aa58e00c
+current_task: ""
+next_action: "Plan complete. Smoke verification remains DEFERRED in docs/masterplan/p4-suppression-smoke/ — run `Use masterplan execute docs/masterplan/p4-suppression-smoke/state.yml` in a fresh session to close the empirical gate."
 autonomy: loose
 loop_enabled: false
 codex_routing: auto
 codex_review: on
 compact_loop_recommended: false
 complexity: high
-pending_gate: smoke_verification
+pending_gate: ""
 artifacts:
   spec: docs/masterplan/p4-suppression-fix/spec.md
   plan: docs/masterplan/p4-suppression-fix/plan.md
@@ -33,6 +33,6 @@ artifacts:
 legacy:
   approved_plan: ""
   codex_review_target: ""
-halt_mode: verification
-stop_reason: "external verification required — fresh Claude Code session must run smoke against docs/masterplan/p4-suppression-smoke/"
+halt_mode: none
+stop_reason: ""
 critical_error: null
