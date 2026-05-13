@@ -19,6 +19,7 @@
 # Usage:
 #   bin/masterplan-state.sh inventory [--format=table|json]
 #   bin/masterplan-state.sh migrate [--dry-run|--write] [--slug=<slug>]
+#   bin/masterplan-state.sh migrate-state [--bundle <path>|--slug <slug>]
 #   bin/masterplan-state.sh transition-guard <bundle-path> <target-phase>
 #   bin/masterplan-state.sh session-sig
 #   bin/masterplan-state.sh build-index <slug>
@@ -288,6 +289,65 @@ if [[ "$mode" == "session-sig" ]]; then
 fi
 
 case "$mode" in
+  migrate-state)
+    bundle=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --bundle) bundle="$2"; shift 2 ;;
+        --slug)   bundle="docs/masterplan/$2"; shift 2 ;;
+        *) echo "ERROR unknown arg: $1" >&2; exit 2 ;;
+      esac
+    done
+    [ -d "$bundle" ] || { echo "ERROR: bundle dir not found: $bundle" >&2; exit 1; }
+    state="$bundle/state.yml"
+    [ -f "$state" ] || { echo "ERROR: state.yml not found in $bundle" >&2; exit 1; }
+    if grep -q 'schema_version: "5.0"' "$state"; then
+      echo "already v5.0: $state"; exit 0
+    fi
+    cp "$state" "$state.v4-backup"
+    plan="$bundle/plan.md"
+    plan_hash="sha256:none"
+    [ -f "$plan" ] && plan_hash="sha256:$(sha256sum "$plan" | awk '{print $1}')"
+    python3 - "$state" "$plan_hash" "$bundle" <<'PY'
+import sys, re, os, pathlib
+state_path, plan_hash, bundle = sys.argv[1], sys.argv[2], sys.argv[3]
+text = open(state_path).read()
+text = re.sub(r'schema_version:\s*"[^"]+"', 'schema_version: "5.0"', text)
+if 'schema_version:' not in text:
+    text = 'schema_version: "5.0"\n' + text
+if 'plan_hash:' not in text:
+    text = text.replace('schema_version: "5.0"\n',
+                        f'schema_version: "5.0"\nplan_hash: "{plan_hash}"\n', 1)
+if not re.search(r'^complexity:', text, re.M):
+    text += 'complexity: medium\n'
+if 'current_phase:' not in text:
+    if re.search(r'step_c|wave_', text): phase = 'step-c'
+    elif re.search(r'plan_complete|spec_complete', text): phase = 'step-b'
+    elif re.search(r'intake|spec_draft', text): phase = 'step-a'
+    else: phase = 'step-0'
+    text = text.replace('schema_version: "5.0"\n',
+                        f'schema_version: "5.0"\ncurrent_phase: {phase}\n', 1)
+def cap_scalar(match):
+    key, val = match.group(1), match.group(2)
+    raw = val.strip().strip('"')
+    if len(raw) <= 200:
+        return match.group(0)
+    target = 'handoff.md' if key in ('handoff',) else 'blockers.md' if key in ('blockers',) else 'overflow.md'
+    target_path = pathlib.Path(bundle) / target
+    existing = target_path.read_text() if target_path.exists() else ''
+    new_line = len(existing.splitlines()) + 1
+    with open(target_path, 'a') as fh:
+        if existing and not existing.endswith('\n'): fh.write('\n')
+        fh.write(f'# {key} (migrated v4 -> v5)\n{raw}\n')
+    return f'{key}: "*overflow at {target} L{new_line + 1}*"'
+text = re.sub(r'^([a-zA-Z_]+):\s*(.+)$', cap_scalar, text, flags=re.M)
+open(state_path, 'w').write(text)
+PY
+    py_status=$?
+    [ $py_status -eq 0 ] || exit $py_status
+    echo "migrated: $state (backup at $state.v4-backup)"
+    exit 0
+    ;;
   build-index)
     slug="${1:?error: build-index requires <slug>}"
     bundle="docs/masterplan/$slug"
