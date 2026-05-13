@@ -1,0 +1,38 @@
+schema_version: 2
+slug: p4-suppression-fix
+status: in_progress
+phase: executing
+pending_retro_attempts: 0
+worktree: ""
+branch: main
+started: 2026-05-13T05:00:45Z
+last_activity: 2026-05-13T05:42:00Z
+task_start_sha: f79fb5a28e31517935267eae7cebb65e0f30d8d5
+completion_sha: ""
+current_task: "task_1_smoke_bundle_scaffold"
+next_action: "Execute Task 1: create docs/masterplan/p4-suppression-smoke/ scaffold (state.yml + spec.md + plan.md + events.jsonl)"
+autonomy: loose
+loop_enabled: false
+codex_routing: auto
+codex_review: on
+compact_loop_recommended: false
+complexity: high
+pending_gate: post-plan
+artifacts:
+  spec: docs/masterplan/p4-suppression-fix/spec.md
+  plan: docs/masterplan/p4-suppression-fix/plan.md
+  retro: ""
+  events: docs/masterplan/p4-suppression-fix/events.jsonl
+  events_archive: ""
+  eligibility_cache: ""
+  telemetry: ""
+  telemetry_archive: ""
+  subagents: ""
+  subagents_archive: ""
+  state_queue: ""
+legacy:
+  approved_plan: ""
+  codex_review_target: ""
+halt_mode: post-plan
+stop_reason: ""
+critical_error: null

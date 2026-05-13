@@ -20,11 +20,17 @@
 #   bin/masterplan-state.sh inventory [--format=table|json]
 #   bin/masterplan-state.sh migrate [--dry-run|--write] [--slug=<slug>]
 #   bin/masterplan-state.sh transition-guard <bundle-path> <target-phase>
+#   bin/masterplan-state.sh session-sig
 #
 # transition-guard: validates a lifecycle phase transition for a run bundle.
 #   <bundle-path>  — absolute path to the run bundle directory (contains state.yml)
 #   <target-phase> — one of: bundle_created | import_complete | complete | archived
 #   Output: JSON on stdout; exit 0 for ok/gate, exit 1 for abort/parse failure.
+#
+# session-sig: print a session signature for Step C entry tracking.
+#   Prefers $CLAUDE_SESSION_ID if set; otherwise generates a fresh UUID
+#   via uuidgen or /proc/sys/kernel/random/uuid. Used by v4.1.1+ Step C
+#   to distinguish first-entry-this-session from same-session drift recovery.
 #
 # Migration is copy-only. It never deletes legacy artifacts; /masterplan clean
 # owns archive/delete decisions after the new bundle has been verified.
@@ -32,7 +38,7 @@
 set -u
 
 usage() {
-  sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'
   exit "${1:-0}"
 }
 
@@ -252,6 +258,24 @@ PYGUARD
   exit $?
 fi
 
+# session-sig is a tiny pure-bash subcommand — handle it early, before flag
+# parsing or the git-repo check. v4.1.1+ Step C calls this once per session
+# to compute step_c_session_init_sha; CLAUDE_SESSION_ID is empirically unset
+# under Claude Code so we fall back to a fresh UUID.
+if [[ "$mode" == "session-sig" ]]; then
+  if [[ -n "${CLAUDE_SESSION_ID:-}" ]]; then
+    printf '%s\n' "${CLAUDE_SESSION_ID}"
+  elif command -v uuidgen >/dev/null 2>&1; then
+    uuidgen | tr 'A-Z' 'a-z'
+  elif [[ -r /proc/sys/kernel/random/uuid ]]; then
+    cat /proc/sys/kernel/random/uuid
+  else
+    echo "session-sig: no uuid source available" >&2
+    exit 2
+  fi
+  exit 0
+fi
+
 format="table"
 write_mode=0
 slug_filter=""
@@ -268,7 +292,7 @@ for arg in "$@"; do
 done
 
 case "$mode" in
-  inventory|migrate|transition-guard) ;;
+  inventory|migrate|transition-guard|session-sig) ;;
   *) echo "unknown mode: $mode" >&2; usage 2 ;;
 esac
 
