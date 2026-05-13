@@ -448,3 +448,26 @@ for s in docs/masterplan/*/state.yml; do
 done
 [ $fail -eq 0 ] && echo "Check #32: PASS" || echo "Check #32: WARN"
 ```
+
+---
+
+## Check #33: TaskCreate projection mode mismatch
+
+**Severity:** Warning
+**Action:** Report-only
+
+For each active run bundle: compute the current projection mode from
+`tasks.projection_threshold` vs `len(plan.tasks)`. Compare against the actual
+TaskList ledger entries owned by this run. Warn if they disagree (stale
+projection entries past threshold cross, or missing projection when within
+threshold).
+
+```bash
+# Pseudocode — requires reading TaskList state via runtime
+# Skip when no TaskList API access; report SKIPPED.
+echo "Check #33: SKIPPED (requires TaskList API access — runtime-only)"
+```
+
+Note: this check is best executed by the orchestrator itself during `doctor`
+verb dispatch, where TaskList API access is available. Standalone CLI runs of
+this check report SKIPPED.
