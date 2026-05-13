@@ -951,6 +951,31 @@ Other deferrals:
 4. Review plan at `docs/masterplan/<slug>/plan.md`. Edit if needed (but don't break the writing-plans format).
 5. Execute when ready: `/masterplan execute docs/masterplan/<slug>/state.yml`.
 
+### Recipe: Author plan grep gates that don't fight markdown
+
+Plan steps in this project commonly verify themselves with grep over a freshly edited markdown file. There are two regex shapes; one is robust to phrasing, the other isn't.
+
+**Prefer anchor-string presence:**
+
+```bash
+grep -q "step_c_session_init_sha" docs/internals.md   # passes when the token appears anywhere
+grep -q "^## \[4\.1\.1\]"          CHANGELOG.md       # passes when the conventional heading exists
+```
+
+**Avoid line-count thresholds on prose:**
+
+```bash
+[ "$(grep -c "step_c_session_init_sha" docs/internals.md)" -ge 2 ]   # brittle
+```
+
+Why this matters: `grep -c` counts matching **lines**, not occurrences. When the natural way to write a paragraph mentions the token twice on the same line — common in dense design subsections — the count is 1 even though the substance is there. Plans that lock a line-count threshold then force the implementer to either re-phrase the prose into less natural shape, or to log a substance-over-form deviation in events.jsonl. Both happened in the v4.1.1 plan (Tasks 9 and 12, events #24 and #27 of `docs/masterplan/p4-suppression-fix/events.jsonl`).
+
+Rule of thumb when authoring a plan grep gate against a markdown target:
+
+1. **What substance are you verifying?** Token presence (use `grep -q`), heading shape (anchor the heading: `^## ...`), or fenced-code-block contents (anchor the fence: `^\`\`\``).
+2. **Sample the target file's existing style before locking the regex.** A 30-second `head` of CHANGELOG.md or the target section will reveal whether the convention is `^## v4.1.1` or `^## \[4\.1\.1\] —` — get the heading anchor right at plan-write time, not at execution time.
+3. **Use line-count gates only when counting lines is the substance** (e.g., "at least N CHANGELOG entries exist", "section has at least N bullets"). For "this concept is mentioned", presence beats count.
+
 ### Recipe: Run smoke verification on the telemetry hook
 
 ```bash
