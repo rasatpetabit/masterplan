@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.1.1] — 2026-05-12 — Verified reminder suppression + Step C entry split
+
+Addresses both findings from the codex adversarial review of v4.1.0 (commit `bbe5a38`).
+
+### Added
+- **Per-state-write `TaskUpdate` priming (HIGH).** Extends v4.1.0's per-transition mirror to every Step C `state.yml` write. Closes the idle-turn gap that left the harness reminder firing between task transitions. Mechanism is additive — v4.1.0's transition hooks remain unchanged. Gated on `codex_host_suppressed == false` AND `current_task != ""`.
+- **Step C entry split (MEDIUM).** New optional `state.yml` field `step_c_session_init_sha` (UUID from `bin/masterplan-state.sh session-sig`). First entry per session: full rehydration. Subsequent entries in same session: drift-check (verify `current_task` alignment + status counts; correct via `TaskUpdate`). Closes the codex finding that v4.1.0 skipped drift recovery on re-entry.
+- **`bin/masterplan-state.sh session-sig`** subcommand: returns `${CLAUDE_SESSION_ID}` if set, else a fresh v4 UUID via `uuidgen` or `/proc/sys/kernel/random/uuid`. The orchestrator never reads the envvar directly.
+
+### Changed
+- README amended to scope the suppression claim: "suppresses the TaskCreate reminder during Step C execution" (brainstorm / plan / halt / doctor phases keep the reminder).
+- `docs/internals.md` L291 rewritten — no longer claims projection makes the reminder a no-op outright; distinguishes v4.1.0 transition-only suppression from v4.1.1 per-state-write priming.
+- `docs/internals.md` §12 gains a v4.1.1 design-rationale subsection covering mechanism, empirical basis, verification gate, and scope discipline.
+
+### Verification
+- Release gated on a real-session smoke run against `docs/masterplan/p4-suppression-smoke/`. The bundle's spec encodes a per-turn `smoke_observation` event contract; success criterion is `reminder_fired == false` on every state-write turn within Step C. Failure routes to pre-registered Option D rescope (idle-turn heartbeat) or to dropping the suppression claim.
+
+### Notes
+- Codex hosts are unaffected — the entire projection layer (including the new priming touch) skips silently per the existing `codex_host_suppressed` gate.
+
 ## [4.1.0] — 2026-05-12 — TaskCreate projection (partial reminder suppression)
 
 ### Added
