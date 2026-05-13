@@ -1,16 +1,18 @@
 schema_version: 2
 slug: loose-skip-plan-approval
-status: in-progress
-phase: executing
+status: complete
+phase: complete
 pending_retro_attempts: 0
 worktree: ""
 branch: loose-skip-plan-approval
 started: 2026-05-13T09:51:07Z
-last_activity: 2026-05-13T10:01:07Z
+last_activity: 2026-05-13T10:03:01Z
 task_start_sha: 6d1ba1b255ccb9f829330b76c2dc606689268ea0
 step_c_session_init_sha: fd95dbef-859a-47e1-8650-dfedc6b2507e
-current_task: "T12 — Commit + push to origin/loose-skip-plan-approval"
-next_action: "Two commits: (1) feature + release artifacts (5 modified files); (2) bundle. Push gate via AskUserQuestion."
+current_task: ""
+next_action: "v4.2.0 released. Branch pushed to origin/loose-skip-plan-approval; PR optional. Smoke validation deferred — run a future /masterplan full <topic> under loose to confirm runtime behavior."
+feature_commit_sha: db6790946aeed75fa9687cb32e29e214e539ac4e
+bundle_commit_sha: 65f74aba051f85e9a104bfb6b745a936b55e90bd
 autonomy: loose
 loop_enabled: false
 codex_routing: auto
