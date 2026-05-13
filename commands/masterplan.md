@@ -646,6 +646,106 @@ If the JSONL doesn't exist (no Stop hook installed, or first turn on this plan),
 
 ---
 
+## TaskCreate projection layer
+
+**Purpose:** mirror the plan's task list into the harness `TaskCreate` ledger (Claude Code only) so the user sees wave / parallel-group progress in the native UI and the per-turn "consider TaskCreate/TaskUpdate" reminder is silenced. This is a one-way **derived projection**. `state.yml` is canonical per **CD-7**; the projection is rebuilt from `state.yml` + `plan.md` on every session start. If TaskList ever disagrees with state.yml, state.yml wins and the TaskList is corrected.
+
+### Projection schema
+
+For each task in `plan.md`, create exactly one TaskCreate task. Mapping is one-to-one.
+
+| TaskCreate field | Source |
+|---|---|
+| `subject` | First line of the plan-task heading, truncated to 80 chars. |
+| `description` | Plan-task body, truncated to 500 chars. Detail stays in `plan.md`. |
+| `prompt` | Empty (orchestrator drives execution; tasks are not user-runnable from the harness). |
+| `metadata` | `{"masterplan": {"slug": "<run-slug>", "task_idx": <0-based>, "wave": <wave-id or null>, "parallel_group": "<group-name or null>", "plan_path": "docs/masterplan/<slug>/plan.md", "state_path": "docs/masterplan/<slug>/state.yml"}}` |
+| Initial status | `pending` (TaskCreate default). If empirical observation shows the harness reminder fires while only `pending` tasks exist, promote initial status to `in_progress` for the `current_task` only and leave the rest `pending`. |
+
+DAG edges use `TaskUpdate { addBlockedBy }` in a second pass after batch creation. Tasks in the same wave / parallel_group have no blocking edges between them — they are siblings.
+
+### Rehydration trigger
+
+Rehydration runs **once per session** at the first of these events:
+
+1. Step M resolves to an in-progress bundle.
+2. Step C entry for an in-progress bundle.
+3. Step I completes import and the imported bundle is in-progress.
+
+Rehydration procedure (Claude Code only — gated on `codex_host_suppressed == false`):
+
+1. Read canonical `state.yml` + `plan.md`.
+2. Call `TaskList`.
+3. Branch on TaskList contents:
+   - **Empty** → batch-create one task per plan task. Then apply `blockedBy` edges in pass 2.
+   - **Non-empty, same `metadata.masterplan.slug`** → drift, see *Drift recovery* below.
+   - **Non-empty, unrelated** → leave foreign tasks untouched. Append the projection alongside; the projection's tasks remain identifiable by `metadata.masterplan.*` for any future cleanup pass.
+4. Set status from `state.yml`:
+   - Tasks listed in `tasks_completed` → `TaskUpdate(status: "completed")`.
+   - `current_task` → `TaskUpdate(status: "in_progress")`.
+   - Others → leave at initial status.
+5. Append `taskcreate_projection_rehydrated` event with `{count_created, count_completed_at_rehydrate, count_in_progress}`.
+
+Rehydration is O(plan-task-count); a typical 50-task plan costs ~50 TaskCreate + ~50 TaskUpdate.
+
+### Lifecycle mirror hooks
+
+Every site where the orchestrator writes `state.yml` for a task transition must also mirror to TaskList **in this order** (Claude Code only):
+
+1. Compute mutation.
+2. Write `state.yml`; append `events.jsonl`.
+3. Call `TaskUpdate` to mirror.
+
+If step 3 fails, do **NOT** roll back `state.yml`. Append `taskcreate_mirror_failed` to `events.jsonl` with the error string and continue. The next rehydration reconciles.
+
+Transition table:
+
+| state.yml change | TaskList mirror |
+|---|---|
+| `current_task` advances N → N+1 | `TaskUpdate` N → `completed`; `TaskUpdate` N+1 → `in_progress`. |
+| Wave dispatch begins (W₁..Wₖ) | Batched `TaskUpdate` W₁..Wₖ → `in_progress`. |
+| Wave member completes (digest received) | `TaskUpdate` that member → `completed`. |
+| Status → `pending_retro` (FM-A path) | `TaskUpdate` current → `completed`; no new `in_progress`. |
+| Status → `complete` (retro written) | All projection tasks already `completed`; no-op. |
+| Status → `blocked` | Leave current at `in_progress`; emit blocker via the existing CD-4 `AskUserQuestion` path. |
+
+Tasks discovered mid-flight (rare; `plan.md` grew) get batch-created immediately after the `plan.md` write; rehydration on the next session would otherwise pick them up.
+
+### Drift recovery
+
+`state.yml` is canonical. Drift is detected at rehydration and at every Step C re-entry. Rules (all gated on `codex_host_suppressed == false`):
+
+| Observation | Action | Event |
+|---|---|---|
+| TaskList shows `completed`; `state.yml.tasks_completed` doesn't list it | Revert TaskList to match `state.yml` | `taskcreate_drift_corrected` `{direction: "tasklist_wrong"}` |
+| `state.yml.tasks_completed` lists task; TaskList shows `pending` | Fast-forward TaskList | `taskcreate_drift_corrected` `{direction: "tasklist_wrong"}` |
+| `state.yml.current_task` ≠ TaskList `in_progress` | Sync TaskList to `state.yml` | `taskcreate_drift_corrected` `{direction: "tasklist_wrong"}` |
+| `plan.md` grew; TaskList missing tasks | Create new tasks | (rehydration §3 covers) |
+| TaskList has a `masterplan.*`-metadata task whose `task_idx` is out of range for current `plan.md` | `TaskUpdate` → `cancelled` (or `deleted` per harness) | `taskcreate_orphan_cancelled` `{task_idx}` |
+
+There is **NO inverse-direction reconciliation**. TaskList never feeds back into `state.yml`.
+
+### Codex no-op gate
+
+The projection is **Claude Code only**. On Codex hosts, every `TaskCreate` / `TaskUpdate` / `TaskList` call is **skipped** and no `taskcreate_*` projection events are emitted. The gate is the same `codex_host_suppressed` boolean set in Step 0:
+
+```
+if codex_host_suppressed == false:
+    # projection call here (TaskCreate, TaskUpdate, TaskList)
+    pass
+```
+
+The reminder-noise saving is therefore Claude Code-only by design (see brainstorming session 2026-05-12 — "Accept Codex degradation"). If Codex eventually exposes a structured-task tool with compatible shape, the projection layer can target it via an adapter; the rest of this spec remains unchanged.
+
+### Events emitted by this layer
+
+- `taskcreate_projection_rehydrated` — once per session at rehydration entry. Payload: `{count_created, count_completed_at_rehydrate, count_in_progress}`.
+- `taskcreate_mirror_failed` — when a `TaskCreate` / `TaskUpdate` call errors during a transition mirror or rehydration. Payload: `{call: "TaskCreate|TaskUpdate", task_idx: <int or null>, error: "<message>"}`. `state.yml` is NOT rolled back; reconciliation happens at next rehydration.
+- `taskcreate_drift_corrected` — when rehydration or re-entry detects TaskList disagreeing with `state.yml` and corrects TaskList. Payload: `{direction: "tasklist_wrong", task_idx: <int>, from: "<status>", to: "<status>"}`.
+- `taskcreate_orphan_cancelled` — when a TaskList task with `metadata.masterplan.*` has a `task_idx` outside the current `plan.md` range. Payload: `{task_idx}`.
+
+---
+
 ## Step M — Bare-invocation resume-first router
 
 Fires when `/masterplan` (Claude Code) or `Use masterplan` (Codex normal chat) is invoked with no args. Default behavior is **resume-first**: try to continue interrupted project work before showing any broad menu. The two-tier `AskUserQuestion` menu is now the empty-state fallback for repos with no active masterplan plan.
