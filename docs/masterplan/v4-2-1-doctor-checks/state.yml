@@ -1,0 +1,42 @@
+schema_version: 2
+slug: v4-2-1-doctor-checks
+status: in_progress
+phase: execution
+pending_retro_attempts: 0
+worktree: ""
+branch: v4.2.1-doctor-checks
+started: 2026-05-13T10:34:52Z
+last_activity: 2026-05-13T10:34:52Z
+task_start_sha: 6d1ba1b255ccb9f829330b76c2dc606689268ea0
+step_c_session_init_sha: ""
+current_task: "T1"
+next_action: "T1: orientation read of Step D + L1286 already complete; proceed to T2 (add #30 row)."
+feature_commit_sha: ""
+bundle_commit_sha: ""
+autonomy: loose
+loop_enabled: false
+codex_routing: auto
+codex_review: on
+compact_loop_recommended: false
+complexity: medium
+plan_kind: implementation
+follow_ups: []
+artifacts:
+  spec: docs/masterplan/v4-2-1-doctor-checks/spec.md
+  plan: docs/masterplan/v4-2-1-doctor-checks/plan.md
+  retro: docs/masterplan/v4-2-1-doctor-checks/retro.md
+  events: docs/masterplan/v4-2-1-doctor-checks/events.jsonl
+  events_archive: ""
+  eligibility_cache: ""
+  telemetry: ""
+  telemetry_archive: ""
+  subagents: ""
+  subagents_archive: ""
+  state_queue: ""
+legacy:
+  approved_plan: ""
+  codex_review_target: ""
+halt_mode: none
+stop_reason: ""
+critical_error: null
+pending_gate: ""
