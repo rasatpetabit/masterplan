@@ -71,6 +71,11 @@ For each worktree, run all checks. Report findings grouped by worktree → check
 | 29 | **Worktree-bundle reconciliation mismatch** (v4.0.0+). Cross-repo: enumerate `git worktree list --porcelain` for the current repo; for each worktree path, find any bundle's `state.yml.worktree:` pointing at it. Surface: (a) bundles claiming a worktree path not registered in `git worktree list` (`worktree_missing`); (b) worktree paths registered in git with no bundle pointer (`worktree_orphan_untracked`). Skip worktrees with `worktree_disposition: removed_after_merge` or `kept_by_user` — those are intentionally settled. | Warning | `--fix`: for (a), set `worktree_disposition: missing`, clear `worktree:` field, write state, commit. For (b): report only (user must decide). |
 | 30 | **Cross-manifest version drift** (repo-scoped, v4.2.1+). Reads the three version-bearing manifests — `.claude-plugin/plugin.json` (canonical), `.claude-plugin/marketplace.json` (root `version` AND nested `plugins[0].version`), `.codex-plugin/plugin.json` — and compares each `version` field against the canonical. `.agents/plugins/marketplace.json` is exempt (no `version` field by schema). Catches the v3.4.0–v4.1.1 drift pattern where `.claude-plugin/marketplace.json` was stuck at 3.3.0 across four releases. **Implementation:** runs inline at the orchestrator (does NOT dispatch per-worktree). Use the Read tool to load each manifest, extract `version` (and the nested `plugins[0].version` for `.claude-plugin/marketplace.json`), compare against `.claude-plugin/plugin.json` as canonical. Any mismatch → emit one Warning per drifted file/field: `version drift: <file>[:<json-path>] at <observed> (canonical: <canonical>)`. | Warning | Report only. Auto-bumping is risky — canonical-source authority is ambiguous when multiple manifests have drifted. Suggest editing alongside the CHANGELOG entry for the next release. |
 | 31 | **Per-autonomy gate-condition consistency** (repo-scoped, v4.2.1+). Maintains a static anchor table mapping gate-decision sites in `commands/masterplan.md` to their expected `--autonomy [!=]= <value>` conditions. Initial table: `{anchor: "id: spec_approval", expected_regex: "--autonomy != full", note: "spec gate intentionally fires under loose (L1286)"}`, `{anchor: "id: plan_approval", expected_regex: "--autonomy == gated", note: "plan gate auto-approves under loose per v4.2.0 (L1360)"}`. **Implementation:** runs inline at the orchestrator. For each table entry: grep `commands/masterplan.md` for the anchor string, read the next 3 lines, regex-match the expected condition. Anchor not found → flag missing gate site. Anchor found but condition mismatches → flag drift with observed text. Maintainers adding a new gate site to the orchestrator MUST extend this static table; an existing entry that no longer matches → loud Warning. | Warning | Report only. Auto-rewriting gate conditions in the orchestrator prompt is never safe — these are deliberate semantic choices made per-release. |
+| 32 | **state.yml scalar cap + overflow pointer** — every scalar value in `state.yml` ≤200 chars; overflow pointers resolve to existing files with valid line numbers. | Warning | Report-only |
+| 33 | **TaskCreate projection mode mismatch** — active run bundle projection mode vs TaskList ledger disagrees. | Warning | Report-only |
+| 34 | **plan.index.json staleness** — `plan_hash` in `state.yml` or `plan.index.json` doesn't match current `plan.md` sha256. | Warning | Report-only |
+| 35 | **Plan-format conformance (v5.0 markers)** — every task heading in `plan.md` must be followed by `**Spec:**` and `**Verify:**` markers within 30 lines. | Warning | Report-only |
+| 36 | **parts/step-*.md sanity + router ceiling** — `commands/masterplan.md` ≤20480 bytes; all phase files exist; CC-3-trampoline and DISPATCH-SITE tags present. | Warning | Report-only |
 
 ---
 
@@ -407,3 +412,39 @@ AskUserQuestion(
 ```
 
 When the user picks "Run --fix now": execute Step D with `--fix` semantics inline — skip re-emitting the detection report; emit only the changed-files list + updated summary line. Omit this gate when `--fix` was already passed, when F = 0 (nothing auto-fixable), or when the report is clean.
+
+---
+
+## Check #32: state.yml scalar cap + overflow pointer integrity
+
+**Severity:** Warning
+**Action:** Report-only
+
+For every `state.yml` in `docs/masterplan/*/`, verify:
+1. Every scalar value (`key: <value>` and every list item) is ≤200 characters.
+2. Any scalar matching `*overflow at <file> L<n>*` resolves: `<file>` exists in the bundle dir AND `<n>` is a valid line number.
+
+```bash
+fail=0
+for s in docs/masterplan/*/state.yml; do
+  while IFS= read -r line; do
+    # strip leading whitespace + key prefix; extract value
+    val="${line#*: }"
+    if [ "${#val}" -gt 200 ]; then
+      echo "WARN $s: scalar exceeds 200 chars on line: ${line:0:80}..."
+      fail=1
+    fi
+    # overflow pointer integrity
+    if [[ "$val" =~ \*overflow\ at\ ([^\ ]+)\ L([0-9]+)\* ]]; then
+      target="$(dirname "$s")/${BASH_REMATCH[1]}"
+      lineno="${BASH_REMATCH[2]}"
+      if [ ! -f "$target" ]; then
+        echo "WARN $s: overflow target missing: $target"; fail=1
+      elif [ "$(wc -l < "$target")" -lt "$lineno" ]; then
+        echo "WARN $s: overflow target $target has fewer than $lineno lines"; fail=1
+      fi
+    fi
+  done < <(grep -E '^[[:space:]]*[a-zA-Z_-]+:' "$s")
+done
+[ $fail -eq 0 ] && echo "Check #32: PASS" || echo "Check #32: WARN"
+```
