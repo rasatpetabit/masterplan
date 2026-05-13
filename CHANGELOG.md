@@ -7,12 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [4.1.0] — 2026-05-12
+## [4.1.0] — 2026-05-12 — TaskCreate projection (partial reminder suppression)
 
 ### Added
-- TaskCreate projection layer: plan tasks are mirrored to the harness's native task ledger so wave progress is visible in the UI and the per-turn TaskCreate reminder is silenced. Claude Code-only; Codex no-op.
+- TaskCreate projection layer: plan tasks are mirrored to the harness's native task ledger so wave progress is visible in the UI. Claude Code-only; Codex no-op.
+- Per-transition `TaskUpdate` mirror at every Step C `state.yml` task transition (`current_task` advance, wave dispatch, wave-member digest, `pending_retro`, `complete`, `blocked`).
+- Drift recovery on rehydration entry (corrects TaskList toward `state.yml`).
 - Four new `events.jsonl` event types: `taskcreate_projection_rehydrated`, `taskcreate_mirror_failed`, `taskcreate_drift_corrected`, `taskcreate_orphan_cancelled`.
 - `bin/masterplan-self-host-audit.sh --taskcreate-gate` check enforcing the Codex no-op invariant.
+
+### Known limitations
+- **Per-turn reminder suppression is partial.** Transitions fire `TaskUpdate` only at transition points; idle turns between transitions can still emit the harness `<system-reminder>`. The codex adversarial review of this release flagged the original "silences the per-turn reminder" claim as inaccurate. v4.1.1 closes this gap via per-state-write priming.
 
 ### Notes
 - Pure addition. No schema bump. `state.yml` shape is unchanged. Existing bundles get a projection the next time they're resumed; no backfill needed.
