@@ -545,6 +545,29 @@ def read_text(path):
         return ""
 
 
+def enforce_scalar_cap(bundle_dir, key, value):
+    if value is None:
+        return value
+    text = str(value)
+    if len(text) <= 200:
+        return value
+    if key in ("handoff", "handoff_text", "handoff_summary"):
+        target = "handoff.md"
+    elif key in ("blockers", "blocker_text"):
+        target = "blockers.md"
+    else:
+        target = "overflow.md"
+    target_path = Path(bundle_dir) / target
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    existing = target_path.read_text() if target_path.exists() else ""
+    content_line = len(existing.splitlines()) + 2
+    with target_path.open("a") as out:
+        if existing and not existing.endswith("\n"):
+            out.write("\n")
+        out.write(f"# {key} (migrated scalar overflow)\n{text}\n")
+    return f"*overflow at {target} L{content_line}*"
+
+
 def parse_frontmatter(text):
     if not text.startswith("---\n"):
         return {}
@@ -935,49 +958,53 @@ def copy_if_present(src, dst):
 def write_state(target, record, copied):
     fm = record["frontmatter"]
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+    def state_scalar(key, value):
+        return yaml_scalar(enforce_scalar_cap(target, key, value))
+
     lines = [
         "schema_version: 2",
-        f"slug: {yaml_scalar(record['slug'])}",
-        f"status: {yaml_scalar(fm.get('status', 'in-progress'))}",
-        f"phase: {yaml_scalar('archived' if fm.get('status') == 'archived' else 'ready')}",
-        f"worktree: {yaml_scalar(fm.get('worktree', str(repo)))}",
-        f"branch: {yaml_scalar(fm.get('branch', ''))}",
-        f"started: {yaml_scalar(fm.get('started', ''))}",
-        f"last_activity: {yaml_scalar(fm.get('last_activity', now))}",
-        f"current_task: {yaml_scalar(fm.get('current_task', ''))}",
-        f"next_action: {yaml_scalar(fm.get('next_action', ''))}",
-        f"autonomy: {yaml_scalar(fm.get('autonomy', 'gated'))}",
-        f"loop_enabled: {yaml_scalar(fm.get('loop_enabled', 'false'))}",
-        f"codex_routing: {yaml_scalar(fm.get('codex_routing', 'off'))}",
-        f"codex_review: {yaml_scalar(fm.get('codex_review', 'off'))}",
-        f"compact_loop_recommended: {yaml_scalar(fm.get('compact_loop_recommended', 'false'))}",
-        f"complexity: {yaml_scalar(fm.get('complexity', 'medium'))}",
+        f"slug: {state_scalar('slug', record['slug'])}",
+        f"status: {state_scalar('status', fm.get('status', 'in-progress'))}",
+        f"phase: {state_scalar('phase', 'archived' if fm.get('status') == 'archived' else 'ready')}",
+        f"worktree: {state_scalar('worktree', fm.get('worktree', str(repo)))}",
+        f"branch: {state_scalar('branch', fm.get('branch', ''))}",
+        f"started: {state_scalar('started', fm.get('started', ''))}",
+        f"last_activity: {state_scalar('last_activity', fm.get('last_activity', now))}",
+        f"current_task: {state_scalar('current_task', fm.get('current_task', ''))}",
+        f"next_action: {state_scalar('next_action', fm.get('next_action', ''))}",
+        f"autonomy: {state_scalar('autonomy', fm.get('autonomy', 'gated'))}",
+        f"loop_enabled: {state_scalar('loop_enabled', fm.get('loop_enabled', 'false'))}",
+        f"codex_routing: {state_scalar('codex_routing', fm.get('codex_routing', 'off'))}",
+        f"codex_review: {state_scalar('codex_review', fm.get('codex_review', 'off'))}",
+        f"compact_loop_recommended: {state_scalar('compact_loop_recommended', fm.get('compact_loop_recommended', 'false'))}",
+        f"complexity: {state_scalar('complexity', fm.get('complexity', 'medium'))}",
         "pending_gate: null",
         "artifacts:",
-        f"  spec: {yaml_scalar(rel(copied.get('spec')) if copied.get('spec') else '')}",
-        f"  plan: {yaml_scalar(rel(copied.get('plan')) if copied.get('plan') else '')}",
-        f"  retro: {yaml_scalar(rel(copied.get('retro')) if copied.get('retro') else '')}",
-        f"  events: {yaml_scalar(rel(copied.get('events')) if copied.get('events') else '')}",
-        f"  events_archive: {yaml_scalar(rel(copied.get('events_archive')) if copied.get('events_archive') else '')}",
-        f"  eligibility_cache: {yaml_scalar(rel(copied.get('eligibility_cache')) if copied.get('eligibility_cache') else '')}",
-        f"  telemetry: {yaml_scalar(rel(copied.get('telemetry')) if copied.get('telemetry') else '')}",
-        f"  telemetry_archive: {yaml_scalar(rel(copied.get('telemetry_archive')) if copied.get('telemetry_archive') else '')}",
-        f"  subagents: {yaml_scalar(rel(copied.get('subagents')) if copied.get('subagents') else '')}",
-        f"  subagents_archive: {yaml_scalar(rel(copied.get('subagents_archive')) if copied.get('subagents_archive') else '')}",
-        f"  state_queue: {yaml_scalar(rel(copied.get('state_queue')) if copied.get('state_queue') else '')}",
+        f"  spec: {state_scalar('spec', rel(copied.get('spec')) if copied.get('spec') else '')}",
+        f"  plan: {state_scalar('plan', rel(copied.get('plan')) if copied.get('plan') else '')}",
+        f"  retro: {state_scalar('retro', rel(copied.get('retro')) if copied.get('retro') else '')}",
+        f"  events: {state_scalar('events', rel(copied.get('events')) if copied.get('events') else '')}",
+        f"  events_archive: {state_scalar('events_archive', rel(copied.get('events_archive')) if copied.get('events_archive') else '')}",
+        f"  eligibility_cache: {state_scalar('eligibility_cache', rel(copied.get('eligibility_cache')) if copied.get('eligibility_cache') else '')}",
+        f"  telemetry: {state_scalar('telemetry', rel(copied.get('telemetry')) if copied.get('telemetry') else '')}",
+        f"  telemetry_archive: {state_scalar('telemetry_archive', rel(copied.get('telemetry_archive')) if copied.get('telemetry_archive') else '')}",
+        f"  subagents: {state_scalar('subagents', rel(copied.get('subagents')) if copied.get('subagents') else '')}",
+        f"  subagents_archive: {state_scalar('subagents_archive', rel(copied.get('subagents_archive')) if copied.get('subagents_archive') else '')}",
+        f"  state_queue: {state_scalar('state_queue', rel(copied.get('state_queue')) if copied.get('state_queue') else '')}",
         "legacy:",
-        f"  migrated_at: {yaml_scalar(now)}",
-        f"  source: {yaml_scalar(record['source'])}",
-        f"  status: {yaml_scalar(rel(record['status_path']) if record['status_path'] else '')}",
-        f"  plan: {yaml_scalar(rel(record['plan']) if record['plan'] else '')}",
-        f"  spec: {yaml_scalar(rel(record['spec']) if record['spec'] else '')}",
-        f"  retro: {yaml_scalar(rel(record['retro']) if record['retro'] else '')}",
+        f"  migrated_at: {state_scalar('migrated_at', now)}",
+        f"  source: {state_scalar('source', record['source'])}",
+        f"  status: {state_scalar('status', rel(record['status_path']) if record['status_path'] else '')}",
+        f"  plan: {state_scalar('plan', rel(record['plan']) if record['plan'] else '')}",
+        f"  spec: {state_scalar('spec', rel(record['spec']) if record['spec'] else '')}",
+        f"  retro: {state_scalar('retro', rel(record['retro']) if record['retro'] else '')}",
     ]
     sidecars = record["sidecars"]
     lines.append("  sidecars:")
     if sidecars:
         for key, path in sorted(sidecars.items()):
-            lines.append(f"    {key}: {yaml_scalar(rel(path))}")
+            lines.append(f"    {key}: {state_scalar(key, rel(path))}")
     else:
         lines[-1] = "  sidecars: {}"
     state = target / "state.yml"
