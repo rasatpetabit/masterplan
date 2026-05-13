@@ -787,7 +787,7 @@ Topics literally named `full`, `brainstorm`, `plan`, `execute`, `retro`, `import
 
 Set in Step 0 from the verb match. Read by Steps B1, B2, B3, C to choose between gate behavior and halt-aware variant.
 
-- **`halt_mode == none`** — full kickoff or execute path. Existing behavior.
+- **`halt_mode == none`** — full kickoff or execute path. Under `--autonomy in {loose, full}`, B1's `spec_approval` close-out gate still halts under loose (intentional: cheap direction-correction); B3's `plan_approval` close-out gate auto-approves (v4.2.0+). Under `--autonomy == gated`, both gates halt. The asymmetry at L1286 vs L1360 is deliberate, not an oversight — see CHANGELOG v4.2.0 for rationale.
 - **`halt_mode == post-brainstorm`** — fires when invoked via `/masterplan brainstorm <topic>`. B1's close-out gate ends the turn after spec is written. B2 + B3 dispatch guards skip themselves.
 - **`halt_mode == post-plan`** — fires when invoked via `/masterplan plan ...` or via Step P's pick. B3's close-out gate ends the turn after `state.yml` and bundled artifacts are written. Step C's dispatch guard skips Step C.
 

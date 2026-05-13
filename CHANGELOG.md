@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.2.0] — 2026-05-13 — loose autonomy auto-approves plan_approval gate
+
+Behavior change for kickoff under `--autonomy=loose`. The Step B3 close-out `plan_approval` gate now auto-approves and proceeds silently to Step C; previously it halted regardless of `halt_mode`. Step B1 `spec_approval` is intentionally **unchanged** — it still halts under loose, so direction-correction stays cheap.
+
+Diagnostic context: the gate condition at `commands/masterplan.md` L1360 was `--autonomy != full`, but per the loose-autonomy "auto-progress through wave boundaries" contract (documented in user-global CLAUDE.md) it should have been `--autonomy == gated`. Evidence: `docs/masterplan/p4-suppression-fix/events.jsonl` contains both `halt_gate_post_brainstorm` and `halt_gate_post_plan` despite `autonomy: loose, halt_mode: none`. The user-global `~/.masterplan.yaml: autonomy: loose` was honored at config-load time — survey of 10 recent `state.yml` files showed 9 of 10 persisted the value correctly. The bug was purely in the downstream gate-condition logic.
+
+Run bundle for this work: `docs/masterplan/loose-skip-plan-approval/`.
+
+### Changed
+- **`commands/masterplan.md` L1360** — `plan_approval` close-out gate now guards on `--autonomy == gated` (was `--autonomy != full`). Under `--autonomy in {loose, full}`: clear `pending_gate`, append `plan_approval_auto_accepted` to `events.jsonl`, proceed to Step C silently. Under `gated`: persist `pending_gate` and surface `AskUserQuestion` as before.
+- Versions in `.claude-plugin/plugin.json` and `.codex-plugin/plugin.json` bumped 4.1.1 → 4.2.0.
+- **`.claude-plugin/marketplace.json`** — both the top-level catalog `version` and the plugin entry `version` bumped 3.3.0 → 4.2.0, catching up pre-existing drift accumulated across the v3.4.0–v4.1.1 releases. The Claude Code marketplace publishes from `marketplace.json`, so the catch-up is the right hygiene moment.
+
+### Not changed (intentional)
+- **`commands/masterplan.md` L1286 (`spec_approval` gate)** still gates on `--autonomy != full`. Under loose, spec_approval continues to halt. Rationale: correcting a wrong spec direction is cheap and worth the round-trip; the asymmetry with L1360 is documented and deliberate, not an oversight.
+- **`.agents/plugins/marketplace.json`** has no `version` field in its schema; T7 was a documented no-op rather than a schema addition (would have required Codex marketplace schema research out of scope here).
+
+### Migration
+Users who relied on the L1360 halt for last-look-before-execute should add `--autonomy=gated` to kickoff invocations. Setting `autonomy: gated` in `~/.masterplan.yaml` restores both halts globally.
+
+### Verification
+- `grep -nE 'id: plan_approval' commands/masterplan.md` → guarded on `autonomy == gated` (L1360). ✓
+- `grep -nE 'id: spec_approval' commands/masterplan.md` → unchanged from v4.1.1 (L1286 still gates on `--autonomy != full`). ✓
+- `git grep -nE '--autonomy != full' commands/ docs/ README.md` → exactly one hit at L1286 (the still-firing spec_approval gate). ✓
+- Fresh-eyes Haiku Explore subagent read `commands/masterplan.md` end-to-end: **zero** dangling references to old plan_approval wording, **zero** internal contradictions with the new L1360, and the only remaining `--autonomy != full` site is L1286 (expected, out of scope). Bundle: `docs/masterplan/loose-skip-plan-approval/events.jsonl` event `haiku_explore_report`. ✓
+- **Status at tag time:** manual smoke run in a throwaway repo was **NOT** executed at release. Reason: smoke requires a fresh Claude Code session against the deployed plugin path (a new `/masterplan` invocation cannot be dispatched from inside the release session itself). Precedent: v4.1.1 shipped with smoke similarly deferred. If a future deferred smoke run shows `plan_approval` still firing under loose autonomy, a v4.2.1 patch will land the corrective change.
+
+### Notes
+- This release "ate its own dog food" once: the v4.2.0 plan itself was authored under v4.1.1 behavior, so kickoff still halted at plan_approval. Future loose-autonomy kickoffs against this codebase pick up the new behavior on the next `/masterplan` invocation.
+- Spec: `docs/masterplan/loose-skip-plan-approval/spec.md`. Plan: `docs/masterplan/loose-skip-plan-approval/plan.md`.
+
 ## [4.1.1] — 2026-05-12 — Verified reminder suppression + Step C entry split
 
 Addresses both findings from the codex adversarial review of v4.1.0 (commit `bbe5a38`).
