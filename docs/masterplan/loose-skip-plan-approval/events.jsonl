@@ -42,3 +42,5 @@
 {"ts":"2026-05-13T10:02:05Z","event":"retro_started","phase":"retro_gate","status":"pending_retro","author":"inline_orchestrator","retro_policy":"auto"}
 {"ts":"2026-05-13T10:03:00Z","event":"retro_written","path":"docs/masterplan/loose-skip-plan-approval/retro.md","author":"inline_orchestrator","sections":["outcome","duration","verification_ceiling","what_worked","what_slipped","orchestrator_prompt_lessons","carried_forward","commit_references"],"carried_forward_count":6}
 {"ts":"2026-05-13T10:03:01Z","event":"retro_complete","phase":"complete","status":"complete","author":"inline_orchestrator"}
+{"ts":"2026-05-13T10:05:42Z","event":"final_state_push_landed","commit":"094114e","ref":"origin/loose-skip-plan-approval","note":"retro commit synced to origin; workflow fully complete on remote"}
+{"ts":"2026-05-13T10:06:18Z","event":"local_tag_created","tag":"v4.2.0","tag_sha":"f315986","commit":"db67909","note":"annotated local tag; not pushed to origin (matches v4.1.1 retro convention)"}
