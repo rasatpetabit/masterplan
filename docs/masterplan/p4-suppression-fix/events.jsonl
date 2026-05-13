@@ -25,3 +25,4 @@
 {"ts":"2026-05-13T05:55:31Z","event":"task_10_complete","task":"task_10_readme_scope_amendment","note":"added v4.1.1 scoped mention to README L71 — suppression claim is now scoped to Step C execution"}
 {"ts":"2026-05-13T05:55:57Z","event":"task_11_complete","task":"task_11_version_bumps","note":"both plugin manifests bumped to 4.1.1; grep verified positive=1+1, negative=0+0"}
 {"ts":"2026-05-13T05:56:34Z","event":"task_12_complete","task":"task_12_changelog_v411","note":"v4.1.1 entry added to CHANGELOG using existing bracketed-version style; plan prose used grep -c \"^## v4.1.1\" but actual format is bracketed; substance gates met (heading=1, smoke_observation=1, ordering=ok)"}
+{"ts":"2026-05-13T05:57:23Z","event":"task_13_halt_for_smoke","task":"task_13_manual_smoke_run","note":"halting for external verification — fresh Claude Code session needed to exercise session-signature path; state.yml updated halt_mode=verification, pending_gate=smoke_verification"}
