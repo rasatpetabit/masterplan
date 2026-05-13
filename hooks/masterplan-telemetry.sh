@@ -262,6 +262,29 @@ jq -nc \
   '{ts:$ts,plan:$plan,turn_kind:"stop",transcript_bytes:$transcript_bytes,transcript_lines:$transcript_lines,status_bytes:$status_bytes,activity_log_entries:$activity_log_entries,wakeup_count_24h:$wakeup_count_24h,tasks_completed_this_turn:$tasks_completed_this_turn,wave_groups:$wave_groups,branch:$branch,cwd:$cwd}' \
   >> "$out_file" 2>/dev/null
 
+emit_parent_turns() {
+  [[ -n "$transcript" && -r "$transcript" ]] || return 0
+
+  jq -c \
+    --arg plan "$slug" \
+    --arg branch "$branch" \
+    --arg cwd "$PWD" \
+    --arg sid "${CLAUDE_SESSION_ID:-}" \
+    '
+    select(.type == "assistant" and ((.message.usage // null) != null))
+    | {
+        ts: (.timestamp // null),
+        type: "parent_turn",
+        plan: $plan,
+        session_id: (.sessionId // $sid),
+        model: (.message.model // null),
+        usage: .message.usage,
+        branch: $branch,
+        cwd: $cwd
+      }
+    ' "$transcript" >> "$out_file" 2>/dev/null
+}
+
 # 8. Subagent dispatch capture (v2.3.0+; v2.4.0 reworked to agent_id dedup).
 #
 # Parse the parent session transcript for Agent tool_use + toolUseResult pairs.
@@ -297,6 +320,8 @@ jq -nc \
 # - no transcript path resolved
 # - transcript file unreadable
 if [[ -n "$transcript" && -r "$transcript" ]]; then
+  emit_parent_turns
+
   if [[ "$is_bundle" -eq 1 ]]; then
     subagents_file="${plans_dir}/subagents.jsonl"
   else
