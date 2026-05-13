@@ -85,7 +85,17 @@ def scope_fingerprint_tokens(slug, current_task):
 
 
 def parse_state_yml(bundle):
-    """Parse state.yml with simple line-by-line parser (no PyYAML needed)."""
+    """Parse state.yml with simple line-by-line parser (no PyYAML needed).
+
+    Parser is allow-by-default: any top-level scalar is captured into
+    ``state[<key>]`` without an explicit allow-list. Known optional fields
+    that may be absent on legacy or first-entry bundles:
+
+    - ``step_c_session_init_sha`` (v4.1.1+): session-stable UUID written by
+      the Step C entry hook to distinguish first-entry-this-session from
+      same-session drift recovery. Absent on legacy bundles and on any
+      bundle that has not yet been entered by a v4.1.1+ orchestrator.
+    """
     state_file = bundle / "state.yml"
     if not state_file.is_file():
         return None, "state.yml not found"
