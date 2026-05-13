@@ -878,6 +878,19 @@ Three slices were considered:
 
 Slice α picked because the depth-pass on candidate mitigations found that the SDD-wrapper (M-4a) ALONE doesn't solve the central git-index-race for committing work. Read-only work sidesteps it entirely.
 
+### v4.1.1 — Verified reminder suppression + Step C entry split
+
+**Mechanism (additive to v4.1.0).** v4.1.0 mirrors `state.yml` task-transitions to `TaskUpdate`. v4.1.1 adds two pieces:
+
+1. **Per-state-write priming.** Every `state.yml` write within Step C (transition or not — `last_activity` bumps, `pending_gate` writes, `background` markers, `next_action` updates) is followed by an idempotent `TaskUpdate(current_task, status=in_progress)` re-stamp. This refreshes the harness's recent-`Task*`-usage signal across idle-turn gaps. Gated on `codex_host_suppressed == false` AND `current_task != ""`.
+2. **Step C entry split.** New optional `state.yml` field `step_c_session_init_sha` (UUID from `bin/masterplan-state.sh session-sig`). First entry of a session: full rehydration + write `step_c_session_init_sha = current_sig`. Subsequent entries in same session: drift-check only. Closes the codex MEDIUM finding that v4.1.0's "once per session" gate skipped drift recovery instead of running it.
+
+**Empirical basis.** v4.1.0 was scoped to per-transition only because pre-ship smoke against `v4-lifecycle-redesign` showed the reminder fires on idle turns regardless of task existence — confirming the harness keys on recent `Task*` tool usage, not on task count or state. The v4.1.1 brainstorm session itself reproduced this twice in real-time (see `docs/masterplan/p4-suppression-fix/events.jsonl` — `empirical_observation_in_session` events).
+
+**Verification gate.** v4.1.1 release is gated on a real-session smoke run against `docs/masterplan/p4-suppression-smoke/`. The bundle's `spec.md` encodes a per-turn `smoke_observation` event contract. Success: `reminder_fired == false` on every state-write turn within Step C. Failure routes to Option D rescope (idle-turn heartbeat) or to dropping the suppression claim.
+
+**Scope discipline.** The priming touch is Step-C-only. Brainstorm, plan, halt-gate, doctor, import, and audit phases keep the harness reminder — it is appropriate context noise there. Codex hosts skip the entire projection (no `TaskCreate` / `TaskUpdate` calls).
+
 ### Deferred items (Slice β/γ + others)
 
 Sharpened revisit trigger for Slice β/γ (in `docs/design/intra-plan-parallelism.md`):
