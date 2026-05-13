@@ -821,6 +821,8 @@ Before resume-first routing, emit a structured plain-text orientation summarizin
    - Else if `active_plans` is non-empty: route directly to **Step A** using `step_m_plans_cache`. Step A handles list+pick across ambiguous in-flight/blocked plans. No Phase/Operations menu.
    - Else: fire the **empty-state picker** below. This is the only route that shows the broad menu by default.
 
+   **Rehydrate TaskCreate projection (Claude Code only).** Before transferring to Step C in the `auto_resume_candidate` branch, if `codex_host_suppressed == false`, run the rehydration procedure from *TaskCreate projection layer — Rehydration trigger*. If TaskList already contains tasks with `metadata.masterplan.slug == <selected-slug>`, run *Drift recovery* per the same section before proceeding. Append `taskcreate_projection_rehydrated` to `events.jsonl` with the counts; if `TaskCreate` / `TaskUpdate` dispatch errors, append `taskcreate_mirror_failed` with the error string and proceed — `state.yml` is canonical and the next rehydration reconciles.
+
    <!-- Previously the empty-state picker was three separate named sections (Tier 1, Tier 2a, Tier 2b); inlined here in v2.12.0 as a two-level nested picker. -->
 
    **Empty-state picker (category level):**
@@ -1370,6 +1372,8 @@ The state file's `autonomy`, `codex_routing`, `codex_review`, `loop_enabled` fie
 ## Step C — Execute
 
 **Dispatch guard.** If `halt_mode != none`, skip Step C entirely — the B1 or B3 close-out gate already ended the turn. The only paths into Step C are: (a) `halt_mode == none` from kickoff or `execute`/`--resume=`; (b) the user explicitly flipped `halt_mode` to `none` via B3's "Start execution now" gate option. B3's gate is reached directly from `/masterplan plan` (and `plan --from-spec=`, Step A's spec-without-plan variant), or via `brainstorm` → B1's "Continue to plan now" → B2 → B3 (which still requires the user to pick "Start execution now" at B3 to enter Step C).
+
+**Rehydrate TaskCreate projection (Claude Code only — runs once per session).** Before entering the task loop, if `codex_host_suppressed == false` AND this is the first Step C entry of the current session for this `slug`, run the rehydration procedure from *TaskCreate projection layer — Rehydration trigger*. If TaskList already contains tasks with `metadata.masterplan.slug == <current-slug>`, run *Drift recovery* per the same section before proceeding. Append `taskcreate_projection_rehydrated` to `events.jsonl` with the counts; if `TaskCreate` / `TaskUpdate` dispatch errors, append `taskcreate_mirror_failed` with the error string and proceed — `state.yml` is canonical and the next rehydration reconciles. Skip silently when Step C was entered earlier this session (Step M's auto-resume hand-off already rehydrated).
 
 1. **Batched re-read.** Issue these as one parallel tool batch (not sequential):
    - Read `state.yml` (or a legacy status file only when the user explicitly chose one-invocation legacy mode).
