@@ -1373,7 +1373,20 @@ The state file's `autonomy`, `codex_routing`, `codex_review`, `loop_enabled` fie
 
 **Dispatch guard.** If `halt_mode != none`, skip Step C entirely — the B1 or B3 close-out gate already ended the turn. The only paths into Step C are: (a) `halt_mode == none` from kickoff or `execute`/`--resume=`; (b) the user explicitly flipped `halt_mode` to `none` via B3's "Start execution now" gate option. B3's gate is reached directly from `/masterplan plan` (and `plan --from-spec=`, Step A's spec-without-plan variant), or via `brainstorm` → B1's "Continue to plan now" → B2 → B3 (which still requires the user to pick "Start execution now" at B3 to enter Step C).
 
-**Rehydrate TaskCreate projection (Claude Code only — runs once per session).** Before entering the task loop, if `codex_host_suppressed == false` AND this is the first Step C entry of the current session for this `slug`, run the rehydration procedure from *TaskCreate projection layer — Rehydration trigger*. If TaskList already contains tasks with `metadata.masterplan.slug == <current-slug>`, run *Drift recovery* per the same section before proceeding. Append `taskcreate_projection_rehydrated` to `events.jsonl` with the counts; if `TaskCreate` / `TaskUpdate` dispatch errors, append `taskcreate_mirror_failed` with the error string and proceed — `state.yml` is canonical and the next rehydration reconciles. Skip silently when Step C was entered earlier this session (Step M's auto-resume hand-off already rehydrated).
+**Rehydrate or reconcile TaskCreate projection (Claude Code only — split by session signature).** Before entering the task loop, if `codex_host_suppressed == false`, branch on the new `state.step_c_session_init_sha` field:
+
+1. **Compute current session signature** by shelling out: `current_sig=$(bin/masterplan-state.sh session-sig)`. This returns `${CLAUDE_SESSION_ID}` when set or a fresh v4 UUID otherwise. Do NOT read `CLAUDE_SESSION_ID` directly — the helper is the single source of truth.
+2. **First entry of this session** (`state.step_c_session_init_sha == ""` OR `state.step_c_session_init_sha != current_sig`):
+   - Run the full rehydration procedure from *TaskCreate projection layer — Rehydration trigger*.
+   - Write `state.step_c_session_init_sha = current_sig` atomically with the rehydration write.
+   - Append `step_c_init_complete` to `events.jsonl` with payload `{session_sig: <current_sig>, rehydrated: true}`.
+   - Issue the per-state-write `TaskUpdate(current_task, status=in_progress)` touch per *Per-state-write priming* below.
+3. **Subsequent entry in same session** (`state.step_c_session_init_sha == current_sig`):
+   - Run *Drift recovery* per *TaskCreate projection layer — Drift recovery*, scoped to `current_task` alignment + status counts (`in_progress count == 1` mid-wave; `pending count > 0` if waves remain).
+   - Append `step_c_drift_check_complete` to `events.jsonl` with payload `{session_sig: <current_sig>, drift_corrected: <bool>}`.
+   - Issue the per-state-write `TaskUpdate(current_task, status=in_progress)` touch.
+
+If `TaskCreate` / `TaskUpdate` dispatch errors at any point, append `taskcreate_mirror_failed` with the error string and proceed — `state.yml` is canonical and the next rehydration reconciles. Skip the entire block silently when `codex_host_suppressed == true`.
 
 **Mirror every state.yml task-transition to TaskList (Claude Code only).** Throughout Step C, every write that changes `current_task`, dispatches a wave, records a wave-member digest, or flips `status` to `pending_retro` / `complete` / `blocked` MUST be followed by a `TaskUpdate` call per the transition table in *TaskCreate projection layer — Lifecycle mirror hooks*. The mirror call comes AFTER the `state.yml` write and the `events.jsonl` append, never before. If the `TaskUpdate` call errors, append `taskcreate_mirror_failed` to `events.jsonl` with `{call, task_idx, error}` and continue; **do NOT roll back the `state.yml` write** — `state.yml` is canonical and the next rehydration reconciles. Skip the entire mirror when `codex_host_suppressed == true`. The transition sites in Step C are: step 4 task-advance, step 3a wave dispatch, step 4b wave-member digest, step 6a-guard `pending_retro` flip, step 6 (post-retro) `complete` flip, and any `status: blocked` / `critical_error` write throughout the section.
 
