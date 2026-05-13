@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.1.0] — 2026-05-12
+
+### Added
+- TaskCreate projection layer: plan tasks are mirrored to the harness's native task ledger so wave progress is visible in the UI and the per-turn TaskCreate reminder is silenced. Claude Code-only; Codex no-op.
+- Four new `events.jsonl` event types: `taskcreate_projection_rehydrated`, `taskcreate_mirror_failed`, `taskcreate_drift_corrected`, `taskcreate_orphan_cancelled`.
+- `bin/masterplan-self-host-audit.sh --taskcreate-gate` check enforcing the Codex no-op invariant.
+
+### Notes
+- Pure addition. No schema bump. `state.yml` shape is unchanged. Existing bundles get a projection the next time they're resumed; no backfill needed.
+
 ## [4.0.0] — 2026-05-13 — lifecycle hardening (FM-A/B/C/D/G)
 
 **Breaking:** `state.yml` schema bumps `schema_version: 2 → 3`. Existing v2

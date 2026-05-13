@@ -68,6 +68,7 @@ on track for multi-week projects.
   isolated context, returning only digested results.
 - Orchestrator context stays clean for sequencing decisions — no raw file
   contents, no verification dumps, no transcript noise.
+- **Native task-list integration (Claude Code).** Each plan's tasks are projected into the harness TaskCreate ledger for wave-progress visibility. State.yml stays canonical; the projection is rebuilt on session start. Codex hosts are a no-op.
 
 ### Cross-checking via Codex
 

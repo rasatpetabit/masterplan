@@ -284,6 +284,14 @@ The pattern follows CD-7 (orchestrator is canonical state writer) and CLAUDE.md 
 
 **Lint check:** `bin/masterplan-self-host-audit.sh --brief-style` greps the orchestrator for dispatch blocks tagged with lifecycle `DISPATCH-SITE` values that lack `contract_id`, and for outcome-only language patterns within dispatch contexts. Exit 0 if clean.
 
+### TaskCreate projection layer (v4.1.0)
+
+The orchestrator projects each run's plan-task list into the harness `TaskCreate` ledger as a derived, one-way mirror. `state.yml` remains canonical per CD-7; the projection is rebuilt on every session start and reconciled on every Step C re-entry. Provenance lives in `task.metadata.masterplan.{slug,task_idx,wave,parallel_group,plan_path,state_path}`. Codex hosts skip the projection entirely (no TaskCreate calls, no projection events).
+
+**Why:** the harness emits a `<system-reminder>` per turn nudging the orchestrator toward TaskCreate; left unaddressed it steals ~200 tokens/turn from Opus context. The projection makes that reminder a no-op and gives the user wave-progress visibility in the native task UI. See `commands/masterplan.md § TaskCreate projection layer` for schema, rehydration, drift, and event-type details.
+
+**Event types emitted:** `taskcreate_projection_rehydrated`, `taskcreate_mirror_failed`, `taskcreate_drift_corrected`, `taskcreate_orphan_cancelled`. All four are scoped to the projection layer and never block state.yml writes.
+
 ---
 
 ## 4. Run bundle format (the only source of truth)
