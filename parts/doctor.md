@@ -471,3 +471,32 @@ echo "Check #33: SKIPPED (requires TaskList API access — runtime-only)"
 Note: this check is best executed by the orchestrator itself during `doctor`
 verb dispatch, where TaskList API access is available. Standalone CLI runs of
 this check report SKIPPED.
+
+---
+
+## Check #34: plan.index.json staleness
+
+**Severity:** Warning
+**Action:** Report-only
+
+```bash
+fail=0
+for d in docs/masterplan/*/; do
+  plan="${d}plan.md"
+  state="${d}state.yml"
+  idx="${d}plan.index.json"
+  [ -f "$plan" ] || continue
+  current="$(sha256sum "$plan" | awk '{print $1}')"
+  if [ -f "$state" ]; then
+    state_hash="$(grep -E '^plan_hash:' "$state" | sed 's/.*"sha256:\([a-f0-9]*\)".*/\1/')"
+    [ -n "$state_hash" ] && [ "$state_hash" != "$current" ] && \
+      { echo "WARN $state: plan_hash drift (state=$state_hash, current=$current)"; fail=1; }
+  fi
+  if [ -f "$idx" ]; then
+    idx_hash="$(jq -r '.plan_hash' "$idx" 2>/dev/null | sed 's/sha256://')"
+    [ -n "$idx_hash" ] && [ "$idx_hash" != "$current" ] && \
+      { echo "WARN $idx: plan.index.json stale (index=$idx_hash, current=$current)"; fail=1; }
+  fi
+done
+[ $fail -eq 0 ] && echo "Check #34: PASS" || echo "Check #34: WARN"
+```
