@@ -20,6 +20,7 @@
 #   bin/masterplan-state.sh inventory [--format=table|json]
 #   bin/masterplan-state.sh migrate [--dry-run|--write] [--slug=<slug>]
 #   bin/masterplan-state.sh migrate-state [--bundle <path>|--slug <slug>]
+#   bin/masterplan-state.sh migrate-plan [--bundle <path>|--slug <slug>] [--dry-run]
 #   bin/masterplan-state.sh transition-guard <bundle-path> <target-phase>
 #   bin/masterplan-state.sh session-sig
 #   bin/masterplan-state.sh build-index <slug>
@@ -346,6 +347,64 @@ PY
     py_status=$?
     [ $py_status -eq 0 ] || exit $py_status
     echo "migrated: $state (backup at $state.v4-backup)"
+    exit 0
+    ;;
+  migrate-plan)
+    bundle=""; dry_run=0
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --bundle) bundle="$2"; shift 2 ;;
+        --slug)   bundle="docs/masterplan/$2"; shift 2 ;;
+        --dry-run) dry_run=1; shift ;;
+        *) echo "ERROR unknown arg: $1" >&2; exit 2 ;;
+      esac
+    done
+    plan="$bundle/plan.md"
+    [ -f "$plan" ] || { echo "ERROR: $plan not found" >&2; exit 1; }
+    tmp="$(mktemp)"
+    python3 - "$plan" <<'PY' > "$tmp"
+import sys, re
+text = open(sys.argv[1]).read()
+lines = text.splitlines(keepends=True)
+out = []
+i = 0
+in_task = False
+current_task = None
+while i < len(lines):
+    line = lines[i]
+    m = re.match(r'^### Task (\d+):', line)
+    if m:
+        in_task = True
+        current_task = int(m.group(1))
+        out.append(line); i += 1; continue
+    if in_task:
+        if line.startswith('```bash') and (not out or '**Verify:**' not in out[-1]):
+            out.append('**Verify:**\n')
+        if line.startswith('### Task '):
+            in_task = False
+            continue
+    out.append(line); i += 1
+sys.stdout.write(''.join(out))
+PY
+    py_status=$?
+    [ $py_status -eq 0 ] || exit $py_status
+    if [ $dry_run -eq 1 ]; then
+      diff -u "$plan" "$tmp" || true
+    else
+      cp "$plan" "$plan.v4-backup"
+      mv "$tmp" "$plan"
+      echo "migrated: $plan (backup at $plan.v4-backup)"
+    fi
+    python3 - "$plan" <<'PY'
+import re, sys
+text = open(sys.argv[1]).read()
+tasks = re.split(r'(?m)^### Task (\d+):', text)
+for num, body in zip(tasks[1::2], tasks[2::2]):
+    if '**Spec:**' not in body:
+        print(f'WARN task #{num}: missing **Spec:** marker (manual fix required)')
+PY
+    py_status=$?
+    [ $py_status -eq 0 ] || exit $py_status
     exit 0
     ;;
   build-index)
