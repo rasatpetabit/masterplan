@@ -21,6 +21,7 @@
 #   bin/masterplan-state.sh migrate [--dry-run|--write] [--slug=<slug>]
 #   bin/masterplan-state.sh transition-guard <bundle-path> <target-phase>
 #   bin/masterplan-state.sh session-sig
+#   bin/masterplan-state.sh build-index <slug>
 #
 # transition-guard: validates a lifecycle phase transition for a run bundle.
 #   <bundle-path>  — absolute path to the run bundle directory (contains state.yml)
@@ -285,6 +286,61 @@ if [[ "$mode" == "session-sig" ]]; then
   fi
   exit 0
 fi
+
+case "$mode" in
+  build-index)
+    slug="${1:?error: build-index requires <slug>}"
+    bundle="docs/masterplan/$slug"
+    plan="$bundle/plan.md"
+    out="$bundle/plan.index.json"
+    [ -f "$plan" ] || { echo "ERROR: $plan not found" >&2; exit 1; }
+    plan_hash="sha256:$(sha256sum "$plan" | awk '{print $1}')"
+    generated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    python3 - "$plan" "$plan_hash" "$generated_at" <<'PY' > "$out"
+import json, re, sys, hashlib
+plan_path, plan_hash, generated_at = sys.argv[1], sys.argv[2], sys.argv[3]
+text = open(plan_path).read().splitlines()
+tasks, current, idx = [], None, 0
+for i, line in enumerate(text, start=1):
+    m = re.match(r'^### Task (\d+):\s*(.+)$', line)
+    if m:
+        if current: tasks.append(current)
+        idx = int(m.group(1))
+        current = {"idx": idx, "name": m.group(2).strip(),
+                   "offset": i, "lines": 0, "files": [], "codex": False,
+                   "parallel_group": None, "verify_commands": [], "spec_refs": []}
+        continue
+    if not current: continue
+    current["lines"] = i - current["offset"]
+    if m2 := re.match(r'^\*\*Files:\*\*\s*(.+)$', line):
+        s = m2.group(1).strip()
+        current["files"] = [p.strip().lstrip("-").strip() for p in s.split(",") if p.strip()]
+    elif m2 := re.match(r'^\*\*Parallel-group:\*\*\s*(.+)$', line):
+        v = m2.group(1).strip()
+        current["parallel_group"] = None if v.lower() in ("none","null","") else v
+    elif m2 := re.match(r'^\*\*Codex:\*\*\s*(true|false)', line, re.I):
+        current["codex"] = m2.group(1).lower() == "true"
+    elif m2 := re.match(r'^\*\*Spec:\*\*\s*(.+)$', line):
+        refs = re.findall(r'spec\.md#L\d+(?:-L\d+)?', m2.group(1))
+        current["spec_refs"] = refs
+    elif line.strip().startswith("**Verify:**"):
+        j = i
+        while j < len(text) and not text[j].startswith("```bash"): j += 1
+        if j < len(text):
+            j += 1
+            while j < len(text) and text[j].strip() != "```":
+                cmd = text[j].strip()
+                if cmd and not cmd.startswith("#"):
+                    current["verify_commands"].append(cmd)
+                j += 1
+if current: tasks.append(current)
+print(json.dumps({"schema_version":"5.0","plan_hash":plan_hash,
+                  "generated_at":generated_at,"tasks":tasks}, indent=2))
+PY
+    echo "wrote $out ($(jq '.tasks | length' "$out") tasks)"
+    exit 0
+    ;;
+esac
 
 format="table"
 write_mode=0

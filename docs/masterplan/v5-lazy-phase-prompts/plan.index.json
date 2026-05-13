@@ -1,0 +1,729 @@
+{
+  "schema_version": "5.0",
+  "plan_hash": "sha256:d71614bbdc666a8dd1f3304f5f5c817d0bd840f3a0dbedb51ec23ea406ca5d5b",
+  "generated_at": "2026-05-13T22:32:30Z",
+  "tasks": [
+    {
+      "idx": 1,
+      "name": "Create v5 directory skeleton",
+      "offset": 59,
+      "lines": 45,
+      "files": [],
+      "codex": false,
+      "parallel_group": "wave-1",
+      "verify_commands": [
+        "test -d parts/contracts && test -f parts/.gitkeep && test -f parts/contracts/.gitkeep"
+      ],
+      "spec_refs": [
+        "spec.md#L61-L86",
+        "spec.md#L61-L86"
+      ]
+    },
+    {
+      "idx": 2,
+      "name": "Extract `docs/config-schema.md`",
+      "offset": 105,
+      "lines": 53,
+      "files": [],
+      "codex": false,
+      "parallel_group": "wave-1",
+      "verify_commands": [
+        "test -f docs/config-schema.md",
+        "grep -q '~/.masterplan.yaml' docs/config-schema.md",
+        "test ! -s parts/contracts/.gitkeep || true  # unrelated; placeholder",
+        "[ \"$(wc -l < docs/config-schema.md)\" -ge 100 ]"
+      ],
+      "spec_refs": [
+        "spec.md#L40",
+        "spec.md#L40",
+        "spec.md#L82",
+        "spec.md#L82"
+      ]
+    },
+    {
+      "idx": 3,
+      "name": "Write `docs/verbs.md` cheat sheet",
+      "offset": 159,
+      "lines": 72,
+      "files": [],
+      "codex": false,
+      "parallel_group": "wave-1",
+      "verify_commands": [
+        "test -f docs/verbs.md",
+        "for v in start resume status doctor import archive validate retry; do",
+        "grep -q \"^## \\`$v\\`\" docs/verbs.md || { echo \"MISSING: $v\"; exit 1; }",
+        "done",
+        "echo VERBS-OK"
+      ],
+      "spec_refs": [
+        "spec.md#L82-L84",
+        "spec.md#L82-L84"
+      ]
+    },
+    {
+      "idx": 4,
+      "name": "Write `parts/contracts/cd-rules.md`",
+      "offset": 232,
+      "lines": 64,
+      "files": [],
+      "codex": false,
+      "parallel_group": "wave-1",
+      "verify_commands": [
+        "for n in 1 2 3 4 5 6 7 8 9 10; do",
+        "grep -q \"^### CD-$n\" parts/contracts/cd-rules.md || { echo \"MISSING CD-$n\"; exit 1; }",
+        "done",
+        "echo CD-RULES-OK"
+      ],
+      "spec_refs": [
+        "spec.md#L114",
+        "spec.md#L114"
+      ]
+    },
+    {
+      "idx": 5,
+      "name": "Write `parts/contracts/agent-dispatch.md`",
+      "offset": 297,
+      "lines": 70,
+      "files": [],
+      "codex": false,
+      "parallel_group": "wave-1",
+      "verify_commands": [
+        "test -f parts/contracts/agent-dispatch.md",
+        "grep -q 'DISPATCH-SITE' parts/contracts/agent-dispatch.md",
+        "grep -q -E 'haiku|sonnet|opus' parts/contracts/agent-dispatch.md",
+        "grep -q -E 'Goal|Inputs|Scope|Constraints|Return' parts/contracts/agent-dispatch.md",
+        "echo AGENT-DISPATCH-OK"
+      ],
+      "spec_refs": [
+        "spec.md#L113",
+        "spec.md#L113"
+      ]
+    },
+    {
+      "idx": 6,
+      "name": "Write `parts/contracts/taskcreate-projection.md`",
+      "offset": 368,
+      "lines": 84,
+      "files": [],
+      "codex": false,
+      "parallel_group": "wave-1",
+      "verify_commands": [
+        "test -f parts/contracts/taskcreate-projection.md",
+        "grep -q 'projection_threshold' parts/contracts/taskcreate-projection.md",
+        "grep -q -E 'len\\(plan\\.tasks\\)|tasks\\.length' parts/contracts/taskcreate-projection.md",
+        "grep -q 'priming' parts/contracts/taskcreate-projection.md",
+        "echo PROJECTION-OK"
+      ],
+      "spec_refs": [
+        "spec.md#L115",
+        "spec.md#L115",
+        "spec.md#L219-L234",
+        "spec.md#L219-L234"
+      ]
+    },
+    {
+      "idx": 7,
+      "name": "Write `parts/contracts/run-bundle.md`",
+      "offset": 453,
+      "lines": 73,
+      "files": [],
+      "codex": false,
+      "parallel_group": "wave-1",
+      "verify_commands": [
+        "test -f parts/contracts/run-bundle.md",
+        "grep -q 'schema_version: \"5.0\"' parts/contracts/run-bundle.md",
+        "grep -q 'plan_hash' parts/contracts/run-bundle.md",
+        "grep -q 'overflow at' parts/contracts/run-bundle.md",
+        "grep -q 'plan.index.json' parts/contracts/run-bundle.md",
+        "echo RUN-BUNDLE-OK"
+      ],
+      "spec_refs": [
+        "spec.md#L116-L117",
+        "spec.md#L116-L117",
+        "spec.md#L185-L218",
+        "spec.md#L185-L218",
+        "spec.md#L119-L160",
+        "spec.md#L119-L160"
+      ]
+    },
+    {
+      "idx": 8,
+      "name": "Write `parts/codex-host.md`",
+      "offset": 527,
+      "lines": 62,
+      "files": [],
+      "codex": false,
+      "parallel_group": "wave-1",
+      "verify_commands": [
+        "test -f parts/codex-host.md",
+        "grep -q 'codex:codex-rescue' parts/codex-host.md",
+        "grep -q -E 'suppress' parts/codex-host.md",
+        "echo CODEX-HOST-OK"
+      ],
+      "spec_refs": [
+        "spec.md#L274-L278",
+        "spec.md#L274-L278"
+      ]
+    },
+    {
+      "idx": 9,
+      "name": "Write `parts/step-0.md`",
+      "offset": 590,
+      "lines": 58,
+      "files": [],
+      "codex": false,
+      "parallel_group": "wave-2",
+      "verify_commands": [
+        "test -f parts/step-0.md",
+        "grep -q 'CC-3-trampoline' parts/step-0.md",
+        "grep -q -E 'status|validate' parts/step-0.md",
+        "[ \"$(wc -c < parts/step-0.md)\" -ge 20000 ]  # at least 20KB \u2014 bootstrap is substantial",
+        "echo STEP-0-OK"
+      ],
+      "spec_refs": [
+        "spec.md#L67",
+        "spec.md#L67",
+        "spec.md#L102-L110",
+        "spec.md#L102-L110"
+      ]
+    },
+    {
+      "idx": 10,
+      "name": "Write `parts/step-a.md`",
+      "offset": 649,
+      "lines": 43,
+      "files": [],
+      "codex": false,
+      "parallel_group": "wave-2",
+      "verify_commands": [
+        "test -f parts/step-a.md",
+        "grep -q -E 'intake|brainstorm' parts/step-a.md",
+        "echo STEP-A-OK"
+      ],
+      "spec_refs": [
+        "spec.md#L68",
+        "spec.md#L68"
+      ]
+    },
+    {
+      "idx": 11,
+      "name": "Write `parts/step-b.md`",
+      "offset": 693,
+      "lines": 65,
+      "files": [
+        "<comma-separated paths>"
+      ],
+      "codex": false,
+      "parallel_group": "<wave-X or none>",
+      "verify_commands": [
+        "test -f parts/step-b.md",
+        "for sub in B0 B1 B2 B3; do",
+        "grep -q \"$sub\" parts/step-b.md || { echo \"MISSING $sub\"; exit 1; }",
+        "done",
+        "[ \"$(wc -c < parts/step-b.md)\" -ge 50000 ]",
+        "echo STEP-B-OK",
+        "<verify commands>"
+      ],
+      "spec_refs": []
+    },
+    {
+      "idx": 12,
+      "name": "Write `parts/step-c.md`",
+      "offset": 759,
+      "lines": 59,
+      "files": [],
+      "codex": false,
+      "parallel_group": "wave-2",
+      "verify_commands": [
+        "test -f parts/step-c.md",
+        "grep -q 'DISPATCH-SITE: step-c.md' parts/step-c.md",
+        "grep -q -E 'wave dispatch|wave-dispatch' parts/step-c.md",
+        "grep -q -E 'verify|verification' parts/step-c.md",
+        "grep -q -E 'archive' parts/step-c.md",
+        "echo STEP-C-OK"
+      ],
+      "spec_refs": [
+        "spec.md#L70",
+        "spec.md#L70"
+      ]
+    },
+    {
+      "idx": 13,
+      "name": "Write `parts/doctor.md` (existing checks #1-#31)",
+      "offset": 819,
+      "lines": 61,
+      "files": [],
+      "codex": false,
+      "parallel_group": "wave-2",
+      "verify_commands": [
+        "test -f parts/doctor.md",
+        "for n in $(seq 1 31); do",
+        "grep -q \"^## Check #$n\" parts/doctor.md || { echo \"MISSING check #$n\"; exit 1; }",
+        "done",
+        "echo DOCTOR-1-31-OK"
+      ],
+      "spec_refs": [
+        "spec.md#L88-L100",
+        "spec.md#L88-L100",
+        "spec.md#L310-L320",
+        "spec.md#L310-L320"
+      ]
+    },
+    {
+      "idx": 14,
+      "name": "Write `parts/import.md`",
+      "offset": 881,
+      "lines": 45,
+      "files": [],
+      "codex": false,
+      "parallel_group": "wave-2",
+      "verify_commands": [
+        "test -f parts/import.md",
+        "grep -q -E 'import|migrate|legacy' parts/import.md",
+        "echo IMPORT-OK"
+      ],
+      "spec_refs": []
+    },
+    {
+      "idx": 15,
+      "name": "Add doctor check #32 (state.yml scalar cap)",
+      "offset": 927,
+      "lines": 70,
+      "files": [],
+      "codex": false,
+      "parallel_group": "wave-3",
+      "verify_commands": [
+        "grep -q '^## Check #32' parts/doctor.md",
+        "grep -A 30 '^## Check #32' parts/doctor.md | grep -q '200'  # cap value present",
+        "grep -A 30 '^## Check #32' parts/doctor.md | grep -q 'overflow at'",
+        "echo CHECK-32-OK"
+      ],
+      "spec_refs": [
+        "spec.md#L312",
+        "spec.md#L312"
+      ]
+    },
+    {
+      "idx": 16,
+      "name": "Add doctor check #33 (projection mode mismatch)",
+      "offset": 998,
+      "lines": 52,
+      "files": [],
+      "codex": false,
+      "parallel_group": "wave-3",
+      "verify_commands": [
+        "grep -q '^## Check #33' parts/doctor.md",
+        "grep -A 30 '^## Check #33' parts/doctor.md | grep -q 'projection_threshold'",
+        "echo CHECK-33-OK"
+      ],
+      "spec_refs": [
+        "spec.md#L313",
+        "spec.md#L313",
+        "spec.md#L232-L233",
+        "spec.md#L232-L233"
+      ]
+    },
+    {
+      "idx": 17,
+      "name": "Add doctor check #34 (plan.index.json staleness)",
+      "offset": 1051,
+      "lines": 58,
+      "files": [],
+      "codex": false,
+      "parallel_group": "wave-3",
+      "verify_commands": [
+        "grep -q '^## Check #34' parts/doctor.md",
+        "grep -A 30 '^## Check #34' parts/doctor.md | grep -q 'plan_hash'",
+        "echo CHECK-34-OK"
+      ],
+      "spec_refs": [
+        "spec.md#L314",
+        "spec.md#L314",
+        "spec.md#L156-L160",
+        "spec.md#L156-L160"
+      ]
+    },
+    {
+      "idx": 18,
+      "name": "Add doctor check #35 (plan-format conformance)",
+      "offset": 1110,
+      "lines": 60,
+      "files": [],
+      "codex": false,
+      "parallel_group": "wave-3",
+      "verify_commands": [
+        "grep -q '^## Check #35' parts/doctor.md",
+        "grep -A 30 '^## Check #35' parts/doctor.md | grep -q -F '**Spec:**'",
+        "grep -A 30 '^## Check #35' parts/doctor.md | grep -q -F '**Verify:**'",
+        "echo CHECK-35-OK"
+      ],
+      "spec_refs": [
+        "spec.md#L315",
+        "spec.md#L315",
+        "spec.md#L161-L184",
+        "spec.md#L161-L184"
+      ]
+    },
+    {
+      "idx": 19,
+      "name": "Add doctor check #36 (router ceiling + phase file sanity)",
+      "offset": 1171,
+      "lines": 61,
+      "files": [],
+      "codex": false,
+      "parallel_group": "wave-3",
+      "verify_commands": [
+        "grep -q '^## Check #36' parts/doctor.md",
+        "grep -A 40 '^## Check #36' parts/doctor.md | grep -q '20480'  # 20KB ceiling",
+        "grep -A 40 '^## Check #36' parts/doctor.md | grep -q 'DISPATCH-SITE'",
+        "grep -A 40 '^## Check #36' parts/doctor.md | grep -q 'CC-3-trampoline'",
+        "echo CHECK-36-OK"
+      ],
+      "spec_refs": [
+        "spec.md#L316",
+        "spec.md#L316",
+        "spec.md#L86",
+        "spec.md#L86",
+        "spec.md#L102-L110",
+        "spec.md#L102-L110"
+      ]
+    },
+    {
+      "idx": 20,
+      "name": "Rewrite `commands/masterplan.md` as the v5 router",
+      "offset": 1233,
+      "lines": 134,
+      "files": [],
+      "codex": true,
+      "parallel_group": "wave-4",
+      "verify_commands": [
+        "[ \"$(wc -c < commands/masterplan.md)\" -le 20480 ]",
+        "grep -q 'CC-1' commands/masterplan.md      # arg-lock guard",
+        "grep -q 'CC-2' commands/masterplan.md      # banner guard",
+        "grep -q 'CC-3-trampoline' commands/masterplan.md",
+        "grep -q 'load.*parts/step-' commands/masterplan.md",
+        "grep -q 'codex.host' commands/masterplan.md  # Codex detect",
+        "! grep -q -E 'Step A|Step B|Step C|^#+ B[0-3]' commands/masterplan.md  # NO phase logic",
+        "echo ROUTER-OK"
+      ],
+      "spec_refs": [
+        "spec.md#L65",
+        "spec.md#L65",
+        "spec.md#L88-L100",
+        "spec.md#L88-L100"
+      ]
+    },
+    {
+      "idx": 21,
+      "name": "Add `build-index` subcommand",
+      "offset": 1368,
+      "lines": 115,
+      "files": [],
+      "codex": true,
+      "parallel_group": "wave-5",
+      "verify_commands": [
+        "bin/masterplan-state.sh build-index v5-lazy-phase-prompts 2>&1 | tee /tmp/bi.out",
+        "test -f docs/masterplan/v5-lazy-phase-prompts/plan.index.json",
+        "jq -e '.schema_version == \"5.0\"' docs/masterplan/v5-lazy-phase-prompts/plan.index.json",
+        "jq -e '.tasks | length >= 1' docs/masterplan/v5-lazy-phase-prompts/plan.index.json",
+        "echo BUILD-INDEX-OK"
+      ],
+      "spec_refs": [
+        "spec.md#L119-L160",
+        "spec.md#L119-L160",
+        "spec.md#L156-L160",
+        "spec.md#L156-L160"
+      ]
+    },
+    {
+      "idx": 22,
+      "name": "Add `migrate-state` subcommand",
+      "offset": 1484,
+      "lines": 123,
+      "files": [],
+      "codex": true,
+      "parallel_group": "wave-5",
+      "verify_commands": [
+        "mkdir -p /tmp/v5-migration-fixtures/test-bundle",
+        "cat > /tmp/v5-migration-fixtures/test-bundle/state.yml <<'EOF'",
+        "schema_version: \"4.2\"",
+        "slug: test-bundle",
+        "autonomy: loose",
+        "complexity: high",
+        "handoff: \"this is a very long handoff essay that goes on and on for many many many characters in order to exceed the 200 char cap that v5 enforces hard at write time so we can verify the overflow logic correctly moves the content to handoff dot md with an overflow pointer in the scalar\"",
+        "EOF",
+        "bin/masterplan-state.sh migrate-state --bundle /tmp/v5-migration-fixtures/test-bundle",
+        "grep -q 'schema_version: \"5.0\"' /tmp/v5-migration-fixtures/test-bundle/state.yml",
+        "grep -q 'overflow at handoff.md' /tmp/v5-migration-fixtures/test-bundle/state.yml",
+        "test -f /tmp/v5-migration-fixtures/test-bundle/state.yml.v4-backup",
+        "test -f /tmp/v5-migration-fixtures/test-bundle/handoff.md",
+        "echo MIGRATE-STATE-OK"
+      ],
+      "spec_refs": [
+        "spec.md#L299-L309",
+        "spec.md#L299-L309"
+      ]
+    },
+    {
+      "idx": 23,
+      "name": "Add `migrate-plan` subcommand",
+      "offset": 1608,
+      "lines": 14,
+      "files": [],
+      "codex": true,
+      "parallel_group": "wave-5",
+      "verify_commands": [
+        "mkdir -p /tmp/v5-migration-fixtures/plan-fixture",
+        "cat > /tmp/v5-migration-fixtures/plan-fixture/plan.md <<'EOF'",
+        "**Files:** src/foo.py",
+        "Some description.",
+        "```bash",
+        "test -f src/foo.py"
+      ],
+      "spec_refs": [
+        "spec.md#L182-L184",
+        "spec.md#L182-L184"
+      ]
+    },
+    {
+      "idx": 1,
+      "name": "Do something",
+      "offset": 1623,
+      "lines": 104,
+      "files": [
+        "src/foo.py"
+      ],
+      "codex": false,
+      "parallel_group": null,
+      "verify_commands": [],
+      "spec_refs": []
+    },
+    {
+      "idx": 24,
+      "name": "Add 200-char scalar cap enforcement to existing write paths",
+      "offset": 1728,
+      "lines": 74,
+      "files": [],
+      "codex": true,
+      "parallel_group": "wave-5",
+      "verify_commands": [
+        "bin/masterplan-state.sh --help 2>&1 | head -10  # smoke that the script still runs",
+        "echo CAP-ENFORCEMENT-OK"
+      ],
+      "spec_refs": [
+        "spec.md#L214-L217",
+        "spec.md#L214-L217"
+      ]
+    },
+    {
+      "idx": 25,
+      "name": "Add `parent_turn` emission to telemetry hook",
+      "offset": 1803,
+      "lines": 79,
+      "files": [],
+      "codex": true,
+      "parallel_group": "wave-6",
+      "verify_commands": [
+        "bash -n hooks/masterplan-telemetry.sh && echo \"syntax OK\"",
+        "grep -q 'parent_turn' hooks/masterplan-telemetry.sh",
+        "grep -q 'message.usage' hooks/masterplan-telemetry.sh",
+        "echo TELEMETRY-OK"
+      ],
+      "spec_refs": [
+        "spec.md#L246-L272",
+        "spec.md#L246-L272"
+      ]
+    },
+    {
+      "idx": 26,
+      "name": "Add `--parent` flag to routing-stats",
+      "offset": 1883,
+      "lines": 55,
+      "files": [],
+      "codex": true,
+      "parallel_group": "wave-6",
+      "verify_commands": [
+        "bash -n bin/masterplan-routing-stats.sh && echo \"syntax OK\"",
+        "bin/masterplan-routing-stats.sh --help 2>&1 | grep -q -- '--parent' && echo HELP-OK",
+        "echo '{\"type\":\"parent_turn\",\"model\":\"opus-4-7\",\"usage\":{\"input_tokens\":100,\"output_tokens\":50}}' > /tmp/rstats-fixture.jsonl",
+        "echo '{\"type\":\"subagent_turn\",\"model\":\"haiku\",\"usage\":{\"input_tokens\":20,\"output_tokens\":10}}' >> /tmp/rstats-fixture.jsonl",
+        "bin/masterplan-routing-stats.sh --parent --file /tmp/rstats-fixture.jsonl 2>&1 | grep -q -E 'parent|opus'",
+        "echo PARENT-FLAG-OK"
+      ],
+      "spec_refs": [
+        "spec.md#L272",
+        "spec.md#L272"
+      ]
+    },
+    {
+      "idx": 27,
+      "name": "Per-phase-file checks in self-host audit",
+      "offset": 1939,
+      "lines": 109,
+      "files": [],
+      "codex": true,
+      "parallel_group": "wave-7",
+      "verify_commands": [
+        "bash -n bin/masterplan-self-host-audit.sh && echo \"syntax OK\"",
+        "bin/masterplan-self-host-audit.sh 2>&1 | tee /tmp/audit.out",
+        "grep -q 'CC-3-trampoline' /tmp/audit.out",
+        "grep -q 'DISPATCH-SITE' /tmp/audit.out",
+        "grep -q 'plan-format' /tmp/audit.out",
+        "echo AUDIT-OK"
+      ],
+      "spec_refs": [
+        "spec.md#L280-L288",
+        "spec.md#L280-L288"
+      ]
+    },
+    {
+      "idx": 28,
+      "name": "Update `skills/masterplan/SKILL.md`",
+      "offset": 2049,
+      "lines": 45,
+      "files": [],
+      "codex": false,
+      "parallel_group": "wave-8",
+      "verify_commands": [
+        "grep -q 'parts/step-' skills/masterplan/SKILL.md",
+        "grep -q -E 'v5\\.0|5\\.0\\.0' skills/masterplan/SKILL.md",
+        "grep -q '#32' skills/masterplan/SKILL.md",
+        "echo SKILL-OK"
+      ],
+      "spec_refs": [
+        "spec.md#L290-L297",
+        "spec.md#L290-L297"
+      ]
+    },
+    {
+      "idx": 29,
+      "name": "Update `docs/internals.md`",
+      "offset": 2095,
+      "lines": 46,
+      "files": [],
+      "codex": false,
+      "parallel_group": "wave-8",
+      "verify_commands": [
+        "grep -q 'parts/step-' docs/internals.md",
+        "grep -q '#32' docs/internals.md",
+        "grep -q '#36' docs/internals.md",
+        "echo INTERNALS-OK"
+      ],
+      "spec_refs": [
+        "spec.md#L320",
+        "spec.md#L320"
+      ]
+    },
+    {
+      "idx": 30,
+      "name": "Bump plugin manifests to 5.0.0",
+      "offset": 2142,
+      "lines": 46,
+      "files": [],
+      "codex": false,
+      "parallel_group": "wave-9",
+      "verify_commands": [
+        "for f in .claude-plugin/plugin.json .claude-plugin/marketplace.json .codex-plugin/plugin.json; do",
+        "jq -r '.. | objects | .version? // empty' \"$f\" | sort -u | tee /tmp/v.out",
+        "grep -q '^5\\.0\\.0$' /tmp/v.out || { echo \"FAIL: $f not bumped to 5.0.0\"; exit 1; }",
+        "done",
+        "echo VERSION-BUMP-OK"
+      ],
+      "spec_refs": [
+        "spec.md#L308",
+        "spec.md#L308"
+      ]
+    },
+    {
+      "idx": 31,
+      "name": "Add CHANGELOG ## [5.0.0] entry",
+      "offset": 2189,
+      "lines": 46,
+      "files": [],
+      "codex": false,
+      "parallel_group": "wave-9",
+      "verify_commands": [
+        "grep -q '^## \\[5\\.0\\.0\\]' CHANGELOG.md",
+        "sed -n '/^## \\[5\\.0\\.0\\]/,/^## \\[/p' CHANGELOG.md | head -50 | grep -q 'parts/step-'",
+        "echo CHANGELOG-OK"
+      ],
+      "spec_refs": []
+    },
+    {
+      "idx": 32,
+      "name": "Run all verification gates",
+      "offset": 2236,
+      "lines": 77,
+      "files": [],
+      "codex": false,
+      "parallel_group": "wave-10",
+      "verify_commands": [
+        "bin/masterplan-self-host-audit.sh && echo AUDIT-OK",
+        "bash -n hooks/masterplan-telemetry.sh && echo HOOK-SYNTAX-OK",
+        "[ \"$(wc -c < commands/masterplan.md)\" -le 20480 ] && echo ROUTER-CEILING-OK",
+        "jq -e '.schema_version == \"5.0\"' docs/masterplan/v5-lazy-phase-prompts/plan.index.json && echo INDEX-SCHEMA-OK",
+        "grep -q -F '**Spec:**' docs/masterplan/v5-lazy-phase-prompts/plan.md && \\",
+        "grep -q -F '**Verify:**' docs/masterplan/v5-lazy-phase-prompts/plan.md && echo PLAN-MARKERS-OK",
+        "echo ALL-VERIFICATION-GATES-OK"
+      ],
+      "spec_refs": [
+        "spec.md#L322-L336",
+        "spec.md#L322-L336"
+      ]
+    },
+    {
+      "idx": 33,
+      "name": "Cold-load smoke test",
+      "offset": 2314,
+      "lines": 41,
+      "files": [
+        "none (runtime test)"
+      ],
+      "codex": false,
+      "parallel_group": "wave-10",
+      "verify_commands": [
+        "echo \"MANUAL: see Step 1 in this task\""
+      ],
+      "spec_refs": [
+        "spec.md#L336",
+        "spec.md#L336"
+      ]
+    },
+    {
+      "idx": 34,
+      "name": "Migration smoke test against a v4 fixture",
+      "offset": 2356,
+      "lines": 52,
+      "files": [],
+      "codex": false,
+      "parallel_group": "wave-10",
+      "verify_commands": [
+        "test -f /tmp/v5-migration-fixtures/test-bundle/state.yml.v4-backup && \\",
+        "grep -q 'schema_version: \"5.0\"' /tmp/v5-migration-fixtures/test-bundle/state.yml",
+        "echo MIGRATE-SMOKE-OK"
+      ],
+      "spec_refs": [
+        "spec.md#L327",
+        "spec.md#L327"
+      ]
+    },
+    {
+      "idx": 35,
+      "name": "Push branch + create tag + write retro",
+      "offset": 2409,
+      "lines": 125,
+      "files": [],
+      "codex": false,
+      "parallel_group": "wave-11",
+      "verify_commands": [
+        "git rev-parse v5.0.0 && echo TAG-OK",
+        "git ls-remote origin v5.0.0-lazy-phase-prompts | grep -q . && echo BRANCH-PUSHED-OK",
+        "test -f docs/masterplan/v5-lazy-phase-prompts/retro.md && echo RETRO-OK"
+      ],
+      "spec_refs": [
+        "spec.md#L337",
+        "spec.md#L337"
+      ]
+    }
+  ]
+}
