@@ -1,20 +1,5 @@
 # superpowers-masterplan — project context for Claude Code
 
-<!-- petabit-handbook:pointer-block:start sha=851068ef8f1f -->
-## Petabit Scale org context
-
-Cross-repo conventions and related repos for the Petabit Scale org are
-indexed in `petabit-handbook`:
-
-- github.com/petabitscale/petabit-handbook
-- ~/dev/petabit-handbook/CLAUDE.md (per-domain docs in docs/boundaries/)
-- ~/dev/petabit-handbook/inventory.yaml (machine-readable)
-
-This block is managed by `bin/pointer-block.sh` in petabit-handbook.
-Do not edit between the sentinels — your changes will be overwritten on
-the next refresh. Edit elsewhere in this CLAUDE.md as you like.
-<!-- petabit-handbook:pointer-block:end -->
-
 You are working in `superpowers-masterplan`, a Claude Code plugin that provides the `/masterplan` slash command. The plugin orchestrates a brainstorm → plan → execute development workflow on top of [`obra/superpowers`](https://github.com/obra/superpowers) skills.
 
 ## What this codebase IS
