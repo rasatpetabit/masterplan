@@ -21,7 +21,7 @@ pending_gate: ""
 artifacts:
   spec: docs/masterplan/p4-suppression-fix/spec.md
   plan: docs/masterplan/p4-suppression-fix/plan.md
-  retro: ""
+  retro: docs/masterplan/p4-suppression-fix/retro.md
   events: docs/masterplan/p4-suppression-fix/events.jsonl
   events_archive: ""
   eligibility_cache: ""
