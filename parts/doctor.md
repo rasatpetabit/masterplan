@@ -530,3 +530,31 @@ for plan in docs/masterplan/*/plan.md; do
 done
 [ $fail -eq 0 ] && echo "Check #35: PASS" || echo "Check #35: WARN"
 ```
+
+---
+
+## Check #36: parts/step-*.md sanity + router ceiling
+
+**Severity:** Warning
+**Action:** Report-only
+
+```bash
+fail=0
+size="$(wc -c < commands/masterplan.md)"
+if [ "$size" -gt 20480 ]; then
+  echo "WARN commands/masterplan.md is $size bytes (ceiling 20480)"
+  fail=1
+fi
+for phase in 0 a b c; do
+  if [ ! -f "parts/step-$phase.md" ]; then
+    echo "WARN parts/step-$phase.md missing"; fail=1
+  fi
+done
+grep -q 'CC-3-trampoline' commands/masterplan.md || \
+  { echo "WARN CC-3-trampoline missing from router"; fail=1; }
+grep -q 'CC-3-trampoline' parts/step-0.md || \
+  { echo "WARN CC-3-trampoline missing from step-0"; fail=1; }
+grep -q 'DISPATCH-SITE: step-c.md' parts/step-c.md 2>/dev/null || \
+  { echo "WARN DISPATCH-SITE: step-c.md tags missing from step-c.md"; fail=1; }
+[ $fail -eq 0 ] && echo "Check #36: PASS" || echo "Check #36: WARN"
+```
