@@ -342,7 +342,10 @@ def cap_scalar(match):
         fh.write(f'# {key} (migrated v4 -> v5)\n{raw}\n')
     return f'{key}: "*overflow at {target} L{new_line + 1}*"'
 text = re.sub(r'^([a-zA-Z_]+):\s*(.+)$', cap_scalar, text, flags=re.M)
-open(state_path, 'w').write(text)
+tmp_path = state_path + '.tmp'
+with open(tmp_path, 'w') as fh:
+    fh.write(text)
+os.replace(tmp_path, state_path)
 PY
     py_status=$?
     [ $py_status -eq 0 ] || exit $py_status
@@ -370,16 +373,21 @@ out = []
 i = 0
 in_task = False
 current_task = None
+task_has_verify = False
 while i < len(lines):
     line = lines[i]
     m = re.match(r'^### Task (\d+):', line)
     if m:
         in_task = True
         current_task = int(m.group(1))
+        task_has_verify = False
         out.append(line); i += 1; continue
     if in_task:
-        if line.startswith('```bash') and (not out or '**Verify:**' not in out[-1]):
+        if '**Verify:**' in line:
+            task_has_verify = True
+        if line.startswith('```bash') and not task_has_verify:
             out.append('**Verify:**\n')
+            task_has_verify = True
         if line.startswith('### Task '):
             in_task = False
             continue
@@ -415,7 +423,8 @@ PY
     [ -f "$plan" ] || { echo "ERROR: $plan not found" >&2; exit 1; }
     plan_hash="sha256:$(sha256sum "$plan" | awk '{print $1}')"
     generated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    python3 - "$plan" "$plan_hash" "$generated_at" <<'PY' > "$out"
+    tmp_out="$(mktemp -p "$bundle" .plan-index.XXXXXX)"
+    python3 - "$plan" "$plan_hash" "$generated_at" <<'PY' > "$tmp_out"
 import json, re, sys, hashlib
 plan_path, plan_hash, generated_at = sys.argv[1], sys.argv[2], sys.argv[3]
 text = open(plan_path).read().splitlines()
@@ -456,6 +465,13 @@ if current: tasks.append(current)
 print(json.dumps({"schema_version":"5.0","plan_hash":plan_hash,
                   "generated_at":generated_at,"tasks":tasks}, indent=2))
 PY
+    py_status=$?
+    if [ $py_status -ne 0 ]; then
+      rm -f "$tmp_out"
+      echo "ERROR: build-index python exit $py_status" >&2
+      exit $py_status
+    fi
+    mv "$tmp_out" "$out"
     echo "wrote $out ($(jq '.tasks | length' "$out") tasks)"
     exit 0
     ;;
