@@ -500,3 +500,33 @@ for d in docs/masterplan/*/; do
 done
 [ $fail -eq 0 ] && echo "Check #34: PASS" || echo "Check #34: WARN"
 ```
+
+---
+
+## Check #35: Plan-format conformance (v5.0 markers)
+
+**Severity:** Warning
+**Action:** Report-only
+
+For each `docs/masterplan/*/plan.md`, every task heading (e.g., `### Task N:`)
+MUST be followed (within 30 lines, before the next task heading) by both
+`**Spec:**` and `**Verify:**` markers.
+
+```bash
+fail=0
+for plan in docs/masterplan/*/plan.md; do
+  bundle="$(dirname "$plan")"
+  # extract task heading line numbers
+  mapfile -t tasks < <(grep -n -E '^### Task [0-9]+' "$plan" | cut -d: -f1)
+  for i in "${!tasks[@]}"; do
+    start="${tasks[$i]}"
+    end="${tasks[$((i+1))]:-$(wc -l < "$plan")}"
+    block="$(sed -n "${start},${end}p" "$plan")"
+    echo "$block" | grep -q -F '**Spec:**' || \
+      { echo "WARN $plan task at L$start: missing **Spec:**"; fail=1; }
+    echo "$block" | grep -q -F '**Verify:**' || \
+      { echo "WARN $plan task at L$start: missing **Verify:**"; fail=1; }
+  done
+done
+[ $fail -eq 0 ] && echo "Check #35: PASS" || echo "Check #35: WARN"
+```
