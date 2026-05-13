@@ -171,10 +171,10 @@ docs/masterplan/<slug>/
 `state.yml` is the resumption contract. It MUST exist as soon as Step B0 has selected a worktree and derived a slug; do not wait for brainstorming or plan generation. Minimum fields:
 
 ```yaml
-schema_version: 2
+schema_version: 3
 slug: <feature-slug>
-status: in-progress | blocked | complete | archived  # blocked is reserved for critical_error only
-phase: worktree_decided | brainstorming | spec_gate | planning | plan_gate | executing | task_gate | finish_gate | critical_error | complete | retro_gate | archived
+status: in-progress | blocked | complete | pending_retro | archived  # blocked is reserved for critical_error only
+phase: worktree_decided | brainstorming | spec_gate | planning | plan_gate | executing | task_gate | finish_gate | critical_error | complete | retro_gate | pending_retro | archived
 worktree: /absolute/path/to/worktree
 branch: <git-branch-name>
 started: 2026-05-01
@@ -258,6 +258,21 @@ Safety-only critical errors are limited to conditions where continuing without u
 
 **Resume controller.** At the start of bare `/masterplan`, Codex `Use masterplan`, `execute`, `next`, and `--resume` flows, after Step 0 config parsing and before any broad menu or fresh-start routing, run this controller against live `state.yml`:
 
+0. **Lazy v2→v3 migration.** If the loaded `state.yml` has `schema_version: 2` (or missing `schema_version`):
+   a. In-memory: hydrate any absent v3 fields with their defaults (same list as Step B0 step 6 above).
+   b. Flag `lazy_migration_pending = true` on the in-memory state.
+   c. On any subsequent state write this turn (any path that writes `state.yml`), persist all v3 fields with their in-memory values and bump `schema_version: 3`. Append event `{"event":"schema_v2_to_v3_lazy_migrated","ts":"...","from":2,"to":3}` to `events.jsonl` at that same write. Do NOT write the migration as a standalone write — piggyback it on the first real state mutation.
+   d. v2 bundles that are read but never written this turn remain at `schema_version: 2` on disk indefinitely.
+
+0b. **Pending-retro recovery.** If the loaded `state.yml` has `status: pending_retro`:
+   a. Emit a visible notice: `↻ Bundle <slug> has status: pending_retro — attempting retro generation.`
+   b. If the bundle was detected as a v2 legacy bundle (i.e., `schema_version: 2` on load with `status: complete` + missing `retro.md`, lazily migrated to `status: pending_retro` by step 0): emit `{"event":"v2_legacy_pending_retro_detected","ts":"...","slug":"<slug>"}` before the recovery attempt.
+   c. Invoke Step R internally with `completion_auto=true` and the loaded slug.
+   d. On success: write `status: complete`, clear `pending_retro_attempts`, append `{"event":"pending_retro_recovered","ts":"..."}`. Continue with resume routing (step 1 below).
+   e. On failure: increment `pending_retro_attempts`. If `pending_retro_attempts >= 2`, surface the same AskUserQuestion as Step C 6b's "failed twice" path above. Otherwise set `stop_reason: null`, leave `status: pending_retro`, append the failure event, and continue with resume routing (step 1 below) so the user can do other work.
+
+   This step is the "Step Resume-Guard step 0b" — the label avoids collision with the existing "Step R3.5" label (archive path inside Step R). The v2 detection path above fires only when step 0's lazy migration set `lazy_migration_pending = true` AND the original `status: complete` bundle had no `retro.md`.
+
 1. If `pending_gate` is non-null, re-render that exact gate and do not infer a default answer.
 2. Else if `critical_error` is non-null or `status: blocked`, render the recorded recovery gate; do not auto-resume unsafe work.
 3. Else if `background` is non-null, poll or review the recorded background continuation before dispatching any new work.
@@ -317,6 +332,16 @@ These two values are read by every downstream step that varies behavior on compl
 ```
 
 This single line is the audit trail for "why did the orchestrator behave this way." Step C step 1 emits it once on kickoff entry and once per cross-session resume.
+
+### Temp-dir sweep (startup, once per invocation)
+
+After complexity resolution, before verb routing, run a one-pass prune of stale masterplan import staging directories:
+
+1. **Enumerate candidates.** List all directories matching `/tmp/masterplan-import-*` using Bash glob. If none exist, skip silently.
+2. **Liveness filter.** For each directory whose name contains a PID component (format: `masterplan-import-<slug>-<pid>`), extract the PID. Run `ps -p <pid> -o pid=` (or `kill -0 <pid> 2>/dev/null` as fallback). If the process is alive, leave the directory untouched.
+3. **Age filter.** For each remaining directory (no live owner), check mtime via `stat -c %Y <dir>` (Linux) or `stat -f %m <dir>` (macOS). If mtime is within the last 24 hours, leave it untouched (may belong to a recently-killed run that the user may wish to inspect).
+4. **Prune.** For each directory that passes both filters (no live owner AND mtime > 24h ago), run `rm -rf <dir>`. Append one `{"event":"tempdir_swept","path":"<dir>","ts":"..."}` event to the active bundle's `events.jsonl` if a bundle is already loaded; otherwise buffer the event for the first state write that creates or loads a bundle.
+5. **Never block.** If the glob, stat, or rm fails for any reason (permission denied, concurrent deletion), emit a one-line warning to stdout but continue. The sweep is best-effort.
 
 ### Verb routing (first token of `$ARGUMENTS`)
 
@@ -402,6 +427,7 @@ This rule applies ONLY to relative paths. Absolute paths (`<path>` starts with `
 | `--no-codex-review` | C | Shorthand for `--codex-review=off` |
 | `--parallelism=on\|off` | C | Override `config.parallelism.enabled` for this run. When `off`, wave dispatch in Step C step 2 is suppressed globally — every task runs serially regardless of `**parallel-group:**` annotations. Not persisted to `state.yml`; use `.masterplan.yaml` for durable defaults. |
 | `--no-parallelism` | C | Shorthand for `--parallelism=off`. |
+| `--keep-worktree` | B (brainstorm/plan/full) | Sets `worktree_disposition: kept_by_user` in initial state.yml at Step B0 step 6, overriding `worktree.default_disposition`. |
 | `--dry-run` | CL | Print the cleanup plan + per-action `<src> → <dst>` lines without executing. Skip the confirmation gate. Does not affect any other step. |
 | `--delete` | CL | For archival categories (completed plans, orphan sidecars, stale plans), `git rm` instead of archiving to `<config.archive_path>/<date>/`. OS-level categories (dead crons, dead worktrees) always delete regardless of this flag. Default off. |
 | `--category=<name>` | CL | Limit Step CL to one category: `completed` / `legacy` / `orphans` / `stale` / `crons` / `worktrees` (or comma-separated subset). Default = all six. |
@@ -509,6 +535,7 @@ The signature string `For every inner Task / Agent invocation you make` is the v
 | Step I1 discovery (per source class) | `Step I1 discovery (<source-class>)` |
 | Step I3.2 fetch wave (per candidate) | `Step I3.2 fetch (<source-class> <slug>)` |
 | Step I3.4 conversion wave (per candidate) | `Step I3.4 conversion (<slug>)` |
+| Step I3.5 import hydration guard (per candidate) | `Step I3.5 hydration guard (<slug>)` |
 | Step S1 situation gather | `Step S1 situation gather` |
 | Step R2 retro source gather | `Step R2 retro source gather` |
 | Step D doctor checks | `Step D doctor checks` |
@@ -900,12 +927,78 @@ When the verb routing table in Step 0 matches `plan` with no args, Step A runs t
 
 The run bundle will be committed inside whichever worktree you're in when brainstorming runs. Decide first. **Apply CD-2.**
 
+**Constants:** `SCOPE_OVERLAP_THRESHOLD=0.6`
+
 1. **Survey the current state.** Issue these as **one parallel Bash batch** (not sequential):
    - `git rev-parse --abbrev-ref HEAD` → current branch.
    - `git status --porcelain` → cleanliness. (Always live per CD-2; never cached.)
    - Worktree list — read from `git_state.worktrees` (Step 0 cache). If unavailable, run `git worktree list --porcelain` in the same batch.
 
-   Then, for the per-worktree related-plan scan: when there are ≥ 2 non-current worktrees, dispatch parallel Haiku agents (pass `model: "haiku"` on each Agent call per §Agent dispatch contract; one per worktree). Each agent's bounded brief: Goal=identify any in-progress plans whose slug or branch name overlaps with the topic's salient words (case-insensitive substring), Inputs=`<worktree-path>` + topic words, Scope=read-only, Return=`{worktree, branch, matching_slugs: [], matching_branch: bool}`. With 1 non-current worktree, do the glob+match inline.
+   Then, for the per-worktree related-plan scan: when there are ≥ 2 non-current worktrees, dispatch parallel Haiku agents (pass `model: "haiku"` on each Agent call per §Agent dispatch contract; one per worktree). Each agent's bounded brief must begin with the DISPATCH-SITE tag `Step B0 related-plan scan` as its first line (per §Agent dispatch contract dispatch-site table), followed by a blank line, then the body:
+
+   ```
+   DISPATCH-SITE: Step B0 related-plan scan
+
+   contract_id: "related_scope_scan_v1"
+   Follow the algorithm defined in commands/masterplan-contracts.md §Contract: related_scope_scan_v1.
+   Goal: Identify any in-progress plans in this worktree whose slug or branch name overlaps with the topic's salient words (case-insensitive substring).
+   Inputs: <worktree-path> + topic words.
+   Scope: read-only.
+   Return shape: {contract_id: "related_scope_scan_v1", inputs_hash: "<sha256>", processed_paths: [list of state.yml paths], violations: [], coverage: {expected: N, processed: N}, result: {worktree, branch, matching_slugs: [], matching_branch: bool}}.
+   ```
+
+   With 1 non-current worktree, do the glob+match inline (no dispatch needed). After the Haiku(s) return, verify `coverage.expected == coverage.processed` for each; if not, re-scan the worktree inline (parent reads state.yml files directly) and append `{"event":"contract_violation","contract_id":"related_scope_scan_v1","delta":<delta>}` to events.jsonl.
+
+1b. **Scope-overlap fingerprint check.** Before the worktree-choice AskUserQuestion (step 3), compute overlap with existing bundles:
+
+   a. **Compute new topic fingerprint.** Tokenize `topic + proposed_slug` with: lowercase → strip punctuation `[.,;:!?'"()\[\]{}\\/]` → split on whitespace → remove stopwords (`{the,and,or,of,for,to,in,on,a,an,is,are,was,were,be,been,has,have,had,it,its,this,that,these,those}`) → apply stem function (trim common suffixes: `-ing`, `-ed`, `-s`, `-es`, `-er`, `-tion` via inline awk — no external dependencies). Result is `new_fingerprint: [token1, token2, ...]`.
+
+   b. **Load existing bundle fingerprints.** For each bundle in `docs/masterplan/*/state.yml` where `status != archived`:
+      - Read `scope_fingerprint` field. If non-empty array, use it.
+      - If empty/missing (v2 bundle), compute fingerprint inline from slug + spec.md H1 title (if file exists, read first H1) + `current_task` field. Persist the computed fingerprint on the bundle's next state write (piggyback via the lazy migration flag set in Wave 1).
+
+   c. **Compute Jaccard similarity.** For each existing bundle: `|A ∩ B| / |A ∪ B|` where A=new_fingerprint, B=existing fingerprint. Implement via inline Bash/awk — compute intersection count and union count from the two token arrays, then divide. Store as `(slug, similarity)` pairs. Sort descending.
+
+   d. **Threshold gate.** If max similarity ≥ `SCOPE_OVERLAP_THRESHOLD`, trigger the scope-overlap gate (step 1c below). Otherwise, record `scope_fingerprint: <new_fingerprint>` in the initial state.yml written in step 6 and proceed to step 2.
+
+   **Edge case:** If there are no existing non-archived bundles in the repo, skip steps 1b–1c entirely and proceed directly to step 2 (worktree recommendation).
+
+1c. **Scope-overlap gate (fires when max Jaccard ≥ `SCOPE_OVERLAP_THRESHOLD`).** Two-stage AskUserQuestion:
+
+   **Stage 1 — Show top-3 matches** (or fewer if < 3 exist above threshold):
+
+   ```
+   AskUserQuestion(
+     question="Topic '<new topic>' overlaps with existing bundles. Top-3 matches:",
+     options=[
+       "<slug-A> (sim=0.NN): <current_task or topic of A>",
+       "<slug-B> (sim=0.NN): <current_task or topic of B>",
+       "<slug-C> (sim=0.NN): <current_task or topic of C>",
+       "None of these — proceed with new slug (acknowledge overlap)"
+     ]
+   )
+   ```
+
+   If user picks **"None of these"**: append `{"event":"scope_overlap_acknowledged","ts":"...","top_sim":<max_sim>,"new_slug":"<proposed>"}` to events.jsonl of the NEW bundle (written after step 6), set `scope_fingerprint` in initial state, and proceed to step 2.
+
+   If user picks one of the matching slugs: proceed to Stage 2.
+
+   **Stage 2 — Relation choice for the picked slug:**
+
+   ```
+   AskUserQuestion(
+     question="How to relate '<new topic>' to '<picked-slug>'?",
+     options=[
+       "Resume <picked-slug> (Recommended) — load that bundle, route to Step C",
+       "Create variant of <picked-slug> — new bundle with variant_of: <picked-slug> set",
+       "Force new (acknowledge overlap) — new bundle with scope_overlap_acknowledged event"
+     ]
+   )
+   ```
+
+   - **"Resume <picked-slug> (Recommended)"**: load the picked bundle's state.yml, route to Step C. Do NOT create a new bundle.
+   - **"Create variant of <picked-slug>"**: proceed to new bundle creation (step 6), set `variant_of: <picked-slug>` in initial state.yml. Append `{"event":"scope_overlap_variant_created","variant_of":"<picked-slug>"}`.
+   - **"Force new (acknowledge overlap)"**: proceed to new bundle creation (step 6), set `scope_fingerprint` in initial state.yml. Append `{"event":"scope_overlap_force_new","acknowledged_sim":<max_sim>}`.
 
 2. **Compute a recommendation** using these heuristics, in order of strength:
    - **Use an existing worktree** if any non-current worktree has a branch name or in-progress slug that overlaps with the topic. Likely the same work is already underway.
@@ -926,7 +1019,36 @@ The run bundle will be committed inside whichever worktree you're in when brains
 
 5. Record the chosen worktree path and branch — they go into `state.yml` before Step B1.
 
-6. **Create the run bundle immediately.** Derive `<slug>` from the topic (stable slug, no date prefix; the date lives in `started`). Create `<config.runs_path>/<slug>/state.yml` and `<config.runs_path>/<slug>/events.jsonl` before invoking brainstorming. If the directory already exists, surface `AskUserQuestion("Run docs/masterplan/<slug>/ already exists. What now?", options=["Resume existing run (Recommended)", "Use <slug>-v2", "Abort kickoff"])`. Initial state: `status: in-progress`, `phase: worktree_decided`, `current_task: ""`, `next_action: brainstorm spec`, `plan_kind: implementation`, `follow_ups: []`, `pending_gate: null`, `background: null`, `stop_reason: null`, `critical_error: null`, artifact paths under `docs/masterplan/<slug>/`, and `legacy: {}`. Append an event: `{"type":"run_created","phase":"worktree_decided","progress_kind":"implementation_plan_created",...}`.
+6. **Create the run bundle immediately.** Derive `<slug>` from the topic (stable slug, no date prefix; the date lives in `started`). Create `<config.runs_path>/<slug>/state.yml` and `<config.runs_path>/<slug>/events.jsonl` before invoking brainstorming. If the directory already exists, surface `AskUserQuestion("Run docs/masterplan/<slug>/ already exists. What now?", options=["Resume existing run (Recommended)", "Use <slug>-v2", "Abort kickoff"])`. Initial state: `status: in-progress`, `phase: worktree_decided`, `current_task: ""`, `next_action: brainstorm spec`, `plan_kind: implementation`, `follow_ups: []`, `pending_gate: null`, `background: null`, `stop_reason: null`, `critical_error: null`, artifact paths under `docs/masterplan/<slug>/`, and `legacy: {}`. Also include the schema_v3 defaults for all new bundles (v4.0.0+). **Populate `scope_fingerprint` with the `new_fingerprint` token list computed in step 1b** (overriding the schema default `[]`). If step 1c set a relation, populate `variant_of` accordingly — `supersedes` and `superseded_by` default to `""` unless explicitly set.
+
+```yaml
+schema_version: 3
+pending_retro_attempts: 0
+retro_policy:
+  waived: false
+  reason: ""
+scope_fingerprint: []
+supersedes: ""
+superseded_by: ""
+variant_of: ""
+import_hydration: ""
+import_contract:
+  contract_id: ""
+  inputs_hash: ""
+  processed_at: ""
+worktree_disposition: ""
+worktree_last_reconciled: ""
+```
+
+**After writing the initial state, override `worktree_disposition` and `worktree_last_reconciled`** (the schema_v3 defaults above write `""` as sentinels; step 6 always computes and persists the real values):
+
+- If `--keep-worktree` flag is set → `worktree_disposition: kept_by_user`.
+- Else if `config.worktree.default_disposition == "kept_by_user"` → `worktree_disposition: kept_by_user`.
+- Else → `worktree_disposition: active`.
+
+Also set `worktree_last_reconciled: <now ISO>`.
+
+Append an event: `{"type":"run_created","phase":"worktree_decided","progress_kind":"implementation_plan_created",...}`.
 
 #### Step B0a — `plan --from-spec=<path>` worktree handling
 
@@ -1733,6 +1855,18 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
    - If `ScheduleWakeup` is not available (not running under `/loop`), step 5 is **not the entry point** — Step C step 4e's post-task router has already routed to the per-task gate or to silent-continue under `--autonomy=full`. This bullet exists for documentation only; step 5's body is reachable only when 4e selects it.
 6. **On plan completion:** run the completion finalizer, then pre-empt the skill's "Which option?" prompt. `superpowers:finishing-a-development-branch` will otherwise present a free-text `1. Merge / 2. Push+PR / 3. Keep / 4. Discard — Which option?` question. That free-text prompt can stall a session if it compacts before the user answers (same silent-stop bug pattern). Avoid this by handling durable completion state first, then surfacing `AskUserQuestion` for the branch-finish choice.
 
+   **6a-worktree-refresh.** First action of Step C step 6a (before the git status --porcelain dirty check): refresh `worktree_disposition` from live `git worktree list --porcelain`:
+
+  1. Run `git worktree list --porcelain` and parse the entries.
+  2. Compare `state.yml.worktree` against the listed paths.
+  3. If recorded worktree path is NOT in `git worktree list`:
+     - Set `worktree_disposition: missing`, clear `worktree:` field (set to ""), set `worktree_last_reconciled: <now>`.
+     - Append `{"event":"worktree_orphan_cleaned","path":"<old-path>","ts":"..."}`.
+     - Proceed (do not block completion).
+  4. If recorded worktree path IS in `git worktree list` AND disposition was empty (v2 bundle):
+     - Set `worktree_disposition: active`, set `worktree_last_reconciled: <now>`.
+  5. Emit notice for untracked worktrees (worktrees in git list with no bundle pointer): if this completion run detects a worktree path in `git worktree list` that no bundle's `state.yml.worktree` points to, append `{"event":"worktree_untracked_detected","path":"<path>","ts":"..."}` to events.jsonl but do NOT block completion.
+
    **6a — Pre-completion dirty check, then mark complete.** Before writing `status: complete`, run live `git status --porcelain` in the plan's recorded worktree. Classify output into task-scope changes (files touched by the plan, run-bundle state, generated artifacts that belong to this plan) and unrelated dirty user work.
 
    - If task-scope changes are dirty/uncommitted, do NOT mark complete. Under `<run-dir>/state.lock`, keep `status: in-progress`, set `phase: finish_gate`, set `current_task: "finish branch"`, set `next_action: commit remaining task-scope work before completion`, set `pending_gate` for the finish choice, set `stop_reason: question`, append `completion_dirty_gate`, and surface:
@@ -1753,11 +1887,39 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
 
    Before the completion write, if `plan_kind != implementation`, scan bundled artifacts for implementation gaps using the same adapter as Step N: `gap-register.md` rows with verdict `confirmed_gap`, explicit "confirmed implementation gaps" sections in `audit-report.md`, or existing pending `follow_ups`. If confirmed implementation gaps exist and `follow_ups` is empty, write concrete structured follow-up records first, set `next_action: materialize pending implementation follow-ups`, append `followups_materialized` with `progress_kind: implementation_plan_created`, and only then continue the completion write. The `petabit-os-mgmt` archived-plans audit pattern is the regression target: DNS operational rows `gap-late-008`/`gap-late-009` become `dns-oper-reporting-cleanup`, and datastore row `gap-late-005` becomes `datastore-list-key-merge`.
 
+   **6a-guard — Retro presence check.** Before writing `status: complete`, invoke `bin/masterplan-state.sh transition-guard <run-dir> complete` inline (not as a subagent dispatch — this is the orchestrator's main-turn synchronous check). Parse the JSON result:
+
+   - `disposition: ok` → proceed to the `status: complete` write below.
+   - `disposition: gate` with `reason: retro_missing` → do NOT write `status: complete`. Instead write `status: pending_retro`, `phase: pending_retro`, `pending_retro_attempts: 0`, `next_action: generate completion retro (pending)`, preserve all other completion fields, append `{"event":"completion_retro_gate_opened","ts":"...","run_dir":"<run-dir>"}` to `events.jsonl`. Then continue Step C step 6b (retro generation) — do NOT surface an AskUserQuestion at this point; let step 6b attempt generation first.
+   - `disposition: abort` (unexpected state) → set `status: in-progress`, `phase: finish_gate`, append `{"event":"completion_guard_abort","reason":"<reason>"}`, surface `AskUserQuestion("Completion guard aborted for <slug>: <reason>. How to proceed?", options=["Inspect state.yml and retry (Recommended)", "Force complete with --no-retro flag", "Abort completion"])`.
+
    Under `<run-dir>/state.lock`, set `status: complete`, `phase: complete`, `current_task: ""`, `next_action: none` unless pending `follow_ups` remain, `pending_gate: null`, `background: null`, `stop_reason: complete`, `critical_error: null`, and `last_activity: <now>`. Append a `plan_completed` event to `events.jsonl` with the final task count, final verification summary, completion SHA if available, the dirty-check summary, and `progress_kind: product_change | implementation_plan_created | verification` as appropriate. Commit this state update with subject `masterplan: complete <slug>` unless the same commit already contains the final task's state update. Do not reschedule.
 
    **Codex native goal completion.** If `codex_host_suppressed == true` and `state.yml` has `codex_goal.objective`, call `get_goal` immediately after the state update. If the active goal objective matches, call `update_goal(status="complete")`, then append `codex_goal_completed` to `events.jsonl`. If no active goal exists or the objective differs, do not mark any native goal complete; append `codex_goal_complete_skipped` with the observed/missing objective.
 
-   **6b — Auto-retro by default.** Unless `--no-retro` was passed OR `config.completion.auto_retro == false`, invoke Step R internally with the resolved slug and `completion_auto=true`. This is not an `AskUserQuestion` option and does not depend on `resolved_complexity`: low, medium, and high plans all get a retro by default. Step R writes `docs/masterplan/<slug>/retro.md`; Step R3.5 archives the run state when `config.retro.auto_archive_after_retro != false`; Step R4 commits the retro/state/events directly in internal mode. If retro generation fails, append a `completion_retro_failed` event, leave `status: complete`, and continue to the branch-finish gate; do NOT lose the completed run.
+   **6b — Auto-retro by default.** Unless `--no-retro` was passed OR `config.completion.auto_retro == false`, invoke Step R internally with the resolved slug and `completion_auto=true`. This is not an `AskUserQuestion` option and does not depend on `resolved_complexity`: low, medium, and high plans all get a retro by default. Step R writes `docs/masterplan/<slug>/retro.md`; Step R3.5 archives the run state when `config.retro.auto_archive_after_retro != false`; Step R4 commits the retro/state/events directly in internal mode.
+
+   If retro generation fails AND the current status is `pending_retro` (set by 6a-guard):
+   - Increment `pending_retro_attempts` (write to state.yml).
+   - Append `{"event":"retro_generation_failed","ts":"...","attempt":<N>}` to events.jsonl.
+   - If `pending_retro_attempts == 1`: set `status: pending_retro`, leave bundle in this state. Do NOT write `status: complete`. Continue to step 6c (completion cleanup) and step 6d (branch finish gate) — the bundle is partially complete; those steps are still safe to run.
+   - If `pending_retro_attempts >= 2`: surface `AskUserQuestion("Retro generation failed twice for <slug>. Disposition?", options=["Regenerate now — will re-dispatch retro subagent (Recommended)", "Mark complete_no_retro with waiver — will prompt for reason", "Leave pending (re-check on next /masterplan)"])`.
+     - "Regenerate now" → re-dispatch retro subagent; on success set `status: complete` and proceed; on failure leave `pending_retro`.
+     - "Mark complete_no_retro with waiver" → `AskUserQuestion("Waiver reason for skipping retro on <slug>?", options=["<free-text Other field>"])`. Write `retro_policy.waived: true`, `retro_policy.reason: <user input>`, set `status: complete`, append `{"event":"retro_waived","reason":"..."}`.
+     - "Leave pending" → persist state as-is, → CLOSE-TURN.
+
+   If retro generation fails AND the current status is already `complete` (legacy path, pre-Wave2 bundles): append `completion_retro_failed` event, leave `status: complete` (backward-compatible; the v2→v3 migration at Step Resume-Guard will catch it on next access). Do NOT lose the completed run.
+
+   **6a-worktree-completion.** After retro generation succeeds (or `retro_policy.waived: true`), evaluate `worktree_disposition`:
+
+- `active`: Run `git worktree remove <state.yml.worktree>`.
+  - On success: set `worktree_disposition: removed_after_merge`, clear `worktree:` field, set `worktree_last_reconciled: <now>`. Append `{"event":"worktree_removed_at_completion","path":"<path>","ts":"..."}`.
+  - On failure (uncommitted changes, locked worktree, path doesn't resolve): emit `{"event":"worktree_removal_failed","path":"<path>","error":"<git error text>","ts":"..."}`, set `worktree_disposition: missing`, clear `worktree:` field. Do NOT block completion — continue to 6d.
+- `kept_by_user`: No removal attempt. Append `{"event":"worktree_kept_per_user_flag","path":"<path>","ts":"..."}`. Continue.
+- `removed_after_merge`: Already removed. No action. Continue.
+- `missing`: Already cleared. No action. Continue.
+
+No AskUserQuestion at this step — this honors the loose-autonomy contract. The user pre-flags intent via `--keep-worktree` or `worktree_disposition: kept_by_user` in state.yml.
 
    **6c — Completion cleanup by default.** Unless `--no-cleanup` was passed OR `config.completion.cleanup_old_state == false`, run Step CL in **completion-safe mode** after the retro attempt:
    - Categories: `legacy` and `orphans` only.
@@ -1849,11 +2011,49 @@ First, for each candidate that has a discernible task list, run completion-state
 
 Then dispatch one Sonnet conversion subagent (pass `model: "sonnet"` per §Agent dispatch contract) per candidate in a single Agent batch. Each agent owns unique target paths from I3.1 and writes only inside its own run directory — no contention. Brief per agent:
 
-> Rewrite this legacy planning artifact into superpowers spec format (`<spec-path>`) and plan format (`<plan-path>`) following the writing-plans skill conventions. Drop tasks classified `done`. Move `possibly_done` tasks into a `## Verify before continuing` checklist at the top of the plan, each with its evidence. Keep `not_done` tasks as the active task list, reformatted into bite-sized steps (writing-plans style). Preserve constraints, decisions, and stakeholder context in the spec's Background section. Discard pure status narration. Do not invent tasks the source didn't mention. Then write `state.yml` at `<state-path>` populating **every** required run-state field per the Step B3 field list (`schema_version: 2`, `slug`, `status: in-progress`, `phase: executing`, `artifacts.spec`, `artifacts.plan`, `artifacts.events`, `worktree`, `branch`, `started` today, `last_activity` now, `current_task` = first `not_done` task, `next_action` = its first step, `autonomy`, `loop_enabled`, `codex_routing`, `codex_review`, `compact_loop_recommended: false`, `complexity`, `pending_gate: null`, `background: null`, `stop_reason: null`, `critical_error: null`, `legacy:` source pointers), and seed `events.jsonl` with: link back to source (path/URL/branch/issue#), inference evidence summary, list of `possibly_done` items the user should verify before execution.
+> Rewrite this legacy planning artifact into superpowers spec format and plan format following the writing-plans skill conventions. Drop tasks classified `done`. Move `possibly_done` tasks into a `## Verify before continuing` checklist at the top of the plan, each with its evidence. Keep `not_done` tasks as the active task list, reformatted into bite-sized steps (writing-plans style). Preserve constraints, decisions, and stakeholder context in the spec's Background section. Discard pure status narration. Do not invent tasks the source didn't mention. Return the proposed spec and plan as content strings in the return shape (do NOT write files to the bundle directory). Return the required schema per contract `import.convert_v1`: `{contract_id: "import.convert_v1", inputs_hash: "<sha256>", processed_paths: ["spec.md", "plan.md"], violations: [], coverage: {expected: 2, processed: 2}, artifacts: {spec: {content: "...", source: "<legacy.spec>"}, plan: {content: "...", source: "<legacy.plan>"}}}`. The parent orchestrator will perform all file writes. If you cannot produce a coherent spec or plan, include the failure reason in `violations` and set `coverage.processed` to the count you could handle.
 
 Bounded scope per agent: writes only inside its own `(run_dir, spec_path, plan_path, state_path, events_path)`; do not touch other candidates' paths or the legacy source.
 
-#### I3.5 — Sequential cruft handling + commit (per candidate)
+#### I3.5 — Import hydration guard (parent-owned transaction)
+
+After I3.4's conversion wave completes, for each candidate, the parent orchestrator runs this transaction BEFORE I3.6 (cruft handling):
+
+1. **Parent stages copies to temp dir.** For each `legacy.<artifact>` path in the candidate's state that resolves to an extant file, copy it to `/tmp/masterplan-import-<slug>-<pid>/` (the PID-tagged directory that the temp-dir sweep in Step 0 will eventually prune). Validate read access before any bundle writes. If a `legacy.*` path does not resolve, record the missing path; it will inform the fallback path below.
+
+2. **Validate subagent return shape.** The I3.4 conversion subagent must return a result conforming to contract `import.convert_v1`:
+
+   ```yaml
+   contract_id: "import.convert_v1"
+   inputs_hash: "<sha256 of staged inputs>"
+   processed_paths: ["spec.md", "plan.md"]
+   violations: []
+   coverage: {expected: 2, processed: 2}
+   artifacts:
+     spec: { content: "...", source: "<legacy.spec>" }
+     plan: { content: "...", source: "<legacy.plan>" }
+   ```
+
+   If `violations` is non-empty OR `coverage.processed != coverage.expected` OR `contract_id != "import.convert_v1"`, the parent treats import as failed (go to fallback path below). Record a `{"event":"import_contract_violation","contract_id":"import.convert_v1","violations":[...]}` event.
+
+3. **Parent validates and writes atomically.** On all-clear from step 2:
+   a. Parent writes `<run-dir>/spec.md` from `artifacts.spec.content`.
+   b. Parent writes `<run-dir>/plan.md` from `artifacts.plan.content`.
+   c. Parent rewrites `artifacts.spec` and `artifacts.plan` in `state.yml` to point to the bundle-local paths.
+   d. Parent preserves `legacy.*` pointers for forensics.
+   e. Parent writes `import_hydration: "full"`, `import_contract.contract_id: "import.convert_v1"`, `import_contract.inputs_hash: "<hash>"`, `import_contract.processed_at: "<now>"` into `state.yml`.
+   f. All of c/d/e are written in a single `state.yml` update (not incremental).
+   g. On any failure (file write error): `rm -rf /tmp/masterplan-import-<slug>-<pid>/`, abort import for this candidate, leave bundle in pre-import state (refuse to create the bundle if it hasn't been created yet), append `{"event":"import_hydration_aborted","reason":"..."}`.
+
+4. **Fallback path.** If step 2 reports violations, OR if the subagent could not produce coherent spec/plan (e.g., legacy artifact is a brief or chat dump), parent writes:
+   - `<run-dir>/spec.md`: a minimal "Import context" wrapper containing: the legacy file path, a one-paragraph summary the subagent produced (from the I3.4 return), and a pointer to verify.
+   - `<run-dir>/plan.md`: a minimal "Import verification plan" with one task: "Read legacy file at `<path>`; confirm scope; produce a real plan if work is to continue."
+   - `state.yml`: `import_hydration: "fallback"` and the same `import_contract.*` fields as above.
+   Append `{"event":"import_hydration_fallback","reason":"..."}`.
+
+5. **v2 bundle rehydration (lazy).** v2 imported bundles with empty `artifacts.spec`/`artifacts.plan` and non-empty `legacy.*` — detectable in the Resume controller's step 0 (Wave 1 lazy migration) by checking `import_hydration` is absent AND `legacy.*` is non-empty AND `artifacts.spec` is empty. On that condition: run Step I3.5 hydration retroactively, exactly as if importing fresh. Event log records `{"event":"v2_legacy_import_rehydrated"}`. If `legacy.*` paths no longer resolve: surface `AskUserQuestion("Legacy import paths for <slug> no longer exist. What now?", options=["Keep bundle as read-only history (Recommended)", "Attempt manual hydration — I'll paste the content", "Delete this bundle"])`.
+
+#### I3.6 — Sequential cruft handling + commit (per candidate)
 
 After all parallel waves complete, iterate candidates one-by-one:
 
@@ -1996,16 +2196,25 @@ In `completion_auto=true` mode, do not prompt. If `<run-dir>/retro.md` already e
 
 Dispatch a single Haiku agent (pass `model: "haiku"` per §Agent dispatch contract) — or run inline if `git_state` already cached the worktree — with this bounded brief:
 
-- **Goal:** Collect retro source material for slug `<slug>` in worktree `<wt>`.
-- **Inputs:** state path, plan path, spec path (from `artifacts.spec`), branch (from `state.branch`), trunk (from `config.trunk_branches[0]`).
-- **Reads (one parallel batch):**
-  1. `<run-dir>/state.yml` — state fields.
-  2. `<run-dir>/events.jsonl` plus `events-archive.jsonl` if present — full activity timeline, blockers, notes/warnings.
-  3. `<run-dir>/plan.md` — task list, intended order.
-  4. `<run-dir>/spec.md` — original goals, scope, design decisions.
-  4. `git -C <wt> log --reverse --format='%h %ci %s' <trunk>..<branch>` — commits since plan started.
-  5. `gh pr list --search "head:<branch>" --state=all --json=number,title,url,mergedAt,additions,deletions` if `gh` is available; degrade gracefully if not.
-- **Return shape:** structured digest `{state, events, blockers, notes, task_list, spec_excerpt, commits, pr?}`.
+```
+DISPATCH-SITE: Step R2 retro source gather
+
+contract_id: "retro.source_gather_v1"
+Follow the algorithm defined in commands/masterplan-contracts.md §Contract: retro.source_gather_v1.
+Goal: Collect retro source material for slug <slug> in worktree <wt>.
+Inputs: state path, plan path, spec path (from artifacts.spec), branch (from state.branch), trunk (from config.trunk_branches[0]).
+Reads (one parallel batch):
+  1. <run-dir>/state.yml — state fields (slug, branch, started, last_activity, artifacts.*).
+  2. <run-dir>/events.jsonl (last 200 lines) plus events-archive.jsonl if present (last 50 lines) — full activity timeline, blockers, notes/warnings.
+  3. <run-dir>/plan.md (full if ≤ 200 lines; first 200 lines otherwise) — task list, intended order.
+  4. <run-dir>/spec.md (first 100 lines) — original goals, scope, design decisions.
+  5. git -C <wt> log --reverse --format='%h %ci %s' <trunk>..<branch> (up to 50 lines) — commits since plan started.
+  6. gh pr list --search "head:<branch>" --state=all --json=number,title,url,mergedAt,additions,deletions if gh is available; degrade gracefully if not.
+Return shape: {contract_id: "retro.source_gather_v1", inputs_hash: "<sha256>", processed_paths: [state.yml, events.jsonl, plan.md, spec.md], violations: [], coverage: {expected: 4, processed: 4}, digest: {state, events_summary, blockers, task_list, spec_excerpt, commits, pr}}.
+Do NOT return raw file content — return excerpts and structured fields only.
+```
+
+**Parent re-verification.** After the Haiku returns, verify `coverage.expected == coverage.processed`. If not, re-run the gather inline (parent reads the missing files directly) and append `{"event":"contract_violation","contract_id":"retro.source_gather_v1","delta":<delta>}` to events.jsonl before proceeding to Step R3.
 
 ### Step R3 — Synthesize + write
 
@@ -2093,15 +2302,30 @@ Triggered by `/masterplan doctor [--fix]`. Lints all masterplan state across all
 
 Read worktrees from `git_state.worktrees` (Step 0 cache). For each worktree, scan `<worktree>/<config.runs_path>/` plus legacy `<worktree>/<config.specs_path>/` and `<worktree>/<config.plans_path>/`.
 
-**Parallelization.** When worktrees ≥ 2, dispatch one Haiku agent (pass `model: "haiku"` per §Agent dispatch contract) per worktree in a single Agent batch (each agent runs all 25 plan-scoped checks for its worktree and returns findings as `[{check_id, severity, file, message}]` JSON). With 1 worktree, run inline — agent dispatch latency isn't worth it. The orchestrator merges results and applies the report ordering below. Repo-scoped check #26 (`auto_compact_loop_attached`, v2.9.1+) fires ONCE per doctor run regardless of worktree/plan count and runs inline at the orchestrator. Its input is session-level state (`CronList` output), not per-plan state. (Self-host audits — deployment-drift detection and CD-9 free-text-question grep — moved to `bin/masterplan-self-host-audit.sh` in v2.11.0; that script is developer-only and runs against the project repo, not the user's working repo.) Plan-scoped check #28 (`completed_plan_without_retro`, v2.11.0+) is interactive: when it fires it surfaces `AskUserQuestion` to the user, so it can NOT be parallelized inside Haiku worktree dispatchers — instead each worktree's Haiku returns the candidate-list, and the orchestrator drives the prompts inline (sequentially) after the parallel detection completes.
+**Parallelization.** When worktrees ≥ 2, dispatch one Haiku agent (pass `model: "haiku"` per §Agent dispatch contract) per worktree in a single Agent batch (each agent runs all plan-scoped checks (currently #1-24, #26, #28, #29) for its worktree and returns findings as `[{check_id, severity, file, message}]` JSON). With 1 worktree, run inline — agent dispatch latency isn't worth it. The orchestrator merges results and applies the report ordering below. Repo-scoped check #26 (`auto_compact_loop_attached`, v2.9.1+) fires ONCE per doctor run regardless of worktree/plan count and runs inline at the orchestrator. Its input is session-level state (`CronList` output), not per-plan state. (Self-host audits — deployment-drift detection and CD-9 free-text-question grep — moved to `bin/masterplan-self-host-audit.sh` in v2.11.0; that script is developer-only and runs against the project repo, not the user's working repo.) Plan-scoped check #28 (`completed_plan_without_retro`, v2.11.0+) is interactive: when it fires it surfaces `AskUserQuestion` to the user, so it can NOT be parallelized inside Haiku worktree dispatchers — instead each worktree's Haiku returns the candidate-list, and the orchestrator drives the prompts inline (sequentially) after the parallel detection completes. Plan-scoped check #29 (`worktree_bundle_reconciliation_mismatch`, v4.0.0+) is a lightweight repo-scoped structural check that applies to all complexity levels.
+
+Each per-worktree Haiku dispatch must use this bounded brief form:
+
+```
+DISPATCH-SITE: Step D doctor checks
+
+contract_id: "doctor.schema_v2"
+Follow the algorithm defined in commands/masterplan-contracts.md §Contract: doctor.schema_v2.
+Goal: Run all plan-scoped doctor checks for the bundle paths in this worktree's runs_path.
+Inputs: worktree path, runs_path glob, legacy paths glob.
+Scope: read-only.
+Return shape: {contract_id: "doctor.schema_v2", inputs_hash: "<sha256 of bundle state.yml paths processed>", processed_paths: [list of state.yml paths], violations: [{bundle, field, kind, detail}], coverage: {expected: N, processed: N}}.
+```
+
+**Sampling-based parent re-verification** (runs AFTER the parallel Haiku wave returns, BEFORE emitting findings): For each bundle path in the doctor scope, the orchestrator re-verifies a sample set: 3 randomly selected bundles + any bundle with violations in the Haiku return. Full scan only when Haiku reports 0 violations on a corpus with known history of violations. For each sampled bundle: grep state.yml for `^retro: ""` and for missing `import_hydration` when any `legacy.*` field is non-empty. Cross-reference against Haiku's violations list. On discrepancy (parent finds violations Haiku missed): append `{"event":"parent_reverify_mismatch","contract_id":"doctor.schema_v2","missed_count":<N>}` to events.jsonl and prefer parent findings. Emit a one-line notice: `⚠ doctor parent re-verify found <N> additional violation(s) not in Haiku return — using parent findings.`
 
 **Legacy-reference index.** Before running legacy-artifact checks, build a per-worktree set of all paths referenced by every bundle `state.yml` under `artifacts.*` and `legacy.*`, normalized relative to that same worktree. A legacy file under `docs/superpowers/...` that appears in this referenced-path set is already attached to durable masterplan state. Do not report it as "legacy plan not migrated" merely because the legacy filename slug differs from the bundle directory slug.
 
 **Complexity-aware check set.** For each scanned plan, read `complexity` from `state.yml` (default `medium` if absent — legacy/pre-feature plans). The active check set varies:
 
-- `low` plans: run only checks #1 (orphan plan), #2 (orphan status), #3 (wrong worktree), #4 (wrong branch), #5 (stale in-progress), #6 (stale critical error), #8 (missing spec), #9 (schema, against the standard run-state field set), #10 (unparseable), #18 (codex misconfig). SKIP all sidecar / annotation / ledger / cache / queue / per-subagent-telemetry checks (#11–#17, #19–#21, #23, #24) — low plans do not produce those artifacts. Also skip #22 (high-only — see below).
-- `medium` plans: run all 25 plan-scoped checks except #22 (high-only).
-- `high` plans: run all 25 plan-scoped checks INCLUDING #22 (high-complexity rigor evidence).
+- `low` plans: run only checks #1 (orphan plan), #2 (orphan status), #3 (wrong worktree), #4 (wrong branch), #5 (stale in-progress), #6 (stale critical error), #8 (missing spec), #9 (schema, against the standard run-state field set), #10 (unparseable), #18 (codex misconfig), #29 (worktree-bundle reconciliation mismatch). SKIP all sidecar / annotation / ledger / cache / queue / per-subagent-telemetry checks (#11–#17, #19–#21, #23, #24) — low plans do not produce those artifacts. Also skip #22 (high-only — see below).
+- `medium` plans: run all plan-scoped checks (currently #1-24, #26, #28, #29) except #22 (high-only).
+- `high` plans: run all plan-scoped checks (currently #1-24, #26, #28, #29) INCLUDING #22 (high-complexity rigor evidence).
 - Plans without a `complexity:` state field: treat as `medium`.
 
 The check-set gate is per-plan: a single `/masterplan doctor` run against worktrees containing a mix of low/medium/high plans honors each plan's complexity individually. Findings are reported with the same severity as today. (Self-host audits — deployment-drift comparison vs HEAD and CD-9 free-text-question grep — moved out of doctor in v2.11.0; those run via the developer-only `bin/masterplan-self-host-audit.sh` script when working on the orchestrator source.)
@@ -2120,7 +2344,7 @@ For each worktree, run all checks. Report findings grouped by worktree → check
 | 6 | **Stale critical error** — `status: blocked` or `stop_reason: critical_error` with `last_activity` > 14 days. | Warning | Report only. |
 | 7 | **Plan/log drift** — plan task count differs from activity-log task references by >50%. | Warning | Report only. |
 | 8 | **Missing spec** — `state.yml`'s `artifacts.spec` points at a missing spec doc when the phase requires one. | Error | Report only; if `legacy.spec` exists, suggest re-copying it into the bundle. |
-| 9 | **Schema violation** — `state.yml` missing required fields. Required set: `schema_version`, `slug`, `status`, `phase`, `artifacts.spec`, `artifacts.plan`, `artifacts.events`, `worktree`, `branch`, `started`, `last_activity`, `current_task`, `next_action`, `autonomy`, `loop_enabled`, `codex_routing`, `codex_review`, `compact_loop_recommended`, `complexity`, `pending_gate`, `stop_reason`, `critical_error`. | Error | Add missing fields with sentinel/derived values where possible (e.g. `pending_gate: null`, `stop_reason: null`, `critical_error: null`, `compact_loop_recommended: false`); report the rest. |
+| 9 | **Schema violation** — `state.yml` missing required fields. Required set: `schema_version`, `slug`, `status`, `phase`, `artifacts.spec`, `artifacts.plan`, `artifacts.events`, `worktree`, `branch`, `started`, `last_activity`, `current_task`, `next_action`, `autonomy`, `loop_enabled`, `codex_routing`, `codex_review`, `compact_loop_recommended`, `complexity`, `pending_gate`, `stop_reason`, `critical_error`. | Error | Add missing fields with sentinel/derived values where possible (e.g. `pending_gate: null`, `stop_reason: null`, `critical_error: null`, `compact_loop_recommended: false`); report the rest. Cross-check: for each `legacy.*` pointer that is non-empty, verify that the corresponding `artifacts.*` pointer is also non-empty AND the file exists on disk. If `legacy.spec` is non-empty but `artifacts.spec` is empty or the file is missing: flag as Error (not just schema violation — this is an unhydrated import). `--fix`: invoke the Step I3.5 rehydration logic inline (parent-side, not as a subagent). Do NOT add null sentinel values when a recoverable `legacy.*` path exists — that was the pre-v4.0 bug this check now prevents. |
 | 10 | **Unparseable state file** — `state.yml` YAML is malformed, or legacy status frontmatter/body is malformed. | Error | Report only (manual fix needed). Step A skips these silently, but doctor calls them out. |
 | 11 | **Orphan events archive** — `events-archive.jsonl` exists without sibling `state.yml`, or legacy `<slug>-status-archive.md` exists without legacy status. | Warning | Suggest moving the archive to `<config.archive_path>/<date>/`. No auto-fix. |
 | 12 | **Telemetry file growth** — `telemetry.jsonl` OR `subagents.jsonl` (or legacy equivalents) > 5 MB. | Warning | Rotate to `telemetry-archive.jsonl` / `subagents-archive.jsonl` (the active file becomes empty; new appends start fresh). |
@@ -2138,6 +2362,7 @@ For each worktree, run all checks. Report findings grouped by worktree → check
 | 24 | **State-write queue file present and non-empty** (F.4 mitigation, v2.8.0+). `state.queue.jsonl` exists with non-zero size, AND `state.yml` shows no `last_activity` update within the last `config.loop_interval_seconds`. | Warning | `--fix`: replay each queued entry into `events.jsonl` / `state.yml` idempotently, then truncate the queue file. No-`--fix`: report queued-entry count + suggest `/masterplan --resume=<state-path>` to trigger drain naturally. |
 | 26 | **`auto_compact_loop_attached`** (repo-scoped). Skipped silently when `config.auto_compact.enabled == false`, or when no `docs/masterplan/*/state.yml` has `compact_loop_recommended: true`. Otherwise calls `CronList()` and filters entries whose `prompt` contains `/compact`. | Warning | No `--fix` available; report the copy-pasteable `/loop {config.auto_compact.interval} /compact {config.auto_compact.focus}` command and the run slugs whose `state.yml` has `compact_loop_recommended: true`. |
 | 28 | **`completed_plan_without_retro`** (plan-scoped). Detects completed run bundles with no `retro.md`, or legacy completed plans without a migrated bundle/retro. | Warning | Surface `AskUserQuestion` per finding: generate retro + archive run bundle (Recommended), generate retro only, skip this plan, or skip all findings this run. |
+| 29 | **Worktree-bundle reconciliation mismatch** (v4.0.0+). Cross-repo: enumerate `git worktree list --porcelain` for the current repo; for each worktree path, find any bundle's `state.yml.worktree:` pointing at it. Surface: (a) bundles claiming a worktree path not registered in `git worktree list` (`worktree_missing`); (b) worktree paths registered in git with no bundle pointer (`worktree_orphan_untracked`). Skip worktrees with `worktree_disposition: removed_after_merge` or `kept_by_user` — those are intentionally settled. | Warning | `--fix`: for (a), set `worktree_disposition: missing`, clear `worktree:` field, write state, commit. For (b): report only (user must decide). |
 ### Output
 
 Plain-text grouped report. Apply **CD-10**: order findings by severity (errors first, then warnings), each line grounded in `<worktree>:<file>` so the user can jump straight to the offender. Summary line at the end with counts: `<E> errors, <W> warnings across <N> worktrees`. If `--fix` ran, include a list of files changed/moved.
@@ -2207,12 +2432,15 @@ The Haiku's bounded brief: Goal=apply the detectors below; Inputs=worktree path 
 
 **Per-category detection rules** (apply only when included by `--category=`; default = all six):
 
-1. **`completed`** — Scan `<runs_path>/*/state.yml` per worktree. For each with `status: complete`, first classify `next_action`. If it is non-empty and not one of the terminal values (`none`, `complete`, `done`, `archived`), classify the bundle as `completed_with_follow_up` and skip archival; Step N owns that follow-up. Otherwise collect the whole run directory (`docs/masterplan/<slug>/`) as the artifact set. Action = `archive` (or `delete`). Archive destination: `<archive_path>/<status.last_activity-date or today>/<slug>/`.
+1. **`completed`** — Scan `<runs_path>/*/state.yml` per worktree. For each with `status: complete`, first classify `next_action`. If it is non-empty and not one of the terminal values (`none`, `complete`, `done`, `archived`), classify the bundle as `completed_with_follow_up` and skip archival; Step N owns that follow-up. Otherwise, before collecting the run directory for archival, invoke `bin/masterplan-state.sh transition-guard <run-dir> archived` inline. If disposition is `gate` (retro missing, no waiver), do NOT include this bundle in the archive set — instead emit a one-line notice: `⚠ <slug>: skipped archive — retro missing and not waived. Run /masterplan retro <slug> first.` and continue to the next bundle. If disposition is `ok` (retro present) or the bundle has `retro_policy.waived: true`, collect the whole run directory (`docs/masterplan/<slug>/`) as the artifact set. Action = `archive` (or `delete`). Archive destination: `<archive_path>/<status.last_activity-date or today>/<slug>/`.
 2. **`legacy`** — Run the legacy-record discovery logic from Step I1. For any legacy `docs/superpowers/...` record with no matching `docs/masterplan/<slug>/state.yml`, offer migration first. For any legacy record whose bundle already exists and whose `legacy:` pointers match the source paths, action = `archive` (or `delete`) for the old legacy files only. This is the explicit cleanup path for previous-version invocations.
 3. **`orphans`** — Reuse Step D sidecar predicates against both layouts: legacy sidecars without legacy status, and run-bundle sidecars (`eligibility-cache.json`, `telemetry.jsonl`, `subagents.jsonl`) whose sibling `state.yml` is missing. Action = `archive` (or `delete`). Archive destination: `<archive_path>/<today>/`.
 4. **`stale`** — Scan `<runs_path>/*/state.yml` and legacy `<plans_path>/*-status.md` for `status: in-progress | blocked` AND `last_activity > 90 days` (compare against the current ISO timestamp). Action = `surface for per-item confirm` (NOT auto-archive — staleness is a judgment call; an active-but-paused project should not be auto-archived). Each stale plan triggers one `AskUserQuestion` in CL2 below.
 5. **`crons`** — Call `CronList` in CL1 (do not rely on Step 0 cache). Group entries by exact `prompt` string; flag every group with ≥ 2 entries. Action = `delete` (call `CronDelete <id>` on duplicates, keeping the lexicographically-smallest `id` per group). No commit (crons aren't file-tracked).
-6. **`worktrees`** — Compare `git worktree list` paths to filesystem reality. Action = `delete` for any registered worktree whose path doesn't exist on disk (`git worktree remove --force <path>` per stale entry). Skip the current worktree even if its path is missing (impossible state, but defensive). No commit.
+6. **`worktrees`** — Run the same refresh logic as Step C 6a-worktree-refresh: compare `git worktree list --porcelain` against ALL bundle `state.yml.worktree` pointers across the current worktree scope. Surface:
+   a. Bundles whose recorded `worktree:` path is NOT in `git worktree list` → `worktree_missing`. Non-interactively: set `worktree_disposition: missing`, clear `worktree:` field, emit `worktree_orphan_cleaned` event, continue archive.
+   b. Paths in `git worktree list` with NO bundle `state.yml.worktree` pointer → `worktree_orphan_untracked`. Report only (no auto-action without user confirmation, since this could be an intentionally standalone worktree). Surface `AskUserQuestion` per orphaned path at CL2.
+   c. Bundles with `worktree_disposition: active` AND `status: complete` or `status: archived` → likely lingered past completion; same removal attempt as Step C's 6a-worktree-completion.
 
 If `--category=<name>` is set, run only the named categories; ignore the rest. Comma-separated multi-select is allowed. Valid categories: `completed`, `legacy`, `orphans`, `stale`, `crons`, `worktrees`.
 
@@ -2564,6 +2792,16 @@ completion:
 # Per-invocation override: pass `--no-archive` to /masterplan retro.
 retro:
   auto_archive_after_retro: true
+
+# Worktree lifecycle policy (v4.0.0+) — controls what happens to feature
+# worktrees when a plan completes. `active` (default): auto-remove the worktree
+# via `git worktree remove` at Step C completion (non-interactive). Use
+# `kept_by_user` for repos where worktrees are intentionally preserved past
+# completion (e.g. always-open dev environments). Override per-run with
+# --keep-worktree flag at kickoff.
+worktree:
+  default_disposition: active  # active | kept_by_user; default active
+  # Repos that always keep worktrees past completion set this to kept_by_user
 
 # Per-turn context telemetry — captured by hooks/masterplan-telemetry.sh
 # (Stop hook, manually installed) and by Step C step 1 inline snapshots.

@@ -23,6 +23,7 @@
 #   bin/masterplan-self-host-audit.sh --brainstorm-anchor  # only check Step B1 brainstorm anchoring
 #   bin/masterplan-self-host-audit.sh --session-audit  # only check session-audit regression tests
 #   bin/masterplan-self-host-audit.sh --loop-first  # only check loop-first resume/stop contract
+#   bin/masterplan-self-host-audit.sh --brief-style  # only check algorithmic brief style at lifecycle dispatch sites
 #
 # Exit code: 0 if clean, 1 if any check fires, 2 on usage error.
 
@@ -49,18 +50,20 @@ RUN_CODEX=1
 RUN_ANCHOR=1
 RUN_SESSION_AUDIT=1
 RUN_LOOP_FIRST=1
+RUN_BRIEF_STYLE=1
 
 case "${MODE}" in
   --fix)    FIX_MODE=1 ;;
-  --drift)  RUN_CD9=0; RUN_MODELS=0; RUN_CODEX=0; RUN_ANCHOR=0; RUN_SESSION_AUDIT=0; RUN_LOOP_FIRST=0 ;;
-  --cd9)    RUN_DRIFT=0; RUN_MODELS=0; RUN_CODEX=0; RUN_ANCHOR=0; RUN_SESSION_AUDIT=0; RUN_LOOP_FIRST=0 ;;
-  --models) RUN_DRIFT=0; RUN_CD9=0; RUN_CODEX=0; RUN_ANCHOR=0; RUN_SESSION_AUDIT=0; RUN_LOOP_FIRST=0 ;;
-  --codex)  RUN_DRIFT=0; RUN_CD9=0; RUN_MODELS=0; RUN_ANCHOR=0; RUN_SESSION_AUDIT=0; RUN_LOOP_FIRST=0 ;;
-  --brainstorm-anchor) RUN_DRIFT=0; RUN_CD9=0; RUN_MODELS=0; RUN_CODEX=0; RUN_SESSION_AUDIT=0; RUN_LOOP_FIRST=0 ;;
-  --session-audit) RUN_DRIFT=0; RUN_CD9=0; RUN_MODELS=0; RUN_CODEX=0; RUN_ANCHOR=0; RUN_LOOP_FIRST=0 ;;
-  --loop-first) RUN_DRIFT=0; RUN_CD9=0; RUN_MODELS=0; RUN_CODEX=0; RUN_ANCHOR=0; RUN_SESSION_AUDIT=0 ;;
+  --drift)  RUN_CD9=0; RUN_MODELS=0; RUN_CODEX=0; RUN_ANCHOR=0; RUN_SESSION_AUDIT=0; RUN_LOOP_FIRST=0; RUN_BRIEF_STYLE=0 ;;
+  --cd9)    RUN_DRIFT=0; RUN_MODELS=0; RUN_CODEX=0; RUN_ANCHOR=0; RUN_SESSION_AUDIT=0; RUN_LOOP_FIRST=0; RUN_BRIEF_STYLE=0 ;;
+  --models) RUN_DRIFT=0; RUN_CD9=0; RUN_CODEX=0; RUN_ANCHOR=0; RUN_SESSION_AUDIT=0; RUN_LOOP_FIRST=0; RUN_BRIEF_STYLE=0 ;;
+  --codex)  RUN_DRIFT=0; RUN_CD9=0; RUN_MODELS=0; RUN_ANCHOR=0; RUN_SESSION_AUDIT=0; RUN_LOOP_FIRST=0; RUN_BRIEF_STYLE=0 ;;
+  --brainstorm-anchor) RUN_DRIFT=0; RUN_CD9=0; RUN_MODELS=0; RUN_CODEX=0; RUN_SESSION_AUDIT=0; RUN_LOOP_FIRST=0; RUN_BRIEF_STYLE=0 ;;
+  --session-audit) RUN_DRIFT=0; RUN_CD9=0; RUN_MODELS=0; RUN_CODEX=0; RUN_ANCHOR=0; RUN_LOOP_FIRST=0; RUN_BRIEF_STYLE=0 ;;
+  --loop-first) RUN_DRIFT=0; RUN_CD9=0; RUN_MODELS=0; RUN_CODEX=0; RUN_ANCHOR=0; RUN_SESSION_AUDIT=0; RUN_BRIEF_STYLE=0 ;;
+  --brief-style) RUN_DRIFT=0; RUN_CD9=0; RUN_MODELS=0; RUN_CODEX=0; RUN_ANCHOR=0; RUN_SESSION_AUDIT=0; RUN_LOOP_FIRST=0 ;;
   "")       : ;;
-  *)        echo "Usage: $0 [--fix|--drift|--cd9|--models|--codex|--brainstorm-anchor|--session-audit|--loop-first]" >&2; exit 2 ;;
+  *)        echo "Usage: $0 [--fix|--drift|--cd9|--models|--codex|--brainstorm-anchor|--session-audit|--loop-first|--brief-style]" >&2; exit 2 ;;
 esac
 
 EXIT=0
@@ -814,6 +817,144 @@ check_loop_first_contract() {
 }
 
 # ---------------------------------------------------------------------------------
+# Check: algorithmic brief style at lifecycle dispatch sites (FM-D, v4.0.0+)
+#
+# Scopes ALL patterns to text within 30 lines of one of the three lifecycle
+# DISPATCH-SITE values — avoids false positives in user-facing prose.
+# Lifecycle dispatch sites: "Step B0 related-plan scan", "Step R2 retro source gather",
+# "Step D doctor checks".
+#
+# Pattern A: "validate against" not followed within 5 lines by "for each" or "if.*field"
+# Pattern B: "make sure that" (outcome language, no algorithmic equivalent)
+# Pattern C: "verify the bundle" not followed within 5 lines by "for each" or "check.*field"
+# Pattern D: lifecycle dispatch block (identified by DISPATCH-SITE matching a lifecycle value)
+#            that lacks "contract_id" in the next 30 lines.
+# ---------------------------------------------------------------------------------
+check_brief_style() {
+  local file="${REPO_ROOT}/commands/masterplan.md"
+  if [[ ! -f "${file}" ]]; then
+    echo "Skipping brief-style check: ${file} not found"
+    return
+  fi
+
+  local found_violations=0
+  local total_lines
+  total_lines="$(wc -l < "${file}")"
+
+  # Lifecycle DISPATCH-SITE values to scope all pattern checks.
+  # We collect line numbers of lifecycle dispatch context windows.
+  local lifecycle_re="DISPATCH-SITE: (Step B0 related-plan scan|Step R2 retro source gather|Step D doctor checks)"
+
+  # Build an array of (start, end) line ranges: each lifecycle DISPATCH-SITE line ± 30 lines.
+  # We'll represent them as "start:end" pairs.
+  local dispatch_ranges=()
+  while IFS= read -r dispatch_line; do
+    local lineno="${dispatch_line%%:*}"
+    local range_start=$((lineno - 5))
+    local range_end=$((lineno + 30))
+    [[ "${range_start}" -lt 1 ]] && range_start=1
+    [[ "${range_end}" -gt "${total_lines}" ]] && range_end="${total_lines}"
+    dispatch_ranges+=("${range_start}:${range_end}")
+  done < <(grep -nE "${lifecycle_re}" "${file}" 2>/dev/null)
+
+  if [[ "${#dispatch_ranges[@]}" -eq 0 ]]; then
+    # No lifecycle dispatch sites found — this is itself a violation.
+    echo "BRIEF-STYLE: ${file}:0: Pattern D — no lifecycle DISPATCH-SITE values found; expected Step B0/R2/D sites"
+    found_violations=$((found_violations + 1))
+    EXIT=1
+    return
+  fi
+
+  # Helper: check if a given line number falls within any dispatch range.
+  in_dispatch_context() {
+    local check_line="$1"
+    local pair
+    for pair in "${dispatch_ranges[@]}"; do
+      local s="${pair%%:*}"
+      local e="${pair#*:}"
+      if [[ "${check_line}" -ge "${s}" && "${check_line}" -le "${e}" ]]; then
+        return 0
+      fi
+    done
+    return 1
+  }
+
+  # Pattern A: "validate against" not followed within 5 lines by "for each" or "if.*field"
+  while IFS= read -r match; do
+    local lineno="${match%%:*}"
+    local excerpt="${match#*:}"
+    if ! in_dispatch_context "${lineno}"; then
+      continue
+    fi
+    local ctx_start=$((lineno + 1))
+    local ctx_end=$((lineno + 5))
+    [[ "${ctx_end}" -gt "${total_lines}" ]] && ctx_end="${total_lines}"
+    local ctx
+    ctx="$(sed -n "${ctx_start},${ctx_end}p" "${file}")"
+    if echo "${ctx}" | grep -qiE "for each|if.*field"; then
+      continue
+    fi
+    echo "BRIEF-STYLE: ${file}:${lineno}: Pattern A (validate against without for-each/field check) — ${excerpt}"
+    found_violations=$((found_violations + 1))
+    EXIT=1
+  done < <(grep -nF "validate against" "${file}" 2>/dev/null)
+
+  # Pattern B: "make sure that" in dispatch context
+  while IFS= read -r match; do
+    local lineno="${match%%:*}"
+    local excerpt="${match#*:}"
+    if ! in_dispatch_context "${lineno}"; then
+      continue
+    fi
+    echo "BRIEF-STYLE: ${file}:${lineno}: Pattern B (outcome language 'make sure that') — ${excerpt}"
+    found_violations=$((found_violations + 1))
+    EXIT=1
+  done < <(grep -niF "make sure that" "${file}" 2>/dev/null)
+
+  # Pattern C: "verify the bundle" not followed within 5 lines by "for each" or "check.*field"
+  while IFS= read -r match; do
+    local lineno="${match%%:*}"
+    local excerpt="${match#*:}"
+    if ! in_dispatch_context "${lineno}"; then
+      continue
+    fi
+    local ctx_start=$((lineno + 1))
+    local ctx_end=$((lineno + 5))
+    [[ "${ctx_end}" -gt "${total_lines}" ]] && ctx_end="${total_lines}"
+    local ctx
+    ctx="$(sed -n "${ctx_start},${ctx_end}p" "${file}")"
+    if echo "${ctx}" | grep -qiE "for each|check.*field"; then
+      continue
+    fi
+    echo "BRIEF-STYLE: ${file}:${lineno}: Pattern C (verify the bundle without for-each/field check) — ${excerpt}"
+    found_violations=$((found_violations + 1))
+    EXIT=1
+  done < <(grep -niF "verify the bundle" "${file}" 2>/dev/null)
+
+  # Pattern D: each lifecycle dispatch block must have "contract_id" within 30 lines after
+  # its DISPATCH-SITE line.
+  while IFS= read -r dispatch_line; do
+    local lineno="${dispatch_line%%:*}"
+    local ctx_start=$((lineno + 1))
+    local ctx_end=$((lineno + 30))
+    [[ "${ctx_end}" -gt "${total_lines}" ]] && ctx_end="${total_lines}"
+    local ctx
+    ctx="$(sed -n "${ctx_start},${ctx_end}p" "${file}")"
+    if echo "${ctx}" | grep -qF "contract_id"; then
+      continue
+    fi
+    local dispatch_val="${dispatch_line#*:}"
+    echo "BRIEF-STYLE: ${file}:${lineno}: Pattern D (lifecycle dispatch missing contract_id) — ${dispatch_val}"
+    found_violations=$((found_violations + 1))
+    EXIT=1
+  done < <(grep -nE "${lifecycle_re}" "${file}" 2>/dev/null)
+
+  if [[ "${found_violations}" -eq 0 ]]; then
+    echo "✓ brief-style: lifecycle dispatch sites use algorithmic briefs with contract_id"
+  fi
+}
+
+# ---------------------------------------------------------------------------------
 # Run
 # ---------------------------------------------------------------------------------
 [[ "${RUN_DRIFT}" -eq 1 ]] && check_drift
@@ -824,6 +965,7 @@ check_loop_first_contract() {
 [[ "${RUN_ANCHOR}" -eq 1 ]] && check_brainstorm_anchor
 [[ "${RUN_SESSION_AUDIT}" -eq 1 ]] && check_session_audit
 [[ "${RUN_LOOP_FIRST}" -eq 1 ]] && check_loop_first_contract
+[[ "${RUN_BRIEF_STYLE}" -eq 1 ]] && check_brief_style
 
 if [[ "${EXIT}" -eq 0 ]]; then
   echo "✓ self-host audit clean"

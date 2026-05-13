@@ -465,6 +465,7 @@ managed cron block only; unrelated crontab entries are preserved.
 | `--keep-legacy` | Import: leave legacy artifacts in place |
 | `--fix` | Doctor: apply safe auto-fixes |
 | `--no-archive` | Retro: write `retro.md` without archiving the run state |
+| `--keep-worktree` | Completion: skip auto-remove of the run bundle's worktree on success |
 
 Common combinations:
 
@@ -502,6 +503,9 @@ trunk_branches: [main, master, trunk, dev, develop]
 cruft_policy: ask
 archive_path: legacy/.archive
 doctor_autofix: false
+
+worktree:
+  default_disposition: removed_after_merge  # or kept_by_user
 
 codex:
   routing: auto

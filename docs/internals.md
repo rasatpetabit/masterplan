@@ -241,6 +241,49 @@ The pattern follows CD-7 (orchestrator is canonical state writer) and CLAUDE.md 
 - Shared-state writes (multiple agents modifying `state.yml` or `events.jsonl` is a race)
 - When the orchestrator needs to react between agents (autonomy=gated checkpoints)
 
+### Algorithmic subagent briefs
+
+**Outcome-described vs algorithmic brief.** An outcome-described brief states what the subagent should *achieve* without specifying how. An algorithmic brief states the exact steps, field-by-field checks, and return shape — it is auditable, reproducible, and contract-bound.
+
+- **Outcome-described (bad):** "Goal=identify any in-progress plans whose slug or branch name overlaps with the topic's salient words." The subagent can use any strategy; the parent can't validate correctness.
+- **Algorithmic (good):** "Follow the algorithm defined in `commands/masterplan-contracts.md §Contract: related_scope_scan_v1`. Return `{contract_id, inputs_hash, processed_paths, violations, coverage, result}`." The parent validates `contract_id`, checks `coverage.expected == coverage.processed`, and emits a `contract_violation` event on mismatch.
+
+**Three before/after examples:**
+
+**1. `doctor.schema_v2` (Step D doctor dispatch)**
+
+*Before:* "Each agent runs all 25 plan-scoped checks for its worktree and returns findings as `[{check_id, severity, file, message}]` JSON."
+
+*After:* "Use `contract_id: "doctor.schema_v2"`. Follow the algorithm in `commands/masterplan-contracts.md`. Return shape: `{contract_id, inputs_hash, processed_paths, violations: [{bundle, field, kind, detail}], coverage: {expected, processed}}`. First line of prompt: `DISPATCH-SITE: Step D doctor checks`."
+
+**2. `retro.source_gather_v1` (Step R2 retro gather)**
+
+*Before:* "Reads: `state.yml`, `events.jsonl`, `plan.md`, `spec.md`, git log, optional `gh pr list`. Return shape: structured digest."
+
+*After:* "Use `contract_id: "retro.source_gather_v1"`. Follow the algorithm in `commands/masterplan-contracts.md` (capped reads: events last 200 lines, plan first 200 lines, spec first 100 lines). Return shape: `{contract_id, inputs_hash, processed_paths, violations, coverage: {expected: 4, processed: 4}, digest: {...}}`. Parent re-verifies `coverage.expected == coverage.processed` after return; on mismatch, appends `contract_violation` event."
+
+**3. `related_scope_scan_v1` (Step B0 related-plan scan)**
+
+*Before:* "Goal=identify any in-progress plans whose slug or branch name overlaps with the topic's salient words (case-insensitive substring), Return=`{worktree, branch, matching_slugs: [], matching_branch: bool}`."
+
+*After:* "Use `contract_id: "related_scope_scan_v1"`. Follow the algorithm in `commands/masterplan-contracts.md`. Return shape: `{contract_id, inputs_hash, processed_paths, violations, coverage: {expected: N, processed: N}, result: {worktree, branch, matching_slugs, matching_branch}}`."
+
+**Standard return-shape vocabulary.** Every lifecycle subagent dispatch returns:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `contract_id` | string | Literal contract name matching the registry entry |
+| `inputs_hash` | string | SHA-256 of the actual input files/data the subagent read |
+| `processed_paths` | string[] | Absolute or run-relative paths actually processed |
+| `violations` | object[] | Per-item failures; shape varies by contract |
+| `coverage` | `{expected: int, processed: int}` | How many items were expected vs. how many were actually processed |
+
+**Rule:** every lifecycle subagent dispatch added in a new orchestrator edit MUST declare a `contract_id` and reference an entry in `commands/masterplan-contracts.md`. The parent validates the return before acting on it; a mismatching `contract_id`, missing field, or `coverage.expected != coverage.processed` triggers a re-verify pass and a `contract_violation` event in `events.jsonl`.
+
+**Contract registry:** `commands/masterplan-contracts.md` — one entry per contract, with `purpose`, `algorithm`, and `return_shape`.
+
+**Lint check:** `bin/masterplan-self-host-audit.sh --brief-style` greps the orchestrator for dispatch blocks tagged with lifecycle `DISPATCH-SITE` values that lack `contract_id`, and for outcome-only language patterns within dispatch contexts. Exit 0 if clean.
+
 ---
 
 ## 4. Run bundle format (the only source of truth)
@@ -303,6 +346,20 @@ The loop-first resume contract is part of the schema, not presentation polish:
 - `scheduled_yield` means Masterplan intentionally yielded to a wakeup, background result, or host budget boundary and should resume automatically on the next invocation.
 
 Ordinary task blockers, loop quotas, context pressure, weak gate evidence, and background polling do not become `status: blocked`. They stay `status: in-progress` with a persisted question or scheduled continuation so the operator does not need to track state manually.
+
+### Schema v3 additions (v4.0.0+)
+
+All fields are additive. v2 bundles remain readable with in-memory defaults applied at load time.
+
+- `schema_version: 3` — bumped from 2 for new bundles; lazy-migrated on first write for v2 bundles.
+- `pending_retro_attempts: 0` — count of retro generation failures; only meaningful when `status: pending_retro`.
+- `retro_policy: {waived: false, reason: ""}` — explicit opt-in skip; `waived: true` requires non-empty `reason`.
+- `scope_fingerprint: []` — normalized token array for Jaccard overlap detection; computed lazily.
+- `supersedes: ""`, `superseded_by: ""`, `variant_of: ""` — bundle lineage pointers.
+- `import_hydration: "" | "full" | "fallback"` — set during Step I3.5 (new).
+- `import_contract: {contract_id, inputs_hash, processed_at}` — import transaction receipt.
+- `worktree_disposition: "" | "active" | "kept_by_user" | "removed_after_merge" | "missing"` — worktree lifecycle state.
+- `worktree_last_reconciled: ""` — ISO timestamp of last `git worktree list` check.
 
 ### Events format
 
@@ -661,6 +718,7 @@ Current check families:
 - **Execution drift:** stale in-progress plans, stale critical-error stops, plan/log drift, cache-build evidence missing, routing configured but eligibility cache absent.
 - **Parallelism safety:** malformed `parallel-group` tasks, overlapping file scopes, wave protocol violations, model attribution drift in `subagents.jsonl`.
 - **Operational hygiene:** telemetry growth, non-empty `state.queue.jsonl`, missing compact loop for plans that requested it, completed plan without retro.
+- **Worktree reconciliation (v4.0.0+, check #29):** enumerates `git worktree list` for the repo and cross-checks against `state.yml#worktree:` pointers across all active bundles. Surfaces both recorded-but-missing (bundle says it has a worktree; `git worktree list` doesn't) and present-but-untracked (worktree on disk, no bundle pointer) orphans. Pairs with the `worktree_disposition: active|kept_by_user|removed_after_merge|missing` schema_v3 field that Step C 6a refreshes at every status write.
 
 When adding a check, update the Step D table, the Step D parallelization brief count, and this family list if the new check creates a new class.
 
@@ -778,6 +836,30 @@ Original kickoff was all-or-nothing — the bare topic catch-all triggered full 
 ### Why Codex defaults flipped to on
 
 Earlier default: `codex.review: off`. Most users who installed Codex wanted adversarial review by default but had to explicitly enable it. v2.0.0 flips both `codex.routing: auto` and `codex.review: on`. Graceful degrade on missing-codex makes this safe (one-line warning, run continues).
+
+### Why v4.0 lifecycle hardening (FM-A through FM-G)
+
+A cross-repo audit of `~/dev/optoe-ng/` and `~/dev/petabit-os-stack/petabit-os-mgmt/` (May 2026) found **11 of 47 complete bundles (~24%) were hollow** — `status: complete` with no `retro.md` on disk, or imported bundles with `legacy.*` pointers but empty `artifacts.*`. The runtime path (brainstorm → plan → execute) was working; the *lifecycle* path was leaking at completion, import, and kickoff boundaries.
+
+Five failure modes drove the redesign:
+
+- **FM-A — hollow completion.** Step C 6b's "if retro fails, leave status: complete and continue" turned retro generation failures into terminal hollow bundles. Step CL archived them with no on-disk retro existence check. Doctor #28 fired *after* the fact.
+- **FM-B — restart-thrash.** Step B had no scope-overlap detection. Evidence: 3 separate CLI-parity bundles in petabit-os-mgmt; 6 OPTOE refactor bundles in optoe-ng with near-identical specs.
+- **FM-C — import hydration gap.** Step I wrote `state.yml` stubs referencing `legacy.*` paths but never copied the files into the bundle or populated `artifacts.*`. Doctor #9 backfilled nulls instead of cross-checking.
+- **FM-D — outcome-described subagent briefs.** A wave-1 doctor pass missed schema violation #9 on all 29 bundles because briefs described the outcome ("validate the bundle") rather than the algorithm ("for each required field, …").
+- **FM-G — orphaned worktrees.** Bundles recorded `worktree:` paths at creation; completion/archive never reconciled against `git worktree list`. Worktrees outlived their bundles.
+
+The v4.0 redesign chose **structural changes at write boundaries over detection at doctor time**:
+
+- New parent-owned `transition_guard(state, target_phase)` write barrier at every Step C status/phase transition; refuses hollow completion at the source (FM-A).
+- Atomic import via `/tmp/masterplan-import-<slug>-<pid>/` staging with all-or-nothing rollback (FM-C).
+- Step B scope-overlap scan via Jaccard token-set similarity (threshold 0.6) over a new `scope_fingerprint` field, with `AskUserQuestion` resume/variant/force-new gate before slug creation (FM-B).
+- New `commands/masterplan-contracts.md` registry with 4 contracts, `contract_id:` in dispatch briefs, sampling-based parent re-verify; `--brief-style` lint mode greps for outcome-only language at lifecycle DISPATCH-SITE contexts (FM-D).
+- New `worktree_disposition` schema_v3 field with 4 states; Step C 6a refresh + non-interactive auto-remove on completion (loose-autonomy contract); doctor #29 reconciles against `git worktree list` (FM-G).
+
+Backward-compat constraint shaped the schema bump: additive only (v2 fields preserved), lazy migration on first write, downgrade not supported. The retro audit corpus (the 11 hollow bundles) is handled by Phase 3 backfill in the target repos, not by v4.0 retro-fill.
+
+FM-E (sentinel rendering) and FM-F (brainstorm-anchor context blowup) were already shipped in v3.3.0 and were explicitly out of scope.
 
 ### Why intra-plan parallelism Slice α first
 

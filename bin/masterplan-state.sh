@@ -19,6 +19,12 @@
 # Usage:
 #   bin/masterplan-state.sh inventory [--format=table|json]
 #   bin/masterplan-state.sh migrate [--dry-run|--write] [--slug=<slug>]
+#   bin/masterplan-state.sh transition-guard <bundle-path> <target-phase>
+#
+# transition-guard: validates a lifecycle phase transition for a run bundle.
+#   <bundle-path>  — absolute path to the run bundle directory (contains state.yml)
+#   <target-phase> — one of: bundle_created | import_complete | complete | archived
+#   Output: JSON on stdout; exit 0 for ok/gate, exit 1 for abort/parse failure.
 #
 # Migration is copy-only. It never deletes legacy artifacts; /masterplan clean
 # owns archive/delete decisions after the new bundle has been verified.
@@ -32,6 +38,219 @@ usage() {
 
 mode="${1:-inventory}"
 shift || true
+
+# transition-guard has a distinct positional arg shape — handle it early
+# and bypass the flag-parsing loop and git-repo check.
+if [[ "$mode" == "transition-guard" ]]; then
+  bundle="${1:?error: transition-guard requires <bundle-path> as first argument}"
+  target_phase="${2:?error: transition-guard requires <target-phase> as second argument}"
+  python3 - "$bundle" "$target_phase" <<'PYGUARD'
+import json
+import os
+import re
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+bundle_path = Path(sys.argv[1]).resolve()
+target_phase = sys.argv[2]
+
+VALID_PHASES = {"bundle_created", "import_complete", "complete", "archived"}
+STOPWORDS = {"the", "and", "or", "of", "for", "to", "in", "on", "a", "an", "is"}
+
+
+def stem(token):
+    """Lightweight suffix trimming."""
+    for suffix in ("-ing", "-ed", "-ies", "-es", "-s"):
+        if len(token) > len(suffix) + 2 and token.endswith(suffix):
+            return token[: -len(suffix)]
+    return token
+
+
+def scope_fingerprint_tokens(slug, current_task):
+    """Return normalized token array from slug + current_task."""
+    raw = (slug or "") + " " + (current_task or "")
+    raw = raw.lower()
+    raw = re.sub(r"[^a-z0-9\s-]", "", raw)
+    tokens = raw.split()
+    tokens = [stem(t) for t in tokens if t not in STOPWORDS and len(t) > 1]
+    return tokens
+
+
+def parse_state_yml(bundle):
+    """Parse state.yml with simple line-by-line parser (no PyYAML needed)."""
+    state_file = bundle / "state.yml"
+    if not state_file.is_file():
+        return None, "state.yml not found"
+    text = state_file.read_text()
+    state = {}
+    current_key = None
+    artifacts = {}
+    retro_policy = {}
+    import_contract = {}
+    in_artifacts = False
+    in_retro_policy = False
+    in_import_contract = False
+    in_legacy = False
+    for line in text.splitlines():
+        if not line.strip() or line.strip().startswith("#"):
+            continue
+        # Detect top-level section changes
+        if line and not line[0].isspace():
+            in_artifacts = False
+            in_retro_policy = False
+            in_import_contract = False
+            in_legacy = False
+        if re.match(r"^artifacts:\s*$", line):
+            in_artifacts = True
+            continue
+        if re.match(r"^retro_policy:\s*$", line):
+            in_retro_policy = True
+            continue
+        if re.match(r"^import_contract:\s*$", line):
+            in_import_contract = True
+            continue
+        if re.match(r"^legacy:", line):
+            in_legacy = True
+            continue
+        # Parse nested keys
+        if in_artifacts:
+            m = re.match(r"^\s{2}(\w+):\s*(.*)", line)
+            if m:
+                val = m.group(2).strip().strip('"').strip("'")
+                artifacts[m.group(1)] = val
+            continue
+        if in_retro_policy:
+            m = re.match(r"^\s{2}(\w+):\s*(.*)", line)
+            if m:
+                val = m.group(2).strip().strip('"').strip("'")
+                retro_policy[m.group(1)] = val
+            continue
+        if in_import_contract:
+            m = re.match(r"^\s{2}(\w+):\s*(.*)", line)
+            if m:
+                val = m.group(2).strip().strip('"').strip("'")
+                import_contract[m.group(1)] = val
+            continue
+        if in_legacy:
+            continue
+        # Top-level scalar
+        m = re.match(r"^(\w+):\s*(.*)", line)
+        if m:
+            val = m.group(2).strip().strip('"').strip("'")
+            state[m.group(1)] = val
+    state["artifacts"] = artifacts
+    state["retro_policy"] = retro_policy
+    state["import_contract"] = import_contract
+    return state, None
+
+
+if target_phase not in VALID_PHASES:
+    print(json.dumps({
+        "disposition": "abort",
+        "reason": "invalid_target_phase",
+        "valid": sorted(VALID_PHASES),
+    }))
+    sys.exit(1)
+
+state, parse_err = parse_state_yml(bundle_path)
+if state is None:
+    print(json.dumps({"disposition": "abort", "reason": "state_parse_failed", "detail": parse_err}))
+    sys.exit(1)
+
+def get(key, default=""):
+    return state.get(key, default)
+
+if target_phase == "bundle_created":
+    tokens = scope_fingerprint_tokens(get("slug"), get("current_task"))
+    print(json.dumps({"disposition": "ok", "scope_fingerprint": tokens}))
+    sys.exit(0)
+
+elif target_phase == "import_complete":
+    artifacts = state.get("artifacts", {})
+    spec_val = artifacts.get("spec", "")
+    plan_val = artifacts.get("plan", "")
+    missing = []
+    if not spec_val or not os.path.exists(spec_val):
+        missing.append("artifacts.spec")
+    if not plan_val or not os.path.exists(plan_val):
+        missing.append("artifacts.plan")
+    if missing:
+        print(json.dumps({
+            "disposition": "abort",
+            "reason": "import_hydration_missing",
+            "missing": missing,
+        }))
+        sys.exit(1)
+    print(json.dumps({"disposition": "ok", "import_hydration": "full"}))
+    sys.exit(0)
+
+elif target_phase in ("complete", "archived"):
+    issues = []
+    final_disposition = "ok"
+
+    # Check retro
+    artifacts = state.get("artifacts", {})
+    retro_val = artifacts.get("retro", "")
+    retro_policy = state.get("retro_policy", {})
+    waived_raw = str(retro_policy.get("waived", "false")).lower()
+    waived = waived_raw == "true"
+
+    retro_ok = bool(
+        retro_val
+        and os.path.exists(retro_val)
+        and os.path.getsize(retro_val) > 0
+    )
+    if not retro_ok and not waived:
+        final_disposition = "gate"
+        issues.append("retro_missing")
+
+    # Check worktree
+    worktree_val = get("worktree")
+    worktree_disposition = get("worktree_disposition")
+    resolved_dispositions = {"kept_by_user", "removed_after_merge", "missing"}
+    if (
+        worktree_val
+        and worktree_disposition not in resolved_dispositions
+    ):
+        # Check if the worktree path is actually registered
+        try:
+            result = subprocess.run(
+                ["git", "worktree", "list", "--porcelain"],
+                capture_output=True, text=True, timeout=10
+            )
+            registered = [
+                line.split("worktree ")[-1].strip()
+                for line in result.stdout.splitlines()
+                if line.startswith("worktree ")
+            ]
+            if worktree_val not in registered:
+                issues.append("worktree_unresolved")
+        except Exception:
+            pass  # Best-effort; do not fail hard on git issues
+
+    # For archived: also require status == complete or (pending_retro + waived)
+    if target_phase == "archived":
+        status_val = get("status")
+        if status_val == "complete":
+            pass  # ok
+        elif status_val == "pending_retro" and waived:
+            pass  # ok
+        else:
+            print(json.dumps({"disposition": "abort", "reason": "not_complete", "status": status_val}))
+            sys.exit(1)
+
+    out = {"disposition": final_disposition}
+    if issues:
+        if final_disposition == "gate":
+            out["reason"] = issues[0]
+        out["issues"] = issues
+    print(json.dumps(out))
+    sys.exit(0)
+PYGUARD
+  exit $?
+fi
 
 format="table"
 write_mode=0
@@ -49,7 +268,7 @@ for arg in "$@"; do
 done
 
 case "$mode" in
-  inventory|migrate) ;;
+  inventory|migrate|transition-guard) ;;
   *) echo "unknown mode: $mode" >&2; usage 2 ;;
 esac
 

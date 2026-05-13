@@ -7,6 +7,94 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.0] — 2026-05-13 — lifecycle hardening (FM-A/B/C/D/G)
+
+**Breaking:** `state.yml` schema bumps `schema_version: 2 → 3`. Existing v2
+bundles migrate lazily on first state write performed by v4.0.0 — the
+migration shim adds `worktree_disposition`, normalizes `retro_policy`, and
+preserves all v2 fields. v2 bundles remain readable and resumable; downgrading
+to ≤3.3.0 after a write is not supported.
+
+Run bundle for the redesign work: `docs/masterplan/v4-lifecycle-redesign/`.
+
+### Added
+
+- **Wave 1 — Foundation.** New parent-owned `transition_guard(state,
+  target_phase)` write barrier called at every Step C status/phase transition
+  (returns `{ok|gate|abort}`); `bin/masterplan-state.sh transition-guard`
+  subcommand exposes the same logic to subagents. Schema_v3 additive bump
+  with `worktree_disposition: active|kept_by_user|removed_after_merge|missing`,
+  `retro_policy: {auto|manual|waived, reason?}`, and `scope_fingerprint`
+  fields. Lazy v2→v3 migration at Step B0 step 6. Temp-dir sweep at Step 0
+  sweeps stale `/tmp/masterplan-import-*-<pid>/` from prior failed imports.
+
+- **Wave 2 — FM-A (hollow completion closed).** Step C 6a guards every
+  status/phase write through `transition_guard`. Step C 6b downgrades retro
+  generation failures to new status `pending_retro` instead of leaving a
+  hollow `complete` bundle. Step CL archive refuses bundles where
+  `artifacts.retro` is empty or the file is missing on disk unless
+  `retro_policy.waived` is set with a reason. Retro recovery picker added at
+  Step R entry for `pending_retro` bundles.
+
+- **Wave 3 — FM-C (import hydration atomic).** Step I3 import now stages all
+  legacy artifact copies in `/tmp/masterplan-import-<slug>-<pid>/` and
+  atomically promotes them into the bundle directory on success; failure
+  rolls back the temp directory and leaves the bundle untouched. New step
+  I3.5 hydration guard refuses to write `artifacts.spec`/`artifacts.plan`
+  pointers without verifying the bundle-local copy is on disk; I3.6 (renamed
+  from prior I3.5) handles cruft sweep. Doctor check #9 cross-checks
+  `legacy.*` vs `artifacts.*` and surfaces hydration gaps instead of
+  silently null-sentinel-filling.
+
+- **Wave 4 — FM-B (kickoff scope-overlap detection).** Step B0 steps 1b/1c
+  scan `docs/masterplan/*/state.yml` before slug creation; Jaccard token-set
+  similarity over `scope_fingerprint` against existing non-archived bundles
+  with named threshold constant `SCOPE_OVERLAP_THRESHOLD = 0.6`. When a hit
+  exceeds threshold, `AskUserQuestion` prompts: resume existing, derive
+  variant (records `variant_of:`), or force new slug (records
+  `supersedes:`/`superseded_by:` cross-links). Stopword list local; no Python
+  dependency.
+
+- **Wave 5 — FM-D (algorithmic subagent briefs + contract pattern).** New
+  `commands/masterplan-contracts.md` registry with 4 contracts:
+  `import.convert_v1`, `doctor.schema_v2`, `retro.source_gather_v1`,
+  `related_scope_scan_v1`. Each contract specifies algorithm, return shape,
+  and parent re-verify rules. Three dispatch sites (Step I import, Step D
+  doctor, Step C retro) now carry `contract_id:` in the brief and a
+  sampling-based parent re-verification step (3 random + all
+  violation-claiming bundles). New `--brief-style` lint mode in
+  `bin/masterplan-self-host-audit.sh` greps for outcome-only brief patterns
+  (Patterns A/B/C/D, scoped to lifecycle DISPATCH-SITE contexts). `docs/internals.md`
+  gains an "Algorithmic subagent briefs" subsection with before/after
+  examples and a contract registry pointer.
+
+- **Wave 6 — FM-G (worktree disposition + auto-resolve).** New schema field
+  `worktree_disposition` with 4 states. Step C 6a worktree refresh
+  reconciles bundle pointer against `git worktree list` before status
+  writes. Step C 6a worktree completion auto-removes worktrees on bundle
+  completion (NON-INTERACTIVE — no `AskUserQuestion` gate, honors the
+  loose-autonomy contract); opt-out via new `--keep-worktree` flag or
+  `worktree.default_disposition: kept_by_user` config. Step CL1 category 6
+  refuses to archive bundles whose worktree state is inconsistent. New
+  doctor check #29 enumerates `git worktree list` against `state.yml#worktree:`
+  pointers across all bundles and surfaces recorded-but-missing AND
+  present-but-untracked orphans.
+
+### Migration notes
+
+- v2 bundles continue to work; migration is lazy and writes-only. To force
+  migration without a state change, run `/masterplan doctor --fix` on the
+  bundle (the autofix path performs a no-op state write that triggers the
+  shim).
+- Existing hollow bundles surfaced in the audit pass (11 across petabit-os-mgmt
+  and optoe-ng) are handled by Phase 3 backfill in those repos; v4.0.0 alone
+  does not retro-fill them.
+
+### Doctor
+
+- New check #29 (worktree reconciliation). The full table count in `docs/internals.md`
+  and the Step D parallelization brief have been updated accordingly.
+
 ## [3.3.0] — 2026-05-12 — sentinel hardening + brainstorm intent-anchor Haiku dispatch
 
 ### Fixed
