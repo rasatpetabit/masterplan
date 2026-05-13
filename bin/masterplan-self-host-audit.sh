@@ -24,6 +24,7 @@
 #   bin/masterplan-self-host-audit.sh --session-audit  # only check session-audit regression tests
 #   bin/masterplan-self-host-audit.sh --loop-first  # only check loop-first resume/stop contract
 #   bin/masterplan-self-host-audit.sh --brief-style  # only check algorithmic brief style at lifecycle dispatch sites
+#   bin/masterplan-self-host-audit.sh --taskcreate-gate  # only check TaskCreate/Update/List mentions are inside Codex no-op gate
 #
 # Exit code: 0 if clean, 1 if any check fires, 2 on usage error.
 
@@ -51,19 +52,21 @@ RUN_ANCHOR=1
 RUN_SESSION_AUDIT=1
 RUN_LOOP_FIRST=1
 RUN_BRIEF_STYLE=1
+RUN_TASKCREATE_GATE=1
 
 case "${MODE}" in
   --fix)    FIX_MODE=1 ;;
-  --drift)  RUN_CD9=0; RUN_MODELS=0; RUN_CODEX=0; RUN_ANCHOR=0; RUN_SESSION_AUDIT=0; RUN_LOOP_FIRST=0; RUN_BRIEF_STYLE=0 ;;
-  --cd9)    RUN_DRIFT=0; RUN_MODELS=0; RUN_CODEX=0; RUN_ANCHOR=0; RUN_SESSION_AUDIT=0; RUN_LOOP_FIRST=0; RUN_BRIEF_STYLE=0 ;;
-  --models) RUN_DRIFT=0; RUN_CD9=0; RUN_CODEX=0; RUN_ANCHOR=0; RUN_SESSION_AUDIT=0; RUN_LOOP_FIRST=0; RUN_BRIEF_STYLE=0 ;;
-  --codex)  RUN_DRIFT=0; RUN_CD9=0; RUN_MODELS=0; RUN_ANCHOR=0; RUN_SESSION_AUDIT=0; RUN_LOOP_FIRST=0; RUN_BRIEF_STYLE=0 ;;
-  --brainstorm-anchor) RUN_DRIFT=0; RUN_CD9=0; RUN_MODELS=0; RUN_CODEX=0; RUN_SESSION_AUDIT=0; RUN_LOOP_FIRST=0; RUN_BRIEF_STYLE=0 ;;
-  --session-audit) RUN_DRIFT=0; RUN_CD9=0; RUN_MODELS=0; RUN_CODEX=0; RUN_ANCHOR=0; RUN_LOOP_FIRST=0; RUN_BRIEF_STYLE=0 ;;
-  --loop-first) RUN_DRIFT=0; RUN_CD9=0; RUN_MODELS=0; RUN_CODEX=0; RUN_ANCHOR=0; RUN_SESSION_AUDIT=0; RUN_BRIEF_STYLE=0 ;;
-  --brief-style) RUN_DRIFT=0; RUN_CD9=0; RUN_MODELS=0; RUN_CODEX=0; RUN_ANCHOR=0; RUN_SESSION_AUDIT=0; RUN_LOOP_FIRST=0 ;;
+  --drift)  RUN_CD9=0; RUN_MODELS=0; RUN_CODEX=0; RUN_ANCHOR=0; RUN_SESSION_AUDIT=0; RUN_LOOP_FIRST=0; RUN_BRIEF_STYLE=0; RUN_TASKCREATE_GATE=0 ;;
+  --cd9)    RUN_DRIFT=0; RUN_MODELS=0; RUN_CODEX=0; RUN_ANCHOR=0; RUN_SESSION_AUDIT=0; RUN_LOOP_FIRST=0; RUN_BRIEF_STYLE=0; RUN_TASKCREATE_GATE=0 ;;
+  --models) RUN_DRIFT=0; RUN_CD9=0; RUN_CODEX=0; RUN_ANCHOR=0; RUN_SESSION_AUDIT=0; RUN_LOOP_FIRST=0; RUN_BRIEF_STYLE=0; RUN_TASKCREATE_GATE=0 ;;
+  --codex)  RUN_DRIFT=0; RUN_CD9=0; RUN_MODELS=0; RUN_ANCHOR=0; RUN_SESSION_AUDIT=0; RUN_LOOP_FIRST=0; RUN_BRIEF_STYLE=0; RUN_TASKCREATE_GATE=0 ;;
+  --brainstorm-anchor) RUN_DRIFT=0; RUN_CD9=0; RUN_MODELS=0; RUN_CODEX=0; RUN_SESSION_AUDIT=0; RUN_LOOP_FIRST=0; RUN_BRIEF_STYLE=0; RUN_TASKCREATE_GATE=0 ;;
+  --session-audit) RUN_DRIFT=0; RUN_CD9=0; RUN_MODELS=0; RUN_CODEX=0; RUN_ANCHOR=0; RUN_LOOP_FIRST=0; RUN_BRIEF_STYLE=0; RUN_TASKCREATE_GATE=0 ;;
+  --loop-first) RUN_DRIFT=0; RUN_CD9=0; RUN_MODELS=0; RUN_CODEX=0; RUN_ANCHOR=0; RUN_SESSION_AUDIT=0; RUN_BRIEF_STYLE=0; RUN_TASKCREATE_GATE=0 ;;
+  --brief-style) RUN_DRIFT=0; RUN_CD9=0; RUN_MODELS=0; RUN_CODEX=0; RUN_ANCHOR=0; RUN_SESSION_AUDIT=0; RUN_LOOP_FIRST=0; RUN_TASKCREATE_GATE=0 ;;
+  --taskcreate-gate) RUN_DRIFT=0; RUN_CD9=0; RUN_MODELS=0; RUN_CODEX=0; RUN_ANCHOR=0; RUN_SESSION_AUDIT=0; RUN_LOOP_FIRST=0; RUN_BRIEF_STYLE=0 ;;
   "")       : ;;
-  *)        echo "Usage: $0 [--fix|--drift|--cd9|--models|--codex|--brainstorm-anchor|--session-audit|--loop-first|--brief-style]" >&2; exit 2 ;;
+  *)        echo "Usage: $0 [--fix|--drift|--cd9|--models|--codex|--brainstorm-anchor|--session-audit|--loop-first|--brief-style|--taskcreate-gate]" >&2; exit 2 ;;
 esac
 
 EXIT=0
@@ -955,6 +958,55 @@ check_brief_style() {
 }
 
 # ---------------------------------------------------------------------------------
+# Check: TaskCreate/Update/List mentions are inside the Codex no-op gate (v4.1.0+)
+#
+# Every TaskCreate / TaskUpdate / TaskList mention in commands/masterplan.md must
+# sit within 8 lines of a Codex gate marker (codex_host_suppressed == false,
+# codex_host_suppressed == true, or "Claude Code only"). The ## TaskCreate
+# projection layer section (and any subsection it contains) is excluded because
+# the section's own preamble + §5 codex_host_suppressed gate cover the whole block.
+# ---------------------------------------------------------------------------------
+check_taskcreate_gate() {
+  local fail=0
+  local target="${REPO_ROOT}/commands/masterplan.md"
+
+  if [[ ! -f "${target}" ]]; then
+    echo "Skipping taskcreate-gate check: ${target} not found"
+    return
+  fi
+
+  # Map the ## TaskCreate projection layer section range (inclusive)
+  # so internal definitions count as gated by the section's own preamble.
+  local section_start section_end
+  section_start=$(grep -n "^## TaskCreate projection layer" "${target}" | head -1 | cut -d: -f1)
+  if [[ -n "${section_start}" ]]; then
+    section_end=$(awk -v s="${section_start}" 'NR>s && /^## /{print NR-1; exit}' "${target}")
+  fi
+
+  while IFS=: read -r ln _; do
+    [[ -z "${ln}" ]] && continue
+    # Skip lines inside the projection-spec section itself (gated by its preamble + §5).
+    if [[ -n "${section_start}" && -n "${section_end}" && "${ln}" -ge "${section_start}" && "${ln}" -le "${section_end}" ]]; then
+      continue
+    fi
+    local start=$(( ln > 8 ? ln - 8 : 1 ))
+    local end=$(( ln + 1 ))
+    local ctx
+    ctx=$(sed -n "${start},${end}p" "${target}")
+    if ! echo "${ctx}" | grep -qE "codex_host_suppressed == false|Claude Code only|codex_host_suppressed == true"; then
+      echo "GAP ${target#${REPO_ROOT}/}:${ln} — TaskCreate/Update/List without Codex gate"
+      fail=1
+      EXIT=1
+    fi
+  done < <(grep -nE "TaskCreate|TaskUpdate|TaskList" "${target}")
+
+  if [[ "${fail}" -eq 0 ]]; then
+    echo "✓ taskcreate-gate: all TaskCreate/Update/List mentions are inside Codex no-op gate"
+  fi
+  return "${fail}"
+}
+
+# ---------------------------------------------------------------------------------
 # Run
 # ---------------------------------------------------------------------------------
 [[ "${RUN_DRIFT}" -eq 1 ]] && check_drift
@@ -966,6 +1018,7 @@ check_brief_style() {
 [[ "${RUN_SESSION_AUDIT}" -eq 1 ]] && check_session_audit
 [[ "${RUN_LOOP_FIRST}" -eq 1 ]] && check_loop_first_contract
 [[ "${RUN_BRIEF_STYLE}" -eq 1 ]] && check_brief_style
+[[ "${RUN_TASKCREATE_GATE}" -eq 1 ]] && check_taskcreate_gate
 
 if [[ "${EXIT}" -eq 0 ]]; then
   echo "✓ self-host audit clean"
