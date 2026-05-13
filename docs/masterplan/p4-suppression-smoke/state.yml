@@ -1,0 +1,39 @@
+schema_version: 2
+slug: p4-suppression-smoke
+status: in_progress
+phase: ready_to_execute
+pending_retro_attempts: 0
+worktree: ""
+branch: main
+started: 2026-05-13T00:00:00Z
+last_activity: 2026-05-13T00:00:00Z
+task_start_sha: ""
+completion_sha: ""
+current_task: ""
+next_action: "Enter Step C; execute 3 no-op tasks; observe reminder firings via smoke_observation events"
+autonomy: loose
+loop_enabled: false
+codex_routing: off
+codex_review: off
+compact_loop_recommended: false
+complexity: low
+pending_gate: null
+artifacts:
+  spec: docs/masterplan/p4-suppression-smoke/spec.md
+  plan: docs/masterplan/p4-suppression-smoke/plan.md
+  retro: ""
+  events: docs/masterplan/p4-suppression-smoke/events.jsonl
+  events_archive: ""
+  eligibility_cache: ""
+  telemetry: ""
+  telemetry_archive: ""
+  subagents: ""
+  subagents_archive: ""
+  state_queue: ""
+legacy:
+  approved_plan: ""
+  codex_review_target: ""
+halt_mode: none
+stop_reason: ""
+critical_error: null
+step_c_session_init_sha: ""
