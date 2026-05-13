@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.2.1] — 2026-05-13 — Doctor checks #30 + #31 (cross-manifest version drift + per-autonomy gate consistency)
+
+Two new doctor checks plus a drive-by self-documenting comment. Both checks
+ship as carried-forward items from the v4.2.0 retro. Report-only — no
+auto-fix; manifest/gate edits are too risky to remediate without a human.
+
+### Added
+
+- **Doctor check #30 — `cross_manifest_version_drift` (Warning, repo-scoped, v4.2.1+).** Detects when the four JSON manifests with a `version` field drift out of sync: `.claude-plugin/plugin.json` (canonical), `.claude-plugin/marketplace.json` (root + nested plugin), and `.codex-plugin/plugin.json`. Skips `.agents/plugins/marketplace.json` (no version field by schema). Background: the v4.2.0 retro documented that `.claude-plugin/marketplace.json` was stuck at 3.3.0 for four releases because it has no enumerator pointing at it; #30 closes that gap with a single source-of-truth diff.
+- **Doctor check #31 — `per_autonomy_gate_condition_consistency` (Warning, repo-scoped, v4.2.1+).** Audits the per-autonomy gate decision sites in `commands/masterplan.md` against a static anchor table of expected `--autonomy [!=]=` conditions. Initial table covers the two known sites: spec_approval (L1286, expected `--autonomy != full`) and plan_approval (L1360, expected `--autonomy == gated`). Mismatches are reported as Warnings with the anchor + observed-vs-expected line context. The table is maintained by hand — drift between table and gate is itself a known risk (see retro R1).
+- **L1286 self-documenting asymmetry comment (drive-by).** A single inline HTML comment on the spec_approval gate-condition line explicitly calls out the intentional asymmetry with plan_approval under loose autonomy, with a pointer to the CHANGELOG v4.2.0 rationale and doctor check #31. Closes the v4.2.0-retro carry-forward "future readers will grep for this" item.
+
+### Changed
+
+- `commands/masterplan.md` Step D parallelization brief (~L2435) updated to include `#30` and `#31` in the inline list of repo-scoped checks that fire ONCE per doctor run (alongside `#26`).
+- `docs/internals.md` §10 gains two new family entries describing the cross-manifest version drift family (#30) and the per-autonomy gate-condition consistency family (#31). The authoritative check table stays in `commands/masterplan.md`; §10 remains orientation-only.
+
+### Verification
+
+- `grep -n '"version": "4.2.1"' .claude-plugin/plugin.json .claude-plugin/marketplace.json .codex-plugin/plugin.json` returns 4 hits (1 + 2 + 1).
+- `grep -nE '^\| #(30|31) ' commands/masterplan.md` returns the two new rows in the Step D table.
+- `grep -n 'Intentionally diverges from the L1360 plan_approval' commands/masterplan.md` returns one hit at the L1286 spec_approval site.
+- `bash -n hooks/masterplan-telemetry.sh` passes (hook unchanged but cheap to re-verify).
+- Manual doctor-check dry-runs of #30 logic against the bumped manifests confirms a clean report when all four hits are at 4.2.1, and a one-mismatch report when one manifest is temporarily reverted.
+- Haiku fresh-eyes Explore review dispatched against the edited `commands/masterplan.md`, `docs/internals.md`, and this CHANGELOG entry to catch dangling references and contradictions (project anti-pattern #5).
+
+### Migration
+
+None. Pure addition. No `state.yml` schema bump. Existing run bundles are unaffected — the new doctor checks fire only when the user invokes `/masterplan doctor` (or `doctor --fix`).
+
+### Notes
+
+- Both checks are report-only by design. Auto-fixing manifest versions is risky (publishing wrong versions); auto-fixing gate-condition source code is even riskier (silent semantic changes). The fix logic for both stops at a clear violation message + file:line pointer.
+- The static anchor table for #31 is a maintenance burden — every new per-autonomy gate site needs a table row. The retro carries this forward as R1 (consider replacing with a derived approach if the table grows past ~5 anchors).
+
 ## [4.2.0] — 2026-05-13 — loose autonomy auto-approves plan_approval gate
 
 Behavior change for kickoff under `--autonomy=loose`. The Step B3 close-out `plan_approval` gate now auto-approves and proceeds silently to Step C; previously it halted regardless of `halt_mode`. Step B1 `spec_approval` is intentionally **unchanged** — it still halts under loose, so direction-correction stays cheap.
