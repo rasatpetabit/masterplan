@@ -1,0 +1,40 @@
+schema_version: 2
+slug: loose-skip-plan-approval
+status: in-progress
+phase: executing
+pending_retro_attempts: 0
+worktree: ""
+branch: loose-skip-plan-approval
+started: 2026-05-13T09:51:07Z
+last_activity: 2026-05-13T10:01:07Z
+task_start_sha: 6d1ba1b255ccb9f829330b76c2dc606689268ea0
+step_c_session_init_sha: fd95dbef-859a-47e1-8650-dfedc6b2507e
+current_task: "T12 — Commit + push to origin/loose-skip-plan-approval"
+next_action: "Two commits: (1) feature + release artifacts (5 modified files); (2) bundle. Push gate via AskUserQuestion."
+autonomy: loose
+loop_enabled: false
+codex_routing: auto
+codex_review: on
+compact_loop_recommended: false
+complexity: high
+plan_kind: implementation
+follow_ups: []
+artifacts:
+  spec: docs/masterplan/loose-skip-plan-approval/spec.md
+  plan: docs/masterplan/loose-skip-plan-approval/plan.md
+  retro: docs/masterplan/loose-skip-plan-approval/retro.md
+  events: docs/masterplan/loose-skip-plan-approval/events.jsonl
+  events_archive: ""
+  eligibility_cache: ""
+  telemetry: ""
+  telemetry_archive: ""
+  subagents: ""
+  subagents_archive: ""
+  state_queue: ""
+legacy:
+  approved_plan: ""
+  codex_review_target: ""
+halt_mode: none
+stop_reason: ""
+critical_error: null
+pending_gate: ""
