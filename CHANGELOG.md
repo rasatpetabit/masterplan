@@ -23,6 +23,7 @@ Addresses both findings from the codex adversarial review of v4.1.0 (commit `bbe
 
 ### Verification
 - Release gated on a real-session smoke run against `docs/masterplan/p4-suppression-smoke/`. The bundle's spec encodes a per-turn `smoke_observation` event contract; success criterion is `reminder_fired == false` on every state-write turn within Step C. Failure routes to pre-registered Option D rescope (idle-turn heartbeat) or to dropping the suppression claim.
+- **Status at tag time:** smoke run was NOT executed at release. The smoke bundle and its `smoke_observation` contract are ready; verification is deferred to a future fresh-session run. If that deferred run fails, follow-up release will apply the Option D rescope or drop the suppression claim per the spec's failure-handling section.
 
 ### Notes
 - Codex hosts are unaffected — the entire projection layer (including the new priming touch) skips silently per the existing `codex_host_suppressed` gate.
