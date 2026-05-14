@@ -12,6 +12,7 @@ artifacts:
   spec: docs/masterplan/expanded-brainstorming-selection/spec.md
   plan: docs/masterplan/expanded-brainstorming-selection/plan.md
   regressions: docs/masterplan/expanded-brainstorming-selection/regressions.json
+  retro: docs/masterplan/expanded-brainstorming-selection/retro.md
 legacy:
   superseded_direction: "individual selection pages for expanded brainstorming"
 brainstorm_anchor:
