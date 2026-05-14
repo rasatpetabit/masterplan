@@ -1,6 +1,8 @@
 # superpowers-masterplan — internal documentation for LLM contributors
 
-**Audience:** Future LLMs (Claude, Codex, others) that pick up this codebase to develop features, fix bugs, debug stuck plans, or extend the orchestrator. The intent is that this document, plus `commands/masterplan.md` and `docs/masterplan/<slug>/state.yml` run bundles, is enough to operate without reading deleted history (pre-v1.1.0 plans/specs were pruned in the v2.0.0 release).
+**Audience:** Future LLMs (Claude, Codex, others) that pick up this codebase to develop features, fix bugs, debug stuck plans, or extend the orchestrator. The intent is that this document, plus `commands/masterplan.md` + `parts/step-*.md` (the v5.0 lazy-load phase prompts), and `docs/masterplan/<slug>/state.yml` run bundles, is enough to operate without reading deleted history (pre-v1.1.0 plans/specs were pruned in the v2.0.0 release).
+
+**v5.0 layout note:** As of v5.0, `commands/masterplan.md` is a thin router (≤20 KB; doctor check #36). Phase bodies live in `parts/step-{0,a,b,c}.md`, doctor in `parts/doctor.md`, import in `parts/import.md`, contracts under `parts/contracts/`. When this document still references `commands/masterplan.md§Step X` for historical context, the active behavior lives in the corresponding `parts/step-X.md` file in v5.0+. The router dispatches by verb; phase files are loaded on demand.
 
 **Token budget warning:** This doc is ~6000 words. It's not always-loaded. CLAUDE.md (always-loaded, ~500 words) points here for deep-dive when needed. Read selectively — use the table of contents.
 
@@ -58,7 +60,16 @@ superpowers-masterplan/
 ├── plugins/
 │   └── superpowers-masterplan -> .. # Codex marketplace path symlink back to repo root
 ├── commands/
-│   └── masterplan.md               # THE orchestrator prompt (~2250 lines, single source of truth for behavior)
+│   └── masterplan.md               # router/dispatch (v5.0+; ≤20KB, enforced by doctor #36). Pre-v5 was a 2250-line monolith.
+├── parts/                          # v5.0 lazy-load phase prompts (loaded on-demand by verb)
+│   ├── step-0.md                   # bootstrap + subroutines (Step M / N / S / T / CL / validate)
+│   ├── step-a.md                   # spec/plan picker
+│   ├── step-b.md                   # brainstorm + plan (Step B0/B1/B2/B3)
+│   ├── step-c.md                   # execute + retro (Step C / Step R)
+│   ├── doctor.md                   # all 36 doctor checks (#1-#36)
+│   ├── import.md                   # legacy migration (Step I)
+│   ├── codex-host.md               # Codex-host runtime adaptations
+│   └── contracts/                  # cross-cutting reference (cd-rules, agent-dispatch, taskcreate-projection, run-bundle)
 ├── skills/
 │   ├── masterplan/
 │   │   └── SKILL.md                # Codex-visible entrypoint that loads commands/masterplan.md
@@ -715,9 +726,9 @@ Use the result to evaluate whether parallel-group annotations are being authored
 
 ## 10. Doctor checks (full table with rationale)
 
-`/masterplan doctor [--fix]` lints run bundles and legacy state across all worktrees. Read-only by default; `--fix` only acts on checks marked auto-fixable in `commands/masterplan.md`.
+`/masterplan doctor [--fix]` lints run bundles and legacy state across all worktrees. Read-only by default; `--fix` only acts on checks marked auto-fixable in `parts/doctor.md` (v5.0+; previously inlined in `commands/masterplan.md` Step D).
 
-The authoritative check table is in Step D of `commands/masterplan.md`. Keep that table and the Step D worker brief in sync first; this section is orientation only.
+The authoritative check table is in `parts/doctor.md` (the router dispatches `doctor` to it). Keep that table and the doctor-phase worker brief in sync first; this section is orientation only.
 
 Current check families:
 
@@ -729,8 +740,9 @@ Current check families:
 - **Worktree reconciliation (v4.0.0+, check #29):** enumerates `git worktree list` for the repo and cross-checks against `state.yml#worktree:` pointers across all active bundles. Surfaces both recorded-but-missing (bundle says it has a worktree; `git worktree list` doesn't) and present-but-untracked (worktree on disk, no bundle pointer) orphans. Pairs with the `worktree_disposition: active|kept_by_user|removed_after_merge|missing` schema_v3 field that Step C 6a refreshes at every status write.
 - **Cross-manifest version drift (v4.2.1+, check #30):** repo-scoped consistency check across the three version-bearing manifests — `.claude-plugin/plugin.json` is canonical; `.claude-plugin/marketplace.json` (both root `version` and nested `plugins[0].version`) and `.codex-plugin/plugin.json` must match. `.agents/plugins/marketplace.json` is exempt (no `version` field by schema). Closes the gap that allowed `.claude-plugin/marketplace.json` to sit at v3.3.0 across four releases (v3.4.0–v4.1.1). Report-only.
 - **Per-autonomy gate-condition consistency (v4.2.1+, check #31):** repo-scoped audit of `--autonomy [!=]= <value>` conditions at gate-decision sites in `commands/masterplan.md`, driven by a static anchor table. Initial coverage: `id: spec_approval` (expects `--autonomy != full`; gates under loose by design) and `id: plan_approval` (expects `--autonomy == gated`; auto-approves under loose per v4.2.0). The static table is maintenance-driven — new gate sites added to the orchestrator require extending the table, and the check flags any existing entry whose condition drifts. Report-only.
+- **v5 lazy-load surface (v5.0.0+, checks #32–#36):** five checks added with the v5.0 router/phase-file split. **#32** (200-char scalar cap): every scalar in `state.yml` must be ≤200 chars or use an overflow pointer (`*overflow at <sidecar>.md L<N>*`); enforced at write time by `bin/masterplan-state.sh` and audited here. **#33** (projection mode): asserts that `state.yml#projection_mode` matches the configured policy and that subagent dispatches honor the projection contract. **#34** (plan.index staleness): compares the `plan.index` hash in `state.yml` to the live `plan.md` hash and flags drift (rebuilt via `bin/masterplan-state.sh build-index`). **#35** (plan-format conformance): walks every task heading in `plan.md` and requires the v5.0 `**Spec:**` and `**Verify:**` markers per task. **#36** (router byte ceiling): asserts `commands/masterplan.md` ≤20480 bytes — the router must stay a thin dispatch shell, with phase bodies in `parts/step-*.md`. Report-only except #32 (write-time enforcement).
 
-When adding a check, update the Step D table, the Step D parallelization brief count, and this family list if the new check creates a new class.
+When adding a check, update the `parts/doctor.md` table (v5.0+), the doctor-phase parallelization brief count, and this family list if the new check creates a new class.
 
 ---
 
