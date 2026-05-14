@@ -21,7 +21,7 @@ critical_error: null
 artifacts:
   spec: docs/masterplan/intra-plan-parallelism/spec.md
   plan: ""
-  retro: ""
+  retro: docs/masterplan/intra-plan-parallelism/retro.md
   events: docs/masterplan/intra-plan-parallelism/events.jsonl
   events_archive: ""
   eligibility_cache: ""
@@ -36,5 +36,5 @@ legacy:
   status: ""
   plan: ""
   spec: docs/superpowers/archived-specs/2026-05-03-intra-plan-parallelism-design.md
-  retro: ""
+  retro: docs/masterplan/intra-plan-parallelism/retro.md
   sidecars: {}
