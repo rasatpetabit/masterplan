@@ -368,7 +368,7 @@ Inspect and maintain state:
 
 | Invocation | Effect | Halts |
 |---|---|---|
-| `/masterplan` | Resume-first: auto-continue current/only in-progress plan, list+pick if ambiguous, menu if none | no |
+| `/masterplan` | Resume-first: auto-continue current/only in-progress plan; detects scope overlap with existing plans (offers Resume / Derive variant / Force new); list+pick if ambiguous, menu if none | no |
 | `/masterplan full <topic>` | Brainstorm, plan, then execute | no |
 | `/masterplan <topic>` | Bare-topic shortcut for `full <topic>` | no |
 | `/masterplan brainstorm <topic>` | Brainstorm and write a spec | after spec |
@@ -382,11 +382,12 @@ Inspect and maintain state:
 | `/masterplan status [--plan=<slug>]` | Read-only situation report or one-plan drilldown | n/a |
 | `/masterplan retro [<slug>]` | Generate or re-run a retrospective for a completed plan | n/a |
 | `/masterplan stats [--plan=<slug>] [--format=table\|json\|md] [--all-repos] [--since=<date>]` | Codex-vs-inline routing distribution + inline model breakdown + token totals across plans | n/a |
-| `/masterplan clean [--dry-run]` | Archive completed bundles, retire migrated legacy artifacts, and prune orphan state | n/a |
+| `/masterplan clean [--dry-run] [--delete] [--category=<name>] [--worktree=<path>]` | Archive completed bundles, retire migrated legacy artifacts, and prune orphan state; `--delete` forces deletion instead of archive; `--category` and `--worktree` scope the operation | n/a |
+| `/masterplan validate [--plan=<slug>]` | Read-only config + state schema validation; checks `.masterplan.yaml` against built-in defaults and (with `--plan`) validates that plan's `state.yml` | n/a |
 | `/masterplan next` | "What's next?" router — scans active plans and completed-plan follow-ups, then offers resume/follow-up/new-plan/status options via AUQ; never starts a brainstorm about the topic "next" | n/a |
 
 Topics literally named after a verb (`full`, `brainstorm`, `plan`, `execute`,
-`retro`, `import`, `doctor`, `status`, `stats`, `clean`, `next`) need a leading word, for example:
+`retro`, `import`, `doctor`, `status`, `stats`, `clean`, `validate`, `next`) need a leading word, for example:
 `/masterplan add brainstorm session timer`.
 
 ### Routing stats
@@ -467,6 +468,8 @@ managed cron block only; unrelated crontab entries are preserved.
 | `--fix` | Doctor: apply safe auto-fixes |
 | `--no-archive` | Retro: write `retro.md` without archiving the run state |
 | `--keep-worktree` | Completion: skip auto-remove of the run bundle's worktree on success |
+
+Under `--autonomy=loose`, the `plan_approval` gate auto-approves silently; `spec_approval` still halts (intentional — cheap to correct direction early).
 
 Common combinations:
 
@@ -605,7 +608,9 @@ and gamma for committing-task parallelism are deferred; see
 
 Each plan has a run bundle at `docs/masterplan/<slug>/`. `state.yml` records
 the worktree, branch, phase, current task, next action, autonomy, Codex settings,
-artifact paths, any pending structured gate, and any background dispatch marker.
+artifact paths, any pending structured gate, any background dispatch marker,
+worktree disposition (`removed_after_merge` / `kept_by_user` / `missing`), retro
+policy, and scope fingerprint (for overlap detection).
 `events.jsonl` records recent
 activity, with cache/telemetry/subagent/queue sidecars kept inside the same run
 directory. This bundle is the durable resume surface; conversation history is not.
@@ -624,7 +629,7 @@ for details and the upstream issue link.
 
 ## Project Status
 
-Current release: **v3.2.7**.
+Current release: **v5.0.1**. See [CHANGELOG.md](./CHANGELOG.md) for full release history.
 
 - Release history: [`CHANGELOG.md`](./CHANGELOG.md)
 - Contributor internals: [`docs/internals.md`](./docs/internals.md)
