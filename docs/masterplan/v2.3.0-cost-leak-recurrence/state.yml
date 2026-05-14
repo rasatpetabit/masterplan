@@ -2,7 +2,8 @@ schema_version: 2
 slug: v2.3.0-cost-leak-recurrence
 status: archived
 phase: archived
-worktree: /home/ras/dev/superpowers-masterplan
+worktree: ""
+worktree_disposition: missing
 branch: ""
 started: ""
 last_activity: 2026-05-08T18:46:34+00:00
@@ -15,6 +16,8 @@ codex_review: off
 compact_loop_recommended: false
 complexity: medium
 pending_gate: null
+stop_reason: null
+critical_error: null
 artifacts:
   spec: ""
   plan: docs/masterplan/v2.3.0-cost-leak-recurrence/plan.md
