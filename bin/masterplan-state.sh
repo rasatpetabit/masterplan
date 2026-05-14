@@ -623,40 +623,76 @@ def existing_new_runs():
     return runs
 
 
-def parse_state_legacy(state_path):
+def normalize_state_path(value):
+    value = str(value).strip().strip('"').strip("'")
+    if not value or value == "{}":
+        return ""
+    path = Path(value)
+    if path.is_absolute():
+        return rel(path)
+    return path.as_posix().lstrip("./")
+
+
+def parse_state_metadata(state_path):
     text = read_text(state_path)
-    if not text:
-        return {}
-    result = {}
-    in_block = False
+    result = {"slug": "", "legacy_paths": set()}
+    in_legacy = False
+    in_sidecars = False
     for line in text.splitlines():
-        if line.rstrip() == "legacy:":
-            in_block = True
+        m = re.match(r"^slug:\s*(.*)$", line)
+        if m:
+            result["slug"] = m.group(1).strip().strip('"').strip("'")
             continue
-        if in_block:
+        if line.rstrip() == "legacy:":
+            in_legacy = True
+            in_sidecars = False
+            continue
+        if in_legacy:
             if line and not line[0].isspace():
                 break
+            if line.startswith("  sidecars:"):
+                in_sidecars = True
+                continue
             m = re.match(r"^  (status|plan|spec|retro):\s*(.*)$", line)
             if m:
-                val = m.group(2).strip().strip('"').strip("'")
+                val = normalize_state_path(m.group(2))
                 if val:
-                    result[m.group(1)] = val
+                    result["legacy_paths"].add(val)
+                in_sidecars = False
+                continue
+            if in_sidecars:
+                m = re.match(r"^    [A-Za-z0-9_-]+:\s*(.*)$", line)
+                if m:
+                    val = normalize_state_path(m.group(1))
+                    if val:
+                        result["legacy_paths"].add(val)
+                    continue
+                if line.startswith("  ") and not line.startswith("    "):
+                    in_sidecars = False
     return result
 
 
 def build_dedup_indices(new_runs):
+    by_slug = dict(new_runs)
     by_canonical = {}
     by_legacy_path = {}
     for slug, record in new_runs.items():
-        by_canonical[canonical_slug(slug)] = record
+        by_canonical.setdefault(canonical_slug(slug), record)
         state_path = repo / record["state"]
-        for legacy_path in parse_state_legacy(state_path).values():
+        metadata = parse_state_metadata(state_path)
+        if metadata["slug"]:
+            by_slug.setdefault(metadata["slug"], record)
+            by_canonical.setdefault(canonical_slug(metadata["slug"]), record)
+        for legacy_path in metadata["legacy_paths"]:
             by_legacy_path[legacy_path] = record
-    return {"by_canonical": by_canonical, "by_legacy_path": by_legacy_path}
+    return {"by_slug": by_slug, "by_canonical": by_canonical, "by_legacy_path": by_legacy_path}
 
 
 def find_existing_match(record, indices):
-    canonical = canonical_slug(record["slug"])
+    slug = record["slug"]
+    if slug in indices["by_slug"]:
+        return ("exact slug match", indices["by_slug"][slug])
+    canonical = canonical_slug(slug)
     if canonical in indices["by_canonical"]:
         return ("canonical slug match", indices["by_canonical"][canonical])
     for legacy_key in ("status_path", "plan", "spec", "retro"):
@@ -665,6 +701,10 @@ def find_existing_match(record, indices):
             path_str = rel(path)
             if path_str in indices["by_legacy_path"]:
                 return ("legacy: pointer reference", indices["by_legacy_path"][path_str])
+    for path in record.get("sidecars", {}).values():
+        path_str = rel(path)
+        if path_str in indices["by_legacy_path"]:
+            return ("legacy: sidecar pointer reference", indices["by_legacy_path"][path_str])
     return None
 
 
