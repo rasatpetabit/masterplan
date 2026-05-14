@@ -224,6 +224,13 @@ def token_counts(rec):
         total_tokens = input_tokens + output_tokens + cache_read + cache_creation
     return input_tokens, output_tokens, total_tokens
 
+def bucket_model(model):
+    m = (model or 'unknown').lower()
+    if 'opus' in m: return 'opus'
+    if 'sonnet' in m: return 'sonnet'
+    if 'haiku' in m: return 'haiku'
+    return m
+
 def rollup_records(records, record_type=None):
     tokens_by_class = defaultdict(lambda: {'total_tokens':0,'duration_ms':0,'count':0,'input':0,'output':0})
     tokens_by_model = defaultdict(int)
@@ -243,7 +250,7 @@ def rollup_records(records, record_type=None):
         tokens_by_class[rc]['count']        += 1
         tokens_by_class[rc]['input']        += input_tokens
         tokens_by_class[rc]['output']       += output_tokens
-        m = (rec.get('model') or 'unknown').lower()
+        m = bucket_model(rec.get('model'))
         tokens_by_model[m] += total_tokens
         dispatches_by_model[m] += 1
     return {
@@ -275,7 +282,7 @@ def attribution_stats(records):
     }
 
 def is_opus_model(model):
-    return model == 'opus' or model.startswith('opus-')
+    return bool(re.search(r'\bopus\b', model or ''))
 
 def result_with_record_stats(base, stats):
     out = dict(base)
@@ -283,6 +290,8 @@ def result_with_record_stats(base, stats):
     out['tokens_by_model'] = stats['tokens_by_model']
     out['dispatches_by_model'] = stats['dispatches_by_model']
     out['subagents_records'] = stats['subagents_records']
+    out['routing'] = empty_routing()
+    out['inline_models'] = {}
     return out
 
 def analyze_plan(status_path):

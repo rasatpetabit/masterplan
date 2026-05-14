@@ -264,6 +264,7 @@ jq -nc \
 
 emit_parent_turns() {
   [[ -n "$transcript" && -r "$transcript" ]] || return 0
+  [[ -n "${subagents_file:-}" ]] || return 0
 
   jq -c \
     --arg plan "$slug" \
@@ -282,7 +283,7 @@ emit_parent_turns() {
         branch: $branch,
         cwd: $cwd
       }
-    ' "$transcript" >> "$out_file" 2>/dev/null
+    ' "$transcript" >> "$subagents_file" 2>/dev/null
 }
 
 # 8. Subagent dispatch capture (v2.3.0+; v2.4.0 reworked to agent_id dedup).
@@ -320,13 +321,13 @@ emit_parent_turns() {
 # - no transcript path resolved
 # - transcript file unreadable
 if [[ -n "$transcript" && -r "$transcript" ]]; then
-  emit_parent_turns
-
   if [[ "$is_bundle" -eq 1 ]]; then
     subagents_file="${plans_dir}/subagents.jsonl"
   else
     subagents_file="${plans_dir}/${slug}-subagents.jsonl"
   fi
+
+  emit_parent_turns
 
   # Build seen-agent-id set from existing subagents.jsonl (one ID per line).
   # Empty file or missing file -> empty set.
@@ -381,6 +382,7 @@ if [[ -n "$transcript" && -r "$transcript" ]]; then
       ) as $routing_class
     | {
         ts: (.timestamp // null),
+        type: "subagent_turn",
         plan: $plan,
         session_id: (.sessionId // $sid),
         tool_use_id: $tuid,
