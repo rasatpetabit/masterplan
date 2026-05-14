@@ -8,35 +8,42 @@ description: Use when the user invokes masterplan as a normal Codex chat request
 This skill is the Codex-visible entrypoint for Superpowers Masterplan. Its job is
 to load the canonical command prompt and adapt it to the current Codex runtime.
 
-## Source of truth
+## Source of truth (v5.0 lazy-load layout)
 
-`commands/masterplan.md` is the behavior source of truth, but Codex-hosted
-runs must load it by targeted section reads. Do not read the whole command file
-unless the user is editing/auditing the masterplan implementation itself.
+As of v5.0, `commands/masterplan.md` is a thin router (≤20 KB; enforced by
+doctor check #36). Per-phase behavior lives in `parts/step-{0,a,b,c}.md`,
+doctor lives in `parts/doctor.md`, import lives in `parts/import.md`, and
+cross-cutting contracts live under `parts/contracts/`. Codex-hosted runs
+should load the router first, then load only the phase file the router
+dispatches to. Do not pre-read all phase files.
 
-Resolve the command file in this order:
+Resolve the router and phase files in this order:
 
-1. `../../commands/masterplan.md` relative to this `SKILL.md` file.
-2. `$PWD/commands/masterplan.md` when running inside the plugin repo.
-3. `/home/ras/dev/superpowers-masterplan/commands/masterplan.md`.
-4. `$HOME/.codex/.tmp/marketplaces/rasatpetabit-superpowers-masterplan/commands/masterplan.md`.
-5. `$HOME/.claude/plugins/marketplaces/rasatpetabit-superpowers-masterplan/commands/masterplan.md`.
+1. `../../commands/masterplan.md` and `../../parts/` relative to this `SKILL.md` file.
+2. `$PWD/commands/masterplan.md` and `$PWD/parts/` when running inside the plugin repo.
+3. `/home/ras/dev/superpowers-masterplan/commands/masterplan.md` (+ sibling `parts/`).
+4. `$HOME/.codex/.tmp/marketplaces/rasatpetabit-superpowers-masterplan/commands/masterplan.md` (+ sibling `parts/`).
+5. `$HOME/.claude/plugins/marketplaces/rasatpetabit-superpowers-masterplan/commands/masterplan.md` (+ sibling `parts/`).
 6. `$HOME/.claude/commands/masterplan.md`.
 
 If none exists, say the local masterplan command file is missing and stop before
 inventing behavior.
 
-For ordinary runtime invocations, first locate headings with `rg -n '^### |^## '`
-and then read only the sections needed for the requested verb:
+For ordinary runtime invocations, load the router (`commands/masterplan.md`)
+and dispatch by verb to the right phase file:
 
-- Always read the Step 0 / Codex host suppression rules and command-specific
-  cross-cutting rules.
-- Bare `/masterplan` and "what next/status" requests read only Step M, Step N,
-  Step S, and state-model snippets needed to render the next gate/status.
-- Resume/execute requests read Step C plus the current run's `state.yml` and the
-  specific current task block from `plan.md`.
-- Brainstorm/plan/import/doctor/clean/retro requests read only their named
-  sections plus the shared gate rules.
+- Bare `/masterplan` and `status` / `next`: router only — Step M / Step N /
+  Step S live inline in `parts/step-0.md`.
+- `brainstorm` / `plan` / `full`: load `parts/step-0.md` then `parts/step-b.md`
+  (and `parts/step-a.md` for spec-pick).
+- `execute` / `--resume=<path>`: load `parts/step-0.md` then `parts/step-c.md`
+  plus the current run's `state.yml` and the specific current task block from
+  `plan.md`.
+- `doctor`: load `parts/doctor.md` (36 checks — v5.0 added #32–#36 covering
+  200-char scalar cap (#32), projection mode (#33), plan.index staleness
+  (#34), plan-format conformance (#35), router byte ceiling (#36)).
+- `import`: load `parts/import.md`.
+- `retro`: load `parts/step-c.md` (Step R subroutine).
 
 In Codex, prefer summary-first inventory (`rg --files docs/masterplan` plus
 targeted `state.yml` reads) before opening plan/spec artifacts. Avoid
