@@ -1006,6 +1006,64 @@ check_taskcreate_gate() {
   return "${fail}"
 }
 
+check_cc3_trampoline() {
+  local fail=0
+  grep -q 'CC-3-trampoline' commands/masterplan.md || { echo "FAIL: CC-3-trampoline missing from router"; fail=1; }
+  grep -q 'CC-3-trampoline' parts/step-0.md       || { echo "FAIL: CC-3-trampoline missing from step-0"; fail=1; }
+  [ $fail -eq 0 ] && echo "CC-3-trampoline: PASS"
+  return $fail
+}
+
+check_cd9_coverage() {
+  local fail=0
+  if ! grep -r -l 'CD-9' parts/ 2>/dev/null | head -1 > /dev/null; then
+    echo "WARN: CD-9 not referenced in any parts/* file"
+  fi
+  # Sample check: parts/step-c.md should reference CD-9 (canonical writer)
+  grep -q 'CD-9' parts/step-c.md 2>/dev/null || { echo "WARN: step-c.md does not reference CD-9"; fail=1; }
+  [ $fail -eq 0 ] && echo "CD-9 coverage: PASS" || echo "CD-9 coverage: WARN"
+  return 0
+}
+
+check_dispatch_sites() {
+  local fail=0
+  if ! grep -q 'DISPATCH-SITE: step-c.md' parts/step-c.md 2>/dev/null; then
+    echo "FAIL: DISPATCH-SITE: step-c.md tags missing from step-c.md"; fail=1
+  fi
+  # Negative: router must NOT carry dispatch-site tags (no dispatch happens in router)
+  if grep -q 'DISPATCH-SITE:' commands/masterplan.md 2>/dev/null; then
+    echo "FAIL: router has DISPATCH-SITE tag (should be in phase files only)"; fail=1
+  fi
+  [ $fail -eq 0 ] && echo "DISPATCH-SITE: PASS"
+  return $fail
+}
+
+check_sentinel_v4_refs() {
+  # No file in parts/ should reference v4 monolith line numbers
+  if grep -r -E 'commands/masterplan\.md:[0-9]+' parts/ 2>/dev/null; then
+    echo "FAIL: parts/* contains v4 monolith line-number reference"
+    return 1
+  fi
+  echo "sentinel (no v4 refs): PASS"
+}
+
+check_plan_format() {
+  # delegate to doctor check #35 logic
+  local fail=0
+  for plan in docs/masterplan/*/plan.md; do
+    grep -E '^### Task [0-9]+' "$plan" | while read -r task_heading; do
+      :  # check #35 already walks tasks; here we just confirm one task per bundle has markers
+    done
+    if grep -q -F '**Spec:**' "$plan" && grep -q -F '**Verify:**' "$plan"; then
+      :
+    else
+      echo "FAIL: $plan missing v5 plan-format markers"; fail=1
+    fi
+  done
+  [ $fail -eq 0 ] && echo "plan-format: PASS"
+  return $fail
+}
+
 # ---------------------------------------------------------------------------------
 # Run
 # ---------------------------------------------------------------------------------
@@ -1019,6 +1077,11 @@ check_taskcreate_gate() {
 [[ "${RUN_LOOP_FIRST}" -eq 1 ]] && check_loop_first_contract
 [[ "${RUN_BRIEF_STYLE}" -eq 1 ]] && check_brief_style
 [[ "${RUN_TASKCREATE_GATE}" -eq 1 ]] && check_taskcreate_gate
+check_cc3_trampoline || EXIT=1
+check_cd9_coverage
+check_dispatch_sites || EXIT=1
+check_sentinel_v4_refs || EXIT=1
+check_plan_format || EXIT=1
 
 if [[ "${EXIT}" -eq 0 ]]; then
   echo "✓ self-host audit clean"
