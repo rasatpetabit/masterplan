@@ -7,6 +7,156 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.0.0] — 2026-05-13 — Lazy-loaded phase prompts (router/parts split + 5 new doctor checks)
+
+**Breaking architectural reorganization.** `commands/masterplan.md` is no longer
+a 341 KB monolith loaded in full on every invocation. v5.0.0 splits the
+orchestrator into a thin router (7.9 KB / 97 lines) plus per-phase prompt files
+under `parts/` that are loaded lazily by verb. Wave dispatch sites in
+phase files now scope the orchestrator's working context to only the prompt
+text needed for the current phase, eliminating the chronic context-pressure
+issue documented across v4.0–v4.2.
+
+No `state.yml` schema bump. Existing run bundles resume unchanged. Existing
+plans authored under v4.x continue to execute. Plans authored without v5
+plan-format markers (`**Spec:**` / `**Verify:**`) surface as warnings on
+doctor check #35 — intentional drift signal, not a regression.
+
+Run bundle for this work: `docs/masterplan/v5-lazy-phase-prompts/`.
+
+### Added
+
+- **Router + parts/ lazy-load layout (T1–T20).** `commands/masterplan.md`
+  becomes a 97-line router that dispatches by verb to the right phase file.
+  New `parts/` tree: `step-0.md` (M/N/S inline + bootstrap, 320 lines),
+  `step-a.md` (spec-pick, 59), `step-b.md` (brainstorm/plan, 376),
+  `step-c.md` (execute, 723), `doctor.md` (all 36 doctor checks, 560),
+  `import.md` (import verb, 131), `codex-host.md` (host suppression rules,
+  9.4 KB), and `contracts/` (cross-cutting: agent-dispatch, cd-rules,
+  run-bundle, taskcreate-projection). Documentation moves to `docs/`:
+  `verbs.md` cheat sheet, `config-schema.md` schema reference.
+- **Doctor check #32 — `scalar_cap_enforcement` (Error, write-time).**
+  Validates that no scalar field in `state.yml` exceeds 200 characters at
+  write time. Overflow content must be redirected to `handoff.md`,
+  `blockers.md`, or `overflow.md` with a pointer stored in `state.yml`.
+  Closes the v4.x failure mode where multi-page free-text leaked into
+  `current_task` / `blocker` / `handoff` scalars and bloated the resume
+  context to multi-MB sizes.
+- **Doctor check #33 — `projection_mode` (Warning, repo-scoped).** Verifies
+  the host's TaskCreate projection mode matches its declared environment
+  (Claude Code: projection on; Codex: projection no-op). Catches drift
+  between actual behavior and the `codex_host_suppressed` gate.
+- **Doctor check #34 — `plan_index_staleness` (Warning, run-scoped).**
+  Compares `state.yml plan.index` against `plan.md` task headings; reports
+  when the index is out of sync after manual plan edits. Built on top of
+  the new `bin/masterplan-state.sh build-index` subcommand.
+- **Doctor check #35 — `plan_format_conformance` (Warning, run-scoped).**
+  Validates that each task block in `plan.md` carries the v5 plan-format
+  markers (`**Spec:**` / `**Verify:**` / `**Files:**`, plus optional
+  `**Parallel-group:**` / `**Codex:**`). Pre-v5 plans authored without
+  these markers will surface as warnings — by design, not a regression.
+- **Doctor check #36 — `router_byte_ceiling` (Error, repo-scoped).** Hard
+  ceiling of 20 KB on `commands/masterplan.md`. The router must stay thin;
+  growth past the ceiling is a regression toward the v4.x monolith.
+  Current size at release: 7.9 KB (40% of the ceiling).
+- **`bin/masterplan-state.sh build-index` (T21).** Generates the
+  `plan.index` projection from `plan.md` headings + body markers. Idempotent;
+  diff-clean re-runs on unchanged input. Used by doctor #34.
+- **`bin/masterplan-state.sh migrate-state` (T22).** Migrates `state.yml`
+  documents between schema versions. Currently a no-op for v3→v3 (no schema
+  bump in v5.0.0), but in place for future schema evolution. Named
+  `migrate-state` rather than bare `migrate` to avoid collision with the
+  separately-named `migrate-plan`.
+- **`bin/masterplan-state.sh migrate-plan` (T23).** Converts pre-v5 `plan.md`
+  files to v5 plan-format by injecting `**Spec:**` / `**Verify:**` /
+  `**Files:**` markers at task boundaries. Best-effort — surfaces tasks
+  where automated injection would be lossy, leaves them for manual edit.
+- **200-character scalar cap enforcement at `write_state()` (T24).** Step C's
+  state-writer path now validates every scalar against the 200-char cap
+  before persisting. Overflow content must be redirected to a sibling
+  artifact file (`handoff.md` / `blockers.md` / `overflow.md`) with a
+  pointer stored in `state.yml`. Surface for doctor #32 to detect drift.
+- **`parent_turn` telemetry records (T25).** The Stop hook
+  (`hooks/masterplan-telemetry.sh`) now emits separate `parent_turn` records
+  (orchestrator decisions) and `subagent_turn` records (dispatched
+  subagents) to `subagents.jsonl`, both tagged with a `type:` field.
+  Enables clean parent-vs-subagent attribution in routing rollups.
+- **`bin/masterplan-routing-stats.sh --parent` (T26).** New flag splits the
+  rollup output into two attribution sections: parent-only and subagent-only.
+  Model labels are bucketed (e.g. `claude-opus-4-7` → `opus`) for display
+  normalization. Per-section `codex_calls` no longer bleed across sections.
+- **Self-host audit phase-file checks (T27).** Five new checks in
+  `bin/masterplan-self-host-audit.sh`: `check_cc3_trampoline` (anchor in
+  router + step-0), `check_cd9_coverage` (CD-9 references across parts/),
+  `check_dispatch_sites` (DISPATCH-SITE tag scoping — must live in parts/,
+  not router), `check_sentinel_v4_refs` (grep for orphan v4 monolith
+  line-number references), and `check_plan_format` (delegates to doctor #35
+  surface). The plan-format check intentionally surfaces failures on pre-v5
+  plan.md files; that's the check working as designed.
+
+### Changed
+
+- **`skills/masterplan/SKILL.md`** rewritten for the v5.0 lazy-load layout.
+  "Source of truth" section now describes the router-plus-parts dispatch
+  model and lists verb→phase-file mapping. Doctor checks #32–#36 documented
+  with one-line descriptions.
+- **`docs/internals.md`** expanded to enumerate the `parts/` tree, document
+  v5 doctor checks #32–#36 in §10, and update "when adding a check" guidance
+  to point at `parts/doctor.md` (v5.0+ authoritative location).
+- **Manifest versions** bumped 4.2.1 → 5.0.0:
+  `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json` (root +
+  nested), `.codex-plugin/plugin.json`. `.agents/plugins/marketplace.json`
+  remains exempt (no `version` field by schema, per doctor #30).
+
+### Migration
+
+- **No `state.yml` schema bump.** Existing run bundles resume unchanged.
+- **Existing plans without v5 plan-format markers** continue to execute, but
+  surface as warnings on doctor check #35 and the new self-host audit
+  `check_plan_format`. To convert in place, run
+  `bin/masterplan-state.sh migrate-plan <path-to-plan.md>`; review the
+  output for tasks flagged as lossy and complete the marker injection
+  manually.
+- **Custom forks that patched the v4.x `commands/masterplan.md` monolith**
+  will need to re-port their patches against the appropriate `parts/`
+  phase file. The router is intentionally thin and unlikely to be the
+  right merge target for most patches.
+
+### Verification
+
+- `wc -l commands/masterplan.md` → 97 lines (was ~2150 pre-v5).
+- `stat -c %s commands/masterplan.md` → 7,975 bytes (40% of the 20,480-byte
+  doctor #36 ceiling).
+- `bash -n bin/masterplan-state.sh bin/masterplan-routing-stats.sh
+  bin/masterplan-self-host-audit.sh hooks/masterplan-telemetry.sh` all
+  pass.
+- T27 self-host audit (`bin/masterplan-self-host-audit.sh`) executes the
+  five new phase-file checks. Audit currently exits 1 due to the
+  plan-format check flagging legacy plan.md files (auto-compact-nudge-fixes,
+  v4-lifecycle-redesign, etc.) — that's the check working as designed.
+  AUDIT-OK fires for the surface-presence assertions.
+- **Status at tag time:** cold-load smoke test (T33), v4→v5 migration smoke
+  against a fixture (T34), and a full verification gates pass (T32) are
+  the final remaining items in the v5.0 plan. If any of those surface a
+  blocker, a v5.0.1 patch will land the corrective change before broader
+  rollout.
+
+### Notes
+
+- The router byte ceiling (#36) is the most important regression guard for
+  v5.0+. If a future change wants to add inline orchestration logic to
+  `commands/masterplan.md`, the right answer is almost always to push it
+  into a `parts/` phase file or a `parts/contracts/` cross-cutting file.
+  Doctor #36 is an Error, not a Warning, by deliberate design.
+- The `parent_turn` / `subagent_turn` split in telemetry is a prerequisite
+  for future per-role cost attribution and for the routing-stats
+  `--parent` flag. The split is purely additive — pre-v5 consumers reading
+  `subagents.jsonl` without filtering on `type:` will see both record kinds
+  interleaved; the field is safe to ignore.
+- The `migrate-plan` subcommand is best-effort and surfaces lossy
+  conversions rather than guessing. It is not part of any automatic
+  upgrade path; plans must be migrated explicitly.
+
 ## [4.2.1] — 2026-05-13 — Doctor checks #30 + #31 (cross-manifest version drift + per-autonomy gate consistency)
 
 Two new doctor checks plus a drive-by self-documenting comment. Both checks
