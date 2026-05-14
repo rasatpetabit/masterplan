@@ -66,7 +66,8 @@ superpowers-masterplan/
 │   ├── step-a.md                   # spec/plan picker
 │   ├── step-b.md                   # brainstorm + plan (Step B0/B1/B2/B3)
 │   ├── step-c.md                   # execute + retro (Step C / Step R)
-│   ├── doctor.md                   # all 36 doctor checks (#1-#36)
+│   ├── doctor.md                   # all 38 doctor checks (#1-#38)
+│   ├── failure-classes.md          # versioned anomaly-class taxonomy (v5.1.0+)
 │   ├── import.md                   # legacy migration (Step I)
 │   ├── codex-host.md               # Codex-host runtime adaptations
 │   └── contracts/                  # cross-cutting reference (cd-rules, agent-dispatch, taskcreate-projection, run-bundle)
@@ -716,11 +717,111 @@ jq -s '
 
 Use the result to evaluate whether parallel-group annotations are being authored AND exercised. Non-zero `wave_turns` is a candidate trigger for the deferred Slice β/γ revisit (per [Section 12](#12-design-decisions--deferred-items)).
 
+### Failure-instrumentation framework (v5.1.0+)
+
+The Stop hook's Section 9 detects orchestrator anomalies at end-of-turn and files
+GitHub issues per occurrence against `rasatpetabit/superpowers-masterplan` (or a
+configured override). The framework is the response to "you ship random fixes
+without data" — failures become structured records first, and fixes are designed
+from the accumulated record.
+
+**Taxonomy (versioned in `parts/failure-classes.md`).** Six initial classes:
+
+| Class | Trigger |
+|:------|:--------|
+| `silent-stop-after-skill` | A `<masterplan-trace skill-return …>` breadcrumb fires but no subsequent step/state-write/gate breadcrumb appears before turn end. |
+| `unexpected-halt` | `state.yml#pending_gate.id` is set but the matching `<masterplan-trace gate=fire id=…>` did not emit AND autonomy/halt configuration says auto-proceed was expected. |
+| `state-mutation-dropped` | `phase ∈ {planning, executing, importing, brainstorming}`, substantive turn (skill-invoke or completed tasks), but no `state-write field=phase` breadcrumb and no `pending_gate`. |
+| `orphan-pending-gate` | `pending_gate.id` set; no `AskUserQuestion` tool_use in transcript tail. |
+| `step-trace-gap` | `step=X phase=in` emitted but no matching `step=X phase=out` before turn end. |
+| `verification-failure-uncited` | `events.jsonl` tail has `verify_*` with `result: failed` AND the same turn wrote a phase-forward without remediation. |
+
+**Breadcrumb stream.** The orchestrator emits structured markers in its visible
+output (in `parts/step-0.md` through `parts/step-c.md` + `parts/import.md` +
+`parts/doctor.md`) at step boundaries, skill invocations, gate fires, and state
+writes:
+
+```
+<masterplan-trace step=b2 phase=in verb=plan halt_mode=post-plan autonomy=loose>
+<masterplan-trace step=b2 phase=out next=b3 reason=success>
+<masterplan-trace skill-invoke name=writing-plans args=spec=<path>>
+<masterplan-trace skill-return name=writing-plans expected-next-step=b2-re-engagement>
+<masterplan-trace gate=fire id=plan_closeout auq-options=4>
+<masterplan-trace state-write field=phase from=planning to=plan_gate>
+```
+
+These are additive — no existing behavior changes. They survive context
+compaction (visible turn output, not internal reasoning) and are the input
+substrate for every detector.
+
+**Signature semantics.** Each detection computes a stable SHA1 over
+`<class>|<step>|<verb>|<halt_mode>|<autonomy>|<skill_or_gate>`. The first 12
+hex chars get embedded in the issue title prefix `[auto:<sig12>]`, so dedup
+queries are plain `gh issue list --search "in:title [auto:<sig12>]"` — no
+custom label scheme needed. Same shape → same signature; different inputs →
+different signatures.
+
+**Dedup, recurrence, regression.**
+
+1. **No match** → create a new issue with labels `auto-filed` + `class/<class>`.
+2. **Match exists and open** → comment with the new record (recurrence log).
+3. **Match exists and closed** → reopen with a regression comment. This is the
+   single most important signal: the analyzer's recurrence-after-fix histogram
+   says whether earlier fixes actually held.
+
+**Local-first persistence.** The canonical record lives in
+`<run-dir>/anomalies.jsonl` (always written, gh failures never lose data). On
+any `gh` failure (rate limit, auth lapse, network), the record is duplicated
+to `<run-dir>/anomalies-pending-upload.jsonl` and drained later by
+`bin/masterplan-anomaly-flush.sh`. The local file is the source of truth;
+GitHub is a mirror.
+
+**Configuration (`.masterplan.yaml`).** All three knobs default to safe values
+when the file is absent.
+
+```yaml
+failure_reporting:
+  repo: rasatpetabit/superpowers-masterplan
+  enabled: true
+  dry_run: false           # true → write local records, skip gh
+```
+
+**Analyzer recipes (`bin/masterplan-failure-analyze.sh`).** Queries GitHub for
+all `auto-filed`-labeled issues, parses signatures from titles, computes:
+
+- Frequency table by class
+- Recurrence-after-fix histogram (which fixes broke their own coverage)
+- Open-time-to-close median per class
+- Per-verb / per-step breakdown
+- Same-day co-occurrence pairs (suggests shared root cause)
+
+Output: markdown to stdout AND a dated snapshot at
+`docs/failure-analysis/<YYYY-MM-DD>.md`. Diff between snapshots tracks whether
+the system is improving over time.
+
+**Smoke test (`bin/masterplan-anomaly-smoke.sh`).** Synthetic transcripts +
+mocked `gh` exercise all six classes, dedup, regression-reopen, dry-run mode.
+Eleven assertions; must pass before every plugin release. Run-isolated via
+`$HOME=$tmp/fake-home` and `PATH=$tmp/fake-bin:$PATH` so it never touches the
+real Claude Code session log or real GitHub.
+
+**Defenses against silent framework failure.** Per-detector exceptions are
+trapped via `set +e` shells and logged to
+`~/.claude/projects/-home-ras-dev-superpowers-masterplan/hook-errors.log` —
+the rest of the telemetry path is unaffected. Section 9 is additive: removing
+it leaves the original telemetry hook untouched.
+
+**Doctor check #38** (`anomaly-file-has-records-since-last-archive`) surfaces
+a warning when `<run-dir>/anomalies.jsonl` or `anomalies-pending-upload.jsonl`
+contains records, so users get a periodic nudge to run the analyzer or flush
+pending uploads. Report-only.
+
 ### Hook portability notes
 
 - Linux smoke-tested. macOS portable-by-construction (uses `head -n1` instead of GNU `find -quit`; uses `stat -c '%Y' || stat -f '%m'` dual form instead of GNU `find -printf`). Not smoke-tested on macOS.
 - Hook bails silently if `jq` is not installed (presence check at startup).
 - Defensive bail: hook exits 0 in any session not on a /masterplan-managed plan branch (matches branch frontmatter).
+- Failure-instrumentation framework requires `gh` for issue filing; without it, local `anomalies.jsonl` writes succeed and the pending-upload queue grows until `bin/masterplan-anomaly-flush.sh` is run.
 
 ---
 

@@ -9,6 +9,14 @@
 
 ## Step A — List + pick (across worktrees)
 
+**Entry breadcrumb.** Emit on first line of this step (per Step 0 §Breadcrumb emission contract):
+
+```
+<masterplan-trace step=step-a phase=in verb={requested_verb} halt_mode={halt_mode} autonomy={autonomy}>
+```
+
+When step A fires AskUserQuestion calls in step 5, step 6 "Start fresh" prompt, step 7 verb-explicit override, or the spec-without-plan variant's step 4/5, emit `<masterplan-trace gate=fire id=step-a-pick auq-options=<n>>` immediately before each AskUserQuestion call. Step A's AUQs are routing prompts, not planning/execution gates — but the breadcrumb still lets the analyzer correlate AUQ counts with verb distribution.
+
 0. **`step_m_plans_cache` short-circuit.** If `step_m_plans_cache` is populated (i.e., this is a resume-first ambiguous case from Step M or a "Resume in-flight" pick from the empty-state menu), skip steps 1–4 and use the cached list directly. Jump to step 5. The cache holds the same `[{path, frontmatter, parse_error?}]` shape that step 4 produces.
 1. Enumerate all worktrees of the current repo from `git_state.worktrees` (cached in Step 0). Parse into `(worktree_path, branch)` tuples. Include the current worktree.
 2. **Worktree-count short-circuit.** If more than 20 worktrees exist, surface a one-line warning and switch to a faster mode: scan only the current worktree plus any worktree with a `state.yml` or legacy status file modified in the last 14 days. Issue the per-worktree `find <worktree> \( -path '*/docs/masterplan/*/state.yml' -o -path '*/docs/superpowers/plans/*-status.md' \) -mtime -14` calls as **one parallel Bash batch**, not sequentially. Per CD-2, do not auto-prune worktrees — just narrow the scan.

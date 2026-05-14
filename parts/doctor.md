@@ -1,6 +1,14 @@
-# Doctor — Self-Host Checks (#1 .. #36)
+# Doctor — Self-Host Checks (#1 .. #38)
 
-Invoked via `/masterplan doctor [--fix]`. Loaded by the router only when verb == doctor. Checks #32–#36 added in Wave C.
+Invoked via `/masterplan doctor [--fix]`. Loaded by the router only when verb == doctor. Checks #32–#36 added in Wave C. Check #38 added in v5.1.0 (failure-instrumentation framework).
+
+**Entry breadcrumb.** Emit on first line of this step (per Step 0 §Breadcrumb emission contract):
+
+```
+<masterplan-trace step=doctor phase=in verb=doctor halt_mode=none autonomy={autonomy}>
+```
+
+Doctor fires `<masterplan-trace gate=fire id=doctor-finding auq-options=<n>>` immediately before each `AskUserQuestion` raised by an interactive check (#28 completed-plan-without-retro, #23 opus-on-bounded, etc.). The exit breadcrumb fires when Doctor returns or closes the turn per CC-3-trampoline.
 
 Triggered by `/masterplan doctor [--fix]`. Lints all masterplan state across all worktrees of the current repo.
 
@@ -76,6 +84,7 @@ For each worktree, run all checks. Report findings grouped by worktree → check
 | 34 | **plan.index.json staleness** — `plan_hash` in `state.yml` or `plan.index.json` doesn't match current `plan.md` sha256. | Warning | Report-only |
 | 35 | **Plan-format conformance (v5.0 markers)** — every task heading in `plan.md` must be followed by `**Spec:**` and `**Verify:**` markers within 30 lines. | Warning | Report-only |
 | 36 | **parts/step-*.md sanity + router ceiling** — `commands/masterplan.md` ≤20480 bytes; all phase files exist; CC-3-trampoline and DISPATCH-SITE tags present. | Warning | Report-only |
+| 38 | **Anomaly file has records since last archive** — `<run-dir>/anomalies.jsonl` (or sidecar `anomalies-pending-upload.jsonl`) is non-empty for any in-progress or recently-archived bundle, indicating failure-instrumentation framework detected ≥1 orchestrator anomaly that has not been reviewed. | Warning | Report each anomaly record: class, signature, last-fired timestamp. If `anomalies-pending-upload.jsonl` is non-empty, suggest `bin/masterplan-anomaly-flush.sh` to drain to GitHub. Report-only otherwise. |
 
 ---
 
@@ -558,3 +567,38 @@ grep -q 'DISPATCH-SITE: step-c.md' parts/step-c.md 2>/dev/null || \
   { echo "WARN DISPATCH-SITE: step-c.md tags missing from step-c.md"; fail=1; }
 [ $fail -eq 0 ] && echo "Check #36: PASS" || echo "Check #36: WARN"
 ```
+
+---
+
+## Check #38: Anomaly file has records since last archive
+
+**Severity:** Warning
+**Action:** Report records + suggest flush; Report-only otherwise
+
+Scans each run bundle directory under `<config.runs_path>/` for the failure-instrumentation framework's anomaly sidecars (`anomalies.jsonl` and `anomalies-pending-upload.jsonl`). A non-empty `anomalies.jsonl` means the Stop hook's Section 9 detector recorded ≥1 orchestrator anomaly that has not yet been reviewed; a non-empty `anomalies-pending-upload.jsonl` means GitHub auto-filing failed (rate limit, auth lapse, network) and the records are queued for retry.
+
+Each anomaly record carries: `ts`, `anomaly_class`, `signature`, `plan_slug`, `session_id`, `host`, `invocation`, `expected_behavior`, `observed_behavior`, `state_yml_at_failure`, `events_tail`, `step_trace_in_turn`, `config_snapshot`, `plugin_version`. The detector framework lives in `parts/failure-classes.md`.
+
+```bash
+fail=0
+for state_yml in docs/masterplan/*/state.yml; do
+  run_dir="$(dirname "$state_yml")"
+  slug="$(basename "$run_dir")"
+  anom="$run_dir/anomalies.jsonl"
+  pending="$run_dir/anomalies-pending-upload.jsonl"
+  if [ -s "$anom" ]; then
+    count="$(wc -l < "$anom")"
+    classes="$(jq -r '.anomaly_class' "$anom" 2>/dev/null | sort -u | tr '\n' ',' | sed 's/,$//')"
+    echo "WARN $slug: $count anomaly record(s) in $anom (classes: $classes)"
+    fail=1
+  fi
+  if [ -s "$pending" ]; then
+    pcount="$(wc -l < "$pending")"
+    echo "WARN $slug: $pcount record(s) queued in $pending — run bin/masterplan-anomaly-flush.sh"
+    fail=1
+  fi
+done
+[ $fail -eq 0 ] && echo "Check #38: PASS" || echo "Check #38: WARN"
+```
+
+The check is **report-only** — anomaly records are durable evidence of orchestrator misbehavior that the user (or the failure analyzer at `bin/masterplan-failure-analyze.sh`) reviews. Doctor surfaces their presence; it does not silently archive or delete them.

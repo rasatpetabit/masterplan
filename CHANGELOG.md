@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.1.0] — 2026-05-14 — Failure-instrumentation framework
+
+### Added
+- **Failure-instrumentation framework** (`hooks/masterplan-telemetry.sh` Section 9, ~280 lines). Six anomaly classes auto-detected at end-of-turn from `<masterplan-trace …>` breadcrumbs + `state.yml` + `events.jsonl`: `silent-stop-after-skill`, `unexpected-halt`, `state-mutation-dropped`, `orphan-pending-gate`, `step-trace-gap`, `verification-failure-uncited`. Each detection writes a canonical record to `<run-dir>/anomalies.jsonl` first, then files/comments/reopens a GitHub issue against `rasatpetabit/superpowers-masterplan` (or configured override) with stable SHA1 signatures and dedup. Local-first persistence: gh failures land in `<run-dir>/anomalies-pending-upload.jsonl` for later drain. Configurable per `.masterplan.yaml` `failure_reporting.{repo, enabled, dry_run}`.
+- **Versioned anomaly taxonomy** (`parts/failure-classes.md`): per-class symptom, signals, detector pseudo-shell, and signature inputs. Adding a class requires extending this file + the hook detector dispatch.
+- **Step-boundary breadcrumb stream** in `parts/step-0.md`, `step-a.md`, `step-b.md`, `step-c.md`, `import.md`, `doctor.md` — additive `<masterplan-trace step=… phase=in|out>`, `skill-invoke`, `skill-return`, `gate=fire`, `state-write` emit points at well-defined control flow boundaries. Visible turn output (not internal reasoning) so they survive context compaction.
+- **`bin/masterplan-failure-analyze.sh`** — over-time analysis script. Queries `auto-filed`-labeled issues from the destination repo, computes frequency by class, recurrence-after-fix histogram (regression signal — the single most important metric for evaluating whether fixes actually held), open-time-to-close median per class, per-verb / per-step breakdown, same-day co-occurrence pairs. Output: markdown to stdout + dated snapshot at `docs/failure-analysis/<YYYY-MM-DD>.md`.
+- **`bin/masterplan-anomaly-flush.sh`** — drain pending-upload queue. Walks every run bundle under `docs/masterplan/`, retries each pending record via `gh`. Records that fail again are preserved in place for the next run.
+- **`bin/masterplan-anomaly-smoke.sh`** — synthetic-transcript smoke test. Eleven assertions across all six classes + signature stability + dedup + regression reopen + dry-run mode. Mock `gh` via PATH stub; isolated `$HOME=/tmp/...` so it never touches the real Claude Code session log or real GitHub. Run before every release.
+- **Doctor Check #38** (`anomaly-file-has-records-since-last-archive`): warns when `<run-dir>/anomalies.jsonl` or `anomalies-pending-upload.jsonl` contains records, nudging users to run the analyzer or flush pending uploads. Report-only.
+- **`docs/failure-analysis/`** directory for analyzer snapshots (with `.gitkeep`).
+- **`docs/internals.md` § 9 Failure-instrumentation framework subsection** — design overview, anomaly classes table, signature semantics, dedup/regression branches, analyzer recipes, smoke-test workflow, configuration knobs.
+
+### Why this release ships before any bug fix
+
+Per direct user feedback: "even the most basic of `/loop /masterplan next`s fail in spectacularly catastrophic ways, which shows me you've done absolutely nothing to test this at all." The fix wasn't to design more fixes — it was to stop shipping fixes designed on the spot and start designing them from accumulated failure data. This release ships the instrumentation; subsequent releases will fix specific anomaly classes identified by the analyzer.
+
+### Known followups
+
+- Redaction layer for sensitive paths/slugs in issue bodies (Phase 2). The default destination `rasatpetabit/superpowers-masterplan` is private to the user; redaction becomes necessary only if a future deployment files to a public repo.
+- Codex-host parity for failure detection. Section 9 is currently Claude Code Stop-hook only.
+
 ## [5.0.1] — 2026-05-13 — Doctor #31 v5 fix + bundle maintenance
 
 ### Fixed

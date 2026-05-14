@@ -12,6 +12,14 @@
 
 ## Step B — Kickoff (worktree decision → brainstorm → plan)
 
+**Entry breadcrumb.** Emit on first line of this part, before the Step B0 worktree-decision logic (per Step 0 §Breadcrumb emission contract):
+
+```
+<masterplan-trace step=step-b0 phase=in verb={resolved-verb} halt_mode={halt_mode} autonomy={autonomy}>
+```
+
+Subsequent step entry breadcrumbs (step-b1, step-b2, step-b3) are emitted at the top of each respective section below. Each fires when the orchestrator transitions into that sub-step's first instruction.
+
 ### Step B0 — Worktree decision (do this BEFORE invoking brainstorming)
 
 The run bundle will be committed inside whichever worktree you're in when brainstorming runs. Decide first. **Apply CD-2.**
@@ -156,9 +164,15 @@ Then proceed to **Step B2** (writing-plans). Step B1 is skipped because the spec
 
 ### Step B1 — Brainstorm
 
+**Entry breadcrumb.** Emit on first line of this section:
+
+```
+<masterplan-trace step=step-b1 phase=in verb={resolved-verb} halt_mode={halt_mode} autonomy={autonomy}>
+```
+
 **Intent anchor (CRITICAL — prevents broad/audit-shaped prompts from turning into unconstrained feature ideation).** Before invoking `superpowers:brainstorming`, /masterplan owns a short repository-grounding pass. Brainstorming is still interactive, but it is briefed with durable intent, scope, and verification limits instead of receiving only the raw topic string.
 
-1. Update `state.yml`: `phase: brainstorming`, `next_action: resolve brainstorm intent anchor`, `pending_gate: null`; append `brainstorm_started` to `events.jsonl`.
+1. Update `state.yml`: `phase: brainstorming`, `next_action: resolve brainstorm intent anchor`, `pending_gate: null`; append `brainstorm_started` to `events.jsonl`. **Emit before this state write:** `<masterplan-trace state-write field=phase from=<old-phase> to=brainstorming>`.
 
 2. **Dispatch the intent-anchor read pass to a Haiku subagent.** The orchestrator MUST NOT inline-Read AGENTS.md, CLAUDE.md, WORKLOG.md, or recent state bundles at this step — large logs (observed: 81KB / 861-line WORKLOG.md) blow the Opus parent context before any real work has started. Use the Agent tool with `subagent_type: "general-purpose"` (or `"Explore"` if available in the host) and `model: "haiku"`. Pass this bounded brief:
 
@@ -255,7 +269,9 @@ brainstorm_anchor:
 - Cover these areas before approaches: problem statement, affected user/audience, desired outcome, success criteria, current workflow, scope boundaries, constraints, data/interfaces, risks and failure modes, verification path, rollout/acceptance path, and remaining unknowns. Mark genuinely irrelevant areas `not-applicable` in the brief/spec rather than silently skipping them.
 - Keep questions structured and concrete per CD-9. Batch only tightly related choices; otherwise ask sequentially so the next question can use the user's previous answer.
 
-**Invoke brainstorming with the anchor.** Invoke `superpowers:brainstorming` with the original topic plus a compact anchor brief containing `mode`, `repo_role`, `yocto_ownership` when present, `in_scope_paths`, `out_of_scope_repos`, `evidence`, `verification_ceiling`, `interview_depth`, and any `gate_selection`. **Brainstorming is always interactive** — the `--autonomy` flag does not apply. The brief MUST instruct the skill to:
+**Invoke brainstorming with the anchor.** **Emit before the Skill invocation:** `<masterplan-trace skill-invoke name=brainstorming args=topic="<short-topic-summary>">`.
+
+Invoke `superpowers:brainstorming` with the original topic plus a compact anchor brief containing `mode`, `repo_role`, `yocto_ownership` when present, `in_scope_paths`, `out_of_scope_repos`, `evidence`, `verification_ceiling`, `interview_depth`, and any `gate_selection`. **Brainstorming is always interactive** — the `--autonomy` flag does not apply. The brief MUST instruct the skill to:
 
 - Include a short `Intent Anchor` / `Scope Boundary` section in `<config.runs_path>/<slug>/spec.md`.
 - Complete the Problem Interview Contract before proposing approaches or writing the spec.
@@ -264,14 +280,16 @@ brainstorm_anchor:
 - Carry the `verification_ceiling` into the spec so execution does not promise unavailable proof.
 - For Codex hosts, avoid designs that depend on native multi-select UI or arbitrary free-form ID entry; offer concrete structured gates instead.
 
-**Re-engagement gate (CRITICAL — fixes a class of bug where the orchestrator stops silently when brainstorming hits its "User reviews written spec" gate, leaving the session unable to continue after compaction).** After brainstorming returns control to /masterplan, the orchestrator MUST verify state and explicitly drive the next step — never end the turn waiting on the user's free-text response from brainstorming's gate:
+**Re-engagement gate (CRITICAL — fixes a class of bug where the orchestrator stops silently when brainstorming hits its "User reviews written spec" gate, leaving the session unable to continue after compaction).** **Emit on the first line of this gate's instructions, BEFORE the spec-existence check below:** `<masterplan-trace skill-return name=brainstorming expected-next-step=step-b1-re-engagement-gate>`.
+
+After brainstorming returns control to /masterplan, the orchestrator MUST verify state and explicitly drive the next step — never end the turn waiting on the user's free-text response from brainstorming's gate:
 
 1. Check whether the expected spec file exists at `<config.runs_path>/<slug>/spec.md`. If the upstream brainstorming skill writes to a legacy path (`docs/superpowers/specs/YYYY-MM-DD-<slug>-design.md`), copy it into `<config.runs_path>/<slug>/spec.md`, record the old path under `legacy.spec`, and continue against the bundled spec.
 2. **If spec missing:** brainstorming was aborted or failed. Persist `pending_gate` with `id: brainstorm_missing`, `phase: brainstorming`, the exact options below, then surface `AskUserQuestion("Brainstorming did not complete (no spec at <path>). Re-invoke brainstorming with the same topic / Refine the topic and re-invoke / Abort kickoff")`.
 3. Check that the spec contains an `Intent Anchor` or `Scope Boundary` section. If missing, update `state.yml`: `pending_gate.id: brainstorm_anchor_missing`, `phase: brainstorming`, then surface `AskUserQuestion("Spec is missing the brainstorm intent anchor. What now?", options=["Re-run brainstorming with the saved anchor (Recommended)", "Patch the spec anchor now", "Abort kickoff"])`.
 4. **If spec exists** (the normal case): update `state.yml`: `phase: spec_gate`, `artifacts.spec: <config.runs_path>/<slug>/spec.md`, `next_action: approve spec for planning`; append `spec_written` to `events.jsonl`, then consult `halt_mode`.
-   - **`halt_mode == none`** (existing kickoff path, unchanged): <!-- Intentionally diverges from the L1360 plan_approval condition under loose autonomy: spec_approval still fires under `--autonomy=loose`, while plan_approval auto-approves. See CHANGELOG v4.2.0 for the rationale and doctor check #31 for the consistency audit. --> under `--autonomy != full`, persist `pending_gate` with `id: spec_approval` and then surface `AskUserQuestion("Spec written at <path>. Ready for writing-plans?", options=[Approve and run writing-plans (Recommended) / Open spec to review first then ping me / Request changes — describe what to change / Abort kickoff])`. Under `--autonomy=full`: auto-approve, clear `pending_gate`, and proceed to Step B2 silently.
-   - **`halt_mode == post-brainstorm`** (new, fires when invoked via `/masterplan brainstorm <topic>`): persist `pending_gate` with `id: brainstorm_closeout`, set `stop_reason: question`, and then surface `AskUserQuestion("Spec written at <path>. What next?", options=["Done — close out this run (Recommended)", "Continue to plan now — run B2+B3 as if /masterplan plan --from-spec=<path> (the B0 worktree decision from earlier this session still holds; B0a is not re-run)", "Open spec to review before deciding — then ping me", "Re-run brainstorming to refine"])`.
+   - **`halt_mode == none`** (existing kickoff path, unchanged): <!-- Intentionally diverges from the L1360 plan_approval condition under loose autonomy: spec_approval still fires under `--autonomy=loose`, while plan_approval auto-approves. See CHANGELOG v4.2.0 for the rationale and doctor check #31 for the consistency audit. --> under `--autonomy != full`, persist `pending_gate` with `id: spec_approval`, then **emit** `<masterplan-trace gate=fire id=spec_approval auq-options=4>` and surface `AskUserQuestion("Spec written at <path>. Ready for writing-plans?", options=[Approve and run writing-plans (Recommended) / Open spec to review first then ping me / Request changes — describe what to change / Abort kickoff])`. Under `--autonomy=full`: auto-approve, clear `pending_gate`, and proceed to Step B2 silently.
+   - **`halt_mode == post-brainstorm`** (new, fires when invoked via `/masterplan brainstorm <topic>`): persist `pending_gate` with `id: brainstorm_closeout`, set `stop_reason: question`, then **emit** `<masterplan-trace gate=fire id=brainstorm_closeout auq-options=4>` and surface `AskUserQuestion("Spec written at <path>. What next?", options=["Done — close out this run (Recommended)", "Continue to plan now — run B2+B3 as if /masterplan plan --from-spec=<path> (the B0 worktree decision from earlier this session still holds; B0a is not re-run)", "Open spec to review before deciding — then ping me", "Re-run brainstorming to refine"])`.
      - "Done" → clear `pending_gate`, leave `stop_reason: question`, set `phase: spec_gate`, append `gate_closed`, → CLOSE-TURN. The next bare `/masterplan` or Codex `Use masterplan` invocation resumes from `state.yml` even though no plan exists yet.
      - "Continue to plan now" → flip in-session `halt_mode` to `post-plan` and proceed to Step B2. The spec is reused.
      - "Open spec" → → CLOSE-TURN; user re-invokes whatever they want next.
@@ -281,9 +299,15 @@ brainstorm_anchor:
 
 ### Step B2 — Plan
 
+**Entry breadcrumb.** Emit on first line of this section:
+
+```
+<masterplan-trace step=step-b2 phase=in verb={resolved-verb} halt_mode={halt_mode} autonomy={autonomy}>
+```
+
 **Dispatch guard.** If `halt_mode == post-brainstorm` *at this point*, skip Step B2 and Step B3 entirely — the B1 close-out gate already ended the turn. (B1's "Continue to plan now" option flips `halt_mode` to `post-plan` BEFORE control returns here, so the guard correctly does not fire on the flip case; B2+B3 run with their `post-plan` variants.)
 
-After Step B1's gate confirms approval, update `state.yml` to `phase: planning`, clear `pending_gate`, append `planning_started`, then invoke `superpowers:writing-plans` against `<config.runs_path>/<slug>/spec.md`. It should produce `<config.runs_path>/<slug>/plan.md`. If the upstream writing skill writes to a legacy path (`docs/superpowers/plans/YYYY-MM-DD-<slug>.md`), copy it into `<config.runs_path>/<slug>/plan.md`, record the old path under `legacy.plan`, and continue against the bundled plan. Brief plan-writing with **CD-1 + CD-6**, plus:
+After Step B1's gate confirms approval, update `state.yml` to `phase: planning`, clear `pending_gate`, append `planning_started`, then invoke `superpowers:writing-plans` against `<config.runs_path>/<slug>/spec.md`. **Emit before the state write:** `<masterplan-trace state-write field=phase from=<old-phase> to=planning>`. **Emit before the Skill invocation:** `<masterplan-trace skill-invoke name=writing-plans args=spec=<config.runs_path>/<slug>/spec.md>`. It should produce `<config.runs_path>/<slug>/plan.md`. If the upstream writing skill writes to a legacy path (`docs/superpowers/plans/YYYY-MM-DD-<slug>.md`), copy it into `<config.runs_path>/<slug>/plan.md`, record the old path under `legacy.plan`, and continue against the bundled plan. Brief plan-writing with **CD-1 + CD-6**, plus:
 
 > When you judge a task as obviously well-suited for Codex (≤ 3 files, unambiguous, has known verification commands, no design judgment) or obviously unsuited (requires understanding broader system context, design tradeoffs, or files outside the stated scope), add a `**Codex:** ok` or `**Codex:** no` line in the per-task `**Files:**` block. See the Plan annotations subsection in Step C 3a for the exact syntax. The orchestrator's eligibility cache parses these as overrides on the heuristic checklist.
 
@@ -320,13 +344,21 @@ After Step B1's gate confirms approval, update `state.yml` to `phase: planning`,
 
 Plans without annotations behave exactly as before (heuristic-only). Annotations are an authoring aid; they're never required.
 
-**Re-engagement gate** (same silent-stop bug pattern as Step B1's gate — never end the turn silently waiting on a free-text question). After writing-plans returns:
+**Re-engagement gate** (same silent-stop bug pattern as Step B1's gate — never end the turn silently waiting on a free-text question). **Emit on the first line of this gate's instructions, BEFORE the plan-existence check below:** `<masterplan-trace skill-return name=writing-plans expected-next-step=step-b2-re-engagement-gate>`.
+
+After writing-plans returns:
 
 1. Check whether the expected plan file exists at `<config.runs_path>/<slug>/plan.md`.
 2. **If plan missing:** writing-plans was aborted or failed. Persist `pending_gate` with `id: plan_missing`, then surface `AskUserQuestion("writing-plans did not complete (no plan at <path>). Re-invoke against the existing spec / Edit the spec and re-invoke / Abort kickoff")`.
-3. **If plan exists** (the normal case): update `state.yml`: `phase: plan_gate`, `artifacts.plan: <config.runs_path>/<slug>/plan.md`, `current_task` = first task from the plan, `next_action` = first step of that task; append `plan_written`; proceed to Step B3 silently. B3's existing AskUserQuestion handles the final plan-approval gate before Step C, so no separate B2 gate is needed in the success case.
+3. **If plan exists** (the normal case): update `state.yml`: `phase: plan_gate`, `artifacts.plan: <config.runs_path>/<slug>/plan.md`, `current_task` = first task from the plan, `next_action` = first step of that task; append `plan_written`; proceed to Step B3 silently. **Emit before the state write:** `<masterplan-trace state-write field=phase from=planning to=plan_gate>`. B3's existing AskUserQuestion handles the final plan-approval gate before Step C, so no separate B2 gate is needed in the success case.
 
 ### Step B3 — State update + approval
+
+**Entry breadcrumb.** Emit on first line of this section:
+
+```
+<masterplan-trace step=step-b3 phase=in verb={resolved-verb} halt_mode={halt_mode} autonomy={autonomy}>
+```
 
 **Complexity kickoff prompt.** Fires once at kickoff (`/masterplan full <topic>`, `/masterplan plan <topic>`, `/masterplan brainstorm <topic>`) when:
 - `--complexity` is NOT on this turn's CLI args, AND
@@ -363,9 +395,9 @@ Then flip `compact_loop_recommended: true` in `state.yml`. Whether or not the us
 
 **Close-out gate.** Consult `halt_mode`:
 
-- **`halt_mode == none`** (kickoff path): if `--autonomy == gated`, persist `pending_gate` with `id: plan_approval`, then present a one-paragraph plan summary and the path to the plan file via `AskUserQuestion` with options "Start execution / Open plan to review / Cancel". Wait for approval. If `--autonomy in {loose, full}`: clear `pending_gate` (no-op if never opened), skip approval, append `plan_approval_auto_accepted` to `events.jsonl` with `{autonomy: "<loose|full>"}`, and proceed to **Step C** with the new `state.yml` path. **Behavior change (v4.2.0):** loose autonomy used to halt here; it now auto-approves like full. Users who want the old halt for last-look-before-execute should run kickoff with `--autonomy=gated` explicitly. Note that L1286 spec_approval is intentionally NOT changed — it still halts under loose for design-direction-correction safety.
+- **`halt_mode == none`** (kickoff path): if `--autonomy == gated`, persist `pending_gate` with `id: plan_approval`, then **emit** `<masterplan-trace gate=fire id=plan_approval auq-options=3>` and present a one-paragraph plan summary and the path to the plan file via `AskUserQuestion` with options "Start execution / Open plan to review / Cancel". Wait for approval. If `--autonomy in {loose, full}`: clear `pending_gate` (no-op if never opened), skip approval, append `plan_approval_auto_accepted` to `events.jsonl` with `{autonomy: "<loose|full>"}`, and proceed to **Step C** with the new `state.yml` path. **Behavior change (v4.2.0):** loose autonomy used to halt here; it now auto-approves like full. Users who want the old halt for last-look-before-execute should run kickoff with `--autonomy=gated` explicitly. Note that L1286 spec_approval is intentionally NOT changed — it still halts under loose for design-direction-correction safety.
 
-- **`halt_mode == post-plan`** (new, fires when invoked via `/masterplan plan <topic>`, `/masterplan plan --from-spec=<path>`, Step A's spec-without-plan variant's pick, or via B1's "Continue to plan now" flip from a `brainstorm` invocation): persist `pending_gate` with `id: plan_closeout`, set `stop_reason: question`, then surface `AskUserQuestion("Plan written at <path>. State file at <state-path>. What next?", options=["Done — resume later with <manual-resume-command> (Recommended)", "Start execution now — flip halt_mode to none and proceed to Step C", "Open plan to review before deciding", "Discard plan + state file (spec kept)"])`. Resolve `<manual-resume-command>` by host: Claude Code uses `/masterplan execute <state-path>`; Codex uses `normal Codex chat: Use masterplan execute <state-path>`.
+- **`halt_mode == post-plan`** (new, fires when invoked via `/masterplan plan <topic>`, `/masterplan plan --from-spec=<path>`, Step A's spec-without-plan variant's pick, or via B1's "Continue to plan now" flip from a `brainstorm` invocation): persist `pending_gate` with `id: plan_closeout`, set `stop_reason: question`, then **emit** `<masterplan-trace gate=fire id=plan_closeout auq-options=4>` and surface `AskUserQuestion("Plan written at <path>. State file at <state-path>. What next?", options=["Done — resume later with <manual-resume-command> (Recommended)", "Start execution now — flip halt_mode to none and proceed to Step C", "Open plan to review before deciding", "Discard plan + state file (spec kept)"])`. Resolve `<manual-resume-command>` by host: Claude Code uses `/masterplan execute <state-path>`; Codex uses `normal Codex chat: Use masterplan execute <state-path>`.
   - "Done" → clear `pending_gate`, leave `stop_reason: question`, → CLOSE-TURN. `state.yml` persists with `status: in-progress`, `phase: plan_gate`, and `current_task` set to the first task. The next bare `/masterplan` or Codex `Use masterplan` invocation resumes from this state without requiring the operator to remember the command.
   - "Start execution now" → flip in-session `halt_mode` to `none` and proceed to **Step C**.
   - "Open plan" → clear `pending_gate`, leave `stop_reason: question`, → CLOSE-TURN. The next bare `/masterplan` or Codex `Use masterplan` invocation resumes from this state.

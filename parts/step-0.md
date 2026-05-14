@@ -37,6 +37,43 @@ Truncate `args` at 120 chars with `…`; total sentinel length ≤ 200 chars. Th
 
 **Why:** when `/masterplan` is invoked after `/reload-plugins` and the harness has not re-registered the slash command, the orchestrator's turn produces zero output (observed: optoe-ng 2026-05-07 23:19, sequence `/compact` → `/plugin` → `/reload-plugins` → `/masterplan` → empty turn). The sentinel makes "did `/masterplan` run?" trivially observable. If the user sees no `→ /masterplan` line, they know the harness ate the invocation — re-register via `/plugin` (uninstall + reinstall) and re-invoke. CC-3-TRAMPOLINE does not apply to the sentinel; it's an unconditional first-line render.
 
+### Breadcrumb emission contract (always-on; failure-instrumentation framework)
+
+Every step part (Step 0, A, B0/B1/B2/B3, C, I1..I4, D, R, S, M, N, CL, T) MUST emit structured `<masterplan-trace …>` markers at well-defined control points. These markers feed the failure-detection hook (`hooks/masterplan-telemetry.sh` Section 9) and the over-time analyzer (`bin/masterplan-failure-analyze.sh`). The full taxonomy + signature semantics + auto-filing logic live in `parts/failure-classes.md`.
+
+**Required emission points and shapes:**
+
+| Marker | When |
+|---|---|
+| `<masterplan-trace step=<id> phase=in verb=<verb> halt_mode=<halt> autonomy=<aut>>` | First line of any step part entry — emit BEFORE any other tool call or prose for that step |
+| `<masterplan-trace step=<id> phase=out next=<next-step-or-CLOSE-TURN> reason=<one-word-reason>>` | Last line before dispatching to next step OR before `→ CLOSE-TURN` |
+| `<masterplan-trace skill-invoke name=<skill> args=<short-arg-summary>>` | Just before invoking `Skill` for `writing-plans` / `brainstorming` / `subagent-driven-development` / `executing-plans` |
+| `<masterplan-trace skill-return name=<skill> expected-next-step=<id>>` | First line after the skill returns (the orchestrator's resume point) |
+| `<masterplan-trace gate=fire id=<gate-id> auq-options=<count>>` | Just before any AskUserQuestion that constitutes a planning/execution gate (B1 close-out, B2 re-engagement, B3 close-out, completion gate, blocker re-engagement) |
+| `<masterplan-trace state-write field=<field> from=<old> to=<new>>` | Immediately before any state.yml mutation that changes `phase`, `current_task`, `pending_gate`, or `status` |
+
+**Conventions:**
+
+- `<id>` values: `step-0`, `step-a`, `step-b0`, `step-b1`, `step-b2`, `step-b3`, `step-c`, `step-i1`..`step-i4`, `step-d`, `step-r`, `step-s`, `step-m`, `step-n`, `step-cl`, `step-t`.
+- `<verb>` values: `plan`, `next`, `resume`, `status`, `import`, `doctor`, `retro`, `clean`, `validate`, `stats`, `full`, `brainstorm`, `execute`, or `unknown`.
+- `<halt>` values: `none`, `post-brainstorm`, `post-plan`.
+- `<aut>` values: `gated`, `loose`, `full`.
+- `<reason>` values: `success`, `gate`, `error`, `halt`, `compaction`, `degraded`, `routed`, `cd-violation`.
+- Markers are **plain stdout** — NOT inside tool calls, NOT inside code fences for display, NOT inside AskUserQuestion previews. They appear in the user-visible turn output, one per line.
+- Markers are **additive**: they never change orchestrator behavior, only make it observable.
+
+**Why:** the framework auto-files GitHub issues against `rasatpetabit/superpowers-masterplan` whenever the Stop hook detects an anomaly (silent stop after skill return, unexpected halt, dropped state mutation, orphan pending gate, step-trace gap, uncited verification failure). Issues are deduped by stable SHA1 signatures derived from these markers' content. Without the markers, the detector cannot reconstruct what the orchestrator was doing when a turn ended — failures become invisible.
+
+Step parts below contain the specific Emit lines at each required point. Where this prompt says **Emit:** followed by a `<masterplan-trace …>` shape, that's an instruction to render the substituted marker verbatim in the turn output.
+
+**Step 0 entry breadcrumb.** Emit immediately after the invocation sentinel (and the compaction notice, if rendered):
+
+```
+<masterplan-trace step=step-0 phase=in verb={resolved-verb} halt_mode={halt_mode} autonomy={autonomy}>
+```
+
+If `resolved-verb` is not yet known (i.e., before verb routing), use `unknown` as a placeholder. `halt_mode` and `autonomy` come from config + flag merge (already complete by this point).
+
 ### Config loading (always runs first)
 
 1. Read `~/.masterplan.yaml` if it exists.
@@ -308,8 +345,9 @@ Every turn-close in this orchestrator MUST route through the following sequence.
 
 **Sequence (execute in order, skip silently if condition not met):**
 1. **CC-3 check** — if `subagents_this_turn` is non-empty, emit the plain-text summary block per §Per-turn dispatch tracking and summary (in `parts/contracts/agent-dispatch.md`). Emit BEFORE any AskUserQuestion or terminal render. Zero-dispatch turns: skip silently.
-2. **Pre-close action** (site-specific) — any commit, state write, or ledger append that the calling site mandates BEFORE yielding (e.g., Step C step 5's ledger append, Step B3 "Discard"'s git-rm commit). These are documented at the call site.
-3. **Closer** — fire the AskUserQuestion, ScheduleWakeup, or terminal render that ends the turn.
+2. **Exit breadcrumb** — emit `<masterplan-trace step=<current-step-id> phase=out next=<next-step-or-CLOSE-TURN> reason=<one-word-reason>>` per the Breadcrumb emission contract (§Breadcrumb emission contract). Always required; never skipped. The marker is plain stdout, one line, BEFORE any AskUserQuestion or terminal render.
+3. **Pre-close action** (site-specific) — any commit, state write, or ledger append that the calling site mandates BEFORE yielding (e.g., Step C step 5's ledger append, Step B3 "Discard"'s git-rm commit). These are documented at the call site.
+4. **Closer** — fire the AskUserQuestion, ScheduleWakeup, or terminal render that ends the turn.
 
 **Scope note:** CC-1 (compact-suggest) fires only before Step C step 5's ScheduleWakeup and is NOT part of this trampoline — it has its own inline position in Step C step 5. The CL5 timer-disclosure render is scoped to Step CL only and is NOT part of this trampoline. Adding new end-of-turn obligations: add them to this sequence, not to individual close sites.
 

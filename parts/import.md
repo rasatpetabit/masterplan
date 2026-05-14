@@ -9,6 +9,14 @@
 
 ## Step I — Import legacy artifacts
 
+**Entry breadcrumb.** Emit on first line of this step (per Step 0 §Breadcrumb emission contract):
+
+```
+<masterplan-trace step=import phase=in verb=import halt_mode=none autonomy={autonomy}>
+```
+
+Emit `<masterplan-trace gate=fire id=import-pick auq-options=<n>>` immediately before each `AskUserQuestion` fired by I2 (pick), I3.1 (slug collision), I3.5 fallback (rehydration), and I3.6 cruft prompts. The exit breadcrumb fires when Import returns or closes the turn per CC-3-trampoline.
+
 Triggered by `/masterplan import [args]`. Brings legacy planning artifacts under the masterplan run-bundle schema (`docs/masterplan/<slug>/state.yml` + bundled spec/plan/events), with completion-state inference so already-done work isn't redone.
 
 **Direct vs. discovery routing:** If `$ARGUMENTS` includes any of `--pr=<num>`, `--issue=<num>`, `--file=<path>`, `--branch=<name>`, skip discovery and jump to **Step I3** with that single candidate (Step I2 rank+pick is also skipped — the candidate is already determined). Otherwise run **Step I1**.

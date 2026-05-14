@@ -14,6 +14,14 @@
 
 ## Step C — Execute
 
+**Entry breadcrumb.** Emit on first line of this step (per Step 0 §Breadcrumb emission contract):
+
+```
+<masterplan-trace step=step-c phase=in verb={requested_verb} halt_mode={halt_mode} autonomy={autonomy}>
+```
+
+Where `{requested_verb}` is the verb parsed by Step 0 (`full`, `execute`, `resume`, etc.), `{halt_mode}` is the resolved halt mode (always `none` here — the dispatch guard below skips Step C for other values), and `{autonomy}` is the resolved autonomy (`gated`/`loose`/`full`). The exit breadcrumb (per CC-3-trampoline) fires when Step C returns or closes the turn.
+
 **Dispatch guard.** If `halt_mode != none`, skip Step C entirely — the B1 or B3 close-out gate already ended the turn. The only paths into Step C are: (a) `halt_mode == none` from kickoff or `execute`/`--resume=`; (b) the user explicitly flipped `halt_mode` to `none` via B3's "Start execution now" gate option. B3's gate is reached directly from `/masterplan plan` (and `plan --from-spec=`, Step A's spec-without-plan variant), or via `brainstorm` → B1's "Continue to plan now" → B2 → B3 (which still requires the user to pick "Start execution now" at B3 to enter Step C).
 
 **Rehydrate or reconcile TaskCreate projection (Claude Code only — split by session signature).** Before entering the task loop, if `codex_host_suppressed == false`, branch on the new `state.step_c_session_init_sha` field:
@@ -268,13 +276,34 @@ The touch is **NOT** applied outside Step C (brainstorm, plan, halt-gate, doctor
 
 After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for the wave per the wave-mode notes in those sub-steps. Then Step C step 5's wakeup-scheduling threshold uses wave count, not task count (a wave-end counts as ONE completion regardless of N).
 
-2. If `--no-subagents` is set: invoke `superpowers:executing-plans`. Otherwise: invoke `superpowers:subagent-driven-development`. Hand the invoked skill the plan path and the current task index. Brief the implementer subagent with **CD-1, CD-2, CD-3, CD-6** AND prepend the verbatim SDD model-passthrough preamble (defined in §Agent dispatch contract recursive-application — copy the fenced text block literally; do not paraphrase). The preamble's signature string `For every inner Task / Agent invocation you make` is what the audit script and downstream tools key on. This preamble is required because SDD's prompt-template files (`implementer-prompt.md`, `spec-reviewer-prompt.md`, `code-quality-reviewer-prompt.md`) are upstream and don't carry model parameters by default — without the override, the inner Task calls inherit the orchestrator's Opus and the wave's `model: "sonnet"` discipline doesn't propagate. (Wave-mode tasks bypass this step's serial dispatch — they were already dispatched in the wave assembly pre-pass above.)
+2. If `--no-subagents` is set: invoke `superpowers:executing-plans`. Otherwise: invoke `superpowers:subagent-driven-development`. Hand the invoked skill the plan path and the current task index.
+
+   **Emit skill-invoke breadcrumb** immediately before the `Skill` tool call (per Step 0 §Breadcrumb emission contract):
+
+   ```
+   <masterplan-trace skill-invoke name={subagent-driven-development|executing-plans} args=task=<idx>>
+   ```
+
+   **On skill return**, emit skill-return breadcrumb on the first orchestrator line of the post-skill assistant turn:
+
+   ```
+   <masterplan-trace skill-return name={subagent-driven-development|executing-plans} expected-next-step=step-c-4a-verify>
+   ```
+
+   The skill-return marker MUST appear before any other Step C work resumes; absence of this marker after a `Skill` tool result is the `silent-stop-after-skill` anomaly class.
+ Brief the implementer subagent with **CD-1, CD-2, CD-3, CD-6** AND prepend the verbatim SDD model-passthrough preamble (defined in §Agent dispatch contract recursive-application — copy the fenced text block literally; do not paraphrase). The preamble's signature string `For every inner Task / Agent invocation you make` is what the audit script and downstream tools key on. This preamble is required because SDD's prompt-template files (`implementer-prompt.md`, `spec-reviewer-prompt.md`, `code-quality-reviewer-prompt.md`) are upstream and don't carry model parameters by default — without the override, the inner Task calls inherit the orchestrator's Opus and the wave's `model: "sonnet"` discipline doesn't propagate. (Wave-mode tasks bypass this step's serial dispatch — they were already dispatched in the wave assembly pre-pass above.)
 3. Layer the autonomy policy on top of the invoked skill's per-task loop:
    - **`gated`** — before each task, call `AskUserQuestion(continue / skip-this-task / stop).` Honor the answer. **Routing decisions made via the eligibility cache (under `codex_routing == auto`) are honored silently** — the per-task question is NOT expanded with a Codex-override option, since the user pre-configured auto-routing and `events.jsonl` records every decision post-hoc. Users who want the legacy expanded prompt set `codex.confirm_auto_routing: true` in `.masterplan.yaml`; in that case the question expands to `(continue inline / continue via Codex / skip / stop)`. Under `codex_routing == manual`, do NOT expand here — Step 3a's per-task `AskUserQuestion` already handles routing.
    - **`loose`** — run autonomously. On a blocker, **apply CD-4** first; only after two rungs have failed, persist a blocker event and surface the **blocker re-engagement gate** below. Keep `status: in-progress` unless the user explicitly marks the condition as a critical error. Cite the rungs tried in the blocker event. Do NOT reschedule a wakeup unless the gate option selected is a scheduled continuation.
    - **`full`** — run autonomously, applying **CD-4** more aggressively before escalating: at least two ladder rungs, plus `superpowers:systematic-debugging` for test failures and spec reinterpretation cited in `events.jsonl`. Escalate to the **blocker re-engagement gate** only after the full ladder fails.
 
    **Blocker re-engagement gate (applies under all autonomy modes when a blocker surfaces).** Before closing the turn for an ordinary blocker, the orchestrator MUST persist `pending_gate`, set `stop_reason: question`, append `question_opened`, and surface `AskUserQuestion` so the user has a clear continuation path. Never just write a blocker event and end silently — the user wakes up later to a state update with no clear next move, the same UX the spec/plan-gate fix addressed. Concrete pattern (covers SDD's BLOCKED/NEEDS_CONTEXT escalations AND CD-4-exhausted gates):
+
+   **Emit gate breadcrumb** immediately before the AskUserQuestion call (per Step 0 §Breadcrumb emission contract):
+
+   ```
+   <masterplan-trace gate=fire id=blocker_reengagement auq-options=4>
+   ```
 
    ```
    AskUserQuestion(
@@ -545,7 +574,13 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
    - low: rotate when `events.jsonl` exceeds 50 entries; archive all but the most recent 25.
    - medium / high: rotate when log exceeds 100 entries; archive all but the most recent 50 (current behavior, unchanged).
 
-   **4d — State update (single-writer run-state update + archive-and-schedule).** Update `state.yml`: bump `last_activity` to the current ISO timestamp, set `current_task` to the next task name, set `next_action` to the next task's first step, and append a task-completion event to `events.jsonl` that includes 1–3 lines of relevant verification output (per **CD-8**), the routing+review tags, and `progress_kind`. For non-trivial decisions made during the task, add dedicated events per **CD-7**.
+   **4d — State update (single-writer run-state update + archive-and-schedule).** Emit state-write breadcrumb immediately BEFORE the write (per Step 0 §Breadcrumb emission contract):
+
+   ```
+   <masterplan-trace state-write field=current_task from=<previous-task> to=<next-task>>
+   ```
+
+   Update `state.yml`: bump `last_activity` to the current ISO timestamp, set `current_task` to the next task name, set `next_action` to the next task's first step, and append a task-completion event to `events.jsonl` that includes 1–3 lines of relevant verification output (per **CD-8**), the routing+review tags, and `progress_kind`. For non-trivial decisions made during the task, add dedicated events per **CD-7**.
 
    `progress_kind` is mandatory on every Step C close. Values:
    - `product_change` — runtime/source/docs behavior requested by the user changed.
@@ -589,7 +624,13 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
    | `ScheduleWakeup` unavailable AND `resolved_autonomy == full` | → re-enter Step C step 2 with `current_task` = next not-done task. Do NOT close turn. Same-turn dispatch. |
    | `ScheduleWakeup` unavailable AND `resolved_autonomy ∈ {gated, loose}` | → fire **per-task gate** (below) |
 
-   **Per-task gate (autonomy ∈ {gated, loose}, no /loop).** Surface:
+   **Per-task gate (autonomy ∈ {gated, loose}, no /loop).** Emit gate breadcrumb immediately before the AskUserQuestion (per Step 0 §Breadcrumb emission contract):
+
+   ```
+   <masterplan-trace gate=fire id=per_task auq-options=3>
+   ```
+
+   Surface:
    ```
    AskUserQuestion(
      question="Task <T-idx> (<task name>) complete. Continue to <next-task name>?",
@@ -642,7 +683,11 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
 
    **6a — Pre-completion dirty check, then mark complete.** Before writing `status: complete`, run live `git status --porcelain` in the plan's recorded worktree. Classify output into task-scope changes (files touched by the plan, run-bundle state, generated artifacts that belong to this plan) and unrelated dirty user work.
 
-   - If task-scope changes are dirty/uncommitted, do NOT mark complete. Under `<run-dir>/state.lock`, keep `status: in-progress`, set `phase: finish_gate`, set `current_task: "finish branch"`, set `next_action: commit remaining task-scope work before completion`, set `pending_gate` for the finish choice, set `stop_reason: question`, append `completion_dirty_gate`, and surface:
+   - If task-scope changes are dirty/uncommitted, do NOT mark complete. Under `<run-dir>/state.lock`, keep `status: in-progress`, set `phase: finish_gate`, set `current_task: "finish branch"`, set `next_action: commit remaining task-scope work before completion`, set `pending_gate` for the finish choice, set `stop_reason: question`, append `completion_dirty_gate`. Emit gate breadcrumb (per Step 0 §Breadcrumb emission contract):
+     ```
+     <masterplan-trace gate=fire id=completion_dirty auq-options=4>
+     ```
+     Then surface:
      ```
      AskUserQuestion(
        question="All plan tasks are done, but task-scope work is still uncommitted. What next?",
@@ -665,6 +710,12 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
    - `disposition: ok` → proceed to the `status: complete` write below.
    - `disposition: gate` with `reason: retro_missing` → do NOT write `status: complete`. Instead write `status: pending_retro`, `phase: pending_retro`, `pending_retro_attempts: 0`, `next_action: generate completion retro (pending)`, preserve all other completion fields, append `{"event":"completion_retro_gate_opened","ts":"...","run_dir":"<run-dir>"}` to `events.jsonl`. Then continue Step C step 6b (retro generation) — do NOT surface an AskUserQuestion at this point; let step 6b attempt generation first.
    - `disposition: abort` (unexpected state) → set `status: in-progress`, `phase: finish_gate`, append `{"event":"completion_guard_abort","reason":"<reason>"}`, surface `AskUserQuestion("Completion guard aborted for <slug>: <reason>. How to proceed?", options=["Inspect state.yml and retry (Recommended)", "Force complete with --no-retro flag", "Abort completion"])`.
+
+   Emit state-write breadcrumb immediately BEFORE the completion write (per Step 0 §Breadcrumb emission contract):
+
+   ```
+   <masterplan-trace state-write field=status from=in-progress to=complete>
+   ```
 
    Under `<run-dir>/state.lock`, set `status: complete`, `phase: complete`, `current_task: ""`, `next_action: none` unless pending `follow_ups` remain, `pending_gate: null`, `background: null`, `stop_reason: complete`, `critical_error: null`, and `last_activity: <now>`. Append a `plan_completed` event to `events.jsonl` with the final task count, final verification summary, completion SHA if available, the dirty-check summary, and `progress_kind: product_change | implementation_plan_created | verification` as appropriate. Commit this state update with subject `masterplan: complete <slug>` unless the same commit already contains the final task's state update. Do not reschedule.
 
@@ -703,7 +754,11 @@ No AskUserQuestion at this step — this honors the loose-autonomy contract. The
    - CD-2 safety: before staging archive moves, capture `git status --porcelain`. After moves, verify the only new changes are the expected archive moves/additions. If unrelated dirty files appear, abort cleanup, append `completion_cleanup_aborted`, and leave the run otherwise complete.
    - Idempotence: a second completion finalizer pass should report `completion cleanup: nothing to archive`.
 
-   **6d — Branch finish gate.** After 6a-6c, surface the existing branch-finish `AskUserQuestion`:
+   **6d — Branch finish gate.** After 6a-6c, emit gate breadcrumb (per Step 0 §Breadcrumb emission contract) then surface the existing branch-finish `AskUserQuestion`:
+
+   ```
+   <masterplan-trace gate=fire id=branch_finish auq-options=4>
+   ```
 
    ```
    AskUserQuestion(
