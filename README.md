@@ -609,7 +609,7 @@ and gamma for committing-task parallelism are deferred; see
 Each plan has a run bundle at `docs/masterplan/<slug>/`. `state.yml` records
 the worktree, branch, phase, current task, next action, autonomy, Codex settings,
 artifact paths, any pending structured gate, any background dispatch marker,
-worktree disposition (`removed_after_merge` / `kept_by_user` / `missing`), retro
+worktree disposition (`active` / `kept_by_user` / `removed_after_merge` / `missing`), retro
 policy, and scope fingerprint (for overlap detection).
 `events.jsonl` records recent
 activity, with cache/telemetry/subagent/queue sidecars kept inside the same run
