@@ -31,7 +31,7 @@ import_contract:
 artifacts:
   spec: docs/masterplan/masterplan-taskcreate-projection/spec.md
   plan: docs/masterplan/masterplan-taskcreate-projection/plan.md
-  retro: ""
+  retro: docs/masterplan/masterplan-taskcreate-projection/retro.md
   events: docs/masterplan/masterplan-taskcreate-projection/events.jsonl
   events_archive: ""
   eligibility_cache: ""
