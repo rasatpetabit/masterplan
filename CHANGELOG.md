@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.0.1] — 2026-05-13 — Doctor #31 v5 fix + bundle maintenance
+
+### Fixed
+- **Doctor check #31** (`per_autonomy_gate_condition_consistency`): update grep target from `commands/masterplan.md` to `parts/step-b.md` (gates moved during v5.0 lazy-load extraction); drop stale `L1286`/`L1360` line-number references from all three spec locations (parallelization preamble, check table row, check body).
+- **6 archived bundle `state.yml` files** had stale `worktree:` path (`/home/ras/dev/…`) from pre-migration home directory; `worktree_disposition: missing` was absent; `stop_reason`/`critical_error` fields missing. All six repaired: `auto-compact-nudge-fixes`, `cd-9-enforcement`, `complexity-levels`, `intra-plan-parallelism`, `subagent-execution-hardening`, `v2.3.0-cost-leak-recurrence`.
+
+### Added
+- **`docs/masterplan/masterplan-taskcreate-projection/`** run bundle: imported from legacy spec + plan (2026-05-12 P4 design artifacts). Status `completed`; implementation lives in `p4-suppression-fix` bundle. Deferred smoke test tracked in `p4-suppression-smoke`.
+
 ## [5.0.0] — 2026-05-13 — Lazy-loaded phase prompts (router/parts split + 5 new doctor checks)
 
 **Breaking architectural reorganization.** `commands/masterplan.md` is no longer
