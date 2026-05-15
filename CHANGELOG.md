@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.2.2] — 2026-05-15 — AUQ-guard softening: bash-input + classifier-denial escape hatches
+
+Targeted softening of the AUQ-guard Stop hook (`hooks/auq-guard.sh`) to suppress two false-positive dialog-cycle cases observed in real sessions:
+
+1. When the user runs a shell command directly via the harness's `!` prefix (the prior user message contains a `<bash-input>` or `<bash-stdout>` tag), the assistant's natural response is a free-text ack/recap — forcing an AUQ creates pointless choreography after work the user already performed.
+2. When the user's tool call was denied by the Claude Code auto-mode classifier ("denied by the Claude Code auto mode classifier" in the last `tool_result`), the natural recovery is free-text instructions ("run it via `!` or add a permission rule") — not another AUQ ceremony.
+
+### Changed
+
+- **`hooks/auq-guard.sh` — Escape hatch B** (~lines 67-74): bail when the most recent real user message contains `<bash-input>` or `<bash-stdout>`. Sequenced after the existing `<no-auq>` / `[oneshot]` hatch.
+- **`hooks/auq-guard.sh` — Escape hatch C** (~lines 76-95): scan the most recent `tool_result` content for the literal classifier-denial string and bail when present. Uses the same `jq` shape the existing turn-block walker uses, scoped to the current user turn.
+
+Both hatches preserve the substantive-turn gate and circuit breaker; they only short-circuit the violation-detection cascade for the two specific shapes named above. Smoke-verified with synthetic transcripts.
+
+### Notes
+
+- This is a hook-only patch: no orchestrator behavior changes, no doctor checks, no plan-bundle schema bumps. Existing in-flight runs are unaffected.
+- The deployed `~/.claude/hooks/auq-guard.sh` had already drifted ahead of the committed `hooks/auq-guard.sh`; this release also resyncs the in-repo copy to the deployed shape (substantive-turn gate, Mode C flat-ending detection, circuit breaker, JSON `decision: block` output, all prior iterative improvements).
+
+---
+
 ## [5.2.1] — 2026-05-15 — Doctor #39 false-positive watcher + README release-pin fix
 
 Follow-up to v5.2.0 driven by a real `/masterplan doctor` run that produced a misleading "Codex auth expired" warning despite `/codex:setup` reporting full health. Per `feedback_failures_drive_instrumentation_not_fixes`, the doctor check itself is not patched here — instead, the recurring-audit module gains a new continuous watcher that surfaces the false-positive shape so the analyzer can drive prioritization of a proper fix.
