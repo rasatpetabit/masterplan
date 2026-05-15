@@ -1,0 +1,4 @@
+{"ts":"2026-05-15T18:24:25Z","event":"smoke_observation","turn_n":1,"tools_called":["TaskCreate","TaskUpdate","Edit"],"reminder_fired":false,"preceding_state_write":true,"last_task_update_age_turns":0,"note":"post v4.1.1 priming via TaskCreate suite; 2 state.yml writes preceded; no harness system-reminder followed either Edit tool result"}
+{"ts":"2026-05-15T18:24:25Z","event":"smoke_task_1_done","note":"noop"}
+{"ts":"2026-05-15T18:24:44Z","event":"smoke_task_2_done","note":"noop"}
+{"ts":"2026-05-15T18:24:51Z","event":"smoke_task_3_done","note":"noop"}
