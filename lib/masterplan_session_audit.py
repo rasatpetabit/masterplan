@@ -70,6 +70,44 @@ ASSISTANT_MASTERPLAN_ACTIVITY_RE = re.compile(
     r")"
 )
 
+# --- Policy-regression watchers (radiant-watchful-dawn, Workstream B) -------
+PLAN_TASK_HEADING_RE = re.compile(r"(?im)^###\s+(?:Task|T\d+|Slice|Wave)\b")
+PLAN_CODEX_ANNOTATION_RE = re.compile(r"(?im)^\*\*Codex:\*\*\s+(?:ok|no)\b")
+PLAN_PARALLEL_GROUP_RE = re.compile(r"(?im)^\*\*parallel-group:\*\*\s*(\S+)")
+EVENT_CODEX_ROUTE_RE = re.compile(r"(?i)(?:routing→\[codex\]|\[codex\]|routed\s+to\s+codex)")
+EVENT_CODEX_INLINE_RE = re.compile(r"(?i)\[inline\]")
+EVENT_CODEX_PING_RE = re.compile(r"(?i)\bcodex_ping\b")
+EVENT_CODEX_DEGRADED_RE = re.compile(r"(?i)\bcodex\s+degraded\b")
+EVENT_CODEX_REVIEW_RE = re.compile(r"(?i)\bcodex\s+review\b")
+EVENT_VERIFY_KIND_RE = re.compile(r"(?i)\b(?:verification|verified|verify_[a-z_]+|test\b|lint\b|tests\s+pass|smoke\s+test)\b")
+EVENT_BRAINSTORM_ANCHOR_RE = re.compile(r"(?i)\bbrainstorm_anchor_resolved\b")
+EVENT_WAVE_DISPATCH_RE = re.compile(r"(?i)\b(?:wave_dispatch|dispatching\s+wave|wave_dispatched|wave_member_dispatched)\b")
+EVENT_CACHE_PINNED_RE = re.compile(r"(?i)\bcache_pinned_for_wave(?:\s*=\s*true|\b)")
+EVENT_PHASE_PLANNING_RE = re.compile(r"(?i)\bphase\s*[:=]\s*planning\b|phase_planning|transition.*planning")
+EVENT_PHASE_COMPLETE_RE = re.compile(r"(?i)\bphase\s*[:=]\s*complete\b|phase_complete|transition.*complete")
+AUQ_GUARD_BLOCK_RE = re.compile(r"AUQ guard blocked:\s*\S+")
+NO_AUQ_ESCAPE_RE = re.compile(r"(?i)<no-auq>|\[oneshot\]")
+FREE_TEXT_QUESTION_TAIL_RE = re.compile(r"\?\s*$")
+
+PENDING_GATE_STALENESS_HOURS = 24
+AUQ_GUARD_BLOCK_LIMIT = 5
+
+POLICY_REGRESSION_HARD_CODES = frozenset({
+    "codex_annotation_gap_on_high",
+    "codex_routing_configured_but_zero_dispatches",
+    "codex_review_configured_but_zero_invocations",
+    "missing_codex_ping_event",
+    "silent_codex_degradation",
+    "cc3_trampoline_skipped_after_subagents",
+    "cd3_verification_missing_on_complete",
+    "brainstorm_anchor_missing_before_planning",
+    "wave_dispatched_without_pin",
+    "parallel_eligible_but_serial_dispatched",
+})
+# Soft (local-only): codex_parallel_group_missing_on_high,
+# pending_gate_orphaned, cd9_free_text_question_at_close,
+# auq_guard_blocked_count_high, complexity_unset_fallthrough.
+
 
 @dataclass(frozen=True)
 class WarningItem:
@@ -101,6 +139,9 @@ class SessionStats:
     outcome_progress_markers: int = 0
     tool_counts: Counter = field(default_factory=Counter)
     command_roots: Counter = field(default_factory=Counter)
+    auq_guard_blocks: int = 0
+    cc3_skip_turns: int = 0
+    cd9_free_text_questions: int = 0
     warnings: list[WarningItem] = field(default_factory=list)
 
     def add_warning(self, code: str, text: str) -> None:
@@ -138,11 +179,31 @@ class PlanStats:
     plan_kind: str = ""
     next_action: str = ""
     current_task: str = ""
+    complexity: str = ""
+    complexity_source: str = ""
+    codex_routing: str = ""
+    codex_review: str = ""
+    pending_gate: str = ""
+    last_warning: str = ""
+    last_activity: str = ""
     follow_up_count: int = 0
     confirmed_gap_count: int = 0
     recent_meta_events: int = 0
     recent_outcome_events: int = 0
     event_count: int = 0
+    plan_task_count: int = 0
+    plan_codex_annotation_count: int = 0
+    plan_parallel_group_count: int = 0
+    plan_parallel_group_dup_count: int = 0
+    codex_route_event_count: int = 0
+    codex_review_event_count: int = 0
+    codex_ping_event_count: int = 0
+    codex_degraded_event_count: int = 0
+    verify_event_count: int = 0
+    brainstorm_anchor_event_count: int = 0
+    wave_dispatch_event_count: int = 0
+    cache_pin_event_count: int = 0
+    serial_dispatch_in_parallel_group: bool = False
     latest_ts: str = ""
     warnings: list[WarningItem] = field(default_factory=list)
 
@@ -649,11 +710,36 @@ def attachment_payload_bytes(att):
     return 0
 
 
+def _classify_claude_turn(content_list):
+    """Return (agent_dispatch, auq_use, final_text) for an assistant turn's content list."""
+    agent_dispatch = False
+    auq_use = False
+    final_text = ""
+    for item in content_list or []:
+        if not isinstance(item, dict):
+            continue
+        itype = item.get("type")
+        if itype == "tool_use":
+            name = str(item.get("name") or "")
+            if name in AGENT_TOOLS:
+                agent_dispatch = True
+            if name in QUESTION_TOOLS:
+                auq_use = True
+        elif itype == "text":
+            txt = str(item.get("text") or "")
+            if txt.strip():
+                final_text = txt
+    return agent_dispatch, auq_use, final_text
+
+
 def analyze_claude_file(path, cutoff):
     stats = SessionStats("claude", repo_from_claude_project(path), "", path.name)
     active = False
     session_id = ""
     cwd = ""
+    last_user_no_auq_escape = False
+    last_assistant_was_agent_dispatch = False
+    last_assistant_had_plain_text = False
     for rec in json_lines(path):
         stats.line_count += 1
         session_id = rec.get("sessionId") or session_id
@@ -677,15 +763,39 @@ def analyze_claude_file(path, cutoff):
             content = msg.get("content")
             role = msg.get("role")
             text = stringify_content(content)
+            if role == "user":
+                last_user_no_auq_escape = bool(NO_AUQ_ESCAPE_RE.search(text or ""))
+                if AUQ_GUARD_BLOCK_RE.search(text or ""):
+                    stats.auq_guard_blocks += 1
             if role in {"user", "assistant"} and has_masterplan_activity(text, role):
                 stats.masterplan_like = True
             if role == "assistant":
                 record_stop_signal(stats, classify_stop_text(text))
                 note_progress_markers(stats, text)
             if role == "assistant" and isinstance(content, list):
+                agent_dispatch, auq_use, final_text = _classify_claude_turn(content)
+                has_plain_text = bool(final_text.strip())
+                # CC-3 trampoline check: an Agent dispatch turn that lacks
+                # a plain-text summary block in the same turn is a CC-3 skip.
+                if agent_dispatch and not has_plain_text:
+                    stats.cc3_skip_turns += 1
+                # CD-9: substantive trailing question with no AUQ this turn
+                # and no <no-auq>/[oneshot] escape in the user's preceding msg.
+                if (
+                    has_plain_text
+                    and not auq_use
+                    and not last_user_no_auq_escape
+                    and FREE_TEXT_QUESTION_TAIL_RE.search(final_text.strip())
+                ):
+                    stats.cd9_free_text_questions += 1
+                last_assistant_was_agent_dispatch = agent_dispatch
+                last_assistant_had_plain_text = has_plain_text
                 for item in content:
                     if isinstance(item, dict) and item.get("type") == "tool_use":
                         count_claude_tool(stats, item.get("name"), item)
+            if AUQ_GUARD_BLOCK_RE.search(text or ""):
+                if role != "user":
+                    stats.auq_guard_blocks += 1
 
     if not active:
         return None
@@ -724,6 +834,25 @@ def analyze_claude_file(path, cutoff):
         and stats.stop_kind == STOP_KIND_UNKNOWN
     ):
         stats.add_warning("active_masterplan_unclassified_stop", "active masterplan session closed without classified stop reason")
+    # ---- Policy-regression watchers (Claude-transcript side) ---------------
+    if not is_auxiliary_session(stats) and stats.cc3_skip_turns >= 1:
+        stats.add_warning(
+            "cc3_trampoline_skipped_after_subagents",
+            f"{stats.cc3_skip_turns} assistant turn(s) dispatched Agent(...) without a plain-text "
+            "summary block in the same turn (CC-3 trampoline)",
+        )
+    if not is_auxiliary_session(stats) and stats.cd9_free_text_questions >= 1:
+        stats.add_warning(
+            "cd9_free_text_question_at_close",
+            f"{stats.cd9_free_text_questions} assistant turn(s) ended with a free-text '?' question "
+            "and no AskUserQuestion call (CD-9)",
+        )
+    if not is_auxiliary_session(stats) and stats.auq_guard_blocks >= AUQ_GUARD_BLOCK_LIMIT:
+        stats.add_warning(
+            "auq_guard_blocked_count_high",
+            f"AUQ guard blocked this session {stats.auq_guard_blocks} times (>= {AUQ_GUARD_BLOCK_LIMIT}) — "
+            "review repeated CD-9 misfires",
+        )
     return stats
 
 
@@ -895,7 +1024,142 @@ def next_action_is_routable(next_action):
     return ROUTABLE_NEXT_ACTION_RE.search(text) is not None
 
 
-def analyze_plan_state(path, cutoff, root_path=None):
+def codex_auth_healthy(codex_auth_path=None):
+    path = Path(codex_auth_path) if codex_auth_path else Path.home() / ".codex" / "auth.json"
+    try:
+        if not path.is_file():
+            return False
+        if path.stat().st_size <= 2:
+            return False
+    except OSError:
+        return False
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError):
+        return False
+    if not isinstance(data, dict):
+        return False
+    tokens = data.get("tokens") or data.get("OPENAI_API_KEY") or data.get("api_key")
+    return bool(tokens)
+
+
+def collect_plan_artifacts(plan_text):
+    plan_text = plan_text or ""
+    task_count = len(PLAN_TASK_HEADING_RE.findall(plan_text))
+    annotation_count = len(PLAN_CODEX_ANNOTATION_RE.findall(plan_text))
+    groups = [m.group(1).strip().lower() for m in PLAN_PARALLEL_GROUP_RE.finditer(plan_text)]
+    group_counts = Counter(groups)
+    dup_groups = sum(count for count in group_counts.values() if count >= 2)
+    return {
+        "task_count": task_count,
+        "annotation_count": annotation_count,
+        "parallel_group_count": len(groups),
+        "parallel_group_dup_count": dup_groups,
+        "parallel_groups": group_counts,
+    }
+
+
+def _event_text(rec):
+    parts = [
+        str(rec.get("type") or ""),
+        str(rec.get("kind") or ""),
+        str(rec.get("event") or ""),
+        stringify_content(rec.get("message") or ""),
+        stringify_content(rec.get("detail") or ""),
+        stringify_content(rec.get("summary") or ""),
+        stringify_content(rec.get("notes") or ""),
+        str(rec.get("status") or ""),
+    ]
+    payload = rec.get("payload")
+    if isinstance(payload, dict):
+        parts.append(stringify_content(payload.get("message") or payload.get("detail") or ""))
+    return " ".join(p for p in parts if p)
+
+
+def scan_plan_events(events_path):
+    """One-pass scan of events.jsonl collecting policy-watcher signals."""
+    signals = {
+        "event_count": 0,
+        "meta_events": 0,
+        "outcome_events": 0,
+        "codex_route_events": 0,
+        "codex_inline_events": 0,
+        "codex_ping_events": 0,
+        "codex_degraded_events": 0,
+        "codex_review_events": 0,
+        "verify_events": 0,
+        "brainstorm_anchor_events": 0,
+        "wave_dispatch_events": 0,
+        "cache_pin_events": 0,
+        "phase_planning_events": 0,
+        "phase_complete_events": 0,
+        "latest_ts": None,
+        "latest_event_ts": None,
+        "wave_dispatch_groups": [],
+        "cache_pin_groups": set(),
+        "serial_dispatch_in_parallel_group": False,
+    }
+    if not events_path or not events_path.exists():
+        return signals
+
+    group_dispatch_order = defaultdict(list)
+    for idx, rec in enumerate(json_lines(events_path)):
+        signals["event_count"] += 1
+        ts = record_ts(rec)
+        if ts and (signals["latest_event_ts"] is None or ts > signals["latest_event_ts"]):
+            signals["latest_event_ts"] = ts
+        text = _event_text(rec)
+        if not text:
+            continue
+        if META_PROGRESS_RE.search(text):
+            signals["meta_events"] += 1
+        if OUTCOME_PROGRESS_RE.search(text):
+            signals["outcome_events"] += 1
+        if EVENT_CODEX_ROUTE_RE.search(text):
+            signals["codex_route_events"] += 1
+        if EVENT_CODEX_INLINE_RE.search(text):
+            signals["codex_inline_events"] += 1
+        if EVENT_CODEX_PING_RE.search(text):
+            signals["codex_ping_events"] += 1
+        if EVENT_CODEX_DEGRADED_RE.search(text):
+            signals["codex_degraded_events"] += 1
+        if EVENT_CODEX_REVIEW_RE.search(text):
+            signals["codex_review_events"] += 1
+        if EVENT_VERIFY_KIND_RE.search(text):
+            signals["verify_events"] += 1
+        if EVENT_BRAINSTORM_ANCHOR_RE.search(text):
+            signals["brainstorm_anchor_events"] += 1
+        if EVENT_PHASE_PLANNING_RE.search(text):
+            signals["phase_planning_events"] += 1
+        if EVENT_PHASE_COMPLETE_RE.search(text):
+            signals["phase_complete_events"] += 1
+        if EVENT_CACHE_PINNED_RE.search(text):
+            signals["cache_pin_events"] += 1
+            m = re.search(r"(?i)wave[_\-]?(?:group)?[:=]\s*(\S+)", text)
+            if m:
+                signals["cache_pin_groups"].add(m.group(1).strip().lower())
+        if EVENT_WAVE_DISPATCH_RE.search(text):
+            signals["wave_dispatch_events"] += 1
+            m = re.search(r"(?i)(?:parallel[_\-]group|group|wave)[:=]\s*(\S+)", text)
+            group = m.group(1).strip().lower() if m else None
+            signals["wave_dispatch_groups"].append(group)
+            if group:
+                order_list = group_dispatch_order[group]
+                if order_list:
+                    prior_idx = order_list[-1]
+                    # A gap of >=3 events (NOT just one or two adjacent
+                    # pin/route events) between same-group dispatches
+                    # signals serial execution within a group that the
+                    # plan declared as parallel.
+                    if idx - prior_idx >= 3:
+                        signals["serial_dispatch_in_parallel_group"] = True
+                order_list.append(idx)
+
+    return signals
+
+
+def analyze_plan_state(path, cutoff, root_path=None, codex_auth_ok=None, now=None):
     run_dir = path.parent
     state_text = read_text(path)
     stats = PlanStats(
@@ -908,33 +1172,51 @@ def analyze_plan_state(path, cutoff, root_path=None):
     stats.plan_kind = classify_plan_kind(state_text, run_dir)
     stats.next_action = yaml_scalar(state_text, "next_action")
     stats.current_task = yaml_scalar(state_text, "current_task")
+    stats.complexity = yaml_scalar(state_text, "complexity").lower()
+    stats.complexity_source = yaml_scalar(state_text, "complexity_source").lower()
+    stats.codex_routing = yaml_scalar(state_text, "codex_routing").lower()
+    stats.codex_review = yaml_scalar(state_text, "codex_review").lower()
+    stats.pending_gate = yaml_scalar(state_text, "pending_gate")
+    stats.last_warning = yaml_scalar(state_text, "last_warning")
+    stats.last_activity = yaml_scalar(state_text, "last_activity")
     stats.follow_up_count = 1 if yaml_block_nonempty(state_text, "follow_ups") else 0
 
     latest = None
-    last_activity = parse_ts(yaml_scalar(state_text, "last_activity"))
+    last_activity = parse_ts(stats.last_activity)
     if last_activity:
         latest = last_activity
 
     gap_register = read_text(run_dir / "gap-register.md")
     stats.confirmed_gap_count = count_confirmed_gap_rows(gap_register)
 
-    events_path = run_dir / "events.jsonl"
-    for rec in json_lines(events_path):
-        stats.event_count += 1
-        ts = record_ts(rec)
-        if ts and (latest is None or ts > latest):
-            latest = ts
-        message = stringify_content(rec.get("message") or rec.get("detail") or rec.get("summary") or "")
-        event_type = str(rec.get("type") or "")
-        combined = f"{event_type} {message}"
-        if META_PROGRESS_RE.search(combined):
-            stats.recent_meta_events += 1
-        if OUTCOME_PROGRESS_RE.search(combined):
-            stats.recent_outcome_events += 1
+    plan_text = read_text(run_dir / "plan.md")
+    plan_artifacts = collect_plan_artifacts(plan_text)
+    stats.plan_task_count = plan_artifacts["task_count"]
+    stats.plan_codex_annotation_count = plan_artifacts["annotation_count"]
+    stats.plan_parallel_group_count = plan_artifacts["parallel_group_count"]
+    stats.plan_parallel_group_dup_count = plan_artifacts["parallel_group_dup_count"]
 
+    events_path = run_dir / "events.jsonl"
+    signals = scan_plan_events(events_path)
+    stats.event_count = signals["event_count"]
+    stats.recent_meta_events = signals["meta_events"]
+    stats.recent_outcome_events = signals["outcome_events"]
+    stats.codex_route_event_count = signals["codex_route_events"]
+    stats.codex_review_event_count = signals["codex_review_events"]
+    stats.codex_ping_event_count = signals["codex_ping_events"]
+    stats.codex_degraded_event_count = signals["codex_degraded_events"]
+    stats.verify_event_count = signals["verify_events"]
+    stats.brainstorm_anchor_event_count = signals["brainstorm_anchor_events"]
+    stats.wave_dispatch_event_count = signals["wave_dispatch_events"]
+    stats.cache_pin_event_count = signals["cache_pin_events"]
+    stats.serial_dispatch_in_parallel_group = signals["serial_dispatch_in_parallel_group"]
+
+    if signals["latest_event_ts"] and (latest is None or signals["latest_event_ts"] > latest):
+        latest = signals["latest_event_ts"]
     if latest:
         stats.latest_ts = latest.isoformat().replace("+00:00", "Z")
 
+    # ---- Existing follow-up/meta-loop warnings (unchanged) ----------------
     if (
         stats.status == "complete"
         and stats.plan_kind in META_PLAN_KINDS
@@ -977,6 +1259,173 @@ def analyze_plan_state(path, cutoff, root_path=None):
             "activity_without_outcome",
             "plan has substantial state activity but no product_change or implementation_plan_created outcome event",
         )
+
+    # ---- Policy-regression watchers (radiant-watchful-dawn) ---------------
+    is_implementation = stats.plan_kind not in META_PLAN_KINDS
+    phase = (stats.phase or "").lower()
+    is_complete = stats.status == "complete" or phase == "complete"
+    is_high = stats.complexity == "high"
+
+    # 1. codex_annotation_gap_on_high
+    if (
+        is_implementation
+        and is_high
+        and stats.plan_task_count > 0
+        and stats.plan_codex_annotation_count < stats.plan_task_count
+    ):
+        gap = stats.plan_task_count - stats.plan_codex_annotation_count
+        stats.add_warning(
+            "codex_annotation_gap_on_high",
+            f"high-complexity plan missing **Codex:** annotations on {gap}/{stats.plan_task_count} task(s) "
+            f"(see parts/step-b.md:324)",
+        )
+
+    # 2. codex_parallel_group_missing_on_high
+    if (
+        is_implementation
+        and is_high
+        and stats.plan_parallel_group_count == 0
+    ):
+        stats.add_warning(
+            "codex_parallel_group_missing_on_high",
+            "high-complexity plan has zero **parallel-group:** annotations "
+            "(see parts/step-b.md:324)",
+        )
+
+    # 3. codex_routing_configured_but_zero_dispatches
+    if (
+        is_implementation
+        and is_complete
+        and stats.codex_routing in {"auto", "manual"}
+        and stats.codex_route_event_count == 0
+    ):
+        stats.add_warning(
+            "codex_routing_configured_but_zero_dispatches",
+            f"codex_routing={stats.codex_routing} on complete plan with zero codex-route events "
+            "(see parts/step-c.md step 3a)",
+        )
+
+    # 4. codex_review_configured_but_zero_invocations
+    if (
+        is_implementation
+        and is_complete
+        and stats.codex_review == "on"
+        and stats.codex_review_event_count == 0
+    ):
+        stats.add_warning(
+            "codex_review_configured_but_zero_invocations",
+            "codex_review=on on complete plan with zero codex-review events "
+            "(see parts/step-c.md step 4b)",
+        )
+
+    # 5. missing_codex_ping_event
+    if (
+        is_implementation
+        and stats.event_count >= 3
+        and stats.codex_ping_event_count == 0
+    ):
+        stats.add_warning(
+            "missing_codex_ping_event",
+            "plan has events but no codex_ping record (Step 0 should emit one per session) "
+            "(see parts/step-0.md:106)",
+        )
+
+    # 6. silent_codex_degradation
+    # Only fire on high-complexity substantive runs — low/medium plans may
+    # legitimately run with codex off. The point is to flag plans that SHOULD
+    # have routed through codex but didn't.
+    if (
+        is_implementation
+        and is_high
+        and stats.event_count >= 3
+        and stats.codex_routing == "off"
+        and stats.codex_review == "off"
+        and not (stats.last_warning or "").strip()
+        and stats.codex_degraded_event_count == 0
+        and codex_auth_ok is True
+    ):
+        stats.add_warning(
+            "silent_codex_degradation",
+            "high-complexity plan: codex routing+review both off, no codex-degraded event, no last_warning, "
+            "but codex auth is healthy (see parts/step-0.md:119)",
+        )
+
+    # 7. pending_gate_orphaned
+    if (
+        is_implementation
+        and (stats.pending_gate or "").strip()
+        and phase not in {"blocked", "critical_error"}
+    ):
+        gate_latest = signals["latest_event_ts"] or last_activity
+        now_dt = now or datetime.now(timezone.utc)
+        if gate_latest and (now_dt - gate_latest) > timedelta(hours=PENDING_GATE_STALENESS_HOURS):
+            age_h = int((now_dt - gate_latest).total_seconds() // 3600)
+            stats.add_warning(
+                "pending_gate_orphaned",
+                f"pending_gate={stats.pending_gate!r} is {age_h}h stale; phase={phase or '<unset>'} "
+                "(no recent events to clear it)",
+            )
+
+    # 8. cd3_verification_missing_on_complete
+    if (
+        is_implementation
+        and is_complete
+        and stats.verify_event_count == 0
+    ):
+        stats.add_warning(
+            "cd3_verification_missing_on_complete",
+            "plan transitioned to complete with zero verify/test/lint events "
+            "(CD-3 in cd-rules.md)",
+        )
+
+    # 9. brainstorm_anchor_missing_before_planning
+    if (
+        is_implementation
+        and (phase == "planning" or signals["phase_planning_events"] > 0)
+        and stats.brainstorm_anchor_event_count == 0
+    ):
+        stats.add_warning(
+            "brainstorm_anchor_missing_before_planning",
+            "plan entered planning phase without a brainstorm_anchor_resolved event "
+            "(see parts/step-b.md:232)",
+        )
+
+    # 10. wave_dispatched_without_pin
+    if (
+        is_implementation
+        and stats.wave_dispatch_event_count > 0
+        and stats.cache_pin_event_count == 0
+    ):
+        stats.add_warning(
+            "wave_dispatched_without_pin",
+            f"observed {stats.wave_dispatch_event_count} wave-dispatch event(s) but no cache_pinned_for_wave event "
+            "(M-2 in parts/step-c.md)",
+        )
+
+    # 11. complexity_unset_fallthrough
+    if (
+        is_implementation
+        and stats.complexity == "medium"
+        and stats.complexity_source == "default"
+    ):
+        stats.add_warning(
+            "complexity_unset_fallthrough",
+            "complexity=medium via complexity_source=default (no explicit signal) "
+            "(see parts/step-b.md:365)",
+        )
+
+    # 12. parallel_eligible_but_serial_dispatched
+    if (
+        is_implementation
+        and stats.plan_parallel_group_dup_count >= 2
+        and stats.serial_dispatch_in_parallel_group
+    ):
+        stats.add_warning(
+            "parallel_eligible_but_serial_dispatched",
+            "plan declared parallel-group siblings but events show serial dispatch within the group "
+            "(Slice α — parts/step-c.md)",
+        )
+
     return stats
 
 
@@ -984,9 +1433,11 @@ def warning_texts(warnings):
     return [warning.text for warning in warnings]
 
 
-def run_audit(since_arg, hours_arg, fmt, claude_dir, codex_dir, repo_roots, now=None):
+def run_audit(since_arg, hours_arg, fmt, claude_dir, codex_dir, repo_roots, now=None, codex_auth_path=None):
     cutoff = compute_cutoff(since_arg, hours_arg, now)
     cutoff_epoch = cutoff.timestamp()
+    auth_ok = codex_auth_healthy(codex_auth_path)
+    audit_now = now or datetime.now(timezone.utc)
 
     codex_sessions = [s for s in (analyze_codex_file(p, cutoff) for p in iter_jsonl_files(codex_dir, cutoff_epoch)) if s]
     claude_sessions = [s for s in (analyze_claude_file(p, cutoff) for p in iter_jsonl_files(claude_dir, cutoff_epoch)) if s]
@@ -1001,7 +1452,7 @@ def run_audit(since_arg, hours_arg, fmt, claude_dir, codex_dir, repo_roots, now=
     plans = [
         p
         for p in (
-            analyze_plan_state(path, cutoff, root_path)
+            analyze_plan_state(path, cutoff, root_path, codex_auth_ok=auth_ok, now=audit_now)
             for path, root_path in iter_plan_state_files(repo_roots, cutoff_epoch)
         )
         if p
@@ -1091,12 +1542,19 @@ def run_audit(since_arg, hours_arg, fmt, claude_dir, codex_dir, repo_roots, now=
             "top_loop_root": root,
             "top_loop_count": root_count,
             "top_tools": session.tool_counts.most_common(8),
+            "auq_guard_blocks": session.auq_guard_blocks,
+            "cc3_skip_turns": session.cc3_skip_turns,
+            "cd9_free_text_questions": session.cd9_free_text_questions,
             "warnings": warning_texts(session.warnings),
             "warning_codes": [warning.code for warning in session.warnings],
         }
 
     return {
         "cutoff": cutoff.isoformat().replace("+00:00", "Z"),
+        "audit_meta": {
+            "codex_auth_ok": auth_ok,
+            "policy_regression_hard_codes": sorted(POLICY_REGRESSION_HARD_CODES),
+        },
         "sources": {
             "claude_dir": safe_repo_label(claude_dir),
             "codex_dir": safe_repo_label(codex_dir),
@@ -1144,11 +1602,27 @@ def run_audit(since_arg, hours_arg, fmt, claude_dir, codex_dir, repo_roots, now=
                 "plan_kind": item.plan_kind,
                 "current_task": item.current_task,
                 "next_action": item.next_action,
+                "complexity": item.complexity,
+                "complexity_source": item.complexity_source,
+                "codex_routing": item.codex_routing,
+                "codex_review": item.codex_review,
+                "pending_gate": item.pending_gate,
                 "follow_up_count": item.follow_up_count,
                 "confirmed_gap_count": item.confirmed_gap_count,
                 "recent_meta_events": item.recent_meta_events,
                 "recent_outcome_events": item.recent_outcome_events,
                 "event_count": item.event_count,
+                "plan_task_count": item.plan_task_count,
+                "plan_codex_annotation_count": item.plan_codex_annotation_count,
+                "plan_parallel_group_count": item.plan_parallel_group_count,
+                "codex_route_event_count": item.codex_route_event_count,
+                "codex_review_event_count": item.codex_review_event_count,
+                "codex_ping_event_count": item.codex_ping_event_count,
+                "codex_degraded_event_count": item.codex_degraded_event_count,
+                "verify_event_count": item.verify_event_count,
+                "brainstorm_anchor_event_count": item.brainstorm_anchor_event_count,
+                "wave_dispatch_event_count": item.wave_dispatch_event_count,
+                "cache_pin_event_count": item.cache_pin_event_count,
                 "latest_ts": item.latest_ts,
                 "warnings": warning_texts(item.warnings),
                 "warning_codes": [warning.code for warning in item.warnings],
@@ -1283,6 +1757,7 @@ def parse_args(argv):
     claude_dir = os.environ.get("CLAUDE_PROJECTS_DIR", str(Path.home() / ".claude" / "projects"))
     codex_dir = os.environ.get("CODEX_SESSIONS_DIR", str(Path.home() / ".codex" / "sessions"))
     repo_roots = os.environ.get("MASTERPLAN_REPO_ROOTS", str(Path.home() / "dev"))
+    codex_auth_path = os.environ.get("CODEX_AUTH_PATH", str(Path.home() / ".codex" / "auth.json"))
 
     for arg in argv:
         if arg.startswith("--hours="):
@@ -1297,6 +1772,8 @@ def parse_args(argv):
             codex_dir = arg.split("=", 1)[1]
         elif arg.startswith("--repo-roots="):
             repo_roots = arg.split("=", 1)[1]
+        elif arg.startswith("--codex-auth-path="):
+            codex_auth_path = arg.split("=", 1)[1]
         elif arg in {"-h", "--help"}:
             return None
         else:
@@ -1305,7 +1782,7 @@ def parse_args(argv):
     if fmt not in {"table", "json"}:
         raise ValueError(f"unknown --format: {fmt} (expected: table|json)")
 
-    return since, hours, fmt, claude_dir, codex_dir, repo_roots
+    return since, hours, fmt, claude_dir, codex_dir, repo_roots, codex_auth_path
 
 
 def usage():
@@ -1317,7 +1794,8 @@ Usage:
   bin/masterplan-session-audit.sh --hours=24
   bin/masterplan-session-audit.sh --since=2026-05-10T15:51:23Z
   bin/masterplan-session-audit.sh --format=json
-  bin/masterplan-session-audit.sh --claude-dir=/tmp/claude --codex-dir=/tmp/codex --repo-roots=/tmp/repos"""
+  bin/masterplan-session-audit.sh --claude-dir=/tmp/claude --codex-dir=/tmp/codex --repo-roots=/tmp/repos
+  bin/masterplan-session-audit.sh --codex-auth-path=/tmp/auth.json"""
 
 
 def main(argv=None):
@@ -1327,13 +1805,22 @@ def main(argv=None):
         if parsed is None:
             print(usage())
             return 0
-        data = run_audit(*parsed)
+        since_arg, hours_arg, fmt, claude_dir, codex_dir, repo_roots, codex_auth_path = parsed
+        data = run_audit(
+            since_arg,
+            hours_arg,
+            fmt,
+            claude_dir,
+            codex_dir,
+            repo_roots,
+            codex_auth_path=codex_auth_path,
+        )
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         print(usage(), file=sys.stderr)
         return 2
 
-    if parsed[2] == "json":
+    if fmt == "json":
         print(json.dumps(data, indent=2, sort_keys=True))
     else:
         print_table(data)

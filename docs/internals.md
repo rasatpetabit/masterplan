@@ -83,7 +83,8 @@ superpowers-masterplan/
 │   ├── masterplan-recurring-audit.sh  # persisted recurring session audit wrapper
 │   ├── masterplan-routing-stats.sh    # codex-vs-inline routing distribution
 │   ├── masterplan-session-audit.sh    # redacted Claude/Codex/session telemetry audit
-│   └── masterplan-state.sh            # run-bundle inventory + migration helper
+│   ├── masterplan-state.sh            # run-bundle inventory + migration helper
+│   └── masterplan-wipe-telemetry.sh   # one-shot wipe of pre-v5.1.1 telemetry (default dry-run)
 └── docs/
     ├── internals.md                # THIS FILE
     ├── design/
@@ -679,6 +680,22 @@ rolling report history, and can fail on findings when
 single managed cron block for that wrapper. It preserves unrelated crontab
 entries and supports `CRONTAB_FILE` for regression tests.
 
+`bin/masterplan-wipe-telemetry.sh` (v5.1.2+) is the one-shot cleanup surface
+for pre-v5.1.1 telemetry: Claude transcripts, Codex transcripts/history/log/
+archived sessions, and per-bundle `events.jsonl` / `anomalies*.jsonl` /
+`subagents.jsonl` / `eligibility-cache.json`. Default mode is `--dry-run`;
+`--apply` requires either a `wipe-confirmed` prompt or `--yes`. Hard keep-list
+preserves all bundle work product (`plan.md`, `state.yml`, `spec.md`,
+`retro.md`, `worklog.md`, `next-actions.md`, `gap-register.md`) and the
+`reviews/`, `notes/`, `subagent-reports/`, `artifacts/` directories. A 5-minute
+mtime skip defends against in-progress writes. The manifest at
+`${XDG_STATE_HOME:-$HOME/.local/state}/superpowers-masterplan/wipes/<UTC-ts>.txt`
+is written before any deletion and lists every path with byte counts. Each
+affected `state.yml` gains a top-level `events_wiped:` breadcrumb so future
+audits can tell "telemetry never existed" from "telemetry was wiped at <ts>".
+This surface exists for one-time post-instrumentation cleanup; it is not run
+on a schedule and not part of the doctor or recurring-audit path.
+
 The implementation lives in `lib/masterplan_session_audit.py`; the shell script
 is only the CLI wrapper. `tests/test_masterplan_session_audit.py`,
 `tests/test_masterplan_audit_schedule.py`, and `tests/fixtures/session-audit/`
@@ -815,6 +832,92 @@ it leaves the original telemetry hook untouched.
 a warning when `<run-dir>/anomalies.jsonl` or `anomalies-pending-upload.jsonl`
 contains records, so users get a periodic nudge to run the analyzer or flush
 pending uploads. Report-only.
+
+### Policy-regression watcher (v5.2.0+)
+
+A second instrumentation lane sits beside the failure-instrumentation framework.
+Where Section 9 catches *orchestrator anomalies at end-of-turn*, the
+policy-regression watcher catches *plan-level policy compliance drift over time*
+— the class of regression that caused 24h of silent codex degradation to ship
+unnoticed pre-v5.1.1.
+
+Implementation is additive to the existing recurring-audit cron path. The
+detectors live in `lib/masterplan_session_audit.py`, alongside the other
+audit categories. The dispatcher (`bin/masterplan-findings-to-issues.sh`) is
+called from the tail of `bin/masterplan-recurring-audit.sh` after the audit
+JSON + table writes complete.
+
+**Fifteen detector categories.** Each emits a `WarningItem` with a stable
+`code` snake_case slug and a citation back to the policy source line. Hard
+(file a GH issue): ten categories. Soft (local-only): five categories. The
+hard list is hard-coded into `POLICY_REGRESSION_HARD_CODES` in the audit
+module and mirrored in the dispatcher's `hard_codes_csv` — drift here
+silently skips dispatch.
+
+| Code | Severity | Detects | Policy citation |
+|:-----|:---------|:--------|:----------------|
+| `codex_annotation_gap_on_high` | hard | `complexity: high` plan with task headings but fewer `**Codex:**` annotations than tasks | `parts/step-b.md:324` |
+| `codex_parallel_group_missing_on_high` | soft | `complexity: high` plan with zero `**parallel-group:**` annotations | `parts/step-b.md:324` |
+| `codex_routing_configured_but_zero_dispatches` | hard | `codex_routing` is auto/manual on a complete plan with zero codex-route events in `events.jsonl` | `parts/step-c.md` step 3a |
+| `codex_review_configured_but_zero_invocations` | hard | `codex_review: on` on a complete plan with zero codex-review events | `parts/step-c.md` step 4b |
+| `missing_codex_ping_event` | hard | Plan has ≥3 events but no `codex_ping` record (Step 0 should emit one per session) | `parts/step-0.md:106` |
+| `silent_codex_degradation` | hard | `complexity: high` substantive plan with `codex_routing=off` AND `codex_review=off` AND healthy `~/.codex/auth.json` AND no `codex degraded` event AND empty `last_warning` | `parts/step-0.md:119` |
+| `pending_gate_orphaned` | soft | `pending_gate` set, `last_activity` >24h stale, phase not in {blocked, critical_error} | Step C 0e pending-gate resume |
+| `cc3_trampoline_skipped_after_subagents` | hard | Claude turn dispatched `Agent(...)` but emitted no plain-text summary in the same turn | `commands/masterplan.md` CC-3-trampoline |
+| `cd3_verification_missing_on_complete` | hard | `phase: complete` with zero `verify_*`/`test`/`lint`/`verification` events in `events.jsonl` | CD-3 (`parts/cd-rules.md`) |
+| `cd9_free_text_question_at_close` | soft | Assistant turn ended with `?` and no `AskUserQuestion` tool_use; `<no-auq>`/`[oneshot]` markers absent | CD-9 |
+| `auq_guard_blocked_count_high` | soft | The AUQ Stop hook (`~/.claude/hooks/auq-guard.sh`) emitted `AUQ guard blocked: …` ≥5 times in one session | `~/.claude/CLAUDE.md` AUQ rule |
+| `brainstorm_anchor_missing_before_planning` | hard | `phase: planning` reached with no `brainstorm_anchor_resolved` event preceding the transition | `parts/step-b.md:232` |
+| `wave_dispatched_without_pin` | hard | `wave_dispatch` event fired without a preceding `cache_pinned_for_wave=true` event | `parts/step-c.md:168` (M-2) |
+| `complexity_unset_fallthrough` | soft | `complexity: medium` AND `complexity_source: default` (planner skill never re-classified) | `parts/step-b.md:365` |
+| `parallel_eligible_but_serial_dispatched` | hard | Plan has ≥2 tasks in the same `**parallel-group:**` AND two `wave_dispatch` events for that group are separated by ≥3 unrelated events (serial-in-parallel) | `parts/step-c.md` Slice α |
+
+The Claude-side detectors (CC-3, CD-9, AUQ guard) operate on transcript turns
+collected by the regular audit pass; the plan-side detectors operate on
+`state.yml`, `plan.md`, and `events.jsonl` per run bundle. Both lanes flow
+into the same `findings.jsonl` stream.
+
+**Dispatcher (`bin/masterplan-findings-to-issues.sh`).** Mirrors the
+v5.1.0 anomaly-flush pattern but reads global `findings.jsonl` instead of
+per-bundle `anomalies.jsonl`:
+
+1. Drains `findings-pending-upload.jsonl` first (retry queue).
+2. Walks new findings since `findings-last-run-id.txt` sentinel.
+3. For each hard-threshold finding: computes
+   `sha1(code|repo|session)[:12]`, searches GH for a matching `[auto:<sig>]`
+   title prefix, files / comments / reopens accordingly. Labels:
+   `auto-filed` + `class/policy-regression` + `class/<code>`.
+4. On gh failure: row carries forward in
+   `findings-pending-upload.jsonl`. Sentinel advances only when the run
+   finishes failure-free.
+5. Honors `.masterplan.yaml failure_reporting.{repo, enabled, dry_run}` —
+   identical knobs to the v5.1.0 framework.
+
+**Wipe-breadcrumb gate.** Plan-source findings whose `state.yml` carries an
+`events_wiped:` block (set by `bin/masterplan-wipe-telemetry.sh` during the
+pre-v5.1.1 cleanup) are skipped by default — they pre-date the visibility
+surfaces and would flood the tracker with historical noise. Override via
+`--no-skip-wiped`. Orphan slugs whose plan dir is no longer on disk are
+skipped on the same grounds (defensive).
+
+**Backfill controls.** `--since-run-id RUN_ID` starts processing from a
+specific run; `--all` ignores the sentinel; `--limit N` caps dispatches per
+invocation (used during initial rollouts to avoid creating dozens of issues
+in one cron tick). `--dry-run` honors the same path but skips gh and leaves
+the sentinel unchanged. The cron path passes nothing — full apply, sentinel-
+tracked.
+
+**Skip flag.** `MASTERPLAN_AUDIT_SKIP_FINDINGS_DISPATCH=1` in the environment
+suppresses the dispatcher call from the recurring-audit tail, used by CI
+fixture tests that should not file real issues.
+
+**Smoke test (`bin/masterplan-policy-regression-smoke.sh`).** Twelve
+synthetic plan-side fixtures (one per detector) + one negative-control clean
+plan + eight dispatcher scenarios (eligibility, soft-skip, wipe-skip,
+orphan-skip, sentinel advance, open-issue comment, closed-issue reopen,
+gh-failure pending replay, dry-run, `--no-skip-wiped`). PATH-stubs `gh`,
+isolates `$HOME` under `mktemp`, runs `lib/masterplan_session_audit.py`
+directly against the fixtures. 44 assertions; must pass before every release.
 
 ### Hook portability notes
 

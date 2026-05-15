@@ -5,7 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [5.2.0] — 2026-05-15 — Wipe helper + policy-regression watcher
+
+Two coupled additions under the `radiant-watchful-dawn` plan:
+
+1. **Workstream A — telemetry wipe helper** that erases mixed pre/post-v5.1.1 telemetry so the new doctor-check evidence in `events.jsonl` is no longer conflated with stale silent-degradation-era data.
+2. **Workstream B — continuous policy-regression watcher** that extends the recurring-audit pipeline with 15 new detector categories. Hard-threshold breaches auto-file GH issues; soft breaches remain local. Watches for the same class of regression that motivated v5.1.1 (annotation gaps, missing routing/review dispatches, missing ping events, silent degradation, CC-3 trampoline skips, CD-3 verification gaps, parallel-eligible-serial dispatch, etc.).
+
+### Added — Policy-regression watcher (radiant-watchful-dawn, Workstream B)
+
+Aimed at the post-instrumentation question of "how do we know future regressions don't silently slip past?" — extends `lib/masterplan_session_audit.py` with 15 new `WarningItem` categories and wires the recurring-audit cron to dispatch hard-threshold breaches to GitHub issues with the same signature/dedup/reopen semantics as the v5.1.0 anomaly framework. No new data sources: detectors operate on already-loaded artifacts (`plan.md`, `state.yml`, `events.jsonl`, Claude/Codex transcripts).
+
+- **15 new detector categories in `lib/masterplan_session_audit.py`**. Hard-threshold (file GH issue): `codex_annotation_gap_on_high`, `codex_routing_configured_but_zero_dispatches`, `codex_review_configured_but_zero_invocations`, `missing_codex_ping_event`, `silent_codex_degradation`, `cc3_trampoline_skipped_after_subagents`, `cd3_verification_missing_on_complete`, `brainstorm_anchor_missing_before_planning`, `wave_dispatched_without_pin`, `parallel_eligible_but_serial_dispatched`. Soft-threshold (local snapshot only): `codex_parallel_group_missing_on_high`, `pending_gate_orphaned`, `cd9_free_text_question_at_close`, `auq_guard_blocked_count_high`, `complexity_unset_fallthrough`. Each category cites the policy in `parts/step-b.md` / `parts/step-c.md` / `parts/step-0.md` / `commands/masterplan.md` it watches.
+- **`bin/masterplan-findings-to-issues.sh`** (~250 lines). Reads `${MASTERPLAN_AUDIT_STATE_DIR}/findings.jsonl`, filters to the hard-code allowlist, computes `sha1(code|repo|session)[:12]` signature, dispatches to `gh` with labels `auto-filed` + `class/policy-regression` + `class/<code>`. Local-first persistence: failures land at `findings-pending-upload.jsonl` for next-run drain (mirrors `anomalies-pending-upload.jsonl`). Sentinel at `findings-last-run-id.txt` advances by `run_id` so each audit pass only dispatches newly-emitted findings. Honors `.masterplan.yaml` `failure_reporting.{repo, enabled, dry_run}` — same knobs as v5.1.0 anomaly framework. Args: `--dry-run`, `--all`, `--since-run-id`, `--limit N`, `--no-skip-wiped`, `--repo`, `--state-dir`, `--plans-roots`.
+- **Wipe-breadcrumb gate.** Default behavior skips any finding whose plan `state.yml` contains an `events_wiped:` block, so the WS-A wipe does not flood the tracker with historical noise. Override with `--no-skip-wiped` for backfill of legitimate pre-wipe gaps.
+- **Wired into `bin/masterplan-recurring-audit.sh`.** The audit cron now dispatches at the tail after JSON+table writes complete. Disable per-run with `MASTERPLAN_AUDIT_SKIP_FINDINGS_DISPATCH=1`.
+- **`bin/masterplan-policy-regression-smoke.sh`** (~340 lines, 44 assertions). 12 plan-side detector fixtures + 1 clean negative control (one per detector category, with positive + negative assertions); 8 dispatcher scenarios (PATH-stubbed `gh` + isolated `$HOME`): hard-code dispatch, soft-code skip, wipe-breadcrumb skip, orphan-plan-dir skip, sentinel advance, open-issue comment, closed-issue reopen, gh-failure pending replay, dry-run no-sentinel-touch, `--no-skip-wiped` override. Mirrors `masterplan-anomaly-smoke.sh` pattern; run before every release.
+- **`docs/internals.md` § 9 Policy-regression watcher subsection** — design overview, 15-row detector reference table (hard/soft + policy citation), dispatcher mechanics, wipe-breadcrumb gate explanation, backfill controls, skip-flag, smoke-test summary.
+
+### Why this release ships the watcher AND a wipe together
+
+The wipe (WS-A) creates a clean baseline for the new visibility surfaces shipped in v5.1.1. Without the watcher (WS-B), the next regression of the same class would again take 12 months to surface — the wipe alone solves nothing forward-looking. The watcher without the wipe would file ~200 GH issues against pre-v5.1.1 historical noise that the user can do nothing about. Both shipped together: clean baseline + continuous monitoring of policy compliance against the baseline. The dispatcher's wipe-breadcrumb gate makes this composable — if you ever wipe again, history is automatically suppressed.
+
+### Verified before release
+
+- 44/44 smoke assertions pass on `bin/masterplan-policy-regression-smoke.sh`
+- Real dry-run against the user's live audit state: 366 findings eligible → 7 dispatched (live plans with real policy gaps) / 160 skipped-soft / 182 skipped-wiped / 17 skipped-orphan / 0 failed. Wipe-breadcrumb gate proven to work against real post-wipe filesystem state.
+
+### Added — Pre-v5.1.1 telemetry wipe helper (radiant-watchful-dawn, Workstream A)
+
+Aimed at the post-v5.1.1 cleanup step: erase 12 months of mixed pre-and-post-instrumentation telemetry so the new doctor-check evidence in `events.jsonl` is not conflated with stale data from the silent-degradation era. Destructive surface is gated behind a default `--dry-run`, an explicit `--apply`, and a `wipe-confirmed` confirmation token (or `--yes` for unattended runs).
+
+- **`bin/masterplan-wipe-telemetry.sh`** (thin bash wrapper) + **`lib/masterplan_wipe_telemetry.py`** (deletion logic). Walks Claude transcripts under `~/.claude/projects/*/*.jsonl`, Codex transcripts/history/log/archived under `~/.codex/`, and per-bundle telemetry (`events.jsonl`, `anomalies.jsonl`, `anomalies-pending-upload.jsonl`, `subagents.jsonl`, `eligibility-cache.json`) across every repo under `$MASTERPLAN_REPO_ROOTS` (default: `~/dev`) including `.worktrees/` copies.
+- **Hard keep-list** preserves all bundle work product (`plan.md`, `state.yml`, `spec.md`, `retro.md`, `worklog.md`, `next-actions.md`, `gap-register.md`) and protected directories (`reviews/`, `notes/`, `subagent-reports/`, `artifacts/`). Codex `auth.json` and `config.toml` are untouched.
+- **mtime skip** defends against in-progress writes — files modified within the last 5 minutes (configurable via `--mtime-skip=N`) are never deleted.
+- **Manifest** at `${XDG_STATE_HOME:-~/.local/state}/superpowers-masterplan/wipes/<UTC-timestamp>.txt` is written BEFORE any deletion, listing every path with byte count + per-category totals, so post-mortem is always recoverable.
+- **State.yml breadcrumb**: each affected bundle's `state.yml` gains a top-level `events_wiped:` block (`ts`, `manifest`, `note`) so future `/masterplan status` / doctor runs can distinguish "never had telemetry" from "telemetry was wiped at <ts>". Append-only; does not mutate other fields per CD-7.
+- **Per-category opt-out flags:** `--no-claude`, `--no-codex`, `--no-bundle-logs`, `--no-worktrees`, `--repo-roots=A:B` for narrow runs.
+- **Verified on this repo's host:** 1600 files / 1.32GB deleted on 2026-05-15; bundle work product across 280 bundles preserved; `events_wiped:` breadcrumb confirmed on sample bundles.
+
+### Why a wipe and not a quarantine
+
+Pre-v5.1.1 telemetry contains 24h of silent-degradation evidence (zero `codex_ping` events, missing `**Codex:**` annotations, expired auth with no warning). Quarantining preserves data nobody will ever query and complicates doctor checks #39/#40/#41 by forcing them to filter by `events_wiped:` timestamp. Wipe gives the new visibility surfaces a clean baseline; the manifest preserves the file inventory for forensic reference.
 
 ## [5.1.1] — 2026-05-15 — Codex-routing visibility instrumentation
 

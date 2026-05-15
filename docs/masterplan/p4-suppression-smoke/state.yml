@@ -37,3 +37,7 @@ halt_mode: none
 stop_reason: ""
 critical_error: null
 step_c_session_init_sha: ""
+events_wiped:
+  ts: '2026-05-15T16:58:33.531569Z'
+  manifest: '/home/ras/.local/state/superpowers-masterplan/wipes/20260515T165833Z.txt'
+  note: 'pre-v5.1.1 telemetry wiped; bundle work product preserved'

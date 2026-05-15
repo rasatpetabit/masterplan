@@ -98,6 +98,15 @@ echo "masterplan recurring audit complete: ${summary}"
 echo "latest_json=${state_dir}/latest.json"
 echo "latest_table=${state_dir}/latest.txt"
 
+# Dispatch policy-regression findings to GH issues (hard-threshold codes only).
+# Skips findings whose state.yml has an events_wiped: breadcrumb so post-wipe
+# historical noise does not flood the tracker. Honors failure_reporting knobs
+# in .masterplan.yaml (same as v5.1.0 anomaly framework).
+if [[ "${MASTERPLAN_AUDIT_SKIP_FINDINGS_DISPATCH:-0}" != "1" ]]; then
+  "${repo_root}/bin/masterplan-findings-to-issues.sh" 2>&1 \
+    | sed 's/^/  findings-to-issues: /' || true
+fi
+
 warning_count="${summary##*warnings=}"
 warning_count="${warning_count%% *}"
 if [[ "${fail_on_warnings}" == "1" && "${warning_count}" != "0" ]]; then
