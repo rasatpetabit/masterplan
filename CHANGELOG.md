@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.2.1] — 2026-05-15 — Doctor #39 false-positive watcher + README release-pin fix
+
+Follow-up to v5.2.0 driven by a real `/masterplan doctor` run that produced a misleading "Codex auth expired" warning despite `/codex:setup` reporting full health. Per `feedback_failures_drive_instrumentation_not_fixes`, the doctor check itself is not patched here — instead, the recurring-audit module gains a new continuous watcher that surfaces the false-positive shape so the analyzer can drive prioritization of a proper fix.
+
+### Added
+
+- **New policy-regression watcher `codex_health_check_jwt_only`** in `lib/masterplan_session_audit.py` (hard-threshold). Emits a `meta`-source finding when `~/.codex/auth.json` has the shape that triggers doctor check #39 sub-conditions (a)/(b) cosmetically: `auth_mode == "chatgpt"` AND `tokens.refresh_token` present AND `last_refresh` within 7 days AND `id_token.exp` < now. This is the exact pattern where Codex auto-refreshes JWTs on every call and a doctor warning is meaningless. Mirrored in `bin/masterplan-findings-to-issues.sh` hard-codes CSV. `meta`-source findings bypass the wipe-breadcrumb gate (the gate only applies to plan-source findings).
+
+### Fixed
+
+- **`README.md` release pin drift** (`Current release: **v5.1.1**` → `**v5.2.0**`). Surfaced by doctor check #30 in the v5.2.0 release validation run.
+
+### Notes
+
+- Doctor check #39 itself is intentionally NOT modified in this release. The watcher surfaces every false-positive occurrence; the proper fix (delegate to `/codex:setup`-equivalent health logic instead of rolling its own JWT arithmetic) will land via a separate change once the analyzer has accumulated enough recurrence data per `feedback_failures_drive_instrumentation_not_fixes`.
+- Smoke-verified against live `~/.codex/auth.json` on the development host: watcher correctly detected the cosmetic-expiry shape (id_token 30 minutes past `exp` with healthy refresh state).
+
+---
+
 ## [5.2.0] — 2026-05-15 — Wipe helper + policy-regression watcher
 
 Two coupled additions under the `radiant-watchful-dawn` plan:
