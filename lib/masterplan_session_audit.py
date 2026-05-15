@@ -103,7 +103,6 @@ POLICY_REGRESSION_HARD_CODES = frozenset({
     "brainstorm_anchor_missing_before_planning",
     "wave_dispatched_without_pin",
     "parallel_eligible_but_serial_dispatched",
-    "codex_health_check_jwt_only",
 })
 # Soft (local-only): codex_parallel_group_missing_on_high,
 # pending_gate_orphaned, cd9_free_text_question_at_close,
@@ -1045,63 +1044,6 @@ def codex_auth_healthy(codex_auth_path=None):
     return bool(tokens)
 
 
-def codex_jwt_only_health_false_positive(codex_auth_path=None, now=None):
-    # auth_mode=chatgpt + refresh_token + recent last_refresh means short-lived
-    # JWTs auto-refresh on each call; doctor #39 sub-conditions (a)/(b) fire on
-    # cosmetic expiry that never reaches a user-visible failure. Returns
-    # (True, detail) only when that exact shape is present so the analyzer can
-    # surface the check defect; (False, "") otherwise.
-    import base64
-    path = Path(codex_auth_path) if codex_auth_path else Path.home() / ".codex" / "auth.json"
-    try:
-        if not path.is_file() or path.stat().st_size <= 2:
-            return False, ""
-    except OSError:
-        return False, ""
-    try:
-        with path.open("r", encoding="utf-8", errors="replace") as handle:
-            data = json.load(handle)
-    except (OSError, ValueError):
-        return False, ""
-    if not isinstance(data, dict):
-        return False, ""
-    tokens = data.get("tokens")
-    if not isinstance(tokens, dict):
-        return False, ""
-    auth_mode = str(data.get("auth_mode") or tokens.get("auth_mode") or "").lower()
-    if auth_mode != "chatgpt":
-        return False, ""
-    if not tokens.get("refresh_token"):
-        return False, ""
-    last_refresh_dt = parse_ts(data.get("last_refresh") or tokens.get("last_refresh"))
-    if last_refresh_dt is None:
-        return False, ""
-    audit_now = now or datetime.now(timezone.utc)
-    if (audit_now - last_refresh_dt) > timedelta(days=7):
-        return False, ""
-    id_token = tokens.get("id_token") or ""
-    if not id_token or id_token.count(".") < 2:
-        return False, ""
-    try:
-        segment = id_token.split(".")[1]
-        padded = segment + "=" * (-len(segment) % 4)
-        payload = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8", errors="replace"))
-        exp = payload.get("exp")
-    except Exception:
-        return False, ""
-    if not isinstance(exp, (int, float)):
-        return False, ""
-    if exp >= audit_now.timestamp():
-        return False, ""
-    delta_sec = int(audit_now.timestamp() - exp)
-    detail = (
-        f"doctor #39 sub-conditions (a)/(b) will false-fire: id_token.exp is {delta_sec}s "
-        f"past now but auth_mode=chatgpt + refresh_token + last_refresh="
-        f"{last_refresh_dt.isoformat()} indicates healthy auto-refresh"
-    )
-    return True, detail
-
-
 def collect_plan_artifacts(plan_text):
     plan_text = plan_text or ""
     task_count = len(PLAN_TASK_HEADING_RE.findall(plan_text))
@@ -1572,11 +1514,6 @@ def run_audit(since_arg, hours_arg, fmt, claude_dir, codex_dir, repo_roots, now=
     for plan in plans:
         for warning in plan.warnings:
             add_warning("plan", plan.repo, plan.slug, warning)
-
-    jwt_fp, jwt_fp_detail = codex_jwt_only_health_false_positive(codex_auth_path, now=audit_now)
-    if jwt_fp:
-        add_warning("meta", "<global>", "codex_auth_health",
-                    WarningItem("codex_health_check_jwt_only", jwt_fp_detail))
 
     for warning in warnings:
         repo_totals[warning["repo"]].warnings += 1

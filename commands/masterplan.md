@@ -43,13 +43,14 @@ The shape is `-> /masterplan v<parsed-semver> args: '<truncated-args-or-(empty)>
 
 Truncate `args` at 120 chars; total sentinel length <= 200 chars. The sentinel is plain stdout, NOT inside an `AskUserQuestion`, NOT inside a tool call, and NOT part of CC-3-trampoline.
 
-**Step 3 — Codex health indicator (v5.1.1+, I-4 of cosmic-cuddling-dusk).** Conditional second sentinel line, emitted ONLY when Codex routing/review is configured on AND `~/.codex/auth.json` shows an expired JWT. Steps:
+**Step 3 — Codex health indicator (v5.1.1+, I-4 of cosmic-cuddling-dusk; v5.2.3 refinement: chatgpt-mode cosmetic-expiry skip).** Conditional second sentinel line, emitted ONLY when Codex routing/review is configured on AND `~/.codex/auth.json` shows a real auth problem. Steps:
 
 1. **Skip gate.** If merged `codex.routing == off` AND `codex.review == off` (resolved from `~/.masterplan.yaml` + `.masterplan.yaml`), emit nothing — silent.
 2. **Read auth file.** Use the **Read tool** to load `~/.codex/auth.json`. If the read fails (file absent — codex not installed for this user), emit nothing — silent.
-3. **Decode JWT exp claims.** For each of `id_token` and `access_token` in the parsed JSON, split the JWT on `.`, base64-url-decode the middle segment, parse JSON, extract `exp` (Unix seconds). Run via Bash: `for f in id_token access_token; do token="$(jq -r ".$f" ~/.codex/auth.json)"; echo "${token}" | cut -d. -f2 | base64 -d 2>/dev/null | jq -r .exp; done` — the two output lines are the two `exp` values. On any decode error, treat that token as unknown (do not emit a warning sentinel for that token).
-4. **Compare to now.** `now="$(date +%s)"`. For each `exp`, compute `age_days = (now - exp) / 86400`. If `now > exp` for either token, the auth is expired.
-5. **Emit conditional line.** When at least one token is expired, emit one additional plain-stdout line directly under the version sentinel:
+3. **Cosmetic-expiry skip (chatgpt mode).** Read three fields from the parsed JSON: `.auth_mode`, `.tokens.refresh_token`, `.last_refresh`. If `auth_mode == "chatgpt"` AND `tokens.refresh_token` is present (non-null, non-empty) AND `last_refresh` parses as an ISO-8601 timestamp within the last 7 days, emit nothing — silent. Rationale: under `auth_mode=chatgpt` the `id_token`/`access_token` JWTs are short-lived (~1 hour) and auto-refreshed via the persistent `refresh_token` on every Codex call; a past-due `exp` claim is the steady-state norm, not a degradation signal. Skip the JWT-exp arithmetic entirely in this case.
+4. **Decode JWT exp claims.** For each of `id_token` and `access_token` in `.tokens.*` (with fallback to top-level for older schemas), split the JWT on `.`, base64-url-decode the middle segment, parse JSON, extract `exp` (Unix seconds). Run via Bash: `for f in id_token access_token; do token="$(jq -r ".tokens.$f // .$f // empty" ~/.codex/auth.json)"; [ -n "$token" ] && echo "${token}" | cut -d. -f2 | base64 -d 2>/dev/null | jq -r .exp; done` — the output lines are the `exp` values. On any decode error, treat that token as unknown (do not emit a warning sentinel for that token).
+5. **Compare to now.** `now="$(date +%s)"`. For each `exp`, compute `age_days = (now - exp) / 86400`. If `now > exp` for either token, the auth is expired.
+6. **Emit conditional line.** When at least one token is expired, emit one additional plain-stdout line directly under the version sentinel:
 
    ```
    ↳ Codex: degraded (id_token expired Nd ago, access_token expired Md ago) — run `codex login` to refresh
@@ -57,7 +58,7 @@ Truncate `args` at 120 chars; total sentinel length <= 200 chars. The sentinel i
 
    Substitute `N` and `M` with the integer day age of each token (omit a token from the parenthetical when its decode failed or exp ≥ now — e.g. `(id_token expired 13d ago)` when only id_token is expired). When BOTH tokens decode cleanly AND are NOT expired but `last_refresh` (read from `~/.codex/auth.json`) is older than 30 days, emit a softer line: `↳ Codex: stale (last_refresh Nd ago — consider running `codex login`)`. When both decode cleanly AND not expired AND last_refresh < 30d, emit nothing — silent.
 
-This Step 3 line is plain stdout, sibling of the Step 2 sentinel, NOT part of CC-3-trampoline. It runs unconditionally on every `/masterplan` invocation (cost: 1 Read + 2 base64-decodes ≈ 50ms). The skip gate in step 1 keeps the cost zero for users who have intentionally disabled codex. Doctor check #39 surfaces the same expiry condition at lint time with more detail.
+This Step 3 line is plain stdout, sibling of the Step 2 sentinel, NOT part of CC-3-trampoline. It runs unconditionally on every `/masterplan` invocation (cost: 1 Read + ≤2 base64-decodes ≈ 50ms; the cosmetic-expiry skip in sub-step 3 short-circuits for healthy chatgpt-mode users). The codex-routing skip gate in sub-step 1 keeps the cost zero for users who have intentionally disabled codex. Doctor check #39 surfaces the same expiry condition at lint time with more detail.
 
 ## CC-3-trampoline
 
