@@ -103,6 +103,15 @@ After config loading completes, if `codex_host_suppressed != true` and the merge
 - **`scan`** — legacy heuristic: scan the system-reminder skills list for any entry prefixed `codex:` (e.g., `codex:codex-rescue`, `codex:setup`, `codex:rescue`). Faster (no dispatch), but fragile — survives only as long as the skills-list format keeps the `codex:` prefix convention.
 - **`trust`** — assume codex is available; skip detection entirely. For users on locked-down accounts where the ping itself fails for unrelated infrastructure reasons (sandbox-blocked subagent dispatch, etc.) and any per-task failure is acceptable as the loudly-degraded signal.
 
+**Always log the detection outcome to `events.jsonl` (v5.1.1+, I-5 of cosmic-cuddling-dusk).** Regardless of result, record one event so the per-run codex-availability decision is auditable. The success-path event piggybacks on the next natural state write of the run (no force-flush — failure-path events still force-flush per the degrade-loudly contract below). Event formats:
+
+- On `ping` success (`codex_ping_result == "ok"`) or `scan` mode finding a `codex:` entry: `<ISO-ts> codex_ping ok — detection_mode=<ping|scan>`.
+- On `trust` mode (detection skipped intentionally): `<ISO-ts> codex_ping skipped — detection_mode=trust`.
+- On `codex_host_suppressed == true` (Codex is hosting this orchestrator; no detection runs): `<ISO-ts> codex_ping skipped — codex_host_suppressed`.
+- On failure: the existing `codex degraded — …` event in the degradation path below already covers this case (no duplicate event).
+
+Doctor check #41 reads these events to distinguish "ping never ran" from "ping returned ok but no Codex dispatches happened" from "ping returned error" — the symptomatic case where `codex_routing: auto` was persisted but no `routing→.*\[codex\]` events ever follow.
+
 If detection concludes codex is **absent**, behavior depends on `config.codex.unavailable_policy` (default `degrade-loudly`; v2.4.0+):
 
 **`unavailable_policy: block`** — orchestrator does NOT degrade silently OR loudly. Instead: emit the same visible stdout warning (step 1 below), then HALT. Do not enter Step B/C/I — there's no plan execution to skip-codex through. For this halt, set: in-memory `halt_reason = "codex unavailable; unavailable_policy=block"`. If invoked via /loop, reschedule the next wakeup so resume can retry with codex installed; otherwise → CLOSE-TURN. The halting message includes: `⚠ HALT — codex plugin not detected and config.codex.unavailable_policy=block. Install codex (per the warning above) OR set codex.unavailable_policy: degrade-loudly in .masterplan.yaml to allow inline fallthrough.`. NO further steps from below run.

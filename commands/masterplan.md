@@ -43,6 +43,22 @@ The shape is `-> /masterplan v<parsed-semver> args: '<truncated-args-or-(empty)>
 
 Truncate `args` at 120 chars; total sentinel length <= 200 chars. The sentinel is plain stdout, NOT inside an `AskUserQuestion`, NOT inside a tool call, and NOT part of CC-3-trampoline.
 
+**Step 3 — Codex health indicator (v5.1.1+, I-4 of cosmic-cuddling-dusk).** Conditional second sentinel line, emitted ONLY when Codex routing/review is configured on AND `~/.codex/auth.json` shows an expired JWT. Steps:
+
+1. **Skip gate.** If merged `codex.routing == off` AND `codex.review == off` (resolved from `~/.masterplan.yaml` + `.masterplan.yaml`), emit nothing — silent.
+2. **Read auth file.** Use the **Read tool** to load `~/.codex/auth.json`. If the read fails (file absent — codex not installed for this user), emit nothing — silent.
+3. **Decode JWT exp claims.** For each of `id_token` and `access_token` in the parsed JSON, split the JWT on `.`, base64-url-decode the middle segment, parse JSON, extract `exp` (Unix seconds). Run via Bash: `for f in id_token access_token; do token="$(jq -r ".$f" ~/.codex/auth.json)"; echo "${token}" | cut -d. -f2 | base64 -d 2>/dev/null | jq -r .exp; done` — the two output lines are the two `exp` values. On any decode error, treat that token as unknown (do not emit a warning sentinel for that token).
+4. **Compare to now.** `now="$(date +%s)"`. For each `exp`, compute `age_days = (now - exp) / 86400`. If `now > exp` for either token, the auth is expired.
+5. **Emit conditional line.** When at least one token is expired, emit one additional plain-stdout line directly under the version sentinel:
+
+   ```
+   ↳ Codex: degraded (id_token expired Nd ago, access_token expired Md ago) — run `codex login` to refresh
+   ```
+
+   Substitute `N` and `M` with the integer day age of each token (omit a token from the parenthetical when its decode failed or exp ≥ now — e.g. `(id_token expired 13d ago)` when only id_token is expired). When BOTH tokens decode cleanly AND are NOT expired but `last_refresh` (read from `~/.codex/auth.json`) is older than 30 days, emit a softer line: `↳ Codex: stale (last_refresh Nd ago — consider running `codex login`)`. When both decode cleanly AND not expired AND last_refresh < 30d, emit nothing — silent.
+
+This Step 3 line is plain stdout, sibling of the Step 2 sentinel, NOT part of CC-3-trampoline. It runs unconditionally on every `/masterplan` invocation (cost: 1 Read + 2 base64-decodes ≈ 50ms). The skip gate in step 1 keeps the cost zero for users who have intentionally disabled codex. Doctor check #39 surfaces the same expiry condition at lint time with more detail.
+
 ## CC-3-trampoline
 
 Every turn-close in this orchestrator MUST route through the following sequence. This is the single enforcement point for CC-3 and the documented exclusion point for narrower close-site duties. Replace any bare "end the turn" directive in loaded parts with `-> CLOSE-TURN` to signal that this sequence runs before yielding.

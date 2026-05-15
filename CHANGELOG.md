@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.1.1] — 2026-05-15 — Codex-routing visibility instrumentation
+
+### Added — Codex-routing visibility instrumentation (cosmic-cuddling-dusk)
+
+Five surgical additions that surface the silent-degradation failure modes observed across 24h of `/masterplan` runs: Codex auth expiring without any user-facing signal, planner skill silently skipping `**Codex:**` and `**parallel-group:**` annotations at `complexity: high`, and the degrade-loudly visibility contract failing to write evidence to `events.jsonl`. All read-only diagnostics — none alter routing logic, eligibility cache, dispatch contract, or persisted state schema.
+
+- **Doctor check #39 — `codex_auth_expiry` (Warning, repo-scoped, v5.1.1+, I-1).** Reads `~/.codex/auth.json`, base64url-decodes the JWT `exp` claim from `id_token` and `access_token`, and warns when either token is expired, expiring within 24h, or when `last_refresh` is older than 30 days. Pairs with check #18 (config-vs-plugin mismatch): #18 flags persistent misconfig; #39 flags expired credentials. Skipped silently when `~/.codex/auth.json` is absent (codex not installed). Report-only — auth refresh is browser-based OAuth, user-owned per headless-host constraint.
+- **Doctor check #40 — `high_complexity_codex_annotation_gap` (Warning, plan-scoped, v5.1.1+, I-2).** For each `state.yml.complexity == "high"` plan: counts `^### Task ` headings in `plan.md` and compares against `**Codex:** (ok|no)` annotation count; warns when annotations are fewer than tasks. INFO-flags when zero `**parallel-group:**` annotations exist (planner brief encourages clustering verification/lint tasks). Catches the writing-plans skill silently skipping the high-complexity brief — which suppresses Codex routing (eligibility cache falls back to heuristic-only) and parallel-wave dispatch (wave assembly pre-pass has nothing to assemble). Skipped silently on `complexity: low` and `complexity: medium`.
+- **Doctor check #41 — `missing_codex_degradation_evidence` (Warning/Info, plan-scoped, v5.1.1+, I-3).** Two sub-fires: (a) WARN when `codex_routing == off` AND `codex_review == off` AND `~/.codex/auth.json` is healthy AND `events.jsonl` has no `codex degraded` event AND `last_warning` is null (silent override without evidence — violates the degrade-loudly visibility contract); (b) INFO when `codex_routing == auto|manual` AND `events.jsonl` has zero `routing→[codex]` events AND at least one `codex_ping ok` event (suggesting ping detected codex available but every task was judged ineligible — cross-references #40 for the same plan).
+- **Boot-banner Codex health indicator** (`commands/masterplan.md` CC-2, I-4). Conditional second sentinel line emitted directly under the version sentinel when ALL of the following hold: `codex.routing != off` OR `codex.review == on` in resolved config, `~/.codex/auth.json` exists, and any JWT is expired. Format: `↳ Codex: degraded (id_token expired Nd ago, access_token expired Md ago) — run \`codex login\` to refresh`. Softer variant `↳ Codex: stale (last_refresh Nd ago — consider running \`codex login\`)` when tokens are within validity but `last_refresh` > 30 days. Silent when codex is intentionally off or auth is healthy. Cost: 1 Read + 2 base64-decodes ≈ 50ms.
+- **`codex_ping` event class in `events.jsonl`** (`parts/step-0.md`, I-5). Step 0's Codex availability detection always logs the outcome to `events.jsonl`, regardless of result: `codex_ping ok — detection_mode=<ping|scan>` on success; `codex_ping skipped — detection_mode=trust` or `codex_ping skipped — codex_host_suppressed` when detection is bypassed; existing `codex degraded — ...` event on failure (no duplicate). Makes the per-run codex-availability decision auditable in every events.jsonl so check #41 can distinguish "ping never ran" from "ping returned ok but no Codex dispatches" from "ping returned error".
+
+Doctor.md heading and parallelization brief updated to (#1 .. #41); complexity-aware check set updated (#41 fires on all complexity levels; #40 only on high); severity table extended with three new rows. Doctor #39 is repo-scoped and runs inline at the orchestrator; #40 and #41 are plan-scoped and run in per-worktree Haiku dispatchers when worktrees ≥ 2.
+
+### Why instrumentation, not fixes
+
+Per the project's failure-instrumentation principle (codified in `[5.1.0]` and reinforced by user feedback): never design a `/masterplan` fix on the spot. The instrumentation surfaces the failure rate; subsequent releases prioritize fixes once the analyzer (`bin/masterplan-failure-analyze.sh`) produces durable evidence of which failure modes recur and which were one-offs. The Codex auth-expiry case is unusual in that the upstream cause is user-owned (browser OAuth refresh), so doctor #39 reports rather than auto-fixes.
+
+### Deferred items
+
+- Should Step 0's `ping` mode actually exercise `codex exec` (force the auth path) rather than just dispatching the subagent_type? Currently the ping returns OK if the subagent dispatches OK, even with broken downstream auth. Specification question — surface via #41 sub-fire (a) when it bites.
+- Should the boot-banner Codex degraded line gate downstream behavior via an `AskUserQuestion` rather than passive stdout? UX question.
+- Should the framework offer to launch `codex login` via shell-out when the user invokes `/masterplan` with expired auth? Headless-host constraint permits user-initiated interactive OAuth.
+- Why is the planner skill silently skipping high-complexity annotations? Needs transcript analysis of the writing-plans subagent invocations.
+
 ## [5.1.0] — 2026-05-14 — Failure-instrumentation framework
 
 ### Added
