@@ -449,6 +449,12 @@ if [[ -n "$transcript" && -r "$transcript" ]]; then
     | .toolUseResult as $r
     | (($tu.subagent_type // $r.agentType // "") | tostring) as $stype
     | (
+        ($r.content // null)
+        | if type == "string" then .
+          elif type == "array" then map(.text // "") | join("")
+          else "" end
+      ) as $subagent_return_text
+    | (
         if   ($stype | startswith("codex:"))                   then "codex"
         elif ($stype | contains("subagent-driven-development")) then "sdd"
         elif ($stype == "Explore")                              then "explore"
@@ -491,16 +497,22 @@ if [[ -n "$transcript" && -r "$transcript" ]]; then
           lines_added: ($r.toolStats.linesAdded // 0),
           lines_removed: ($r.toolStats.linesRemoved // 0)
         },
-        result_chars: (
-          ($r.content // null)
-          | if type == "string" then length
-            elif type == "array" then map(.text // "") | join("") | length
-            else 0 end
-        ),
+        result_chars: ($subagent_return_text | length),
+        subagent_return_bytes: 0,
+        subagent_return_text: $subagent_return_text,
         branch: $branch,
         cwd: $cwd
       }
-    ' "$transcript" >> "$subagents_file" 2>/dev/null
+    ' "$transcript" 2>/dev/null | while IFS= read -r rec; do
+      subagent_return_text=""
+      IFS= read -r -d '' subagent_return_text < <(
+        printf '%s' "$rec" | jq -j '.subagent_return_text // "", "\u0000"' 2>/dev/null
+      ) || true
+      subagent_return_bytes=$(printf '%s' "$subagent_return_text" | wc -c | tr -d ' ')
+      printf '%s\n' "$rec" | jq -c \
+        --argjson subagent_return_bytes "${subagent_return_bytes:-0}" \
+        'del(.subagent_return_text) | .subagent_return_bytes = $subagent_return_bytes'
+    done >> "$subagents_file" 2>/dev/null
 }
   if [[ "$is_bundle" -eq 1 ]]; then
     with_bundle_lock "$plans_dir" _do_append_subagents || true
