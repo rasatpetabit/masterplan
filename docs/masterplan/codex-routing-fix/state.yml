@@ -34,7 +34,7 @@ tasks:
   - idx: 12
     status: complete
   - idx: 13
-    status: pending
+    status: complete
   - idx: 14
     status: pending
   - idx: 15
@@ -50,5 +50,6 @@ recent_events:
   - "2026-05-16T16:11Z wave2 entry: serial Codex EXEC on parts/step-c.md T4→T5→T6→T7"
   - "2026-05-16T16:20Z wave2 complete: T4(96def0a) T5(e7832d7) T6(958e649) T7(2b15a98)"
   - "2026-05-16T16:21Z wave3 entry: T8 inline-Claude B4 audit + 5 freeform contracts + audit-script hardening"
-  - "2026-05-16T16:30Z wave3 complete: T8(PENDING) — audit script Pattern D verified via fixture"
+  - "2026-05-16T16:30Z wave3 complete: T8(dfd0424) — audit script Pattern D verified via fixture"
   - "2026-05-16T16:30Z wave5 entry: T13/T14/T15 inline-Claude finale"
+  - "2026-05-16T16:35Z T13 complete (PENDING): docs/internals.md §3/§8/§9/§10 v5.8.0 updates"
