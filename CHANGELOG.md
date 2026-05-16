@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Guard B: cross-worktree slug-uniqueness pre-check with auto-suffix and AUQ (`bin/masterplan-state.sh check-slug-collision`, integrated into Step B0 and Step I3)
+
 ## [5.6.0] — 2026-05-16 — Claude `/goal` interop (observability-only) + audit denominator fix
 
 Minor release. Adds host-only observability for Claude Code's `/goal` autonomous-continuation loop via the Stop hook input contract, exposes the signal in telemetry and session-audit rollups, and fixes a P2 denominator bug found in pre-release Codex review.

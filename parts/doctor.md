@@ -1,6 +1,6 @@
-# Doctor — Self-Host Checks (#1 .. #41)
+# Doctor — Self-Host Checks (#1 .. #42)
 
-Invoked via `/masterplan doctor [--fix]`. Loaded by the router only when verb == doctor. Checks #32–#36 added in Wave C. Check #38 added in v5.1.0 (failure-instrumentation framework). Checks #39–#41 added in v5.1.1 (cosmic-cuddling-dusk Codex-routing instrumentation).
+Invoked via `/masterplan doctor [--fix]`. Loaded by the router only when verb == doctor. Checks #32–#36 added in Wave C. Check #38 added in v5.1.0 (failure-instrumentation framework). Checks #39–#41 added in v5.1.1 (cosmic-cuddling-dusk Codex-routing instrumentation); Check #42 (stale .lock) added in concurrency-guards wave.
 
 **Entry breadcrumb.** Emit on first line of this step (per Step 0 §Breadcrumb emission contract):
 
@@ -16,7 +16,7 @@ Triggered by `/masterplan doctor [--fix]`. Lints all masterplan state across all
 
 Read worktrees from `git_state.worktrees` (Step 0 cache). For each worktree, scan `<worktree>/<config.runs_path>/` plus legacy `<worktree>/<config.specs_path>/` and `<worktree>/<config.plans_path>/`.
 
-**Parallelization.** When worktrees ≥ 2, dispatch one Haiku agent (pass `model: "haiku"` per §Agent dispatch contract) per worktree in a single Agent batch (each agent runs all plan-scoped checks (currently #1-24, #26, #28, #29, #32, #34, #35, #40, #41) for its worktree and returns findings as `[{check_id, severity, file, message}]` JSON). With 1 worktree, run inline — agent dispatch latency isn't worth it. The orchestrator merges results and applies the report ordering below.
+**Parallelization.** When worktrees ≥ 2, dispatch one Haiku agent (pass `model: "haiku"` per §Agent dispatch contract) per worktree in a single Agent batch (each agent runs all plan-scoped checks (currently #1-24, #26, #28, #29, #32, #34, #35, #40, #41, #42) for its worktree and returns findings as `[{check_id, severity, file, message}]` JSON). With 1 worktree, run inline — agent dispatch latency isn't worth it. The orchestrator merges results and applies the report ordering below.
 
 **Repo-scoped checks #26 / #30 / #31 / #36 / #39 (v5.4.0+ — single Haiku batch).** These five checks fire ONCE per doctor run regardless of worktree/plan count. Before v5.4.0 they ran inline at the orchestrator (serial reads, ~5 round-trips through the Opus context). v5.4.0+ dispatches a single Haiku in the SAME Agent batch as the per-worktree Haikus above, so all parallelizable doctor work returns in one wave. Inputs per check: #26 (`auto_compact_loop_attached`, v2.9.1+) consumes `CronList` output (session-level state — the Haiku must call `ToolSearch(query: "select:CronList", max_results: 1)` to load the deferred tool before invoking it); #30 (`cross_manifest_version_drift`, v4.2.1+) reads `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json` (root `version` + nested `plugins[0].version`), `.codex-plugin/plugin.json`, and greps `README.md` for `Current release:`; #31 (`per_autonomy_gate_condition_consistency`, v4.2.1+) reads `parts/step-b.md` (v5.0+; gates moved from `commands/masterplan.md` during v5.0 lazy-load extraction); #36 (`router_ceiling_and_phase_file_sanity`, v5.0.0+) reads `commands/masterplan.md` size + checks `parts/step-*.md` existence; #39 (`codex_auth_expiry`, v5.1.1+) reads `~/.codex/auth.json` (user-global, not per-repo). Brief shape:
 
@@ -54,9 +54,9 @@ Return shape: {contract_id: "doctor.schema_v2", inputs_hash: "<sha256 of bundle 
 
 **Complexity-aware check set.** For each scanned plan, read `complexity` from `state.yml` (default `medium` if absent — legacy/pre-feature plans). The active check set varies:
 
-- `low` plans: run only checks #1 (orphan plan), #2 (orphan status), #3 (wrong worktree), #4 (wrong branch), #5 (stale in-progress), #6 (stale critical error), #8 (missing spec), #9 (schema, against the standard run-state field set), #10 (unparseable), #18 (codex misconfig), #29 (worktree-bundle reconciliation mismatch), #41 (missing degradation evidence — fires regardless of complexity when Codex was configured on). SKIP all sidecar / annotation / ledger / cache / queue / per-subagent-telemetry checks (#11–#17, #19–#21, #23, #24) — low plans do not produce those artifacts. Also skip #22 and #40 (both high-only — see below).
-- `medium` plans: run all plan-scoped checks (currently #1-24, #26, #28, #29, #32, #34, #35, #41) except #22 and #40 (both high-only).
-- `high` plans: run all plan-scoped checks (currently #1-24, #26, #28, #29, #32, #34, #35, #40, #41) INCLUDING #22 (high-complexity rigor evidence) and #40 (missing Codex/parallel-group annotations at complexity:high).
+- `low` plans: run only checks #1 (orphan plan), #2 (orphan status), #3 (wrong worktree), #4 (wrong branch), #5 (stale in-progress), #6 (stale critical error), #8 (missing spec), #9 (schema, against the standard run-state field set), #10 (unparseable), #18 (codex misconfig), #29 (worktree-bundle reconciliation mismatch), #41 (missing degradation evidence — fires regardless of complexity when Codex was configured on), #42 (stale .lock file — cheap structural check). SKIP all sidecar / annotation / ledger / cache / queue / per-subagent-telemetry checks (#11–#17, #19–#21, #23, #24) — low plans do not produce those artifacts. Also skip #22 and #40 (both high-only — see below).
+- `medium` plans: run all plan-scoped checks (currently #1-24, #26, #28, #29, #32, #34, #35, #41, #42) except #22 and #40 (both high-only).
+- `high` plans: run all plan-scoped checks (currently #1-24, #26, #28, #29, #32, #34, #35, #40, #41, #42) INCLUDING #22 (high-complexity rigor evidence) and #40 (missing Codex/parallel-group annotations at complexity:high).
 - Plans without a `complexity:` state field: treat as `medium`.
 
 The check-set gate is per-plan: a single `/masterplan doctor` run against worktrees containing a mix of low/medium/high plans honors each plan's complexity individually. Findings are reported with the same severity as today. (Self-host audits — deployment-drift comparison vs HEAD and CD-9 free-text-question grep — moved out of doctor in v2.11.0; those run via the developer-only `bin/masterplan-self-host-audit.sh` script when working on the orchestrator source.)
@@ -105,6 +105,7 @@ For each worktree, run all checks. Report findings grouped by worktree → check
 | 39 | **Codex auth expired or stale** (repo-scoped, v5.1.1+, refined v5.2.3+). Reads `~/.codex/auth.json`. Decodes JWT `exp` claim from `id_token` and `access_token` (nested under `.tokens.*` per schema_v3+; falls back to top-level for older schemas). Fires on: (a) either token expired (`now > exp`); (b) either token expires within 24h (`exp - now < 86400`); (c) `last_refresh` > 30 days ago even when tokens are within validity. **Skipped (returns PASS-with-info) when `auth_mode == "chatgpt"` AND `tokens.refresh_token` is present AND `last_refresh` is within the last 7 days** — that shape indicates the ChatGPT mode's short-lived JWT auto-refresh is healthy, so cosmetic `id_token.exp` past `now` is normal steady state, not degradation. Diagnoses the upstream cause of Codex routing/review silently degrading to off — Step 0's ping returns an error, the framework correctly applies `degrade-loudly`, but the user has no idea WHY. Pairs with check #18 (config-vs-plugin mismatch): #18 flags persistent misconfig; #39 flags expired credentials. Skipped silently when `~/.codex/auth.json` is absent (codex not installed). | Warning | Report per-token expiry timestamp + age in days. Suggest `codex login` (or equivalent shell-based refresh — varies by codex CLI version). No auto-fix (auth refresh is browser-based OAuth, user-owned per headless-host constraint). |
 | 40 | **High-complexity plan missing Codex / parallel-group annotations** (plan-scoped, v5.1.1+, I-2 of cosmic-cuddling-dusk). Fires when `state.yml.complexity == "high"` AND the plan-scoped count of `**Codex:** (ok|no)` annotations in `plan.md` is LESS than the count of task headings (`^### Task `). Also INFO-flags when `state.yml.complexity == "high"` AND zero `**parallel-group:**` annotations exist in plan.md. Per `parts/step-b.md` complexity-aware brief, `complexity: high` REQUIRES a `**Codex:**` annotation per task and ENCOURAGES `**parallel-group:**` annotations for verification/lint/inference clusters; this check catches the writing-plans skill silently skipping the high-complexity brief, which suppresses Codex routing (eligibility cache falls back to heuristic-only) and parallel-wave dispatch (wave assembly pre-pass has nothing to assemble). Skipped silently on `complexity: low` and `complexity: medium`. | Warning | Report per-plan: complexity, task count, Codex annotation count, parallel-group annotation count, and the gap. Suggest re-running `/masterplan plan --from-spec=<spec>` to regenerate with the high-complexity brief, OR annotating by hand. No auto-fix (modifying plan.md mid-execution is risky per CD-7). |
 | 41 | **Missing Codex degradation evidence** (plan-scoped, v5.1.1+, expanded v5.3.0+). Three sub-fires: (a) WARN when `state.yml.codex_routing == off` AND `state.yml.codex_review == off` AND `~/.codex/auth.json` is healthy AND `events.jsonl` has NO `codex degraded` event AND `state.yml.last_warning` is null/absent (silent override without evidence — violates the degrade-loudly visibility contract). (b) INFO when `state.yml.codex_routing == auto` OR `state.yml.codex_routing == manual` AND `events.jsonl` has NO `routing→.*\[codex\]` events anywhere AND `events.jsonl` has at least one `codex_ping ok` event (suggesting ping detected codex available but every task was judged ineligible by the planner or heuristic — symptomatic of root cause #2 in cosmic-cuddling-dusk: annotation-gap in plan). **(c) v5.3.0+ — Step 0 confabulation detector.** ERROR when `events.jsonl` contains a `degradation_self_doubt` event (Step 0 self-flagged a likely false-positive at warning-time) OR `events.jsonl` contains a `codex degraded — plugin not detected` event AND `~/.codex/auth.json` is healthy AND `ls ~/.claude/plugins/*/codex* 2>/dev/null` finds the codex plugin's files on disk. Indicates Step 0 emitted the degradation warning despite all on-disk evidence pointing to a healthy install — likely orchestrator confabulation under the legacy `ping` detection mode (fixed by default flip to `scan-then-ping` in v5.3.0). Pairs with #20/#21 from a different angle. | Warning (sub-fires a, b) / Error (sub-fire c) | Report each sub-fire with diagnostic context. For (a): suggest investigating why codex was forced off without trace — possibly Step 0 ping bug. For (b): cross-reference with #40 finding for the same plan. For (c): suggest setting `detection_mode: scan-then-ping` in `.masterplan.yaml` (or removing the explicit `ping` override) and re-running `/masterplan`. No auto-fix. |
+| 42 | **Stale `.lock` file in bundle** (concurrency-guards wave). For each run bundle, stat `<bundle>/.lock` if present. Fires when the file's mtime is older than 1 hour. Indicates a writer process crashed or wedged before releasing the `flock` (Guard C). The framework still functions — the next write blocks 5 s, then proceeds when `flock` reaps the abandoned lock. False-positive risk is non-zero (a legitimate long-running write during the stat window). | Warning | Report only (no auto-remediation). Confirm no live writer process holds the lock, then `rm <bundle>/.lock`. |
 
 ---
 
@@ -862,3 +863,29 @@ fi
 ```
 
 This check is **report-only**. Sub-fire (a) is the harder case to debug — surface the finding so the user (or a future investigation) can reproduce. Sub-fire (b) usually pairs with check #40 firing on the same plan; surface both findings together so the chain of causation is obvious.
+
+---
+
+## Check #42 — Stale `.lock` file in bundle
+
+**Severity:** Warning
+**--fix:** Report only (no auto-remediation)
+
+For each run bundle, stat `<bundle>/.lock` if present. Emit a WARN when the file's mtime is older than 1 hour. Indicates a writer process crashed or wedged before releasing the `flock` (Guard C). The framework still functions — the next write blocks 5 s, then proceeds when `flock` reaps the abandoned lock. False-positive risk is non-zero (a legitimate long-running write during the stat window).
+
+**Recommended fix:** Confirm no live writer process holds the lock, then `rm <bundle>/.lock`.
+
+**Implementation:** For each bundle in the scan, run:
+```bash
+if [[ -f "${bundle}/.lock" ]]; then
+  lock_age=$(( $(date +%s) - $(stat -c %Y "${bundle}/.lock" 2>/dev/null || echo 0) ))
+  if [[ $lock_age -gt 3600 ]]; then
+    emit_finding 42 WARN "${bundle}/.lock" "lockfile age ${lock_age}s exceeds 1h threshold; possible wedged writer"
+  fi
+fi
+```
+
+**Output shape:**
+```json
+{"check_id": 42, "severity": "WARN", "file": "<bundle>/.lock", "message": "lockfile age Xs exceeds 1h threshold; possible wedged writer"}
+```
