@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.3.1] — 2026-05-15 — Doctor #41 bash bug fix: `|| echo 0` produced "0\n0", silently skipping sub-fires
+
+Patch release. Fixes a pre-existing bug in `parts/doctor.md` Check #41 bash (introduced in v5.1.1 alongside sub-fires (a)/(b); inherited by v5.3.0 sub-fire (c)).
+
+### Fixed
+
+- **Check #41 grep-count fallback pattern.** The idiom `grep -cE 'foo' "$events" 2>/dev/null || echo 0` produced `"0\n0"` whenever `$events` was readable with zero matches: `grep -c` always prints `"0"` and exits 1 when there are zero matches, so the `|| echo 0` fallback fired and appended a second `"0"`. The resulting two-line string then failed the downstream `[ "$var" -eq 0 ]` integer test with a `bash: [: 0\n0: integer expected` warning to stderr, and the if-branch was silently skipped. Net effect: sub-fire (a) (silent override without evidence) only fired when `events.jsonl` was entirely unreadable — never on the intended common case of "file exists with zero degraded events". Sub-fire (b) was similarly broken; new sub-fire (c) inherited the pattern in v5.3.0 but happened to be guarded by an explicit `[ -r "$events" ]` so it tripped the same bug only when `$events` was readable AND had zero matches of the target patterns. Fix: drop the `|| echo 0` fallback (since `grep -c` always prints a number when the file is readable), guard the per-bundle loop with `[ -r "$events" ] || continue` so unreadable bundles are skipped instead of misinterpreted, and use `${var:-0}` parameter expansion in the integer tests as a belt-and-suspenders default for any future caller. Found during retroactive Doctor #41 lint sweep across 426 bundles in `/home/ras/dev/*` immediately after the v5.3.0 release.
+
+### Verification
+
+- Re-ran cross-repo sweep against 426 bundles (95 main + 331 yanos-mgmt worktrees) post-fix: zero spurious "integer expected" stderr lines; Check #41 still returns PASS (no historical exposure to sub-fire (c), which is by-design — legacy ping-mode false-positives left no `events.jsonl` audit trail; the new `degradation_self_doubt` event closes that gap going forward).
+- `bash -n parts/doctor.md` is not applicable (markdown, not executable), but a stand-alone extraction-and-run of the Check #41 bash block against the local bundle inventory succeeded without warnings.
+
 ## [5.3.0] — 2026-05-15 — Step 0: scan-then-ping detection default + Doctor #41 ERROR escalation
 
 Fixes a recurring false-positive class where `/masterplan` emits `⚠ Codex plugin not detected — codex_routing and codex_review are degraded to off for this run` against installs where Codex is fully present and actively dispatching. Repro that motivated this release: `/loop /masterplan --autonomy=full` in `yanos-mgmt/.worktrees/pivot-landing-4b-yanos-wireguard` on epyc2 emitted the warning while the session's own system-reminder skills list contained `codex:codex-rescue`, `codex:setup`, `codex:rescue`, etc., and `bin/masterplan-codex-usage.sh` showed the same host actively dispatching Codex in the same window.

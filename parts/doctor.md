@@ -801,35 +801,38 @@ for state_yml in docs/masterplan/*/state.yml; do
   run_dir="$(dirname "$state_yml")"
   slug="$(basename "$run_dir")"
   events="$run_dir/events.jsonl"
+  # v5.3.1+ events.jsonl readability gate. Without this, `grep -c PATTERN $events 2>/dev/null || echo 0`
+  # produced "0\n0" when the file existed with zero matches (grep -c always prints "0" and exits 1),
+  # which failed `-eq 0` integer tests and silently skipped every sub-fire. Skip the bundle entirely
+  # when events.jsonl is unreadable — sub-fires (a), (b), (c) are all events-driven and need it.
+  [ -r "$events" ] || continue
   routing="$(grep -E '^codex_routing:' "$state_yml" 2>/dev/null | head -1 | awk '{print $2}' | tr -d '"')"
   review="$(grep -E '^codex_review:' "$state_yml" 2>/dev/null | head -1 | awk '{print $2}' | tr -d '"')"
   has_last_warning="$(grep -cE '^last_warning:' "$state_yml" 2>/dev/null)"
   if [ "$routing" = "off" ] && [ "$review" = "off" ] && [ $auth_healthy -eq 1 ] && [ "$has_last_warning" -eq 0 ]; then
-    degraded_event="$(grep -cE 'codex degraded' "$events" 2>/dev/null || echo 0)"
-    if [ "$degraded_event" -eq 0 ]; then
+    degraded_event="$(grep -cE 'codex degraded' "$events" 2>/dev/null)"
+    if [ "${degraded_event:-0}" -eq 0 ]; then
       echo "WARN $slug: codex routing+review forced off; auth healthy; no \`codex degraded\` event in events.jsonl; no last_warning set — silent override without evidence (degrade-loudly visibility violation)"
       fail=1
     fi
   fi
   if [ "$routing" = "auto" ] || [ "$routing" = "manual" ]; then
-    codex_routing_events="$(grep -cE 'routing→.*\[codex\]' "$events" 2>/dev/null || echo 0)"
-    ping_ok_events="$(grep -cE 'codex_ping ok' "$events" 2>/dev/null || echo 0)"
-    if [ "$codex_routing_events" -eq 0 ] && [ "$ping_ok_events" -gt 0 ]; then
+    codex_routing_events="$(grep -cE 'routing→.*\[codex\]' "$events" 2>/dev/null)"
+    ping_ok_events="$(grep -cE 'codex_ping ok' "$events" 2>/dev/null)"
+    if [ "${codex_routing_events:-0}" -eq 0 ] && [ "${ping_ok_events:-0}" -gt 0 ]; then
       echo "INFO $slug: codex_routing=$routing; ping returned ok ($ping_ok_events times); zero routing→[codex] events — every task judged ineligible. Cross-check #40 for annotation gap."
       fail=1
     fi
   fi
   # v5.3.0+ sub-fire (c): Step 0 confabulation detector.
-  if [ -r "$events" ]; then
-    self_doubt_events="$(grep -cE 'degradation_self_doubt' "$events" 2>/dev/null || echo 0)"
-    plugin_not_detected_events="$(grep -cE 'codex degraded — plugin not detected' "$events" 2>/dev/null || echo 0)"
-    if [ "$self_doubt_events" -gt 0 ]; then
-      echo "ERROR $slug: events.jsonl contains $self_doubt_events \`degradation_self_doubt\` event(s) — Step 0 self-flagged a likely false-positive at warning-time. Set \`detection_mode: scan-then-ping\` in .masterplan.yaml (or remove explicit \`ping\` override) and re-run."
-      error=1
-    elif [ "$plugin_not_detected_events" -gt 0 ] && [ $auth_healthy -eq 1 ] && [ $plugin_on_disk -eq 1 ]; then
-      echo "ERROR $slug: events.jsonl contains \`codex degraded — plugin not detected\` event(s), but auth is healthy AND codex plugin files exist under ~/.claude/plugins/. Step 0 confabulation suspected (legacy \`detection_mode: ping\` failure mode). Set \`detection_mode: scan-then-ping\` and re-run."
-      error=1
-    fi
+  self_doubt_events="$(grep -cE 'degradation_self_doubt' "$events" 2>/dev/null)"
+  plugin_not_detected_events="$(grep -cE 'codex degraded — plugin not detected' "$events" 2>/dev/null)"
+  if [ "${self_doubt_events:-0}" -gt 0 ]; then
+    echo "ERROR $slug: events.jsonl contains $self_doubt_events \`degradation_self_doubt\` event(s) — Step 0 self-flagged a likely false-positive at warning-time. Set \`detection_mode: scan-then-ping\` in .masterplan.yaml (or remove explicit \`ping\` override) and re-run."
+    error=1
+  elif [ "${plugin_not_detected_events:-0}" -gt 0 ] && [ $auth_healthy -eq 1 ] && [ $plugin_on_disk -eq 1 ]; then
+    echo "ERROR $slug: events.jsonl contains \`codex degraded — plugin not detected\` event(s), but auth is healthy AND codex plugin files exist under ~/.claude/plugins/. Step 0 confabulation suspected (legacy \`detection_mode: ping\` failure mode). Set \`detection_mode: scan-then-ping\` and re-run."
+    error=1
   fi
 done
 if [ $error -ne 0 ]; then
