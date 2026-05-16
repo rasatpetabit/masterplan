@@ -112,6 +112,50 @@ return_shape: |
   digest: {state, events_summary, blockers, task_list, spec_excerpt, commits, pr}
 ```
 
+## Contract: codex.review_wave_member_v1
+
+```yaml
+purpose: Per-wave-member Codex REVIEW dispatch at wave-end Step 4b (v5.8.0+)
+algorithm: |
+  Orchestrator emits N parallel Codex REVIEW Agent calls in a single assistant
+  message — one per qualifying wave member (one that passed gate eval +
+  asymmetric-review rule). Each call is bounded to a single wave member.
+
+  Per-member brief shape (Goal/Inputs/Scope/Constraints/Return):
+    Goal: Adversarial review of THIS wave member's portion of the wave-end
+          commit against the spec and acceptance criteria.
+    Inputs:
+      Task: <member task name from plan>
+      Acceptance criteria: <bullet list from member's plan entry>
+      Spec excerpt: <member's relevant section of design doc>
+      Diff range: <wave_start_sha>..<wave_end_sha>
+      Files in scope: <member's **Files:** list>
+      Verification: <captured output from 4a's wave verification, member-filtered>
+    Scope: Review only — no writes, no commits, no file modifications.
+           Run `git diff <range> -- <files...>` yourself to obtain the diff.
+    Constraints: CD-10. Be adversarial about correctness, not style.
+                 Do NOT review other wave members' files even if they
+                 share the diff range.
+    Return: severity-ordered findings (high/medium/low) grounded in file:line,
+            OR the literal string "no findings" if clean.
+
+  Codex sites are exempt from §Agent dispatch contract — do NOT pass model:.
+
+  Reviewer-batching: all N calls in ONE assistant message. Read-only
+  reviewers do not conflict on shared state, so batching is correct
+  (this is the same batching rule that governs N parallel
+  feature-dev:code-reviewer dispatches across independent tasks).
+
+return_shape: |
+  contract_id: "codex.review_wave_member_v1"
+  member_task_id: "<task name>"
+  diff_range: "<wave_start_sha>..<wave_end_sha>"
+  files_in_scope: [list of files]
+  severity_summary: "clean" | "<N high, N medium, N low>"
+  findings: [{severity, file, line, message}] OR []
+  notes: "<optional, e.g. 'diff was empty for this member'>"
+```
+
 ## Contract: related_scope_scan_v1
 
 ```yaml

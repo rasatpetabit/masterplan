@@ -619,7 +619,26 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
 
    This single-writer funnel is the M-1 / M-3 mitigation (FM-2 + FM-3). Wave members do NOT write to run state directly (per the per-instance brief in the wave assembly pre-pass). The orchestrator is the canonical writer per CD-7.
 
-   **4b under wave.** Skipped entirely for wave members — they don't commit, so the diff range `<task_start_sha>..HEAD` is empty; existing zero-commit branch in 4b step 1 handles this naturally (no new code).
+   **4b under wave (v5.8.0+).** Wave members don't commit, but the wave-end commit produces a reviewable SHA range — `<wave_start_sha>..<wave_end_sha>` filtered per member's declared `**Files:**`. At wave-end, dispatch **N parallel Codex REVIEW calls — one per wave member** (NOT one giant review). The principle is the reviewer-batching trigger (read-only review subagents can run in parallel because they don't conflict on shared state); per-member granularity preserves findings attribution to the originating task.
+
+   1. **Gate eval (per wave member).** Apply the same gate conditions enumerated for serial 4b above (`codex_host_suppressed`, `codex_review`, codex plugin availability, `codex_routing`). Additionally apply the asymmetric-review rule: if the wave member's recorded `dispatched_by == "codex"` (which would only happen if a Codex EXEC ran inside a wave — currently rare but possible), skip review for that member with reason `task was codex-routed (asymmetric-review rule)` per Step 3a's post-Codex flow. Emit the per-member skip variant (see step 4 below).
+
+   2. **Pre-dispatch visibility events (v2.4.0+, MANDATORY).** For each member that passes gate eval, emit a per-member pre-dispatch event:
+      ```
+      - <ISO-ts> task "<task name>" review→CODEX (wave-member; codex_review=on; diff <wave_start_sha>..<wave_end_sha> -- <files>; dispatched_by: "codex")
+      ```
+      For each member that fails gate eval, emit the matching `review→SKIP(<reason>)` variant from serial 4b's reason templates.
+
+   3. **Batched dispatch.** Emit ALL N Codex REVIEW dispatches in a **single assistant message**, with N `Agent` tool_use blocks (one per qualifying member). This is the reviewer-batching rule: serial dispatch turns an O(N×latency) job into an O(latency) job for no benefit because reviewers don't conflict. Each per-member brief uses `contract_id: codex.review_wave_member_v1` (see `commands/masterplan-contracts.md`) and follows the same brief shape as serial 4b (Goal/Inputs/Scope/Constraints/Return) but with:
+      - Diff range = `<wave_start_sha>..<wave_end_sha>` filtered to the member's `**Files:**` (Codex runs `git diff <range> -- <files...>` itself; no inlined diff in the brief).
+      - Task name + acceptance criteria from the member's plan entry only.
+      - **Codex sites are exempt from §Agent dispatch contract** — do NOT pass `model:`.
+
+   4. **Per-member decision matrix per autonomy.** Apply the serial 4b decision matrix (gated/loose/full) independently per member's findings digest. The wave-end completion-event batch (step 4d under wave) tags each per-member completion as `[inline][wave: <group>][reviewed: <severity-summary or "no findings">]` (or `[reviewed: SKIP(<reason>)]` for skipped members). High-severity findings still drive the CD-4 ladder per the existing autonomy semantics, but on a per-member basis: a high-severity finding on member T-i doesn't block member T-j's auto-accept.
+
+   5. **Post-review barrier.** Orchestrator waits for all N Codex REVIEW returns before writing the wave-end state-update commit (step 4d under wave). The wave-completion barrier (above) and the post-review barrier are distinct: the first gates wave members' implementation returns, the second gates Codex reviewers' returns.
+
+   **Why this is not a "skip with empty diff" case anymore.** The pre-v5.8.0 rule claimed "the diff range `<task_start_sha>..HEAD` is empty for wave members" — mechanically true at the individual-member level (members don't commit; their `task_start_sha` equals HEAD throughout the wave) but the wave-end commit SHA range *is* reviewable. Filtering that range to each member's declared files yields the per-member diff. Closes F2 (wave-mode Step 4b skip).
 
    The invoked skill already commits per task (serial mode only) — verify the commit landed; if not, commit the run-state update (and any rotation-created archive file) separately.
 
