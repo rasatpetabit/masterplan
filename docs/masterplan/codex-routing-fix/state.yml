@@ -36,7 +36,7 @@ tasks:
   - idx: 13
     status: complete
   - idx: 14
-    status: pending
+    status: complete
   - idx: 15
     status: pending
 
@@ -52,4 +52,5 @@ recent_events:
   - "2026-05-16T16:21Z wave3 entry: T8 inline-Claude B4 audit + 5 freeform contracts + audit-script hardening"
   - "2026-05-16T16:30Z wave3 complete: T8(dfd0424) — audit script Pattern D verified via fixture"
   - "2026-05-16T16:30Z wave5 entry: T13/T14/T15 inline-Claude finale"
-  - "2026-05-16T16:35Z T13 complete (PENDING): docs/internals.md §3/§8/§9/§10 v5.8.0 updates"
+  - "2026-05-16T16:35Z T13 complete (df5038b): docs/internals.md §3/§8/§9/§10 v5.8.0 updates"
+  - "2026-05-16T16:40Z T14 complete (PENDING): version 5.7.3→5.8.0 in 3 manifests + CHANGELOG v5.8.0 entry"
