@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.5.0] — 2026-05-15 — Three-layer regression test suite: static battery + doctor-fixtures (9 checks, 24 fixtures) + e2e claude --print harness
+
+Minor release. Adds a complete, sequenced three-layer test suite across `tests/static/`, `tests/doctor-fixtures/`, and `tests/e2e/`. No orchestrator behavior changes — this is purely additive test infrastructure. 83 files changed, 906 insertions, 2 deletions.
+
+### Added
+
+- **`tests/static/` — four structural regression scripts + `tests/run-static.sh` runner.** Each script runs in under 2 seconds; the full battery completes in under 5 seconds total. Catches prompt-edit regressions before publish rather than after a production fire. `make test-static` runs all four; `make test` runs static + doctor-fixtures + python. The first run of `test-cross-refs.sh` caught a real dangling reference (`parts/cd-rules.md` → `parts/contracts/cd-rules.md`).
+- **`tests/doctor-fixtures/run.sh` — semantic harness for bash-extractable doctor checks.** awk-extracts the fenced `bash` block under each `## Check #NN` heading in `parts/doctor.md` and runs it verbatim against synthetic PASS / FAIL / SKIPPED bundle fixtures under a controlled `HOME` and `cwd`. The doctor block IS the test code — zero drift risk. Wired as `make test-doctor-fixtures`.
+- **`tests/e2e/run.sh` — black-box harness via `claude --print`.** Invokes the full orchestrator (plugin loading + `commands/masterplan.md` + Step 0 routing) against fixture inputs and asserts substring matches against `golden.grep`. Opt-in only (`make test-e2e`, NOT in `make test`) because each invocation costs real API spend (~$0.20–1.00 under Sonnet). Per-test budget capped via `--max-budget-usd`; timeout via `timeout(1)`. First fixture: `version-sentinel` — asserts the version sentinel appears in Step 0 output. Tunable via `CLAUDE_E2E_MODEL`, `CLAUDE_E2E_BUDGET`, `CLAUDE_E2E_TIMEOUT`; defaults to Sonnet (Haiku 4.5 trips autocompact thrash on the ~2150-line orchestrator load).
+
+### Test layer details
+
+- **Layer 1 — static battery** (`tests/static/`, `tests/run-static.sh`, commit `f64204a`): four scripts — `test-yaml-frontmatter.sh` (python+yaml validates frontmatter on every `.md` with a leading `---`); `test-cross-refs.sh` (file-path existence, `contract_id:` → `## Contract:` mapping, `Check #NN` → `parts/doctor.md` heading mapping across all three reference classes); `test-bash-blocks.sh` (`bash -n` on every ` ```bash ``` ` block in `parts/*.md` and `commands/*.md`); `test-manifest-drift.sh` (mirror of Doctor #30 pre-commit: 5 version fields across `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json` root + nested, `.codex-plugin/plugin.json`, README).
+
+- **Layer 2 — doctor-fixtures harness** (`tests/doctor-fixtures/run.sh`, commits `1cd3e3a` + `e24ce37`): 9 check directories (`check-32` through `check-41`), 24 fixtures total, all green. Coverage: Check #32 (overflow watch — `pass-clean`, `fail-overflow-missing-target`, `fail-overflow-too-long`); Check #33 (reserved/trivial — `skipped`); Check #34 (state/plan hash drift — `pass-matching-hash`, `fail-state-drift`); Check #35 (spec/verify presence — `pass-conformant`, `fail-missing-spec`, `fail-missing-verify`); Check #36 (router file budgets — `pass-mini-repo`, `fail-oversized-router`, `fail-missing-step`); Check #38 (retro anomalies log — `pass-no-anomalies`, `fail-records-present`); Check #39 (Codex JWT freshness — `pass-chatgpt-fresh`, `fail-expired-jwt`, `skip-no-auth`); Check #40 (Codex annotation gap — `pass-high-fully-annotated`, `pass-low-skipped`, `fail-codex-gap`); Check #41 (Codex degradation evidence — `pass-no-bundles`, `pass-healthy-bundle`, `fail-silent-override`, `info-annotation-gap`). Scales to any of the 9 bash-extractable checks without runner changes — drop a `check-NN/<verdict>-<reason>/` directory with `state.yml` + `events.jsonl` + `expected.txt`.
+
+- **Layer 3 — e2e harness** (`tests/e2e/run.sh`, `tests/e2e/README.md`, `tests/e2e/version-sentinel/`, commit `8d6a6a4`): per-fixture layout of `prompt.txt`, `golden.grep`, optional `cwd/` (isolated to prevent resume-controller cross-contamination from unrelated bundles), optional `setup.sh`. `version-sentinel` fixture asserts the orchestrator's version sentinel appears in output — catching plugin-load breakage, Step 0 router breakage, and `vUNKNOWN` regressions without pinning a specific version number so the test survives release bumps.
+
+### Compatibility
+
+No plugin behavior changes. The orchestrator prompt (`commands/masterplan.md`), all subagent briefs, doctor check logic, and run bundle schemas are unchanged. Existing run bundles, doctor outputs, and eligibility caches remain fully compatible.
+
+### Why minor (5.4.0 → 5.5.0)
+
+A complete sequenced test suite is a versioned milestone: it formalizes a regression contract that downstream installers and contributors can rely on. PATCH would have undersold the surface area — 906 lines of new test infrastructure across three distinct layers. Per the project's semver convention (CD-10 family), additive infrastructure that establishes a new capability boundary gets MINOR even when no orchestrator behavior changes.
+
+### Rollout
+
+- Dual-surface refresh per the patched rollout macro: `claude plugin marketplace update` + `claude plugin update "superpowers-masterplan@rasatpetabit-superpowers-masterplan"` for Claude Code AND `codex plugin marketplace upgrade rasatpetabit-superpowers-masterplan` for Codex CLI, on both ras@epyc2 and grojas@epyc1.
+
 ## [5.4.0] — 2026-05-15 — Parallelism wave: doctor repo-scoped Haiku batch + intent-anchor 3-way fan-out + parent re-verify parallel Bash + eligibility cache sharding
 
 Minor release. Four new parallel-dispatch sites in the orchestrator, all returning the same data shape as their pre-v5.4.0 single-dispatch / inline-serial counterparts so existing run bundles, doctor lints, and cache files remain compatible.
