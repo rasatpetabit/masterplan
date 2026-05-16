@@ -363,7 +363,7 @@ The loop-first resume contract is part of the schema, not presentation polish:
 
 - `question` means a structured gate is persisted and must be re-rendered on resume before new work.
 - `critical_error` is the only reason to set `status: blocked`; it records the code, summary, recovery already attempted, and safe next options.
-- `complete` is terminal for execution and routes only to completion follow-up, retro, archive, or status.
+- `complete` is terminal for execution and routes only to completion follow-up, retro, archive, or status. **Auto-retro backfill (v5.2.3+):** every `/masterplan` touch of a `status: complete` (or `pending_retro` / synonym `retro_pending`) bundle without `retro.md` invokes Step R inline before any other routing, provided `schema_version >= 3` and `retro_policy.waived/exempt != true`. This catches Step C 6 bypasses — manual state-yml edits, brainstorm-only completions, or first-attempt retro failures that left `pending_retro` — so completion is durable by default even when the in-flight 6a-guard didn't run. Spec: `parts/step-0.md` resume controller item 4.
 - `scheduled_yield` means Masterplan intentionally yielded to a wakeup, background result, or host budget boundary and should resume automatically on the next invocation.
 
 Ordinary task blockers, loop quotas, context pressure, weak gate evidence, and background polling do not become `status: blocked`. They stay `status: in-progress` with a persisted question or scheduled continuation so the operator does not need to track state manually.
@@ -374,7 +374,7 @@ All fields are additive. v2 bundles remain readable with in-memory defaults appl
 
 - `schema_version: 3` — bumped from 2 for new bundles; lazy-migrated on first write for v2 bundles.
 - `pending_retro_attempts: 0` — count of retro generation failures; only meaningful when `status: pending_retro`.
-- `retro_policy: {waived: false, reason: ""}` — explicit opt-in skip; `waived: true` requires non-empty `reason`.
+- `retro_policy: {waived: false, reason: "", exempt: false}` — explicit opt-in skip. `waived: true` requires non-empty `reason` (post-failure escape). `exempt: true` (v5.2.3+) marks a bundle as deliberately retro-less (e.g., the `p4-suppression-smoke` hand-crafted fixture); it bypasses both the resume-controller auto-retro backfill and Doctor #28's `--fix` AskUserQuestion.
 - `scope_fingerprint: []` — normalized token array for Jaccard overlap detection; computed lazily.
 - `supersedes: ""`, `superseded_by: ""`, `variant_of: ""` — bundle lineage pointers.
 - `import_hydration: "" | "full" | "fallback"` — set during Step I3.5 (new).

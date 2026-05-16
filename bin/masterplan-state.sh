@@ -178,6 +178,19 @@ if state is None:
     print(json.dumps({"disposition": "abort", "reason": "state_parse_failed", "detail": parse_err}))
     sys.exit(1)
 
+# Normalize retro_pending → pending_retro (v5.2.3+ auto-heal for early-writer drift).
+# The canonical status value is `pending_retro` per parts/step-c.md 6a-guard; a small
+# number of bundles in the corpus carry the typo'd `retro_pending` from an earlier writer.
+# Rewrite on disk so subsequent readers see the canonical value.
+if state.get("status") == "retro_pending":
+    state_file = bundle_path / "state.yml"
+    original_text = state_file.read_text()
+    healed_text = re.sub(r"^status:\s*retro_pending\s*$", "status: pending_retro",
+                         original_text, count=1, flags=re.MULTILINE)
+    if healed_text != original_text:
+        state_file.write_text(healed_text)
+        state["status"] = "pending_retro"
+
 def get(key, default=""):
     return state.get(key, default)
 

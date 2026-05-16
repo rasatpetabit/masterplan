@@ -723,6 +723,8 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
 
    **6b — Auto-retro by default.** Unless `--no-retro` was passed OR `config.completion.auto_retro == false`, invoke Step R internally with the resolved slug and `completion_auto=true`. This is not an `AskUserQuestion` option and does not depend on `resolved_complexity`: low, medium, and high plans all get a retro by default. Step R writes `docs/masterplan/<slug>/retro.md`; Step R3.5 archives the run state when `config.retro.auto_archive_after_retro != false`; Step R4 commits the retro/state/events directly in internal mode.
 
+   **Safety net at next /masterplan touch.** If Step C 6 is bypassed entirely — for example, by a manual `state.yml` edit that flips `status: complete` from outside Step C, or by a brainstorm-only completion under `halt_mode=post-brainstorm` that never enters Step C 6 — the resume controller at Step 0 §Run bundle state model item 4 fires Step R as a backfill on next `/masterplan` touch. The guard above (6a-guard) is for the in-flight Step C completion path; the resume-controller clause is the catch-all for everything that reaches `status: complete` without it.
+
    If retro generation fails AND the current status is `pending_retro` (set by 6a-guard):
    - Increment `pending_retro_attempts` (write to state.yml).
    - Append `{"event":"retro_generation_failed","ts":"...","attempt":<N>}` to events.jsonl.
@@ -732,7 +734,7 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
      - "Mark complete_no_retro with waiver" → `AskUserQuestion("Waiver reason for skipping retro on <slug>?", options=["<free-text Other field>"])`. Write `retro_policy.waived: true`, `retro_policy.reason: <user input>`, set `status: complete`, append `{"event":"retro_waived","reason":"..."}`.
      - "Leave pending" → persist state as-is, → CLOSE-TURN.
 
-   If retro generation fails AND the current status is already `complete` (legacy path, pre-Wave2 bundles): append `completion_retro_failed` event, leave `status: complete` (backward-compatible; the v2→v3 migration at Step Resume-Guard will catch it on next access). Do NOT lose the completed run.
+   If retro generation fails AND the current status is already `complete` (legacy path, pre-Wave2 bundles): append `completion_retro_failed` event, leave `status: complete` (backward-compatible; the auto-retro backfill at Step 0 §Run bundle state model item 4 will catch it on next `/masterplan` touch for schema_v3+ bundles, or Doctor #28's `--fix` for legacy schema_v2 bundles). Do NOT lose the completed run.
 
    **6a-worktree-completion.** After retro generation succeeds (or `retro_policy.waived: true`), evaluate `worktree_disposition`:
 
