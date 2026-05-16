@@ -437,6 +437,24 @@ The recurring wrapper stores `latest.json`, `latest.txt`, `history.jsonl`, and
 or `$HOME/.local/state/superpowers-masterplan/audits`. The scheduler installs a
 managed cron block only; unrelated crontab entries are preserved.
 
+### Codex usage analysis
+
+`bash <plugin-root>/bin/masterplan-codex-usage.sh` surveys codex invocations
+across three sources in one report: codex's own session rollouts under
+`~/.codex/sessions/`, Claude transcripts under `~/.claude/projects/` (for
+`codex:*` Agent dispatches and `codex` CLI calls in Bash tool_use), and per-plan
+`codex_routing` / `codex_review` config from the current repo's
+`docs/masterplan/*/state.yml`. Useful for answering "how much am I actually
+using codex right now, and through which path." Default window is 14 days;
+override via `--days=N` or `--since=YYYY-MM-DD`. Supports `--json` for
+machine-readable output.
+
+```bash
+bin/masterplan-codex-usage.sh
+bin/masterplan-codex-usage.sh --days=30
+bin/masterplan-codex-usage.sh --json | jq '.totals'
+```
+
 ### Import Shortcuts
 
 | Invocation | Effect |
