@@ -19,7 +19,7 @@ test-doctor-fixtures:
 	@bash tests/doctor-fixtures/run.sh
 
 test-python:
-	@cd tests && python3 -m unittest discover -p 'test_*.py' -v
+	@python3 -m unittest discover -s tests -p 'test_*.py' -v
 
 test-e2e:
 	@CLAUDE_E2E=1 bash tests/e2e/run.sh

@@ -228,7 +228,7 @@ class SessionAuditTests(unittest.TestCase):
                 "MASTERPLAN_REPO_ROOTS": "/tmp/masterplan-repos",
             },
         ):
-            _since, _hours, _fmt, claude_dir, codex_dir, repo_roots = audit.parse_args([])
+            _since, _hours, _fmt, claude_dir, codex_dir, repo_roots, _codex_auth = audit.parse_args([])
 
         self.assertEqual("/tmp/masterplan-claude", claude_dir)
         self.assertEqual("/tmp/masterplan-codex", codex_dir)
