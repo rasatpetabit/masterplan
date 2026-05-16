@@ -85,7 +85,7 @@ For each worktree, run all checks. Report findings grouped by worktree → check
 | 35 | **Plan-format conformance (v5.0 markers)** — every task heading in `plan.md` must be followed by `**Spec:**` and `**Verify:**` markers within 30 lines. | Warning | Report-only |
 | 36 | **parts/step-*.md sanity + router ceiling** — `commands/masterplan.md` ≤20480 bytes; all phase files exist; CC-3-trampoline and DISPATCH-SITE tags present. | Warning | Report-only |
 | 38 | **Anomaly file has records since last archive** — `<run-dir>/anomalies.jsonl` (or sidecar `anomalies-pending-upload.jsonl`) is non-empty for any in-progress or recently-archived bundle, indicating failure-instrumentation framework detected ≥1 orchestrator anomaly that has not been reviewed. | Warning | Report each anomaly record: class, signature, last-fired timestamp. If `anomalies-pending-upload.jsonl` is non-empty, suggest `bin/masterplan-anomaly-flush.sh` to drain to GitHub. Report-only otherwise. |
-| 39 | **Codex auth expired or stale** (repo-scoped, v5.1.1+, I-1 of cosmic-cuddling-dusk). Reads `~/.codex/auth.json`. Decodes JWT `exp` claim from `id_token` and `access_token`. Fires on: (a) either token expired (`now > exp`); (b) either token expires within 24h (`exp - now < 86400`); (c) `last_refresh` > 30 days ago even when tokens are within validity. Diagnoses the upstream cause of Codex routing/review silently degrading to off — Step 0's ping returns an error, the framework correctly applies `degrade-loudly`, but the user has no idea WHY. Pairs with check #18 (config-vs-plugin mismatch): #18 flags persistent misconfig; #39 flags expired credentials. Skipped silently when `~/.codex/auth.json` is absent (codex not installed). | Warning | Report per-token expiry timestamp + age in days. Suggest `codex login` (or equivalent shell-based refresh — varies by codex CLI version). No auto-fix (auth refresh is browser-based OAuth, user-owned per headless-host constraint). |
+| 39 | **Codex auth expired or stale** (repo-scoped, v5.1.1+, refined v5.2.3+). Reads `~/.codex/auth.json`. Decodes JWT `exp` claim from `id_token` and `access_token` (nested under `.tokens.*` per schema_v3+; falls back to top-level for older schemas). Fires on: (a) either token expired (`now > exp`); (b) either token expires within 24h (`exp - now < 86400`); (c) `last_refresh` > 30 days ago even when tokens are within validity. **Skipped (returns PASS-with-info) when `auth_mode == "chatgpt"` AND `tokens.refresh_token` is present AND `last_refresh` is within the last 7 days** — that shape indicates the ChatGPT mode's short-lived JWT auto-refresh is healthy, so cosmetic `id_token.exp` past `now` is normal steady state, not degradation. Diagnoses the upstream cause of Codex routing/review silently degrading to off — Step 0's ping returns an error, the framework correctly applies `degrade-loudly`, but the user has no idea WHY. Pairs with check #18 (config-vs-plugin mismatch): #18 flags persistent misconfig; #39 flags expired credentials. Skipped silently when `~/.codex/auth.json` is absent (codex not installed). | Warning | Report per-token expiry timestamp + age in days. Suggest `codex login` (or equivalent shell-based refresh — varies by codex CLI version). No auto-fix (auth refresh is browser-based OAuth, user-owned per headless-host constraint). |
 | 40 | **High-complexity plan missing Codex / parallel-group annotations** (plan-scoped, v5.1.1+, I-2 of cosmic-cuddling-dusk). Fires when `state.yml.complexity == "high"` AND the plan-scoped count of `**Codex:** (ok|no)` annotations in `plan.md` is LESS than the count of task headings (`^### Task `). Also INFO-flags when `state.yml.complexity == "high"` AND zero `**parallel-group:**` annotations exist in plan.md. Per `parts/step-b.md` complexity-aware brief, `complexity: high` REQUIRES a `**Codex:**` annotation per task and ENCOURAGES `**parallel-group:**` annotations for verification/lint/inference clusters; this check catches the writing-plans skill silently skipping the high-complexity brief, which suppresses Codex routing (eligibility cache falls back to heuristic-only) and parallel-wave dispatch (wave assembly pre-pass has nothing to assemble). Skipped silently on `complexity: low` and `complexity: medium`. | Warning | Report per-plan: complexity, task count, Codex annotation count, parallel-group annotation count, and the gap. Suggest re-running `/masterplan plan --from-spec=<spec>` to regenerate with the high-complexity brief, OR annotating by hand. No auto-fix (modifying plan.md mid-execution is risky per CD-7). |
 | 41 | **Missing Codex degradation evidence** (plan-scoped, v5.1.1+, I-3 of cosmic-cuddling-dusk). Two sub-fires: (a) WARN when `state.yml.codex_routing == off` AND `state.yml.codex_review == off` AND `~/.codex/auth.json` is healthy AND `events.jsonl` has NO `codex degraded` event AND `state.yml.last_warning` is null/absent (silent override without evidence — violates the degrade-loudly visibility contract). (b) INFO when `state.yml.codex_routing == auto` OR `state.yml.codex_routing == manual` AND `events.jsonl` has NO `routing→.*\[codex\]` events anywhere AND `events.jsonl` has at least one `codex_ping ok` event (suggesting ping detected codex available but every task was judged ineligible by the planner or heuristic — symptomatic of root cause #2 in cosmic-cuddling-dusk: annotation-gap in plan). Pairs with #20/#21 from a different angle. | Warning | Report each sub-fire with diagnostic context. For (a): suggest investigating why codex was forced off without trace — possibly Step 0 ping bug. For (b): cross-reference with #40 finding for the same plan. No auto-fix. |
 
@@ -619,6 +619,8 @@ Diagnoses the upstream cause of Codex routing/review silently degrading to `off`
 
 Skipped silently when `~/.codex/auth.json` is absent (codex not installed for this user).
 
+**Cosmetic-shape early-exit (v5.2.3+):** when `auth_mode == "chatgpt"` AND `tokens.refresh_token` is non-empty AND `last_refresh` is within the last 7 days, sub-conditions (a) and (b) are skipped — the ChatGPT auth mode uses short-lived JWTs that auto-refresh on every codex call, so cosmetic `id_token.exp` past `now` is normal steady state, not degradation. Sub-condition (c) — `last_refresh` > 30 days — still fires under this shape (it would indicate the refresh token itself has gone stale). This guard mirrors the predicate in `commands/masterplan.md` Step 3 and the (retired) `codex_jwt_only_health_false_positive` watcher in `lib/masterplan_session_audit.py`.
+
 ```bash
 fail=0
 auth="$HOME/.codex/auth.json"
@@ -626,48 +628,66 @@ if [ ! -r "$auth" ]; then
   echo "Check #39: SKIP (~/.codex/auth.json absent — codex not installed for this user)"
 else
   now="$(date +%s)"
-  for field in id_token access_token; do
-    token="$(jq -r ".$field // empty" "$auth" 2>/dev/null)"
-    if [ -z "$token" ]; then
-      continue
-    fi
-    payload="$(echo "$token" | cut -d. -f2)"
-    # Pad base64url to multiple of 4 before decoding
-    pad=$(( 4 - ${#payload} % 4 ))
-    [ $pad -eq 4 ] && pad=0
-    padded="${payload}$(printf '=%.0s' $(seq 1 $pad))"
-    exp="$(echo "$padded" | tr '_-' '/+' | base64 -d 2>/dev/null | jq -r .exp 2>/dev/null)"
-    if [ -z "$exp" ] || [ "$exp" = "null" ]; then
-      echo "WARN $field: cannot decode exp claim (token malformed?)"
-      fail=1
-      continue
-    fi
-    age_sec=$(( now - exp ))
-    age_days=$(( age_sec / 86400 ))
-    iso_exp="$(date -u -d "@$exp" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -r "$exp" +%Y-%m-%dT%H:%M:%SZ)"
-    if [ $age_sec -gt 0 ]; then
-      echo "WARN $field expired $iso_exp ($age_days days ago)"
-      fail=1
-    elif [ $age_sec -gt -86400 ]; then
-      echo "WARN $field expires $iso_exp (within 24h)"
-      fail=1
-    fi
-  done
+  # v5.2.3+ cosmetic-shape gate: skip JWT-exp sub-fires (a)/(b) under healthy auto-refresh.
+  auth_mode="$(jq -r '.auth_mode // empty' "$auth" 2>/dev/null)"
+  refresh_token="$(jq -r '.tokens.refresh_token // .refresh_token // empty' "$auth" 2>/dev/null)"
   last_refresh="$(jq -r '.last_refresh // empty' "$auth" 2>/dev/null)"
-  if [ -n "$last_refresh" ]; then
-    refresh_sec="$(date -u -d "$last_refresh" +%s 2>/dev/null || echo 0)"
-    if [ "$refresh_sec" -gt 0 ]; then
-      refresh_age_days=$(( (now - refresh_sec) / 86400 ))
-      if [ $refresh_age_days -gt 30 ]; then
-        echo "WARN last_refresh $last_refresh ($refresh_age_days days ago — token rotation may be broken)"
-        fail=1
+  jwt_skip=0
+  if [ "$auth_mode" = "chatgpt" ] && [ -n "$refresh_token" ] && [ -n "$last_refresh" ]; then
+    refresh_sec_gate="$(date -u -d "$last_refresh" +%s 2>/dev/null || echo 0)"
+    if [ "$refresh_sec_gate" -gt 0 ]; then
+      refresh_age_days_gate=$(( (now - refresh_sec_gate) / 86400 ))
+      if [ "$refresh_age_days_gate" -le 7 ]; then
+        jwt_skip=1
       fi
     fi
   fi
-  if [ $fail -eq 0 ]; then
-    echo "Check #39: PASS"
+  if [ "$jwt_skip" -eq 1 ]; then
+    echo "Check #39: PASS (auth_mode=chatgpt; JWT auto-refresh healthy; last_refresh ${refresh_age_days_gate}d ago)"
   else
-    echo "Check #39: WARN — run \`codex login\` to refresh credentials"
+    for field in id_token access_token; do
+      # v5.2.3+: read from nested .tokens.<field> with top-level fallback for schema-compat.
+      token="$(jq -r ".tokens.$field // .$field // empty" "$auth" 2>/dev/null)"
+      if [ -z "$token" ]; then
+        continue
+      fi
+      payload="$(echo "$token" | cut -d. -f2)"
+      # Pad base64url to multiple of 4 before decoding
+      pad=$(( 4 - ${#payload} % 4 ))
+      [ $pad -eq 4 ] && pad=0
+      padded="${payload}$(printf '=%.0s' $(seq 1 $pad))"
+      exp="$(echo "$padded" | tr '_-' '/+' | base64 -d 2>/dev/null | jq -r .exp 2>/dev/null)"
+      if [ -z "$exp" ] || [ "$exp" = "null" ]; then
+        echo "WARN $field: cannot decode exp claim (token malformed?)"
+        fail=1
+        continue
+      fi
+      age_sec=$(( now - exp ))
+      age_days=$(( age_sec / 86400 ))
+      iso_exp="$(date -u -d "@$exp" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -r "$exp" +%Y-%m-%dT%H:%M:%SZ)"
+      if [ $age_sec -gt 0 ]; then
+        echo "WARN $field expired $iso_exp ($age_days days ago)"
+        fail=1
+      elif [ $age_sec -gt -86400 ]; then
+        echo "WARN $field expires $iso_exp (within 24h)"
+        fail=1
+      fi
+    done
+    if [ -n "$last_refresh" ]; then
+      refresh_sec="$(date -u -d "$last_refresh" +%s 2>/dev/null || echo 0)"
+      if [ "$refresh_sec" -gt 0 ]; then
+        refresh_age_days=$(( (now - refresh_sec) / 86400 ))
+        if [ $refresh_age_days -gt 30 ]; then
+          echo "WARN last_refresh $last_refresh ($refresh_age_days days ago — token rotation may be broken)"
+          fail=1
+        fi
+      fi
+    fi
+    if [ $fail -eq 0 ]; then
+      echo "Check #39: PASS"
+    else
+      echo "Check #39: WARN — run \`codex login\` to refresh credentials"
+    fi
   fi
 fi
 ```
@@ -741,20 +761,34 @@ auth="$HOME/.codex/auth.json"
 auth_healthy=0
 if [ -r "$auth" ]; then
   now="$(date +%s)"
-  for field in id_token access_token; do
-    token="$(jq -r ".$field // empty" "$auth" 2>/dev/null)"
-    [ -z "$token" ] && continue
-    payload="$(echo "$token" | cut -d. -f2)"
-    pad=$(( 4 - ${#payload} % 4 )); [ $pad -eq 4 ] && pad=0
-    padded="${payload}$(printf '=%.0s' $(seq 1 $pad))"
-    exp="$(echo "$padded" | tr '_-' '/+' | base64 -d 2>/dev/null | jq -r .exp 2>/dev/null)"
-    if [ -n "$exp" ] && [ "$exp" != "null" ] && [ "$exp" -gt "$now" ]; then
+  # v5.2.3+ cosmetic-shape gate: ChatGPT auth mode with refresh_token + recent last_refresh
+  # is healthy regardless of cosmetic JWT exp (short-lived JWTs auto-refresh on every call).
+  auth_mode_41="$(jq -r '.auth_mode // empty' "$auth" 2>/dev/null)"
+  refresh_token_41="$(jq -r '.tokens.refresh_token // .refresh_token // empty' "$auth" 2>/dev/null)"
+  last_refresh_41="$(jq -r '.last_refresh // empty' "$auth" 2>/dev/null)"
+  if [ "$auth_mode_41" = "chatgpt" ] && [ -n "$refresh_token_41" ] && [ -n "$last_refresh_41" ]; then
+    refresh_sec_41="$(date -u -d "$last_refresh_41" +%s 2>/dev/null || echo 0)"
+    if [ "$refresh_sec_41" -gt 0 ] && [ $(( (now - refresh_sec_41) / 86400 )) -le 7 ]; then
       auth_healthy=1
-    else
-      auth_healthy=0
-      break
     fi
-  done
+  fi
+  if [ "$auth_healthy" -ne 1 ]; then
+    for field in id_token access_token; do
+      # v5.2.3+: nested-path read with top-level fallback for schema-compat.
+      token="$(jq -r ".tokens.$field // .$field // empty" "$auth" 2>/dev/null)"
+      [ -z "$token" ] && continue
+      payload="$(echo "$token" | cut -d. -f2)"
+      pad=$(( 4 - ${#payload} % 4 )); [ $pad -eq 4 ] && pad=0
+      padded="${payload}$(printf '=%.0s' $(seq 1 $pad))"
+      exp="$(echo "$padded" | tr '_-' '/+' | base64 -d 2>/dev/null | jq -r .exp 2>/dev/null)"
+      if [ -n "$exp" ] && [ "$exp" != "null" ] && [ "$exp" -gt "$now" ]; then
+        auth_healthy=1
+      else
+        auth_healthy=0
+        break
+      fi
+    done
+  fi
 fi
 for state_yml in docs/masterplan/*/state.yml; do
   run_dir="$(dirname "$state_yml")"
