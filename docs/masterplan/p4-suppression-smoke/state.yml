@@ -1,7 +1,7 @@
 schema_version: 2
 slug: p4-suppression-smoke
-status: complete
-phase: ready_for_retro
+status: completed
+phase: completed
 pending_retro_attempts: 0
 worktree: ""
 branch: main
