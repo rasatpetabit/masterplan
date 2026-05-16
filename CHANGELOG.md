@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.6.0] — 2026-05-16 — Claude `/goal` interop (observability-only) + audit denominator fix
+
+Minor release. Adds host-only observability for Claude Code's `/goal` autonomous-continuation loop via the Stop hook input contract, exposes the signal in telemetry and session-audit rollups, and fixes a P2 denominator bug found in pre-release Codex review.
+
+### Added
+
+- **`claude_stop_hook_active` field on Stop-hook telemetry records** (`hooks/masterplan-telemetry.sh`). Lifted verbatim from the Claude Code Stop hook input JSON via `jq -r '.stop_hook_active // false'`. `true` when the Stop event fired inside an autonomous-continuation loop (Claude `/goal`, agent SDK loop, etc.); `false` when missing, malformed, or under a normal Stop. Default-false on Codex hosts and on legacy records pre-dating this field — Codex-side audit logic does not treat absence as a regression.
+- **`stop_records` + `claude_continuation_records` + `claude_continuation_share` fields on `bin/masterplan-session-audit.sh` JSON output, plus matching table section.** Per-plan rollup of how many Stop events fired during `/goal`-driven continuations vs natural stops. Header line always prints; rows only appear when `claude_continuation_records > 0` so most sessions stay silent.
+- **`docs/internals.md` §8.5 — "Claude `/goal` interop (host-only, observability-only)"**. Asymmetry table between Codex MCP goal tools (bidirectional, already wired as `codex_goal`) vs Claude `/goal` (user-only control surface). Documents the explicit decision NOT to add a runtime hint (would fight `gated`/`loose` per-task checkpoints intentional per `parts/step-c.md:625-650`) and NOT to add a `claude_goal` schema field (cannot be reconciled without `get_goal`-equivalent, violates CD-7).
+- **README compatibility note under Flags**. Frames `/goal` as `--autonomy=full`-compatible outer wrapper; explicit caveat against `gated`/`loose` use; notes orchestrator does not invoke `/goal` programmatically (no API surface in Claude Code as of 2.1.139).
+
+### Fixed
+
+- **`claude_continuation_share` denominator P2** (`lib/masterplan_session_audit.py`). Initial implementation divided by `item.records` (Stop + `step_c_entry` records). Inline Step C snapshots cannot carry the hook field, so they only diluted the rate. Now divides by `stop_records` (a new field counting only `turn_kind == "stop"` records). Synthetic 5-record mixed file now reports 0.667 instead of buggy 0.400; surfaced by `/codex:review --base HEAD~1` before push.
+
+### Compatibility
+
+No schema bump on `state.yml`. No new doctor checks. The new `claude_stop_hook_active` field is additive on telemetry records (`turn_kind: "stop"` only); audit rollup tolerates legacy records that omit it. No orchestrator behavior changes — Step C dispatch, autonomy modes, and gate semantics are unchanged.
+
+### Why minor (5.5.0 → 5.6.0)
+
+A new telemetry field plus a new audit rollup is a versioned capability boundary that downstream observability and audit consumers can rely on. Per the project's semver convention (CD-10 family), additive observability surfaces that establish a new data contract get MINOR even when no orchestrator behavior changes.
+
+### Rollout
+
+- Dual-surface refresh per the patched rollout macro: `claude plugin marketplace update` + `claude plugin update "superpowers-masterplan@rasatpetabit-superpowers-masterplan"` for Claude Code AND `codex plugin marketplace upgrade rasatpetabit-superpowers-masterplan` for Codex CLI, on both ras@epyc2 and grojas@epyc1.
+
 ## [5.5.0] — 2026-05-15 — Three-layer regression test suite: static battery + doctor-fixtures (9 checks, 24 fixtures) + e2e claude --print harness
 
 Minor release. Adds a complete, sequenced three-layer test suite across `tests/static/`, `tests/doctor-fixtures/`, and `tests/e2e/`. No orchestrator behavior changes — this is purely additive test infrastructure. 83 files changed, 906 insertions, 2 deletions.

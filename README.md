@@ -649,7 +649,7 @@ for details and the upstream issue link.
 
 ## Project Status
 
-Current release: **v5.5.0**. See [CHANGELOG.md](./CHANGELOG.md) for full release history.
+Current release: **v5.6.0**. See [CHANGELOG.md](./CHANGELOG.md) for full release history.
 
 - Release history: [`CHANGELOG.md`](./CHANGELOG.md)
 - Contributor internals: [`docs/internals.md`](./docs/internals.md)
