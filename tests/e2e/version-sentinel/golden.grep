@@ -1,0 +1,10 @@
+# The orchestrator MUST emit the version sentinel as the first line of every
+# /masterplan invocation, before any verb routing. This catches:
+#   - plugin not loaded (no /masterplan command resolves)
+#   - commands/masterplan.md Step 0 broken (no sentinel)
+#   - version reading from plugin.json broken (vUNKNOWN literal)
+#
+# We deliberately do NOT pin the version number — the test must survive
+# release bumps. We assert format only.
+→ /masterplan v
+args: '(empty)'
