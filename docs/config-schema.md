@@ -83,14 +83,26 @@ codex:
                                       # path. Step 0's degradation block (above) and Step C step 3a's precondition halt both honor this.
                                       # `block`: skip user prompts; record a critical_error, set status: blocked, and end the turn.
                                       # For users who'd rather a stuck plan than a silent-codex-skip plan.
-  detection_mode: ping                # v2.8.0+: how Step 0 detects codex availability
-                                      # values: ping | scan | trust
-                                      # `ping` (default): dispatch a 5-token bounded ping to codex:codex-rescue; most accurate
-                                      #   (catches plugin-present-but-broken). Cost: ~5 tokens per /masterplan invocation.
-                                      # `scan`: legacy heuristic — look for any `codex:` prefix in the system-reminder skills list.
-                                      #   Faster but fragile; survives only as long as that prefix convention holds.
+  detection_mode: scan-then-ping      # v5.3.0+: how Step 0 detects codex availability
+                                      # values: scan-then-ping | ping | scan | trust
+                                      # `scan-then-ping` (default, v5.3.0+): deterministic-first two-tier check.
+                                      #   Stage A scans the system-reminder skills list for the literal substring `codex:`;
+                                      #   on hit, short-circuit (no ping). Stage B falls back to the 5-token ping ONLY when
+                                      #   Stage A returns zero matches. Eliminates the v2.8.0–v5.2.x false-positive class
+                                      #   where the orchestrator (an LLM) confabulated "ping not detected" without proof
+                                      #   of dispatch. The `codex:` prefix is structural (Anthropic plugin namespacing),
+                                      #   so Stage A is deterministic against a context the orchestrator already has.
+                                      # `ping` (legacy default, pre-v5.3.0): dispatch the 5-token ping unconditionally;
+                                      #   never scan. Retained for explicit opt-in (e.g., to test plugin-present-but-broken
+                                      #   corner cases). Same false-positive failure mode that motivated v5.3.0 applies;
+                                      #   pair with Doctor Check #41 ERROR escalation to catch confabulation post-hoc.
+                                      # `scan`: scan-only — literal `codex:` substring test, never dispatches. Faster than
+                                      #   scan-then-ping (skips Stage B fallback) at the cost of conflating "plugin truly
+                                      #   absent" with "skills-reminder format changed."
                                       # `trust`: assume available; skip detection entirely. For locked-down accounts where the
                                       #   ping itself fails for unrelated reasons (sandbox-blocked subagent dispatch, etc.).
+                                      # Migration: users with explicit `detection_mode: ping` keep ping-only semantics.
+                                      # Only the unset default flips from `ping` → `scan-then-ping`.
 
 # Intra-plan task parallelism (v2.0.0+) — Slice α (read-only parallel waves)
 # When enabled, contiguous tasks sharing the same `**parallel-group:**` annotation

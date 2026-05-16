@@ -87,7 +87,7 @@ For each worktree, run all checks. Report findings grouped by worktree → check
 | 38 | **Anomaly file has records since last archive** — `<run-dir>/anomalies.jsonl` (or sidecar `anomalies-pending-upload.jsonl`) is non-empty for any in-progress or recently-archived bundle, indicating failure-instrumentation framework detected ≥1 orchestrator anomaly that has not been reviewed. | Warning | Report each anomaly record: class, signature, last-fired timestamp. If `anomalies-pending-upload.jsonl` is non-empty, suggest `bin/masterplan-anomaly-flush.sh` to drain to GitHub. Report-only otherwise. |
 | 39 | **Codex auth expired or stale** (repo-scoped, v5.1.1+, refined v5.2.3+). Reads `~/.codex/auth.json`. Decodes JWT `exp` claim from `id_token` and `access_token` (nested under `.tokens.*` per schema_v3+; falls back to top-level for older schemas). Fires on: (a) either token expired (`now > exp`); (b) either token expires within 24h (`exp - now < 86400`); (c) `last_refresh` > 30 days ago even when tokens are within validity. **Skipped (returns PASS-with-info) when `auth_mode == "chatgpt"` AND `tokens.refresh_token` is present AND `last_refresh` is within the last 7 days** — that shape indicates the ChatGPT mode's short-lived JWT auto-refresh is healthy, so cosmetic `id_token.exp` past `now` is normal steady state, not degradation. Diagnoses the upstream cause of Codex routing/review silently degrading to off — Step 0's ping returns an error, the framework correctly applies `degrade-loudly`, but the user has no idea WHY. Pairs with check #18 (config-vs-plugin mismatch): #18 flags persistent misconfig; #39 flags expired credentials. Skipped silently when `~/.codex/auth.json` is absent (codex not installed). | Warning | Report per-token expiry timestamp + age in days. Suggest `codex login` (or equivalent shell-based refresh — varies by codex CLI version). No auto-fix (auth refresh is browser-based OAuth, user-owned per headless-host constraint). |
 | 40 | **High-complexity plan missing Codex / parallel-group annotations** (plan-scoped, v5.1.1+, I-2 of cosmic-cuddling-dusk). Fires when `state.yml.complexity == "high"` AND the plan-scoped count of `**Codex:** (ok|no)` annotations in `plan.md` is LESS than the count of task headings (`^### Task `). Also INFO-flags when `state.yml.complexity == "high"` AND zero `**parallel-group:**` annotations exist in plan.md. Per `parts/step-b.md` complexity-aware brief, `complexity: high` REQUIRES a `**Codex:**` annotation per task and ENCOURAGES `**parallel-group:**` annotations for verification/lint/inference clusters; this check catches the writing-plans skill silently skipping the high-complexity brief, which suppresses Codex routing (eligibility cache falls back to heuristic-only) and parallel-wave dispatch (wave assembly pre-pass has nothing to assemble). Skipped silently on `complexity: low` and `complexity: medium`. | Warning | Report per-plan: complexity, task count, Codex annotation count, parallel-group annotation count, and the gap. Suggest re-running `/masterplan plan --from-spec=<spec>` to regenerate with the high-complexity brief, OR annotating by hand. No auto-fix (modifying plan.md mid-execution is risky per CD-7). |
-| 41 | **Missing Codex degradation evidence** (plan-scoped, v5.1.1+, I-3 of cosmic-cuddling-dusk). Two sub-fires: (a) WARN when `state.yml.codex_routing == off` AND `state.yml.codex_review == off` AND `~/.codex/auth.json` is healthy AND `events.jsonl` has NO `codex degraded` event AND `state.yml.last_warning` is null/absent (silent override without evidence — violates the degrade-loudly visibility contract). (b) INFO when `state.yml.codex_routing == auto` OR `state.yml.codex_routing == manual` AND `events.jsonl` has NO `routing→.*\[codex\]` events anywhere AND `events.jsonl` has at least one `codex_ping ok` event (suggesting ping detected codex available but every task was judged ineligible by the planner or heuristic — symptomatic of root cause #2 in cosmic-cuddling-dusk: annotation-gap in plan). Pairs with #20/#21 from a different angle. | Warning | Report each sub-fire with diagnostic context. For (a): suggest investigating why codex was forced off without trace — possibly Step 0 ping bug. For (b): cross-reference with #40 finding for the same plan. No auto-fix. |
+| 41 | **Missing Codex degradation evidence** (plan-scoped, v5.1.1+, expanded v5.3.0+). Three sub-fires: (a) WARN when `state.yml.codex_routing == off` AND `state.yml.codex_review == off` AND `~/.codex/auth.json` is healthy AND `events.jsonl` has NO `codex degraded` event AND `state.yml.last_warning` is null/absent (silent override without evidence — violates the degrade-loudly visibility contract). (b) INFO when `state.yml.codex_routing == auto` OR `state.yml.codex_routing == manual` AND `events.jsonl` has NO `routing→.*\[codex\]` events anywhere AND `events.jsonl` has at least one `codex_ping ok` event (suggesting ping detected codex available but every task was judged ineligible by the planner or heuristic — symptomatic of root cause #2 in cosmic-cuddling-dusk: annotation-gap in plan). **(c) v5.3.0+ — Step 0 confabulation detector.** ERROR when `events.jsonl` contains a `degradation_self_doubt` event (Step 0 self-flagged a likely false-positive at warning-time) OR `events.jsonl` contains a `codex degraded — plugin not detected` event AND `~/.codex/auth.json` is healthy AND `ls ~/.claude/plugins/*/codex* 2>/dev/null` finds the codex plugin's files on disk. Indicates Step 0 emitted the degradation warning despite all on-disk evidence pointing to a healthy install — likely orchestrator confabulation under the legacy `ping` detection mode (fixed by default flip to `scan-then-ping` in v5.3.0). Pairs with #20/#21 from a different angle. | Warning (sub-fires a, b) / Error (sub-fire c) | Report each sub-fire with diagnostic context. For (a): suggest investigating why codex was forced off without trace — possibly Step 0 ping bug. For (b): cross-reference with #40 finding for the same plan. For (c): suggest setting `detection_mode: scan-then-ping` in `.masterplan.yaml` (or removing the explicit `ping` override) and re-running `/masterplan`. No auto-fix. |
 
 ---
 
@@ -745,18 +745,20 @@ This check is **report-only**. Modifying plan.md mid-execution is risky per CD-7
 
 ## Check #41: Missing Codex degradation evidence
 
-**Severity:** Warning (silent-override sub-fire); Info (annotation-gap sub-fire)
+**Severity:** Warning (silent-override sub-fire); Info (annotation-gap sub-fire); Error (Step 0 confabulation sub-fire, v5.3.0+)
 **Action:** Report-only; cross-reference with #18, #39, #40 for diagnosis.
 **Scope:** Plan-scoped (per-plan; runs in worktree-Haiku dispatchers when worktrees ≥ 2).
-**Added:** v5.1.1 (I-3 of cosmic-cuddling-dusk).
+**Added:** v5.1.1 (I-3 of cosmic-cuddling-dusk); expanded v5.3.0 with sub-fire (c).
 
-Two distinct sub-fires that surface the runtime-vs-config divergence from different angles:
+Three distinct sub-fires that surface the runtime-vs-config divergence from different angles:
 
 - **(a) Silent override without evidence.** `state.yml.codex_routing == off` AND `state.yml.codex_review == off` AND `~/.codex/auth.json` is healthy (no expired JWTs) AND `events.jsonl` has NO `codex degraded` event AND `state.yml.last_warning` is null/absent. Indicates the routing was forced off WITHOUT going through Step 0's degrade-loudly path — possibly a Step 0 ping bug, an out-of-band user edit, or an orchestrator state-write that skipped the event-log obligation. The degrade-loudly contract requires written evidence; this check flags absence.
 - **(b) Codex configured on but never dispatched.** `state.yml.codex_routing == auto` OR `state.yml.codex_routing == manual` AND `events.jsonl` has NO `routing→.*\[codex\]` events anywhere AND `events.jsonl` has at least one `codex_ping ok` event from Step 0 (added by I-5 of cosmic-cuddling-dusk). Indicates ping detected Codex available but every task was judged ineligible by the planner or heuristic. Symptomatic of root cause #2 in cosmic-cuddling-dusk: high-complexity plan annotation gap (cross-references #40 for the same plan).
+- **(c) Step 0 confabulation (v5.3.0+).** Fires under EITHER condition: (1) `events.jsonl` contains a `degradation_self_doubt` event written by Step 0 itself at warning-time (Step 0's two on-disk probes — auth-healthy + plugin-manifest-on-disk — both passed but Step 0 was still about to emit the "plugin not detected" warning). (2) Older bundle without the self-doubt breadcrumb: `events.jsonl` contains a `codex degraded — plugin not detected` event AND `~/.codex/auth.json` is healthy AND `ls ~/.claude/plugins/*/codex* 2>/dev/null` returns a non-empty match (codex plugin's files present on disk). Either path indicates Step 0 emitted the degradation warning despite all on-disk evidence pointing to a healthy install — classic orchestrator confabulation under the legacy `ping` detection mode. The default flip to `scan-then-ping` in v5.3.0 prevents this; explicit `detection_mode: ping` users remain exposed. Suggested action: set `detection_mode: scan-then-ping` in `.masterplan.yaml` (or remove the explicit `ping` override) and re-run `/masterplan`.
 
 ```bash
 fail=0
+error=0
 auth="$HOME/.codex/auth.json"
 auth_healthy=0
 if [ -r "$auth" ]; then
@@ -790,6 +792,11 @@ if [ -r "$auth" ]; then
     done
   fi
 fi
+# v5.3.0+ sub-fire (c) precondition: codex plugin files present on disk.
+plugin_on_disk=0
+if ls $HOME/.claude/plugins/*/codex* 2>/dev/null | head -1 | grep -q .; then
+  plugin_on_disk=1
+fi
 for state_yml in docs/masterplan/*/state.yml; do
   run_dir="$(dirname "$state_yml")"
   slug="$(basename "$run_dir")"
@@ -812,8 +819,26 @@ for state_yml in docs/masterplan/*/state.yml; do
       fail=1
     fi
   fi
+  # v5.3.0+ sub-fire (c): Step 0 confabulation detector.
+  if [ -r "$events" ]; then
+    self_doubt_events="$(grep -cE 'degradation_self_doubt' "$events" 2>/dev/null || echo 0)"
+    plugin_not_detected_events="$(grep -cE 'codex degraded — plugin not detected' "$events" 2>/dev/null || echo 0)"
+    if [ "$self_doubt_events" -gt 0 ]; then
+      echo "ERROR $slug: events.jsonl contains $self_doubt_events \`degradation_self_doubt\` event(s) — Step 0 self-flagged a likely false-positive at warning-time. Set \`detection_mode: scan-then-ping\` in .masterplan.yaml (or remove explicit \`ping\` override) and re-run."
+      error=1
+    elif [ "$plugin_not_detected_events" -gt 0 ] && [ $auth_healthy -eq 1 ] && [ $plugin_on_disk -eq 1 ]; then
+      echo "ERROR $slug: events.jsonl contains \`codex degraded — plugin not detected\` event(s), but auth is healthy AND codex plugin files exist under ~/.claude/plugins/. Step 0 confabulation suspected (legacy \`detection_mode: ping\` failure mode). Set \`detection_mode: scan-then-ping\` and re-run."
+      error=1
+    fi
+  fi
 done
-[ $fail -eq 0 ] && echo "Check #41: PASS" || echo "Check #41: WARN"
+if [ $error -ne 0 ]; then
+  echo "Check #41: ERROR"
+elif [ $fail -ne 0 ]; then
+  echo "Check #41: WARN"
+else
+  echo "Check #41: PASS"
+fi
 ```
 
 This check is **report-only**. Sub-fire (a) is the harder case to debug — surface the finding so the user (or a future investigation) can reproduce. Sub-fire (b) usually pairs with check #40 firing on the same plan; surface both findings together so the chain of causation is obvious.

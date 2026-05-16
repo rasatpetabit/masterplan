@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.3.0] — 2026-05-15 — Step 0: scan-then-ping detection default + Doctor #41 ERROR escalation
+
+Fixes a recurring false-positive class where `/masterplan` emits `⚠ Codex plugin not detected — codex_routing and codex_review are degraded to off for this run` against installs where Codex is fully present and actively dispatching. Repro that motivated this release: `/loop /masterplan --autonomy=full` in `yanos-mgmt/.worktrees/pivot-landing-4b-yanos-wireguard` on epyc2 emitted the warning while the session's own system-reminder skills list contained `codex:codex-rescue`, `codex:setup`, `codex:rescue`, etc., and `bin/masterplan-codex-usage.sh` showed the same host actively dispatching Codex in the same window.
+
+### Changed
+
+- **`config.codex.detection_mode` default flips `ping` → `scan-then-ping`** (`parts/step-0.md`, `docs/config-schema.md`). The new default is a deterministic-first two-tier check: **Stage A** scans the system-reminder skills list for the literal substring `codex:`; on hit, short-circuit with `detection_source: scan`. **Stage B** falls back to the existing 5-token `codex:codex-rescue` ping only when Stage A returns zero matches. Stage A has zero judgment surface — it's a literal substring test against context the orchestrator already has every turn, modeled on the existing `codex_host_suppressed` precedent. The legacy `ping`-only mode was non-deterministic: the orchestrator (an LLM) was asked to dispatch and judge, and observed false-positives where Codex was demonstrably installed but the orchestrator emitted "not detected" without proof of dispatch. **Migration:** users with explicit `detection_mode: ping` in `.masterplan.yaml` keep ping-only semantics — only the unset default flips. No state-bundle migration; `codex_ping_result` is per-invocation.
+
+### Added
+
+- **New `detection_mode: scan-then-ping` value** alongside existing `ping`/`scan`/`trust`. The fourth enum value, not a rename — back-compat is total.
+- **Step 0 self-doubt event (`degradation_self_doubt`)** (`parts/step-0.md`). Before emitting the visible-stdout "Codex plugin not detected" warning under `unavailable_policy: degrade-loudly`, Step 0 runs two deterministic on-disk probes: (1) auth-healthy (reuses Doctor Check #39's predicate against `~/.codex/auth.json`); (2) plugin-on-disk (`ls ~/.claude/plugins/*/codex* 2>/dev/null`). If both pass but Step 0 is about to emit the warning anyway, an INFO event `degradation_self_doubt — about to emit codex-degraded warning, but auth healthy AND plugin manifest on disk; detection_mode=<...>, detection_source=<...>, ping_result=<...>` is written to `events.jsonl` on the same forced state write as the `codex degraded` event. The warning still fires (Step 0 cannot ground-truth the runtime path actually works), but the breadcrumb makes the false-positive *visible to Doctor*.
+- **Doctor Check #41 sub-fire (c) — Step 0 confabulation detector** (`parts/doctor.md`). New ERROR-severity sub-fire that triggers under EITHER condition: (1) `events.jsonl` contains a `degradation_self_doubt` event (Step 0 self-flagged the false-positive at warning-time); (2) older bundles without the self-doubt breadcrumb — `events.jsonl` contains `codex degraded — plugin not detected` AND `~/.codex/auth.json` is healthy AND `~/.claude/plugins/*/codex*` exists on disk. Either path is strong evidence of Step 0 confabulation under legacy `detection_mode: ping`. Suggested action: set `detection_mode: scan-then-ping` (or remove the explicit `ping` override) and re-run. Pairs with sub-fires (a)/(b) for full coverage of the degrade-loudly visibility contract.
+
+### Documentation
+
+- **`docs/config-schema.md`** documents the new value, marks it default, and adds a migration note. Softens the "fragile" framing on `scan` to "structural — depends on Anthropic plugin namespacing."
+- **`parts/step-0.md`** events.jsonl format list updated: success events now include `detection_source` (scan|ping) alongside `detection_mode`. One-line note added that mid-session `/reload-plugins` is uncovered (per-invocation cache, acceptable trade-off — re-running `/masterplan` rebuilds the cache).
+- **`parts/doctor.md` Check #41** body updated with sub-fire (c) prose, severity line, and extended bash check (new `plugin_on_disk` probe, `self_doubt_events` / `plugin_not_detected_events` counters, ERROR-vs-WARN final-line logic).
+
+### Verification
+
+- Static: `grep -n "scan-then-ping\|degradation_self_doubt\|detection_source" parts/step-0.md docs/config-schema.md parts/doctor.md` returns identifiers in all expected sites.
+- Cross-manifest version drift (Check #30 territory): `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json` (root + nested `plugins[0].version`), `.codex-plugin/plugin.json` all at 5.3.0; README's `Current release:` line bumped.
+- Live smoke deferred to first post-release `/masterplan` invocation against the repro repo (yanos-mgmt/.worktrees/pivot-landing-4b-yanos-wireguard) — expectation: no degradation warning, `events.jsonl` records `codex_ping ok` with `detection_source=scan`.
+
+---
+
 ## [5.2.3] — 2026-05-15 — Auto-retro backfill + Codex JWT cosmetic-expiry fix
 
 Two coupled refinements that close known gaps in v5.2.x: (1) auto-retro becomes durable even when Step C 6 is bypassed, and (2) the Step 0 boot banner and doctor Check #39 stop emitting false "Codex: degraded" warnings when ChatGPT-mode auth is healthy.
