@@ -138,6 +138,67 @@ auto_expected=$(autonomy_expects_auto_proceed "$autonomy" "$halt_mode" "$pgid")
 
 **Detection lifecycle:** This class spans two turns. The detector records candidate state in `<plan>-anomaly-candidates.jsonl` on the failure turn; the next turn's hook run confirms or clears.
 
+### 7. `wave_codex_review_skip`
+
+**Symptom:** Doctor check #43 `codex_review_coverage` finds coverage < 100% on a wave-mode bundle where the run was not inside a Codex host.
+
+**Why this matters:** Addresses F2 finding in the codex-routing-fix bundle.
+
+**Signals:**
+- Detector reference: doctor check #43 `codex_review_coverage` (added in T1 of the codex-routing-fix bundle; see `parts/doctor.md`).
+- Severity: `WARN`.
+- Suggested remediation: re-run wave-end review with Codex, OR accept-and-document if wave members are themselves Codex-produced (asymmetric review rule).
+
+**Detector:** `parts/doctor.md` check #43 reports Codex review coverage below 100% for a wave-mode bundle.
+
+**Signature inputs:** class, last_step, verb, halt_mode, autonomy, review coverage percentage.
+
+### 8. `subagent_return_oversized`
+
+**Symptom:** A per-subagent JSONL record reports `subagent_return_bytes > 5120`.
+
+**Why this matters:** Addresses F4 finding (no instrumentation for subagent context impact).
+
+**Signals:**
+- Detector reference: `subagent_return_bytes` field in `hooks/masterplan-telemetry.sh` per-subagent JSONL records (added in T2 of the codex-routing-fix bundle).
+- Severity: `WARN`.
+- Threshold: `5120` bytes (the v3.3.0 WORKLOG-regression threshold).
+- Suggested remediation: tighten the dispatch brief's return shape (require digest-only, specify max bytes, list forbidden inclusions); revisit subagent type selection if the subagent is summarizing too much.
+
+**Detector:** Compare each per-subagent JSONL record's `subagent_return_bytes` value against the explicit `5120` byte threshold.
+
+**Signature inputs:** class, last_step, verb, halt_mode, autonomy, subagent name.
+
+### 9. `eligibility_cache_event_missing`
+
+**Symptom:** Step C entry `events.jsonl` is missing the v2.4.0+ MANDATORY `eligibility_cache` event (per `parts/step-c.md:96`).
+
+**Why this matters:** Addresses F3 finding (mandatory event vs wave-pin contradiction).
+
+**Signals:**
+- Detector reference: future event-presence check OR doctor check #43 sibling (TBD; detector wiring is part of a follow-up bundle, not this one).
+- Severity: `WARN`.
+- Suggested remediation: re-emit the mandatory event before next dispatch; audit the wave-pin short-circuit at `parts/step-c.md:87` (addressed for new runs by T4/A3 in this bundle).
+
+**Detector:** TBD follow-up event-presence check scans Step C entry `events.jsonl` for the mandatory `eligibility_cache` event.
+
+**Signature inputs:** class, last_step, verb, halt_mode, autonomy, Step C entry event stream.
+
+### 10. `dispatch_brief_unregistered`
+
+**Symptom:** The self-host audit encounters a lifecycle dispatch site in `parts/step-c.md` or `parts/doctor.md` that lacks a `contract_id` reference into `commands/masterplan-contracts.md`.
+
+**Why this matters:** Addresses F6 finding (4 contracts registered vs many freeform dispatch sites).
+
+**Signals:**
+- Detector reference: `bin/masterplan-self-host-audit.sh --brief-style` (strengthened in T8/B4 of the codex-routing-fix bundle).
+- Severity: `WARN`.
+- Suggested remediation: register the brief shape as a new contract in `commands/masterplan-contracts.md`; cite the new `contract_id` at the dispatch site.
+
+**Detector:** `bin/masterplan-self-host-audit.sh --brief-style` scans lifecycle dispatch sites for a `contract_id` reference that resolves into `commands/masterplan-contracts.md`.
+
+**Signature inputs:** class, last_step, verb, halt_mode, autonomy, dispatch site path.
+
 ## Detector framework defenses
 
 The detectors themselves MUST NOT silently fail. Three defenses per the framework design:
