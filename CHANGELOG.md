@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.3.2] — 2026-05-15 — Docs: internals.md case study on Step 0 confabulation + Doctor #41 bash lesson
+
+Docs-only release. Adds a new "Why Step 0 `scan-then-ping` default (v5.3.0+) and the Doctor #41 `|| echo 0` patch (v5.3.1)" section to `docs/internals.md` documenting:
+
+- the original Step 0 `ping`-mode confabulation pattern (warning emitted before audit-trail write, no proof-of-dispatch);
+- the live repro from 2026-05-15 in `yanos-mgmt/.worktrees/pivot-landing-4b-yanos-wireguard` (codex skills present in same session that emitted "not detected");
+- the historical forensic case in `yanos-os/yocto-error-qa-audit` (codex_degraded event on day 1, retro-fix `codex_host_suppressed` event 24h later via `doctor --fix` — confirming the run was actually inside Codex, where host-suppression is the correct degrade reason, but Step 0 confabulated the plugin-missing message);
+- the design choice to drop the proposed "evidence-required guardrail" on Plan-agent advice (decorative — a confabulating LLM can fabricate the evidence string too) in favor of post-hoc deterministic Doctor escalation;
+- the v5.3.1 `|| echo 0` bash lesson for future Doctor checks: `grep -c` always prints stdout but has three exit codes (0/1/2); don't paper over the difference with `|| echo N` fallbacks that conflate exit-1 and exit-2 — use explicit `[ -r "$file" ]` guards instead.
+
+No code or skill behavior change. Bumped version anyway so the docs land on a tagged release that downstream installers can pin to.
+
 ## [5.3.1] — 2026-05-15 — Doctor #41 bash bug fix: `|| echo 0` produced "0\n0", silently skipping sub-fires
 
 Patch release. Fixes a pre-existing bug in `parts/doctor.md` Check #41 bash (introduced in v5.1.1 alongside sub-fires (a)/(b); inherited by v5.3.0 sub-fire (c)).
