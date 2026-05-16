@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.3.3] — 2026-05-15 — Plugins UI errors: frontmatter on contract registry + drop dead auq-guard.sh
+
+Patch release. Fixes 2 static issues surfaced by the Claude Code Plugins UI's Errors tab after the v5.3.2 install.
+
+### Fixed
+
+- **`commands/masterplan-contracts.md` had no frontmatter.** The file is a registry doc that has lived in `commands/` since v4.0.0 (referenced by path in `parts/step-b.md`, `parts/doctor.md`, and `docs/internals.md` so subagent briefs can cite specific `## Contract:` sections). Claude Code's plugin command loader treats every `commands/*.md` as a slash command and rejects ones without frontmatter, producing a Plugins UI error. Added minimal frontmatter with a `description:` field that documents the file as an internal registry and explicitly notes it is not user-invokable. The 10+ existing path-and-anchor references remain intact (frontmatter sits above the `# Masterplan subagent contract registry` heading; heading anchors are unaffected). A phantom `/superpowers-masterplan:masterplan-contracts` slash command now appears in the autocomplete with the disclaimer description — preferred over an unfixed UI error.
+
+### Removed
+
+- **`hooks/auq-guard.sh` deleted.** Tracked in git since v2.17.0 (`AUQ-guard Stop hook` release) and last touched in v5.2.2, but never registered in `hooks/hooks.json`. The active AUQ-guard hook moved to user-global scope (`~/.claude/hooks/auq-guard.sh`) long ago; the plugin copy is dead cruft. Removing it eliminates a 238-line bash file that no path references, and removes the possibility of future confusion where a plugin update reads from a hook that was never actually wired.
+
+### Rollout
+
+- Both surfaces refreshed: `claude plugin marketplace update` + `claude plugin update "superpowers-masterplan@..."` for Claude Code AND `codex plugin marketplace upgrade ...` for Codex CLI (per the v5.3.2 lesson where Codex side was silently skipped).
+
 ## [5.3.2] — 2026-05-15 — Docs: internals.md case study on Step 0 confabulation + Doctor #41 bash lesson
 
 Docs-only release. Adds a new "Why Step 0 `scan-then-ping` default (v5.3.0+) and the Doctor #41 `|| echo 0` patch (v5.3.1)" section to `docs/internals.md` documenting:

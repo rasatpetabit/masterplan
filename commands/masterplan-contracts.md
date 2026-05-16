@@ -1,3 +1,7 @@
+---
+description: "Internal subagent contract registry — read by orchestrator dispatch briefs in parts/step-b.md and parts/doctor.md. Not user-invokable; this command file is a registry doc, not an action."
+---
+
 # Masterplan subagent contract registry
 
 Each lifecycle subagent dispatch declares a `contract_id`. The orchestrator validates the return before acting on it. If validation fails, the orchestrator re-runs the invariant check locally and emits a `contract_violation` event.
