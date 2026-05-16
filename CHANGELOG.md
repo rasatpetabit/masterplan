@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.7.3] — 2026-05-16 — telemetry: fix parent_turn duplication in emit_parent_turns
+
+Patch release. Fixes a bug where `emit_parent_turns()` re-emitted all historical `parent_turn` records from the full transcript on every Stop hook fire, inflating counts ~2× per additional Stop event. Measured inflation: 2.1× across `p4-suppression-smoke` (9108 raw → 4292 deduped) and 1.8× across `concurrency-guards` (2085 raw → 1153 deduped). Fixes #8.
+
+### Fixed
+
+- **`emit_parent_turns()` parent_turn deduplication** (`hooks/masterplan-telemetry.sh`). Builds a seen-set from existing `subagents.jsonl` keyed by composite `ts|session_id` before scanning the transcript, then filters the jq output against that set before appending. Mirrors the identical `agent_id` dedup pattern already used in `_do_append_subagents()` at lines 391–398. New records emitted only when `ts|session_id` is not already present in the file.
+
+### Compatibility
+
+No schema changes. Existing `subagents.jsonl` files retain their (inflated) historical records — the fix prevents future duplication but does not retroactively deduplicate. Downstream `stats` queries that sum over `parent_turn` records should deduplicate by `ts+session_id` when querying pre-5.7.3 data.
+
+---
+
 ## [5.7.2] — 2026-05-16 — Bundle maintenance (state field normalization + archive)
 
 Patch release. Normalizes `phase`/`status` values in completed bundles from non-canonical `complete`/`ready_for_retro` to the standard `completed`/`archived` values per run-bundle schema. Archives the `concurrency-guards` bundle (work delivered in v5.7.0). Removes stale `.lock` and unreferenced `anomalies.jsonl` from `p4-suppression-smoke`. No behavioral changes.

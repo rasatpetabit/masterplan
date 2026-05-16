@@ -322,17 +322,22 @@ emit_parent_turns() {
   [[ -n "${subagents_file:-}" ]] || return 0
 
   jq -c \
+    --argjson seen "${seen_parent_json:-[]}" \
     --arg plan "$slug" \
     --arg branch "$branch" \
     --arg cwd "$PWD" \
     --arg sid "${CLAUDE_SESSION_ID:-}" \
     '
-    select(.type == "assistant" and ((.message.usage // null) != null))
+    ($seen | map({(.):true}) | add // {}) as $seen_set
+    | select(.type == "assistant" and ((.message.usage // null) != null))
+    | (.timestamp // null) as $ts
+    | (.sessionId // $sid) as $sess
+    | select(($seen_set[($ts + "|" + $sess)] // false) | not)
     | {
-        ts: (.timestamp // null),
+        ts: $ts,
         type: "parent_turn",
         plan: $plan,
-        session_id: (.sessionId // $sid),
+        session_id: $sess,
         model: (.message.model // null),
         usage: .message.usage,
         branch: $branch,
@@ -381,6 +386,15 @@ if [[ -n "$transcript" && -r "$transcript" ]]; then
   else
     subagents_file="${plans_dir}/${slug}-subagents.jsonl"
   fi
+
+  # Build seen parent_turn set from existing subagents.jsonl, keyed by "ts|session_id".
+  # Prevents re-emitting historical parent_turns on every Stop event (mirrors agent_id dedup below).
+  if [[ -s "$subagents_file" ]]; then
+    seen_parent_json=$(jq -sc '[.[] | select(.type=="parent_turn") | (.ts + "|" + (.session_id // ""))] | unique' "$subagents_file" 2>/dev/null || echo '[]')
+  else
+    seen_parent_json='[]'
+  fi
+  [[ -z "$seen_parent_json" ]] && seen_parent_json='[]'
 
   if [[ "$is_bundle" -eq 1 ]]; then
     with_bundle_lock "$plans_dir" emit_parent_turns || true
