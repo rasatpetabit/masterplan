@@ -50,5 +50,5 @@ The session went spec (pre-authored) → brainstorm (6 open questions resolved a
 
 ## Open items
 
-- Doctor check #41 fires for this plan (codex_routing=off, no `codex degraded` event). This is an expected false positive for plans where Codex was never enabled. Check #41(a) would benefit from a "was_codex_ever_enabled" heuristic that skips the finding when `events.jsonl` has no Codex ping or routing events at all.
+- ~~Doctor check #41 fires for this plan (codex_routing=off, no `codex degraded` event). This is an expected false positive for plans where Codex was never enabled.~~ **Resolved in v5.7.1**: check #41(a) now gates on `codex_ever_active` — if `events.jsonl` has zero `codex_ping`/`codex degraded`/`routing→[codex]` events, sub-fire (a) is skipped (Codex configured off from bundle creation, no degrade-loudly evidence expected).
 - The `worktree_decision_note` scalar in `state.yml` exceeds 200 chars (check #32). This field is informational brainstorm context that doesn't need to be in the state file long-term. Future: truncate or move to spec.md on completion.

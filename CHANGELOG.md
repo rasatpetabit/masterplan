@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.7.1] — 2026-05-16 — Doctor check #41 false-positive fix (never-Codex-active bundles)
+
+Patch release. Check #41(a) now gates on `codex_ever_active`: if `events.jsonl` has zero `codex_ping` / `codex degraded` / `routing→[codex]` events, sub-fire (a) is skipped entirely — Codex was configured `off` from bundle creation, so no degrade-loudly evidence is expected. Previously fired as WARN on every plan where Codex was intentionally disabled from the start (codex_routing=off, no prior Codex activity). Both `parts/doctor.md` (bash + prose + table entry) and `concurrency-guards/retro.md` (open item resolved) updated.
+
+---
+
 ## [5.7.0] — 2026-05-16 — Concurrency safety: Guard B (slug-uniqueness) + Guard C (flock serialization)
 
 Minor release. Closes two long-standing race windows: cross-worktree slug collisions at bundle creation time, and same-worktree concurrent JSONL/state.yml write corruption.
