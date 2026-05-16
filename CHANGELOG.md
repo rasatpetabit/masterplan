@@ -5,10 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [5.7.0] — 2026-05-16 — Concurrency safety: Guard B (slug-uniqueness) + Guard C (flock serialization)
+
+Minor release. Closes two long-standing race windows: cross-worktree slug collisions at bundle creation time, and same-worktree concurrent JSONL/state.yml write corruption.
 
 ### Added
-- Guard B: cross-worktree slug-uniqueness pre-check with auto-suffix and AUQ (`bin/masterplan-state.sh check-slug-collision`, integrated into Step B0 and Step I3)
+
+- **Guard B — cross-worktree slug-uniqueness pre-check** (`bin/masterplan-state.sh check-slug-collision`). Scans all `git worktree list` peers for an active run with the same slug before creating a new bundle. Detects stale worktrees (directory removed but still registered). On collision: AUQ with 4 options (resume peer, auto-suffix per D3 global scheme, orphan-acknowledge, abort). Integrated into Step B0 (sub-step 1d, excluding `--from-spec` per D6) and Step I3 import pre-flight (between within-batch and path-existence passes).
+- **Guard C — `with_bundle_lock()` write serialization** (`bin/masterplan-state.sh`, `hooks/masterplan-telemetry.sh`). `flock -w 5` fd-based form — `(flock -w 5 9; "$@") 9>"$lockfile"` — so bash functions are callable in the guarded subshell. macOS fallback: one-per-process WARN via `MASTERPLAN_FLOCK_WARNED` env var, then unguarded passthrough. Wraps all bundle-mode append sites: 2 `masterplan-state.sh` rename paths + 5 `masterplan-telemetry.sh` append paths. Bail-silent contract preserved (`|| true` on telemetry sites).
+- **Doctor check #42 — stale `.lock` file** (`parts/doctor.md`). `mtime > 1h` on `<bundle>/.lock` → `WARN` (report-only, never auto-delete). Added to Haiku brief, all complexity tiers, check table, and per-check section.
+- **Smoke tests**: `bin/masterplan-guard-b-smoke.sh` (collision detection + stale-peer detection via synthetic git worktree fixture) and `bin/masterplan-guard-c-smoke.sh` (100-concurrent `events.jsonl` appends, macOS fallback, `state.yml` race, stale-lock doctor check). Both `bash -n` clean.
+
+### Compatibility
+
+No schema bump on `state.yml`. Guard B fires only at bundle creation; existing runs are unaffected. Guard C is transparent to callers — `with_bundle_lock()` degrades silently on macOS. Doctor check #42 is WARN-only.
 
 ## [5.6.0] — 2026-05-16 — Claude `/goal` interop (observability-only) + audit denominator fix
 
