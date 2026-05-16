@@ -22,7 +22,7 @@ pending_gate: null
 artifacts:
   spec: docs/masterplan/p4-suppression-smoke/spec.md
   plan: docs/masterplan/p4-suppression-smoke/plan.md
-  retro: ""
+  retro: docs/masterplan/p4-suppression-smoke/retro.md
   events: docs/masterplan/p4-suppression-smoke/events.jsonl
   events_archive: ""
   eligibility_cache: ""

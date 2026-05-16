@@ -1,0 +1,81 @@
+schema_version: 3
+slug: concurrency-guards
+status: complete
+phase: complete
+pending_retro_attempts: 0
+retro_policy:
+  waived: false
+  reason: ""
+scope_fingerprint:
+  - concurrenc
+  - guard
+  - worktree
+  - slug
+  - flock
+supersedes: ""
+superseded_by: ""
+variant_of: ""
+import_hydration: ""
+import_contract:
+  contract_id: ""
+  inputs_hash: ""
+  processed_at: ""
+worktree_disposition: active
+worktree_last_reconciled: 2026-05-16T08:10:00Z
+worktree: /home/ras/dev/superpowers-masterplan
+branch: main
+started: 2026-05-16T08:10:00Z
+last_activity: 2026-05-16T08:20:00Z
+current_task: ""
+next_action: "Open PR from concurrency-guards branch → main when ready"
+autonomy: loose
+loop_enabled: false
+codex_routing: off
+codex_review: off
+compact_loop_recommended: false
+complexity: high
+pending_gate:
+  id: ""
+  phase: executing
+  options: 0
+artifacts:
+  spec: docs/masterplan/concurrency-guards/spec.md
+  plan: docs/masterplan/concurrency-guards/plan.md
+  retro: docs/masterplan/concurrency-guards/retro.md
+  events: docs/masterplan/concurrency-guards/events.jsonl
+  events_archive: ""
+  eligibility_cache: ""
+  telemetry: ""
+  telemetry_archive: ""
+  subagents: ""
+  subagents_archive: ""
+  state_queue: ""
+legacy:
+  approved_plan: ""
+  codex_review_target: ""
+halt_mode: post-plan
+stop_reason: question
+critical_error: null
+brainstorm_anchor:
+  mode: implementation-design
+  repo_role: claude-code-plugin-orchestrator
+  in_scope_paths:
+    - bin/masterplan-state.sh
+    - hooks/masterplan-telemetry.sh
+    - parts/step-b.md
+    - parts/import.md
+    - parts/doctor.md
+  out_of_scope_repos: []
+  evidence:
+    - "Pre-existing spec at docs/masterplan/concurrency-guards/spec.md authored 2026-05-16 by Claude Opus 4.7 in this session"
+    - "Concurrency analysis grounded in bin/masterplan-state.sh:380,439 (atomic rename via mktemp, no flock anywhere) and hooks/masterplan-telemetry.sh:195,249,552,773 (events.jsonl readers that break on git conflict markers)"
+    - "Spec scope explicitly bounded: Guard B (slug-uniqueness + auto-suffix) and Guard C (flock) only; Guard D (owner sentinel) deferred; Guard A (worktree-scoped paths) rejected"
+    - "Existing schema (parts/contracts/run-bundle.md:17-44) v5.0 carries no `worktree:` or owner field; older fixtures (bin/masterplan-anomaly-smoke.sh:148) still do"
+  verification_ceiling: repo-local-tests
+  gate_selection: null
+  interview_depth:
+    complexity: high
+    seriousness: serious
+    understanding_level: strong
+    target_question_count: "6"
+worktree_decision_note: "Brainstorm-only on docs/; no worktree isolation needed for spec refinement. If user picks 'Continue to plan now' at close-out, worktree decision will be revisited at Step B0 entry for the plan phase (current branch=main is trunk; plan will recommend creating a feature worktree)."
