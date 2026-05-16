@@ -12,6 +12,15 @@
 
 > **v5 DISPATCH-SITE convention.** All Agent dispatches originating from this phase file MUST tag their first prompt line as `DISPATCH-SITE: step-c.md:<label>` (e.g., `DISPATCH-SITE: step-c.md:wave-dispatch`, `DISPATCH-SITE: step-c.md:per-task-verify`, `DISPATCH-SITE: step-c.md:codex-eligibility-build`). This re-tags the v4 convention (which used step-name values like `Step C step 1`) to file-path-scoped values per spec §L70. The router's dispatch-site table (in `commands/masterplan.md`) is updated by Task 20.
 
+> **Completion-event provenance (`dispatched_by`).** Every Step C event that records a task, wave, review, cache, or phase outcome MUST include `dispatched_by` using this canonical enum:
+>
+> | Value | Meaning |
+> |---|---|
+> | `codex` | Task dispatched via codex EXEC or codex REVIEW. |
+> | `claude` | Task dispatched as a Claude inline action (no subagent). |
+> | `wave-claude` | Task dispatched as a Claude Agent wave-member implementer. |
+> | `user` | Task created/initiated by user action (for example, bundle bootstrap or Step C session/cache/finalizer outcomes). |
+
 ## Step C — Execute
 
 **Entry breadcrumb.** Emit on first line of this step (per Step 0 §Breadcrumb emission contract):
@@ -30,11 +39,11 @@ Where `{requested_verb}` is the verb parsed by Step 0 (`full`, `execute`, `resum
 2. **First entry of this session** (`state.step_c_session_init_sha == ""` OR `state.step_c_session_init_sha != current_sig`):
    - Run the full rehydration procedure from *TaskCreate projection layer — Rehydration trigger*.
    - Write `state.step_c_session_init_sha = current_sig` atomically with the rehydration write.
-   - Append `step_c_init_complete` to `events.jsonl` with payload `{session_sig: <current_sig>, rehydrated: true}`.
+   - Append `step_c_init_complete` to `events.jsonl` with payload `{session_sig: <current_sig>, rehydrated: true, dispatched_by: "user"}`.
    - Issue the per-state-write `TaskUpdate(current_task, status=in_progress)` touch per *Per-state-write priming* below.
 3. **Subsequent entry in same session** (`state.step_c_session_init_sha == current_sig`):
    - Run *Drift recovery* per *TaskCreate projection layer — Drift recovery*, scoped to `current_task` alignment + status counts (`in_progress count == 1` mid-wave; `pending count > 0` if waves remain).
-   - Append `step_c_drift_check_complete` to `events.jsonl` with payload `{session_sig: <current_sig>, drift_corrected: <bool>}`.
+   - Append `step_c_drift_check_complete` to `events.jsonl` with payload `{session_sig: <current_sig>, drift_corrected: <bool>, dispatched_by: "user"}`.
    - Issue the per-state-write `TaskUpdate(current_task, status=in_progress)` touch.
 
 If `TaskCreate` / `TaskUpdate` dispatch errors at any point, append `taskcreate_mirror_failed` with the error string and proceed — `state.yml` is canonical and the next rehydration reconciles. Skip the entire block silently when `codex_host_suppressed == true`.
@@ -109,7 +118,7 @@ The touch is **NOT** applied outside Step C (brainstorm, plan, halt-gate, doctor
    - <ISO-ts> eligibility cache: rebuilt — schema version mismatch (<found>; expected 1.0)
    ```
 
-   The event is appended ONCE per Step C entry, before any task-routing decisions. Subsequent re-entries (e.g., resume after compaction) emit a new event per re-entry — that's intentional, `events.jsonl` becomes the canonical record of "did Step 1 run, when, and what did it conclude?" Cost is one small JSON object per Step C entry; negligible against the rotation threshold.
+   The event is appended ONCE per Step C entry, before any task-routing decisions. Every `eligibility_cache` event includes `dispatched_by: "user"` because the cache outcome is initiated by the current Step C invocation, not by a task implementer. Subsequent re-entries (e.g., resume after compaction) emit a new event per re-entry — that's intentional, `events.jsonl` becomes the canonical record of "did Step 1 run, when, and what did it conclude?" Cost is one small JSON object per Step C entry; negligible against the rotation threshold.
 
    **Inline-build verifier (CD-3 evidence anchor).** The annotation-completeness scan in the Build path step 1 IS the verifier that licenses the inline shortcut — analogous to Step 4a's implementer-return trust contract (see line ~996), where structured fields gate skipping redundant verification. The scan must pass for ALL tasks before the inline path activates: any malformed annotation, missing `**Files:**` block, or unknown `**Codex:**` value (e.g., `**Codex:** maybe`, `OK`, `ok ` with trailing whitespace) disqualifies the inline path and silently falls back to Haiku dispatch. Silent fallback is correct here — the Haiku is the standard path, not an error path; the orchestrator never trusts data it can't structurally validate. At `complexity == high`, writing-plans guarantees every task carries a well-formed `**Codex:**` annotation pair (see line ~540), so the inline path activates by construction; at `medium`, it activates opportunistically when annotations happen to be complete; at `low`, the entire decision tree is skipped per the **Complexity gate** above. Doctor #21's regex (`eligibility cache:`) matches both inline and Haiku-built variants — no doctor-side change is required.
 
@@ -393,8 +402,8 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
 
     2. **Pre-dispatch event** — append ONE event to `events.jsonl` BEFORE dispatching:
        ```
-       - <ISO-ts> task "<task name>" routing→CODEX (<decision_source>; <files-count> files in scope)
-       - <ISO-ts> task "<task name>" routing→INLINE (<decision_source>; <reason>)
+       - <ISO-ts> task "<task name>" routing→CODEX (<decision_source>; <files-count> files in scope; dispatched_by: "codex")
+       - <ISO-ts> task "<task name>" routing→INLINE (<decision_source>; <reason>; dispatched_by: "claude")
        ```
        The post-completion event is unchanged — it still appears as a SECOND event per task with the existing `[codex]` or `[inline]` tag and verification details in `message`. Two events per task is the price for being able to grep `routing→` across state bundles for an unambiguous, searchable routing-decision audit independent of completion outcomes.
 
@@ -511,7 +520,7 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
          ```
        - **Pre-dispatch event**:
          ```
-         - <ISO-ts> task "<task name>" review→CODEX (codex_review=on)
+         - <ISO-ts> task "<task name>" review→CODEX (codex_review=on; dispatched_by: "codex")
          ```
        The post-review event is unchanged — still tagged `[reviewed: <severity-summary or "no findings">]` per the decision matrix below. Two events per reviewed task — the pre-dispatch event is greppable as `review→CODEX` independent of severity outcome.
 
@@ -580,7 +589,7 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
    <masterplan-trace state-write field=current_task from=<previous-task> to=<next-task>>
    ```
 
-   Update `state.yml`: bump `last_activity` to the current ISO timestamp, set `current_task` to the next task name, set `next_action` to the next task's first step, and append a task-completion event to `events.jsonl` that includes 1–3 lines of relevant verification output (per **CD-8**), the routing+review tags, and `progress_kind`. For non-trivial decisions made during the task, add dedicated events per **CD-7**.
+   Update `state.yml`: bump `last_activity` to the current ISO timestamp, set `current_task` to the next task name, set `next_action` to the next task's first step, and append a task-completion event to `events.jsonl` that includes 1–3 lines of relevant verification output (per **CD-8**), the routing+review tags, `progress_kind`, and `dispatched_by: "codex"` for Codex EXEC completions or `dispatched_by: "claude"` for serial inline completions. For non-trivial decisions made during the task, add dedicated events per **CD-7**.
 
    `progress_kind` is mandatory on every Step C close. Values:
    - `product_change` — runtime/source/docs behavior requested by the user changed.
@@ -602,7 +611,7 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
    **Under wave (Slice α v2.0.0+ — single-writer funnel).**
 
    1. **Aggregate digest list.** Collect all wave members' digests from the wave-completion barrier. Compute `current_task` = lowest-indexed not-yet-complete task in the plan (across the union of completed wave members + remaining serial tasks).
-   2. **Append N events in plan-order** (NOT completion-order — predictable for human readers). Each event tags routing as `[inline][wave: <group>]`, includes verification result from the digest, references `task_start_sha`. (No completion SHA for read-only tasks — they don't commit.)
+   2. **Append N events in plan-order** (NOT completion-order — predictable for human readers). Each event tags routing as `[inline][wave: <group>]`, includes verification result from the digest, references `task_start_sha`, and includes `dispatched_by: "wave-claude"`. (No completion SHA for read-only tasks — they don't commit.)
    3. **Event rotation pre-check (wave-aware per FM-2).** If `len(active_events) + N` exceeds the threshold, rotate ONCE at the END of the batch append (not mid-batch). Move older entries to `events-archive.jsonl`; append an `events_rotated` marker; then append the N new wave events.
    4. **Update `last_activity`** to the wave-completion timestamp.
    5. **Append decision/blocker events for any partial-failure context** per the wave-mode failure handling rules in Step C step 3.
@@ -717,7 +726,7 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
    <masterplan-trace state-write field=status from=in-progress to=complete>
    ```
 
-   Under `<run-dir>/state.lock`, set `status: complete`, `phase: complete`, `current_task: ""`, `next_action: none` unless pending `follow_ups` remain, `pending_gate: null`, `background: null`, `stop_reason: complete`, `critical_error: null`, and `last_activity: <now>`. Append a `plan_completed` event to `events.jsonl` with the final task count, final verification summary, completion SHA if available, the dirty-check summary, and `progress_kind: product_change | implementation_plan_created | verification` as appropriate. Commit this state update with subject `masterplan: complete <slug>` unless the same commit already contains the final task's state update. Do not reschedule.
+   Under `<run-dir>/state.lock`, set `status: complete`, `phase: complete`, `current_task: ""`, `next_action: none` unless pending `follow_ups` remain, `pending_gate: null`, `background: null`, `stop_reason: complete`, `critical_error: null`, and `last_activity: <now>`. Append a `plan_completed` event to `events.jsonl` with the final task count, final verification summary, completion SHA if available, the dirty-check summary, `progress_kind: product_change | implementation_plan_created | verification` as appropriate, and `dispatched_by: "user"`. Commit this state update with subject `masterplan: complete <slug>` unless the same commit already contains the final task's state update. Do not reschedule.
 
    **Codex native goal completion.** If `codex_host_suppressed == true` and `state.yml` has `codex_goal.objective`, call `get_goal` immediately after the state update. If the active goal objective matches, call `update_goal(status="complete")`, then append `codex_goal_completed` to `events.jsonl`. If no active goal exists or the objective differs, do not mark any native goal complete; append `codex_goal_complete_skipped` with the observed/missing objective.
 
