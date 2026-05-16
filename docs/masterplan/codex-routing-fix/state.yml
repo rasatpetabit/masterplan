@@ -1,0 +1,54 @@
+---
+schema_version: "5.0"
+slug: codex-routing-fix
+plan_hash: "sha256:pending-first-build"
+
+current_phase: step-c
+current_wave: 5
+autonomy: loose
+complexity: medium
+
+tasks:
+  - idx: 1
+    status: complete
+  - idx: 2
+    status: complete
+  - idx: 3
+    status: complete
+  - idx: 4
+    status: complete
+  - idx: 5
+    status: complete
+  - idx: 6
+    status: complete
+  - idx: 7
+    status: complete
+  - idx: 8
+    status: complete
+  - idx: 9
+    status: complete
+  - idx: 10
+    status: complete
+  - idx: 11
+    status: complete
+  - idx: 12
+    status: complete
+  - idx: 13
+    status: pending
+  - idx: 14
+    status: pending
+  - idx: 15
+    status: pending
+
+handoff: ""
+blockers: []
+recent_events:
+  - "2026-05-16T16:00Z bundle bootstrapped from approved plan steady-sparking-nygaard"
+  - "2026-05-16T16:00Z worktree isolation: .worktrees/codex-routing-fix (branch codex-routing-fix)"
+  - "2026-05-16T16:10Z wave1 complete: T1(80b96d5) T2(0e0ce06) T3(322dac8)"
+  - "2026-05-16T16:10Z wave4 complete: T9-T12(c94b5cb) parallel-with-wave1"
+  - "2026-05-16T16:11Z wave2 entry: serial Codex EXEC on parts/step-c.md T4→T5→T6→T7"
+  - "2026-05-16T16:20Z wave2 complete: T4(96def0a) T5(e7832d7) T6(958e649) T7(2b15a98)"
+  - "2026-05-16T16:21Z wave3 entry: T8 inline-Claude B4 audit + 5 freeform contracts + audit-script hardening"
+  - "2026-05-16T16:30Z wave3 complete: T8(PENDING) — audit script Pattern D verified via fixture"
+  - "2026-05-16T16:30Z wave5 entry: T13/T14/T15 inline-Claude finale"

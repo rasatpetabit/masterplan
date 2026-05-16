@@ -112,6 +112,187 @@ return_shape: |
   digest: {state, events_summary, blockers, task_list, spec_excerpt, commits, pr}
 ```
 
+## Contract: step-c.eligibility_cache_build_v1
+
+```yaml
+purpose: Step C step 1 Haiku eligibility-cache shard build (v5.4.0+, contractified v5.8.0)
+algorithm: |
+  Orchestrator shards the plan task list per the v5.4.0 sharding strategy
+  (one Haiku per **parallel-group:** if any are declared; otherwise
+  ceil(task_count/10) shards of ~10 tasks; single Haiku for plans <10 tasks
+  with no parallel-groups). One Haiku per shard.
+
+  Per-shard brief (Goal/Inputs/Scope/Constraints/Return):
+    Goal: Apply the Step C 3a Codex eligibility checklist AND the
+          parallel-eligibility rules (1-5) to each task in the shard.
+    Inputs:
+      Full plan task list (read-only, for rule-5 cohort visibility)
+      Shard's task_indices subset (the tasks to evaluate)
+      Plan annotations: **Codex:**, **parallel-group:**, **Files:**,
+                        optional **non-committing:** override
+    Scope: Read-only.
+    Constraints: Return JSON only — no narration.
+    Return: One JSON object per shard with top-level cache_schema_version
+            "1.0", shard_id string ("group:<name>" | "unassigned:<range>"
+            | "full"), and tasks array (only the shard's subset).
+
+  Runtime-audit fields (dispatched_to, dispatched_at, decision_source)
+  are always null at cache build time; Step 3a fills them.
+
+return_shape: |
+  contract_id: "step-c.eligibility_cache_build_v1"
+  cache_schema_version: "1.0"
+  shard_id: "<group:name | unassigned:range | full>"
+  tasks:
+    - idx: int
+      name: str
+      eligible: bool
+      reason: str
+      annotated: bool
+      parallel_group: str | null
+      files: [str]
+      parallel_eligible: bool
+      parallel_eligibility_reason: str
+      dispatched_to: null
+      dispatched_at: null
+      decision_source: null
+```
+
+## Contract: step-c.wave_implementer_v1
+
+```yaml
+purpose: Step C step 2 wave-member implementer dispatch (Slice α v2.0.0+, contractified v5.8.0)
+algorithm: |
+  Orchestrator dispatches N parallel Agent calls in a single assistant
+  message (N = wave member count). Each call uses subagent_type
+  "general-purpose" with model: "sonnet" per §Agent dispatch contract.
+
+  Per-member brief (standard implementer brief PLUS three wave-specific
+  clauses):
+    Goal: Implement THIS wave member's task per the plan entry.
+    Inputs:
+      Task name + index
+      Acceptance criteria from plan entry
+      **Files:** list (exhaustive — implementer must not read/modify
+                       anything outside this list)
+      Spec excerpt: relevant section of design doc
+    Scope:
+      WAVE CONTEXT clause: "You are dispatched as part of a parallel
+        wave of N tasks (group: <name>). Your declared scope is
+        **Files:** (exhaustive — do not read or modify anything outside
+        this list, including plan.md, state.yml, events.jsonl, sibling
+        tasks' scopes, or the eligibility cache)."
+      START-SHA clause: "Capture `git rev-parse HEAD` BEFORE any work;
+        return as task_start_sha (required per implementer-return
+        contract)."
+      NO-COMMIT clause: "DO NOT commit your work — return staged-changes
+        digest only. DO NOT update run state — orchestrator handles
+        batched wave-end updates."
+    Constraints: Failure handling — if you BLOCK or NEEDS_CONTEXT,
+                 return immediately; orchestrator's blocker
+                 re-engagement gate handles you alongside the rest of
+                 the wave.
+    Return: implementer-return digest with task_start_sha (required),
+            verification output excerpt, staged-changes summary,
+            any BLOCK/NEEDS_CONTEXT signal.
+
+return_shape: |
+  contract_id: "step-c.wave_implementer_v1"
+  task_idx: int
+  task_name: str
+  task_start_sha: "<sha>"  # REQUIRED
+  staged_changes:
+    files_modified: [str]
+    diff_summary: str
+  verification:
+    commands_run: [str]
+    excerpt: str  # tail -3 per command
+    passed: bool
+  outcome: "complete" | "blocked" | "needs_context"
+  blocker: str | null
+  notes: str | null
+```
+
+## Contract: step-c.codex_exec_v1
+
+```yaml
+purpose: Step C step 3a Codex EXEC dispatch (v2.4.0+ pre-dispatch visibility, contractified v5.8.0)
+algorithm: |
+  Orchestrator dispatches codex:codex-rescue subagent in EXEC mode.
+  Codex sites are exempt from §Agent dispatch contract — do NOT pass
+  model: parameter.
+
+  Brief (Goal/Inputs/Scope/Constraints/Return per CLAUDE.md):
+    Goal: Implement the named task per the plan entry.
+    Inputs:
+      Task name + index
+      Acceptance criteria from plan entry
+      **Files:** list (exhaustive scope)
+      Spec excerpt: relevant section of design doc
+      Branch context: current branch + worktree path
+    Scope: Edit + verify within **Files:** only. May commit per the
+           per-task commit convention if running outside a wave;
+           wave-mode dispatch uses step-c.wave_implementer_v1 instead.
+    Constraints: CD-10. Edit-only when sandbox .git is read-only;
+                 return a signed digest if commit is blocked.
+    Return: implementer-return digest with task_start_sha (required),
+            verification output, commit SHA (when commit succeeded) or
+            edit-only flag.
+
+return_shape: |
+  contract_id: "step-c.codex_exec_v1"
+  task_idx: int
+  task_name: str
+  task_start_sha: "<sha>"  # REQUIRED
+  commit_sha: "<sha>" | null  # null when edit-only mode
+  files_modified: [str]
+  verification:
+    commands_run: [str]
+    excerpt: str
+    passed: bool
+  outcome: "complete" | "blocked" | "needs_context"
+  blocker: str | null
+  notes: str | null
+```
+
+## Contract: step-c.codex_review_serial_v1
+
+```yaml
+purpose: Step C step 4b serial Codex REVIEW dispatch (v2.4.0+ pre-dispatch visibility, contractified v5.8.0)
+algorithm: |
+  Orchestrator dispatches codex:codex-rescue subagent in REVIEW mode
+  for serial (non-wave) tasks. Asymmetric review rule applies:
+  dispatched_by == "codex" tasks skip serial 4b entirely (see Step
+  3a's post-Codex flow).
+
+  Brief (Goal/Inputs/Scope/Constraints/Return):
+    Goal: Adversarial review of this task's diff against the spec and
+          acceptance criteria.
+    Inputs:
+      Task: <task name from plan>
+      Acceptance criteria: <bullet list from plan>
+      Spec excerpt: <relevant section of design doc>
+      Diff range: <task_start_sha>..HEAD
+      Files in scope: <task's **Files:** list>
+      Verification: <captured output from 4a>
+    Scope: Review only — no writes, no commits, no file modifications.
+           Run `git diff <range> -- <files...>` yourself to obtain the
+           diff. Diff range NOT inlined into the brief.
+    Constraints: CD-10. Be adversarial about correctness, not style.
+    Return: severity-ordered findings (high/medium/low) grounded in
+            file:line, OR the literal string "no findings" if clean.
+
+return_shape: |
+  contract_id: "step-c.codex_review_serial_v1"
+  task_idx: int
+  task_name: str
+  diff_range: "<task_start_sha>..HEAD"
+  files_in_scope: [str]
+  severity_summary: "clean" | "<N high, N medium, N low>"
+  findings: [{severity, file, line, message}] OR []
+  notes: str | null
+```
+
 ## Contract: codex.review_wave_member_v1
 
 ```yaml

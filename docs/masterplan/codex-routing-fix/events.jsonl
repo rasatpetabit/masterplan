@@ -1,0 +1,24 @@
+{"ts":"2026-05-16T16:00:00Z","event":"bundle_bootstrapped","slug":"codex-routing-fix","source_spec":"steady-sparking-nygaard.md","dispatched_by":"user"}
+{"ts":"2026-05-16T16:00:00Z","event":"worktree_isolated","branch":"codex-routing-fix","path":".worktrees/codex-routing-fix","reason":"self-modification of parts/step-c.md and parts/step-b.md while orchestrator reads them"}
+{"ts":"2026-05-16T16:00:00Z","event":"plan_written","autonomy":"loose","complexity":"medium","task_count":15,"wave_plan":"wave1=T1-T3 parallel-codex, wave2=T4-T7 serial-codex, wave3=T8 inline, wave4=T9-T12 batched-codex, wave5=T13-T15 inline"}
+{"ts":"2026-05-16T16:00:00Z","event":"phase_transition","from":"step-b","to":"step-c","reason":"plan approved via ExitPlanMode pre-bundle; bootstrap complete"}
+{"ts":"2026-05-16T16:01:00Z","event":"eligibility_cache","step_c_entry":1,"codex_routing":"auto","codex_review":"on","total_tasks":15,"codex_eligible":10,"codex_ineligible":5,"eligible_tasks":["T1","T2","T3","T4","T5","T7","T9","T10","T11","T12"],"ineligible_tasks":["T6","T8","T13","T14","T15"],"ineligible_reasons":{"T6":"multi-file (parts/step-c.md + commands/masterplan-contracts.md)","T8":"multi-file + needs Explore subagent for audit","T13":"docs/internals.md cross-section judgment","T14":"version bump across 4 manifest files + CHANGELOG narrative","T15":"WORKLOG narrative"},"cache_pinned_for_wave":false,"codex_host_suppressed":false}
+{"ts":"2026-05-16T16:01:00Z","event":"wave_routing_summary","wave":1,"members_by_route":{"codex":3,"inline_review":0,"inline_no_review":0},"members":["T1","T2","T3"]}
+{"ts":"2026-05-16T16:10:00Z","event":"wave_task_completed","wave":1,"task":"T1","commit":"80b96d5","dispatched_by":"codex+claude-fixup","note":"codex sandbox could not commit (.git read-only); inline rescue normalized heading to ## Check #N — name style"}
+{"ts":"2026-05-16T16:10:00Z","event":"wave_task_completed","wave":1,"task":"T2","commit":"0e0ce06","dispatched_by":"codex"}
+{"ts":"2026-05-16T16:10:00Z","event":"wave_task_completed","wave":1,"task":"T3","commit":"322dac8","dispatched_by":"codex"}
+{"ts":"2026-05-16T16:10:00Z","event":"wave_task_completed","wave":4,"task":"T9","commit":"c94b5cb","dispatched_by":"codex+claude-fixup","note":"wave4 dispatched in parallel with wave1; all 4 in single commit"}
+{"ts":"2026-05-16T16:10:00Z","event":"wave_task_completed","wave":4,"task":"T10","commit":"c94b5cb","dispatched_by":"codex+claude-fixup"}
+{"ts":"2026-05-16T16:10:00Z","event":"wave_task_completed","wave":4,"task":"T11","commit":"c94b5cb","dispatched_by":"codex+claude-fixup"}
+{"ts":"2026-05-16T16:10:00Z","event":"wave_task_completed","wave":4,"task":"T12","commit":"c94b5cb","dispatched_by":"codex+claude-fixup"}
+{"ts":"2026-05-16T16:10:00Z","event":"wave_complete","wave":1,"members":["T1","T2","T3"],"commits":["80b96d5","0e0ce06","322dac8"]}
+{"ts":"2026-05-16T16:10:00Z","event":"wave_complete","wave":4,"members":["T9","T10","T11","T12"],"commits":["c94b5cb"]}
+{"ts":"2026-05-16T16:11:00Z","event":"wave_routing_summary","wave":2,"members_by_route":{"codex":4,"inline_review":0,"inline_no_review":0},"members":["T4","T5","T6","T7"],"note":"serial dispatch — all four touch parts/step-c.md"}
+{"ts":"2026-05-16T16:20:00Z","event":"wave_task_completed","wave":2,"task":"T4","commit":"96def0a","dispatched_by":"codex"}
+{"ts":"2026-05-16T16:20:00Z","event":"wave_task_completed","wave":2,"task":"T5","commit":"e7832d7","dispatched_by":"codex"}
+{"ts":"2026-05-16T16:20:00Z","event":"wave_task_completed","wave":2,"task":"T6","commit":"958e649","dispatched_by":"claude","note":"multi-file (parts/step-c.md + commands/masterplan-contracts.md); plan marked **Codex:** no"}
+{"ts":"2026-05-16T16:20:00Z","event":"wave_task_completed","wave":2,"task":"T7","commit":"2b15a98","dispatched_by":"codex"}
+{"ts":"2026-05-16T16:20:00Z","event":"wave_complete","wave":2,"members":["T4","T5","T6","T7"],"commits":["96def0a","e7832d7","958e649","2b15a98"]}
+{"ts":"2026-05-16T16:21:00Z","event":"wave_routing_summary","wave":3,"members_by_route":{"codex":0,"inline_review":1,"inline_no_review":0},"members":["T8"],"note":"T8 inline-Claude per plan annotation (multi-file + needs Explore subagent for audit)"}
+{"ts":"2026-05-16T16:30:00Z","event":"wave_task_completed","wave":3,"task":"T8","commit":"PENDING","dispatched_by":"claude","note":"B4 audit findings + 4 new freeform-site contracts registered + bin/masterplan-self-host-audit.sh check_brief_style() extended to scan parts/step-c.md and parts/doctor.md with v5 DISPATCH-SITE convention; Pattern D verified via injected fixture"}
+{"ts":"2026-05-16T16:30:00Z","event":"wave_complete","wave":3,"members":["T8"],"commits":["PENDING"]}

@@ -820,12 +820,15 @@ check_loop_first_contract() {
 }
 
 # ---------------------------------------------------------------------------------
-# Check: algorithmic brief style at lifecycle dispatch sites (FM-D, v4.0.0+)
+# Check: algorithmic brief style at lifecycle dispatch sites (FM-D, v4.0.0+; v5.8.0+ multi-file)
 #
-# Scopes ALL patterns to text within 30 lines of one of the three lifecycle
-# DISPATCH-SITE values — avoids false positives in user-facing prose.
-# Lifecycle dispatch sites: "Step B0 related-plan scan", "Step R2 retro source gather",
-# "Step D doctor checks".
+# Scopes ALL patterns to text within 30 lines of a lifecycle DISPATCH-SITE
+# value — avoids false positives in user-facing prose.
+#
+# v5.8.0+ expanded scope:
+#   - commands/masterplan.md  — legacy v4 step-name sites (Step B0/R2/D)
+#   - parts/step-c.md         — v5 site-label sites (`DISPATCH-SITE: step-c.md:<label>`)
+#   - parts/doctor.md         — v5 site-label sites + legacy `Step D doctor [...] checks`
 #
 # Pattern A: "validate against" not followed within 5 lines by "for each" or "if.*field"
 # Pattern B: "make sure that" (outcome language, no algorithmic equivalent)
@@ -834,25 +837,65 @@ check_loop_first_contract() {
 #            that lacks "contract_id" in the next 30 lines.
 # ---------------------------------------------------------------------------------
 check_brief_style() {
-  local file="${REPO_ROOT}/commands/masterplan.md"
+  BRIEF_STYLE_VIOLATIONS=0
+
+  # Per-file scan. Args: file lifecycle_re apply_prose_patterns require_sites_found
+  #   apply_prose_patterns=1 enables Pattern A/B/C (only meaningful for files
+  #     that historically carried orchestration prose; v5 phase files are
+  #     algorithmic by construction).
+  #   require_sites_found=1 treats zero matches as a violation (only used for
+  #     commands/masterplan.md for legacy compatibility — v5 phase files may
+  #     legitimately have zero tagged sites if no Agent dispatches originate
+  #     there yet).
+  # In v5.0+, lifecycle dispatch sites moved out of commands/masterplan.md
+  # into parts/*.md (step-b.md, step-c.md, doctor.md). We still scan
+  # masterplan.md in case future revisions re-introduce sites there, but no
+  # longer require it to have any (require_sites_found=0).
+  _brief_style_scan_file "${REPO_ROOT}/commands/masterplan.md" \
+    "DISPATCH-SITE: (Step B0 related-plan scan|Step R2 retro source gather|Step D doctor checks)" \
+    1 0
+  _brief_style_scan_file "${REPO_ROOT}/parts/step-c.md" \
+    "DISPATCH-SITE: step-c\\.md:[a-zA-Z0-9_-]+" \
+    0 0
+  _brief_style_scan_file "${REPO_ROOT}/parts/doctor.md" \
+    "DISPATCH-SITE: (doctor\\.md:[a-zA-Z0-9_-]+|Step D doctor [a-zA-Z0-9_-]*checks?)" \
+    0 0
+
+  if [[ "${BRIEF_STYLE_VIOLATIONS}" -eq 0 ]]; then
+    echo "✓ brief-style: lifecycle dispatch sites use algorithmic briefs with contract_id"
+  fi
+}
+
+_brief_style_scan_file() {
+  local file="$1"
+  local lifecycle_re="$2"
+  local apply_prose="$3"
+  local require_sites="$4"
+
   if [[ ! -f "${file}" ]]; then
     echo "Skipping brief-style check: ${file} not found"
     return
   fi
 
-  local found_violations=0
   local total_lines
   total_lines="$(wc -l < "${file}")"
 
-  # Lifecycle DISPATCH-SITE values to scope all pattern checks.
-  # We collect line numbers of lifecycle dispatch context windows.
-  local lifecycle_re="DISPATCH-SITE: (Step B0 related-plan scan|Step R2 retro source gather|Step D doctor checks)"
-
-  # Build an array of (start, end) line ranges: each lifecycle DISPATCH-SITE line ± 30 lines.
-  # We'll represent them as "start:end" pairs.
+  # Collect lifecycle DISPATCH-SITE line numbers and build context ranges
+  # (lineno-5 .. lineno+30) for prose-pattern scoping.
+  #
+  # Skip lines that contain backticks: a real DISPATCH-SITE tag line lives
+  # inside a fenced code block (the fence delimiters live on adjacent lines,
+  # so the tag line itself is backtick-free). Prose that documents the
+  # convention by embedding `DISPATCH-SITE: ...` examples in inline-code
+  # spans (e.g., the v5 convention preamble at parts/step-c.md:13) carries
+  # backticks on the same line and is not a real tag.
   local dispatch_ranges=()
   while IFS= read -r dispatch_line; do
     local lineno="${dispatch_line%%:*}"
+    local content="${dispatch_line#*:}"
+    if [[ "${content}" == *'`'* ]]; then
+      continue
+    fi
     local range_start=$((lineno - 5))
     local range_end=$((lineno + 30))
     [[ "${range_start}" -lt 1 ]] && range_start=1
@@ -861,15 +904,15 @@ check_brief_style() {
   done < <(grep -nE "${lifecycle_re}" "${file}" 2>/dev/null)
 
   if [[ "${#dispatch_ranges[@]}" -eq 0 ]]; then
-    # No lifecycle dispatch sites found — this is itself a violation.
-    echo "BRIEF-STYLE: ${file}:0: Pattern D — no lifecycle DISPATCH-SITE values found; expected Step B0/R2/D sites"
-    found_violations=$((found_violations + 1))
-    EXIT=1
+    if [[ "${require_sites}" -eq 1 ]]; then
+      echo "BRIEF-STYLE: ${file}:0: Pattern D — no lifecycle DISPATCH-SITE values found; expected Step B0/R2/D sites"
+      BRIEF_STYLE_VIOLATIONS=$((BRIEF_STYLE_VIOLATIONS + 1))
+      EXIT=1
+    fi
     return
   fi
 
-  # Helper: check if a given line number falls within any dispatch range.
-  in_dispatch_context() {
+  _brief_style_in_context() {
     local check_line="$1"
     local pair
     for pair in "${dispatch_ranges[@]}"; do
@@ -882,62 +925,64 @@ check_brief_style() {
     return 1
   }
 
-  # Pattern A: "validate against" not followed within 5 lines by "for each" or "if.*field"
-  while IFS= read -r match; do
-    local lineno="${match%%:*}"
-    local excerpt="${match#*:}"
-    if ! in_dispatch_context "${lineno}"; then
-      continue
-    fi
-    local ctx_start=$((lineno + 1))
-    local ctx_end=$((lineno + 5))
-    [[ "${ctx_end}" -gt "${total_lines}" ]] && ctx_end="${total_lines}"
-    local ctx
-    ctx="$(sed -n "${ctx_start},${ctx_end}p" "${file}")"
-    if echo "${ctx}" | grep -qiE "for each|if.*field"; then
-      continue
-    fi
-    echo "BRIEF-STYLE: ${file}:${lineno}: Pattern A (validate against without for-each/field check) — ${excerpt}"
-    found_violations=$((found_violations + 1))
-    EXIT=1
-  done < <(grep -nF "validate against" "${file}" 2>/dev/null)
+  if [[ "${apply_prose}" -eq 1 ]]; then
+    # Pattern A: "validate against" not followed within 5 lines by "for each" or "if.*field"
+    while IFS= read -r match; do
+      local lineno="${match%%:*}"
+      local excerpt="${match#*:}"
+      _brief_style_in_context "${lineno}" || continue
+      local ctx_start=$((lineno + 1))
+      local ctx_end=$((lineno + 5))
+      [[ "${ctx_end}" -gt "${total_lines}" ]] && ctx_end="${total_lines}"
+      local ctx
+      ctx="$(sed -n "${ctx_start},${ctx_end}p" "${file}")"
+      if echo "${ctx}" | grep -qiE "for each|if.*field"; then
+        continue
+      fi
+      echo "BRIEF-STYLE: ${file}:${lineno}: Pattern A (validate against without for-each/field check) — ${excerpt}"
+      BRIEF_STYLE_VIOLATIONS=$((BRIEF_STYLE_VIOLATIONS + 1))
+      EXIT=1
+    done < <(grep -nF "validate against" "${file}" 2>/dev/null)
 
-  # Pattern B: "make sure that" in dispatch context
-  while IFS= read -r match; do
-    local lineno="${match%%:*}"
-    local excerpt="${match#*:}"
-    if ! in_dispatch_context "${lineno}"; then
-      continue
-    fi
-    echo "BRIEF-STYLE: ${file}:${lineno}: Pattern B (outcome language 'make sure that') — ${excerpt}"
-    found_violations=$((found_violations + 1))
-    EXIT=1
-  done < <(grep -niF "make sure that" "${file}" 2>/dev/null)
+    # Pattern B: "make sure that" in dispatch context
+    while IFS= read -r match; do
+      local lineno="${match%%:*}"
+      local excerpt="${match#*:}"
+      _brief_style_in_context "${lineno}" || continue
+      echo "BRIEF-STYLE: ${file}:${lineno}: Pattern B (outcome language 'make sure that') — ${excerpt}"
+      BRIEF_STYLE_VIOLATIONS=$((BRIEF_STYLE_VIOLATIONS + 1))
+      EXIT=1
+    done < <(grep -niF "make sure that" "${file}" 2>/dev/null)
 
-  # Pattern C: "verify the bundle" not followed within 5 lines by "for each" or "check.*field"
-  while IFS= read -r match; do
-    local lineno="${match%%:*}"
-    local excerpt="${match#*:}"
-    if ! in_dispatch_context "${lineno}"; then
-      continue
-    fi
-    local ctx_start=$((lineno + 1))
-    local ctx_end=$((lineno + 5))
-    [[ "${ctx_end}" -gt "${total_lines}" ]] && ctx_end="${total_lines}"
-    local ctx
-    ctx="$(sed -n "${ctx_start},${ctx_end}p" "${file}")"
-    if echo "${ctx}" | grep -qiE "for each|check.*field"; then
-      continue
-    fi
-    echo "BRIEF-STYLE: ${file}:${lineno}: Pattern C (verify the bundle without for-each/field check) — ${excerpt}"
-    found_violations=$((found_violations + 1))
-    EXIT=1
-  done < <(grep -niF "verify the bundle" "${file}" 2>/dev/null)
+    # Pattern C: "verify the bundle" not followed within 5 lines by "for each" or "check.*field"
+    while IFS= read -r match; do
+      local lineno="${match%%:*}"
+      local excerpt="${match#*:}"
+      _brief_style_in_context "${lineno}" || continue
+      local ctx_start=$((lineno + 1))
+      local ctx_end=$((lineno + 5))
+      [[ "${ctx_end}" -gt "${total_lines}" ]] && ctx_end="${total_lines}"
+      local ctx
+      ctx="$(sed -n "${ctx_start},${ctx_end}p" "${file}")"
+      if echo "${ctx}" | grep -qiE "for each|check.*field"; then
+        continue
+      fi
+      echo "BRIEF-STYLE: ${file}:${lineno}: Pattern C (verify the bundle without for-each/field check) — ${excerpt}"
+      BRIEF_STYLE_VIOLATIONS=$((BRIEF_STYLE_VIOLATIONS + 1))
+      EXIT=1
+    done < <(grep -niF "verify the bundle" "${file}" 2>/dev/null)
+  fi
 
   # Pattern D: each lifecycle dispatch block must have "contract_id" within 30 lines after
-  # its DISPATCH-SITE line.
+  # its DISPATCH-SITE line. Applies to ALL scanned files (v5 phase files included).
+  # Backtick-bearing matches are documentation prose, not real tags — skip (same
+  # reasoning as dispatch_ranges collection above).
   while IFS= read -r dispatch_line; do
     local lineno="${dispatch_line%%:*}"
+    local dispatch_val="${dispatch_line#*:}"
+    if [[ "${dispatch_val}" == *'`'* ]]; then
+      continue
+    fi
     local ctx_start=$((lineno + 1))
     local ctx_end=$((lineno + 30))
     [[ "${ctx_end}" -gt "${total_lines}" ]] && ctx_end="${total_lines}"
@@ -946,15 +991,10 @@ check_brief_style() {
     if echo "${ctx}" | grep -qF "contract_id"; then
       continue
     fi
-    local dispatch_val="${dispatch_line#*:}"
     echo "BRIEF-STYLE: ${file}:${lineno}: Pattern D (lifecycle dispatch missing contract_id) — ${dispatch_val}"
-    found_violations=$((found_violations + 1))
+    BRIEF_STYLE_VIOLATIONS=$((BRIEF_STYLE_VIOLATIONS + 1))
     EXIT=1
   done < <(grep -nE "${lifecycle_re}" "${file}" 2>/dev/null)
-
-  if [[ "${found_violations}" -eq 0 ]]; then
-    echo "✓ brief-style: lifecycle dispatch sites use algorithmic briefs with contract_id"
-  fi
 }
 
 # ---------------------------------------------------------------------------------
