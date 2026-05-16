@@ -1,0 +1,2 @@
+commands/masterplan.md is 20556 bytes (ceiling 20480)
+Check #36: WARN

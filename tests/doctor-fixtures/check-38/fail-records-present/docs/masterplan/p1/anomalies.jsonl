@@ -1,0 +1,2 @@
+{"ts":"2026-05-15T10:00:00Z","anomaly_class":"cd3_verification_missing_on_complete","signature":"abc123","plan_slug":"p1","plugin_version":"v5.4.0"}
+{"ts":"2026-05-15T10:30:00Z","anomaly_class":"cd9_free_text_question_at_close","signature":"def456","plan_slug":"p1","plugin_version":"v5.4.0"}

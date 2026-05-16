@@ -1,0 +1,3 @@
+Check #39: PASS
+auth_mode=chatgpt
+JWT auto-refresh healthy

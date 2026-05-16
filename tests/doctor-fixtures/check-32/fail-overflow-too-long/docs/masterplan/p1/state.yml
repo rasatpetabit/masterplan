@@ -1,0 +1,4 @@
+slug: p1
+status: in-progress
+phase: building
+last_warning: "this is a deliberately overlong scalar value designed to trip the 200-character cap enforced by check 32; padding padding padding padding padding padding padding padding padding padding padding padding padding"

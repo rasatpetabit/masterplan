@@ -1,0 +1,1 @@
+# Step A (synthetic fixture)

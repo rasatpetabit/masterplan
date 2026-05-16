@@ -1,0 +1,2 @@
+2 anomaly record(s)
+Check #38: WARN
