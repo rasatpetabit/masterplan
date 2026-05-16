@@ -174,62 +174,82 @@ Then proceed to **Step B2** (writing-plans). Step B1 is skipped because the spec
 
 1. Update `state.yml`: `phase: brainstorming`, `next_action: resolve brainstorm intent anchor`, `pending_gate: null`; append `brainstorm_started` to `events.jsonl`. **Emit before this state write:** `<masterplan-trace state-write field=phase from=<old-phase> to=brainstorming>`.
 
-2. **Dispatch the intent-anchor read pass to a Haiku subagent.** The orchestrator MUST NOT inline-Read AGENTS.md, CLAUDE.md, WORKLOG.md, or recent state bundles at this step — large logs (observed: 81KB / 861-line WORKLOG.md) blow the Opus parent context before any real work has started. Use the Agent tool with `subagent_type: "general-purpose"` (or `"Explore"` if available in the host) and `model: "haiku"`. Pass this bounded brief:
+2. **Dispatch the intent-anchor read pass to three Haiku subagents in parallel (v5.4.0+ fan-out).** The orchestrator MUST NOT inline-Read AGENTS.md, CLAUDE.md, WORKLOG.md, or recent state bundles at this step — large logs (observed: 81KB / 861-line WORKLOG.md) blow the Opus parent context before any real work has started. Pre-v5.4.0 used a single Haiku reading all 7 source files serially. v5.4.0+ splits the work into three Haikus dispatched in ONE assistant message (Agent tool, all three blocks in the same turn), each with `subagent_type: "general-purpose"` (or `"Explore"` if available in the host) and `model: "haiku"`. Each Haiku reads ONLY its assigned file class and returns extracted *facts and hints* (not a fully-classified anchor). The orchestrator merges the three returns, performs the final classification, and persists the result.
 
-   > **Goal.** Produce the `brainstorm_anchor` JSON object the orchestrator will persist verbatim. Read the source files listed below — bounded per-file caps — and classify mode, repo role, evidence, and verification ceiling. Return JSON ONLY; do NOT paste file content in the return.
-   >
-   > **Inputs (provided by orchestrator).** Topic string (verbatim from the user), `requested_verb`, repo root path, `config.runs_path`.
+   **Why partition this way.** Each file class has a different signal density and a different "natural" extraction. Project docs (AGENTS.md/CLAUDE.md/WORKLOG.md) carry repo role, scope, and ownership. Run state (state.yml/events.jsonl/spec.md) carries mode-defining signals (`execution-resume` / `deferred-task`) and the most recent verification ceiling. The repo sketch (rg --files) ground-truths the repo role and adds file-class evidence. Splitting cleanly avoids cross-source merge ambiguity that a 5- or 7-way split would introduce.
+
+   **Haiku A — project-docs.** Bounded brief:
+
+   > **Goal.** Extract project-doc facts and hints for the brainstorm anchor. Return JSON ONLY.
    >
    > **Read source (each Read tool call MUST pass `limit`).**
    > - `<repo-root>/AGENTS.md` — limit 500
    > - `<repo-root>/CLAUDE.md` — limit 500
-   > - `<repo-root>/WORKLOG.md` — limit 200 (newest-at-top convention; first 200 lines are sufficient for recent activity)
-   > - The most recent `<config.runs_path>/<slug>/state.yml` — limit 300
-   > - That slug's `events.jsonl` — limit 300
-   > - That slug's `spec.md` — limit 300
-   > - `rg --files <repo-root>` for the repo-structure sketch — pipe through `head -200`; exclude `node_modules/`, `vendor/`, `.git/`, `legacy/.archive/`, `<config.runs_path>`, `<config.specs_path>`, `<config.plans_path>`.
+   > - `<repo-root>/WORKLOG.md` — limit 200 (newest-at-top convention)
    >
-   > **Constraints.**
-   > - No file read may exceed 500 lines (WORKLOG.md is capped at 200). If a file's tail beyond the cap is needed, note it in `notes_for_orchestrator` instead of reading more.
-   > - Do NOT paste any file content in the return — only short path-backed facts.
-   > - Read-only scope. Do NOT write to `state.yml`, `events.jsonl`, or any file.
-   >
-   > **Classification — `mode` (exactly one).**
-   > - `feature-ideas` — the user explicitly wants new ideas, options, or a broad product/feature funnel.
-   > - `implementation-design` — the user wants a buildable design for known work.
-   > - `audit-review` — the user asks to reevaluate, review, inspect, audit, simplify, or find problems.
-   > - `deferred-task` — the topic names a task, phase, TODO, skipped item, plan task, prior error, or worklog entry.
-   > - `execution-resume` — the user wants to continue already-planned work.
-   > - `unclear` — no safe classification after the cheap reads.
-   >
-   > **Classification — `plan_kind`.** Derive from mode: `audit-review -> audit`, `execution-resume -> implementation`, `deferred-task -> implementation`, all other modes default to `implementation`. (When the requested verb is `doctor`, `import`, `status`, `clean`, or `retro`, the orchestrator overrides this downstream — leave the mode-derived value here.)
-   >
-   > **Classification — `repo_role` and scope.** Classify the repository's role (short string, e.g. `yocto-distro-policy-layer`, `bigcommerce-storefront`, `cloudflare-worker`, `python-cli-tool`). For Yocto layer repositories, also classify `yocto_ownership` as one of `distro/image policy`, `BSP/machine`, `app recipes`, `kas composition`, `builder orchestration`, or `cross-repo`. Record `in_scope_paths` and `out_of_scope_repos` when local guidance names them.
-   >
-   > **Evidence.** Record 3-8 short path-backed facts in `evidence[]`, e.g. `"AGENTS.md: meta-petabit owns distro/image policy"` or `"WORKLOG.md: Task 6 deferred ERROR_QA build-backed audit"`. Each entry MUST cite its source path. Do not paste large file excerpts.
-   >
-   > **Verification ceiling.** Set `verification_ceiling` to exactly one of: `local-static`, `repo-local-tests`, `requires-build-host`, `requires-runtime`, `requires-external-service`.
+   > **Constraints.** Read-only. Do NOT paste file content. If a file's tail beyond the cap is needed, note it in `notes`.
    >
    > **Return shape (JSON only).**
    > ```json
    > {
-   >   "mode": "feature-ideas|implementation-design|audit-review|deferred-task|execution-resume|unclear",
-   >   "plan_kind": "audit|implementation",
-   >   "repo_role": "<short string>",
-   >   "yocto_ownership": "<distro/image policy|BSP/machine|app recipes|kas composition|builder orchestration|cross-repo|null>",
-   >   "in_scope_paths": ["..."],
-   >   "out_of_scope_repos": ["..."],
-   >   "evidence": ["AGENTS.md: ...", "WORKLOG.md: ...", "..."],
-   >   "verification_ceiling": "local-static|repo-local-tests|requires-build-host|requires-runtime|requires-external-service",
-   >   "notes_for_orchestrator": "<optional short string; e.g. 'WORKLOG.md tail beyond line 200 may contain older context'>"
+   >   "source_class": "project-docs",
+   >   "facts": ["AGENTS.md: ...", "CLAUDE.md: ...", "WORKLOG.md: ..."],
+   >   "extracted": {
+   >     "repo_role_hint": "<short string or null>",
+   >     "yocto_ownership_hint": "<distro/image policy|BSP/machine|app recipes|kas composition|builder orchestration|cross-repo|null>",
+   >     "in_scope_paths_hint": ["..."],
+   >     "out_of_scope_repos_hint": ["..."],
+   >     "verification_ceiling_hint": "<local-static|repo-local-tests|requires-build-host|requires-runtime|requires-external-service|null>",
+   >     "mode_hint": "<feature-ideas|implementation-design|audit-review|deferred-task|execution-resume|unclear|null>"
+   >   },
+   >   "notes": "<optional short string>"
    > }
    > ```
-   >
-   > **Escape hatch.** If no safe classification is possible after the bounded reads, return `mode: "unclear"` and explain in `notes_for_orchestrator`. The orchestrator will surface an `AskUserQuestion` gate instead of guessing.
 
-3. **Validate + persist (orchestrator owns this).** Parse the Haiku return as JSON.
-   - **Validation failure** (malformed JSON, missing required fields `mode`/`plan_kind`/`repo_role`/`evidence`/`verification_ceiling`, OR `mode == "unclear"`) → fall through to the existing `AskUserQuestion` audit-mode gate (below) with `pending_gate.id: brainstorm_anchor_audit_mode`. Do NOT silently default to `implementation-design`.
-   - **Validation success** → persist the object verbatim under `brainstorm_anchor:` in `state.yml` and append `brainstorm_anchor_resolved` to `events.jsonl` before any spec-writing call. The orchestrator is the canonical writer per CD-7; the Haiku subagent never writes state.
+   **Haiku B — run-state.** Bounded brief:
+
+   > **Goal.** Extract run-state facts and hints from the most recent run bundle. Return JSON ONLY.
+   >
+   > **Inputs (provided by orchestrator).** Topic string, `requested_verb`, repo root path, `config.runs_path`, slug of the most-recent bundle (orchestrator pre-resolves via `ls -t <config.runs_path>/*/state.yml | head -1`).
+   >
+   > **Read source (each Read tool call MUST pass `limit`).**
+   > - `<config.runs_path>/<slug>/state.yml` — limit 300
+   > - `<config.runs_path>/<slug>/events.jsonl` — limit 300
+   > - `<config.runs_path>/<slug>/spec.md` — limit 300
+   >
+   > **Constraints.** Read-only. If no recent bundle exists (`<slug>` is null), return an empty `facts` array and all hints as null with `notes: "no recent bundle"`.
+   >
+   > **Return shape (JSON only).** Same shape as Haiku A's return but `source_class: "run-state"`. The `mode_hint` field is the highest-signal output of this Haiku — set to `execution-resume` if the bundle shows in-progress phase and no completed retro; `deferred-task` if events.jsonl shows skipped/deferred entries matching the topic; otherwise null.
+
+   **Haiku C — repo-sketch.** Bounded brief:
+
+   > **Goal.** Extract repo-structure facts from `rg --files`. Return JSON ONLY.
+   >
+   > **Inputs (provided by orchestrator).** Repo root path.
+   >
+   > **Read source.** `rg --files <repo-root>` piped through `head -200`; exclude `node_modules/`, `vendor/`, `.git/`, `legacy/.archive/`, `<config.runs_path>`, `<config.specs_path>`, `<config.plans_path>`.
+   >
+   > **Constraints.** Read-only. The rg output IS the read; do NOT Read individual files.
+   >
+   > **Return shape (JSON only).** Same shape as Haiku A's return but `source_class: "repo-sketch"`. Only `repo_role_hint` and (when file structure makes it derivable) `verification_ceiling_hint` are expected non-null; everything else can be null.
+
+3. **Merge + classify + persist (orchestrator owns this).** Parse all three Haiku returns as JSON. If any return is malformed or missing the required `source_class` / `extracted` / `facts` fields, fall through to the `AskUserQuestion` audit-mode gate (below) with `pending_gate.id: brainstorm_anchor_audit_mode` and `notes_for_orchestrator: "haiku <A|B|C> return malformed"`. Do NOT silently default.
+
+   **Merge rules** (field-by-field; first-non-null wins per the precedence below):
+   - `repo_role` ← `A.extracted.repo_role_hint` || `C.extracted.repo_role_hint` || `B.extracted.repo_role_hint`. (Project docs are most specific; sketch ground-truths; run-state has it only when spec.md happened to record it.)
+   - `yocto_ownership` ← `A.extracted.yocto_ownership_hint`. (Project docs only — neither state nor sketch carry this.)
+   - `in_scope_paths` ← union of `A.extracted.in_scope_paths_hint` and `B.extracted.in_scope_paths_hint` (dedupe; preserve A's ordering).
+   - `out_of_scope_repos` ← union of `A.extracted.out_of_scope_repos_hint` and `B.extracted.out_of_scope_repos_hint` (dedupe; preserve A's ordering).
+   - `verification_ceiling` ← the *most restrictive* of the three hints, using the order `local-static < repo-local-tests < requires-build-host < requires-runtime < requires-external-service`. Null hints are ignored. If all three are null → fall through to AUQ gate (cannot guess ceiling).
+   - `mode` ← `B.extracted.mode_hint` (highest signal — recent run state) || `A.extracted.mode_hint` || orchestrator-derives from topic string per the rules below.
+   - `plan_kind` ← derived from final `mode`: `audit-review -> audit`, `execution-resume -> implementation`, `deferred-task -> implementation`, all others default to `implementation`. (When the requested verb is `doctor`, `import`, `status`, `clean`, or `retro`, the orchestrator overrides this downstream — leave the mode-derived value here.)
+   - `evidence` ← concat of `A.facts` + `B.facts` + `C.facts` (preserve order; dedupe by exact-match string). If the merged list has > 8 entries, the orchestrator may keep the first 8 (chosen for source diversity: at least one from each Haiku when available).
+
+   **Topic-derived mode fallback** (when B and A both return `mode_hint: null`): apply the existing single-Haiku classification rules verbatim against the topic string alone — `feature-ideas` for "new ideas/options/funnel" requests, `implementation-design` for "buildable design", `audit-review` for "reevaluate/review/inspect/audit/simplify/find problems", `deferred-task` for topics naming a task/phase/TODO/skipped/error/worklog entry, `execution-resume` for "continue planned work". If still ambiguous → `mode: "unclear"`.
+
+   **Validation gate.** If merged `mode == "unclear"` OR any required field (`repo_role`, `evidence`, `verification_ceiling`) is empty/null → fall through to the existing `AskUserQuestion` audit-mode gate (below) with `pending_gate.id: brainstorm_anchor_audit_mode`. Do NOT silently default to `implementation-design`.
+
+   **Persist.** On successful merge, persist the resulting anchor verbatim under `brainstorm_anchor:` in `state.yml` and append `brainstorm_anchor_resolved` to `events.jsonl` before any spec-writing call. The orchestrator is the canonical writer per CD-7; Haiku subagents never write state.
 
    Minimum shape:
 

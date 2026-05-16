@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.4.0] — 2026-05-15 — Parallelism wave: doctor repo-scoped Haiku batch + intent-anchor 3-way fan-out + parent re-verify parallel Bash + eligibility cache sharding
+
+Minor release. Four new parallel-dispatch sites in the orchestrator, all returning the same data shape as their pre-v5.4.0 single-dispatch / inline-serial counterparts so existing run bundles, doctor lints, and cache files remain compatible.
+
+### Added — Parallel dispatch sites
+
+- **Doctor repo-scoped checks #26 / #30 / #31 / #36 / #39 → single Haiku batch.** Pre-v5.4.0 ran these five inline at the orchestrator (5 serial reads of session-level state, manifests, `parts/step-b.md`, `commands/masterplan.md`, and `~/.codex/auth.json`). v5.4.0+ bundles them into one Haiku dispatched in the SAME Agent batch as the per-worktree Haikus, so all parallelizable doctor work returns in a single wave. Haiku loads the deferred `CronList` tool via `ToolSearch` to service check #26. Brief uses new `contract_id: "doctor.repo_scoped.schema_v1"`. Partial-failure handling: malformed return → inline fallback to pre-v5.4.0 path + one telemetry event; single missing-check return → per-check INFO without full fallback. See `parts/doctor.md` line 19 + adjacent paragraphs.
+- **Step B1 intent-anchor → 3-way Haiku fan-out (project-docs / run-state / repo-sketch).** Pre-v5.4.0 dispatched ONE Haiku that serially Read 7 source files (AGENTS.md, CLAUDE.md, WORKLOG.md, recent state.yml, events.jsonl, spec.md, `rg --files` sketch) and produced a fully-classified `brainstorm_anchor`. v5.4.0+ splits into three parallel Haikus by source class: Haiku A reads project docs (AGENTS.md+CLAUDE.md+WORKLOG.md), Haiku B reads run state (state.yml+events.jsonl+spec.md), Haiku C reads the repo sketch (`rg --files`). Each returns *extracted facts + hints* (not a classification); the orchestrator merges with precedence rules (run-state wins on `mode`, project-docs wins on `repo_role` / `yocto_ownership` / scope, repo-sketch ground-truths). Merge protocol documents field-by-field precedence and the most-restrictive `verification_ceiling`. Validation gate identical to pre-v5.4.0: any merge ambiguity (mode unclear, required field null) → fall through to existing `pending_gate.id: brainstorm_anchor_audit_mode` AUQ gate. See `parts/step-b.md` line 177+.
+- **Doctor parent re-verify → parallel Bash batch.** Pre-v5.4.0 looped serially over the sample set (3 random bundles + any with Haiku-reported violations), one grep per bundle for `^retro: ""` and missing `import_hydration`. v5.4.0+ emits one Bash invocation that backgrounds all N greps with `&` + `wait`, parsing line-delimited JSON output once. Latency is the longest single grep, not the sum. Output format and Haiku cross-reference logic unchanged. See `parts/doctor.md` line 34+.
+- **Step C eligibility cache → sharded build with parallel-group affinity.** Pre-v5.4.0 dispatched ONE Haiku to build the entire `eligibility-cache.json`. v5.4.0+ shards the build: if the plan has any `**parallel-group:**` annotations, one Haiku per group plus one for unassigned tasks (preserves rule-5 cohort visibility — every group member lands in the same shard). If no parallel-groups exist AND the plan has ≥10 tasks, shard into ceil(N/10) index ranges (min 1, max 4 — beyond 4, dispatch overhead exceeds win). Plans with <10 tasks AND no parallel-groups skip sharding entirely (pre-v5.4.0 single-Haiku path). Orchestrator dispatches all shards in ONE assistant message, concatenates `tasks` arrays on return, sorts by `idx`, validates contiguity, atomic-writes the merged JSON. New `shard_id` field on Haiku return (`"group:<name>"`, `"unassigned:<low>-<high>"`, or `"full"`); merge step is a no-op pass-through when bypassed. `cache_pinned_for_wave: false` on merged cache (pin flag is still set later at wave entry). See `parts/step-c.md` line 93 + brief at line 157.
+
+### Compatibility
+
+- Existing run bundles, doctor outputs, and `eligibility-cache.json` files (incl. `cache_schema_version: "1.0"`) remain readable and writable. No schema bumps.
+- The doctor `contract_id: "doctor.schema_v2"` per-worktree brief is unchanged; the new `contract_id: "doctor.repo_scoped.schema_v1"` is a sibling, not a replacement.
+- Step B1 `pending_gate.id: brainstorm_anchor_audit_mode` gate semantics unchanged — sole entry path is unresolved merge or unclear classification.
+- Step C eligibility-cache shape, parallel-eligibility rules 1-5, and `cache_pinned_for_wave` lifecycle unchanged.
+
+### Why minor (5.3.x → 5.4.0)
+
+New parallel dispatch sites are behavior-affecting (different observable telemetry shapes, new event types in doctor logs, new `shard_id` fields in eligibility caches built post-upgrade) but every existing input/output contract holds. Per the project's semver convention (CD-10 family), behavior-additive changes that preserve all back-compat get MINOR. PATCH would have understated the surface area.
+
+### Rollout
+
+- Dual-surface refresh per the patched rollout macro: `claude plugin marketplace update` + `claude plugin update "superpowers-masterplan@rasatpetabit-superpowers-masterplan"` for Claude Code AND `codex plugin marketplace upgrade rasatpetabit-superpowers-masterplan` for Codex CLI, on both ras@epyc2 and grojas@epyc1.
+
 ## [5.3.3] — 2026-05-15 — Plugins UI errors: frontmatter on contract registry + drop dead auq-guard.sh
 
 Patch release. Fixes 2 static issues surfaced by the Claude Code Plugins UI's Errors tab after the v5.3.2 install.

@@ -70,6 +70,26 @@ return_shape: |
   coverage: {expected: int, processed: int}
 ```
 
+## Contract: doctor.repo_scoped.schema_v1
+
+```yaml
+purpose: Run the five repo-scoped doctor checks (#26, #30, #31, #36, #39) in one Haiku batch (v5.4.0+)
+algorithm: |
+  Load deferred CronList via ToolSearch first (required for check #26).
+  For each check, run the algorithm enumerated in parts/doctor.md's per-check row:
+    #26 auto_compact_loop_attached: call CronList(); filter entries whose prompt contains "/compact"; cross-reference with state.yml compact_loop_recommended flags.
+    #30 cross_manifest_version_drift: Read .claude-plugin/plugin.json (canonical), .claude-plugin/marketplace.json (root + nested[0].version), .codex-plugin/plugin.json; grep README.md for "Current release:.*v[0-9]+\.[0-9]+\.[0-9]+"; report any drifted file/field.
+    #31 per_autonomy_gate_condition_consistency: Read parts/step-b.md; lint per-autonomy gate conditions for consistency per the rules documented in parts/doctor.md Check #31.
+    #36 router_ceiling_and_phase_file_sanity: Read commands/masterplan.md (size check); check existence of parts/step-*.md per Check #36's manifest.
+    #39 codex_auth_expiry: Read ~/.codex/auth.json; apply Check #39's chatgpt-mode-with-refresh-token suppression rule.
+  Aggregate all per-check findings into a single violations[] array.
+return_shape: |
+  contract_id: "doctor.repo_scoped.schema_v1"
+  checks_processed: [26, 30, 31, 36, 39]
+  violations: [{check_id: int, severity: "warning"|"error"|"info", file: str, message: str}]
+  notes: "<optional string, e.g. 'CronList unavailable; #26 skipped'>"
+```
+
 ## Contract: retro.source_gather_v1
 
 ```yaml
