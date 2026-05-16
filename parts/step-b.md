@@ -97,6 +97,27 @@ The run bundle will be committed inside whichever worktree you're in when brains
    - **"Create variant of <picked-slug>"**: proceed to new bundle creation (step 6), set `variant_of: <picked-slug>` in initial state.yml. Append `{"event":"scope_overlap_variant_created","variant_of":"<picked-slug>"}`.
    - **"Force new (acknowledge overlap)"**: proceed to new bundle creation (step 6), set `scope_fingerprint` in initial state.yml. Append `{"event":"scope_overlap_force_new","acknowledged_sim":<max_sim>}`.
 
+1d. **Slug-uniqueness pre-check (Guard B).** Before creating any bundle directory, run `bin/masterplan-state.sh check-slug-collision <slug>` where `<slug>` is the candidate slug from step 1a. Parse the returned JSON.
+
+   - If `collisions` is empty: proceed to step 2 unchanged.
+   - If `collisions` is non-empty: persist `pending_gate.id: guard_b_slug_collision` to `state.yml`, then surface `AskUserQuestion` with these options (assembled from the JSON — include worktree path, branch, and last_activity in the question text):
+
+     ```
+     question: "Slug `<slug>` is already in progress in <N> peer worktree(s): [list]. What now?"
+     options:
+       1. "Resume the peer session in `<path>` [branch: <b>, last activity: <t>]" (Recommended when N==1)
+          → cd to that worktree silently (per parts/step-a.md:29 / D1); no second confirmation. Append {"event":"guard_b_peer_resumed","peer":"<path>"} to the peer bundle's events.jsonl.
+       2. "Auto-suffix this slug to `<suggested_suffix>`"
+          → Replace the candidate slug with <suggested_suffix>; continue to step 2. Append {"event":"guard_b_auto_suffixed","original":"<slug>","new":"<suggested_suffix>"} to the new bundle's events.jsonl (written at step 6).
+       3. "Abort"
+          → Clear pending_gate; append {"event":"guard_b_aborted"}; CLOSE-TURN.
+       [4. "Peer worktree at `<path>` no longer exists — treat as orphaned, proceed with original slug"
+          → Only rendered when at least one collision has stale: true (D2).
+          → Ignore that collision; proceed to step 2 with original slug. Append {"event":"guard_b_orphan_peer_acknowledged","peer":"<path>"}. CD-2: do NOT invoke git worktree prune.]
+     ```
+
+   Per D6, this sub-step fires on the kickoff/full path (B0) but NOT on Step B0a (`plan --from-spec=<path>`), which cd's into an existing bundle by definition and bypasses B0 entirely.
+
 2. **Compute a recommendation** using these heuristics, in order of strength:
    - **Use an existing worktree** if any non-current worktree has a branch name or in-progress slug that overlaps with the topic. Likely the same work is already underway.
    - **Create a new worktree** if any of these are true: current branch is `main`/`master`/`trunk`/`dev`/`develop`; current branch has uncommitted changes (`git status --porcelain` non-empty); another in-progress masterplan plan exists in the current worktree (one plan per branch).

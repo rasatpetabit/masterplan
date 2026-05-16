@@ -49,6 +49,15 @@ Conversions parallelize across candidates because each candidate writes to uniqu
 
 This produces a `candidates[]` list with finalized `(slug, run_dir, spec_path, plan_path, state_path, events_path)` tuples — guaranteed unique within this batch (but not yet checked against existing on-disk paths). New paths are always inside `<config.runs_path>/<slug>/`.
 
+**Cross-worktree slug pass (Guard B; per D6).** For each candidate's finalized slug, run `bin/masterplan-state.sh check-slug-collision <slug>`. When `collisions` is non-empty, surface the same Guard B `AskUserQuestion` described in `parts/step-b.md` Step B0 sub-step 1d. Option routing:
+
+- **Resume peer** → skip this candidate (peer bundle is authoritative for this slug).
+- **Auto-suffix** → rewrite the candidate's `(slug, run_dir, spec_path, plan_path, state_path, events_path)` tuple with the suffixed slug — same shape as the within-batch collision rewrite above.
+- **Orphaned peer** (D2, stale:true) → proceed with original slug.
+- **Abort** → remove the candidate from `candidates[]`.
+
+Run order: (1) within-batch pass, (2) this cross-worktree pass, (3) path-existence pass.
+
 **Path-existence pass:** For each candidate's `(run_dir, spec_path, plan_path, state_path, events_path)` tuple, check whether ANY target path already exists on disk. Implements the operational rule "Import never overwrites existing masterplan state silently". "Pre-existing collision" here covers two cases: (a) a target path already exists on disk, AND (b) the candidate matches an already-migrated bundle by `canonical_slug` or by `legacy.{status,plan,spec,retro}` pointer reference. Case (b) should normally be filtered upstream in Step I1.4, but the defense-in-depth check here catches direct-routing invocations (`--file=`, `--branch=`, `--pr=`, `--issue=`) that skip discovery entirely.
 
 For each candidate with **≥ 1** pre-existing path collision, surface `AskUserQuestion` (one prompt per colliding candidate; sequential, not parallel — interactive prompts must not interleave): "Importing `<slug>` would overwrite existing masterplan state at: `<colliding-paths>`. What now?" with options:

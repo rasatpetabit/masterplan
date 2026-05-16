@@ -164,6 +164,10 @@ Legacy state from earlier versions remains supported. `bin/masterplan-state.sh i
 
 Successful Step C completion now runs a default finalizer: first check live `git status --porcelain`, keep the run in `finish_gate` when task-scope work is still dirty, then mark the run complete, generate `retro.md`, archive the run by updating `state.yml`, and run an archive-only cleanup subset for verified legacy/orphan state. That subset never deletes, never moves the current `docs/masterplan/<slug>/` bundle, and skips stale/crons/worktrees; manual `/masterplan clean` remains the broad maintenance surface.
 
+### Slug auto-suffix scheme
+
+When Guard B detects a cross-worktree collision, the suggested suffix is monotonically incremented: `-2`, `-3`, etc. The next suffix is computed by globbing `<all-worktrees>/docs/masterplan/<slug>-*/state.yml` and taking `max(N)+1`. Scope is GLOBAL across all worktrees (not per-worktree), which prevents a merge collision between `worktree-A/deploy-x-2/` and `worktree-B/deploy-x-2/` (D3).
+
 ---
 
 ## 3. Subagent + context-control architecture

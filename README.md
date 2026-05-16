@@ -38,6 +38,10 @@ on track for multi-week projects.
 - Each plan runs in its own git worktree on its own branch, so parallel plans
   don't collide.
 
+### Concurrency safety
+
+**Concurrency safety (Guard B — slug uniqueness).** Before creating a new run bundle, masterplan checks whether the same slug is already in progress in any other git worktree. If a collision is found, you're prompted to: resume the peer session (recommended), auto-suffix the slug (e.g., `deploy-x` → `deploy-x-2`, globally across all worktrees per D3), or abort. The `import` flow fires the same check; `--from-spec=<path>` does not (it resumes an existing bundle by definition).
+
 ### Anchored brainstorming
 
 - Before brainstorming writes a spec, `/masterplan` reads cheap repo truth

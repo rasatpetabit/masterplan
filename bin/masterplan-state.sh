@@ -302,6 +302,90 @@ if [[ "$mode" == "session-sig" ]]; then
   exit 0
 fi
 
+# check-slug-collision: check whether <slug> is already in-progress in any peer worktree.
+# Usage: bin/masterplan-state.sh check-slug-collision <slug>
+# Output: JSON {slug, collisions: [{worktree, branch, last_activity, stale}], suggested_suffix}
+# Exit 0 always (collision count in JSON); exit 2 on wrong arg count.
+if [[ "$mode" == "check-slug-collision" ]]; then
+  if [[ $# -ne 1 ]]; then
+    echo "usage: masterplan-state.sh check-slug-collision <slug>" >&2
+    exit 2
+  fi
+  target_slug="$1"
+  current_worktree="$(git rev-parse --show-toplevel 2>/dev/null)"
+
+  # Enumerate all git worktrees
+  worktree_paths=()
+  while IFS= read -r line; do
+    if [[ "$line" == worktree\ * ]]; then
+      worktree_paths+=("${line#worktree }")
+    fi
+  done < <(git worktree list --porcelain 2>/dev/null)
+
+  # Parallel scan: for each worktree, check for state.yml matching <slug>
+  # Collect results into a temp dir
+  tmpdir="$(mktemp -d)"
+  trap 'rm -rf "$tmpdir"' EXIT
+
+  _check_worktree() {
+    local wt="$1"
+    local slug="$2"
+    local out_file="$3"
+    # Skip current worktree — not a peer collision
+    [ "$wt" = "$current_worktree" ] && return 0
+    # Stale registration: dir gone but still in git worktree list.
+    # Record it without slug check — the AUQ option lets the user acknowledge.
+    if [ ! -d "$wt" ]; then
+      printf '{"worktree":"%s","branch":"","last_activity":"","stale":true}\n' \
+        "$wt" >> "$out_file"
+      return 0
+    fi
+    local state_file="${wt}/docs/masterplan/${slug}/state.yml"
+    [ -f "$state_file" ] || return 0
+    local status branch last_activity
+    status="$(awk '/^status:/{print $2; exit}' "$state_file")"
+    case "$status" in
+      archived|complete|pending_retro) return 0 ;;
+    esac
+    branch="$(awk '/^branch:/{print $2; exit}' "$state_file")"
+    last_activity="$(awk '/^last_activity:/{print $2; exit}' "$state_file")"
+    printf '{"worktree":"%s","branch":"%s","last_activity":"%s","stale":false}\n' \
+      "$wt" "${branch:-}" "${last_activity:-}" >> "$out_file"
+  }
+
+  for wt in "${worktree_paths[@]}"; do
+    _check_worktree "$wt" "$target_slug" "${tmpdir}/collisions.jsonl" &
+  done
+  wait
+
+  # Compute suggested suffix: glob <all-worktrees>/docs/masterplan/<slug>-*/
+  # Collect all trailing -N integers across all worktrees; take max(N)+1
+  max_n=1
+  for wt in "${worktree_paths[@]}"; do
+    [ -d "$wt" ] || continue
+    for d in "${wt}/docs/masterplan/${target_slug}-"*/; do
+      [ -d "$d" ] || continue
+      suffix="${d%/}"
+      suffix="${suffix##*-}"
+      if [[ "$suffix" =~ ^[0-9]+$ ]] && [ "$suffix" -gt "$max_n" ]; then
+        max_n="$suffix"
+      fi
+    done
+  done
+  next_n=$(( max_n + 1 ))
+  suggested_suffix="${target_slug}-${next_n}"
+
+  # Build collisions JSON array
+  collisions_json="[]"
+  if [ -f "${tmpdir}/collisions.jsonl" ]; then
+    collisions_json="[$(paste -sd ',' "${tmpdir}/collisions.jsonl")]"
+  fi
+
+  printf '{"slug":"%s","collisions":%s,"suggested_suffix":"%s"}\n' \
+    "$target_slug" "$collisions_json" "$suggested_suffix"
+  exit 0
+fi
+
 case "$mode" in
   migrate-state)
     bundle=""
