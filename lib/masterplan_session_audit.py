@@ -160,6 +160,7 @@ class TelemetryStats:
     plan: str
     file_label: str
     records: int = 0
+    stop_records: int = 0
     max_bytes: int = 0
     max_lines: int = 0
     latest_ts: str = ""
@@ -915,6 +916,9 @@ def analyze_telemetry_file(path, cutoff, root_path=None):
             continue
         active = True
         stats.records += 1
+        is_stop_record = rec.get("turn_kind") == "stop"
+        if is_stop_record:
+            stats.stop_records += 1
         add_latest(stats, ts)
         try:
             stats.max_bytes = max(stats.max_bytes, int(rec.get("transcript_bytes") or 0))
@@ -928,8 +932,10 @@ def analyze_telemetry_file(path, cutoff, root_path=None):
         # writes claude_stop_hook_active=true when the Stop event fired inside
         # an autonomous-continuation loop (e.g. /goal). Codex hosts and pre-
         # claude_goal-interop telemetry omit the field; count only explicit
-        # True so missing => 0 stays the safe default.
-        if rec.get("claude_stop_hook_active") is True:
+        # True so missing => 0 stays the safe default. The share denominator
+        # uses stop_records (not all records) since inline step_c_entry
+        # snapshots cannot carry the field and would dilute the rate.
+        if is_stop_record and rec.get("claude_stop_hook_active") is True:
             stats.claude_continuation_records += 1
     if not active:
         return None
@@ -1596,10 +1602,11 @@ def run_audit(since_arg, hours_arg, fmt, claude_dir, codex_dir, repo_roots, now=
                 "max_bytes": item.max_bytes,
                 "max_lines": item.max_lines,
                 "latest_ts": item.latest_ts,
+                "stop_records": item.stop_records,
                 "claude_continuation_records": item.claude_continuation_records,
                 "claude_continuation_share": (
-                    round(item.claude_continuation_records / item.records, 3)
-                    if item.records
+                    round(item.claude_continuation_records / item.stop_records, 3)
+                    if item.stop_records
                     else 0.0
                 ),
                 "warnings": warning_texts(item.warnings),
@@ -1742,7 +1749,7 @@ def print_table(data):
 
     print("")
     print("Claude autonomous-continuation share (per-plan, /goal-driven Stop events)")
-    print("repo                         plan                         records  cont   share")
+    print("repo                         plan                         stops    cont   share")
     print("---------------------------- ---------------------------- -------  ----   -----")
     cont_rows = [item for item in telemetry if item.get("claude_continuation_records", 0) > 0]
     if not cont_rows:
@@ -1750,7 +1757,7 @@ def print_table(data):
     else:
         for item in sorted(cont_rows, key=lambda r: r["claude_continuation_records"], reverse=True)[:12]:
             print(
-                f"{item['repo'][:28]:28} {item['plan'][:28]:28} {item['records']:7d}  "
+                f"{item['repo'][:28]:28} {item['plan'][:28]:28} {item['stop_records']:7d}  "
                 f"{item['claude_continuation_records']:4d}  {item['claude_continuation_share']:5.2f}"
             )
 
