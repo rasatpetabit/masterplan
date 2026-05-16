@@ -54,5 +54,5 @@ recent_events:
   - "2026-05-16T16:30Z wave5 entry: T13/T14/T15 inline-Claude finale"
   - "2026-05-16T16:35Z T13 complete (df5038b): docs/internals.md §3/§8/§9/§10 v5.8.0 updates"
   - "2026-05-16T16:40Z T14 complete (18ea70d): version 5.7.3→5.8.0 in 3 manifests + CHANGELOG v5.8.0 entry"
-  - "2026-05-16T16:45Z T15 complete (PENDING): WORKLOG.md v5.8.0 entry prepended"
+  - "2026-05-16T16:45Z T15 complete (e82777e): WORKLOG.md v5.8.0 entry prepended"
   - "2026-05-16T16:45Z bundle complete: all 15 tasks landed; phase=done; ready for retro+archive"
