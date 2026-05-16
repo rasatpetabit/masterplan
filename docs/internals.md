@@ -2,7 +2,7 @@
 
 **Audience:** Future LLMs (Claude, Codex, others) that pick up this codebase to develop features, fix bugs, debug stuck plans, or extend the orchestrator. The intent is that this document, plus `commands/masterplan.md` + `parts/step-*.md` (the v5.0 lazy-load phase prompts), and `docs/masterplan/<slug>/state.yml` run bundles, is enough to operate without reading deleted history (pre-v1.1.0 plans/specs were pruned in the v2.0.0 release).
 
-**v5.0 layout note:** As of v5.0, `commands/masterplan.md` is a thin router (≤20 KB; doctor check #36). Phase bodies live in `parts/step-{0,a,b,c}.md`, doctor in `parts/doctor.md`, import in `parts/import.md`, contracts under `parts/contracts/`. When this document still references `commands/masterplan.md§Step X` for historical context, the active behavior lives in the corresponding `parts/step-X.md` file in v5.0+. The router dispatches by verb; phase files are loaded on demand.
+**v5.0 layout note:** As of v5.0, `commands/masterplan.md` is a thin router (≤20 KB; doctor check #36). Phase bodies live in `parts/step-{0,a,b,c}.md`, doctor in `parts/doctor.md`, import in `parts/import.md`, contracts under `parts/contracts/`. When this document still references `commands/masterplan.md§Step X` for historical context, the active behavior lives in the corresponding `parts/step-{0,a,b,c}.md` file in v5.0+ (where the trailing token matches the phase letter). The router dispatches by verb; phase files are loaded on demand.
 
 **Token budget warning:** This doc is ~6000 words. It's not always-loaded. CLAUDE.md (always-loaded, ~500 words) points here for deep-dive when needed. Read selectively — use the table of contents.
 
@@ -864,7 +864,7 @@ silently skips dispatch.
 | `silent_codex_degradation` | hard | `complexity: high` substantive plan with `codex_routing=off` AND `codex_review=off` AND healthy `~/.codex/auth.json` AND no `codex degraded` event AND empty `last_warning` | `parts/step-0.md:119` |
 | `pending_gate_orphaned` | soft | `pending_gate` set, `last_activity` >24h stale, phase not in {blocked, critical_error} | Step C 0e pending-gate resume |
 | `cc3_trampoline_skipped_after_subagents` | hard | Claude turn dispatched `Agent(...)` but emitted no plain-text summary in the same turn | `commands/masterplan.md` CC-3-trampoline |
-| `cd3_verification_missing_on_complete` | hard | `phase: complete` with zero `verify_*`/`test`/`lint`/`verification` events in `events.jsonl` | CD-3 (`parts/cd-rules.md`) |
+| `cd3_verification_missing_on_complete` | hard | `phase: complete` with zero `verify_*`/`test`/`lint`/`verification` events in `events.jsonl` | CD-3 (`parts/contracts/cd-rules.md`) |
 | `cd9_free_text_question_at_close` | soft | Assistant turn ended with `?` and no `AskUserQuestion` tool_use; `<no-auq>`/`[oneshot]` markers absent | CD-9 |
 | `auq_guard_blocked_count_high` | soft | The AUQ Stop hook (`~/.claude/hooks/auq-guard.sh`) emitted `AUQ guard blocked: …` ≥5 times in one session | `~/.claude/CLAUDE.md` AUQ rule |
 | `brainstorm_anchor_missing_before_planning` | hard | `phase: planning` reached with no `brainstorm_anchor_resolved` event preceding the transition | `parts/step-b.md:232` |
