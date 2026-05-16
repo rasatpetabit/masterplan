@@ -496,6 +496,8 @@ Common combinations:
 - `/masterplan <topic> --codex=off` for Claude-only execution/review.
 - `/masterplan <topic> --no-parallelism` to debug wave-dispatch issues.
 
+**Claude `/goal` compatibility.** The native Claude Code `/goal` slash command is compatible with `--autonomy=full` as an outer wrapper — both mechanisms target silent auto-advance. Avoid `/goal` under `--autonomy=loose` or `--autonomy=gated`: the per-task `AskUserQuestion` checkpoints are intentional and the goal evaluator will fight them. The masterplan does not invoke `/goal` programmatically (Claude Code 2.1.x exposes no API surface for it); the Stop hook captures `claude_stop_hook_active` as advisory telemetry only. See `docs/internals.md` §8.5 for the design rationale.
+
 CLI flags override config for the run. State-schema values such as `autonomy`,
 `loop_enabled`, `codex_routing`, and `codex_review` land in `state.yml`;
 durable defaults such as `parallelism.enabled` belong in `.masterplan.yaml`.

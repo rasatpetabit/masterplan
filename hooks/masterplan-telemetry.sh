@@ -58,6 +58,25 @@ ensure_telemetry_excluded() {
 # the absence rather than via gradually-empty telemetry files.
 command -v jq >/dev/null 2>&1 || bail
 
+# 0b. Claude Code Stop hook input capture.
+# Claude Code passes a JSON blob on stdin per https://code.claude.com/docs/en/hooks
+# including .stop_hook_active (true when the Stop event fired inside a
+# /goal-driven or other autonomous-continuation loop). Codex hosts do not
+# provide this surface; absent/malformed input defaults to false so the field
+# stays meaningful on every record.
+hook_input=""
+if [[ ! -t 0 ]]; then
+  hook_input=$(cat 2>/dev/null || true)
+fi
+claude_stop_hook_active=false
+if [[ -n "$hook_input" ]]; then
+  parsed=$(printf '%s' "$hook_input" | jq -r '.stop_hook_active // false' 2>/dev/null || printf 'false')
+  case "$parsed" in
+    true|false) claude_stop_hook_active="$parsed" ;;
+    *) claude_stop_hook_active=false ;;
+  esac
+fi
+
 # 1. Must be inside a git work tree.
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || bail
 worktree=$(git rev-parse --show-toplevel 2>/dev/null) || bail
@@ -259,7 +278,8 @@ jq -nc \
   --argjson tasks_completed_this_turn "${tasks_completed_this_turn:-0}" \
   --argjson wave_groups "${wave_groups_json}" \
   --argjson wakeup_count_24h "${wakeup_count_24h:-0}" \
-  '{ts:$ts,plan:$plan,turn_kind:"stop",transcript_bytes:$transcript_bytes,transcript_lines:$transcript_lines,status_bytes:$status_bytes,activity_log_entries:$activity_log_entries,wakeup_count_24h:$wakeup_count_24h,tasks_completed_this_turn:$tasks_completed_this_turn,wave_groups:$wave_groups,branch:$branch,cwd:$cwd}' \
+  --argjson claude_stop_hook_active "${claude_stop_hook_active:-false}" \
+  '{ts:$ts,plan:$plan,turn_kind:"stop",transcript_bytes:$transcript_bytes,transcript_lines:$transcript_lines,status_bytes:$status_bytes,activity_log_entries:$activity_log_entries,wakeup_count_24h:$wakeup_count_24h,tasks_completed_this_turn:$tasks_completed_this_turn,wave_groups:$wave_groups,claude_stop_hook_active:$claude_stop_hook_active,branch:$branch,cwd:$cwd}' \
   >> "$out_file" 2>/dev/null
 
 emit_parent_turns() {

@@ -53,6 +53,7 @@ classes instead of brittle warning prose.
   "wakeup_count_24h": 3,
   "tasks_completed_this_turn": 1,
   "wave_groups": ["verification"],
+  "claude_stop_hook_active": false,
   "branch": "feat/auth-refactor",
   "cwd": "/home/.../wt"
 }
@@ -70,6 +71,7 @@ classes instead of brittle warning prose.
 | `wakeup_count_24h` | Wakeups recorded in `## Wakeup ledger` over the last 24h | Loop activity rate |
 | `tasks_completed_this_turn` *(v2.0.0+)* | Delta of `activity_log_entries` between this and previous Stop record | 1 for serial; N for wave; 0 for no-progress turns. **First-turn caveat:** when no previous record exists for a plan, this field reports `0` rather than the absolute entry count — first-record telemetry doesn't have a baseline to subtract. Activity log rotation (entries moved to `<slug>-status-archive.md`) can decrement `activity_log_entries` between records; the hook clamps to 0. |
 | `wave_groups` *(v2.0.0+)* | Distinct `[wave: <group>]` tags from the last `tasks_completed_this_turn` activity-log entries | Empty array `[]` for serial-only turns. Use to identify which parallel-group(s) dispatched this turn — useful for measuring per-group latency wins. |
+| `claude_stop_hook_active` *(v5.6.0+)* | Value of `stop_hook_active` in the Claude Code Stop hook input JSON | `true` when the Stop event fired inside an autonomous-continuation loop (Claude `/goal`, agent SDK loop, etc.). Always `false` on Codex hosts and on legacy records pre-dating this field. Observability-only — the orchestrator does not invoke `/goal` programmatically. See `docs/internals.md` §8.5 for the design rationale. |
 | `branch` | Current branch | Useful for cross-worktree analysis |
 | `cwd` | Working directory at hook fire | Distinguishes worktrees |
 

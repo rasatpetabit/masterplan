@@ -163,6 +163,7 @@ class TelemetryStats:
     max_bytes: int = 0
     max_lines: int = 0
     latest_ts: str = ""
+    claude_continuation_records: int = 0
     warnings: list[WarningItem] = field(default_factory=list)
 
     def add_warning(self, code: str, text: str) -> None:
@@ -923,6 +924,13 @@ def analyze_telemetry_file(path, cutoff, root_path=None):
             stats.max_lines = max(stats.max_lines, int(rec.get("transcript_lines") or 0))
         except Exception:
             pass
+        # Claude /goal interop (host-only observability). The telemetry hook
+        # writes claude_stop_hook_active=true when the Stop event fired inside
+        # an autonomous-continuation loop (e.g. /goal). Codex hosts and pre-
+        # claude_goal-interop telemetry omit the field; count only explicit
+        # True so missing => 0 stays the safe default.
+        if rec.get("claude_stop_hook_active") is True:
+            stats.claude_continuation_records += 1
     if not active:
         return None
     if stats.max_bytes > TELEMETRY_BYTES_LIMIT:
@@ -1588,6 +1596,12 @@ def run_audit(since_arg, hours_arg, fmt, claude_dir, codex_dir, repo_roots, now=
                 "max_bytes": item.max_bytes,
                 "max_lines": item.max_lines,
                 "latest_ts": item.latest_ts,
+                "claude_continuation_records": item.claude_continuation_records,
+                "claude_continuation_share": (
+                    round(item.claude_continuation_records / item.records, 3)
+                    if item.records
+                    else 0.0
+                ),
                 "warnings": warning_texts(item.warnings),
                 "warning_codes": [warning.code for warning in item.warnings],
             }
@@ -1725,6 +1739,20 @@ def print_table(data):
         print(f"{item['repo']}/{item['plan']}: max={item['max_bytes'] / (1024*1024):.1f}MB lines={item['max_lines']} - {'; '.join(item['warnings'])}")
     if not shown:
         print("(none)")
+
+    print("")
+    print("Claude autonomous-continuation share (per-plan, /goal-driven Stop events)")
+    print("repo                         plan                         records  cont   share")
+    print("---------------------------- ---------------------------- -------  ----   -----")
+    cont_rows = [item for item in telemetry if item.get("claude_continuation_records", 0) > 0]
+    if not cont_rows:
+        print("(none)")
+    else:
+        for item in sorted(cont_rows, key=lambda r: r["claude_continuation_records"], reverse=True)[:12]:
+            print(
+                f"{item['repo'][:28]:28} {item['plan'][:28]:28} {item['records']:7d}  "
+                f"{item['claude_continuation_records']:4d}  {item['claude_continuation_share']:5.2f}"
+            )
 
     print("")
     print("Plan follow-up warnings")

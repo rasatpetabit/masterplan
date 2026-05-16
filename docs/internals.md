@@ -26,6 +26,7 @@
 6. [Operational rules](#6-operational-rules)
 7. [Wave dispatch (Slice α) + failure-mode catalog (FM-1 to FM-6)](#7-wave-dispatch-slice-α--failure-mode-catalog-fm-1-to-fm-6)
 8. [Codex integration](#8-codex-integration)
+   - [8.5 Claude `/goal` interop (host-only, observability-only)](#85-claude-goal-interop-host-only-observability-only)
 9. [Telemetry signals + jq recipes](#9-telemetry-signals--jq-recipes)
 10. [Doctor checks (full table with rationale)](#10-doctor-checks-full-table-with-rationale)
 11. [Verb routing + halt_mode flow](#11-verb-routing--halt_mode-flow)
@@ -598,6 +599,29 @@ Host suppression is not plugin-missing degradation. Inside Codex, Step 0 emits a
 
 ---
 
+## 8.5 Claude `/goal` interop (host-only, observability-only)
+
+Claude Code shipped a native `/goal` slash command in v2.1.139 (2026-05-12). The user invokes `/goal <description>` and Claude works autonomously across turns until a small evaluator model declares the condition met. The asymmetry with Codex's MCP goal tools is structural:
+
+| Capability | Codex `get_goal` / `create_goal` / `update_goal` | Claude `/goal` |
+|---|---|---|
+| Agent can create / read / clear | Yes (MCP tool surface) | No (user-only via slash) |
+| Hook event on goal lifecycle | n/a (Codex tracks server-side) | No |
+| Observability of goal-driven Stop | n/a | Yes — `stop_hook_active` in Stop hook input |
+| Persistence | Host-tracked | Session-local |
+
+There is **no programmatic control surface for `/goal`**, so the orchestrator cannot create, read, or complete a Claude goal the way it reconciles `codex_goal` against the run bundle. The only available signal is observability: Claude's Stop hook input JSON includes a `stop_hook_active` boolean per [the hook contract](https://code.claude.com/docs/en/hooks), which is `true` when the Stop event fires inside an autonomous-continuation loop (`/goal`, agent SDK loops, etc.). The masterplan telemetry hook captures this and emits it as the per-record `claude_stop_hook_active` field documented in §9.
+
+**Explicit non-additions.**
+
+- **No `claude_goal` field in `state.yml`.** Without a `get_goal`-equivalent the field cannot be reconciled against actual goal state, which would violate CD-7 (run bundle is authoritative). Writing user-confirmed-but-unverifiable goal text into the canonical bundle creates a drift surface for cosmetic symmetry only.
+- **No Step C runtime hint suggesting `/goal`.** Under `--autonomy=full` the masterplan already auto-advances silently; the hint is redundant. Under `--autonomy=loose` or `--autonomy=gated` the per-task `AskUserQuestion` checkpoint is intentional ([`parts/step-c.md` lines 625–650](../parts/step-c.md)) and an outer goal evaluator would fight those gates.
+- **No transcript-based goal-text extraction.** The boolean signal is sufficient for classification; parsing transcript lines for goal text adds fragility for marginal benefit.
+
+**Compatibility guidance.** `/goal` is compatible with `--autonomy=full` as an outer wrapper — both mechanisms aim at silent auto-advance, and the evaluator decides "done" the same way Step C does ("plan in done state, retro written, archived"). Avoid layering `/goal` over `--autonomy=loose` or `--autonomy=gated` runs.
+
+---
+
 ## 9. Telemetry signals + jq recipes
 
 ### Stop hook record schema
@@ -616,6 +640,7 @@ Each Stop turn while `/masterplan` is operating on a managed plan, the hook (`ho
   "wakeup_count_24h": 3,
   "tasks_completed_this_turn": 1,
   "wave_groups": ["verification"],
+  "claude_stop_hook_active": false,
   "branch": "feat/<branch>",
   "cwd": "/path/to/worktree"
 }
@@ -625,6 +650,7 @@ Each Stop turn while `/masterplan` is operating on a managed plan, the hook (`ho
 
 - `tasks_completed_this_turn` (v2.0.0+): delta of `activity_log_entries` between this and previous Stop record. **First-turn caveat:** when no previous record exists, reports 0 (no baseline). Activity log rotation can decrement; clamps to 0.
 - `wave_groups` (v2.0.0+): distinct `[wave: <group>]` tags from the last `tasks_completed_this_turn` log entries. Empty for serial turns.
+- `claude_stop_hook_active` (v5.6.0+): boolean lifted verbatim from the Claude Code Stop hook input JSON. `true` when the Stop event fired inside an autonomous-continuation loop (`/goal`, agent SDK loop, etc.). Always `false` on Codex hosts and on legacy records pre-dating this field. See §8.5 for why this is observability-only — the orchestrator does not invoke or reconcile `/goal` programmatically.
 - See [`docs/design/telemetry-signals.md`](./design/telemetry-signals.md) for the canonical field reference.
 
 ### Redacted session audit
@@ -658,6 +684,14 @@ Masterplan missing-telemetry or unclassified-stop warnings. Primary sessions
 also expose `goal_outcome` and `goal_failure_reasons` in JSON output, and the
 table output includes a "Started goals at risk" section derived from those
 redacted fields.
+
+Per-plan telemetry rollup also exposes `claude_continuation_records` and
+`claude_continuation_share` per `docs/masterplan/<slug>/telemetry.jsonl` (the
+share of Stop records in the audit window where `claude_stop_hook_active ==
+true`). Table output prints a "Claude autonomous-continuation share" row when
+any plan has a non-zero count; this is the per-plan analogue of Codex's
+`goal_outcome` reporting and is `0` on Codex-only hosts. See §8.5 for the
+design rationale.
 
 Forward-progress checks are explicit warning codes, not prose heuristics:
 `shell_invocation_trap` catches Codex shell transcripts for `$masterplan` or
