@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.2.3] — 2026-05-15 — Auto-retro backfill + Codex JWT cosmetic-expiry fix
+
+Two coupled refinements that close known gaps in v5.2.x: (1) auto-retro becomes durable even when Step C 6 is bypassed, and (2) the Step 0 boot banner and doctor Check #39 stop emitting false "Codex: degraded" warnings when ChatGPT-mode auth is healthy.
+
+### Fixed
+
+- **Codex auth cosmetic-expiry false positive.** Step 3 of CC-2 (boot banner in `commands/masterplan.md`), doctor Check #39 (`codex_auth_expiry`), and Check #41's `auth_healthy` probe now skip sub-conditions (a)/(b) — token-expired and token-expires-within-24h — when `auth_mode == "chatgpt"` AND `tokens.refresh_token` is non-empty AND `last_refresh` is within the last 7 days. ChatGPT mode uses short-lived JWTs that auto-refresh on every codex call via the persistent refresh token; `id_token.exp` being minutes-to-hours past `now` is the normal steady state, not degradation. Sub-condition (c) — `last_refresh > 30d` — still fires, since a stale refresh_token IS a real degradation signal. Check #39 emits an INFO-style PASS line: `Check #39: PASS (auth_mode=chatgpt; JWT auto-refresh healthy; last_refresh Nd ago)`. Boot banner is silent under this shape.
+- **`~/.codex/auth.json` JSON-path bug at three sites.** `commands/masterplan.md` Step 3, `parts/doctor.md` Check #39, and Check #41's `auth_healthy` probe were reading `jq -r ".id_token"` / `".access_token"` (top-level) — but the schema_v3+ shape of `~/.codex/auth.json` nests tokens under `.tokens.*`. All three now read `jq -r ".tokens.<field> // .<field> // empty"` for forward/backward schema-compat. The Read-tool-driven LLM interpretation in the boot banner compensated for the bug at runtime; the bash sites broke silently against the real schema.
+
+### Added
+
+- **Auto-retro backfill in Step 0 resume controller.** `parts/step-0.md` resume controller item 4 now invokes Step R inline as a backfill on any `/masterplan` touch of a `status: complete` (or `pending_retro`) bundle missing `retro.md`, provided `schema_version >= 3` and `retro_policy.waived/exempt != true`. Catches the paths where Step C 6 is bypassed entirely — manual `state.yml` edits flipping `status: complete`, brainstorm-only completions under `halt_mode=post-brainstorm`, or first-attempt retro failures that left `status: pending_retro`. Makes auto-retro durable by default, mirroring the in-flight 6a-guard.
+- **`retro_policy.exempt` field.** Marks a bundle as deliberately retro-less (e.g., the `p4-suppression-smoke` hand-crafted fixture); bypasses both the resume-controller backfill and Doctor #28's `--fix` `AskUserQuestion`.
+- **`bin/masterplan-state.sh` auto-heal shim.** `transition-guard` normalizes the typo'd `status: retro_pending` (one outlier bundle in the corpus from an earlier writer) to the canonical `status: pending_retro` on read, rewriting `state.yml` on disk.
+
+### Removed
+
+- **`codex_health_check_jwt_only` watcher** in `lib/masterplan_session_audit.py` — retired after serving its purpose. The watcher (added v5.2.1) flagged the false-positive class; the proper fix is now landed in v5.2.3, so the watcher is no longer load-bearing. The user-visible boot banner IS the regression detector going forward — if the false positive returns, it returns visibly on every `/masterplan` invocation. Also removed from `bin/masterplan-findings-to-issues.sh` hard-codes CSV.
+
+### Documentation
+
+- **`docs/internals.md` §4 Run bundle format** documents the auto-retro backfill clause and `retro_policy.exempt` field.
+- **`docs/internals.md` Codex-routing visibility section** documents the v5.2.3 cosmetic-expiry refinement and the watcher retirement.
+- **`parts/step-c.md` 6b** cross-references the resume controller as the catch-all for paths that reach `status: complete` without entering Step C 6.
+
+### Verification
+
+- Check #39 bash extracted and run against live `~/.codex/auth.json` (auth_mode=chatgpt, last_refresh=2026-05-15T16:41:36Z): returned `Check #39: PASS (auth_mode=chatgpt; JWT auto-refresh healthy; last_refresh 0d ago)`.
+- Check #41 `auth_healthy` probe: sets `auth_healthy=1` under the cosmetic-shape gate against the same auth.json.
+- `python3 -m py_compile lib/masterplan_session_audit.py`: clean.
+- `bash -n` on `bin/masterplan-findings-to-issues.sh` and `bin/masterplan-state.sh`: clean.
+- `bin/masterplan-state.sh transition-guard` smoke against a temp copy of a `status: retro_pending` bundle: file successfully rewritten to `status: pending_retro`.
+- Router byte ceiling: `commands/masterplan.md` now 11460 bytes (well under the 20480 limit).
+
+---
+
 ## [5.2.2] — 2026-05-15 — AUQ-guard softening: bash-input + classifier-denial escape hatches
 
 Targeted softening of the AUQ-guard Stop hook (`hooks/auq-guard.sh`) to suppress two false-positive dialog-cycle cases observed in real sessions:
