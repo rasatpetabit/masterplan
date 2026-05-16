@@ -20,6 +20,34 @@ set -u
 # --- Bail-silent helper ---
 bail() { exit 0; }
 
+# Guard C — serialize bundle writes. Wrap a write command in flock -w 5.
+# The lockfile lives inside the bundle dir (CD-2 compliant). On macOS /
+# non-Linux installs without util-linux flock(1), degrade to unguarded write
+# with a one-time WARN per process (MASTERPLAN_FLOCK_WARNED env var).
+# See docs/masterplan/concurrency-guards/spec.md L60-L87 / D4.
+with_bundle_lock() {
+  local bundle="$1"; shift
+  local lockfile="${bundle}/.lock"
+  mkdir -p "$bundle" 2>/dev/null || true
+  if command -v flock >/dev/null 2>&1; then
+    # fd-based form: runs "$@" as a shell command (functions + builtins work).
+    (
+      flock -w 5 9 || {
+        echo "ERROR: flock -w 5 on ${lockfile} failed; writer wedged?" >&2
+        exit 1
+      }
+      "$@"
+    ) 9>"$lockfile"
+    return $?
+  else
+    if [[ -z "${MASTERPLAN_FLOCK_WARNED:-}" ]]; then
+      echo "WARN: flock(1) not found; concurrent writes to ${bundle} are unguarded" >&2
+      export MASTERPLAN_FLOCK_WARNED=1
+    fi
+    "$@"
+  fi
+}
+
 ensure_telemetry_excluded() {
   local exclude_file rel
   exclude_file=$(git rev-parse --git-path info/exclude 2>/dev/null) || return 1
@@ -266,21 +294,28 @@ else
   wave_groups_json="[]"
 fi
 
-jq -nc \
-  --arg ts "$ts" \
-  --arg plan "$slug" \
-  --arg branch "$branch" \
-  --arg cwd "$PWD" \
-  --argjson transcript_bytes "${transcript_bytes:-0}" \
-  --argjson transcript_lines "${transcript_lines:-0}" \
-  --argjson status_bytes "${status_bytes:-0}" \
-  --argjson activity_log_entries "${activity_log_entries:-0}" \
-  --argjson tasks_completed_this_turn "${tasks_completed_this_turn:-0}" \
-  --argjson wave_groups "${wave_groups_json}" \
-  --argjson wakeup_count_24h "${wakeup_count_24h:-0}" \
-  --argjson claude_stop_hook_active "${claude_stop_hook_active:-false}" \
-  '{ts:$ts,plan:$plan,turn_kind:"stop",transcript_bytes:$transcript_bytes,transcript_lines:$transcript_lines,status_bytes:$status_bytes,activity_log_entries:$activity_log_entries,wakeup_count_24h:$wakeup_count_24h,tasks_completed_this_turn:$tasks_completed_this_turn,wave_groups:$wave_groups,claude_stop_hook_active:$claude_stop_hook_active,branch:$branch,cwd:$cwd}' \
-  >> "$out_file" 2>/dev/null
+_do_append_telemetry() {
+  jq -nc \
+    --arg ts "$ts" \
+    --arg plan "$slug" \
+    --arg branch "$branch" \
+    --arg cwd "$PWD" \
+    --argjson transcript_bytes "${transcript_bytes:-0}" \
+    --argjson transcript_lines "${transcript_lines:-0}" \
+    --argjson status_bytes "${status_bytes:-0}" \
+    --argjson activity_log_entries "${activity_log_entries:-0}" \
+    --argjson tasks_completed_this_turn "${tasks_completed_this_turn:-0}" \
+    --argjson wave_groups "${wave_groups_json}" \
+    --argjson wakeup_count_24h "${wakeup_count_24h:-0}" \
+    --argjson claude_stop_hook_active "${claude_stop_hook_active:-false}" \
+    '{ts:$ts,plan:$plan,turn_kind:"stop",transcript_bytes:$transcript_bytes,transcript_lines:$transcript_lines,status_bytes:$status_bytes,activity_log_entries:$activity_log_entries,wakeup_count_24h:$wakeup_count_24h,tasks_completed_this_turn:$tasks_completed_this_turn,wave_groups:$wave_groups,claude_stop_hook_active:$claude_stop_hook_active,branch:$branch,cwd:$cwd}' \
+    >> "$out_file" 2>/dev/null
+}
+if [[ "$is_bundle" -eq 1 ]]; then
+  with_bundle_lock "$plans_dir" _do_append_telemetry || true
+else
+  _do_append_telemetry
+fi
 
 emit_parent_turns() {
   [[ -n "$transcript" && -r "$transcript" ]] || return 0
@@ -347,7 +382,11 @@ if [[ -n "$transcript" && -r "$transcript" ]]; then
     subagents_file="${plans_dir}/${slug}-subagents.jsonl"
   fi
 
-  emit_parent_turns
+  if [[ "$is_bundle" -eq 1 ]]; then
+    with_bundle_lock "$plans_dir" emit_parent_turns || true
+  else
+    emit_parent_turns
+  fi
 
   # Build seen-agent-id set from existing subagents.jsonl (one ID per line).
   # Empty file or missing file -> empty set.
@@ -358,6 +397,7 @@ if [[ -n "$transcript" && -r "$transcript" ]]; then
   fi
   [[ -z "$seen_ids_json" ]] && seen_ids_json='[]'
 
+  _do_append_subagents() {
   jq -c -s \
     --argjson seen "$seen_ids_json" \
     --arg plan "$slug" \
@@ -447,6 +487,12 @@ if [[ -n "$transcript" && -r "$transcript" ]]; then
         cwd: $cwd
       }
     ' "$transcript" >> "$subagents_file" 2>/dev/null
+}
+  if [[ "$is_bundle" -eq 1 ]]; then
+    with_bundle_lock "$plans_dir" _do_append_subagents || true
+  else
+    _do_append_subagents
+  fi
 fi
 
 # ============================================================================
@@ -603,7 +649,12 @@ write_anomaly_record() {
       plugin_version:$plugin_version
     } + (if $extra_field != "" then {($extra_field):$extra_value} else {} end)' 2>/dev/null)
   if [[ -n "$rec" ]]; then
-    echo "$rec" >> "$anomalies_file" 2>/dev/null
+    if [[ "$is_bundle" -eq 1 ]]; then
+      _do_append_anomaly() { echo "$rec" >> "$anomalies_file" 2>/dev/null; }
+      with_bundle_lock "$plans_dir" _do_append_anomaly || true
+    else
+      echo "$rec" >> "$anomalies_file" 2>/dev/null
+    fi
     echo "$rec"
   fi
 }
@@ -615,12 +666,22 @@ file_or_update_issue() {
   local title_prefix="[auto:${sig:0:12}]"
   local issue_title="${title_prefix} ${class}: ${last_step} ${last_verb}"
 
+  # Helper: queue rec to pending_file, serialized when in a bundle dir.
+  _queue_pending() {
+    if [[ "$is_bundle" -eq 1 ]]; then
+      _do_write_pending() { echo "$rec" >> "$pending_file" 2>/dev/null; }
+      with_bundle_lock "$plans_dir" _do_write_pending || true
+    else
+      echo "$rec" >> "$pending_file" 2>/dev/null
+    fi
+  }
+
   if [[ "$fr_dry_run" == "true" ]]; then
     return 0
   fi
 
   command -v gh >/dev/null 2>&1 || {
-    echo "$rec" >> "$pending_file" 2>/dev/null
+    _queue_pending
     log_detector_error "gh-missing" "gh not installed — record queued"
     return 0
   }
@@ -629,7 +690,7 @@ file_or_update_issue() {
   existing=$(gh issue list --repo "$fr_repo" \
     --search "in:title ${title_prefix}" \
     --state all --json number,state,title --limit 5 2>/dev/null) || {
-    echo "$rec" >> "$pending_file" 2>/dev/null
+    _queue_pending
     log_detector_error "gh-list-failed" "queued for retry"
     return 0
   }
@@ -648,14 +709,14 @@ file_or_update_issue() {
       --title "$issue_title" \
       --label "auto-filed" --label "class/${class}" \
       --body "$body" >/dev/null 2>&1 || {
-        echo "$rec" >> "$pending_file" 2>/dev/null
+        _queue_pending
         log_detector_error "gh-create-failed" "queued"
       }
   elif [[ "$existing_state" == "CLOSED" ]]; then
     gh issue reopen "$existing_num" --repo "$fr_repo" \
       --comment "Regression at ${ts}: same signature reopened. New record:
 ${body}" >/dev/null 2>&1 || {
-        echo "$rec" >> "$pending_file" 2>/dev/null
+        _queue_pending
         log_detector_error "gh-reopen-failed" "queued"
       }
   else
@@ -663,7 +724,7 @@ ${body}" >/dev/null 2>&1 || {
       --body "Recurrence at ${ts}.
 
 ${body}" >/dev/null 2>&1 || {
-        echo "$rec" >> "$pending_file" 2>/dev/null
+        _queue_pending
         log_detector_error "gh-comment-failed" "queued"
       }
   fi

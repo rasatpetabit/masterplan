@@ -40,6 +40,34 @@
 
 set -u
 
+# Guard C — serialize bundle writes. Wrap a write command in flock -w 5.
+# The lockfile lives inside the bundle dir (CD-2 compliant). On macOS /
+# non-Linux installs without util-linux flock(1), degrade to unguarded write
+# with a one-time WARN per process (MASTERPLAN_FLOCK_WARNED env var).
+# See docs/masterplan/concurrency-guards/spec.md L60-L87 / D4.
+with_bundle_lock() {
+  local bundle="$1"; shift
+  local lockfile="${bundle}/.lock"
+  mkdir -p "$bundle" 2>/dev/null || true
+  if command -v flock >/dev/null 2>&1; then
+    # fd-based form: runs "$@" as a shell command (functions + builtins work).
+    (
+      flock -w 5 9 || {
+        echo "ERROR: flock -w 5 on ${lockfile} failed; writer wedged?" >&2
+        exit 1
+      }
+      "$@"
+    ) 9>"$lockfile"
+    return $?
+  else
+    if [[ -z "${MASTERPLAN_FLOCK_WARNED:-}" ]]; then
+      echo "WARN: flock(1) not found; concurrent writes to ${bundle} are unguarded" >&2
+      export MASTERPLAN_FLOCK_WARNED=1
+    fi
+    "$@"
+  fi
+}
+
 usage() {
   sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'
   exit "${1:-0}"
@@ -497,7 +525,8 @@ PY
       diff -u "$plan" "$tmp" || true
     else
       cp "$plan" "$plan.v4-backup"
-      mv "$tmp" "$plan"
+      _do_write_plan() { mv "$tmp" "$plan"; }
+      with_bundle_lock "$bundle" _do_write_plan
       echo "migrated: $plan (backup at $plan.v4-backup)"
     fi
     python3 - "$plan" <<'PY'
@@ -568,7 +597,8 @@ PY
       echo "ERROR: build-index python exit $py_status" >&2
       exit $py_status
     fi
-    mv "$tmp_out" "$out"
+    _do_write_index() { mv "$tmp_out" "$out"; }
+    with_bundle_lock "$bundle" _do_write_index
     echo "wrote $out ($(jq '.tasks | length' "$out") tasks)"
     exit 0
     ;;
