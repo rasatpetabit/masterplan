@@ -500,6 +500,11 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
 
    **4b — Codex-review (Codex review of inline work)** (consult `config.codex.review`, overridden by `--codex-review=` flag, persisted as `codex_review` in `state.yml`).
 
+   First handle the asymmetric-review skip branch: if the task record has `dispatched_by == "codex"`, do not run serial 4b because Step 3a's post-Codex flow owns review of Codex-produced work. Skip with reason `task was codex-routed (asymmetric-review rule)` (the reason template below) and emit:
+   ```
+   - <ISO-ts> task "<task name>" review→SKIP(task was codex-routed (asymmetric-review rule); decision_source: codex-produced)
+   ```
+
    Fires when ALL of the following hold, otherwise skip silently:
    - `codex_host_suppressed` is not `true`. When running inside Codex, skip 4b with reason `running inside Codex — recursive Codex review disabled`; do not run the mid-plan Codex availability re-check in this branch.
    - `codex_review` is `on`.
@@ -621,7 +626,11 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
 
    **4b under wave (v5.8.0+).** Wave members don't commit, but the wave-end commit produces a reviewable SHA range — `<wave_start_sha>..<wave_end_sha>` filtered per member's declared `**Files:**`. At wave-end, dispatch **N parallel Codex REVIEW calls — one per wave member** (NOT one giant review). The principle is the reviewer-batching trigger (read-only review subagents can run in parallel because they don't conflict on shared state); per-member granularity preserves findings attribution to the originating task.
 
-   1. **Gate eval (per wave member).** Apply the same gate conditions enumerated for serial 4b above (`codex_host_suppressed`, `codex_review`, codex plugin availability, `codex_routing`). Additionally apply the asymmetric-review rule: if the wave member's recorded `dispatched_by == "codex"` (which would only happen if a Codex EXEC ran inside a wave — currently rare but possible), skip review for that member with reason `task was codex-routed (asymmetric-review rule)` per Step 3a's post-Codex flow. Emit the per-member skip variant (see step 4 below).
+   1. **Gate eval (per wave member).** Apply the same gate conditions enumerated for serial 4b above (`codex_host_suppressed`, `codex_review`, codex plugin availability, `codex_routing`). Additionally apply the asymmetric-review rule per member: read that member's recorded `dispatched_by` from its `wave_task_completed` provenance event (T5 field). If `dispatched_by == "codex"`, skip review for that member with reason `task was codex-routed (asymmetric-review rule)` per Step 3a's post-Codex flow and emit:
+      ```
+      - <ISO-ts> task "<task name>" review→SKIP(codex-produced; wave-member; T<idx>; decision_source: codex-produced)
+      ```
+      The asymmetric skip is per-member, not per-wave: other members in the same wave continue through normal gate eval.
 
    2. **Pre-dispatch visibility events (v2.4.0+, MANDATORY).** For each member that passes gate eval, emit a per-member pre-dispatch event:
       ```
