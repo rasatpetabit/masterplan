@@ -137,7 +137,7 @@ Add the repository as a Codex marketplace:
 codex plugin marketplace add rasatpetabit/superpowers-masterplan
 ```
 
-The marketplace is configured to install `superpowers-masterplan` by default.
+The marketplace is configured to install `masterplan` by default (formerly `superpowers-masterplan` prior to v6.0.0).
 New Codex sessions should see a `masterplan` skill in their available-skills
 list. That skill is the portable Codex entrypoint: it loads
 `commands/masterplan.md` and recognizes run bundles created by Claude Code under
@@ -161,11 +161,11 @@ contract is prompt exposure through the `masterplan` skill, so Codex-facing
 resume hints use normal chat text such as `Use masterplan ...`. `$masterplan ...`
 is not the portable resume instruction for Codex because shell-command mode sends
 it to Bash, where `$masterplan` is environment-variable expansion. Slash-style
-text such as `/masterplan` or `/superpowers-masterplan:masterplan` is accepted
+text such as `/masterplan` or `/masterplan:masterplan` is accepted
 when the host passes it to the model, but it is not the portable resume
 instruction for Codex. If your Codex build registers the marketplace but a fresh
 prompt does not list `masterplan`,
-enable `superpowers-masterplan@rasatpetabit-superpowers-masterplan` in Codex's
+enable `masterplan@rasatpetabit-superpowers-masterplan` in Codex's
 plugin UI or config, or install a user-level bridge at
 `~/.codex/skills/masterplan/SKILL.md` from this repo's `skills/masterplan/`
 directory. The same `commands/masterplan.md` orchestrator is used for Claude Code
@@ -197,13 +197,15 @@ Desktop-first install:
 3. If `rasatpetabit-superpowers-masterplan` is not already listed, add this
    repository as a marketplace from the plugin manager's **Marketplaces** tab,
    or paste the marketplace command from the next section into the prompt.
-4. Install `superpowers-masterplan`. Use **User scope** for all projects,
+4. Install `masterplan`. Use **User scope** for all projects,
    **Project scope** to share through this repository's `.claude/settings.json`,
    or **Local scope** for only the current repository.
 5. Run `/reload-plugins` or restart the session.
 6. Verify by typing `/` or opening **+** → **Slash commands**. Look for
    `/masterplan`; if another command with the same name exists, use the
-   namespaced form `/superpowers-masterplan:masterplan`.
+   namespaced form `/masterplan:masterplan`. The 12 per-verb shims
+   (`/masterplan:brainstorm`, `/masterplan:plan`, `/masterplan:execute`, …)
+   also appear in autocomplete.
 
 Claude's desktop plugin browser only shows plugins from configured
 marketplaces. The slash-command flow below works inside the Desktop Code tab
@@ -213,13 +215,13 @@ too, and is often the fastest way to add this marketplace the first time.
 
 ```text
 /plugin marketplace add rasatpetabit/superpowers-masterplan
-/plugin install superpowers-masterplan@rasatpetabit-superpowers-masterplan
+/plugin install masterplan@rasatpetabit-superpowers-masterplan
 /reload-plugins
 ```
 
-Verify with `/plugin`; `superpowers-masterplan` should appear under
+Verify with `/plugin`; `masterplan` should appear under
 **Installed**. If Claude Code's plugin install syntax has drifted, add the
-marketplace and pick `superpowers-masterplan` from `/plugin`'s Discover tab.
+marketplace and pick `masterplan` from `/plugin`'s Discover tab.
 The marketplace entry declares the official `superpowers` plugin as a
 dependency, so Claude Code can resolve it automatically when the official
 marketplace is available. If dependency resolution says
@@ -232,7 +234,7 @@ the install.
 
 ```bash
 mkdir -p ~/.claude/commands ~/.claude/skills
-printf '%s\n' '---' 'description: "Delegate to the installed superpowers-masterplan plugin."' '---' '<!-- masterplan-shim: v3 -->' '/superpowers-masterplan:masterplan $ARGUMENTS' > ~/.claude/commands/masterplan.md
+printf '%s\n' '---' 'description: "Delegate to the installed masterplan plugin."' '---' '<!-- masterplan-shim: v3 -->' '/masterplan:masterplan $ARGUMENTS' > ~/.claude/commands/masterplan.md
 cp -r skills/masterplan-detect ~/.claude/skills/
 ```
 
@@ -586,7 +588,7 @@ missing, both settings auto-degrade to `off` for that run and persisted config i
 unchanged.
 
 This section applies to Claude Code hosting `/masterplan`. When the same
-orchestrator is hosted by Codex through `/superpowers-masterplan:masterplan`,
+orchestrator is hosted by Codex through `/masterplan:masterplan`,
 `codex:codex-rescue` routing/review is suppressed automatically to avoid
 recursive Codex dispatch.
 
@@ -647,7 +649,7 @@ for details and the upstream issue link.
 
 ## Project Status
 
-Current release: **v5.5.0**. See [CHANGELOG.md](./CHANGELOG.md) for full release history.
+Current release: **v6.0.0**. See [CHANGELOG.md](./CHANGELOG.md) for full release history.
 
 - Release history: [`CHANGELOG.md`](./CHANGELOG.md)
 - Contributor internals: [`docs/internals.md`](./docs/internals.md)

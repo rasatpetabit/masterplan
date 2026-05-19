@@ -1,10 +1,10 @@
 # Codex Host Suppression
 
-Loaded by the router only when `/masterplan` is hosted by Codex (slash path resolves to `/superpowers-masterplan:masterplan`).
+Loaded by the router only when `/masterplan` is hosted by Codex (slash path resolves to `/masterplan:masterplan`).
 
 ## When this file applies
 
-Codex hosts `/masterplan` through the `/superpowers-masterplan:masterplan` route. Detect this by examining the active system/developer prompt and tool contracts: if the session identifies the agent as Codex, exposes Codex-native tools (`apply_patch` / `update_plan` / `request_user_input`), or uses an `AGENTS.md` compatibility map rather than Claude Code's native tool names, set in-memory `codex_host_suppressed = true` and load this file.
+Codex hosts `/masterplan` through the `/masterplan:masterplan` route. Detect this by examining the active system/developer prompt and tool contracts: if the session identifies the agent as Codex, exposes Codex-native tools (`apply_patch` / `update_plan` / `request_user_input`), or uses an `AGENTS.md` compatibility map rather than Claude Code's native tool names, set in-memory `codex_host_suppressed = true` and load this file.
 
 ## Suppression rule
 

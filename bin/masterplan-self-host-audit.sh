@@ -115,7 +115,7 @@ check_drift() {
 
   local plugin_registry="${HOME}/.claude/plugins/installed_plugins.json"
   local plugin_registered=0
-  if [[ -f "${plugin_registry}" ]] && grep -q "superpowers-masterplan" "${plugin_registry}" 2>/dev/null; then
+  if [[ -f "${plugin_registry}" ]] && grep -qE '"(superpowers-)?masterplan"' "${plugin_registry}" 2>/dev/null; then
     plugin_registered=1
   fi
 
@@ -271,8 +271,8 @@ check_codex_packaging() {
     EXIT=1
     missing=1
   fi
-  if [[ ! -L "${REPO_ROOT}/plugins/superpowers-masterplan" ]]; then
-    echo "⚠️  Codex packaging — missing plugins/superpowers-masterplan symlink"
+  if [[ ! -L "${REPO_ROOT}/plugins/masterplan" ]]; then
+    echo "⚠️  Codex packaging — missing plugins/masterplan symlink"
     EXIT=1
     missing=1
   fi
@@ -295,8 +295,8 @@ check_codex_packaging() {
     marketplace_path="$(sed -n 's/.*"path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${codex_marketplace}" | head -1)"
   fi
 
-  if [[ "${codex_name}" != "superpowers-masterplan" ]]; then
-    echo "⚠️  .codex-plugin/plugin.json — name is '${codex_name}', expected 'superpowers-masterplan'"
+  if [[ "${codex_name}" != "masterplan" ]]; then
+    echo "⚠️  .codex-plugin/plugin.json — name is '${codex_name}', expected 'masterplan'"
     EXIT=1
   fi
 
@@ -310,18 +310,18 @@ check_codex_packaging() {
     EXIT=1
   fi
 
-  if [[ "${marketplace_plugin}" != "superpowers-masterplan" ]]; then
-    echo "⚠️  .agents/plugins/marketplace.json — plugin name is '${marketplace_plugin}', expected 'superpowers-masterplan'"
+  if [[ "${marketplace_plugin}" != "masterplan" ]]; then
+    echo "⚠️  .agents/plugins/marketplace.json — plugin name is '${marketplace_plugin}', expected 'masterplan'"
     EXIT=1
   fi
 
-  if [[ "${marketplace_source}" != "local" || "${marketplace_path}" != "./plugins/superpowers-masterplan" ]]; then
-    echo "⚠️  .agents/plugins/marketplace.json — source must be local path './plugins/superpowers-masterplan' (got source='${marketplace_source}', path='${marketplace_path}')"
+  if [[ "${marketplace_source}" != "local" || "${marketplace_path}" != "./plugins/masterplan" ]]; then
+    echo "⚠️  .agents/plugins/marketplace.json — source must be local path './plugins/masterplan' (got source='${marketplace_source}', path='${marketplace_path}')"
     EXIT=1
   fi
 
-  if ! grep -q '/superpowers-masterplan:masterplan' "${REPO_ROOT}/README.md" 2>/dev/null; then
-    echo "⚠️  README.md — missing documented Codex compatibility input /superpowers-masterplan:masterplan"
+  if ! grep -q '/masterplan:masterplan' "${REPO_ROOT}/README.md" 2>/dev/null; then
+    echo "⚠️  README.md — missing documented Codex compatibility input /masterplan:masterplan"
     EXIT=1
   fi
 

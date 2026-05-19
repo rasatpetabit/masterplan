@@ -1,4 +1,4 @@
-# superpowers-masterplan — internal documentation for LLM contributors
+# masterplan (repo: superpowers-masterplan) — internal documentation for LLM contributors
 
 **Audience:** Future LLMs (Claude, Codex, others) that pick up this codebase to develop features, fix bugs, debug stuck plans, or extend the orchestrator. The intent is that this document, plus `commands/masterplan.md` + `parts/step-*.md` (the v5.0 lazy-load phase prompts), and `docs/masterplan/<slug>/state.yml` run bundles, is enough to operate without reading deleted history (pre-v1.1.0 plans/specs were pruned in the v2.0.0 release).
 
@@ -38,7 +38,7 @@
 
 ## 1. Project orientation
 
-`superpowers-masterplan` ships one orchestrator command for Claude Code and Codex. In Claude Code the command is `/masterplan`; in Codex the portable invocation is a normal chat request such as `Use masterplan next` through the `masterplan` skill, with slash-style text accepted only when the host passes it through. The command orchestrates a complete development workflow — brainstorm a spec, plan the implementation, execute task-by-task, generate a retrospective when complete — by sequencing the upstream `superpowers` skills (`brainstorming`, `writing-plans`, `subagent-driven-development`, `executing-plans`, `using-git-worktrees`, `systematic-debugging`, `finishing-a-development-branch`).
+The `masterplan` plugin (repo: `superpowers-masterplan`) ships one orchestrator command for Claude Code and Codex, plus 12 per-verb `/masterplan:<verb>` shims for CLI autocomplete (v6.0.0+). In Claude Code the command is `/masterplan`; in Codex the portable invocation is a normal chat request such as `Use masterplan next` through the `masterplan` skill, with slash-style text accepted only when the host passes it through. The command orchestrates a complete development workflow — brainstorm a spec, plan the implementation, execute task-by-task, generate a retrospective when complete — by sequencing the upstream `superpowers` skills (`brainstorming`, `writing-plans`, `subagent-driven-development`, `executing-plans`, `using-git-worktrees`, `systematic-debugging`, `finishing-a-development-branch`).
 
 **It's a thin orchestrator, not a re-implementation.** The pipeline phases live in superpowers; `/masterplan` sequences them, persists state in `docs/masterplan/<slug>/state.yml`, and routes decisions (which model executes a task; whether Codex reviews; whether a wave dispatches in parallel; etc.).
 
@@ -58,7 +58,7 @@ superpowers-masterplan/
 ├── .agents/
 │   └── plugins/marketplace.json    # Codex marketplace catalog
 ├── plugins/
-│   └── superpowers-masterplan -> .. # Codex marketplace path symlink back to repo root
+│   └── masterplan -> ..             # Codex marketplace path symlink back to repo root
 ├── commands/
 │   └── masterplan.md               # router/dispatch (v5.0+; ≤20KB, enforced by doctor #36). Pre-v5 was a 2250-line monolith.
 ├── parts/                          # v5.0 lazy-load phase prompts (loaded on-demand by verb)
@@ -110,7 +110,7 @@ When the user types `/masterplan <args>` in Claude Code, the host loads `command
 
 Claude's SessionStart hook must keep the user-level `/masterplan` command as a
 compact shim (`<!-- masterplan-shim: v3 -->`) that delegates to
-`/superpowers-masterplan:masterplan $ARGUMENTS`. Do not symlink or copy the full
+`/masterplan:masterplan $ARGUMENTS`. Do not symlink or copy the full
 `commands/masterplan.md` into `~/.claude/commands/masterplan.md`; doing so makes
 startup payloads inherit the full orchestrator prompt before the user invokes
 the command.
@@ -548,7 +548,7 @@ If the orchestrator crashes mid-wave (after dispatch, before barrier returns), t
 
 ### Codex as a plugin host
 
-Codex support is packaged by `.codex-plugin/plugin.json`, `.agents/plugins/marketplace.json`, and `skills/masterplan/SKILL.md`. The Codex marketplace entry points at `./plugins/superpowers-masterplan`, a Git symlink back to the repo root, so the existing `commands/`, `skills/`, `bin/`, and docs stay single-source while satisfying Codex's plugin-path convention. Do not duplicate `commands/masterplan.md` under `plugins/`; if Codex packaging changes, update the packaging manifests and self-host audit instead.
+Codex support is packaged by `.codex-plugin/plugin.json`, `.agents/plugins/marketplace.json`, and `skills/masterplan/SKILL.md`. The Codex marketplace entry points at `./plugins/masterplan`, a Git symlink back to the repo root, so the existing `commands/`, `skills/`, `bin/`, and docs stay single-source while satisfying Codex's plugin-path convention. Do not duplicate `commands/masterplan.md` under `plugins/`; if Codex packaging changes, update the packaging manifests and self-host audit instead.
 
 The portable Codex contract is prompt exposure through the `masterplan` skill. New Codex sessions should list `masterplan` in available skills and should route normal chat requests such as `Use masterplan <args>`, slash-style text when the host supports it, or other natural-language masterplan requests through that skill. Native slash-command registration is host-dependent and must not be treated as the only smoke test. Codex-facing close-out and resume hints should say to send a normal Codex chat message such as `Use masterplan execute <state-path>` rather than Claude Code's `/masterplan ...` form or shell-looking `$masterplan ...`.
 

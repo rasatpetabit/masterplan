@@ -16,7 +16,7 @@ Before doing anything else — before config load, before git_state cache, befor
 
 1. `~/.claude/plugins/marketplaces/rasatpetabit-superpowers-masterplan/.claude-plugin/plugin.json` — canonical installed location
 2. `<cwd>/.claude-plugin/plugin.json` — dev checkout (works when CWD is the plugin source repo)
-3. `~/.claude/plugins/cache/rasatpetabit-superpowers-masterplan/superpowers-masterplan/<latest-version>/.claude-plugin/plugin.json` — last resort; glob `~/.claude/plugins/cache/rasatpetabit-superpowers-masterplan/superpowers-masterplan/*/` and pick the highest semver
+3. `~/.claude/plugins/cache/rasatpetabit-superpowers-masterplan/masterplan/<latest-version>/.claude-plugin/plugin.json` — last resort; glob `~/.claude/plugins/cache/rasatpetabit-superpowers-masterplan/masterplan/*/` and pick the highest semver
 
 **Step 2 — Render the sentinel.** Emit exactly one line in this shape, prefixed with `v` plus the parsed semver (no angle brackets, no placeholder tokens):
 

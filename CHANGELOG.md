@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.0.0] — 2026-05-19 — Plugin rename `superpowers-masterplan` → `masterplan` + 12 per-verb autocomplete shims
+
+**BREAKING:** plugin name renamed from `superpowers-masterplan` to `masterplan`. The Claude Code marketplace catalog name (`rasatpetabit-superpowers-masterplan`) and the GitHub repo path (`rasatpetabit/superpowers-masterplan`) are **unchanged**, so `/plugin marketplace add rasatpetabit/superpowers-masterplan` still works. Install command becomes `/plugin install masterplan@rasatpetabit-superpowers-masterplan`. Codex equivalent: `codex plugin marketplace add rasatpetabit/superpowers-masterplan` then install `masterplan`.
+
+### Added
+
+- **12 per-verb shim skills** (`skills/{full,brainstorm,plan,execute,retro,import,doctor,status,stats,clean,validate,next}/SKILL.md`) — each is a ~20-line delegate that surfaces in CLI autocomplete as `/masterplan:<verb>`. The shim's frontmatter description matches the canonical verb-routing prose at `commands/masterplan.md`; behavior delegates to the router and the same `parts/step-{0,a,b,c}.md` / `parts/doctor.md` / `parts/import.md` phase files. No new verbs, no new behavior — purely discoverability scaffolding mirroring the upstream `superpowers` plugin's pattern.
+
+### Changed (breaking)
+
+- `.claude-plugin/plugin.json` — `name: "masterplan"`, `version: "6.0.0"`.
+- `.claude-plugin/marketplace.json` — nested `plugins[0].name: "masterplan"`. Top-level marketplace `name: "rasatpetabit-superpowers-masterplan"` unchanged.
+- `.codex-plugin/plugin.json` — `name: "masterplan"`, `version: "6.0.0"`.
+- `.agents/plugins/marketplace.json` — `plugins[0].name: "masterplan"`, `plugins[0].source.path: "./plugins/masterplan"`.
+- `plugins/superpowers-masterplan` → `plugins/masterplan` (symlink renamed; target unchanged at `..`).
+- Codex host-detection path renamed from `/superpowers-masterplan:masterplan` to `/masterplan:masterplan` in `commands/masterplan.md`, `parts/codex-host.md`, `parts/step-0.md`, and `skills/masterplan/SKILL.md`.
+- `bin/masterplan-self-host-audit.sh` updated to match new plugin name across symlink, codex manifest, marketplace plugin, marketplace path, and README compat input checks. Marketplace catalog name + origin URL checks unchanged.
+- `hooks/hooks.json` SessionStart shim writes `/masterplan:masterplan $ARGUMENTS` (was `/superpowers-masterplan:masterplan ...`) into `~/.claude/commands/masterplan.md`.
+
+### Migration
+
+Existing installs are NOT auto-migrated. To upgrade:
+
+1. **Claude Code:** `/plugin marketplace update rasatpetabit-superpowers-masterplan`, then `/plugin uninstall superpowers-masterplan@rasatpetabit-superpowers-masterplan` followed by `/plugin install masterplan@rasatpetabit-superpowers-masterplan`. `/reload-plugins`.
+2. **Codex:** `codex plugin marketplace upgrade rasatpetabit-superpowers-masterplan`, then re-enable the `masterplan` plugin in your Codex plugin UI/config.
+3. **Existing run bundles** under `docs/masterplan/<slug>/state.yml` are unchanged and fully compatible — no data migration needed.
+4. **Auto-memory** for user-level `/masterplan` continues to apply; the user-level shim hook will rewrite the delegating shim on next SessionStart.
+
+### Notes
+
+- Doctor Check #30 (cross-manifest version drift) only validates `version`, not `name`. All 4 manifests were verified by hand at v6.0.0 to carry `name: "masterplan"` consistently. Extending #30 to validate `name` is a follow-up.
+- The reserved-verbs CC-1 guard at `commands/masterplan.md:11` is unchanged. New shims are additive — they expose existing verbs, do not introduce new ones.
+
 ## [5.5.0] — 2026-05-15 — Three-layer regression test suite: static battery + doctor-fixtures (9 checks, 24 fixtures) + e2e claude --print harness
 
 Minor release. Adds a complete, sequenced three-layer test suite across `tests/static/`, `tests/doctor-fixtures/`, and `tests/e2e/`. No orchestrator behavior changes — this is purely additive test infrastructure. 83 files changed, 906 insertions, 2 deletions.

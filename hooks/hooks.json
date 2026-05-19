@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "mkdir -p \"$HOME/.claude/commands\"; shim=\"$HOME/.claude/commands/masterplan.md\"; if [ ! -e \"$shim\" ] || [ -L \"$shim\" ] || grep -q 'You are the \\*\\*orchestrator\\*\\* for a brainstorm' \"$shim\" 2>/dev/null; then [ -L \"$shim\" ] && unlink \"$shim\"; { printf '%s\\n' '---'; printf '%s\\n' 'description: \"Delegate to the installed superpowers-masterplan plugin.\"'; printf '%s\\n' '---'; printf '%s\\n' '<!-- masterplan-shim: v3 -->'; printf '%s\\n' '/superpowers-masterplan:masterplan $ARGUMENTS'; } > \"$shim\"; fi",
+            "command": "mkdir -p \"$HOME/.claude/commands\"; shim=\"$HOME/.claude/commands/masterplan.md\"; if [ ! -e \"$shim\" ] || [ -L \"$shim\" ] || grep -q 'You are the \\*\\*orchestrator\\*\\* for a brainstorm' \"$shim\" 2>/dev/null; then [ -L \"$shim\" ] && unlink \"$shim\"; { printf '%s\\n' '---'; printf '%s\\n' 'description: \"Delegate to the installed masterplan plugin.\"'; printf '%s\\n' '---'; printf '%s\\n' '<!-- masterplan-shim: v3 -->'; printf '%s\\n' '/masterplan:masterplan $ARGUMENTS'; } > \"$shim\"; fi",
             "timeout": 2,
             "async": true
           }

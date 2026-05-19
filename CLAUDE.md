@@ -1,6 +1,6 @@
-# superpowers-masterplan — project context for Claude Code
+# masterplan — project context for Claude Code
 
-You are working in `superpowers-masterplan`, a Claude Code plugin that provides the `/masterplan` slash command. The plugin orchestrates a brainstorm → plan → execute development workflow on top of [`obra/superpowers`](https://github.com/obra/superpowers) skills.
+You are working in the `masterplan` plugin (repo `superpowers-masterplan`, plugin name `masterplan` as of v6.0.0), a Claude Code plugin that provides the `/masterplan` slash command and per-verb `/masterplan:<verb>` autocomplete shims. The plugin orchestrates a brainstorm → plan → execute development workflow on top of [`obra/superpowers`](https://github.com/obra/superpowers) skills.
 
 ## What this codebase IS
 
@@ -13,9 +13,10 @@ A single ~2150-line markdown orchestrator prompt at **`commands/masterplan.md`**
 - `.claude-plugin/marketplace.json` — marketplace catalog for direct `/plugin marketplace add rasatpetabit/superpowers-masterplan` installs
 - `.codex-plugin/plugin.json` — Codex plugin manifest for the same command surface
 - `.agents/plugins/marketplace.json` — Codex marketplace catalog for `codex plugin marketplace add rasatpetabit/superpowers-masterplan`
-- `plugins/superpowers-masterplan -> ..` — Codex marketplace path symlink back to the repo root
+- `plugins/masterplan -> ..` — Codex marketplace path symlink back to the repo root
+- `skills/<verb>/SKILL.md` — 12 thin verb-shim skills (full, brainstorm, plan, execute, retro, import, doctor, status, stats, clean, validate, next) exposing `/masterplan:<verb>` in CLI autocomplete; each delegates to `commands/masterplan.md`
 
-Codex can host the command through `/superpowers-masterplan:masterplan`. When it
+Codex can host the command through `/masterplan:masterplan`. When it
 does, the orchestrator must suppress the separate Claude Code
 `codex:codex-rescue` companion route for that invocation to avoid recursive
 Codex dispatch; persisted `codex.routing` / `codex.review` config remains for

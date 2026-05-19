@@ -1,6 +1,6 @@
 ---
 name: masterplan
-description: Use when the user invokes masterplan as a normal Codex chat request, $masterplan, /masterplan, /superpowers-masterplan:masterplan, asks to brainstorm, plan, execute, resume, import, doctor, status, next, retro, or clean masterplan work, or asks about existing docs/masterplan run bundles created by Claude.
+description: Use when the user invokes masterplan as a normal Codex chat request, $masterplan, /masterplan, /masterplan:masterplan, asks to brainstorm, plan, execute, resume, import, doctor, status, next, retro, or clean masterplan work, or asks about existing docs/masterplan run bundles created by Claude.
 ---
 
 # Codex entrypoint for Superpowers Masterplan
@@ -79,8 +79,8 @@ Treat these user inputs as this skill:
   form because Codex TUI shell-command mode sends it to Bash
 - `/masterplan`
 - `/masterplan <args>`
-- `/superpowers-masterplan:masterplan`
-- `/superpowers-masterplan:masterplan <args>`
+- `/masterplan:masterplan`
+- `/masterplan:masterplan <args>`
 - natural-language requests to use, resume, check, import, or continue
   masterplan work.
 
