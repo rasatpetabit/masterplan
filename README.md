@@ -124,11 +124,34 @@ codex plugin marketplace add rasatpetabit/superpowers-masterplan
 *Codex hosts the orchestrator under `/superpowers-masterplan:masterplan`. See [parts/codex-host.md](parts/codex-host.md) for Codex-specific suppression and behavior overrides.*
 
 ### Optional Telemetry Hook
-To enable `/masterplan stats` and roll-up metrics, add the telemetry hook as a global Stop hook in your `~/.claude/settings.json`:
-```json
-// Wire hooks/masterplan-telemetry.sh into your global configuration.
+To enable `/masterplan stats` and roll-up metrics, copy the hook into your global hooks directory and wire it as a Stop hook in `~/.claude/settings.json`:
+
+```bash
+mkdir -p ~/.claude/hooks
+cp hooks/masterplan-telemetry.sh ~/.claude/hooks/
+chmod +x ~/.claude/hooks/masterplan-telemetry.sh
 ```
-*For signal definitions and opt-out specifications, see [docs/design/telemetry-signals.md](docs/design/telemetry-signals.md).*
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/hooks/masterplan-telemetry.sh\"",
+            "timeout": 3,
+            "async": true
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+*For signal definitions and opt-out specifications, see [docs/design/telemetry-signals.md](docs/design/telemetry-signals.md). For the full install reference (Claude Desktop, manual filesystem install, Codex CLI), see [docs/install.md](docs/install.md).*
 
 ---
 

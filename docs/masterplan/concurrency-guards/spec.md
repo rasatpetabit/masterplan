@@ -20,7 +20,7 @@ Both gaps are silent today: no anomaly event fires, no doctor check catches dive
 
 - **Guard D — Owner sentinel (`worktree:` + `owner: {host, pid, started_at, last_heartbeat}` in state.yml).** Captures active-peer-session detection and cross-machine collisions. Requires schema bump (v5.0 → v5.1), bundle migration, doctor-check additions, and a "force-take" UI for stale-lock recovery. Defer until B+C in production reveal incidents B+C cannot catch.
 
-- **Guard A — Worktree-scoped paths (`docs/masterplan/<worktree-id>/<slug>/state.yml`).** Rejected: breaks every existing run bundle, breaks portability across machines (worktree paths are not stable across `/path/to/...` on epyc1 vs epyc2), couples the user's intentional slug to an accidental property of which worktree the run started in.
+- **Guard A — Worktree-scoped paths (`docs/masterplan/<worktree-id>/<slug>/state.yml`).** Rejected: breaks every existing run bundle, breaks portability across machines (worktree paths are not stable across hosts with different `/path/to/...` layouts), couples the user's intentional slug to an accidental property of which worktree the run started in.
 
 - **Cross-worktree lock.** Out of scope. `flock` on a path inside a worktree only locks that worktree's copy of the file. A cross-worktree mutex would require a shared lock surface (e.g., `.git/masterplan.lock`), which conflicts with the run-bundle-as-source-of-truth principle (CD-7). Guard B prevents the *creation* collision; Guard D would be the right answer for the *active-peer* collision if it becomes a real incident.
 

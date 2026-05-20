@@ -1792,7 +1792,7 @@ def parse_args(argv):
     fmt = "table"
     claude_dir = os.environ.get("CLAUDE_PROJECTS_DIR", str(Path.home() / ".claude" / "projects"))
     codex_dir = os.environ.get("CODEX_SESSIONS_DIR", str(Path.home() / ".codex" / "sessions"))
-    repo_roots = os.environ.get("MASTERPLAN_REPO_ROOTS", str(Path.home() / "dev"))
+    repo_roots = os.environ.get("MASTERPLAN_REPO_ROOTS", str(Path(__file__).resolve().parent.parent.parent))
     codex_auth_path = os.environ.get("CODEX_AUTH_PATH", str(Path.home() / ".codex" / "auth.json"))
 
     for arg in argv:

@@ -203,7 +203,7 @@ auto_expected=$(autonomy_expects_auto_proceed "$autonomy" "$halt_mode" "$pgid")
 
 The detectors themselves MUST NOT silently fail. Three defenses per the framework design:
 
-1. **Hook-internal error log.** Each detector function in Section 9 runs inside a `set +e` block wrapped by `trap`. Any non-zero exit from a detector is logged to `~/.claude/projects/-home-ras-dev-superpowers-masterplan/hook-errors.log` with the failing detector name, the slug, and stderr capture. Per-turn telemetry continues regardless.
+1. **Hook-internal error log.** Each detector function in Section 9 runs inside a `set +e` block wrapped by `trap`. Any non-zero exit from a detector is logged to `~/.claude/projects/<slugified-worktree>/hook-errors.log` (where `<slugified-worktree>` is the active repo's absolute path with `/` replaced by `-`, matching Claude Code's transcript storage encoding) with the failing detector name, the slug, and stderr capture. Per-turn telemetry continues regardless.
 
 2. **Local-first persistence.** Anomaly records land in `<plan>-anomalies.jsonl` (inside the bundle directory) BEFORE any `gh` call. The local file is canonical; GitHub is a mirror. `gh` failure (rate limit, auth lapse, network) writes the record to `<plan>-anomalies-pending-upload.jsonl` for later flushing via `bin/masterplan-anomaly-flush.sh`.
 
