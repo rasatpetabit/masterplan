@@ -1,11 +1,8 @@
 # AGENTS.md — `superpowers-masterplan`
 
-Project-specific agent behavior lives in `CLAUDE.md`. If your environment also
-uses an org-wide AI-agent guide (e.g., `~/.claude/AGENTS.md` for Claude Code,
-or `~/.codex/AGENTS.md` for Codex), this file layers on top of it.
+All project context — codebase layout, anti-patterns, operating principles,
+canonical reading order — lives in [`CLAUDE.md`](./CLAUDE.md). Read that file
+first. AGENTS.md exists for tooling that conventionally looks for `AGENTS.md`
+(Codex CLI, Cursor, etc.); the content is the same.
 
-- Domain: `meta`
-
-## Repo-specific quirks
-<!-- handbook:repo-quirks:start -->
-<!-- handbook:repo-quirks:end -->
+@CLAUDE.md
