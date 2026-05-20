@@ -20,26 +20,30 @@ Multi-hour software engineering tasks are notoriously fragile for AI assistants.
 
 ---
 
-## 2. Hierarchical Delegation (Subagent Architecture)
+## 2. Hierarchical Delegation (Corporate Department Analogy)
 
-To enforce this context isolation and keep the main orchestrator cheap, fast, and sharp, **the orchestrator never executes raw tasks itself**. Instead, it delegates all physical work—reading files, writing code, executing tests, or scanning documentation—to short-lived, specialized subagents.
+To enforce strict context isolation and keep execution fast, cheap, and precise, Masterplan operates like a well-structured corporation. **Senior leadership never rolls up their sleeves to do raw labor**—doing so would clutter their desks, overwhelm their cognitive bandwidth, and cause them to lose sight of the roadmap.
+
+Instead, Masterplan structures its work through a highly disciplined hierarchy of specialized agents:
 
 ```mermaid
 graph TD
-    Orchestrator[Orchestrator: High-Level Planner / Opus or Sonnet] -->|1. Dispatch Bounded Brief| Subagent[Subagent: Fresh Context Window / Sonnet, Haiku, or Codex]
-    Subagent -->|2. Runs Task & Verifies| Filesystem[(Filesystem & Git)]
-    Subagent -->|3. Digest <= 5KB| Orchestrator
+    CEO[Executive Orchestrator: CEO / Roadmap & Strategy / Opus or Sonnet] -->|1. Issues Precise Work Order| Agent[Specialized Department: Temporary Subagent / Sonnet, Haiku, or Codex]
+    Agent -->|2. Executes & Verifies Work| Workspace[(Project Workspace & Git)]
+    Agent -->|3. Submits 1-Page Executive Summary| CEO
 ```
 
-### The Bounded Brief Contract
-Each subagent is spawned with a fresh context window and a strict **Dispatch Brief** defining:
-1. **Goal:** A single, action-oriented sentence.
-2. **Inputs:** An explicit list of files or data to read.
-3. **Allowed Scope:** The exact files/paths it is allowed to modify.
-4. **Constraints:** Execution rules, autonomy levels, and budget limits.
-5. **Return Shape:** The precise structure of its response.
+### Roles and Hierarchical Structure
 
-When the subagent completes its task, it returns only a **Digest** (≤ 5,120 bytes) containing essential results (e.g., commit SHAs, test passes, critical anomalies). Raw logs and drafts are discarded, keeping the orchestrator's context perfectly clean.
+*   **The Executive Orchestrator (CEO / Senior Leadership):** Manages the big-picture implementation plan, coordinates waves of tasks, manages high-level logic, and handles critical pivots or user prompts. The CEO remains high-altitude and never reads hundreds of lines of code or executes shell commands directly to keep their "desk" (context window) pristine.
+*   **Specialized Departments (Subagents):** Short-lived, highly focused temporary workers spawned to execute a single, isolated assignment (e.g., a file refactoring, a dependency audit, or a test run). Once their specific task is done, the department is disbanded.
+
+### Strict Desk Hygiene: The Work Order & Executive Summary
+
+To keep the CEO's desk perfectly organized and free of distractions, the delegation follows a strict communication protocol:
+
+1.  **The Work Order (Dispatch Brief):** The CEO hands the subagent a clear, non-negotiable set of instructions containing the precise **Goal**, the explicit **Inputs** it is allowed to read, the **Scope** of files it is permitted to modify, and strict **Budget/Autonomy Constraints**.
+2.  **The Executive Summary (Digest):** When the subagent finishes, it does not dump all its intermediate drafts, scratchpads, and raw tool outputs onto the CEO's desk. Instead, it packages its results into a concise **Executive Summary (Digest ≤ 5KB)** detailing the key achievements, commit SHAs, and test outcomes. All raw intermediate noise is discarded, keeping the CEO's context window perfectly clean and ready for the next strategic decision.
 
 ### Model Routing: Right Tool, Right Cost
 Masterplan automatically selects the optimal model for each step, keeping your API bill as small as possible:
