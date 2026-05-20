@@ -22,6 +22,8 @@ Long inline sessions degrade two ways. **Correctness:** even on a 200k-token win
 
 ## Subagent dispatch & context-window management
 
+Forward references in this section — *wave*, *digest*, *dispatch brief*, *autonomy level* — are all defined in §4 (Core concepts). Here's how they fit together in practice.
+
 The architecture's most consequential design choice: **the orchestrator never executes substantive work itself**. Every step that would otherwise bloat its context — file reading, code generation, library-doc lookups, verification, log triage — fans out to a bounded subagent that gets a fresh context window, a single dispatch brief (goal, inputs, allowed scope, constraints, return shape), and returns only a *digest* (≤5120 bytes: commit SHA, verify result, short note). The orchestrator never sees raw subagent output.
 
 Subagents are tiered explicitly by task class. `/masterplan` pays for the model the work actually needs, not whatever the parent happens to be running:
@@ -40,7 +42,7 @@ Activity records carry only what the orchestrator needs to resume — typically 
 
 ```jsonl
 {"ts":"2026-05-16T16:01:00Z","event":"wave_routing_summary","wave":1,"members_by_route":{"codex":3,"inline_review":0,"inline_no_review":0},"members":["T1","T2","T3"]}
-{"ts":"2026-05-16T16:10:00Z","event":"wave_task_completed","wave":1,"task":"T1","commit":"80b96d5","dispatched_by":"codex+claude-fixup","note":"codex sandbox could not commit (.git read-only); inline rescue normalized heading"}
+{"ts":"2026-05-16T16:10:00Z","event":"wave_task_completed","wave":1,"task":"T1","commit":"80b96d5","dispatched_by":"codex"}
 {"ts":"2026-05-16T16:10:00Z","event":"wave_task_completed","wave":1,"task":"T2","commit":"0e0ce06","dispatched_by":"codex"}
 {"ts":"2026-05-16T16:10:00Z","event":"wave_task_completed","wave":1,"task":"T3","commit":"322dac8","dispatched_by":"codex"}
 {"ts":"2026-05-16T16:10:00Z","event":"wave_complete","wave":1,"members":["T1","T2","T3"],"commits":["80b96d5","0e0ce06","322dac8"]}
@@ -82,7 +84,7 @@ Requires Claude Code or Codex CLI; depends on the upstream `superpowers` plugin 
 
 **Phase + gate** — the run lifecycle moves through four phases: B0–B1 (brainstorm), B2–B3 (plan), C1–C6 (execute), R (retro). Gates are validators at phase boundaries that block forward progress until their conditions are met; under `gated` autonomy most gates pause for user confirmation, under `loose` and `full` they auto-advance when conditions are satisfied. See [`docs/internals.md`](./docs/internals.md).
 
-**Wave** — N tasks from the same `**parallel-group:**` annotation dispatched as one batch in a single assistant message. Introduced in v2.0.0. As of v5.8.0, each wave concludes with N parallel per-member Codex REVIEW dispatches (`contract_id: codex.review_wave_member_v1`) rather than skipping review entirely. See [`parts/contracts/agent-dispatch.md`](./parts/contracts/agent-dispatch.md).
+**Wave** — N tasks from the same `**parallel-group:**` annotation dispatched as one batch in a single assistant message. Introduced in v2.0.0; per-member review gating refined in v5.8.0 (see *Asymmetric review* below and §7). See [`parts/contracts/agent-dispatch.md`](./parts/contracts/agent-dispatch.md).
 
 **Autonomy levels** — `gated` (default) | `loose` | `full`. Controls which gates fire interactively: `gated` prompts at every phase boundary; `loose` auto-advances through successful gates; `full` suppresses even mid-task confirmation prompts. Set via `.masterplan.yaml`, CLI flag, or per-run in `state.yml`. See [`docs/config-schema.md`](./docs/config-schema.md).
 
