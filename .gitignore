@@ -12,6 +12,7 @@ __pycache__/
 .agents/
 .codex-plugin/
 .antigravitycli/
+.claude-plugin/
 
 # Claude Code session-local state (per-user settings + scheduled-task locks).
 # To later track a project-shared file under .claude/, switch this rule to
