@@ -105,7 +105,7 @@ Resolved in-session against the spec's own constraints (CD-2, CD-3, CD-7, CD-9) 
 
 ### D1 — Resume-peer `cd` is silent (no confirmation prompt)
 
-Mirror Step A's existing silent-cd behavior (`parts/step-a.md:29`). The user has already picked "Resume the peer in <path>" from the AUQ — adding a second confirmation diverges from established flow without adding safety. Surface the destination path in the `AskUserQuestion` option label itself (e.g., "Resume the peer in `/home/ras/dev/sp-mp-wt2`") so the user sees the target before clicking.
+Mirror Step A's existing silent-cd behavior (`parts/step-a.md:29`). The user has already picked "Resume the peer in <path>" from the AUQ — adding a second confirmation diverges from established flow without adding safety. Surface the destination path in the `AskUserQuestion` option label itself (e.g., "Resume the peer in `~/dev/sp-mp-wt2`") so the user sees the target before clicking.
 
 ### D2 — Stale peer worktree is a 4th AUQ option
 

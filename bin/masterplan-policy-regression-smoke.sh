@@ -228,11 +228,11 @@ last_activity: 2026-05-15T00:00:00Z' '### Task 1
 
 # Run the audit module directly via Python on the synthetic dir.
 out_json="$smoke_root/audit.json"
-python3 - "$smoke_root" "$out_json" <<'PY'
+python3 - "$smoke_root" "$out_json" "$repo_root" <<'PY'
 import json
 import sys
 from pathlib import Path
-sys.path.insert(0, "/home/ras/dev/superpowers-masterplan/lib")
+sys.path.insert(0, sys.argv[3] + "/lib")
 import masterplan_session_audit as M
 
 root = Path(sys.argv[1])

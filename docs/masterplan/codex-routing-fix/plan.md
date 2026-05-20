@@ -1,6 +1,6 @@
 # Implementation plan — codex-routing-fix
 
-Source spec: `brainstorm.md` (approved via ExitPlanMode from `/home/ras/.claude/plans/steady-sparking-nygaard.md`).
+Source spec: `brainstorm.md` (approved via ExitPlanMode from `~/.claude/plans/steady-sparking-nygaard.md`).
 
 **Autonomy:** loose. **Complexity:** medium. **Run bundle:** `docs/masterplan/codex-routing-fix/`.
 

@@ -203,7 +203,7 @@ Patch release. Fixes a pre-existing bug in `parts/doctor.md` Check #41 bash (int
 
 ### Fixed
 
-- **Check #41 grep-count fallback pattern.** The idiom `grep -cE 'foo' "$events" 2>/dev/null || echo 0` produced `"0\n0"` whenever `$events` was readable with zero matches: `grep -c` always prints `"0"` and exits 1 when there are zero matches, so the `|| echo 0` fallback fired and appended a second `"0"`. The resulting two-line string then failed the downstream `[ "$var" -eq 0 ]` integer test with a `bash: [: 0\n0: integer expected` warning to stderr, and the if-branch was silently skipped. Net effect: sub-fire (a) (silent override without evidence) only fired when `events.jsonl` was entirely unreadable — never on the intended common case of "file exists with zero degraded events". Sub-fire (b) was similarly broken; new sub-fire (c) inherited the pattern in v5.3.0 but happened to be guarded by an explicit `[ -r "$events" ]` so it tripped the same bug only when `$events` was readable AND had zero matches of the target patterns. Fix: drop the `|| echo 0` fallback (since `grep -c` always prints a number when the file is readable), guard the per-bundle loop with `[ -r "$events" ] || continue` so unreadable bundles are skipped instead of misinterpreted, and use `${var:-0}` parameter expansion in the integer tests as a belt-and-suspenders default for any future caller. Found during retroactive Doctor #41 lint sweep across 426 bundles in `/home/ras/dev/*` immediately after the v5.3.0 release.
+- **Check #41 grep-count fallback pattern.** The idiom `grep -cE 'foo' "$events" 2>/dev/null || echo 0` produced `"0\n0"` whenever `$events` was readable with zero matches: `grep -c` always prints `"0"` and exits 1 when there are zero matches, so the `|| echo 0` fallback fired and appended a second `"0"`. The resulting two-line string then failed the downstream `[ "$var" -eq 0 ]` integer test with a `bash: [: 0\n0: integer expected` warning to stderr, and the if-branch was silently skipped. Net effect: sub-fire (a) (silent override without evidence) only fired when `events.jsonl` was entirely unreadable — never on the intended common case of "file exists with zero degraded events". Sub-fire (b) was similarly broken; new sub-fire (c) inherited the pattern in v5.3.0 but happened to be guarded by an explicit `[ -r "$events" ]` so it tripped the same bug only when `$events` was readable AND had zero matches of the target patterns. Fix: drop the `|| echo 0` fallback (since `grep -c` always prints a number when the file is readable), guard the per-bundle loop with `[ -r "$events" ] || continue` so unreadable bundles are skipped instead of misinterpreted, and use `${var:-0}` parameter expansion in the integer tests as a belt-and-suspenders default for any future caller. Found during retroactive Doctor #41 lint sweep across 426 bundles in `~/dev/*` immediately after the v5.3.0 release.
 
 ### Verification
 
@@ -408,7 +408,7 @@ Per direct user feedback: "even the most basic of `/loop /masterplan next`s fail
 
 ### Fixed
 - **Doctor check #31** (`per_autonomy_gate_condition_consistency`): update grep target from `commands/masterplan.md` to `parts/step-b.md` (gates moved during v5.0 lazy-load extraction); drop stale `L1286`/`L1360` line-number references from all three spec locations (parallelization preamble, check table row, check body).
-- **6 archived bundle `state.yml` files** had stale `worktree:` path (`/home/ras/dev/…`) from pre-migration home directory; `worktree_disposition: missing` was absent; `stop_reason`/`critical_error` fields missing. All six repaired: `auto-compact-nudge-fixes`, `cd-9-enforcement`, `complexity-levels`, `intra-plan-parallelism`, `subagent-execution-hardening`, `v2.3.0-cost-leak-recurrence`.
+- **6 archived bundle `state.yml` files** had stale `worktree:` path (`~/dev/…`) from pre-migration home directory; `worktree_disposition: missing` was absent; `stop_reason`/`critical_error` fields missing. All six repaired: `auto-compact-nudge-fixes`, `cd-9-enforcement`, `complexity-levels`, `intra-plan-parallelism`, `subagent-execution-hardening`, `v2.3.0-cost-leak-recurrence`.
 
 ### Added
 - **`docs/masterplan/masterplan-taskcreate-projection/`** run bundle: imported from legacy spec + plan (2026-05-12 P4 design artifacts). Status `completed`; implementation lives in `p4-suppression-fix` bundle. Deferred smoke test tracked in `p4-suppression-smoke`.
@@ -774,7 +774,7 @@ Run bundle for the redesign work: `docs/masterplan/v4-lifecycle-redesign/`.
     Read tool call is mandatory — do not skip it, do not paraphrase its
     result, do not infer a version from session memory."
   - Concrete rendered example using a real semver
-    (`→ /masterplan v3.3.0 args: 'doctor --fix' cwd: /home/grojas/dev/optoe-ng`)
+    (`→ /masterplan v3.3.0 args: 'doctor --fix' cwd: ~/dev/optoe-ng`)
     so the LLM has a pattern to emit, not a template to render literally.
   - Explicit prohibition: the version slot must be either a parsed semver or
     the literal six-character string `vUNKNOWN`. `v?`, `v??`, `vTBD`,
@@ -1974,7 +1974,7 @@ install path.
 - **Activity log archive description** overstated `/masterplan doctor`'s involvement — doctor only flags orphan archives via check #11, doesn't read content. Removed the misleading "and by `/masterplan doctor`" clause.
 - **Telemetry hook had a dead `out_file` assignment** (line 80 was overwritten by line 82) with a comment that described line 82's behavior, not line 80's. Removed the dead line and the orphan comment.
 - **`masterplan-detect` skill body** described two detection execution paths (Claude Code `Glob` tool vs shell `fd` snippets) as a single mechanism. Reframed as two layers: Glob is the always-available skill-tool path; the `fd` snippets in **Detection commands** give richer matching where `fd` is installed.
-- **Historical status-file example** had a real `/home/ras/...` worktree path. Anonymized to `/home/you/...` to match the README's status-file example convention.
+- **Historical status-file example** had a real `~/...` worktree path. Anonymized to `~/...` to match the README's status-file example convention.
 - **README hook section** softened to make the Linux-only smoke-test gap explicit: portable code paths are documented, but the macOS path hasn't been verified — readers are pointed at GitHub issues if telemetry doesn't land.
 
 ### Migration notes

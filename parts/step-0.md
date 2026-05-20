@@ -21,7 +21,7 @@ Before doing anything else — before config load, before git_state cache, befor
 **Step 2 — Render the sentinel.** Emit exactly one line in this shape, prefixed with `v` plus the parsed semver (no angle brackets, no placeholder tokens):
 
 ```
-→ /masterplan v3.3.0 args: 'doctor --fix' cwd: /home/grojas/dev/optoe-ng
+→ /masterplan v3.3.0 args: 'doctor --fix' cwd: ~/dev/optoe-ng
 ```
 
 The shape is `→ /masterplan v<parsed-semver> args: '<truncated-args-or-(empty)>' cwd: <repo-root-or-pwd>`. Substitute the actual parsed semver (e.g. `v3.3.0`, `v3.2.9`), the actual `$ARGUMENTS` string (or the literal text `(empty)` when no arguments), and the actual cwd.
