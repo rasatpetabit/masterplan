@@ -1,219 +1,46 @@
 # superpowers-masterplan
 
-**Masterplan** — a Claude Code plugin (built on
-[`obra/superpowers`](https://github.com/obra/superpowers)) for long-term
-brainstorm → plan → execute workflows that survive session boundaries and stay
-on track for multi-week projects.
+> A Claude Code & Codex CLI plugin for multi-hour engineering work — durable run bundles, four-phase brainstorm/plan/execute/retro lifecycle, wave-mode parallel dispatch, and asymmetric Codex review.
 
-> **For LLMs working on this repo:** start with [`CLAUDE.md`](./CLAUDE.md),
-> then use [`docs/internals.md`](./docs/internals.md) for architecture,
-> dispatch model, status schema, CD rules, doctor checks, recipes, and
-> contributor pitfalls. The orchestrator source is
-> [`commands/masterplan.md`](./commands/masterplan.md).
+**Version:** 5.8.0 · **License:** MIT · **Works with:** Claude Code, Codex CLI
 
-## Key benefits
+---
 
-### Long-term planning consistency
+## What this is
 
-- Every plan writes to a well-defined run bundle under `docs/masterplan/<slug>/`.
-  `state.yml` is the single source of truth — current phase, current task,
-  next action, artifact paths, pending structured gate, and any background
-  dispatch marker. `events.jsonl`
-  carries the activity log. `/masterplan` will find existing plans and
-  documentation and bring them into conformity with the masterplan format.
-- Successful completion now checks live git status before marking the run
-  complete, writes the retrospective into the same run bundle, archives the run
-  state, and safely archives migrated legacy/orphan state by default. Completed
-  work should not leave plan/spec/retro fragments behind.
-- Resume any in-flight work from `state.yml` plus bundled artifacts. No
-  conversation context required, no compaction loss, no "what was I doing
-  again?"
-- Bare `/masterplan` and Codex `Use masterplan` invocations are loop-first: they
-  re-render pending structured gates, poll recorded background work, recover
-  critical errors explicitly, or continue the only unambiguous in-progress plan
-  without requiring the operator to track state manually.
-- Survives `/compact`, fresh sessions, and handoff between agents — pass a
-  plan to Codex or another Claude session and they pick up exactly where the
-  last one stopped.
-- Each plan runs in its own git worktree on its own branch, so parallel plans
-  don't collide.
+`superpowers-masterplan` is a Claude Code (and Codex CLI) plugin that runs multi-hour software-engineering tasks as a four-phase, durable workflow: **brainstorm → plan → execute → retro**. Each run lives in a self-contained on-disk *run bundle* (`docs/masterplan/<slug>/`) holding `state.yml`, `spec.md`, `plan.md`, `events.jsonl`, and `retro.md`. The bundle — not your conversation context — is the source of truth, so a `/clear`, a session compaction, an IDE crash, or switching from Claude Code to Codex CLI mid-run all resume cleanly: `/masterplan` (no args) lists in-progress slugs and picks up exactly where the events log left off.
 
-### Concurrency safety
+It is built for engineers running multi-hour work that wants three things at once: **auditability** (every dispatch, every wave, every Codex/Claude decision is appended to `events.jsonl` as it happens), **parallelism** (wave dispatch fans N independent tasks to N subagents in one assistant turn), and **asymmetric trust** (Codex-produced work is annotated `decision_source: codex-produced` and skipped by Codex review — the model doesn't grade its own homework). If you want a one-shot copilot, you don't need this; if you want a workflow that can survive a 6-hour task and a model swap, you do.
 
-**Concurrency safety (Guard B — slug uniqueness).** Before creating a new run bundle, masterplan checks whether the same slug is already in progress in any other git worktree. If a collision is found, you're prompted to: resume the peer session (recommended), auto-suffix the slug (e.g., `deploy-x` → `deploy-x-2`, globally across all worktrees per D3), or abort. The `import` flow fires the same check; `--from-spec=<path>` does not (it resumes an existing bundle by definition).
+Why durability matters in practice: a long-running coding task that lives only in the chat window is one accidental `/clear`, one context-window compaction, or one host crash away from being unrecoverable — and the loss isn't just "the code I was about to write," it's the *plan* (which tasks were already committed, which wave was in flight, which dispatch was paired with which Codex/Claude decision). The masterplan bundle keeps every one of those facts on disk in canonical form: tasks in `plan.md`, completion + verification + review outcomes appended to `events.jsonl`, current cursor in `state.yml`, post-mortem in `retro.md`. Resume is `/masterplan` with no arguments; the orchestrator reads the events log, recomputes the wave cursor, and continues. The same bundle layout is portable between Claude Code and Codex CLI: a run started under `/superpowers-masterplan:masterplan` on one host can be picked up under the other host without rewriting state, which is the only reason the asymmetric review and aggressive Codex routing in §7 are safe to enable by default.
 
-### Anchored brainstorming
+## 30-second example
 
-- Before brainstorming writes a spec, `/masterplan` reads cheap repo truth
-  (`AGENTS.md`, `CLAUDE.md`, `WORKLOG.md`, recent run bundles, and the obvious
-  file layout), classifies the topic as feature ideation, implementation
-  design, audit/review, deferred task, execution resume, or unclear, and
-  persists that `brainstorm_anchor` in `state.yml`.
-- Audit/review prompts, deferred plan tasks, and cross-repo scope get structured
-  gates before spec writing. Yocto layer repos carry explicit ownership
-  boundaries, so a distro/image policy review does not silently turn into BSP,
-  app recipe, builder, or kas-composition work.
-- Every spec-creating kickoff runs an adaptive interview before approaches or
-  spec writing. Question depth follows resolved complexity, issue seriousness,
-  and how much repo evidence already answers.
-- Specs include an `Intent Anchor` / `Scope Boundary` section plus the
-  verification ceiling, which keeps downstream planning honest about what can
-  be proven locally versus on a build host or runtime system.
+A real `v5.8.0` run lives at `docs/masterplan/codex-routing-fix/`. The bundle was bootstrapped from approved spec `steady-sparking-nygaard.md` after `ExitPlanMode` (the plan-approval gate), with the orchestrator isolating a worktree (`.worktrees/codex-routing-fix`) and writing a 15-task plan grouped into five waves. The first four events in `events.jsonl` record exactly that hand-off:
 
-### Token efficiency
-
-- The orchestrator never does substantive work itself — it dispatches to
-  bounded subagents whose context never bleeds back into the orchestrator's
-  window.
-- Explicit model routing per task type: Haiku for mechanical extraction
-  (status parsing, log scraping, file enumeration), Sonnet for general
-  implementation, Opus reserved for genuine deep reasoning.
-- Wave dispatch runs independent tasks in parallel subagents, each with
-  isolated context, returning only digested results.
-- Orchestrator context stays clean for sequencing decisions — no raw file
-  contents, no verification dumps, no transcript noise.
-- **Native task-list integration (Claude Code).** Each plan's tasks are projected into the harness TaskCreate ledger for wave-progress visibility. State.yml stays canonical; the projection is rebuilt on session start. v4.1.1 adds per-state-write `TaskUpdate` priming that suppresses the TaskCreate reminder during Step C execution; other phases keep the reminder. Codex hosts are a no-op.
-
-### Cross-checking via Codex
-
-- Optional cross-model review on every commit — catches what same-family
-  review misses. Claude reviewing Claude has blind spots that GPT-5 doesn't
-  share, and vice versa.
-- Codex routing for bounded, well-defined tasks hands subtasks to the model
-  best suited to them, not just whichever one is loaded.
-- Graceful degrade: if the Codex plugin isn't installed, runs Claude-only
-  with a one-line warning. Never fails a run on a missing optional dependency.
-
-Deep design rationale lives in [`docs/internals.md`](./docs/internals.md).
-
-## Subagent dispatch model
-
-The most important design decision: **every substantive piece of work goes
-to a fresh subagent, and only digested results come back to the
-orchestrator**. A multi-task plan run in a single Claude session bloats
-context fast — failed experiments, big diffs, library docs, verification
-dumps. By task 10, the orchestrator is reasoning on cluttered, partially-
-stale state and quality drops. `/masterplan` solves this structurally.
-
-The dispatch model:
-
-| Phase | Model | Why |
-|---|---|---|
-| Discovery scans (Step I1) | Haiku | Mechanical extraction, parallel, bounded |
-| Per-task implementation | Sonnet | The default workhorse, via `superpowers:subagent-driven-development` |
-| Conversion / rewriting | Sonnet | Generation, not just extraction |
-| Architecture, ambiguous specs | Opus | Reserved for tasks that genuinely need deep reasoning |
-| Small well-defined coding tasks | Codex | Per the routing toggle, via `codex:codex-rescue` |
-| Asymmetric review of inline work | Codex (review mode) | When `codex_review: on`, fresh-eyes review of Sonnet/Claude diffs against the spec |
-| Completion inference | Haiku | One per task chunk, parallel, bounded |
-
-Every subagent gets a **bounded brief**: explicit goal, inputs, allowed
-scope, constraints, return shape. It doesn't inherit session history, and
-the orchestrator doesn't see its raw output — just a digest.
-
-Activity log entries illustrate the digest pattern:
-
-```text
-2026-04-22T16:14 task "Implement memory session adapter" complete, commit f4e5d6c [codex] (verify: 24 passed)
+```jsonl
+{"ts":"2026-05-16T16:00:00Z","event":"bundle_bootstrapped","slug":"codex-routing-fix","source_spec":"steady-sparking-nygaard.md","dispatched_by":"user"}
+{"ts":"2026-05-16T16:00:00Z","event":"worktree_isolated","branch":"codex-routing-fix","path":".worktrees/codex-routing-fix","reason":"self-modification of parts/step-c.md and parts/step-b.md while orchestrator reads them"}
+{"ts":"2026-05-16T16:00:00Z","event":"plan_written","autonomy":"loose","complexity":"medium","task_count":15,"wave_plan":"wave1=T1-T3 parallel-codex, wave2=T4-T7 serial-codex, wave3=T8 inline, wave4=T9-T12 batched-codex, wave5=T13-T15 inline"}
+{"ts":"2026-05-16T16:00:00Z","event":"phase_transition","from":"step-b","to":"step-c","reason":"plan approved via ExitPlanMode pre-bundle; bootstrap complete"}
 ```
 
-Enough to reconstruct state. Nothing more.
+Step C entry produced an eligibility cache (which tasks are safe for Codex EXEC vs. which require an inline Claude subagent), then emitted a wave routing summary and dispatched all three wave-1 members in a single assistant message:
 
-This is what makes `ScheduleWakeup`'ing into a fresh session every ~3
-tasks lossless. `state.yml` is the bridge; the orchestrator's
-mid-session context is disposable.
+```jsonl
+{"ts":"2026-05-16T16:01:00Z","event":"eligibility_cache","step_c_entry":1,"codex_routing":"auto","codex_review":"on","total_tasks":15,"codex_eligible":10,"codex_ineligible":5,"ineligible_tasks":["T6","T8","T13","T14","T15"]}
+{"ts":"2026-05-16T16:01:00Z","event":"wave_routing_summary","wave":1,"members_by_route":{"codex":3,"inline_review":0,"inline_no_review":0},"members":["T1","T2","T3"]}
+{"ts":"2026-05-16T16:10:00Z","event":"wave_task_completed","wave":1,"task":"T1","commit":"80b96d5","dispatched_by":"codex+claude-fixup","note":"codex sandbox could not commit (.git read-only); inline rescue normalized heading to ## Check #N — name style"}
+{"ts":"2026-05-16T16:10:00Z","event":"wave_task_completed","wave":1,"task":"T2","commit":"0e0ce06","dispatched_by":"codex"}
+{"ts":"2026-05-16T16:10:00Z","event":"wave_task_completed","wave":1,"task":"T3","commit":"322dac8","dispatched_by":"codex"}
+{"ts":"2026-05-16T16:10:00Z","event":"wave_complete","wave":1,"members":["T1","T2","T3"],"commits":["80b96d5","0e0ce06","322dac8"]}
+```
 
-v2.0.0+ extends this with **wave-mode dispatch**: contiguous read-only
-tasks sharing a `**parallel-group:**` annotation fire as one parallel
-batch of Sonnet subagents under a single wave-completion barrier, with a
-single-writer status update at wave end. Doctor checks (Step D),
-situation reports (Step S), and per-worktree frontmatter parsing (Step A)
-are also parallelized when N ≥ 2 worktrees. Full per-step model and
-parallelism table in [`docs/internals.md`](./docs/internals.md).
+`dispatched_by: codex` is asymmetric-review's signal: when Step 4b sees it on a completion event, Codex REVIEW is skipped with `decision_source: codex-produced` (§7). `codex+claude-fixup` records that Codex did the work but Claude inline-rescued a sandbox limitation — both visible after the fact. Five waves later the run wrote `retro.md`, archived the slug in `state.yml`, and `/masterplan` (no args) was ready to resume the next plan.
 
 ## Install
 
-### Codex
-
-Add the repository as a Codex marketplace:
-
-```bash
-codex plugin marketplace add rasatpetabit/superpowers-masterplan
-```
-
-The marketplace is configured to install `superpowers-masterplan` by default.
-New Codex sessions should see a `masterplan` skill in their available-skills
-list. That skill is the portable Codex entrypoint: it loads
-`commands/masterplan.md` and recognizes run bundles created by Claude Code under
-`docs/masterplan/<slug>/`. Before it derives defaults or creates state, it must
-load the same config tiers as Claude Code: `~/.masterplan.yaml`, then
-`<repo-root>/.masterplan.yaml`, then invocation flags.
-
-After install, invoke masterplan in Codex with a normal chat message. Do not use
-Codex shell-command mode for these examples:
-
-```text
-Use masterplan status for this repo
-Use masterplan next
-Use masterplan full Stripe webhook handler
-Use masterplan status
-Use masterplan execute docs/masterplan/auth-refactor/state.yml
-```
-
-Codex may expose plugin slash commands differently across builds. The reliable
-contract is prompt exposure through the `masterplan` skill, so Codex-facing
-resume hints use normal chat text such as `Use masterplan ...`. `$masterplan ...`
-is not the portable resume instruction for Codex because shell-command mode sends
-it to Bash, where `$masterplan` is environment-variable expansion. Slash-style
-text such as `/masterplan` or `/superpowers-masterplan:masterplan` is accepted
-when the host passes it to the model, but it is not the portable resume
-instruction for Codex. If your Codex build registers the marketplace but a fresh
-prompt does not list `masterplan`,
-enable `superpowers-masterplan@rasatpetabit-superpowers-masterplan` in Codex's
-plugin UI or config, or install a user-level bridge at
-`~/.codex/skills/masterplan/SKILL.md` from this repo's `skills/masterplan/`
-directory. The same `commands/masterplan.md` orchestrator is used for Claude Code
-and Codex; Codex follows the compatibility block at the top of that prompt plus
-the local `AGENTS.md` tool mapping.
-
-When running inside Codex, masterplan disables the separate Claude Code
-`codex:codex-rescue` companion path for that invocation.
-This avoids recursive Codex-on-Codex dispatch: execution stays inside the active
-Codex session, while persisted `codex.routing` / `codex.review` settings remain
-unchanged for future Claude Code runs. Other global defaults such as `autonomy`,
-`complexity`, `runs_path`, and `parallelism` still come from `.masterplan.yaml`.
-After a plan exists, Codex-hosted masterplan also bridges to Codex's native
-goal tools: it inspects the active goal, creates a matching plan pursuit goal
-when needed, and marks that native goal complete only after the run bundle's own
-completion finalizer succeeds. This is not a Masterplan `goal` verb and not a
-shell command; `/goal` remains a Codex host feature.
-
-### Claude Desktop app (Code tab)
-
-This is a **Claude Code** plugin, so in the desktop app use the **Code** tab,
-not a regular Chat conversation. Start a Local or SSH coding session for the
-repository you want `/masterplan` to manage.
-
-Desktop-first install:
-
-1. Click the **+** button beside the prompt box.
-2. Choose **Plugins** → **Add plugin**.
-3. If `rasatpetabit-superpowers-masterplan` is not already listed, add this
-   repository as a marketplace from the plugin manager's **Marketplaces** tab,
-   or paste the marketplace command from the next section into the prompt.
-4. Install `superpowers-masterplan`. Use **User scope** for all projects,
-   **Project scope** to share through this repository's `.claude/settings.json`,
-   or **Local scope** for only the current repository.
-5. Run `/reload-plugins` or restart the session.
-6. Verify by typing `/` or opening **+** → **Slash commands**. Look for
-   `/masterplan`; if another command with the same name exists, use the
-   namespaced form `/superpowers-masterplan:masterplan`.
-
-Claude's desktop plugin browser only shows plugins from configured
-marketplaces. The slash-command flow below works inside the Desktop Code tab
-too, and is often the fastest way to add this marketplace the first time.
-
-### Claude slash-command install (CLI or Desktop Code tab)
+### Claude Code
 
 ```text
 /plugin marketplace add rasatpetabit/superpowers-masterplan
@@ -221,455 +48,136 @@ too, and is often the fastest way to add this marketplace the first time.
 /reload-plugins
 ```
 
-Verify with `/plugin`; `superpowers-masterplan` should appear under
-**Installed**. If Claude Code's plugin install syntax has drifted, add the
-marketplace and pick `superpowers-masterplan` from `/plugin`'s Discover tab.
-The marketplace entry declares the official `superpowers` plugin as a
-dependency, so Claude Code can resolve it automatically when the official
-marketplace is available. If dependency resolution says
-`superpowers@claude-plugins-official` is missing, refresh the official
-marketplace with `/plugin marketplace update claude-plugins-official`, or add it
-with `/plugin marketplace add anthropics/claude-plugins-official`, then retry
-the install.
+The marketplace add registers the catalog; the install step actually loads the plugin and its `masterplan-detect` skill. `superpowers` resolves automatically as a declared dependency. For desktop-app, manual, or offline setup, see [docs/install.md](docs/install.md).
 
-### Claude manual install
+### Codex CLI
 
-```bash
-mkdir -p ~/.claude/commands ~/.claude/skills
-printf '%s\n' '---' 'description: "Delegate to the installed superpowers-masterplan plugin."' '---' '<!-- masterplan-shim: v3 -->' '/superpowers-masterplan:masterplan $ARGUMENTS' > ~/.claude/commands/masterplan.md
-cp -r skills/masterplan-detect ~/.claude/skills/
+```sh
+codex plugin marketplace add rasatpetabit/superpowers-masterplan
 ```
 
-### Dependencies
-
-- **Required:** [`superpowers`](https://github.com/obra/superpowers).
-- **Optional:** `codex` plugin for `codex:codex-rescue` execution/review.
-- **Optional:** `context7` MCP for library-doc lookups during CD-4 recovery.
-- **Optional:** `gh` CLI for GitHub issue/PR import and retro PR lookup.
+Codex hosts the orchestrator under `/superpowers-masterplan:masterplan`; see [parts/codex-host.md](parts/codex-host.md) for suppression rules and Codex-specific behavior differences.
 
 ### Optional telemetry hook
 
-`/masterplan` can append per-turn telemetry to `docs/masterplan/<slug>/telemetry.jsonl` and
-per-subagent cost records to `docs/masterplan/<slug>/subagents.jsonl`. These runtime sidecars
-are local-only: the hook and command add ignore patterns to `.git/info/exclude`
-before writing, and this repository's `.gitignore` ignores its own generated
-telemetry. To install the Stop hook:
+Optional. Wire `hooks/masterplan-telemetry.sh` as a global Stop hook in `~/.claude/settings.json`; required only if you want `/masterplan stats`. For signal definitions and opt-out, see [docs/design/telemetry-signals.md](docs/design/telemetry-signals.md).
 
-```bash
-mkdir -p ~/.claude/hooks
-cp hooks/masterplan-telemetry.sh ~/.claude/hooks/
-chmod +x ~/.claude/hooks/masterplan-telemetry.sh
-```
+---
 
-Add this hook command to `~/.claude/settings.json`:
+Requires Claude Code or Codex CLI; depends on the upstream `superpowers` plugin (auto-installed via the marketplace).
 
-```json
-{
-  "hooks": {
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"$HOME/.claude/hooks/masterplan-telemetry.sh\"",
-            "timeout": 3,
-            "async": true
-          }
-        ]
-      }
-    ]
-  }
-}
-```
+## Core concepts
 
-The hook bails silently outside `/masterplan`-managed plans. Per-plan opt-out:
-add `telemetry: off` to `state.yml`. Field details and `jq`
-queries are in [`docs/design/telemetry-signals.md`](./docs/design/telemetry-signals.md).
+**Run bundle** — the directory `docs/masterplan/<slug>/` containing `state.yml`, `spec.md`, `plan.md`, `plan.index.json`, `events.jsonl`, `retro.md`, `.lock`, and `eligibility-cache.json`. The single source of truth for a run; survives `/clear` and host swap because it lives in the repo, not in conversation context. See [`parts/contracts/run-bundle.md`](./parts/contracts/run-bundle.md).
 
-## Quick Start
+**Phase + gate** — the run lifecycle moves through four phases: B0–B1 (brainstorm), B2–B3 (plan), C1–C6 (execute), R (retro). Gates are validators at phase boundaries that block forward progress until their conditions are met; under `gated` autonomy most gates pause for user confirmation, under `loose` and `full` they auto-advance when conditions are satisfied. See [`docs/internals.md`](./docs/internals.md).
 
-Start a complete brainstorm -> plan -> execute flow:
+**Wave** — N tasks from the same `**parallel-group:**` annotation dispatched as one batch in a single assistant message. Introduced in v2.0.0. As of v5.8.0, each wave concludes with N parallel per-member Codex REVIEW dispatches (`contract_id: codex.review_wave_member_v1`) rather than skipping review entirely. See [`parts/contracts/agent-dispatch.md`](./parts/contracts/agent-dispatch.md).
 
-```text
-/masterplan full Stripe webhook handler
-```
+**Autonomy levels** — `gated` (default) | `loose` | `full`. Controls which gates fire interactively: `gated` prompts at every phase boundary; `loose` auto-advances through successful gates; `full` suppresses even mid-task confirmation prompts. Set via `.masterplan.yaml`, CLI flag, or per-run in `state.yml`. See [`docs/config-schema.md`](./docs/config-schema.md).
 
-Stop after earlier phases when you want review time:
+**Subagent dispatch contract** — every lifecycle dispatch site must carry a `DISPATCH-SITE:` tag and a registered `contract_id` in `commands/masterplan-contracts.md`. The orchestrator validates return shapes against the contract before acting; a mismatched or missing `contract_id` triggers a `contract_violation` event. Doctor check `--brief-style` enforces no orphan dispatch sites. See [`parts/contracts/agent-dispatch.md`](./parts/contracts/agent-dispatch.md).
 
-```text
-/masterplan brainstorm Stripe webhook handler
-/masterplan plan Stripe webhook handler
-/masterplan plan --from-spec=docs/masterplan/webhooks/spec.md
-/masterplan plan
-```
+**Asymmetric review** — when `dispatched_by ∈ {codex, codex+claude-fixup}` on a completion event, Step 4b skips Codex review and emits `review→SKIP(codex-produced)` with `decision_source: codex-produced`. Prevents Codex from grading its own output, applied uniformly across serial and wave-mode paths. New in v5.8.0. See [`docs/internals.md`](./docs/internals.md).
 
-Run longer autonomous work with wakeups:
+**Guard C (flock)** — `flock <bundle>/.lock` wraps every `state.yml` / `events.jsonl` write sequence with a 5-second timeout. The helper in `bin/masterplan-state.sh` exits with ERROR on timeout, leaving the orchestrator to decide whether to queue the would-be update (the intended contention recovery, drained by doctor check #24) or abort the turn. On hosts without `flock(1)`, the helper degrades unguarded and emits a `state_lock_unavailable` event. Doctor check #42 warns when `<bundle>/.lock` is older than 1 hour, indicating a wedged writer. See [`parts/step-c.md`](./parts/step-c.md).
 
-```text
-/loop /masterplan full refactor auth middleware --autonomy=loose
-```
+## Verbs
 
-Resume work:
+Each invocation matches its first token against the routing table below; unrecognized tokens fall through to the resume picker.
 
-```text
-/masterplan
-/masterplan execute docs/masterplan/auth-refactor/state.yml
-/masterplan --resume=docs/masterplan/auth-refactor/state.yml
-```
+| Verb | Phase | What it does | Output |
+|---|---|---|---|
+| `/masterplan` | intake | Resume picker or new-topic prompt | (interactive) |
+| `/masterplan brainstorm <topic>` | brainstorm | Discovery + spec; halts at B1 gate | `spec.md` |
+| `/masterplan plan [<topic>\|--from-spec=]` | plan | Spec (if absent) then plan; halts at B3 | `plan.md` |
+| `/masterplan full <topic>` | all | Full brainstorm → plan → execute pipeline | all artifacts |
+| `/masterplan execute [<topic>\|<state>]` | execute | Resume or pick an in-progress plan | `events.jsonl` |
+| `/masterplan retro [<state>]` | retro | Generate retrospective; archive bundle | `retro.md` |
+| `/masterplan import [--pr=\|--issue=\|--file=\|--branch=]` | intake | Migrate legacy artifacts to run bundle | `state.yml` |
+| `/masterplan doctor [--fix]` | diagnostics | 43 lint checks across bundles | stdout report |
+| `/masterplan status` | diagnostics | Current plan, phase, and activity | stdout report |
+| `/masterplan stats` | diagnostics | Telemetry roll-up (per-turn + per-subagent) | stdout report |
+| `/masterplan validate` | diagnostics | Config + state schema check | stdout report |
+| `/masterplan clean` | diagnostics | Archive completed; prune legacy artifacts | `archive/` |
+| `/masterplan next` | intake | Route to next actionable plan | (interactive) |
 
-With no args, `/masterplan` or Codex `Use masterplan` tries to resume interrupted work
-first: it re-renders pending gates, handles recorded critical errors, polls
-background continuations, auto-continues the current or only in-progress plan,
-opens the resume picker when active work is ambiguous, and shows the broader
-phase/operations menu only when no active plan exists.
-
-Every run lives in one directory:
-
-```text
-docs/masterplan/<slug>/
-  state.yml
-  spec.md
-  plan.md
-  retro.md
-  events.jsonl
-  events-archive.jsonl
-  eligibility-cache.json
-  telemetry.jsonl
-  subagents.jsonl
-  state.queue.jsonl
-```
-
-`state.yml` is created before brainstorming starts, so compaction or a stopped
-session can resume from a durable phase pointer. It records `stop_reason` and
-`critical_error` separately: ordinary pauses stay `in-progress` with a question
-or scheduled continuation, while `blocked` is reserved for safety-critical
-recovery. Older `docs/superpowers/...` layouts are migrated into this bundle
-layout by `/masterplan import` (copy-only; preserves source paths under
-`legacy:`).
-
-When the last task completes, `/masterplan` checks live git status before
-marking the run complete. If task-scope work is still dirty, it keeps the run in
-`finish_gate` with a concrete commit/finish `next_action`; otherwise it
-generates `retro.md`, archives the run state in `state.yml`, and runs an
-archive-only completion cleanup for verified legacy/orphan state. Use
-`--no-retro` or `--no-cleanup` for a one-off opt-out, or config defaults to
-disable either behavior.
-
-Inspect and maintain state:
-
-```text
-/masterplan import
-/masterplan doctor
-/masterplan doctor --fix
-/masterplan status
-/masterplan status --plan=<slug>
-/masterplan retro
-/masterplan retro auth-refactor
-/masterplan clean --dry-run
-```
-
-## Command Reference
-
-| Invocation | Effect | Halts |
-|---|---|---|
-| `/masterplan` | Resume-first: auto-continue current/only in-progress plan; detects scope overlap with existing plans (offers Resume / Derive variant / Force new); list+pick if ambiguous, menu if none | no |
-| `/masterplan full <topic>` | Brainstorm, plan, then execute | no |
-| `/masterplan <topic>` | Bare-topic shortcut for `full <topic>` | no |
-| `/masterplan brainstorm <topic>` | Brainstorm and write a spec | after spec |
-| `/masterplan plan <topic>` | Brainstorm and write a run bundle | after plan |
-| `/masterplan plan --from-spec=<path>` | Plan against an existing spec | after plan |
-| `/masterplan plan` | Pick a spec without a plan, then plan it | after plan |
-| `/masterplan execute [<state-path>]` | Resume a plan, or list+pick if no path | no |
-| `/masterplan --resume=<state-path>` | Alias for `execute <state-path>` | no |
-| `/masterplan import [...]` | Convert legacy planning artifacts into bundled spec/plan/state | n/a |
-| `/masterplan doctor [--fix]` | Lint masterplan state across worktrees | n/a |
-| `/masterplan status [--plan=<slug>]` | Read-only situation report or one-plan drilldown | n/a |
-| `/masterplan retro [<slug>]` | Generate or re-run a retrospective for a completed plan | n/a |
-| `/masterplan stats [--plan=<slug>] [--format=table\|json\|md] [--all-repos] [--since=<date>]` | Codex-vs-inline routing distribution + inline model breakdown + token totals across plans | n/a |
-| `/masterplan clean [--dry-run] [--delete] [--category=<name>] [--worktree=<path>]` | Archive completed bundles, retire migrated legacy artifacts, and prune orphan state; `--delete` forces deletion instead of archive; `--category` and `--worktree` scope the operation | n/a |
-| `/masterplan validate [--plan=<slug>]` | Read-only config + state schema validation; checks `.masterplan.yaml` against built-in defaults and (with `--plan`) validates that plan's `state.yml` | n/a |
-| `/masterplan next` | "What's next?" router — scans active plans and completed-plan follow-ups, then offers resume/follow-up/new-plan/status options via AUQ; never starts a brainstorm about the topic "next" | n/a |
-
-Topics literally named after a verb (`full`, `brainstorm`, `plan`, `execute`,
-`retro`, `import`, `doctor`, `status`, `stats`, `clean`, `validate`, `next`) need a leading word, for example:
-`/masterplan add brainstorm session timer`.
-
-### Routing stats
-
-`/masterplan stats` (or directly: `bash <plugin-root>/bin/masterplan-routing-stats.sh`)
-reports codex-vs-inline routing distribution, inline model breakdown
-(Sonnet/Haiku/Opus), token totals by routing class (when `docs/masterplan/<slug>/subagents.jsonl`
-is populated), eligibility-cache decision-source breakdown, and per-plan health
-flags. By default it scans the current repo's main worktree + every linked
-worktree under `.worktrees/`; use `--all-repos` to aggregate across known repos
-(configurable via `MASTERPLAN_REPO_ROOTS` env var, default `~/dev`). Three
-output formats: `table` (default, terminal), `json` (jq-pipeable), `md`
-(GitHub-flavored, paste into PR descriptions).
-
-### Session audit
-
-`bash <plugin-root>/bin/masterplan-session-audit.sh` is the read-only incident
-audit for recent Claude, Codex, and `/masterplan` telemetry logs. It scans a
-configurable time window, prints repo-level totals and top offending sessions,
-prints a primary-session "Started goals at risk" table, and warns on runaway
-Codex tool calls, meta-resume loops with no outcome progress, completed
-audit/doctor plans that found confirmed gaps but did not create structured
-implementation follow-ups, shell invocations such as `$masterplan next`,
-unclassified active Masterplan stops, repeated shell-tool loops, Claude
-AskUserQuestion/Agent fanout, SessionStart payload bloat, oversized transcript
-telemetry, and missing telemetry for sessions with explicit `/masterplan`
-invocation/runtime markers. Codex guardian approval sub-sessions are classified
-as auxiliary so they do not pollute started-goal or missing-telemetry reports.
-The output
-is content-redacted: it reports counters, repo labels, session IDs, tool names,
-and telemetry sizes, not user prompts, shell commands, credentials, or tool
-results. JSON output includes stable warning `code`, `session_role`,
-`goal_outcome`, and `goal_failure_reasons` fields for downstream automation,
-and the self-host audit runs fixture-backed regressions for the classifier and
-warning contract.
-
-```bash
-bin/masterplan-session-audit.sh --hours=24
-bin/masterplan-session-audit.sh --since=2026-05-10T15:51:23Z --format=json
-bin/masterplan-recurring-audit.sh
-bin/masterplan-audit-schedule.sh install
-```
-
-The recurring wrapper stores `latest.json`, `latest.txt`, `history.jsonl`, and
-`findings.jsonl` under
-`${MASTERPLAN_AUDIT_STATE_DIR:-$XDG_STATE_HOME/superpowers-masterplan/audits}`
-or `$HOME/.local/state/superpowers-masterplan/audits`. The scheduler installs a
-managed cron block only; unrelated crontab entries are preserved.
-
-### Codex usage analysis
-
-`bash <plugin-root>/bin/masterplan-codex-usage.sh` surveys codex invocations
-across three sources in one report: codex's own session rollouts under
-`~/.codex/sessions/`, Claude transcripts under `~/.claude/projects/` (for
-`codex:*` Agent dispatches and `codex` CLI calls in Bash tool_use), and per-plan
-`codex_routing` / `codex_review` config from the current repo's
-`docs/masterplan/*/state.yml`. Useful for answering "how much am I actually
-using codex right now, and through which path." Default window is 14 days;
-override via `--days=N` or `--since=YYYY-MM-DD`. Supports `--json` for
-machine-readable output.
-
-```bash
-bin/masterplan-codex-usage.sh
-bin/masterplan-codex-usage.sh --days=30
-bin/masterplan-codex-usage.sh --json | jq '.totals'
-```
-
-### Import Shortcuts
-
-| Invocation | Effect |
-|---|---|
-| `/masterplan import --pr=<num>` | Import one GitHub PR |
-| `/masterplan import --issue=<num>` | Import one GitHub issue |
-| `/masterplan import --file=<path>` | Import one local file |
-| `/masterplan import --branch=<name>` | Reverse-engineer from one branch |
-
-## Flags
-
-| Flag | Effect |
-|---|---|
-| `--autonomy=gated\|loose\|full` | Control execution gating |
-| `--resume=<state-path>` | Resume a specific plan |
-| `--no-loop` | Disable ScheduleWakeup self-pacing |
-| `--no-subagents` | Use `executing-plans` instead of `subagent-driven-development` |
-| `--no-retro` | Skip the default completion retro for this run |
-| `--no-cleanup` | Skip the default completion cleanup for this run |
-| `--codex=off\|auto\|manual` | Control per-task Codex execution routing |
-| `--no-codex` | Shorthand for `--codex=off`; also disables review |
-| `--codex-review=on\|off` | Control Codex review of inline-completed tasks |
-| `--codex-review` | Shorthand for `--codex-review=on` |
-| `--no-codex-review` | Shorthand for `--codex-review=off` |
-| `--parallelism=on\|off` | Enable/disable read-only parallel waves for this run |
-| `--no-parallelism` | Shorthand for `--parallelism=off` |
-| `--archive` | Import: archive legacy artifacts after conversion |
-| `--keep-legacy` | Import: leave legacy artifacts in place |
-| `--fix` | Doctor: apply safe auto-fixes |
-| `--no-archive` | Retro: write `retro.md` without archiving the run state |
-| `--keep-worktree` | Completion: skip auto-remove of the run bundle's worktree on success |
-
-Under `--autonomy=loose`, the `plan_approval` gate auto-approves silently; `spec_approval` still halts (intentional — cheap to correct direction early).
-
-Common combinations:
-
-- `/loop /masterplan <topic> --autonomy=loose` for long autonomous work.
-- `/masterplan <topic> --codex=manual --codex-review=on` to decide routing per task.
-- `/masterplan <topic> --codex=off` for Claude-only execution/review.
-- `/masterplan <topic> --no-parallelism` to debug wave-dispatch issues.
-
-**Claude `/goal` compatibility.** The native Claude Code `/goal` slash command is compatible with `--autonomy=full` as an outer wrapper — both mechanisms target silent auto-advance. Avoid `/goal` under `--autonomy=loose` or `--autonomy=gated`: the per-task `AskUserQuestion` checkpoints are intentional and the goal evaluator will fight them. The masterplan does not invoke `/goal` programmatically (Claude Code 2.1.x exposes no API surface for it); the Stop hook captures `claude_stop_hook_active` as advisory telemetry only. See `docs/internals.md` §8.5 for the design rationale.
-
-CLI flags override config for the run. State-schema values such as `autonomy`,
-`loop_enabled`, `codex_routing`, and `codex_review` land in `state.yml`;
-durable defaults such as `parallelism.enabled` belong in `.masterplan.yaml`.
+Flags and per-verb options: see [`docs/verbs.md`](./docs/verbs.md). Doctor checks: see [`parts/doctor.md`](./parts/doctor.md).
 
 ## Configuration
 
-Drop `.masterplan.yaml` at the repo root, or `~/.masterplan.yaml` for global
-defaults. Precedence is CLI flags > repo-local > user-global > built-in defaults.
+Configuration loads from three tiers (later overrides earlier): `~/.masterplan.yaml` → `<repo-root>/.masterplan.yaml` → CLI flag → per-run override in `state.yml`. Most installs leave the defaults alone; the knobs below are the ones that get changed in practice.
 
 ```yaml
-autonomy: gated
-complexity: medium
-gated_switch_offer_at_tasks: 15
-
-loop_enabled: true
-loop_interval_seconds: 1500
-loop_max_per_day: 24
-
-use_subagents: true
-
+autonomy: gated              # gated | loose | full
+complexity: medium           # low | medium | high
 runs_path: docs/masterplan
-specs_path: docs/superpowers/specs   # legacy migration input
-plans_path: docs/superpowers/plans   # legacy migration input
-worktree_base: ../
-trunk_branches: [main, master, trunk, dev, develop]
-
-cruft_policy: ask
-archive_path: legacy/.archive
-doctor_autofix: false
-
-worktree:
-  default_disposition: removed_after_merge  # or kept_by_user
-
-codex:
-  routing: auto
-  review: on
-  review_diff_under_full: false
-  max_files_for_auto: 3
-  review_max_fix_iterations: 2
-  confirm_auto_routing: false
-  review_prompt_at: medium
-  unavailable_policy: degrade-loudly
-  detection_mode: ping
-
 parallelism:
-  enabled: true
-  max_wave_size: 5
-  abort_wave_on_protocol_violation: true
-  member_timeout_sec: 600
-  on_member_timeout: warn
-
-auto_compact:
-  enabled: true
-  interval: 30m
-  focus: "focus on current task + active plan; drop tool output and old reasoning"
-
-completion:
-  auto_retro: true
-  cleanup_old_state: true
-
-retro:
-  auto_archive_after_retro: true
-
-telemetry:
-  enabled: true
-  path_suffix: -telemetry.jsonl
-
-integrations:
-  github:
-    enabled: true
-    auto_link_pr_to_plan: true
-  linear:
-    project: null
-  slack:
-    blocked_channel: null  # critical_error/status: blocked notifications
-```
-
-The canonical behavior and schema details live in
-[`commands/masterplan.md`](./commands/masterplan.md).
-
-## Advanced Features
-
-### Codex delegation from Claude
-
-By default, `codex.routing: auto` delegates eligible small tasks to Codex, and
-`codex.review: on` reviews inline Claude/Sonnet diffs. If the Codex plugin is
-missing, both settings auto-degrade to `off` for that run and persisted config is
-unchanged.
-
-This section applies to Claude Code hosting `/masterplan`. When the same
-orchestrator is hosted by Codex through `/superpowers-masterplan:masterplan`,
-`codex:codex-rescue` routing/review is suppressed automatically to avoid
-recursive Codex dispatch.
-
-Install the Codex companion plugin in Claude Code:
-
-```text
-/plugin marketplace add openai/codex-plugin-cc
-/plugin install codex@openai-codex
-/reload-plugins
-```
-
-Disable per run with `--no-codex` or `--no-codex-review`, or persistently:
-
-```yaml
+  enabled: true              # wave dispatch on; set false to force serial
 codex:
-  routing: off
-  review: off
+  routing: auto              # auto | on | off (per-task **Codex:** annotation governs `auto`)
+  review: on                 # on | off — controls Step 4b Codex REVIEW dispatch
+  detection_mode: scan-then-ping   # scan-then-ping | trust | ping
+  unavailable_policy: degrade-loudly   # degrade-loudly | block
 ```
 
-### Plan Annotations
+`autonomy` is the most-touched setting — `gated` for new users, `loose` for trusted multi-hour runs, `full` only for autonomous pipelines (e.g., `/loop /masterplan full ...`). `codex.detection_mode` defaults to `scan-then-ping` (v5.3.0+): cheap scan first, ping only on miss. Set `trust` on locked-down accounts where the ping fails for non-availability reasons. `codex.unavailable_policy: degrade-loudly` is the safe default — if Codex is unreachable the run continues Claude-only but emits a `codex_degraded` event the doctor + telemetry will surface. Full schema and per-field semantics: [`docs/config-schema.md`](./docs/config-schema.md).
 
-Plan tasks can include annotations that influence routing and parallelism:
+## Parallelism, Codex routing, asymmetric review
 
-| Annotation | Effect |
-|---|---|
-| `**Codex:** ok` | Force Codex eligibility |
-| `**Codex:** no` | Never delegate this task to Codex |
-| `**parallel-group:** <name>` | Group read-only tasks into one parallel wave |
-| `**non-committing: true**` | Mark a parallel-grouped task as non-committing |
+These three mechanisms turn the linear "draft a plan, work through it" model into something that survives a 6-hour task without the orchestrator's context window collapsing.
 
-`parallel-group` tasks require a complete `**Files:**` block and are intended for
-verification, inference, lint, type-check, and doc-generation tasks. Slice beta
-and gamma for committing-task parallelism are deferred; see
-[`docs/design/intra-plan-parallelism.md`](./docs/design/intra-plan-parallelism.md).
+**Wave dispatch (v2.0.0+).** Plan tasks share a `**parallel-group:**` annotation; the orchestrator fans every member of a group into one assistant turn as N parallel subagent calls under a single barrier. Each subagent returns a digest (commit SHA, verify result, ≤5120-byte note), never raw diff output, so context cost is fixed at digest size × wave width rather than full transcript × N. Wave-completion is recorded once per wave as `wave_complete` with `{members, commits}` — the orchestrator never reads back per-member files. Wave width is bounded only by the task graph; the largest shipped run was a 4-member parallel batch (`codex-routing-fix` wave 4: T9–T12 in commit `c94b5cb`).
 
-### Run State
+**Codex routing (aggressive default in v5.8.0).** The plan-writer (`parts/step-b.md`) now annotates `**Codex:** ok` by default for any single-file edit, code or doc, with verifiable acceptance criteria. It only marks `**Codex:** no` when the task is multi-file, scope is ambiguous, no known verification exists, or the user explicitly scoped Codex out. At Step C dispatch, `codex.routing: auto` (the default) consults the per-task annotation; `codex.routing: on/off` overrides it. The plan-writer aggressiveness reverses the prior conservative default, which left a majority of Codex-eligible tasks routing to Claude SDD — measurably under-using the cheaper, bounded path.
 
-Each plan has a run bundle at `docs/masterplan/<slug>/`. `state.yml` records
-the worktree, branch, phase, current task, next action, autonomy, Codex settings,
-artifact paths, any pending structured gate, any background dispatch marker,
-worktree disposition (`active` / `kept_by_user` / `removed_after_merge` / `missing`), retro
-policy, and scope fingerprint (for overlap detection).
-`events.jsonl` records recent
-activity, with cache/telemetry/subagent/queue sidecars kept inside the same run
-directory. This bundle is the durable resume surface; conversation history is not.
+**Asymmetric review (new in v5.8.0).** When a `wave_task_completed` or serial task-completion event carries `dispatched_by ∈ {codex, codex+claude-fixup}`, Step 4b skips Codex REVIEW and emits `review→SKIP(codex-produced)` with `decision_source: codex-produced`. The principle: the model that produced the code should not also grade it. Codex-produced work is held to spec-fit verification (tests, doctor, post-condition checks) rather than fresh-eyes Codex review; Sonnet-produced work goes through full Codex REVIEW. Applied uniformly across serial and per-wave-member paths; doctor check #43 (`codex_review_coverage`) enforces 100% paired-review coverage across every `wave_task_completed` event.
 
-The full schema and operational rules are documented in
-[`docs/internals.md`](./docs/internals.md).
+Concretely, the three mechanisms compose on a single wave. Consider wave 1 of `codex-routing-fix` (T1–T3, all annotated `**Codex:** ok` by Step B): Step C consults the eligibility cache, finds all three Codex-eligible, and emits one `wave_routing_summary` with `members_by_route: {codex: 3, inline_review: 0, inline_no_review: 0}`. The orchestrator then dispatches all three Codex EXECs in a single assistant turn. T1 hits a sandbox limitation (the Codex worktree's `.git` was read-only), so its return digest carries `dispatched_by: codex+claude-fixup` — Codex did the edit, an inline Claude rescue normalized the heading style and made the commit. T2 and T3 return clean `dispatched_by: codex`. Step 4b examines each completion, sees `codex` or `codex+claude-fixup` on all three, and emits three `review→SKIP(codex-produced)` events with `decision_source: codex-produced` — no Codex REVIEW dispatched. Doctor check #43 later confirms every `wave_task_completed` in the run has a paired review event of either kind; absence triggers failure class `wave_codex_review_skip` and the run halts. The net cost of the wave on the orchestrator's context window is three ≤5120-byte digests plus the routing summary — not three full Codex transcripts.
+
+Full mechanism + dispatch contract surface: [`docs/internals.md`](./docs/internals.md), [`parts/step-c.md`](./parts/step-c.md), [`commands/masterplan-contracts.md`](./commands/masterplan-contracts.md).
+
+## Doctor, failure classes, self-host audit
+
+### Doctor
+
+`/masterplan doctor` runs 43 lint checks across all run bundles. The check set is complexity-aware: `low` plans skip ~14 checks (sidecar, annotation, ledger, cache, and per-subagent-telemetry checks that those plans never produce); `high` plans add 2 additional checks (#22 rigor evidence, #40 Codex/parallel-group annotation coverage). New in v5.8.0: check #43 (`codex_review_coverage`) validates that every `wave_task_completed` event has a paired `review→CODEX` or `review→SKIP` event with explicit `decision_source`. Auto-fix available for repairable findings: `/masterplan doctor --fix`.
+
+### Failure classes
+
+`parts/failure-classes.md` catalogues anomaly classes the orchestrator detects at runtime. v5.8.0 added four: `wave_codex_review_skip` (wave review coverage < 100%), `subagent_return_oversized` (return text > 5120 bytes), `eligibility_cache_event_missing` (mandatory cache event absent at Step C entry), and `dispatch_brief_unregistered` (lifecycle dispatch site lacking a registered `contract_id`). Each entry includes a name, description, and recommended response.
+
+### Self-host audit
+
+`bin/masterplan-self-host-audit.sh` is a developer-only script that validates the plugin against its own contracts: deployment drift across shipped files, dispatch-brief registration, doctor check consistency, and CD-9 free-text-question compliance. v5.8.0 strengthened `--brief-style` to enforce Pattern D (contract_id within 30 lines of each lifecycle dispatch site). Run pre-release; exit code 1 blocks release.
+
+Details: [`parts/doctor.md`](./parts/doctor.md), [`parts/failure-classes.md`](./parts/failure-classes.md).
 
 ## Troubleshooting
 
-If `/masterplan` produces no output (zero assistant response) after `/reload-plugins`,
-the harness has likely de-registered the slash command. Confirm by checking whether
-the first line of the turn was `→ /masterplan v… args: …` (the v2.16.0+ invocation
-sentinel) — if absent, re-install via `/plugin` (uninstall + install
-`superpowers-masterplan`) and re-invoke. See [`CHANGELOG.md`](./CHANGELOG.md) v2.16.0
-for details and the upstream issue link.
+**Q: My session got `/clear`'d mid-execute. How do I resume?**
+A: Run `/masterplan` (no args). The intake picker lists in-progress plans by recency; pick one. State lives in `docs/masterplan/<slug>/state.yml`.
 
-## Project Status
+**Q: Can I run two plans at once?**
+A: Yes — different slugs, different worktrees. Guard C (`bin/masterplan-state.sh`) serializes writes per-bundle via `<bundle>/.lock`; concurrent writes to the same bundle would corrupt `events.jsonl` without it.
 
-Current release: **v5.7.2**. See [CHANGELOG.md](./CHANGELOG.md) for full release history.
+**Q: Doctor is WARNing on check #43 for old bundles.**
+A: Expected. `codex_review_coverage` (v5.8.0) WARNs on bundles predating wave-review events. No auto-fix exists; ignore or accept the WARN.
 
-- Release history: [`CHANGELOG.md`](./CHANGELOG.md)
-- Contributor internals: [`docs/internals.md`](./docs/internals.md)
-- Parallelism roadmap: [`docs/design/intra-plan-parallelism.md`](./docs/design/intra-plan-parallelism.md)
-- Telemetry schema: [`docs/design/telemetry-signals.md`](./docs/design/telemetry-signals.md)
+**Q: Codex isn't being detected.**
+A: Verify `detection_mode` (default `scan-then-ping`, v5.3.0+). On locked-down accounts, set `detection_mode: trust` in `~/.masterplan.yaml`. See `parts/codex-host.md`.
 
-The public command and config surface continues to evolve under semver. Breaking
-changes are called out in the changelog with migration notes.
+**Q: `/masterplan stats` shows duplicated `parent_turn` counts.**
+A: Fixed in the patch release immediately before v5.8.0. Upgrade or deduplicate pre-patch `subagents.jsonl` by `ts+session_id` when querying historical data.
 
-## Author
+## Versioning, contributing, links
 
-Built by [Richard A Steenbergen](https://github.com/rasatpetabit)
-(`ras@petabitscale.com`). Inspired by the
-[superpowers](https://github.com/obra/superpowers) plugin's
-brainstorm/plan/execute pipeline.
+Semantic versioning: **patch** for bug fixes and bundle maintenance, **minor** for additive event types / new doctor checks / new failure classes / new contracts, **major** reserved for breaking changes to `state.yml` schema or the verb router. Each release tags a single commit on `main`; see [`CHANGELOG.md`](./CHANGELOG.md) for per-version rationale.
 
-## License
+- Design: [`docs/internals.md`](./docs/internals.md) — orchestrator architecture, subagent context-control, run-bundle state model
+- Contracts: [`commands/masterplan-contracts.md`](./commands/masterplan-contracts.md), [`parts/contracts/run-bundle.md`](./parts/contracts/run-bundle.md), [`parts/contracts/cd-rules.md`](./parts/contracts/cd-rules.md)
+- Verbs: [`docs/verbs.md`](./docs/verbs.md) · Config schema: [`docs/config-schema.md`](./docs/config-schema.md)
+- Doctor checks: [`parts/doctor.md`](./parts/doctor.md) · Failure classes: [`parts/failure-classes.md`](./parts/failure-classes.md)
+- License: [`LICENSE`](./LICENSE) (MIT) · Repository: <https://github.com/rasatpetabit/superpowers-masterplan>
 
-MIT - see [LICENSE](./LICENSE).
+LLMs working on this repo should start with [`CLAUDE.md`](./CLAUDE.md) — it pins the canonical reading order, anti-patterns, and operating principles for orchestrator-context work.
