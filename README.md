@@ -14,29 +14,35 @@ It is built for engineers running multi-hour work that wants three things at onc
 
 Why durability matters in practice: a long-running coding task that lives only in the chat window is one accidental `/clear`, one context-window compaction, or one host crash away from being unrecoverable — and the loss isn't just "the code I was about to write," it's the *plan* (which tasks were already committed, which wave was in flight, which dispatch was paired with which Codex/Claude decision). The masterplan bundle keeps every one of those facts on disk in canonical form: tasks in `plan.md`, completion + verification + review outcomes appended to `events.jsonl`, current cursor in `state.yml`, post-mortem in `retro.md`. Resume is `/masterplan` with no arguments; the orchestrator reads the events log, recomputes the wave cursor, and continues. The same bundle layout is portable between Claude Code and Codex CLI: a run started under `/superpowers-masterplan:masterplan` on one host can be picked up under the other host without rewriting state, which is the only reason the asymmetric review and aggressive Codex routing in §7 are safe to enable by default.
 
-## 30-second example
+Why context-window management matters in practice: long inline sessions degrade in two distinct, compounding ways. **Correctness** — even on a 200k-token window, by the time an orchestrator has driven a dozen tasks inline it is reasoning against an accumulated history of stale failed experiments, partial diffs, library-doc snippets pulled three tasks ago, and verbose verification output it no longer needs; attention reliably degrades well before the window is full, the model loses track of which decisions are still in force, and answers get measurably worse — the same agent that nailed task 3 quietly misroutes task 14. **Token efficiency** — every accumulated byte is rebilled on every subsequent turn, so a long inline run pays compound interest on context that should have been discarded the moment it stopped being load-bearing; even when the model still gets the answer right, you've paid 5–10× the necessary token cost to arrive there. The fix isn't a bigger window (those degrade too, just later); it's structural — keep the orchestrator's context surgical (sequencing decisions, dispatch routing, gate handling) and push every piece of substantive work to a fresh subagent whose context is born for that one task, sized to the smallest model that can do it, and disposed of after. The next section walks through exactly how that's wired.
 
-A real `v5.8.0` run lives at `docs/masterplan/codex-routing-fix/`. The bundle was bootstrapped from approved spec `steady-sparking-nygaard.md` after `ExitPlanMode` (the plan-approval gate), with the orchestrator isolating a worktree (`.worktrees/codex-routing-fix`) and writing a 15-task plan grouped into five waves. The first four events in `events.jsonl` record exactly that hand-off:
+## Subagent dispatch & context-window management
+
+The architecture's most consequential design choice: **the orchestrator never executes substantive work itself**. Every step that would otherwise bloat its context — file reading, code generation, library-doc lookups, verification, log triage — fans out to a bounded subagent that gets a fresh context window, a single dispatch brief (goal, inputs, allowed scope, constraints, return shape), and returns only a *digest* (≤5120 bytes: commit SHA, verify result, short note). A multi-task plan run inline in one Claude session bloats context fast; by task 10 the orchestrator is reasoning on cluttered, partially-stale state and quality drops. Masterplan solves this structurally — the orchestrator never sees raw subagent output, only the digest, and `state.yml` + `events.jsonl` carry forward everything it needs to resume.
+
+Subagents are tiered explicitly by task class. `/masterplan` pays for the model the work actually needs, not whatever the parent happens to be running:
+
+| Phase | Model | Why |
+|---|---|---|
+| Discovery scans (Step I1) | **Haiku** | Mechanical extraction, parallel, bounded |
+| Per-task implementation | **Sonnet** | Default workhorse via `superpowers:subagent-driven-development` |
+| Conversion / rewriting | **Sonnet** | Generation, not just extraction |
+| Architecture, ambiguous specs | **Opus** | Reserved for tasks that genuinely need deep reasoning |
+| Small, well-defined coding tasks | **Codex** | Per the routing toggle, via `codex:codex-rescue` |
+| Asymmetric Codex REVIEW | **Codex (review mode)** | Fresh-eyes review of Sonnet/Claude diffs against spec, when `codex_review: on` |
+| Completion inference | **Haiku** | One per task chunk, parallel, bounded |
+
+Activity records carry only what the orchestrator needs to resume — typically commit SHA, route, and (only on anomalies) a short note. Wave 1 of the real `docs/masterplan/codex-routing-fix/` run, three Codex EXECs dispatched in parallel in a single assistant turn:
 
 ```jsonl
-{"ts":"2026-05-16T16:00:00Z","event":"bundle_bootstrapped","slug":"codex-routing-fix","source_spec":"steady-sparking-nygaard.md","dispatched_by":"user"}
-{"ts":"2026-05-16T16:00:00Z","event":"worktree_isolated","branch":"codex-routing-fix","path":".worktrees/codex-routing-fix","reason":"self-modification of parts/step-c.md and parts/step-b.md while orchestrator reads them"}
-{"ts":"2026-05-16T16:00:00Z","event":"plan_written","autonomy":"loose","complexity":"medium","task_count":15,"wave_plan":"wave1=T1-T3 parallel-codex, wave2=T4-T7 serial-codex, wave3=T8 inline, wave4=T9-T12 batched-codex, wave5=T13-T15 inline"}
-{"ts":"2026-05-16T16:00:00Z","event":"phase_transition","from":"step-b","to":"step-c","reason":"plan approved via ExitPlanMode pre-bundle; bootstrap complete"}
-```
-
-Step C entry produced an eligibility cache (which tasks are safe for Codex EXEC vs. which require an inline Claude subagent), then emitted a wave routing summary and dispatched all three wave-1 members in a single assistant message:
-
-```jsonl
-{"ts":"2026-05-16T16:01:00Z","event":"eligibility_cache","step_c_entry":1,"codex_routing":"auto","codex_review":"on","total_tasks":15,"codex_eligible":10,"codex_ineligible":5,"ineligible_tasks":["T6","T8","T13","T14","T15"]}
 {"ts":"2026-05-16T16:01:00Z","event":"wave_routing_summary","wave":1,"members_by_route":{"codex":3,"inline_review":0,"inline_no_review":0},"members":["T1","T2","T3"]}
-{"ts":"2026-05-16T16:10:00Z","event":"wave_task_completed","wave":1,"task":"T1","commit":"80b96d5","dispatched_by":"codex+claude-fixup","note":"codex sandbox could not commit (.git read-only); inline rescue normalized heading to ## Check #N — name style"}
+{"ts":"2026-05-16T16:10:00Z","event":"wave_task_completed","wave":1,"task":"T1","commit":"80b96d5","dispatched_by":"codex+claude-fixup","note":"codex sandbox could not commit (.git read-only); inline rescue normalized heading"}
 {"ts":"2026-05-16T16:10:00Z","event":"wave_task_completed","wave":1,"task":"T2","commit":"0e0ce06","dispatched_by":"codex"}
 {"ts":"2026-05-16T16:10:00Z","event":"wave_task_completed","wave":1,"task":"T3","commit":"322dac8","dispatched_by":"codex"}
 {"ts":"2026-05-16T16:10:00Z","event":"wave_complete","wave":1,"members":["T1","T2","T3"],"commits":["80b96d5","0e0ce06","322dac8"]}
 ```
 
-`dispatched_by: codex` is asymmetric-review's signal: when Step 4b sees it on a completion event, Codex REVIEW is skipped with `decision_source: codex-produced` (§7). `codex+claude-fixup` records that Codex did the work but Claude inline-rescued a sandbox limitation — both visible after the fact. Five waves later the run wrote `retro.md`, archived the slug in `state.yml`, and `/masterplan` (no args) was ready to resume the next plan.
+Three Codex transcripts that would otherwise eat ~30k tokens of orchestrator window each collapse to four lines of JSONL — fixed cost regardless of wave width. This is what makes `/clear` between waves lossless and what makes `ScheduleWakeup` into a fresh session every ~3 tasks survivable: the orchestrator's mid-session context is disposable. v2.0.0 extended the same pattern to **wave-mode dispatch** (§7): independent tasks sharing a `**parallel-group:**` annotation fan to N parallel subagents in one assistant turn, each with isolated context, returning only digests under a single wave-completion barrier. Doctor scans, situation reports, and per-worktree frontmatter parsing parallelize the same way when N ≥ 2 worktrees. Full per-step model and parallelism table: [`docs/internals.md§Subagent and context-control architecture`](./docs/internals.md).
 
 ## Install
 
