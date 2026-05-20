@@ -22,7 +22,7 @@ import_contract:
   processed_at: ""
 worktree_disposition: active
 worktree_last_reconciled: 2026-05-16T08:10:00Z
-worktree: ~/dev/superpowers-masterplan
+worktree: /path/to/superpowers-masterplan
 branch: main
 started: 2026-05-16T08:10:00Z
 last_activity: 2026-05-16T08:20:00Z

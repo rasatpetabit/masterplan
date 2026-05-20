@@ -109,7 +109,9 @@ def discover_repo_roots(override: str | None) -> list[Path]:
     if override:
         raw = override
     else:
-        raw = os.environ.get("MASTERPLAN_REPO_ROOTS") or str(Path.home() / "dev")
+        current_repo_parent = Path(__file__).resolve().parent.parent.parent
+        fallback = f"{current_repo_parent}:{Path.home() / 'dev'}"
+        raw = os.environ.get("MASTERPLAN_REPO_ROOTS") or fallback
     roots: list[Path] = []
     for part in raw.split(":"):
         part = part.strip()

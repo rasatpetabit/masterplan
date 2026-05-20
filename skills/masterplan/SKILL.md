@@ -21,7 +21,7 @@ Resolve the router and phase files in this order:
 
 1. `../../commands/masterplan.md` and `../../parts/` relative to this `SKILL.md` file.
 2. `$PWD/commands/masterplan.md` and `$PWD/parts/` when running inside the plugin repo.
-3. `~/dev/superpowers-masterplan/commands/masterplan.md` (+ sibling `parts/`).
+3. `/path/to/superpowers-masterplan/commands/masterplan.md` (+ sibling `parts/`).
 4. `$HOME/.codex/.tmp/marketplaces/rasatpetabit-superpowers-masterplan/commands/masterplan.md` (+ sibling `parts/`).
 5. `$HOME/.claude/plugins/marketplaces/rasatpetabit-superpowers-masterplan/commands/masterplan.md` (+ sibling `parts/`).
 6. `$HOME/.claude/commands/masterplan.md`.

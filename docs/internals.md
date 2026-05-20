@@ -1109,7 +1109,7 @@ Earlier default: `codex.review: off`. Most users who installed Codex wanted adve
 
 ### Why v4.0 lifecycle hardening (FM-A through FM-G)
 
-A cross-repo audit of `~/dev/optoe-ng/` and `~/dev/petabit-os-stack/petabit-os-mgmt/` (May 2026) found **11 of 47 complete bundles (~24%) were hollow** — `status: complete` with no `retro.md` on disk, or imported bundles with `legacy.*` pointers but empty `artifacts.*`. The runtime path (brainstorm → plan → execute) was working; the *lifecycle* path was leaking at completion, import, and kickoff boundaries.
+A cross-repo audit of `/path/to/optoe-ng/` and `/path/to/petabit-os-stack/petabit-os-mgmt/` (May 2026) found **11 of 47 complete bundles (~24%) were hollow** — `status: complete` with no `retro.md` on disk, or imported bundles with `legacy.*` pointers but empty `artifacts.*`. The runtime path (brainstorm → plan → execute) was working; the *lifecycle* path was leaking at completion, import, and kickoff boundaries.
 
 Five failure modes drove the redesign:
 

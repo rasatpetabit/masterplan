@@ -203,7 +203,7 @@ Patch release. Fixes a pre-existing bug in `parts/doctor.md` Check #41 bash (int
 
 ### Fixed
 
-- **Check #41 grep-count fallback pattern.** The idiom `grep -cE 'foo' "$events" 2>/dev/null || echo 0` produced `"0\n0"` whenever `$events` was readable with zero matches: `grep -c` always prints `"0"` and exits 1 when there are zero matches, so the `|| echo 0` fallback fired and appended a second `"0"`. The resulting two-line string then failed the downstream `[ "$var" -eq 0 ]` integer test with a `bash: [: 0\n0: integer expected` warning to stderr, and the if-branch was silently skipped. Net effect: sub-fire (a) (silent override without evidence) only fired when `events.jsonl` was entirely unreadable — never on the intended common case of "file exists with zero degraded events". Sub-fire (b) was similarly broken; new sub-fire (c) inherited the pattern in v5.3.0 but happened to be guarded by an explicit `[ -r "$events" ]` so it tripped the same bug only when `$events` was readable AND had zero matches of the target patterns. Fix: drop the `|| echo 0` fallback (since `grep -c` always prints a number when the file is readable), guard the per-bundle loop with `[ -r "$events" ] || continue` so unreadable bundles are skipped instead of misinterpreted, and use `${var:-0}` parameter expansion in the integer tests as a belt-and-suspenders default for any future caller. Found during retroactive Doctor #41 lint sweep across 426 bundles in `~/dev/*` immediately after the v5.3.0 release.
+- **Check #41 grep-count fallback pattern.** The idiom `grep -cE 'foo' "$events" 2>/dev/null || echo 0` produced `"0\n0"` whenever `$events` was readable with zero matches: `grep -c` always prints `"0"` and exits 1 when there are zero matches, so the `|| echo 0` fallback fired and appended a second `"0"`. The resulting two-line string then failed the downstream `[ "$var" -eq 0 ]` integer test with a `bash: [: 0\n0: integer expected` warning to stderr, and the if-branch was silently skipped. Net effect: sub-fire (a) (silent override without evidence) only fired when `events.jsonl` was entirely unreadable — never on the intended common case of "file exists with zero degraded events". Sub-fire (b) was similarly broken; new sub-fire (c) inherited the pattern in v5.3.0 but happened to be guarded by an explicit `[ -r "$events" ]` so it tripped the same bug only when `$events` was readable AND had zero matches of the target patterns. Fix: drop the `|| echo 0` fallback (since `grep -c` always prints a number when the file is readable), guard the per-bundle loop with `[ -r "$events" ] || continue` so unreadable bundles are skipped instead of misinterpreted, and use `${var:-0}` parameter expansion in the integer tests as a belt-and-suspenders default for any future caller. Found during retroactive Doctor #41 lint sweep across 426 bundles in `/path/to/workspaces/*` immediately after the v5.3.0 release.
 
 ### Verification
 
@@ -345,7 +345,7 @@ The wipe (WS-A) creates a clean baseline for the new visibility surfaces shipped
 
 Aimed at the post-v5.1.1 cleanup step: erase 12 months of mixed pre-and-post-instrumentation telemetry so the new doctor-check evidence in `events.jsonl` is not conflated with stale data from the silent-degradation era. Destructive surface is gated behind a default `--dry-run`, an explicit `--apply`, and a `wipe-confirmed` confirmation token (or `--yes` for unattended runs).
 
-- **`bin/masterplan-wipe-telemetry.sh`** (thin bash wrapper) + **`lib/masterplan_wipe_telemetry.py`** (deletion logic). Walks Claude transcripts under `~/.claude/projects/*/*.jsonl`, Codex transcripts/history/log/archived under `~/.codex/`, and per-bundle telemetry (`events.jsonl`, `anomalies.jsonl`, `anomalies-pending-upload.jsonl`, `subagents.jsonl`, `eligibility-cache.json`) across every repo under `$MASTERPLAN_REPO_ROOTS` (default: `~/dev`) including `.worktrees/` copies.
+- **`bin/masterplan-wipe-telemetry.sh`** (thin bash wrapper) + **`lib/masterplan_wipe_telemetry.py`** (deletion logic). Walks Claude transcripts under `~/.claude/projects/*/*.jsonl`, Codex transcripts/history/log/archived under `~/.codex/`, and per-bundle telemetry (`events.jsonl`, `anomalies.jsonl`, `anomalies-pending-upload.jsonl`, `subagents.jsonl`, `eligibility-cache.json`) across every repo under `$MASTERPLAN_REPO_ROOTS` (default: the parent of the active repository or `~/dev`) including `.worktrees/` copies.
 - **Hard keep-list** preserves all bundle work product (`plan.md`, `state.yml`, `spec.md`, `retro.md`, `worklog.md`, `next-actions.md`, `gap-register.md`) and protected directories (`reviews/`, `notes/`, `subagent-reports/`, `artifacts/`). Codex `auth.json` and `config.toml` are untouched.
 - **mtime skip** defends against in-progress writes — files modified within the last 5 minutes (configurable via `--mtime-skip=N`) are never deleted.
 - **Manifest** at `${XDG_STATE_HOME:-~/.local/state}/superpowers-masterplan/wipes/<UTC-timestamp>.txt` is written BEFORE any deletion, listing every path with byte count + per-category totals, so post-mortem is always recoverable.
@@ -408,7 +408,7 @@ Per direct user feedback: "even the most basic of `/loop /masterplan next`s fail
 
 ### Fixed
 - **Doctor check #31** (`per_autonomy_gate_condition_consistency`): update grep target from `commands/masterplan.md` to `parts/step-b.md` (gates moved during v5.0 lazy-load extraction); drop stale `L1286`/`L1360` line-number references from all three spec locations (parallelization preamble, check table row, check body).
-- **6 archived bundle `state.yml` files** had stale `worktree:` path (`~/dev/…`) from pre-migration home directory; `worktree_disposition: missing` was absent; `stop_reason`/`critical_error` fields missing. All six repaired: `auto-compact-nudge-fixes`, `cd-9-enforcement`, `complexity-levels`, `intra-plan-parallelism`, `subagent-execution-hardening`, `v2.3.0-cost-leak-recurrence`.
+- **6 archived bundle `state.yml` files** had stale `worktree:` path (`/path/to/workspace/…`) from pre-migration home directory; `worktree_disposition: missing` was absent; `stop_reason`/`critical_error` fields missing. All six repaired: `auto-compact-nudge-fixes`, `cd-9-enforcement`, `complexity-levels`, `intra-plan-parallelism`, `subagent-execution-hardening`, `v2.3.0-cost-leak-recurrence`.
 
 ### Added
 - **`docs/masterplan/masterplan-taskcreate-projection/`** run bundle: imported from legacy spec + plan (2026-05-12 P4 design artifacts). Status `completed`; implementation lives in `p4-suppression-fix` bundle. Deferred smoke test tracked in `p4-suppression-smoke`.
@@ -774,7 +774,7 @@ Run bundle for the redesign work: `docs/masterplan/v4-lifecycle-redesign/`.
     Read tool call is mandatory — do not skip it, do not paraphrase its
     result, do not infer a version from session memory."
   - Concrete rendered example using a real semver
-    (`→ /masterplan v3.3.0 args: 'doctor --fix' cwd: ~/dev/optoe-ng`)
+    (`→ /masterplan v3.3.0 args: 'doctor --fix' cwd: /path/to/optoe-ng`)
     so the LLM has a pattern to emit, not a template to render literally.
   - Explicit prohibition: the version slot must be either a parsed semver or
     the literal six-character string `vUNKNOWN`. `v?`, `v??`, `vTBD`,
@@ -1118,7 +1118,7 @@ Folds in a fix surfaced during the AUQ-violation investigation (see WORKLOG `202
 
 ## [2.16.0] — 2026-05-07 — May 7 failure resolution: per-task CD-9 hole, verb-explicit routing, compaction notice, invocation sentinel
 
-Synthesizes findings from a transcript audit of every May 7, 2026 `/masterplan` session across `~/dev` (16 transcripts, ~36 MB). Two parallel Sonnet survey agents plus a deep-read of `commands/masterplan.md` triangulated four root causes that survived v2.10.x–v2.15.x. Three are orchestrator bugs with prompt-level fixes; one is a Claude Code harness bug we mitigate with a sentinel + docs.
+Synthesizes findings from a transcript audit of every May 7, 2026 `/masterplan` session across work directories (16 transcripts, ~36 MB). Two parallel Sonnet survey agents plus a deep-read of `commands/masterplan.md` triangulated four root causes that survived v2.10.x–v2.15.x. Three are orchestrator bugs with prompt-level fixes; one is a Claude Code harness bug we mitigate with a sentinel + docs.
 
 ### Fixed
 
