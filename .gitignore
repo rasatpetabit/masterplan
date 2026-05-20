@@ -32,3 +32,4 @@ __pycache__/
 # See SessionStart-hook convention; LLMs collaborating on this repo
 # write decisions here for the next session, not the public.
 WORKLOG.md
+legacy/
