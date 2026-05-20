@@ -568,7 +568,8 @@ fi
 [[ "$fr_enabled" == "true" ]] || exit 0
 
 # Hook-internal error log.
-hook_err_log="$HOME/.claude/projects/-home-ras-dev-superpowers-masterplan/hook-errors.log"
+slugified_worktree=$(echo "$worktree" | sed 's/\//-/g')
+hook_err_log="$HOME/.claude/projects/${slugified_worktree}/hook-errors.log"
 mkdir -p "$(dirname "$hook_err_log")" 2>/dev/null
 
 log_detector_error() {
