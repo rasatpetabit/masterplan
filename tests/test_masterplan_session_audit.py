@@ -219,6 +219,52 @@ class SessionAuditTests(unittest.TestCase):
         self.assertTrue(audit.is_nested_test_fixture(path, Path("/tmp/project")))
         self.assertFalse(audit.is_nested_test_fixture(path, Path("/tmp/project/tests/fixtures/session-audit/repos")))
 
+    def test_yaml_scalar_does_not_cross_into_child_block(self):
+        text = "pending_gate:\n  id: \"\"\n  phase: executing\n  options: 0\n"
+        self.assertEqual("", audit.yaml_scalar(text, "pending_gate"))
+
+    def test_yaml_scalar_returns_literal_null_value(self):
+        text = "pending_gate: null\nphase: completed\n"
+        self.assertEqual("null", audit.yaml_scalar(text, "pending_gate"))
+
+    def test_yaml_scalar_returns_real_quoted_value(self):
+        text = "pending_gate: 'plan-approval'\nphase: executing\n"
+        self.assertEqual("plan-approval", audit.yaml_scalar(text, "pending_gate"))
+
+    def test_pending_gate_orphaned_ignores_yaml_cleared_sentinels(self):
+        # Sentinel values that mean "no gate" must not trigger the orphaned
+        # warning, regardless of staleness. Drives analyze_plan_state via a
+        # tmpdir fixture so the full detector path is exercised.
+        import tempfile
+        from datetime import datetime, timezone
+        now = datetime(2026, 6, 1, tzinfo=timezone.utc)
+        cutoff = 0  # all events in window
+        with tempfile.TemporaryDirectory() as td:
+            run_dir = Path(td) / "docs" / "masterplan" / "t"
+            run_dir.mkdir(parents=True)
+            (run_dir / "plan.md").write_text("# t\n## T1\n")
+            (run_dir / "events.jsonl").write_text("")
+            for sentinel in ("null", "~", "[]", "{}"):
+                (run_dir / "state.yml").write_text(
+                    "schema_version: 3\n"
+                    "slug: t\n"
+                    "status: completed\n"
+                    "phase: completed\n"
+                    "last_activity: 2026-05-01T00:00:00Z\n"
+                    f"pending_gate: {sentinel}\n"
+                    "autonomy: loose\n"
+                    "complexity: high\n"
+                )
+                stats = audit.analyze_plan_state(
+                    run_dir / "state.yml", cutoff, root_path=Path(td), now=now,
+                )
+                codes = {w.code for w in stats.warnings}
+                self.assertNotIn(
+                    "pending_gate_orphaned",
+                    codes,
+                    f"sentinel {sentinel!r} should be treated as cleared",
+                )
+
     def test_parse_args_preserves_environment_default_paths(self):
         with patch.dict(
             "os.environ",

@@ -34,10 +34,7 @@ codex_routing: off
 codex_review: off
 compact_loop_recommended: false
 complexity: high
-pending_gate:
-  id: ""
-  phase: executing
-  options: 0
+pending_gate: null
 artifacts:
   spec: docs/masterplan/concurrency-guards/spec.md
   plan: docs/masterplan/concurrency-guards/plan.md

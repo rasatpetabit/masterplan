@@ -987,7 +987,10 @@ def read_text(path):
 
 
 def yaml_scalar(text, key):
-    match = re.search(rf"(?m)^{re.escape(key)}:\s*(.*?)\s*$", text or "")
+    # [ \t] not \s: prevents the regex from crossing into a child block when
+    # `key:` is the parent of a block (e.g. `pending_gate:\n  id: ""`), which
+    # would otherwise return the child's content as the scalar value.
+    match = re.search(rf"(?m)^{re.escape(key)}:[ \t]*(.*?)[ \t]*$", text or "")
     if not match:
         return ""
     value = match.group(1).strip()
@@ -1365,9 +1368,11 @@ def analyze_plan_state(path, cutoff, root_path=None, codex_auth_ok=None, now=Non
         )
 
     # 7. pending_gate_orphaned
+    gate_val = (stats.pending_gate or "").strip()
     if (
         is_implementation
-        and (stats.pending_gate or "").strip()
+        and gate_val
+        and gate_val not in {"null", "~", "[]", "{}"}
         and phase not in {"blocked", "critical_error"}
     ):
         gate_latest = signals["latest_event_ts"] or last_activity
