@@ -1111,20 +1111,49 @@ check_sentinel_v4_refs() {
   echo "sentinel (no v4 refs): PASS"
 }
 
+_plan_bundle_is_archived() {
+  # Return 0 (true / archived) if the sibling state.yml indicates the run
+  # is no longer active under any supported schema:
+  #   v2 / v3 (status + phase keys): status or phase in {archived, completed}
+  #   v5     (current_phase key)   : current_phase == done
+  # Return 1 (false) when the bundle is active or has no readable state.yml.
+  local plan="$1"
+  local state="${plan%/plan.md}/state.yml"
+  [[ -f "${state}" ]] || return 1
+  if grep -Eq '^(status|phase): *"?(archived|completed)"?[[:space:]]*$' "${state}" 2>/dev/null; then
+    return 0
+  fi
+  if grep -Eq '^current_phase: *"?done"?[[:space:]]*$' "${state}" 2>/dev/null; then
+    return 0
+  fi
+  return 1
+}
+
 check_plan_format() {
   # delegate to doctor check #35 logic
+  # Skip archived/completed bundles regardless of schema: pre-v5 plans
+  # weren't written with the **Spec:** / **Verify:** markers and won't be
+  # retroactively reformatted once the run is done.
   local fail=0
+  local skipped=0
   for plan in docs/masterplan/*/plan.md; do
-    grep -E '^### Task [0-9]+' "$plan" | while read -r task_heading; do
-      :  # check #35 already walks tasks; here we just confirm one task per bundle has markers
-    done
+    if _plan_bundle_is_archived "$plan"; then
+      skipped=$((skipped + 1))
+      continue
+    fi
     if grep -q -F '**Spec:**' "$plan" && grep -q -F '**Verify:**' "$plan"; then
       :
     else
       echo "FAIL: $plan missing v5 plan-format markers"; fail=1
     fi
   done
-  [ $fail -eq 0 ] && echo "plan-format: PASS"
+  if [ $fail -eq 0 ]; then
+    if [ $skipped -gt 0 ]; then
+      echo "plan-format: PASS (${skipped} archived/completed bundle(s) skipped)"
+    else
+      echo "plan-format: PASS"
+    fi
+  fi
   return $fail
 }
 
