@@ -374,11 +374,12 @@ check_codex_packaging() {
     EXIT=1
   fi
 
-  if ! grep -qE '`masterplan` skill|masterplan skill' "${REPO_ROOT}/README.md" 2>/dev/null; then
-    echo "⚠️  README.md — missing Codex masterplan skill entrypoint documentation"
-    EXIT=1
-  fi
-
+  # v5.8.0 README rewrite intentionally moved internal Codex-host detail
+  # (entrypoint skill, recursive-dispatch suppression, normal-chat resume hint)
+  # out of README and into parts/codex-host.md + docs/internals.md. The README
+  # now links to parts/codex-host.md at the Codex-CLI install section instead
+  # of restating the rules. The internals.md SKILL.md reference remains a
+  # canonical handbook entry.
   if ! grep -q 'skills/masterplan/SKILL.md' "${REPO_ROOT}/docs/internals.md" 2>/dev/null; then
     echo "⚠️  docs/internals.md — missing Codex entrypoint skill documentation"
     EXIT=1
@@ -396,6 +397,7 @@ check_codex_packaging() {
   local codex_host_patterns=(
     "codex_host_suppressed"
     "host-suppressed"
+    "explicit interactive selection"
     "Codex host performance guard"
     "codex_host_perf_guard"
     "codex_host_gate_continuation"
@@ -436,8 +438,8 @@ check_codex_packaging() {
     fi
   done
 
-  if ! grep -q 'targeted section reads' "${codex_entry_skill}" 2>/dev/null; then
-    echo "⚠️  skills/masterplan/SKILL.md — missing targeted section reads guidance"
+  if ! grep -qF 'targeted `state.yml` reads' "${codex_entry_skill}" 2>/dev/null; then
+    echo "⚠️  skills/masterplan/SKILL.md — missing targeted-read guidance for Codex (current canonical: 'targeted \`state.yml\` reads')"
     EXIT=1
   fi
 
@@ -453,11 +455,6 @@ check_codex_packaging() {
 
   if ! grep -q 'codex_user_entrypoint = "Use masterplan"' "${codex_host_file}" 2>/dev/null; then
     echo '⚠️  parts/codex-host.md — missing Codex normal-chat resume-hint contract'
-    EXIT=1
-  fi
-
-  if ! grep -q 'Use masterplan' "${REPO_ROOT}/README.md" 2>/dev/null; then
-    echo '⚠️  README.md — missing Codex normal-chat invocation documentation'
     EXIT=1
   fi
 
@@ -492,13 +489,14 @@ check_codex_packaging() {
     fi
   done
 
-  if ! grep -q 'completed_with_follow_up' "${command_file}" 2>/dev/null; then
-    echo "⚠️  commands/masterplan.md — clean must skip completed plans with follow-up next_action"
-    EXIT=1
-  fi
-
-  if ! grep -qi 'recursive Codex' "${REPO_ROOT}/README.md" 2>/dev/null; then
-    echo "⚠️  README.md — missing Codex-host recursive dispatch documentation"
+  # v5.0+: the "completed plan with confirmed implementation gaps must
+  # materialize structured follow-ups before completion" rule moved from
+  # commands/masterplan.md (legacy `completed_with_follow_up` next_action
+  # sentinel) into parts/step-c.md's completion-write phase, which now
+  # uses the canonical "completed meta-plan" + "confirmed implementation
+  # gaps" + "follow_ups" language.
+  if ! grep -qF 'completed meta-plan' "${REPO_ROOT}/parts/step-c.md" 2>/dev/null; then
+    echo "⚠️  parts/step-c.md — clean/completion must handle completed meta-plans with confirmed implementation gaps"
     EXIT=1
   fi
 
@@ -522,9 +520,12 @@ check_codex_packaging() {
 # ---------------------------------------------------------------------------------
 check_brainstorm_anchor() {
   # v5.0+: brainstorm anchor contract lives in parts/step-b.md (phase module),
-  # not the legacy monolithic commands/masterplan.md.
+  # not the legacy monolithic commands/masterplan.md. The legacy 4-case
+  # regression fixture at docs/masterplan/expanded-brainstorming-selection/
+  # regressions.json was archived to legacy/.archive/ (gitignored) when the
+  # dev-phase bundle was retired; the 14-sentinel contract scan below is
+  # the durable regression net now that the contract is locked in code.
   local source_file="${REPO_ROOT}/parts/step-b.md"
-  local fixture_file="${REPO_ROOT}/docs/masterplan/expanded-brainstorming-selection/regressions.json"
 
   if [[ ! -f "${source_file}" ]]; then
     echo "Skipping brainstorm-anchor check: ${source_file} not found"
@@ -552,52 +553,6 @@ check_brainstorm_anchor() {
     "Step B1 brainstorm anchor contract" \
     "${source_file}" \
     "${patterns[@]}"
-
-  if [[ ! -f "${fixture_file}" ]]; then
-    echo "⚠️  brainstorm anchor fixtures — missing ${fixture_file#${REPO_ROOT}/}"
-    EXIT=1
-    return
-  fi
-
-  if command -v jq >/dev/null 2>&1; then
-    local count
-    count="$(jq 'length' "${fixture_file}" 2>/dev/null || echo 0)"
-    if [[ "${count}" -ne 4 ]]; then
-      echo "⚠️  brainstorm anchor fixtures — expected 4 cases, found ${count}"
-      EXIT=1
-    fi
-
-    local cases=(
-      "meta-petabit-yocto-config-review|audit-review"
-      "meta-petabit-error-qa|deferred-task"
-      "meta-petabit-image-package-policy|implementation-design"
-      "superpowers-masterplan-feature-ideas|feature-ideas"
-    )
-
-    local entry
-    for entry in "${cases[@]}"; do
-      local id="${entry%%|*}"
-      local mode="${entry#*|}"
-      if ! jq -e --arg id "${id}" --arg mode "${mode}" '.[] | select(.id == $id and .expected_mode == $mode)' "${fixture_file}" >/dev/null; then
-        echo "⚠️  brainstorm anchor fixtures — missing case ${id} with mode ${mode}"
-        EXIT=1
-      fi
-    done
-  else
-    local ids=(
-      "meta-petabit-yocto-config-review"
-      "meta-petabit-error-qa"
-      "meta-petabit-image-package-policy"
-      "superpowers-masterplan-feature-ideas"
-    )
-    local id
-    for id in "${ids[@]}"; do
-      if ! grep -qF "\"id\": \"${id}\"" "${fixture_file}" 2>/dev/null; then
-        echo "⚠️  brainstorm anchor fixtures — missing case ${id}"
-        EXIT=1
-      fi
-    done
-  fi
 
   if [[ "${EXIT}" -eq 0 ]]; then
     echo "✓ brainstorm anchor contract clean"
@@ -766,12 +721,11 @@ check_loop_first_contract() {
   local stepc_file="${REPO_ROOT}/parts/step-c.md"
   local step0_file="${REPO_ROOT}/parts/step-0.md"
   local internals_file="${REPO_ROOT}/docs/internals.md"
-  local readme_file="${REPO_ROOT}/README.md"
   local audit_module="${REPO_ROOT}/lib/masterplan_session_audit.py"
   local audit_tests="${REPO_ROOT}/tests/test_masterplan_session_audit.py"
 
   local missing=0
-  for file in "${stepc_file}" "${step0_file}" "${internals_file}" "${readme_file}" "${audit_module}" "${audit_tests}"; do
+  for file in "${stepc_file}" "${step0_file}" "${internals_file}" "${audit_module}" "${audit_tests}"; do
     if [[ ! -f "${file}" ]]; then
       echo "⚠️  loop-first contract — missing ${file#${REPO_ROOT}/}"
       EXIT=1
@@ -820,10 +774,13 @@ check_loop_first_contract() {
     fi
   done
 
-  if ! grep -qF "loop-first" "${readme_file}" 2>/dev/null; then
-    echo "⚠️  README.md — missing user-facing loop-first resume documentation"
-    EXIT=1
-  fi
+  # v5.8.0 README rewrite is audience-first / concise; it documents the
+  # losslessly-resumable run-bundle model (line 74, "If your session
+  # crashes ... pick up exactly where the event log left off") rather
+  # than the internal "loop-first" implementation term. The conceptual
+  # rule is enforced via the docs/internals.md "Blocked means critical
+  # error only" sentinel above; readme phrasing is left to the docs
+  # author.
 
   local audit_patterns=(
     "stop_kind"
