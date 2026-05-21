@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.8.2] — 2026-05-20 — Self-host audit reconciliation with v5.0+ phase modules
+
+Patch release. `bin/masterplan-self-host-audit.sh` had drifted behind the v5.0 modularization (orchestrator split from monolithic `commands/masterplan.md` into `parts/*.md` phase modules + `parts/contracts/*.md` cross-cutting contracts). Several checks were still scanning the legacy router for sentinels that had migrated into the phase modules, and the v5 plan-format check was hard-asserting markers on archived pre-v5 bundles that won't be retroactively reformatted. Net effect on a fresh marketplace clone: ~3 false-positive warnings + 2 FAILs on every audit run, eroding the signal value of the script.
+
+### Fixed
+
+- **`check_brainstorm_anchor`** — scans `parts/step-b.md` (canonical home of the 13-sentinel anchor contract) instead of `commands/masterplan.md`. Enum sentinel updated to the current set: `feature-ideas|implementation-design|audit-review|deferred-task|execution-resume|unclear|null`. Legacy 4-case JSON regression fixture (`docs/masterplan/expanded-brainstorming-selection/regressions.json`) was archived to `legacy/.archive/` when the dev-phase bundle retired; the contract scan in step-b.md is now the durable regression net.
+- **`check_loop_first_contract`** — scans `parts/step-c.md` + `parts/step-0.md` + `docs/internals.md` per current sentinel locations. Negative regression guards broadened to glob `parts/*.md` + `commands/masterplan.md` so a forbidden `Stop` reference added to any phase module fails the audit. README-side `loop-first` assertion dropped — the v5.8.0 README rewrite intentionally moved that implementation term out and describes the losslessly-resumable run-bundle model in audience-first language instead.
+- **`check_codex_packaging`** — scans the 10 codex-host sentinels in `parts/codex-host.md`. Four stale README-targeted checks dropped (entrypoint skill, recursive-Codex suppression, Use-masterplan example, loop-first user-facing term) — these were canonicalized in `parts/codex-host.md` + `docs/internals.md` during the v5.8.0 README rewrite, not regressed. Two evolved sentinel phrases migrated: `targeted section reads` → ``targeted `state.yml` reads`` (SKILL.md), and `completed_with_follow_up` in `commands/masterplan.md` → `completed meta-plan` in `parts/step-c.md`. Added `"explicit interactive selection"` to the codex-host pattern set.
+- **`check_model_passthrough`** — scans the full orchestrator surface (`commands/masterplan.md` + `parts/*.md` + `parts/contracts/*.md`) instead of just the thin router. The verbatim SDD preamble sentinel ("For every inner Task / Agent invocation you make") canonically lives in `parts/contracts/agent-dispatch.md` and is operatively referenced in `parts/step-c.md`; dispatch-site `model: "haiku|sonnet|opus"` annotations are spread across step-a / step-b / step-c / import / doctor. Aggregation uses `grep -c | awk` so the sum is portable across files; per-file bare-opus warning reports `path:lineno` and preserves the ±5-line blocker-stronger-model context suppressor.
+- **`check_plan_format`** — schema-aware skip for archived/completed bundles. New helper `_plan_bundle_is_archived` reads the sibling `state.yml` and matches all three supported schemas: v2/v3 (`status:` or `phase:` in {archived, completed}) and v5.0 (`current_phase: done`). Pre-v5 plan bodies in `codex-routing-fix` and `p4-suppression-smoke` aren't going to grow retroactive **Spec:** / **Verify:** markers; active bundles still fail when they lack them. PASS line reports the skip count for transparency.
+- **`_check_sentinels_in_file` helper** added in the first commit of the series to factor the multi-file glob-and-grep pattern that each migrated check uses.
+
+### Compatibility
+
+No schema changes. Audit script behavior is strictly more correct: same set of regressions still flagged, fewer false positives. Doctor checks are unchanged.
+
+### Rollout
+
+`claude plugin marketplace update` + `claude plugin update "superpowers-masterplan@rasatpetabit-superpowers-masterplan"` for Claude Code AND `codex plugin marketplace upgrade rasatpetabit-superpowers-masterplan` for Codex CLI to pick up the audit script. No orchestrator-surface or runtime behavior changes.
+
+## [5.8.1] — 2026-05-20 — Path-portability finalization + pending_gate_orphaned audit fix
+
+Patch release. Pre-publication finalization for plugin distribution from arbitrary workspace directories.
+
+### Fixed
+
+- **Hardcoded developer-path leaks (3 docs files):** `docs/internals.md` and `parts/failure-classes.md` carried literal `~/.claude/projects/-home-ras-dev-superpowers-masterplan/hook-errors.log` examples; replaced with a `<slugified-worktree>` placeholder + one-line explanation matching the actual hook behavior at `hooks/masterplan-telemetry.sh:571`. `README.md` "Optional Telemetry Hook" section restored from collateral stripping (prior refactor left it as a comment-only JSON block).
+- **`AGENTS.md`** — dropped private-repo refs (`~/dev/petabit-handbook/*`); now generically points at `CLAUDE.md` + optional org-wide guide.
+- **Python `~/dev` defaults:** `lib/masterplan_session_audit.py` and `lib/masterplan_wipe_telemetry.py` derived `MASTERPLAN_REPO_ROOTS` from `~/dev`; both now derive from `Path(__file__).resolve().parent.parent.parent` so discovery works without assuming the developer's home layout.
+- **Hostname leaks:** `epyc1`/`epyc2` references in `docs/internals.md` and two `docs/masterplan/` bundles generalized to "one host" / "every host that has the plugin installed".
+- **`pending_gate_orphaned` false positive on YAML-cleared gates** (`lib/masterplan_session_audit.py`). Sentinel values `null`, `~`, `[]`, `{}` are now treated as "no gate" regardless of staleness.
+
+### Compatibility
+
+No schema changes. Pure docs + tooling fixes.
+
 ## [5.8.0] — 2026-05-16 — Codex routing fix: aggressive default, per-member wave review, asymmetric enforcement + 4 failure classes
 
 Minor release. Addresses the T8 misfire (wave-mode code-review running via Claude SDD despite Codex configured) and the broader Codex under-dispatch / subagent context-pollution concerns documented in `docs/masterplan/codex-routing-fix/brainstorm.md` (findings F1–F6).
