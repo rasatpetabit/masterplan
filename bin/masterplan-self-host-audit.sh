@@ -71,6 +71,35 @@ esac
 
 EXIT=0
 
+# ---------------------------------------------------------------------------------
+# Helper: verify each sentinel string is present in a single file.
+#
+# Many contract checks (brainstorm-anchor, loop-first, codex-packaging) collapse
+# to "this list of sentinels must all be present in this file." In v5.0+ the
+# orchestrator was modularized from a single commands/masterplan.md into
+# parts/*.md phase files, so checks now need to scan parts/step-b.md,
+# parts/step-c.md, parts/codex-host.md, etc. This helper makes the migration
+# mechanical: change the file arg, keep the sentinel list as-is.
+#
+# Sets EXIT=1 on any miss; skips silently if the file does not exist (caller
+# is expected to validate file presence separately when that matters).
+#
+# Usage:
+#   local patterns=("sentinel one" "sentinel two")
+#   _check_sentinels_in_file "label-for-message" "$file" "${patterns[@]}"
+_check_sentinels_in_file() {
+  local label="$1"
+  local file="$2"
+  shift 2
+  local pattern
+  for pattern in "$@"; do
+    if ! grep -qF "${pattern}" "${file}" 2>/dev/null; then
+      echo "⚠️  ${file#${REPO_ROOT}/} — missing ${label} text: ${pattern}"
+      EXIT=1
+    fi
+  done
+}
+
 json_value() {
   local file="$1"
   local expr="$2"
@@ -494,18 +523,20 @@ check_codex_packaging() {
 # Check: Step B1 brainstorm intent anchor
 # ---------------------------------------------------------------------------------
 check_brainstorm_anchor() {
-  local command_file="${REPO_ROOT}/commands/masterplan.md"
+  # v5.0+: brainstorm anchor contract lives in parts/step-b.md (phase module),
+  # not the legacy monolithic commands/masterplan.md.
+  local source_file="${REPO_ROOT}/parts/step-b.md"
   local fixture_file="${REPO_ROOT}/docs/masterplan/expanded-brainstorming-selection/regressions.json"
 
-  if [[ ! -f "${command_file}" ]]; then
-    echo "Skipping brainstorm-anchor check: ${command_file} not found"
+  if [[ ! -f "${source_file}" ]]; then
+    echo "Skipping brainstorm-anchor check: ${source_file} not found"
     return
   fi
 
   local patterns=(
     "brainstorm_anchor:"
     "brainstorm_anchor_resolved"
-    "feature-ideas | implementation-design | audit-review | deferred-task | execution-resume | unclear"
+    "feature-ideas|implementation-design|audit-review|deferred-task|execution-resume|unclear|null"
     "brainstorm_anchor_audit_mode"
     "brainstorm_anchor_scope_boundary"
     "Intent Anchor"
@@ -519,13 +550,10 @@ check_brainstorm_anchor() {
     "understanding_level"
   )
 
-  local pattern
-  for pattern in "${patterns[@]}"; do
-    if ! grep -qF "${pattern}" "${command_file}" 2>/dev/null; then
-      echo "⚠️  commands/masterplan.md — missing Step B1 brainstorm anchor contract text: ${pattern}"
-      EXIT=1
-    fi
-  done
+  _check_sentinels_in_file \
+    "Step B1 brainstorm anchor contract" \
+    "${source_file}" \
+    "${patterns[@]}"
 
   if [[ ! -f "${fixture_file}" ]]; then
     echo "⚠️  brainstorm anchor fixtures — missing ${fixture_file#${REPO_ROOT}/}"
