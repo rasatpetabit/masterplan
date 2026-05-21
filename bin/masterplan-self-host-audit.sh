@@ -759,14 +759,21 @@ check_session_audit() {
 # Check: loop-first resume/stop contract
 # ---------------------------------------------------------------------------------
 check_loop_first_contract() {
-  local command_file="${REPO_ROOT}/commands/masterplan.md"
+  # v5.0+: loop-first stop/resume contract spans multiple modularized files.
+  # parts/step-c.md      — wave/stop-reason/critical_error machinery
+  # parts/step-0.md      — Resume controller entry-point
+  # docs/internals.md    — state-shape and conceptual rules (blocked = critical)
+  # lib/masterplan_session_audit.py  — stop_kind classifier
+  # tests/test_masterplan_session_audit.py — stop-kind fixtures
+  local stepc_file="${REPO_ROOT}/parts/step-c.md"
+  local step0_file="${REPO_ROOT}/parts/step-0.md"
   local internals_file="${REPO_ROOT}/docs/internals.md"
   local readme_file="${REPO_ROOT}/README.md"
   local audit_module="${REPO_ROOT}/lib/masterplan_session_audit.py"
   local audit_tests="${REPO_ROOT}/tests/test_masterplan_session_audit.py"
 
   local missing=0
-  for file in "${command_file}" "${internals_file}" "${readme_file}" "${audit_module}" "${audit_tests}"; do
+  for file in "${stepc_file}" "${step0_file}" "${internals_file}" "${readme_file}" "${audit_module}" "${audit_tests}"; do
     if [[ ! -f "${file}" ]]; then
       echo "⚠️  loop-first contract — missing ${file#${REPO_ROOT}/}"
       EXIT=1
@@ -775,39 +782,45 @@ check_loop_first_contract() {
   done
   [[ "${missing}" -eq 1 ]] && return
 
-  local command_patterns=(
+  local stepc_patterns=(
     "Loop-first stop contract"
-    "Resume controller"
-    "stop_reason: null | question | critical_error | complete | scheduled_yield"
     "critical_error: null"
-    "blocked is reserved for critical_error only"
-    "Ordinary task blockers, weak/no gate evidence, Codex host budget limits, background polling, loop quotas, and context pressure are resumable conditions"
     "Record critical error and stop"
     "loop_quota_exhausted"
   )
+  _check_sentinels_in_file \
+    "loop-first contract" \
+    "${stepc_file}" \
+    "${stepc_patterns[@]}"
 
+  local step0_patterns=(
+    "Resume controller"
+  )
+  _check_sentinels_in_file \
+    "loop-first contract" \
+    "${step0_file}" \
+    "${step0_patterns[@]}"
+
+  local internals_patterns=(
+    "stop_reason: null | question | critical_error | complete | scheduled_yield"
+    "Blocked means critical error only"
+  )
+  _check_sentinels_in_file \
+    "loop-first contract" \
+    "${internals_file}" \
+    "${internals_patterns[@]}"
+
+  # Regression guards. Scan all orchestrator surfaces (parts/*.md + the
+  # router) — legacy text could regress into any of them.
   local pattern
-  for pattern in "${command_patterns[@]}"; do
-    if ! grep -qF "${pattern}" "${command_file}" 2>/dev/null; then
-      echo "⚠️  commands/masterplan.md — missing loop-first contract text: ${pattern}"
+  for pattern in "Set status: blocked and end the turn" "loop quota exhausted; resume manually"; do
+    local hit
+    hit="$(grep -lF "${pattern}" "${REPO_ROOT}"/parts/*.md "${REPO_ROOT}/commands/masterplan.md" 2>/dev/null | head -1)"
+    if [[ -n "${hit}" ]]; then
+      echo "⚠️  ${hit#${REPO_ROOT}/} — legacy loop-first text regressed: '${pattern}'"
       EXIT=1
     fi
   done
-
-  if grep -qF "Set status: blocked and end the turn" "${command_file}" 2>/dev/null; then
-    echo "⚠️  commands/masterplan.md — legacy manual-block option is still present"
-    EXIT=1
-  fi
-
-  if grep -qF "loop quota exhausted; resume manually" "${command_file}" 2>/dev/null; then
-    echo "⚠️  commands/masterplan.md — loop quota exhaustion must be a persisted question, not manual blocked state"
-    EXIT=1
-  fi
-
-  if ! grep -qF "Blocked means critical error only" "${internals_file}" 2>/dev/null; then
-    echo "⚠️  docs/internals.md — missing blocked-is-critical-only operational rule"
-    EXIT=1
-  fi
 
   if ! grep -qF "loop-first" "${readme_file}" 2>/dev/null; then
     echo "⚠️  README.md — missing user-facing loop-first resume documentation"
