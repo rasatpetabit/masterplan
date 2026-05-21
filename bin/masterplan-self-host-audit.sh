@@ -384,65 +384,57 @@ check_codex_packaging() {
     EXIT=1
   fi
 
-  if ! grep -q 'codex_host_suppressed' "${command_file}" 2>/dev/null; then
-    echo "⚠️  commands/masterplan.md — missing codex_host_suppressed runtime guard"
+  # v5.0+: Codex host contract lives in parts/codex-host.md (phase module),
+  # not the legacy monolithic commands/masterplan.md.
+  local codex_host_file="${REPO_ROOT}/parts/codex-host.md"
+  if [[ ! -f "${codex_host_file}" ]]; then
+    echo "⚠️  Codex packaging — missing parts/codex-host.md"
+    EXIT=1
+    return
+  fi
+
+  local codex_host_patterns=(
+    "codex_host_suppressed"
+    "host-suppressed"
+    "Codex host performance guard"
+    "codex_host_perf_guard"
+    "codex_host_gate_continuation"
+    "Sensitive live-auth stop"
+  )
+  _check_sentinels_in_file \
+    "Codex host contract" \
+    "${codex_host_file}" \
+    "${codex_host_patterns[@]}"
+
+  if ! grep -qi 'recursive Codex' "${codex_host_file}" 2>/dev/null; then
+    echo "⚠️  parts/codex-host.md — missing recursive Codex dispatch suppression text"
     EXIT=1
   fi
 
-  if ! grep -q 'host-suppressed' "${command_file}" 2>/dev/null; then
-    echo "⚠️  commands/masterplan.md — missing host-suppressed routing decision source"
-    EXIT=1
-  fi
+  # Regression guards. Scan all orchestrator surfaces (parts/*.md + the
+  # router) — legacy text could regress into any of them.
+  local negative_patterns=(
+    "recommended option was not treated as consent"
+    "then → CLOSE-TURN instead of continuing into the next phase"
+    "Because this is a Codex-hosted Masterplan run, I closed after the structured gate"
+  )
+  local pattern
+  for pattern in "${negative_patterns[@]}"; do
+    local hit
+    hit="$(grep -lF "${pattern}" "${REPO_ROOT}"/parts/*.md "${REPO_ROOT}/commands/masterplan.md" 2>/dev/null | head -1)"
+    if [[ -n "${hit}" ]]; then
+      echo "⚠️  ${hit#${REPO_ROOT}/} — Codex regression text present: '${pattern}'"
+      EXIT=1
+    fi
+  done
 
-  if ! grep -qi 'recursive Codex' "${command_file}" 2>/dev/null; then
-    echo "⚠️  commands/masterplan.md — missing recursive Codex dispatch suppression text"
-    EXIT=1
-  fi
-
-  if ! grep -q 'Codex interactive-selection evidence' "${command_file}" 2>/dev/null; then
-    echo "⚠️  commands/masterplan.md — missing Codex interactive-selection evidence rule"
-    EXIT=1
-  fi
-
-  if grep -q 'recommended option was not treated as consent' "${command_file}" 2>/dev/null; then
-    echo "⚠️  commands/masterplan.md — still rejects Codex interactive recommended-option selections"
-    EXIT=1
-  fi
-
-  if grep -q 'recommended-only `request_user_input` answer.*weak evidence' "${command_file}" 2>/dev/null; then
-    echo "⚠️  commands/masterplan.md — still classifies recommended-only Codex answers as weak evidence"
-    EXIT=1
-  fi
-
-  if ! grep -q 'Codex host performance guard' "${command_file}" 2>/dev/null; then
-    echo "⚠️  commands/masterplan.md — missing Codex host performance guard"
-    EXIT=1
-  fi
-
-  if ! grep -q 'codex_host_perf_guard' "${command_file}" 2>/dev/null; then
-    echo "⚠️  commands/masterplan.md — missing codex_host_perf_guard budget variable"
-    EXIT=1
-  fi
-
-  if ! grep -q 'codex_host_gate_continuation' "${command_file}" 2>/dev/null; then
-    echo "⚠️  commands/masterplan.md — missing Codex answered-gate continuation rule"
-    EXIT=1
-  fi
-
-  if grep -q 'then → CLOSE-TURN instead of continuing into the next phase' "${command_file}" 2>/dev/null; then
-    echo "⚠️  commands/masterplan.md — Codex answered gates must not force-close full-flow runs"
-    EXIT=1
-  fi
-
-  if grep -q 'Because this is a Codex-hosted Masterplan run, I closed after the structured gate' "${command_file}" 2>/dev/null; then
-    echo "⚠️  commands/masterplan.md — forbidden Codex post-gate close rationale is present"
-    EXIT=1
-  fi
-
-  if ! grep -q 'Sensitive live-auth stop' "${command_file}" 2>/dev/null; then
-    echo "⚠️  commands/masterplan.md — missing sensitive live-auth stop rule"
-    EXIT=1
-  fi
+  # ERE-pattern negative guard (kept as a separate grep -E for clarity).
+  for f in "${REPO_ROOT}"/parts/*.md "${REPO_ROOT}/commands/masterplan.md"; do
+    if grep -qE 'recommended-only `request_user_input` answer.*weak evidence' "${f}" 2>/dev/null; then
+      echo "⚠️  ${f#${REPO_ROOT}/} — still classifies recommended-only Codex answers as weak evidence"
+      EXIT=1
+    fi
+  done
 
   if ! grep -q 'targeted section reads' "${codex_entry_skill}" 2>/dev/null; then
     echo "⚠️  skills/masterplan/SKILL.md — missing targeted section reads guidance"
@@ -459,8 +451,8 @@ check_codex_packaging() {
     EXIT=1
   fi
 
-  if ! grep -q 'codex_user_entrypoint = "Use masterplan"' "${command_file}" 2>/dev/null; then
-    echo '⚠️  commands/masterplan.md — missing Codex normal-chat resume-hint contract'
+  if ! grep -q 'codex_user_entrypoint = "Use masterplan"' "${codex_host_file}" 2>/dev/null; then
+    echo '⚠️  parts/codex-host.md — missing Codex normal-chat resume-hint contract'
     EXIT=1
   fi
 
@@ -469,30 +461,36 @@ check_codex_packaging() {
     EXIT=1
   fi
 
-  if grep -Eq 'Codex host budget reached: .*(resume with /masterplan|resume with \$masterplan)' "${command_file}" 2>/dev/null; then
-    echo "⚠️  commands/masterplan.md — Codex budget close text must not suggest shell/slash resume commands"
+  # Codex resume-hint regression guards. Broaden to all orchestrator surfaces
+  # so a forbidden hard-coded /masterplan or $masterplan example added to any
+  # phase module fails the audit.
+  for f in "${REPO_ROOT}"/parts/*.md "${REPO_ROOT}/commands/masterplan.md"; do
+    if grep -Eq 'Codex host budget reached: .*(resume with /masterplan|resume with \$masterplan)' "${f}" 2>/dev/null; then
+      echo "⚠️  ${f#${REPO_ROOT}/} — Codex budget close text must not suggest shell/slash resume commands"
+      EXIT=1
+    fi
+    if grep -q 'MUST use \$masterplan' "${f}" 2>/dev/null; then
+      echo "⚠️  ${f#${REPO_ROOT}/} — Codex resume hints must not require \$masterplan"
+      EXIT=1
+    fi
+    if grep -q 're-invoke /masterplan' "${f}" 2>/dev/null; then
+      echo "⚠️  ${f#${REPO_ROOT}/} — user-facing resume gate examples must use host-specific placeholders, not hard-coded /masterplan"
+      EXIT=1
+    fi
+  done
+
+  if ! grep -q 'Codex native goal pursuit' "${codex_host_file}" 2>/dev/null; then
+    echo "⚠️  parts/codex-host.md — missing Codex native goal pursuit contract"
     EXIT=1
   fi
 
-  if grep -q 'MUST use \$masterplan' "${command_file}" 2>/dev/null; then
-    echo '⚠️  commands/masterplan.md — Codex resume hints must not require $masterplan'
-    EXIT=1
-  fi
-
-  if grep -q 're-invoke /masterplan' "${command_file}" 2>/dev/null; then
-    echo "⚠️  commands/masterplan.md — user-facing resume gate examples must use host-specific placeholders, not hard-coded /masterplan"
-    EXIT=1
-  fi
-
-  if ! grep -q 'Codex native goal pursuit' "${command_file}" 2>/dev/null; then
-    echo "⚠️  commands/masterplan.md — missing Codex native goal pursuit contract"
-    EXIT=1
-  fi
-
-  if ! grep -q 'create_goal' "${command_file}" 2>/dev/null || ! grep -q 'get_goal' "${command_file}" 2>/dev/null || ! grep -q 'update_goal' "${command_file}" 2>/dev/null; then
-    echo "⚠️  commands/masterplan.md — missing Codex goal tool lifecycle calls"
-    EXIT=1
-  fi
+  local goal_tool
+  for goal_tool in create_goal get_goal update_goal; do
+    if ! grep -q "${goal_tool}" "${codex_host_file}" 2>/dev/null; then
+      echo "⚠️  parts/codex-host.md — missing Codex goal tool lifecycle call: ${goal_tool}"
+      EXIT=1
+    fi
+  done
 
   if ! grep -q 'completed_with_follow_up' "${command_file}" 2>/dev/null; then
     echo "⚠️  commands/masterplan.md — clean must skip completed plans with follow-up next_action"
