@@ -231,6 +231,78 @@ class SessionAuditTests(unittest.TestCase):
         text = "pending_gate: 'plan-approval'\nphase: executing\n"
         self.assertEqual("plan-approval", audit.yaml_scalar(text, "pending_gate"))
 
+    def test_yaml_nested_field_extracts_block_child_scalar(self):
+        text = "pending_gate:\n  id: brainstorm_anchor_audit_mode\n  phase: brainstorming\n"
+        self.assertEqual("brainstorm_anchor_audit_mode", audit.yaml_nested_field(text, "pending_gate", "id"))
+
+    def test_yaml_nested_field_strips_quotes(self):
+        text = "pending_gate:\n  id: 'plan-approval'\n"
+        self.assertEqual("plan-approval", audit.yaml_nested_field(text, "pending_gate", "id"))
+
+    def test_yaml_nested_field_returns_empty_when_scalar_parent(self):
+        text = "pending_gate: null\n"
+        self.assertEqual("", audit.yaml_nested_field(text, "pending_gate", "id"))
+
+    def test_yaml_nested_field_returns_empty_when_child_missing(self):
+        text = "pending_gate:\n  phase: brainstorming\n"
+        self.assertEqual("", audit.yaml_nested_field(text, "pending_gate", "id"))
+
+    def test_pending_gate_block_form_with_id_fires_orphaned_when_stale(self):
+        import tempfile
+        from datetime import datetime, timezone
+        now = datetime(2026, 6, 1, tzinfo=timezone.utc)
+        cutoff = 0
+        with tempfile.TemporaryDirectory() as td:
+            run_dir = Path(td) / "docs" / "masterplan" / "t"
+            run_dir.mkdir(parents=True)
+            (run_dir / "plan.md").write_text("# t\n## T1\n")
+            (run_dir / "events.jsonl").write_text("")
+            (run_dir / "state.yml").write_text(
+                "schema_version: 3\n"
+                "slug: t\n"
+                "status: in-progress\n"
+                "phase: executing\n"
+                "last_activity: 2026-05-01T00:00:00Z\n"
+                "pending_gate:\n"
+                "  id: brainstorm_anchor_audit_mode\n"
+                "  phase: brainstorming\n"
+                "autonomy: loose\n"
+                "complexity: high\n"
+            )
+            stats = audit.analyze_plan_state(
+                run_dir / "state.yml", cutoff, root_path=Path(td), now=now,
+            )
+            codes = {w.code for w in stats.warnings}
+            self.assertIn("pending_gate_orphaned", codes)
+
+    def test_pending_gate_block_form_with_empty_id_does_not_fire(self):
+        import tempfile
+        from datetime import datetime, timezone
+        now = datetime(2026, 6, 1, tzinfo=timezone.utc)
+        cutoff = 0
+        with tempfile.TemporaryDirectory() as td:
+            run_dir = Path(td) / "docs" / "masterplan" / "t"
+            run_dir.mkdir(parents=True)
+            (run_dir / "plan.md").write_text("# t\n## T1\n")
+            (run_dir / "events.jsonl").write_text("")
+            (run_dir / "state.yml").write_text(
+                "schema_version: 3\n"
+                "slug: t\n"
+                "status: in-progress\n"
+                "phase: executing\n"
+                "last_activity: 2026-05-01T00:00:00Z\n"
+                "pending_gate:\n"
+                "  id: \"\"\n"
+                "  phase: executing\n"
+                "autonomy: loose\n"
+                "complexity: high\n"
+            )
+            stats = audit.analyze_plan_state(
+                run_dir / "state.yml", cutoff, root_path=Path(td), now=now,
+            )
+            codes = {w.code for w in stats.warnings}
+            self.assertNotIn("pending_gate_orphaned", codes)
+
     def test_pending_gate_orphaned_ignores_yaml_cleared_sentinels(self):
         # Sentinel values that mean "no gate" must not trigger the orphaned
         # warning, regardless of staleness. Drives analyze_plan_state via a

@@ -1016,6 +1016,24 @@ def yaml_block_nonempty(text, key):
     return False
 
 
+def yaml_nested_field(text, parent_key, child_key):
+    lines = (text or "").splitlines()
+    for idx, line in enumerate(lines):
+        if not re.match(rf"^{re.escape(parent_key)}:[ \t]*$", line):
+            continue
+        for child in lines[idx + 1 :]:
+            if not child.startswith((" ", "\t")):
+                break
+            m = re.match(rf"^[ \t]+{re.escape(child_key)}:[ \t]*(.*?)[ \t]*$", child)
+            if m:
+                value = m.group(1).strip()
+                if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+                    value = value[1:-1]
+                return value
+        return ""
+    return ""
+
+
 def count_confirmed_gap_rows(text):
     return sum(1 for line in (text or "").splitlines() if re.search(r"\|\s*confirmed_gap\s*\|", line))
 
@@ -1193,7 +1211,8 @@ def analyze_plan_state(path, cutoff, root_path=None, codex_auth_ok=None, now=Non
     stats.complexity_source = yaml_scalar(state_text, "complexity_source").lower()
     stats.codex_routing = yaml_scalar(state_text, "codex_routing").lower()
     stats.codex_review = yaml_scalar(state_text, "codex_review").lower()
-    stats.pending_gate = yaml_scalar(state_text, "pending_gate")
+    pending_gate_scalar = yaml_scalar(state_text, "pending_gate")
+    stats.pending_gate = pending_gate_scalar or yaml_nested_field(state_text, "pending_gate", "id")
     stats.last_warning = yaml_scalar(state_text, "last_warning")
     stats.last_activity = yaml_scalar(state_text, "last_activity")
     stats.follow_up_count = 1 if yaml_block_nonempty(state_text, "follow_ups") else 0

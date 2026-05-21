@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.8.3] — 2026-05-20 — pending_gate_orphaned: see block-form gates
+
+Patch release. v5.8.1 added sentinel-suppression to `pending_gate_orphaned` (lib/masterplan_session_audit.py), but the underlying `yaml_scalar(state_text, "pending_gate")` returns `""` whenever `pending_gate` is a block (the canonical form per `parts/step-b.md` + `parts/failure-classes.md`: `pending_gate.id: <gate>` / `phase:` / `options:` etc.). Empty string failed the `and gate_val` truthiness guard, so every block-form pending gate — i.e., every *real* pending gate — was silently invisible to the detector. The smoke regression at `bin/masterplan-policy-regression-smoke.sh` (`pending-stale` fixture, block form) exposed this on the v5.8.2 follow-up run: 1 of 44 assertions failed.
+
+### Fixed
+
+- **`yaml_nested_field(text, parent, child)`** helper added to `lib/masterplan_session_audit.py`. Parses block-form YAML parents and returns the scalar value of a named child (strips quotes; returns `""` when parent is scalar or child is missing).
+- **`stats.pending_gate` population:** falls through to `yaml_nested_field(state_text, "pending_gate", "id")` when the top-level scalar is empty. So scalar form (`pending_gate: null`, `pending_gate: 'plan-approval'`) still works as before; block form (`pending_gate:\n  id: brainstorm_anchor_audit_mode\n  phase: brainstorming`) now exposes the gate id to the detector and threshold logic.
+- **Smoke pipeline:** 44/44 assertions now pass on a clean run.
+
+### Tests
+
+5 new unit tests in `tests/test_masterplan_session_audit.py`:
+- `test_yaml_nested_field_extracts_block_child_scalar`
+- `test_yaml_nested_field_strips_quotes`
+- `test_yaml_nested_field_returns_empty_when_scalar_parent`
+- `test_yaml_nested_field_returns_empty_when_child_missing`
+- `test_pending_gate_block_form_with_id_fires_orphaned_when_stale` + `test_pending_gate_block_form_with_empty_id_does_not_fire` (full `analyze_plan_state` integration through a tmpdir fixture).
+
+The pre-existing `test_pending_gate_orphaned_ignores_yaml_cleared_sentinels` keeps the v5.8.1 sentinel suppression locked in. All 28 tests pass.
+
+### Compatibility
+
+No schema changes. Detector behavior is strictly more complete: every existing call site that worked before still works; block-form gates that were silently dropped now fire correctly when stale.
+
+### Rollout
+
+`claude plugin marketplace update` + `claude plugin update "superpowers-masterplan@rasatpetabit-superpowers-masterplan"` for Claude Code AND `codex plugin marketplace upgrade rasatpetabit-superpowers-masterplan` for Codex CLI to pick up the session-audit library. No orchestrator-surface or runtime behavior changes.
+
 ## [5.8.2] — 2026-05-20 — Self-host audit reconciliation with v5.0+ phase modules
 
 Patch release. `bin/masterplan-self-host-audit.sh` had drifted behind the v5.0 modularization (orchestrator split from monolithic `commands/masterplan.md` into `parts/*.md` phase modules + `parts/contracts/*.md` cross-cutting contracts). Several checks were still scanning the legacy router for sentinels that had migrated into the phase modules, and the v5 plan-format check was hard-asserting markers on archived pre-v5 bundles that won't be retroactively reformatted. Net effect on a fresh marketplace clone: ~3 false-positive warnings + 2 FAILs on every audit run, eroding the signal value of the script.
