@@ -563,54 +563,82 @@ check_brainstorm_anchor() {
 # Check: model-passthrough preamble enforcement (doctor check #23 audit surface, v2.12.0)
 # ---------------------------------------------------------------------------------
 check_model_passthrough() {
-  local file="${REPO_ROOT}/commands/masterplan.md"
-  if [[ ! -f "${file}" ]]; then
-    echo "Skipping model-passthrough check: ${file} not found"
+  # v5.0+: the SDD preamble + dispatch-site annotations migrated from the
+  # monolithic commands/masterplan.md into the phase modules. The canonical
+  # contract lives in parts/contracts/agent-dispatch.md; step-c.md operatively
+  # references it; step-a/step-b/import/doctor carry dispatch sites. Scan the
+  # whole orchestrator surface so the audit follows the modularization.
+  local files=()
+  local candidate
+  for candidate in \
+    "${REPO_ROOT}/commands/masterplan.md" \
+    "${REPO_ROOT}/parts/step-0.md" \
+    "${REPO_ROOT}/parts/step-a.md" \
+    "${REPO_ROOT}/parts/step-b.md" \
+    "${REPO_ROOT}/parts/step-c.md" \
+    "${REPO_ROOT}/parts/doctor.md" \
+    "${REPO_ROOT}/parts/import.md" \
+    "${REPO_ROOT}/parts/codex-host.md" \
+    "${REPO_ROOT}/parts/failure-classes.md" \
+    "${REPO_ROOT}/parts/contracts/agent-dispatch.md" \
+    "${REPO_ROOT}/parts/contracts/run-bundle.md" \
+    "${REPO_ROOT}/parts/contracts/taskcreate-projection.md"; do
+    [[ -f "${candidate}" ]] && files+=("${candidate}")
+  done
+
+  if [[ "${#files[@]}" -eq 0 ]]; then
+    echo "Skipping model-passthrough check: no orchestrator surface files found"
     return
   fi
 
-  # 1. Verify the verbatim preamble sentinel is present (canonical definition in §Agent dispatch contract).
+  # 1. Verify the verbatim preamble sentinel is present somewhere on the
+  #    orchestrator surface (canonical definition in parts/contracts/agent-dispatch.md).
   local sentinel="For every inner Task / Agent invocation you make"
   local sentinel_count
-  sentinel_count="$(grep -c "${sentinel}" "${file}" || true)"
+  sentinel_count="$(grep -c "${sentinel}" "${files[@]}" 2>/dev/null | awk -F: '{s+=$2} END {print s+0}')"
   if [[ "${sentinel_count}" -eq 0 ]]; then
-    echo "⚠️  commands/masterplan.md — verbatim SDD preamble sentinel not found (expected ≥1 occurrence of: '${sentinel}')"
+    echo "⚠️  orchestrator surface — verbatim SDD preamble sentinel not found (expected ≥1 occurrence of: '${sentinel}')"
     echo "    Contract drift: §Agent dispatch contract recursive-application preamble is missing."
+    echo "    Canonical home: parts/contracts/agent-dispatch.md"
     EXIT=1
   else
-    echo "✓ model-passthrough preamble sentinel found (${sentinel_count} occurrence(s))"
+    echo "✓ model-passthrough preamble sentinel found (${sentinel_count} occurrence(s) across orchestrator surface)"
   fi
 
   # 2. Informational: count lines carrying model: "haiku"|"sonnet"|"opus" — dispatch attribution sites.
   local model_lines
-  model_lines="$(grep -cE 'model: "(haiku|sonnet|opus)"' "${file}" || true)"
-  echo "  Info: ${model_lines} line(s) with explicit model: \"haiku\"|\"sonnet\"|\"opus\" in orchestrator source"
+  model_lines="$(grep -cE 'model: "(haiku|sonnet|opus)"' "${files[@]}" 2>/dev/null | awk -F: '{s+=$2} END {print s+0}')"
+  echo "  Info: ${model_lines} line(s) with explicit model: \"haiku\"|\"sonnet\"|\"opus\" across orchestrator surface"
 
   # 3. Warn on model: "opus" occurrences outside the blocker-stronger-model context.
-  local opus_lines
-  opus_lines="$(grep -n 'model: "opus"' "${file}" || true)"
-  if [[ -n "${opus_lines}" ]]; then
-    local warned=0
+  local warned=0
+  local opus_total=0
+  local f
+  for f in "${files[@]}"; do
+    local opus_lines
+    opus_lines="$(grep -n 'model: "opus"' "${f}" 2>/dev/null || true)"
+    [[ -z "${opus_lines}" ]] && continue
     while IFS= read -r line; do
+      opus_total=$((opus_total + 1))
       local lineno="${line%%:*}"
       local context_start=$((lineno - 5))
       local context_end=$((lineno + 5))
       [[ "${context_start}" -lt 1 ]] && context_start=1
       local context
-      context="$(sed -n "${context_start},${context_end}p" "${file}")"
+      context="$(sed -n "${context_start},${context_end}p" "${f}")"
       # Suppress if near blocker gate context or config table (expected opus sites).
       if echo "${context}" | grep -qE 'blocker|stronger.model|re-dispatch|ONLY exception|config table|dispatch contract'; then
         continue
       fi
-      echo "⚠️  commands/masterplan.md:${lineno} — model: \"opus\" outside blocker-stronger-model context (cost regression site; should be sonnet)"
+      echo "⚠️  ${f#${REPO_ROOT}/}:${lineno} — model: \"opus\" outside blocker-stronger-model context (cost regression site; should be sonnet)"
       warned=$((warned + 1))
       EXIT=1
     done <<< "${opus_lines}"
-    if [[ "${warned}" -eq 0 && -n "${opus_lines}" ]]; then
-      echo "✓ all model: \"opus\" occurrences are within blocker-stronger-model or config-table context"
-    fi
-  else
+  done
+  if [[ "${opus_total}" -eq 0 ]]; then
     echo "✓ no bare model: \"opus\" dispatch sites found"
+  elif [[ "${warned}" -eq 0 ]]; then
+    echo "✓ all model: \"opus\" occurrences are within blocker-stronger-model or config-table context"
   fi
 }
 
