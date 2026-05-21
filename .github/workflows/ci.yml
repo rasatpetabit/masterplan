@@ -1,0 +1,72 @@
+name: release-gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Seed gitignored plugin manifests from README
+        run: |
+          set -euo pipefail
+          readme_version=$(grep -oE 'Current release:[[:space:]]*\*\*v[0-9]+\.[0-9]+\.[0-9]+\*\*' README.md \
+            | sed -E 's/.*v([0-9]+\.[0-9]+\.[0-9]+).*/\1/' \
+            | head -1)
+          if [ -z "${readme_version:-}" ]; then
+            echo "FAIL: could not parse 'Current release: **vX.Y.Z**' from README.md" >&2
+            exit 2
+          fi
+          echo "Seeding manifests at version ${readme_version}"
+          mkdir -p .claude-plugin .codex-plugin
+          cat > .claude-plugin/plugin.json <<EOF
+          {
+            "name": "superpowers-masterplan",
+            "version": "${readme_version}",
+            "description": "Multi-hour engineering workflow plugin (brainstorm → plan → execute) with durable run bundles, wave dispatch, and asymmetric review.",
+            "url": "https://github.com/rasatpetabit/superpowers-masterplan"
+          }
+          EOF
+          cat > .claude-plugin/marketplace.json <<EOF
+          {
+            "name": "rasatpetabit-superpowers-masterplan",
+            "version": "${readme_version}",
+            "plugins": [
+              {
+                "name": "superpowers-masterplan",
+                "version": "${readme_version}",
+                "source": "."
+              }
+            ]
+          }
+          EOF
+          cat > .codex-plugin/plugin.json <<EOF
+          {
+            "name": "superpowers-masterplan",
+            "version": "${readme_version}",
+            "description": "Multi-hour engineering workflow plugin (brainstorm → plan → execute) with durable run bundles, wave dispatch, and asymmetric review.",
+            "url": "https://github.com/rasatpetabit/superpowers-masterplan"
+          }
+          EOF
+
+      - name: Run release gate
+        run: bash bin/masterplan-release-gate.sh
