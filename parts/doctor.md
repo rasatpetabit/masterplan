@@ -576,17 +576,22 @@ if [ "$size" -gt 20480 ]; then
   echo "WARN commands/masterplan.md is $size bytes (ceiling 20480)"
   fail=1
 fi
-for phase in 0 a b c; do
+for phase in 0 a b; do
   if [ ! -f "parts/step-$phase.md" ]; then
     echo "WARN parts/step-$phase.md missing"; fail=1
+  fi
+done
+for sub in resume dispatch verification completion; do
+  if [ ! -f "parts/step-c-$sub.md" ]; then
+    echo "WARN parts/step-c-$sub.md missing"; fail=1
   fi
 done
 grep -q 'CC-3-trampoline' commands/masterplan.md || \
   { echo "WARN CC-3-trampoline missing from router"; fail=1; }
 grep -q 'CC-3-trampoline' parts/step-0.md || \
   { echo "WARN CC-3-trampoline missing from step-0"; fail=1; }
-grep -q 'DISPATCH-SITE: step-c.md' parts/step-c.md 2>/dev/null || \
-  { echo "WARN DISPATCH-SITE: step-c.md tags missing from step-c.md"; fail=1; }
+grep -q 'DISPATCH-SITE: step-c-resume.md' parts/step-c-resume.md 2>/dev/null || \
+  { echo "WARN DISPATCH-SITE labels missing from step-c-resume.md"; fail=1; }
 [ $fail -eq 0 ] && echo "Check #36: PASS" || echo "Check #36: WARN"
 ```
 

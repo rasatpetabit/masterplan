@@ -60,11 +60,11 @@ Every turn-close in this orchestrator MUST route through the following sequence.
 | Verb | Routes to | Notes |
 |---|---|---|
 | _(empty)_ | parts/step-0.md (Step M0 resume-first) | inline status orientation + auto-resume |
-| `full` | parts/step-0.md → parts/step-b.md → parts/step-c.md | full kickoff (B0→B1→B2→B3→C) |
+| `full` | parts/step-0.md → parts/step-b.md → parts/step-c-resume.md | full kickoff (B0→B1→B2→B3→C) |
 | `brainstorm` | parts/step-0.md → parts/step-b.md | halts at B1 close-out gate (halt_mode=post-brainstorm) |
 | `plan` | parts/step-0.md → parts/step-a.md (spec-pick) or parts/step-b.md | halts at B3 close-out gate (halt_mode=post-plan) |
-| `execute` | parts/step-0.md → parts/step-c.md (resume) or parts/step-a.md (picker) | state-path resumes; topic/no-args picks |
-| `retro` | parts/step-0.md → parts/step-c.md (Step R subroutine) | generate retrospective |
+| `execute` | parts/step-0.md → parts/step-c-resume.md (resume) or parts/step-a.md (picker) | state-path resumes; topic/no-args picks |
+| `retro` | parts/step-0.md → parts/step-c-resume.md (Step R subroutine) | generate retrospective |
 | `import` | parts/step-0.md → parts/import.md | legacy migration (Step I) |
 | `doctor` | parts/step-0.md → parts/doctor.md | all 36 checks (Step D) |
 | `status` | parts/step-0.md (Step S subroutine) | read-only situation report |
@@ -72,7 +72,7 @@ Every turn-close in this orchestrator MUST route through the following sequence.
 | `stats` | parts/step-0.md (Step T subroutine) | telemetry roll-up |
 | `clean` | parts/step-0.md (Step CL subroutine) | archive + prune |
 | `next` | parts/step-0.md (Step N subroutine) | what's-next router |
-| `--resume=<path>` | parts/step-0.md → parts/step-c.md | alias for `execute <path>` |
+| `--resume=<path>` | parts/step-0.md → parts/step-c-resume.md | alias for `execute <path>` |
 
 ## Codex host detection
 
@@ -81,6 +81,8 @@ If invoked via `/superpowers-masterplan:masterplan` (Codex host), set `codex.hos
 ## Phase-prompt loader
 
 After step-0.md completes bootstrap, route by verb. For `full`, `brainstorm`, `plan`, `execute`, `retro`, and `--resume=<path>`, load `parts/step-{state.yml.current_phase}.md`. The phase file is self-contained; it loads contracts on demand. Subroutine verbs (`status`, `stats`, `clean`, `next`, `validate`) execute inline within step-0.md and do not load additional phase files.
+
+**step-c split (v6.0).** `step-c.md` is replaced by 4 load-on-demand sub-files: `step-c-resume.md` (entry + step 1), `step-c-dispatch.md` (wave assembly + routing), `step-c-verification.md` (post-task finalize), `step-c-completion.md` (loop scheduling + completion). Load `step-c-resume.md` as the execution entry point; sub-file headers cross-reference each next sub-file.
 
 ## Doctor entry point
 
