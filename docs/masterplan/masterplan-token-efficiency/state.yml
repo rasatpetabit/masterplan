@@ -1,0 +1,50 @@
+---
+schema_version: 3
+slug: masterplan-token-efficiency
+topic: Improve masterplan token use efficiency
+status: in-progress
+phase: worktree_decided
+worktree: /srv/dev/superpowers-masterplan/.worktrees/masterplan-token-efficiency
+branch: worktree-masterplan-token-efficiency
+started: 2026-05-22T17:22:34Z
+last_activity: 2026-05-22T17:22:34Z
+complexity: high
+autonomy: loose
+codex_routing: auto
+codex_review: on
+loop_enabled: false
+compact_loop_recommended: false
+halt_mode: post-brainstorm
+current_task: ""
+next_action: resolve brainstorm intent anchor
+plan_kind: implementation
+follow_ups: []
+pending_gate: null
+background: null
+stop_reason: null
+critical_error: null
+pending_retro_attempts: 0
+retro_policy:
+  waived: false
+  reason: ""
+scope_fingerprint:
+  - improv
+  - masterplan
+  - token
+  - us
+  - effici
+supersedes: ""
+superseded_by: ""
+variant_of: ""
+import_hydration: ""
+import_contract:
+  contract_id: ""
+  inputs_hash: ""
+  processed_at: ""
+worktree_disposition: active
+worktree_last_reconciled: 2026-05-22T17:22:34Z
+artifacts:
+  spec: docs/masterplan/masterplan-token-efficiency/spec.md
+  plan: ""
+  retro: ""
+legacy: {}
