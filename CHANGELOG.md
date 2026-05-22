@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.0.1] — 2026-05-22
+
+### Fixed
+
+- **Codex sandbox worktree compatibility:** `codex-companion.mjs` hardcoded `workspace-write` sandbox for write tasks. In git worktrees the git index lives at `<main>/.git/worktrees/<name>/index` — outside the worktree root and blocked by `workspace-write`. Fix: detect worktree context (`<cwd>/.git` is a file, not a directory) and use `danger-full-access` instead. Patched both marketplace and 1.0.4 cache copies. This unblocks Codex task dispatch for all masterplan bundles running in git worktrees.
+- **Gate chat option falls through:** `spec_approval` gate (step-b.md B1, `halt_mode==none`) listed four options including "Request changes — describe what to change" but had no explicit option routing. Any non-approve response fell through to Step B2 (plan writing), which immediately fired a downstream AUQ, preventing the user from chatting. Added routing for all four options: approve→B2; open-to-review→CLOSE-TURN (gate retained); request-changes→respond and CLOSE-TURN (gate retained); abort→cleanup. Also added a global free-text gate response rule to step-0.md: when any pending gate AUQ receives an unrecognized (free-text) response, hold the gate, respond to the user's text, and CLOSE-TURN.
+
+### Added
+
+- **AUQ breadcrumb navigation (CC-3 trampoline step 3):** Before every `AskUserQuestion` Closer, emit a plain-text navigation line: `/masterplan {verb} › {phase-label} › {gate-id}  [{slug}]`. Gives users the "big picture" workflow context when responding to nested questions. Phase label derived from the latest `<masterplan-trace step=X phase=in>` breadcrumb; gate-id from the surfaced gate; slug from the active bundle.
+
 ## [6.0.0] — 2026-05-22
 
 ### Performance
