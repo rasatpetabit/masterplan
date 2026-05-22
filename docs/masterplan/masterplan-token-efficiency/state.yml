@@ -3,21 +3,21 @@ schema_version: 3
 slug: masterplan-token-efficiency
 topic: Improve masterplan token use efficiency
 status: in-progress
-phase: spec_gate
+phase: plan_gate
 worktree: /srv/dev/superpowers-masterplan/.worktrees/masterplan-token-efficiency
 branch: worktree-masterplan-token-efficiency
 started: 2026-05-22T17:22:34Z
-last_activity: 2026-05-22T17:41:00Z
+last_activity: 2026-05-22T21:30:00Z
 complexity: high
 autonomy: loose
 codex_routing: auto
 codex_review: on
 loop_enabled: false
 compact_loop_recommended: false
-halt_mode: post-brainstorm
-current_task: ""
-next_action: approve spec for planning
-pending_gate: brainstorm_closeout
+halt_mode: post-plan
+current_task: "Task 1: Add turn_context_bytes event to telemetry hook"
+next_action: await plan approval
+pending_gate: plan_closeout
 stop_reason: question
 plan_kind: implementation
 follow_ups: []
@@ -45,6 +45,6 @@ worktree_disposition: active
 worktree_last_reconciled: 2026-05-22T17:22:34Z
 artifacts:
   spec: docs/masterplan/masterplan-token-efficiency/spec.md
-  plan: ""
+  plan: docs/masterplan/masterplan-token-efficiency/plan.md
   retro: ""
 legacy: {}
