@@ -3,11 +3,11 @@ schema_version: 3
 slug: masterplan-token-efficiency
 topic: Improve masterplan token use efficiency
 status: in-progress
-phase: worktree_decided
+phase: spec_gate
 worktree: /srv/dev/superpowers-masterplan/.worktrees/masterplan-token-efficiency
 branch: worktree-masterplan-token-efficiency
 started: 2026-05-22T17:22:34Z
-last_activity: 2026-05-22T17:22:34Z
+last_activity: 2026-05-22T17:41:00Z
 complexity: high
 autonomy: loose
 codex_routing: auto
@@ -16,12 +16,12 @@ loop_enabled: false
 compact_loop_recommended: false
 halt_mode: post-brainstorm
 current_task: ""
-next_action: resolve brainstorm intent anchor
+next_action: approve spec for planning
+pending_gate: brainstorm_closeout
+stop_reason: question
 plan_kind: implementation
 follow_ups: []
-pending_gate: null
 background: null
-stop_reason: null
 critical_error: null
 pending_retro_attempts: 0
 retro_policy:
