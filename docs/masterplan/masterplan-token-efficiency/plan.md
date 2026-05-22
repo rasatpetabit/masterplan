@@ -14,7 +14,7 @@
 
 **Files:** hooks/masterplan-telemetry.sh
 **Parallel-group:** none
-**Codex:** true
+**Codex:** ok
 **Spec:** [spec.md#L66-L100](spec.md#L66-L100)
 **Verify:**
 ```bash
@@ -126,7 +126,7 @@ git commit -m "feat(telemetry): add turn_context_bytes event + file-load marker 
 
 **Files:** bin/masterplan-codex-usage.sh
 **Parallel-group:** none
-**Codex:** true
+**Codex:** ok
 **Spec:** [spec.md#L89-L100](spec.md#L89-L100)
 **Verify:**
 ```bash
@@ -225,7 +225,7 @@ git commit -m "feat(bin): add baseline subcommand to masterplan-codex-usage.sh"
 
 **Files:** parts/step-0.md
 **Parallel-group:** none
-**Codex:** true
+**Codex:** ok
 **Spec:** [spec.md#L118-L143](spec.md#L118-L143)
 **Verify:**
 ```bash
@@ -301,7 +301,7 @@ git commit -m "perf(step-0): prose-prune 47KB → ≤30KB"
 
 **Files:** parts/step-b.md
 **Parallel-group:** none
-**Codex:** true
+**Codex:** ok
 **Spec:** [spec.md#L118-L143](spec.md#L118-L143)
 **Verify:**
 ```bash
@@ -373,7 +373,7 @@ git commit -m "perf(step-b): prose-prune 48KB → ≤28KB"
 
 **Files:** commands/masterplan.md
 **Parallel-group:** none
-**Codex:** true
+**Codex:** ok
 **Spec:** [spec.md#L118-L143](spec.md#L118-L143)
 **Verify:**
 ```bash
@@ -431,7 +431,7 @@ git commit -m "perf(router): prose-prune 11KB → ≤9KB"
 
 **Files:** parts/doctor.md
 **Parallel-group:** none
-**Codex:** true
+**Codex:** ok
 **Spec:** [spec.md#L118-L143](spec.md#L118-L143)
 **Verify:**
 ```bash
@@ -476,7 +476,7 @@ git commit -m "perf(doctor): compress per-check rationale to 1 sentence each"
 
 **Files:** parts/step-c-resume.md
 **Parallel-group:** none
-**Codex:** false
+**Codex:** no
 **Spec:** [spec.md#L148-L165](spec.md#L148-L165)
 **Verify:**
 ```bash
@@ -535,7 +535,7 @@ git commit -m "feat(step-c): create step-c-resume.md (C1 resume controller, ≤2
 
 **Files:** parts/step-c-dispatch.md
 **Parallel-group:** none
-**Codex:** false
+**Codex:** no
 **Spec:** [spec.md#L148-L165](spec.md#L148-L165)
 **Verify:**
 ```bash
@@ -585,7 +585,7 @@ git commit -m "feat(step-c): create step-c-dispatch.md (C2 wave dispatch, ≤25K
 
 **Files:** parts/step-c-verification.md
 **Parallel-group:** none
-**Codex:** false
+**Codex:** no
 **Spec:** [spec.md#L148-L165](spec.md#L148-L165)
 **Verify:**
 ```bash
@@ -634,7 +634,7 @@ git commit -m "feat(step-c): create step-c-verification.md (C3 verification, ≤
 
 **Files:** parts/step-c-completion.md
 **Parallel-group:** none
-**Codex:** false
+**Codex:** no
 **Spec:** [spec.md#L148-L165](spec.md#L148-L165)
 **Verify:**
 ```bash
@@ -687,7 +687,7 @@ git commit -m "feat(step-c): create step-c-completion.md (C4-C6 completion/failu
 
 **Files:** commands/masterplan.md, parts/step-c.md (remove), parts/step-0.md
 **Parallel-group:** none
-**Codex:** false
+**Codex:** no
 **Spec:** [spec.md#L156-L165](spec.md#L156-L165)
 **Verify:**
 ```bash
@@ -755,7 +755,7 @@ git commit -m "feat(router): lazy-load step-c sub-files; remove monolithic step-
 
 **Files:** parts/contracts/coordinator.md
 **Parallel-group:** none
-**Codex:** true
+**Codex:** ok
 **Spec:** [spec.md#L169-L183](spec.md#L169-L183)
 **Verify:**
 ```bash
@@ -833,7 +833,7 @@ git commit -m "feat(contracts): add coordinator subagent contract"
 
 **Files:** docs/internals/brainstorm-anchor.md
 **Parallel-group:** none
-**Codex:** true
+**Codex:** ok
 **Spec:** [spec.md#L183-L211](spec.md#L183-L211)
 **Verify:**
 ```bash
@@ -959,7 +959,7 @@ git commit -m "docs(internals): add brainstorm-anchor coordinator doc"
 
 **Files:** parts/step-b.md
 **Parallel-group:** none
-**Codex:** true
+**Codex:** ok
 **Spec:** [spec.md#L183-L211](spec.md#L183-L211)
 **Verify:**
 ```bash
@@ -1019,7 +1019,7 @@ git commit -m "feat(step-b): dispatch coordinator-brainstorm-anchor; compact Hai
 
 **Files:** docs/internals/doctor.md, parts/step-0.md
 **Parallel-group:** none
-**Codex:** false
+**Codex:** no
 **Spec:** [spec.md#L212-L237](spec.md#L212-L237)
 **Verify:**
 ```bash
@@ -1119,7 +1119,7 @@ git commit -m "feat(doctor): route via coordinator-doctor; add docs/internals/do
 
 **Files:** parts/step-c-verification.md, docs/internals/task-verification.md
 **Parallel-group:** none
-**Codex:** false
+**Codex:** no
 **Spec:** [spec.md#L238-L260](spec.md#L238-L260)
 **Verify:**
 ```bash
@@ -1211,7 +1211,7 @@ git commit -m "feat(step-c-verification): dispatch coordinator-task-verify; add 
 
 **Files:** parts/step-c-resume.md, docs/internals/bundle-resume.md
 **Parallel-group:** none
-**Codex:** false
+**Codex:** no
 **Spec:** [spec.md#L261-L292](spec.md#L261-L292)
 **Verify:**
 ```bash
@@ -1306,7 +1306,7 @@ git commit -m "feat(step-c-resume): dispatch coordinator-bundle-resume; add inte
 
 **Files:** parts/step-c-dispatch.md, docs/internals/plan-parser.md
 **Parallel-group:** none
-**Codex:** false
+**Codex:** no
 **Spec:** [spec.md#L293-L322](spec.md#L293-L322)
 **Verify:**
 ```bash
@@ -1412,7 +1412,7 @@ git commit -m "feat(step-c-dispatch): dispatch coordinator-plan-parser for eligi
 
 **Files:** docs/internals/wave-dispatch.md, docs/internals/coordinator-pattern.md
 **Parallel-group:** none
-**Codex:** false
+**Codex:** no
 **Spec:** [spec.md#L325-L345](spec.md#L325-L345)
 **Verify:**
 ```bash
@@ -1506,7 +1506,7 @@ git commit -m "docs(internals): add wave-dispatch and coordinator-pattern focuse
 
 **Files:** docs/internals.md
 **Parallel-group:** none
-**Codex:** false
+**Codex:** no
 **Spec:** [spec.md#L325-L345](spec.md#L325-L345)
 **Verify:**
 ```bash
@@ -1580,7 +1580,7 @@ git commit -m "docs(internals): convert to index; all content in docs/internals/
 
 **Files:** .claude-plugin/plugin.json, CHANGELOG.md
 **Parallel-group:** none
-**Codex:** false
+**Codex:** no
 **Spec:** [spec.md#L52-L58](spec.md#L52-L58)
 **Verify:**
 ```bash

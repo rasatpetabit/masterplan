@@ -2,3 +2,6 @@
 {"type":"codex_ping","result":"ok","detection_mode":"scan-then-ping","detection_source":"scan","ts":"2026-05-22T17:22:34Z"}
 {"type":"planning_started","phase":"planning","ts":"2026-05-22T20:15:00Z","source":"plan --from-spec","gate_cleared":"brainstorm_closeout"}
 {"type":"plan_written","phase":"plan_gate","ts":"2026-05-22T21:30:00Z","plan":"docs/masterplan/masterplan-token-efficiency/plan.md","task_count":21,"gate":"plan_closeout"}
+{"type":"gate_closed","gate":"plan_closeout","selection":"execute invocation","ts":"2026-05-22T22:00:00Z","dispatched_by":"user"}
+{"type":"eligibility_cache","result":"built inline (21 tasks; 9 codex-eligible) — all tasks annotated; first build for this plan","ts":"2026-05-22T22:00:00Z","dispatched_by":"user"}
+{"type":"step_c_init_complete","session_sig":"session-2026-05-22","rehydrated":false,"dispatched_by":"user"}

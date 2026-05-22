@@ -1,0 +1,352 @@
+{
+  "cache_schema_version": "1.0",
+  "plan_path": "docs/masterplan/masterplan-token-efficiency/plan.md",
+  "plan_mtime_at_compute": "2026-05-22T18:49:19Z",
+  "generated_at": "2026-05-22T18:50:03Z",
+  "tasks": [
+    {
+      "idx": 1,
+      "name": "Add turn_context_bytes event to telemetry hook",
+      "eligible": true,
+      "reason": "annotated **Codex:** ok",
+      "annotated": "ok",
+      "parallel_group": null,
+      "files": [
+        "hooks/masterplan-telemetry.sh"
+      ],
+      "parallel_eligible": false,
+      "parallel_eligibility_reason": "no parallel-group annotation",
+      "dispatched_to": null,
+      "dispatched_at": null,
+      "decision_source": null
+    },
+    {
+      "idx": 2,
+      "name": "Add baseline subcommand to bin/masterplan-codex-usage.sh",
+      "eligible": true,
+      "reason": "annotated **Codex:** ok",
+      "annotated": "ok",
+      "parallel_group": null,
+      "files": [
+        "bin/masterplan-codex-usage.sh"
+      ],
+      "parallel_eligible": false,
+      "parallel_eligibility_reason": "no parallel-group annotation",
+      "dispatched_to": null,
+      "dispatched_at": null,
+      "decision_source": null
+    },
+    {
+      "idx": 3,
+      "name": "Prose-prune parts/step-0.md (47KB \u2192 \u226430KB)",
+      "eligible": true,
+      "reason": "annotated **Codex:** ok",
+      "annotated": "ok",
+      "parallel_group": null,
+      "files": [
+        "parts/step-0.md"
+      ],
+      "parallel_eligible": false,
+      "parallel_eligibility_reason": "no parallel-group annotation",
+      "dispatched_to": null,
+      "dispatched_at": null,
+      "decision_source": null
+    },
+    {
+      "idx": 4,
+      "name": "Prose-prune parts/step-b.md (48KB \u2192 \u226428KB)",
+      "eligible": true,
+      "reason": "annotated **Codex:** ok",
+      "annotated": "ok",
+      "parallel_group": null,
+      "files": [
+        "parts/step-b.md"
+      ],
+      "parallel_eligible": false,
+      "parallel_eligibility_reason": "no parallel-group annotation",
+      "dispatched_to": null,
+      "dispatched_at": null,
+      "decision_source": null
+    },
+    {
+      "idx": 5,
+      "name": "Prose-prune commands/masterplan.md (11KB \u2192 \u22649KB)",
+      "eligible": true,
+      "reason": "annotated **Codex:** ok",
+      "annotated": "ok",
+      "parallel_group": null,
+      "files": [
+        "commands/masterplan.md"
+      ],
+      "parallel_eligible": false,
+      "parallel_eligibility_reason": "no parallel-group annotation",
+      "dispatched_to": null,
+      "dispatched_at": null,
+      "decision_source": null
+    },
+    {
+      "idx": 6,
+      "name": "Prose-prune parts/doctor.md per-check rationale blocks",
+      "eligible": true,
+      "reason": "annotated **Codex:** ok",
+      "annotated": "ok",
+      "parallel_group": null,
+      "files": [
+        "parts/doctor.md"
+      ],
+      "parallel_eligible": false,
+      "parallel_eligibility_reason": "no parallel-group annotation",
+      "dispatched_to": null,
+      "dispatched_at": null,
+      "decision_source": null
+    },
+    {
+      "idx": 7,
+      "name": "Create parts/step-c-resume.md (Step C1 content)",
+      "eligible": false,
+      "reason": "annotated **Codex:** no",
+      "annotated": "no",
+      "parallel_group": null,
+      "files": [
+        "parts/step-c-resume.md"
+      ],
+      "parallel_eligible": false,
+      "parallel_eligibility_reason": "no parallel-group annotation",
+      "dispatched_to": null,
+      "dispatched_at": null,
+      "decision_source": null
+    },
+    {
+      "idx": 8,
+      "name": "Create parts/step-c-dispatch.md (Step C2 content)",
+      "eligible": false,
+      "reason": "annotated **Codex:** no",
+      "annotated": "no",
+      "parallel_group": null,
+      "files": [
+        "parts/step-c-dispatch.md"
+      ],
+      "parallel_eligible": false,
+      "parallel_eligibility_reason": "no parallel-group annotation",
+      "dispatched_to": null,
+      "dispatched_at": null,
+      "decision_source": null
+    },
+    {
+      "idx": 9,
+      "name": "Create parts/step-c-verification.md (Step C3 content)",
+      "eligible": false,
+      "reason": "annotated **Codex:** no",
+      "annotated": "no",
+      "parallel_group": null,
+      "files": [
+        "parts/step-c-verification.md"
+      ],
+      "parallel_eligible": false,
+      "parallel_eligibility_reason": "no parallel-group annotation",
+      "dispatched_to": null,
+      "dispatched_at": null,
+      "decision_source": null
+    },
+    {
+      "idx": 10,
+      "name": "Create parts/step-c-completion.md (Steps C4-C6 content)",
+      "eligible": false,
+      "reason": "annotated **Codex:** no",
+      "annotated": "no",
+      "parallel_group": null,
+      "files": [
+        "parts/step-c-completion.md"
+      ],
+      "parallel_eligible": false,
+      "parallel_eligibility_reason": "no parallel-group annotation",
+      "dispatched_to": null,
+      "dispatched_at": null,
+      "decision_source": null
+    },
+    {
+      "idx": 11,
+      "name": "Update router lazy-load directives and remove parts/step-c.md",
+      "eligible": false,
+      "reason": "annotated **Codex:** no",
+      "annotated": "no",
+      "parallel_group": null,
+      "files": [
+        "commands/masterplan.md",
+        "parts/step-c.md (remove)",
+        "parts/step-0.md"
+      ],
+      "parallel_eligible": false,
+      "parallel_eligibility_reason": "no parallel-group annotation",
+      "dispatched_to": null,
+      "dispatched_at": null,
+      "decision_source": null
+    },
+    {
+      "idx": 12,
+      "name": "Create parts/contracts/coordinator.md",
+      "eligible": true,
+      "reason": "annotated **Codex:** ok",
+      "annotated": "ok",
+      "parallel_group": null,
+      "files": [
+        "parts/contracts/coordinator.md"
+      ],
+      "parallel_eligible": false,
+      "parallel_eligibility_reason": "no parallel-group annotation",
+      "dispatched_to": null,
+      "dispatched_at": null,
+      "decision_source": null
+    },
+    {
+      "idx": 13,
+      "name": "Create docs/internals/brainstorm-anchor.md",
+      "eligible": true,
+      "reason": "annotated **Codex:** ok",
+      "annotated": "ok",
+      "parallel_group": null,
+      "files": [
+        "docs/internals/brainstorm-anchor.md"
+      ],
+      "parallel_eligible": false,
+      "parallel_eligibility_reason": "no parallel-group annotation",
+      "dispatched_to": null,
+      "dispatched_at": null,
+      "decision_source": null
+    },
+    {
+      "idx": 14,
+      "name": "Update parts/step-b.md to dispatch coordinator-brainstorm-anchor",
+      "eligible": true,
+      "reason": "annotated **Codex:** ok",
+      "annotated": "ok",
+      "parallel_group": null,
+      "files": [
+        "parts/step-b.md"
+      ],
+      "parallel_eligible": false,
+      "parallel_eligibility_reason": "no parallel-group annotation",
+      "dispatched_to": null,
+      "dispatched_at": null,
+      "decision_source": null
+    },
+    {
+      "idx": 15,
+      "name": "Create docs/internals/doctor.md and update doctor dispatch routing",
+      "eligible": false,
+      "reason": "annotated **Codex:** no",
+      "annotated": "no",
+      "parallel_group": null,
+      "files": [
+        "docs/internals/doctor.md",
+        "parts/step-0.md"
+      ],
+      "parallel_eligible": false,
+      "parallel_eligibility_reason": "no parallel-group annotation",
+      "dispatched_to": null,
+      "dispatched_at": null,
+      "decision_source": null
+    },
+    {
+      "idx": 16,
+      "name": "Update step-c-verification.md for coordinator-task-verify",
+      "eligible": false,
+      "reason": "annotated **Codex:** no",
+      "annotated": "no",
+      "parallel_group": null,
+      "files": [
+        "parts/step-c-verification.md",
+        "docs/internals/task-verification.md"
+      ],
+      "parallel_eligible": false,
+      "parallel_eligibility_reason": "no parallel-group annotation",
+      "dispatched_to": null,
+      "dispatched_at": null,
+      "decision_source": null
+    },
+    {
+      "idx": 17,
+      "name": "Update step-c-resume.md for coordinator-bundle-resume",
+      "eligible": false,
+      "reason": "annotated **Codex:** no",
+      "annotated": "no",
+      "parallel_group": null,
+      "files": [
+        "parts/step-c-resume.md",
+        "docs/internals/bundle-resume.md"
+      ],
+      "parallel_eligible": false,
+      "parallel_eligibility_reason": "no parallel-group annotation",
+      "dispatched_to": null,
+      "dispatched_at": null,
+      "decision_source": null
+    },
+    {
+      "idx": 18,
+      "name": "Update step-c-dispatch.md for coordinator-plan-parser",
+      "eligible": false,
+      "reason": "annotated **Codex:** no",
+      "annotated": "no",
+      "parallel_group": null,
+      "files": [
+        "parts/step-c-dispatch.md",
+        "docs/internals/plan-parser.md"
+      ],
+      "parallel_eligible": false,
+      "parallel_eligibility_reason": "no parallel-group annotation",
+      "dispatched_to": null,
+      "dispatched_at": null,
+      "decision_source": null
+    },
+    {
+      "idx": 19,
+      "name": "Create docs/internals/wave-dispatch.md and coordinator-pattern.md",
+      "eligible": false,
+      "reason": "annotated **Codex:** no",
+      "annotated": "no",
+      "parallel_group": null,
+      "files": [
+        "docs/internals/wave-dispatch.md",
+        "docs/internals/coordinator-pattern.md"
+      ],
+      "parallel_eligible": false,
+      "parallel_eligibility_reason": "no parallel-group annotation",
+      "dispatched_to": null,
+      "dispatched_at": null,
+      "decision_source": null
+    },
+    {
+      "idx": 20,
+      "name": "Migrate docs/internals.md to lightweight index",
+      "eligible": false,
+      "reason": "annotated **Codex:** no",
+      "annotated": "no",
+      "parallel_group": null,
+      "files": [
+        "docs/internals.md"
+      ],
+      "parallel_eligible": false,
+      "parallel_eligibility_reason": "no parallel-group annotation",
+      "dispatched_to": null,
+      "dispatched_at": null,
+      "decision_source": null
+    },
+    {
+      "idx": 21,
+      "name": "Final verification suite and version bump",
+      "eligible": false,
+      "reason": "annotated **Codex:** no",
+      "annotated": "no",
+      "parallel_group": null,
+      "files": [
+        ".claude-plugin/plugin.json",
+        "CHANGELOG.md"
+      ],
+      "parallel_eligible": false,
+      "parallel_eligibility_reason": "no parallel-group annotation",
+      "dispatched_to": null,
+      "dispatched_at": null,
+      "decision_source": null
+    }
+  ]
+}
