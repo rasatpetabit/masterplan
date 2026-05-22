@@ -22,6 +22,21 @@
 
    **Why:** SDD's implementer subagent runs project tests as part of TDD discipline. Re-running them in 4a duplicates token cost and CI time without adding signal — but trust-without-evidence (the pre-v2.8.0 contract) opened a gap where a fabricated `tests_passed: true` would silently pass. The excerpt-validator closes that gap with one line of regex per command: cheap to compute, cheap for the implementer to capture (`tail -3` of each command), and the ground truth lives in real terminal output rather than implementer self-report.
 
+   **Dispatch coordinator-task-verify** (when 4a does run commands):
+
+   ```
+   DISPATCH-SITE: coordinator-task-verify
+   contract_id: "coordinator-task-verify-v1"
+   Tier: haiku
+   Goal: Run verify commands for task <N>; evaluate against PASS pattern; return status + excerpt.
+   Inputs: commands=<verify_commands_list>, pattern=<verify_pattern or default>, task_name=<name>, timeout_s=60
+   Scope: run commands (read filesystem as needed); no state writes.
+   Constraints: timeout 60s per command; return exit_code even on timeout.
+   Return shape: {status, exit_code, excerpt, commands_run, pattern_matched, coordinator_version}
+   ```
+
+   **Fallback** (coordinator errors or timeout): run commands inline; evaluate against default PASS pattern. Log `coordinator_fallback`.
+
    **Parallelize independent verifiers** (when 4a does run commands). Lint, typecheck, and unit-test commands typically don't share mutable state and should be issued as one parallel Bash batch. Run them sequentially when commands write to the same shared artifacts:
    - `node_modules/`, `dist/`, `build/`, `target/`, `out/`
    - `.tsbuildinfo`, `coverage/`, `.next/`, `.nuxt/`
