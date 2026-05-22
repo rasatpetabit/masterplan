@@ -191,6 +191,15 @@ integrations:
     project: null             # e.g. INGEST; requires Linear MCP
   slack:
     blocked_channel: null     # post here when critical_error/status: blocked, requires Slack MCP
+
+# Adversarial-review integration (v6.1.0+)
+# Run codex:adversarial-review at spec gate (B2) and/or plan gate (B3).
+# `both` (default): run at B2 and B3.
+# `spec`: run at B2 only.
+# `plan`: run at B3 only.
+# `off`: suppress all adversarial-review dispatch.
+# Per-run override: --no-adversarial-review CLI flag.
+adversarial_review: both   # off | spec | plan | both
 ```
 
 ### Adding new keys
