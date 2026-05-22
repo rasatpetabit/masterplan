@@ -2,12 +2,12 @@
 schema_version: 3
 slug: masterplan-token-efficiency
 topic: Improve masterplan token use efficiency
-status: in-progress
-phase: executing
+status: pending_retro
+phase: complete
 worktree: /srv/dev/superpowers-masterplan/.worktrees/masterplan-token-efficiency
 branch: worktree-masterplan-token-efficiency
 started: 2026-05-22T17:22:34Z
-last_activity: 2026-05-22T21:00:00Z
+last_activity: 2026-05-22T23:30:00Z
 complexity: high
 autonomy: loose
 codex_routing: auto
@@ -15,8 +15,8 @@ codex_review: on
 loop_enabled: false
 compact_loop_recommended: false
 halt_mode: none
-current_task: "Task 6: Prose-prune parts/doctor.md"
-next_action: inline edit parts/doctor.md to remove verbose rationale blocks from per-check sections
+current_task: ""
+next_action: run /masterplan retro docs/masterplan/masterplan-token-efficiency/state.yml
 pending_gate: null
 stop_reason: null
 plan_kind: implementation
