@@ -4,3 +4,4 @@
 {"type":"plan_written","phase":"plan_gate","ts":"2026-05-22T22:40:00Z","slug":"adversarial-review-integration","artifact":"docs/masterplan/adversarial-review-integration/plan.md"}
 {"type":"plan_approval_auto_accepted","phase":"executing","ts":"2026-05-22T22:40:30Z","slug":"adversarial-review-integration","autonomy":"loose"}
 {"type":"plan_completed","phase":"complete","ts":"2026-05-22T23:10:00Z","slug":"adversarial-review-integration","tasks_completed":7,"final_commit":"5341d12","dispatched_by":"user","progress_kind":"product_change"}
+{"type":"branch_finish_merged","ts":"2026-05-22T23:12:00Z","slug":"adversarial-review-integration","branch":"main","note":"bundle ran on main directly; no separate feature branch"}
