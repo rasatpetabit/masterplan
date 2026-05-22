@@ -101,7 +101,7 @@ Return shape: {pass, warn, error, findings: [{id, severity, summary, fix_availab
 
 **Fallback** (coordinator errors): log `coordinator_fallback` and load `parts/doctor.md` inline (pre-v6 behavior).
 
-Check #36 verifies this router stays ≤20480 bytes. See `docs/internals/doctor.md` for the coordinator contract and per-check extended rationale.
+Check #36 verifies this router stays ≤20480 bytes. Extended rationale: `docs/internals/doctor.md`.
 
 ## Config reference
 

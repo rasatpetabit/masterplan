@@ -208,7 +208,7 @@ After complexity resolution, before verb routing, run a one-pass prune of stale 
 | `execute <state-path>` | **Step C** — resume that plan | `none` |
 | `execute <topic-or-fuzzy-slug>` | **Step A** — list+pick with topic-match preference; set `requested_verb=execute`, `topic_hint=<remaining args>` | `none` |
 | `import` (alone or with args) | **Step I** — legacy import | `none` |
-| `doctor` (alone or with `--fix`) | **Step D** — lint state via coordinator-doctor (see `commands/masterplan.md §Doctor entry point`) | `none` |
+| `doctor` (alone or with `--fix`) | **Step D** — lint state via coordinator-doctor (see `commands/masterplan.md §Doctor entry point`); on coordinator error, log `coordinator_fallback` and load `parts/doctor.md` inline | `none` |
 | `status` (alone or with `--plan=<slug>`) | **Step S** — situation report (read-only); see §Status verb below | `none` |
 | `validate` (alone or with `--plan=<slug>`) | **inline** — validate config schema; see §Validate verb below | `none` |
 | `retro` (alone or with `<slug>`) | **Step R** — generate retrospective for a completed plan | `none` |
