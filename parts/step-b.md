@@ -197,7 +197,23 @@ After brainstorming returns control, verify state and drive the next step:
 2. **Spec missing:** persist `pending_gate.id: brainstorm_missing`, surface `AskUserQuestion(... options=["Re-invoke with same topic", "Refine topic and re-invoke", "Abort kickoff"])`.
 3. **No `Intent Anchor`/`Scope Boundary` section:** persist `pending_gate.id: brainstorm_anchor_missing`, surface `AskUserQuestion(... options=["Re-run with saved anchor (Recommended)", "Patch anchor now", "Abort"])`.
 4. **Spec exists:** update `state.yml`: `phase: spec_gate`, `artifacts.spec: <path>`, `next_action: approve spec for planning`; append `spec_written`; consult `halt_mode`.
-   - **`halt_mode == none`** (existing kickoff path, unchanged): <!-- Intentionally diverges from the L1360 plan_approval condition under loose autonomy: spec_approval still fires under `--autonomy=loose`, while plan_approval auto-approves. See CHANGELOG v4.2.0 for the rationale and doctor check #31 for the consistency audit. --> under `--autonomy != full`, persist `pending_gate` with `id: spec_approval`, then **emit** `<masterplan-trace gate=fire id=spec_approval auq-options=4>` and surface `AskUserQuestion("Spec written at <path>. Ready for writing-plans?", options=[Approve and run writing-plans (Recommended) / Open spec to review first then ping me / Request changes — describe what to change / Abort kickoff])`. Under `--autonomy=full`: auto-approve, clear `pending_gate`, and proceed to Step B2 silently.
+   **Adversarial review — spec gate (B2).** Before routing by `halt_mode`, run this block:
+   1. **Enable check:** Resolve `config.adversarial_review` from merged config tiers (global `~/.masterplan.yaml` then repo `.masterplan.yaml`, last-writer wins). If `adversarial_review ∉ {both, spec}` OR `--no-adversarial-review` is set on this run → skip this block entirely (proceed to halt_mode routing below unchanged).
+   2. **Locate companion.** In order:
+      - `~/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs`
+      - `~/.claude/plugins/cache/openai-codex/codex/*/scripts/codex-companion.mjs` (glob; pick highest semver if multiple)
+      If neither path exists: append `{"event":"adversarial_review_skipped","gate":"spec_approval","reason":"companion_not_found","ts":"<now>"}` → skip to halt_mode routing unchanged. Never block the workflow over missing review infrastructure.
+   3. **Run foreground review.** Append `{"event":"adversarial_review_started","gate":"spec_approval","ts":"<now>","artifact":"<slug>/spec.md"}`. Then run:
+      ```bash
+      node "<companion-path>" adversarial-review --scope working-tree --wait "focus on docs/masterplan/<slug>/spec.md"
+      ```
+      Capture full stdout+stderr as `review_output`.
+   4. **Parse pass/fail.** If `review_output` matches `/\b(critical|fatal|serious|blocking|fundamental|wrong assumption)\b/i` → `review_result: fail`, `findings: review_output`. Otherwise → `review_result: pass`.
+   5. **Append event.** `{"event":"adversarial_review_complete","gate":"spec_approval","result":"<pass|fail>","findings_chars":<N>,"ts":"<now>"}`.
+   6. **Gate routing override (aggressive-loose + pass only).** If `autonomy == aggressive-loose` AND `review_result == pass`: skip the spec_approval AUQ, append `{"event":"spec_approval_auto_accepted","reason":"adversarial_review_passed","ts":"<now>"}`, clear `pending_gate`, → proceed directly to Step B2. Do NOT fire the AUQ. This is the only path that suppresses the gate; every other combination proceeds to halt_mode routing below.
+   — (end adversarial review block; fall through to halt_mode routing for all non-auto-close cases)
+
+   - **`halt_mode == none`** (existing kickoff path, unchanged): <!-- Intentionally diverges from the L1360 plan_approval condition under loose autonomy: spec_approval still fires under `--autonomy=loose`, while plan_approval auto-approves. See CHANGELOG v4.2.0 for the rationale and doctor check #31 for the consistency audit. --> under `--autonomy != full`, persist `pending_gate` with `id: spec_approval`, then **emit** `<masterplan-trace gate=fire id=spec_approval auq-options=4>` and surface `AskUserQuestion("Spec written at <path>. Ready for writing-plans?", options=[Approve and run writing-plans (Recommended) / Open spec to review first then ping me / Request changes — describe what to change / Abort kickoff / (only when review_result==fail) View adversarial-review findings and decide — shows findings in option context; does not auto-approve])`. Under `--autonomy=full`: auto-approve, clear `pending_gate`, and proceed to Step B2 silently.
      Option routing (halt_mode == none):
      - "Approve and run writing-plans (Recommended)" → clear `pending_gate`, proceed to Step B2.
      - "Open spec to review first then ping me" → keep `pending_gate: spec_approval`, set `stop_reason: question`, → CLOSE-TURN. Next invocation re-fires this gate.
