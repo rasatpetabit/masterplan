@@ -7,7 +7,7 @@ phase: executing
 worktree: /srv/dev/superpowers-masterplan/.worktrees/masterplan-token-efficiency
 branch: worktree-masterplan-token-efficiency
 started: 2026-05-22T17:22:34Z
-last_activity: 2026-05-22T22:00:00Z
+last_activity: 2026-05-22T20:30:00Z
 complexity: high
 autonomy: loose
 codex_routing: auto
@@ -15,12 +15,13 @@ codex_review: on
 loop_enabled: false
 compact_loop_recommended: false
 halt_mode: none
-current_task: "Task 1: Add turn_context_bytes event to telemetry hook"
-next_action: dispatch Task 1 to Codex
+current_task: "Task 5: Prose-prune commands/masterplan.md"
+next_action: inline edit commands/masterplan.md to reduce size from 11KB to ≤9KB
 pending_gate: null
 stop_reason: null
 plan_kind: implementation
-follow_ups: []
+follow_ups:
+  - "writing-plans skill emits Codex annotations as true/false instead of ok/no tokens required by step-c.md annotation-completeness scan; auto-falls-back to Haiku build, defeats inline path (v6.0 fix candidate)"
 background: null
 critical_error: null
 pending_retro_attempts: 0

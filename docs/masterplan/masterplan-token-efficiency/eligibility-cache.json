@@ -16,9 +16,9 @@
       ],
       "parallel_eligible": false,
       "parallel_eligibility_reason": "no parallel-group annotation",
-      "dispatched_to": null,
-      "dispatched_at": null,
-      "decision_source": null
+      "dispatched_to": "codex",
+      "dispatched_at": "2026-05-22T18:54:39Z",
+      "decision_source": "annotation"
     },
     {
       "idx": 2,
