@@ -1,7 +1,7 @@
 schema_version: 2
 slug: p4-suppression-smoke
-status: completed
-phase: completed
+status: archived
+phase: archived
 pending_retro_attempts: 0
 worktree: ""
 branch: main
@@ -11,7 +11,7 @@ task_start_sha: b7f5bc84fc07eb03e16565572347f809d2aa9158
 step_c_session_init_sha: b7f5bc84fc07eb03e16565572347f809d2aa9158
 completion_sha: b7f5bc84fc07eb03e16565572347f809d2aa9158
 current_task: ""
-next_action: "Smoke complete; run retro or archive per user disposition"
+next_action: ""
 autonomy: loose
 loop_enabled: false
 codex_routing: off
