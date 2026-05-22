@@ -141,7 +141,7 @@ The canonical runtime state is a per-plan run bundle at `docs/masterplan/<slug>/
 
 **Resume controller.** On every `/masterplan` invocation, after Step 0 config parsing and before any routing, run against live `state.yml` (full logic in `parts/contracts/run-bundle.md`):
 
-1. If `pending_gate` is non-null, re-render that exact gate and do not infer a default answer.
+1. If `pending_gate` is non-null, re-render that exact gate and do not infer a default answer. **Free-text gate response rule:** when the user's response to a gate AUQ does not match any of its named options (i.e., they typed free text via the "Other" field, or their text is a question/comment rather than a selection), treat it as "hold the gate and chat": respond to their text, keep `pending_gate` as-is, and → CLOSE-TURN. Do NOT advance to the next phase or fire a downstream AUQ. This applies to every gate in every phase — spec_approval, plan_closeout, completion_dirty, blocker re-engagement, etc.
 2. Else if `critical_error` is non-null or `status: blocked`, render the recorded recovery gate; do not auto-resume unsafe work.
 3. Else if `background` is non-null, poll or review the recorded background continuation before dispatching any new work.
 4. Else if `status: complete` OR `status: pending_retro`: auto-retro backfill (v5.2.3+) — if `retro.md` is missing, invoke Step R inline before any other routing (full spec in `parts/contracts/run-bundle.md`). Route to completion follow-up, retro, archive, or status flows.
