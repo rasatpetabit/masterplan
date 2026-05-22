@@ -37,7 +37,7 @@ Every task MUST include these structured markers in order before the task body (
 
 **Files:** <comma-separated paths>
 **Parallel-group:** <wave-X or none>
-**Codex:** <true|false>
+**Codex:** <ok|no>
 **Spec:** [spec.md#L<a>-L<b>](spec.md#L<a>-L<b>)
 **Verify:**
 ```bash
