@@ -1,0 +1,49 @@
+---
+schema_version: 3
+slug: adversarial-review-integration
+topic: Integrate codex:adversarial-review into masterplan spec and plan gates
+status: in-progress
+phase: plan_gate
+worktree: /srv/dev/superpowers-masterplan
+branch: main
+started: 2026-05-22T22:03:28Z
+last_activity: 2026-05-22T22:25:00Z
+complexity: high
+autonomy: loose
+codex_routing: auto
+codex_review: on
+loop_enabled: false
+compact_loop_recommended: false
+halt_mode: none
+current_task: ""
+next_action: approve plan and begin execution
+pending_gate: null
+stop_reason: null
+plan_kind: implementation
+follow_ups: []
+background: null
+critical_error: null
+pending_retro_attempts: 0
+retro_policy:
+  waived: false
+  reason: ""
+scope_fingerprint:
+  - adversar
+  - review
+  - integr
+supersedes: ""
+superseded_by: ""
+variant_of: ""
+import_hydration: ""
+import_contract:
+  contract_id: ""
+  inputs_hash: ""
+  processed_at: ""
+worktree_disposition: active
+worktree_last_reconciled: 2026-05-22T22:03:28Z
+artifacts:
+  spec: docs/masterplan/adversarial-review-integration/spec.md
+  plan: docs/masterplan/adversarial-review-integration/plan.md
+  spec: docs/masterplan/adversarial-review-integration/spec.md
+  retro: docs/masterplan/adversarial-review-integration/retro.md
+legacy: {}

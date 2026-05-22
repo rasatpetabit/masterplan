@@ -1,0 +1,4 @@
+{"type":"run_created","phase":"worktree_decided","progress_kind":"implementation_plan_created","ts":"2026-05-22T22:03:28Z","slug":"adversarial-review-integration","worktree":"/srv/dev/superpowers-masterplan","branch":"main"}
+{"type":"spec_written","phase":"spec_gate","ts":"2026-05-22T22:25:00Z","slug":"adversarial-review-integration","artifact":"docs/masterplan/adversarial-review-integration/spec.md"}
+{"type":"spec_approved","phase":"plan_writing","ts":"2026-05-22T22:25:30Z","slug":"adversarial-review-integration","gate":"spec_approval","disposition":"approved"}
+{"type":"plan_written","phase":"plan_gate","ts":"2026-05-22T22:40:00Z","slug":"adversarial-review-integration","artifact":"docs/masterplan/adversarial-review-integration/plan.md"}
