@@ -35,7 +35,7 @@ The shape is `→ /masterplan v<parsed-semver> args: '<truncated-args-or-(empty)
 
 Truncate `args` at 120 chars with `…`; total sentinel length ≤ 200 chars. The sentinel is plain stdout, NOT inside an `AskUserQuestion`, NOT inside a tool call — it must appear in the user-visible turn output.
 
-**Why:** when `/masterplan` is invoked after `/reload-plugins` and the harness has not re-registered the slash command, the orchestrator's turn produces zero output (observed: optoe-ng 2026-05-07 23:19, sequence `/compact` → `/plugin` → `/reload-plugins` → `/masterplan` → empty turn). The sentinel makes "did `/masterplan` run?" trivially observable. If the user sees no `→ /masterplan` line, they know the harness ate the invocation — re-register via `/plugin` (uninstall + reinstall) and re-invoke. CC-3-TRAMPOLINE does not apply to the sentinel; it's an unconditional first-line render.
+**Why:** a missing sentinel line signals the harness ate the invocation — re-register via `/plugin` (uninstall + reinstall) and re-invoke. CC-3-TRAMPOLINE does not apply; this is an unconditional first-line render.
 
 ### Breadcrumb emission contract (always-on; failure-instrumentation framework)
 
@@ -62,7 +62,7 @@ Every step part (Step 0, A, B0/B1/B2/B3, C, I1..I4, D, R, S, M, N, CL, T) MUST e
 - Markers are **plain stdout** — NOT inside tool calls, NOT inside code fences for display, NOT inside AskUserQuestion previews. They appear in the user-visible turn output, one per line.
 - Markers are **additive**: they never change orchestrator behavior, only make it observable.
 
-**Why:** the framework auto-files GitHub issues against `rasatpetabit/superpowers-masterplan` whenever the Stop hook detects an anomaly (silent stop after skill return, unexpected halt, dropped state mutation, orphan pending gate, step-trace gap, uncited verification failure). Issues are deduped by stable SHA1 signatures derived from these markers' content. Without the markers, the detector cannot reconstruct what the orchestrator was doing when a turn ended — failures become invisible.
+> See `docs/internals.md` §Failure-detection framework for the auto-filing rationale.
 
 Step parts below contain the specific Emit lines at each required point. Where this prompt says **Emit:** followed by a `<masterplan-trace …>` shape, that's an instruction to render the substituted marker verbatim in the turn output.
 
@@ -99,67 +99,39 @@ When `codex_host_suppressed == true`: load `parts/codex-host.md` immediately and
 
 After config loading completes, if `codex_host_suppressed != true` and the merged config has `codex.routing != off` OR `codex.review == on` (the v2.0.0 defaults are `routing: auto` + `review: on` — both trigger this check), verify the codex plugin is available. Detection mode is governed by `config.codex.detection_mode` (default `scan-then-ping`; v5.3.0+ — see `docs/config-schema.md`):
 
-- **`scan-then-ping` (default, v5.3.0+)** — two-tier deterministic-first detection. **Stage A (scan):** if the literal substring `codex:` appears anywhere in the system-reminder skills list received this turn, set `codex_ping_result = "ok"` with `detection_source = "scan"` and short-circuit. No further judgment applies; no ping dispatched. This rule has zero judgment surface — it is a literal substring test against context the orchestrator already has, modeled on the `codex_host_suppressed` precedent above (line 94). The `codex:` prefix is structural (enforced by Anthropic plugin namespacing), so this signal is robust as long as that namespace convention holds. **Stage B (ping fallback):** only when Stage A returns zero matches, dispatch a 5-token bounded ping to `codex:codex-rescue` with brief `Goal=health-check`, `Inputs=none`, `Scope=read-only`, `Constraints=return only "ok"`, `Return shape={status:"ok"}`. On dispatch error (subagent_type not found, plugin uninstalled, API error) → codex unavailable; preserve the error string for the activity-log marker. On successful return → codex available with `detection_source = "ping"`. Cache result on per-invocation state as `codex_ping_result`. Ping cost (only when Stage A misses): ~5 tokens; runs at most once per `/masterplan` invocation. This mode is the default because the legacy `ping`-only mode is non-deterministic — the orchestrator (an LLM) was asked to dispatch and judge, and observed false-positives where Codex was demonstrably installed but the orchestrator emitted "not detected" without proof of dispatch.
-- **`ping` (legacy default pre-v5.3.0)** — dispatch the 5-token ping unconditionally; never scan. Retained for users who explicitly opt in (e.g., to test plugin-present-but-broken corner cases). The same false-positive failure mode that motivated v5.3.0 applies under this mode; pair with Doctor Check #41 ERROR escalation to catch confabulation post-hoc.
-- **`scan`** — scan-only: literal substring `codex:` test against the system-reminder skills list. Never dispatches a ping. Faster than `scan-then-ping` (skips the rare Stage B fallback), but cannot distinguish "plugin truly absent" from "skills list temporarily empty" if Claude Code ever changes the skills-reminder format. The structural namespace prefix makes that risk small; the `scan-then-ping` default exists precisely to cover the corner case.
-- **`trust`** — assume codex is available; skip detection entirely. For users on locked-down accounts where the ping itself fails for unrelated infrastructure reasons (sandbox-blocked subagent dispatch, etc.) and any per-task failure is acceptable as the loudly-degraded signal.
+- **`scan-then-ping` (default, v5.3.0+)** — two-tier detection. **Stage A (scan):** if `codex:` appears in the system-reminder skills list, set `codex_ping_result = "ok"` (`detection_source = "scan"`) and short-circuit. **Stage B (ping fallback):** only when Stage A misses, dispatch a 5-token bounded ping to `codex:codex-rescue` (`Goal=health-check`, `Return shape={status:"ok"}`). On dispatch error → codex unavailable; cache error string. On success → `detection_source = "ping"`. At most one ping per invocation.
+- **`ping` (legacy default pre-v5.3.0)** — dispatch the 5-token ping unconditionally; never scan. Retained for users who explicitly opt in.
+- **`scan`** — scan-only: literal substring `codex:` test against the system-reminder skills list. Never dispatches a ping.
+- **`trust`** — assume codex is available; skip detection entirely.
 
-**Mid-session `/reload-plugins` is uncovered.** `codex_ping_result` is per-invocation; if the user installs/uninstalls Codex mid-session, Step 0's cache will be stale until the next `/masterplan` invocation. Acceptable trade-off — re-running `/masterplan` rebuilds the cache.
+**Mid-session `/reload-plugins`:** `codex_ping_result` is per-invocation; re-running `/masterplan` rebuilds the cache.
 
-**Always log the detection outcome to `events.jsonl` (v5.1.1+, I-5 of cosmic-cuddling-dusk).** Regardless of result, record one event so the per-run codex-availability decision is auditable. The success-path event piggybacks on the next natural state write of the run (no force-flush — failure-path events still force-flush per the degrade-loudly contract below). Event formats:
-
-- On `scan-then-ping` Stage A hit (`detection_source == "scan"`) or `scan` mode finding a `codex:` entry: `<ISO-ts> codex_ping ok — detection_mode=<scan-then-ping|scan>, detection_source=scan`.
-- On `scan-then-ping` Stage B hit (`detection_source == "ping"`) or `ping` mode success (`codex_ping_result == "ok"`): `<ISO-ts> codex_ping ok — detection_mode=<scan-then-ping|ping>, detection_source=ping`.
-- On `trust` mode (detection skipped intentionally): `<ISO-ts> codex_ping skipped — detection_mode=trust`.
-- On `codex_host_suppressed == true` (Codex is hosting this orchestrator; no detection runs): `<ISO-ts> codex_ping skipped — codex_host_suppressed`.
-- On failure: the existing `codex degraded — …` event in the degradation path below already covers this case (no duplicate event).
-
-Doctor check #41 reads these events to distinguish "ping never ran" from "ping returned ok but no Codex dispatches happened" from "ping returned error" — the symptomatic case where `codex_routing: auto` was persisted but no `routing→.*\[codex\]` events ever follow.
+**Log detection outcome to `events.jsonl`.** Record one event per invocation; success-path events piggyback on the next natural state write; failure-path events force-flush. Event formats and Doctor check #41 audit spec: see `parts/contracts/run-bundle.md §Codex availability events`.
 
 If detection concludes codex is **absent**, behavior depends on `config.codex.unavailable_policy` (default `degrade-loudly`; v2.4.0+):
 
-**`unavailable_policy: block`** — orchestrator does NOT degrade silently OR loudly. Instead: emit the same visible stdout warning (step 1 below), then HALT. Do not enter Step B/C/I — there's no plan execution to skip-codex through. For this halt, set: in-memory `halt_reason = "codex unavailable; unavailable_policy=block"`. If invoked via /loop, reschedule the next wakeup so resume can retry with codex installed; otherwise → CLOSE-TURN. The halting message includes: `⚠ HALT — codex plugin not detected and config.codex.unavailable_policy=block. Install codex (per the warning above) OR set codex.unavailable_policy: degrade-loudly in .masterplan.yaml to allow inline fallthrough.`. NO further steps from below run.
+**`unavailable_policy: block`** — emit the visible stdout warning then HALT; do not enter Step B/C/I. Set `halt_reason = "codex unavailable; unavailable_policy=block"`. If via `/loop`, reschedule for retry; otherwise → CLOSE-TURN. Emit: `⚠ HALT — codex plugin not detected and config.codex.unavailable_policy=block. Install codex OR set unavailable_policy: degrade-loudly to allow inline fallthrough.`
 
 **`unavailable_policy: degrade-loudly`** (default) — execute the full degradation path below:
 
-0. **Self-doubt cross-check (v5.3.0+, deterministic).** Before emitting the visible stdout warning, run two on-disk probes:
-   - **Auth-healthy probe:** reuse Doctor Check #39's predicate against `~/.codex/auth.json` — file exists, JWT not expired more than 24h, AND (under `auth_mode == "chatgpt"`) `tokens.refresh_token` non-empty + `last_refresh` within 7 days.
-   - **Plugin-on-disk probe:** `ls ~/.claude/plugins/*/codex* 2>/dev/null | head -1` — non-empty match means the codex plugin's files are present on disk regardless of what runtime detection concluded.
-
-   If **both probes pass** but Step 0 is about to emit "plugin not detected", append one INFO event to `events.jsonl` on the same forced state write below:
-
-   ```
-   <ISO-ts> degradation_self_doubt — about to emit codex-degraded warning, but auth_mode=<chatgpt|apikey> healthy AND plugin manifest present on disk; detection_mode=<scan-then-ping|ping|scan>, detection_source=<scan|ping|none>, ping_result=<ok|error-msg|null>
-   ```
-
-   The warning still fires (Step 0 cannot ground-truth that codex's runtime path actually works), but the breadcrumb makes the false-positive *visible to Doctor Check #41*, which escalates to ERROR when this event is present.
+0. **Self-doubt cross-check (v5.3.0+).** Before emitting the warning, run the auth-healthy and plugin-on-disk probes per `parts/contracts/run-bundle.md §Codex degradation evidence`. If both pass but detection returned absent, append the `degradation_self_doubt` INFO event; the warning still fires.
 
 1. **Emit visible stdout warning** (do not abort) — must be a top-level user-facing line, not buried inside a tool call:
 
    > ⚠ Codex plugin not detected — `codex_routing` and `codex_review` are degraded to `off` for this run. Install via `/plugin marketplace add openai/codex-plugin-cc` then `/plugin install codex@openai-codex`, then `/reload-plugins`, to restore configured Codex routing + cross-model review. Persisted config is unchanged.
 
 2. In-memory only: treat `codex_routing` as `off` and `codex_review` as `off` for the run. The persisted defaults (in `.masterplan.yaml`) and run fields (in `state.yml`) are **not** rewritten to `off` — re-installing codex restores configured behavior on the next invocation.
-3. **Record the degradation in `state.yml` immediately, on the very next state write of the run** (not "whenever the status updates next" — explicitly: at the close of Step B3 for kickoff flows, at Step C step 1's first state write for resume flows (auto-compact nudge / gated→loose offer / current_task refresh — whichever fires first), or at Step I3 for import flows; whichever lands first).
-   - **`events.jsonl`** entry (one of):
-     - `<ISO-ts> codex degraded — plugin not detected; codex_routing+codex_review forced to off for this run (configured: routing=<configured>, review=<configured>). Re-install codex plugin to restore.` *(detection_mode=`scan-then-ping`/`scan`/`ping` reporting plugin-missing)*
-     - `<ISO-ts> codex degraded — ping returned error: <error-message-from-codex_ping_result>; codex_routing+codex_review forced to off for this run (configured: routing=<configured>, review=<configured>). Re-install or repair codex plugin to restore.` *(detection_mode=`scan-then-ping` Stage B or `ping`, dispatch returned an error — distinguishes "plugin missing" from "plugin present but dispatch broken")*
-   - **If step 0 above appended a `degradation_self_doubt` event**, write it on the same forced state write as the `codex degraded` event (one immediately before the other, same `<ISO-ts>` granularity).
-   - **No other state write happens this turn?** Force one anyway: append the degradation event, update `last_activity`, and set `last_warning: codex degraded this run — install codex plugin to restore configured routing/review` so the user's next `cat <state.yml>` shows the warning. Rationale: the user's optoe-ng pattern was a session that did codex-eligible work but never wrote degradation evidence.
+3. **Record the degradation in `state.yml`** on the very next state write (Step B3 close for kickoff; Step C step 1's first write for resume; Step I3 for import; whichever lands first). Event formats and force-flush contract: see `parts/contracts/run-bundle.md §Codex degradation evidence`.
 
 4. Per-task safety net during Step C: at task-routing time (Step 3a), if the orchestrator finds itself routing inline because of Step 0 degradation rather than per-task ineligibility, the pre-dispatch banner (Fix 5 step 1) MUST suffix `(codex degraded — plugin missing)` so each task carries the degradation context, not just the kickoff write.
 
-This detection is the FM-4-class graceful-degrade path. It complements doctor check #18 (the persistent-misconfiguration warning at lint time), check #20 (catches the missing-eligibility-cache *file* footprint when Step 0 degrades silently between sessions), and check #21 (catches the missing activity-log *evidence* footprint of the same root cause from a different angle — the two checks are designed to fire together on the same degraded plan).
-
 ### Git state cache (per invocation)
 
-Several downstream steps consult the same git facts. Cache them once in Step 0 to avoid repeated subprocess overhead and keep latency predictable across A/B0/D fan-outs:
-
+Cache once in Step 0 (Steps A, B0, D read these instead of re-running):
 - `git_state.worktrees` — `git worktree list --porcelain`, parsed into `[{path, branch}]`.
-- `git_state.branches` — `git branch --list` (local) and `git branch -r` (remote) names.
+- `git_state.branches` — `git branch --list` (local) + `git branch -r` (remote).
 
-Steps A, B0, D consult the cache instead of re-running these. **Invalidate** the cache after any orchestrator-initiated `git worktree add`/`git worktree remove`/`git branch` operation (typically inside Step B0's "Create new" branch).
-
-**Never cache `git status --porcelain`.** Working-tree dirty state must always be live; CD-2 depends on accurate dirty detection. A stale value here could let the orchestrator overwrite user-owned uncommitted changes.
+Invalidate after any orchestrator `git worktree add/remove` or `git branch` call. **Never cache `git status --porcelain`** — dirty state must always be live (CD-2).
 
 ### Run bundle state model
 
@@ -167,33 +139,24 @@ Steps A, B0, D consult the cache instead of re-running these. **Invalidate** the
 
 The canonical runtime state is a per-plan run bundle at `docs/masterplan/<slug>/`. The `state.yml` file is the resumption contract and must exist as soon as Step B0 has selected a worktree and derived a slug.
 
-**Resume controller.** At the start of bare `/masterplan`, Codex `Use masterplan`, `execute`, `next`, and `--resume` flows, after Step 0 config parsing and before any broad menu or fresh-start routing, run this controller against live `state.yml` (full logic in `parts/contracts/run-bundle.md`):
+**Resume controller.** On every `/masterplan` invocation, after Step 0 config parsing and before any routing, run against live `state.yml` (full logic in `parts/contracts/run-bundle.md`):
 
 1. If `pending_gate` is non-null, re-render that exact gate and do not infer a default answer.
 2. Else if `critical_error` is non-null or `status: blocked`, render the recorded recovery gate; do not auto-resume unsafe work.
 3. Else if `background` is non-null, poll or review the recorded background continuation before dispatching any new work.
-4. Else if `status: complete` OR `status: pending_retro` (or its synonym `retro_pending` — `bin/masterplan-state.sh` auto-heals the latter on read):
-   - **Auto-retro backfill (v5.2.3+).** If `retro.md` is missing on disk AND `retro_policy.waived != true` AND `retro_policy.exempt != true` AND `schema_version >= 3`, invoke Step R inline as a backfill **before any other routing**. This catches Step C 6 bypasses — manual state edits flipping `status: complete`, brainstorm-only completions (`halt_mode=post-brainstorm` + force-complete), or first-attempt retro failures that left `status: pending_retro`. Step R writes `retro.md`; Step R3.5 archives state per `config.retro.auto_archive_after_retro`. On success, append `retro_backfill_succeeded` to `events.jsonl` and continue routing. On failure, persist `status: pending_retro`, increment `pending_retro_attempts`, append `retro_generation_failed`, and fall through to Step C step 6b's existing recovery (per `pending_retro_attempts` rules — second failure surfaces the regenerate/waive `AskUserQuestion`). **Schema_version < 3 bundles are NOT auto-backfilled** — they predate this contract; Doctor #28's `--fix` AskUserQuestion is the canonical path for those. **Smoke-fixture exemption:** to mark a bundle exempt from this backfill (e.g., a hand-crafted test state for the suppression smoke fixture), set `retro_policy.exempt: true` in `state.yml`.
-   - After backfill (or if `retro.md` already exists), route only to completion follow-up, retro, archive, or status flows.
+4. Else if `status: complete` OR `status: pending_retro`: auto-retro backfill (v5.2.3+) — if `retro.md` is missing, invoke Step R inline before any other routing (full spec in `parts/contracts/run-bundle.md`). Route to completion follow-up, retro, archive, or status flows.
 5. Else if one active `status: in-progress` plan is unambiguous, resume it automatically from `phase`, `current_task`, and `next_action`.
 6. Else if multiple active plans are present, show a structured picker; never fall back to a broad feature menu while active work exists.
 
-**Legacy migration.** Previous versions wrote state under `docs/superpowers/{plans,specs,retros,archived-*}` with `<slug>-status.md` plus sibling sidecars. Step 0 treats legacy status paths as resolvable inputs. Before listing, doctoring, cleaning, status reporting, or executing a legacy plan, run the legacy-state inventory logic described in Step I1 (Discover). If a legacy record has no matching `docs/masterplan/<slug>/state.yml`, surface an `AskUserQuestion` with options:
-
-1. `Migrate to docs/masterplan/<slug>/state.yml now (Recommended)` — copy legacy plan/spec/retro/sidecars into the bundle, convert the legacy activity log into `events.jsonl`, preserve old paths under `legacy:`, then continue against the new `state.yml`.
-2. `Use the legacy status path for this invocation only` — read legacy state but do not write new architecture fields except when explicitly requested by the user.
-3. `Abort` — close without modifying files.
-
-The migration is copy-only. Never delete legacy artifacts during migration; Step CL owns archive/delete after the new bundle is verified.
+**Legacy migration.** If a legacy `docs/superpowers/...` plan has no matching `docs/masterplan/<slug>/state.yml`, surface an AskUserQuestion: Migrate now (Recommended) / Use legacy path this invocation / Abort. Migration is copy-only; Step CL owns archive/delete.
 
 ### Compaction-recent notice (per invocation)
 
-A `/masterplan` invocation that follows a `/compact` within the same session can re-derive state from the filesystem only and inadvertently discard workflow position from the compaction summary (observed: petabit-os-mgmt 2026-05-07 00:46→00:54, where the compaction summary said *"interrupted before Step B1"* but the orchestrator routed to fresh start because no durable run state existed yet). To make this visible:
+When a `/compact` precedes a `/masterplan` invocation, workflow position may be lost. To make this visible:
 
 1. **Detect.** If any of these signals are present, set in-memory `compaction_recent = true`:
    - The current turn's first system reminder mentions `"session was compacted"` or `"post-compaction"` (case-insensitive substring match).
    - The user's preceding message (immediately before this `/masterplan` invocation) contains `<command-name>/compact</command-name>` or the literal token `/compact` as command output.
-   - (Best-effort, opt-in) The session jsonl exists at `~/.claude/projects/<encoded-cwd>/<session-id>.jsonl` AND a `type: "summary"` message was written within the last 30 minutes. If the jsonl path is not resolvable from inside the orchestrator (no session-id in scope), skip — this signal is informational, not load-bearing.
 
 2. **Render.** When `compaction_recent == true`, emit a single non-blocking line AFTER the invocation sentinel (above) and BEFORE the verb routing table fires:
 
@@ -202,12 +165,6 @@ A `/masterplan` invocation that follows a `/compact` within the same session can
     If you intended to resume specific work: /masterplan --resume=<state-path> (or paste the slug).
      Otherwise this run will route per the args you typed.
    ```
-
-   This is plain stdout, NOT an `AskUserQuestion`. The user can ignore it; CC-3-TRAMPOLINE does not apply. The notice exists so the user can self-correct with `--resume=<path>` if the filesystem-derived routing differs from their intent.
-
-3. **Pair with verb-explicit routing (Bug B).** When `compaction_recent == true` AND `requested_verb in {execute, full, plan}` AND no `state.yml` or legacy status matches `topic_hint`: Step A's verb-explicit override (step 7 of Step A) becomes the gate that catches the case where the user expected to resume but the filesystem disagrees. The compaction notice + the AskUserQuestion together cover the transition.
-
-This is conservative by design — no JSONL parsing in the hot path, no pre-routing prompts.
 
 ### Complexity resolution (per invocation)
 
@@ -223,13 +180,7 @@ Stash:
 - `resolved_complexity` — one of `low`, `medium`, `high`.
 - `complexity_source` — one of `flag`, `frontmatter`, `repo_config`, `user_config`, `default`.
 
-These two values are read by every downstream step that varies behavior on complexity. Use `resolved_complexity` for behavioral branching and `complexity_source` for attribution. The activity-log audit line written at Step C step 1's first entry uses both values, e.g.:
-
-```
-- 2026-05-05T19:32 complexity=low (source: repo_config); codex_review=on (source: cli_flag, overrides complexity-derived default)
-```
-
-This single line is the audit trail for "why did the orchestrator behave this way." Step C step 1 emits it once on kickoff entry and once per cross-session resume.
+These two values are read by every downstream step. Step C step 1 logs both as the complexity attribution entry on kickoff and resume.
 
 ### Temp-dir sweep (startup, once per invocation)
 
@@ -275,31 +226,20 @@ After complexity resolution, before verb routing, run a one-pass prune of stale 
 
 **Argument-parse precedence (in Step 0, after config + git_state cache):**
 0. If invoked with no args (zero tokens after the command name): route directly to **Step M** — resume-first routing (see § Step M).
-1. Match the first token against `{full, brainstorm, plan, execute, retro, import, doctor, status, stats, clean, validate, next}`. On match: set `halt_mode` per the table; **stash `requested_verb = <matched-verb>` for downstream steps to consult** (Step A's verb-explicit override reads it; Step B/C ignore it); consume the verb; pass remaining args to the matched step. **`execute <topic>` special case:** when `requested_verb == 'execute'` AND remaining args is non-empty AND remaining args does NOT resolve to an existing file path (`test -e <remaining>`), set `topic_hint = <remaining args>` and route to Step A (the table's third `execute` row). This carries the explicit verb intent into Step A so a missing state file does not silently route to brainstorm.
+1. Match the first token against `{full, brainstorm, plan, execute, retro, import, doctor, status, stats, clean, validate, next}`. On match: set `halt_mode` per the table; stash `requested_verb = <matched-verb>`; consume the verb; pass remaining args to the matched step. **`execute <topic>` special case:** when `requested_verb == 'execute'` AND remaining args non-empty AND does NOT resolve to an existing file path, set `topic_hint = <remaining args>` and route to Step A.
 2. If unmatched and the first arg starts with `--`: route to **Step A** (flag-only invocation).
 3. If unmatched and the first arg is a non-flag word: catch-all → **Step B** with the full arg string as the topic (existing behavior).
 
-**`--resume=<path>` worktree-aware path resolution (v2.17.0+).** When `--resume=<path>` (or `--resume <path>` / `execute <path>`) is given AND `<path>` is relative AND `test -e <path>` is false against the current working directory, do NOT fall through to the catch-all or fail silently. Instead, search worktree subdirectories for the file before erroring:
+**`--resume=<path>` worktree-aware path resolution (v2.17.0+).** When `<path>` is relative and `test -e <path>` fails against cwd, search worktree subdirectories before erroring.
 
-1. **Build the candidate set.** Collect paths that match either of these globs (using shell globbing, no shell-out for find):
-   - `<cwd>/.worktrees/*/<path>`
-   - `<repo-root>/.worktrees/*/<path>` (when `<repo-root>` differs from `<cwd>`; resolve via `git rev-parse --show-toplevel` from `git_state` cache).
-   Filter to existing files (`test -e <candidate>` per match).
-2. **Resolve.**
-   - **Exactly one match** → before entering Step C, `cd` to that match's worktree (the directory containing the matched path's nearest ancestor that is itself a registered worktree per `git_state.worktrees`). Re-resolve the relative path against the new cwd (it now exists). Emit one stdout line: `↻ --resume path resolved into worktree <worktree-path>; cd'd before Step C config load.` Then proceed to Step C step 1's batched re-read with the resolved path. The repo-local `<worktree>/.masterplan.yaml` is now picked up by Step 0's config-loading reload (re-run the repo-local config read post-cd; user-global + CLI flags merged on top, unchanged).
-   - **Zero matches** → surface `AskUserQuestion("--resume path '<path>' not found at cwd or in any .worktrees/*/ subdirectory of <cwd> or <repo-root>. What now?", options=["Abort and let me re-run with a correct path (Recommended)", "Search the entire repo for matching state files (slower; uses find . -path '*/<path>')", "Treat <path> as a topic and route to Step A"])`. The third option preserves the existing `execute <topic>` fallback semantics for paths that look like topics rather than relative paths.
-   - **Multiple matches** → surface `AskUserQuestion("--resume path '<path>' matches multiple candidates. Which one?", options=[<one option per candidate, label = '<worktree-path>/<path>', up to 4>, ...])`. If more than 4 candidates, show the first 3 ordered by `last_activity` from each matching `state.yml` or legacy status adapter (descending) plus a fourth "List all in stdout and abort" option.
+> Full candidate-set build, single/zero/multiple-match AskUserQuestion specs: see `parts/contracts/run-bundle.md §--resume path resolution`. Absolute paths bypass the search.
 
-This rule applies ONLY to relative paths. Absolute paths (`<path>` starts with `/`) bypass the search and use the existing direct-load behavior — if absolute paths don't exist, Step C step 1's parse guard catches them at file-read time.
+**Flag-interaction rules** (Step 0):
+- `halt_mode == post-brainstorm` → `--autonomy=`, `--codex=`, `--codex-review=`, `--no-loop` are **ignored**. Emit: `flags <list> ignored: brainstorm halts before execution`.
+- `halt_mode == post-plan` → those same flags are **persisted** to `state.yml` but do not fire this run.
+- `halt_mode == none` → flags fire normally.
 
-**Why:** a user re-resuming work in a parent directory of a worktree (typical `optoe-ng` / `xcvr-tools-fresh` layout) would otherwise get a silent fall-through to Step A or a confusing parse error. The auto-cd resolves the common single-match case immediately; the AUQ branches handle ambiguity instead of guessing.
-
-**Flag-interaction rules** (warnings emitted at Step 0, not later):
-- `halt_mode == post-brainstorm` → `--autonomy=`, `--codex=`, `--codex-review=`, `--no-loop` are **ignored**. Emit one-line warning: `flags <list> ignored: brainstorm halts before execution`.
-- `halt_mode == post-plan` → those same flags are **persisted** to `state.yml` (Step B3 records them) but do not fire this run. No warning.
-- `halt_mode == none` → flags fire as today.
-
-**`/loop /masterplan <verb> ...` foot-gun.** When `halt_mode != none` AND `ScheduleWakeup` is available (i.e. invoked via `/loop`), emit one-line warning: `note: <verb> halts before execution; --no-loop recommended for this verb`. Do NOT auto-disable the loop; the user may have a reason.
+**`/loop /masterplan <verb> ...` foot-gun.** When `halt_mode != none` AND `ScheduleWakeup` is available, emit: `note: <verb> halts before execution; --no-loop recommended for this verb`. Do not auto-disable the loop.
 
 ### Recognized flags
 
@@ -337,31 +277,13 @@ This rule applies ONLY to relative paths. Absolute paths (`<path>` starts with `
 
 ## Status verb
 
-`/masterplan status` (or `/masterplan status --plan=<slug>`) routes to **Step S** (situation report, read-only). Step S logic lives in `commands/masterplan.md` (monolith) in the `## Step S — Situation report` section; in v5.0+ it will be extracted to a dedicated phase file. The route from Step 0 is a direct handoff with no additional setup beyond what Step 0 already built (`git_state` cache, `config` object).
-
-Flags accepted by `status`: `--plan=<slug>` narrows the report to one plan bundle. When absent, Step S reports across all worktrees.
-
-`halt_mode` for `status` is `none`. Step S does not modify `state.yml`.
+`/masterplan status` (or with `--plan=<slug>`) routes to Step S (situation report, read-only). `--plan=<slug>` narrows to one plan bundle. `halt_mode=none`; Step S does not modify `state.yml`.
 
 ---
 
 ## Validate verb
 
-`/masterplan validate` (or `/masterplan validate --plan=<slug>`) runs a read-only config and state schema validation. This verb is handled inline in Step 0 without dispatching to a separate phase file.
-
-**What validate does:**
-
-1. **Load config schema.** Read `docs/config-schema.md` (deferred; only loaded on this verb).
-2. **Validate `~/.masterplan.yaml`.** Parse YAML. Check every key against the schema. Surface violations as severity-ordered findings:
-   - **Error** — unknown key, wrong type, invalid enum value (e.g., `autonomy: aggressive`). Emit as `ERROR: <file>: <key>: <reason>`.
-   - **Warning** — deprecated key, redundant flag, known-noisy combination (e.g., `codex.routing: off` + `codex.review: on`). Emit as `WARN: <file>: <key>: <reason>`.
-3. **Validate repo-local `.masterplan.yaml`** (if present) — same checks.
-4. **When `--plan=<slug>` is given:** also validate that plan's `state.yml` against the run-bundle schema in `parts/contracts/run-bundle.md`. Surface any required-field violations or schema_version mismatches.
-5. **Summary line.** Emit `validate: <N> errors, <M> warnings` (or `validate: OK` when both are zero).
-6. **Exit contract.** If any errors were found, append `{"event":"validate_failed","errors":<N>,"warnings":<M>,"ts":"..."}` to the active bundle's `events.jsonl` (or to a transient log if no active bundle). If warnings only, append `validate_warned`. If clean, no event.
-7. **No state mutation.** Validate never writes `state.yml`, never modifies `.masterplan.yaml`. Read-only throughout.
-
-`halt_mode` for `validate` is `none`. After the summary line, → CLOSE-TURN.
+`/masterplan validate` (or with `--plan=<slug>`) — read-only config and state schema check, inline in Step 0. Loads `docs/config-schema.md`; validates `~/.masterplan.yaml` + repo-local `.masterplan.yaml` against schema (errors: `ERROR: <file>: <key>: <reason>`; warnings: `WARN: …`). When `--plan=<slug>` given, also validates `state.yml` against run-bundle schema. Emits `validate: <N> errors, <M> warnings` (or `validate: OK`); appends `validate_failed`/`validate_warned` to `events.jsonl`. Read-only; never mutates state. `halt_mode=none`; → CLOSE-TURN.
 
 ---
 
@@ -377,10 +299,6 @@ Every turn-close in this orchestrator MUST route through the following sequence.
 3. **Pre-close action** (site-specific) — any commit, state write, or ledger append that the calling site mandates BEFORE yielding (e.g., Step C step 5's ledger append, Step B3 "Discard"'s git-rm commit). These are documented at the call site.
 4. **Closer** — fire the AskUserQuestion, ScheduleWakeup, or terminal render that ends the turn.
 
-**Scope note:** CC-1 (compact-suggest) fires only before Step C step 5's ScheduleWakeup and is NOT part of this trampoline — it has its own inline position in Step C step 5. The CL5 timer-disclosure render is scoped to Step CL only and is NOT part of this trampoline. Adding new end-of-turn obligations: add them to this sequence, not to individual close sites.
+**Scope note:** CC-1 compact-suggest and CL5 timer-disclosure are NOT part of this trampoline; they have narrower inline positions. New obligations: add to this sequence, not to individual close sites. Authoring rule: write `→ CLOSE-TURN` at every new turn-close site; `bin/masterplan-self-host-audit.sh` greps for non-negated `end the turn` occurrences.
 
-**Authoring rule:** when adding a new turn-close site to the spec, write `→ CLOSE-TURN` as the close directive. The string `end the turn` should appear ONLY in negation contexts ("never end the turn waiting on..."), AskUserQuestion option labels, or YAML/comment blocks. `bin/masterplan-self-host-audit.sh` should grep for non-negated "end the turn" occurrences as a CD-style violation check.
-
-**Exclusions:** CC-3-TRAMPOLINE does not apply to:
-- The invocation sentinel (Step 0 §Invocation sentinel) — unconditional first-line render, not a turn-close.
-- The compaction-recent notice (Step 0 §Compaction-recent notice) — emitted before verb routing, not a turn-close.
+**Exclusions:** CC-3-TRAMPOLINE does not apply to the invocation sentinel or compaction-recent notice — neither is a turn-close.
