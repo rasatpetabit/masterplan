@@ -70,6 +70,7 @@ Step parts below contain the specific Emit lines at each required point. Where t
 
 ```
 <masterplan-trace step=step-0 phase=in verb={resolved-verb} halt_mode={halt_mode} autonomy={autonomy}>
+/masterplan {verb} › Bootstrap
 ```
 
 If `resolved-verb` is not yet known (i.e., before verb routing), use `unknown` as a placeholder. `halt_mode` and `autonomy` come from config + flag merge (already complete by this point).

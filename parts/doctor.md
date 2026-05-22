@@ -6,6 +6,7 @@ Invoked via `/masterplan doctor [--fix]`. Loaded by the router only when verb ==
 
 ```
 <masterplan-trace step=doctor phase=in verb=doctor halt_mode=none autonomy={autonomy}>
+/masterplan doctor › Doctor  [{slug-if-bundle-loaded}]
 ```
 
 Doctor fires `<masterplan-trace gate=fire id=doctor-finding auq-options=<n>>` immediately before each `AskUserQuestion` raised by an interactive check (#28 completed-plan-without-retro, #23 opus-on-bounded, etc.). The exit breadcrumb fires when Doctor returns or closes the turn per CC-3-trampoline.

@@ -29,6 +29,7 @@
 
 ```
 <masterplan-trace step=step-c phase=in verb={requested_verb} halt_mode={halt_mode} autonomy={autonomy}>
+/masterplan {verb} › Execute  [{slug}]
 ```
 
 Where `{requested_verb}` is the verb parsed by Step 0 (`full`, `execute`, `resume`, etc.), `{halt_mode}` is the resolved halt mode (always `none` here — the dispatch guard below skips Step C for other values), and `{autonomy}` is the resolved autonomy (`gated`/`loose`/`full`). The exit breadcrumb (per CC-3-trampoline) fires when Step C returns or closes the turn.

@@ -6,6 +6,13 @@
      Continues in parts/step-c-completion.md (loop scheduling + plan completion).
      DISPATCH-SITE: step-c-verification.md:per-task-verify -->
 
+**Entry breadcrumb.** Emit on first line after this comment block:
+
+```
+<masterplan-trace step=step-c-verification phase=in verb={requested_verb} halt_mode={halt_mode} autonomy={autonomy}>
+/masterplan {verb} › Execute (verify)  [{slug}]
+```
+
 4. **Post-task finalization** — runs in this fixed order after every completed task:
 
    **4a — Verify (CD-3 verification).** Run the task's verification commands (per CD-1) and capture output for 4b. Trust-but-verify the implementer: read `tests_passed`, `commands_run`, and `commands_run_excerpts` from the implementer's return digest (required fields per the dispatch model table) and skip what the implementer already ran cleanly **AND for which the excerpt validator passes (G.1 mitigation, v2.8.0+)**.

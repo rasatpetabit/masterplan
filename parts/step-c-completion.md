@@ -5,6 +5,13 @@
      and Step C step 6 (plan completion finalizer: dirty check, retro, branch finish).
      DISPATCH-SITE: step-c-completion.md:plan-completion -->
 
+**Entry breadcrumb.** Emit on first line after this comment block:
+
+```
+<masterplan-trace step=step-c-completion phase=in verb={requested_verb} halt_mode={halt_mode} autonomy={autonomy}>
+/masterplan {verb} › Execute (complete)  [{slug}]
+```
+
 5. **Cross-session loop scheduling** (entered only via Step C step 4e's "ScheduleWakeup available" route — i.e. `--no-loop` is NOT set AND `ScheduleWakeup` IS available because the session was launched via `/loop /masterplan ...`):
    - **Complexity gate.** If `resolved_complexity == low`, wakeup ledger events are NOT maintained (per Operational rules' Complexity precedence: `loop_enabled` defaults to `false` at low, so no `ScheduleWakeup` is even called; however, if the user explicitly enabled the loop via override, `ScheduleWakeup` runs but the ledger event below is SKIPPED). Doctor checks #19 + #20 do not fire on low plans (handled by Task 12's check-set gate).
    - **Competing-scheduler suppression.** If `competing_scheduler_keep == true` (in-memory flag set by Step C step 1's competing-scheduler check when the user picked "Keep the cron, suspend wakeups this session"), skip scheduling silently for the rest of the session. The user-acknowledged cron is the sole pacer.

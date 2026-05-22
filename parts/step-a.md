@@ -13,6 +13,7 @@
 
 ```
 <masterplan-trace step=step-a phase=in verb={requested_verb} halt_mode={halt_mode} autonomy={autonomy}>
+/masterplan {verb} › Plan picker
 ```
 
 When step A fires AskUserQuestion calls in step 5, step 6 "Start fresh" prompt, step 7 verb-explicit override, or the spec-without-plan variant's step 4/5, emit `<masterplan-trace gate=fire id=step-a-pick auq-options=<n>>` immediately before each AskUserQuestion call. Step A's AUQs are routing prompts, not planning/execution gates — but the breadcrumb still lets the analyzer correlate AUQ counts with verb distribution.

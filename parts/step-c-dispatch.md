@@ -6,6 +6,13 @@
      Continues in parts/step-c-verification.md (post-task finalization + verify).
      DISPATCH-SITE: step-c-dispatch.md:wave-dispatch -->
 
+**Entry breadcrumb.** Emit on first line after this comment block:
+
+```
+<masterplan-trace step=step-c-dispatch phase=in verb={requested_verb} halt_mode={halt_mode} autonomy={autonomy}>
+/masterplan {verb} › Execute (dispatch)  [{slug}]
+```
+
 **Wave assembly pre-pass (Slice α v2.0.0+).** Before invoking the per-task implementer, scan the upcoming task list against the eligibility cache for parallel-eligible tasks (`parallel_eligible == true`).
 
 1. **Parse plan via coordinator-plan-parser** (when eligibility cache is stale or absent):

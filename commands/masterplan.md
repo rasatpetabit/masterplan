@@ -51,17 +51,21 @@ Every turn-close in this orchestrator MUST route through the following sequence.
 
 1. **CC-3 check** — if `subagents_this_turn` is non-empty, emit the plain-text summary block per the per-turn dispatch tracking contract. Emit before any `AskUserQuestion` or terminal render. Zero-dispatch turns: skip silently.
 2. **Pre-close action** — perform any commit, state write, ledger append, or timer disclosure that the calling part mandates before yielding. These obligations stay documented at the call site.
-3. **Breadcrumb render** — before every `AskUserQuestion` Closer (skip for `ScheduleWakeup` and non-interactive terminal renders), emit one plain-text navigation line so the user knows their location in the flow:
+3. **Breadcrumb render** — emit one plain-text navigation line at **two** sites so the breadcrumb survives manual interruption:
+   - **Step entry** — immediately after each `<masterplan-trace step=X phase=in>` marker (every step that emits a phase-in trace must follow it with the breadcrumb on the next line).
+   - **AUQ close-site** — before every `AskUserQuestion` Closer (skip for `ScheduleWakeup` and non-interactive terminal renders).
+
+   Format:
    ```
    /masterplan {verb} › {phase-label} › {gate-id}  [{slug}]
    ```
    - `{verb}`: the resolved verb for this invocation (`full`, `brainstorm`, `plan`, `execute`, `doctor`, etc.).
-   - `{phase-label}`: human-readable current step — derive from the latest `<masterplan-trace step=X phase=in>` breadcrumb emitted this turn: `step-b1`→`Brainstorm`, `step-b2`→`Plan`, `step-b3`→`Plan-approval`, `step-c-resume`→`Execute`, `step-c-dispatch`→`Execute (dispatch)`, `step-c-verification`→`Execute (verify)`, `step-c-completion`→`Execute (complete)`, `doctor`→`Doctor`, `retro`→`Retro`, `step-a`→`Plan picker`, `step-0`→`Bootstrap`. When no step trace exists this turn, omit this segment.
-   - `{gate-id}`: the `id` field of the gate being surfaced, e.g. `spec_approval`, `plan_closeout`, `completion_dirty`. Omit when the AUQ is a routing question without a formal gate (e.g. plan picker, complexity choice).
+   - `{phase-label}`: human-readable current step — derive from the current `<masterplan-trace step=X phase=in>` marker: `step-b1`→`Brainstorm`, `step-b2`→`Plan`, `step-b3`→`Plan-approval`, `step-c-resume`→`Execute`, `step-c-dispatch`→`Execute (dispatch)`, `step-c-verification`→`Execute (verify)`, `step-c-completion`→`Execute (complete)`, `doctor`→`Doctor`, `retro`→`Retro`, `step-a`→`Plan picker`, `step-0`→`Bootstrap`, `step-b0`→`Worktree setup`. When no step trace exists this turn, omit this segment.
+   - `{gate-id}`: the `id` field of the gate being surfaced. At step-entry sites (no gate yet), omit. At AUQ close-sites, include when the AUQ is a formal planning gate; omit for routing questions (plan picker, complexity choice).
    - `[{slug}]`: the active run bundle slug if available. Omit when no bundle is loaded.
-   - Example: `/masterplan full › Brainstorm › spec_approval  [my-feature]`
-   - Example: `/masterplan execute › Execute (verify) › codex_review_gate  [yanos-wifi]`
-   - Example: `/masterplan plan ›  Plan picker` (no gate, no slug yet)
+   - Example (step entry): `/masterplan full › Brainstorm  [my-feature]`
+   - Example (AUQ gate): `/masterplan full › Brainstorm › spec_approval  [my-feature]`
+   - Example (AUQ routing): `/masterplan plan ›  Plan picker`
 4. **Closer** — fire the `AskUserQuestion`, `ScheduleWakeup`, or terminal render that ends the turn.
 
 > CC-1 compact-suggest and timer-disclosure are not part of this trampoline. New end-of-turn obligations go into this sequence. Authoring rule: write `-> CLOSE-TURN` as the close directive; "end the turn" only in negation contexts or YAML examples.

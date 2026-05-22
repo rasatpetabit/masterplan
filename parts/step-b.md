@@ -16,6 +16,7 @@
 
 ```
 <masterplan-trace step=step-b0 phase=in verb={resolved-verb} halt_mode={halt_mode} autonomy={autonomy}>
+/masterplan {verb} › Worktree setup  [{slug-if-known}]
 ```
 
 Subsequent step entry breadcrumbs (step-b1, step-b2, step-b3) are emitted at the top of each respective section below. Each fires when the orchestrator transitions into that sub-step's first instruction.
@@ -144,6 +145,7 @@ Then proceed to **Step B2**. Step B1 is skipped (spec already exists).
 
 ```
 <masterplan-trace step=step-b1 phase=in verb={resolved-verb} halt_mode={halt_mode} autonomy={autonomy}>
+/masterplan {verb} › Brainstorm  [{slug}]
 ```
 
 **Intent anchor (CRITICAL — prevents broad/audit-shaped prompts from turning into unconstrained feature ideation).** Before invoking `superpowers:brainstorming`, /masterplan owns a short repository-grounding pass. Brainstorming is still interactive, but it is briefed with durable intent, scope, and verification limits instead of receiving only the raw topic string.
@@ -215,6 +217,7 @@ After brainstorming returns control, verify state and drive the next step:
 
 ```
 <masterplan-trace step=step-b2 phase=in verb={resolved-verb} halt_mode={halt_mode} autonomy={autonomy}>
+/masterplan {verb} › Plan  [{slug}]
 ```
 
 **Dispatch guard.** If `halt_mode == post-brainstorm` *at this point*, skip Step B2 and Step B3 entirely — the B1 close-out gate already ended the turn. (B1's "Continue to plan now" option flips `halt_mode` to `post-plan` BEFORE control returns here, so the guard correctly does not fire on the flip case; B2+B3 run with their `post-plan` variants.)
@@ -235,6 +238,7 @@ After writing-plans returns:
 
 ```
 <masterplan-trace step=step-b3 phase=in verb={resolved-verb} halt_mode={halt_mode} autonomy={autonomy}>
+/masterplan {verb} › Plan-approval  [{slug}]
 ```
 
 **Complexity kickoff prompt.** Fires once at kickoff (`/masterplan full <topic>`, `/masterplan plan <topic>`, `/masterplan brainstorm <topic>`) when:
