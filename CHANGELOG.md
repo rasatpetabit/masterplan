@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.1.0] — 2026-05-22
+
+### Added
+
+- **Adversarial-review integration at B2 and B3 gates:** `codex:adversarial-review` now runs automatically at the spec gate (B2, foreground) and plan gate (B3, background) before the respective approval AUQs fire. Findings surface as a fifth AUQ option; a failing review always fires the AUQ regardless of autonomy level.
+- **`aggressive-loose` autonomy auto-close:** Under `autonomy: aggressive-loose`, a passing adversarial review auto-closes the spec_approval and plan_approval gates without an AUQ (reviewer-PASS IS the approval).
+- **`adversarial_review` config field:** New config key `adversarial_review: both` (default). Values: `off | spec | plan | both`. Controls which gates dispatch the review.
+- **`--no-adversarial-review` CLI flag:** Suppresses adversarial-review dispatch for one run without changing config. Documented in step-0.md recognized flags table.
+- **Doctor check #44 — `adversarial_review` config valid:** Warns when any config tier sets `adversarial_review` to an unrecognized value.
+- **Doctor check #45 — gate-fire audit:** Info check on completed bundles; verifies `adversarial_review_complete` events exist for spec_approval and plan_approval gates. Expected to fire INFO on all pre-v6.1.0 bundles.
+
 ## [6.0.1] — 2026-05-22
 
 ### Fixed
