@@ -150,13 +150,28 @@ Then proceed to **Step B2**. Step B1 is skipped (spec already exists).
 
 1. Update `state.yml`: `phase: brainstorming`, `next_action: resolve brainstorm intent anchor`, `pending_gate: null`; append `brainstorm_started` to `events.jsonl`. **Emit before this state write:** `<masterplan-trace state-write field=phase from=<old-phase> to=brainstorming>`.
 
-2. **Dispatch the intent-anchor read pass to three Haiku subagents in parallel (v5.4.0+ fan-out).** Do NOT inline-Read AGENTS.md, CLAUDE.md, WORKLOG.md, or recent state bundles — large logs blow parent context. Dispatch all three in ONE assistant message (`Agent` tool, `model: "haiku"`, `subagent_type: "general-purpose"` or `"Explore"`). Each reads ONLY its assigned file class and returns extracted facts and hints. Orchestrator merges the three returns, classifies, and persists.
+2. **Dispatch coordinator-brainstorm-anchor (v6.0.0+).** The orchestrator dispatches 1 Sonnet coordinator; the coordinator runs Haiku A (project-docs), Haiku B (run-state), and Haiku C (repo-sketch) in parallel internally. Do NOT inline-Read AGENTS.md, CLAUDE.md, WORKLOG.md, or recent state bundles — large logs blow parent context.
 
-   **Bounded briefs for Haiku A (project-docs), B (run-state), C (repo-sketch):** see `parts/contracts/brainstorm-anchor.md §Haiku Fan-out Briefs`.
+   ```
+   DISPATCH-SITE: coordinator-brainstorm-anchor
+   contract_id: "coordinator-brainstorm-anchor-v1"
+   Tier: sonnet
+   Goal: Run 3-Haiku anchor fan-out; return merged anchor JSON.
+   Inputs: topic=<topic>, repo_root=<repo_root>, runs_path=<config.runs_path>
+   Scope: read-only. Brief bodies for Haiku A/B/C: docs/internals/brainstorm-anchor.md §Haiku A/B/C.
+   Constraints: CD-7 (read-only; do not write state).
+   Return shape: {mode, repo_role, verification_ceiling, in_scope_paths, out_of_scope_repos, evidence, interview_depth, coordinator_version}
+   ```
 
-3. **Merge + classify + persist (orchestrator owns this).** Parse all three Haiku returns as JSON. On malformed or missing `source_class` / `extracted` / `facts`: fall through to AUQ audit-mode gate with `pending_gate.id: brainstorm_anchor_audit_mode`. Do NOT silently default.
+   **Haiku A — project-docs.** Reads AGENTS.md/CLAUDE.md/WORKLOG.md (limit 500/500/200). See `docs/internals/brainstorm-anchor.md §Haiku A` for full brief.
+   **Haiku B — run-state.** Reads most-recent bundle state.yml/events.jsonl/spec.md (limit 300 each). See `docs/internals/brainstorm-anchor.md §Haiku B`.
+   **Haiku C — repo-sketch.** Runs `rg --files <repo-root> | head -200`. See `docs/internals/brainstorm-anchor.md §Haiku C`.
 
-   **Merge rules, topic-derived mode fallback, validation gate, and YAML shape:** see `parts/contracts/brainstorm-anchor.md §Merge Rules` and `§brainstorm_anchor YAML Shape`.
+   **Fallback** (coordinator returns malformed JSON or errors): log `{"event":"coordinator_fallback","site":"coordinator-brainstorm-anchor","reason":"<error>"}` and dispatch the 3 Haiku agents inline per `docs/internals/brainstorm-anchor.md §Haiku A/B/C` full briefs.
+
+3. **Merge + classify + persist (orchestrator owns this).** Parse coordinator return as JSON. On malformed return (missing `mode`/`repo_role`/`verification_ceiling`): fall through to AUQ audit-mode gate with `pending_gate.id: brainstorm_anchor_audit_mode`. Do NOT silently default.
+
+   **Merge rules, topic-derived mode fallback, validation gate, and YAML shape:** see `docs/internals/brainstorm-anchor.md §Merge Rules` and `parts/contracts/plan-annotations.md §brainstorm_anchor YAML Shape`.
 
 **Anchor gates.** Persist `pending_gate` before each AUQ:
 - Audit/review with ambiguous execution semantics → `pending_gate.id: brainstorm_anchor_audit_mode` → `AskUserQuestion("This looks like an audit/review. How should the spec behave?", options=["Fix-as-you-go audit (Recommended)", "Report-only audit", "Narrow deferred task", "Abort"])`.
