@@ -20,9 +20,9 @@ import_contract:
   contract_id: ""
   inputs_hash: ""
   processed_at: ""
-worktree_disposition: active
+worktree_disposition: removed_after_merge
 worktree_last_reconciled: 2026-05-16T08:10:00Z
-worktree: /path/to/superpowers-masterplan
+worktree: /srv/dev/superpowers-masterplan
 branch: main
 started: 2026-05-16T08:10:00Z
 last_activity: 2026-05-16T08:20:00Z
