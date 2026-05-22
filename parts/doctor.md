@@ -881,3 +881,79 @@ fi
 **Action:** Report bundle slug, coverage percentage, and list of `wave_task_completed` events lacking a paired `review→` event.
 
 **Expected backfill warnings:** Running this check against existing bundles `concurrency-guards` and `p4-suppression-smoke` should WARN — both predate the wave-mode review-visibility rule. This is expected and does not indicate a regression.
+
+---
+
+## Check #44 — `adversarial_review` config valid
+
+**Severity:** Warning
+**Action:** Report-only; no auto-fix. Invalid values must be corrected by the user.
+**Scope:** Global (config tiers only — not per-plan).
+**Added:** v6.1.0 (adversarial-review-integration).
+
+If the `adversarial_review` key is present in any config tier (`~/.masterplan.yaml` or `.masterplan.yaml`), its value must be one of `off`, `spec`, `plan`, or `both`. Any other value is flagged.
+
+```bash
+fail=0
+for cfg in "$HOME/.masterplan.yaml" ".masterplan.yaml"; do
+  [ -r "$cfg" ] || continue
+  val="$(grep -E '^adversarial_review:' "$cfg" 2>/dev/null | head -1 | awk '{print $2}' | tr -d '"' | tr -d "'")"
+  [ -z "$val" ] && continue
+  case "$val" in
+    off|spec|plan|both) ;;
+    *)
+      echo "WARN $cfg: adversarial_review: \"$val\" — must be off|spec|plan|both"
+      fail=1
+      ;;
+  esac
+done
+[ $fail -eq 0 ] && echo "Check #44: PASS" || echo "Check #44: WARN"
+```
+
+Report-only.
+
+---
+
+## Check #45 — Adversarial review gate-fire audit
+
+**Severity:** Info (skipped for bundles with fewer than 2 events or status != complete)
+**Action:** Report-only; informational only. Historical bundles predating v6.1.0 will always show INFO.
+**Scope:** Plan-scoped (per-plan; applies to completed bundles only).
+**Added:** v6.1.0 (adversarial-review-integration).
+
+For each completed bundle where `config.adversarial_review != off` (resolved from merged config tiers at check time), verify that `events.jsonl` contains at least one `adversarial_review_complete` event with `gate: spec_approval` and one with `gate: plan_approval`. If missing, emit INFO. Bundles predating v6.1.0 will always fire INFO — this is expected and not a regression.
+
+```bash
+for state_yml in docs/masterplan/*/state.yml; do
+  run_dir="$(dirname "$state_yml")"
+  slug="$(basename "$run_dir")"
+  events="$run_dir/events.jsonl"
+  status="$(grep -E '^status:' "$state_yml" 2>/dev/null | head -1 | awk '{print $2}' | tr -d '"')"
+  [ "$status" = "complete" ] || continue
+  [ -r "$events" ] || continue
+  event_count="$(wc -l < "$events" 2>/dev/null)"
+  [ "${event_count:-0}" -lt 2 ] && continue
+
+  ar_val="both"
+  for cfg in "$HOME/.masterplan.yaml" ".masterplan.yaml"; do
+    [ -r "$cfg" ] || continue
+    v="$(grep -E '^adversarial_review:' "$cfg" 2>/dev/null | head -1 | awk '{print $2}' | tr -d '"' | tr -d "'")"
+    [ -n "$v" ] && ar_val="$v"
+  done
+  [ "$ar_val" = "off" ] && continue
+
+  spec_gate_fire="$(grep -c '"adversarial_review_complete"' "$events" 2>/dev/null | tr -d ' ')"
+  has_spec="$(grep '"adversarial_review_complete"' "$events" 2>/dev/null | grep -c '"spec_approval"' || echo 0)"
+  has_plan="$(grep '"adversarial_review_complete"' "$events" 2>/dev/null | grep -c '"plan_approval"' || echo 0)"
+
+  missing=""
+  [ "${has_spec:-0}" -eq 0 ] && missing="${missing}spec_approval "
+  [ "${has_plan:-0}" -eq 0 ] && missing="${missing}plan_approval"
+  if [ -n "$missing" ]; then
+    echo "INFO $slug: adversarial_review=$ar_val, status=complete — adversarial_review_complete event(s) missing for: ${missing}. Bundle predates v6.1.0 or review was skipped."
+  fi
+done
+echo "Check #45: INFO (historical audit — see per-bundle lines above for details)"
+```
+
+Report-only. Expected to fire INFO on all bundles created before v6.1.0.
