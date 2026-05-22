@@ -86,7 +86,22 @@ After step-0.md completes bootstrap, route by verb. For `full`, `brainstorm`, `p
 
 ## Doctor entry point
 
-For doctor verb: after step-0.md bootstrap, load `parts/doctor.md` and run all checks. Check #36 verifies this router stays ≤20480 bytes.
+For doctor verb: after step-0.md bootstrap, dispatch coordinator-doctor:
+
+```
+DISPATCH-SITE: coordinator-doctor
+contract_id: "coordinator-doctor-v1"
+Tier: sonnet
+Goal: Load parts/doctor.md internally; run all checks; apply safe fixes when fix_flag=true.
+Inputs: fix_flag=<true|false>, bundle_path=<active-bundle-path or null>
+Scope: read parts/doctor.md + all referenced state files; write only when fix_flag=true.
+Constraints: CD-7 (orchestrator writes state.yml from coordinator results only).
+Return shape: {pass, warn, error, findings: [{id, severity, summary, fix_available}], fix_applied, coordinator_version}
+```
+
+**Fallback** (coordinator errors): log `coordinator_fallback` and load `parts/doctor.md` inline (pre-v6 behavior).
+
+Check #36 verifies this router stays ≤20480 bytes. See `docs/internals/doctor.md` for the coordinator contract and per-check extended rationale.
 
 ## Config reference
 
