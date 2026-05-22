@@ -97,3 +97,50 @@ recent_events:
 ## Canonical Writer
 
 Orchestrator is the canonical writer (CD-7). Wave members emit digests only; orchestrator writes state. `bin/masterplan-state.sh` enforces.
+
+## --resume Path Resolution
+
+When `--resume=<path>` / `execute <path>` is given, `<path>` is relative, and `test -e <path>` fails against cwd:
+
+1. **Build candidate set.** Collect paths matching `<cwd>/.worktrees/*/<path>` and `<repo-root>/.worktrees/*/<path>` (resolve repo-root via `git_state` cache). Filter to existing files.
+2. **Resolve.**
+   - **Exactly one match** → `cd` to that match's worktree, re-resolve path, emit `↻ --resume path resolved into worktree <worktree-path>; cd'd before Step C config load.`, re-run repo-local config read, then proceed to Step C step 1.
+   - **Zero matches** → `AskUserQuestion("--resume path '<path>' not found …", options=["Abort (Recommended)", "Search entire repo for matching state files", "Treat <path> as topic → Step A"])`.
+   - **Multiple matches** → `AskUserQuestion("--resume path '<path>' matches multiple candidates. Which one?", options=[top 3 by last_activity, "List all and abort"])`.
+3. **Absolute paths** bypass this search — Step C step 1's parse guard catches missing absolutes.
+
+Rationale: prevents silent fall-through to Step A when user is in parent dir of a worktree.
+
+## Codex Availability Events
+
+Detection outcome appended to `events.jsonl` on every `/masterplan` invocation:
+
+- Stage A scan hit or `scan` mode: `<ISO-ts> codex_ping ok — detection_mode=<scan-then-ping|scan>, detection_source=scan`
+- Stage B ping hit or `ping` mode success: `<ISO-ts> codex_ping ok — detection_mode=<scan-then-ping|ping>, detection_source=ping`
+- `trust` mode: `<ISO-ts> codex_ping skipped — detection_mode=trust`
+- `codex_host_suppressed == true`: `<ISO-ts> codex_ping skipped — codex_host_suppressed`
+- Failure: covered by the `codex degraded — …` event in the degradation path
+
+Doctor check #41 reads these events to distinguish never-ran / ok / error states.
+
+## Codex Degradation Evidence
+
+**Self-doubt cross-check (v5.3.0+).** Before emitting the degradation warning, run two on-disk probes:
+
+- **Auth-healthy probe:** `~/.codex/auth.json` exists, JWT not expired > 24h, AND under `auth_mode == "chatgpt"` — `tokens.refresh_token` non-empty + `last_refresh` within 7 days (reuses Doctor Check #39's predicate).
+- **Plugin-on-disk probe:** `ls ~/.claude/plugins/*/codex* 2>/dev/null | head -1` — non-empty match confirms plugin files present.
+
+If **both probes pass** but detection returned absent, append one INFO event:
+
+```
+<ISO-ts> degradation_self_doubt — about to emit codex-degraded warning, but auth_mode=<chatgpt|apikey> healthy AND plugin manifest present on disk; detection_mode=<scan-then-ping|ping|scan>, detection_source=<scan|ping|none>, ping_result=<ok|error-msg|null>
+```
+
+The warning still fires (Step 0 cannot ground-truth the runtime path), but the breadcrumb makes the false-positive visible to Doctor Check #41 (escalates to ERROR when this event present).
+
+**Degradation events.** Write on the next natural state write (Step B3 close for kickoff; Step C step 1 first write for resume; Step I3 for import):
+
+- Plugin missing: `<ISO-ts> codex degraded — plugin not detected; codex_routing+codex_review forced to off for this run (configured: routing=<r>, review=<rv>). Re-install codex plugin to restore.`
+- Ping error: `<ISO-ts> codex degraded — ping returned error: <error>; codex_routing+codex_review forced to off for this run (configured: routing=<r>, review=<rv>). Re-install or repair codex plugin to restore.`
+
+If no other state write happens this turn, force one: append the event, update `last_activity`, set `last_warning: codex degraded this run — install codex plugin to restore configured routing/review`.

@@ -48,7 +48,7 @@ Scope: read-only.
 Return shape: {contract_id: "doctor.schema_v2", inputs_hash: "<sha256 of bundle state.yml paths processed>", processed_paths: [list of state.yml paths], violations: [{bundle, field, kind, detail}], coverage: {expected: N, processed: N}}.
 ```
 
-**Sampling-based parent re-verification** (runs AFTER the parallel Haiku wave returns, BEFORE emitting findings): For each bundle path in the doctor scope, the orchestrator re-verifies a sample set: 3 randomly selected bundles + any bundle with violations in the Haiku return. Full scan only when Haiku reports 0 violations on a corpus with known history of violations. **All sampled-bundle checks run in a single parallel Bash batch** (v5.4.0+): emit one Bash invocation whose body backgrounds N greps (`&`) and `wait`s for completion — each background job greps state.yml for `^retro: ""` and (when any `legacy.*` field is non-empty) for missing `import_hydration`, emitting one JSON line per bundle to stdout. The orchestrator parses the line-delimited JSON output once. Per-bundle latency is the longest single grep, not the sum. Pre-v5.4.0 ran these greps serially in a loop. Cross-reference against Haiku's violations list. On discrepancy (parent finds violations Haiku missed): append `{"event":"parent_reverify_mismatch","contract_id":"doctor.schema_v2","missed_count":<N>}` to events.jsonl and prefer parent findings. Emit a one-line notice: `⚠ doctor parent re-verify found <N> additional violation(s) not in Haiku return — using parent findings.`
+**Sampling-based parent re-verification** (after Haiku wave, before emitting findings): re-verify 3 randomly selected bundles + any bundle with Haiku violations. Run as a single parallel Bash batch (background N greps, `wait`): grep state.yml for `^retro: ""` and missing `import_hydration`. On discrepancy: append `parent_reverify_mismatch` event, prefer parent findings, emit `⚠ doctor parent re-verify found <N> additional violation(s) not in Haiku return — using parent findings.`
 
 **Legacy-reference index.** Before running legacy-artifact checks, build a per-worktree set of all paths referenced by every bundle `state.yml` under `artifacts.*` and `legacy.*`, normalized relative to that same worktree. A legacy file under `docs/superpowers/...` that appears in this referenced-path set is already attached to durable masterplan state. Do not report it as "legacy plan not migrated" merely because the legacy filename slug differs from the bundle directory slug.
 
@@ -59,7 +59,7 @@ Return shape: {contract_id: "doctor.schema_v2", inputs_hash: "<sha256 of bundle 
 - `high` plans: run all plan-scoped checks (currently #1-24, #26, #28, #29, #32, #34, #35, #40, #41, #42, #43) INCLUDING #22 (high-complexity rigor evidence) and #40 (missing Codex/parallel-group annotations at complexity:high).
 - Plans without a `complexity:` state field: treat as `medium`.
 
-The check-set gate is per-plan: a single `/masterplan doctor` run against worktrees containing a mix of low/medium/high plans honors each plan's complexity individually. Findings are reported with the same severity as today. (Self-host audits — deployment-drift comparison vs HEAD and CD-9 free-text-question grep — moved out of doctor in v2.11.0; those run via the developer-only `bin/masterplan-self-host-audit.sh` script when working on the orchestrator source.)
+Check-set gate is per-plan (a mixed worktree run honors each plan's complexity individually). Self-host audits run via `bin/masterplan-self-host-audit.sh`, not doctor.
 
 ## Severity / Action Table
 
@@ -95,7 +95,7 @@ For each worktree, run all checks. Report findings grouped by worktree → check
 | 28 | **`completed_plan_without_retro`** (plan-scoped). Detects completed run bundles with no `retro.md`, or legacy completed plans without a migrated bundle/retro. | Warning | Surface `AskUserQuestion` per finding: generate retro + archive run bundle (Recommended), generate retro only, skip this plan, or skip all findings this run. |
 | 29 | **Worktree-bundle reconciliation mismatch** (v4.0.0+). Cross-repo: enumerate `git worktree list --porcelain` for the current repo; for each worktree path, find any bundle's `state.yml.worktree:` pointing at it. Surface: (a) bundles claiming a worktree path not registered in `git worktree list` (`worktree_missing`); (b) worktree paths registered in git with no bundle pointer (`worktree_orphan_untracked`). Skip worktrees with `worktree_disposition: removed_after_merge` or `kept_by_user` — those are intentionally settled. | Warning | `--fix`: for (a), set `worktree_disposition: missing`, clear `worktree:` field, write state, commit. For (b): report only (user must decide). |
 | 30 | **Cross-manifest version drift** (repo-scoped, v4.2.1+). Reads the three version-bearing manifests — `.claude-plugin/plugin.json` (canonical), `.claude-plugin/marketplace.json` (root `version` AND nested `plugins[0].version`), `.codex-plugin/plugin.json` — and compares each `version` field against the canonical. `.agents/plugins/marketplace.json` is exempt (no `version` field by schema). Also reads `README.md` and greps for a line matching `Current release:.*v[0-9]+\.[0-9]+\.[0-9]+`; if found, compares the extracted version against canonical. Catches the v3.4.0–v4.1.1 drift pattern where `.claude-plugin/marketplace.json` was stuck at 3.3.0 across four releases, and the v3.2.7–v5.0.1 README drift. **Implementation:** runs inline at the orchestrator (does NOT dispatch per-worktree). Use the Read tool to load each manifest, extract `version` (and the nested `plugins[0].version` for `.claude-plugin/marketplace.json`), compare against `.claude-plugin/plugin.json` as canonical. Any mismatch → emit one Warning per drifted file/field: `version drift: <file>[:<json-path>] at <observed> (canonical: <canonical>)`. For README: if the `Current release:` line is absent, no warning (version was intentionally removed). | Warning | Report only. Auto-bumping is risky — canonical-source authority is ambiguous when multiple manifests have drifted. Suggest editing alongside the CHANGELOG entry for the next release. |
-| 31 | **Per-autonomy gate-condition consistency** (repo-scoped, v4.2.1+). Maintains a static anchor table mapping gate-decision sites in `parts/step-b.md` (v5.0+; gates moved from `commands/masterplan.md` during v5.0 lazy-load extraction) to their expected `--autonomy [!=]= <value>` conditions. Initial table: `{anchor: "id: spec_approval", expected_regex: "--autonomy != full", note: "spec gate intentionally fires under loose"}`, `{anchor: "id: plan_approval", expected_regex: "--autonomy == gated", note: "plan gate auto-approves under loose per v4.2.0"}`. **Implementation:** runs inline at the orchestrator. For each table entry: grep `parts/step-b.md` for the anchor string, read the next 3 lines, regex-match the expected condition. Anchor not found → flag missing gate site. Anchor found but condition mismatches → flag drift with observed text. Maintainers adding a new gate site to the orchestrator MUST extend this static table; an existing entry that no longer matches → loud Warning. | Warning | Report only. Auto-rewriting gate conditions in the orchestrator prompt is never safe — these are deliberate semantic choices made per-release. |
+| 31 | **Per-autonomy gate-condition consistency** (repo-scoped, v4.2.1+). Static anchor table for gate-decision sites in `parts/step-b.md`: `spec_approval` expects `--autonomy != full`; `plan_approval` expects `--autonomy == gated`. For each entry: grep `parts/step-b.md` for anchor, read next 3 lines, regex-match condition. Anchor missing → flag missing site; condition mismatch → flag drift. Extend table when adding new gate sites. Implementation: inline. | Warning | Report only. Auto-rewriting gate conditions in the orchestrator prompt is never safe — these are deliberate semantic choices made per-release. |
 | 32 | **state.yml scalar cap + overflow pointer** — every scalar value in `state.yml` ≤200 chars; overflow pointers resolve to existing files with valid line numbers. | Warning | Report-only |
 | 33 | **TaskCreate projection mode mismatch** — active run bundle projection mode vs TaskList ledger disagrees. | Warning | Report-only |
 | 34 | **plan.index.json staleness** — `plan_hash` in `state.yml` or `plan.index.json` doesn't match current `plan.md` sha256. | Warning | Report-only |
@@ -396,7 +396,7 @@ _This check ID was retired in an earlier version. Reserved to prevent renumberin
 
 **Severity:** Warning
 
-(repo-scoped, v4.2.1+). Reads the three version-bearing manifests — `.claude-plugin/plugin.json` (canonical), `.claude-plugin/marketplace.json` (root `version` AND nested `plugins[0].version`), `.codex-plugin/plugin.json` — and compares each `version` field against the canonical. `.agents/plugins/marketplace.json` is exempt (no `version` field by schema). Also reads `README.md` and greps for a line matching `Current release:.*v[0-9]+\.[0-9]+\.[0-9]+`; if found, compares the extracted version against canonical. Catches the v3.4.0–v4.1.1 drift pattern where `.claude-plugin/marketplace.json` was stuck at 3.3.0 across four releases, and the v3.2.7–v5.0.1 README drift. **Implementation:** runs inline at the orchestrator (does NOT dispatch per-worktree). Use the Read tool to load each manifest, extract `version` (and the nested `plugins[0].version` for `.claude-plugin/marketplace.json`), compare against `.claude-plugin/plugin.json` as canonical. Any mismatch → emit one Warning per drifted file/field: `version drift: <file>[:<json-path>] at <observed> (canonical: <canonical>)`. For README: grep for `Current release:.*v[0-9]+\.[0-9]+\.[0-9]+`, extract the version token, compare. If the line is absent, no warning (version was intentionally removed from README).
+(repo-scoped, v4.2.1+). Reads `.claude-plugin/plugin.json` (canonical), `.claude-plugin/marketplace.json` (root `version` AND nested `plugins[0].version`), `.codex-plugin/plugin.json`; `.agents/plugins/marketplace.json` is exempt. Also greps `README.md` for `Current release:.*v[0-9]+\.[0-9]+\.[0-9]+`. Any mismatch → `version drift: <file>[:<json-path>] at <observed> (canonical: <canonical>)`. Absent `Current release:` line → no warning. Implementation: inline (does NOT dispatch per-worktree).
 
 **`--fix` action:** Report only. Auto-bumping is risky — canonical-source authority is ambiguous when multiple manifests have drifted. Suggest editing alongside the CHANGELOG entry for the next release. See `RELEASING.md` for the full release checklist.
 
@@ -406,7 +406,7 @@ _This check ID was retired in an earlier version. Reserved to prevent renumberin
 
 **Severity:** Warning
 
-(repo-scoped, v4.2.1+). Maintains a static anchor table mapping gate-decision sites in `parts/step-b.md` (v5.0+; gates moved from `commands/masterplan.md` during v5.0 lazy-load extraction) to their expected `--autonomy [!=]= <value>` conditions. Initial table: `{anchor: "id: spec_approval", expected_regex: "--autonomy != full", note: "spec gate intentionally fires under loose"}`, `{anchor: "id: plan_approval", expected_regex: "--autonomy == gated", note: "plan gate auto-approves under loose per v4.2.0"}`. **Implementation:** runs inline at the orchestrator. For each table entry: grep `parts/step-b.md` for the anchor string, read the next 3 lines, regex-match the expected condition. Anchor not found → flag missing gate site. Anchor found but condition mismatches → flag drift with observed text. Maintainers adding a new gate site to the orchestrator MUST extend this static table; an existing entry that no longer matches → loud Warning.
+(repo-scoped, v4.2.1+). Static anchor table for gate-decision sites in `parts/step-b.md`: `spec_approval` expects `--autonomy != full`; `plan_approval` expects `--autonomy == gated`. For each entry: grep `parts/step-b.md` for anchor, read next 3 lines, regex-match condition. Anchor missing → flag missing site; condition mismatch → flag drift. Extend table when adding new gate sites. Implementation: inline.
 
 **`--fix` action:** Report only. Auto-rewriting gate conditions in the orchestrator prompt is never safe — these are deliberate semantic choices made per-release.
 
@@ -576,17 +576,22 @@ if [ "$size" -gt 20480 ]; then
   echo "WARN commands/masterplan.md is $size bytes (ceiling 20480)"
   fail=1
 fi
-for phase in 0 a b c; do
+for phase in 0 a b; do
   if [ ! -f "parts/step-$phase.md" ]; then
     echo "WARN parts/step-$phase.md missing"; fail=1
+  fi
+done
+for sub in resume dispatch verification completion; do
+  if [ ! -f "parts/step-c-$sub.md" ]; then
+    echo "WARN parts/step-c-$sub.md missing"; fail=1
   fi
 done
 grep -q 'CC-3-trampoline' commands/masterplan.md || \
   { echo "WARN CC-3-trampoline missing from router"; fail=1; }
 grep -q 'CC-3-trampoline' parts/step-0.md || \
   { echo "WARN CC-3-trampoline missing from step-0"; fail=1; }
-grep -q 'DISPATCH-SITE: step-c.md' parts/step-c.md 2>/dev/null || \
-  { echo "WARN DISPATCH-SITE: step-c.md tags missing from step-c.md"; fail=1; }
+grep -q 'DISPATCH-SITE: step-c-resume.md' parts/step-c-resume.md 2>/dev/null || \
+  { echo "WARN DISPATCH-SITE labels missing from step-c-resume.md"; fail=1; }
 [ $fail -eq 0 ] && echo "Check #36: PASS" || echo "Check #36: WARN"
 ```
 
@@ -597,9 +602,7 @@ grep -q 'DISPATCH-SITE: step-c.md' parts/step-c.md 2>/dev/null || \
 **Severity:** Warning
 **Action:** Report records + suggest flush; Report-only otherwise
 
-Scans each run bundle directory under `<config.runs_path>/` for the failure-instrumentation framework's anomaly sidecars (`anomalies.jsonl` and `anomalies-pending-upload.jsonl`). A non-empty `anomalies.jsonl` means the Stop hook's Section 9 detector recorded ≥1 orchestrator anomaly that has not yet been reviewed; a non-empty `anomalies-pending-upload.jsonl` means GitHub auto-filing failed (rate limit, auth lapse, network) and the records are queued for retry.
-
-Each anomaly record carries: `ts`, `anomaly_class`, `signature`, `plan_slug`, `session_id`, `host`, `invocation`, `expected_behavior`, `observed_behavior`, `state_yml_at_failure`, `events_tail`, `step_trace_in_turn`, `config_snapshot`, `plugin_version`. The detector framework lives in `parts/failure-classes.md`.
+Scans each run bundle for `anomalies.jsonl` and `anomalies-pending-upload.jsonl`. Non-empty `anomalies.jsonl` → Stop hook recorded ≥1 unreviewed anomaly. Non-empty `anomalies-pending-upload.jsonl` → GitHub auto-filing queued for retry. Detector framework: `parts/failure-classes.md`.
 
 ```bash
 fail=0
@@ -623,7 +626,7 @@ done
 [ $fail -eq 0 ] && echo "Check #38: PASS" || echo "Check #38: WARN"
 ```
 
-The check is **report-only** — anomaly records are durable evidence of orchestrator misbehavior that the user (or the failure analyzer at `bin/masterplan-failure-analyze.sh`) reviews. Doctor surfaces their presence; it does not silently archive or delete them.
+Report-only. Use `bin/masterplan-failure-analyze.sh` to review anomaly records.
 
 ---
 
@@ -634,11 +637,7 @@ The check is **report-only** — anomaly records are durable evidence of orchest
 **Scope:** Repo-scoped (fires once per doctor run; reads user-global `~/.codex/auth.json`).
 **Added:** v5.1.1 (I-1 of cosmic-cuddling-dusk).
 
-Diagnoses the upstream cause of Codex routing/review silently degrading to `off`: expired JWT credentials in `~/.codex/auth.json`. Step 0's `ping` mode dispatches a `codex:codex-rescue` health-check; if downstream `codex exec` fails due to expired auth, the framework correctly applies `unavailable_policy: degrade-loudly` and forces `codex_routing`/`codex_review` to `off` in-memory. But the user often doesn't notice WHY routing degraded — they just see less Codex activity. This check makes the credential state explicit.
-
-Skipped silently when `~/.codex/auth.json` is absent (codex not installed for this user).
-
-**Cosmetic-shape early-exit (v5.2.3+):** when `auth_mode == "chatgpt"` AND `tokens.refresh_token` is non-empty AND `last_refresh` is within the last 7 days, sub-conditions (a) and (b) are skipped — the ChatGPT auth mode uses short-lived JWTs that auto-refresh on every codex call, so cosmetic `id_token.exp` past `now` is normal steady state, not degradation. Sub-condition (c) — `last_refresh` > 30 days — still fires under this shape (it would indicate the refresh token itself has gone stale). This guard mirrors the predicate in `commands/masterplan.md` Step 3 and the (retired) `codex_jwt_only_health_false_positive` watcher in `lib/masterplan_session_audit.py`.
+Skipped when `~/.codex/auth.json` absent. v5.2.3+ cosmetic-shape gate: `auth_mode == "chatgpt"` AND `tokens.refresh_token` present AND `last_refresh` ≤7d → skip JWT-exp sub-fires (a)/(b) — ChatGPT uses short-lived JWTs that auto-refresh; cosmetic `id_token.exp` past now is normal. Sub-condition (c) still fires.
 
 ```bash
 fail=0
@@ -647,7 +646,6 @@ if [ ! -r "$auth" ]; then
   echo "Check #39: SKIP (~/.codex/auth.json absent — codex not installed for this user)"
 else
   now="$(date +%s)"
-  # v5.2.3+ cosmetic-shape gate: skip JWT-exp sub-fires (a)/(b) under healthy auto-refresh.
   auth_mode="$(jq -r '.auth_mode // empty' "$auth" 2>/dev/null)"
   refresh_token="$(jq -r '.tokens.refresh_token // .refresh_token // empty' "$auth" 2>/dev/null)"
   last_refresh="$(jq -r '.last_refresh // empty' "$auth" 2>/dev/null)"
@@ -671,7 +669,6 @@ else
         continue
       fi
       payload="$(echo "$token" | cut -d. -f2)"
-      # Pad base64url to multiple of 4 before decoding
       pad=$(( 4 - ${#payload} % 4 ))
       [ $pad -eq 4 ] && pad=0
       padded="${payload}$(printf '=%.0s' $(seq 1 $pad))"
@@ -711,9 +708,7 @@ else
 fi
 ```
 
-This check is **report-only**. Refreshing Codex auth is browser-based OAuth (per `~/.codex/auth.json` schema), which the headless-host constraint cannot run automatically — the user must execute `codex login` (or the codex CLI's documented refresh command for their version) interactively. Doctor surfaces the credential state; it does not modify auth.json.
-
-Pairs with check #18 (Codex config-vs-plugin mismatch): #18 catches persistent misconfiguration; #39 catches expired credentials. Both can be live on the same run.
+Report-only (auth refresh requires `codex login`). Pairs with #18 (misconfig) and #41 (degradation evidence).
 
 ---
 
@@ -724,14 +719,7 @@ Pairs with check #18 (Codex config-vs-plugin mismatch): #18 catches persistent m
 **Scope:** Plan-scoped (per-plan; runs in worktree-Haiku dispatchers when worktrees ≥ 2).
 **Added:** v5.1.1 (I-2 of cosmic-cuddling-dusk).
 
-Catches the writing-plans skill silently skipping the high-complexity brief (per `parts/step-b.md` complexity-aware brief: `complexity: high` REQUIRES `**Codex:** (ok|no)` per task; ENCOURAGES `**parallel-group:**` for verification/lint/inference clusters). Without these annotations:
-
-- Step C 3a's eligibility cache falls back to heuristic-only judgment → Codex routing silently suppressed
-- Slice α wave assembly pre-pass has no parallel-group memberships → wave dispatch falls back to sequential
-
-Empirically observed during cosmic-cuddling-dusk investigation: 3 of 4 recent high-complexity plans had 0/67 Codex annotations and 0 parallel-group annotations, while the planner brief required them all.
-
-Skipped silently on `complexity: low` (annotations not required) and `complexity: medium` (annotations optional).
+Skipped silently on `complexity: low` and `complexity: medium`.
 
 ```bash
 fail=0
@@ -758,7 +746,7 @@ done
 [ $fail -eq 0 ] && echo "Check #40: PASS" || echo "Check #40: WARN"
 ```
 
-This check is **report-only**. Modifying plan.md mid-execution is risky per CD-7 (orchestrator is canonical writer); regenerating the plan via `/masterplan plan --from-spec=<spec>` re-invokes the writing-plans skill under the active complexity brief. Manual annotation is also valid.
+Report-only.
 
 ---
 
@@ -769,11 +757,7 @@ This check is **report-only**. Modifying plan.md mid-execution is risky per CD-7
 **Scope:** Plan-scoped (per-plan; runs in worktree-Haiku dispatchers when worktrees ≥ 2).
 **Added:** v5.1.1 (I-3 of cosmic-cuddling-dusk); expanded v5.3.0 with sub-fire (c).
 
-Three distinct sub-fires that surface the runtime-vs-config divergence from different angles:
-
-- **(a) Silent override without evidence.** `state.yml.codex_routing == off` AND `state.yml.codex_review == off` AND `~/.codex/auth.json` is healthy (no expired JWTs) AND `events.jsonl` has NO `codex degraded` event AND `state.yml.last_warning` is null/absent. **Skipped when `events.jsonl` has zero Codex-related events** (`codex_ping`, `codex degraded`, `routing→[codex]`) — that shape indicates Codex was configured `off` from bundle creation, not silently disabled mid-run; no degrade-loudly evidence is expected in that case. Trade-off: a manual state edit that flips `auto → off` in a never-Codex-active bundle would also pass silently — accepted as a low-frequency edge case. Indicates the routing was forced off WITHOUT going through Step 0's degrade-loudly path — possibly a Step 0 ping bug, an out-of-band user edit, or an orchestrator state-write that skipped the event-log obligation. The degrade-loudly contract requires written evidence; this check flags absence.
-- **(b) Codex configured on but never dispatched.** `state.yml.codex_routing == auto` OR `state.yml.codex_routing == manual` AND `events.jsonl` has NO `routing→.*\[codex\]` events anywhere AND `events.jsonl` has at least one `codex_ping ok` event from Step 0 (added by I-5 of cosmic-cuddling-dusk). Indicates ping detected Codex available but every task was judged ineligible by the planner or heuristic. Symptomatic of root cause #2 in cosmic-cuddling-dusk: high-complexity plan annotation gap (cross-references #40 for the same plan).
-- **(c) Step 0 confabulation (v5.3.0+).** Fires under EITHER condition: (1) `events.jsonl` contains a `degradation_self_doubt` event written by Step 0 itself at warning-time (Step 0's two on-disk probes — auth-healthy + plugin-manifest-on-disk — both passed but Step 0 was still about to emit the "plugin not detected" warning). (2) Older bundle without the self-doubt breadcrumb: `events.jsonl` contains a `codex degraded — plugin not detected` event AND `~/.codex/auth.json` is healthy AND `ls ~/.claude/plugins/*/codex* 2>/dev/null` returns a non-empty match (codex plugin's files present on disk). Either path indicates Step 0 emitted the degradation warning despite all on-disk evidence pointing to a healthy install — classic orchestrator confabulation under the legacy `ping` detection mode. The default flip to `scan-then-ping` in v5.3.0 prevents this; explicit `detection_mode: ping` users remain exposed. Suggested action: set `detection_mode: scan-then-ping` in `.masterplan.yaml` (or remove the explicit `ping` override) and re-run `/masterplan`.
+Sub-fires: **(a)** routing+review forced `off`, no `codex degraded` event, auth healthy → silent-override-without-evidence. Skipped when zero Codex-related events exist (intentionally-off bundle). **(b)** `codex_routing` not `off`, zero `routing→[codex]` events, `codex_ping ok` exists → Codex never dispatched despite availability; cross-check #40. **(c) v5.3.0+** `degradation_self_doubt` event in events.jsonl, OR `codex degraded — plugin not detected` event with healthy auth + codex files on disk → Step 0 confabulation; set `detection_mode: scan-then-ping` in `.masterplan.yaml` and re-run.
 
 ```bash
 fail=0
@@ -782,8 +766,6 @@ auth="$HOME/.codex/auth.json"
 auth_healthy=0
 if [ -r "$auth" ]; then
   now="$(date +%s)"
-  # v5.2.3+ cosmetic-shape gate: ChatGPT auth mode with refresh_token + recent last_refresh
-  # is healthy regardless of cosmetic JWT exp (short-lived JWTs auto-refresh on every call).
   auth_mode_41="$(jq -r '.auth_mode // empty' "$auth" 2>/dev/null)"
   refresh_token_41="$(jq -r '.tokens.refresh_token // .refresh_token // empty' "$auth" 2>/dev/null)"
   last_refresh_41="$(jq -r '.last_refresh // empty' "$auth" 2>/dev/null)"
@@ -795,7 +777,6 @@ if [ -r "$auth" ]; then
   fi
   if [ "$auth_healthy" -ne 1 ]; then
     for field in id_token access_token; do
-      # v5.2.3+: nested-path read with top-level fallback for schema-compat.
       token="$(jq -r ".tokens.$field // .$field // empty" "$auth" 2>/dev/null)"
       [ -z "$token" ] && continue
       payload="$(echo "$token" | cut -d. -f2)"
@@ -820,16 +801,10 @@ for state_yml in docs/masterplan/*/state.yml; do
   run_dir="$(dirname "$state_yml")"
   slug="$(basename "$run_dir")"
   events="$run_dir/events.jsonl"
-  # v5.3.1+ events.jsonl readability gate. Without this, `grep -c PATTERN $events 2>/dev/null || echo 0`
-  # produced "0\n0" when the file existed with zero matches (grep -c always prints "0" and exits 1),
-  # which failed `-eq 0` integer tests and silently skipped every sub-fire. Skip the bundle entirely
-  # when events.jsonl is unreadable — sub-fires (a), (b), (c) are all events-driven and need it.
   [ -r "$events" ] || continue
   routing="$(grep -E '^codex_routing:' "$state_yml" 2>/dev/null | head -1 | awk '{print $2}' | tr -d '"')"
   review="$(grep -E '^codex_review:' "$state_yml" 2>/dev/null | head -1 | awk '{print $2}' | tr -d '"')"
   has_last_warning="$(grep -cE '^last_warning:' "$state_yml" 2>/dev/null)"
-  # codex_ever_active: any Codex-related event means Codex was configured on at some point;
-  # zero events means intentionally-off from bundle creation — no degrade-loudly evidence expected.
   codex_ever_active="$(grep -cE 'codex_ping|codex degraded|routing→.*\[codex\]' "$events" 2>/dev/null)"
   if [ "$routing" = "off" ] && [ "$review" = "off" ] && [ $auth_healthy -eq 1 ] && [ "$has_last_warning" -eq 0 ] && [ "${codex_ever_active:-0}" -gt 0 ]; then
     degraded_event="$(grep -cE 'codex degraded' "$events" 2>/dev/null)"
@@ -846,7 +821,6 @@ for state_yml in docs/masterplan/*/state.yml; do
       fail=1
     fi
   fi
-  # v5.3.0+ sub-fire (c): Step 0 confabulation detector.
   self_doubt_events="$(grep -cE 'degradation_self_doubt' "$events" 2>/dev/null)"
   plugin_not_detected_events="$(grep -cE 'codex degraded — plugin not detected' "$events" 2>/dev/null)"
   if [ "${self_doubt_events:-0}" -gt 0 ]; then
@@ -866,7 +840,7 @@ else
 fi
 ```
 
-This check is **report-only**. Sub-fire (a) is the harder case to debug — surface the finding so the user (or a future investigation) can reproduce. Sub-fire (b) usually pairs with check #40 firing on the same plan; surface both findings together so the chain of causation is obvious.
+Report-only. Sub-fire (b) usually co-fires with #40 on the same plan.
 
 ---
 
@@ -875,9 +849,7 @@ This check is **report-only**. Sub-fire (a) is the harder case to debug — surf
 **Severity:** Warning
 **--fix:** Report only (no auto-remediation)
 
-For each run bundle, stat `<bundle>/.lock` if present. Emit a WARN when the file's mtime is older than 1 hour. Indicates a writer process crashed or wedged before releasing the `flock` (Guard C). The framework still functions — the next write blocks 5 s, then proceeds when `flock` reaps the abandoned lock. False-positive risk is non-zero (a legitimate long-running write during the stat window).
-
-**Recommended fix:** Confirm no live writer process holds the lock, then `rm <bundle>/.lock`.
+Stat `<bundle>/.lock`; emit WARN when mtime > 1 hour. False-positive risk exists (long-running write). Fix: confirm no live writer, then `rm <bundle>/.lock`.
 
 **Implementation:** For each bundle in the scan, run:
 ```bash
@@ -887,11 +859,6 @@ if [[ -f "${bundle}/.lock" ]]; then
     emit_finding 42 WARN "${bundle}/.lock" "lockfile age ${lock_age}s exceeds 1h threshold; possible wedged writer"
   fi
 fi
-```
-
-**Output shape:**
-```json
-{"check_id": 42, "severity": "WARN", "file": "<bundle>/.lock", "message": "lockfile age Xs exceeds 1h threshold; possible wedged writer"}
 ```
 
 ---

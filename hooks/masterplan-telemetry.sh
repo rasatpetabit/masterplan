@@ -81,6 +81,41 @@ ensure_telemetry_excluded() {
   done
 }
 
+# Parse <masterplan-trace file-load path=P bytes=N> markers from a text block.
+parse_file_load_markers() {
+  local text="$1"
+  echo "$text" \
+    | grep -oP '<masterplan-trace file-load path=\S+ bytes=\d+>' \
+    | sed 's/.*path=\([^ ]*\) bytes=\([0-9]*\)>/{"path":"\1","bytes":\2}/' \
+    | jq -s '.' 2>/dev/null || echo '[]'
+}
+
+# Emit turn_context_bytes event to the active bundle's events.jsonl.
+# Usage: emit_turn_context_bytes "$events_file" "$turn_num" "$verb" "$transcript"
+emit_turn_context_bytes() {
+  local events_file="$1"
+  local turn_num="${2:-0}"
+  local verb="${3:-unknown}"
+  local transcript="$4"
+
+  [ -f "$events_file" ] || return 0
+
+  local loaded_files
+  loaded_files=$(parse_file_load_markers "$transcript")
+
+  local input_tokens_field=""
+  if [ -n "${CLAUDE_USAGE_INPUT_TOKENS:-}" ]; then
+    input_tokens_field="\"input_tokens\":${CLAUDE_USAGE_INPUT_TOKENS},"
+  fi
+
+  local ts
+  ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+  printf '{"event":"turn_context_bytes","turn":%s,"verb":"%s","loaded_files":%s,%s"ts":"%s"}\n' \
+    "$turn_num" "$verb" "$loaded_files" "$input_tokens_field" "$ts" \
+    >> "$events_file"
+}
+
 # 0. Required tool guard. If jq is missing, the JSONL append at step 7 would
 # silently produce nothing forever — bail explicitly so the user notices via
 # the absence rather than via gradually-empty telemetry files.
@@ -584,6 +619,13 @@ anomalies_file="${plans_dir}/anomalies.jsonl"
 pending_file="${plans_dir}/anomalies-pending-upload.jsonl"
 
 # Extract this turn's breadcrumb stream from the transcript.
+# Recognized <masterplan-trace> marker types processed by this hook:
+#   step=<name> phase=in|out     — phase transitions (detector 5)
+#   skill-invoke name=<name>     — skill dispatch (detectors 1, 3)
+#   skill-return name=<name>     — skill return (detector 1)
+#   state-write field=<f>        — state mutations (detectors 2, 3)
+#   gate=fire id=<id>            — gate activations (detector 2)
+#   file-load path=<p> bytes=<n> — loaded-file tracking (turn_context_bytes)
 # Markers live in assistant message text content. We grep all
 # <masterplan-trace ...> markers from the LAST assistant turn boundary
 # onwards (loosely: the transcript tail since the previous Stop hook).
@@ -887,5 +929,9 @@ detector_dispatch() {
 }
 
 detector_dispatch
+
+if [[ "$is_bundle" -eq 1 ]]; then
+  emit_turn_context_bytes "${plans_dir}/events.jsonl" 0 "${last_verb:-unknown}" "$transcript"
+fi
 
 exit 0

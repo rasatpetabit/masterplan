@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.0.0] — 2026-05-22
+
+### Performance
+
+- **P0 Baseline instrumentation:** `turn_context_bytes` event in telemetry hook; `bin/masterplan-codex-usage.sh baseline` subcommand for pre/post token measurement.
+- **P1 Prose pruning:** `parts/step-0.md` 47KB→≤30KB; `parts/step-b.md` 48KB→≤28KB; `commands/masterplan.md` 11KB→≤9KB; `parts/doctor.md` per-check rationale blocks compressed to 1 sentence each.
+- **P2 Sub-file split:** `parts/step-c.md` (110KB monolith) replaced by 4 load-on-demand sub-files: step-c-resume (≤38KB), step-c-dispatch (≤30KB), step-c-verification (≤29KB), step-c-completion (≤17KB). A typical mid-plan execute turn loads ~50KB instead of 110KB.
+- **P3 Coordinator pattern:** 5 coordinator subagents introduced — brainstorm-anchor, doctor, task-verify, bundle-resume, plan-parser. Each coordinator pays context cost internally; orchestrator receives ≤1000-token JSON. Inline fallbacks at all 5 sites preserve pre-v6 behavior on error.
+
+### Architecture
+
+- **`parts/contracts/coordinator.md`:** Core coordinator subagent contract (CD-7 compliance, tier selection, failure contract, coordinator catalog).
+- **`docs/internals/`:** 7 focused docs replace the monolithic `docs/internals.md`. All cross-references in `parts/` updated to specific coordinator docs.
+
 ## [5.8.3] — 2026-05-20 — pending_gate_orphaned: see block-form gates
 
 Patch release. v5.8.1 added sentinel-suppression to `pending_gate_orphaned` (lib/masterplan_session_audit.py), but the underlying `yaml_scalar(state_text, "pending_gate")` returns `""` whenever `pending_gate` is a block (the canonical form per `parts/step-b.md` + `parts/failure-classes.md`: `pending_gate.id: <gate>` / `phase:` / `options:` etc.). Empty string failed the `and gate_val` truthiness guard, so every block-form pending gate — i.e., every *real* pending gate — was silently invisible to the detector. The smoke regression at `bin/masterplan-policy-regression-smoke.sh` (`pending-stale` fixture, block form) exposed this on the v5.8.2 follow-up run: 1 of 44 assertions failed.

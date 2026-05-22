@@ -18,47 +18,30 @@ description: Lazy-loading orchestrator router for /masterplan. Dispatches verbs 
 
 ## CC-2 — Boot banner
 
-Before doing anything else — before config load, before git_state cache, before verb routing — emit ONE plain-text line so the user can confirm `/masterplan` is alive. This is the FIRST output of every `/masterplan` turn.
+Emit ONE plain-text line before anything else (first output of every turn).
 
-**Step 1 — Resolve the version.** Use the **Read tool** to load `.claude-plugin/plugin.json` from the FIRST readable candidate path below, then parse the JSON and extract the `version` field. The Read tool call is mandatory — do not skip it, do not paraphrase its result, do not infer a version from session memory:
+**Step 1.** Use the **Read tool** (mandatory — do not skip, paraphrase, or infer from memory) to load `.claude-plugin/plugin.json` from the first readable candidate:
 
 1. `~/.claude/plugins/marketplaces/rasatpetabit-superpowers-masterplan/.claude-plugin/plugin.json` — canonical installed location
-2. `<cwd>/.claude-plugin/plugin.json` — dev checkout (works when CWD is the plugin source repo)
-3. `~/.claude/plugins/cache/rasatpetabit-superpowers-masterplan/superpowers-masterplan/<latest-version>/.claude-plugin/plugin.json` — last resort; glob and pick the highest semver
+2. `<cwd>/.claude-plugin/plugin.json` — dev checkout
+3. `~/.claude/plugins/cache/rasatpetabit-superpowers-masterplan/superpowers-masterplan/<latest-version>/.claude-plugin/plugin.json` — last resort; glob highest semver
 
-**Step 2 — Render the sentinel.** Emit exactly one line in this shape, prefixed with `v` plus the parsed semver (no angle brackets, no placeholder tokens):
+**Step 2.** Emit: `-> /masterplan v<semver> args: '<args-or-(empty)>' cwd: <repo-root-or-pwd>`. Substitute actual values; `(empty)` when no args. Truncate args at 120 chars; total sentinel ≤200 chars. Plain stdout, NOT inside AskUserQuestion/tool call/CC-3-trampoline.
 
-```
--> /masterplan v5.0.0 args: 'doctor --fix' cwd: <repo-root-or-pwd>
-```
+**Fallback (ALL three Read attempts fail):** render `vUNKNOWN`. No other fallback permitted.
 
-The shape is `-> /masterplan v<parsed-semver> args: '<truncated-args-or-(empty)>' cwd: <repo-root-or-pwd>`. Substitute the actual parsed semver, the actual `$ARGUMENTS` string (or the literal text `(empty)` when no arguments), and the actual cwd.
+**Strict prohibitions.** Version slot must be parsed semver or literal `vUNKNOWN`. Never emit: any placeholder (`v?`, `vTBD`, etc.); the template token `v<version-from-plugin.json>` itself (angle brackets = you skipped the Read); a semver from session memory — always Read fresh.
 
-**Fallback (ONLY when ALL three Read attempts fail).** Render the literal version slot `vUNKNOWN`. No other fallback value is permitted.
+**Step 3 — Codex health indicator (v5.1.1+, v5.2.3+).** Conditional second sentinel line, emitted ONLY when Codex routing/review is configured on AND `~/.codex/auth.json` shows actual auth degradation.
 
-**Strict prohibitions on the version slot.** The version slot must be either a parsed semver from `plugin.json` or the literal `vUNKNOWN`. You MUST NOT emit:
-- `v?`, `v??`, `v???`, `vTBD`, `vXXX`, `v-`, `v<unknown>`, or any other abbreviated/handwaved fallback.
-- The angle-bracket template token `v<version-from-plugin.json>` itself — that token is a shape-description in this prompt, not output. If you find yourself about to emit angle brackets in the sentinel, stop: you skipped the Read tool call.
-- A semver from an older message, the conversation history, or a previous turn. **Always Read fresh on every `/masterplan` invocation.**
+1. **Skip gate.** If `codex.routing == off` AND `codex.review == off`, emit nothing.
+2. **Read auth file.** Read `~/.codex/auth.json`; if absent, emit nothing.
+3. **Cosmetic-shape early-exit.** If `auth_mode == "chatgpt"` AND `tokens.refresh_token` non-empty AND `last_refresh` within last 7 days, emit nothing. (ChatGPT uses short-lived JWTs that auto-refresh; expired `id_token.exp` is normal steady state. `schema_v3+`: tokens under `.tokens.*`; jq fallback in step 4 handles both.)
+4. **Decode JWT exp claims.** For each of `id_token` and `access_token`: `jq -r ".tokens.$f // .$f // empty" ~/.codex/auth.json | cut -d. -f2 | base64 -d 2>/dev/null | jq -r .exp`. On decode error, treat as unknown.
+5. **Compare to now.** `now="$(date +%s)"`. Expired when `now > exp`.
+6. **Emit.** When ≥1 token expired: `↳ Codex: degraded (id_token expired Nd ago, access_token expired Md ago) — run \`codex login\` to refresh` (omit tokens where decode failed or exp ≥ now). When both decode cleanly + not expired + `last_refresh` > 30d (non-chatgpt only): `↳ Codex: stale (last_refresh Nd ago — consider running \`codex login\`)`. Both healthy + ≤30d: silent.
 
-Truncate `args` at 120 chars; total sentinel length <= 200 chars. The sentinel is plain stdout, NOT inside an `AskUserQuestion`, NOT inside a tool call, and NOT part of CC-3-trampoline.
-
-**Step 3 — Codex health indicator (v5.1.1+, refined v5.2.3+).** Conditional second sentinel line, emitted ONLY when Codex routing/review is configured on AND `~/.codex/auth.json` shows actual auth degradation (not a cosmetic JWT expiry under healthy auto-refresh). Steps:
-
-1. **Skip gate.** If merged `codex.routing == off` AND `codex.review == off` (resolved from `~/.masterplan.yaml` + `.masterplan.yaml`), emit nothing — silent.
-2. **Read auth file.** Use the **Read tool** to load `~/.codex/auth.json`. If the read fails (file absent — codex not installed for this user), emit nothing — silent.
-3. **Cosmetic-shape early-exit (v5.2.3+).** Read `auth_mode` (top-level), `tokens.refresh_token` (present/absent), and `last_refresh` (top-level ISO timestamp). If `auth_mode == "chatgpt"` AND `tokens.refresh_token` is non-empty AND `last_refresh` is within the last 7 days, emit nothing — silent. Rationale: the ChatGPT auth mode uses short-lived JWTs that auto-refresh on every codex call via the persistent `refresh_token`; `id_token.exp` being minutes-to-hours past `now` is the normal steady state, not a degradation signal. The v5.1.1 banner false-fired on this shape; v5.2.3 skips JWT-exp arithmetic entirely in this case. (`schema_v3+` of `~/.codex/auth.json` nests tokens under `.tokens.*` — older schemas may keep them top-level; use the jq fallback in step 4 to handle both.)
-4. **Decode JWT exp claims.** Only reached when step 3's cosmetic-shape gate did NOT trigger. For each of `id_token` and `access_token`, read from the nested path with a top-level fallback for forward/backward schema-compat: `for f in id_token access_token; do token="$(jq -r ".tokens.$f // .$f // empty" ~/.codex/auth.json)"; [ -z "$token" ] && continue; echo "${token}" | cut -d. -f2 | base64 -d 2>/dev/null | jq -r .exp; done` — the two output lines are the two `exp` values. On any decode error, treat that token as unknown (do not emit a warning sentinel for that token).
-5. **Compare to now.** `now="$(date +%s)"`. For each `exp`, compute `age_days = (now - exp) / 86400`. If `now > exp` for either token, the auth is expired.
-6. **Emit conditional line.** When at least one token is expired, emit one additional plain-stdout line directly under the version sentinel:
-
-   ```
-   ↳ Codex: degraded (id_token expired Nd ago, access_token expired Md ago) — run `codex login` to refresh
-   ```
-
-   Substitute `N` and `M` with the integer day age of each token (omit a token from the parenthetical when its decode failed or exp ≥ now — e.g. `(id_token expired 13d ago)` when only id_token is expired). When BOTH tokens decode cleanly AND are NOT expired but `last_refresh` is older than 30 days (for non-chatgpt modes — the chatgpt mode was already silenced in step 3), emit a softer line: `↳ Codex: stale (last_refresh Nd ago — consider running `codex login`)`. When both decode cleanly AND not expired AND last_refresh < 30d, emit nothing — silent.
-
-This Step 3 line is plain stdout, sibling of the Step 2 sentinel, NOT part of CC-3-trampoline. It runs unconditionally on every `/masterplan` invocation (cost: 1 Read + at most 2 base64-decodes ≈ 50ms; the v5.2.3 cosmetic-shape gate skips the decodes entirely under healthy ChatGPT auth). The skip gate in step 1 keeps the cost zero for users who have intentionally disabled codex. Doctor check #39 surfaces the same expiry condition at lint time with more detail and applies the same v5.2.3 cosmetic-shape gate.
+Plain stdout, NOT part of CC-3-trampoline. Cost: 1 Read + ≤2 base64-decodes (cosmetic-shape gate skips decodes under healthy ChatGPT auth). Doctor #39 surfaces the same expiry with more detail.
 
 ## CC-3-trampoline
 
@@ -70,20 +53,18 @@ Every turn-close in this orchestrator MUST route through the following sequence.
 2. **Pre-close action** — perform any commit, state write, ledger append, or timer disclosure that the calling part mandates before yielding. These obligations stay documented at the call site.
 3. **Closer** — fire the `AskUserQuestion`, `ScheduleWakeup`, or terminal render that ends the turn.
 
-**Scope note:** CC-1 compact-suggest remains positioned by the execution part and is not part of this trampoline. Timer-disclosure renders remain scoped to the archive/cleanup part. Adding a new end-of-turn obligation means adding it to this sequence, not spreading it across individual close sites.
-
-**Authoring rule:** when adding a new turn-close site to the spec, write `-> CLOSE-TURN` as the close directive. The phrase "end the turn" should appear only in negation contexts, option labels, or YAML/comment examples.
+> CC-1 compact-suggest and timer-disclosure are not part of this trampoline. New end-of-turn obligations go into this sequence. Authoring rule: write `-> CLOSE-TURN` as the close directive; "end the turn" only in negation contexts or YAML examples.
 
 ## Verb dispatch table
 
 | Verb | Routes to | Notes |
 |---|---|---|
 | _(empty)_ | parts/step-0.md (Step M0 resume-first) | inline status orientation + auto-resume |
-| `full` | parts/step-0.md → parts/step-b.md → parts/step-c.md | full kickoff (B0→B1→B2→B3→C) |
+| `full` | parts/step-0.md → parts/step-b.md → parts/step-c-resume.md | full kickoff (B0→B1→B2→B3→C) |
 | `brainstorm` | parts/step-0.md → parts/step-b.md | halts at B1 close-out gate (halt_mode=post-brainstorm) |
 | `plan` | parts/step-0.md → parts/step-a.md (spec-pick) or parts/step-b.md | halts at B3 close-out gate (halt_mode=post-plan) |
-| `execute` | parts/step-0.md → parts/step-c.md (resume) or parts/step-a.md (picker) | state-path resumes; topic/no-args picks |
-| `retro` | parts/step-0.md → parts/step-c.md (Step R subroutine) | generate retrospective |
+| `execute` | parts/step-0.md → parts/step-c-resume.md (resume) or parts/step-a.md (picker) | state-path resumes; topic/no-args picks |
+| `retro` | parts/step-0.md → parts/step-c-resume.md (Step R subroutine) | generate retrospective |
 | `import` | parts/step-0.md → parts/import.md | legacy migration (Step I) |
 | `doctor` | parts/step-0.md → parts/doctor.md | all 36 checks (Step D) |
 | `status` | parts/step-0.md (Step S subroutine) | read-only situation report |
@@ -91,7 +72,7 @@ Every turn-close in this orchestrator MUST route through the following sequence.
 | `stats` | parts/step-0.md (Step T subroutine) | telemetry roll-up |
 | `clean` | parts/step-0.md (Step CL subroutine) | archive + prune |
 | `next` | parts/step-0.md (Step N subroutine) | what's-next router |
-| `--resume=<path>` | parts/step-0.md → parts/step-c.md | alias for `execute <path>` |
+| `--resume=<path>` | parts/step-0.md → parts/step-c-resume.md | alias for `execute <path>` |
 
 ## Codex host detection
 
@@ -101,9 +82,26 @@ If invoked via `/superpowers-masterplan:masterplan` (Codex host), set `codex.hos
 
 After step-0.md completes bootstrap, route by verb. For `full`, `brainstorm`, `plan`, `execute`, `retro`, and `--resume=<path>`, load `parts/step-{state.yml.current_phase}.md`. The phase file is self-contained; it loads contracts on demand. Subroutine verbs (`status`, `stats`, `clean`, `next`, `validate`) execute inline within step-0.md and do not load additional phase files.
 
+**step-c split (v6.0).** `step-c.md` is replaced by 4 load-on-demand sub-files: `step-c-resume.md` (entry + step 1), `step-c-dispatch.md` (wave assembly + routing), `step-c-verification.md` (post-task finalize), `step-c-completion.md` (loop scheduling + completion). Load `step-c-resume.md` as the execution entry point; sub-file headers cross-reference each next sub-file.
+
 ## Doctor entry point
 
-For doctor verb: after step-0.md bootstrap, load `parts/doctor.md` and run all checks. Check #36 verifies this router stays ≤20480 bytes.
+For doctor verb: after step-0.md bootstrap, dispatch coordinator-doctor:
+
+```
+DISPATCH-SITE: coordinator-doctor
+contract_id: "coordinator-doctor-v1"
+Tier: sonnet
+Goal: Load parts/doctor.md internally; run all checks; apply safe fixes when fix_flag=true.
+Inputs: fix_flag=<true|false>, bundle_path=<active-bundle-path or null>
+Scope: read parts/doctor.md + all referenced state files; write only when fix_flag=true.
+Constraints: CD-7 (orchestrator writes state.yml from coordinator results only).
+Return shape: {pass, warn, error, findings: [{id, severity, summary, fix_available}], fix_applied, coordinator_version}
+```
+
+**Fallback** (coordinator errors): log `coordinator_fallback` and load `parts/doctor.md` inline (pre-v6 behavior).
+
+Check #36 verifies this router stays ≤20480 bytes. Extended rationale: `docs/internals/doctor.md`.
 
 ## Config reference
 

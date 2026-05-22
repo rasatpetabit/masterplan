@@ -1,0 +1,51 @@
+---
+schema_version: 3
+slug: masterplan-token-efficiency
+topic: Improve masterplan token use efficiency
+status: complete
+phase: complete
+worktree: /srv/dev/superpowers-masterplan/.worktrees/masterplan-token-efficiency
+branch: worktree-masterplan-token-efficiency
+started: 2026-05-22T17:22:34Z
+last_activity: 2026-05-22T23:55:00Z
+complexity: high
+autonomy: loose
+codex_routing: auto
+codex_review: on
+loop_enabled: false
+compact_loop_recommended: false
+halt_mode: none
+current_task: ""
+next_action: none
+pending_gate: null
+stop_reason: null
+plan_kind: implementation
+follow_ups:
+  - "writing-plans skill emits Codex annotations as true/false instead of ok/no tokens required by step-c.md annotation-completeness scan; auto-falls-back to Haiku build, defeats inline path (v6.0 fix candidate)"
+background: null
+critical_error: null
+pending_retro_attempts: 0
+retro_policy:
+  waived: false
+  reason: ""
+scope_fingerprint:
+  - improv
+  - masterplan
+  - token
+  - us
+  - effici
+supersedes: ""
+superseded_by: ""
+variant_of: ""
+import_hydration: ""
+import_contract:
+  contract_id: ""
+  inputs_hash: ""
+  processed_at: ""
+worktree_disposition: active
+worktree_last_reconciled: 2026-05-22T17:22:34Z
+artifacts:
+  spec: docs/masterplan/masterplan-token-efficiency/spec.md
+  plan: docs/masterplan/masterplan-token-efficiency/plan.md
+  retro: docs/masterplan/masterplan-token-efficiency/retro.md
+legacy: {}

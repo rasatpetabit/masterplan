@@ -8,6 +8,7 @@
 #
 # Usage:
 #   bin/masterplan-codex-usage.sh                # report on last 14 days, all sources
+#   bin/masterplan-codex-usage.sh baseline       # per-verb median/p90 token stats from turn_context_bytes events
 #   bin/masterplan-codex-usage.sh --days=N       # adjust window
 #   bin/masterplan-codex-usage.sh --since=YYYY-MM-DD
 #   bin/masterplan-codex-usage.sh --json         # machine-readable output
@@ -25,6 +26,50 @@ set -u
 DAYS=14
 SINCE=""
 FORMAT="text"
+
+cmd_baseline() {
+  local runs_dir="${MASTERPLAN_RUNS_DIR:-docs/masterplan}"
+  local tmpfile
+  tmpfile=$(mktemp /tmp/masterplan-baseline-XXXXXX)
+
+  # Collect all turn_context_bytes events from non-archived bundles
+  find "$runs_dir" -name "events.jsonl" -not -path "*/archived/*" 2>/dev/null \
+    | xargs grep -h '"event":"turn_context_bytes"' 2>/dev/null \
+    > "$tmpfile"
+
+  if [ ! -s "$tmpfile" ]; then
+    rm -f "$tmpfile"
+    echo "No turn_context_bytes events found. Run /masterplan turns first (requires Task 1)."
+    return 0
+  fi
+
+  # Print header
+  printf "%-14s %-20s %-17s %s\n" "verb" "median_input_tokens" "p90_input_tokens" "sample_n"
+  printf "%-14s %-20s %-17s %s\n" "----" "-------------------" "----------------" "--------"
+
+  # Compute per-verb stats using jq + awk
+  jq -r '.verb' "$tmpfile" | sort -u | while IFS= read -r verb; do
+    local tokens
+    tokens=$(grep "\"verb\":\"${verb}\"" "$tmpfile" \
+             | jq -r '.input_tokens // empty' | grep -E '^[0-9]+$' | sort -n)
+    local n
+    n=$(echo "$tokens" | grep -c .)
+    [ "$n" -eq 0 ] && continue
+    local median p90
+    median=$(echo "$tokens" | awk -v n="$n" 'NR==int(n/2)+1{print}')
+    p90=$(echo "$tokens" | awk -v n="$n" 'NR==int(n*0.9)+1{print}')
+    printf "%-14s %-20s %-17s %s\n" "$verb" "${median:-N/A}" "${p90:-N/A}" "$n"
+  done
+  rm -f "$tmpfile"
+}
+
+# Subcommand dispatch
+case "${1:-}" in
+  baseline)
+    cmd_baseline
+    exit 0
+    ;;
+esac
 
 for arg in "$@"; do
     case "$arg" in
