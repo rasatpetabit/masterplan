@@ -7,7 +7,7 @@ phase: executing
 worktree: /srv/dev/superpowers-masterplan/.worktrees/masterplan-token-efficiency
 branch: worktree-masterplan-token-efficiency
 started: 2026-05-22T17:22:34Z
-last_activity: 2026-05-22T20:30:00Z
+last_activity: 2026-05-22T21:00:00Z
 complexity: high
 autonomy: loose
 codex_routing: auto
@@ -15,8 +15,8 @@ codex_review: on
 loop_enabled: false
 compact_loop_recommended: false
 halt_mode: none
-current_task: "Task 5: Prose-prune commands/masterplan.md"
-next_action: inline edit commands/masterplan.md to reduce size from 11KB to ≤9KB
+current_task: "Task 6: Prose-prune parts/doctor.md"
+next_action: inline edit parts/doctor.md to remove verbose rationale blocks from per-check sections
 pending_gate: null
 stop_reason: null
 plan_kind: implementation
