@@ -8,7 +8,22 @@
 
 **Wave assembly pre-pass (Slice α v2.0.0+).** Before invoking the per-task implementer, scan the upcoming task list against the eligibility cache for parallel-eligible tasks (`parallel_eligible == true`).
 
-1. Read upcoming task pointer from `state.yml` (`current_task` + plan task list).
+1. **Parse plan via coordinator-plan-parser** (when eligibility cache is stale or absent):
+
+   ```
+   DISPATCH-SITE: coordinator-plan-parser
+   contract_id: "coordinator-plan-parser-v1"
+   Tier: haiku
+   Goal: Parse plan.md; return structured task list with eligibility annotations.
+   Inputs: plan_path=<docs/masterplan/<slug>/plan.md>
+   Scope: read plan.md only.
+   Constraints: read-only; CD-7.
+   Return shape: {total_tasks, schema_version, tasks: [{idx, name, files, codex_eligible, parallel_group, verify_commands, status}], eligibility_cache_hash, coordinator_version}
+   ```
+
+   **Fallback** (coordinator errors): read plan.md inline and build eligibility cache from heuristic checklist. Log `coordinator_fallback`.
+
+   Read upcoming task pointer from `state.yml` (`current_task` + coordinator-returned task list).
 2. Walk forward in plan-order from `current_task`. Collect contiguous tasks with the SAME `parallel_group` value into a wave candidate. Stop at the first task that has a different `parallel_group`, has no `parallel_group`, or has `parallel_eligible == false`.
 3. Wave size: ≥ 2 tasks, capped at `config.parallelism.max_wave_size` (default `5`). Tasks beyond cap roll into the next wave.
 4. Edge case: wave candidate of size 1 → execute serially (fall through to standard per-task dispatch).
