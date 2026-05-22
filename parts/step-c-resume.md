@@ -63,12 +63,20 @@ This is an idempotent re-stamp; the task is already `in_progress` if the session
 
 The touch is **NOT** applied outside Step C (brainstorm, plan, halt-gate, doctor, import, audit, etc.) — those phases legitimately benefit from the harness reminder.
 
-1. **Batched re-read.** Issue these as one parallel tool batch (not sequential):
-   - Read `state.yml` (or a legacy status file only when the user explicitly chose one-invocation legacy mode).
-   - Read the referenced bundled spec file.
-   - Read the referenced bundled plan file.
-   - `pwd` (Bash).
-   - `git rev-parse --abbrev-ref HEAD` (Bash).
+1. **Resume state via coordinator-bundle-resume.** On every execute-turn entry:
+
+   ```
+   DISPATCH-SITE: coordinator-bundle-resume
+   contract_id: "coordinator-bundle-resume-v1"
+   Tier: haiku
+   Goal: Read bundle state; return compact situation report.
+   Inputs: bundle_path=<docs/masterplan/<slug>/>
+   Scope: read state.yml (full), events.jsonl (limit 200 lines), plan.md (limit 100 lines); run pwd + git rev-parse --abbrev-ref HEAD.
+   Constraints: read-only; CD-7.
+   Return shape: {phase, current_task, next_action, pending_gate, autonomy, last_5_events, task_summary, coordinator_version}
+   ```
+
+   **Fallback** (coordinator errors): read state.yml inline with the Read tool (pre-v6 behavior). Log `coordinator_fallback`.
 
    **In-session mtime gating.** Maintain an orchestrator-memory cache `file_cache: {path → (mtime, content)}`. On a Step C entry within the **same session**, if a file's current mtime matches the cached mtime, reuse the cached content and skip the Read for that file. Cross-session entries (i.e. after a `ScheduleWakeup` resumption) start with an empty cache and always re-read. `state.yml` is **never** mtime-gated — always re-read live, since the orchestrator wrote it last and the user may have edited it between turns. Fail-safe: re-read on any doubt.
 
