@@ -100,12 +100,12 @@ adversarial_review: both   # off | spec | plan | both. Default: both.
 
 ### Doctor checks
 
-**Check #42 — adversarial_review config valid:**
+**Check #44 — adversarial_review config valid:**
 - Severity: warn
 - Check: if `adversarial_review` field is present in any config tier, it must be `off|spec|plan|both`.
 - Fix available: no (invalid value must be corrected by user).
 
-**Check #43 — adversarial review gate-fire audit:**
+**Check #45 — adversarial review gate-fire audit:**
 - Severity: info (skipped for bundles with < 2 events)
 - Check: for bundles where `config.adversarial_review != off` AND `status: complete`, verify `events.jsonl` contains at least one `adversarial_review_complete` event with `gate: spec_approval` and one with `gate: plan_approval`. If missing, emit: "Bundle <slug>: adversarial-review gate-fire not found in events.jsonl — may have been skipped or run before integration."
 - Fix available: no (historical; informational only).
@@ -134,7 +134,7 @@ adversarial_review: both   # off | spec | plan | both. Default: both.
 6. A failing review fires an AUQ with findings in the option context.
 7. Plan gate review runs in background (turn closes, wakeup scheduled).
 8. `grep "adversarial_review" docs/masterplan/<slug>/events.jsonl` returns entries after a run with review enabled.
-9. `/masterplan doctor` check #42 catches invalid `adversarial_review: sideways` config value (warns).
+9. `/masterplan doctor` check #44 catches invalid `adversarial_review: sideways` config value (warns).
 10. `bash -n hooks/masterplan-telemetry.sh` passes (no syntax error from changes).
 
 ---
@@ -152,7 +152,7 @@ grep -n "no-adversarial-review" commands/masterplan.md
 grep "adversarial_review" docs/config-schema.md
 
 # Doctor checks are present
-grep -n "#42\|#43" parts/doctor.md
+grep -n "#44\|#45" parts/doctor.md
 
 # CHANGELOG updated
 grep "adversarial.review" CHANGELOG.md

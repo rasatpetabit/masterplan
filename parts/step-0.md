@@ -273,6 +273,7 @@ After complexity resolution, before verb routing, run a one-pass prune of stale 
 | `--category=<name>` | CL | Limit Step CL to one category: `completed` / `legacy` / `orphans` / `stale` / `crons` / `worktrees` (or comma-separated subset). Default = all six. |
 | `--worktree=<path>` | CL | Limit Step CL's per-worktree scan to one absolute path. Default = all worktrees in `git_state.worktrees`. |
 | `--no-archive` | R | For manual `/masterplan retro`, write `retro.md` but skip Step R3.5's archive-state update |
+| `--no-adversarial-review` | B | Disable adversarial-review dispatch at B2 and B3 for this run regardless of `config.adversarial_review`. Does not persist to `state.yml`. |
 
 ---
 
