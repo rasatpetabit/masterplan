@@ -274,6 +274,19 @@ Update the existing `state.yml` created in Step B0 using the format in **Run bun
 
 **Auto-compact nudge** (once per plan; respects `config.auto_compact.enabled`). If enabled and not yet nudged, emit before the close-out gate: `*(Recommended: pair this run with /loop {interval} /compact {focus})*`. Then flip `compact_loop_recommended: true` in `state.yml`.
 
+**Adversarial review — plan gate (B3).** After appending `plan_written` and before the B3 close-out gate:
+
+1. **Enable check:** If `adversarial_review ∉ {both, plan}` OR `--no-adversarial-review` set → skip this block; proceed to B3 close-out gate unchanged.
+2. **Locate companion.** Same two-path discovery as B2 spec gate above. If neither exists: append `{"event":"adversarial_review_skipped","gate":"plan_approval","reason":"companion_not_found","ts":"<now>"}` → proceed to B3 close-out gate unchanged.
+3. **Launch background review.** Append `{"event":"adversarial_review_started","gate":"plan_approval","ts":"<now>","artifact":"<slug>/plan.md"}`. Persist `pending_gate: {id: adversarial_review_plan_pending}` to `state.yml`. Run:
+   ```bash
+   node "<companion-path>" adversarial-review --scope working-tree --background "focus on docs/masterplan/<slug>/plan.md"
+   ```
+4. **Close-turn with wakeup.** If `ScheduleWakeup` available: call `ScheduleWakeup(delaySeconds=120, prompt="/masterplan --resume=<state-path>", reason="Checking adversarial review result for <slug> plan gate")`. Set `stop_reason: scheduled_yield`, append `wakeup_scheduled` → CLOSE-TURN.
+   If `ScheduleWakeup` unavailable: emit `<masterplan-trace gate=fire id=adversarial_review_plan_pending auq-options=2>` and surface `AskUserQuestion("Adversarial review running in background for <slug> plan gate.", options=["Poll now — check if review completed", "Resume later — run /masterplan when the review finishes"])`.
+5. **On resume (wakeup or manual).** Check if background review process completed. If NOT complete: re-schedule wakeup (same parameters) → CLOSE-TURN. If complete: parse output with same pass/fail heuristic (`/\b(critical|fatal|serious|blocking|fundamental|wrong assumption)\b/i`). Append `{"event":"adversarial_review_complete","gate":"plan_approval","result":"<pass|fail>","findings_chars":<N>,"ts":"<now>"}`. Clear `pending_gate`. Proceed to B3 close-out gate.
+6. **B3 close-out gate override (aggressive-loose + pass only).** If `autonomy == aggressive-loose` AND `review_result == pass`: append `{"event":"plan_approval_auto_accepted","reason":"adversarial_review_passed","ts":"<now>"}`, proceed directly to Step C. When `review_result == fail` (any autonomy level): prepend findings summary to the halt_mode == none question text before surfacing the AUQ.
+
 **Close-out gate.** Consult `halt_mode`:
 
 - **`halt_mode == none`** (kickoff path): if `--autonomy == gated`, persist `pending_gate.id: plan_approval`, emit `<masterplan-trace gate=fire id=plan_approval auq-options=3>`, and surface `AskUserQuestion` (Start execution / Open plan to review / Cancel). If `--autonomy in {loose, full}`: auto-approve, append `plan_approval_auto_accepted`, proceed to Step C. (v4.2.0: loose now auto-approves; use `--autonomy=gated` for last-look. `spec_approval` still halts under loose.)
