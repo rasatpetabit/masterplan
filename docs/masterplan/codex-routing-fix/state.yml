@@ -40,8 +40,8 @@ tasks:
   - idx: 15
     status: complete
 
-status: complete
-phase: done
+status: archived
+phase: archived
 worktree: /srv/dev/superpowers-masterplan
 branch: main
 worktree_disposition: removed_after_merge
@@ -59,7 +59,7 @@ critical_error: null
 artifacts:
   spec: ""
   plan: docs/masterplan/codex-routing-fix/plan.md
-  retro: ""
+  retro: docs/masterplan/codex-routing-fix/retro.md
   events: docs/masterplan/codex-routing-fix/events.jsonl
   events_archive: ""
   eligibility_cache: ""
@@ -88,3 +88,4 @@ recent_events:
   - "2026-05-16T16:40Z T14 complete (18ea70d): version 5.7.3→5.8.0 in 3 manifests + CHANGELOG v5.8.0 entry"
   - "2026-05-16T16:45Z T15 complete (e82777e): WORKLOG.md v5.8.0 entry prepended"
   - "2026-05-16T16:45Z bundle complete: all 15 tasks landed; phase=done; ready for retro+archive"
+  - "2026-05-22 retro.md generated + bundle archived (doctor --fix run)"
