@@ -62,7 +62,7 @@ Every step part (Step 0, A, B0/B1/B2/B3, C, I1..I4, D, R, S, M, N, CL, T) MUST e
 - Markers are **plain stdout** — NOT inside tool calls, NOT inside code fences for display, NOT inside AskUserQuestion previews. They appear in the user-visible turn output, one per line.
 - Markers are **additive**: they never change orchestrator behavior, only make it observable.
 
-> See `docs/internals.md` (index) for the auto-filing rationale.
+> See `docs/internals/failure-instrumentation.md` for the auto-filing rationale.
 
 Step parts below contain the specific Emit lines at each required point. Where this prompt says **Emit:** followed by a `<masterplan-trace …>` shape, that's an instruction to render the substituted marker verbatim in the turn output.
 

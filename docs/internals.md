@@ -13,6 +13,7 @@
 | [plan-parser.md](internals/plan-parser.md) | Plan annotation format, eligibility cache build | `parts/step-c-dispatch.md` |
 | [wave-dispatch.md](internals/wave-dispatch.md) | Wave batch assembly, Codex routing decision tree | `parts/step-c-dispatch.md` |
 | [coordinator-pattern.md](internals/coordinator-pattern.md) | Adding coordinators, CD-7 compliance, versioning | `parts/contracts/coordinator.md` |
+| [failure-instrumentation.md](internals/failure-instrumentation.md) | Anomaly detection, auto-filing, policy-regression watcher | `hooks/masterplan-telemetry.sh` §9 |
 
 ## Architecture Overview
 

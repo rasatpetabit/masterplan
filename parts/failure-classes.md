@@ -216,7 +216,7 @@ When the analyzer flags an issue cluster that doesn't fit the 6 classes above:
 1. Append a new section to this file in the same shape (Symptom / Why / Signals / Detector / Signature inputs).
 2. Add the matching shell detector function to `hooks/masterplan-telemetry.sh` Section 9 — name it `detect_<class_id>()`, register it in the detector dispatch loop.
 3. Extend `bin/masterplan-anomaly-smoke.sh` with a synthetic transcript that triggers it; assert the new signature is emitted.
-4. Document the class in `docs/internals.md` (index) and the relevant `docs/internals/*.md` coordinator doc.
+4. Document the class in `docs/internals/failure-instrumentation.md`.
 5. Bump the schema_version at the top of this file when the class set changes (analyzers gate on schema_version for snapshot compatibility).
 
 Never silently merge a class without smoke coverage — the framework is the safety net; gaps in the net are unobserved by definition.
