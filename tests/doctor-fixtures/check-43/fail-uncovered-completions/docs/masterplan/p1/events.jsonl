@@ -1,0 +1,3 @@
+{"event":"wave_task_completed","task":"task-1"}
+{"event":"wave_task_completed","task":"task-2"}
+{"event":"review→inline(task-1) decision_source=inline"}
