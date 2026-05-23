@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.2.1] — 2026-05-23
+
+### Added
+
+- **Codex failure policy** (`docs/conventions/codex-failure-policy.md`): New conventions doc classifying Codex-specific infrastructure failures not covered by `api-retry-policy.md`: silent exit (worker spawns but no file changes occur), daemon-broken (socket/ECONNREFUSED error patterns), and auth-degraded (stale `last_refresh`). Documents two-consecutive-failure threshold before inline fallback, session-only `codex_failure_streak[task_name]` counter, auth-degraded fast path (skip streak, inline immediately), and user-facing notices per failure type.
+- **Silent-exit detection** (`parts/step-c-dispatch.md`): New "Silent exit (infra failure)" bullet in the "After Codex returns" section. Primary signal: empty `git diff --stat` against `task_start_sha` when plan declared `Create:`/`Modify:` paths. Secondary signal: socket/ECONNREFUSED error patterns in return text (daemon-broken sub-type). Completion events now use `[inline:codex-fallback]` tag when inline routing was triggered by infra failure.
+- **`tests/structural/test-codex-failure-policy.sh`**: Structural test covering policy doc content (silent exit, daemon-broken, auth-degraded, streak counter, cross-refs) and `step-c-dispatch.md` cross-reference.
+
 ## [6.2.0] — 2026-05-23
 
 ### Added

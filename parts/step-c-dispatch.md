@@ -267,6 +267,12 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
       - The next Step C entry MUST execute the Background-dispatch resume check before any new routing or redispatch.
     - **`gated`** — present diff + verification output via `AskUserQuestion(Accept / Reject and rerun inline / Reject and rerun in Codex with feedback)`.
     - **`loose` / `full`** — auto-accept if verification passed cleanly. If verification failed, fall back to inline rerun under `superpowers:systematic-debugging` and apply the autonomy's blocker policy from above (which itself triggers **CD-4** ladder work).
+    - **Silent exit (infra failure)** — if Codex returns but the expected file changes didn't happen, treat as an infrastructure failure (distinct from a semantic `blocked` result). Apply the policy in `docs/conventions/codex-failure-policy.md`:
+      - **Detection (primary):** `git diff --stat <task_start_sha>..HEAD` is empty (serial dispatch) or `staged_changes_digest` is null/empty (wave members), AND the task's `**Files:**` section declared `Create:` or `Modify:` paths.
+      - **Detection (secondary):** return text contains `app-server control socket`, `ECONNREFUSED`, or `socket already in use` → classify as daemon-broken sub-type.
+      - **Auth-degraded fast path:** if `~/.codex/auth.json` `last_refresh` > 7 days (non-chatgpt mode), skip streak and route inline immediately with `⚠ Codex auth degraded — routing <task> inline. Run: codex login`.
+      - **Streak 1:** emit `⚠ Codex silent exit on <task> (attempt 1/2) — retrying dispatch` and redispatch once.
+      - **Streak ≥ 2:** emit `⚠ Codex infrastructure failure on <task> (2 consecutive silent exits) — routing inline` and run inline. Track in session-only `codex_failure_streak[task_name]`; reset to 0 on successful Codex return.
 
-    Append a `[codex]` or `[inline]` tag to the completion event for each completed task so future-you can see the routing distribution.
+    Append a `[codex]`, `[inline]`, or `[inline:codex-fallback]` tag to the completion event for each completed task so future-you can see the routing distribution. Use `[inline:codex-fallback]` when the inline run was triggered by the silent-exit threshold above.
 
