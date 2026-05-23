@@ -1526,10 +1526,12 @@ Report-only. Expected to fire INFO on all bundles created before v6.1.0.
 **Scope:** Prompt-scoped (scans `parts/step-*.md`). Fires regardless of plan complexity.
 **Added:** v6.2.0 (improve-subagents-parallelism).
 
-Scan `parts/step-*.md` for 3+ consecutive Bash-type directives feeding one decision without
-an upstream `dispatch Haiku` or `DISPATCH-SITE:` gate. The CC-2 rule (dispatch Haiku before
-reading files >300 lines or before commands expected to print >100 lines) degrades silently as
-the prompt evolves; this check enforces it at lint time.
+Scan `parts/step-*.md` (and `parts/doctor.md`) for 3+ consecutive Bash-type directives feeding
+one decision without an upstream `dispatch Haiku` or `DISPATCH-SITE:` gate. The CC-2 rule
+(dispatch Haiku before reading files >300 lines or before commands expected to print >100 lines)
+degrades silently as the prompt evolves; this check enforces it at lint time. Lines inside
+`` ```bash `` … `` ``` `` code fences are skipped (they are implementation blocks, not inline
+orchestrator directives).
 
 ```bash
 violations=0
@@ -1538,10 +1540,14 @@ for f in parts/step-0.md parts/step-b.md parts/step-c-resume.md parts/step-c-dis
   [ -r "$f" ] || continue
   consecutive=0
   gate_seen=0
+  in_fence=0
   while IFS= read -r line; do
+    if [ "$line" = '```bash' ]; then in_fence=1; consecutive=0; continue; fi
+    if [ "$line" = '```' ] && [ "$in_fence" -eq 1 ]; then in_fence=0; consecutive=0; continue; fi
+    [ "$in_fence" -eq 1 ] && continue
     case "$line" in
       *"dispatch Haiku"*|*"DISPATCH-SITE:"*) gate_seen=1; consecutive=0 ;;
-      *"Read \`"*|*"\`\`\`bash"*|*"node "*|*"bash -"*|*"curl "*|*"grep "*)
+      *"Read \`"*|*"node "*|*"bash -"*|*"curl "*|*"grep "*)
         consecutive=$((consecutive + 1))
         if [ "$consecutive" -ge 3 ] && [ "$gate_seen" -eq 0 ]; then
           echo "WARN $f: 3+ consecutive Bash-type directives without upstream Haiku gate (near: $line)"
