@@ -1,5 +1,28 @@
 # WORKLOG
 
+## 2026-05-22 — brainstorm: improve-regression-detection (v6.2.0)
+
+`/masterplan brainstorm improve the robustness of masterplan regression detection` — spec written and committed to `worktree-improve-regression-detection` branch.
+
+**Approach chosen:** Tiered test suite (Approach B). Fast tier (<30s, pre-commit): 4 existing static tests + 2 new structural tests (coordinator-dispatch, step-c-split). Full tier (CI/pre-merge): fast + doctor fixtures for all 47 checks + hook unit tests.
+
+**Key finding:** Checks #1–#31, #37, #43 lack embedded bash blocks — can't use existing fixture mechanism. Bundle will add bash blocks to doctor.md for those checks (itself a robustness improvement).
+
+State: `spec_gate` / `pending_gate: brainstorm_closeout` — awaiting user decision before planning.
+
+## 2026-05-22 — execution complete: improve-subagents-parallelism → v6.2.0
+
+Wave-based execution of all 6 tasks. Dimension A/B audits returned no actionable fixes; Dimension C confirmed 2 expected violations.
+
+**Changes shipped (3 implementation commits):**
+- `parts/step-b.md`: cap adversarial-review companion stdout+stderr at 8192 chars (C3 fix)
+- `parts/step-c-dispatch.md`: add `(≤ 100 items)` to coordinator-plan-parser tasks[] (C1 fix)
+- `parts/doctor.md`: Check #46 (CC-2 self-enforcement lint) + Check #47 (return-shape caps lint); low/medium/high check sets updated
+- `docs/internals/coordinator-pattern.md` + `wave-dispatch.md`: CC-2 wording added
+- `bin/masterplan-self-host-audit.sh`: stale `step-c.md` → 4 sub-file scans in `check_brief_style()` and `check_dispatch_sites()`
+
+**Status:** `pending_retro` on `worktree-improve-subagents-parallelism` branch.
+
 ## 2026-05-22 — brainstorm: v6.0 token efficiency spec (v5.8.3)
 
 `/masterplan brainstorm improve masterplan token use efficiency` — spec written and committed to `worktree-masterplan-token-efficiency` branch.
