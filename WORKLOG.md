@@ -117,4 +117,6 @@ Both stale worktrees merged to main and removed.
 
 Both bundles: `status: archived`, `worktree_disposition: removed_after_merge`.
 
-**Post-merge fix:** `check_brief_style` Pattern D false-fired on HTML nav comment headers in `step-c-resume.md:7` and `step-c-completion.md:6`. Root cause: lines ending with `-->` (sub-file nav labels) matched the lifecycle regex but aren't real dispatch sites. Fixed by adding `-->` to the skip condition alongside the existing backtick guard. Main at 9/9.
+**Post-merge fix:** `check_brief_style` Pattern D false-fired on HTML nav comment headers in `step-c-resume.md:7` and `step-c-completion.md:6`. Root cause: lines ending with `-->` (sub-file nav labels) matched the lifecycle regex but aren't real dispatch sites. Fixed by adding `-->` to the skip condition alongside the existing backtick guard.
+
+**Python tests wired:** `tests/run-tests.sh --full` now includes a `python-unit-tests` step covering all `tests/test_*.py` (33 tests). PYTHONPATH is set automatically. Main at 10/10.
