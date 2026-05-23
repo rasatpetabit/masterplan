@@ -148,3 +148,15 @@ All 4 tasks completed inline. 11/11 tests pass (`worktree-hoist-run-policy` bran
 **Side fix:** plan.md lacked v5 plan-format markers (`**Spec:**`/`**Codex:**`/`**Verify:**` per task); added during Task 4 to pass self-host-audit `check_plan_format`.
 
 Ready for `branch finish` → merge to main.
+
+## 2026-05-23 — hoist-run-policy extended: Codex failure policy → v6.2.1
+
+Committed directly on `worktree-hoist-run-policy` branch (no bundle bookkeeping per user request). 12/12 tests pass.
+
+**Changes shipped:**
+- `docs/conventions/codex-failure-policy.md`: new doc — silent-exit, daemon-broken, auth-degraded failure classes; two-consecutive-failure streak threshold; auth-degraded fast path (skip streak); user-facing notices; scope boundary with api-retry-policy.md.
+- `parts/step-c-dispatch.md`: "Silent exit (infra failure)" bullet in "After Codex returns"; primary detection via empty `git diff --stat` vs `task_start_sha` when plan declared file changes; secondary detection via socket/ECONNREFUSED patterns; `codex_failure_streak[task_name]` session var; `[inline:codex-fallback]` completion tag.
+- `tests/structural/test-codex-failure-policy.sh`: new structural test.
+- CHANGELOG v6.2.1.
+
+**Key decision:** silent-exit detection keys off git diff (primary) not Codex return fields — non-wave Codex returns are free-form text, not field-structured. Two-failure threshold avoids aggressive fallback on transient daemon restarts.
