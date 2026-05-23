@@ -2,7 +2,7 @@
 # Doctor-fixture runner.
 #
 # For each check whose body in parts/doctor.md contains an extractable ```bash
-# block (currently #32, #33, #34, #35, #36, #38, #39, #40, #41), the runner:
+# block (currently check-01..check-47), the runner:
 #   1. extracts the bash block from parts/doctor.md (between ## Check #NN and
 #      the next ## Check / ## ## / EOF);
 #   2. for each fixture directory under tests/doctor-fixtures/check-NN/:
