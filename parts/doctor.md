@@ -1166,7 +1166,7 @@ Report-only. Use `bin/masterplan-failure-analyze.sh` to review anomaly records.
 **Scope:** Repo-scoped (fires once per doctor run; reads user-global `~/.codex/auth.json`).
 **Added:** v5.1.1 (I-1 of cosmic-cuddling-dusk).
 
-Skipped when `~/.codex/auth.json` absent. v5.2.3+ cosmetic-shape gate: `auth_mode == "chatgpt"` AND `tokens.refresh_token` present AND `last_refresh` ≤30d → skip JWT-exp sub-fires (a)/(b) — ChatGPT uses short-lived JWTs that auto-refresh; cosmetic `id_token.exp` past now is normal (even after idle periods of weeks). Sub-condition (c) still fires.
+Skipped when `~/.codex/auth.json` absent. v5.2.3+ cosmetic-shape gate: `auth_mode == "chatgpt"` AND `tokens.refresh_token` present → skip ALL sub-conditions and emit PASS immediately. ChatGPT uses short-lived JWTs that auto-refresh on every Codex invocation via `refresh_token`; neither `id_token.exp` past now nor `last_refresh` age is a meaningful health signal for this auth mode. Non-chatgpt modes run all sub-conditions.
 
 ```bash
 fail=0
@@ -1178,18 +1178,10 @@ else
   auth_mode="$(jq -r '.auth_mode // empty' "$auth" 2>/dev/null)"
   refresh_token="$(jq -r '.tokens.refresh_token // .refresh_token // empty' "$auth" 2>/dev/null)"
   last_refresh="$(jq -r '.last_refresh // empty' "$auth" 2>/dev/null)"
-  jwt_skip=0
-  if [ "$auth_mode" = "chatgpt" ] && [ -n "$refresh_token" ] && [ -n "$last_refresh" ]; then
-    refresh_sec_gate="$(date -u -d "$last_refresh" +%s 2>/dev/null || echo 0)"
-    if [ "$refresh_sec_gate" -gt 0 ]; then
-      refresh_age_days_gate=$(( (now - refresh_sec_gate) / 86400 ))
-      if [ "$refresh_age_days_gate" -le 30 ]; then
-        jwt_skip=1
-      fi
-    fi
-  fi
-  if [ "$jwt_skip" -eq 1 ]; then
-    echo "Check #39: PASS (auth_mode=chatgpt; JWT auto-refresh healthy; last_refresh ${refresh_age_days_gate}d ago)"
+  if [ "$auth_mode" = "chatgpt" ] && [ -n "$refresh_token" ]; then
+    # chatgpt mode: refresh_token auto-refreshes id_token on every Codex invocation.
+    # No age check needed — idle time is irrelevant to auth health.
+    echo "Check #39: PASS (auth_mode=chatgpt; refresh_token present; auto-refreshes on next invocation)"
   else
     for field in id_token access_token; do
       # v5.2.3+: read from nested .tokens.<field> with top-level fallback for schema-compat.
