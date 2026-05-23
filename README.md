@@ -2,7 +2,7 @@
 
 > A Claude Code & Codex CLI plugin for multi-hour engineering work — featuring durable run bundles, a robust four-phase lifecycle, parallel wave dispatch, and asymmetric review.
 
-Current release: **v6.2.2** · **License:** MIT · **Works with:** Claude Code, Codex CLI · See [CHANGELOG.md](./CHANGELOG.md)
+Current release: **v6.2.3** · **License:** MIT · **Works with:** Claude Code, Codex CLI · See [CHANGELOG.md](./CHANGELOG.md)
 
 ---
 

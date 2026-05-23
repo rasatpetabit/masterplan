@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.2.3] — 2026-05-23
+
+### Fixed
+
+- **Doctor check tier classifications** (`parts/doctor.md`, `commands/masterplan-contracts.md`): Six checks had drifted from their declared `**Scope:**` fields into the wrong routing slots:
+  - **Check #26** removed from the plan-scoped parallelization brief (was in both brief and repo-scoped batch; CronList is session-level state — no benefit to N per-worktree calls). Now repo-scoped only.
+  - **Check #38** scope description corrected (was copy-pasted verbatim from check #39: "reads `~/.codex/auth.json`" — wrong; it scans per-bundle `anomalies.jsonl`); added to plan-scoped parallelization brief and all three complexity sets.
+  - **Check #44** (`adversarial_review` config valid) moved from medium/high complexity sets → repo-scoped Haiku batch (validates global config tiers, not per-bundle state).
+  - **Check #45** (adversarial review gate-fire audit) added to plan-scoped brief and medium/high complexity sets — was entirely absent from both routing slots despite being plan-scoped.
+  - **Checks #46/#47** (CC-2 self-enforcement; return-shape caps) moved from all three complexity sets → repo-scoped Haiku batch (prompt-scoped: scan `parts/step-*.md`, which is the same repo content every time; no value running N× per worktree).
+  - Repo-scoped batch count updated 5 → 8; `checks_processed: [26, 30, 31, 36, 39, 44, 46, 47]` in both `parts/doctor.md` return-shape and `commands/masterplan-contracts.md` contract definition; partial-failure fallback comparison updated; medium/high complexity sets no longer reference repo-scoped #26.
+- **Doctor file title and preamble** (`parts/doctor.md`): title updated `#1 .. #43` → `#1 .. #47`; preamble comment now records v6.1.0 (#44–#45) and v6.2.0 (#46–#47) provenance.
+- **README doctor check count** (`README.md`): Two stale references to "43 proactive/structural audits" updated to 47.
+
+### Added
+
+- **`tests/static/test-doctor-tier-drift.sh`** (FAST tier): Static test that cross-validates every `**Scope:**` field in `parts/doctor.md` against the corresponding routing slot — Plan-scoped checks must appear in the parallelization brief; Repo/Global/Prompt-scoped checks must appear in `checks_processed`. Catches future tier misassignment at pre-commit time without requiring a manual audit.
+
+### Docs
+
+- **`docs/internals/doctor.md` — Add a New Check guide**: Expanded from a 3-step checklist to a 5-step guide covering Scope field values, all files to update for repo-scoped checks, reference to the new static test, and the title/preamble version-provenance convention.
+
 ## [6.2.2] — 2026-05-23
 
 ### Fixed
