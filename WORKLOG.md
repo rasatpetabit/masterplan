@@ -102,3 +102,7 @@ Ready for retro + merge to main.
 ## 2026-05-23 — branch finish: improve-regression-detection
 
 Merged to main; worktree + branch removed. Cross-refs gap fixed alongside merge (3-part fix: 5 coordinator contracts added to `masterplan-contracts.md`, stale `parts/step-c.md` references in `parts/failure-classes.md` updated to split file names, `test-cross-refs.sh` regex extended to match hyphenated contract IDs). `test-manifest-drift` fix also landed (marketplace.json + README bumped to 6.0.1 to match plugin.json). Main now exits 0 on `--fast` (6/6).
+
+## 2026-05-23 — hotfix: Codex annotation true/false aliases
+
+`writing-plans` emits `**Codex:** true/false` (boolean) rather than `ok/no` (canonical); doctor #40 counter, step-c-resume inline-build verifier, step-c-dispatch scanner all updated to accept `true`≡`ok` / `false`≡`no`. Check #16 also updated. `parts/contracts/plan-annotations.md` format spec updated to show `<ok|no|true|false>`. CHANGELOG 6.0.1 entry updated. Main at 9/9.
