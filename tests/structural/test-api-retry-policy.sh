@@ -16,4 +16,10 @@ if [ -f "$f" ]; then
   grep -qiE "429|rate.?limit|5xx|timeout" "$f" || { echo "FAIL: missing error class examples"; FAIL=1; }
 fi
 
+# Cross-ref checks
+grep -q "api-retry-policy" "$REPO_ROOT/parts/step-c-dispatch.md" \
+  || { echo "FAIL: step-c-dispatch.md missing api-retry-policy cross-ref"; FAIL=1; }
+grep -q "api-retry-policy" "$REPO_ROOT/docs/internals/wave-dispatch.md" \
+  || { echo "FAIL: wave-dispatch.md missing api-retry-policy cross-ref"; FAIL=1; }
+
 [ $FAIL -eq 0 ] && echo "PASS: api-retry-policy checks" || exit 1

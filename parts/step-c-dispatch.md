@@ -258,6 +258,8 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
     Return: <expected diff + verification output>
     ```
 
+    **API error handling.** If the `codex:codex-rescue` dispatch fails with a transport or rate-limit error, apply the retry schedule in `docs/conventions/api-retry-policy.md` before promoting to a blocker. The same policy applies to inline `Agent()` dispatch.
+
     **After Codex returns** — always review (apply **CD-10**):
     - **Background return** — if Codex returns a background handle instead of a final digest, do not close with free text like "when it finishes I'll review." Under `<run-dir>/state.lock`, keep `status: in-progress`, keep `current_task` on the dispatched task, set `phase: executing`, set `next_action: poll background task for <task>`, write the `background:` object described in the run-bundle contract, and append `background_started`.
       - If `ScheduleWakeup` is available, schedule `/masterplan --resume=<state-path>` and append `wakeup_scheduled`, then close.
