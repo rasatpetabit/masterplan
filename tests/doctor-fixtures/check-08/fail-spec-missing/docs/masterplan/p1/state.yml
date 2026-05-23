@@ -1,0 +1,4 @@
+slug: p1
+phase: executing
+artifacts:
+  spec: docs/masterplan/p1/spec.md

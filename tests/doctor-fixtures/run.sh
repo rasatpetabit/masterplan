@@ -57,7 +57,7 @@ missing_blocks=0
 
 for check_dir in "$REPO_ROOT"/tests/doctor-fixtures/check-*/; do
   [ -d "$check_dir" ] || continue
-  nn="$(basename "$check_dir" | sed 's/^check-//')"
+  nn="$(basename "$check_dir" | sed -E 's/^check-0*([1-9][0-9]*|0)$/\1/')"
 
   block="$(extract_check_bash "$nn")"
   if [ -z "$block" ]; then
