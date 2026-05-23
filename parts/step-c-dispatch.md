@@ -25,7 +25,7 @@
    Inputs: plan_path=<docs/masterplan/<slug>/plan.md>
    Scope: read plan.md only.
    Constraints: read-only; CD-7.
-   Return shape: {total_tasks, schema_version, tasks: [{idx, name, files, codex_eligible, parallel_group, verify_commands, status}], eligibility_cache_hash, coordinator_version}
+   Return shape: {total_tasks, schema_version, tasks: [{idx, name, files, codex_eligible, parallel_group, verify_commands, status}] (≤ 100 items), eligibility_cache_hash, coordinator_version}
    ```
 
    **Fallback** (coordinator errors): read plan.md inline and build eligibility cache from heuristic checklist. Log `coordinator_fallback`.

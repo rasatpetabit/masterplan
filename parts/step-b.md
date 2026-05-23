@@ -207,7 +207,7 @@ After brainstorming returns control, verify state and drive the next step:
       ```bash
       node "<companion-path>" adversarial-review --scope working-tree --wait "focus on docs/masterplan/<slug>/spec.md"
       ```
-      Capture full stdout+stderr as `review_output`.
+      Capture first 8192 chars of stdout+stderr as `review_output` (truncate if longer).
    4. **Parse pass/fail.** If `review_output` matches `/\b(critical|fatal|serious|blocking|fundamental|wrong assumption)\b/i` → `review_result: fail`, `findings: review_output`. Otherwise → `review_result: pass`.
    5. **Append event.** `{"event":"adversarial_review_complete","gate":"spec_approval","result":"<pass|fail>","findings_chars":<N>,"ts":"<now>"}`.
    6. **Gate routing override (aggressive-loose + pass only).** If `autonomy == aggressive-loose` AND `review_result == pass`: skip the spec_approval AUQ, append `{"event":"spec_approval_auto_accepted","reason":"adversarial_review_passed","ts":"<now>"}`, clear `pending_gate`, → proceed directly to Step B2. Do NOT fire the AUQ. This is the only path that suppresses the gate; every other combination proceeds to halt_mode routing below.
