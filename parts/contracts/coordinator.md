@@ -30,7 +30,7 @@ When a coordinator returns malformed JSON or errors, the orchestrator falls thro
 | Name | Tier | Replaces | Doc |
 |---|---|---|---|
 | `coordinator-brainstorm-anchor` | Sonnet | 3 direct Haiku dispatches (Step B1) | `docs/internals/brainstorm-anchor.md` |
-| `coordinator-doctor` | Sonnet | Loading `parts/doctor.md` (73KB) into orchestrator context | `docs/internals/doctor.md` |
+| `coordinator-doctor` | Sonnet | Loading `parts/doctor.md` (~90KB) into orchestrator context | `docs/internals/doctor.md` |
 | `coordinator-task-verify` | Haiku | Inline verify execution (Step C3) | `docs/internals/task-verification.md` |
 | `coordinator-bundle-resume` | Haiku | Direct state.yml/events.jsonl/plan.md reads on resume | `docs/internals/bundle-resume.md` |
 | `coordinator-plan-parser` | Haiku | Direct plan.md reads for eligibility cache build (Step C2) | `docs/internals/plan-parser.md` |
