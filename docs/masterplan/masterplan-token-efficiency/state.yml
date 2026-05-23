@@ -2,7 +2,7 @@
 schema_version: 3
 slug: masterplan-token-efficiency
 topic: Improve masterplan token use efficiency
-status: complete
+status: archived
 phase: complete
 worktree: /srv/dev/superpowers-masterplan/.worktrees/masterplan-token-efficiency
 branch: worktree-masterplan-token-efficiency
@@ -42,7 +42,7 @@ import_contract:
   contract_id: ""
   inputs_hash: ""
   processed_at: ""
-worktree_disposition: active
+worktree_disposition: removed_after_merge
 worktree_last_reconciled: 2026-05-22T17:22:34Z
 artifacts:
   spec: docs/masterplan/masterplan-token-efficiency/spec.md

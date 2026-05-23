@@ -1,7 +1,7 @@
 schema_version: 3
 slug: improve-subagents-parallelism
 topic: Improve use of subagents and parallelism
-status: complete
+status: archived
 phase: complete
 worktree: /srv/dev/superpowers-masterplan/.worktrees/improve-subagents-parallelism
 branch: worktree-improve-subagents-parallelism
@@ -14,7 +14,7 @@ codex_review: on
 loop_enabled: false
 halt_mode: none
 current_task: "done"
-next_action: merge
+next_action: ""
 plan_kind: implementation
 follow_ups: []
 pending_gate: null
@@ -39,7 +39,7 @@ import_contract:
   contract_id: ""
   inputs_hash: ""
   processed_at: ""
-worktree_disposition: active
+worktree_disposition: removed_after_merge
 worktree_last_reconciled: "2026-05-22T00:00:00Z"
 brainstorm_anchor:
   mode: implementation-design

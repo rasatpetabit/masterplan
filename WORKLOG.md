@@ -106,3 +106,13 @@ Merged to main; worktree + branch removed. Cross-refs gap fixed alongside merge 
 ## 2026-05-23 — hotfix: Codex annotation true/false aliases
 
 `writing-plans` emits `**Codex:** true/false` (boolean) rather than `ok/no` (canonical); doctor #40 counter, step-c-resume inline-build verifier, step-c-dispatch scanner all updated to accept `true`≡`ok` / `false`≡`no`. Check #16 also updated. `parts/contracts/plan-annotations.md` format spec updated to show `<ok|no|true|false>`. CHANGELOG 6.0.1 entry updated. Main at 9/9.
+
+## 2026-05-23 — branch finish: improve-subagents-parallelism + masterplan-token-efficiency
+
+Both stale worktrees merged to main and removed.
+
+**improve-subagents-parallelism**: merged `worktree-improve-subagents-parallelism` → main. One conflict in `bin/masterplan-self-host-audit.sh` `check_dispatch_sites()` resolved by keeping main's glob `parts/step-c*.md` over worktree's explicit file list. Brings in Check #46 (CC-2 self-enforcement), Check #47 (return-shape caps), step-b.md 8192-char cap, step-c-dispatch `≤ 100 items` bound.
+
+**masterplan-token-efficiency**: branch had no unique commits (all changes already applied inline to main during v6.0.0 execution). Worktree removed, branch deleted, bundle archived.
+
+Both bundles: `status: archived`, `worktree_disposition: removed_after_merge`.
