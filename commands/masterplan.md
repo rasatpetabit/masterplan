@@ -81,7 +81,7 @@ Every turn-close in this orchestrator MUST route through the following sequence.
 | `execute` | parts/step-0.md → parts/step-c-resume.md (resume) or parts/step-a.md (picker) | state-path resumes; topic/no-args picks |
 | `retro` | parts/step-0.md → parts/step-c-resume.md (Step R subroutine) | generate retrospective |
 | `import` | parts/step-0.md → parts/import.md | legacy migration (Step I) |
-| `doctor` | parts/step-0.md → parts/doctor.md | all 36 checks (Step D) |
+| `doctor` | parts/step-0.md → parts/doctor.md | all 47 checks (Step D) |
 | `status` | parts/step-0.md (Step S subroutine) | read-only situation report |
 | `validate` | parts/step-0.md (reads docs/config-schema.md inline) | config + state schema check |
 | `stats` | parts/step-0.md (Step T subroutine) | telemetry roll-up |

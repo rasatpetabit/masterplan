@@ -106,7 +106,7 @@ DISPATCH-SITE: <site-name>
 ```
 
 For v5 phase files, use the form `DISPATCH-SITE: <phase-file>:<site-label>`.
-Examples: `DISPATCH-SITE: step-c.md:wave-N1-01`, `DISPATCH-SITE: step-a.md:state-parse`.
+Examples: `DISPATCH-SITE: step-c-dispatch.md:wave-N1-01`, `DISPATCH-SITE: step-a.md:state-parse`.
 
 ### Canonical site table (monolith step names)
 
