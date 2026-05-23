@@ -54,10 +54,10 @@ import_contract:
   inputs_hash: ''
   processed_at: ''
 import_hydration: ''
-last_activity: '2026-05-23T10:30:00.000000+00:00'
+last_activity: '2026-05-23T12:00:00.000000+00:00'
 legacy: {}
 loop_enabled: false
-next_action: retro + merge to main
+next_action: ''
 pending_gate: null
 pending_retro_attempts: 0
 phase: complete
@@ -74,12 +74,12 @@ scope_fingerprint:
 - detect
 slug: improve-regression-detection
 started: 2026-05-22 00:00:00+00:00
-status: complete
+status: archived
 stop_reason: question
 superseded_by: ''
 supersedes: ''
 topic: Improve the robustness of masterplan regression detection
 variant_of: ''
 worktree: /srv/dev/superpowers-masterplan/.worktrees/improve-regression-detection
-worktree_disposition: active
+worktree_disposition: removed_after_merge
 worktree_last_reconciled: '2026-05-22T00:00:00Z'

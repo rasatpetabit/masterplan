@@ -98,3 +98,7 @@ All 15 tasks completed. Final state: 9/9 tests pass on `worktree-improve-regress
 - `bin/masterplan-self-host-audit.sh`: updated `check_cd9_coverage` and `check_dispatch_sites` for step-c split; added `complete` status to `_plan_bundle_is_archived`
 
 Ready for retro + merge to main.
+
+## 2026-05-23 — branch finish: improve-regression-detection
+
+Merged to main; worktree + branch removed. Cross-refs gap fixed alongside merge (3-part fix: 5 coordinator contracts added to `masterplan-contracts.md`, stale `parts/step-c.md` references in `parts/failure-classes.md` updated to split file names, `test-cross-refs.sh` regex extended to match hyphenated contract IDs). `test-manifest-drift` fix also landed (marketplace.json + README bumped to 6.0.1 to match plugin.json). Main now exits 0 on `--fast` (6/6).
