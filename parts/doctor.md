@@ -1,6 +1,6 @@
-# Doctor — Self-Host Checks (#1 .. #43)
+# Doctor — Self-Host Checks (#1 .. #47)
 
-Invoked via `/masterplan doctor [--fix]`. Loaded by the router only when verb == doctor. Checks #32–#36 added in Wave C. Check #38 added in v5.1.0 (failure-instrumentation framework). Checks #39–#41 added in v5.1.1 (cosmic-cuddling-dusk Codex-routing instrumentation); Check #42 (stale .lock) added in concurrency-guards wave; Check #43 (codex_review_coverage) added in codex-routing-fix wave.
+Invoked via `/masterplan doctor [--fix]`. Loaded by the router only when verb == doctor. Checks #32–#36 added in Wave C. Check #38 added in v5.1.0 (failure-instrumentation framework). Checks #39–#41 added in v5.1.1 (cosmic-cuddling-dusk Codex-routing instrumentation); Check #42 (stale .lock) added in concurrency-guards wave; Check #43 (codex_review_coverage) added in codex-routing-fix wave. Checks #44–#45 added in v6.1.0 (adversarial-review-integration). Checks #46–#47 added in v6.2.0 (improve-subagents-parallelism).
 
 **Entry breadcrumb.** Emit on first line of this step (per Step 0 §Breadcrumb emission contract):
 
@@ -56,8 +56,8 @@ Return shape: {contract_id: "doctor.schema_v2", inputs_hash: "<sha256 of bundle 
 **Complexity-aware check set.** For each scanned plan, read `complexity` from `state.yml` (default `medium` if absent — legacy/pre-feature plans). The active check set varies:
 
 - `low` plans: run only checks #1 (orphan plan), #2 (orphan status), #3 (wrong worktree), #4 (wrong branch), #5 (stale in-progress), #6 (stale critical error), #8 (missing spec), #9 (schema, against the standard run-state field set), #10 (unparseable), #18 (codex misconfig), #29 (worktree-bundle reconciliation mismatch), #38 (anomaly file has records since last archive), #41 (missing degradation evidence — fires regardless of complexity when Codex was configured on), #42 (stale .lock file — cheap structural check), #43 (codex review coverage — event-log consistency check), #45 (adversarial review gate-fire audit). SKIP all sidecar / annotation / ledger / cache / queue / per-subagent-telemetry checks (#11–#17, #19–#21, #23, #24) — low plans do not produce those artifacts. Also skip #22 and #40 (both high-only — see below).
-- `medium` plans: run all plan-scoped checks (currently #1-24, #26, #28, #29, #32, #34, #35, #38, #41, #42, #43, #45) except #22 and #40 (both high-only).
-- `high` plans: run all plan-scoped checks (currently #1-24, #26, #28, #29, #32, #34, #35, #38, #40, #41, #42, #43, #45) INCLUDING #22 (high-complexity rigor evidence) and #40 (missing Codex/parallel-group annotations at complexity:high).
+- `medium` plans: run all plan-scoped checks (currently #1-24, #28, #29, #32, #34, #35, #38, #41, #42, #43, #45) except #22 and #40 (both high-only).
+- `high` plans: run all plan-scoped checks (currently #1-24, #28, #29, #32, #34, #35, #38, #40, #41, #42, #43, #45) INCLUDING #22 (high-complexity rigor evidence) and #40 (missing Codex/parallel-group annotations at complexity:high).
 - Plans without a `complexity:` state field: treat as `medium`.
 
 Check-set gate is per-plan (a mixed worktree run honors each plan's complexity individually). Self-host audits run via `bin/masterplan-self-host-audit.sh`, not doctor.
