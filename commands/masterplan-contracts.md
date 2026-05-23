@@ -355,3 +355,96 @@ return_shape: |
   coverage: {expected: N, processed: N}
   result: {worktree, branch, matching_slugs: [], matching_branch: bool}
 ```
+
+## Contract: coordinator-brainstorm-anchor-v1
+
+```yaml
+purpose: Extract structured brainstorm anchor data from a completed brainstorm session
+algorithm: |
+  1. Read the brainstorm output (B1 close-out section of state.yml or the brainstorm artifact).
+  2. Extract: evidence list, in_scope_paths, out_of_scope_repos, yocto_ownership, gate_selection,
+     repo_role, verification_ceiling, interview_depth.
+  Return the structured anchor digest.
+return_shape: |
+  contract_id: "coordinator-brainstorm-anchor-v1"
+  inputs_hash: "<sha256>"
+  processed_paths: [state.yml]
+  violations: []
+  coverage: {expected: 1, processed: 1}
+  anchor: {evidence, in_scope_paths, out_of_scope_repos, yocto_ownership, gate_selection,
+           repo_role, verification_ceiling, interview_depth}
+```
+
+## Contract: coordinator-plan-parser-v1
+
+```yaml
+purpose: Parse a plan.md artifact into structured task metadata for execution tracking
+algorithm: |
+  1. Read plan.md from the bundle directory.
+  2. Extract task list: task numbers, titles, file paths (create/modify), step count.
+  3. Identify the current task based on state.yml.current_task.
+  Return structured task list and execution pointer.
+return_shape: |
+  contract_id: "coordinator-plan-parser-v1"
+  inputs_hash: "<sha256>"
+  processed_paths: [plan.md, state.yml]
+  violations: []
+  coverage: {expected: 2, processed: 2}
+  tasks: [{number, title, files, step_count}]
+  current_task: "<task title>"
+```
+
+## Contract: coordinator-bundle-resume-v1
+
+```yaml
+purpose: Reconstruct execution context from a paused bundle to enable seamless resume
+algorithm: |
+  1. Read state.yml: slug, branch, phase, current_task, last_activity, autonomy.
+  2. Read events.jsonl (last 100 lines): extract last wave result, last completed task.
+  3. Read plan.md: find next incomplete task after current_task.
+  Return structured resume context sufficient to continue without re-reading raw files.
+return_shape: |
+  contract_id: "coordinator-bundle-resume-v1"
+  inputs_hash: "<sha256>"
+  processed_paths: [state.yml, events.jsonl, plan.md]
+  violations: []
+  coverage: {expected: 3, processed: 3}
+  context: {slug, branch, phase, current_task, next_task, last_wave_result, autonomy}
+```
+
+## Contract: coordinator-task-verify-v1
+
+```yaml
+purpose: Verify a completed task's outputs satisfy the plan spec before marking done
+algorithm: |
+  1. Read the task spec from plan.md (files created/modified, acceptance criteria).
+  2. Check each listed file exists and is non-empty.
+  3. Run any specified verification commands (bash -n for shell, grep checks).
+  4. Return pass/fail per check.
+return_shape: |
+  contract_id: "coordinator-task-verify-v1"
+  inputs_hash: "<sha256>"
+  processed_paths: [plan.md, <task output files>]
+  violations: []
+  coverage: {expected: N, processed: N}
+  result: {task, checks: [{name, pass, detail}], overall: pass|fail}
+```
+
+## Contract: coordinator-doctor-v1
+
+```yaml
+purpose: Run a subset of doctor checks and return structured findings
+algorithm: |
+  1. Receive check IDs to run (or "all" for the full suite).
+  2. For each check: execute the bash block from parts/doctor.md, capture stdout/stderr.
+  3. Parse pass/fail from output line starting with "PASS" or "FAIL".
+  Return structured findings per check.
+return_shape: |
+  contract_id: "coordinator-doctor-v1"
+  inputs_hash: "<sha256>"
+  processed_paths: [parts/doctor.md]
+  violations: []
+  coverage: {expected: N, processed: N}
+  findings: [{check_id, status, detail}]
+  summary: {pass: N, fail: N, skip: N}
+```

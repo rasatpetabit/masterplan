@@ -71,3 +71,13 @@ Stale `.lock` at `docs/masterplan/concurrency-guards/.lock` (39h+) — `rm` it a
 Patched `codex-companion.mjs` (both marketplace and 1.0.4 cache copies) at line 488. Root cause: `workspace-write` sandbox blacklists `.git/` paths; in git worktrees the index lives at `<main>/.git/worktrees/<name>/index` — outside the worktree root and doubly blocked. Fix: detect worktree context via `fs.stat(<cwd>/.git).isFile()` and use `danger-full-access` instead of `workspace-write`. Probe confirmed: write tasks in worktrees now succeed. This unblocks Codex dispatch for all masterplan bundles running in git worktrees.
 
 **Pending follow-ups:** adversarial-review integration into masterplan workflow (new bundle); writing-plans annotation mismatch (v6.0.1).
+
+## 2026-05-23 — plan written: improve-regression-detection
+
+Bundle: `improve-regression-detection` (worktree: `.worktrees/improve-regression-detection`). Plan at `docs/masterplan/improve-regression-detection/plan.md` (2244 lines, 15 tasks).
+
+**Scope:** Tiered test runner (`tests/run-tests.sh` with `--fast`/`--full`/`--all-worktrees`); structural tests for coordinator dispatch (A1–A4) and step-c split invariants (B1–B4); bash block implementations for all 47 doctor checks that previously lacked them (#1–#24, #26, #28–#31, #37 reserved stub, #42 rewrite, #43 new); fixture directories for checks #1–#45; hook unit tests (telemetry C1–C4, self-host audit D1–D3); bin/ aliases + pre-commit gate.
+
+**Key decisions:** Check #37 was absent from doctor.md — resolved as Reserved stub (same pattern as #25, #27). Check #12 fail fixture impractical (5MB file); testability added via `TELEMETRY_SIZE_THRESHOLD` env var. Check #42 pseudo-code rewrote using `stat -c %Y` + integer arithmetic. Git-dependent checks (#3, #4, #29) tested with empty fixture dirs (no state.yml → PASS).
+
+**State:** phase→executing. Ready for `/masterplan execute` to kick off Task 1.

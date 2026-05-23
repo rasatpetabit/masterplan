@@ -68,7 +68,7 @@ fi
 # Class 2 — contract IDs
 # ------------------------------------------------------------------
 # Build the set of defined contract_ids from commands/masterplan-contracts.md:
-defined_contracts="$(grep -oE '^## Contract: [a-zA-Z0-9_.]+' commands/masterplan-contracts.md | awk '{print $3}' | sort -u)"
+defined_contracts="$(grep -oE '^## Contract: [a-zA-Z0-9_.-]+' commands/masterplan-contracts.md | awk '{print $3}' | sort -u)"
 
 # Find every contract_id reference in parts/*.md and commands/masterplan.md:
 missing_contracts=0
