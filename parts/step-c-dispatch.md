@@ -37,6 +37,36 @@
 5. **Interleaved groups do not parallelize.** Plan-order is authoritative; the contiguous-walk rule produces multiple single-task wave candidates if parallel-grouped tasks are interleaved with serial tasks. Planner is responsible for ordering parallel-grouped tasks contiguously to enable wave dispatch.
 6. **If `config.parallelism.enabled == false`** (global kill switch from `--no-parallelism` flag or config), skip wave assembly entirely — fall through to the standard serial loop.
 
+**Run-policy gate (v5.9.0+, first wave only).** When a wave of ≥ 2 tasks assembles and `run_policy` is not yet set for this session, fire the upfront gate before dispatching:
+
+<masterplan-trace gate=fire id=run_policy auq-options=4>
+
+```
+AskUserQuestion(
+  question="About to dispatch a parallel wave of <N> tasks (group: <name>). Set run policy for this session:",
+  options=[
+    "Parallel + ask on each blocker (Recommended) — fastest; pauses at each block to ask",
+    "Parallel + async hold on blocker — fastest; holds blocked tasks and surfaces them at next check-in",
+    "Serial + ask on each blocker — safest; one task at a time",
+    "Serial + halt on any blocker — serial execution; stops everything on first block"
+  ]
+)
+```
+
+Set `run_policy` from selection:
+- Option 1: `{parallelism: parallel, on_blocker: ask}`
+- Option 2: `{parallelism: parallel, on_blocker: async_hold}`
+- Option 3: `{parallelism: serial, on_blocker: ask}`
+- Option 4: `{parallelism: serial, on_blocker: halt}`
+
+**Default (gate dismissed / `run_policy` not yet set):** `{parallelism: serial, on_blocker: ask}` — no behavior change from current.
+
+After gate: if `run_policy.parallelism == serial`, fall through to standard per-task serial dispatch (skip wave assembly). If `parallel`, proceed to wave dispatch below.
+
+On subsequent wave assemblies this session: `run_policy` is already set — read it directly without re-firing the gate.
+
+**`on_blocker: async_hold` semantics.** When a wave member returns `status: blocked` and `run_policy.on_blocker == async_hold`: mark the task as `held` (not `blocked`) in session memory. Continue dispatching remaining tasks and subsequent waves. Accumulate all held tasks. At plan completion (or at the next `/masterplan` invocation), surface held tasks in a single AUQ: `"<N> tasks were held during this run."` with options `[Review and retry each / Skip all held tasks / Abort run]`.
+
 **When a wave assembles** (≥ 2 tasks): append a `wave_routing_summary` visibility event at wave-entry with shape `{wave, members_by_route: {codex: N, inline_review: N, inline_no_review: N}}`, where `wave` identifies the parallel group / task-index span and `members_by_route` counts the assembled wave members by their Step 3a route bucket. Then set `cache_pinned_for_wave: true`. Dispatch all N implementer subagents as parallel `Agent` tool calls in a single assistant turn (existing pattern in Step I3.2/I3.4). **Pass `model: "sonnet"` on each Agent call** per §Agent dispatch contract — wave members are general-purpose implementers, not Opus-grade reasoning. Each instance gets the standard implementer brief PLUS three wave-specific clauses:
 
 > *"WAVE CONTEXT: You are dispatched as part of a parallel wave of N tasks (group: `<name>`). Your declared scope is `**Files:**` (exhaustive — do not read or modify anything outside this list, including plan.md, state.yml, events.jsonl, sibling tasks' scopes, or the eligibility cache). Capture `git rev-parse HEAD` BEFORE any work; return as `task_start_sha` (required per existing implementer-return contract). DO NOT commit your work — return staged-changes digest only. DO NOT update run state — orchestrator handles batched wave-end updates. Failure handling: if you BLOCK or NEEDS_CONTEXT, return immediately; orchestrator's blocker re-engagement gate handles you alongside the rest of the wave."*
