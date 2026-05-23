@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.2.2] — 2026-05-23
+
+### Fixed
+
+- **Check #39 — chatgpt mode root fix** (`parts/doctor.md`, `commands/masterplan.md`): Removed all time-based sub-conditions for `auth_mode == "chatgpt"` + `refresh_token` present. The previous 7d→30d gate widening was a partial fix; this replaces it with a simple presence check — if `refresh_token` is non-empty, emit PASS immediately with no `last_refresh` age arithmetic. The chatgpt auth model auto-refreshes `id_token` on every Codex invocation via `refresh_token`; idle time between invocations is not a health signal. Fixture `pass-chatgpt-fresh` updated: `last_refresh` changed from `2026-05-20` (time bomb) to `2020-01-01` (permanently old, proves date-independence); expected output updated to show `refresh_token present`.
+- **Annotation-completeness scan spec** (`parts/step-c-resume.md`): The authoritative scan definition (inline build path, step 1) said only `ok`/`no` accepted; any other value disqualified the plan from the inline fast-path. The prose documentation and `parts/contracts/plan-annotations.md` already documented `true`/`false` as aliases (from the v6.0.1 fix), but the scan spec was never updated. Plans from the `writing-plans` skill (which emits `true`/`false` booleans) were silently falling back to Haiku dispatch instead of taking the inline cache path. Fixed: scan spec now accepts `ok|no|true|false`.
+- **Check #46 — code-fence skip** (`parts/doctor.md`, 3 new fixtures): The CC-2 self-enforcement lint check counted lines inside `` ```bash `` … `` ``` `` blocks as consecutive orchestrator directives. Doctor.md's 47 embedded bash implementation blocks all triggered violations. Fix: added `in_fence` state tracking — lines inside `` ```bash `` … `` ``` `` fences are skipped entirely, and the `` ```bash `` opener no longer appears in the trigger pattern. Three new fixtures: `pass-clean` (≤2 consecutive bash-type lines per section), `fail-violation` (3 consecutive lines with no gate → WARN), `pass-fenced` (3 bash lines inside a fence → PASS, validates the fix).
+
 ## [6.2.1] — 2026-05-23
 
 ### Added
