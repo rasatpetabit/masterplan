@@ -132,3 +132,19 @@ Completed all 47 doctor checks with `--fix` applied. Changes committed to main:
 - `docs/masterplan/improve-regression-detection/retro.md` written (was referenced in state.yml but missing; resolves Check #22)
 - Stale `.lock` files removed: `adversarial-review-integration/.lock`, `p4-suppression-smoke/.lock`
 - All 10/10 tests pass after fixes.
+
+## 2026-05-23 — execution complete: hoist-run-policy → v6.2.0
+
+All 4 tasks completed inline. 11/11 tests pass (`worktree-hoist-run-policy` branch).
+
+**Changes shipped:**
+- `docs/conventions/api-retry-policy.md`: new doc — retryable/fatal error classification, 3-retry schedule (5s/15s/45s backoff), user-facing notices, Codex + inline dispatch scope.
+- `parts/step-c-dispatch.md`: run-policy gate at first parallel wave assembly (4-option AUQ: parallelism × on_blocker); `on_blocker: async_hold` semantics; API error handling cross-ref in Codex dispatch section.
+- `docs/internals/wave-dispatch.md`: §API Error Handling section.
+- `tests/structural/test-api-retry-policy.sh`: new structural test (content + cross-refs).
+- `tests/structural/test-coordinator-dispatch.sh`: A5/A6 checks (run_policy gate presence + ordering).
+- CHANGELOG v6.2.0.
+
+**Side fix:** plan.md lacked v5 plan-format markers (`**Spec:**`/`**Codex:**`/`**Verify:**` per task); added during Task 4 to pass self-host-audit `check_plan_format`.
+
+Ready for `branch finish` → merge to main.
