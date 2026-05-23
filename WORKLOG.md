@@ -116,3 +116,5 @@ Both stale worktrees merged to main and removed.
 **masterplan-token-efficiency**: branch had no unique commits (all changes already applied inline to main during v6.0.0 execution). Worktree removed, branch deleted, bundle archived.
 
 Both bundles: `status: archived`, `worktree_disposition: removed_after_merge`.
+
+**Post-merge fix:** `check_brief_style` Pattern D false-fired on HTML nav comment headers in `step-c-resume.md:7` and `step-c-completion.md:6`. Root cause: lines ending with `-->` (sub-file nav labels) matched the lifecycle regex but aren't real dispatch sites. Fixed by adding `-->` to the skip condition alongside the existing backtick guard. Main at 9/9.
