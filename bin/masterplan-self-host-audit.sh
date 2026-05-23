@@ -1083,20 +1083,30 @@ check_cd9_coverage() {
   if ! grep -r -l 'CD-9' parts/ 2>/dev/null | head -1 > /dev/null; then
     echo "WARN: CD-9 not referenced in any parts/* file"
   fi
-  # Sample check: parts/step-c.md should reference CD-9 (canonical writer)
-  grep -q 'CD-9' parts/step-c.md 2>/dev/null || { echo "WARN: step-c.md does not reference CD-9"; fail=1; }
+  # Sample check: step-c phase files should reference CD-9 (canonical writer).
+  # step-c.md was split into step-c-{resume,dispatch,verification,completion}.md;
+  # check any of those (or the monolithic step-c.md if it still exists).
+  if ! grep -q 'CD-9' parts/step-c*.md 2>/dev/null; then
+    echo "WARN: step-c phase files do not reference CD-9"; fail=1
+  fi
   [ $fail -eq 0 ] && echo "CD-9 coverage: PASS" || echo "CD-9 coverage: WARN"
   return 0
 }
 
 check_dispatch_sites() {
   local fail=0
-  if ! grep -q 'DISPATCH-SITE: step-c.md' parts/step-c.md 2>/dev/null; then
-    echo "FAIL: DISPATCH-SITE: step-c.md tags missing from step-c.md"; fail=1
+  # Positive: step-c phase files must carry DISPATCH-SITE tags.
+  # step-c.md was split into step-c-{resume,dispatch,verification,completion}.md;
+  # accept either the monolithic file or any of the split files.
+  if ! grep -q 'DISPATCH-SITE:' parts/step-c*.md 2>/dev/null; then
+    echo "FAIL: DISPATCH-SITE tags missing from step-c phase files"; fail=1
   fi
-  # Negative: router must NOT carry dispatch-site tags (no dispatch happens in router)
-  if grep -q 'DISPATCH-SITE:' commands/masterplan.md 2>/dev/null; then
-    echo "FAIL: router has DISPATCH-SITE tag (should be in phase files only)"; fail=1
+  # Negative: router must NOT carry dispatch-site tags (lifecycle dispatch belongs
+  # in phase files), EXCEPT the coordinator-doctor dispatch which routes directly
+  # from the router verb table.
+  non_doctor_dispatch=$(grep 'DISPATCH-SITE:' commands/masterplan.md 2>/dev/null | grep -v 'coordinator-doctor' || true)
+  if [ -n "$non_doctor_dispatch" ]; then
+    echo "FAIL: router has unexpected DISPATCH-SITE tag (should be in phase files only): ${non_doctor_dispatch}"; fail=1
   fi
   [ $fail -eq 0 ] && echo "DISPATCH-SITE: PASS"
   return $fail
@@ -1120,7 +1130,7 @@ _plan_bundle_is_archived() {
   local plan="$1"
   local state="${plan%/plan.md}/state.yml"
   [[ -f "${state}" ]] || return 1
-  if grep -Eq '^(status|phase): *"?(archived|completed)"?[[:space:]]*$' "${state}" 2>/dev/null; then
+  if grep -Eq '^(status|phase): *"?(archived|complete|completed)"?[[:space:]]*$' "${state}" 2>/dev/null; then
     return 0
   fi
   if grep -Eq '^current_phase: *"?done"?[[:space:]]*$' "${state}" 2>/dev/null; then
