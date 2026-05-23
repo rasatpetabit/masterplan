@@ -170,3 +170,18 @@ Three targeted fixes committed directly to main after the hoist-run-policy branc
 **Annotation scan spec — accept `true`/`false` aliases** (`parts/step-c-resume.md` + `parts/doctor.md`): The authoritative annotation-completeness scan definition (step 1 of the Build path) said "any other value disqualifies" — only `ok`/`no`. The prose at line 134 and `plan-annotations.md` already documented `true`/`false` as aliases; the scan spec was never updated. Plans emitted by `writing-plans` (which uses `true`/`false`) were silently falling back to Haiku build instead of taking the inline cache path. Fixed; also clears the `masterplan-token-efficiency` bundle follow-up.
 
 **Check #46 — code-fence skip** (`parts/doctor.md` + 3 new fixtures): The CC-2 self-enforcement check was false-firing on doctor.md's 47 embedded bash blocks. Added `in_fence` state tracking: lines inside ` ```bash ` … ` ``` ` blocks are skipped. Also removes ` ```bash ` from the consecutive-trigger pattern (it now enters fence state instead). Three fixtures: `pass-clean`, `fail-violation`, `pass-fenced`.
+
+## 2026-05-23 — doctor check tier classification fixes (masterplan-token-efficiency branch)
+
+Full tier audit of all 47 doctor checks. Six checks had drift between their `**Scope:**` field declarations and the routing slots in `parts/doctor.md`.
+
+**Changes:**
+- `#26` removed from plan-scoped parallelization brief (was in both brief and repo-scoped batch; repo-scoped is the correct single home; `CronList` call should run once per doctor run, not N× per worktree)
+- `#38` Scope: field fixed (copy-paste from #39 said "reads ~/.codex/auth.json"; actually scans per-bundle anomaly files); added to plan-scoped brief and all complexity sets
+- `#44` moved from medium/high complexity sets → repo-scoped batch (global config check, not per-bundle)
+- `#45` added to plan-scoped brief + medium/high complexity sets (was entirely absent)
+- `#46`/`#47` moved from all complexity sets → repo-scoped batch (prompt-scoped: scan `parts/step-*.md`, same repo files every time, no benefit to running per-worktree)
+- `checks_processed` arrays in `parts/doctor.md` and `commands/masterplan-contracts.md` updated from 5 → 8 checks
+- `tests/static/test-doctor-tier-drift.sh` added: cross-validates every explicit-Scope check is in the right routing slot; FAST tier
+
+**Key decision:** "Prompt-scoped" checks (#46/#47 scan prompt files, not bundle state) treated as repo-scoped for routing purposes — run in the single repo-scoped Haiku batch. Tests: 9/9 pass.
