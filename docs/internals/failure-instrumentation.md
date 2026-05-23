@@ -20,7 +20,7 @@ from the accumulated record.
 | `verification-failure-uncited` | `events.jsonl` tail has `verify_*` with `result: failed` AND the same turn wrote a phase-forward without remediation. |
 
 **Breadcrumb stream.** The orchestrator emits structured markers in its visible
-output (in `parts/step-0.md` through `parts/step-c.md` + `parts/import.md` +
+output (in `parts/step-0.md` through `parts/step-c-completion.md` + `parts/import.md` +
 `parts/doctor.md`) at step boundaries, skill invocations, gate fires, and state
 writes:
 
@@ -126,8 +126,8 @@ silently skips dispatch.
 |:-----|:---------|:--------|:----------------|
 | `codex_annotation_gap_on_high` | hard | `complexity: high` plan with task headings but fewer `**Codex:**` annotations than tasks | `parts/step-b.md:324` |
 | `codex_parallel_group_missing_on_high` | soft | `complexity: high` plan with zero `**parallel-group:**` annotations | `parts/step-b.md:324` |
-| `codex_routing_configured_but_zero_dispatches` | hard | `codex_routing` is auto/manual on a complete plan with zero codex-route events in `events.jsonl` | `parts/step-c.md` step 3a |
-| `codex_review_configured_but_zero_invocations` | hard | `codex_review: on` on a complete plan with zero codex-review events | `parts/step-c.md` step 4b |
+| `codex_routing_configured_but_zero_dispatches` | hard | `codex_routing` is auto/manual on a complete plan with zero codex-route events in `events.jsonl` | `parts/step-c-dispatch.md` (Codex routing section) |
+| `codex_review_configured_but_zero_invocations` | hard | `codex_review: on` on a complete plan with zero codex-review events | `parts/step-c-dispatch.md` (Codex review section) |
 | `missing_codex_ping_event` | hard | Plan has ≥3 events but no `codex_ping` record (Step 0 should emit one per session) | `parts/step-0.md:106` |
 | `silent_codex_degradation` | hard | `complexity: high` substantive plan with `codex_routing=off` AND `codex_review=off` AND healthy `~/.codex/auth.json` AND no `codex degraded` event AND empty `last_warning` | `parts/step-0.md:119` |
 | `pending_gate_orphaned` | soft | `pending_gate` set, `last_activity` >24h stale, phase not in {blocked, critical_error} | Step C 0e pending-gate resume |
@@ -136,9 +136,9 @@ silently skips dispatch.
 | `cd9_free_text_question_at_close` | soft | Assistant turn ended with `?` and no `AskUserQuestion` tool_use; `<no-auq>`/`[oneshot]` markers absent | CD-9 |
 | `auq_guard_blocked_count_high` | soft | The AUQ Stop hook (`~/.claude/hooks/auq-guard.sh`) emitted `AUQ guard blocked: …` ≥5 times in one session | `~/.claude/CLAUDE.md` AUQ rule |
 | `brainstorm_anchor_missing_before_planning` | hard | `phase: planning` reached with no `brainstorm_anchor_resolved` event preceding the transition | `parts/step-b.md:232` |
-| `wave_dispatched_without_pin` | hard | `wave_dispatch` event fired without a preceding `cache_pinned_for_wave=true` event | `parts/step-c.md:168` (M-2) |
+| `wave_dispatched_without_pin` | hard | `wave_dispatch` event fired without a preceding `cache_pinned_for_wave=true` event | `parts/step-c-dispatch.md` (M-2 wave assembly) |
 | `complexity_unset_fallthrough` | soft | `complexity: medium` AND `complexity_source: default` (planner skill never re-classified) | `parts/step-b.md:365` |
-| `parallel_eligible_but_serial_dispatched` | hard | Plan has ≥2 tasks in the same `**parallel-group:**` AND two `wave_dispatch` events for that group are separated by ≥3 unrelated events (serial-in-parallel) | `parts/step-c.md` Slice α |
+| `parallel_eligible_but_serial_dispatched` | hard | Plan has ≥2 tasks in the same `**parallel-group:**` AND two `wave_dispatch` events for that group are separated by ≥3 unrelated events (serial-in-parallel) | `parts/step-c-dispatch.md` (Slice α wave assembly) |
 
 The Claude-side detectors (CC-3, CD-9, AUQ guard) operate on transcript turns
 collected by the regular audit pass; the plan-side detectors operate on

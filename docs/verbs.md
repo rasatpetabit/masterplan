@@ -2,29 +2,41 @@
 
 This is a human reference. The orchestrator does NOT load this file at runtime.
 
-## `start`
-Begin a new run. Routes through: `step-0.md` → `step-a.md` → `step-b.md` → `step-c.md`.
-Flags: `--autonomy={gated|loose|full}`, `--complexity={low|medium|high}`, `--halt_mode={...}`.
+## `full`
+Begin a new run end-to-end. Routes through: `step-0.md` → `step-b.md` (B0→B1→B2→B3) → `step-c-resume.md` (C).
 
-## `resume`
-Continue an active run from `state.yml.current_phase`. Routes through: `step-0.md` → `step-{current_phase}.md`.
+## `brainstorm`
+Run brainstorm phase only (B0→B1). Halts at B1 close-out gate. Routes through: `step-0.md` → `step-b.md`.
 
-## `status`
-Print current run state. Routes through: `step-0.md` (status logic lives there).
-No state mutation.
+## `plan`
+Run plan phase only (B2→B3). Halts at B3 close-out gate. Routes through: `step-0.md` → `step-a.md` (spec-pick) or `step-b.md`.
+Flags: `--from-spec` to use an existing spec without re-brainstorming.
 
-## `doctor`
-Run all 36 doctor checks against the repo + active run bundles. Routes through: `step-0.md` → `doctor.md`.
-Report-only by default; `--fix` for safe auto-fixes where supported.
+## `execute`
+Resume or begin execution. Routes through: `step-0.md` → `step-c-resume.md` (state-path resume) or `step-a.md` (picker when no active bundle).
+Flags: `--resume=<path>` to resume a specific bundle path directly.
+
+## `retro`
+Generate a retrospective for a completed run. Routes through: `step-0.md` → `step-c-resume.md` (Step R subroutine).
 
 ## `import`
 Migrate legacy planning artifacts into a new run bundle. Routes through: `step-0.md` → `import.md`.
 
-## `archive`
-Archive a completed run bundle. Routes through: `step-0.md` → `step-c.md` (archive subroutine).
+## `doctor`
+Run all 47 doctor checks against the repo + active run bundles. Routes through: `step-0.md` → `doctor.md`.
+Report-only by default; `--fix` for safe auto-fixes where supported.
+
+## `status`
+Print current run state. Routes through: `step-0.md` (status logic lives there). No state mutation.
+
+## `stats`
+Print telemetry roll-up for active and archived run bundles. Routes through: `step-0.md` (Step T subroutine).
+
+## `clean`
+Archive stale bundles and prune orphan artifacts. Routes through: `step-0.md` (Step CL subroutine).
 
 ## `validate`
-Validate `~/.masterplan.yaml` or a per-run config. Loads `docs/config-schema.md`.
+Validate `~/.masterplan.yaml` or a per-run config against `docs/config-schema.md`. Routes through: `step-0.md` (reads config-schema.md inline).
 
-## `retry`
-Retry a failed wave or wave member. Routes through: `step-0.md` → `step-c.md` (wave-dispatch subroutine).
+## `next`
+What's-next router — surfaces the most actionable pending item across all active bundles. Routes through: `step-0.md` (Step N subroutine).
