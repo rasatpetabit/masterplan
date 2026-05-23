@@ -58,6 +58,21 @@ run_suite() {
         FAIL=$((FAIL+1))
       fi
     done
+    # Python unit tests (PYTHONPATH required so lib/ is importable)
+    py_tests=()
+    for f in "$root"/tests/test_*.py; do
+      [[ -f "$f" ]] && py_tests+=("$f")
+    done
+    if [[ ${#py_tests[@]} -gt 0 ]] && command -v python3 >/dev/null 2>&1; then
+      if PYTHONPATH="$root" python3 -m pytest "${py_tests[@]}" -q >/dev/null 2>&1; then
+        printf "[FULL] %-40s PASS\n" "python-unit-tests"
+        PASS=$((PASS+1))
+      else
+        printf "[FULL] %-40s FAIL\n" "python-unit-tests"
+        PYTHONPATH="$root" python3 -m pytest "${py_tests[@]}" -v || true
+        FAIL=$((FAIL+1))
+      fi
+    fi
   fi
 }
 
