@@ -119,6 +119,23 @@ pre-v3 plan/spec/status/retro exists under `docs/superpowers/...`, is not refere
 
 **`--fix` action:** `--fix`: invoke `/masterplan import` and select `<slug>` from the picker (copy-only; no legacy delete).
 
+```bash
+fail=0
+for d in docs/superpowers/*/; do
+  [ -d "$d" ] || continue
+  slug="$(basename "$d")"
+  ref=0
+  for s in docs/masterplan/*/state.yml; do
+    [ -f "$s" ] || continue
+    grep -qF "$slug" "$s" && ref=1 && break
+  done
+  [ $ref -eq 0 ] && [ ! -d "docs/masterplan/$slug" ] && {
+    echo "WARN $d: legacy plan not migrated (not referenced by any bundle state.yml)"; fail=1
+  }
+done
+[ $fail -eq 0 ] && echo "Check #1: PASS" || echo "Check #1: WARN"
+```
+
 ---
 
 ## Check #2 — Orphan state
@@ -128,6 +145,24 @@ pre-v3 plan/spec/status/retro exists under `docs/superpowers/...`, is not refere
 `state.yml` points at a missing `artifacts.plan` / `artifacts.spec` required for its current `phase`, or a legacy status points at a missing plan.
 
 **`--fix` action:** For bundle state: prompt to repair artifact path or mark archived. For legacy status: migrate if possible, otherwise move to `<config.archive_path>/<date>/`.
+
+```bash
+fail=0
+for state in docs/masterplan/*/state.yml; do
+  [ -f "$state" ] || continue
+  phase="$(grep -E '^phase:' "$state" | head -1 | awk '{print $2}' | tr -d '"')"
+  spec="$(grep -E '^[[:space:]]+spec:' "$state" | head -1 | awk '{print $2}' | tr -d '"')"
+  plan_f="$(grep -E '^[[:space:]]+plan:' "$state" | head -1 | awk '{print $2}' | tr -d '"')"
+  if [ -n "$spec" ] && [ ! -f "$spec" ]; then
+    echo "ERROR $state: artifacts.spec points at missing file: $spec"; fail=1
+  fi
+  case "$phase" in spec_gate|brainstorming|"") ;;
+    *) [ -n "$plan_f" ] && [ ! -f "$plan_f" ] && \
+       { echo "ERROR $state: artifacts.plan missing for phase=$phase: $plan_f"; fail=1; } ;;
+  esac
+done
+[ $fail -eq 0 ] && echo "Check #2: PASS" || echo "Check #2: ERROR"
+```
 
 ---
 
@@ -139,6 +174,23 @@ pre-v3 plan/spec/status/retro exists under `docs/superpowers/...`, is not refere
 
 **`--fix` action:** Try to match by branch name; rewrite if unique match. Otherwise report.
 
+```bash
+fail=0
+declare -a valid_paths=()
+while IFS= read -r wt; do
+  valid_paths+=("$wt")
+done < <(git worktree list --porcelain 2>/dev/null | grep '^worktree ' | awk '{print $2}')
+for state in docs/masterplan/*/state.yml; do
+  [ -f "$state" ] || continue
+  wt="$(grep -E '^worktree:' "$state" | head -1 | awk '{print $2}' | tr -d '"')"
+  [ -z "$wt" ] && continue
+  ok=0
+  for vp in "${valid_paths[@]}"; do [ "$wt" = "$vp" ] && ok=1 && break; done
+  [ $ok -eq 0 ] && { echo "ERROR $state: worktree '$wt' not in git worktree list"; fail=1; }
+done
+[ $fail -eq 0 ] && echo "Check #3: PASS" || echo "Check #3: ERROR"
+```
+
 ---
 
 ## Check #4 — Wrong branch
@@ -148,6 +200,18 @@ pre-v3 plan/spec/status/retro exists under `docs/superpowers/...`, is not refere
 `state.yml`'s `branch` doesn't exist in `git branch --list`.
 
 **`--fix` action:** Report only (manual fix).
+
+```bash
+fail=0
+for state in docs/masterplan/*/state.yml; do
+  [ -f "$state" ] || continue
+  branch="$(grep -E '^branch:' "$state" | head -1 | awk '{print $2}' | tr -d '"')"
+  [ -z "$branch" ] && continue
+  git branch --list "$branch" 2>/dev/null | grep -q . \
+    || { echo "ERROR $state: branch '$branch' not in git branch --list"; fail=1; }
+done
+[ $fail -eq 0 ] && echo "Check #4: PASS" || echo "Check #4: ERROR"
+```
 
 ---
 
@@ -159,6 +223,22 @@ pre-v3 plan/spec/status/retro exists under `docs/superpowers/...`, is not refere
 
 **`--fix` action:** Report only.
 
+```bash
+fail=0
+now="$(date +%s)"
+for state in docs/masterplan/*/state.yml; do
+  [ -f "$state" ] || continue
+  status="$(grep -E '^status:' "$state" | head -1 | awk '{print $2}' | tr -d '"')"
+  [ "$status" = "in-progress" ] || continue
+  last="$(grep -E '^last_activity:' "$state" | head -1 | awk '{print $2}' | tr -d "'")"
+  [ -z "$last" ] && continue
+  ts="$(date -u -d "$last" +%s 2>/dev/null || echo 0)"
+  age=$(( (now - ts) / 86400 ))
+  [ $age -gt 30 ] && { echo "WARN $state: in-progress for ${age} days (last_activity $last)"; fail=1; }
+done
+[ $fail -eq 0 ] && echo "Check #5: PASS" || echo "Check #5: WARN"
+```
+
 ---
 
 ## Check #6 — Stale critical error
@@ -168,6 +248,23 @@ pre-v3 plan/spec/status/retro exists under `docs/superpowers/...`, is not refere
 `status: blocked` or `stop_reason: critical_error` with `last_activity` > 14 days.
 
 **`--fix` action:** Report only.
+
+```bash
+fail=0
+now="$(date +%s)"
+for state in docs/masterplan/*/state.yml; do
+  [ -f "$state" ] || continue
+  status="$(grep -E '^status:' "$state" | head -1 | awk '{print $2}' | tr -d '"')"
+  stop="$(grep -E '^stop_reason:' "$state" | head -1 | awk '{print $2}' | tr -d '"')"
+  case "$status/$stop" in blocked/*|*/critical_error) ;; *) continue ;; esac
+  last="$(grep -E '^last_activity:' "$state" | head -1 | awk '{print $2}' | tr -d "'")"
+  [ -z "$last" ] && continue
+  ts="$(date -u -d "$last" +%s 2>/dev/null || echo 0)"
+  age=$(( (now - ts) / 86400 ))
+  [ $age -gt 14 ] && { echo "WARN $state: blocked/critical_error for ${age} days"; fail=1; }
+done
+[ $fail -eq 0 ] && echo "Check #6: PASS" || echo "Check #6: WARN"
+```
 
 ---
 
@@ -179,6 +276,31 @@ plan task count differs from activity-log task references by >50%.
 
 **`--fix` action:** Report only.
 
+```bash
+fail=0
+for state in docs/masterplan/*/state.yml; do
+  [ -f "$state" ] || continue
+  bundle="$(dirname "$state")"
+  plan="$bundle/plan.md"
+  events="$bundle/events.jsonl"
+  [ -f "$plan" ] || continue
+  task_count="$(grep -cE '^### Task [0-9]' "$plan" 2>/dev/null || echo 0)"
+  [ "${task_count:-0}" -eq 0 ] && continue
+  log_refs=0
+  [ -f "$events" ] && log_refs="$(grep -cE '"task_completed"|"wave_task_completed"' "$events" 2>/dev/null || echo 0)"
+  if [ "${log_refs:-0}" -gt 0 ]; then
+    diff=$(( task_count - log_refs ))
+    abs_diff="${diff#-}"
+    pct=$(( abs_diff * 100 / task_count ))
+    [ $pct -gt 50 ] && {
+      echo "WARN $state: plan=$task_count tasks, events=$log_refs completions (${pct}% drift)"
+      fail=1
+    }
+  fi
+done
+[ $fail -eq 0 ] && echo "Check #7: PASS" || echo "Check #7: WARN"
+```
+
 ---
 
 ## Check #8 — Missing spec
@@ -188,6 +310,21 @@ plan task count differs from activity-log task references by >50%.
 `state.yml`'s `artifacts.spec` points at a missing spec doc when the phase requires one.
 
 **`--fix` action:** Report only; if `legacy.spec` exists, suggest re-copying it into the bundle.
+
+```bash
+fail=0
+for state in docs/masterplan/*/state.yml; do
+  [ -f "$state" ] || continue
+  phase="$(grep -E '^phase:' "$state" | head -1 | awk '{print $2}' | tr -d '"')"
+  case "$phase" in spec_gate|brainstorming|"") continue ;; esac
+  spec="$(grep -E '^[[:space:]]+spec:' "$state" | head -1 | awk '{print $2}' | tr -d '"')"
+  if [ -z "$spec" ] || [ ! -f "$spec" ]; then
+    echo "ERROR $state: phase=$phase requires artifacts.spec; missing: ${spec:-<empty>}"
+    fail=1
+  fi
+done
+[ $fail -eq 0 ] && echo "Check #8: PASS" || echo "Check #8: ERROR"
+```
 
 ---
 
@@ -199,6 +336,25 @@ plan task count differs from activity-log task references by >50%.
 
 **`--fix` action:** Add missing fields with sentinel/derived values where possible (e.g. `pending_gate: null`, `stop_reason: null`, `critical_error: null`, `compact_loop_recommended: false`); report the rest. Cross-check: for each `legacy.*` pointer that is non-empty, verify that the corresponding `artifacts.*` pointer is also non-empty AND the file exists on disk. If `legacy.spec` is non-empty but `artifacts.spec` is empty or the file is missing: flag as Error (not just schema violation — this is an unhydrated import). `--fix`: invoke the Step I3.5 rehydration logic inline (parent-side, not as a subagent). Do NOT add null sentinel values when a recoverable `legacy.*` path exists — that was the pre-v4.0 bug this check now prevents.
 
+```bash
+fail=0
+required="schema_version slug status phase worktree branch started last_activity current_task next_action autonomy loop_enabled codex_routing codex_review compact_loop_recommended complexity pending_gate stop_reason critical_error"
+for state in docs/masterplan/*/state.yml; do
+  [ -f "$state" ] || continue
+  for field in $required; do
+    grep -qE "^${field}:" "$state" \
+      || { echo "ERROR $state: missing required field: $field"; fail=1; }
+  done
+  grep -qE '^[[:space:]]+spec:' "$state" \
+    || { echo "ERROR $state: missing required field: artifacts.spec"; fail=1; }
+  grep -qE '^[[:space:]]+plan:' "$state" \
+    || { echo "ERROR $state: missing required field: artifacts.plan"; fail=1; }
+  grep -qE '^[[:space:]]+events:' "$state" \
+    || { echo "ERROR $state: missing required field: artifacts.events"; fail=1; }
+done
+[ $fail -eq 0 ] && echo "Check #9: PASS" || echo "Check #9: ERROR"
+```
+
 ---
 
 ## Check #10 — Unparseable state file
@@ -208,6 +364,23 @@ plan task count differs from activity-log task references by >50%.
 `state.yml` YAML is malformed, or legacy status frontmatter/body is malformed.
 
 **`--fix` action:** Report only (manual fix needed). Step A skips these silently, but doctor calls them out.
+
+```bash
+fail=0
+for state in docs/masterplan/*/state.yml; do
+  [ -f "$state" ] || continue
+  if command -v python3 >/dev/null 2>&1; then
+    err="$(python3 -c "import yaml, sys; yaml.safe_load(open(sys.argv[1]))" "$state" 2>&1)"
+    if [ -n "$err" ]; then
+      echo "ERROR $state: YAML parse error: ${err:0:120}"; fail=1
+    fi
+  else
+    grep -Pq '\t' "$state" 2>/dev/null \
+      && { echo "ERROR $state: contains tab characters (YAML invalid)"; fail=1; }
+  fi
+done
+[ $fail -eq 0 ] && echo "Check #10: PASS" || echo "Check #10: ERROR"
+```
 
 ---
 
@@ -219,6 +392,17 @@ plan task count differs from activity-log task references by >50%.
 
 **`--fix` action:** Suggest moving the archive to `<config.archive_path>/<date>/`. No auto-fix.
 
+```bash
+fail=0
+for archive in docs/masterplan/*/events-archive.jsonl; do
+  [ -f "$archive" ] || continue
+  dir="$(dirname "$archive")"
+  [ -f "$dir/state.yml" ] \
+    || { echo "WARN $archive: orphan events archive (no sibling state.yml)"; fail=1; }
+done
+[ $fail -eq 0 ] && echo "Check #11: PASS" || echo "Check #11: WARN"
+```
+
 ---
 
 ## Check #12 — Telemetry file growth
@@ -228,6 +412,22 @@ plan task count differs from activity-log task references by >50%.
 `telemetry.jsonl` OR `subagents.jsonl` (or legacy equivalents) > 5 MB.
 
 **`--fix` action:** Rotate to `telemetry-archive.jsonl` / `subagents-archive.jsonl` (the active file becomes empty; new appends start fresh).
+
+```bash
+fail=0
+threshold="${TELEMETRY_SIZE_THRESHOLD:-5242880}"
+for state in docs/masterplan/*/state.yml; do
+  [ -f "$state" ] || continue
+  dir="$(dirname "$state")"
+  for f in "$dir/telemetry.jsonl" "$dir/subagents.jsonl"; do
+    [ -f "$f" ] || continue
+    sz="$(wc -c < "$f")"
+    [ "$sz" -gt "$threshold" ] \
+      && { echo "WARN $f: ${sz} bytes exceeds threshold (${threshold})"; fail=1; }
+  done
+done
+[ $fail -eq 0 ] && echo "Check #12: PASS" || echo "Check #12: WARN"
+```
 
 ---
 
