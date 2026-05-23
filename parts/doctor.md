@@ -205,6 +205,10 @@ done
 fail=0
 for state in docs/masterplan/*/state.yml; do
   [ -f "$state" ] || continue
+  disp="$(grep -E '^worktree_disposition:' "$state" | head -1 | awk '{print $2}' | tr -d '"')"
+  [[ "$disp" == "removed_after_merge" || "$disp" == "kept_by_user" ]] && continue
+  status_val="$(grep -E '^status:' "$state" | head -1 | awk '{print $2}' | tr -d '"')"
+  [[ "$status_val" == "archived" ]] && continue
   branch="$(grep -E '^branch:' "$state" | head -1 | awk '{print $2}' | tr -d '"')"
   [ -z "$branch" ] && continue
   git branch --list "$branch" 2>/dev/null | grep -q . \
