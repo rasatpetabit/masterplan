@@ -171,6 +171,15 @@ Three targeted fixes committed directly to main after the hoist-run-policy branc
 
 **Check #46 — code-fence skip** (`parts/doctor.md` + 3 new fixtures): The CC-2 self-enforcement check was false-firing on doctor.md's 47 embedded bash blocks. Added `in_fence` state tracking: lines inside ` ```bash ` … ` ``` ` blocks are skipped. Also removes ` ```bash ` from the consecutive-trigger pattern (it now enters fence state instead). Three fixtures: `pass-clean`, `fail-violation`, `pass-fenced`.
 
+## 2026-05-23 — post-v6.2.3 documentation drift scan
+
+Three additional doc fixes found during scanning after v6.2.3 release:
+- `parts/doctor.md` Severity/Action table was missing rows for checks #44–#47 (added in v6.1.0/v6.2.0 but never added to the table)
+- `docs/internals/doctor.md` return-shape example summed to 36 (old check count); updated to 47
+- `parts/contracts/coordinator.md` coordinator catalog listed `parts/doctor.md` as "73KB"; actual size is ~90KB
+
+All fixes committed post-v6.2.3 (`00ddede`, `7c2efbe`). 9/9 tests still pass. No version bump (doc-only).
+
 ## 2026-05-23 — doctor check tier classification fixes (masterplan-token-efficiency branch)
 
 Full tier audit of all 47 doctor checks. Six checks had drift between their `**Scope:**` field declarations and the routing slots in `parts/doctor.md`.
