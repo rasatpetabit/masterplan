@@ -779,6 +779,20 @@ _This check ID was retired in an earlier version. Reserved to prevent renumberin
 
 **`--fix` action:** No `--fix` available; report the copy-pasteable `/loop {config.auto_compact.interval} /compact {config.auto_compact.focus}` command and the run slugs whose `state.yml` has `compact_loop_recommended: true`.
 
+```bash
+compact_needed=0
+for state in docs/masterplan/*/state.yml; do
+  [ -f "$state" ] || continue
+  val="$(grep -E '^compact_loop_recommended:' "$state" | head -1 | awk '{print $2}' | tr -d '"')"
+  [ "$val" = "true" ] && compact_needed=1 && break
+done
+if [ $compact_needed -eq 0 ]; then
+  echo "Check #26: PASS (no bundles have compact_loop_recommended:true)"
+else
+  echo "Check #26: SKIP (CronList API access required to verify loop attachment — run /masterplan doctor for full check)"
+fi
+```
+
 ---
 
 ## Check #27 — Reserved
@@ -795,6 +809,22 @@ _This check ID was retired in an earlier version. Reserved to prevent renumberin
 
 **`--fix` action:** Surface `AskUserQuestion` per finding: generate retro + archive run bundle (Recommended), generate retro only, skip this plan, or skip all findings this run.
 
+```bash
+fail=0
+for state in docs/masterplan/*/state.yml; do
+  [ -f "$state" ] || continue
+  status="$(grep -E '^status:' "$state" | head -1 | awk '{print $2}' | tr -d '"')"
+  [ "$status" = "complete" ] || continue
+  dir="$(dirname "$state")"
+  retro_path="$(grep -E '^[[:space:]]+retro:' "$state" | head -1 | awk '{print $2}' | tr -d '"')"
+  if { [ -z "$retro_path" ] || [ ! -f "$retro_path" ]; } && [ ! -f "$dir/retro.md" ]; then
+    echo "WARN $state: status=complete but no retro artifact (neither artifacts.retro nor retro.md found)"
+    fail=1
+  fi
+done
+[ $fail -eq 0 ] && echo "Check #28: PASS" || echo "Check #28: WARN"
+```
+
 ---
 
 ## Check #29 — Worktree-bundle reconciliation mismatch
@@ -804,6 +834,25 @@ _This check ID was retired in an earlier version. Reserved to prevent renumberin
 (v4.0.0+). Cross-repo: enumerate `git worktree list --porcelain` for the current repo; for each worktree path, find any bundle's `state.yml.worktree:` pointing at it. Surface: (a) bundles claiming a worktree path not registered in `git worktree list` (`worktree_missing`); (b) worktree paths registered in git with no bundle pointer (`worktree_orphan_untracked`). Skip worktrees with `worktree_disposition: removed_after_merge` or `kept_by_user` — those are intentionally settled.
 
 **`--fix` action:** `--fix`: for (a), set `worktree_disposition: missing`, clear `worktree:` field, write state, commit. For (b): report only (user must decide).
+
+```bash
+fail=0
+declare -a git_wts=()
+while IFS= read -r wt; do
+  git_wts+=("$wt")
+done < <(git worktree list --porcelain 2>/dev/null | grep '^worktree ' | awk '{print $2}')
+for state in docs/masterplan/*/state.yml; do
+  [ -f "$state" ] || continue
+  disposition="$(grep -E '^worktree_disposition:' "$state" | head -1 | awk '{print $2}' | tr -d '"')"
+  case "$disposition" in removed_after_merge|kept_by_user) continue ;; esac
+  claimed="$(grep -E '^worktree:' "$state" | head -1 | awk '{print $2}' | tr -d '"')"
+  [ -z "$claimed" ] && continue
+  found=0
+  for wt in "${git_wts[@]}"; do [ "$claimed" = "$wt" ] && found=1 && break; done
+  [ $found -eq 0 ] && { echo "WARN $state: worktree_missing — '$claimed' not in git worktree list"; fail=1; }
+done
+[ $fail -eq 0 ] && echo "Check #29: PASS" || echo "Check #29: WARN"
+```
 
 ---
 
@@ -815,6 +864,34 @@ _This check ID was retired in an earlier version. Reserved to prevent renumberin
 
 **`--fix` action:** Report only. Auto-bumping is risky — canonical-source authority is ambiguous when multiple manifests have drifted. Suggest editing alongside the CHANGELOG entry for the next release. See `RELEASING.md` for the full release checklist.
 
+```bash
+fail=0
+canonical=""
+[ -f ".claude-plugin/plugin.json" ] && \
+  canonical="$(jq -r '.version // empty' ".claude-plugin/plugin.json" 2>/dev/null)"
+if [ -z "$canonical" ]; then
+  echo "Check #30: SKIP (.claude-plugin/plugin.json not found)"
+else
+  for f in ".codex-plugin/plugin.json" ".claude-plugin/marketplace.json"; do
+    [ -f "$f" ] || continue
+    v="$(jq -r '.version // empty' "$f" 2>/dev/null)"
+    [ -n "$v" ] && [ "$v" != "$canonical" ] && \
+      { echo "WARN $f: version drift: $v (canonical: $canonical)"; fail=1; }
+    if [ "$f" = ".claude-plugin/marketplace.json" ]; then
+      nv="$(jq -r '.plugins[0].version // empty' "$f" 2>/dev/null)"
+      [ -n "$nv" ] && [ "$nv" != "$canonical" ] && \
+        { echo "WARN $f[plugins[0].version]: version drift: $nv (canonical: $canonical)"; fail=1; }
+    fi
+  done
+  if [ -f "README.md" ]; then
+    rv="$(grep -oP 'Current release:.*v\K[0-9]+\.[0-9]+\.[0-9]+' README.md | head -1)"
+    [ -n "$rv" ] && [ "$rv" != "$canonical" ] && \
+      { echo "WARN README.md: Current release version drift: $rv (canonical: $canonical)"; fail=1; }
+  fi
+  [ $fail -eq 0 ] && echo "Check #30: PASS" || echo "Check #30: WARN"
+fi
+```
+
 ---
 
 ## Check #31 — Per-autonomy gate-condition consistency
@@ -824,6 +901,30 @@ _This check ID was retired in an earlier version. Reserved to prevent renumberin
 (repo-scoped, v4.2.1+). Static anchor table for gate-decision sites in `parts/step-b.md`: `spec_approval` expects `--autonomy != full`; `plan_approval` expects `--autonomy == gated`. For each entry: grep `parts/step-b.md` for anchor, read next 3 lines, regex-match condition. Anchor missing → flag missing site; condition mismatch → flag drift. Extend table when adding new gate sites. Implementation: inline.
 
 **`--fix` action:** Report only. Auto-rewriting gate conditions in the orchestrator prompt is never safe — these are deliberate semantic choices made per-release.
+
+```bash
+fail=0
+step_b="parts/step-b.md"
+if [ ! -f "$step_b" ]; then
+  echo "Check #31: SKIP (parts/step-b.md not found)"
+else
+  if grep -q 'spec_approval' "$step_b"; then
+    ctx="$(grep -A4 'spec_approval' "$step_b" | head -8)"
+    printf '%s\n' "$ctx" | grep -qiE 'autonomy.*(!=|not|loose|gated)' \
+      || { echo "WARN $step_b: spec_approval gate missing autonomy!=full condition"; fail=1; }
+  else
+    echo "WARN $step_b: spec_approval anchor not found"; fail=1
+  fi
+  if grep -q 'plan_approval' "$step_b"; then
+    ctx="$(grep -A4 'plan_approval' "$step_b" | head -8)"
+    printf '%s\n' "$ctx" | grep -qiE 'autonomy.*(==|is|=.*gated|gated)' \
+      || { echo "WARN $step_b: plan_approval gate missing autonomy==gated condition"; fail=1; }
+  else
+    echo "WARN $step_b: plan_approval anchor not found"; fail=1
+  fi
+  [ $fail -eq 0 ] && echo "Check #31: PASS" || echo "Check #31: WARN"
+fi
+```
 
 ---
 
@@ -1008,6 +1109,16 @@ grep -q 'CC-3-trampoline' parts/step-0.md || \
 grep -q 'DISPATCH-SITE: step-c-resume.md' parts/step-c-resume.md 2>/dev/null || \
   { echo "WARN DISPATCH-SITE labels missing from step-c-resume.md"; fail=1; }
 [ $fail -eq 0 ] && echo "Check #36: PASS" || echo "Check #36: WARN"
+```
+
+---
+
+## Check #37 — Reserved
+
+_This check ID was retired in an earlier version. Reserved to prevent renumbering of subsequent checks._
+
+```bash
+echo "Check #37: SKIP (reserved — retired check ID)"
 ```
 
 ---
@@ -1266,14 +1377,21 @@ Report-only. Sub-fire (b) usually co-fires with #40 on the same plan.
 
 Stat `<bundle>/.lock`; emit WARN when mtime > 1 hour. False-positive risk exists (long-running write). Fix: confirm no live writer, then `rm <bundle>/.lock`.
 
-**Implementation:** For each bundle in the scan, run:
 ```bash
-if [[ -f "${bundle}/.lock" ]]; then
-  lock_age=$(( $(date +%s) - $(stat -c %Y "${bundle}/.lock" 2>/dev/null || echo 0) ))
-  if [[ $lock_age -gt 3600 ]]; then
-    emit_finding 42 WARN "${bundle}/.lock" "lockfile age ${lock_age}s exceeds 1h threshold; possible wedged writer"
+fail=0
+now="$(date +%s)"
+for state in docs/masterplan/*/state.yml; do
+  [ -f "$state" ] || continue
+  lock="$(dirname "$state")/.lock"
+  [ -f "$lock" ] || continue
+  mtime="$(stat -c %Y "$lock" 2>/dev/null || echo 0)"
+  age=$(( now - mtime ))
+  if [ "$age" -gt 3600 ]; then
+    echo "WARN $lock: lockfile age ${age}s exceeds 1h threshold (possible wedged writer)"
+    fail=1
   fi
-fi
+done
+[ $fail -eq 0 ] && echo "Check #42: PASS" || echo "Check #42: WARN"
 ```
 
 ---
@@ -1295,6 +1413,30 @@ fi
 **Action:** Report bundle slug, coverage percentage, and list of `wave_task_completed` events lacking a paired `review→` event.
 
 **Expected backfill warnings:** Running this check against existing bundles `concurrency-guards` and `p4-suppression-smoke` should WARN — both predate the wave-mode review-visibility rule. This is expected and does not indicate a regression.
+
+```bash
+fail=0; skip=0
+for state in docs/masterplan/*/state.yml; do
+  [ -f "$state" ] || continue
+  codex_host="$(grep -E '^codex_host:' "$state" | head -1 | awk '{print $2}' | tr -d '"')"
+  [ "$codex_host" = "true" ] && { skip=$((skip+1)); continue; }
+  dir="$(dirname "$state")"
+  slug="$(basename "$dir")"
+  events="$dir/events.jsonl"
+  [ -f "$events" ] || continue
+  completed="$(grep -c '"wave_task_completed"' "$events" 2>/dev/null || echo 0)"
+  [ "${completed:-0}" -eq 0 ] && continue
+  reviewed="$(grep -c 'review→' "$events" 2>/dev/null || echo 0)"
+  if [ "${reviewed:-0}" -lt "${completed:-0}" ]; then
+    gap=$(( completed - reviewed ))
+    pct=$(( reviewed * 100 / completed ))
+    echo "WARN $slug: wave_task_completed=$completed, review→ events=$reviewed (${pct}% coverage, $gap uncovered)"
+    fail=1
+  fi
+done
+[ $skip -gt 0 ] && echo "INFO: $skip Codex-hosted run(s) skipped (codex_host:true)"
+[ $fail -eq 0 ] && echo "Check #43: PASS" || echo "Check #43: WARN"
+```
 
 ---
 
