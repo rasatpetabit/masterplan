@@ -74,7 +74,7 @@ The touch is **NOT** applied outside Step C (brainstorm, plan, halt-gate, doctor
    Inputs: bundle_path=<docs/masterplan/<slug>/>
    Scope: read state.yml (full), events.jsonl (limit 200 lines), plan.md (limit 100 lines); run pwd + git rev-parse --abbrev-ref HEAD.
    Constraints: read-only; CD-7.
-   Return shape: {phase, current_task, next_action, pending_gate, autonomy, last_5_events, task_summary, coordinator_version}
+   Return shape: {phase, current_task, next_action, pending_gate, autonomy, last_5_events, task_summary, coordinator_version}; ≤ 1000 tokens total
    ```
 
    **Fallback** (coordinator errors): read state.yml inline with the Read tool (pre-v6 behavior). Log `coordinator_fallback`.

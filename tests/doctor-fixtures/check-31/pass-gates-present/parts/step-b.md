@@ -1,5 +1,3 @@
-## spec_approval gate
-Fires when autonomy != full (loose, gated modes).
+## spec_approval gate (fires under --autonomy != full — loose and gated modes)
 
-## plan_approval gate
-Fires when autonomy == gated only.
+## plan_approval gate (fires when --autonomy == gated only)

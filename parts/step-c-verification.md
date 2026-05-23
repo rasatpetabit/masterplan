@@ -39,7 +39,7 @@
    Inputs: commands=<verify_commands_list>, pattern=<verify_pattern or default>, task_name=<name>, timeout_s=60
    Scope: run commands (read filesystem as needed); no state writes.
    Constraints: timeout 60s per command; return exit_code even on timeout.
-   Return shape: {status, exit_code, excerpt, commands_run, pattern_matched, coordinator_version}
+   Return shape: {status, exit_code, excerpt (≤ 2000 chars), commands_run (≤ 10 items), pattern_matched, coordinator_version}
    ```
 
    **Fallback** (coordinator errors or timeout): run commands inline; evaluate against default PASS pattern. Log `coordinator_fallback`.

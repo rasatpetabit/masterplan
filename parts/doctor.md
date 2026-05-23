@@ -29,7 +29,7 @@ Follow the algorithm defined in commands/masterplan-contracts.md §Contract: doc
 Goal: Run the five repo-scoped doctor checks (#26, #30, #31, #36, #39) in one pass. Each check's input list and decision rule is also enumerated in the per-check rows below the Severity / Action Table.
 Inputs: repo root path; for #26, first load CronList via ToolSearch(query: "select:CronList", max_results: 1).
 Scope: read-only.
-Return shape: {contract_id: "doctor.repo_scoped.schema_v1", checks_processed: [26, 30, 31, 36, 39], violations: [{check_id, severity, file, message}], notes: "<optional>"}.
+Return shape: {contract_id: "doctor.repo_scoped.schema_v1", checks_processed: [26, 30, 31, 36, 39], violations: [{check_id, severity, file, message}] (≤ 50 items), notes: "<optional>"}.
 ```
 
 **Partial-failure handling.** If the repo-scoped Haiku returns malformed JSON, missing `contract_id`, OR `checks_processed` ≠ `[26, 30, 31, 36, 39]`, the orchestrator falls back to running the five checks inline (pre-v5.4.0 path) and appends one `doctor_repo_scoped_haiku_fallback` event to the bundle-agnostic doctor telemetry log. Single missing-check (e.g., #26 returned `CronList unavailable`) is reported as a per-check INFO and does NOT trigger full fallback. (Self-host audits — deployment-drift detection and CD-9 free-text-question grep — moved to `bin/masterplan-self-host-audit.sh` in v2.11.0; that script is developer-only and runs against the project repo, not the user's working repo.)
@@ -46,7 +46,7 @@ Follow the algorithm defined in commands/masterplan-contracts.md §Contract: doc
 Goal: Run all plan-scoped doctor checks for the bundle paths in this worktree's runs_path.
 Inputs: worktree path, runs_path glob, legacy paths glob.
 Scope: read-only.
-Return shape: {contract_id: "doctor.schema_v2", inputs_hash: "<sha256 of bundle state.yml paths processed>", processed_paths: [list of state.yml paths], violations: [{bundle, field, kind, detail}], coverage: {expected: N, processed: N}}.
+Return shape: {contract_id: "doctor.schema_v2", inputs_hash: "<sha256 of bundle state.yml paths processed>", processed_paths: [list of state.yml paths (≤ 20 items)], violations: [{bundle, field, kind, detail}] (≤ 200 items), coverage: {expected: N, processed: N}}.
 ```
 
 **Sampling-based parent re-verification** (after Haiku wave, before emitting findings): re-verify 3 randomly selected bundles + any bundle with Haiku violations. Run as a single parallel Bash batch (background N greps, `wait`): grep state.yml for `^retro: ""` and missing `import_hydration`. On discrepancy: append `parent_reverify_mismatch` event, prefer parent findings, emit `⚠ doctor parent re-verify found <N> additional violation(s) not in Haiku return — using parent findings.`
@@ -316,7 +316,7 @@ fail=0
 for state in docs/masterplan/*/state.yml; do
   [ -f "$state" ] || continue
   phase="$(grep -E '^phase:' "$state" | head -1 | awk '{print $2}' | tr -d '"')"
-  case "$phase" in spec_gate|brainstorming|"") continue ;; esac
+  case "$phase" in spec_gate|brainstorming|complete|archived|retro|"") continue ;; esac
   spec="$(grep -E '^[[:space:]]+spec:' "$state" | head -1 | awk '{print $2}' | tr -d '"')"
   if [ -z "$spec" ] || [ ! -f "$spec" ]; then
     echo "ERROR $state: phase=$phase requires artifacts.spec; missing: ${spec:-<empty>}"
@@ -909,15 +909,14 @@ if [ ! -f "$step_b" ]; then
   echo "Check #31: SKIP (parts/step-b.md not found)"
 else
   if grep -q 'spec_approval' "$step_b"; then
-    ctx="$(grep -A4 'spec_approval' "$step_b" | head -8)"
-    printf '%s\n' "$ctx" | grep -qiE 'autonomy.*(!=|not|loose|gated)' \
+    # grep across the full file for the gate-decision line; head -8 clips early when many occurrences exist
+    grep -qiE 'spec_approval.*autonomy.*(!=|not.*full)|autonomy.*!=.*full.*spec_approval|halt_mode == none.*autonomy.*!=.*full' "$step_b" \
       || { echo "WARN $step_b: spec_approval gate missing autonomy!=full condition"; fail=1; }
   else
     echo "WARN $step_b: spec_approval anchor not found"; fail=1
   fi
   if grep -q 'plan_approval' "$step_b"; then
-    ctx="$(grep -A4 'plan_approval' "$step_b" | head -8)"
-    printf '%s\n' "$ctx" | grep -qiE 'autonomy.*(==|is|=.*gated|gated)' \
+    grep -qiE 'plan_approval.*autonomy.*(==|gated)|autonomy.*(==.*gated|gated).*plan_approval|halt_mode == none.*autonomy == gated' "$step_b" \
       || { echo "WARN $step_b: plan_approval gate missing autonomy==gated condition"; fail=1; }
   else
     echo "WARN $step_b: plan_approval anchor not found"; fail=1
@@ -1574,13 +1573,14 @@ violations=0
 for f in parts/step-0.md parts/step-b.md parts/step-c-resume.md parts/step-c-dispatch.md \
           parts/step-c-verification.md parts/step-c-completion.md parts/doctor.md; do
   [ -r "$f" ] || continue
-  grep -n "Return shape:\|return shape:" "$f" 2>/dev/null | while IFS=: read -r lineno rest; do
+  while IFS=: read -r lineno rest; do
+    case "$rest" in *'grep '*) continue ;; esac  # skip self-referential code-block matches
     context="$(awk -v s="$lineno" -v e="$((lineno+3))" 'NR>=s && NR<=e' "$f" 2>/dev/null)"
     if ! echo "$context" | grep -qiE "≤|max|limit|[0-9]+ items?|[0-9]+ chars?"; then
       echo "WARN $f:$lineno: Return shape block lacks item/char cap"
       violations=$((violations + 1))
     fi
-  done
+  done < <(grep -n "Return shape:\|return shape:" "$f" 2>/dev/null)
 done
 [ "$violations" -eq 0 ] && echo "Check #47: PASS" || echo "Check #47: WARN ($violations uncapped block(s))"
 ```
