@@ -2,7 +2,7 @@ schema_version: 3
 slug: improve-regression-detection
 topic: Improve the robustness of masterplan regression detection
 status: in-progress
-phase: brainstorming
+phase: spec_gate
 worktree: /srv/dev/superpowers-masterplan/.worktrees/improve-regression-detection
 branch: worktree-improve-regression-detection
 started: 2026-05-22T00:00:00Z
@@ -13,12 +13,13 @@ codex_routing: auto
 codex_review: on
 loop_enabled: false
 current_task: ""
-next_action: resolve brainstorm intent anchor
+next_action: approve spec for planning
 plan_kind: implementation
 follow_ups: []
-pending_gate: null
+pending_gate:
+  id: brainstorm_closeout
 background: null
-stop_reason: null
+stop_reason: question
 critical_error: null
 compact_loop_recommended: false
 pending_retro_attempts: 0
