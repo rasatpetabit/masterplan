@@ -1,7 +1,7 @@
 schema_version: 3
 slug: improve-subagents-parallelism
 topic: Improve use of subagents and parallelism
-status: pending_retro
+status: complete
 phase: complete
 worktree: /srv/dev/superpowers-masterplan/.worktrees/improve-subagents-parallelism
 branch: worktree-improve-subagents-parallelism
@@ -14,7 +14,7 @@ codex_review: on
 loop_enabled: false
 halt_mode: none
 current_task: "done"
-next_action: retro
+next_action: merge
 plan_kind: implementation
 follow_ups: []
 pending_gate: null
@@ -77,5 +77,5 @@ brainstorm_anchor:
 artifacts:
   spec: docs/masterplan/improve-subagents-parallelism/spec.md
   plan: docs/masterplan/improve-subagents-parallelism/plan.md
-  retro: ""
+  retro: docs/masterplan/improve-subagents-parallelism/retro.md
 legacy: {}
