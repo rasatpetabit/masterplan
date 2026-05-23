@@ -1166,7 +1166,7 @@ Report-only. Use `bin/masterplan-failure-analyze.sh` to review anomaly records.
 **Scope:** Repo-scoped (fires once per doctor run; reads user-global `~/.codex/auth.json`).
 **Added:** v5.1.1 (I-1 of cosmic-cuddling-dusk).
 
-Skipped when `~/.codex/auth.json` absent. v5.2.3+ cosmetic-shape gate: `auth_mode == "chatgpt"` AND `tokens.refresh_token` present AND `last_refresh` ≤7d → skip JWT-exp sub-fires (a)/(b) — ChatGPT uses short-lived JWTs that auto-refresh; cosmetic `id_token.exp` past now is normal. Sub-condition (c) still fires.
+Skipped when `~/.codex/auth.json` absent. v5.2.3+ cosmetic-shape gate: `auth_mode == "chatgpt"` AND `tokens.refresh_token` present AND `last_refresh` ≤30d → skip JWT-exp sub-fires (a)/(b) — ChatGPT uses short-lived JWTs that auto-refresh; cosmetic `id_token.exp` past now is normal (even after idle periods of weeks). Sub-condition (c) still fires.
 
 ```bash
 fail=0
@@ -1183,7 +1183,7 @@ else
     refresh_sec_gate="$(date -u -d "$last_refresh" +%s 2>/dev/null || echo 0)"
     if [ "$refresh_sec_gate" -gt 0 ]; then
       refresh_age_days_gate=$(( (now - refresh_sec_gate) / 86400 ))
-      if [ "$refresh_age_days_gate" -le 7 ]; then
+      if [ "$refresh_age_days_gate" -le 30 ]; then
         jwt_skip=1
       fi
     fi

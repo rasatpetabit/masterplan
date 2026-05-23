@@ -36,7 +36,7 @@ Emit ONE plain-text line before anything else (first output of every turn).
 
 1. **Skip gate.** If `codex.routing == off` AND `codex.review == off`, emit nothing.
 2. **Read auth file.** Read `~/.codex/auth.json`; if absent, emit nothing.
-3. **Cosmetic-shape early-exit.** If `auth_mode == "chatgpt"` AND `tokens.refresh_token` non-empty AND `last_refresh` within last 7 days, emit nothing. (ChatGPT uses short-lived JWTs that auto-refresh; expired `id_token.exp` is normal steady state. `schema_v3+`: tokens under `.tokens.*`; jq fallback in step 4 handles both.)
+3. **Cosmetic-shape early-exit.** If `auth_mode == "chatgpt"` AND `tokens.refresh_token` non-empty AND `last_refresh` within last 30 days, emit nothing. (ChatGPT uses short-lived JWTs that auto-refresh; expired `id_token.exp` is normal steady state even after idle periods of weeks. `schema_v3+`: tokens under `.tokens.*`; jq fallback in step 4 handles both.)
 4. **Decode JWT exp claims.** For each of `id_token` and `access_token`: `jq -r ".tokens.$f // .$f // empty" ~/.codex/auth.json | cut -d. -f2 | base64 -d 2>/dev/null | jq -r .exp`. On decode error, treat as unknown.
 5. **Compare to now.** `now="$(date +%s)"`. Expired when `now > exp`.
 6. **Emit.** When ≥1 token expired: `↳ Codex: degraded (id_token expired Nd ago, access_token expired Md ago) — run \`codex login\` to refresh` (omit tokens where decode failed or exp ≥ now). When both decode cleanly + not expired + `last_refresh` > 30d (non-chatgpt only): `↳ Codex: stale (last_refresh Nd ago — consider running \`codex login\`)`. Both healthy + ≤30d: silent.
