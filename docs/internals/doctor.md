@@ -25,9 +25,23 @@ The orchestrator dispatches 1 Sonnet coordinator for `/masterplan doctor [--fix]
 
 ## Adding a New Check
 
-1. Add to `parts/doctor.md` following the existing format (1-sentence Why:).
-2. Update the total check count in the parallelization brief.
-3. Verify `pass + warn + error` still sums correctly in the return shape.
+1. Add `## Check #N` section to `parts/doctor.md` with a `**Scope:**` field set to
+   `Plan-scoped`, `Repo-scoped`, `Global`, or `Prompt-scoped`.
+2. Register the check in the right routing slot based on its Scope:
+   - **Plan-scoped**: add to the parallelization brief list (line 20) and the relevant
+     complexity sets (lines 58–60).
+   - **Repo/Global/Prompt-scoped**: add to the repo-scoped batch:
+     - line 22 (prose description list),
+     - line 29 (Goal count + check list),
+     - line 32 (Return shape `checks_processed` array),
+     - line 35 (partial-failure comparison array),
+     - `commands/masterplan-contracts.md` §Contract: doctor.repo_scoped.schema_v1
+       (`purpose` count + `algorithm` entry + `checks_processed` array).
+3. Run `bash tests/static/test-doctor-tier-drift.sh` — it validates Scope: field → routing slot
+   consistency for all explicit-Scope checks. FAIL means the check is in the wrong slot.
+4. Update the doctor file title (`# Doctor — Self-Host Checks (#1 .. #N)`) and preamble comment
+   on line 3 to include the new check's version provenance.
+5. Verify `pass + warn + error` still sums correctly in the return shape example above.
 
 ## Per-Check Extended Rationale
 
