@@ -11,8 +11,8 @@ The orchestrator dispatches 1 Sonnet coordinator for `/masterplan doctor [--fix]
 **Return shape:**
 ```json
 {
-  "pass": 30,
-  "warn": 4,
+  "pass": 40,
+  "warn": 5,
   "error": 2,
   "findings": [
     {"id": "#18", "severity": "error", "summary": "...", "fix_available": true},
