@@ -517,7 +517,7 @@ for plan in docs/masterplan/*/plan.md; do
     end="${task_lines[$((i+1))]:-$(wc -l < "$plan")}"
     block="$(sed -n "${start},${end}p" "$plan")"
     if printf '%s\n' "$block" | grep -qE '^\*\*parallel-group:\*\*' \
-    && printf '%s\n' "$block" | grep -qE '^\*\*Codex:\*\* ok'; then
+    && printf '%s\n' "$block" | grep -qE '^\*\*Codex:\*\* (ok|true)'; then
       echo "WARN $plan task at L$start: **parallel-group:** and **Codex:** ok both set (mutually exclusive)"
       fail=1
     fi
@@ -1257,7 +1257,7 @@ for state_yml in docs/masterplan/*/state.yml; do
   [ "$complexity" = "high" ] || continue
   [ -r "$plan" ] || continue
   task_count="$(grep -cE '^### Task ' "$plan")"
-  codex_count="$(grep -cE '^\*\*Codex:\*\* (ok|no)' "$plan")"
+  codex_count="$(grep -cE '^\*\*Codex:\*\* (ok|no|true|false)' "$plan")"
   pgroup_count="$(grep -cE '^\*\*parallel-group:\*\*' "$plan")"
   if [ "$task_count" -gt 0 ] && [ "$codex_count" -lt "$task_count" ]; then
     gap=$(( task_count - codex_count ))

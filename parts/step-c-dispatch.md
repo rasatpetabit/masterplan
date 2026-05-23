@@ -208,8 +208,8 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
     ```
 
     Effect on the eligibility cache:
-    - `**Codex:** ok` → `eligible: true`, `annotated: "ok"` (overrides the heuristic; delegate even for tasks the checklist would reject).
-    - `**Codex:** no` → `eligible: false`, `annotated: "no"` (never delegate; run inline).
+    - `**Codex:** ok` (or `true`) → `eligible: true`, `annotated: "ok"` (overrides the heuristic; delegate even for tasks the checklist would reject).
+    - `**Codex:** no` (or `false`) → `eligible: false`, `annotated: "no"` (never delegate; run inline).
     - No annotation → fall through to the heuristic checklist above; `annotated: null`.
 
     The eligibility-cache builder Haiku (Step C step 1) parses these annotations: scan each task block's `**Files:**` section for a following `**Codex:**` line; record the annotation alongside the heuristic decision.
