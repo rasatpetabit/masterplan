@@ -81,3 +81,20 @@ Bundle: `improve-regression-detection` (worktree: `.worktrees/improve-regression
 **Key decisions:** Check #37 was absent from doctor.md — resolved as Reserved stub (same pattern as #25, #27). Check #12 fail fixture impractical (5MB file); testability added via `TELEMETRY_SIZE_THRESHOLD` env var. Check #42 pseudo-code rewrote using `stat -c %Y` + integer arithmetic. Git-dependent checks (#3, #4, #29) tested with empty fixture dirs (no state.yml → PASS).
 
 **State:** phase→executing. Ready for `/masterplan execute` to kick off Task 1.
+
+## 2026-05-23 — execution complete: improve-regression-detection
+
+All 15 tasks completed. Final state: 9/9 tests pass on `worktree-improve-regression-detection` (6 fast + 3 full). 89 doctor-fixture checks pass (checks #1-#45 fully covered, reserved/retired IDs skipped).
+
+**Key deliverables:**
+- `tests/structural/test-coordinator-dispatch.sh` (A1-A4) — verifies DISPATCH-SITE markers, return-shape caps, CC-2 guard, fallback docs
+- `tests/structural/test-step-c-split.sh` (B1-B4) — verifies 4-file split, no duplicate headers, CC-3 trampoline, xref resolution
+- Doctor fixtures for checks #1-#45 (89 fixtures, 0 failures)
+- `tests/hook-unit/test-telemetry-sections.sh` (C1-C4) — hook syntax, exit code, anomaly detectors (step-trace-gap + silent-stop-after-skill)
+- `tests/hook-unit/test-self-host-audit.sh` (D1-D3) — self-host audit passes with step-c split
+- `bin/run-tests.sh`, `bin/run-tests-fast.sh` aliases
+
+**Audit fixes shipped alongside tests:**
+- `bin/masterplan-self-host-audit.sh`: updated `check_cd9_coverage` and `check_dispatch_sites` for step-c split; added `complete` status to `_plan_bundle_is_archived`
+
+Ready for retro + merge to main.

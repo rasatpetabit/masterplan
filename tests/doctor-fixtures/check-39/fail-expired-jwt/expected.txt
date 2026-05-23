@@ -1,2 +1,2 @@
-id_token expired
+WARN id_token expired
 Check #39: WARN

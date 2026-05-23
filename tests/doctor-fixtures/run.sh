@@ -2,7 +2,7 @@
 # Doctor-fixture runner.
 #
 # For each check whose body in parts/doctor.md contains an extractable ```bash
-# block (currently #32, #33, #34, #35, #36, #38, #39, #40, #41), the runner:
+# block (currently check-01..check-47), the runner:
 #   1. extracts the bash block from parts/doctor.md (between ## Check #NN and
 #      the next ## Check / ## ## / EOF);
 #   2. for each fixture directory under tests/doctor-fixtures/check-NN/:
@@ -57,7 +57,7 @@ missing_blocks=0
 
 for check_dir in "$REPO_ROOT"/tests/doctor-fixtures/check-*/; do
   [ -d "$check_dir" ] || continue
-  nn="$(basename "$check_dir" | sed 's/^check-//')"
+  nn="$(basename "$check_dir" | sed -E 's/^check-0*([1-9][0-9]*|0)$/\1/')"
 
   block="$(extract_check_bash "$nn")"
   if [ -z "$block" ]; then

@@ -119,6 +119,23 @@ pre-v3 plan/spec/status/retro exists under `docs/superpowers/...`, is not refere
 
 **`--fix` action:** `--fix`: invoke `/masterplan import` and select `<slug>` from the picker (copy-only; no legacy delete).
 
+```bash
+fail=0
+for d in docs/superpowers/*/; do
+  [ -d "$d" ] || continue
+  slug="$(basename "$d")"
+  ref=0
+  for s in docs/masterplan/*/state.yml; do
+    [ -f "$s" ] || continue
+    grep -qF "$slug" "$s" && ref=1 && break
+  done
+  [ $ref -eq 0 ] && [ ! -d "docs/masterplan/$slug" ] && {
+    echo "WARN $d: legacy plan not migrated (not referenced by any bundle state.yml)"; fail=1
+  }
+done
+[ $fail -eq 0 ] && echo "Check #1: PASS" || echo "Check #1: WARN"
+```
+
 ---
 
 ## Check #2 — Orphan state
@@ -128,6 +145,24 @@ pre-v3 plan/spec/status/retro exists under `docs/superpowers/...`, is not refere
 `state.yml` points at a missing `artifacts.plan` / `artifacts.spec` required for its current `phase`, or a legacy status points at a missing plan.
 
 **`--fix` action:** For bundle state: prompt to repair artifact path or mark archived. For legacy status: migrate if possible, otherwise move to `<config.archive_path>/<date>/`.
+
+```bash
+fail=0
+for state in docs/masterplan/*/state.yml; do
+  [ -f "$state" ] || continue
+  phase="$(grep -E '^phase:' "$state" | head -1 | awk '{print $2}' | tr -d '"')"
+  spec="$(grep -E '^[[:space:]]+spec:' "$state" | head -1 | awk '{print $2}' | tr -d '"')"
+  plan_f="$(grep -E '^[[:space:]]+plan:' "$state" | head -1 | awk '{print $2}' | tr -d '"')"
+  if [ -n "$spec" ] && [ ! -f "$spec" ]; then
+    echo "ERROR $state: artifacts.spec points at missing file: $spec"; fail=1
+  fi
+  case "$phase" in spec_gate|brainstorming|"") ;;
+    *) [ -n "$plan_f" ] && [ ! -f "$plan_f" ] && \
+       { echo "ERROR $state: artifacts.plan missing for phase=$phase: $plan_f"; fail=1; } ;;
+  esac
+done
+[ $fail -eq 0 ] && echo "Check #2: PASS" || echo "Check #2: ERROR"
+```
 
 ---
 
@@ -139,6 +174,23 @@ pre-v3 plan/spec/status/retro exists under `docs/superpowers/...`, is not refere
 
 **`--fix` action:** Try to match by branch name; rewrite if unique match. Otherwise report.
 
+```bash
+fail=0
+declare -a valid_paths=()
+while IFS= read -r wt; do
+  valid_paths+=("$wt")
+done < <(git worktree list --porcelain 2>/dev/null | grep '^worktree ' | awk '{print $2}')
+for state in docs/masterplan/*/state.yml; do
+  [ -f "$state" ] || continue
+  wt="$(grep -E '^worktree:' "$state" | head -1 | awk '{print $2}' | tr -d '"')"
+  [ -z "$wt" ] && continue
+  ok=0
+  for vp in "${valid_paths[@]}"; do [ "$wt" = "$vp" ] && ok=1 && break; done
+  [ $ok -eq 0 ] && { echo "ERROR $state: worktree '$wt' not in git worktree list"; fail=1; }
+done
+[ $fail -eq 0 ] && echo "Check #3: PASS" || echo "Check #3: ERROR"
+```
+
 ---
 
 ## Check #4 — Wrong branch
@@ -148,6 +200,18 @@ pre-v3 plan/spec/status/retro exists under `docs/superpowers/...`, is not refere
 `state.yml`'s `branch` doesn't exist in `git branch --list`.
 
 **`--fix` action:** Report only (manual fix).
+
+```bash
+fail=0
+for state in docs/masterplan/*/state.yml; do
+  [ -f "$state" ] || continue
+  branch="$(grep -E '^branch:' "$state" | head -1 | awk '{print $2}' | tr -d '"')"
+  [ -z "$branch" ] && continue
+  git branch --list "$branch" 2>/dev/null | grep -q . \
+    || { echo "ERROR $state: branch '$branch' not in git branch --list"; fail=1; }
+done
+[ $fail -eq 0 ] && echo "Check #4: PASS" || echo "Check #4: ERROR"
+```
 
 ---
 
@@ -159,6 +223,22 @@ pre-v3 plan/spec/status/retro exists under `docs/superpowers/...`, is not refere
 
 **`--fix` action:** Report only.
 
+```bash
+fail=0
+now="$(date +%s)"
+for state in docs/masterplan/*/state.yml; do
+  [ -f "$state" ] || continue
+  status="$(grep -E '^status:' "$state" | head -1 | awk '{print $2}' | tr -d '"')"
+  [ "$status" = "in-progress" ] || continue
+  last="$(grep -E '^last_activity:' "$state" | head -1 | awk '{print $2}' | tr -d "'")"
+  [ -z "$last" ] && continue
+  ts="$(date -u -d "$last" +%s 2>/dev/null || echo 0)"
+  age=$(( (now - ts) / 86400 ))
+  [ $age -gt 30 ] && { echo "WARN $state: in-progress for ${age} days (last_activity $last)"; fail=1; }
+done
+[ $fail -eq 0 ] && echo "Check #5: PASS" || echo "Check #5: WARN"
+```
+
 ---
 
 ## Check #6 — Stale critical error
@@ -168,6 +248,23 @@ pre-v3 plan/spec/status/retro exists under `docs/superpowers/...`, is not refere
 `status: blocked` or `stop_reason: critical_error` with `last_activity` > 14 days.
 
 **`--fix` action:** Report only.
+
+```bash
+fail=0
+now="$(date +%s)"
+for state in docs/masterplan/*/state.yml; do
+  [ -f "$state" ] || continue
+  status="$(grep -E '^status:' "$state" | head -1 | awk '{print $2}' | tr -d '"')"
+  stop="$(grep -E '^stop_reason:' "$state" | head -1 | awk '{print $2}' | tr -d '"')"
+  case "$status/$stop" in blocked/*|*/critical_error) ;; *) continue ;; esac
+  last="$(grep -E '^last_activity:' "$state" | head -1 | awk '{print $2}' | tr -d "'")"
+  [ -z "$last" ] && continue
+  ts="$(date -u -d "$last" +%s 2>/dev/null || echo 0)"
+  age=$(( (now - ts) / 86400 ))
+  [ $age -gt 14 ] && { echo "WARN $state: blocked/critical_error for ${age} days"; fail=1; }
+done
+[ $fail -eq 0 ] && echo "Check #6: PASS" || echo "Check #6: WARN"
+```
 
 ---
 
@@ -179,6 +276,31 @@ plan task count differs from activity-log task references by >50%.
 
 **`--fix` action:** Report only.
 
+```bash
+fail=0
+for state in docs/masterplan/*/state.yml; do
+  [ -f "$state" ] || continue
+  bundle="$(dirname "$state")"
+  plan="$bundle/plan.md"
+  events="$bundle/events.jsonl"
+  [ -f "$plan" ] || continue
+  task_count="$(grep -cE '^### Task [0-9]' "$plan" 2>/dev/null || echo 0)"
+  [ "${task_count:-0}" -eq 0 ] && continue
+  log_refs=0
+  [ -f "$events" ] && log_refs="$(grep -cE '"task_completed"|"wave_task_completed"' "$events" 2>/dev/null || echo 0)"
+  if [ "${log_refs:-0}" -gt 0 ]; then
+    diff=$(( task_count - log_refs ))
+    abs_diff="${diff#-}"
+    pct=$(( abs_diff * 100 / task_count ))
+    [ $pct -gt 50 ] && {
+      echo "WARN $state: plan=$task_count tasks, events=$log_refs completions (${pct}% drift)"
+      fail=1
+    }
+  fi
+done
+[ $fail -eq 0 ] && echo "Check #7: PASS" || echo "Check #7: WARN"
+```
+
 ---
 
 ## Check #8 — Missing spec
@@ -188,6 +310,21 @@ plan task count differs from activity-log task references by >50%.
 `state.yml`'s `artifacts.spec` points at a missing spec doc when the phase requires one.
 
 **`--fix` action:** Report only; if `legacy.spec` exists, suggest re-copying it into the bundle.
+
+```bash
+fail=0
+for state in docs/masterplan/*/state.yml; do
+  [ -f "$state" ] || continue
+  phase="$(grep -E '^phase:' "$state" | head -1 | awk '{print $2}' | tr -d '"')"
+  case "$phase" in spec_gate|brainstorming|"") continue ;; esac
+  spec="$(grep -E '^[[:space:]]+spec:' "$state" | head -1 | awk '{print $2}' | tr -d '"')"
+  if [ -z "$spec" ] || [ ! -f "$spec" ]; then
+    echo "ERROR $state: phase=$phase requires artifacts.spec; missing: ${spec:-<empty>}"
+    fail=1
+  fi
+done
+[ $fail -eq 0 ] && echo "Check #8: PASS" || echo "Check #8: ERROR"
+```
 
 ---
 
@@ -199,6 +336,25 @@ plan task count differs from activity-log task references by >50%.
 
 **`--fix` action:** Add missing fields with sentinel/derived values where possible (e.g. `pending_gate: null`, `stop_reason: null`, `critical_error: null`, `compact_loop_recommended: false`); report the rest. Cross-check: for each `legacy.*` pointer that is non-empty, verify that the corresponding `artifacts.*` pointer is also non-empty AND the file exists on disk. If `legacy.spec` is non-empty but `artifacts.spec` is empty or the file is missing: flag as Error (not just schema violation — this is an unhydrated import). `--fix`: invoke the Step I3.5 rehydration logic inline (parent-side, not as a subagent). Do NOT add null sentinel values when a recoverable `legacy.*` path exists — that was the pre-v4.0 bug this check now prevents.
 
+```bash
+fail=0
+required="schema_version slug status phase worktree branch started last_activity current_task next_action autonomy loop_enabled codex_routing codex_review compact_loop_recommended complexity pending_gate stop_reason critical_error"
+for state in docs/masterplan/*/state.yml; do
+  [ -f "$state" ] || continue
+  for field in $required; do
+    grep -qE "^${field}:" "$state" \
+      || { echo "ERROR $state: missing required field: $field"; fail=1; }
+  done
+  grep -qE '^[[:space:]]+spec:' "$state" \
+    || { echo "ERROR $state: missing required field: artifacts.spec"; fail=1; }
+  grep -qE '^[[:space:]]+plan:' "$state" \
+    || { echo "ERROR $state: missing required field: artifacts.plan"; fail=1; }
+  grep -qE '^[[:space:]]+events:' "$state" \
+    || { echo "ERROR $state: missing required field: artifacts.events"; fail=1; }
+done
+[ $fail -eq 0 ] && echo "Check #9: PASS" || echo "Check #9: ERROR"
+```
+
 ---
 
 ## Check #10 — Unparseable state file
@@ -208,6 +364,23 @@ plan task count differs from activity-log task references by >50%.
 `state.yml` YAML is malformed, or legacy status frontmatter/body is malformed.
 
 **`--fix` action:** Report only (manual fix needed). Step A skips these silently, but doctor calls them out.
+
+```bash
+fail=0
+for state in docs/masterplan/*/state.yml; do
+  [ -f "$state" ] || continue
+  if command -v python3 >/dev/null 2>&1; then
+    err="$(python3 -c "import yaml, sys; yaml.safe_load(open(sys.argv[1]))" "$state" 2>&1)"
+    if [ -n "$err" ]; then
+      echo "ERROR $state: YAML parse error: ${err:0:120}"; fail=1
+    fi
+  else
+    grep -Pq '\t' "$state" 2>/dev/null \
+      && { echo "ERROR $state: contains tab characters (YAML invalid)"; fail=1; }
+  fi
+done
+[ $fail -eq 0 ] && echo "Check #10: PASS" || echo "Check #10: ERROR"
+```
 
 ---
 
@@ -219,6 +392,17 @@ plan task count differs from activity-log task references by >50%.
 
 **`--fix` action:** Suggest moving the archive to `<config.archive_path>/<date>/`. No auto-fix.
 
+```bash
+fail=0
+for archive in docs/masterplan/*/events-archive.jsonl; do
+  [ -f "$archive" ] || continue
+  dir="$(dirname "$archive")"
+  [ -f "$dir/state.yml" ] \
+    || { echo "WARN $archive: orphan events archive (no sibling state.yml)"; fail=1; }
+done
+[ $fail -eq 0 ] && echo "Check #11: PASS" || echo "Check #11: WARN"
+```
+
 ---
 
 ## Check #12 — Telemetry file growth
@@ -228,6 +412,22 @@ plan task count differs from activity-log task references by >50%.
 `telemetry.jsonl` OR `subagents.jsonl` (or legacy equivalents) > 5 MB.
 
 **`--fix` action:** Rotate to `telemetry-archive.jsonl` / `subagents-archive.jsonl` (the active file becomes empty; new appends start fresh).
+
+```bash
+fail=0
+threshold="${TELEMETRY_SIZE_THRESHOLD:-5242880}"
+for state in docs/masterplan/*/state.yml; do
+  [ -f "$state" ] || continue
+  dir="$(dirname "$state")"
+  for f in "$dir/telemetry.jsonl" "$dir/subagents.jsonl"; do
+    [ -f "$f" ] || continue
+    sz="$(wc -c < "$f")"
+    [ "$sz" -gt "$threshold" ] \
+      && { echo "WARN $f: ${sz} bytes exceeds threshold (${threshold})"; fail=1; }
+  done
+done
+[ $fail -eq 0 ] && echo "Check #12: PASS" || echo "Check #12: WARN"
+```
 
 ---
 
@@ -239,6 +439,16 @@ plan task count differs from activity-log task references by >50%.
 
 **`--fix` action:** Suggest moving to `<config.archive_path>/<date>/`. No auto-fix.
 
+```bash
+fail=0
+for f in docs/masterplan/*/telemetry.jsonl docs/masterplan/*/telemetry-archive.jsonl; do
+  [ -f "$f" ] || continue
+  [ -f "$(dirname "$f")/state.yml" ] \
+    || { echo "WARN $f: orphan telemetry file (no sibling state.yml)"; fail=1; }
+done
+[ $fail -eq 0 ] && echo "Check #13: PASS" || echo "Check #13: WARN"
+```
+
 ---
 
 ## Check #14 — Orphan eligibility cache
@@ -248,6 +458,16 @@ plan task count differs from activity-log task references by >50%.
 `eligibility-cache.json` exists without sibling `state.yml`, or legacy cache exists without legacy status.
 
 **`--fix` action:** Suggest moving to `<config.archive_path>/<date>/`. No auto-fix.
+
+```bash
+fail=0
+for f in docs/masterplan/*/eligibility-cache.json; do
+  [ -f "$f" ] || continue
+  [ -f "$(dirname "$f")/state.yml" ] \
+    || { echo "WARN $f: orphan eligibility cache (no sibling state.yml)"; fail=1; }
+done
+[ $fail -eq 0 ] && echo "Check #14: PASS" || echo "Check #14: WARN"
+```
 
 ---
 
@@ -259,6 +479,24 @@ plan task count differs from activity-log task references by >50%.
 
 **`--fix` action:** Report only. Author must add `**Files:**` block.
 
+```bash
+fail=0
+for plan in docs/masterplan/*/plan.md; do
+  [ -f "$plan" ] || continue
+  mapfile -t task_lines < <(grep -nE '^### Task [0-9]' "$plan" | cut -d: -f1)
+  for i in "${!task_lines[@]}"; do
+    start="${task_lines[$i]}"
+    end="${task_lines[$((i+1))]:-$(wc -l < "$plan")}"
+    block="$(sed -n "${start},${end}p" "$plan")"
+    if printf '%s\n' "$block" | grep -qE '^\*\*parallel-group:\*\*'; then
+      printf '%s\n' "$block" | grep -qE '^\*\*Files:\*\*' \
+        || { echo "WARN $plan task at L$start: **parallel-group:** set but **Files:** missing"; fail=1; }
+    fi
+  done
+done
+[ $fail -eq 0 ] && echo "Check #15: PASS" || echo "Check #15: WARN"
+```
+
 ---
 
 ## Check #16 — `parallel-group:` and `**Codex:** ok` both set on the same task
@@ -268,6 +506,25 @@ plan task count differs from activity-log task references by >50%.
 `parallel-group:` and `**Codex:** ok` both set on the same task. Section 2 eligibility rule 4 violated; FM-4 mitigation conflict (mutually exclusive).
 
 **`--fix` action:** Report only. Author must remove one of the annotations.
+
+```bash
+fail=0
+for plan in docs/masterplan/*/plan.md; do
+  [ -f "$plan" ] || continue
+  mapfile -t task_lines < <(grep -nE '^### Task [0-9]' "$plan" | cut -d: -f1)
+  for i in "${!task_lines[@]}"; do
+    start="${task_lines[$i]}"
+    end="${task_lines[$((i+1))]:-$(wc -l < "$plan")}"
+    block="$(sed -n "${start},${end}p" "$plan")"
+    if printf '%s\n' "$block" | grep -qE '^\*\*parallel-group:\*\*' \
+    && printf '%s\n' "$block" | grep -qE '^\*\*Codex:\*\* ok'; then
+      echo "WARN $plan task at L$start: **parallel-group:** and **Codex:** ok both set (mutually exclusive)"
+      fail=1
+    fi
+  done
+done
+[ $fail -eq 0 ] && echo "Check #16: PASS" || echo "Check #16: WARN"
+```
 
 ---
 
@@ -279,6 +536,35 @@ File-path overlap detected within a `parallel-group:`. Section 2 eligibility rul
 
 **`--fix` action:** Report the overlapping task pairs. No auto-fix.
 
+```bash
+fail=0
+for plan in docs/masterplan/*/plan.md; do
+  [ -f "$plan" ] || continue
+  declare -A group_files=()
+  mapfile -t task_lines < <(grep -nE '^### Task [0-9]' "$plan" | cut -d: -f1)
+  for i in "${!task_lines[@]}"; do
+    start="${task_lines[$i]}"
+    end="${task_lines[$((i+1))]:-$(wc -l < "$plan")}"
+    block="$(sed -n "${start},${end}p" "$plan")"
+    pg="$(printf '%s\n' "$block" | grep -E '^\*\*parallel-group:\*\*' | head -1 \
+          | sed 's/^\*\*parallel-group:\*\* *//')"
+    [ -z "$pg" ] && continue
+    while IFS= read -r fpath; do
+      [ -z "$fpath" ] && continue
+      key="${pg}|${fpath}"
+      if [ -n "${group_files[$key]:-}" ]; then
+        echo "WARN $plan: file-path overlap in parallel-group '$pg': $fpath (tasks L${group_files[$key]} and L$start)"
+        fail=1
+      else
+        group_files[$key]="$start"
+      fi
+    done < <(printf '%s\n' "$block" | grep -E '^- (Create|Modify|Test):' | awk '{print $NF}')
+  done
+  unset group_files
+done
+[ $fail -eq 0 ] && echo "Check #17: PASS" || echo "Check #17: WARN"
+```
+
 ---
 
 ## Check #18 — Codex config on but plugin missing
@@ -288,6 +574,27 @@ File-path overlap detected within a `parallel-group:`. Section 2 eligibility rul
 Config has `codex.routing != off` OR `codex.review == on` AND no entry prefixed `codex:` is present in the system-reminder skills list at lint time. Step 0's codex-availability detection auto-degrades silently per-run; doctor surfaces the persistent misconfiguration as a Warning so the user notices and either installs codex or sets the defaults to `off`.
 
 **`--fix` action:** Suggest `/plugin marketplace add openai/codex-plugin-cc` then `/plugin install codex@openai-codex` to enable, OR set `codex.routing: off` and `codex.review: off` in `.masterplan.yaml` to suppress this check. No auto-fix (changing user's config is out of scope per CD-2).
+
+```bash
+fail=0
+routing="off"; review="off"
+for cfg in "$HOME/.masterplan.yaml" ".masterplan.yaml"; do
+  [ -r "$cfg" ] || continue
+  r="$(grep -E '^  routing:|^codex_routing:' "$cfg" 2>/dev/null | head -1 | awk '{print $2}' | tr -d '"')"
+  rv="$(grep -E '^  review:|^codex_review:' "$cfg" 2>/dev/null | head -1 | awk '{print $2}' | tr -d '"')"
+  [ -n "$r" ] && routing="$r"
+  [ -n "$rv" ] && review="$rv"
+done
+if [ "$routing" != "off" ] || [ "$review" = "on" ]; then
+  plugin_found=0
+  ls "$HOME/.claude/plugins/"*codex* 2>/dev/null | grep -q . && plugin_found=1
+  if [ $plugin_found -eq 0 ]; then
+    echo "WARN codex.routing=$routing / codex.review=$review but no codex plugin found under ~/.claude/plugins/"
+    fail=1
+  fi
+fi
+[ $fail -eq 0 ] && echo "Check #18: PASS" || echo "Check #18: WARN"
+```
 
 ---
 
@@ -299,6 +606,16 @@ Config has `codex.routing != off` OR `codex.review == on` AND no entry prefixed 
 
 **`--fix` action:** Suggest moving the subagents file to `<config.archive_path>/<date>/`. Cursor file (if present) can simply be deleted. No auto-fix.
 
+```bash
+fail=0
+for f in docs/masterplan/*/subagents.jsonl; do
+  [ -f "$f" ] || continue
+  [ -f "$(dirname "$f")/state.yml" ] \
+    || { echo "WARN $f: orphan subagents file (no sibling state.yml)"; fail=1; }
+done
+[ $fail -eq 0 ] && echo "Check #19: PASS" || echo "Check #19: WARN"
+```
+
 ---
 
 ## Check #20 — Codex routing configured but eligibility cache missing
@@ -308,6 +625,22 @@ Config has `codex.routing != off` OR `codex.review == on` AND no entry prefixed 
 `state.yml` has `codex_routing: auto` OR `codex_routing: manual` AND no bundled `eligibility-cache.json` exists AND `events.jsonl` has at least one `routing→` or `[codex]`/`[inline]` entry.
 
 **`--fix` action:** `--fix`: Rebuild `eligibility-cache.json` deterministically (mirrors Step C step 1's Build path), append an event `eligibility cache: rebuilt (...) -- via doctor --fix`, and commit the cache/state update.
+
+```bash
+fail=0
+for state in docs/masterplan/*/state.yml; do
+  [ -f "$state" ] || continue
+  routing="$(grep -E '^codex_routing:' "$state" | head -1 | awk '{print $2}' | tr -d '"')"
+  case "$routing" in auto|manual) ;; *) continue ;; esac
+  dir="$(dirname "$state")"
+  events="$dir/events.jsonl"
+  [ -f "$events" ] || continue
+  grep -qE 'routing→|\[codex\]|\[inline\]' "$events" 2>/dev/null || continue
+  [ -f "$dir/eligibility-cache.json" ] \
+    || { echo "WARN $state: codex_routing=$routing, routing events present, eligibility-cache.json missing"; fail=1; }
+done
+[ $fail -eq 0 ] && echo "Check #20: PASS" || echo "Check #20: WARN"
+```
 
 ---
 
@@ -319,6 +652,22 @@ Config has `codex.routing != off` OR `codex.review == on` AND no entry prefixed 
 
 **`--fix` action:** Same action as #20. No-`--fix`: suggest re-running the next task via `/masterplan execute <state-path>` with codex installed, or setting `codex_routing: off` in `state.yml` if codex is intentionally disabled for this plan.
 
+```bash
+fail=0
+for state in docs/masterplan/*/state.yml; do
+  [ -f "$state" ] || continue
+  routing="$(grep -E '^codex_routing:' "$state" | head -1 | awk '{print $2}' | tr -d '"')"
+  case "$routing" in auto|manual) ;; *) continue ;; esac
+  dir="$(dirname "$state")"
+  events="$dir/events.jsonl"
+  [ -f "$events" ] || continue
+  grep -qE '"task_completed"|"wave_task_completed"' "$events" 2>/dev/null || continue
+  grep -qE 'eligibility cache:' "$events" 2>/dev/null \
+    || { echo "WARN $state: codex_routing=$routing, completions exist, no 'eligibility cache:' event"; fail=1; }
+done
+[ $fail -eq 0 ] && echo "Check #21: PASS" || echo "Check #21: WARN"
+```
+
 ---
 
 ## Check #22 — High-complexity plan missing rigor evidence
@@ -328,6 +677,30 @@ Config has `codex.routing != off` OR `codex.review == on` AND no entry prefixed 
 Fires when `state.yml` has `complexity: high` AND the run lacks ALL THREE of: (a) a retro artifact/event, (b) at least one `Codex review:` event indicating a review pass, (c) `[reviewed: ...]` tags in >= 50% of task-completion events. Skipped on `complexity: low` and `complexity: medium`.
 
 **`--fix` action:** No auto-fix. Suggest re-running the most recent task with `--complexity=medium` if high is overkill, OR running `/masterplan retro` to generate the retro reference.
+
+```bash
+fail=0
+for state in docs/masterplan/*/state.yml; do
+  [ -f "$state" ] || continue
+  complexity="$(grep -E '^complexity:' "$state" | head -1 | awk '{print $2}' | tr -d '"')"
+  [ "$complexity" = "high" ] || continue
+  dir="$(dirname "$state")"
+  events="$dir/events.jsonl"
+  retro_path="$(grep -E '^[[:space:]]+retro:' "$state" | head -1 | awk '{print $2}' | tr -d '"')"
+  has_retro=0
+  { [ -n "$retro_path" ] && [ -f "$retro_path" ]; } && has_retro=1
+  { [ -f "$dir/retro.md" ]; } && has_retro=1
+  has_review=0
+  [ -f "$events" ] && grep -qE 'Codex review:.*pass' "$events" 2>/dev/null && has_review=1
+  has_tags=0
+  [ -f "$events" ] && grep -qE '\[reviewed:' "$events" 2>/dev/null && has_tags=1
+  if [ $has_retro -eq 0 ] && [ $has_review -eq 0 ] && [ $has_tags -eq 0 ]; then
+    echo "WARN $state: complexity=high but no retro/codex-review/reviewed-tags evidence found"
+    fail=1
+  fi
+done
+[ $fail -eq 0 ] && echo "Check #22: PASS" || echo "Check #22: WARN"
+```
 
 ---
 
@@ -339,6 +712,34 @@ Fires when `state.yml` has `complexity: high` AND the run lacks ALL THREE of: (a
 
 **`--fix` action:** Surface `AskUserQuestion` per finding: "Detected `<N>` SDD/wave/eligibility dispatch(es) with `model: opus` (cost contract calls for sonnet). How to proceed? — `Run \`bin/masterplan-self-host-audit.sh --models\` to lint orchestrator dispatch sites (Recommended)` / `Investigate transcript: print suspected session prompts from JSONL` / `Suppress for this plan (sets model_attribution_suppressed: true in state.yml)` / `Skip this finding only`". The first option chains into running the audit script and surfacing its output. See §Agent dispatch contract recursive-application for the verbatim preamble that should be present in SDD invocations.
 
+```bash
+fail=0
+for state in docs/masterplan/*/state.yml; do
+  [ -f "$state" ] || continue
+  dir="$(dirname "$state")"
+  subs="$dir/subagents.jsonl"
+  [ -f "$subs" ] || continue
+  total="$(wc -l < "$subs")"
+  start=1; [ "$total" -gt 20 ] && start=$(( total - 19 ))
+  while IFS= read -r rec; do
+    dispatch="$(printf '%s' "$rec" | jq -r '.dispatch_site // empty' 2>/dev/null)"
+    routing_class="$(printf '%s' "$rec" | jq -r '.routing_class // empty' 2>/dev/null)"
+    model="$(printf '%s' "$rec" | jq -r '.model // empty' 2>/dev/null)"
+    prompt_first="$(printf '%s' "$rec" | jq -r '.prompt_first_line // empty' 2>/dev/null)"
+    [ "$model" = "opus" ] || continue
+    printf '%s\n' "$prompt_first" | grep -q 're-dispatched with model=opus per blocker gate' && continue
+    sdd_site=0
+    case "$dispatch" in *"Step C step 1"*|*"Step C step 2 wave"*|*"Step C step 2 SDD"*) sdd_site=1 ;; esac
+    [ "$routing_class" = "sdd" ] && sdd_site=1
+    [ $sdd_site -eq 1 ] && {
+      echo "WARN $(basename "$dir"): SDD/wave dispatch with model=opus (should be sonnet): $dispatch"
+      fail=1
+    }
+  done < <(sed -n "${start},${total}p" "$subs" 2>/dev/null)
+done
+[ $fail -eq 0 ] && echo "Check #23: PASS" || echo "Check #23: WARN"
+```
+
 ---
 
 ## Check #24 — State-write queue file present and non-empty
@@ -348,6 +749,19 @@ Fires when `state.yml` has `complexity: high` AND the run lacks ALL THREE of: (a
 (F.4 mitigation, v2.8.0+). `state.queue.jsonl` exists with non-zero size, AND `state.yml` shows no `last_activity` update within the last `config.loop_interval_seconds`.
 
 **`--fix` action:** `--fix`: replay each queued entry into `events.jsonl` / `state.yml` idempotently, then truncate the queue file. No-`--fix`: report queued-entry count + suggest `/masterplan --resume=<state-path>` to trigger drain naturally.
+
+```bash
+fail=0
+for state in docs/masterplan/*/state.yml; do
+  [ -f "$state" ] || continue
+  queue="$(dirname "$state")/state.queue.jsonl"
+  [ -s "$queue" ] || continue
+  count="$(wc -l < "$queue")"
+  echo "WARN $state: $count queued state write(s) in $(basename "$queue") — resume with /masterplan execute to drain"
+  fail=1
+done
+[ $fail -eq 0 ] && echo "Check #24: PASS" || echo "Check #24: WARN"
+```
 
 ---
 
@@ -365,6 +779,20 @@ _This check ID was retired in an earlier version. Reserved to prevent renumberin
 
 **`--fix` action:** No `--fix` available; report the copy-pasteable `/loop {config.auto_compact.interval} /compact {config.auto_compact.focus}` command and the run slugs whose `state.yml` has `compact_loop_recommended: true`.
 
+```bash
+compact_needed=0
+for state in docs/masterplan/*/state.yml; do
+  [ -f "$state" ] || continue
+  val="$(grep -E '^compact_loop_recommended:' "$state" | head -1 | awk '{print $2}' | tr -d '"')"
+  [ "$val" = "true" ] && compact_needed=1 && break
+done
+if [ $compact_needed -eq 0 ]; then
+  echo "Check #26: PASS (no bundles have compact_loop_recommended:true)"
+else
+  echo "Check #26: SKIP (CronList API access required to verify loop attachment — run /masterplan doctor for full check)"
+fi
+```
+
 ---
 
 ## Check #27 — Reserved
@@ -381,6 +809,22 @@ _This check ID was retired in an earlier version. Reserved to prevent renumberin
 
 **`--fix` action:** Surface `AskUserQuestion` per finding: generate retro + archive run bundle (Recommended), generate retro only, skip this plan, or skip all findings this run.
 
+```bash
+fail=0
+for state in docs/masterplan/*/state.yml; do
+  [ -f "$state" ] || continue
+  status="$(grep -E '^status:' "$state" | head -1 | awk '{print $2}' | tr -d '"')"
+  [ "$status" = "complete" ] || continue
+  dir="$(dirname "$state")"
+  retro_path="$(grep -E '^[[:space:]]+retro:' "$state" | head -1 | awk '{print $2}' | tr -d '"')"
+  if { [ -z "$retro_path" ] || [ ! -f "$retro_path" ]; } && [ ! -f "$dir/retro.md" ]; then
+    echo "WARN $state: status=complete but no retro artifact (neither artifacts.retro nor retro.md found)"
+    fail=1
+  fi
+done
+[ $fail -eq 0 ] && echo "Check #28: PASS" || echo "Check #28: WARN"
+```
+
 ---
 
 ## Check #29 — Worktree-bundle reconciliation mismatch
@@ -390,6 +834,25 @@ _This check ID was retired in an earlier version. Reserved to prevent renumberin
 (v4.0.0+). Cross-repo: enumerate `git worktree list --porcelain` for the current repo; for each worktree path, find any bundle's `state.yml.worktree:` pointing at it. Surface: (a) bundles claiming a worktree path not registered in `git worktree list` (`worktree_missing`); (b) worktree paths registered in git with no bundle pointer (`worktree_orphan_untracked`). Skip worktrees with `worktree_disposition: removed_after_merge` or `kept_by_user` — those are intentionally settled.
 
 **`--fix` action:** `--fix`: for (a), set `worktree_disposition: missing`, clear `worktree:` field, write state, commit. For (b): report only (user must decide).
+
+```bash
+fail=0
+declare -a git_wts=()
+while IFS= read -r wt; do
+  git_wts+=("$wt")
+done < <(git worktree list --porcelain 2>/dev/null | grep '^worktree ' | awk '{print $2}')
+for state in docs/masterplan/*/state.yml; do
+  [ -f "$state" ] || continue
+  disposition="$(grep -E '^worktree_disposition:' "$state" | head -1 | awk '{print $2}' | tr -d '"')"
+  case "$disposition" in removed_after_merge|kept_by_user) continue ;; esac
+  claimed="$(grep -E '^worktree:' "$state" | head -1 | awk '{print $2}' | tr -d '"')"
+  [ -z "$claimed" ] && continue
+  found=0
+  for wt in "${git_wts[@]}"; do [ "$claimed" = "$wt" ] && found=1 && break; done
+  [ $found -eq 0 ] && { echo "WARN $state: worktree_missing — '$claimed' not in git worktree list"; fail=1; }
+done
+[ $fail -eq 0 ] && echo "Check #29: PASS" || echo "Check #29: WARN"
+```
 
 ---
 
@@ -401,6 +864,34 @@ _This check ID was retired in an earlier version. Reserved to prevent renumberin
 
 **`--fix` action:** Report only. Auto-bumping is risky — canonical-source authority is ambiguous when multiple manifests have drifted. Suggest editing alongside the CHANGELOG entry for the next release. See `RELEASING.md` for the full release checklist.
 
+```bash
+fail=0
+canonical=""
+[ -f ".claude-plugin/plugin.json" ] && \
+  canonical="$(jq -r '.version // empty' ".claude-plugin/plugin.json" 2>/dev/null)"
+if [ -z "$canonical" ]; then
+  echo "Check #30: SKIP (.claude-plugin/plugin.json not found)"
+else
+  for f in ".codex-plugin/plugin.json" ".claude-plugin/marketplace.json"; do
+    [ -f "$f" ] || continue
+    v="$(jq -r '.version // empty' "$f" 2>/dev/null)"
+    [ -n "$v" ] && [ "$v" != "$canonical" ] && \
+      { echo "WARN $f: version drift: $v (canonical: $canonical)"; fail=1; }
+    if [ "$f" = ".claude-plugin/marketplace.json" ]; then
+      nv="$(jq -r '.plugins[0].version // empty' "$f" 2>/dev/null)"
+      [ -n "$nv" ] && [ "$nv" != "$canonical" ] && \
+        { echo "WARN $f[plugins[0].version]: version drift: $nv (canonical: $canonical)"; fail=1; }
+    fi
+  done
+  if [ -f "README.md" ]; then
+    rv="$(grep -oP 'Current release:.*v\K[0-9]+\.[0-9]+\.[0-9]+' README.md | head -1)"
+    [ -n "$rv" ] && [ "$rv" != "$canonical" ] && \
+      { echo "WARN README.md: Current release version drift: $rv (canonical: $canonical)"; fail=1; }
+  fi
+  [ $fail -eq 0 ] && echo "Check #30: PASS" || echo "Check #30: WARN"
+fi
+```
+
 ---
 
 ## Check #31 — Per-autonomy gate-condition consistency
@@ -410,6 +901,30 @@ _This check ID was retired in an earlier version. Reserved to prevent renumberin
 (repo-scoped, v4.2.1+). Static anchor table for gate-decision sites in `parts/step-b.md`: `spec_approval` expects `--autonomy != full`; `plan_approval` expects `--autonomy == gated`. For each entry: grep `parts/step-b.md` for anchor, read next 3 lines, regex-match condition. Anchor missing → flag missing site; condition mismatch → flag drift. Extend table when adding new gate sites. Implementation: inline.
 
 **`--fix` action:** Report only. Auto-rewriting gate conditions in the orchestrator prompt is never safe — these are deliberate semantic choices made per-release.
+
+```bash
+fail=0
+step_b="parts/step-b.md"
+if [ ! -f "$step_b" ]; then
+  echo "Check #31: SKIP (parts/step-b.md not found)"
+else
+  if grep -q 'spec_approval' "$step_b"; then
+    ctx="$(grep -A4 'spec_approval' "$step_b" | head -8)"
+    printf '%s\n' "$ctx" | grep -qiE 'autonomy.*(!=|not|loose|gated)' \
+      || { echo "WARN $step_b: spec_approval gate missing autonomy!=full condition"; fail=1; }
+  else
+    echo "WARN $step_b: spec_approval anchor not found"; fail=1
+  fi
+  if grep -q 'plan_approval' "$step_b"; then
+    ctx="$(grep -A4 'plan_approval' "$step_b" | head -8)"
+    printf '%s\n' "$ctx" | grep -qiE 'autonomy.*(==|is|=.*gated|gated)' \
+      || { echo "WARN $step_b: plan_approval gate missing autonomy==gated condition"; fail=1; }
+  else
+    echo "WARN $step_b: plan_approval anchor not found"; fail=1
+  fi
+  [ $fail -eq 0 ] && echo "Check #31: PASS" || echo "Check #31: WARN"
+fi
+```
 
 ---
 
@@ -594,6 +1109,16 @@ grep -q 'CC-3-trampoline' parts/step-0.md || \
 grep -q 'DISPATCH-SITE: step-c-resume.md' parts/step-c-resume.md 2>/dev/null || \
   { echo "WARN DISPATCH-SITE labels missing from step-c-resume.md"; fail=1; }
 [ $fail -eq 0 ] && echo "Check #36: PASS" || echo "Check #36: WARN"
+```
+
+---
+
+## Check #37 — Reserved
+
+_This check ID was retired in an earlier version. Reserved to prevent renumbering of subsequent checks._
+
+```bash
+echo "Check #37: SKIP (reserved — retired check ID)"
 ```
 
 ---
@@ -852,14 +1377,21 @@ Report-only. Sub-fire (b) usually co-fires with #40 on the same plan.
 
 Stat `<bundle>/.lock`; emit WARN when mtime > 1 hour. False-positive risk exists (long-running write). Fix: confirm no live writer, then `rm <bundle>/.lock`.
 
-**Implementation:** For each bundle in the scan, run:
 ```bash
-if [[ -f "${bundle}/.lock" ]]; then
-  lock_age=$(( $(date +%s) - $(stat -c %Y "${bundle}/.lock" 2>/dev/null || echo 0) ))
-  if [[ $lock_age -gt 3600 ]]; then
-    emit_finding 42 WARN "${bundle}/.lock" "lockfile age ${lock_age}s exceeds 1h threshold; possible wedged writer"
+fail=0
+now="$(date +%s)"
+for state in docs/masterplan/*/state.yml; do
+  [ -f "$state" ] || continue
+  lock="$(dirname "$state")/.lock"
+  [ -f "$lock" ] || continue
+  mtime="$(stat -c %Y "$lock" 2>/dev/null || echo 0)"
+  age=$(( now - mtime ))
+  if [ "$age" -gt 3600 ]; then
+    echo "WARN $lock: lockfile age ${age}s exceeds 1h threshold (possible wedged writer)"
+    fail=1
   fi
-fi
+done
+[ $fail -eq 0 ] && echo "Check #42: PASS" || echo "Check #42: WARN"
 ```
 
 ---
@@ -881,6 +1413,30 @@ fi
 **Action:** Report bundle slug, coverage percentage, and list of `wave_task_completed` events lacking a paired `review→` event.
 
 **Expected backfill warnings:** Running this check against existing bundles `concurrency-guards` and `p4-suppression-smoke` should WARN — both predate the wave-mode review-visibility rule. This is expected and does not indicate a regression.
+
+```bash
+fail=0; skip=0
+for state in docs/masterplan/*/state.yml; do
+  [ -f "$state" ] || continue
+  codex_host="$(grep -E '^codex_host:' "$state" | head -1 | awk '{print $2}' | tr -d '"')"
+  [ "$codex_host" = "true" ] && { skip=$((skip+1)); continue; }
+  dir="$(dirname "$state")"
+  slug="$(basename "$dir")"
+  events="$dir/events.jsonl"
+  [ -f "$events" ] || continue
+  completed="$(grep -c '"wave_task_completed"' "$events" 2>/dev/null || echo 0)"
+  [ "${completed:-0}" -eq 0 ] && continue
+  reviewed="$(grep -c 'review→' "$events" 2>/dev/null || echo 0)"
+  if [ "${reviewed:-0}" -lt "${completed:-0}" ]; then
+    gap=$(( completed - reviewed ))
+    pct=$(( reviewed * 100 / completed ))
+    echo "WARN $slug: wave_task_completed=$completed, review→ events=$reviewed (${pct}% coverage, $gap uncovered)"
+    fail=1
+  fi
+done
+[ $skip -gt 0 ] && echo "INFO: $skip Codex-hosted run(s) skipped (codex_host:true)"
+[ $fail -eq 0 ] && echo "Check #43: PASS" || echo "Check #43: WARN"
+```
 
 ---
 
