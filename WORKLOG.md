@@ -160,3 +160,13 @@ Committed directly on `worktree-hoist-run-policy` branch (no bundle bookkeeping 
 - CHANGELOG v6.2.1.
 
 **Key decision:** silent-exit detection keys off git diff (primary) not Codex return fields — non-wave Codex returns are free-form text, not field-structured. Two-failure threshold avoids aggressive fallback on transient daemon restarts.
+
+## 2026-05-23 — post-merge fixes (main, no bundle)
+
+Three targeted fixes committed directly to main after the hoist-run-policy branch finish. All 100/100 tests pass (8 structural + 92 fixtures).
+
+**Check #39 — chatgpt gate widened from 7d to 30d** (`commands/masterplan.md` + `parts/doctor.md`): ChatGPT refresh_token is long-lived; `last_refresh` > 7 days just means Codex hasn't been invoked recently, not that auth is broken. 8-day idle was false-firing as `degraded`.
+
+**Annotation scan spec — accept `true`/`false` aliases** (`parts/step-c-resume.md` + `parts/doctor.md`): The authoritative annotation-completeness scan definition (step 1 of the Build path) said "any other value disqualifies" — only `ok`/`no`. The prose at line 134 and `plan-annotations.md` already documented `true`/`false` as aliases; the scan spec was never updated. Plans emitted by `writing-plans` (which uses `true`/`false`) were silently falling back to Haiku build instead of taking the inline cache path. Fixed; also clears the `masterplan-token-efficiency` bundle follow-up.
+
+**Check #46 — code-fence skip** (`parts/doctor.md` + 3 new fixtures): The CC-2 self-enforcement check was false-firing on doctor.md's 47 embedded bash blocks. Added `in_fence` state tracking: lines inside ` ```bash ` … ` ``` ` blocks are skipped. Also removes ` ```bash ` from the consecutive-trigger pattern (it now enters fence state instead). Three fixtures: `pass-clean`, `fail-violation`, `pass-fenced`.
