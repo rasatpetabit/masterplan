@@ -9,6 +9,10 @@ Add a coordinator when:
 1. The orchestrator would load a file ≥20KB for a task.
 2. The task is structurally read-only (builds a cache, classifies, runs verification).
 3. A ≤1000-token JSON return captures everything the orchestrator needs to act.
+4. The orchestrator would otherwise run 3+ consecutive Bash-type directives (inline reads, shell
+   commands, external process invocations) feeding one decision without a Haiku gate — CC-2
+   mandates a gate, and a coordinator is the preferred gate form when the read target is a
+   structured artifact.
 
 ## Adding a New Coordinator
 

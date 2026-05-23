@@ -12,6 +12,9 @@ Tasks in the plan are grouped into waves by `**Parallel-group:**` annotations. A
 - Parallel-grouped tasks must have exhaustive `**Files:**` blocks (required at `complexity == high`).
 - Codex-eligible tasks (`**Codex:** true`) are dispatched to `codex:codex-rescue`.
 - Parallel-grouped tasks must be read-only or write only to gitignored paths.
+- Orchestrator must not accumulate 3+ consecutive inline reads or Bash-type calls without a
+  coordinator or `dispatch Haiku` gate (CC-2 rule). Add a coordinator when the call target is
+  a structured artifact ≥20KB; use a Haiku gate for smaller reads or shell commands.
 
 ### Codex Routing Decision Tree
 
