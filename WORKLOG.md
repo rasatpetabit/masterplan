@@ -48,3 +48,22 @@ Stale `.lock` at `docs/masterplan/concurrency-guards/.lock` (39h+) — `rm` it a
 Patched `codex-companion.mjs` (both marketplace and 1.0.4 cache copies) at line 488. Root cause: `workspace-write` sandbox blacklists `.git/` paths; in git worktrees the index lives at `<main>/.git/worktrees/<name>/index` — outside the worktree root and doubly blocked. Fix: detect worktree context via `fs.stat(<cwd>/.git).isFile()` and use `danger-full-access` instead of `workspace-write`. Probe confirmed: write tasks in worktrees now succeed. This unblocks Codex dispatch for all masterplan bundles running in git worktrees.
 
 **Pending follow-ups:** adversarial-review integration into masterplan workflow (new bundle); writing-plans annotation mismatch (v6.0.1).
+
+## 2026-05-23 — execution complete: improve-regression-detection
+
+All 15 tasks completed. Final state: 9/9 tests pass on `worktree-improve-regression-detection` (6 fast + 3 full). 89 doctor-fixture checks pass (checks #1-#45 fully covered, reserved/retired IDs skipped).
+
+**Key deliverables:**
+- `tests/structural/test-coordinator-dispatch.sh` (A1-A4) — verifies DISPATCH-SITE markers, return-shape caps, CC-2 guard, fallback docs
+- `tests/structural/test-step-c-split.sh` (B1-B4) — verifies 4-file split, no duplicate headers, CC-3 trampoline, xref resolution
+- Doctor fixtures for checks #1-#45 (89 fixtures, 0 failures)
+- `tests/hook-unit/test-telemetry-sections.sh` (C1-C4) — hook syntax, exit code, anomaly detectors (step-trace-gap + silent-stop-after-skill)
+- `tests/hook-unit/test-self-host-audit.sh` (D1-D3) — self-host audit passes with step-c split
+- `bin/run-tests.sh`, `bin/run-tests-fast.sh` aliases
+
+**Audit fixes shipped alongside tests:**
+- `bin/masterplan-self-host-audit.sh`: updated `check_cd9_coverage` and `check_dispatch_sites` for step-c split; added `complete` status to `_plan_bundle_is_archived`
+
+**Known pre-existing gap:** main repo's `test-cross-refs` fails (coordinator contract IDs in parts/*.md but not in masterplan-contracts.md; pre-dates this bundle). `--full --all-worktrees` exits 1 until main branch is fixed.
+
+Ready for retro + merge to main.

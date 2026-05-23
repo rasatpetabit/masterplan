@@ -1,78 +1,85 @@
-schema_version: 3
-slug: improve-regression-detection
-topic: Improve the robustness of masterplan regression detection
-status: in-progress
-phase: spec_gate
-worktree: /srv/dev/superpowers-masterplan/.worktrees/improve-regression-detection
-branch: worktree-improve-regression-detection
-started: 2026-05-22T00:00:00Z
-last_activity: 2026-05-22T00:00:00Z
-complexity: high
-autonomy: loose
-codex_routing: auto
-codex_review: on
-loop_enabled: false
-current_task: ""
-next_action: approve spec for planning
-plan_kind: implementation
-follow_ups: []
-pending_gate: null
-background: null
-stop_reason: question
-critical_error: null
-compact_loop_recommended: false
-pending_retro_attempts: 0
-retro_policy:
-  waived: false
-  reason: ""
-scope_fingerprint:
-  - improv
-  - robust
-  - masterplan
-  - regress
-  - detect
-supersedes: ""
-superseded_by: ""
-variant_of: ""
-import_hydration: ""
-import_contract:
-  contract_id: ""
-  inputs_hash: ""
-  processed_at: ""
-worktree_disposition: active
-worktree_last_reconciled: "2026-05-22T00:00:00Z"
 artifacts:
-  spec: docs/masterplan/improve-regression-detection/spec.md
   plan: docs/masterplan/improve-regression-detection/plan.md
   retro: docs/masterplan/improve-regression-detection/retro.md
+  spec: docs/masterplan/improve-regression-detection/spec.md
+autonomy: loose
+background: null
 brainstorm_anchor:
-  mode: implementation-design
-  repo_role: "Claude Code plugin whose entire source code is a ~2150-line markdown orchestrator prompt (commands/masterplan.md) plus bash/python support tooling; no compiled code, verification is grep + bash -n + smoke runs."
-  yocto_ownership: null
-  in_scope_paths:
-    - commands/masterplan.md
-    - parts/doctor.md
-    - bin/masterplan-policy-regression-smoke.sh
-    - tests/static/
-    - tests/doctor-fixtures/
-    - tests/run-static.sh
-    - bin/masterplan-state.sh
-    - hooks/masterplan-telemetry.sh
-  out_of_scope_repos: []
   evidence:
-    - "bin/masterplan-policy-regression-smoke.sh exists — existing regression smoke harness to build on"
-    - "tests/static/ has 4 static tests: manifest-drift, bash-blocks, yaml-frontmatter, cross-refs"
-    - "tests/doctor-fixtures/ has check-32 through check-41 with pass/fail fixture suites"
-    - "parts/doctor.md contains Checks #32–#47; new checks require updating 5 sync'd locations"
-    - "Verification is grep + bash -n + hand-crafted smoke; no compiled test runner beyond tests/run-static.sh"
-    - "commands/masterplan.md is ~2150 lines; large edits require fresh-eyes Explore subagent"
-    - "Most recent prior bundle adversarial-review-integration is complete (ran on main)"
-    - "tests/run-static.sh and tests/e2e/run.sh are the test runners"
-  verification_ceiling: local-static
+  - bin/masterplan-policy-regression-smoke.sh exists — existing regression smoke harness
+    to build on
+  - 'tests/static/ has 4 static tests: manifest-drift, bash-blocks, yaml-frontmatter,
+    cross-refs'
+  - tests/doctor-fixtures/ has check-32 through check-41 with pass/fail fixture suites
+  - 'parts/doctor.md contains Checks #32–#47; new checks require updating 5 sync''d
+    locations'
+  - Verification is grep + bash -n + hand-crafted smoke; no compiled test runner beyond
+    tests/run-static.sh
+  - commands/masterplan.md is ~2150 lines; large edits require fresh-eyes Explore
+    subagent
+  - Most recent prior bundle adversarial-review-integration is complete (ran on main)
+  - tests/run-static.sh and tests/e2e/run.sh are the test runners
   gate_selection: null
+  in_scope_paths:
+  - commands/masterplan.md
+  - parts/doctor.md
+  - bin/masterplan-policy-regression-smoke.sh
+  - tests/static/
+  - tests/doctor-fixtures/
+  - tests/run-static.sh
+  - bin/masterplan-state.sh
+  - hooks/masterplan-telemetry.sh
   interview_depth:
     complexity: high
     seriousness: serious
+    target_question_count: 8-12
     understanding_level: partial
-    target_question_count: "8-12"
+  mode: implementation-design
+  out_of_scope_repos: []
+  repo_role: Claude Code plugin whose entire source code is a ~2150-line markdown
+    orchestrator prompt (commands/masterplan.md) plus bash/python support tooling;
+    no compiled code, verification is grep + bash -n + smoke runs.
+  verification_ceiling: local-static
+  yocto_ownership: null
+branch: worktree-improve-regression-detection
+codex_review: true
+codex_routing: auto
+compact_loop_recommended: false
+complexity: high
+critical_error: null
+current_task: ''
+follow_ups: []
+import_contract:
+  contract_id: ''
+  inputs_hash: ''
+  processed_at: ''
+import_hydration: ''
+last_activity: '2026-05-23T10:30:00.000000+00:00'
 legacy: {}
+loop_enabled: false
+next_action: retro + merge to main
+pending_gate: null
+pending_retro_attempts: 0
+phase: complete
+plan_kind: implementation
+retro_policy:
+  reason: ''
+  waived: false
+schema_version: 3
+scope_fingerprint:
+- improv
+- robust
+- masterplan
+- regress
+- detect
+slug: improve-regression-detection
+started: 2026-05-22 00:00:00+00:00
+status: complete
+stop_reason: question
+superseded_by: ''
+supersedes: ''
+topic: Improve the robustness of masterplan regression detection
+variant_of: ''
+worktree: /srv/dev/superpowers-masterplan/.worktrees/improve-regression-detection
+worktree_disposition: active
+worktree_last_reconciled: '2026-05-22T00:00:00Z'
