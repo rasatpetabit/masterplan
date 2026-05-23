@@ -20,8 +20,7 @@ next_action: none
 pending_gate: null
 stop_reason: null
 plan_kind: implementation
-follow_ups:
-  - "writing-plans skill emits Codex annotations as true/false instead of ok/no tokens required by step-c.md annotation-completeness scan; auto-falls-back to Haiku build, defeats inline path (v6.0 fix candidate)"
+follow_ups: []
 background: null
 critical_error: null
 pending_retro_attempts: 0
