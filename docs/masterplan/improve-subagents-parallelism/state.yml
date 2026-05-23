@@ -1,8 +1,8 @@
 schema_version: 3
 slug: improve-subagents-parallelism
 topic: Improve use of subagents and parallelism
-status: in-progress
-phase: brainstorming
+status: spec-complete
+phase: spec_complete
 worktree: /srv/dev/superpowers-masterplan/.worktrees/improve-subagents-parallelism
 branch: worktree-improve-subagents-parallelism
 started: 2026-05-22T00:00:00Z
@@ -14,7 +14,7 @@ codex_review: on
 loop_enabled: false
 halt_mode: post-brainstorm
 current_task: ""
-next_action: resolve brainstorm intent anchor
+next_action: resume with /masterplan plan improve-subagents-parallelism when ready
 plan_kind: implementation
 follow_ups: []
 pending_gate: null
@@ -48,9 +48,13 @@ brainstorm_anchor:
   in_scope_paths:
     - commands/masterplan.md
     - parts/step-b.md
-    - parts/step-c.md
+    - parts/step-c-resume.md
+    - parts/step-c-dispatch.md
+    - parts/step-c-verification.md
+    - parts/step-c-completion.md
     - parts/step-0.md
-    - docs/internals.md
+    - docs/internals/coordinator-pattern.md
+    - docs/internals/wave-dispatch.md
     - bin/masterplan-state.sh
     - hooks/masterplan-telemetry.sh
   out_of_scope_repos: []
