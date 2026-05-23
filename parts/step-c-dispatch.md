@@ -37,6 +37,36 @@
 5. **Interleaved groups do not parallelize.** Plan-order is authoritative; the contiguous-walk rule produces multiple single-task wave candidates if parallel-grouped tasks are interleaved with serial tasks. Planner is responsible for ordering parallel-grouped tasks contiguously to enable wave dispatch.
 6. **If `config.parallelism.enabled == false`** (global kill switch from `--no-parallelism` flag or config), skip wave assembly entirely — fall through to the standard serial loop.
 
+**Run-policy gate (v5.9.0+, first wave only).** When a wave of ≥ 2 tasks assembles and `run_policy` is not yet set for this session, fire the upfront gate before dispatching:
+
+<masterplan-trace gate=fire id=run_policy auq-options=4>
+
+```
+AskUserQuestion(
+  question="About to dispatch a parallel wave of <N> tasks (group: <name>). Set run policy for this session:",
+  options=[
+    "Parallel + ask on each blocker (Recommended) — fastest; pauses at each block to ask",
+    "Parallel + async hold on blocker — fastest; holds blocked tasks and surfaces them at next check-in",
+    "Serial + ask on each blocker — safest; one task at a time",
+    "Serial + halt on any blocker — serial execution; stops everything on first block"
+  ]
+)
+```
+
+Set `run_policy` from selection:
+- Option 1: `{parallelism: parallel, on_blocker: ask}`
+- Option 2: `{parallelism: parallel, on_blocker: async_hold}`
+- Option 3: `{parallelism: serial, on_blocker: ask}`
+- Option 4: `{parallelism: serial, on_blocker: halt}`
+
+**Default (gate dismissed / `run_policy` not yet set):** `{parallelism: serial, on_blocker: ask}` — no behavior change from current.
+
+After gate: if `run_policy.parallelism == serial`, fall through to standard per-task serial dispatch (skip wave assembly). If `parallel`, proceed to wave dispatch below.
+
+On subsequent wave assemblies this session: `run_policy` is already set — read it directly without re-firing the gate.
+
+**`on_blocker: async_hold` semantics.** When a wave member returns `status: blocked` and `run_policy.on_blocker == async_hold`: mark the task as `held` (not `blocked`) in session memory. Continue dispatching remaining tasks and subsequent waves. Accumulate all held tasks. At plan completion (or at the next `/masterplan` invocation), surface held tasks in a single AUQ: `"<N> tasks were held during this run."` with options `[Review and retry each / Skip all held tasks / Abort run]`.
+
 **When a wave assembles** (≥ 2 tasks): append a `wave_routing_summary` visibility event at wave-entry with shape `{wave, members_by_route: {codex: N, inline_review: N, inline_no_review: N}}`, where `wave` identifies the parallel group / task-index span and `members_by_route` counts the assembled wave members by their Step 3a route bucket. Then set `cache_pinned_for_wave: true`. Dispatch all N implementer subagents as parallel `Agent` tool calls in a single assistant turn (existing pattern in Step I3.2/I3.4). **Pass `model: "sonnet"` on each Agent call** per §Agent dispatch contract — wave members are general-purpose implementers, not Opus-grade reasoning. Each instance gets the standard implementer brief PLUS three wave-specific clauses:
 
 > *"WAVE CONTEXT: You are dispatched as part of a parallel wave of N tasks (group: `<name>`). Your declared scope is `**Files:**` (exhaustive — do not read or modify anything outside this list, including plan.md, state.yml, events.jsonl, sibling tasks' scopes, or the eligibility cache). Capture `git rev-parse HEAD` BEFORE any work; return as `task_start_sha` (required per existing implementer-return contract). DO NOT commit your work — return staged-changes digest only. DO NOT update run state — orchestrator handles batched wave-end updates. Failure handling: if you BLOCK or NEEDS_CONTEXT, return immediately; orchestrator's blocker re-engagement gate handles you alongside the rest of the wave."*
@@ -228,6 +258,8 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
     Return: <expected diff + verification output>
     ```
 
+    **API error handling.** If the `codex:codex-rescue` dispatch fails with a transport or rate-limit error, apply the retry schedule in `docs/conventions/api-retry-policy.md` before promoting to a blocker. The same policy applies to inline `Agent()` dispatch.
+
     **After Codex returns** — always review (apply **CD-10**):
     - **Background return** — if Codex returns a background handle instead of a final digest, do not close with free text like "when it finishes I'll review." Under `<run-dir>/state.lock`, keep `status: in-progress`, keep `current_task` on the dispatched task, set `phase: executing`, set `next_action: poll background task for <task>`, write the `background:` object described in the run-bundle contract, and append `background_started`.
       - If `ScheduleWakeup` is available, schedule `/masterplan --resume=<state-path>` and append `wakeup_scheduled`, then close.
@@ -235,6 +267,12 @@ After the wave-completion barrier, proceed to Step C 4-series (4a/4b/4c/4d) for 
       - The next Step C entry MUST execute the Background-dispatch resume check before any new routing or redispatch.
     - **`gated`** — present diff + verification output via `AskUserQuestion(Accept / Reject and rerun inline / Reject and rerun in Codex with feedback)`.
     - **`loose` / `full`** — auto-accept if verification passed cleanly. If verification failed, fall back to inline rerun under `superpowers:systematic-debugging` and apply the autonomy's blocker policy from above (which itself triggers **CD-4** ladder work).
+    - **Silent exit (infra failure)** — if Codex returns but the expected file changes didn't happen, treat as an infrastructure failure (distinct from a semantic `blocked` result). Apply the policy in `docs/conventions/codex-failure-policy.md`:
+      - **Detection (primary):** `git diff --stat <task_start_sha>..HEAD` is empty (serial dispatch) or `staged_changes_digest` is null/empty (wave members), AND the task's `**Files:**` section declared `Create:` or `Modify:` paths.
+      - **Detection (secondary):** return text contains `app-server control socket`, `ECONNREFUSED`, or `socket already in use` → classify as daemon-broken sub-type.
+      - **Auth-degraded fast path:** if `~/.codex/auth.json` `last_refresh` > 7 days (non-chatgpt mode), skip streak and route inline immediately with `⚠ Codex auth degraded — routing <task> inline. Run: codex login`.
+      - **Streak 1:** emit `⚠ Codex silent exit on <task> (attempt 1/2) — retrying dispatch` and redispatch once.
+      - **Streak ≥ 2:** emit `⚠ Codex infrastructure failure on <task> (2 consecutive silent exits) — routing inline` and run inline. Track in session-only `codex_failure_streak[task_name]`; reset to 0 on successful Codex return.
 
-    Append a `[codex]` or `[inline]` tag to the completion event for each completed task so future-you can see the routing distribution.
+    Append a `[codex]`, `[inline]`, or `[inline:codex-fallback]` tag to the completion event for each completed task so future-you can see the routing distribution. Use `[inline:codex-fallback]` when the inline run was triggered by the silent-exit threshold above.
 

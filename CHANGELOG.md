@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.2.1] — 2026-05-23
+
+### Added
+
+- **Codex failure policy** (`docs/conventions/codex-failure-policy.md`): New conventions doc classifying Codex-specific infrastructure failures not covered by `api-retry-policy.md`: silent exit (worker spawns but no file changes occur), daemon-broken (socket/ECONNREFUSED error patterns), and auth-degraded (stale `last_refresh`). Documents two-consecutive-failure threshold before inline fallback, session-only `codex_failure_streak[task_name]` counter, auth-degraded fast path (skip streak, inline immediately), and user-facing notices per failure type.
+- **Silent-exit detection** (`parts/step-c-dispatch.md`): New "Silent exit (infra failure)" bullet in the "After Codex returns" section. Primary signal: empty `git diff --stat` against `task_start_sha` when plan declared `Create:`/`Modify:` paths. Secondary signal: socket/ECONNREFUSED error patterns in return text (daemon-broken sub-type). Completion events now use `[inline:codex-fallback]` tag when inline routing was triggered by infra failure.
+- **`tests/structural/test-codex-failure-policy.sh`**: Structural test covering policy doc content (silent exit, daemon-broken, auth-degraded, streak counter, cross-refs) and `step-c-dispatch.md` cross-reference.
+
+## [6.2.0] — 2026-05-23
+
+### Added
+
+- **Run-policy gate** (`parts/step-c-dispatch.md`): Single upfront AUQ fires at first parallel wave assembly to capture both parallelism choice (`serial|parallel`) and on-blocker policy (`ask|async_hold|halt`). Session-only; not persisted to `state.yml`. Default: `{parallelism: serial, on_blocker: ask}` (no behavior change when gate not answered). Serial plans never see the gate. Resolves the per-wave ordering AUQ friction reported on multi-workstream runs.
+- **`on_blocker: async_hold`**: New on-blocker policy — holds blocked tasks, continues other tasks and subsequent waves, surfaces all held tasks at next check-in rather than interrupting the run.
+- **API retry backoff policy** (`docs/conventions/api-retry-policy.md`): New conventions doc documenting the retryable/fatal error classification, 3x retry schedule (5s/15s/45s), user-facing retry notices, and scope (Codex + inline dispatch). Cross-referenced from `parts/step-c-dispatch.md` and `docs/internals/wave-dispatch.md`.
+
 ## [6.1.0] — 2026-05-22
 
 ### Added

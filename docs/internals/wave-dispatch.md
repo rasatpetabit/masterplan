@@ -25,3 +25,9 @@ Tasks in the plan are grouped into waves by `**Parallel-group:**` annotations. A
 ### Wave Completion
 
 A wave is complete when all members return. Orchestrator verifies each result before dispatching the next wave. Failed tasks trigger the CD-4 blocker-re-engagement ladder.
+
+## API Error Handling
+
+Transient API errors (429 rate-limit, 5xx, transport timeout) are distinct from task blockers. The retry policy, backoff schedule, user-facing notices, and scope (Codex vs inline dispatch) are documented in `docs/conventions/api-retry-policy.md`.
+
+The key invariant: API retries happen *before* the blocker re-engagement ladder (CD-4). Only after 3 retries are exhausted does the task promote to a blocker and enter CD-4.

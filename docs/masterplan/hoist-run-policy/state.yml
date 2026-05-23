@@ -1,0 +1,77 @@
+artifacts:
+  plan: docs/masterplan/hoist-run-policy/plan.md
+  retro: docs/masterplan/hoist-run-policy/retro.md
+  spec: docs/masterplan/hoist-run-policy/spec.md
+autonomy: loose
+background: null
+brainstorm_anchor:
+  evidence: []
+  gate_selection: null
+  in_scope_paths:
+  - parts/step-c-dispatch.md
+  - commands/masterplan.md
+  - parts/step-0.md
+  - docs/internals.md
+  - docs/conventions/
+  mode: implementation-design
+  out_of_scope_repos: []
+  repo_role: Claude Code plugin whose entire source code is a ~2150-line markdown
+    orchestrator prompt (commands/masterplan.md) plus bash/python support tooling;
+    no compiled code, verification is grep + bash -n + smoke runs.
+  verification_ceiling: local-static
+  yocto_ownership: null
+  interview_depth:
+    complexity: high
+    seriousness: serious
+    target_question_count: 8-12
+    understanding_level: partial
+branch: worktree-hoist-run-policy
+codex_review: true
+codex_routing: auto
+compact_loop_recommended: false
+complexity: high
+critical_error: null
+current_task: ''
+follow_ups: []
+import_contract:
+  contract_id: ''
+  inputs_hash: ''
+  processed_at: ''
+import_hydration: ''
+last_activity: '2026-05-23T00:00:00.000000+00:00'
+legacy: {}
+loop_enabled: false
+next_action: merge to main
+pending_gate: null
+pending_retro_attempts: 0
+phase: retro
+plan_kind: implementation
+retro_policy:
+  reason: ''
+  waived: false
+schema_version: 3
+scope_fingerprint:
+- hoist
+- run
+- polic
+- upfront
+- parallel
+- blocker
+- gate
+- singl
+- question
+- api
+- retri
+- backoff
+slug: hoist-run-policy
+started: 2026-05-23 00:00:00+00:00
+status: pending_retro
+stop_reason: null
+superseded_by: ''
+supersedes: ''
+topic: 'Hoist parallelism/blocker gates to single upfront question; document API
+  retry backoff policy'
+variant_of: ''
+worktree: /srv/dev/superpowers-masterplan/.worktrees/hoist-run-policy
+worktree_disposition: active
+worktree_last_reconciled: '2026-05-23T00:00:00Z'

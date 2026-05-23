@@ -143,6 +143,18 @@ done < <(find "$REPO_ROOT/parts" "$REPO_ROOT/commands" -name "*.md" 2>/dev/null)
 [ $a4_fail -eq 0 ] && pass 4 "Fallback documentation: all real DISPATCH-SITE blocks contain Fallback" \
   || fail 4 "Fallback documentation: $a4_fail real DISPATCH-SITE block(s) missing Fallback"
 
+# A5: run-policy gate present in wave assembly
+if ! grep -qF "run_policy" "$REPO_ROOT/parts/step-c-dispatch.md"; then
+  fail 5 "run_policy gate not found in parts/step-c-dispatch.md"
+else
+  pass 5 "run_policy gate present"
+fi
+
+# A6: run-policy gate fires before wave dispatch (order check)
+awk '/run_policy/,/When a wave assembles/' "$REPO_ROOT/parts/step-c-dispatch.md" | grep -q "When a wave assembles" \
+  && pass 6 "run_policy gate order correct" \
+  || fail 6 "run_policy gate must appear before 'When a wave assembles'"
+
 echo ""
-echo "coordinator-dispatch: $PASS passed, $FAIL failed (4/4 checks)"
+echo "coordinator-dispatch: $PASS passed, $FAIL failed (6/6 checks)"
 [ $FAIL -eq 0 ]
