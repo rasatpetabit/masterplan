@@ -926,7 +926,7 @@ _brief_style_scan_file() {
   while IFS= read -r dispatch_line; do
     local lineno="${dispatch_line%%:*}"
     local content="${dispatch_line#*:}"
-    if [[ "${content}" == *'`'* ]]; then
+    if [[ "${content}" == *'`'* ]] || [[ "${content}" == *'-->'* ]]; then
       continue
     fi
     local range_start=$((lineno - 5))
@@ -1009,11 +1009,12 @@ _brief_style_scan_file() {
   # Pattern D: each lifecycle dispatch block must have "contract_id" within 30 lines after
   # its DISPATCH-SITE line. Applies to ALL scanned files (v5 phase files included).
   # Backtick-bearing matches are documentation prose, not real tags — skip (same
-  # reasoning as dispatch_ranges collection above).
+  # reasoning as dispatch_ranges collection above). Lines ending with '-->' are
+  # HTML comment block headers (sub-file nav labels) — not real dispatch sites; skip.
   while IFS= read -r dispatch_line; do
     local lineno="${dispatch_line%%:*}"
     local dispatch_val="${dispatch_line#*:}"
-    if [[ "${dispatch_val}" == *'`'* ]]; then
+    if [[ "${dispatch_val}" == *'`'* ]] || [[ "${dispatch_val}" == *'-->'* ]]; then
       continue
     fi
     local ctx_start=$((lineno + 1))
