@@ -171,14 +171,14 @@ auto_expected=$(autonomy_expects_auto_proceed "$autonomy" "$halt_mode" "$pgid")
 
 ### 9. `eligibility_cache_event_missing`
 
-**Symptom:** Step C entry `events.jsonl` is missing the v2.4.0+ MANDATORY `eligibility_cache` event (per `parts/step-c.md:96`).
+**Symptom:** Step C entry `events.jsonl` is missing the v2.4.0+ MANDATORY `eligibility_cache` event (per `parts/step-c-dispatch.md`).
 
 **Why this matters:** Addresses F3 finding (mandatory event vs wave-pin contradiction).
 
 **Signals:**
 - Detector reference: future event-presence check OR doctor check #43 sibling (TBD; detector wiring is part of a follow-up bundle, not this one).
 - Severity: `WARN`.
-- Suggested remediation: re-emit the mandatory event before next dispatch; audit the wave-pin short-circuit at `parts/step-c.md:87` (addressed for new runs by T4/A3 in this bundle).
+- Suggested remediation: re-emit the mandatory event before next dispatch; audit the wave-pin short-circuit in `parts/step-c-dispatch.md` (addressed for new runs by T4/A3 in this bundle).
 
 **Detector:** TBD follow-up event-presence check scans Step C entry `events.jsonl` for the mandatory `eligibility_cache` event.
 
@@ -186,7 +186,7 @@ auto_expected=$(autonomy_expects_auto_proceed "$autonomy" "$halt_mode" "$pgid")
 
 ### 10. `dispatch_brief_unregistered`
 
-**Symptom:** The self-host audit encounters a lifecycle dispatch site in `parts/step-c.md` or `parts/doctor.md` that lacks a `contract_id` reference into `commands/masterplan-contracts.md`.
+**Symptom:** The self-host audit encounters a lifecycle dispatch site in `parts/step-c-*.md` or `parts/doctor.md` that lacks a `contract_id` reference into `commands/masterplan-contracts.md`.
 
 **Why this matters:** Addresses F6 finding (4 contracts registered vs many freeform dispatch sites).
 

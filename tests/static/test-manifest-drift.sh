@@ -20,6 +20,13 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 0
 fi
 
+# Plugin manifest files are gitignored — only present in the main checkout,
+# not in worktrees. Skip gracefully when absent.
+if [ ! -f .claude-plugin/plugin.json ]; then
+  echo "SKIP: .claude-plugin/plugin.json absent (gitignored; run from main checkout to verify manifest drift)"
+  exit 0
+fi
+
 v_claude_plugin="$(jq -r '.version // empty' .claude-plugin/plugin.json)"
 v_market_root="$(jq -r '.version // empty' .claude-plugin/marketplace.json)"
 v_market_nested="$(jq -r '.plugins[0].version // empty' .claude-plugin/marketplace.json)"

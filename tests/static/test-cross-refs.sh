@@ -41,9 +41,13 @@ while IFS= read -r refline; do
   if [ ! -e "$path" ]; then
     # Tolerate paths under docs/masterplan/<slug>/ — those are dynamic runtime
     # bundles, not static repo artifacts.
+    # Tolerate .claude-plugin/ and .codex-plugin/ — gitignored, absent in
+    # worktrees; verified by test-manifest-drift.sh on main checkout.
     case "$path" in
-      docs/masterplan/*) continue ;;
-      legacy/*)          continue ;;
+      docs/masterplan/*)  continue ;;
+      legacy/*)           continue ;;
+      .claude-plugin/*)   continue ;;
+      .codex-plugin/*)    continue ;;
     esac
     echo "FAIL $src: references non-existent path: $path"
     missing=$((missing + 1))
@@ -68,7 +72,7 @@ fi
 # Class 2 — contract IDs
 # ------------------------------------------------------------------
 # Build the set of defined contract_ids from commands/masterplan-contracts.md:
-defined_contracts="$(grep -oE '^## Contract: [a-zA-Z0-9_.]+' commands/masterplan-contracts.md | awk '{print $3}' | sort -u)"
+defined_contracts="$(grep -oE '^## Contract: [a-zA-Z0-9_.-]+' commands/masterplan-contracts.md | awk '{print $3}' | sort -u)"
 
 # Find every contract_id reference in parts/*.md and commands/masterplan.md:
 missing_contracts=0
