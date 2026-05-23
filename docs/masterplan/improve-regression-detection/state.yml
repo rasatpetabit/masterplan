@@ -16,8 +16,7 @@ current_task: ""
 next_action: approve spec for planning
 plan_kind: implementation
 follow_ups: []
-pending_gate:
-  id: brainstorm_closeout
+pending_gate: null
 background: null
 stop_reason: question
 critical_error: null

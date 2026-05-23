@@ -1,3 +1,4 @@
 {"type":"run_created","phase":"worktree_decided","progress_kind":"implementation_plan_created","slug":"improve-regression-detection","worktree":"/srv/dev/superpowers-masterplan/.worktrees/improve-regression-detection","branch":"worktree-improve-regression-detection","ts":"2026-05-22T00:00:00Z"}
 {"type":"brainstorm_started","ts":"2026-05-22T00:00:00Z"}
 {"type":"spec_written","ts":"2026-05-22T00:00:00Z","path":"docs/masterplan/improve-regression-detection/spec.md"}
+{"type":"gate_closed","gate":"brainstorm_closeout","ts":"2026-05-22T00:00:00Z"}
