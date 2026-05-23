@@ -15,6 +15,10 @@
 **Files:**
 - Create: `docs/conventions/api-retry-policy.md`
 
+**Spec:** spec.md §Part B — API retry policy documentation
+**Codex:** false
+**Verify:** `bash tests/structural/test-api-retry-policy.sh 2>&1 | tail -3`
+
 - [ ] **Step 1: Write a failing test**
 
 ```bash
@@ -157,6 +161,10 @@ git commit -m "docs(conventions): add API retry backoff policy (v5.9.0)"
 **Files:**
 - Modify: `parts/step-c-dispatch.md:38-40`
 
+**Spec:** spec.md §Part A — run-policy gate design
+**Codex:** false
+**Verify:** `bash tests/structural/test-coordinator-dispatch.sh 2>&1 | tail -3`
+
 - [ ] **Step 1: Write a failing test**
 
 Add to `tests/structural/test-coordinator-dispatch.sh` (A5 check at end of the existing A1-A4 block):
@@ -248,6 +256,10 @@ git commit -m "feat(dispatch): add run-policy gate at first wave assembly (v5.9.
 - Modify: `parts/step-c-dispatch.md` (Codex dispatch section, ~line 219)
 - Modify: `docs/internals/wave-dispatch.md` (add §API Error Handling section)
 
+**Spec:** spec.md §Part B — cross-references from dispatch + wave-dispatch docs
+**Codex:** false
+**Verify:** `bash tests/structural/test-api-retry-policy.sh 2>&1 | tail -3`
+
 - [ ] **Step 1: Write a failing test**
 
 Add to `tests/structural/test-api-retry-policy.sh`:
@@ -314,6 +326,10 @@ git commit -m "docs: cross-reference api-retry-policy from dispatch + wave-dispa
 
 **Files:**
 - Modify: `CHANGELOG.md`
+
+**Spec:** spec.md §All — final verification pass
+**Codex:** false
+**Verify:** `bash tests/run-tests.sh --full 2>&1 | tail -3`
 
 - [ ] **Step 1: Run full test suite**
 

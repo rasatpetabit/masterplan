@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.2.0] — 2026-05-23
+
+### Added
+
+- **Run-policy gate** (`parts/step-c-dispatch.md`): Single upfront AUQ fires at first parallel wave assembly to capture both parallelism choice (`serial|parallel`) and on-blocker policy (`ask|async_hold|halt`). Session-only; not persisted to `state.yml`. Default: `{parallelism: serial, on_blocker: ask}` (no behavior change when gate not answered). Serial plans never see the gate. Resolves the per-wave ordering AUQ friction reported on multi-workstream runs.
+- **`on_blocker: async_hold`**: New on-blocker policy — holds blocked tasks, continues other tasks and subsequent waves, surfaces all held tasks at next check-in rather than interrupting the run.
+- **API retry backoff policy** (`docs/conventions/api-retry-policy.md`): New conventions doc documenting the retryable/fatal error classification, 3x retry schedule (5s/15s/45s), user-facing retry notices, and scope (Codex + inline dispatch). Cross-referenced from `parts/step-c-dispatch.md` and `docs/internals/wave-dispatch.md`.
+
 ## [6.1.0] — 2026-05-22
 
 ### Added
