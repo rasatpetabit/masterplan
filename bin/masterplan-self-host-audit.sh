@@ -851,7 +851,7 @@ check_loop_first_contract() {
 #
 # v5.8.0+ expanded scope:
 #   - commands/masterplan.md  — legacy v4 step-name sites (Step B0/R2/D)
-#   - parts/step-c.md         — v5 site-label sites (`DISPATCH-SITE: step-c.md:<label>`)
+#   - parts/step-c-{resume,dispatch,verification,completion}.md — v6.0+ split sub-files
 #   - parts/doctor.md         — v5 site-label sites + legacy `Step D doctor [...] checks`
 #
 # Pattern A: "validate against" not followed within 5 lines by "for each" or "if.*field"
@@ -878,8 +878,17 @@ check_brief_style() {
   _brief_style_scan_file "${REPO_ROOT}/commands/masterplan.md" \
     "DISPATCH-SITE: (Step B0 related-plan scan|Step R2 retro source gather|Step D doctor checks)" \
     1 0
-  _brief_style_scan_file "${REPO_ROOT}/parts/step-c.md" \
-    "DISPATCH-SITE: step-c\\.md:[a-zA-Z0-9_-]+" \
+  _brief_style_scan_file "${REPO_ROOT}/parts/step-c-resume.md" \
+    "DISPATCH-SITE: step-c-resume\\.md:[a-zA-Z0-9_-]+" \
+    0 0
+  _brief_style_scan_file "${REPO_ROOT}/parts/step-c-dispatch.md" \
+    "DISPATCH-SITE: (step-c-dispatch\\.md:[a-zA-Z0-9_-]+|coordinator-[a-zA-Z0-9_-]+)" \
+    0 0
+  _brief_style_scan_file "${REPO_ROOT}/parts/step-c-verification.md" \
+    "DISPATCH-SITE: (step-c-verification\\.md:[a-zA-Z0-9_-]+|coordinator-[a-zA-Z0-9_-]+)" \
+    0 0
+  _brief_style_scan_file "${REPO_ROOT}/parts/step-c-completion.md" \
+    "DISPATCH-SITE: step-c-completion\\.md:[a-zA-Z0-9_-]+" \
     0 0
   _brief_style_scan_file "${REPO_ROOT}/parts/doctor.md" \
     "DISPATCH-SITE: (doctor\\.md:[a-zA-Z0-9_-]+|Step D doctor [a-zA-Z0-9_-]*checks?)" \

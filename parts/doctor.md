@@ -55,9 +55,9 @@ Return shape: {contract_id: "doctor.schema_v2", inputs_hash: "<sha256 of bundle 
 
 **Complexity-aware check set.** For each scanned plan, read `complexity` from `state.yml` (default `medium` if absent — legacy/pre-feature plans). The active check set varies:
 
-- `low` plans: run only checks #1 (orphan plan), #2 (orphan status), #3 (wrong worktree), #4 (wrong branch), #5 (stale in-progress), #6 (stale critical error), #8 (missing spec), #9 (schema, against the standard run-state field set), #10 (unparseable), #18 (codex misconfig), #29 (worktree-bundle reconciliation mismatch), #41 (missing degradation evidence — fires regardless of complexity when Codex was configured on), #42 (stale .lock file — cheap structural check), #43 (codex review coverage — event-log consistency check). SKIP all sidecar / annotation / ledger / cache / queue / per-subagent-telemetry checks (#11–#17, #19–#21, #23, #24) — low plans do not produce those artifacts. Also skip #22 and #40 (both high-only — see below).
-- `medium` plans: run all plan-scoped checks (currently #1-24, #26, #28, #29, #32, #34, #35, #41, #42, #43) except #22 and #40 (both high-only).
-- `high` plans: run all plan-scoped checks (currently #1-24, #26, #28, #29, #32, #34, #35, #40, #41, #42, #43) INCLUDING #22 (high-complexity rigor evidence) and #40 (missing Codex/parallel-group annotations at complexity:high).
+- `low` plans: run only checks #1 (orphan plan), #2 (orphan status), #3 (wrong worktree), #4 (wrong branch), #5 (stale in-progress), #6 (stale critical error), #8 (missing spec), #9 (schema, against the standard run-state field set), #10 (unparseable), #18 (codex misconfig), #29 (worktree-bundle reconciliation mismatch), #41 (missing degradation evidence — fires regardless of complexity when Codex was configured on), #42 (stale .lock file — cheap structural check), #43 (codex review coverage — event-log consistency check), #46, #47. SKIP all sidecar / annotation / ledger / cache / queue / per-subagent-telemetry checks (#11–#17, #19–#21, #23, #24) — low plans do not produce those artifacts. Also skip #22 and #40 (both high-only — see below).
+- `medium` plans: run all plan-scoped checks (currently #1-24, #26, #28, #29, #32, #34, #35, #41, #42, #43, #46, #47) except #22 and #40 (both high-only).
+- `high` plans: run all plan-scoped checks (currently #1-24, #26, #28, #29, #32, #34, #35, #40, #41, #42, #43, #46, #47) INCLUDING #22 (high-complexity rigor evidence) and #40 (missing Codex/parallel-group annotations at complexity:high).
 - Plans without a `complexity:` state field: treat as `medium`.
 
 Check-set gate is per-plan (a mixed worktree run honors each plan's complexity individually). Self-host audits run via `bin/masterplan-self-host-audit.sh`, not doctor.
@@ -1513,3 +1513,76 @@ echo "Check #45: INFO (historical audit — see per-bundle lines above for detai
 ```
 
 Report-only. Expected to fire INFO on all bundles created before v6.1.0.
+
+---
+
+## Check #46 — CC-2 self-enforcement
+
+**Severity:** Warning
+**Action:** Report-only.
+**Scope:** Prompt-scoped (scans `parts/step-*.md`). Fires regardless of plan complexity.
+**Added:** v6.2.0 (improve-subagents-parallelism).
+
+Scan `parts/step-*.md` for 3+ consecutive Bash-type directives feeding one decision without
+an upstream `dispatch Haiku` or `DISPATCH-SITE:` gate. The CC-2 rule (dispatch Haiku before
+reading files >300 lines or before commands expected to print >100 lines) degrades silently as
+the prompt evolves; this check enforces it at lint time.
+
+```bash
+violations=0
+for f in parts/step-0.md parts/step-b.md parts/step-c-resume.md parts/step-c-dispatch.md \
+          parts/step-c-verification.md parts/step-c-completion.md parts/doctor.md; do
+  [ -r "$f" ] || continue
+  consecutive=0
+  gate_seen=0
+  while IFS= read -r line; do
+    case "$line" in
+      *"dispatch Haiku"*|*"DISPATCH-SITE:"*) gate_seen=1; consecutive=0 ;;
+      *"Read \`"*|*"\`\`\`bash"*|*"node "*|*"bash -"*|*"curl "*|*"grep "*)
+        consecutive=$((consecutive + 1))
+        if [ "$consecutive" -ge 3 ] && [ "$gate_seen" -eq 0 ]; then
+          echo "WARN $f: 3+ consecutive Bash-type directives without upstream Haiku gate (near: $line)"
+          violations=$((violations + 1))
+          consecutive=0
+        fi
+        ;;
+      "") consecutive=0; gate_seen=0 ;;
+    esac
+  done < "$f"
+done
+[ "$violations" -eq 0 ] && echo "Check #46: PASS" || echo "Check #46: WARN ($violations sequence(s) found)"
+```
+
+Report-only.
+
+---
+
+## Check #47 — Return-shape caps
+
+**Severity:** Warning
+**Action:** Report-only.
+**Scope:** Prompt-scoped (scans `parts/step-*.md`). Fires regardless of plan complexity.
+**Added:** v6.2.0 (improve-subagents-parallelism).
+
+Scan `parts/step-*.md` for `Return shape:` blocks (in `Brief:` sections and coordinator
+`DISPATCH-SITE:` blocks) that lack any of `max`, `≤`, `limit`, or an item-count constraint.
+Uncapped return shapes allow subagents to return unbounded content directly into the
+orchestrator's context.
+
+```bash
+violations=0
+for f in parts/step-0.md parts/step-b.md parts/step-c-resume.md parts/step-c-dispatch.md \
+          parts/step-c-verification.md parts/step-c-completion.md parts/doctor.md; do
+  [ -r "$f" ] || continue
+  grep -n "Return shape:\|return shape:" "$f" 2>/dev/null | while IFS=: read -r lineno rest; do
+    context="$(awk -v s="$lineno" -v e="$((lineno+3))" 'NR>=s && NR<=e' "$f" 2>/dev/null)"
+    if ! echo "$context" | grep -qiE "≤|max|limit|[0-9]+ items?|[0-9]+ chars?"; then
+      echo "WARN $f:$lineno: Return shape block lacks item/char cap"
+      violations=$((violations + 1))
+    fi
+  done
+done
+[ "$violations" -eq 0 ] && echo "Check #47: PASS" || echo "Check #47: WARN ($violations uncapped block(s))"
+```
+
+Report-only.
