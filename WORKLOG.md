@@ -120,3 +120,15 @@ Both bundles: `status: archived`, `worktree_disposition: removed_after_merge`.
 **Post-merge fix:** `check_brief_style` Pattern D false-fired on HTML nav comment headers in `step-c-resume.md:7` and `step-c-completion.md:6`. Root cause: lines ending with `-->` (sub-file nav labels) matched the lifecycle regex but aren't real dispatch sites. Fixed by adding `-->` to the skip condition alongside the existing backtick guard.
 
 **Python tests wired:** `tests/run-tests.sh --full` now includes a `python-unit-tests` step covering all `tests/test_*.py` (33 tests). PYTHONPATH is set automatically. Main at 10/10.
+
+## 2026-05-23 — doctor --fix run (masterplan-token-efficiency worktree)
+
+Completed all 47 doctor checks with `--fix` applied. Changes committed to main:
+- Check #8 bash: add `complete|archived|retro` to phase skip list (false positive on archived bundles)
+- Check #31 bash: replace narrow `grep -A4|head -8` with full-file regex to avoid early clip on multi-occurrence files
+- Check #47 bash: fix subshell bug (pipe → process substitution); add self-referential code-block skip
+- Return-shape caps added (6 blocks): `parts/doctor.md` ×2, `parts/step-b.md`, `parts/step-c-dispatch.md`, `parts/step-c-resume.md`, `parts/step-c-verification.md`
+- Fixture `check-31/pass-gates-present/parts/step-b.md` updated to match same-line anchor+condition pattern
+- `docs/masterplan/improve-regression-detection/retro.md` written (was referenced in state.yml but missing; resolves Check #22)
+- Stale `.lock` files removed: `adversarial-review-integration/.lock`, `p4-suppression-smoke/.lock`
+- All 10/10 tests pass after fixes.
