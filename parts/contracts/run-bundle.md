@@ -46,6 +46,7 @@ pending_gate: null          # non-null: AUQ re-render required before routing
 stop_reason: null           # null | question | blocker | scheduled_yield | complete | critical_error
 background: null            # non-null: background dispatch in-flight (see §background below)
 critical_error: null        # non-null: unrecoverable error requiring user resolution
+adversarial_review_plan_pending_job: null  # non-null while B3 background review is in flight; cleared at step-5 completion
 ```
 
 - **Hard write-time rule:** any scalar > 200 chars rejected at write time by `bin/masterplan-state.sh`. Overflow moved to `<slug>/handoff.md` or `<slug>/blockers.md` with `*overflow at <file> L<n>*` pointer.
@@ -71,6 +72,20 @@ background:
 **`output_path` — cross-session result persistence.** `agent_id` is only resolvable by `TaskGet`/`TaskOutput` within the same Claude Code session that dispatched the background task. When the ScheduleWakeup fires in a NEW session (session boundary crossed), `TaskGet(agent_id)` will return "not found" — the task result is gone from harness memory. `output_path` is the cross-session fallback: the background task brief instructs the agent to write its complete digest JSON to this path before returning. `output_path` is computed BEFORE dispatch (so it can be included in the brief) as `<run-dir>/task-<idx>-bg-output.json` (deterministic; does not depend on agent_id). The resume check consults `output_path` when TaskGet returns "not found" or is unavailable.
 
 **Polling:** Load deferred tools first — `ToolSearch(query: "select:TaskGet,TaskOutput", max_results: 2)`. Then `TaskGet(id=background.agent_id)`. Status `running|queued` → still in-flight. Status `completed` → call `TaskOutput(id=background.agent_id)` to retrieve result. Status `failed|cancelled|error` → treat as `background_failed`. Status `not_found` OR `TaskGet` unavailable/errors → cross-session boundary: fall back to `test -s <background.output_path>` — non-empty file indicates available output; absent/empty file means still running or result was lost.
+
+### §adversarial_review_plan_pending_job — B3 Background Review Object
+
+Written when B3 dispatches the adversarial plan review in background mode. **Only present during the planning phase** — cleared when the review completes (step 5 of the B3 block) or is skipped.
+
+```yaml
+adversarial_review_plan_pending_job:
+  log_file: "/home/ras/.codex/workspaces/<id>/logs/<job-id>.log"  # detached process writes review output here
+  started_at: "2026-05-23T14:00:00Z"
+```
+
+**Lifecycle:** Set to non-null in B3 step 3 after `review_handle=$(node ... --background ...)` captures a non-empty `log_file` from the companion's JSON stdout. Cleared to `null` in B3 step 5 (or the Step C resume carve-out) when `test -s <log_file>` returns 0. If the companion returns malformed output (empty `log_file`), this field is never written and the block skips to the B3 close-out gate.
+
+**Polling:** `test -s <log_file>` — non-empty file signals the detached review process has written its output. The detached process (`spawnDetachedTaskWorker` inside `codex-companion.mjs`) survives session death; `log_file` persists on disk and is the sole cross-session observable. No `TaskGet`/`TaskOutput` needed — the companion's detached process writes directly to disk, not to the harness task queue.
 
 ## plan.index.json Schema (Full v5.0)
 
