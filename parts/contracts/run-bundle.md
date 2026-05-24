@@ -41,12 +41,33 @@ blockers: []
 recent_events:
   - "2026-05-13T13:05Z task-2 dispatched (wave-1)"
   - "2026-05-13T13:08Z task-1 complete (digest: abc...)"
+
+pending_gate: null          # non-null: AUQ re-render required before routing
+stop_reason: null           # null | question | blocker | scheduled_yield | complete | critical_error
+background: null            # non-null: background dispatch in-flight (see §background below)
+critical_error: null        # non-null: unrecoverable error requiring user resolution
 ```
 
 - **Hard write-time rule:** any scalar > 200 chars rejected at write time by `bin/masterplan-state.sh`. Overflow moved to `<slug>/handoff.md` or `<slug>/blockers.md` with `*overflow at <file> L<n>*` pointer.
 - `current_phase` enables router phase-prompt dispatch.
 - `plan_hash` triggers plan.index.json regeneration when plan.md changes.
 - Doctor check #32 verifies cap + pointer integrity.
+
+### §background — Background Dispatch Object
+
+Written when the orchestrator dispatches a Codex task with `run_in_background: true` (the Agent tool returns immediately with a task ID rather than blocking). **NOT written for wave-mode parallel dispatch** — wave members are blocking parallel calls; the wave-completion barrier waits for all of them synchronously.
+
+```yaml
+background:
+  task: "T9"                        # task name from plan (for user-facing messages)
+  agent_id: "<task-id>"             # ID from run_in_background dispatch; used for TaskGet polling
+  started_at: "2026-05-16T16:00:00Z"
+  wave: null                        # wave number if part of wave dispatch; null for serial dispatch
+```
+
+**Lifecycle:** Set to non-null when `background_started` is appended. Cleared to `null` when `background_finished` or `background_failed` is appended. `stop_reason: scheduled_yield` is set alongside `wakeup_scheduled` while the task runs. Step C resume check (`parts/step-c-resume.md §Background-dispatch resume`) polls this on every Step C entry when non-null.
+
+**Polling:** Load deferred tools first — `ToolSearch(query: "select:TaskGet,TaskOutput", max_results: 2)`. Then `TaskGet(id=background.agent_id)`. Status `running|queued` → still in-flight. Status `completed` → call `TaskOutput(id=background.agent_id)` to retrieve result. Status `failed|cancelled|error` → treat as `background_failed`.
 
 ## plan.index.json Schema (Full v5.0)
 
