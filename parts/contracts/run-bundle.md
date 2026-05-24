@@ -63,11 +63,14 @@ background:
   agent_id: "<task-id>"             # ID from run_in_background dispatch; used for TaskGet polling
   started_at: "2026-05-16T16:00:00Z"
   wave: null                        # wave number if part of wave dispatch; null for serial dispatch
+  output_path: "docs/masterplan/<slug>/task-9-bg-output.json"  # deterministic disk path; agent writes digest here before returning
 ```
 
 **Lifecycle:** Set to non-null when `background_started` is appended. Cleared to `null` when `background_finished` or `background_failed` is appended. `stop_reason: scheduled_yield` is set alongside `wakeup_scheduled` while the task runs. Step C resume check (`parts/step-c-resume.md §Background-dispatch resume`) polls this on every Step C entry when non-null.
 
-**Polling:** Load deferred tools first — `ToolSearch(query: "select:TaskGet,TaskOutput", max_results: 2)`. Then `TaskGet(id=background.agent_id)`. Status `running|queued` → still in-flight. Status `completed` → call `TaskOutput(id=background.agent_id)` to retrieve result. Status `failed|cancelled|error` → treat as `background_failed`.
+**`output_path` — cross-session result persistence.** `agent_id` is only resolvable by `TaskGet`/`TaskOutput` within the same Claude Code session that dispatched the background task. When the ScheduleWakeup fires in a NEW session (session boundary crossed), `TaskGet(agent_id)` will return "not found" — the task result is gone from harness memory. `output_path` is the cross-session fallback: the background task brief instructs the agent to write its complete digest JSON to this path before returning. `output_path` is computed BEFORE dispatch (so it can be included in the brief) as `<run-dir>/task-<idx>-bg-output.json` (deterministic; does not depend on agent_id). The resume check consults `output_path` when TaskGet returns "not found" or is unavailable.
+
+**Polling:** Load deferred tools first — `ToolSearch(query: "select:TaskGet,TaskOutput", max_results: 2)`. Then `TaskGet(id=background.agent_id)`. Status `running|queued` → still in-flight. Status `completed` → call `TaskOutput(id=background.agent_id)` to retrieve result. Status `failed|cancelled|error` → treat as `background_failed`. Status `not_found` OR `TaskGet` unavailable/errors → cross-session boundary: fall back to `test -s <background.output_path>` — non-empty file indicates available output; absent/empty file means still running or result was lost.
 
 ## plan.index.json Schema (Full v5.0)
 

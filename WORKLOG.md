@@ -1,5 +1,16 @@
 # WORKLOG
 
+## 2026-05-23 — codex-hardening: wave-barrier-interrupted detection (commit 009c28a)
+
+Third round of Codex dispatch hardening. Root cause of "forcing me to ask" pattern: when a session dies mid-wave (crash, timeout) while blocking Agent calls are in-flight, state.yml shows `tasks[*].status: in_flight` AND `background: null`. Prior resume logic had no case for this — it fell through to auto-redispatch from scratch, causing the repeated-dispatch loop.
+
+3 files changed:
+- `parts/failure-classes.md`: Added class 11 `wave-barrier-interrupted` (schema_version bumped 1→2). Detection: `tasks[*].status == "in_flight" AND background == null AND no wave_task_completed event in events.jsonl`. AUQ surfaces 4 options (re-dispatch/skip/inline/abort).
+- `parts/step-c-resume.md`: Added **Orphaned in-flight task resume** gate after Background-dispatch resume check. Scans events.jsonl for completion events per orphaned idx; fires AUQ when gap found. Skip condition: `background != null` (background resume already handles it).
+- `docs/internals/failure-instrumentation.md`: Added classes 7–11 to taxonomy table (was only showing 1–6).
+
+**Key decision:** Detection keyed on *absence of completion event* rather than presence of in_flight status alone — prevents false-positive firing when a task is mid-dispatch during first run (not a resume). The `background: null` guard prevents double-handling with the existing background-dispatch resume path.
+
 ## 2026-05-23 — codex-sandbox-probe: linked-worktree guard + Doctor Check #48
 
 Confirmed failure mode from `codex-routing-fix/events.jsonl`: T1 `codex sandbox could not commit (.git read-only)`, T9–T12 all `codex+claude-fixup` — all running inside `.worktrees/codex-routing-fix` (linked worktree topology).
