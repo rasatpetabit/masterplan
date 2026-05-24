@@ -38,7 +38,25 @@ Expired or stale credentials cause silent exits. The Step 0 CC-2 health indicato
 
 **Action:** Route inline immediately — do NOT use the two-failure streak counter. Retrying against degraded auth is guaranteed to fail.
 
-### 4. Scope boundary with api-retry-policy.md
+### 4. Sandbox Read-Only Git (Linked Worktree)
+
+When masterplan runs inside a linked git worktree (`.git` index lives outside the workspace path), the Codex sandbox restricts writes to the workspace. `git add` and `git commit` fail silently — Codex appears to complete the task but no commits appear.
+
+**Structural detection** (run in `parts/step-c-dispatch.md` before any Codex dispatch):
+```bash
+git_dir="$(git rev-parse --git-dir 2>/dev/null)"
+git_common="$(git rev-parse --git-common-dir 2>/dev/null)"
+superproject="$(git rev-parse --show-superproject-working-tree 2>/dev/null)"
+```
+Linked worktree detected when `git_dir != git_common` AND `superproject` is empty. The superproject guard prevents submodule false-positives.
+
+**Do NOT use a `touch` probe** — the orchestrator has full user permissions and can always write to `.git`, making the probe return `writable` regardless of sandbox topology.
+
+**Action:** Skip Codex dispatch. Route inline. Record `decision_source: linked-worktree`. Log `{"event":"codex_skip_linked_worktree","task":"<task>"}` to `events.jsonl`. This is a preemptive block (topology-detected before dispatch), not a post-failure recovery.
+
+---
+
+### 5. Scope boundary with api-retry-policy.md
 
 | Failure | Covered by |
 |---|---|
@@ -48,6 +66,7 @@ Expired or stale credentials cause silent exits. The Step 0 CC-2 health indicato
 | Silent exit — no file changes after return | This doc |
 | Daemon broken — socket/ECONNREFUSED in return text | This doc |
 | Auth degraded — `last_refresh` stale or tokens expired | This doc |
+| Linked-worktree topology — Codex sandbox cannot commit | This doc |
 
 The `app-server control socket is already in use` error is an infrastructure failure (this doc), not a transport failure — the transport succeeded but the daemon couldn't process the request.
 

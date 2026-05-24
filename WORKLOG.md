@@ -1,5 +1,20 @@
 # WORKLOG
 
+## 2026-05-23 — codex-sandbox-probe: linked-worktree guard + Doctor Check #48
+
+Confirmed failure mode from `codex-routing-fix/events.jsonl`: T1 `codex sandbox could not commit (.git read-only)`, T9–T12 all `codex+claude-fixup` — all running inside `.worktrees/codex-routing-fix` (linked worktree topology).
+
+5 files changed:
+- `parts/step-c-dispatch.md`: inserted **Linked-worktree guard** paragraph between Host-suppressed and Delegating; uses `git rev-parse --git-dir vs --git-common-dir` structural detection (NOT a touch probe — orchestrator has full perms). Logs `codex_skip_linked_worktree` event.
+- `docs/conventions/codex-failure-policy.md`: added §4 Sandbox Read-Only Git; scope boundary renumbered §4→§5; scope table gains linked-worktree row.
+- `parts/doctor.md`: Check #48 `codex_linked_worktree` (Repo-scoped, v6.3.0+); title, preamble, repo-scoped batch header (8→9 checks), dispatch brief, checks_processed, partial-failure array all updated; severity table row added.
+- `docs/internals/doctor.md`: pass count 40→41.
+- `commands/masterplan-contracts.md`: `doctor.repo_scoped.schema_v1` purpose, algorithm, checks_processed updated (eight→nine, add #48).
+
+Tier-drift test passes: 5 repo-scoped checks [39,44,46,47,48].
+
+**Key decision:** Structural detection (`git_dir != git_common`) chosen over permission-based probe; orchestrator always has write access to `.git` regardless of sandbox, making a touch probe always return writable. The superproject guard (`--show-superproject-working-tree` non-empty = submodule) prevents false positives.
+
 ## 2026-05-22 — brainstorm: improve-regression-detection (v6.2.0)
 
 `/masterplan brainstorm improve the robustness of masterplan regression detection` — spec written and committed to `worktree-improve-regression-detection` branch.

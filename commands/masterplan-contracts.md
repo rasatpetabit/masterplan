@@ -73,7 +73,7 @@ return_shape: |
 ## Contract: doctor.repo_scoped.schema_v1
 
 ```yaml
-purpose: Run the eight repo-scoped doctor checks (#26, #30, #31, #36, #39, #44, #46, #47) in one Haiku batch (v5.4.0+)
+purpose: Run the nine repo-scoped doctor checks (#26, #30, #31, #36, #39, #44, #46, #47, #48) in one Haiku batch (v5.4.0+)
 algorithm: |
   Load deferred CronList via ToolSearch first (required for check #26).
   For each check, run the algorithm enumerated in parts/doctor.md's per-check row:
@@ -85,10 +85,11 @@ algorithm: |
     #44 adversarial_review_config_valid: Read ~/.masterplan.yaml and .masterplan.yaml; if adversarial_review key present, validate value is one of: off, spec, plan, both.
     #46 cc2_self_enforcement: Scan parts/step-*.md; for each file that invokes a coordinator-level dispatch, verify a CC-2 sentinel line is present.
     #47 return_shape_caps: Scan parts/step-*.md; for each Return shape: line in a dispatch block, verify a ≤N token/char cap is present.
+    #48 codex_linked_worktree: Run git rev-parse --git-dir and --git-common-dir; if git_dir ≠ git_common AND show-superproject-working-tree is empty, report linked-worktree topology (Codex sandbox cannot commit).
   Aggregate all per-check findings into a single violations[] array.
 return_shape: |
   contract_id: "doctor.repo_scoped.schema_v1"
-  checks_processed: [26, 30, 31, 36, 39, 44, 46, 47]
+  checks_processed: [26, 30, 31, 36, 39, 44, 46, 47, 48]
   violations: [{check_id: int, severity: "warning"|"error"|"info", file: str, message: str}]
   notes: "<optional string, e.g. 'CronList unavailable; #26 skipped'>"
 ```
