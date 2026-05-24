@@ -1,5 +1,22 @@
 # WORKLOG
 
+## 2026-05-23 — codex-hardening: adversarial review B3 background handle capture (commit 6886be4)
+
+Fix #5 in the Codex dispatch hardening series. Root cause: `parts/step-b.md`'s B3 block ran `node ... --background` without capturing stdout, so `log_file` (the companion's detached process log path) was discarded. On wakeup, "check if review completed" had no mechanism — the orchestrator had to ask the user.
+
+3 files changed:
+- `parts/step-b.md`: Capture `review_handle=$(node ... --background ...)`, parse `log_file` via jq; persist `adversarial_review_plan_pending_job: {log_file, started_at}` to state.yml. Fallback: if `log_file` empty, skip block entirely.
+- `parts/step-c-resume.md`: Added **adversarial review plan gate carve-out** to pending-gate handler. When `pending_gate.id == adversarial_review_plan_pending` AND `log_file` set: auto-run `test -s <log_file>` on wakeup. Complete → parse/proceed; not complete → re-schedule wakeup.
+- `parts/contracts/run-bundle.md`: Documented `adversarial_review_plan_pending_job` field in state.yml schema + §adversarial_review_plan_pending_job section (lifecycle, polling, why disk-not-TaskGet).
+
+**Pattern:** Same class as output_path fix (3787231) — background process writes to disk; cross-session completion detection uses `test -s <path>` rather than session-scoped TaskGet.
+
+## 2026-05-23 — codex-hardening: output_path cross-session fallback (commit 3787231)
+
+Fix #4. Background Codex tasks dispatched with `run_in_background: true` return a session-scoped `agent_id`. If the ScheduleWakeup fires in a NEW session, `TaskGet(agent_id)` returns "not found" — the prior code treated this as failure and re-dispatched. Fix: compute `output_path = <run-dir>/task-<idx>-bg-output.json` BEFORE dispatch; include in brief with instruction to write digest there; on resume, `not_found` triggers `test -s <output_path>` fallback rather than background_failed.
+
+Changed: `parts/step-c-dispatch.md` (pre-dispatch path setup), `parts/step-c-resume.md` (not_found → fallback, not failure), `parts/contracts/run-bundle.md` (schema + §output_path subsection).
+
 ## 2026-05-23 — codex-hardening: wave-barrier-interrupted detection (commit 009c28a)
 
 Third round of Codex dispatch hardening. Root cause of "forcing me to ask" pattern: when a session dies mid-wave (crash, timeout) while blocking Agent calls are in-flight, state.yml shows `tasks[*].status: in_flight` AND `background: null`. Prior resume logic had no case for this — it fell through to auto-redispatch from scratch, causing the repeated-dispatch loop.

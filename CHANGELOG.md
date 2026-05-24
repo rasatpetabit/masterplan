@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.3.0] — 2026-05-23
+
+### Fixed
+
+- **Linked-worktree Codex dispatch guard** (`parts/step-c-dispatch.md`, Doctor #48): Codex tasks dispatched inside linked worktrees (`.worktrees/<slug>`) fail with `git add`/`git commit` errors because the Codex sandbox cannot write the `.git` index (a symlink to the common `.git`). Added structural detection via `git rev-parse --git-dir vs --git-common-dir` inequality (submodule guard included); logs `codex_skip_linked_worktree` and routes inline. Doctor check #48 (`codex_linked_worktree`, repo-scoped) flags plans where Codex was configured but all tasks routed inline due to this condition.
+- **Background task dispatch schema** (`parts/step-c-dispatch.md`, `parts/step-c-resume.md`, `parts/contracts/run-bundle.md`): Formalized the `background:` state.yml object shape with all required fields. Step C resume's polling algorithm now has explicit branches for every TaskGet status including `not_found` (cross-session boundary: fall back to `output_path`, do NOT treat as failed).
+- **Cross-session background task recovery** (`parts/step-c-dispatch.md`, `parts/step-c-resume.md`, `parts/contracts/run-bundle.md`): `TaskGet` IDs are session-scoped — a ScheduleWakeup firing in a new session cannot resolve prior task IDs. Added `output_path` field to background schema: computed as `<run-dir>/task-<idx>-bg-output.json` before dispatch; brief instructs agent to write digest there. On resume, `not_found` triggers `test -s <output_path>` fallback.
+- **Wave-barrier-interrupted recovery** (`parts/step-c-resume.md`, `parts/failure-classes.md`, `docs/internals/failure-instrumentation.md`): When a session dies mid-wave while blocking Agent calls are in-flight, state.yml shows `tasks[*].status: in_flight` with no completion events in `events.jsonl`. Added class 11 anomaly and resume-time detection + AUQ (re-dispatch/skip/inline/abort options). Taxonomy table updated to show classes 7–11.
+- **Adversarial review B3 background log_file capture** (`parts/step-b.md`, `parts/step-c-resume.md`, `parts/contracts/run-bundle.md`): B3's `node ... --background` call was discarding the companion's stdout, making post-wakeup completion detection impossible. Fixed: capture `review_handle` stdout, parse `log_file` from JSON, persist `adversarial_review_plan_pending_job: {log_file, started_at}`. Step C resume gains a carve-out for `adversarial_review_plan_pending` gate: auto-runs `test -s <log_file>` on wakeup; complete → parse + proceed; not complete → re-schedule wakeup. State schema documented in run-bundle contract.
+
 ## [6.2.3] — 2026-05-23
 
 ### Fixed
