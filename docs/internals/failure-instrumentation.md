@@ -18,6 +18,11 @@ from the accumulated record.
 | `orphan-pending-gate` | `pending_gate.id` set; no `AskUserQuestion` tool_use in transcript tail. |
 | `step-trace-gap` | `step=X phase=in` emitted but no matching `step=X phase=out` before turn end. |
 | `verification-failure-uncited` | `events.jsonl` tail has `verify_*` with `result: failed` AND the same turn wrote a phase-forward without remediation. |
+| `wave_codex_review_skip` | Doctor check #43 finds Codex review coverage < 100% on a wave-mode bundle not running inside Codex host. |
+| `subagent_return_oversized` | A per-subagent JSONL record reports `subagent_return_bytes > 5120`. |
+| `eligibility_cache_event_missing` | Step C entry `events.jsonl` lacks the mandatory `eligibility_cache` event (v2.4.0+). |
+| `dispatch_brief_unregistered` | A lifecycle dispatch site in the step-c or doctor parts lacks a `contract_id` reference into `commands/masterplan-contracts.md`. |
+| `wave-barrier-interrupted` | At resume time, `tasks[*].status == "in_flight"` AND `background: null` AND no completion event in `events.jsonl` for those task indices — session died mid-wave while the blocking wave-completion barrier waited. |
 
 **Breadcrumb stream.** The orchestrator emits structured markers in its visible
 output (in `parts/step-0.md` through `parts/step-c-completion.md` + `parts/import.md` +

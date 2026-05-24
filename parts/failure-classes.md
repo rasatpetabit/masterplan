@@ -1,6 +1,6 @@
 # Failure classes — `/masterplan` anomaly taxonomy
 
-**Schema version:** 1
+**Schema version:** 2
 **Owner:** Stop hook Section 9 (`hooks/masterplan-telemetry.sh`)
 **Issue destination default:** `rasatpetabit/superpowers-masterplan`
 
@@ -198,6 +198,35 @@ auto_expected=$(autonomy_expects_auto_proceed "$autonomy" "$halt_mode" "$pgid")
 **Detector:** `bin/masterplan-self-host-audit.sh --brief-style` scans lifecycle dispatch sites for a `contract_id` reference that resolves into `commands/masterplan-contracts.md`.
 
 **Signature inputs:** class, last_step, verb, halt_mode, autonomy, dispatch site path.
+
+### 11. `wave-barrier-interrupted`
+
+**Symptom:** At Step C resume time, `state.yml.tasks[*].status == "in_flight"` for one or more tasks AND `state.yml.background == null` AND `events.jsonl` contains no `wave_task_completed` / `codex_task_completed` / `implementer_complete` event referencing those task indices.
+
+**Why this matters:** When a session dies (crash, timeout, network drop) while the wave-completion barrier is blocking — waiting for all parallel Agent calls to return — the state file records the tasks as `in_flight` but no `background` object is set (background is only written for `run_in_background: true` dispatch, not blocking parallel waves). The existing resume logic handled `pending_gate` and `background` but had no case for this shape. Without detection, the orchestrator silently re-dispatches from scratch, potentially causing duplicate work or permanently losing the orphaned output. This is the structural origin of the "forcing me to ask instead of polling the status" failure mode — the user observes the re-dispatch loop and has to intervene manually.
+
+**Signals:**
+- `state.yml.background` is `null` at resume time.
+- `state.yml.tasks` contains one or more entries with `status: "in_flight"`.
+- `events.jsonl` scan: no `wave_task_completed` / `codex_task_completed` / `implementer_complete` event with a matching `task_idx` (or `task` field) for those entries.
+- `state.yml.stop_reason` is `null` or `scheduled_yield` (not `question` — if the session ended at a gate, class 2 `unexpected-halt` fires instead).
+
+**Detector (pseudo-shell):**
+```sh
+bg=$(yq -r '.background // ""' "$state_yml")
+[ -n "$bg" ] && return              # background dispatch active — handled by background-dispatch resume
+inflight_idxs=$(yq -r '.tasks[] | select(.status == "in_flight") | .idx' "$state_yml")
+[ -z "$inflight_idxs" ] && return   # no in-flight tasks
+for idx in $inflight_idxs; do
+  has_completion=$(grep -cE '"(wave_task_completed|codex_task_completed|implementer_complete)"' "$events_jsonl" \
+    | xargs -I{} grep -c "\"task_idx\"[[:space:]]*:[[:space:]]*$idx\|\"task\"[[:space:]]*:[[:space:]]*\"$idx\"" "$events_jsonl")
+  [ "$has_completion" -eq 0 ] && fire_anomaly wave-barrier-interrupted && return
+done
+```
+
+**Signature inputs:** class, `last_step` (always `step-c`), verb, halt_mode, autonomy, orphaned task indices joined with `-` (substitutes for skill_name — e.g. `9-10-11`).
+
+**Issue body must include:** orphaned task indices, `events.jsonl` tail (20 lines), `state.yml` tasks section, last known `session_id` from telemetry (if available), timestamp of last `events.jsonl` entry before the gap.
 
 ## Detector framework defenses
 
