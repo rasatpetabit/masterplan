@@ -89,13 +89,13 @@ import_contract:
   inputs_hash: ''
   processed_at: ''
 import_hydration: ''
-last_activity: '2026-05-26T22:15:30Z'
+last_activity: '2026-05-26T23:05:00Z'
 legacy: {}
 loop_enabled: false
-next_action: c_completion
+next_action: archived
 pending_gate: null
 pending_retro_attempts: 0
-phase: step-c-dispatch
+phase: completed
 plan_kind: implementation
 retro_policy:
   reason: ''
@@ -110,8 +110,8 @@ scope_fingerprint:
 - review
 slug: cc3-visibility
 started: '2026-05-26T16:39:50Z'
-status: active
-stop_reason: question
+status: completed
+stop_reason: complete
 superseded_by: ''
 supersedes: ''
 topic: 'CC-3 visibility: wire summary-block emit, enforce breadcrumb-at-AUQ, surface
