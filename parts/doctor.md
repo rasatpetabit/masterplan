@@ -1,6 +1,6 @@
-# Doctor — Self-Host Checks (#1 .. #50)
+# Doctor — Self-Host Checks (#1 .. #52)
 
-Invoked via `/masterplan doctor [--fix]`. Loaded by the router only when verb == doctor. Checks #32–#36 added in Wave C. Check #38 added in v5.1.0 (failure-instrumentation framework). Checks #39–#41 added in v5.1.1 (cosmic-cuddling-dusk Codex-routing instrumentation); Check #42 (stale .lock) added in concurrency-guards wave; Check #43 (codex_review_coverage) added in codex-routing-fix wave. Checks #44–#45 added in v6.1.0 (adversarial-review-integration). Checks #46–#47 added in v6.2.0 (improve-subagents-parallelism). Check #48 added in v6.3.0 (masterplan-token-efficiency). Check #49 added in v6.3.1 (stale-codex-task detection — surfaced by production telemetry 2026-05-25). Check #50 added in v6.3.3 (plugin registry drift — installed_plugins.json pinned to v5.8.3 for three weeks while v6.x shipped).
+Invoked via `/masterplan doctor [--fix]`. Loaded by the router only when verb == doctor. Checks #32–#36 added in Wave C. Check #38 added in v5.1.0 (failure-instrumentation framework). Checks #39–#41 added in v5.1.1 (cosmic-cuddling-dusk Codex-routing instrumentation); Check #42 (stale .lock) added in concurrency-guards wave; Check #43 (codex_review_coverage) added in codex-routing-fix wave. Checks #44–#45 added in v6.1.0 (adversarial-review-integration). Checks #46–#47 added in v6.2.0 (improve-subagents-parallelism). Check #48 added in v6.3.0 (masterplan-token-efficiency). Check #49 added in v6.3.1 (stale-codex-task detection — surfaced by production telemetry 2026-05-25). Check #50 added in v6.3.3 (plugin registry drift — installed_plugins.json pinned to v5.8.3 for three weeks while v6.x shipped). Checks #51–#52 added in v6.4.0 (CC-3 runtime compliance — breadcrumb-at-AUQ and summary-block emit).
 
 **Entry breadcrumb.** Emit on first line of this step (per Step 0 §Breadcrumb emission contract):
 
@@ -19,20 +19,20 @@ Read worktrees from `git_state.worktrees` (Step 0 cache). For each worktree, sca
 
 **Parallelization.** When worktrees ≥ 2, dispatch one Haiku agent (pass `model: "haiku"` per §Agent dispatch contract) per worktree in a single Agent batch (each agent runs all plan-scoped checks (currently #1-24, #28, #29, #32, #34, #35, #38, #40, #41, #42, #43, #45) for its worktree and returns findings as `[{check_id, severity, file, message}]` JSON). With 1 worktree, run inline — agent dispatch latency isn't worth it. The orchestrator merges results and applies the report ordering below.
 
-**Repo-scoped checks #26 / #30 / #31 / #36 / #39 / #44 / #46 / #47 / #48 / #49 / #50 (v5.4.0+ — single Haiku batch).** These eleven checks fire ONCE per doctor run regardless of worktree/plan count. Before v5.4.0 they ran inline at the orchestrator (serial reads, ~5 round-trips through the Opus context). v5.4.0+ dispatches a single Haiku in the SAME Agent batch as the per-worktree Haikus above, so all parallelizable doctor work returns in one wave. Inputs per check: #26 (`auto_compact_loop_attached`, v2.9.1+) consumes `CronList` output (session-level state — the Haiku must call `ToolSearch(query: "select:CronList", max_results: 1)` to load the deferred tool before invoking it); #30 (`cross_manifest_version_drift`, v4.2.1+) reads `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json` (root `version` + nested `plugins[0].version`), `.codex-plugin/plugin.json`, and greps `README.md` for `Current release:`; #31 (`per_autonomy_gate_condition_consistency`, v4.2.1+) reads `parts/step-b.md` (v5.0+; gates moved from `commands/masterplan.md` during v5.0 lazy-load extraction); #36 (`router_ceiling_and_phase_file_sanity`, v5.0.0+) reads `commands/masterplan.md` size + checks `parts/step-*.md` existence; #39 (`codex_auth_expiry`, v5.1.1+) reads `~/.codex/auth.json` (user-global, not per-repo); #44 (`adversarial_review_config_valid`, v6.1.0+) reads `~/.masterplan.yaml` and `.masterplan.yaml` for the `adversarial_review` config key (global config tiers, not per-bundle); #46 (`cc2_self_enforcement`, v6.2.0+) scans `parts/step-*.md` for CC-2 sentinel presence; #47 (`return_shape_caps`, v6.2.0+) scans `parts/step-*.md` for uncapped return-shape descriptions; #48 (`codex_linked_worktree`, v6.3.0+) runs `git rev-parse --git-dir` vs `--git-common-dir` to detect linked-worktree topology where Codex sandbox cannot commit; #49 (`stale_codex_background_task`, v6.3.1+) scans `~/.claude/plugins/data/*/state/*/jobs/*.json` for non-terminal tasks whose `startedAt` is more than 24 hours ago — surfaces runaway background workers before they become multi-day orphans; #50 (`plugin_registry_drift`, v6.3.3+) compares the `superpowers-masterplan` version in `~/.claude/plugins/installed_plugins.json` against `~/.claude/plugins/marketplaces/rasatpetabit-superpowers-masterplan/.claude-plugin/plugin.json` — when they differ, Claude Code silently runs an older build and newly shipped features are invisible at runtime. Brief shape:
+**Repo-scoped checks #26 / #30 / #31 / #36 / #39 / #44 / #46 / #47 / #48 / #49 / #50 / #51 / #52 (v5.4.0+ — single Haiku batch).** These thirteen checks fire ONCE per doctor run regardless of worktree/plan count. Before v5.4.0 they ran inline at the orchestrator (serial reads, ~5 round-trips through the Opus context). v5.4.0+ dispatches a single Haiku in the SAME Agent batch as the per-worktree Haikus above, so all parallelizable doctor work returns in one wave. Inputs per check: #26 (`auto_compact_loop_attached`, v2.9.1+) consumes `CronList` output (session-level state — the Haiku must call `ToolSearch(query: "select:CronList", max_results: 1)` to load the deferred tool before invoking it); #30 (`cross_manifest_version_drift`, v4.2.1+) reads `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json` (root `version` + nested `plugins[0].version`), `.codex-plugin/plugin.json`, and greps `README.md` for `Current release:`; #31 (`per_autonomy_gate_condition_consistency`, v4.2.1+) reads `parts/step-b.md` (v5.0+; gates moved from `commands/masterplan.md` during v5.0 lazy-load extraction); #36 (`router_ceiling_and_phase_file_sanity`, v5.0.0+) reads `commands/masterplan.md` size + checks `parts/step-*.md` existence; #39 (`codex_auth_expiry`, v5.1.1+) reads `~/.codex/auth.json` (user-global, not per-repo); #44 (`adversarial_review_config_valid`, v6.1.0+) reads `~/.masterplan.yaml` and `.masterplan.yaml` for the `adversarial_review` config key (global config tiers, not per-bundle); #46 (`cc2_self_enforcement`, v6.2.0+) scans `parts/step-*.md` for CC-2 sentinel presence; #47 (`return_shape_caps`, v6.2.0+) scans `parts/step-*.md` for uncapped return-shape descriptions; #48 (`codex_linked_worktree`, v6.3.0+) runs `git rev-parse --git-dir` vs `--git-common-dir` to detect linked-worktree topology where Codex sandbox cannot commit; #49 (`stale_codex_background_task`, v6.3.1+) scans `~/.claude/plugins/data/*/state/*/jobs/*.json` for non-terminal tasks whose `startedAt` is more than 24 hours ago — surfaces runaway background workers before they become multi-day orphans; #50 (`plugin_registry_drift`, v6.3.3+) compares the `superpowers-masterplan` version in `~/.claude/plugins/installed_plugins.json` against `~/.claude/plugins/marketplaces/rasatpetabit-superpowers-masterplan/.claude-plugin/plugin.json` — when they differ, Claude Code silently runs an older build and newly shipped features are invisible at runtime; #51 (`cc3_breadcrumb_compliance`, v6.4.0+) reads the active bundle's `events.jsonl` and computes `breadcrumb_emitted`-before-`auq_render` ratio over the last 20 turns (schema_version >= "5.1" only); #52 (`cc3_summary_block_compliance`, v6.4.0+) reads `events.jsonl` and `subagents.jsonl` and computes the ratio of dispatch-turns with a `summary_block_emitted` event, with model attribution drift detection via `turn_id` join on `subagents.jsonl`. Brief shape:
 
 ```
 DISPATCH-SITE: Step D doctor repo-scoped checks
 
 contract_id: "doctor.repo_scoped.schema_v1"
 Follow the algorithm defined in commands/masterplan-contracts.md §Contract: doctor.repo_scoped.schema_v1.
-Goal: Run the eleven repo-scoped doctor checks (#26, #30, #31, #36, #39, #44, #46, #47, #48, #49, #50) in one pass. Each check's input list and decision rule is also enumerated in the per-check rows below the Severity / Action Table.
+Goal: Run the thirteen repo-scoped doctor checks (#26, #30, #31, #36, #39, #44, #46, #47, #48, #49, #50, #51, #52) in one pass. Each check's input list and decision rule is also enumerated in the per-check rows below the Severity / Action Table.
 Inputs: repo root path; for #26, first load CronList via ToolSearch(query: "select:CronList", max_results: 1).
 Scope: read-only.
-Return shape: {contract_id: "doctor.repo_scoped.schema_v1", checks_processed: [26, 30, 31, 36, 39, 44, 46, 47, 48, 49, 50], violations: [{check_id, severity, file, message}] (≤ 50 items), notes: "<optional>"}.
+Return shape: {contract_id: "doctor.repo_scoped.schema_v1", checks_processed: [26, 30, 31, 36, 39, 44, 46, 47, 48, 49, 50, 51, 52], violations: [{check_id, severity, file, message}] (≤ 50 items), notes: "<optional>"}.
 ```
 
-**Partial-failure handling.** If the repo-scoped Haiku returns malformed JSON, missing `contract_id`, OR `checks_processed` ≠ `[26, 30, 31, 36, 39, 44, 46, 47, 48, 49, 50]`, the orchestrator falls back to running the eleven checks inline (pre-v5.4.0 path) and appends one `doctor_repo_scoped_haiku_fallback` event to the bundle-agnostic doctor telemetry log. Single missing-check (e.g., #26 returned `CronList unavailable`) is reported as a per-check INFO and does NOT trigger full fallback. (Self-host audits — deployment-drift detection and CD-9 free-text-question grep — moved to `bin/masterplan-self-host-audit.sh` in v2.11.0; that script is developer-only and runs against the project repo, not the user's working repo.)
+**Partial-failure handling.** If the repo-scoped Haiku returns malformed JSON, missing `contract_id`, OR `checks_processed` ≠ `[26, 30, 31, 36, 39, 44, 46, 47, 48, 49, 50, 51, 52]`, the orchestrator falls back to running the thirteen checks inline (pre-v5.4.0 path) and appends one `doctor_repo_scoped_haiku_fallback` event to the bundle-agnostic doctor telemetry log. Single missing-check (e.g., #26 returned `CronList unavailable`) is reported as a per-check INFO and does NOT trigger full fallback. (Self-host audits — deployment-drift detection and CD-9 free-text-question grep — moved to `bin/masterplan-self-host-audit.sh` in v2.11.0; that script is developer-only and runs against the project repo, not the user's working repo.)
 
 Plan-scoped check #28 (`completed_plan_without_retro`, v2.11.0+) is interactive: when it fires it surfaces `AskUserQuestion` to the user, so it can NOT be parallelized inside Haiku worktree dispatchers — instead each worktree's Haiku returns the candidate-list, and the orchestrator drives the prompts inline (sequentially) after the parallel detection completes. Plan-scoped check #29 (`worktree_bundle_reconciliation_mismatch`, v4.0.0+) is a lightweight repo-scoped structural check that applies to all complexity levels.
 
@@ -114,6 +114,9 @@ For each worktree, run all checks. Report findings grouped by worktree → check
 | 47 | **Return-shape caps** (prompt-scoped, v6.2.0+). Scans `parts/step-*.md` for `Return shape:` blocks lacking item-count constraints (`max`, `≤`, `limit`). | Warning | Report-only. |
 | 48 | **Codex dispatch blocked by linked-worktree** (repo-scoped, v6.3.0+). Detects when masterplan runs in a linked git worktree where Codex sandbox cannot commit (`.git` index lives outside the workspace path; `git_dir` ≠ `git_common`). | Warning | Report-only. |
 | 49 | **Stale Codex background task** (user-scoped, v6.3.1+). Scans `~/.claude/plugins/data/*/state/*/jobs/*.json` for tasks whose `status` is non-terminal (not `completed`, `done`, `cancelled`, `failed`, or `error`) and whose `startedAt` is more than 24 hours ago. Surfaces runaway background workers (e.g., tasks stuck in `verifying` phase) before they become multi-day orphans. Skipped when the plugin data directory is absent. | Warning | Report-only; emits `node <companion> cancel <task-id>` suggestion for each stale task when the codex-companion.mjs is resolvable. |
+| 50 | **Plugin registry drift** — `~/.claude/plugins/installed_plugins.json` version differs from `~/.claude/plugins/marketplaces/rasatpetabit-superpowers-masterplan/.claude-plugin/plugin.json` version. | Warning | Report-only; suggest updating registry pointer and restarting Claude Code. |
+| 51 | **CC-3 breadcrumb-at-AUQ runtime compliance** — In the latest 20 turns (active bundle, `schema_version >= "5.1"`), the ratio of `auq_render` events preceded immediately by a `breadcrumb_emitted` event is below 0.8. | Warning | Report-only; cached to `state.yml.cached_compliance.breadcrumb_ratio`. Suggest re-running `/masterplan doctor` after authoring fixes to CC-3-trampoline if ratio is persistently low. |
+| 52 | **CC-3 summary-block emit runtime compliance** — In the latest 20 turns (active bundle, `schema_version >= "5.1"`), the ratio of turns with ≥1 `subagent_dispatched` event that also have a `summary_block_emitted` event is below 0.8. Sub-fire (model attribution drift): events.jsonl `subagent_dispatched.model` mismatches `subagents.jsonl.model` for the same `turn_id`. | Warning | Report-only; cached to `state.yml.cached_compliance.summary_block_ratio`. Sub-fire (drift): report per-turn mismatches. |
 
 ---
 
@@ -1728,3 +1731,257 @@ fi
 ```
 
 Report-only.
+
+## Check #51 — CC-3 breadcrumb-at-AUQ runtime compliance
+
+**Severity:** Warning (ratio < 0.80) / Error (ratio < 0.50)
+**Action:** Report-only. Caches result to `state.yml.cached_compliance.breadcrumb_ratio` for CC-2.4 boot indicator.
+**Scope:** Active bundles with `schema_version >= "5.1"` (string tuple compare per D24). Fires once per doctor run. Skips legacy bundles (`schema_version < "5.1"`) silently.
+**Added:** v6.4.0 (CC-3 breadcrumb-at-AUQ compliance audit).
+
+Scans the active bundle's `events.jsonl` for `auq_render` events, computes `breadcrumb_preceded / total` ratio over the most recent N=20 turns. Cross-references against `subagents.jsonl` for ground-truth dispatch counts.
+
+Algorithm: For each `auq_render` event in the last 20 assistant turns (defined as events between successive `turn_start` events), check whether the preceding event in the same turn was a `breadcrumb_emitted` event. Count compliant / total. If any turn in `subagents.jsonl` has a dispatch count that does not match what `events.jsonl` implies, append `model_attribution_drift` note.
+
+```bash
+# Check #51 — CC-3 breadcrumb-at-AUQ runtime compliance.
+# Fixture runner contract (tests/doctor-fixtures/run.sh): invoked via `bash -c "$block"` with
+# NO positional arguments and cwd = fixture directory. Locate state.yml by glob, not $1.
+STATE_FILE="$(ls -1d docs/masterplan/*/state.yml 2>/dev/null | head -1)"
+[ -n "$STATE_FILE" ] && [ -f "$STATE_FILE" ] || { echo "Check #51: SKIP (no state.yml found under docs/masterplan/*/state.yml)"; exit 0; }
+events_file="${STATE_FILE%state.yml}events.jsonl"
+
+# D24: schema_version is a STRING (e.g. "5.1"); int-style `-lt 4` won't work.
+# Use Python tuple compare with safe fallback for non-parseable legacy ints.
+skip_check="$(python3 - "$STATE_FILE" <<'PYEOF'
+import yaml, sys
+try:
+    with open(sys.argv[1]) as f:
+        s = yaml.safe_load(f) or {}
+    v = s.get('schema_version', '0')
+    try:
+        parts = tuple(int(p) for p in str(v).split('.'))
+    except ValueError:
+        parts = (0,)
+    print('skip' if parts < (5, 1) else 'run')
+except Exception:
+    print('skip')
+PYEOF
+)"
+
+if [ "$skip_check" = "skip" ]; then
+  echo "Check #51: SKIP (schema_version < \"5.1\", pre-v6.4.0 bundle)"
+elif [ ! -f "$events_file" ]; then
+  echo "Check #51: SKIP (no events.jsonl at $events_file)"
+else
+  result="$(python3 - "$events_file" <<'PYEOF'
+import json, sys
+events_file = sys.argv[1]
+events = []
+with open(events_file) as f:
+    for line in f:
+        line = line.strip()
+        if line:
+            try: events.append(json.loads(line))
+            except: pass
+
+# Split into turns (between turn_start events)
+turns = []
+current = []
+for e in events:
+    if e.get('event') == 'turn_start':
+        if current: turns.append(current)
+        current = [e]
+    else:
+        current.append(e)
+if current: turns.append(current)
+
+# Last 20 turns
+turns = turns[-20:]
+total_auq = 0
+compliant = 0
+for turn in turns:
+    for i, e in enumerate(turn):
+        if e.get('event') == 'auq_render':
+            total_auq += 1
+            if i > 0 and turn[i-1].get('event') == 'breadcrumb_emitted':
+                compliant += 1
+
+if total_auq == 0:
+    print("SKIP:no_auq_renders")
+else:
+    ratio = compliant / total_auq
+    print(f"RATIO:{ratio:.3f}:{compliant}:{total_auq}")
+PYEOF
+)"
+
+  if echo "$result" | grep -q "^SKIP:"; then
+    reason="${result#SKIP:}"
+    echo "Check #51: SKIP ($reason in last 20 turns)"
+  else
+    ratio_str="${result#RATIO:}"
+    ratio_val="${ratio_str%%:*}"
+    rest="${ratio_str#*:}"
+    compliant_n="${rest%%:*}"
+    total_n="${rest#*:}"
+    ratio_pct="$(python3 -c "print(f'{float($ratio_val)*100:.0f}')")"
+    if python3 -c "import sys; sys.exit(0 if float('$ratio_val') >= 0.80 else 1)"; then
+      echo "Check #51: PASS (breadcrumb-at-AUQ ${ratio_pct}% — ${compliant_n}/${total_n} AUQ events in last 20 turns)"
+    elif python3 -c "import sys; sys.exit(0 if float('$ratio_val') >= 0.50 else 1)"; then
+      echo "WARN: Check #51: breadcrumb-at-AUQ compliance ${ratio_pct}% (${compliant_n}/${total_n}) — below 80% threshold"
+    else
+      echo "ERROR: Check #51: breadcrumb-at-AUQ compliance ${ratio_pct}% (${compliant_n}/${total_n}) — below 50% error threshold"
+    fi
+  fi
+fi
+```
+
+After running, cache result to `state.yml.cached_compliance.breadcrumb_ratio = <ratio_val>` and `cached_compliance.turns_audited = <total_n>` and `cached_compliance.audited_at = <now>`. Report-only; `fix_available: false`.
+
+## Check #52 — CC-3 summary-block runtime compliance
+
+**Severity:** Warning (ratio < 0.80) / Error (ratio < 0.50)
+**Action:** Report-only. Caches result to `state.yml.cached_compliance.summary_block_ratio`.
+**Scope:** Active bundles with `schema_version >= "5.1"` (string tuple compare per D24). Fires once per doctor run. Skips legacy bundles (`schema_version < "5.1"`) silently.
+**Added:** v6.4.0 (CC-3 summary-block emit compliance audit).
+
+For each turn in `events.jsonl` with one or more `subagent_dispatched` events, verify the assistant message text (captured via `assistant_message_text` event if present, or inferred from turn context) contains a `Subagents this turn: N dispatched` line. Cross-references against `subagents.jsonl` for ground-truth dispatch counts; flags count divergence as `model_attribution_drift`.
+
+```bash
+# Check #52 — CC-3 summary-block runtime compliance.
+# Fixture runner contract: cwd = fixture dir, no positional args. Locate state.yml by glob.
+STATE_FILE="$(ls -1d docs/masterplan/*/state.yml 2>/dev/null | head -1)"
+[ -n "$STATE_FILE" ] && [ -f "$STATE_FILE" ] || { echo "Check #52: SKIP (no state.yml found under docs/masterplan/*/state.yml)"; exit 0; }
+events_file="${STATE_FILE%state.yml}events.jsonl"
+subagents_file="${STATE_FILE%state.yml}subagents.jsonl"
+
+# D24: schema_version is a STRING; tuple compare with safe fallback.
+skip_check="$(python3 - "$STATE_FILE" <<'PYEOF'
+import yaml, sys
+try:
+    with open(sys.argv[1]) as f:
+        s = yaml.safe_load(f) or {}
+    v = s.get('schema_version', '0')
+    try:
+        parts = tuple(int(p) for p in str(v).split('.'))
+    except ValueError:
+        parts = (0,)
+    print('skip' if parts < (5, 1) else 'run')
+except Exception:
+    print('skip')
+PYEOF
+)"
+
+if [ "$skip_check" = "skip" ]; then
+  echo "Check #52: SKIP (schema_version < \"5.1\", pre-v6.4.0 bundle)"
+elif [ ! -f "$events_file" ]; then
+  echo "Check #52: SKIP (no events.jsonl at $events_file)"
+else
+  result="$(python3 - "$events_file" "$subagents_file" <<'PYEOF'
+import json, sys, os
+
+events_file = sys.argv[1]
+subagents_file = sys.argv[2] if len(sys.argv) > 2 else None
+
+events = []
+with open(events_file) as f:
+    for line in f:
+        line = line.strip()
+        if line:
+            try: events.append(json.loads(line))
+            except: pass
+
+# Split into turns
+turns = []
+current = []
+for e in events:
+    if e.get('event') == 'turn_start':
+        if current: turns.append(current)
+        current = [e]
+    else:
+        current.append(e)
+if current: turns.append(current)
+
+turns = turns[-20:]
+turns_with_dispatch = 0
+compliant = 0
+
+# Build turn_id -> subagent model index from subagents.jsonl (HIGH-3: join on turn_id).
+# Maps turn_id -> list of model strings from subagents.jsonl records.
+subagents_by_turn_id = {}
+if subagents_file and os.path.isfile(subagents_file):
+    with open(subagents_file) as sf:
+        for line in sf:
+            line = line.strip()
+            if line:
+                try:
+                    rec = json.loads(line)
+                    tid = rec.get('turn_id')
+                    if tid:
+                        subagents_by_turn_id.setdefault(tid, []).append(rec.get('model', ''))
+                except: pass
+
+drift_mismatches = []
+
+for turn in turns:
+    dispatch_events = [e for e in turn if e.get('event') == 'subagent_dispatched']
+    dispatch_count = len(dispatch_events)
+    if dispatch_count == 0:
+        continue
+    turns_with_dispatch += 1
+    has_summary = any(
+        e.get('event') == 'summary_block_emitted' or
+        'Subagents this turn' in str(e.get('text', ''))
+        for e in turn
+    )
+    if has_summary:
+        compliant += 1
+
+    # HIGH-3: check model attribution via turn_id join.
+    for de in dispatch_events:
+        tid = de.get('turn_id')
+        events_model = de.get('model', '')
+        if tid and tid in subagents_by_turn_id:
+            for sa_model in subagents_by_turn_id[tid]:
+                if sa_model and events_model and sa_model != events_model:
+                    drift_mismatches.append(f"turn_id={tid}: events.jsonl model={events_model!r} vs subagents.jsonl model={sa_model!r}")
+
+if turns_with_dispatch == 0:
+    print("SKIP:no_dispatch_turns")
+else:
+    ratio = compliant / turns_with_dispatch
+    drift_suffix = ""
+    if drift_mismatches:
+        drift_suffix = "|DRIFT:" + ";".join(drift_mismatches[:5])
+    print(f"RATIO:{ratio:.3f}:{compliant}:{turns_with_dispatch}{drift_suffix}")
+PYEOF
+)"
+
+  if echo "$result" | grep -q "^SKIP:"; then
+    reason="${result#SKIP:}"
+    echo "Check #52: SKIP ($reason in last 20 turns)"
+  else
+    ratio_str="${result#RATIO:}"
+    ratio_val="${ratio_str%%:*}"
+    rest="${ratio_str#*:}"
+    compliant_n="${rest%%:*}"
+    rest2="${rest#*:}"
+    total_n="${rest2%%|*}"
+    drift_part="${rest2#*|}"
+    ratio_pct="$(python3 -c "print(f'{float($ratio_val)*100:.0f}')")"
+    if python3 -c "import sys; sys.exit(0 if float('$ratio_val') >= 0.80 else 1)"; then
+      echo "Check #52: PASS (summary-block compliance ${ratio_pct}% — ${compliant_n}/${total_n} dispatch-turns in last 20 turns)"
+    elif python3 -c "import sys; sys.exit(0 if float('$ratio_val') >= 0.50 else 1)"; then
+      echo "WARN: Check #52: summary-block compliance ${ratio_pct}% (${compliant_n}/${total_n}) — below 80% threshold"
+    else
+      echo "ERROR: Check #52: summary-block compliance ${ratio_pct}% (${compliant_n}/${total_n}) — below 50% error threshold"
+    fi
+    if echo "$drift_part" | grep -q "^DRIFT:"; then
+      echo "ERROR: Check #52: model attribution drift detected (turn_id join mismatch):"
+      echo "$drift_part" | sed 's/^DRIFT://' | tr ';' '\n' | while read -r line; do echo "  - $line"; done
+    fi
+  fi
+fi
+```
+
+After running, cache result to `state.yml.cached_compliance.summary_block_ratio = <ratio_val>`. Report-only; `fix_available: false`.

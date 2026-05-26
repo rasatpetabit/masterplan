@@ -11,7 +11,7 @@ The orchestrator dispatches 1 Sonnet coordinator for `/masterplan doctor [--fix]
 **Return shape:**
 ```json
 {
-  "pass": 41,
+  "pass": 45,
   "warn": 5,
   "error": 2,
   "findings": [
@@ -31,10 +31,10 @@ The orchestrator dispatches 1 Sonnet coordinator for `/masterplan doctor [--fix]
    - **Plan-scoped**: add to the parallelization brief list (line 20) and the relevant
      complexity sets (lines 58–60).
    - **Repo/Global/Prompt-scoped**: add to the repo-scoped batch:
-     - line 22 (prose description list),
-     - line 29 (Goal count + check list),
-     - line 32 (Return shape `checks_processed` array),
-     - line 35 (partial-failure comparison array),
+     - line 22 (prose description list — currently thirteen repo-scoped checks, 52 total),
+     - line 29 (Goal count + check list — `Run the thirteen repo-scoped doctor checks (#26, #30, #31, #36, #39, #44, #46, #47, #48, #49, #50, #51, #52)`),
+     - line 32 (Return shape `checks_processed` array — `[26, 30, 31, 36, 39, 44, 46, 47, 48, 49, 50, 51, 52]`),
+     - line 35 (partial-failure comparison array — `[26, 30, 31, 36, 39, 44, 46, 47, 48, 49, 50, 51, 52]`),
      - `commands/masterplan-contracts.md` §Contract: doctor.repo_scoped.schema_v1
        (`purpose` count + `algorithm` entry + `checks_processed` array).
 3. Run `bash tests/static/test-doctor-tier-drift.sh` — it validates Scope: field → routing slot

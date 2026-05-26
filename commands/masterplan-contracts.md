@@ -73,7 +73,7 @@ return_shape: |
 ## Contract: doctor.repo_scoped.schema_v1
 
 ```yaml
-purpose: Run the eleven repo-scoped doctor checks (#26, #30, #31, #36, #39, #44, #46, #47, #48, #49, #50) in one Haiku batch (v5.4.0+)
+purpose: Run the thirteen repo-scoped doctor checks (#26, #30, #31, #36, #39, #44, #46, #47, #48, #49, #50, #51, #52) in one Haiku batch (v5.4.0+)
 algorithm: |
   Load deferred CronList via ToolSearch first (required for check #26).
   For each check, run the algorithm enumerated in parts/doctor.md's per-check row:
@@ -88,10 +88,12 @@ algorithm: |
     #48 codex_linked_worktree: Run git rev-parse --git-dir and --git-common-dir; if git_dir ≠ git_common AND show-superproject-working-tree is empty, report linked-worktree topology (Codex sandbox cannot commit).
     #49 stale_codex_background_task: Scan ~/.claude/plugins/data/*/state/*/jobs/*.json; for each job whose status is non-terminal (not completed/done/cancelled/failed/error) and whose startedAt is >24h ago, emit a warning with task ID, workspace, summary, and suggested cancel command (node <companion> cancel <id>) if codex-companion.mjs is resolvable. Skip if plugin data directory absent.
     #50 plugin_registry_drift: Read ~/.claude/plugins/installed_plugins.json; extract superpowers-masterplan@rasatpetabit-superpowers-masterplan[0].version. Read ~/.claude/plugins/marketplaces/rasatpetabit-superpowers-masterplan/.claude-plugin/plugin.json; extract .version. If either file is absent, skip. If versions differ, emit WARN with the active installPath and instructions to copy marketplace to a new cache dir, update the registry, and restart Claude Code.
+    #51 disposition_filter_completeness: Run per Check #51's algorithm in parts/doctor.md.
+    #52 bundle_artifacts_completeness: Run per Check #52's algorithm in parts/doctor.md.
   Aggregate all per-check findings into a single violations[] array.
 return_shape: |
   contract_id: "doctor.repo_scoped.schema_v1"
-  checks_processed: [26, 30, 31, 36, 39, 44, 46, 47, 48, 49, 50]
+  checks_processed: [26, 30, 31, 36, 39, 44, 46, 47, 48, 49, 50, 51, 52]
   violations: [{check_id: int, severity: "warning"|"error"|"info", file: str, message: str}]
   notes: "<optional string, e.g. 'CronList unavailable; #26 skipped'>"
 ```
