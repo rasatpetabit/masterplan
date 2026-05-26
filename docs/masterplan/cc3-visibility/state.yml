@@ -84,13 +84,13 @@ import_contract:
   inputs_hash: ''
   processed_at: ''
 import_hydration: ''
-last_activity: '2026-05-26T19:14:00Z'
+last_activity: '2026-05-26T21:00:00Z'
 legacy: {}
 loop_enabled: false
-next_action: c_wave1_dispatch
+next_action: c_wave2_dispatch
 pending_gate: null
 pending_retro_attempts: 0
-phase: step-b3
+phase: step-c-dispatch
 plan_kind: implementation
 retro_policy:
   reason: ''

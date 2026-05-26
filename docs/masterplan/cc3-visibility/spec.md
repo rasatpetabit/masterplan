@@ -141,8 +141,8 @@ Current text at `:54-56` (after Change 2):
 Replace with:
 ```
 3. **Breadcrumb render** — emit one plain-text navigation line at **two** sites so the breadcrumb survives manual interruption. After each breadcrumb line, emit `<masterplan-trace event=breadcrumb_emitted site=<tag>>` on its own line as the inert textual signal for the Stop hook (D19; the hook converts this to an `events.jsonl` row used by Check #51).
-   - **Step entry** — immediately after each `<masterplan-trace step=X phase=in>` marker (every step that emits a phase-in trace must follow it with the breadcrumb on the next line, then the `breadcrumb_emitted` marker on the line after that with `site=step-entry-<phase>`).
-   - **AUQ close-site** — before every `AskUserQuestion` Closer. No routing-question exception — every AUQ requires a breadcrumb line, followed by the `breadcrumb_emitted` marker with `site=auq-close-<gate>` (or `site=auq-close-routing` for non-gate AUQs like the plan picker). (Skip only for `ScheduleWakeup` and non-interactive terminal renders that never surface to the user.)
+   - **Step entry** — immediately after each `<masterplan-trace step=X phase=in>` marker (every step that emits a phase-in trace must follow it with the breadcrumb on the next line, then `<masterplan-trace event=breadcrumb_emitted site=step-entry-<phase>>` on the line after that).
+   - **AUQ close-site** — before every `AskUserQuestion` Closer. No routing-question exception — every AUQ requires a breadcrumb line, followed by `<masterplan-trace event=breadcrumb_emitted site=auq-close-<gate>>` (or `<masterplan-trace event=breadcrumb_emitted site=auq-close-routing>` for non-gate AUQs like the plan picker). (Skip only for `ScheduleWakeup` and non-interactive terminal renders that never surface to the user.)
 ```
 
 **Change 3c — Step 4 (Closer) gains a pre-AUQ marker.**
@@ -299,7 +299,7 @@ After the TaskCreate rehydration / drift-recovery block (around line `:39-54`), 
 4. If `findings_addressed` found → skip replay silently.
 5. On "Acknowledge findings" selection: append `{"event":"findings_addressed","gate":"<gate>","ts":"<now>","by":"user-ack"}` to events.jsonl. Do NOT suppress the pending gate or alter review_result — the acknowledgement is informational, not an approval.
 
-Schema guard: if `state.yml.schema_version < 4`, skip this section silently.
+Schema guard: if `state.yml.schema_version < "5.1"`, skip this section silently.
 ```
 
 Why: compaction destroys the inline emit from the prior turn. The resume replay ensures findings survive across session boundaries.
@@ -677,7 +677,7 @@ cached_compliance:
   audited_at: null
 ```
 
-For existing bundles, Checks #51 and #52 skip silently when `schema_version < 4` — no retroactive migration.
+For existing bundles, Checks #51 and #52 skip silently when `schema_version < "5.1"` — no retroactive migration.
 
 ---
 
@@ -1275,7 +1275,7 @@ When both are failing:
 
 **Cost:** Zero extra tool calls. The cached ratios are already in-memory from the state.yml read at Step 0.
 
-**No-cache path:** If `cached_compliance.audited_at == null` or `schema_version < 4`: skip silently. Do NOT run an audit during boot.
+**No-cache path:** If `cached_compliance.audited_at == null` or `schema_version < "5.1"`: skip silently. Do NOT run an audit during boot.
 
 ---
 
@@ -1283,7 +1283,7 @@ When both are failing:
 
 ### Version
 
-v6.4.0 — minor bump (new features + behavioral clarifications; no removals). Schema bump from 3→4 is additive (new field only).
+v6.4.0 — minor bump (new features + behavioral clarifications; no removals). Schema bump from 3 → "5.1" is additive (new field only).
 
 ### Always-on (D9)
 
@@ -1306,7 +1306,7 @@ No opt-in flag. CC-3 changes are clarifications to existing mandates + new obser
 - **`parts/contracts/codex-review.md`** — new contract file defining structured JSON return
   shape for all REVIEW dispatches, parse algorithm, degraded-parse fallback, and inline emit
   format.
-- **CC-2.4 boot indicator** — when active bundle (schema_version ≥ 4) has a cached compliance
+- **CC-2.4 boot indicator** — when active bundle (schema_version >= "5.1") has a cached compliance
   ratio < 0.8 from the last doctor run, a 4th banner line surfaces the issue at turn start.
 - **`state.yml.cached_compliance`** field (added at `schema_version: "5.1"` per D24) caches
   last-doctor ratios for zero-cost boot-time compliance display.
@@ -1513,7 +1513,7 @@ All seven open questions from the first-draft spec are resolved below. No outsta
 
 1. **Event emission mechanism for `auq_render` / `breadcrumb_emitted` / `summary_block_emitted` / `subagent_dispatched`** — RESOLVED by D19. The Stop hook `hooks/masterplan-telemetry.sh` is the single writer for all four event types. It tails the assistant transcript, parses `<masterplan-trace>` markers (existing mechanism — extended with four new marker subtypes), and appends events to the active bundle's `events.jsonl`. The orchestrator emits markers only; it does NOT directly append these four event types. This makes the hook the canonical source of truth and avoids the brittle per-site emission-instruction pattern that caused the original CC-3 non-compliance.
 
-2. **Fixture test driver compatibility** — RESOLVED. `tests/doctor-fixtures/run.sh` is compatible with the new fixture layout (`check-51/pass/{events.jsonl, state.yml, expected.txt}`, same for `check-52/` and the new `check-degraded-parse/`). The runner extracts bash blocks from `parts/doctor.md` and runs them with the fixture directory as CWD; the bash blocks in Checks #51/#52 read `events.jsonl` from `$PWD`. No runner changes required. A shell wrapper for the degraded-parse fixture (which asserts on event content, not output text) is documented in the new `tests/doctor-fixtures/README.md`.
+2. **Fixture test driver compatibility** — RESOLVED via L1'/NEW-H1 (see Round-2 review findings below). The initial resolution claimed `check-degraded-parse/` would be compatible with the fixture runner, but Round-2 review determined that `tests/doctor-fixtures/run.sh` silently skips non-numeric directory names (regex `^check-0*([1-9][0-9]*|0)$`). The fix moves degraded-parse validation to the Python unit-test tier: `tests/test_codex_review_parse.py` (5-function suite covering raw-excerpt preservation, verdict extraction, and event record shape). See the L1'/NEW-H1 resolution in the Round-2 reviewer findings for full detail.
 
 3. **`subagents_this_turn` reset trigger** — RESOLVED by D8 (refined in this revision). The reset fires at the start of every assistant turn — operationally, this means the orchestrator resets `subagents_this_turn` at CC-2 banner emit (first action of every turn). `parts/step-0.md` CC-3 anchor must be updated to clarify: turn-level reset for `subagents_this_turn`, step-level reset for `subagents_this_step`. The plan phase's first task is the agent-dispatch.md edit (already in scope above).
 

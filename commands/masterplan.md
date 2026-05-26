@@ -49,11 +49,11 @@ Every turn-close in this orchestrator MUST route through the following sequence.
 
 **Sequence (execute in order, skip silently if condition not met):**
 
-1. **CC-3 check** — if `subagents_this_turn` is non-empty, emit the plain-text summary block per the per-turn dispatch tracking contract. Emit before any `AskUserQuestion` or terminal render. Zero-dispatch turns: skip silently.
+1. **CC-3 check** — if `subagents_this_turn` is non-empty, emit the plain-text summary block per `parts/contracts/agent-dispatch.md` §Per-turn dispatch tracking. Format, record shape, and reset rules defined there. Emit before any `AskUserQuestion` or terminal render. Immediately after the summary block, emit the marker `<masterplan-trace event=summary_block_emitted dispatch_count=<N>>` on its own line (where `<N>` = `len(subagents_this_turn)`); this is the inert textual signal the Stop hook scans to write the corresponding `events.jsonl` row (D19). Zero-dispatch turns: skip silently — emit neither block nor marker.
 2. **Pre-close action** — perform any commit, state write, ledger append, or timer disclosure that the calling part mandates before yielding. These obligations stay documented at the call site.
-3. **Breadcrumb render** — emit one plain-text navigation line at **two** sites so the breadcrumb survives manual interruption:
-   - **Step entry** — immediately after each `<masterplan-trace step=X phase=in>` marker (every step that emits a phase-in trace must follow it with the breadcrumb on the next line).
-   - **AUQ close-site** — before every `AskUserQuestion` Closer (skip for `ScheduleWakeup` and non-interactive terminal renders).
+3. **Breadcrumb render** — emit one plain-text navigation line at **two** sites so the breadcrumb survives manual interruption. After each breadcrumb line, emit `<masterplan-trace event=breadcrumb_emitted site=<tag>>` on its own line as the inert textual signal for the Stop hook (D19; the hook converts this to an `events.jsonl` row used by Check #51).
+   - **Step entry** — immediately after each `<masterplan-trace step=X phase=in>` marker (every step that emits a phase-in trace must follow it with the breadcrumb on the next line, then `<masterplan-trace event=breadcrumb_emitted site=step-entry-<phase>>` on the line after that).
+   - **AUQ close-site** — before every `AskUserQuestion` Closer. No routing-question exception — every AUQ requires a breadcrumb line, followed by `<masterplan-trace event=breadcrumb_emitted site=auq-close-<gate>>` (or `<masterplan-trace event=breadcrumb_emitted site=auq-close-routing>` for non-gate AUQs like the plan picker). (Skip only for `ScheduleWakeup` and non-interactive terminal renders that never surface to the user.)
 
    Format:
    ```
@@ -66,9 +66,11 @@ Every turn-close in this orchestrator MUST route through the following sequence.
    - Example (step entry): `/masterplan full › Brainstorm  [my-feature]`
    - Example (AUQ gate): `/masterplan full › Brainstorm › spec_approval  [my-feature]`
    - Example (AUQ routing): `/masterplan plan ›  Plan picker`
-4. **Closer** — fire the `AskUserQuestion`, `ScheduleWakeup`, or terminal render that ends the turn.
+4. **Closer** — fire the `AskUserQuestion`, `ScheduleWakeup`, or terminal render that ends the turn. **Before** any `AskUserQuestion` tool call, emit `<masterplan-trace event=auq_render site=<tag>>` on its own line (use the same `<tag>` from the preceding breadcrumb's `site=auq-close-<gate>`, normalized — e.g., `b2-spec-approval`, `b3-plan-approval`, `c4b-failure`, `routing-plan-picker`). This is the hook-side signal that drives Check #51's AUQ-side counter (D19). Skip for `ScheduleWakeup` and non-interactive renders (they never present an AUQ to the user).
 
 > CC-1 compact-suggest and timer-disclosure are not part of this trampoline. New end-of-turn obligations go into this sequence. Authoring rule: write `-> CLOSE-TURN` as the close directive; "end the turn" only in negation contexts or YAML examples.
+
+**Subagent-dispatch marker rule (D19).** Every site that invokes the `Agent`, `Task`, `codex:codex-rescue`, `WebFetch`, or any other dispatch-class tool MUST emit `<masterplan-trace event=subagent_dispatched type=<subagent_type> model=<model> task=<short-label>>` on its own line immediately before the dispatch tool call. `<subagent_type>` matches the tool's `subagent_type` parameter (e.g., `Explore`, `general-purpose`, `Plan`, `feature-dev:code-architect`, `codex:codex-rescue`). `<model>` matches the dispatched tier (`haiku`, `sonnet`, `opus`, or `codex` for codex dispatches). `<short-label>` is a kebab-case identifier ≤32 chars (e.g., `grep-batch`, `B2-spec-review`, `wave-1-task-3`). The Stop hook converts each marker to an `events.jsonl` row that Check #52 cross-references against `subagents.jsonl` for drift detection (D4). This rule is referenced from `parts/contracts/agent-dispatch.md` §Per-turn dispatch tracking; the marker MUST be emitted in addition to (not instead of) the `subagents_this_turn` list append.
 
 ## Verb dispatch table
 
@@ -81,7 +83,7 @@ Every turn-close in this orchestrator MUST route through the following sequence.
 | `execute` | parts/step-0.md → parts/step-c-resume.md (resume) or parts/step-a.md (picker) | state-path resumes; topic/no-args picks |
 | `retro` | parts/step-0.md → parts/step-c-resume.md (Step R subroutine) | generate retrospective |
 | `import` | parts/step-0.md → parts/import.md | legacy migration (Step I) |
-| `doctor` | parts/step-0.md → parts/doctor.md | all 47 checks (Step D) |
+| `doctor` | parts/step-0.md → parts/doctor.md | all 52 checks (Step D) |
 | `status` | parts/step-0.md (Step S subroutine) | read-only situation report |
 | `validate` | parts/step-0.md (reads docs/config-schema.md inline) | config + state schema check |
 | `stats` | parts/step-0.md (Step T subroutine) | telemetry roll-up |

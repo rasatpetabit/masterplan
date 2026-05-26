@@ -464,6 +464,7 @@ if [[ -n "$transcript" && -r "$transcript" ]]; then
     --arg branch "$branch" \
     --arg cwd "$PWD" \
     --arg sid "${CLAUDE_SESSION_ID:-}" \
+    --arg turn_id "${CLAUDE_SESSION_ID:-unknown}:${ts}" \
     '
     . as $all
     | ($seen | map({(.):true}) | add // {}) as $seen_set
@@ -547,7 +548,8 @@ if [[ -n "$transcript" && -r "$transcript" ]]; then
         subagent_return_bytes: 0,
         subagent_return_text: $subagent_return_text,
         branch: $branch,
-        cwd: $cwd
+        cwd: $cwd,
+        turn_id: $turn_id
       }
     ' "$transcript" 2>/dev/null | while IFS= read -r rec; do
       subagent_return_text=""
@@ -927,6 +929,84 @@ detect_verification_failure_uncited() {
     "advance_count" "$advanced"
 }
 
+# emit_cc3_marker_events — parse the four new event-type markers from
+# $turn_breadcrumbs and append one JSONL row per match to events.jsonl.
+# Called after detector_dispatch, before emit_turn_context_bytes.
+# Argument $1: path to the events.jsonl file (must already exist for bundle turns).
+emit_cc3_marker_events() {
+  local events_file="$1"
+  local turn_id="${CLAUDE_SESSION_ID:-unknown}:${ts}"
+  local iso_ts
+  iso_ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+  # Collect all rows to append in one string, then flush under a single lock.
+  local rows=""
+
+  while IFS= read -r marker; do
+    [[ -z "$marker" ]] && continue
+
+    case "$marker" in
+      *event=auq_render*)
+        local site
+        site=$(printf '%s' "$marker" | grep -oE 'site=[^ >]+' | cut -d= -f2 | head -1)
+        local row
+        row=$(jq -nc \
+          --arg ts "$iso_ts" \
+          --arg turn_id "$turn_id" \
+          --arg site "${site:-unknown}" \
+          '{"ts":$ts,"event":"auq_render","turn_id":$turn_id,"site":$site}') || continue
+        rows="${rows}${row}"$'\n'
+        ;;
+      *event=breadcrumb_emitted*)
+        local site
+        site=$(printf '%s' "$marker" | grep -oE 'site=[^ >]+' | cut -d= -f2 | head -1)
+        local row
+        row=$(jq -nc \
+          --arg ts "$iso_ts" \
+          --arg turn_id "$turn_id" \
+          --arg site "${site:-unknown}" \
+          '{"ts":$ts,"event":"breadcrumb_emitted","turn_id":$turn_id,"site":$site}') || continue
+        rows="${rows}${row}"$'\n'
+        ;;
+      *event=summary_block_emitted*)
+        local dispatch_count_raw
+        dispatch_count_raw=$(printf '%s' "$marker" | grep -oE 'dispatch_count=[^ >]+' | cut -d= -f2 | head -1)
+        local dispatch_count_int="${dispatch_count_raw:-0}"
+        [[ "$dispatch_count_int" =~ ^[0-9]+$ ]] || dispatch_count_int=0
+        local row
+        row=$(jq -nc \
+          --arg ts "$iso_ts" \
+          --arg turn_id "$turn_id" \
+          --argjson dispatch_count "$dispatch_count_int" \
+          '{"ts":$ts,"event":"summary_block_emitted","turn_id":$turn_id,"dispatch_count":$dispatch_count}') || continue
+        rows="${rows}${row}"$'\n'
+        ;;
+      *event=subagent_dispatched*)
+        local type model task
+        type=$(printf '%s' "$marker" | grep -oE 'type=[^ >]+' | cut -d= -f2 | head -1)
+        model=$(printf '%s' "$marker" | grep -oE 'model=[^ >]+' | cut -d= -f2 | head -1)
+        task=$(printf '%s' "$marker" | grep -oE 'task=[^ >]+' | cut -d= -f2 | head -1)
+        local row
+        row=$(jq -nc \
+          --arg ts "$iso_ts" \
+          --arg turn_id "$turn_id" \
+          --arg type "${type:-unknown}" \
+          --arg model "${model:-unknown}" \
+          --arg task "${task:-unknown}" \
+          '{"ts":$ts,"event":"subagent_dispatched","turn_id":$turn_id,"type":$type,"model":$model,"task":$task}') || continue
+        rows="${rows}${row}"$'\n'
+        ;;
+    esac
+  done <<< "$turn_breadcrumbs"
+
+  [[ -z "$rows" ]] && return 0
+
+  _do_append_cc3_markers() {
+    printf '%s' "$rows" >> "$events_file" 2>/dev/null
+  }
+  with_bundle_lock "$(dirname "$events_file")" _do_append_cc3_markers || true
+}
+
 # Run every detector under set +e + log on error. Each is independent.
 detector_dispatch() {
   for fn in detect_silent_stop_after_skill detect_unexpected_halt \
@@ -940,6 +1020,8 @@ detector_dispatch() {
 }
 
 detector_dispatch
+
+if [[ "$is_bundle" -eq 1 ]]; then emit_cc3_marker_events "${plans_dir}/events.jsonl"; fi
 
 if [[ "$is_bundle" -eq 1 ]]; then
   emit_turn_context_bytes "${plans_dir}/events.jsonl" 0 "${last_verb:-unknown}" "$transcript"

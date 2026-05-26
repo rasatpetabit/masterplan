@@ -487,19 +487,22 @@ Locate the new-bundle bootstrap / creation path (around lines :418-467 in the cu
 
 ---
 
-### W4-T3 — `README.md`: doctor check count updates
+### W4-T3 — `README.md` + `docs/verbs.md`: doctor check count updates
 
 **Tier:** `sonnet`
-**File:** `README.md`
+**Files:** `README.md`, `docs/verbs.md`
 **Depends on:** none
 
 **Brief:**
 
-Two count edits per spec.md §`README.md` (lines 715–726):
+Two count edits in `README.md` per spec.md §`README.md` (lines 715–726):
 - Line `:207`: `47 proactive lint checks` → `52 proactive lint checks`.
 - Line `:239`: `48 structural audits` → `52 structural audits`.
 
-**Verification greps:** #19.
+One count edit in `docs/verbs.md` (drift gap detected during Wave 1 gate verification — surface text not enumerated in plan-v3):
+- Line `:26`: `Run all 47 doctor checks against the repo + active run bundles.` → `Run all 52 doctor checks against the repo + active run bundles.`
+
+**Verification greps:** #19, plus `grep -nE 'all 4[0-9] doctor checks' docs/verbs.md` → expect 0 hits (negative discriminator confirms count was bumped).
 
 ---
 
