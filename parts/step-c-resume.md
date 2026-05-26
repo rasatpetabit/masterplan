@@ -51,6 +51,23 @@ Where `{requested_verb}` is the verb parsed by Step 0 (`full`, `execute`, `resum
 
 If `TaskCreate` / `TaskUpdate` dispatch errors at any point, append `taskcreate_mirror_failed` with the error string and proceed — `state.yml` is canonical and the next rehydration reconciles. Skip the entire block silently when `codex_host_suppressed == true`.
 
+### Codex review resume replay (v6.4.0+)
+
+**Schema guard:** if `state.yml.schema_version` compares less than `"5.1"` via D24 tuple-compare (`tuple(int(p) for p in str(v).split('.')) < (5, 1)` with safe fallback to skip on parse error), skip this section silently.
+
+After rehydration completes, replay any unaddressed Codex review findings so they survive compaction across session boundaries:
+
+1. Tail-scan `events.jsonl` for the most recent `{"event":"codex_review_returned",...}` entry.
+2. If found, check whether any later `{"event":"findings_addressed",...}` entry exists for the same `gate` value.
+3. If no `findings_addressed` found for that gate → unaddressed review is pending. Re-emit the inline status block annotated with `(resumed)`:
+   ```
+   ↳ codex review (<gate>, resumed): <VERDICT> — <N> findings
+     • [top-3 by severity]
+   ```
+   Add an explicit option to the first AUQ of this resume turn: `"Acknowledge findings — mark as addressed (appends findings_addressed event)"`.
+4. If `findings_addressed` found for that gate → skip replay silently.
+5. On user selecting "Acknowledge findings": append `{"event":"findings_addressed","gate":"<gate>","ts":"<now>","by":"user-ack"}` to `events.jsonl`. Do NOT suppress the pending gate or alter `review_result` — the acknowledgement is informational only and does NOT change gate state.
+
 **Mirror every state.yml task-transition to TaskList (Claude Code only).** Throughout Step C, every write that changes `current_task`, dispatches a wave, records a wave-member digest, or flips `status` to `pending_retro` / `complete` / `blocked` MUST be followed by a `TaskUpdate` call per the transition table in *TaskCreate projection layer — Lifecycle mirror hooks*. The mirror call comes AFTER the `state.yml` write and the `events.jsonl` append, never before. If the `TaskUpdate` call errors, append `taskcreate_mirror_failed` to `events.jsonl` with `{call, task_idx, error}` and continue; **do NOT roll back the `state.yml` write** — `state.yml` is canonical and the next rehydration reconciles. Skip the entire mirror when `codex_host_suppressed == true`. The transition sites in Step C are: step 4 task-advance, step 3a wave dispatch, step 4b wave-member digest, step 6a-guard `pending_retro` flip, step 6 (post-retro) `complete` flip, and any `status: blocked` / `critical_error` write throughout the section.
 
 **Per-state-write priming (v4.1.1, Claude Code only).** In addition to the per-transition mirror above, every Step C `state.yml` write — including writes that do NOT change `current_task` or wave state (e.g. `last_activity` bumps, `pending_gate` writes, `background` marker writes, `next_action` updates) — MUST be followed by:

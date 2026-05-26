@@ -60,7 +60,7 @@
    ```
 
    Fires when ALL of the following hold, otherwise skip silently:
-   - `codex_host_suppressed` is not `true`. When running inside Codex, skip 4b with reason `running inside Codex — recursive Codex review disabled`; do not run the mid-plan Codex availability re-check in this branch.
+   - `codex_host_suppressed` is not `true`. When running inside Codex, skip 4b with reason `running inside Codex — recursive Codex review disabled`; do not run the mid-plan Codex availability re-check in this branch. ↳ codex review (C4b): SKIPPED — codex-host recursion guard
    - `codex_review` is `on`.
    - The task just completed was **inline** (Sonnet/Claude did the work — not Codex). Codex-delegated tasks are reviewed by Step 3a's post-Codex flow, not here. Skipping for those is the asymmetric-review rule.
    - The codex plugin is available (re-check inline at gate time per the heuristic in Step 0). On miss, write the same degradation event as Step 0's degrade-loudly path, set in-memory `codex_review = off` for the rest of the session, and skip 4b. This catches mid-plan plugin uninstall (D.4 mitigation).
@@ -112,11 +112,19 @@
       Scope: Review only — no writes, no commits, no file modifications.
              Run `git diff <range> -- <files>` yourself to obtain the diff.
       Constraints: CD-10. Be adversarial about correctness, not style.
-      Return: severity-ordered findings (high/medium/low) grounded in file:line, OR the literal string "no findings" if clean.
+      Return: JSON matching the contract in parts/contracts/codex-review.md §Return JSON shape.
+              Schema: {"verdict": "pass"|"fail"|"warn", "dimensions": [...], "findings": [{"severity":"high"|"medium"|"low","file":"<path>","line":<int>,"issue":"<text>"}], "summary":"<1-2 line gist>"}
+              If findings list is empty, return it as []. Do NOT return prose.
       ```
 
       Why diff-by-SHA: Codex agent runs in the worktree with full git access; passing a SHA range avoids inlining 5K–10K tokens of diff into the brief on multi-file tasks. (Zero-commit tasks are handled in step 1, which skips 4b entirely.)
-   3. Digest the response per output-digestion rules: parse into severity buckets, drop verbose prose. Don't pull the full review text into orchestrator context.
+   3. **Parse and emit inline.** Parse the return per `parts/contracts/codex-review.md` §Parse algorithm. On JSON parse failure (D5, D21): preserve first 2048 bytes in `raw_excerpt`, apply D23 regex fallback, annotate `(degraded-parse)`. Immediately (D6 — before decision matrix, before state write) emit:
+      ```
+      ↳ codex review (C4b[, degraded-parse]): <VERDICT> — <N> findings
+        • [top-3 by severity]
+      ```
+      On degraded-parse, append `raw excerpt: <first ~500 chars>` line.
+      Append `{"event":"codex_review_returned","gate":"C4b","task":"<task name>","verdict":"<v>","dimensions":[...],"findings":[...full list...],"summary":"<s>","raw_excerpt":"<≤2KB or null>","ts":"<now>"}` to `events.jsonl`.
    4. **Decision matrix by autonomy** (retry caps come from `config.codex.review_max_fix_iterations`, default 2):
       - **`gated`** — auto-accept silently when severity is `clean` or strictly below `config.codex.review_prompt_at` (default `"medium"`). `events.jsonl` records the auto-accept; clean and low-only reviews don't need extra state. When severity is at or above the threshold, persist `pending_gate` and present findings via `AskUserQuestion` → `Accept / Fix and re-review (rerun inline with findings as briefing; capped at config.codex.review_max_fix_iterations) / Accept anyway / Stop`. Users who want every review prompted set `codex.review_prompt_at: "low"` in `.masterplan.yaml`.
       - **`loose`**:

@@ -254,9 +254,9 @@ Two edits per spec.md §`parts/contracts/agent-dispatch.md` (lines 588–750):
 
 Run greps #14, #21 first (baseline). Then run the structured-review-wiring depth verification (HIGH-4 fix — the v1 gate was too shallow and a stub implementation that omitted inline emits or used prose returns would still pass):
 
-1. **JSON return shape required at B2, B3, C4b.** `grep -nE 'Return: JSON matching|Return JSON matching' parts/step-b.md parts/step-c-verification.md` — expect ≥3 hits (B2 dispatch brief + B3 dispatch brief + C4b dispatch brief). Zero hits = brief omits the structured-return directive.
+1. **JSON return shape required at B2, B3, C4b.** `grep -nE 'Return: JSON matching|Return JSON matching' parts/step-b.md parts/step-c-verification.md parts/contracts/codex-review.md` — expect ≥2 hits (C4b inlines the directive at step-c-verification.md; contract carries the canonical template at parts/contracts/codex-review.md:27; B2 and B3 cite the contract by path per spec.md §Change 1/2). Plan-v3.1 fix: original gate expected ≥3 hits in step-b.md + step-c-verification.md, but the spec explicitly routes step-b.md sites to cite the contract by reference rather than inline the literal — this gate was over-strict and missed the contract file. The canonical literal MUST exist exactly once in the contract; dispatch sites MUST cite the contract path.
 
-2. **"Do NOT return prose" guard at all three sites.** `grep -nE 'Do NOT return prose' parts/step-b.md parts/step-c-verification.md` — expect ≥3 hits. The literal phrase is the prose-return blocker per spec.md line 264.
+2. **"Do NOT return prose" guard at all three sites.** `grep -nE 'Do NOT return prose' parts/step-b.md parts/step-c-verification.md parts/contracts/codex-review.md` — expect ≥2 hits (same routing as #1 above: contract carries the directive once, B2/B3 cite by path, C4b inlines). The literal phrase is the prose-return blocker per spec.md line 264; the contract is the single authoritative copy.
 
 3. **`codex_review_returned` event emit at all three gates.** `grep -nE '"event": *"codex_review_returned"|codex_review_returned' parts/step-b.md parts/step-c-verification.md` — expect ≥3 hits across B2 (`gate: "spec_approval"`), B3 (`gate: "plan_approval"`), C4b (`gate: "C4b"`).
 

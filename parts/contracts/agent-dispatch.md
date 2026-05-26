@@ -207,8 +207,13 @@ when the upstream skill template parses keywords.
 
 ## Per-turn dispatch tracking
 
-The orchestrator MUST maintain a session-local `subagents_this_turn` list.
-Reset at the start of every top-level Step entry (A, B, C, I, S, R, D, CL).
+The orchestrator MUST maintain TWO tracking structures:
+
+**`subagents_this_turn`** — list of dispatch records. Resets at the start of every assistant turn (before the CC-2 banner and before the first tool call of each turn). Drives the CC-3 step 1 summary block.
+
+**`subagents_this_step`** — running counter. Resets at the start of every top-level Step entry (A, B, C, I, S, R, D, CL). Feeds telemetry roll-up and `/masterplan stats`. Does NOT reset between assistant turns within a session — it accumulates across turns within a step.
+
+Migration: pre-v6.4.0 code that read `subagents_this_turn` as a per-Step counter continues to work — readers now see a per-turn list (which can span multiple steps within one turn) instead of a per-step list. Step-level consumers needing per-step granularity must migrate to `subagents_this_step`. The two structures coexist; both are populated on every dispatch.
 
 **Per-dispatch record** (push immediately on every Agent invocation):
 - `ts` — ISO 8601 timestamp
@@ -234,6 +239,14 @@ Subagents this turn: 6 dispatched (2 haiku, 3 sonnet, 1 codex)
 ```
 
 Zero-dispatch turns emit nothing.
+
+**Single-writer rule for `events.jsonl` (D19).** The `subagent_dispatched` events in `events.jsonl` are written by the Stop hook from the `<masterplan-trace event=subagent_dispatched type=<type> model=<model> task=<short>>` marker — NOT directly by the orchestrator. At every Agent / Task / Codex dispatch site, the orchestrator has exactly three responsibilities:
+
+1. Emit the `<masterplan-trace event=subagent_dispatched type=<type> model=<model> task=<short>>` marker on the line immediately before the dispatch tool call.
+2. Append the dispatch record to `subagents_this_turn` (in-memory list).
+3. Increment `subagents_this_step` (in-memory counter).
+
+The hook is the canonical writer for the `events.jsonl` row. This note exists to prevent double-emission: do NOT add an orchestrator-side `events.jsonl` append for `subagent_dispatched` — it would create a duplicate entry alongside the hook-written record. Cross-validate via `subagents.jsonl` (hook ground truth) ↔ `events.jsonl#subagent_dispatched` for Check #52 drift detection.
 
 **Cross-validation at Step C entry:** compare `subagents_this_turn` model
 values against the most-recent records in `<run-dir>/subagents.jsonl` (written
