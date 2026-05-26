@@ -1,5 +1,23 @@
 # WORKLOG
 
+## 2026-05-26 — publish v6.3.3
+
+All 8 run bundles archived; no active work. Status clean; pushed main to origin. Check #50 (registry/marketplace drift) self-resolves after push + `/plugin update` on consuming side.
+
+## 2026-05-25 — doctor run + pre-restart cleanup (v6.3.3, commits 5cdb961 + 276e955)
+
+Full 50-check `/masterplan doctor` run. Two real findings fixed:
+
+**Check #3 bug** (`parts/doctor.md`): Bash block missing the `worktree_disposition` skip guard that checks #4 and #29 already had. All 4 flagged bundles (hoist-run-policy, improve-regression-detection, improve-subagents-parallelism, masterplan-token-efficiency) had `worktree_disposition: removed_after_merge` — the check itself was wrong. Added 2-line guard to skip those bundles.
+
+**Check #9 missing `artifacts.events`** (5 state.yml files): Older bundles (4 above + adversarial-review-integration) predated `artifacts.events` as required schema field. Files existed on disk; just the pointer was absent. Added `events:` line to each.
+
+**Stale .lock deleted**: `docs/masterplan/adversarial-review-integration/.lock` was 32214s (~9h) old; Check #42 surfaced it.
+
+**Check #50 (registry/marketplace drift)**: Expected — registry pinned to v6.3.3 (dev), marketplace git checkout at v6.3.0 (last publish). Resolves on push + `/plugin update`.
+
+**Key decision:** All 5 `artifacts.events` fixes + Check #3 fix committed as one patch (276e955). WORKLOG entry deferred to restart prep, not the hot path.
+
 ## 2026-05-23 — codex-hardening: adversarial review B3 background handle capture (commit 6886be4)
 
 Fix #5 in the Codex dispatch hardening series. Root cause: `parts/step-b.md`'s B3 block ran `node ... --background` without capturing stdout, so `log_file` (the companion's detached process log path) was discarded. On wakeup, "check if review completed" had no mechanism — the orchestrator had to ask the user.
