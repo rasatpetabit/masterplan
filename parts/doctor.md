@@ -1,6 +1,6 @@
-# Doctor — Self-Host Checks (#1 .. #49)
+# Doctor — Self-Host Checks (#1 .. #50)
 
-Invoked via `/masterplan doctor [--fix]`. Loaded by the router only when verb == doctor. Checks #32–#36 added in Wave C. Check #38 added in v5.1.0 (failure-instrumentation framework). Checks #39–#41 added in v5.1.1 (cosmic-cuddling-dusk Codex-routing instrumentation); Check #42 (stale .lock) added in concurrency-guards wave; Check #43 (codex_review_coverage) added in codex-routing-fix wave. Checks #44–#45 added in v6.1.0 (adversarial-review-integration). Checks #46–#47 added in v6.2.0 (improve-subagents-parallelism). Check #48 added in v6.3.0 (masterplan-token-efficiency). Check #49 added in v6.3.1 (stale-codex-task detection — surfaced by production telemetry 2026-05-25).
+Invoked via `/masterplan doctor [--fix]`. Loaded by the router only when verb == doctor. Checks #32–#36 added in Wave C. Check #38 added in v5.1.0 (failure-instrumentation framework). Checks #39–#41 added in v5.1.1 (cosmic-cuddling-dusk Codex-routing instrumentation); Check #42 (stale .lock) added in concurrency-guards wave; Check #43 (codex_review_coverage) added in codex-routing-fix wave. Checks #44–#45 added in v6.1.0 (adversarial-review-integration). Checks #46–#47 added in v6.2.0 (improve-subagents-parallelism). Check #48 added in v6.3.0 (masterplan-token-efficiency). Check #49 added in v6.3.1 (stale-codex-task detection — surfaced by production telemetry 2026-05-25). Check #50 added in v6.3.3 (plugin registry drift — installed_plugins.json pinned to v5.8.3 for three weeks while v6.x shipped).
 
 **Entry breadcrumb.** Emit on first line of this step (per Step 0 §Breadcrumb emission contract):
 
@@ -19,20 +19,20 @@ Read worktrees from `git_state.worktrees` (Step 0 cache). For each worktree, sca
 
 **Parallelization.** When worktrees ≥ 2, dispatch one Haiku agent (pass `model: "haiku"` per §Agent dispatch contract) per worktree in a single Agent batch (each agent runs all plan-scoped checks (currently #1-24, #28, #29, #32, #34, #35, #38, #40, #41, #42, #43, #45) for its worktree and returns findings as `[{check_id, severity, file, message}]` JSON). With 1 worktree, run inline — agent dispatch latency isn't worth it. The orchestrator merges results and applies the report ordering below.
 
-**Repo-scoped checks #26 / #30 / #31 / #36 / #39 / #44 / #46 / #47 / #48 / #49 (v5.4.0+ — single Haiku batch).** These ten checks fire ONCE per doctor run regardless of worktree/plan count. Before v5.4.0 they ran inline at the orchestrator (serial reads, ~5 round-trips through the Opus context). v5.4.0+ dispatches a single Haiku in the SAME Agent batch as the per-worktree Haikus above, so all parallelizable doctor work returns in one wave. Inputs per check: #26 (`auto_compact_loop_attached`, v2.9.1+) consumes `CronList` output (session-level state — the Haiku must call `ToolSearch(query: "select:CronList", max_results: 1)` to load the deferred tool before invoking it); #30 (`cross_manifest_version_drift`, v4.2.1+) reads `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json` (root `version` + nested `plugins[0].version`), `.codex-plugin/plugin.json`, and greps `README.md` for `Current release:`; #31 (`per_autonomy_gate_condition_consistency`, v4.2.1+) reads `parts/step-b.md` (v5.0+; gates moved from `commands/masterplan.md` during v5.0 lazy-load extraction); #36 (`router_ceiling_and_phase_file_sanity`, v5.0.0+) reads `commands/masterplan.md` size + checks `parts/step-*.md` existence; #39 (`codex_auth_expiry`, v5.1.1+) reads `~/.codex/auth.json` (user-global, not per-repo); #44 (`adversarial_review_config_valid`, v6.1.0+) reads `~/.masterplan.yaml` and `.masterplan.yaml` for the `adversarial_review` config key (global config tiers, not per-bundle); #46 (`cc2_self_enforcement`, v6.2.0+) scans `parts/step-*.md` for CC-2 sentinel presence; #47 (`return_shape_caps`, v6.2.0+) scans `parts/step-*.md` for uncapped return-shape descriptions; #48 (`codex_linked_worktree`, v6.3.0+) runs `git rev-parse --git-dir` vs `--git-common-dir` to detect linked-worktree topology where Codex sandbox cannot commit; #49 (`stale_codex_background_task`, v6.3.1+) scans `~/.claude/plugins/data/*/state/*/jobs/*.json` for non-terminal tasks whose `startedAt` is more than 24 hours ago — surfaces runaway background workers before they become multi-day orphans. Brief shape:
+**Repo-scoped checks #26 / #30 / #31 / #36 / #39 / #44 / #46 / #47 / #48 / #49 / #50 (v5.4.0+ — single Haiku batch).** These eleven checks fire ONCE per doctor run regardless of worktree/plan count. Before v5.4.0 they ran inline at the orchestrator (serial reads, ~5 round-trips through the Opus context). v5.4.0+ dispatches a single Haiku in the SAME Agent batch as the per-worktree Haikus above, so all parallelizable doctor work returns in one wave. Inputs per check: #26 (`auto_compact_loop_attached`, v2.9.1+) consumes `CronList` output (session-level state — the Haiku must call `ToolSearch(query: "select:CronList", max_results: 1)` to load the deferred tool before invoking it); #30 (`cross_manifest_version_drift`, v4.2.1+) reads `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json` (root `version` + nested `plugins[0].version`), `.codex-plugin/plugin.json`, and greps `README.md` for `Current release:`; #31 (`per_autonomy_gate_condition_consistency`, v4.2.1+) reads `parts/step-b.md` (v5.0+; gates moved from `commands/masterplan.md` during v5.0 lazy-load extraction); #36 (`router_ceiling_and_phase_file_sanity`, v5.0.0+) reads `commands/masterplan.md` size + checks `parts/step-*.md` existence; #39 (`codex_auth_expiry`, v5.1.1+) reads `~/.codex/auth.json` (user-global, not per-repo); #44 (`adversarial_review_config_valid`, v6.1.0+) reads `~/.masterplan.yaml` and `.masterplan.yaml` for the `adversarial_review` config key (global config tiers, not per-bundle); #46 (`cc2_self_enforcement`, v6.2.0+) scans `parts/step-*.md` for CC-2 sentinel presence; #47 (`return_shape_caps`, v6.2.0+) scans `parts/step-*.md` for uncapped return-shape descriptions; #48 (`codex_linked_worktree`, v6.3.0+) runs `git rev-parse --git-dir` vs `--git-common-dir` to detect linked-worktree topology where Codex sandbox cannot commit; #49 (`stale_codex_background_task`, v6.3.1+) scans `~/.claude/plugins/data/*/state/*/jobs/*.json` for non-terminal tasks whose `startedAt` is more than 24 hours ago — surfaces runaway background workers before they become multi-day orphans; #50 (`plugin_registry_drift`, v6.3.3+) compares the `superpowers-masterplan` version in `~/.claude/plugins/installed_plugins.json` against `~/.claude/plugins/marketplaces/rasatpetabit-superpowers-masterplan/.claude-plugin/plugin.json` — when they differ, Claude Code silently runs an older build and newly shipped features are invisible at runtime. Brief shape:
 
 ```
 DISPATCH-SITE: Step D doctor repo-scoped checks
 
 contract_id: "doctor.repo_scoped.schema_v1"
 Follow the algorithm defined in commands/masterplan-contracts.md §Contract: doctor.repo_scoped.schema_v1.
-Goal: Run the ten repo-scoped doctor checks (#26, #30, #31, #36, #39, #44, #46, #47, #48, #49) in one pass. Each check's input list and decision rule is also enumerated in the per-check rows below the Severity / Action Table.
+Goal: Run the eleven repo-scoped doctor checks (#26, #30, #31, #36, #39, #44, #46, #47, #48, #49, #50) in one pass. Each check's input list and decision rule is also enumerated in the per-check rows below the Severity / Action Table.
 Inputs: repo root path; for #26, first load CronList via ToolSearch(query: "select:CronList", max_results: 1).
 Scope: read-only.
-Return shape: {contract_id: "doctor.repo_scoped.schema_v1", checks_processed: [26, 30, 31, 36, 39, 44, 46, 47, 48, 49], violations: [{check_id, severity, file, message}] (≤ 50 items), notes: "<optional>"}.
+Return shape: {contract_id: "doctor.repo_scoped.schema_v1", checks_processed: [26, 30, 31, 36, 39, 44, 46, 47, 48, 49, 50], violations: [{check_id, severity, file, message}] (≤ 50 items), notes: "<optional>"}.
 ```
 
-**Partial-failure handling.** If the repo-scoped Haiku returns malformed JSON, missing `contract_id`, OR `checks_processed` ≠ `[26, 30, 31, 36, 39, 44, 46, 47, 48, 49]`, the orchestrator falls back to running the ten checks inline (pre-v5.4.0 path) and appends one `doctor_repo_scoped_haiku_fallback` event to the bundle-agnostic doctor telemetry log. Single missing-check (e.g., #26 returned `CronList unavailable`) is reported as a per-check INFO and does NOT trigger full fallback. (Self-host audits — deployment-drift detection and CD-9 free-text-question grep — moved to `bin/masterplan-self-host-audit.sh` in v2.11.0; that script is developer-only and runs against the project repo, not the user's working repo.)
+**Partial-failure handling.** If the repo-scoped Haiku returns malformed JSON, missing `contract_id`, OR `checks_processed` ≠ `[26, 30, 31, 36, 39, 44, 46, 47, 48, 49, 50]`, the orchestrator falls back to running the eleven checks inline (pre-v5.4.0 path) and appends one `doctor_repo_scoped_haiku_fallback` event to the bundle-agnostic doctor telemetry log. Single missing-check (e.g., #26 returned `CronList unavailable`) is reported as a per-check INFO and does NOT trigger full fallback. (Self-host audits — deployment-drift detection and CD-9 free-text-question grep — moved to `bin/masterplan-self-host-audit.sh` in v2.11.0; that script is developer-only and runs against the project repo, not the user's working repo.)
 
 Plan-scoped check #28 (`completed_plan_without_retro`, v2.11.0+) is interactive: when it fires it surfaces `AskUserQuestion` to the user, so it can NOT be parallelized inside Haiku worktree dispatchers — instead each worktree's Haiku returns the candidate-list, and the orchestrator drives the prompts inline (sequentially) after the parallel detection completes. Plan-scoped check #29 (`worktree_bundle_reconciliation_mismatch`, v4.0.0+) is a lightweight repo-scoped structural check that applies to all complexity levels.
 
@@ -1686,6 +1686,42 @@ else
     fi
   done
   [ "$stale" -eq 0 ] && echo "Check #49: PASS" || echo "Check #49: WARN ($stale stale task(s) found)"
+fi
+```
+
+Report-only.
+
+## Check #50 — Plugin registry drift
+
+**Severity:** Warning
+**Action:** Report-only; suggests updating `~/.claude/plugins/installed_plugins.json` to point at the marketplace version.
+**Scope:** User-scoped (reads `~/.claude/plugins/installed_plugins.json` + marketplace `.claude-plugin/plugin.json`). Fires once per doctor run.
+**Added:** v6.3.3 (registry-version vs marketplace-version divergence — silently ran v5.8.3 for three weeks while v6.x features shipped).
+
+Compares the `superpowers-masterplan` version in `~/.claude/plugins/installed_plugins.json` (what Claude Code actually loads) against the version in `~/.claude/plugins/marketplaces/rasatpetabit-superpowers-masterplan/.claude-plugin/plugin.json` (the installed git checkout). When they differ, Claude Code silently runs an older build — newly shipped features (doctor checks, breadcrumbs, telemetry fixes, etc.) are invisible at runtime until the registry is updated and Claude Code is restarted.
+
+```bash
+registry_version="$(jq -r '.plugins["superpowers-masterplan@rasatpetabit-superpowers-masterplan"][0].version // empty' \
+  "$HOME/.claude/plugins/installed_plugins.json" 2>/dev/null)"
+marketplace_plugin="$HOME/.claude/plugins/marketplaces/rasatpetabit-superpowers-masterplan/.claude-plugin/plugin.json"
+
+if [ -z "$registry_version" ]; then
+  echo "Check #50: SKIP (superpowers-masterplan not found in installed_plugins.json)"
+elif [ ! -f "$marketplace_plugin" ]; then
+  echo "Check #50: SKIP (no marketplace plugin.json at $marketplace_plugin)"
+else
+  marketplace_version="$(jq -r '.version // empty' "$marketplace_plugin" 2>/dev/null)"
+  if [ "$registry_version" = "$marketplace_version" ]; then
+    echo "Check #50: PASS (registry and marketplace both at v${registry_version})"
+  else
+    echo "WARN: plugin registry drift — Claude Code loads v${registry_version} but marketplace is v${marketplace_version}"
+    install_path="$(jq -r '.plugins["superpowers-masterplan@rasatpetabit-superpowers-masterplan"][0].installPath // empty' \
+      "$HOME/.claude/plugins/installed_plugins.json" 2>/dev/null)"
+    echo "      active installPath: ${install_path}"
+    echo "      Fix: copy marketplace to ~/.claude/plugins/cache/.../superpowers-masterplan/${marketplace_version}/"
+    echo "           update installPath + version in ~/.claude/plugins/installed_plugins.json"
+    echo "           restart Claude Code to pick up the new version."
+  fi
 fi
 ```
 

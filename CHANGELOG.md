@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.3.3] — 2026-05-26
+
+### Added
+
+- **Doctor Check #50 — Plugin registry drift** (`parts/doctor.md`, `commands/masterplan-contracts.md`): Compares the `superpowers-masterplan` version recorded in `~/.claude/plugins/installed_plugins.json` (what Claude Code actually loads) against the version in the marketplace git checkout (`.claude-plugin/plugin.json`). When they differ, Claude Code silently runs an older build and all newly shipped features are invisible until the registry is updated and Claude Code restarted. Root cause: `installed_plugins.json` was pinned to v5.8.3 since 2026-05-22 while the repo shipped v5.9 through v6.3.2 — the breadcrumb navigation feature (v6.0.1) and 11 new doctor checks were all silently skipped at runtime. Repo-scoped Haiku batch count: 10 → 11. `checks_processed: [26, 30, 31, 36, 39, 44, 46, 47, 48, 49, 50]` in both `parts/doctor.md` and `commands/masterplan-contracts.md`. Partial-failure comparison updated to match.
+
 ## [6.3.2] — 2026-05-25
 
 ### Fixed
