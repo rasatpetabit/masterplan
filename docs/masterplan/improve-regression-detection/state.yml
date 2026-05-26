@@ -2,6 +2,7 @@ artifacts:
   plan: docs/masterplan/improve-regression-detection/plan.md
   retro: docs/masterplan/improve-regression-detection/retro.md
   spec: docs/masterplan/improve-regression-detection/spec.md
+  events: docs/masterplan/improve-regression-detection/events.jsonl
 autonomy: loose
 background: null
 brainstorm_anchor:

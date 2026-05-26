@@ -78,4 +78,5 @@ artifacts:
   spec: docs/masterplan/improve-subagents-parallelism/spec.md
   plan: docs/masterplan/improve-subagents-parallelism/plan.md
   retro: docs/masterplan/improve-subagents-parallelism/retro.md
+  events: docs/masterplan/improve-subagents-parallelism/events.jsonl
 legacy: {}

@@ -188,6 +188,8 @@ while IFS= read -r wt; do
 done < <(git worktree list --porcelain 2>/dev/null | grep '^worktree ' | awk '{print $2}')
 for state in docs/masterplan/*/state.yml; do
   [ -f "$state" ] || continue
+  disp="$(grep -E '^worktree_disposition:' "$state" | head -1 | awk '{print $2}' | tr -d '"')"
+  [[ "$disp" == "removed_after_merge" || "$disp" == "kept_by_user" ]] && continue
   wt="$(grep -E '^worktree:' "$state" | head -1 | awk '{print $2}' | tr -d '"')"
   [ -z "$wt" ] && continue
   ok=0

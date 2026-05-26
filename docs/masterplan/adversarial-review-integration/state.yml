@@ -45,4 +45,5 @@ artifacts:
   spec: docs/masterplan/adversarial-review-integration/spec.md
   plan: docs/masterplan/adversarial-review-integration/plan.md
   retro: docs/masterplan/adversarial-review-integration/retro.md
+  events: docs/masterplan/adversarial-review-integration/events.jsonl
 legacy: {}

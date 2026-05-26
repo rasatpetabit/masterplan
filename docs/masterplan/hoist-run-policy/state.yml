@@ -2,6 +2,7 @@ artifacts:
   plan: docs/masterplan/hoist-run-policy/plan.md
   retro: docs/masterplan/hoist-run-policy/retro.md
   spec: docs/masterplan/hoist-run-policy/spec.md
+  events: docs/masterplan/hoist-run-policy/events.jsonl
 autonomy: loose
 background: null
 brainstorm_anchor:
