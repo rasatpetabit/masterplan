@@ -236,7 +236,7 @@ Masterplan coordinates three high-powered mechanisms to keep 6-hour runs excepti
 
 Autonomous runs are vulnerable to state drift and silent errors. Masterplan embeds a robust safety net:
 
-*   **Proactive Doctor Checks:** `/masterplan doctor` runs 47 structural audits. It is complexity-aware: simple `low` plans skip ~14 ledger and telemetry checks to reduce noise, while `high` plans add strict audits (e.g., check #22 for rigor evidence, check #40 for parallel-group annotation coverage). Check #43 validates wave review events. `--fix` repairs common issues.
+*   **Proactive Doctor Checks:** `/masterplan doctor` runs 48 structural audits. It is complexity-aware: simple `low` plans skip ~14 ledger and telemetry checks to reduce noise, while `high` plans add strict audits (e.g., check #22 for rigor evidence, check #40 for parallel-group annotation coverage). Check #43 validates wave review events. `--fix` repairs common issues.
 *   **Versioned Failure Classes:** Runtime anomalies are mapped instantly to a strict taxonomy in [parts/failure-classes.md](parts/failure-classes.md). Mapped classes (e.g., `wave_codex_review_skip` when wave review coverage drops, `subagent_return_oversized` when output > 5120 bytes, `eligibility_cache_event_missing` when cache events are absent, or `dispatch_brief_unregistered` when site contracts are unregistered) enable the orchestrator to recover gracefully or halt safely.
 *   **Self-Host Audits:** For developers, `bin/masterplan-self-host-audit.sh` validates the orchestrator against its own contracts, enforcing Pattern D (contracts must be declared within 30 lines of every lifecycle `DISPATCH-SITE` call) and CD-9 compliance.
 
