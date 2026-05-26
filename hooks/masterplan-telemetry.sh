@@ -171,6 +171,15 @@ if [[ -d "$worktree/.worktrees" ]]; then
     [[ -d "$plans" ]] && candidates+=("$plans")
   done < <(find "$worktree/.worktrees" -mindepth 1 -maxdepth 1 -type d 2>/dev/null)
 fi
+if [[ -d "$worktree/.claude/worktrees" ]]; then
+  while IFS= read -r wt; do
+    [[ -e "$wt/.git" ]] || continue
+    plans="$wt/docs/superpowers/plans"
+    runs="$wt/docs/masterplan"
+    [[ -d "$runs" ]] && candidates+=("$runs")
+    [[ -d "$plans" ]] && candidates+=("$plans")
+  done < <(find "$worktree/.claude/worktrees" -mindepth 1 -maxdepth 1 -type d 2>/dev/null)
+fi
 [[ ${#candidates[@]} -gt 0 ]] || bail
 
 # 3b. Score every candidate state/status file. Preference order:
@@ -189,6 +198,9 @@ for d in "${candidates[@]}"; do
     if [[ "$(basename "$f")" == "state.yml" ]]; then
       fm_worktree=$(awk '/^worktree:/{sub(/^worktree:[[:space:]]*/,""); print; exit}' "$f" 2>/dev/null)
       fm_branch=$(awk '/^branch:/{sub(/^branch:[[:space:]]*/,""); print; exit}' "$f" 2>/dev/null)
+      fm_status=$(awk '/^status:/{sub(/^status:[[:space:]]*/,""); print; exit}' "$f" 2>/dev/null)
+      fm_phase=$(awk '/^phase:/{sub(/^phase:[[:space:]]*/,""); print; exit}' "$f" 2>/dev/null)
+      [[ "$fm_status" == "archived" || "$fm_phase" == "complete" ]] && continue
     else
       fm_worktree=$(awk '/^---$/{c++; next} c==1 && /^worktree:/{sub(/^worktree:[[:space:]]*/,""); print; exit}' "$f" 2>/dev/null)
       fm_branch=$(awk '/^---$/{c++; next} c==1 && /^branch:/{sub(/^branch:[[:space:]]*/,""); print; exit}' "$f" 2>/dev/null)
@@ -310,8 +322,7 @@ fi
 if [[ $tasks_completed_this_turn -gt 0 ]]; then
   if [[ "$is_bundle" -eq 1 ]]; then
     wave_groups_raw=$(tail -n "$tasks_completed_this_turn" "${plans_dir}/events.jsonl" 2>/dev/null \
-      | grep -oE '\[wave: [^]]+\]' \
-      | sed -E 's|\[wave: (.*)\]|\1|' \
+      | jq -r 'select(.wave != null) | .wave' 2>/dev/null \
       | sort -u)
   else
     wave_groups_raw=$(awk '/^## Activity log/{in_log=1; next} /^## /{in_log=0} in_log && /^- /{print}' "$status_file" 2>/dev/null \

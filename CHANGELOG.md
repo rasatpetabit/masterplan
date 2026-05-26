@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.3.2] — 2026-05-25
+
+### Fixed
+
+- **Telemetry hook plan-binding: skip archived/complete bundles** (`hooks/masterplan-telemetry.sh`): The candidate-selection loop had no status filter, so an `archived`/`phase: complete` bundle on the same branch would win over an active in-progress bundle via mtime. Added `fm_status`/`fm_phase` extraction for `state.yml` candidates; any bundle with `status: archived` OR `phase: complete` is skipped before scoring. Fixes the symptom where the adversarial-review-integration bundle (archived) was capturing all telemetry for unrelated sessions running on `main`.
+- **Telemetry hook plan-binding: scan `.claude/worktrees/` for linked worktrees** (`hooks/masterplan-telemetry.sh`): Claude Code places linked worktrees under `.claude/worktrees/<slug>/` but the hook only scanned `.worktrees/`. Added a parallel fan-out block for `$worktree/.claude/worktrees`; the same `.git`-presence guard applies. Fixes zero-telemetry for any run bundle resident in a `.claude/worktrees/`-style worktree (e.g., `masterplan-token-efficiency`).
+- **Telemetry hook wave_groups extraction: use jq instead of grep** (`hooks/masterplan-telemetry.sh`): `events.jsonl` stores structured JSON with a `.wave` field; the previous extractor grepped for `[wave: ...]` markdown patterns which are never written by the orchestrator. Replaced with `jq -r 'select(.wave != null) | .wave'`. Wave group data now correctly appears in telemetry for active bundles that emit wave events.
+
 ## [6.3.1] — 2026-05-25
 
 ### Added
