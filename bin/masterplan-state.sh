@@ -1130,7 +1130,12 @@ def write_state(target, record, copied):
         return yaml_scalar(enforce_scalar_cap(target, key, value))
 
     lines = [
-        "schema_version: 2",
+        'schema_version: "5.1"',
+        "cached_compliance:",
+        "  breadcrumb_ratio: null",
+        "  summary_block_ratio: null",
+        "  window_turns: null",
+        "  last_audit_ts: null",
         f"slug: {state_scalar('slug', record['slug'])}",
         f"status: {state_scalar('status', fm.get('status', 'in-progress'))}",
         f"phase: {state_scalar('phase', 'archived' if fm.get('status') == 'archived' else 'ready')}",

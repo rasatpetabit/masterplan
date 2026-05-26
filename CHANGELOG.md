@@ -5,6 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v6.4.0 — CC-3 visibility (2026-05-26)
+
+### Added
+
+- `<masterplan-trace event=... ...>` runtime marker grammar with four event literals (`subagent_dispatched`, `subagent_returned`, `summary_block_emitted`, `breadcrumb_emitted`)
+- Per-turn dispatch tracking: `subagents_this_turn` (list) + `subagents_this_step` (counter) dual structure in `parts/contracts/agent-dispatch.md`
+- New contract: `parts/contracts/codex-review.md` — canonical JSON return shape for B2/B3/C4b adversarial reviews
+- Doctor Check #51 — CC-3 breadcrumb-at-AUQ runtime compliance
+- Doctor Check #52 — CC-3 summary-block runtime compliance with HIGH-3 model-attribution drift sub-fire via turn_id join
+- `cached_compliance` field in state.yml (4 sub-fields: breadcrumb_ratio, summary_block_ratio, window_turns, last_audit_ts)
+- `turn_id` field in subagents.jsonl rows for cross-stream joining
+- CC-2 Step 4 boot-banner: `↳ CC-3 compliance: WARN — ...` indicator (parts/step-0.md)
+- 5 new doctor fixtures: check-51/{pass,fail}, check-52/{pass,fail,fail-drift}
+- 5 new pytest tests for codex-review parse contract (tests/test_codex_review_parse.py)
+
+### Changed
+
+- `parts/step-b.md` B2/B3 adversarial review gates: structured JSON return contract per `parts/contracts/codex-review.md`; inline findings emit on resume
+- `parts/step-c-verification.md` C4b Codex review dispatch: structured JSON return; inline findings emit; codex-host recursion guard sentinel
+- `parts/step-c-resume.md`: Codex review resume-replay block with D24 tuple-compare schema guard
+- `hooks/masterplan-telemetry.sh`: scans turn output for 4 marker event literals; adds turn_id field to subagents.jsonl rows
+- `commands/masterplan.md` CC-3-trampoline: expanded breadcrumb literal at both step-entry and AUQ-close sites
+- `bin/masterplan-state.sh` bootstrap path: schema_version "5.1" + cached_compliance stub in new bundles
+- README.md doctor counts: 47 → 52 (proactive lint), 48 → 52 (structural audits)
+- docs/verbs.md doctor count: 47 → 52
+- coordinator-doctor: 13 repo-scoped checks (was 11) including #51, #52
+
+### Fixed
+
+- CC-3 summary-block emission: `subagents_this_turn` list now populated via dispatch contract; summary block actually renders at turn close (previously the list was implicit-model-memory and never filled)
+- Breadcrumb-at-AUQ enforcement: spec mandated it but most close-sites were unwired — trampoline now requires it
+- Codex review findings inline visibility: previously dropped to digest tag only; now surfaced as `↳ codex review (sites): N findings ...` inline event
+
+### Migration
+
+- state.yml `schema_version` changed from integer `3` to STRING `"5.1"` (tuple-compare semantics)
+- New `cached_compliance:` block with 4 null fields added to all new bundles (existing bundles will pick it up on next doctor run via Check #51/#52 write-back)
+- Existing bundles continue to function with `schema_version: 3`; doctor checks D24-gate (tuple-compare) skip silently for pre-v5.1 bundles until they accept the migration on next run
+- The cc3-visibility bundle migrated itself first (D22 canary) — see `state.yml.bak.pre-v5_1-migration` for the pre-migration backup
+
 ## [6.3.3] — 2026-05-26
 
 ### Added

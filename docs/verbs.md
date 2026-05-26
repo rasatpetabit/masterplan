@@ -23,7 +23,7 @@ Generate a retrospective for a completed run. Routes through: `step-0.md` → `s
 Migrate legacy planning artifacts into a new run bundle. Routes through: `step-0.md` → `import.md`.
 
 ## `doctor`
-Run all 47 doctor checks against the repo + active run bundles. Routes through: `step-0.md` → `doctor.md`.
+Run all 52 doctor checks against the repo + active run bundles. Routes through: `step-0.md` → `doctor.md`.
 Report-only by default; `--fix` for safe auto-fixes where supported.
 
 ## `status`

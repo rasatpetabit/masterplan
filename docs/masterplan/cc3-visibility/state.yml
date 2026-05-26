@@ -89,10 +89,10 @@ import_contract:
   inputs_hash: ''
   processed_at: ''
 import_hydration: ''
-last_activity: '2026-05-26T22:08:00Z'
+last_activity: '2026-05-26T22:15:30Z'
 legacy: {}
 loop_enabled: false
-next_action: c_wave4_dispatch
+next_action: c_completion
 pending_gate: null
 pending_retro_attempts: 0
 phase: step-c-dispatch

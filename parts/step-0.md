@@ -37,6 +37,35 @@ Truncate `args` at 120 chars with `…`; total sentinel length ≤ 200 chars. Th
 
 **Why:** a missing sentinel line signals the harness ate the invocation — re-register via `/plugin` (uninstall + reinstall) and re-invoke. CC-3-TRAMPOLINE does not apply; this is an unconditional first-line render.
 
+**Step 4 — CC-3 compliance indicator (v6.4.0+).** Fires ONLY when ALL of the following hold simultaneously — skip silently otherwise (zero tool calls; read only from in-memory state.yml data already loaded in Step 0):
+
+1. An active bundle is loaded into the in-memory state.yml data from Step 0 (no extra Read needed).
+2. `schema_version >= "5.1"` — evaluate via D24 tuple-compare with a safe fallback on malformed values:
+   `tuple(int(p) for p in str(schema_version).split('.')) >= (5, 1)` — on any parse error (non-numeric segment, missing field), skip silently.
+3. `cached_compliance` is non-null AND `cached_compliance.last_audit_ts` is non-null (the dict exists and has been audited at least once).
+4. At least one of `cached_compliance.breadcrumb_ratio < 0.8` OR `cached_compliance.summary_block_ratio < 0.8`.
+
+**Cosmetic-shape early-exit:** if `cached_compliance.breadcrumb_ratio >= 0.8` AND `cached_compliance.summary_block_ratio >= 0.8`, skip silently even when all other conditions hold.
+
+**Emit** exactly one plain-text line when all four conditions hold:
+
+```
+↳ CC-3 compliance: WARN — <failing-sub-metrics> (last K turns)
+```
+
+Where:
+- `<failing-sub-metrics>` enumerates ONLY the sub-metrics whose ratio is `< 0.8` (omit any sub-metric ≥ 0.8). Format each as `breadcrumb <ratio%>` or `summary-block <ratio%>`. Separate multiple failing metrics with `, `.
+- `K` is `cached_compliance.window_turns` (NOT hardcoded — must be read from the field).
+
+Examples:
+```
+↳ CC-3 compliance: WARN — breadcrumb 62% (last 20 turns)
+↳ CC-3 compliance: WARN — summary-block 74% (last 15 turns)
+↳ CC-3 compliance: WARN — breadcrumb 42%, summary-block 0% (last 20 turns)
+```
+
+Plain stdout. NOT inside CC-3-trampoline. Cost: zero tool calls — ratios come from in-memory state.yml already loaded. Doctor runs populate `cached_compliance`; the indicator is silent until the first doctor run on a v6.4.0+ bundle.
+
 ### Breadcrumb emission contract (always-on; failure-instrumentation framework)
 
 Every step part (Step 0, A, B0/B1/B2/B3, C, I1..I4, D, R, S, M, N, CL, T) MUST emit structured `<masterplan-trace …>` markers at well-defined control points. These markers feed the failure-detection hook (`hooks/masterplan-telemetry.sh` Section 9) and the over-time analyzer (`bin/masterplan-failure-analyze.sh`). The full taxonomy + signature semantics + auto-filing logic live in `parts/failure-classes.md`.
