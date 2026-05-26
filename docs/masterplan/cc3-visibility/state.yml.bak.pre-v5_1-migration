@@ -72,11 +72,6 @@ brainstorm_anchor:
   verification_ceiling: local-static
   yocto_ownership: null
 branch: masterplan/cc3-visibility
-cached_compliance:
-  breadcrumb_ratio: null
-  summary_block_ratio: null
-  window_turns: null
-  last_audit_ts: null
 codex_review: true
 codex_routing: auto
 compact_loop_recommended: false
@@ -89,10 +84,10 @@ import_contract:
   inputs_hash: ''
   processed_at: ''
 import_hydration: ''
-last_activity: '2026-05-26T22:08:00Z'
+last_activity: '2026-05-26T22:06:00Z'
 legacy: {}
 loop_enabled: false
-next_action: c_wave4_dispatch
+next_action: c_wave3_t5_self_migration
 pending_gate: null
 pending_retro_attempts: 0
 phase: step-c-dispatch
@@ -100,7 +95,7 @@ plan_kind: implementation
 retro_policy:
   reason: ''
   waived: false
-schema_version: '5.1'
+schema_version: 3
 scope_fingerprint:
 - cc3
 - visibility
