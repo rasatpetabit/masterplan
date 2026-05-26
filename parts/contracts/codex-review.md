@@ -25,8 +25,11 @@ Inputs:
 Scope: Review only — no writes, no commits, no file modifications.
 Constraints: CD-10. Be adversarial about correctness and completeness, not style.
 Return: JSON matching the shape below. Do NOT return prose. Return only the JSON object.
+```
 
-Return JSON shape:
+### Return JSON shape
+
+```json
 {
   "verdict": "pass" | "fail" | "warn",
   "dimensions": ["completeness", "correctness", "security", "consistency", "naming", "scope"],
@@ -40,15 +43,15 @@ Return JSON shape:
   ],
   "summary": "<1-2 line gist of the review>"
 }
+```
 
 Notes:
-- "verdict" MUST be one of the three literals — no other values.
-- "findings" MUST be a list (may be empty []).
-- "dimensions" MUST be a list of the dimensions actually evaluated.
-- "summary" MUST be a non-empty string.
-- If findings list is empty, set "verdict" to "pass" (not "warn").
+- `verdict` MUST be one of the three literals — no other values.
+- `findings` MUST be a list (may be empty `[]`).
+- `dimensions` MUST be a list of the dimensions actually evaluated.
+- `summary` MUST be a non-empty string.
+- If findings list is empty, set `verdict` to `pass` (not `warn`).
 - Do NOT include any prose outside the JSON object.
-```
 
 ---
 

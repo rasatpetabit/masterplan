@@ -1836,7 +1836,7 @@ PYEOF
 fi
 ```
 
-After running, cache result to `state.yml.cached_compliance.breadcrumb_ratio = <ratio_val>` and `cached_compliance.turns_audited = <total_n>` and `cached_compliance.audited_at = <now>`. Report-only; `fix_available: false`.
+After running, cache result to `state.yml.cached_compliance.breadcrumb_ratio = <ratio_val>` and `cached_compliance.window_turns = <total_n>` and `cached_compliance.last_audit_ts = <now>`. Report-only; `fix_available: false`.
 
 ## Check #52 — CC-3 summary-block runtime compliance
 

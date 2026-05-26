@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `<masterplan-trace event=... ...>` runtime marker grammar with four event literals (`subagent_dispatched`, `subagent_returned`, `summary_block_emitted`, `breadcrumb_emitted`)
+- `<masterplan-trace event=... ...>` runtime marker grammar with four event literals (`subagent_dispatched`, `breadcrumb_emitted`, `summary_block_emitted`, `auq_render`) — all scanned by the Stop hook and converted to `events.jsonl` rows
 - Per-turn dispatch tracking: `subagents_this_turn` (list) + `subagents_this_step` (counter) dual structure in `parts/contracts/agent-dispatch.md`
 - New contract: `parts/contracts/codex-review.md` — canonical JSON return shape for B2/B3/C4b adversarial reviews
 - Doctor Check #51 — CC-3 breadcrumb-at-AUQ runtime compliance
