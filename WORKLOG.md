@@ -1,5 +1,13 @@
 # WORKLOG
 
+## 2026-05-27 — v7.0.2 patch: doctor #1 false positives + #34 placeholder hash
+
+Check #1 tightened: container dirs under `docs/superpowers/` with no actual `.md` files (only README or empty) no longer fire false-positive WARNs. Check #34 fixed: `codex-routing-fix` bundle had a placeholder `plan_hash` since creation; replaced with real computed hash. Manifests bumped to v7.0.2.
+
+## 2026-05-27 — doctor re-run (v7.0.1) + stale job cleanup
+
+Full 52-check doctor re-run (all inline). 0 errors. Pre-existing WARNs (#1, #16, #32, #34, #35, #40, #43) on archived pre-v5.0 bundles — unchanged. New fix found during run: marketplace clone and installed_plugins.json were still at v7.0.0; pulled marketplace, updated registry to v7.0.1 (#50 now PASS). Checks #3/#18/#29/#49/#50 all PASS. Stale Codex task cleanup: 10 stale running job files (129h–619h) deleted directly from `~/.claude/plugins/data/*/state/*/jobs/` — `codex-companion.mjs cancel` was ineffective (companion only tracks jobs from current session). Checks #51/#52 SKIP (no schema_version >= 5.1 bundle in this repo — expected).
+
 ## 2026-05-27 — doctor post-rename (v7.0.0)
 
 Ran all 52 doctor checks inline (skill routes not available mid-session). Results: 0 errors, ~12 warnings. Fixed: README `Current release:` v6.3.3 → v7.0.0 (#30); cc3-visibility `worktree_disposition: active → removed_after_merge` (#3, #29). False positives confirmed: #18 (codex IS installed at marketplaces/openai-codex/, glob checks wrong depth), #50 (plugin manager updated registry to 7.0.0 mid-run, was stale at check time). Expected backfill: #35/#43 (pre-v5.0 bundles), #45 (pre-v6.1.0 bundles). Stale Codex tasks (#49): 10 runaway tasks across yanos/openxcvr repos — cancel commands surfaced, user-action required.

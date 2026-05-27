@@ -1,7 +1,7 @@
 ---
 schema_version: "5.0"
 slug: codex-routing-fix
-plan_hash: "sha256:pending-first-build"
+plan_hash: "sha256:4780ab40e8559788fc2e5a0d17dae582e0390d5b3e4f97854f54d2763718dfb8"
 
 current_phase: done
 current_wave: 5

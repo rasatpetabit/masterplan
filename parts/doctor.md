@@ -132,6 +132,9 @@ pre-v3 plan/spec/status/retro exists under `docs/superpowers/...`, is not refere
 fail=0
 for d in docs/superpowers/*/; do
   [ -d "$d" ] || continue
+  # Skip container directories with no actual plan/spec/status .md files (only README or empty).
+  plan_files="$(find "$d" -maxdepth 1 -name "*.md" ! -name "README.md" 2>/dev/null | wc -l)"
+  [ "${plan_files:-0}" -eq 0 ] && continue
   slug="$(basename "$d")"
   ref=0
   for s in docs/masterplan/*/state.yml; do

@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v7.0.2 — Doctor fixes: Check #1 false positives + Check #34 placeholder hash (2026-05-27)
+
+### Fixed
+
+- Doctor Check #1 (`legacy plan not migrated`): container directories under `docs/superpowers/` that contain no actual plan/spec/status `.md` files (e.g., `archived-plans/`, `archived-specs/`, `plans/`, `specs/` with only a README or empty) no longer trigger false-positive WARNs. Added a `find -maxdepth 1 -name "*.md" ! -name "README.md"` guard before processing each subdirectory.
+- Doctor Check #34 (`plan_hash staleness`): `codex-routing-fix` bundle had a `plan_hash: "sha256:pending-first-build"` placeholder left from bundle creation. Updated to the real computed hash (`sha256:4780ab40e8559788fc2e5a0d17dae582e0390d5b3e4f97854f54d2763718dfb8`).
+
 ## v7.0.1 — Doctor Check #18 fix (2026-05-27)
 
 ### Fixed
