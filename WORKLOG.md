@@ -1,5 +1,9 @@
 # WORKLOG
 
+## 2026-05-26 — v7.0.0 rename: superpowers-masterplan → masterplan (complete)
+
+Full sweep done after initial commit. Additional files updated on both machines: `~/.claude/settings.json` (plugin trust + extraKnownMarketplaces), `~/.claude/plugins/known_marketplaces.json`, `~/.claude.json` (favoritePlugins + repoToProjects), `~/.claude/AGENTS.md`, `~/.claude/CLAUDE.md`, `~/.claude/refs/hindsight-setup.md`. External repos updated: `ai-template/CLAUDE.md`, `petabit-datasheets/CLAUDE.md`, `petabit-handbook/CLAUDE.md` (committed). Remaining old-name references are historical-only (`.bak` files, session transcripts, tool-results).
+
 ## 2026-05-26 — v7.0.0 rename: superpowers-masterplan → masterplan
 
 Full rename across git, source, and installed paths. GitHub repo renamed via `gh repo rename`. All 95 source files updated (sed passes: rasatpetabit-superpowers-masterplan → rasatpetabit-masterplan, URL, skill route, name). `plugins/superpowers-masterplan` symlink renamed to `plugins/masterplan`. Installed paths on this machine migrated: marketplace clone, cache dir, telemetry hook symlink, command shim (v4), installed_plugins.json key, Codex marketplace. Version bumped to 7.0.0 (breaking: marketplace ID changed). Skill route is `/masterplan:masterplan` internally but users always go through the `/masterplan` shim so it's not user-visible. **Other machines need `/plugin update` after this push to pick up the new marketplace ID.**
