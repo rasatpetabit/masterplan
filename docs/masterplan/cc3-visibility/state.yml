@@ -117,6 +117,6 @@ supersedes: ''
 topic: 'CC-3 visibility: wire summary-block emit, enforce breadcrumb-at-AUQ, surface
   Codex review findings inline'
 variant_of: ''
-worktree: /srv/dev/superpowers-masterplan/.worktrees/cc3-visibility
+worktree: /srv/dev/masterplan/.worktrees/cc3-visibility
 worktree_disposition: active
 worktree_last_reconciled: '2026-05-26T16:39:50Z'

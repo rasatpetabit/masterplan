@@ -15,7 +15,7 @@
 #                                     [--since YYYY-MM-DD]
 #
 # Defaults:
-#   --repo          rasatpetabit/superpowers-masterplan (override via
+#   --repo          rasatpetabit/masterplan (override via
 #                   .masterplan.yaml failure_reporting.repo)
 #   --snapshot-dir  docs/failure-analysis
 #   --limit         1000
@@ -56,7 +56,7 @@ if [[ -z "$repo" ]]; then
     [[ -n "$cfg_repo" ]] && repo="$cfg_repo"
   fi
 fi
-repo="${repo:-rasatpetabit/superpowers-masterplan}"
+repo="${repo:-rasatpetabit/masterplan}"
 snapshot_dir="${snapshot_dir:-$worktree/docs/failure-analysis}"
 
 # ----- deps -----

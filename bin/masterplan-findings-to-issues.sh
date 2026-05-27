@@ -67,7 +67,7 @@ worktree="$(cd "$script_dir/.." && pwd)"
 # Resolve failure_reporting from .masterplan.yaml (matches hooks/masterplan-telemetry.sh pattern).
 fr_enabled="true"
 fr_dry_run="false"
-fr_repo="rasatpetabit/superpowers-masterplan"
+fr_repo="rasatpetabit/masterplan"
 mp_config="$worktree/.masterplan.yaml"
 if [[ -f "$mp_config" ]]; then
   awk_repo=$(awk '/^failure_reporting:/{in_fr=1; next} in_fr && /^[^ ]/{in_fr=0} in_fr && /repo:/{sub(/.*repo:[[:space:]]*/,""); gsub(/["'\'']/,""); print; exit}' "$mp_config" 2>/dev/null)
@@ -85,7 +85,7 @@ fi
 [[ "$fr_dry_run" == "true" ]] && dry_run=1
 [[ -z "$repo" ]] && repo="$fr_repo"
 
-state_dir="${state_dir:-${MASTERPLAN_AUDIT_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/superpowers-masterplan/audits}}"
+state_dir="${state_dir:-${MASTERPLAN_AUDIT_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/masterplan/audits}}"
 plans_roots="${plans_roots:-${MASTERPLAN_REPO_ROOTS:-$HOME/dev}}"
 
 findings_file="${state_dir}/findings.jsonl"

@@ -576,7 +576,7 @@ fi
 # Six anomaly classes, each with a detector. Each anomaly record is written to
 # <run-dir>/anomalies.jsonl (canonical) FIRST. Then a stable signature is
 # computed and `gh` is invoked to file/comment/reopen a GitHub issue against
-# `rasatpetabit/superpowers-masterplan`. On `gh` failure (no auth, rate limit,
+# `rasatpetabit/masterplan`. On `gh` failure (no auth, rate limit,
 # network), the record is duplicated to
 # <run-dir>/anomalies-pending-upload.jsonl for later drain via
 # bin/masterplan-anomaly-flush.sh.
@@ -602,7 +602,7 @@ fi
 # Resolve framework config from .masterplan.yaml if present.
 fr_enabled="true"
 fr_dry_run="false"
-fr_repo="rasatpetabit/superpowers-masterplan"
+fr_repo="rasatpetabit/masterplan"
 mp_config="$worktree/.masterplan.yaml"
 if [[ -f "$mp_config" ]]; then
   awk_repo=$(awk '/^failure_reporting:/{in_fr=1; next} in_fr && /^[^ ]/{in_fr=0} in_fr && /repo:/{sub(/.*repo:[[:space:]]*/,""); gsub(/["'\'']/,""); print; exit}' "$mp_config" 2>/dev/null)

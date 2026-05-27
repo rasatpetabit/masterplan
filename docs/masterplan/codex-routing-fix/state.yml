@@ -42,7 +42,7 @@ tasks:
 
 status: archived
 phase: archived
-worktree: /srv/dev/superpowers-masterplan
+worktree: /srv/dev/masterplan
 branch: main
 worktree_disposition: removed_after_merge
 started: 2026-05-16T16:00:00Z

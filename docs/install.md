@@ -8,10 +8,10 @@ This is a Claude Code plugin, so use the **Code** tab in the desktop app, not re
 
 1. Click the **+** button next to the prompt box.
 2. Choose **Plugins** → **Add plugin**.
-3. If `rasatpetabit-superpowers-masterplan` is not listed yet, add this repository as a marketplace from the plugin manager's **Marketplaces** tab, or paste the marketplace command into the prompt.
-4. Install `superpowers-masterplan`. Use **User scope** to enable it across all projects, **Project scope** to share it via this repository's `.claude/settings.json`, or **Local scope** for the current repo only.
+3. If `rasatpetabit-masterplan` is not listed yet, add this repository as a marketplace from the plugin manager's **Marketplaces** tab, or paste the marketplace command into the prompt.
+4. Install `masterplan`. Use **User scope** to enable it across all projects, **Project scope** to share it via this repository's `.claude/settings.json`, or **Local scope** for the current repo only.
 5. Run `/reload-plugins` or restart the session.
-6. Verify: type `/` or open **+** → **Slash commands** and look for `/masterplan`. If another command shares the name, use the namespaced form `/superpowers-masterplan:masterplan`.
+6. Verify: type `/` or open **+** → **Slash commands** and look for `/masterplan`. If another command shares the name, use the namespaced form `/masterplan:masterplan`.
 
 The desktop plugin browser only shows plugins from configured marketplaces, so the marketplace-add step is required even when the install command itself runs from the chat UI.
 
@@ -23,10 +23,10 @@ If the marketplace path is unavailable (offline host, locked-down account, custo
 mkdir -p ~/.claude/commands ~/.claude/skills
 printf '%s\n' \
   '---' \
-  'description: "Delegate to the installed superpowers-masterplan plugin."' \
+  'description: "Delegate to the installed masterplan plugin."' \
   '---' \
   '<!-- masterplan-shim: v3 -->' \
-  '/superpowers-masterplan:masterplan $ARGUMENTS' \
+  '/masterplan:masterplan $ARGUMENTS' \
   > ~/.claude/commands/masterplan.md
 cp -r skills/masterplan-detect ~/.claude/skills/
 ```
@@ -46,9 +46,9 @@ Use masterplan full Stripe webhook handler
 Use masterplan execute docs/masterplan/auth-refactor/state.yml
 ```
 
-Slash-style text (`/masterplan` or `/superpowers-masterplan:masterplan`) is accepted when the host passes it to the model, but the chat-message form is the portable resume instruction. `$masterplan ...` is **not** portable — Codex shell-command mode sends it to Bash where `$masterplan` is an environment-variable expansion.
+Slash-style text (`/masterplan` or `/masterplan:masterplan`) is accepted when the host passes it to the model, but the chat-message form is the portable resume instruction. `$masterplan ...` is **not** portable — Codex shell-command mode sends it to Bash where `$masterplan` is an environment-variable expansion.
 
-If your Codex build registers the marketplace but a fresh prompt does not list `masterplan`, enable `superpowers-masterplan@rasatpetabit-superpowers-masterplan` in Codex's plugin UI/config, or install a user-level bridge at `~/.codex/skills/masterplan/SKILL.md` from this repo's `skills/masterplan/` directory.
+If your Codex build registers the marketplace but a fresh prompt does not list `masterplan`, enable `masterplan@rasatpetabit-masterplan` in Codex's plugin UI/config, or install a user-level bridge at `~/.codex/skills/masterplan/SKILL.md` from this repo's `skills/masterplan/` directory.
 
 When running inside Codex, masterplan disables the separate Claude Code `codex:codex-rescue` companion path for that invocation to avoid recursive Codex-on-Codex dispatch; persisted `codex.routing` / `codex.review` settings remain unchanged for future Claude Code runs.
 
@@ -106,4 +106,4 @@ After install:
 /masterplan
 ```
 
-With no arguments, this opens the intake picker: it lists any in-progress run bundles, or — when none exist — prompts for a new topic. If the command isn't found, run `/plugin` and confirm `superpowers-masterplan` appears under **Installed**; if it doesn't, the marketplace add and install steps need to be re-run in order.
+With no arguments, this opens the intake picker: it lists any in-progress run bundles, or — when none exist — prompts for a new topic. If the command isn't found, run `/plugin` and confirm `masterplan` appears under **Installed**; if it doesn't, the marketplace add and install steps need to be re-run in order.

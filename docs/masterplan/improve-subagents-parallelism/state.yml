@@ -3,7 +3,7 @@ slug: improve-subagents-parallelism
 topic: Improve use of subagents and parallelism
 status: archived
 phase: complete
-worktree: /srv/dev/superpowers-masterplan/.worktrees/improve-subagents-parallelism
+worktree: /srv/dev/masterplan/.worktrees/improve-subagents-parallelism
 branch: worktree-improve-subagents-parallelism
 started: 2026-05-22T00:00:00Z
 last_activity: 2026-05-22T21:30:00Z

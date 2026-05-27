@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v7.0.0 — Rename to masterplan (2026-05-26)
+
+### Changed (breaking)
+
+- Plugin renamed from `superpowers-masterplan` to `masterplan` — marketplace ID changes from `rasatpetabit-superpowers-masterplan` to `rasatpetabit-masterplan`
+- GitHub repo renamed from `rasatpetabit/superpowers-masterplan` to `rasatpetabit/masterplan`
+- Skill route changes from `/superpowers-masterplan:masterplan` to `/masterplan:masterplan`
+- Install command changes from `/plugin marketplace add rasatpetabit/superpowers-masterplan` to `/plugin marketplace add rasatpetabit/masterplan`
+- Existing installs on other machines require `/plugin update` after upgrading
+
 ## v6.4.0 — CC-3 visibility (2026-05-26)
 
 ### Added
@@ -49,7 +59,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Doctor Check #50 — Plugin registry drift** (`parts/doctor.md`, `commands/masterplan-contracts.md`): Compares the `superpowers-masterplan` version recorded in `~/.claude/plugins/installed_plugins.json` (what Claude Code actually loads) against the version in the marketplace git checkout (`.claude-plugin/plugin.json`). When they differ, Claude Code silently runs an older build and all newly shipped features are invisible until the registry is updated and Claude Code restarted. Root cause: `installed_plugins.json` was pinned to v5.8.3 since 2026-05-22 while the repo shipped v5.9 through v6.3.2 — the breadcrumb navigation feature (v6.0.1) and 11 new doctor checks were all silently skipped at runtime. Repo-scoped Haiku batch count: 10 → 11. `checks_processed: [26, 30, 31, 36, 39, 44, 46, 47, 48, 49, 50]` in both `parts/doctor.md` and `commands/masterplan-contracts.md`. Partial-failure comparison updated to match.
+- **Doctor Check #50 — Plugin registry drift** (`parts/doctor.md`, `commands/masterplan-contracts.md`): Compares the `masterplan` version recorded in `~/.claude/plugins/installed_plugins.json` (what Claude Code actually loads) against the version in the marketplace git checkout (`.claude-plugin/plugin.json`). When they differ, Claude Code silently runs an older build and all newly shipped features are invisible until the registry is updated and Claude Code restarted. Root cause: `installed_plugins.json` was pinned to v5.8.3 since 2026-05-22 while the repo shipped v5.9 through v6.3.2 — the breadcrumb navigation feature (v6.0.1) and 11 new doctor checks were all silently skipped at runtime. Repo-scoped Haiku batch count: 10 → 11. `checks_processed: [26, 30, 31, 36, 39, 44, 46, 47, 48, 49, 50]` in both `parts/doctor.md` and `commands/masterplan-contracts.md`. Partial-failure comparison updated to match.
 
 ## [6.3.2] — 2026-05-25
 
@@ -185,7 +195,7 @@ No schema changes. Detector behavior is strictly more complete: every existing c
 
 ### Rollout
 
-`claude plugin marketplace update` + `claude plugin update "superpowers-masterplan@rasatpetabit-superpowers-masterplan"` for Claude Code AND `codex plugin marketplace upgrade rasatpetabit-superpowers-masterplan` for Codex CLI to pick up the session-audit library. No orchestrator-surface or runtime behavior changes.
+`claude plugin marketplace update` + `claude plugin update "masterplan@rasatpetabit-masterplan"` for Claude Code AND `codex plugin marketplace upgrade rasatpetabit-masterplan` for Codex CLI to pick up the session-audit library. No orchestrator-surface or runtime behavior changes.
 
 ## [5.8.2] — 2026-05-20 — Self-host audit reconciliation with v5.0+ phase modules
 
@@ -206,7 +216,7 @@ No schema changes. Audit script behavior is strictly more correct: same set of r
 
 ### Rollout
 
-`claude plugin marketplace update` + `claude plugin update "superpowers-masterplan@rasatpetabit-superpowers-masterplan"` for Claude Code AND `codex plugin marketplace upgrade rasatpetabit-superpowers-masterplan` for Codex CLI to pick up the audit script. No orchestrator-surface or runtime behavior changes.
+`claude plugin marketplace update` + `claude plugin update "masterplan@rasatpetabit-masterplan"` for Claude Code AND `codex plugin marketplace upgrade rasatpetabit-masterplan` for Codex CLI to pick up the audit script. No orchestrator-surface or runtime behavior changes.
 
 ## [5.8.1] — 2026-05-20 — Path-portability finalization + pending_gate_orphaned audit fix
 
@@ -214,7 +224,7 @@ Patch release. Pre-publication finalization for plugin distribution from arbitra
 
 ### Fixed
 
-- **Hardcoded developer-path leaks (3 docs files):** `docs/internals.md` and `parts/failure-classes.md` carried literal `~/.claude/projects/-home-ras-dev-superpowers-masterplan/hook-errors.log` examples; replaced with a `<slugified-worktree>` placeholder + one-line explanation matching the actual hook behavior at `hooks/masterplan-telemetry.sh:571`. `README.md` "Optional Telemetry Hook" section restored from collateral stripping (prior refactor left it as a comment-only JSON block).
+- **Hardcoded developer-path leaks (3 docs files):** `docs/internals.md` and `parts/failure-classes.md` carried literal `~/.claude/projects/-home-ras-dev-masterplan/hook-errors.log` examples; replaced with a `<slugified-worktree>` placeholder + one-line explanation matching the actual hook behavior at `hooks/masterplan-telemetry.sh:571`. `README.md` "Optional Telemetry Hook" section restored from collateral stripping (prior refactor left it as a comment-only JSON block).
 - **`AGENTS.md`** — dropped private-repo refs (`~/dev/petabit-handbook/*`); now generically points at `CLAUDE.md` + optional org-wide guide.
 - **Python `~/dev` defaults:** `lib/masterplan_session_audit.py` and `lib/masterplan_wipe_telemetry.py` derived `MASTERPLAN_REPO_ROOTS` from `~/dev`; both now derive from `Path(__file__).resolve().parent.parent.parent` so discovery works without assuming the developer's home layout.
 - **Hostname leaks:** `epyc1`/`epyc2` references in `docs/internals.md` and two `docs/masterplan/` bundles generalized to "one host" / "every host that has the plugin installed".
@@ -262,7 +272,7 @@ This bundle adds (a) new policy that flips a default behavior the plan-writer ap
 
 ### Rollout
 
-Per the patched rollout macro: `claude plugin marketplace update` + `claude plugin update "superpowers-masterplan@rasatpetabit-superpowers-masterplan"` for Claude Code AND `codex plugin marketplace upgrade rasatpetabit-superpowers-masterplan` for Codex CLI, on both ras@epyc2 and grojas@epyc1.
+Per the patched rollout macro: `claude plugin marketplace update` + `claude plugin update "masterplan@rasatpetabit-masterplan"` for Claude Code AND `codex plugin marketplace upgrade rasatpetabit-masterplan` for Codex CLI, on both ras@epyc2 and grojas@epyc1.
 
 ## [5.7.3] — 2026-05-16 — telemetry: fix parent_turn duplication in emit_parent_turns
 
@@ -330,7 +340,7 @@ A new telemetry field plus a new audit rollup is a versioned capability boundary
 
 ### Rollout
 
-- Dual-surface refresh per the patched rollout macro: `claude plugin marketplace update` + `claude plugin update "superpowers-masterplan@rasatpetabit-superpowers-masterplan"` for Claude Code AND `codex plugin marketplace upgrade rasatpetabit-superpowers-masterplan` for Codex CLI, on both ras@epyc2 and grojas@epyc1.
+- Dual-surface refresh per the patched rollout macro: `claude plugin marketplace update` + `claude plugin update "masterplan@rasatpetabit-masterplan"` for Claude Code AND `codex plugin marketplace upgrade rasatpetabit-masterplan` for Codex CLI, on both ras@epyc2 and grojas@epyc1.
 
 ## [5.5.0] — 2026-05-15 — Three-layer regression test suite: static battery + doctor-fixtures (9 checks, 24 fixtures) + e2e claude --print harness
 
@@ -360,7 +370,7 @@ A complete sequenced test suite is a versioned milestone: it formalizes a regres
 
 ### Rollout
 
-- Dual-surface refresh per the patched rollout macro: `claude plugin marketplace update` + `claude plugin update "superpowers-masterplan@rasatpetabit-superpowers-masterplan"` for Claude Code AND `codex plugin marketplace upgrade rasatpetabit-superpowers-masterplan` for Codex CLI, on both ras@epyc2 and grojas@epyc1.
+- Dual-surface refresh per the patched rollout macro: `claude plugin marketplace update` + `claude plugin update "masterplan@rasatpetabit-masterplan"` for Claude Code AND `codex plugin marketplace upgrade rasatpetabit-masterplan` for Codex CLI, on both ras@epyc2 and grojas@epyc1.
 
 ## [5.4.0] — 2026-05-15 — Parallelism wave: doctor repo-scoped Haiku batch + intent-anchor 3-way fan-out + parent re-verify parallel Bash + eligibility cache sharding
 
@@ -386,7 +396,7 @@ New parallel dispatch sites are behavior-affecting (different observable telemet
 
 ### Rollout
 
-- Dual-surface refresh per the patched rollout macro: `claude plugin marketplace update` + `claude plugin update "superpowers-masterplan@rasatpetabit-superpowers-masterplan"` for Claude Code AND `codex plugin marketplace upgrade rasatpetabit-superpowers-masterplan` for Codex CLI, on both ras@epyc2 and grojas@epyc1.
+- Dual-surface refresh per the patched rollout macro: `claude plugin marketplace update` + `claude plugin update "masterplan@rasatpetabit-masterplan"` for Claude Code AND `codex plugin marketplace upgrade rasatpetabit-masterplan` for Codex CLI, on both ras@epyc2 and grojas@epyc1.
 
 ## [5.3.3] — 2026-05-15 — Plugins UI errors: frontmatter on contract registry + drop dead auq-guard.sh
 
@@ -394,7 +404,7 @@ Patch release. Fixes 2 static issues surfaced by the Claude Code Plugins UI's Er
 
 ### Fixed
 
-- **`commands/masterplan-contracts.md` had no frontmatter.** The file is a registry doc that has lived in `commands/` since v4.0.0 (referenced by path in `parts/step-b.md`, `parts/doctor.md`, and `docs/internals.md` so subagent briefs can cite specific `## Contract:` sections). Claude Code's plugin command loader treats every `commands/*.md` as a slash command and rejects ones without frontmatter, producing a Plugins UI error. Added minimal frontmatter with a `description:` field that documents the file as an internal registry and explicitly notes it is not user-invokable. The 10+ existing path-and-anchor references remain intact (frontmatter sits above the `# Masterplan subagent contract registry` heading; heading anchors are unaffected). A phantom `/superpowers-masterplan:masterplan-contracts` slash command now appears in the autocomplete with the disclaimer description — preferred over an unfixed UI error.
+- **`commands/masterplan-contracts.md` had no frontmatter.** The file is a registry doc that has lived in `commands/` since v4.0.0 (referenced by path in `parts/step-b.md`, `parts/doctor.md`, and `docs/internals.md` so subagent briefs can cite specific `## Contract:` sections). Claude Code's plugin command loader treats every `commands/*.md` as a slash command and rejects ones without frontmatter, producing a Plugins UI error. Added minimal frontmatter with a `description:` field that documents the file as an internal registry and explicitly notes it is not user-invokable. The 10+ existing path-and-anchor references remain intact (frontmatter sits above the `# Masterplan subagent contract registry` heading; heading anchors are unaffected). A phantom `/masterplan:masterplan-contracts` slash command now appears in the autocomplete with the disclaimer description — preferred over an unfixed UI error.
 
 ### Removed
 
@@ -402,7 +412,7 @@ Patch release. Fixes 2 static issues surfaced by the Claude Code Plugins UI's Er
 
 ### Rollout
 
-- Both surfaces refreshed: `claude plugin marketplace update` + `claude plugin update "superpowers-masterplan@..."` for Claude Code AND `codex plugin marketplace upgrade ...` for Codex CLI (per the v5.3.2 lesson where Codex side was silently skipped).
+- Both surfaces refreshed: `claude plugin marketplace update` + `claude plugin update "masterplan@..."` for Claude Code AND `codex plugin marketplace upgrade ...` for Codex CLI (per the v5.3.2 lesson where Codex side was silently skipped).
 
 ## [5.3.2] — 2026-05-15 — Docs: internals.md case study on Step 0 confabulation + Doctor #41 bash lesson
 
@@ -567,7 +577,7 @@ Aimed at the post-v5.1.1 cleanup step: erase 12 months of mixed pre-and-post-ins
 - **`bin/masterplan-wipe-telemetry.sh`** (thin bash wrapper) + **`lib/masterplan_wipe_telemetry.py`** (deletion logic). Walks Claude transcripts under `~/.claude/projects/*/*.jsonl`, Codex transcripts/history/log/archived under `~/.codex/`, and per-bundle telemetry (`events.jsonl`, `anomalies.jsonl`, `anomalies-pending-upload.jsonl`, `subagents.jsonl`, `eligibility-cache.json`) across every repo under `$MASTERPLAN_REPO_ROOTS` (default: the parent of the active repository or `~/dev`) including `.worktrees/` copies.
 - **Hard keep-list** preserves all bundle work product (`plan.md`, `state.yml`, `spec.md`, `retro.md`, `worklog.md`, `next-actions.md`, `gap-register.md`) and protected directories (`reviews/`, `notes/`, `subagent-reports/`, `artifacts/`). Codex `auth.json` and `config.toml` are untouched.
 - **mtime skip** defends against in-progress writes — files modified within the last 5 minutes (configurable via `--mtime-skip=N`) are never deleted.
-- **Manifest** at `${XDG_STATE_HOME:-~/.local/state}/superpowers-masterplan/wipes/<UTC-timestamp>.txt` is written BEFORE any deletion, listing every path with byte count + per-category totals, so post-mortem is always recoverable.
+- **Manifest** at `${XDG_STATE_HOME:-~/.local/state}/masterplan/wipes/<UTC-timestamp>.txt` is written BEFORE any deletion, listing every path with byte count + per-category totals, so post-mortem is always recoverable.
 - **State.yml breadcrumb**: each affected bundle's `state.yml` gains a top-level `events_wiped:` block (`ts`, `manifest`, `note`) so future `/masterplan status` / doctor runs can distinguish "never had telemetry" from "telemetry was wiped at <ts>". Append-only; does not mutate other fields per CD-7.
 - **Per-category opt-out flags:** `--no-claude`, `--no-codex`, `--no-bundle-logs`, `--no-worktrees`, `--repo-roots=A:B` for narrow runs.
 - **Verified on this repo's host:** 1600 files / 1.32GB deleted on 2026-05-15; bundle work product across 280 bundles preserved; `events_wiped:` breadcrumb confirmed on sample bundles.
@@ -604,7 +614,7 @@ Per the project's failure-instrumentation principle (codified in `[5.1.0]` and r
 ## [5.1.0] — 2026-05-14 — Failure-instrumentation framework
 
 ### Added
-- **Failure-instrumentation framework** (`hooks/masterplan-telemetry.sh` Section 9, ~280 lines). Six anomaly classes auto-detected at end-of-turn from `<masterplan-trace …>` breadcrumbs + `state.yml` + `events.jsonl`: `silent-stop-after-skill`, `unexpected-halt`, `state-mutation-dropped`, `orphan-pending-gate`, `step-trace-gap`, `verification-failure-uncited`. Each detection writes a canonical record to `<run-dir>/anomalies.jsonl` first, then files/comments/reopens a GitHub issue against `rasatpetabit/superpowers-masterplan` (or configured override) with stable SHA1 signatures and dedup. Local-first persistence: gh failures land in `<run-dir>/anomalies-pending-upload.jsonl` for later drain. Configurable per `.masterplan.yaml` `failure_reporting.{repo, enabled, dry_run}`.
+- **Failure-instrumentation framework** (`hooks/masterplan-telemetry.sh` Section 9, ~280 lines). Six anomaly classes auto-detected at end-of-turn from `<masterplan-trace …>` breadcrumbs + `state.yml` + `events.jsonl`: `silent-stop-after-skill`, `unexpected-halt`, `state-mutation-dropped`, `orphan-pending-gate`, `step-trace-gap`, `verification-failure-uncited`. Each detection writes a canonical record to `<run-dir>/anomalies.jsonl` first, then files/comments/reopens a GitHub issue against `rasatpetabit/masterplan` (or configured override) with stable SHA1 signatures and dedup. Local-first persistence: gh failures land in `<run-dir>/anomalies-pending-upload.jsonl` for later drain. Configurable per `.masterplan.yaml` `failure_reporting.{repo, enabled, dry_run}`.
 - **Versioned anomaly taxonomy** (`parts/failure-classes.md`): per-class symptom, signals, detector pseudo-shell, and signature inputs. Adding a class requires extending this file + the hook detector dispatch.
 - **Step-boundary breadcrumb stream** in `parts/step-0.md`, `step-a.md`, `step-b.md`, `step-c.md`, `import.md`, `doctor.md` — additive `<masterplan-trace step=… phase=in|out>`, `skill-invoke`, `skill-return`, `gate=fire`, `state-write` emit points at well-defined control flow boundaries. Visible turn output (not internal reasoning) so they survive context compaction.
 - **`bin/masterplan-failure-analyze.sh`** — over-time analysis script. Queries `auto-filed`-labeled issues from the destination repo, computes frequency by class, recurrence-after-fix histogram (regression signal — the single most important metric for evaluating whether fixes actually held), open-time-to-close median per class, per-verb / per-step breakdown, same-day co-occurrence pairs. Output: markdown to stdout + dated snapshot at `docs/failure-analysis/<YYYY-MM-DD>.md`.
@@ -620,7 +630,7 @@ Per direct user feedback: "even the most basic of `/loop /masterplan next`s fail
 
 ### Known followups
 
-- Redaction layer for sensitive paths/slugs in issue bodies (Phase 2). The default destination `rasatpetabit/superpowers-masterplan` is private to the user; redaction becomes necessary only if a future deployment files to a public repo.
+- Redaction layer for sensitive paths/slugs in issue bodies (Phase 2). The default destination `rasatpetabit/masterplan` is private to the user; redaction becomes necessary only if a future deployment files to a public repo.
 - Codex-host parity for failure detection. Section 9 is currently Claude Code Stop-hook only.
 
 ## [5.0.1] — 2026-05-13 — Doctor #31 v5 fix + bundle maintenance
@@ -800,7 +810,7 @@ v2 bundles work unchanged; migration is lazy. Force with `/masterplan doctor --f
 
 ### Added
 - **`next` verb (Step N)** — intercepts "next" before it falls through to the bare-topic catch-all (which previously launched a new brainstorm cycle cascading through compaction). Step N inline state scan → AUQ: resume / new plan / status. Updated all 6 sync'd locations per anti-pattern #4.
-- Codex-native plugin packaging: `.codex-plugin/plugin.json`, `.agents/plugins/marketplace.json`, `plugins/superpowers-masterplan -> ..` symlink. Portable invocation: `/superpowers-masterplan:masterplan`.
+- Codex-native plugin packaging: `.codex-plugin/plugin.json`, `.agents/plugins/marketplace.json`, `plugins/masterplan -> ..` symlink. Portable invocation: `/masterplan:masterplan`.
 - **Codex host suppression**: Step 0 detects Codex context, suppresses `codex:codex-rescue` for that invocation, routes Step C inline with `decision_source: host-suppressed`.
 
 ## [3.0.0] — 2026-05-08 — run bundles, migration, and default completion finalization
@@ -865,7 +875,7 @@ Fix: `/masterplan-detect` duplicated in slash-command list (user-level copy shad
 
 ## [2.11.0] — 2026-05-06 — extract self-host checks; shim v2; retro auto-archive; doctor #28
 
-Fix: shim v2 (`<!-- masterplan-shim: v2 -->`) — v1 body routed through Skill tool which could be absent; v2 body is just `/superpowers-masterplan:masterplan $ARGUMENTS`, resolved at message-receive time, no Skill tool dependency. Doctor checks #25 + #27 extracted from `commands/masterplan.md` to `bin/masterplan-self-host-audit.sh` (they only fired inside the dev repo; consumed prompt tokens in all user sessions). Added: Step R3.5 auto-archives plan+spec after retro write (opt-out: `retro.auto_archive_after_retro: false`). Doctor check #28 `completed_plan_without_retro` — plan-scoped Warning, offers AUQ per finding. Active checks after gaps: #1–#24, #26, #28.
+Fix: shim v2 (`<!-- masterplan-shim: v2 -->`) — v1 body routed through Skill tool which could be absent; v2 body is just `/masterplan:masterplan $ARGUMENTS`, resolved at message-receive time, no Skill tool dependency. Doctor checks #25 + #27 extracted from `commands/masterplan.md` to `bin/masterplan-self-host-audit.sh` (they only fired inside the dev repo; consumed prompt tokens in all user sessions). Added: Step R3.5 auto-archives plan+spec after retro write (opt-out: `retro.auto_archive_after_retro: false`). Doctor check #28 `completed_plan_without_retro` — plan-scoped Warning, offers AUQ per finding. Active checks after gaps: #1–#24, #26, #28.
 
 ## [2.10.0] — 2026-05-06 — codify CD-9 (no free-text user questions) + plugin-shim recognition
 
@@ -913,7 +923,7 @@ Model-dispatch contract + per-subagent telemetry layer. Root cause: 2-day sessio
 
 ## [2.2.3] — 2026-05-04
 
-Marketplace-readiness patch. Added `.claude-plugin/marketplace.json` (self-contained `rasatpetabit-superpowers-masterplan` marketplace; `superpowers@claude-plugins-official` dependency). Fixed: `plugin.json` `repository` field from npm-style object to string; `commands/masterplan.md` frontmatter description quoted so colon in `Verbs:` parses as valid YAML. Added `docs/release-submission.md`. Verified with `claude plugin validate .` + clean install smoke test.
+Marketplace-readiness patch. Added `.claude-plugin/marketplace.json` (self-contained `rasatpetabit-masterplan` marketplace; `superpowers@claude-plugins-official` dependency). Fixed: `plugin.json` `repository` field from npm-style object to string; `commands/masterplan.md` frontmatter description quoted so colon in `Verbs:` parses as valid YAML. Added `docs/release-submission.md`. Verified with `claude plugin validate .` + clean install smoke test.
 
 ## [2.2.2] — 2026-05-04
 

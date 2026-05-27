@@ -22,7 +22,7 @@
 
 ```bash
 pwd
-# Expected: /srv/dev/superpowers-masterplan/.worktrees/improve-subagents-parallelism
+# Expected: /srv/dev/masterplan/.worktrees/improve-subagents-parallelism
 git log --oneline -3
 ls parts/step-c*.md
 # Expected: only parts/step-c.md present (monolith — sub-files do not exist yet)

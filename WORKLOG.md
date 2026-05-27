@@ -1,5 +1,21 @@
 # WORKLOG
 
+## 2026-05-26 — v7.0.0 rename: superpowers-masterplan → masterplan
+
+Full rename across git, source, and installed paths. GitHub repo renamed via `gh repo rename`. All 95 source files updated (sed passes: rasatpetabit-superpowers-masterplan → rasatpetabit-masterplan, URL, skill route, name). `plugins/superpowers-masterplan` symlink renamed to `plugins/masterplan`. Installed paths on this machine migrated: marketplace clone, cache dir, telemetry hook symlink, command shim (v4), installed_plugins.json key, Codex marketplace. Version bumped to 7.0.0 (breaking: marketplace ID changed). Skill route is `/masterplan:masterplan` internally but users always go through the `/masterplan` shim so it's not user-visible. **Other machines need `/plugin update` after this push to pick up the new marketplace ID.**
+
+## 2026-05-26 — epyc2 upgrade to v6.4.0 + dev-repo stale-worktree root-cause
+
+Two hosts to upgrade; epyc1 (grojas) already at v6.4.0 (registry + clone + symlinked hook all in sync). epyc2 (ras) brought to v6.4.0 with caveats below.
+
+**Dev repo (/srv/dev/masterplan) anomaly — root cause identified.** Working tree appeared to have a staged revert of v6.4.0 → v6.3.3 (manifest versions, CHANGELOG, cc3-visibility bundle, check-51/#52 fixtures, codex-review contract). `git diff HEAD 6d7e51d` showed zero content difference between working tree and v6.3.3 commit — i.e., not a hand-authored revert, just stale state. `.git/logs/refs/heads/main` tail confirmed: ref jumped `6d7e51d → 0fd49c7` at epoch `1779831675` with an **empty reflog message** — signature of bare `git update-ref` or `git fetch origin main:main`, neither of which touches working tree. Fix: `git checkout HEAD -- .` (no user work lost; verified no untracked files).
+
+**Mechanism note for next time.** Avoid `git fetch origin main:main` from a worktree that has `main` checked out elsewhere — it advances the ref without checking out, leaving every consumer with what looks like a giant staged revert. Use `git pull --ff-only` from the actual main checkout instead.
+
+**epyc2 marketplace clone upgrade.** Local bin/ edits (`$HOME/dev` → `/srv/dev` in `masterplan-findings-to-issues.sh` + `masterplan-routing-stats.sh`) stashed → `git pull --ff-only` (276e955 → 0fd49c7, 41 files +3666/-42) → `git stash pop` clean. **Surprise:** `~/.claude/hooks/masterplan-telemetry.sh` is a **symlink** to the marketplace clone's `hooks/`, not a copy — so `git pull` updated the live hook implicitly (md5 confirmed `25430886ead05d0fa9970ae8f39482e5`). Prior session's compaction summary assumed copy; verified symlink via `ls -la`. Cache dir `~/.claude/plugins/cache/.../masterplan/` still lacks a `6.4.0/` subdir — Claude Code's plugin manager materializes that on session restart, which is also when `installed_plugins.json` updates from `version 6.3.3 / gitCommitSha 81a953f` → `6.4.0 / 0fd49c7`.
+
+**Handoff to user:** restart Claude Code session on epyc2; then run `/masterplan doctor` to verify Check #50 (registry/marketplace drift) reports in sync and Checks #51/#52 (new in v6.4.0) fire.
+
 ## 2026-05-26 — publish v6.3.3
 
 All 8 run bundles archived; no active work. Status clean; pushed main to origin. Check #50 (registry/marketplace drift) self-resolves after push + `/plugin update` on consuming side.
@@ -109,7 +125,7 @@ State: `plan_gate` / `pending_gate: plan_closeout` — awaiting user approval be
 Auto-fix pass across all 4 run bundles. Three commits landed on main + both active worktrees:
 
 - **codex-routing-fix**: injected 17 missing v3 standard fields (bundle used experimental v5.0 lightweight schema; all values derived from `recent_events` timestamps and git state). Plan_hash still `sha256:pending-first-build` (#34 WARN). No retro.md — Check #28 deferred to AUQ.
-- **concurrency-guards**: fixed bogus `worktree: /path/to/...` placeholder → `/srv/dev/superpowers-masterplan`; corrected `worktree_disposition: active → removed_after_merge` (archived bundle, ran brainstorm-only on main, no separate worktree). `worktree_decision_note` >200 chars (#32, report-only).
+- **concurrency-guards**: fixed bogus `worktree: /path/to/...` placeholder → `/srv/dev/masterplan`; corrected `worktree_disposition: active → removed_after_merge` (archived bundle, ran brainstorm-only on main, no separate worktree). `worktree_decision_note` >200 chars (#32, report-only).
 - **improve-subagents-parallelism** (worktree): fixed `.claude/worktrees/` path → `.worktrees/` (actual git worktree location). First commit of bundle files.
 - **masterplan-token-efficiency** (worktree): same path fix + added missing `compact_loop_recommended: false`. First commit of bundle files.
 

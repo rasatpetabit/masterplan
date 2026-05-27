@@ -128,7 +128,7 @@ git config user.name  "smoke"
 # .masterplan.yaml — dry-run mode by default; we'll flip per-phase.
 cat > .masterplan.yaml <<EOF
 failure_reporting:
-  repo: rasatpetabit/superpowers-masterplan
+  repo: rasatpetabit/masterplan
   enabled: true
   dry_run: false
 EOF

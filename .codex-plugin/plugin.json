@@ -1,13 +1,13 @@
 {
-  "name": "superpowers-masterplan",
-  "version": "6.4.0",
+  "name": "masterplan",
+  "version": "7.0.0",
   "description": "Brainstorm, plan, execute, resume, import, lint, and retrospect long-running coding-agent work with durable run bundles and strict context control.",
   "author": {
     "name": "Richard A Steenbergen",
     "email": "ras@petabitscale.com"
   },
-  "homepage": "https://github.com/rasatpetabit/superpowers-masterplan",
-  "repository": "https://github.com/rasatpetabit/superpowers-masterplan",
+  "homepage": "https://github.com/rasatpetabit/masterplan",
+  "repository": "https://github.com/rasatpetabit/masterplan",
   "license": "MIT",
   "keywords": [
     "codex",
@@ -33,7 +33,7 @@
       "Read",
       "Write"
     ],
-    "websiteURL": "https://github.com/rasatpetabit/superpowers-masterplan",
+    "websiteURL": "https://github.com/rasatpetabit/masterplan",
     "privacyPolicyURL": "https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement",
     "termsOfServiceURL": "https://docs.github.com/en/site-policy/github-terms/github-terms-of-service",
     "defaultPrompt": [

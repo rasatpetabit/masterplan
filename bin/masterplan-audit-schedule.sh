@@ -28,7 +28,7 @@ esac
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 audit_script="${repo_root}/bin/masterplan-recurring-audit.sh"
-state_dir="${MASTERPLAN_AUDIT_STATE_DIR:-${XDG_STATE_HOME:-${HOME}/.local/state}/superpowers-masterplan/audits}"
+state_dir="${MASTERPLAN_AUDIT_STATE_DIR:-${XDG_STATE_HOME:-${HOME}/.local/state}/masterplan/audits}"
 cron_expr="${MASTERPLAN_AUDIT_CRON:-17 * * * *}"
 begin="# BEGIN MASTERPLAN RECURRING AUDIT"
 end="# END MASTERPLAN RECURRING AUDIT"

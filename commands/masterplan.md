@@ -22,9 +22,9 @@ Emit ONE plain-text line before anything else (first output of every turn).
 
 **Step 1.** Use the **Read tool** (mandatory — do not skip, paraphrase, or infer from memory) to load `.claude-plugin/plugin.json` from the first readable candidate:
 
-1. `~/.claude/plugins/marketplaces/rasatpetabit-superpowers-masterplan/.claude-plugin/plugin.json` — canonical installed location
+1. `~/.claude/plugins/marketplaces/rasatpetabit-masterplan/.claude-plugin/plugin.json` — canonical installed location
 2. `<cwd>/.claude-plugin/plugin.json` — dev checkout
-3. `~/.claude/plugins/cache/rasatpetabit-superpowers-masterplan/superpowers-masterplan/<latest-version>/.claude-plugin/plugin.json` — last resort; glob highest semver
+3. `~/.claude/plugins/cache/rasatpetabit-masterplan/masterplan/<latest-version>/.claude-plugin/plugin.json` — last resort; glob highest semver
 
 **Step 2.** Emit: `-> /masterplan v<semver> args: '<args-or-(empty)>' cwd: <repo-root-or-pwd>`. Substitute actual values; `(empty)` when no args. Truncate args at 120 chars; total sentinel ≤200 chars. Plain stdout, NOT inside AskUserQuestion/tool call/CC-3-trampoline.
 
@@ -93,7 +93,7 @@ Every turn-close in this orchestrator MUST route through the following sequence.
 
 ## Codex host detection
 
-If invoked via `/superpowers-masterplan:masterplan` (Codex host), set `codex.host=true` and load `parts/codex-host.md` before phase dispatch. Suppresses `codex:codex-rescue` companion dispatch to prevent recursion.
+If invoked via `/masterplan:masterplan` (Codex host), set `codex.host=true` and load `parts/codex-host.md` before phase dispatch. Suppresses `codex:codex-rescue` companion dispatch to prevent recursion.
 
 ## Phase-prompt loader
 

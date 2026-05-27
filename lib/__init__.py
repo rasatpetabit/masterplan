@@ -1,1 +1,1 @@
-"""Local support modules for superpowers-masterplan developer tools."""
+"""Local support modules for masterplan developer tools."""

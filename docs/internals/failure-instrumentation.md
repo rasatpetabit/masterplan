@@ -3,7 +3,7 @@
 ## Failure-instrumentation framework (v5.1.0+)
 
 The Stop hook's Section 9 detects orchestrator anomalies at end-of-turn and files
-GitHub issues per occurrence against `rasatpetabit/superpowers-masterplan` (or a
+GitHub issues per occurrence against `rasatpetabit/masterplan` (or a
 configured override). The framework is the response to "you ship random fixes
 without data" — failures become structured records first, and fixes are designed
 from the accumulated record.
@@ -69,7 +69,7 @@ when the file is absent.
 
 ```yaml
 failure_reporting:
-  repo: rasatpetabit/superpowers-masterplan
+  repo: rasatpetabit/masterplan
   enabled: true
   dry_run: false           # true → write local records, skip gh
 ```

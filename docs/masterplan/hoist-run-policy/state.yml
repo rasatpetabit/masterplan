@@ -73,6 +73,6 @@ supersedes: ''
 topic: 'Hoist parallelism/blocker gates to single upfront question; document API
   retry backoff policy'
 variant_of: ''
-worktree: /srv/dev/superpowers-masterplan/.worktrees/hoist-run-policy
+worktree: /srv/dev/masterplan/.worktrees/hoist-run-policy
 worktree_disposition: removed_after_merge
 worktree_last_reconciled: '2026-05-23T00:00:00Z'

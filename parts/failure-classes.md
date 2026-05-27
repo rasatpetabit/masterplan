@@ -2,7 +2,7 @@
 
 **Schema version:** 2
 **Owner:** Stop hook Section 9 (`hooks/masterplan-telemetry.sh`)
-**Issue destination default:** `rasatpetabit/superpowers-masterplan`
+**Issue destination default:** `rasatpetabit/masterplan`
 
 This file is the versioned source of truth for which `/masterplan` failure shapes the instrumentation framework knows how to detect, name, and auto-file. The Stop hook reads the detector functions referenced here; the analyzer (`bin/masterplan-failure-analyze.sh`) reads the class IDs to roll up issue streams.
 

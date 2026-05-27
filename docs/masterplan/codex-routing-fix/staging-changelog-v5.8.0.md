@@ -43,7 +43,7 @@ This bundle adds (a) new policy that flips a default behavior the plan-writer ap
 
 ### Rollout
 
-Per the patched rollout macro: `claude plugin marketplace update` + `claude plugin update "superpowers-masterplan@rasatpetabit-superpowers-masterplan"` for Claude Code AND `codex plugin marketplace upgrade rasatpetabit-superpowers-masterplan` for Codex CLI, on every host that has the plugin installed.
+Per the patched rollout macro: `claude plugin marketplace update` + `claude plugin update "masterplan@rasatpetabit-masterplan"` for Claude Code AND `codex plugin marketplace upgrade rasatpetabit-masterplan` for Codex CLI, on every host that has the plugin installed.
 
 ---
 

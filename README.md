@@ -1,4 +1,4 @@
-# superpowers-masterplan
+# masterplan
 
 > A Claude Code & Codex CLI plugin for multi-hour engineering work — featuring durable run bundles, a robust four-phase lifecycle, parallel wave dispatch, and asymmetric review.
 
@@ -62,7 +62,7 @@ Masterplan automatically selects the optimal model for each step, keeping your A
 
 ## 3. Durable Run Bundles & Executive Function (The Masterplan Solution)
 
-`superpowers-masterplan` externalizes session state into a structured **Run Bundle** (`docs/masterplan/<slug>/`) stored directly on your disk. The filesystem—not your chat context—is the single source of truth. 
+`masterplan` externalizes session state into a structured **Run Bundle** (`docs/masterplan/<slug>/`) stored directly on your disk. The filesystem—not your chat context—is the single source of truth. 
 
 Each bundle contains:
 *   `state.yml` (the durable pointer representing active phase, worktree, branch, autonomy level, current task, pending gates, and background action states)
@@ -109,8 +109,8 @@ To support multi-hour engineering runs with maximum reliability and efficiency, 
 ### Claude Code
 Run the following commands inside the Claude Code CLI:
 ```text
-/plugin marketplace add rasatpetabit/superpowers-masterplan
-/plugin install superpowers-masterplan@rasatpetabit-superpowers-masterplan
+/plugin marketplace add rasatpetabit/masterplan
+/plugin install masterplan@rasatpetabit-masterplan
 /reload-plugins
 ```
 > [!NOTE]
@@ -119,9 +119,9 @@ Run the following commands inside the Claude Code CLI:
 ### Codex CLI
 Run the following command in your shell:
 ```sh
-codex plugin marketplace add rasatpetabit/superpowers-masterplan
+codex plugin marketplace add rasatpetabit/masterplan
 ```
-*Codex hosts the orchestrator under `/superpowers-masterplan:masterplan`. See [parts/codex-host.md](parts/codex-host.md) for Codex-specific suppression and behavior overrides.*
+*Codex hosts the orchestrator under `/masterplan:masterplan`. See [parts/codex-host.md](parts/codex-host.md) for Codex-specific suppression and behavior overrides.*
 
 ### Optional Telemetry Hook
 To enable `/masterplan stats` and roll-up metrics, copy the hook into your global hooks directory and wire it as a Stop hook in `~/.claude/settings.json`:

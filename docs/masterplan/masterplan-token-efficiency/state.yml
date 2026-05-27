@@ -4,7 +4,7 @@ slug: masterplan-token-efficiency
 topic: Improve masterplan token use efficiency
 status: archived
 phase: complete
-worktree: /srv/dev/superpowers-masterplan/.worktrees/masterplan-token-efficiency
+worktree: /srv/dev/masterplan/.worktrees/masterplan-token-efficiency
 branch: worktree-masterplan-token-efficiency
 started: 2026-05-22T17:22:34Z
 last_activity: 2026-05-22T23:55:00Z

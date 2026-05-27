@@ -1,4 +1,4 @@
-# AGENTS.md — `superpowers-masterplan`
+# AGENTS.md — `masterplan`
 
 All project context — codebase layout, anti-patterns, operating principles,
 canonical reading order — lives in [`CLAUDE.md`](./CLAUDE.md). Read that file

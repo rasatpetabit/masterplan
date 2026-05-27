@@ -1,26 +1,26 @@
 {
-  "name": "rasatpetabit-superpowers-masterplan",
+  "name": "rasatpetabit-masterplan",
   "owner": {
     "name": "Richard A Steenbergen",
     "email": "ras@petabitscale.com"
   },
-  "description": "Marketplace catalog for the superpowers-masterplan Claude Code plugin.",
-  "version": "6.4.0",
+  "description": "Marketplace catalog for the masterplan Claude Code plugin.",
+  "version": "7.0.0",
   "allowCrossMarketplaceDependenciesOn": [
     "claude-plugins-official"
   ],
   "plugins": [
     {
-      "name": "superpowers-masterplan",
+      "name": "masterplan",
       "source": "./",
       "description": "Brainstorm, plan, execute, resume, import, lint, and retrospect long-running Claude Code work with durable run bundles.",
-      "version": "6.4.0",
+      "version": "7.0.0",
       "author": {
         "name": "Richard A Steenbergen",
         "email": "ras@petabitscale.com"
       },
-      "homepage": "https://github.com/rasatpetabit/superpowers-masterplan",
-      "repository": "https://github.com/rasatpetabit/superpowers-masterplan",
+      "homepage": "https://github.com/rasatpetabit/masterplan",
+      "repository": "https://github.com/rasatpetabit/masterplan",
       "license": "MIT",
       "keywords": [
         "claude-code",

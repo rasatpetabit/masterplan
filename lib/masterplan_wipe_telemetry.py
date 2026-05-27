@@ -4,7 +4,7 @@
 Default mode is dry-run. Apply mode requires explicit --apply and a confirmation
 token. Hard-coded keep-list prevents touching plan.md/state.yml/spec.md/retro.md
 and other work product. A manifest of every deleted path lands at
-${XDG_STATE_HOME:-~/.local/state}/superpowers-masterplan/wipes/<ts>.txt before
+${XDG_STATE_HOME:-~/.local/state}/masterplan/wipes/<ts>.txt before
 any deletion happens so the operation is always recoverable post-hoc."""
 
 from __future__ import annotations
@@ -347,7 +347,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--claude-dir", default=str(Path.home() / ".claude" / "projects"))
     parser.add_argument("--codex-dir", default=str(Path.home() / ".codex"))
     parser.add_argument("--mtime-skip", type=int, default=DEFAULT_MTIME_SKIP_SECONDS, help="skip files modified within this many seconds (default: 300)")
-    parser.add_argument("--manifest-dir", default="", help="override manifest directory (default: $XDG_STATE_HOME/superpowers-masterplan/wipes)")
+    parser.add_argument("--manifest-dir", default="", help="override manifest directory (default: $XDG_STATE_HOME/masterplan/wipes)")
     parser.add_argument("--verbose", action="store_true")
     opts = parser.parse_args(argv)
 
@@ -369,7 +369,7 @@ def main(argv: list[str] | None = None) -> int:
     state_root = opts.manifest_dir or os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local" / "state")
     manifest_dir = Path(state_root).expanduser()
     if opts.manifest_dir == "":
-        manifest_dir = manifest_dir / "superpowers-masterplan" / "wipes"
+        manifest_dir = manifest_dir / "masterplan" / "wipes"
     ts_compact = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     ts_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     manifest_path = manifest_dir / f"{ts_compact}{'-dryrun' if not opts.apply else ''}.txt"

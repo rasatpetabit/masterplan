@@ -299,7 +299,7 @@ Both checks: add the post-run write-back instruction (cache result to `state.yml
 Exact row content (matches column structure `| # | Check | Severity | --fix action |`):
 
 ```markdown
-| 50 | **Plugin registry drift** — `~/.claude/plugins/installed_plugins.json` version differs from `~/.claude/plugins/marketplaces/rasatpetabit-superpowers-masterplan/.claude-plugin/plugin.json` version. | Warning | Report-only; suggest updating registry pointer and restarting Claude Code. |
+| 50 | **Plugin registry drift** — `~/.claude/plugins/installed_plugins.json` version differs from `~/.claude/plugins/marketplaces/rasatpetabit-masterplan/.claude-plugin/plugin.json` version. | Warning | Report-only; suggest updating registry pointer and restarting Claude Code. |
 | 51 | **CC-3 breadcrumb-at-AUQ runtime compliance** — In the latest 20 turns (active bundle, `schema_version >= "5.1"`), the ratio of `auq_render` events preceded immediately by a `breadcrumb_emitted` event is below 0.8. | Warning | Report-only; cached to `state.yml.cached_compliance.breadcrumb_ratio`. Suggest re-running `/masterplan doctor` after authoring fixes to CC-3-trampoline if ratio is persistently low. |
 | 52 | **CC-3 summary-block emit runtime compliance** — In the latest 20 turns (active bundle, `schema_version >= "5.1"`), the ratio of turns with ≥1 `subagent_dispatched` event that also have a `summary_block_emitted` event is below 0.8. Sub-fire (model attribution drift): events.jsonl `subagent_dispatched.model` mismatches `subagents.jsonl.model` for the same `turn_id`. | Warning | Report-only; cached to `state.yml.cached_compliance.summary_block_ratio`. Sub-fire (drift): report per-turn mismatches. |
 ```

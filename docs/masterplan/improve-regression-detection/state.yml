@@ -81,6 +81,6 @@ superseded_by: ''
 supersedes: ''
 topic: Improve the robustness of masterplan regression detection
 variant_of: ''
-worktree: /srv/dev/superpowers-masterplan/.worktrees/improve-regression-detection
+worktree: /srv/dev/masterplan/.worktrees/improve-regression-detection
 worktree_disposition: removed_after_merge
 worktree_last_reconciled: '2026-05-22T00:00:00Z'

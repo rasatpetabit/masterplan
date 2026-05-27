@@ -31,7 +31,7 @@ jobs:
 
       - name: Configure git identity (needed by guard-b-smoke fixtures)
         run: |
-          git config --global user.email "ci@superpowers-masterplan.local"
+          git config --global user.email "ci@masterplan.local"
           git config --global user.name "release-gate CI"
 
       - name: Seed gitignored plugin manifests from README
@@ -48,19 +48,19 @@ jobs:
           mkdir -p .claude-plugin .codex-plugin .agents/plugins
           cat > .claude-plugin/plugin.json <<EOF
           {
-            "name": "superpowers-masterplan",
+            "name": "masterplan",
             "version": "${readme_version}",
             "description": "Multi-hour engineering workflow plugin (brainstorm → plan → execute) with durable run bundles, wave dispatch, and asymmetric review.",
-            "url": "https://github.com/rasatpetabit/superpowers-masterplan"
+            "url": "https://github.com/rasatpetabit/masterplan"
           }
           EOF
           cat > .claude-plugin/marketplace.json <<EOF
           {
-            "name": "rasatpetabit-superpowers-masterplan",
+            "name": "rasatpetabit-masterplan",
             "version": "${readme_version}",
             "plugins": [
               {
-                "name": "superpowers-masterplan",
+                "name": "masterplan",
                 "version": "${readme_version}",
                 "source": "."
               }
@@ -69,24 +69,24 @@ jobs:
           EOF
           cat > .codex-plugin/plugin.json <<EOF
           {
-            "name": "superpowers-masterplan",
+            "name": "masterplan",
             "version": "${readme_version}",
             "description": "Multi-hour engineering workflow plugin (brainstorm → plan → execute) with durable run bundles, wave dispatch, and asymmetric review.",
-            "url": "https://github.com/rasatpetabit/superpowers-masterplan"
+            "url": "https://github.com/rasatpetabit/masterplan"
           }
           EOF
           cat > .agents/plugins/marketplace.json <<'EOF'
           {
-            "name": "rasatpetabit-superpowers-masterplan",
+            "name": "rasatpetabit-masterplan",
             "interface": {
-              "displayName": "rasatpetabit superpowers-masterplan"
+              "displayName": "rasatpetabit masterplan"
             },
             "plugins": [
               {
-                "name": "superpowers-masterplan",
+                "name": "masterplan",
                 "source": {
                   "source": "local",
-                  "path": "./plugins/superpowers-masterplan"
+                  "path": "./plugins/masterplan"
                 },
                 "policy": {
                   "installation": "INSTALLED_BY_DEFAULT",
@@ -105,9 +105,9 @@ jobs:
           cat > "${HOME}/.claude/plugins/installed_plugins.json" <<'EOF'
           {
             "plugins": {
-              "superpowers-masterplan@rasatpetabit-superpowers-masterplan": {
-                "name": "superpowers-masterplan",
-                "marketplace": "rasatpetabit-superpowers-masterplan"
+              "masterplan@rasatpetabit-masterplan": {
+                "name": "masterplan",
+                "marketplace": "rasatpetabit-masterplan"
               }
             }
           }

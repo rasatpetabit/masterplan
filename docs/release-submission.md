@@ -1,6 +1,6 @@
 # Claude Plugin Directory Submission
 
-Release target: `superpowers-masterplan` v3.2.3.
+Release target: `masterplan` v3.2.3.
 
 ## Official submission path
 
@@ -16,30 +16,30 @@ Anthropic's current plugin directory submission docs say:
 
 ## Current package state
 
-- Public repo: <https://github.com/rasatpetabit/superpowers-masterplan>
+- Public repo: <https://github.com/rasatpetabit/masterplan>
 - Claude plugin manifest: `.claude-plugin/plugin.json`
 - Claude marketplace catalog: `.claude-plugin/marketplace.json`
 - Codex plugin manifest: `.codex-plugin/plugin.json`
 - Codex marketplace catalog: `.agents/plugins/marketplace.json`
-- Codex marketplace plugin path: `plugins/superpowers-masterplan -> ..`
+- Codex marketplace plugin path: `plugins/masterplan -> ..`
 - Independent install path:
 
 ```text
-/plugin marketplace add rasatpetabit/superpowers-masterplan
-/plugin install superpowers-masterplan@rasatpetabit-superpowers-masterplan
+/plugin marketplace add rasatpetabit/masterplan
+/plugin install masterplan@rasatpetabit-masterplan
 /reload-plugins
 ```
 
 Codex install path:
 
 ```bash
-codex plugin marketplace add rasatpetabit/superpowers-masterplan
+codex plugin marketplace add rasatpetabit/masterplan
 ```
 
 Portable Codex invocation:
 
 ```text
-/superpowers-masterplan:masterplan
+/masterplan:masterplan
 ```
 
 Codex host behavior: when invoked inside Codex, the orchestrator suppresses the
@@ -51,7 +51,7 @@ budget stop.
 
 ## Submission form copy
 
-Plugin name: `superpowers-masterplan`
+Plugin name: `masterplan`
 
 Short description:
 
@@ -60,7 +60,7 @@ Short description:
 
 Long description:
 
-> superpowers-masterplan adds a `/masterplan` workflow on top of the official
+> masterplan adds a `/masterplan` workflow on top of the official
 > Superpowers plugin. It turns large coding efforts into durable specs, plans,
 > run bundles, worktrees, activity logs, resume points, doctor checks,
 > automatic retrospectives, and safe legacy-state cleanup so long-running work
@@ -78,9 +78,9 @@ Why it should be considered for Anthropic Verified:
 > designed around conservative status persistence, user-owned worktree
 > protection, and verification-before-completion guardrails.
 
-Repository URL: <https://github.com/rasatpetabit/superpowers-masterplan>
+Repository URL: <https://github.com/rasatpetabit/masterplan>
 
-Homepage URL: <https://github.com/rasatpetabit/superpowers-masterplan#readme>
+Homepage URL: <https://github.com/rasatpetabit/masterplan#readme>
 
 Category suggestion: development workflow / coding.
 
@@ -106,7 +106,7 @@ HOME="$tmp_home" CLAUDE_CODE_PLUGIN_CACHE_DIR="$tmp_home/plugin-cache" \
 HOME="$tmp_home" CLAUDE_CODE_PLUGIN_CACHE_DIR="$tmp_home/plugin-cache" \
   claude plugin marketplace add ./ --scope user
 HOME="$tmp_home" CLAUDE_CODE_PLUGIN_CACHE_DIR="$tmp_home/plugin-cache" \
-  claude plugin install superpowers-masterplan@rasatpetabit-superpowers-masterplan --scope user
+  claude plugin install masterplan@rasatpetabit-masterplan --scope user
 ```
 
 The official submission form is an authenticated external action; submit it from

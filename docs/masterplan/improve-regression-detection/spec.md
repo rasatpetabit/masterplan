@@ -9,7 +9,7 @@
 ## Intent Anchor
 
 **Mode**: implementation-design  
-**Scope boundary**: `superpowers-masterplan` repo only. Changes confined to `tests/`, `bin/`, `parts/`, `hooks/`, `docs/`. No external test framework dependencies.  
+**Scope boundary**: `masterplan` repo only. Changes confined to `tests/`, `bin/`, `parts/`, `hooks/`, `docs/`. No external test framework dependencies.  
 **Verification ceiling**: local-static (grep + bash -n + exit-code checks; no runtime Claude invocations)
 
 ---

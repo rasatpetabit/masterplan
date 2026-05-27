@@ -15,7 +15,7 @@
 #                                   [--plans-root DIR]
 #
 # Defaults:
-#   --repo        rasatpetabit/superpowers-masterplan (override via
+#   --repo        rasatpetabit/masterplan (override via
 #                 .masterplan.yaml failure_reporting.repo)
 #   --plans-root  docs/masterplan
 #
@@ -58,7 +58,7 @@ if [[ -z "$repo" ]]; then
     [[ -n "$cfg_repo" ]] && repo="$cfg_repo"
   fi
 fi
-repo="${repo:-rasatpetabit/superpowers-masterplan}"
+repo="${repo:-rasatpetabit/masterplan}"
 plans_root="${plans_root:-$worktree/docs/masterplan}"
 
 for tool in gh jq; do

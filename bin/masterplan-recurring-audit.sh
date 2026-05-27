@@ -15,7 +15,7 @@ case "${1:-}" in
 esac
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-state_dir="${MASTERPLAN_AUDIT_STATE_DIR:-${XDG_STATE_HOME:-${HOME}/.local/state}/superpowers-masterplan/audits}"
+state_dir="${MASTERPLAN_AUDIT_STATE_DIR:-${XDG_STATE_HOME:-${HOME}/.local/state}/masterplan/audits}"
 hours="${MASTERPLAN_AUDIT_HOURS:-24}"
 retention_days="${MASTERPLAN_AUDIT_RETENTION_DAYS:-14}"
 fail_on_warnings="${MASTERPLAN_AUDIT_FAIL_ON_WARNINGS:-0}"

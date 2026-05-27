@@ -53,8 +53,8 @@ STOP_SIGNAL_RE = {
 USER_MASTERPLAN_ACTIVITY_RE = re.compile(
     r"(?imx)"
     r"("
-    r"^\s*/(?:superpowers-masterplan:)?masterplan\b"
-    r"|\buse\s+(?:/)?(?:superpowers-masterplan:)?masterplan\b"
+    r"^\s*/(?:masterplan:)?masterplan\b"
+    r"|\buse\s+(?:/)?(?:masterplan:)?masterplan\b"
     r"|\b(?:run|invoke|resume|continue|check|doctor|status)\s+(?:the\s+)?masterplan\b"
     r"|\bmasterplan\s+(?:full|brainstorm|plan|execute|import|doctor|status|stats|clean|next|retro|resume)\b"
     r")"

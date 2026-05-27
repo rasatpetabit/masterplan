@@ -17,7 +17,7 @@
 #   bin/masterplan-wipe-telemetry.sh --verbose           # show example deletion paths
 #
 # Manifest written to:
-#   ${XDG_STATE_HOME:-~/.local/state}/superpowers-masterplan/wipes/<UTC-timestamp>.txt
+#   ${XDG_STATE_HOME:-~/.local/state}/masterplan/wipes/<UTC-timestamp>.txt
 #
 # Implementation: thin wrapper around lib/masterplan_wipe_telemetry.py.
 
