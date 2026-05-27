@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v7.1.0 — Per-verb /masterplan:<verb> skill commands (2026-05-27)
+
+### Added
+
+- 12 per-verb skill stubs under `skills/<verb>/SKILL.md`: `brainstorm`, `plan`, `full`, `execute`, `retro`, `import`, `doctor`, `status`, `validate`, `stats`, `clean`, `next`. Each exposes `/masterplan:<verb>` as a named slash command in the Claude Code interactive command picker, matching the `/superpowers:<skill>` discovery pattern.
+- `hooks/hooks.json` SessionStart shim updated to v4 format: richer description mentioning per-verb commands, `argument-hint` updated to `[verb] [topic-or-path]`.
+
 ## v7.0.2 — Doctor fixes: Check #1 false positives + Check #34 placeholder hash (2026-05-27)
 
 ### Fixed

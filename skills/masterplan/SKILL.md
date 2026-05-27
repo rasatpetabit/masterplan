@@ -1,6 +1,6 @@
 ---
 name: masterplan
-description: Use when the user invokes masterplan as a normal Codex chat request, $masterplan, /masterplan, /masterplan:masterplan, asks to brainstorm, plan, execute, resume, import, doctor, status, next, retro, or clean masterplan work, or asks about existing docs/masterplan run bundles created by Claude.
+description: "Generic/Codex entrypoint: bare /masterplan, /masterplan:masterplan, $masterplan, or any verb not covered by a dedicated /masterplan:<verb> skill. Dedicated per-verb skills exist for brainstorm, plan, full, execute, retro, import, doctor, status, validate, stats, clean, and next."
 ---
 
 # Codex entrypoint for Superpowers Masterplan
@@ -83,6 +83,13 @@ Treat these user inputs as this skill:
 - `/masterplan:masterplan <args>`
 - natural-language requests to use, resume, check, import, or continue
   masterplan work.
+
+**Per-verb skills** (Claude Code only): the following verbs have dedicated
+`/masterplan:<verb>` skills that are preferred over this skill when invoked
+directly: `brainstorm`, `plan`, `full`, `execute`, `retro`, `import`,
+`doctor`, `status`, `validate`, `stats`, `clean`, `next`. Each loads
+`commands/masterplan.md` with the verb pre-filled. This skill remains the
+entrypoint for Codex-hosted runs and bare `/masterplan` invocations.
 
 The arguments are the text after the command name. If there are no arguments,
 follow the command's bare invocation flow: resume active `state.yml` first,

@@ -1,5 +1,9 @@
 # WORKLOG
 
+## 2026-05-27 — v7.1.0: per-verb /masterplan:<verb> skill commands
+
+12 per-verb `skills/<verb>/SKILL.md` stubs created (brainstorm, plan, full, execute, retro, import, doctor, status, validate, stats, clean, next). Each registers as `/masterplan:<verb>` in Claude Code's interactive command picker — same discovery pattern as `/superpowers:<skill>`. `skills/masterplan/SKILL.md` description narrowed to Codex/bare entrypoint. `hooks/hooks.json` shim bumped to v4 format.
+
 ## 2026-05-27 — v7.0.2 patch: doctor #1 false positives + #34 placeholder hash
 
 Check #1 tightened: container dirs under `docs/superpowers/` with no actual `.md` files (only README or empty) no longer fire false-positive WARNs. Check #34 fixed: `codex-routing-fix` bundle had a placeholder `plan_hash` since creation; replaced with real computed hash. Manifests bumped to v7.0.2.
