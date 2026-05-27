@@ -137,7 +137,7 @@ else
 fi
 ```
 
-If the Bash call exits non-zero (returns the ABORT message above), **stop immediately**: render the abort message verbatim as a plain-text error line to the user, set `halt_reason = "fd_limit_too_low"`, and → CLOSE-TURN. Do NOT proceed to config loading or any subsequent step.
+If the Bash call exits non-zero **or** its stdout begins with `ABORT —`, **stop immediately**: render the abort message verbatim as a plain-text error line to the user, set `halt_reason = "fd_limit_too_low"`, and → CLOSE-TURN. Do NOT proceed to config loading or any subsequent step. (Either signal is authoritative; the snippet emits both.)
 
 If the shell cannot resolve `ulimit -n` (returns empty or the command errors), emit a one-line warning and continue — do not abort on an unresolvable probe:
 

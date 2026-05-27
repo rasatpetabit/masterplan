@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v7.2.0 — Ops-audit hardening: banner enforcement, fd preflight, read budget (2026-05-27)
+
+Driven by an audit of 12 hours of Claude Code transcripts (run bundle `docs/masterplan/ops-audit-hardening/`). Four findings (F1–F4); two confirmed and fixed, one generalized, one refuted-with-rationale.
+
+### Added
+
+- **Doctor Check #53** (`cc2_banner_compaction_resume_compliance`): audits the *runtime* CC-2 boot-banner emission ratio on compaction-resume / `invoked_skills` re-injection turns, excluding fresh invocations from the denominator (those are already 100% compliant). Complements the static Check #46. Warning < 0.80, Error < 0.50. Total doctor checks: 52 → 53.
+- **File-descriptor preflight** in `parts/step-0.md`: an always-runs check before the bootstrap file storm. `ulimit -n < 1024` aborts early with a remediation message instead of dying opaquely on `EMFILE` (os error 24); `unlimited` proceeds; an unresolvable probe warns and continues.
+- **Host-agnostic context-control discipline** in `parts/step-0.md`: lifted the summary-first inventory + large-read budget (≤2 large reads during Step 0 bootstrap) out of the Codex-host-only section so it applies to Claude Code runs too — addresses sessions that needed ~16 context-exhaustion resumptions. The Codex-host section is retained as the host-specific extension.
+
+### Changed
+
+- **CC-2 boot-banner enforcement** (F1, confirmed): under-emission was concentrated entirely in compaction-resume / `invoked_skills` re-injection turns (83% miss), not fresh invocations (100% compliant). Tightened the unconditional-render language in `parts/step-0.md` and `commands/masterplan.md` to explicitly cover the re-injection scenario and prohibit the "plan is already loaded" shortcut.
+
+### Notes
+
+- **F2 (gate re-entrance): refuted.** The 30 raw `gate=fire` matches in the audited session collapse to 6 real fires, all distinct legitimate gates. The three `spec_approval` re-fires are designed resume-controller re-renders (`parts/step-0.md` §resume controller) after free-text / "Request changes" responses, both of which intentionally preserve `pending_gate`. An idempotency guard would convert this working feature into a dropped-gate bug — no source change made. Full reasoning in `docs/masterplan/ops-audit-hardening/verdict-f2.md`.
+
 ## v7.1.1 — Add /masterplan:verbs skill (2026-05-27)
 
 ### Fixed
