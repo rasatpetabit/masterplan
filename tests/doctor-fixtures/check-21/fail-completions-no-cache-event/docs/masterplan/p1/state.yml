@@ -1,2 +1,5 @@
 slug: p1
 codex_routing: auto
+
+artifacts:
+  events: tests/doctor-fixtures/check-21/fail-completions-no-cache-event/docs/masterplan/p1/events.jsonl

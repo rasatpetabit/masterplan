@@ -1,1 +1,5 @@
 slug: p1
+
+artifacts:
+  plan: tests/doctor-fixtures/check-07/fail-high-drift/docs/masterplan/p1/plan.md
+  events: tests/doctor-fixtures/check-07/fail-high-drift/docs/masterplan/p1/events.jsonl
