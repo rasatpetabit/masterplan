@@ -1,5 +1,9 @@
 # WORKLOG
 
+## 2026-05-27 — v7.1.1: add /masterplan:verbs; restore plan skill
+
+`skills/plan/SKILL.md` was accidentally deleted from working tree after v7.1.0 commit (HEAD was correct; restored via `git checkout HEAD`). `skills/verbs/SKILL.md` added — was omitted from v7.1.0; provides `/masterplan:verbs` to display `docs/verbs.md` cheat sheet. Both synced to installed plugin.
+
 ## 2026-05-27 — v7.1.0: per-verb /masterplan:<verb> skill commands
 
 12 per-verb `skills/<verb>/SKILL.md` stubs created (brainstorm, plan, full, execute, retro, import, doctor, status, validate, stats, clean, next). Each registers as `/masterplan:<verb>` in Claude Code's interactive command picker — same discovery pattern as `/superpowers:<skill>`. `skills/masterplan/SKILL.md` description narrowed to Codex/bare entrypoint. `hooks/hooks.json` shim bumped to v4 format.

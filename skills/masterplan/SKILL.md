@@ -87,9 +87,10 @@ Treat these user inputs as this skill:
 **Per-verb skills** (Claude Code only): the following verbs have dedicated
 `/masterplan:<verb>` skills that are preferred over this skill when invoked
 directly: `brainstorm`, `plan`, `full`, `execute`, `retro`, `import`,
-`doctor`, `status`, `validate`, `stats`, `clean`, `next`. Each loads
-`commands/masterplan.md` with the verb pre-filled. This skill remains the
-entrypoint for Codex-hosted runs and bare `/masterplan` invocations.
+`doctor`, `status`, `validate`, `stats`, `clean`, `next`, `verbs`. Each loads
+`commands/masterplan.md` with the verb pre-filled (except `verbs`, which reads
+`docs/verbs.md` as a quick-reference). This skill remains the entrypoint for
+Codex-hosted runs and bare `/masterplan` invocations.
 
 The arguments are the text after the command name. If there are no arguments,
 follow the command's bare invocation flow: resume active `state.yml` first,

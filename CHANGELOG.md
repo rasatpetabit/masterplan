@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v7.1.1 — Add /masterplan:verbs skill (2026-05-27)
+
+### Fixed
+
+- `skills/plan/SKILL.md` accidental working-tree deletion restored (file was correct in HEAD; dev-checkout dirty state).
+
+### Added
+
+- `skills/verbs/SKILL.md`: exposes `/masterplan:verbs` as a named slash command that reads and displays `docs/verbs.md` (the verb quick-reference cheat sheet) then offers next-step options.
+- `skills/masterplan/SKILL.md`: added `verbs` to the per-verb skills enumeration.
+
 ## v7.1.0 — Per-verb /masterplan:<verb> skill commands (2026-05-27)
 
 ### Added
