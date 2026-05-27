@@ -295,3 +295,19 @@ Full tier audit of all 47 doctor checks. Six checks had drift between their `**S
 - `tests/static/test-doctor-tier-drift.sh` added: cross-validates every explicit-Scope check is in the right routing slot; FAST tier
 
 **Key decision:** "Prompt-scoped" checks (#46/#47 scan prompt files, not bundle state) treated as repo-scoped for routing purposes — run in the single repo-scoped Haiku batch. Tests: 9/9 pass.
+
+## 2026-05-27 — ops-audit-hardening: v7.2.0 (transcript audit F1–F4)
+
+Audited ~12h of Claude Code transcripts for `/masterplan` operational issues. Four findings, repro-first posture (repro task → verdict, fix task branches on it). Run bundle: `docs/masterplan/ops-audit-hardening/`.
+
+- **F1 boot-banner under-emission (confirmed → fixed):** raw 3/318 was a grep artifact; true ratio 9 banners / 24 real invocations, with the miss concentrated *entirely* in compaction-resume / `invoked_skills` re-injection turns (fresh invocations 100% compliant). Tightened unconditional-render language in `parts/step-0.md` + `commands/masterplan.md` scoped to the re-injection path; added doctor **Check #53** (`cc2_banner_compaction_resume_compliance`, 52→53) that excludes fresh invocations from the denominator.
+- **F2 gate re-entrance (refuted → docs-only):** 30 raw `gate=fire` collapse to 6 distinct legitimate gates; the 3 `spec_approval` re-fires are *designed* resume-controller re-renders. A planned idempotency guard would have converted a working feature into a dropped-gate bug — repro-first blocked the regression. No source change; rationale in `verdict-f2.md`.
+- **F3 context-budget (generalized):** lifted summary-first inventory + ≤2 large-read budget out of the Codex-host-only section into host-agnostic context-control discipline in `parts/step-0.md`; codex-host.md retained as host-specific extension.
+- **F4 fd/ulimit preflight (added):** always-runs fd check before the bootstrap file storm — `ulimit -n < 1024` aborts with remediation instead of dying on EMFILE; `unlimited` proceeds; unresolvable probe warns and continues.
+
+**Key decisions / caveats:**
+- Check #53 ships **dormant (forward-wired):** it reads `invoked_skills_reinjection` / `compaction_recent` / `cc2_banner_emitted` events the Stop hook does not yet emit, so it SKIPs. Disclosed in CHANGELOG + retro; wiring those three events into `hooks/masterplan-telemetry.sh` is logged as the open follow-up in `state.yml`.
+- Version sync touched all four locations (Check #30 surface): `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json` (×2 fields), `.codex-plugin/plugin.json`, README. The first sync brief missed marketplace.json — caught by cross-manifest check.
+- Verification ceiling was local-static: cross-manifest drift + `bash -n` passed; the full `/masterplan doctor` verb (recursive invocation) was deferred.
+
+Shipped v7.2.0. Commits: `45a9162` (wave), `3c52d02` (version-sync), `d95960c` (retro+archive), plus this final disclosure-amendment commit.

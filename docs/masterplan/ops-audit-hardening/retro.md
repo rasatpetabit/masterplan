@@ -64,3 +64,11 @@ task produces a verdict, fix task branches on it.
   pattern-matching the prior check's version rather than the live plugin
   version (7.x). Sync tasks should hand the implementer the target version
   string explicitly.
+- **T7 "run doctor end-to-end" verify was partial.** The cross-manifest
+  version-drift sanity check (Check #30 surface) and `bash -n` on changed
+  snippets were run and passed. The full `/masterplan doctor` verb was *not*
+  executed — it requires a recursive orchestrator invocation that the
+  local-static verification ceiling for this run did not cover. Check #53's
+  own runtime audit is dormant regardless (forward-wired, SKIPs). Net: static
+  correctness is verified; a full doctor sweep is deferred to the next run that
+  legitimately invokes the verb.
