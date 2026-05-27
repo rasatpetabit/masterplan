@@ -1,5 +1,9 @@
 # WORKLOG
 
+## 2026-05-27 — doctor post-rename (v7.0.0)
+
+Ran all 52 doctor checks inline (skill routes not available mid-session). Results: 0 errors, ~12 warnings. Fixed: README `Current release:` v6.3.3 → v7.0.0 (#30); cc3-visibility `worktree_disposition: active → removed_after_merge` (#3, #29). False positives confirmed: #18 (codex IS installed at marketplaces/openai-codex/, glob checks wrong depth), #50 (plugin manager updated registry to 7.0.0 mid-run, was stale at check time). Expected backfill: #35/#43 (pre-v5.0 bundles), #45 (pre-v6.1.0 bundles). Stale Codex tasks (#49): 10 runaway tasks across yanos/openxcvr repos — cancel commands surfaced, user-action required.
+
 ## 2026-05-26 — v7.0.0 rename: superpowers-masterplan → masterplan (complete)
 
 Full sweep done after initial commit. Additional files updated on both machines: `~/.claude/settings.json` (plugin trust + extraKnownMarketplaces), `~/.claude/plugins/known_marketplaces.json`, `~/.claude.json` (favoritePlugins + repoToProjects), `~/.claude/AGENTS.md`, `~/.claude/CLAUDE.md`, `~/.claude/refs/hindsight-setup.md`. External repos updated: `ai-template/CLAUDE.md`, `petabit-datasheets/CLAUDE.md`, `petabit-handbook/CLAUDE.md` (committed). Remaining old-name references are historical-only (`.bak` files, session transcripts, tool-results).
