@@ -1,0 +1,151 @@
+{
+  "schema_version": "5.0",
+  "plan_hash": "sha256:4bbfbc7a1f3ebf1e9cb2a032889364e0cf3895dbbc97a416e42a1a6155f571e0",
+  "generated_at": "2026-05-27T22:44:38Z",
+  "tasks": [
+    {
+      "idx": 1,
+      "name": "Repro F1 \u2014 boot-banner under-emission verdict",
+      "offset": 28,
+      "lines": 25,
+      "files": [
+        "docs/masterplan/ops-audit-hardening/verdict-f1.md",
+        "docs/masterplan/ops-audit-hardening/events.jsonl"
+      ],
+      "codex": false,
+      "parallel_group": null,
+      "verify_commands": [
+        "test -f docs/masterplan/ops-audit-hardening/verdict-f1.md",
+        "grep -qE \"^VERDICT: (confirmed|refuted)\" docs/masterplan/ops-audit-hardening/verdict-f1.md"
+      ],
+      "spec_refs": [
+        "spec.md#L33-L48",
+        "spec.md#L33-L48"
+      ]
+    },
+    {
+      "idx": 2,
+      "name": "Repro F2 \u2014 gate re-entrance verdict",
+      "offset": 54,
+      "lines": 24,
+      "files": [
+        "docs/masterplan/ops-audit-hardening/verdict-f2.md",
+        "docs/masterplan/ops-audit-hardening/events.jsonl"
+      ],
+      "codex": false,
+      "parallel_group": null,
+      "verify_commands": [
+        "test -f docs/masterplan/ops-audit-hardening/verdict-f2.md",
+        "grep -qE \"^VERDICT: (confirmed|refuted)\" docs/masterplan/ops-audit-hardening/verdict-f2.md"
+      ],
+      "spec_refs": [
+        "spec.md#L50-L64",
+        "spec.md#L50-L64"
+      ]
+    },
+    {
+      "idx": 3,
+      "name": "Fix-or-note F1 \u2014 banner enforcement + runtime audit (reads verdict-f1)",
+      "offset": 79,
+      "lines": 24,
+      "files": [
+        "parts/step-0.md",
+        "commands/masterplan.md",
+        "parts/doctor.md",
+        "docs/masterplan/ops-audit-hardening/verdict-f1.md"
+      ],
+      "codex": false,
+      "parallel_group": null,
+      "verify_commands": [
+        "grep -qE \"^RESOLUTION: (fix-applied|docs-only-refuted)\" docs/masterplan/ops-audit-hardening/verdict-f1.md",
+        "bash -n parts/doctor.md 2>/dev/null || true   # doctor.md is markdown; bash -n only if a shell snippet was added"
+      ],
+      "spec_refs": [
+        "spec.md#L96-L101",
+        "spec.md#L96-L101"
+      ]
+    },
+    {
+      "idx": 4,
+      "name": "Fix-or-note F2 \u2014 gate idempotency guard (reads verdict-f2)",
+      "offset": 104,
+      "lines": 21,
+      "files": [
+        "parts/step-b.md",
+        "parts/step-0.md",
+        "docs/masterplan/ops-audit-hardening/verdict-f2.md"
+      ],
+      "codex": false,
+      "parallel_group": null,
+      "verify_commands": [
+        "grep -qE \"^RESOLUTION: (fix-applied|docs-only-refuted)\" docs/masterplan/ops-audit-hardening/verdict-f2.md"
+      ],
+      "spec_refs": [
+        "spec.md#L102-L106",
+        "spec.md#L102-L106"
+      ]
+    },
+    {
+      "idx": 5,
+      "name": "F3 \u2014 generalize summary-first / read-budget to all hosts",
+      "offset": 126,
+      "lines": 22,
+      "files": [
+        "parts/step-0.md",
+        "parts/codex-host.md"
+      ],
+      "codex": false,
+      "parallel_group": null,
+      "verify_commands": [
+        "grep -qiE \"summary-first|read budget|large-read\" parts/step-0.md",
+        "grep -qiE \"summary-first|read budget\" parts/codex-host.md   # host-specific bits retained"
+      ],
+      "spec_refs": [
+        "spec.md#L66-L76",
+        "spec.md#L66-L76"
+      ]
+    },
+    {
+      "idx": 6,
+      "name": "F4 \u2014 file-descriptor / ulimit preflight",
+      "offset": 149,
+      "lines": 26,
+      "files": [
+        "parts/step-0.md"
+      ],
+      "codex": false,
+      "parallel_group": null,
+      "verify_commands": [
+        "grep -qiE \"ulimit|EMFILE|file descriptor|open files\" parts/step-0.md"
+      ],
+      "spec_refs": [
+        "spec.md#L78-L88",
+        "spec.md#L78-L88"
+      ]
+    },
+    {
+      "idx": 7,
+      "name": "Doctor + version + sync (depends on T3/T4/T5/T6)",
+      "offset": 176,
+      "lines": 38,
+      "files": [
+        ".claude-plugin/plugin.json",
+        ".codex-plugin/plugin.json",
+        "CHANGELOG.md",
+        "README.md",
+        "docs/internals.md",
+        "parts/doctor.md"
+      ],
+      "codex": false,
+      "parallel_group": null,
+      "verify_commands": [
+        "grep -qE \"\\\"version\\\"\" .claude-plugin/plugin.json",
+        "grep -q \"$(grep -oE '\\\"version\\\": \\\"[0-9.]+\\\"' .claude-plugin/plugin.json | grep -oE '[0-9.]+')\" CHANGELOG.md"
+      ],
+      "spec_refs": [
+        "spec.md#L114-L116",
+        "spec.md#L114-L116"
+      ]
+    }
+  ]
+}

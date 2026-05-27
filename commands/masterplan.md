@@ -32,6 +32,8 @@ Emit ONE plain-text line before anything else (first output of every turn).
 
 **Strict prohibitions.** Version slot must be parsed semver or literal `vUNKNOWN`. Never emit: any placeholder (`v?`, `vTBD`, etc.); the template token `v<version-from-plugin.json>` itself (angle brackets = you skipped the Read); a semver from session memory — always Read fresh.
 
+**Compaction-resume / `invoked_skills` re-injection — CRITICAL.** Production telemetry (83% miss rate on compaction-resume turns) confirms the most common CC-2 failure is skipping Steps 1–2 on compaction-resume turns. An `invoked_skills` re-injection after a context rollover or ctrl+O compact is a full re-invocation. The sentinel is unconditional — emit it BEFORE resuming any in-progress task, even when the plan state is already loaded in context and the next action is known. A missing sentinel on a compaction-resume turn is a CC-2 violation; it must be treated the same as a missing sentinel on a fresh invocation. See `parts/step-0.md §Invocation sentinel` for the full compaction-resume prohibition.
+
 **Step 3 — Codex health indicator (v5.1.1+, v5.2.3+).** Conditional second sentinel line, emitted ONLY when Codex routing/review is configured on AND `~/.codex/auth.json` shows actual auth degradation.
 
 1. **Skip gate.** If `codex.routing == off` AND `codex.review == off`, emit nothing.

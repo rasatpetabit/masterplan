@@ -1,0 +1,100 @@
+artifacts:
+  events: docs/masterplan/ops-audit-hardening/events.jsonl
+  plan: docs/masterplan/ops-audit-hardening/plan.md
+  spec: docs/masterplan/ops-audit-hardening/spec.md
+autonomy: loose
+background: null
+brainstorm_anchor:
+  evidence:
+  - "F1 — commands/masterplan.md:19-44 (CC-2 boot banner) + parts/step-0.md:9-38\
+    \ (invocation sentinel; :38 unconditional render). Live v7.1.1 session ab57e7c8\
+    \ emitted the banner 3\xD7 vs 318 masterplan-trace fires; no doctor check audits\
+    \ runtime banner-emission ratio (only #36 static presence). Confounder: many hits\
+    \ are resumes/status, not fresh invocations — repro-first."
+  - "F2 — parts/step-b.md:218 (spec_approval fire) / :303 (plan_approval) / :220-223\
+    \ (pending_gate clear routing); resume controller parts/step-0.md:172-179. Session\
+    \ 335b66e4 shows 68 spec_approval mentions vs 30 gate=fire; no idempotency guard\
+    \ exists. Confounder: raw counts can't separate genuine re-fires from distinct\
+    \ legitimate gates — repro-first."
+  - "F3 — summary-first inventory + large-read-budget discipline is scoped to\
+    \ the Codex host only (parts/codex-host.md:87, :98-100); not generalized to Claude\
+    \ Code runs. One session needed ~16 context-exhaustion resumptions. Behavioral\
+    \ tuning, not a discrete bug."
+  - "F4 — Step 0 bootstrap has no fd/ulimit preflight (ulimit/EMFILE/\"file descriptor\"\
+    /\"open files\" appear nowhere). An EMFILE (os error 24) aborted a /masterplan:plan\
+    \ run mid-Step-0. Insertion window parts/step-0.md:67 (end CC-3 indicator) →\
+    \ :107 (first heavy file reads). Environmental root cause; goal is graceful abort\
+    \ + remediation message."
+  gate_selection: null
+  in_scope_paths:
+  - commands/masterplan.md
+  - parts/step-0.md
+  - parts/step-b.md
+  - parts/doctor.md
+  - parts/codex-host.md
+  - .claude-plugin/plugin.json
+  - CHANGELOG.md
+  - README.md
+  - docs/internals.md
+  interview_depth:
+    complexity: high
+    seriousness: serious
+    target_question_count: 12-20
+    understanding_level: high
+  mode: implementation-design
+  out_of_scope_repos: []
+  repo_role: "A single-orchestrator Claude Code plugin (~2150-line markdown prompt\
+    \ plus hooks/helpers) that provides the /masterplan slash command, orchestrating\
+    \ brainstorm → spec → plan → execute on top of obra/superpowers\
+    \ skills with optional Codex routing/review."
+  verification_ceiling: local-static
+  yocto_ownership: null
+branch: main
+cached_compliance:
+  breadcrumb_ratio: null
+  summary_block_ratio: null
+  window_turns: null
+  last_audit_ts: null
+codex_review: true
+codex_routing: auto
+compact_loop_recommended: false
+complexity: high
+critical_error: null
+current_task: 'T7 — Doctor + version + sync (bump plugin.json x2, CHANGELOG, README/internals check-count to 53)'
+follow_ups: []
+import_contract:
+  contract_id: ''
+  inputs_hash: ''
+  processed_at: ''
+import_hydration: ''
+last_activity: '2026-05-27T23:14:00Z'
+legacy: {}
+loop_enabled: false
+next_action: 'execute T7 — bump versions, CHANGELOG entry, sync doctor check count (now 53) across README/internals; run doctor end-to-end'
+pending_gate: null
+pending_retro_attempts: 0
+phase: executing
+plan_hash: 'sha256:4bbfbc7a1f3ebf1e9cb2a032889364e0cf3895dbbc97a416e42a1a6155f571e0'
+plan_kind: implementation
+retro_policy:
+  reason: ''
+  waived: false
+schema_version: '5.1'
+scope_fingerprint:
+- ops-audit
+- banner
+- gate-reentrance
+- context-budget
+- emfile
+- ulimit
+slug: ops-audit-hardening
+started: '2026-05-27T22:17:26Z'
+status: in-progress
+stop_reason: null
+superseded_by: ''
+supersedes: ''
+topic: 'masterplan operational hardening (2026-05-27 transcript audit): F1 boot-banner under-emission, F2 gate re-entrance, F3 context-budget generalization, F4 fd/ulimit preflight'
+variant_of: ''
+worktree: ''
+worktree_disposition: ''
+worktree_last_reconciled: '2026-05-27T22:17:26Z'

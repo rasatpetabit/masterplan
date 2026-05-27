@@ -37,6 +37,16 @@ Truncate `args` at 120 chars with `…`; total sentinel length ≤ 200 chars. Th
 
 **Why:** a missing sentinel line signals the harness ate the invocation — re-register via `/plugin` (uninstall + reinstall) and re-invoke. CC-3-TRAMPOLINE does not apply; this is an unconditional first-line render.
 
+**Compaction-resume / `invoked_skills` re-injection — CRITICAL.** The most common CC-2 miss (83% of misses in production telemetry) is NOT a fresh invocation — it is a **compaction-resume turn**: a turn where the harness re-injects the skill body via an `invoked_skills` attachment after a context rollover or ctrl+O compact. In those turns the model is already mid-task (it has an in-progress plan, knows the next action, and the text at line 602+ is already in context) — and it skips Steps 1 and 2 entirely, jumping straight to task execution.
+
+**This shortcut is explicitly prohibited.** The compaction-resume scenario is the exact scenario the banner exists to guard against. An `invoked_skills` re-injection is a full re-invocation of `/masterplan`. Steps 1 and 2 are unconditional — they MUST fire even when:
+- The current turn's preceding context shows in-progress task work.
+- The system-reminder block contains `"session was compacted"` or `"post-compaction"`.
+- The user's preceding message is `"This session is being continued from a previous conversation…"` or equivalent compaction framing.
+- An `invoked_skills` attachment (not a direct user command) triggered this invocation.
+
+In all of these cases: emit the sentinel first, THEN resume from the in-progress task. The sentinel proves the re-injection was processed. Skipping it because "the plan is already loaded" is a CC-2 violation.
+
 **Step 4 — CC-3 compliance indicator (v6.4.0+).** Fires ONLY when ALL of the following hold simultaneously — skip silently otherwise (zero tool calls; read only from in-memory state.yml data already loaded in Step 0):
 
 1. An active bundle is loaded into the in-memory state.yml data from Step 0 (no extra Read needed).
@@ -103,6 +113,51 @@ Step parts below contain the specific Emit lines at each required point. Where t
 ```
 
 If `resolved-verb` is not yet known (i.e., before verb routing), use `unknown` as a placeholder. `halt_mode` and `autonomy` come from config + flag merge (already complete by this point).
+
+### File-descriptor preflight (always runs; abort before file storm)
+
+Before reading any config, plan, or state files, verify the process has enough open-file capacity. A low or exhausted file-descriptor budget causes opaque `EMFILE` (os error 24) failures mid-bootstrap — especially on macOS with its default 256-fd limit — that are far harder to diagnose than an explicit early abort.
+
+**Execute as a single Bash call** (do not skip; cost: ≤1 shell invocation, zero reads):
+
+```bash
+fd_limit="$(ulimit -n 2>/dev/null)"
+if [ "$fd_limit" = "unlimited" ]; then
+  :  # ample budget — proceed
+elif printf '%s' "$fd_limit" | grep -qE '^[0-9]+$'; then
+  if [ "$fd_limit" -lt 1024 ]; then
+    echo "ABORT — file-descriptor budget too low: ulimit -n = ${fd_limit} (need ≥ 1024)"
+    echo "  Fix: run  ulimit -n 4096  in the shell that launches Claude Code,"
+    echo "  or add  ulimit -n 4096  to your shell profile (~/.zshrc / ~/.bashrc)."
+    exit 1
+  fi
+else
+  # empty or non-numeric — unresolvable probe; warn and continue, do not abort
+  echo "⚠ fd preflight: could not read ulimit -n — skipping fd check; EMFILE errors may surface later"
+fi
+```
+
+If the Bash call exits non-zero (returns the ABORT message above), **stop immediately**: render the abort message verbatim as a plain-text error line to the user, set `halt_reason = "fd_limit_too_low"`, and → CLOSE-TURN. Do NOT proceed to config loading or any subsequent step.
+
+If the shell cannot resolve `ulimit -n` (returns empty or the command errors), emit a one-line warning and continue — do not abort on an unresolvable probe:
+
+```
+⚠ fd preflight: could not read ulimit -n — skipping fd check; EMFILE errors may surface later
+```
+
+This preflight fires unconditionally on every invocation (it is not gated on verb, complexity, or config). It runs BEFORE any file reads — the intent is to catch the exhausted-fd condition before the bootstrap file storm that triggers it.
+
+### Context-control discipline (all hosts; always applies)
+
+**Summary-first inventory and large-read budget.** To avoid premature context exhaustion — a session that needed ~16 context-exhaustion resumptions was traced to unconstrained upfront file reads — apply the following discipline on every invocation, regardless of host:
+
+1. **Inventory before full reads.** For bare, `next`, `status`, `doctor`, `audit`, and transcript-review-style invocations, inspect run state through summary paths first: `rg --files docs/masterplan` plus targeted `state.yml` reads. Do NOT read the full `commands/masterplan.md`, full plan docs, full spec docs, full event logs, or full transcripts at bootstrap time unless the user explicitly asked to audit/edit that file OR a targeted summary proves the full file is required.
+
+2. **Large-read budget.** Treat large reads (files >500 lines or >20k chars of prompt, plan, spec, transcript, or event-log content) as a bounded resource. Consume at most **2 large reads per invocation** during Step 0 bootstrap, before verb routing resolves. After verb routing, additional large reads are permitted only when the resolved verb explicitly requires them (e.g., `doctor` reading full event logs, `plan` loading a spec). This budget is a self-discipline guide, not a hard system limit; exceeding it is permissible when the task unambiguously requires it, but should be noted as a deviation.
+
+3. **Preserve for judgment work.** Reserve context tokens for sequencing decisions, gate management, and spec/plan authoring — not for raw file-content dumps that could be summarized by a subagent.
+
+> **Codex-host note:** When `codex_host_suppressed == true`, `parts/codex-host.md` §Summary-first loading applies additional host-specific constraints (including the `large_read_budget: 2` hard close checkpoint that gates Codex's own budget tracker). The rule above is the host-agnostic floor; the Codex-host file extends it with hard-stop enforcement.
 
 ### Config loading (always runs first)
 
