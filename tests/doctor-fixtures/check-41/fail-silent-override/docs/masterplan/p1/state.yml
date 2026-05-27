@@ -4,3 +4,6 @@ phase: building
 codex_routing: off
 codex_review: off
 complexity: medium
+
+artifacts:
+  events: tests/doctor-fixtures/check-41/fail-silent-override/docs/masterplan/p1/events.jsonl

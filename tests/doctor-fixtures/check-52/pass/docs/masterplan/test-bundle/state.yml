@@ -1,2 +1,5 @@
 schema_version: "5.1"
 slug: test-bundle
+
+artifacts:
+  events: tests/doctor-fixtures/check-52/pass/docs/masterplan/test-bundle/events.jsonl
