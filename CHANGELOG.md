@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v7.0.1 — Doctor Check #18 fix (2026-05-27)
+
+### Fixed
+
+- Doctor Check #18 (`codex config on but plugin missing`): glob `~/.claude/plugins/*codex*` only searched the root level, missing the actual install paths at `marketplaces/openai-codex/` and `cache/openai-codex/`. Replaced with `find … -maxdepth 3` to correctly detect the codex plugin regardless of where the plugin manager places it.
+- Doctor Check #41 sub-fire (c): same shallow glob used for `plugin_on_disk` precondition — fixed to use the same `find` approach.
+
 ## v7.0.0 — Rename to masterplan (2026-05-26)
 
 ### Changed (breaking)

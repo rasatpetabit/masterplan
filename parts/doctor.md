@@ -602,9 +602,10 @@ for cfg in "$HOME/.masterplan.yaml" ".masterplan.yaml"; do
 done
 if [ "$routing" != "off" ] || [ "$review" = "on" ]; then
   plugin_found=0
-  ls "$HOME/.claude/plugins/"*codex* 2>/dev/null | grep -q . && plugin_found=1
+  # Search root, marketplaces/, and cache/ — plugin manager installs under subdirs.
+  find "$HOME/.claude/plugins" -maxdepth 3 -name '*codex*' 2>/dev/null | grep -q . && plugin_found=1
   if [ $plugin_found -eq 0 ]; then
-    echo "WARN codex.routing=$routing / codex.review=$review but no codex plugin found under ~/.claude/plugins/"
+    echo "WARN codex.routing=$routing / codex.review=$review but no codex plugin found under ~/.claude/plugins/ (searched depth 3)"
     fail=1
   fi
 fi
@@ -1327,7 +1328,7 @@ if [ -r "$auth" ]; then
 fi
 # v5.3.0+ sub-fire (c) precondition: codex plugin files present on disk.
 plugin_on_disk=0
-if ls $HOME/.claude/plugins/*/codex* 2>/dev/null | head -1 | grep -q .; then
+if find "$HOME/.claude/plugins" -maxdepth 3 -name '*codex*' 2>/dev/null | grep -q .; then
   plugin_on_disk=1
 fi
 for state_yml in docs/masterplan/*/state.yml; do
