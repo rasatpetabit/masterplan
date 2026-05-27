@@ -1,6 +1,7 @@
 artifacts:
   events: docs/masterplan/ops-audit-hardening/events.jsonl
   plan: docs/masterplan/ops-audit-hardening/plan.md
+  retro: docs/masterplan/ops-audit-hardening/retro.md
   spec: docs/masterplan/ops-audit-hardening/spec.md
 autonomy: loose
 background: null
@@ -60,20 +61,23 @@ codex_routing: auto
 compact_loop_recommended: false
 complexity: high
 critical_error: null
-current_task: 'T7 — Doctor + version + sync (bump plugin.json x2, CHANGELOG, README/internals check-count to 53)'
-follow_ups: []
+current_task: 'all tasks complete (T1-T7); run archived'
+follow_ups:
+- 'Wire telemetry hook (hooks/masterplan-telemetry.sh) to emit invoked_skills_reinjection,
+  compaction_recent, and cc2_banner_emitted events so doctor Check #53 has data to
+  audit (currently forward-wired; #53 SKIPs until then).'
 import_contract:
   contract_id: ''
   inputs_hash: ''
   processed_at: ''
 import_hydration: ''
-last_activity: '2026-05-27T23:14:00Z'
+last_activity: '2026-05-27T23:30:00Z'
 legacy: {}
 loop_enabled: false
-next_action: 'execute T7 — bump versions, CHANGELOG entry, sync doctor check count (now 53) across README/internals; run doctor end-to-end'
+next_action: 'none — run complete, shipped as v7.2.0'
 pending_gate: null
 pending_retro_attempts: 0
-phase: executing
+phase: complete
 plan_hash: 'sha256:4bbfbc7a1f3ebf1e9cb2a032889364e0cf3895dbbc97a416e42a1a6155f571e0'
 plan_kind: implementation
 retro_policy:
@@ -89,7 +93,7 @@ scope_fingerprint:
 - ulimit
 slug: ops-audit-hardening
 started: '2026-05-27T22:17:26Z'
-status: in-progress
+status: complete
 stop_reason: null
 superseded_by: ''
 supersedes: ''
