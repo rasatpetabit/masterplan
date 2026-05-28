@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v7.2.2 — Fix /plan hijack: remove colliding `plan` per-verb skill (2026-05-27)
+
+### Fixed
+
+- **`/plan` is no longer hijacked by masterplan.** The v7.1.0 per-verb skill `skills/plan/SKILL.md` registered as `/masterplan:plan` but also shadowed Claude Code's built-in `/plan` (plan mode). A transcript audit found an unqualified `/plan` resolving to the masterplan plugin skill (`command-message: masterplan:plan`) and launching the orchestrator instead of entering plan mode — confirmed in `~/.claude/projects/-srv-dev-masterplan/aaff8127-….jsonl`. Removed `skills/plan/SKILL.md`. The `plan` **verb** is unaffected: still reachable via `/masterplan plan <topic>` (first-token verb routing in `parts/step-0.md`) and `/masterplan:masterplan plan <topic>`.
+- The earlier removal of this skill was wrongly reverted in v7.1.1 as an "accidental working-tree deletion." It was not accidental — the skill collides with the built-in `/plan`. To stop the loop, added `tests/structural/test-no-plan-skill-shadow.sh`, which FAILS if `skills/plan/SKILL.md` reappears, asserts `plan` stays a reserved verb in `parts/step-0.md`, and asserts the main skill no longer advertises a dedicated `plan` skill.
+
+### Removed
+
+- `skills/plan/SKILL.md`. `skills/masterplan/SKILL.md` per-verb enumeration updated to drop `plan`, with an inline note explaining the intentional omission so it is not re-added.
+
 ## v7.2.1 — Wire Check #53 telemetry: CC-2 compaction-resume banner events (2026-05-27)
 
 Follow-up to v7.2.0. Check #53 was forward-wired against three telemetry events the Stop hook did not yet emit, so it always reported SKIP. This release emits those events, taking the check live.

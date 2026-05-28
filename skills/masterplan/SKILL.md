@@ -1,6 +1,6 @@
 ---
 name: masterplan
-description: "Generic/Codex entrypoint: bare /masterplan, /masterplan:masterplan, $masterplan, or any verb not covered by a dedicated /masterplan:<verb> skill. Dedicated per-verb skills exist for brainstorm, plan, full, execute, retro, import, doctor, status, validate, stats, clean, and next."
+description: "Generic/Codex entrypoint: bare /masterplan, /masterplan:masterplan, $masterplan, or any verb not covered by a dedicated /masterplan:<verb> skill. Dedicated per-verb skills exist for brainstorm, full, execute, retro, import, doctor, status, validate, stats, clean, and next (no dedicated plan skill — it collides with the built-in /plan)."
 ---
 
 # Codex entrypoint for Superpowers Masterplan
@@ -86,11 +86,22 @@ Treat these user inputs as this skill:
 
 **Per-verb skills** (Claude Code only): the following verbs have dedicated
 `/masterplan:<verb>` skills that are preferred over this skill when invoked
-directly: `brainstorm`, `plan`, `full`, `execute`, `retro`, `import`,
+directly: `brainstorm`, `full`, `execute`, `retro`, `import`,
 `doctor`, `status`, `validate`, `stats`, `clean`, `next`, `verbs`. Each loads
 `commands/masterplan.md` with the verb pre-filled (except `verbs`, which reads
 `docs/verbs.md` as a quick-reference). This skill remains the entrypoint for
 Codex-hosted runs and bare `/masterplan` invocations.
+
+> **`plan` has no dedicated skill — intentionally (v7.2.2).** A skill named
+> `plan` registers as `/masterplan:plan` but ALSO shadows Claude Code's
+> built-in `/plan` (plan mode): an unqualified `/plan` was observed resolving
+> to the plugin skill and launching masterplan instead of entering plan mode.
+> The `plan` **verb** stays fully reachable via `/masterplan plan <topic>`
+> (first-token verb routing in `parts/step-0.md`) and
+> `/masterplan:masterplan plan <topic>`. A prior removal was wrongly reverted
+> in v7.1.1 as an "accidental deletion." Do **not** recreate
+> `skills/plan/SKILL.md` — `tests/structural/test-no-plan-skill-shadow.sh`
+> guards against it.
 
 The arguments are the text after the command name. If there are no arguments,
 follow the command's bare invocation flow: resume active `state.yml` first,
