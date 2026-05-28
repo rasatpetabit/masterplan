@@ -5,13 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v7.2.1 — Wire Check #53 telemetry: CC-2 compaction-resume banner events (2026-05-27)
+
+Follow-up to v7.2.0. Check #53 was forward-wired against three telemetry events the Stop hook did not yet emit, so it always reported SKIP. This release emits those events, taking the check live.
+
+### Added
+
+- **`hooks/masterplan-telemetry.sh` — `emit_cc53_events`**: a new bundle-turn emitter that writes the four events doctor Check #53 consumes:
+  - `turn_start` — emitted first and unconditionally per bundle Stop, delimiting turns for the consumer.
+  - `invoked_skills_reinjection` — when this turn's transcript window contains the "invoked EARLIER in this session" re-injection reminder.
+  - `step0_flag` / `flag=compaction_recent` — when this turn's window contains an `isCompactSummary` record (the session was compacted before this turn).
+  - `cc2_banner_emitted` — when an assistant record in this turn's window rendered the CC-2 banner sentinel (`-> /masterplan v` or `→ /masterplan v`).
+- Detection is **per-turn scoped** (most-recent maximal run of non-tool-result user records through EOF), not a flat tail window — a flat window would catch a banner from a prior turn and inflate the compliance ratio. Banner detection is **hook-side** (independent of orchestrator markers) so a missing banner cannot also suppress its own detection event. The emitter runs before `emit_cc3_marker_events` so `turn_start` leads each turn's event group.
+
+### Verified
+
+- `bash -n` clean. Per-turn detection validated against crafted transcripts (resume+banner → compliant; resume+no-banner → non-compliant; fresh+banner → excluded). End-to-end through the real hook in an isolated sandbox: resume+banner → Check #53 `RATIO:1.000`; resume+no-banner → `RATIO:0.000`; fresh → `SKIP`. The producer→consumer event-shape contract was confirmed against the exact Check #53 consumer.
+
 ## v7.2.0 — Ops-audit hardening: banner enforcement, fd preflight, read budget (2026-05-27)
 
 Driven by an audit of 12 hours of Claude Code transcripts (run bundle `docs/masterplan/ops-audit-hardening/`). Four findings (F1–F4); two confirmed and fixed, one generalized, one refuted-with-rationale.
 
 ### Added
 
-- **Doctor Check #53** (`cc2_banner_compaction_resume_compliance`): audits the *runtime* CC-2 boot-banner emission ratio on compaction-resume / `invoked_skills` re-injection turns, excluding fresh invocations from the denominator (those are already 100% compliant). Complements the static Check #46. Warning < 0.80, Error < 0.50. Total doctor checks: 52 → 53. **Forward-wired:** the check reads `invoked_skills_reinjection`, `compaction_recent`, and `cc2_banner_emitted` telemetry events that `hooks/masterplan-telemetry.sh` does not yet emit, so it reports **SKIP** until a follow-up release wires those three events into the Stop hook (tracked in `docs/masterplan/ops-audit-hardening/state.yml` follow-ups).
+- **Doctor Check #53** (`cc2_banner_compaction_resume_compliance`): audits the *runtime* CC-2 boot-banner emission ratio on compaction-resume / `invoked_skills` re-injection turns, excluding fresh invocations from the denominator (those are already 100% compliant). Complements the static Check #46. Warning < 0.80, Error < 0.50. Total doctor checks: 52 → 53. **Forward-wired:** the check reads `invoked_skills_reinjection`, `compaction_recent`, and `cc2_banner_emitted` telemetry events that `hooks/masterplan-telemetry.sh` does not yet emit, so it reported **SKIP** until those three events were wired into the Stop hook (done in v7.2.1, below).
 - **File-descriptor preflight** in `parts/step-0.md`: an always-runs check before the bootstrap file storm. `ulimit -n < 1024` aborts early with a remediation message instead of dying opaquely on `EMFILE` (os error 24); `unlimited` proceeds; an unresolvable probe warns and continues.
 - **Host-agnostic context-control discipline** in `parts/step-0.md`: lifted the summary-first inventory + large-read budget (≤2 large reads during Step 0 bootstrap) out of the Codex-host-only section so it applies to Claude Code runs too — addresses sessions that needed ~16 context-exhaustion resumptions. The Codex-host section is retained as the host-specific extension.
 

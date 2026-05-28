@@ -1007,6 +1007,84 @@ emit_cc3_marker_events() {
   with_bundle_lock "$(dirname "$events_file")" _do_append_cc3_markers || true
 }
 
+# emit_cc53_events — CC-2 compaction-resume banner compliance telemetry (doctor Check #53).
+# Emits, per masterplan bundle turn:
+#   turn_start                          — ALWAYS first; delimits turns for the consumer.
+#   invoked_skills_reinjection          — turn window contains the "invoked EARLIER in
+#                                         this session" re-injection reminder.
+#   step0_flag flag=compaction_recent   — turn window contains an isCompactSummary record
+#                                         (the session was compacted before this turn).
+#   cc2_banner_emitted                  — an assistant record in the turn window rendered
+#                                         the CC-2 banner sentinel ("-> /masterplan v" or
+#                                         "→ /masterplan v").
+# Turn window = most recent maximal run of non-tool-result user records through EOF,
+# computed over a bounded transcript tail. Per-turn scoping is REQUIRED: a flat tail-N
+# window would catch a banner from a PRIOR turn and inflate the compliance ratio.
+# Detection is hook-side (independent of orchestrator markers) so a missing banner cannot
+# also suppress its own detection event. Must run BEFORE emit_cc3_marker_events so
+# turn_start is the first row of the turn's event group.
+# Argument $1: path to events.jsonl (must exist for bundle turns).
+emit_cc53_events() {
+  local events_file="$1"
+  local turn_id="${CLAUDE_SESSION_ID:-unknown}:${ts}"
+  local iso_ts
+  iso_ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+  # Per-turn signal detection over a bounded transcript tail.
+  local sig
+  sig=$(tail -n 600 "$transcript" 2>/dev/null | jq -rs '
+    [.[] | select(.type=="user" or .type=="assistant")] as $msgs
+    | ($msgs | length) as $n
+    | ($msgs | map(
+        if .type=="assistant" then "A"
+        elif (.message.content|type)=="string" then "U"
+        elif ((.message.content|type)=="array" and (any((.message.content[]?); .type=="text"))) then "U"
+        else "T" end)) as $cls
+    | ([range(0;$n) | select($cls[.]=="U" and (.==0 or $cls[.-1]!="U"))] | last) as $start
+    | (if $start==null then [] else $msgs[$start:] end) as $turn
+    | {
+        banner: ($turn | any(.type=="assistant"
+                   and (((.message.content // [])|type)=="array")
+                   and (any((.message.content[]?); .type=="text"
+                        and ((.text//"")|test("(->|→)\\s*/masterplan\\s+v")))))),
+        reinjection: ($turn | any(
+                   ((.message.content|type)=="string" and ((.message.content)|test("invoked EARLIER in this session")))
+                   or ((.message.content|type)=="array" and any((.message.content[]?); .type=="text" and ((.text//"")|test("invoked EARLIER in this session")))))),
+        compaction: ($turn | any(.isCompactSummary==true))
+      } | "\(.banner) \(.reinjection) \(.compaction)"
+  ' 2>/dev/null)
+  [[ -z "$sig" ]] && sig="false false false"
+  local banner reinjection compaction
+  read -r banner reinjection compaction <<< "$sig"
+
+  local rows="" row
+  # turn_start ALWAYS first — delimits the turn for the Check #53 consumer.
+  row=$(jq -nc --arg ts "$iso_ts" --arg turn_id "$turn_id" \
+    '{"ts":$ts,"event":"turn_start","turn_id":$turn_id}') || return 0
+  rows="${rows}${row}"$'\n'
+
+  if [[ "$reinjection" == "true" ]]; then
+    row=$(jq -nc --arg ts "$iso_ts" --arg turn_id "$turn_id" \
+      '{"ts":$ts,"event":"invoked_skills_reinjection","turn_id":$turn_id}') \
+      && rows="${rows}${row}"$'\n'
+  fi
+  if [[ "$compaction" == "true" ]]; then
+    row=$(jq -nc --arg ts "$iso_ts" --arg turn_id "$turn_id" \
+      '{"ts":$ts,"event":"step0_flag","flag":"compaction_recent","turn_id":$turn_id}') \
+      && rows="${rows}${row}"$'\n'
+  fi
+  if [[ "$banner" == "true" ]]; then
+    row=$(jq -nc --arg ts "$iso_ts" --arg turn_id "$turn_id" \
+      '{"ts":$ts,"event":"cc2_banner_emitted","turn_id":$turn_id}') \
+      && rows="${rows}${row}"$'\n'
+  fi
+
+  _do_append_cc53() {
+    printf '%s' "$rows" >> "$events_file" 2>/dev/null
+  }
+  with_bundle_lock "$(dirname "$events_file")" _do_append_cc53 || true
+}
+
 # Run every detector under set +e + log on error. Each is independent.
 detector_dispatch() {
   for fn in detect_silent_stop_after_skill detect_unexpected_halt \
@@ -1020,6 +1098,8 @@ detector_dispatch() {
 }
 
 detector_dispatch
+
+if [[ "$is_bundle" -eq 1 ]]; then emit_cc53_events "${plans_dir}/events.jsonl"; fi
 
 if [[ "$is_bundle" -eq 1 ]]; then emit_cc3_marker_events "${plans_dir}/events.jsonl"; fi
 

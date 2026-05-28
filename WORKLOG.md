@@ -1,5 +1,9 @@
 # WORKLOG
 
+## 2026-05-27 — v7.2.1: wire Check #53 telemetry (CC-2 compaction-resume banner)
+
+Took doctor Check #53 live. It was forward-wired in v7.2.0 against three events the Stop hook never emitted, so it always SKIPped. Added `emit_cc53_events` to `hooks/masterplan-telemetry.sh` emitting `turn_start` (unconditional, first), `invoked_skills_reinjection`, `step0_flag/compaction_recent`, and `cc2_banner_emitted`. Key decisions: banner detection is **hook-side** (greps the transcript sentinel directly) so a missing banner can't suppress its own detection event; turn-window is the **most-recent maximal non-tool-result user-record run → EOF** (a flat tail-N window would leak a prior turn's banner and inflate the ratio). Verified end-to-end via an isolated-sandbox hook run (resume+banner→RATIO 1.0, resume+no-banner→0.0, fresh→SKIP) — which caught a `jq` missing-`-r` bug that quote-contaminated the first/last detection fields (`bash -n` would not have). Manifests + README bumped to 7.2.1; CHANGELOG + retro updated.
+
 ## 2026-05-27 — v7.1.1: add /masterplan:verbs; restore plan skill
 
 `skills/plan/SKILL.md` was accidentally deleted from working tree after v7.1.0 commit (HEAD was correct; restored via `git checkout HEAD`). `skills/verbs/SKILL.md` added — was omitted from v7.1.0; provides `/masterplan:verbs` to display `docs/verbs.md` cheat sheet. Both synced to installed plugin.

@@ -63,9 +63,11 @@ complexity: high
 critical_error: null
 current_task: 'all tasks complete (T1-T7); run archived'
 follow_ups:
-- 'Wire telemetry hook (hooks/masterplan-telemetry.sh) to emit invoked_skills_reinjection,
-  compaction_recent, and cc2_banner_emitted events so doctor Check #53 has data to
-  audit (currently forward-wired; #53 SKIPs until then).'
+- 'RESOLVED (v7.2.1): wired hooks/masterplan-telemetry.sh emit_cc53_events to emit
+  turn_start, invoked_skills_reinjection, step0_flag/compaction_recent, and
+  cc2_banner_emitted so doctor Check #53 has data to audit. Verified end-to-end
+  (isolated-sandbox hook run: resume+banner RATIO 1.0, resume+no-banner 0.0, fresh
+  SKIP).'
 import_contract:
   contract_id: ''
   inputs_hash: ''

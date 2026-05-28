@@ -55,11 +55,20 @@ task produces a verdict, fix task branches on it.
   omitted `.claude-plugin/marketplace.json` (two version fields); the
   cross-manifest sanity check caught it. Doctor Check #30 exists precisely for
   this — the brief should enumerate *all four* version locations next time.
-- **Forward-wired telemetry.** Check #53 reads `invoked_skills_reinjection`,
-  `compaction_recent`, and `cc2_banner_emitted` events that the Stop hook does
-  not yet emit. Until `hooks/masterplan-telemetry.sh` writes them, #53 will
-  SKIP (no compaction-resume evidence). **Follow-up:** wire those three events
-  into the telemetry hook so #53 has data to audit.
+- **Forward-wired telemetry — RESOLVED in v7.2.1.** Check #53 reads
+  `invoked_skills_reinjection`, `compaction_recent`, and `cc2_banner_emitted`
+  events the Stop hook did not emit, so #53 SKIPped. The v7.2.1 follow-up wired
+  them via a new `emit_cc53_events` function. Two design choices worth recording:
+  (1) **Hook-side banner detection**, not a step-0 `step0_flag` marker emitter —
+  the hook independently greps the transcript for the banner sentinel, so a
+  missing banner can't also suppress its own detection event (a marker emitted by
+  the orchestrator would share fate with the banner it's meant to audit).
+  (2) **Per-turn windowing** (most-recent maximal run of non-tool-result user
+  records → EOF), not a flat tail-N window — a flat window catches a prior turn's
+  banner and inflates the ratio. The end-to-end smoke test (isolated sandbox,
+  real hook) caught a real `jq`-missing-`-r` bug that quote-contaminated the
+  first/last detection fields; `bash -n` alone would not have surfaced it —
+  reinforcing the prior run's "static correctness ≠ runtime correctness" lesson.
 - **Version-stamp guess.** The implementer stamped Check #53 as `v6.4.1` by
   pattern-matching the prior check's version rather than the live plugin
   version (7.x). Sync tasks should hand the implementer the target version
