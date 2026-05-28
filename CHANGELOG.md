@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v7.2.3 — Codex review dispatch guard + runtime-drift detection (2026-05-27)
+
+### Fixed
+
+- **Codex REVIEW dispatch no longer mis-refused as `disable-model-invocation`.** At a B2 spec-review gate the orchestrator refused a correct `codex:codex-rescue` dispatch, telling the user to type `/codex:adversarial-review` because that *slash-command skill* is `disable-model-invocation: true` — a bogus punt that cost two corrections. Root cause: "adversarial review" names three different things — (1) this masterplan workflow + its `adversarial_review` config/events, (2) the codex companion's `adversarial-review` shell subcommand (B3), (3) the `/codex:adversarial-review` slash-command skill — and the dispatch sites carried no guard against conflating (1)/(2) with (3). Added a canonical **§Dispatch mechanism** section to `parts/contracts/codex-review.md` and an inline anti-rationalization sentinel at every REVIEW dispatch site (B2, B3, C4b serial, C4b wave-batched): the dispatch is the model-invocable `codex:codex-rescue` Agent subagent (or the companion subcommand / sonnet fallback), **NOT** the slash command — never refuse citing `disable-model-invocation`, never punt to a slash command. Also reframed B2's "Locate companion" step as an availability probe (it was misread as "shell out to the script").
+
+### Added
+
+- **Static regression guard** `tests/static/test-codex-review-dispatch-guard.sh` — fails the static battery if any REVIEW dispatch site loses its anti-rationalization sentinel, so the refusal cannot silently return.
+
+### Changed
+
+- **Doctor Check #50 (`plugin_registry_drift`) extended** to also compare the `gitCommitSha` in `installed_plugins.json` against the marketplace clone's `HEAD`, not just the version strings. A version-only comparison missed the case where the runtime cache is frozen at an old commit while source advances — exactly how v7.1.1→v7.2.2 shipped while the host kept running 7.1.0 content (`8d8d492`). Every `/masterplan doctor` now warns on commit-level drift with the `/plugin update` + `/reload-plugins` remediation.
+
 ## v7.2.2 — Fix /plan hijack: remove colliding `plan` per-verb skill (2026-05-27)
 
 ### Fixed

@@ -1705,15 +1705,18 @@ Report-only.
 
 **Severity:** Warning
 **Action:** Report-only; suggests updating `~/.claude/plugins/installed_plugins.json` to point at the marketplace version.
-**Scope:** User-scoped (reads `~/.claude/plugins/installed_plugins.json` + marketplace `.claude-plugin/plugin.json`). Fires once per doctor run.
-**Added:** v6.3.3 (registry-version vs marketplace-version divergence — silently ran v5.8.3 for three weeks while v6.x features shipped).
+**Scope:** User-scoped (reads `~/.claude/plugins/installed_plugins.json` + marketplace `.claude-plugin/plugin.json`, and runs `git rev-parse HEAD` in the local marketplace clone — no network). Fires once per doctor run.
+**Added:** v6.3.3 (registry-version vs marketplace-version divergence — silently ran v5.8.3 for three weeks while v6.x features shipped). **Extended v7.2.3:** also compares `gitCommitSha` vs marketplace HEAD (sha-level drift was invisible to the version-only check — e.g. runtime frozen at 7.1.1/`8d8d492` while source shipped 7.2.0→7.2.2).
 
-Compares the `masterplan` version in `~/.claude/plugins/installed_plugins.json` (what Claude Code actually loads) against the version in `~/.claude/plugins/marketplaces/rasatpetabit-masterplan/.claude-plugin/plugin.json` (the installed git checkout). When they differ, Claude Code silently runs an older build — newly shipped features (doctor checks, breadcrumbs, telemetry fixes, etc.) are invisible at runtime until the registry is updated and Claude Code is restarted.
+Compares the `masterplan` version in `~/.claude/plugins/installed_plugins.json` (what Claude Code actually loads) against the version in `~/.claude/plugins/marketplaces/rasatpetabit-masterplan/.claude-plugin/plugin.json` (the installed git checkout). When they differ, Claude Code silently runs an older build — newly shipped features (doctor checks, breadcrumbs, telemetry fixes, etc.) are invisible at runtime until the registry is updated and Claude Code is restarted. **Also compares the `gitCommitSha` recorded in `installed_plugins.json` against the marketplace clone's current `HEAD`:** this catches the case where the version *strings* match but the cached content is stale (the runtime cache was never rebuilt after a `git pull`), which a version-only comparison cannot see. This is the drift behind "the install fails every time but is reported as fine."
 
 ```bash
-registry_version="$(jq -r '.plugins["masterplan@rasatpetabit-masterplan"][0].version // empty' \
-  "$HOME/.claude/plugins/installed_plugins.json" 2>/dev/null)"
-marketplace_plugin="$HOME/.claude/plugins/marketplaces/rasatpetabit-masterplan/.claude-plugin/plugin.json"
+ip="$HOME/.claude/plugins/installed_plugins.json"
+registry_version="$(jq -r '.plugins["masterplan@rasatpetabit-masterplan"][0].version // empty' "$ip" 2>/dev/null)"
+registry_sha="$(jq -r '.plugins["masterplan@rasatpetabit-masterplan"][0].gitCommitSha // empty' "$ip" 2>/dev/null)"
+install_path="$(jq -r '.plugins["masterplan@rasatpetabit-masterplan"][0].installPath // empty' "$ip" 2>/dev/null)"
+marketplace_dir="$HOME/.claude/plugins/marketplaces/rasatpetabit-masterplan"
+marketplace_plugin="$marketplace_dir/.claude-plugin/plugin.json"
 
 if [ -z "$registry_version" ]; then
   echo "Check #50: SKIP (masterplan not found in installed_plugins.json)"
@@ -1721,16 +1724,23 @@ elif [ ! -f "$marketplace_plugin" ]; then
   echo "Check #50: SKIP (no marketplace plugin.json at $marketplace_plugin)"
 else
   marketplace_version="$(jq -r '.version // empty' "$marketplace_plugin" 2>/dev/null)"
-  if [ "$registry_version" = "$marketplace_version" ]; then
-    echo "Check #50: PASS (registry and marketplace both at v${registry_version})"
+  marketplace_sha="$(git -C "$marketplace_dir" rev-parse HEAD 2>/dev/null)"
+  drift=0
+  if [ "$registry_version" != "$marketplace_version" ]; then
+    echo "WARN: plugin registry drift (version) — Claude Code loads v${registry_version} but marketplace is v${marketplace_version}"
+    drift=1
+  fi
+  if [ -n "$registry_sha" ] && [ -n "$marketplace_sha" ] && [ "$registry_sha" != "$marketplace_sha" ]; then
+    echo "WARN: plugin registry drift (commit) — runtime cache frozen at ${registry_sha:0:7} but source (marketplace HEAD) is ${marketplace_sha:0:7}"
+    echo "      Even when version strings match, stale cache content means newly shipped prompt/doctor changes are invisible at runtime."
+    drift=1
+  fi
+  if [ "$drift" -eq 0 ]; then
+    echo "Check #50: PASS (registry v${registry_version} @ ${registry_sha:0:7} matches marketplace)"
   else
-    echo "WARN: plugin registry drift — Claude Code loads v${registry_version} but marketplace is v${marketplace_version}"
-    install_path="$(jq -r '.plugins["masterplan@rasatpetabit-masterplan"][0].installPath // empty' \
-      "$HOME/.claude/plugins/installed_plugins.json" 2>/dev/null)"
     echo "      active installPath: ${install_path}"
-    echo "      Fix: copy marketplace to ~/.claude/plugins/cache/.../masterplan/${marketplace_version}/"
-    echo "           update installPath + version in ~/.claude/plugins/installed_plugins.json"
-    echo "           restart Claude Code to pick up the new version."
+    echo "      Fix: run /plugin update masterplan then /reload-plugins (advances the cache + flips installPath)."
+    echo "           Do NOT hand-edit installed_plugins.json or hand-roll a cache version dir."
   fi
 fi
 ```

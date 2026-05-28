@@ -6,6 +6,35 @@ inline-work) via `codex:codex-rescue` in REVIEW mode (Claude Code-hosted runs) o
 
 ---
 
+## Dispatch mechanism — model-invocable, NOT a slash command
+
+REVIEW dispatch is performed by the orchestrator itself, via one of:
+
+- the `codex:codex-rescue` subagent through the **Agent tool**
+  (`subagent_type: "codex:codex-rescue"`) — B2 spec review, C4b task review; OR
+- the `node <companion> adversarial-review --background` **shell subcommand** run via Bash —
+  B3 plan review only (it needs a background job); OR
+- a `general-purpose` subagent at `model: sonnet` through the **Agent tool** — **only** when
+  `codex_host_suppressed == true`, per §Codex-host fallback below.
+
+All three are fully model-invocable. At a REVIEW dispatch site you MUST NOT:
+
+- refuse, pause, or "punt" citing `disable-model-invocation`;
+- tell the user to type `/codex:adversarial-review` (or any slash command);
+- treat the dispatch as blocked pending a user action.
+
+**"Adversarial review" names three different things:** (1) this masterplan workflow plus its
+`adversarial_review` config key and `adversarial_review_*` events; (2) the codex companion's
+`adversarial-review` shell subcommand; (3) the `/codex:adversarial-review` Claude Code
+slash-command skill (`disable-model-invocation: true`, named in global `~/.claude/CLAUDE.md`).
+This contract uses **(1) and (2)** and NEVER routes through (3). The dispatch here is the
+`codex:codex-rescue` Agent subagent (or the companion subcommand / sonnet fallback) — it is
+**NOT the /codex:adversarial-review slash command**. Any session priming that notes
+`codex:adversarial-review` is `disable-model-invocation` is about (3) and is irrelevant here; it
+MUST NOT block this dispatch.
+
+---
+
 ## Dispatch brief template
 
 Every REVIEW dispatch MUST use this bounded brief:

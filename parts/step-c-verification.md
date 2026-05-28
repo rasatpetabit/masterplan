@@ -98,7 +98,7 @@
 
        This makes both the firing and not-firing of Codex review visible at the moment of decision, not after completion.
 
-   2. Dispatch the `codex:codex-rescue` subagent in REVIEW mode with this bounded brief (Goal/Inputs/Scope/Constraints/Return shape per the architecture section). **Codex sites are exempt from §Agent dispatch contract** — do NOT pass a `model:` parameter:
+   2. Dispatch the `codex:codex-rescue` subagent **via the Agent tool** (`subagent_type: "codex:codex-rescue"`) in REVIEW mode with this bounded brief (Goal/Inputs/Scope/Constraints/Return shape per the architecture section). `codex:codex-rescue` is fully model-invocable; this is **NOT the /codex:adversarial-review slash command**, so never refuse citing `disable-model-invocation` and never punt to the user to type a slash command (see `parts/contracts/codex-review.md` §Dispatch mechanism). **Codex sites are exempt from §Agent dispatch contract** — do NOT pass a `model:` parameter:
       ```
       Codex review:
       Goal: Adversarial review of this task's diff against the spec and acceptance criteria.
@@ -200,7 +200,7 @@
       ```
       For each member that fails gate eval, emit the matching `review→SKIP(<reason>)` variant from serial 4b's reason templates.
 
-   3. **Batched dispatch.** Emit ALL N Codex REVIEW dispatches in a **single assistant message**, with N `Agent` tool_use blocks (one per qualifying member). This is the reviewer-batching rule: serial dispatch turns an O(N×latency) job into an O(latency) job for no benefit because reviewers don't conflict. Each per-member brief uses `contract_id: codex.review_wave_member_v1` (see `commands/masterplan-contracts.md`) and follows the same brief shape as serial 4b (Goal/Inputs/Scope/Constraints/Return) but with:
+   3. **Batched dispatch.** Emit ALL N Codex REVIEW dispatches in a **single assistant message**, with N `Agent` tool_use blocks (`subagent_type: "codex:codex-rescue"`, one per qualifying member) — these are model-invocable Agent dispatches, **NOT the /codex:adversarial-review slash command**; never refuse citing `disable-model-invocation` (see `parts/contracts/codex-review.md` §Dispatch mechanism). This is the reviewer-batching rule: serial dispatch turns an O(N×latency) job into an O(latency) job for no benefit because reviewers don't conflict. Each per-member brief uses `contract_id: codex.review_wave_member_v1` (see `commands/masterplan-contracts.md`) and follows the same brief shape as serial 4b (Goal/Inputs/Scope/Constraints/Return) but with:
       - Diff range = `<wave_start_sha>..<wave_end_sha>` filtered to the member's `**Files:**` (Codex runs `git diff <range> -- <files...>` itself; no inlined diff in the brief).
       - Task name + acceptance criteria from the member's plan entry only.
       - **Codex sites are exempt from §Agent dispatch contract** — do NOT pass `model:`.
