@@ -1,0 +1,14 @@
+{
+  "name": "masterplan",
+  "version": "8.0.0-ng.0",
+  "private": true,
+  "type": "module",
+  "description": "masterplan clean-core rebuild (codename v8) — brainstorm→plan→execute orchestrator on native Claude Code primitives. Lives on the masterplan-ng branch until parity cutover.",
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "doctor": "node bin/doctor.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
