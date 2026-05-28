@@ -131,4 +131,4 @@ Implications (hardening, mostly for `mp-implementer` + the L2 engine):
 - Per-agent cost-field extraction from `agent-*.jsonl` → step 4 (Resolved #5 / R1), now scoped to "parse JSONL" since `.meta.json` lacks cost.
 
 ## Throwaway artifacts (discarded)
-`/tmp/mp-spike-repo` (removed); the two persisted spike workflow scripts under the session `workflows/scripts/` dir (out-of-repo session artifacts, harmless).
+`/tmp/mp-spike-repo` (left in place — the sandbox declined the `rm -rf`; harmless, outside any tracked repo, safe to delete manually); the two persisted spike workflow scripts under the session `workflows/scripts/` dir (out-of-repo session artifacts, harmless).
