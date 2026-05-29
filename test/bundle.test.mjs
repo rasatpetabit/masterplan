@@ -16,6 +16,8 @@ import {
   setActiveRun,
   clearActiveRun,
   markTask,
+  CORE_REQUIRED_FIELDS,
+  validateCoreState,
 } from '../lib/bundle.mjs';
 
 test('round-trips scalars with correct types', () => {
@@ -97,6 +99,52 @@ test('markTask throws on an unknown id (no silent no-op that fakes success)', ()
   const s = { tasks: [{ id: 1, wave: 1, status: 'pending', files: [] }] };
   assert.throws(() => markTask(s, 99, 'done'), /no task with id 99/);
   assert.equal(markTask(s, 1, 'done').tasks[0].status, 'done'); // known id still works
+});
+
+test('validateCoreState: a well-formed v8 core (with tasks) is valid', () => {
+  const ok = {
+    schema_version: 6, slug: 'r', status: 'executing', phase: 'execute',
+    tasks: [{ id: 1, wave: 1, status: 'pending', files: [] }],
+    active_run: null, pending_gate: null,
+  };
+  assert.deepEqual(validateCoreState(ok), []);
+});
+
+test('validateCoreState: a pre-plan (brainstorm) bundle WITHOUT tasks is valid', () => {
+  // tasks is intentionally NOT required-present — a brainstorm-phase bundle has none yet.
+  const brainstorm = { schema_version: 6, slug: 'r', status: 'brainstorming', phase: 'brainstorm' };
+  assert.deepEqual(validateCoreState(brainstorm), []);
+});
+
+test('validateCoreState: flags each missing required field', () => {
+  const problems = validateCoreState({ schema_version: 6 }); // slug/status/phase absent
+  assert.ok(problems.some((p) => /missing required field: slug/.test(p)));
+  assert.ok(problems.some((p) => /missing required field: status/.test(p)));
+  assert.ok(problems.some((p) => /missing required field: phase/.test(p)));
+  assert.ok(!problems.some((p) => /schema_version/.test(p))); // present + valid -> not flagged
+});
+
+test('validateCoreState: schema_version < 6 and non-number are flagged', () => {
+  const core = { slug: 'r', status: 's', phase: 'p' };
+  assert.ok(validateCoreState({ ...core, schema_version: 3 }).some((p) => /schema_version must be a number >= 6/.test(p)));
+  assert.ok(validateCoreState({ ...core, schema_version: '6' }).some((p) => /schema_version must be a number >= 6/.test(p)));
+});
+
+test('validateCoreState: tasks present-but-not-array, and bad active_run/pending_gate types', () => {
+  const core = { schema_version: 6, slug: 'r', status: 's', phase: 'p' };
+  assert.ok(validateCoreState({ ...core, tasks: {} }).some((p) => /tasks must be an array/.test(p)));
+  assert.ok(validateCoreState({ ...core, active_run: 'wf_x' }).some((p) => /active_run must be an object or null/.test(p)));
+  assert.ok(validateCoreState({ ...core, pending_gate: 42 }).some((p) => /pending_gate must be a string or null/.test(p)));
+});
+
+test('validateCoreState: non-object input is reported, never throws', () => {
+  assert.deepEqual(validateCoreState(null), ['state is not an object']);
+  assert.deepEqual(validateCoreState('nope'), ['state is not an object']);
+  assert.deepEqual(validateCoreState(undefined), ['state is not an object']);
+});
+
+test('CORE_REQUIRED_FIELDS is the frozen v8 core key set', () => {
+  assert.deepEqual(CORE_REQUIRED_FIELDS, ['schema_version', 'slug', 'status', 'phase']);
 });
 
 test('parseState∘serializeState round-trips a fuzz of scalar / object / array shapes', () => {

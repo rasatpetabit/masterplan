@@ -39,13 +39,13 @@ checks get fresh v8-flat fixtures.
 | `scalar-cap` | #32 | WARN | ✅ slice |
 | `worktree-integrity` | #3/#4/#29(a) | ERROR/SKIP | ✅ slice |
 | `codex-auth` | #39 | WARN/SKIP | ✅ slice |
-| `state-schema` | #9 (+#10 folded) | ERROR | pending batch |
-| `legacy-bundle` | #1 | WARN | pending batch |
-| `codex-plugin-presence` | #18 | WARN/SKIP | pending batch |
-| `index-staleness` | #34 | WARN | pending batch |
-| `stale-lock` | #42 | WARN | pending batch |
-| `stale-codex-task` | #49 | WARN | pending batch |
-| `plugin-registry-drift` | #50 | WARN | pending batch |
+| `state-schema` | #9 (+#10 folded) | ERROR | ✅ batch |
+| `legacy-bundle` | #1 | WARN | ✅ batch |
+| `codex-plugin-presence` | #18 | PASS/WARN/SKIP | ✅ batch |
+| `index-staleness` | #34 | WARN | ✅ batch |
+| `stale-lock` | #42 | WARN | ✅ batch |
+| `stale-codex-task` | #49 | WARN | ✅ batch |
+| `plugin-registry-drift` | #50 | WARN | ✅ batch |
 
 **`#9` stays minimal** — v8 bundles are well-formed by construction (`serializeState`), so #9
 guards only the migrate/hand-edit boundary: validate what the control loop dereferences

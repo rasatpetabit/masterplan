@@ -1,0 +1,6 @@
+schema_version: 6
+slug: p1
+status: in-progress
+phase: building
+codex_routing: auto
+codex_review: false

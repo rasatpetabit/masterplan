@@ -57,3 +57,15 @@ id_ed25519.*
 # write decisions here for the next session, not the public.
 WORKLOG.md
 legacy/
+
+# --- Doctor test fixtures are CI ground truth and MUST be committed ---
+# They deliberately mirror the real host layout the doctor probes (.claude/,
+# .codex/, .claude-plugin/, installed_plugins.json, auth.json), which the
+# local-state ignores above (lines 13-25) would otherwise silently drop. The
+# directory negations re-admit the dot-dirs so git recurses into them; the final
+# catch-all re-admits the files within (incl. auth.json, overriding **/.codex/auth.json).
+!test/fixtures/**/.claude/
+!test/fixtures/**/.codex/
+!test/fixtures/**/.claude-plugin/
+!test/fixtures/**/auth.json
+!test/fixtures/**

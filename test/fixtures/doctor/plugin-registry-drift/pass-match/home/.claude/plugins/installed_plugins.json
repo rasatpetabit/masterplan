@@ -1,0 +1,11 @@
+{
+  "plugins": {
+    "masterplan@rasatpetabit-masterplan": [
+      {
+        "version": "7.2.3",
+        "gitCommitSha": "def5678",
+        "installPath": "/home/user/.claude/plugins/cache/rasatpetabit-masterplan/7.2.3"
+      }
+    ]
+  }
+}

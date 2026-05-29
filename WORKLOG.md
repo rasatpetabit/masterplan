@@ -1,5 +1,29 @@
 # WORKLOG
 
+## 2026-05-28 — v8 (masterplan-ng): step 5 (doctor L4) COMPLETE — all 10 checks, full suite 197/197 green
+
+Implemented the remaining 7 doctor check modules (`state-schema`, `legacy-bundle`, `codex-plugin-presence`, `index-staleness`, `stale-lock`, `stale-codex-task`, `plugin-registry-drift`) via a batched Sonnet port against the frozen contract, then a fresh-eyes review (anti-pattern #5) + orchestrator-applied fixes. Extended `test/doctor.test.mjs` and created fixture trees for all. Full repo suite now **197/197** green (was 146 at the slice). Live `node bin/doctor.mjs` runs all 10 checks, 0 ERROR — and surfaces *real* host findings (Gemini companion jobs stuck 25–30h via `stale-codex-task`), proving the checks work on real data.
+
+**Key semantic decisions (deviations from the brief's implicit numeric-only framing):**
+- `schema_version` quote-normalization: v7 bundles on disk store `'5.1'` / `"5.0"` (YAML single/double quoted strings). `parseState` returns these as embedded-quote strings; both `state-schema` and `legacy-bundle` now strip wrapping quotes before `parseFloat` to classify them correctly as legacy (< 6). Without this, `state-schema` false-positives ERROR on every existing v7 bundle. Decision is the load-bearing semantic call of this batch; recorded here as the rationale for the non-obvious guard.
+- `codex-plugin-presence` emits PASS (not absent from findings) when the plugin is present; WARN/SKIP are the missing-plugin signals. The README survivor table's severity cell was corrected to `PASS/WARN/SKIP` in this amend to match.
+- `stale-codex-task` summary says "codex task stuck" for Gemini jobs because the glob is plugin-agnostic (per brief). Real findings on this host are Gemini background tasks. Cosmetic; behavior is correct.
+
+**Implementer pre-return fixes:**
+1. `test/fixtures/doctor/legacy-bundle/skip-no-bundles/docs/masterplan/.gitkeep` added — git won't track an empty dir without it; the committed fixture would silently disappear from the `scenarios()` loop post-commit.
+2. Two in-code mkdtemp tests added covering the `plan.index.json` fallback path in `index-staleness` (previously zero coverage on the `if (!checked)` branch). `import { createHash } from 'node:crypto'` added to test file top-level imports.
+
+**Orchestrator post-review fixes (3, CD-7 single-writer — applied after fresh-eyes review):**
+1. **`.gitignore` blocker (HIGH).** Lines 13–25 (`.claude/`, `.codex/`, `.claude-plugin/`, `**/.codex/auth.json`) silently excluded **12 host-path fixture files** — incl. the *already-"committed"* `codex-auth` slice's `auth.json` (so the slice itself had broken CI ground truth). Tests passed locally only because the files sat on disk; a fresh clone / CI would have none. Added scoped `!test/fixtures/**` negations (dir-negations re-admit the dot-dirs so git recurses; catch-all re-admits files incl. `auth.json`). Verified: `git check-ignore` danger-set now empty; all 12 stage. This retroactively fixes the slice gap too.
+2. **`state-schema` ordering (MED → reclassified clarity-only).** Moved the `schema_version < 6` legacy-deferral *ahead* of the zero-keys ERROR. The reviewer flagged this as a false-ERROR risk, but on re-analysis it is a **behavior-preserving no-op**: zero-keys and a readable `schema_version` are mutually exclusive (zero modellable keys ⇒ no col-0 `schema_version:` ⇒ `svNum` is `NaN` ⇒ the deferral cannot fire in *either* order). A v7 block-YAML bundle that still carries a col-0 `schema_version:` line was never zero-keys, so it already deferred before the move. Kept anyway because the reordered code reads in deferral-then-validate intent order and is robust if `parseState` ever becomes less tolerant — but it is NOT the "false-ERROR fix" the reviewer's MED finding implied. The actual block-YAML behavior (zero col-0 keys → ERROR "unparseable") is correct and was confirmed on live bundles.
+3. **Test hardening (HIGH).** 8 SKIP-path tests called `maxSeverity(check(...))` inline — but `maxSeverity([])` seeds to `'SKIP'`, so a regression to an empty array (violating the ≥1-finding contract) would have passed silently. Each now captures `findings`, asserts `assertFindingShape` (length ≥ 1 + shape), then `maxSeverity`.
+
+**Fixtures are synthetic** (dummy tokens `rt_fixture_dummy_value`, JWT `{"exp":11}`, fake SHA `abc1234`) — no real secrets. NOTE: `test/fixtures/legacy-bundles/` (verbatim other-repo bundles) is the separate CUTOVER-GATE concern — must be sanitized-or-confirmed-public BEFORE any push; this commit is scoped by path to exclude it.
+
+**Known cosmetic gap (deferred, sub-threshold per review):** `stale-codex-task` says "codex task" for Gemini companion jobs (glob is plugin-agnostic by design; fix line carries the exact path). (The earlier `codex-plugin-presence` README-labelling gap was closed in this amend — survivor table now reads `PASS/WARN/SKIP`.)
+
+`node bin/doctor.mjs` on live worktree: 10 checks, 0 errors, 21 warnings (legacy v7 bundles, stale Gemini tasks, one stale plan hash, one scalar overflow — all real findings). No false positives on main, masterplan-ng, or concurrency-guards bundles.
+
 ## 2026-05-28 — v8 (masterplan-ng): step 5 (doctor L4) STARTED — dispatcher + first 3-module slice (suite 146/146)
 
 Began the L4 doctor port. Built the load-bearing **contract + dispatcher** plus a 3-module slice chosen to prove all three `opts` shapes at once; the remaining 7 modules are a batched port (next).
