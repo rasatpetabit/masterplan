@@ -32,6 +32,7 @@ for each verdict is the plan's *Survives / Dies / Transforms* table
 | `bin/masterplan-guard-b-smoke.sh`, `bin/masterplan-guard-c-smoke.sh` | v7 guard smokes → superseded by `node:test` |
 | `bin/masterplan-state.sh` | v7 inventory/migration → superseded by `lib/migrate.mjs` + `bin/masterplan.mjs migrate-bundle` — table L96 transforms |
 | `lib/__init__.py` | python package marker; v8 is node-only ("Bash survives only in the SessionStart shim", plan L151) |
+| `skills/masterplan-detect/` | **RESOLVED 2026-05-29 → DELETE.** No v8 wiring: `hooks/hooks.json` (the surviving SessionStart shim) has zero refs to it; `commands/masterplan.md` / `bin/masterplan.mjs` / `lib/` never invoke it (`lib/hygiene.mjs:107` only lists it in `INFRA_SKILL_NAMES` to *exclude* it from collision checks). Plan L94 preserves the SessionStart **shim**, not this skill. The v7 job (ambient auto-suggest `/masterplan import`) is superseded by the direct `import` verb in the v8 routing table. ⚠️ Soft caveat: this drops ambient legacy-artifact *detection* — confirm you don't want to retain a v8 detect-suggest before deleting. |
 
 ### Prose orchestrator (`parts/` — entire tree, 21 files)
 
@@ -43,7 +44,9 @@ Table L81/L82/L83. Confirmed: `commands/masterplan.md` references **no** `parts/
 - `parts/doctor.md` → `lib/doctor/*.mjs` (table L83)
 - `parts/failure-classes.md` → anomaly framework dies (table L88)
 - `parts/step-0.md`, `step-a.md`, `step-b.md`, `step-c-{dispatch,resume,verification,completion}.md` → L1/L2 (table L81)
-- `parts/import.md`, `parts/contracts/`, `parts/.gitkeep` → delete with the tree (see Tier-2 note on the *import capability* + contracts)
+- `parts/import.md` → **RESOLVED → DELETE.** The `import` *verb itself survives* (v8 routing table `commands/masterplan.md:136` → `mp migrate-bundle`, implemented `bin/masterplan.mjs:193` + `lib/migrate.mjs`); only the 17.7 KB v7 prose step-file dies. The `skills/import` entry-point shim is KEEP (Tier 3).
+- `parts/.gitkeep` → delete with the tree
+- `parts/contracts/` → dies with `parts/`, **but port-check first** — see the Tier-2 row (TRANSFORM-INCOMPLETE: confirm v8 represents the still-live contract content before deleting).
 
 ### v7 test harness (`tests/` — entire tree, 302 files)
 
@@ -63,22 +66,28 @@ v7 `tests/doctor-fixtures/` block-YAML "tests the deleted doctor".
 
 ---
 
-## Tier 2 — DECISION REQUIRED before delete (strong v7 evidence; confirm v8 design intent)
+## Tier 2 — DECISION REQUIRED before delete
 
-| Path / subsystem | Question | Evidence |
+> **2026-05-29 — four of the original six Tier-2 items RESOLVED** by a read-only
+> tree investigation (subagent, evidence-cited). The corrected verdicts: the
+> per-verb `skills/` dirs (incl. `stats`, `import`) are **KEEP** — they are
+> *entry-point delegators*, not v7 prose (moved to Tier 3); `skills/masterplan-detect`
+> and `parts/import.md` are **DELETE** (moved to Tier 1). The earlier "the v8 shell
+> references none of them → v7 surface" reasoning was **wrong** (confirmation bias,
+> anti-pattern #5): the skills *call into* the shell, so the shell referencing them
+> back was never expected. **Only the two rows below remain genuinely unresolved.**
+
+| Path / subsystem | Verdict | Open question + evidence |
 |---|---|---|
-| `skills/` per-verb dirs: `brainstorm clean doctor execute full import next retro status validate verbs masterplan` | Does v8 ship a per-verb skill surface, or pure thin-shell verb routing? | `commands/masterplan.md` references **none** of them. The v8 design is a ~100-line thin shell. Strong signal these are v7 surface. |
-| `skills/stats` | Delete outright. | `/masterplan stats` → "trivial `jq` over `events.jsonl` if wanted at all" (table L92); routing-stats source is gone. |
-| `skills/masterplan-detect` | Keep import-detection in v8? | v7 CLAUDE.md lists it as current (auto-suggest `/masterplan import`). Tie to the *import capability* decision below. |
-| `parts/import.md` + import capability | Is `import` a v8 verb? | If yes, it lives in the shell/an agent, not `parts/`; if no, drop both `parts/import.md` and `skills/import`. |
-| `parts/contracts/` vs `commands/masterplan-contracts.md` | Did contracts fully migrate to `commands/`? | `commands/masterplan-contracts.md` exists (v8); confirm `parts/contracts/` is fully superseded before deleting. |
-| `Makefile` | Trim or delete. | v7 had a doctor-fixtures target; v8 uses `npm test` / `bin/run-tests` rewrite. |
+| `parts/contracts/` (prose-contract dir) | **DELETE-with-`parts/`, but PORT-CHECK first** (TRANSFORM-INCOMPLETE) | This is *operational-prose contracts* — a **different artifact** from the v8 `commands/masterplan-contracts.md` (which is a YAML return-shape *registry*), so "it migrated to commands/" is false. Confirmed-dead members: `taskcreate-projection.md` (plan L86 DIES), `run-bundle.md` (→ `lib/bundle.mjs`), `cd-rules.md` (→ `lib/`). The whole dir dies with the v7 prose orchestrator — **but before `git rm`, verify v8 represents the still-live content of:** `plan-annotations.md` (plan-annotation syntax), `agent-dispatch.md` (dispatch model → check `agents/*.md` + `workflows/execute.workflow.js`), `codex-review.md` (dispatch/parse → check `lib/codex-host.mjs` + `agents/mp-codex-reviewer.md` + `extractVerdict`), `brainstorm-anchor.md`, `coordinator.md`. If any is unported, that's a **v8 gap to fill first**, not just a deletion. (Note `codex-review.md` is referenced by `parts/step-b.md` — but that's a *within-v7* ref; both die together.) |
+| `Makefile` | **TRIM** (not full delete, not full keep) | All 5 targets (`help`, `test`, `test-static`, `test-doctor-fixtures`, `test-python`) wire to the v7 `tests/` tree; **none** invoke the v8 `node:test` suite (that's `npm test` via `package.json`). v7-only targets (`test-python`, `test-doctor-fixtures`, structural) die with `tests/`. The `test-static` format-level checks (manifest-drift, yaml-frontmatter) may still apply. Decision: trim to the surviving subset + add a `test-node` target, **or** delete the Makefile and make `npm test` / `node --test test/` the sole entry point. |
 
 ---
 
 ## Tier 3 — KEEP (v8 core + explicit survivors)
 
 - **L1/L2/L3 core:** `commands/masterplan.md`, `commands/masterplan-contracts.md`, `workflows/execute.workflow.js`, `agents/mp-{explorer,implementer,planner,codex-reviewer}.md`
+- **Per-verb `skills/` entry-point shims (RESOLVED 2026-05-29 → KEEP):** `skills/{brainstorm,clean,doctor,execute,full,import,next,retro,status,validate,verbs,stats,masterplan}/SKILL.md`. Each is a thin delegator that loads `commands/masterplan.md` with `requested_verb=<verb>` — it is the published surface that makes `/masterplan:<verb>` resolve into the v8 shell. **Not v7 prose; deleting these breaks the verb commands.** (`skills/stats` survives too: the `stats` *verb* maps to a `jq` roll-up over `events.jsonl` per `commands/masterplan.md:140` — only the v7 routing-stats *scripts* in `bin/` die.) The namespace-collision guard (`lib/hygiene.mjs`) polices this dir, e.g. the seeded `shadows-builtin`=`plan` regression — another reason it's live v8 surface. **Excludes `skills/masterplan-detect`** → Tier 1 DELETE.
 - **`lib/` (node):** `bundle.mjs`, `codex-host.mjs`, `hygiene.mjs`, `migrate.mjs`, `paths.mjs`, `resume.mjs`, `routing.mjs`, `wave.mjs`, `lib/doctor/*`
 - **`bin/`:** `masterplan.mjs` (L1 adapter), `doctor.mjs` (L4)
 - **`hooks/hooks.json`** — SessionStart shim only; **survives verbatim** (table L94)
