@@ -15,6 +15,8 @@ import {
   clearGate,
   setActiveRun,
   clearActiveRun,
+  setPhase,
+  setStatus,
   markTask,
   CORE_REQUIRED_FIELDS,
   validateCoreState,
@@ -90,6 +92,9 @@ test('state transforms are pure and correct', () => {
 
   assert.equal(markTask(base, 2, 'done').tasks.find((t) => t.id === 2).status, 'done');
   assert.equal(markTask(base, 2, 'done').tasks.find((t) => t.id === 1).status, 'pending');
+
+  assert.equal(setPhase(base, 'plan').phase, 'plan');
+  assert.equal(setStatus(base, 'archived').status, 'archived');
 
   assert.equal(JSON.stringify(base), frozen); // never mutated
 });

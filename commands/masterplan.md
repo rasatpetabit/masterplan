@@ -8,8 +8,8 @@ description: "Resumable orchestrator for /masterplan: brainstorm→plan→execut
 > zero-LLM-token, unit-tested) — this shell only **sequences**. Durable state lives in
 > `docs/masterplan/<slug>/` (`state.yml` is the source of truth). CD-7: the shell is the SOLE
 > state writer, via `bin` — **never** hand-edit, `Write`, or `Edit` `state.yml` or `events.jsonl`;
-> every mutation goes through an `mp` subcommand (`seed`, `mark-task`, `open-gate`, `clear-gate`,
-> `event`, …). A raw `Write`/`Edit` both violates CD-7 **and** floods the screen with the file diff
+> every mutation goes through an `mp` subcommand (`seed`, `set-phase`, `set-status`, `mark-task`,
+> `open-gate`, `clear-gate`, `event`, …). A raw `Write`/`Edit` both violates CD-7 **and** floods the screen with the file diff
 > (anti-flood) — `mp` writes the file server-side and returns one terse JSON line. Work goes to
 > dedicated agents (`agents/*.md`), the L2 Workflow engine (`workflows/execute.workflow.js`), and
 > `superpowers` skills — never run substantive work inline in this context (it holds sequencing state only).
@@ -81,7 +81,7 @@ The spine. It NEVER decides in prose — it asks `mp decide` and executes the re
    | `recover_and_redispatch` | Crash recovery. If `staleTaskId` ≠ null: `TaskList` → `TaskStop` any surviving run for it (a backgrounded Workflow MAY outlive session death — reconcile before touching files). Then RESET scope: `git checkout -- <resetPaths>` and, **only when `resetPaths` is non-empty**, `git clean -fd -- <resetPaths>` — scope the clean to the reset paths; a bare `git clean -fd` (or one with an empty pathspec) would wipe unrelated user-owned untracked files. Then dispatch the wave via **§2a**. Idempotent — agents never commit. |
    | `dispatch_wave` | Launch one wave through the L2 engine — full sequence in **§2a**. In brief: `mp prepare-wave` (resolves routing) → capture the git baseline → `mp set-active-run --wave=N` (phase-1, BEFORE launch) → launch `workflows/execute.workflow.js` in the background with `args={wave,tasks,baseline,repoRoot,review}` → `mp promote-active-run --run-id=… --task-id=…` (phase-2) → close to await its completion notification. |
    | `resume_phase` | The bundle is mid-`{brainstorm\|plan}` with no plan built yet (`tasks:[]`). Hand to §3's named-phase lifecycle for that `phase`. **Do NOT finalize/archive** — that would destroy a mid-design run. Full pre-execute resume (re-entering an in-progress brainstorm/plan and continuing the superpowers skill) is **not yet wired (step 7)**, so for now SURFACE it via `AskUserQuestion` — offer to continue the phase, restart it, or stop — and close. Never fall through to `complete`. |
-   | `complete` | All tasks done → completion: write `retro.md`, archive the bundle, commit. |
+   | `complete` | All tasks done → completion: write `retro.md`, archive the bundle (`mp set-status --state=<path> --status=archived` — the sole archival mechanism wherever a bundle is archived; never hand-edit `state.yml`), commit. |
 
 6. **CD-7 commit discipline.** Each durable change = a `mp` write (atomic) FOLLOWED BY a `git commit`
    of the bundle. A crash between write and commit is safe — `state.yml` leads, resume re-commits.
@@ -138,15 +138,15 @@ dispatches agents and echoes the baseline.
 
 | verb | v8 target |
 |---|---|
-| `full` / `brainstorm` / `plan` | Locate the bundle, or **seed a new one** — `mp seed --state=<path> --slug=<slug> --topic="<topic>" [--complexity=… --autonomy=… --predecessor-transcript=…]` (writes a valid v8 brainstorm-phase bundle; refuses an existing one unless `--force`). Then invoke the `superpowers` skill directly — `superpowers:brainstorming` (B), then `writing-plans` (plan); plan output → `plan.index.json`. Log lifecycle milestones with `mp event --state=<path> --type=<event> [--phase=… --note=… --data=JSON]`. Gates via `mp open-gate` + an `AskUserQuestion`. **[full skill-invocation lifecycle wiring = step 7.]** |
+| `full` / `brainstorm` / `plan` | Locate the bundle, or **seed a new one** — `mp seed --state=<path> --slug=<slug> --topic="<topic>" [--complexity=… --autonomy=… --predecessor-transcript=…]` (writes a valid v8 brainstorm-phase bundle; refuses an existing one unless `--force`). Then invoke the `superpowers` skill directly — `superpowers:brainstorming` (B), then `writing-plans` (plan); plan output → `plan.index.json`. **Advance the phase at each transition** (never hand-edit `state.yml` — that is a CD-7 violation): run `mp set-phase --state=<path> --phase=plan` once brainstorm's spec is approved, then `mp set-phase --state=<path> --phase=execute` once the plan is built. Pair each transition with `mp event --state=<path> --type=phase_transition --phase=<new>`. Log other lifecycle milestones with `mp event --state=<path> --type=<event> [--phase=… --note=… --data=JSON]`. Gates via `mp open-gate` + an `AskUserQuestion`. **[full skill-invocation lifecycle wiring = step 7.]** |
 | `execute` | The resume controller (§2). |
-| `retro` | Generate `retro.md` for the bundle (the completion subroutine), then close. |
+| `retro` | Generate `retro.md` for the bundle, then close. Archival is `complete`'s terminal step (§2), NOT this verb's — a standalone `retro` must NOT `set-status archived` (that would strand a run with pending tasks: the §2 discover filter hides archived bundles). Safe to (re)generate a retro on an in-progress or finished run. |
 | `import` | Legacy intake → a v8 bundle: `mp migrate-bundle` an in-place legacy `state.yml` (backs up the original). |
 | `doctor` | `node "${CLAUDE_PLUGIN_ROOT}/bin/doctor.mjs" [--fix]`. **[checks = step 5.]** |
 | `status` | Read-only: `mp decide` (no writes) + a one-screen situation report from `state.yml`. |
 | `validate` | Parse-check `state.yml` + config; report findings. No writes. |
 | `stats` | `jq` roll-up over `events.jsonl` if present (replaces the v7 telemetry scripts). |
-| `clean` | Archive / prune completed bundles. |
+| `clean` | Archive (`mp set-status --state=<path> --status=archived`) / prune completed bundles. |
 | `next` | `mp decide` → describe the next action without executing it. |
 | `verbs` | Print the reserved-verb list above. |
 

@@ -32,6 +32,8 @@
 //                                                  (--review overrides state.codex.review; else read from state)
 //   verify-scope --state=PATH --wave=N --before=JSON --after=JSON -> {ok, touched, outOfScope} (D6 post-barrier)
 //   mark-task --state=PATH --id=N --status=S    -> CD-7 write: set a task's status
+//   set-phase --state=PATH --phase=P            -> CD-7 write: advance the lifecycle phase (brainstorm|plan|execute)
+//   set-status --state=PATH --status=S          -> CD-7 write: set the run status (in-progress|archived)
 //   open-gate --state=PATH --id=X [--opened-at=T] -> CD-7 write: open the durable approval gate
 //   clear-gate --state=PATH                     -> CD-7 write: clear the gate
 //   set-active-run --state=PATH --wave=N        -> CD-7 write: phase-1 marker {wave, phase:'launching'}
@@ -42,7 +44,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, buildSeedState, appendEvent } from '../lib/bundle.mjs';
+import { readState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, buildSeedState, appendEvent } from '../lib/bundle.mjs';
 import { migrate, detectSchemaVersion, MigrationError } from '../lib/migrate.mjs';
 import { decideNextAction } from '../lib/resume.mjs';
 import { prepareWave, declaredScope, verifyScope } from '../lib/wave.mjs';
@@ -82,6 +84,15 @@ function need(flags, key) {
 // correctly and a typo ('doen', 'complete') is rejected rather than silently mis-recorded. (Legacy
 // v7 statuses like 'skipped'/'in-progress' live only in pre-migration bundles — migrate's concern.)
 const VALID_TASK_STATUS = ['pending', 'in_progress', 'done'];
+
+// Valid bundle phases (the brainstorm→plan→execute lifecycle) and run statuses the shell may WRITE
+// via set-phase/set-status. Enum-validated at the bin boundary (mirror of VALID_TASK_STATUS):
+// validateCoreState only PRESENCE-checks phase/status, so a typo'd 'archive'/'plann' would pass the
+// schema yet break the §2 discover filter (keys on status==='archived') or the resume.mjs pre-execute
+// guard (keys on phase ∈ {brainstorm,plan}). Reject at the source. Value-enum only — NO transition
+// ordering (recovery/restart legitimately moves phase backward; a re-opened run goes archived→in-progress).
+const VALID_PHASE = ['brainstorm', 'plan', 'execute'];
+const VALID_STATUS = ['in-progress', 'archived'];
 
 // ---- read helpers: decide migrates in-memory; write ops require an already-v8 bundle ----
 function readText(p) {
@@ -414,6 +425,26 @@ function main() {
       const p = need(flags, 'state');
       writeState(p, clearActiveRun(loadForWrite(p)));
       out({ active_run: null });
+      break;
+    }
+    case 'set-phase': {
+      const p = need(flags, 'state');
+      const phase = need(flags, 'phase');
+      if (!VALID_PHASE.includes(phase)) {
+        die(`invalid --phase '${phase}' — expected one of: ${VALID_PHASE.join(', ')}`);
+      }
+      writeState(p, setPhase(loadForWrite(p), phase));
+      out({ phase });
+      break;
+    }
+    case 'set-status': {
+      const p = need(flags, 'state');
+      const status = need(flags, 'status');
+      if (!VALID_STATUS.includes(status)) {
+        die(`invalid --status '${status}' — expected one of: ${VALID_STATUS.join(', ')}`);
+      }
+      writeState(p, setStatus(loadForWrite(p), status));
+      out({ status });
       break;
     }
     default:

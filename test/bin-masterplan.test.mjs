@@ -134,6 +134,26 @@ test('mark-task: write updates status; decide then advances to the next wave', (
   assert.equal(read(p).tasks.find((t) => t.id === 1).status, 'done');
   assert.equal(JSON.parse(run(['decide', `--state=${p}`]).stdout).wave, 1);
 });
+test('set-phase / set-status: write the lifecycle fields; reject a value outside the enum', () => {
+  // The CD-7 closure for the line-333 hand-edit: there is now an `mp` write for the phase/status
+  // fields, so the orchestrator never hand-edits state.yml to advance a phase or archive a run.
+  const p = tmpBundle(v8());
+  assert.equal(JSON.parse(run(['set-phase', `--state=${p}`, '--phase=plan']).stdout).phase, 'plan');
+  assert.equal(read(p).phase, 'plan');
+  assert.equal(JSON.parse(run(['set-status', `--state=${p}`, '--status=archived']).stdout).status, 'archived');
+  assert.equal(read(p).status, 'archived');
+  // Enum guard: a typo ('planning'/'archive') PASSES validateCoreState (presence-only) yet would break
+  // the §2 discover filter (status==='archived') or the resume.mjs pre-execute guard (phase ∈ {…}).
+  // It must die at the bin boundary, leaving the field untouched.
+  const badPhase = run(['set-phase', `--state=${p}`, '--phase=planning']);
+  assert.notEqual(badPhase.status, 0);
+  assert.match(badPhase.stderr, /invalid --phase/);
+  const badStatus = run(['set-status', `--state=${p}`, '--status=archive']);
+  assert.notEqual(badStatus.status, 0);
+  assert.match(badStatus.stderr, /invalid --status/);
+  assert.equal(read(p).phase, 'plan');       // unchanged by the rejected writes
+  assert.equal(read(p).status, 'archived');
+});
 test('active_run two-phase: set (launching) -> recover w/ null staleTaskId; promote -> wait(alive)/recover(dead, staleTaskId)', () => {
   const p = tmpBundle(v8());
   assert.deepEqual(JSON.parse(run(['set-active-run', `--state=${p}`, '--wave=0']).stdout).active_run, { wave: 0, phase: 'launching' });
