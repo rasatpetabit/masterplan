@@ -27,30 +27,55 @@ session**, started *after* an additive dev-plugin install, is mandatory.
 
 ---
 
-## Step 1 — Additive dev-plugin install (setup; precedes the fresh session)
+## Step 1 — Launch the fresh session with `--plugin-dir` (the whole setup)
 
-Install **this worktree** as a **distinct, additive** local/dev plugin so a new
-session's agent registry includes `masterplan:mp-explorer / mp-implementer /
-mp-planner / mp-codex-reviewer`.
+Start the fresh session with this worktree loaded as a **session-scoped** dev
+plugin so its agent registry includes `masterplan:mp-explorer / mp-implementer /
+mp-planner / mp-codex-reviewer`. This is the **one** step that needs the user's
+terminal (a fresh `claude` launch); everything after is in-session.
 
-> ⚠️ **Never replace the shipped `masterplan` marketplace entry.** Overwriting it
-> hijacks the user's working `/masterplan` (still published **v7.2.3**) and
-> pre-empts the user-gated cutover. Install as a *separate* entry alongside it.
+```bash
+# [USER-INTERACTIVE] — run in your terminal; cwd inside the worktree is fine
+claude --plugin-dir /srv/dev/masterplan/.worktrees/masterplan-ng
+```
 
-This is the one step that needs plugin management (a `/plugin marketplace add`
-of the local path + install, or the equivalent local-dev-plugin mechanism) and
-must complete **before** the fresh session launches.
+**Why `--plugin-dir` and NOT `/plugin marketplace add`** (claude-code-guide-verified
+2026-05-29):
 
-## Step 2 — Launch a FRESH session, verify `masterplan:*` registered
+- `--plugin-dir` loads the worktree's plugin for **that session only**. It mutates
+  **no** global state — `~/.claude/plugins/installed_plugins.json` is untouched, and
+  the shipped `masterplan@rasatpetabit-masterplan` **v7.2.3** stays the default for
+  every other session. When a `--plugin-dir` plugin shares a name with an installed
+  one, the local copy **takes precedence for that session**. No cleanup/uninstall
+  needed — the next plain `claude` reverts to v7.2.3 automatically.
+- The `masterplan:` namespace is derived from the plugin's `name` field
+  (`.claude-plugin/plugin.json` → `"masterplan"`, confirmed), so the v8 agents resolve
+  as `masterplan:mp-*` with no rename — exactly the literal the engine defaults to.
+- > ⚠️ **Do NOT `/plugin marketplace add` this worktree.** Plugins key by **bare
+  > name**, so a second marketplace offering a plugin also named `masterplan` does
+  > **not** install alongside v7.2.3 — it **overwrites/conflicts** with it, hijacking
+  > the user's working `/masterplan` and pre-empting the user-gated cutover. The
+  > coexistence the earlier draft assumed is not possible; `--plugin-dir` is the only
+  > safe path.
 
-In the new session, before anything else, confirm resolution **at both layers**:
+Precondition (already verified 2026-05-29, re-runnable any time):
+
+```bash
+# [SCRIPTABLE]
+jq -r '.name' /srv/dev/masterplan/.worktrees/masterplan-ng/.claude-plugin/plugin.json  # → masterplan
+ls -1 /srv/dev/masterplan/.worktrees/masterplan-ng/agents/mp-*.md                       # → 4 agents
+```
+
+## Step 2 — In the fresh session, verify `masterplan:*` registered
+
+Before anything else, confirm resolution **at both layers**:
 
 1. **Orchestrator layer** — dispatch `Agent({subagent_type:"masterplan:mp-implementer", …})` (a trivial no-op probe). It must NOT error "agent type not found".
 2. **Engine-subprocess layer (the one that actually gated this)** — run a 1-agent `Workflow` whose single `agent()` call uses `agentType:'masterplan:mp-implementer'`. It must resolve there too. (Last time this is exactly where it failed — the orchestrator probe is necessary but not sufficient.)
 
-If either probe still shows no `masterplan:*`, STOP — the additive install did not
-take; re-do Step 1 and relaunch. Do not fall back to stand-ins (that just
-reproduces the existing residual).
+If either probe still shows no `masterplan:*`, STOP — the session was not launched
+with `--plugin-dir` (or pointed at the wrong path). Exit, relaunch per Step 1, and
+re-probe. Do not fall back to stand-ins (that just reproduces the existing residual).
 
 ## Step 3 — Reset the dogfood bundle to re-run wave 2
 

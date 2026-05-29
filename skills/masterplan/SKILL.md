@@ -1,6 +1,6 @@
 ---
 name: masterplan
-description: "Generic/Codex entrypoint: bare /masterplan, /masterplan:masterplan, $masterplan, or any verb not covered by a dedicated /masterplan:<verb> skill. Dedicated per-verb skills exist for brainstorm, full, execute, retro, import, doctor, status, validate, stats, clean, and next (no dedicated plan skill — it collides with the built-in /plan)."
+description: "Generic/Codex entrypoint for masterplan: bare /masterplan, /masterplan:masterplan, $masterplan, or any verb. All verbs (full, brainstorm, plan, execute, retro, import, doctor, status, validate, stats, clean, next, verbs) route through this single command — v8 ships NO per-verb /masterplan:<verb> skills (they shadowed Claude Code built-ins like /plan, /status, /doctor and added nothing over bare-command routing)."
 ---
 
 # Codex entrypoint for Superpowers Masterplan
@@ -84,24 +84,17 @@ Treat these user inputs as this skill:
 - natural-language requests to use, resume, check, import, or continue
   masterplan work.
 
-**Per-verb skills** (Claude Code only): the following verbs have dedicated
-`/masterplan:<verb>` skills that are preferred over this skill when invoked
-directly: `brainstorm`, `full`, `execute`, `retro`, `import`,
-`doctor`, `status`, `validate`, `stats`, `clean`, `next`, `verbs`. Each loads
-`commands/masterplan.md` with the verb pre-filled (except `verbs`, which reads
-`docs/verbs.md` as a quick-reference). This skill remains the entrypoint for
-Codex-hosted runs and bare `/masterplan` invocations.
-
-> **`plan` has no dedicated skill — intentionally (v7.2.2).** A skill named
-> `plan` registers as `/masterplan:plan` but ALSO shadows Claude Code's
-> built-in `/plan` (plan mode): an unqualified `/plan` was observed resolving
-> to the plugin skill and launching masterplan instead of entering plan mode.
-> The `plan` **verb** stays fully reachable via `/masterplan plan <topic>`
-> (first-token verb routing in `parts/step-0.md`) and
-> `/masterplan:masterplan plan <topic>`. A prior removal was wrongly reverted
-> in v7.1.1 as an "accidental deletion." Do **not** recreate
-> `skills/plan/SKILL.md` — `tests/structural/test-no-plan-skill-shadow.sh`
-> guards against it.
+**No per-verb skills (v8).** masterplan ships exactly two skill dirs — this one
+and `masterplan-detect`. There are **no** `/masterplan:<verb>` per-verb skills:
+every verb (`brainstorm`, `full`, `execute`, `retro`, `import`, `doctor`,
+`status`, `validate`, `stats`, `clean`, `next`, `verbs`, and `plan`) is dispatched
+by the bare `/masterplan <verb>` command through `bin/masterplan.mjs` (verb
+routing in `commands/masterplan.md` §1/§3). The per-verb namespace was removed
+because it added nothing over bare-command routing and the reserved words
+`plan`/`status`/`doctor` actively **shadowed** Claude Code built-ins (`/plan`
+plan-mode, `/status`, `/doctor`). The namespace-collision guard (`lib/hygiene.mjs`
+→ `findNamespaceCollisions`, driven by `test/publish-hygiene.test.mjs`) keeps it
+that way: only `masterplan` + `masterplan-detect` are allowed under `skills/`.
 
 The arguments are the text after the command name. If there are no arguments,
 follow the command's bare invocation flow: resume active `state.yml` first,

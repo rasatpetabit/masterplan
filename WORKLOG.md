@@ -1,5 +1,17 @@
 # WORKLOG
 
+## 2026-05-29 — v8 (masterplan-ng): removed ALL per-verb skill dirs + terse-narration directive (pre-cutover hygiene)
+
+Two user-directed changes landed ahead of the (still-gated) cutover; both are scoped, local, and suite-green (`node --test test/*.test.mjs` → **239 pass / 0 fail**).
+
+**1. Per-verb `/masterplan:<verb>` skills DELETED — all 12 (`git rm`).** User directive: "`/masterplan:verb` is just a bad idea … you didn't actually add support for it." Correct — the per-verb dirs were redundant delegators pointing at the **dead v5.0 `parts/` architecture**; v8 verbs dispatch through the bare `/masterplan <verb>` command via `bin/masterplan.mjs` (`commands/masterplan.md` §1/§3), so the namespace added nothing over bare-command routing *and* `plan`/`status`/`doctor` actively shadowed CC built-ins (`/plan` plan-mode, `/status`, `/doctor`). **This REVERSES the 2026-05-29 "KEEP per-verb skills" entry below** (line ~36 "deleting them would break every verb command") — that claim was an overstatement; verb routing is independent of the skill dirs. Removed: `skills/{brainstorm,clean,doctor,execute,full,import,next,retro,stats,status,validate,verbs}/`. Survivors: `skills/masterplan/` (Codex/generic entrypoint) + `skills/masterplan-detect/` — the ONLY two dirs v8 ships.
+- **Hygiene guard tightened to an infra-only contract** (`lib/hygiene.mjs`): `FORBIDDEN_SKILL_NAMES` = `['plan','status','doctor']` (was `['plan']`); `findNamespaceCollisions` no longer consults the reserved-verb allowlist — any non-infra skill dir is flagged (`shadows-builtin` for the three built-ins, `unwired-verb` for anything else). `reservedVerbs` param kept for API stability. `test/publish-hygiene.test.mjs` Guard-3 tests rewritten to match (planted-bad / synthetic-clean / LIVE triad intact); the LIVE walk now sweeps clean because only the two infra survivors remain.
+- `skills/masterplan/SKILL.md` frontmatter `description:` + per-verb section rewritten to state v8 ships no per-verb skills. (Its broader v7-era staleness — `parts/` refs, "36 doctor checks", v5.0 lazy-load layout — is a SEPARATE cutover doc-rewrite, intentionally not touched here.) `cutover-removal-manifest.md` Tier-3 bullet flipped to "⚠️ DECISION REVERSED → DELETED". Plugin manifests need no change (`brainstorm` appears only in `keywords` search tags; `.codex-plugin` uses a `"skills": "./skills/"` directory pointer, not an enumeration).
+
+**2. Terse per-wave narration directive** (`commands/masterplan.md` §2a step 3, "Commit once"): after each wave commit, print at most a 1–2 line summary — NEVER echo the `state.yml` *or* `WORKLOG.md` diff to screen. Extends the existing state-diff anti-flood preference to WORKLOG diffs per the user ask; the full record lives in the bundle + `git log`.
+
+**Not pushed; cutover NOT started** (both stay user-gated). The scoped v8 deploy to the second dev host is the pending outward action.
+
 ## 2026-05-29 — v8 (masterplan-ng): pre-ported the 3 DEFERRED-SPEC slices → `docs/conventions/` (additive; cutover still NOT started)
 
 Collapsed all cutover-time *porting* into **additive commits now**, so the eventual v7→v8 cutover is pure deletion + version/doc-rewrite with **no spec at risk**. A Sonnet implementer extracted the three port-blocker slices identified in the prior Tier-2 close-out **verbatim**, into the established reference home `docs/conventions/` (alongside `autonomy-policy.md`, `api-retry-policy.md`). **No deletions — `parts/contracts/` untouched; nothing in the cutover started.**

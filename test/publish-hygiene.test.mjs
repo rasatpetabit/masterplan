@@ -147,24 +147,32 @@ test('namespace: parseReservedVerbs extracts the canonical verb list from the or
   ]);
 });
 
-test('namespace FLAGS a skills/plan/ dir as a built-in shadow (the v7.2.2 regression)', () => {
-  // `plan` is a reserved VERB yet must never be a top-level skill dir — it shadows CC `/plan`.
-  assert.deepEqual(findNamespaceCollisions(['plan'], RESERVED_VERBS), [
+test('namespace FLAGS plan/status/doctor skill dirs as built-in shadows (v7.2.2 plan regression + v8 status/doctor cleanup)', () => {
+  // Each is a reserved VERB yet must never be a top-level skill dir — they shadow CC's
+  // `/plan` (plan mode), `/status`, and `/doctor`. The verbs stay reachable via `/masterplan <verb>`.
+  assert.deepEqual(findNamespaceCollisions(['plan', 'status', 'doctor'], RESERVED_VERBS), [
     { name: 'plan', kind: 'shadows-builtin' },
+    { name: 'status', kind: 'shadows-builtin' },
+    { name: 'doctor', kind: 'shadows-builtin' },
   ]);
 });
 
-test('namespace FLAGS an unwired (non-verb, non-infra) skill dir', () => {
+test('namespace FLAGS an unwired (non-infra) skill dir', () => {
   assert.deepEqual(findNamespaceCollisions(['foobar'], RESERVED_VERBS), [
     { name: 'foobar', kind: 'unwired-verb' },
   ]);
 });
 
-test('namespace does NOT flag legitimate verb + infra dirs', () => {
-  assert.deepEqual(
-    findNamespaceCollisions(['brainstorm', 'clean', 'masterplan', 'masterplan-detect', 'verbs'], RESERVED_VERBS),
-    []
-  );
+test('namespace: v8 allows ONLY infra dirs — any verb-named skill dir is flagged (verbs route through bin, not skills)', () => {
+  // infra dirs sweep clean...
+  assert.deepEqual(findNamespaceCollisions(['masterplan', 'masterplan-detect'], RESERVED_VERBS), []);
+  // ...but a verb-named delegator is no longer legitimate (the v8 per-verb-skill removal) — flagged
+  // so the `/masterplan:<verb>` namespace can't creep back in.
+  assert.deepEqual(findNamespaceCollisions(['brainstorm', 'clean', 'verbs'], RESERVED_VERBS), [
+    { name: 'brainstorm', kind: 'unwired-verb' },
+    { name: 'clean', kind: 'unwired-verb' },
+    { name: 'verbs', kind: 'unwired-verb' },
+  ]);
 });
 
 test('LIVE: no skills/ dir shadows a built-in or is unwired from the verb router', () => {

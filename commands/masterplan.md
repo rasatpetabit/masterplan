@@ -121,6 +121,9 @@ dispatches agents and echoes the baseline.
    out-of-scope new directory is removed too). In-scope work stands.
 3. **Commit once.** Commit `state.yml` AND the wave's in-scope file edits together. State leads git
    (CD-7): a crash before the commit re-derives from the marked-`done` state on the next resume.
+   **Narrate tersely:** after the commit, print at most a 1–2 line wave summary (what completed /
+   what's next) — NEVER echo the `state.yml` or `WORKLOG.md` diff to screen (anti-flood; the full
+   record lives in the bundle + `git log`).
 4. **Re-decide.** Re-enter step 4. With the wave's tasks now `done`, `decide` returns `finalize_run`
    (→ clear `active_run` → next wave, or `complete`); any task left `pending` (failed/blocked, or
    scope-reverted) drives `recover_and_redispatch` for ONLY those, idempotently. Surface failed/blocked
