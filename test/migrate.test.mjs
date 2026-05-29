@@ -33,6 +33,24 @@ test('detectSchemaVersion: bare value and absent', () => {
   assert.equal(detectSchemaVersion('schema_version: 5.0\nslug: x\n'), '5.0');
   assert.equal(detectSchemaVersion('slug: ancient\ncurrent_phase: foo\n'), null);
 });
+// ---- REGRESSION (parity-dogfood): v8's serializeState emits whole versions as bare integers
+// (`schema_version: 6`, since JS `String(6.0) === "6"`). A decimal-required VERSION_RE rejected
+// those, wedging the L1 loop after the shell's FIRST state write (every set-active-run / mark-task
+// re-serializes, dropping the decimal, and the next loadForWrite then saw "pre-5.0/unknown"). The
+// detector must accept the canonical bare-integer form the writer produces. ----
+test('detectSchemaVersion: bare-integer v8 version (serializeState output) is detected', () => {
+  assert.equal(detectSchemaVersion('schema_version: 6\nslug: x\n'), '6');
+  assert.equal(detectSchemaVersion('---\nschema_version: 6\nslug: x\n'), '6'); // with `---` doc marker
+});
+test('round-trip: a v8 bundle survives serialize -> detect (the loadForWrite mutation gate)', () => {
+  // The exact cycle that wedged the dogfood: a 6.0 bundle is read, mutated, and written back — the
+  // writer normalizes the version to bare `6`, and the NEXT loadForWrite must still admit it as v8.
+  const written = serializeState(parseState('---\nschema_version: 6.0\nslug: x\nstatus: executing\nphase: C\n'));
+  assert.match(written, /^schema_version: 6$/m); // the trap: the decimal really is dropped on write
+  const v = detectSchemaVersion(written);
+  assert.equal(v, '6');
+  assert.ok(Number(v.split('.')[0]) >= 6, 'major must be >=6 so loadForWrite admits the bundle');
+});
 
 // ---- extractLegacyFields: the targeted line-extractor (no full YAML parse) ----
 test('extract(sample): header scalars + 32 mixed-status tasks, `- idx:` at column 0', () => {
