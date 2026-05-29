@@ -18,12 +18,17 @@
 // INVARIANT: returns digests only. NEVER writes state.yml, NEVER commits — L1 is the single durable
 // writer, post-barrier. That is exactly what keeps crash re-dispatch idempotent (CD-7).
 //
-// SCOPE (this iteration). The Step-3 agent roster ships mp-implementer (sonnet) + mp-codex-reviewer
-// only — there is NO codex-IMPLEMENTER agent yet. So every task is IMPLEMENTED by mp-implementer
-// regardless of its routed `target`; `target` is recorded + logged (a real, non-silent routing
-// decision) and gates only the optional REVIEW. Adding a codex-implementer (target=codex implemented
-// BY Codex, plus the v7 silent-exit empty-diff fallback) is a deferred SCOPE choice, not a safety
-// one — a foreground `timeout codex exec` cannot orphan (see agents/mp-codex-reviewer.md + WORKLOG).
+// DESIGN DECISION — inline-only implementation (Fork 1, resolved 2026-05-28: keep inline; no
+// codex-implementer). The agent roster is mp-implementer (sonnet) + mp-codex-reviewer ONLY; there is
+// intentionally no codex-IMPLEMENTER. A codex-implementer needs WRITE access, which drags back the
+// whole v7 sandbox/worktree-git/silent-exit/empty-diff/orphan hardening series that v8 exists to
+// delete — and parity ranks below durable-state/token-efficiency in the v8 rubric, so it buys nothing
+// the rubric rewards. The codex-REVIEWER is kept because a foreground `timeout codex exec` is
+// read-only and cannot orphan (the unsafe write-path is the implementer, not the reviewer; see
+// agents/mp-codex-reviewer.md + WORKLOG). So every task is IMPLEMENTED inline by mp-implementer
+// regardless of its routed `target`. `target` (from routeTask) is informational/logged-only: it
+// neither gates implementation (always inline) nor gates review (review is CONFIG-gated — see
+// review() below). It records which tasks a future codex-implementer COULD offload, never a silent cap.
 
 export const meta = {
   name: 'masterplan-execute',
@@ -125,7 +130,12 @@ async function implement(t) {
   return { task_id: t.id, target: t.target, digest, review: null };
 }
 
-// Stage 2: optional Codex second opinion. Gated by CONFIG only — NOT by `target`/eligibility:
+// Stage 2: optional Codex second opinion — PER-TASK single-pass (Fork 2, resolved 2026-05-28: keep
+// per-task; NOT per-wave, NOT spec+quality two-stage). Per-task is failure-isolated (one wedged Codex
+// degrades one task's review, never the whole wave's), maps each finding to a task for re-dispatch,
+// and — since review is config-gated OFF by default — a fewer-calls topology wins nothing on the
+// common path. Two-stage's 2N Codex calls violate token-efficiency; v8 trims that self-checking.
+// Gated by CONFIG only — NOT by `target`/eligibility:
 // judgment-heavy (inline-routed) tasks need a second opinion MORE, not less, so gating review by
 // codex-eligibility would skip exactly the riskiest work. Only review a task that actually got
 // `done` (a failed/blocked non-edit has nothing to review and surfaces to the user instead).
@@ -165,8 +175,8 @@ log(`masterplan-execute: wave ${wave} — ${tasks.length} task(s); review ${revi
 for (const t of tasks) log(`  task ${t.id} → routed ${t.target} (${t.reason})`);
 const codexCount = tasks.filter((t) => t.target === 'codex').length;
 if (codexCount) {
-  log(`  note: ${codexCount} task(s) codex-eligible by routing but implemented INLINE this iteration ` +
-      '(codex-implementer deferred — scope, not safety). target is logged, never a silent cap.');
+  log(`  note: ${codexCount} task(s) codex-eligible by routing, implemented INLINE by design ` +
+      '(v8 has no codex-implementer — see header). target is logged, never a silent cap.');
 }
 
 // pipeline (NOT a barrier between stages): task A's review starts the instant A implements, while B
