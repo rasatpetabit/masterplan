@@ -92,6 +92,21 @@ test('no tasks -> complete', () => {
   assert.equal(decideNextAction(base(), {}).action, 'complete');
 });
 
+test('GUARD: a pending task with a non-integer (null) wave throws — waves not backfilled', () => {
+  // A just-migrated legacy bundle carries wave:null until the shell re-derives waves from
+  // plan.index.json. Math.min(null,…) coerces to 0 but `wave === 0` matches nothing -> a SILENT
+  // empty dispatch and the run stalls. The guard fails loud instead. (Caught via migrate(WBN).)
+  const s = base({ tasks: [t(1, null, 'pending'), t(2, null, 'pending')] });
+  assert.throws(() => decideNextAction(s, {}), /backfill waves from plan\.index\.json/);
+});
+
+test('GUARD: all-done tasks with null waves still resume to complete (guard not reached)', () => {
+  // Migrated all-complete bundle (e.g. codex-routing-fix): zero pending -> early `complete` return
+  // BEFORE the wave guard, so null-wave DONE tasks never trip it.
+  const s = base({ tasks: [t(1, null, 'done'), t(2, null, 'done')] });
+  assert.equal(decideNextAction(s, {}).action, 'complete');
+});
+
 test('is pure: does not mutate the input state', () => {
   const s = base({ active_run: { run_id: 'wf_1', task_id: 'k1', wave: 1 }, tasks: [t(1, 1, 'pending', ['a'])] });
   const snapshot = JSON.stringify(s);

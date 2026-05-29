@@ -78,6 +78,12 @@ test('migrate(cc3 5.1): no tasks -> resume controller decides complete', () => {
   assert.deepEqual(s.tasks, []);
   assert.equal(decideNextAction(s, {}).action, 'complete'); // end-to-end: migrated state resumes cleanly
 });
+test('migrate(wbn 5.0) + resume: in-flight migrated tasks carry null waves -> guard fires until backfill', () => {
+  // The composition cc3 CANNOT expose (it has zero tasks -> early `complete`). A migrated IN-FLIGHT
+  // bundle carries wave:null; decideNextAction must fail loud, not silently dispatch an empty wave.
+  // The L1 shell backfills waves from a plan.md re-parse (step-2 contract) before resume.
+  assert.throws(() => decideNextAction(migrate(WBN), {}), /backfill waves from plan\.index\.json/);
+});
 
 // ---- 6.0 passthrough: already-v8 flat state round-trips unchanged ----
 test('migrate(6.0): passthrough via the flat parser (no transform)', () => {
