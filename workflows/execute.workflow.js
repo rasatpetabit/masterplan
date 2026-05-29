@@ -40,11 +40,32 @@ export const meta = {
 };
 
 // ---- args (resolved by L1: `mp prepare-wave` output + the shell's git/host probes) ----
-const wave = args?.wave;
-const tasks = Array.isArray(args?.tasks) ? args.tasks : [];
-const baseline = Array.isArray(args?.baseline) ? args.baseline : []; // git-touched set BEFORE launch (D6)
-const repoRoot = args?.repoRoot ?? '(launch cwd)';
-const reviewOn = (args?.review ?? 'off') === 'on';
+// SEAM NORMALIZATION (cutover-blocker fix, parity-dogfood step 8). The `Workflow` TOOL boundary
+// delivers object `args` JSON-STRINGIFIED — the script's `args` global is then a STRING, not an object.
+// The in-script `workflow(ref, obj)` path delivers a real object. Production L1 launches L2 via the
+// tool, so without this the engine reads `args?.tasks === undefined` → tasks=[] → an empty wave on
+// EVERY real run (this is exactly what produced the first two `total:0` launches). Accept both shapes.
+// A string that isn't valid JSON is a launch bug — JSON.parse throws loud, which beats silently
+// dispatching a zero-task wave. Confirmed by a 0-agent probe: a clean `{wave,items}` launched via the
+// tool arrives as `typeof args === 'string'`. Covered by test/execute-workflow.test.mjs.
+const A = (typeof args === 'string') ? JSON.parse(args) : (args ?? {});
+const wave = A.wave;
+const tasks = Array.isArray(A.tasks) ? A.tasks : [];
+const baseline = Array.isArray(A.baseline) ? A.baseline : []; // git-touched set BEFORE launch (D6)
+const repoRoot = A.repoRoot ?? '(launch cwd)';
+const reviewOn = (A.review ?? 'off') === 'on';
+
+// DOGFOOD SEAM (uncommitted; parity-dogfood step 8). The engine hardcodes the `masterplan:` agentType
+// prefix, which only resolves when the dev plugin is installed — so the L2 engine cannot run in an
+// uninstalled dev worktree as-is. To dogfood it, L1 may inject a resolvable agentType + an explicit
+// model. Production NEVER sets these args, so the defaults reproduce shipping behavior byte-for-byte:
+// `masterplan:*` agents on their own frontmatter model (sonnet for the implementer). The explicit
+// model matters because an injected `general-purpose` agent would otherwise inherit the main-loop
+// model (opus), corrupting the token-budget capture this dogfood exists to take.
+const implAgentType = A.implAgentType ?? 'masterplan:mp-implementer';
+const implModel = A.implModel; // undefined in prod → agent-frontmatter model (sonnet) governs
+const reviewAgentType = A.reviewAgentType ?? 'masterplan:mp-codex-reviewer';
+const reviewModel = A.reviewModel;
 
 // The mp-implementer digest, schema-validated at the tool boundary (mirror of agents/mp-implementer.md
 // — keep byte-aware-synced). A validated return removes a retry round-trip (design goal 2). Lenient
@@ -106,13 +127,10 @@ function extractVerdict(text) {
 // nulls out of the pipeline — a vanished item would read as "wave smaller than it is".
 async function implement(t) {
   let digest = null;
+  const opts = { label: `impl:task-${t.id}`, phase: 'Dispatch', agentType: implAgentType, schema: IMPL_DIGEST };
+  if (implModel) opts.model = implModel; // omitted in prod → frontmatter model governs (see seam note)
   try {
-    digest = await agent(implementerPrompt(t), {
-      label: `impl:task-${t.id}`,
-      phase: 'Dispatch',
-      agentType: 'masterplan:mp-implementer',
-      schema: IMPL_DIGEST,
-    });
+    digest = await agent(implementerPrompt(t), opts);
   } catch (e) {
     log(`  task ${t.id}: implementer dispatch errored (${String(e?.message ?? e)})`);
   }
@@ -148,11 +166,9 @@ async function review(item, task) {
   let verdict = 'inconclusive';
   let findings = 'NOTE — Codex review inconclusive (no output). verdict: inconclusive';
   try {
-    const text = await agent(reviewerPrompt(task, files), {
-      label: `review:task-${item.task_id}`,
-      phase: 'Review',
-      agentType: 'masterplan:mp-codex-reviewer',
-    });
+    const ropts = { label: `review:task-${item.task_id}`, phase: 'Review', agentType: reviewAgentType };
+    if (reviewModel) ropts.model = reviewModel; // omitted in prod → frontmatter model governs
+    const text = await agent(reviewerPrompt(task, files), ropts);
     if (text) {
       findings = String(text);
       verdict = extractVerdict(text);
