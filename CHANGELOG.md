@@ -316,10 +316,10 @@ Patch release. Pre-publication finalization for plugin distribution from arbitra
 
 ### Fixed
 
-- **Hardcoded developer-path leaks (3 docs files):** `docs/internals.md` and `parts/failure-classes.md` carried literal `~/.claude/projects/-home-ras-dev-masterplan/hook-errors.log` examples; replaced with a `<slugified-worktree>` placeholder + one-line explanation matching the actual hook behavior at `hooks/masterplan-telemetry.sh:571`. `README.md` "Optional Telemetry Hook" section restored from collateral stripping (prior refactor left it as a comment-only JSON block).
+- **Hardcoded developer-path leaks (3 docs files):** `docs/internals.md` and `parts/failure-classes.md` carried literal `~/.claude/projects/-home-<user>-dev-masterplan/hook-errors.log` examples; replaced with a `<slugified-worktree>` placeholder + one-line explanation matching the actual hook behavior at `hooks/masterplan-telemetry.sh:571`. `README.md` "Optional Telemetry Hook" section restored from collateral stripping (prior refactor left it as a comment-only JSON block).
 - **`AGENTS.md`** — dropped private-repo refs (a sibling repo's docs glob); now generically points at `CLAUDE.md` + optional org-wide guide.
 - **Python `~/dev` defaults:** `lib/masterplan_session_audit.py` and `lib/masterplan_wipe_telemetry.py` derived `MASTERPLAN_REPO_ROOTS` from `~/dev`; both now derive from `Path(__file__).resolve().parent.parent.parent` so discovery works without assuming the developer's home layout.
-- **Hostname leaks:** `epyc1`/`epyc2` references in `docs/internals.md` and two `docs/masterplan/` bundles generalized to "one host" / "every host that has the plugin installed".
+- **Hostname leaks:** bare dev-host references in `docs/internals.md` and two `docs/masterplan/` bundles generalized to "one host" / "every host that has the plugin installed".
 - **`pending_gate_orphaned` false positive on YAML-cleared gates** (`lib/masterplan_session_audit.py`). Sentinel values `null`, `~`, `[]`, `{}` are now treated as "no gate" regardless of staleness.
 
 ### Compatibility
@@ -364,7 +364,7 @@ This bundle adds (a) new policy that flips a default behavior the plan-writer ap
 
 ### Rollout
 
-Per the patched rollout macro: `claude plugin marketplace update` + `claude plugin update "masterplan@rasatpetabit-masterplan"` for Claude Code AND `codex plugin marketplace upgrade rasatpetabit-masterplan` for Codex CLI, on both ras@epyc2 and grojas@epyc1.
+Per the patched rollout macro: `claude plugin marketplace update` + `claude plugin update "masterplan@rasatpetabit-masterplan"` for Claude Code AND `codex plugin marketplace upgrade rasatpetabit-masterplan` for Codex CLI, on both dev hosts.
 
 ## [5.7.3] — 2026-05-16 — telemetry: fix parent_turn duplication in emit_parent_turns
 
@@ -432,7 +432,7 @@ A new telemetry field plus a new audit rollup is a versioned capability boundary
 
 ### Rollout
 
-- Dual-surface refresh per the patched rollout macro: `claude plugin marketplace update` + `claude plugin update "masterplan@rasatpetabit-masterplan"` for Claude Code AND `codex plugin marketplace upgrade rasatpetabit-masterplan` for Codex CLI, on both ras@epyc2 and grojas@epyc1.
+- Dual-surface refresh per the patched rollout macro: `claude plugin marketplace update` + `claude plugin update "masterplan@rasatpetabit-masterplan"` for Claude Code AND `codex plugin marketplace upgrade rasatpetabit-masterplan` for Codex CLI, on both dev hosts.
 
 ## [5.5.0] — 2026-05-15 — Three-layer regression test suite: static battery + doctor-fixtures (9 checks, 24 fixtures) + e2e claude --print harness
 
@@ -462,7 +462,7 @@ A complete sequenced test suite is a versioned milestone: it formalizes a regres
 
 ### Rollout
 
-- Dual-surface refresh per the patched rollout macro: `claude plugin marketplace update` + `claude plugin update "masterplan@rasatpetabit-masterplan"` for Claude Code AND `codex plugin marketplace upgrade rasatpetabit-masterplan` for Codex CLI, on both ras@epyc2 and grojas@epyc1.
+- Dual-surface refresh per the patched rollout macro: `claude plugin marketplace update` + `claude plugin update "masterplan@rasatpetabit-masterplan"` for Claude Code AND `codex plugin marketplace upgrade rasatpetabit-masterplan` for Codex CLI, on both dev hosts.
 
 ## [5.4.0] — 2026-05-15 — Parallelism wave: doctor repo-scoped Haiku batch + intent-anchor 3-way fan-out + parent re-verify parallel Bash + eligibility cache sharding
 
@@ -488,7 +488,7 @@ New parallel dispatch sites are behavior-affecting (different observable telemet
 
 ### Rollout
 
-- Dual-surface refresh per the patched rollout macro: `claude plugin marketplace update` + `claude plugin update "masterplan@rasatpetabit-masterplan"` for Claude Code AND `codex plugin marketplace upgrade rasatpetabit-masterplan` for Codex CLI, on both ras@epyc2 and grojas@epyc1.
+- Dual-surface refresh per the patched rollout macro: `claude plugin marketplace update` + `claude plugin update "masterplan@rasatpetabit-masterplan"` for Claude Code AND `codex plugin marketplace upgrade rasatpetabit-masterplan` for Codex CLI, on both dev hosts.
 
 ## [5.3.3] — 2026-05-15 — Plugins UI errors: frontmatter on contract registry + drop dead auq-guard.sh
 
@@ -533,7 +533,7 @@ Patch release. Fixes a pre-existing bug in `parts/doctor.md` Check #41 bash (int
 
 ## [5.3.0] — 2026-05-15 — Step 0: scan-then-ping detection default + Doctor #41 ERROR escalation
 
-Fixes a recurring false-positive class where `/masterplan` emits `⚠ Codex plugin not detected — codex_routing and codex_review are degraded to off for this run` against installs where Codex is fully present and actively dispatching. Repro that motivated this release: `/loop /masterplan --autonomy=full` in `yanos-mgmt/.worktrees/pivot-landing-4b-yanos-wireguard` on epyc2 emitted the warning while the session's own system-reminder skills list contained `codex:codex-rescue`, `codex:setup`, `codex:rescue`, etc., and `bin/masterplan-codex-usage.sh` showed the same host actively dispatching Codex in the same window.
+Fixes a recurring false-positive class where `/masterplan` emits `⚠ Codex plugin not detected — codex_routing and codex_review are degraded to off for this run` against installs where Codex is fully present and actively dispatching. Repro that motivated this release: `/loop /masterplan --autonomy=full` in a sibling-project worktree on one dev host emitted the warning while the session's own system-reminder skills list contained `codex:codex-rescue`, `codex:setup`, `codex:rescue`, etc., and `bin/masterplan-codex-usage.sh` showed the same host actively dispatching Codex in the same window.
 
 ### Changed
 
