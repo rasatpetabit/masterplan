@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.0.0 — clean-core rebuild (branch `masterplan-ng`; deployed to ras@epyc2, not yet merged to `main`)
+
+Version label bumped 7.2.3 → 8.0.0 so the registry-swapped install reads **v8** in `claude plugin list` (previously both the v7.2.3 and the v8 install reported `7.2.3`, distinguishable only by `gitCommitSha`). The full clean-core rebuild — 5-layer Node-primary architecture (durable run bundle · thin resumable shell · Workflow-tool engine · plugin-root agents · doctor checks), ~80% line reduction, and removal of the per-verb `/masterplan:<verb>` skill namespace — ships on this branch. Finalized release notes land at the v7 → v8 cutover merge to `main`.
+
 ## v7.2.3 — Codex review dispatch guard + runtime-drift detection (2026-05-27)
 
 ### Fixed
