@@ -1,5 +1,17 @@
 # WORKLOG
 
+## 2026-05-29 — v8 (masterplan-ng): CUTOVER sanitization of legacy-bundle fixtures (Phase 3 of the published-guard track)
+
+Closed remaining item (A) from the DECISIONS entry below: the three `test/fixtures/legacy-bundles/` fixtures were **verbatim other-repo run bundles** — real slugs, commit SHAs, absolute `/home/<user>/` + `/srv/` paths, vendor product codes. They are CI ground truth (the migrate extractor's only real-structure exercise) so they must stay committed, but must not ship real identifiers. Sanitized in place, keeping every structural property the targeted line-extractor depends on; the test suite is the proof the structure survived.
+
+**Decision — sanitize, don't redact-to-toy.** Advisor-gated. The fixtures' *value* is that they're structurally real (col-0 vs indented `- idx:`, mixed statuses, folded `note:`/`name:` scalars, a `recent_events:` col-0 list after `tasks:` that proves region-bounding). Replacing identifiers preserves that; trimming to a toy bundle would have silently weakened coverage. migrate.mjs drops names/commits/notes on migration (only `{id,status,wave:null,files:[]}` survive), so those fields were never asserted — free to genericize.
+
+**What changed.** `5.0-inflight-wbn.yml` → renamed `5.0-inflight-sample.yml` (32 mixed-status tasks, the risky path). `5.0-archived-codex-routing-fix.yml` + `5.1-archived-cc3-visibility.yml` sanitized, filenames kept. Synthetic conventions (also the future guard's positive enforcement): home paths → `/work/...` or `/home/user/`; 7-char SHAs → `a00000N`/`b00000N`; full hashes → `sha256:`+64 zeros. Lockstep test refactor: `migrate.test.mjs` (`WBN`→`SAMPLE`, slug assertion, header comment) + `bin-masterplan.test.mjs` (`WBN`→`SAMPLE` const + 3 copyFileSync) re-pointed; residual client refs scrubbed in `lib/migrate.mjs:12`, `resume.test.mjs:120`. Assertions (counts/indices/statuses) unchanged — structure-preserving by construction.
+
+Authoritative gate: `node --test test/` → **214 pass / 0 fail / 0 skipped** (unchanged; structure-preserving). Deny-list grep over `test/fixtures/` clean except the plugin's own public identifier `rasatpetabit-masterplan` (legitimate) and one index-staleness content-hash (a value the staleness check *compares*, not a client identifier — resolved in Phase 4). Orchestrator sole committer (CD-7). **Not pushed.**
+
+**Next — Phase 4 / Step 6 published-guards (item (B), now unblocked):** two L4 doctor checks — `release-hygiene` (cross-manifest version sync, router size, namespace collision) + `fixture-hygiene` (identifier scan over `test/fixtures/` enforcing the deny list + synthetic conventions, so the cutover gate becomes an *enforced* invariant). Resolve the index-staleness 64-hex content-hash there. **Flagged for the user (out of scope here):** WORKLOG.md + CHANGELOG.md carry `petabit-*` org/project references — a separate publish-hygiene call.
+
 ## 2026-05-29 — v8 (masterplan-ng): resolved the 2 Codex doctor DECISIONS (#1 registry SHA-drift, #4 orphan state.yml)
 
 Closed the two deferred DECISION findings from the Codex doctor review. Done **inline, not via Workflow** — 2 design-heavy edits sharing one test file, no fan-out benefit. Advisor-gated on the design calls before writing; the advisor also drew the line that the remaining cutover + Step 6 work is **not** autonomously executable (a user fact / an unwritten spec), so this run executes only the well-defined tail.

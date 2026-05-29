@@ -13,7 +13,7 @@ import { formatBanner, applyPlanIndex } from '../bin/masterplan.mjs';
 import { serializeState, parseState } from '../lib/bundle.mjs';
 
 const BIN = fileURLToPath(new URL('../bin/masterplan.mjs', import.meta.url));
-const WBN = fileURLToPath(new URL('./fixtures/legacy-bundles/5.0-inflight-wbn.yml', import.meta.url));
+const SAMPLE = fileURLToPath(new URL('./fixtures/legacy-bundles/5.0-inflight-sample.yml', import.meta.url));
 
 function run(args, opts = {}) {
   try {
@@ -90,7 +90,7 @@ test('decide: all-done -> complete; open gate -> surface_gate', () => {
   assert.equal(g.gate.id, 'plan_approval');
 });
 test('decide: legacy bundle migrates in-memory; null waves trip the guard -> exit 2 + backfill hint', () => {
-  const r = run(['decide', `--state=${WBN}`]);
+  const r = run(['decide', `--state=${SAMPLE}`]);
   assert.equal(r.status, 2);
   assert.match(r.stderr, /backfill waves from plan\.index\.json/);
 });
@@ -98,7 +98,7 @@ test('decide: legacy bundle migrates in-memory; null waves trip the guard -> exi
 // ---- integration: migrate-bundle + backfill-waves (the on-load migrate contract) ----
 test('migrate-bundle: backs up original + rewrites as v8; second run is a no-op', () => {
   const p = path.join(tmpDir('mp-mig-'), 'state.yml');
-  fs.copyFileSync(WBN, p);
+  fs.copyFileSync(SAMPLE, p);
   const r = JSON.parse(run(['migrate-bundle', `--state=${p}`]).stdout);
   assert.equal(r.migrated, true);
   assert.equal(r.from, '5.0');
@@ -109,7 +109,7 @@ test('migrate-bundle: backs up original + rewrites as v8; second run is a no-op'
 test('migrated bundle: backfill-waves satisfies the guard -> decide dispatches', () => {
   const dir = tmpDir('mp-bf-');
   const p = path.join(dir, 'state.yml');
-  fs.copyFileSync(WBN, p);
+  fs.copyFileSync(SAMPLE, p);
   run(['migrate-bundle', `--state=${p}`]);
   const planIdx = path.join(dir, 'plan.index.json');
   fs.writeFileSync(planIdx, JSON.stringify(Array.from({ length: 32 }, (_, i) => ({ id: i + 1, wave: 0, files: [] }))));
@@ -150,7 +150,7 @@ test('open-gate / clear-gate write the durable marker', () => {
 });
 test('write ops refuse an un-migrated legacy bundle (no silent overwrite before backup)', () => {
   const p = path.join(tmpDir('mp-guard-'), 'state.yml');
-  fs.copyFileSync(WBN, p);
+  fs.copyFileSync(SAMPLE, p);
   const r = run(['mark-task', `--state=${p}`, '--id=1', '--status=done']);
   assert.equal(r.status, 2);
   assert.match(r.stderr, /migrate-bundle/);

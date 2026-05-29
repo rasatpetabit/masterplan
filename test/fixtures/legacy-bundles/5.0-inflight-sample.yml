@@ -1,10 +1,10 @@
 schema_version: '5.0'
-slug: 2026-05-13-wbn-datasheet-redesign
-plan_hash: sha256:4461d352f5545588b220db96fedd4f6ff8ea400d3b968affbbf0207a84235d1f
+slug: 2026-05-13-sample-datasheet-redesign
+plan_hash: sha256:0000000000000000000000000000000000000000000000000000000000000000
 status: in-progress
 current_phase: step-c
 current_wave: 9
-worktree: /home/grojas/dev/petabit-datasheets
+worktree: /work/sample-datasheets
 branch: main
 started: '2026-05-13T17:14:50Z'
 last_activity: '2026-05-14T18:30:00Z'
@@ -14,120 +14,120 @@ loop_enabled: false
 codex_routing: auto
 codex_review: true
 compact_loop_recommended: false
-current_task: Wave 9 — 4-page polish (mechanical quality, Coherent details, typography)
-next_action: Redesign mechanical SVG from QSFP-DD MSA Rev 7.0 spec pages; apply Coherent-style
+current_task: Wave 9 — 4-page polish (mechanical quality, vendor details, typography)
+next_action: Redesign mechanical SVG from module MSA Rev 7.0 spec pages; apply vendor-style
   details; improve typography
 pending_gate: null
 stop_reason: null
 critical_error: null
 artifacts:
-  spec: docs/masterplan/2026-05-13-wbn-datasheet-redesign/spec.md
-  plan: docs/masterplan/2026-05-13-wbn-datasheet-redesign/plan.md
-  events: docs/masterplan/2026-05-13-wbn-datasheet-redesign/events.jsonl
+  spec: docs/masterplan/2026-05-13-sample-datasheet-redesign/spec.md
+  plan: docs/masterplan/2026-05-13-sample-datasheet-redesign/plan.md
+  events: docs/masterplan/2026-05-13-sample-datasheet-redesign/events.jsonl
 legacy:
-  spec: docs/superpowers/specs/2026-05-13-wbn-datasheet-redesign.md
-  plan: docs/superpowers/plans/2026-05-13-wbn-datasheet-redesign.md
+  spec: docs/superpowers/specs/2026-05-13-sample-datasheet-redesign.md
+  plan: docs/superpowers/plans/2026-05-13-sample-datasheet-redesign.md
 tasks:
 - idx: 1
   name: Scaffold scripts/typst-datasheet/README.md, pin Typst 0.13.1
   status: complete
-  commit: 68bc554
+  commit: a000001
 - idx: 2
   name: Create directory skeleton + gitignore generated artifacts
   status: complete
-  commit: c7e3d0e
+  commit: a000002
 - idx: 3
-  name: Vendor WBN logos (horizontal + mark) and Lato fonts
+  name: Vendor logos (horizontal + mark) and Lato fonts
   status: complete
-  commit: 5b35790
+  commit: a000003
 - idx: 4
   name: template/colors.typ
   status: complete
-  commit: dc52507
+  commit: a000004
 - idx: 5
   name: template/fonts.typ
   status: complete
-  commit: dbc31d3
+  commit: a000005
 - idx: 6
   name: template/section.typ
   status: complete
-  commit: db18b27
+  commit: a000006
 - idx: 7
   name: template/table.typ
   status: complete
-  commit: 17ac1a4
+  commit: a000007
 - idx: 8
   name: template/chrome.typ (header/footer)
   status: complete
-  commit: 1c5b2d4
+  commit: a000008
 - idx: 9
-  name: template/lane-map.typ (CWDM4 band)
+  name: template/lane-map.typ (sample band)
   status: complete
-  commit: f9db113
+  commit: a000009
 - idx: 10
   name: template/margin-chart.typ (TX/RX margin bars)
   status: complete
-  commit: 70d5c41
+  commit: a000010
 - idx: 11
   name: 'Hand-drawn SVG: module faceplate'
   status: complete
-  commit: 3411c14
+  commit: a000011
 - idx: 12
-  name: 'Hand-drawn SVG: FR4 internal block diagram'
+  name: 'Hand-drawn SVG: internal block diagram'
   status: complete
-  commit: 39e3bf2
+  commit: a000012
 - idx: 13
-  name: 'Hand-drawn SVG: p2p reference topology'
+  name: 'Hand-drawn SVG: reference topology'
   status: complete
-  commit: 1414e7e
+  commit: a000013
 - idx: 14
   name: 'Hand-drawn SVG: mechanical reference'
   status: complete
-  commit: 7d2467a
+  commit: a000014
 - idx: 15
-  name: QSFP-DD pinout test (76 pins, MSA Rev 5.0)
+  name: Module pinout test (76 pins, MSA Rev 5.0)
   status: complete
-  commit: abbcbb6
+  commit: a000015
 - idx: 16
-  name: QSFP-DD pinout TOML
+  name: Module pinout TOML
   status: complete
-  commit: b324582
+  commit: a000016
 - idx: 17
-  name: WBN metadata sidecar JSON
+  name: Module metadata sidecar JSON
   status: complete
-  commit: 6b46562
+  commit: a000017
 - idx: 18
-  name: Transformer test (src/wbn/datasheet-data.ts)
+  name: Transformer test (src/datasheet/datasheet-data.ts)
   status: complete
-  commit: 5d72891
+  commit: a000018
 - idx: 19
   name: Transformer impl
   status: complete
-  commit: 8216340
+  commit: a000019
 - idx: 20
   name: build-data CLI
   status: complete
-  commit: 6e937f9
+  commit: a000020
 - idx: 21
   name: main.typ Typst template
   status: complete
-  commit: 0061daf
+  commit: a000021
 - idx: 22
   name: build.sh wrapper
   status: complete
-  commit: e0a5fda
+  commit: a000022
 - idx: 23
-  name: End-to-end smoke test on XCVR-Q56D-FR4-WBN
+  name: End-to-end smoke test on sample module
   status: complete
-  commit: 3fd1c0f
+  commit: a000023
 - idx: 24
-  name: Deprecate scripts/build-wbn-datasheet.py (reportlab)
+  name: Deprecate scripts/build-datasheet-legacy.py
   status: complete
-  commit: 5300a71
+  commit: a000024
 - idx: 25
   name: Full vitest + typecheck gate
   status: complete
-  note: 'vitest 43 passed | 3 skipped; BLOCKED: tsc 10 type errors in src/wbn/datasheet-data.ts
+  note: 'vitest 43 passed | 3 skipped; BLOCKED: tsc 10 type errors in src/datasheet/datasheet-data.ts
     + tests — pre-existing regressions, requires user adjudication'
   commit: null
 - idx: 26
@@ -139,38 +139,38 @@ tasks:
 - idx: 27
   name: WORKLOG entry
   status: complete
-  commit: c93255f
+  commit: a000027
 - idx: 28
   name: Execution handoff to user
   status: pending
 - idx: 29
-  name: Wave 8 — V4 Coherent-style visual rework (mech 3-view ANSI drawing, pinout
+  name: Wave 8 — V4 vendor-style visual rework (mech 3-view ANSI drawing, pinout
     orientation bars, dedicated mechanical page, footer auto-counter)
   status: complete
-  note: 'uncommitted at time of save — mech-qsfp-dd.svg viewBox crop, template/main.typ
-    counter+pagebreak, new assets/pinout-orientation-qsfp-dd.svg, regenerated PDF
-    (5pp, 203KB). Coherent reference: FTCD4523E2PxM p2 pinout + p10 mechanical.'
+  note: 'uncommitted at time of save — mech-module.svg viewBox crop, template/main.typ
+    counter+pagebreak, new assets/pinout-orientation-module.svg, regenerated PDF
+    (5pp, 203KB). Vendor reference: sample part p2 pinout + p10 mechanical.'
   commit: null
 - idx: 30
-  name: Permanent headless-host preview workflow (~/.local/bin/preview, ~/.claude/CLAUDE.md,
-    ~/.claude/AGENTS.md, Hindsight retain)
+  name: Permanent headless-host preview workflow (preview helper, global CLAUDE.md,
+    global AGENTS.md, memory retain)
   status: complete
   note: out-of-tree changes; ensures future sessions can render-and-show without rediscovering
-    the headless constraint. See ~/.claude/projects/-home-grojas-dev-petabit-datasheets/memory/feedback_headless_host.md
+    the headless constraint. See project memory note feedback_headless_host.md
   commit: null
 - idx: 31
   name: V4 visual decision (4-way AUQ)
   status: complete
-  note: 'Decision: 4-page layout + major polish (mechanical quality, Coherent details,
+  note: 'Decision: 4-page layout + major polish (mechanical quality, vendor details,
     typography)'
 - idx: 32
-  name: Wave 9 — Redesign mechanical SVG from QSFP-DD MSA Rev 7.0 spec; 4-page template
+  name: Wave 9 — Redesign mechanical SVG from module MSA Rev 7.0 spec; 4-page template
     polish
   status: in_progress
 handoff: '*overflow at handoff.md L1 (rewritten for V4 resume)*'
 blockers: []
 deferred_backlog:
-- 10 tsc type errors in src/wbn/datasheet-data.ts + tests — pre-existing regressions
+- 10 tsc type errors in src/datasheet/datasheet-data.ts + tests — pre-existing regressions
 - build.sh --validated CLI flag/metadata mismatch
 - Duplicate 'Supply Voltage (Absolute Max)' row leaking into operating table
 recent_events:
@@ -180,13 +180,13 @@ recent_events:
   deferred'
 - '2026-05-14T15:00Z Wave 8 V1-V3: visual polish iterations on hand-drawn SVGs (rough-stroke
   pastel, brand panel, sketch-A density)'
-- '2026-05-14T17:00Z Wave 8 V4: rebuilt mechanical to Coherent FTCD4523E2PxM 3-view
-  ANSI engineering drawing style; added Coherent-style pin orientation bars; dedicated
+- '2026-05-14T17:00Z Wave 8 V4: rebuilt mechanical to vendor sample-part 3-view
+  ANSI engineering drawing style; added vendor-style pin orientation bars; dedicated
   mechanical page; footer auto-counter via context+counter(page).final'
 - 2026-05-14T18:00Z Wave 8 V4 PDF rendered 5pp 203KB; raster preview-and-Read confirmed
-  visual parity with Coherent p2/p10 reference
+  visual parity with vendor p2/p10 reference
 - '2026-05-14T18:30Z paused-awaiting-v4-decision: 4-way visual AUQ pending (ship/fill-p2/compress-4/polish)'
-- '2026-05-14T18:30Z out-of-tree: installed ~/.local/bin/preview + memory + Hindsight
-  retain so render-and-show works friction-free on resume'
+- '2026-05-14T18:30Z out-of-tree: installed preview helper + memory + retain so render-and-show
+  works friction-free on resume'
 - '2026-05-14T04:40:00Z Wave 9 start: V4 gate resolved — 4-page layout chosen; polish
-  tracks: mechanical quality, Coherent details, typography'
+  tracks: mechanical quality, vendor details, typography'

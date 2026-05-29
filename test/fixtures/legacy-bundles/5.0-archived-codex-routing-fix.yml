@@ -1,7 +1,7 @@
 ---
 schema_version: "5.0"
 slug: codex-routing-fix
-plan_hash: "sha256:4780ab40e8559788fc2e5a0d17dae582e0390d5b3e4f97854f54d2763718dfb8"
+plan_hash: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 
 current_phase: done
 current_wave: 5
@@ -42,7 +42,7 @@ tasks:
 
 status: archived
 phase: archived
-worktree: /srv/dev/masterplan
+worktree: /work/masterplan
 branch: main
 worktree_disposition: removed_after_merge
 started: 2026-05-16T16:00:00Z
@@ -75,17 +75,17 @@ legacy:
 handoff: ""
 blockers: []
 recent_events:
-  - "2026-05-16T16:00Z bundle bootstrapped from approved plan steady-sparking-nygaard"
+  - "2026-05-16T16:00Z bundle bootstrapped from approved plan sample-plan-codename"
   - "2026-05-16T16:00Z worktree isolation: .worktrees/codex-routing-fix (branch codex-routing-fix)"
-  - "2026-05-16T16:10Z wave1 complete: T1(80b96d5) T2(0e0ce06) T3(322dac8)"
-  - "2026-05-16T16:10Z wave4 complete: T9-T12(c94b5cb) parallel-with-wave1"
+  - "2026-05-16T16:10Z wave1 complete: T1(b000001) T2(b000002) T3(b000003)"
+  - "2026-05-16T16:10Z wave4 complete: T9-T12(b000004) parallel-with-wave1"
   - "2026-05-16T16:11Z wave2 entry: serial Codex EXEC on parts/step-c.md T4→T5→T6→T7"
-  - "2026-05-16T16:20Z wave2 complete: T4(96def0a) T5(e7832d7) T6(958e649) T7(2b15a98)"
+  - "2026-05-16T16:20Z wave2 complete: T4(b000005) T5(b000006) T6(b000007) T7(b000008)"
   - "2026-05-16T16:21Z wave3 entry: T8 inline-Claude B4 audit + 5 freeform contracts + audit-script hardening"
-  - "2026-05-16T16:30Z wave3 complete: T8(dfd0424) — audit script Pattern D verified via fixture"
+  - "2026-05-16T16:30Z wave3 complete: T8(b000009) — audit script Pattern D verified via fixture"
   - "2026-05-16T16:30Z wave5 entry: T13/T14/T15 inline-Claude finale"
-  - "2026-05-16T16:35Z T13 complete (df5038b): docs/internals.md §3/§8/§9/§10 v5.8.0 updates"
-  - "2026-05-16T16:40Z T14 complete (18ea70d): version 5.7.3→5.8.0 in 3 manifests + CHANGELOG v5.8.0 entry"
-  - "2026-05-16T16:45Z T15 complete (e82777e): WORKLOG.md v5.8.0 entry prepended"
+  - "2026-05-16T16:35Z T13 complete (b000010): docs/internals.md §3/§8/§9/§10 v5.8.0 updates"
+  - "2026-05-16T16:40Z T14 complete (b000011): version 5.7.3→5.8.0 in 3 manifests + CHANGELOG v5.8.0 entry"
+  - "2026-05-16T16:45Z T15 complete (b000012): WORKLOG.md v5.8.0 entry prepended"
   - "2026-05-16T16:45Z bundle complete: all 15 tasks landed; phase=done; ready for retro+archive"
   - "2026-05-22 retro.md generated + bundle archived (doctor --fix run)"

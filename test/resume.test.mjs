@@ -117,7 +117,7 @@ test('no tasks -> complete', () => {
 test('GUARD: a pending task with a non-integer (null) wave throws — waves not backfilled', () => {
   // A just-migrated legacy bundle carries wave:null until the shell re-derives waves from
   // plan.index.json. Math.min(null,…) coerces to 0 but `wave === 0` matches nothing -> a SILENT
-  // empty dispatch and the run stalls. The guard fails loud instead. (Caught via migrate(WBN).)
+  // empty dispatch and the run stalls. The guard fails loud instead. (Caught via migrate(SAMPLE).)
   const s = base({ tasks: [t(1, null, 'pending'), t(2, null, 'pending')] });
   assert.throws(() => decideNextAction(s, {}), /backfill waves from plan\.index\.json/);
 });
