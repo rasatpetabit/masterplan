@@ -98,12 +98,17 @@ function loadForWrite(p) {
 }
 
 // ---- the CC-2 version banner. plugin.json candidate paths (Read-tool order from v7). ----
-function readPluginVersion(cwd, env) {
+export function readPluginVersion(cwd, env) {
   const cfg = resolveConfigDir(env, os.homedir());
   const candidates = [
+    // candidate #0: the actually-loaded plugin root (Claude Code sets CLAUDE_PLUGIN_ROOT when the
+    // shell runs `mp`). Authoritative + marketplace-name-agnostic, so a registry swap under a
+    // non-canonical marketplace name (e.g. the masterplan-v8 scoped deploy) still reports the
+    // running version instead of falling back to a stale same-named clone.
+    env.CLAUDE_PLUGIN_ROOT && path.join(env.CLAUDE_PLUGIN_ROOT, '.claude-plugin/plugin.json'),
     path.join(cfg, 'plugins/marketplaces/rasatpetabit-masterplan/.claude-plugin/plugin.json'),
     path.join(cwd, '.claude-plugin/plugin.json'),
-  ];
+  ].filter(Boolean);
   // Best-effort cache path: …/cache/rasatpetabit-masterplan/masterplan/<latest-semver>/.claude-plugin/plugin.json
   const cacheRoot = path.join(cfg, 'plugins/cache/rasatpetabit-masterplan/masterplan');
   try {

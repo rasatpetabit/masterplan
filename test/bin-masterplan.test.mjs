@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { formatBanner, applyPlanIndex } from '../bin/masterplan.mjs';
+import { formatBanner, applyPlanIndex, readPluginVersion } from '../bin/masterplan.mjs';
 import { serializeState, parseState } from '../lib/bundle.mjs';
 
 const BIN = fileURLToPath(new URL('../bin/masterplan.mjs', import.meta.url));
@@ -46,6 +46,14 @@ test('formatBanner: version + args + cwd', () => {
 });
 test('formatBanner: no version -> vUNKNOWN; empty args -> (empty)', () => {
   assert.equal(formatBanner(null, '', '/x'), "→ /masterplan vUNKNOWN args: '(empty)' cwd: /x");
+});
+test('readPluginVersion: CLAUDE_PLUGIN_ROOT (the loaded plugin) wins over marketplace-name-specific paths', () => {
+  // regression: a registry swap under a non-canonical marketplace name (masterplan-v8 scoped deploy)
+  // must still report the RUNNING version, not fall back to a stale same-named rasatpetabit clone.
+  const root = tmpDir('mp-root-');
+  fs.mkdirSync(path.join(root, '.claude-plugin'));
+  fs.writeFileSync(path.join(root, '.claude-plugin/plugin.json'), JSON.stringify({ version: '9.9.9' }));
+  assert.equal(readPluginVersion('/nonexistent', { CLAUDE_PLUGIN_ROOT: root }), '9.9.9');
 });
 test('applyPlanIndex: sets wave+files by id; parallel_group->wave; {tasks:[]} & bare-array; unmatched untouched', () => {
   const state = { tasks: [
