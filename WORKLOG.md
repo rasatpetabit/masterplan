@@ -1,5 +1,23 @@
 # WORKLOG
 
+## 2026-05-28 — v8 (masterplan-ng): R2b (codex watcher-harness) RESOLVED by construction — analysis turn, no code
+
+The user picked "R2b — codex watcher-harness" as the next build item. Investigation (advisor-pressure-tested) found the runtime path is **already R2b-safe by construction**, so the honest deliverable is to *record that* + flag the one cross-project residual, NOT build a detached watcher (which would be regressive — it re-adds the machinery v8 deletes).
+
+**Root cause was the dispatch shape, not a missing watcher.** R2b's two live failure modes (orphan; MCP-wedge hang) were both artifacts of the *detached, harness-untracked* `codex:codex-rescue` dispatch. v8 routes review through a harness-tracked Workflow `agent()` (`masterplan:mp-codex-reviewer`):
+- **orphan → eliminated** — the native Workflow tool emits a completion notification and the call is tracked in the run (the asymmetry that bit the out-of-process route is gone). This is the *direct* fix for mode 1, and the bigger half.
+- **hang → bounded** — the reviewer runs a synchronous foreground `timeout -k 10 540 codex exec` and returns an inconclusive NOTE on cap/empty/missing-binary (`agents/mp-codex-reviewer.md`); never hangs.
+- **death-without-results → covered** — `implement`/`review` never null (synthesize a `failed` digest) → L1 re-dispatches idempotently.
+- **MCP-child lock → structurally removed for the default path** — base `~/.codex/config.toml` is ICM-free (icm MCP is opt-in via a `codex -p <name>` overlay), so reviews can't contend on the shared `~/.local/share/icm/memories.db` lock that wedged the hand-run.
+
+A watcher supervises a *detached* job; v8's review path has none — so productizing one is regressive, not protective.
+
+**Dev-time entry point (the adoption deliverable).** The *development* loop still reaches for a raw `codex:codex-rescue` Agent dispatch — which is precisely where the orphan still bites (it's a Claude Code harness behavior, not masterplan code). For an on-demand Codex second opinion while developing masterplan, use the hardened `~/.claude/bin/codex-scan.sh` (own-process-group launch + stall/max-runtime watchdog + group-kill of a wedged `icm serve`) instead of a bare rescue dispatch.
+
+**Cross-project residual (flagged, NOT actioned here — out of masterplan scope).** `~/.claude/bin/codex-scan.sh` is host-global, untracked, hand-synced from `yanos-project/scripts/codex-scan.sh` under a parity-diff contract. It has header/body drift: the header documents `run_supervised`, `run_detached_with_reaper`, and a `CODEX_SCAN_SUPERVISED=0` escape hatch that the body never implements (body = legacy `run_with_watchdog` for `--wait`; `--background` delegates to the companion's detached worker). Reconcile in the canonical yanos copy first (editing one parity copy alone breaks the diff guard) — see `~/.claude/refs/icm-codex-scan-architecture.md §5.1`.
+
+Net: R2b risk marked RESOLVED in the plan; no code touched; suite unchanged at **124/124**. Next: Step 5 (doctor L4, ~12 external-integration checks).
+
 ## 2026-05-28 — v8 (masterplan-ng): the two parked design forks resolved (A/A) — decision turn, comments only
 
 Closing the two forks parked after Step 4 so the build order resumes on settled ground. Reasoned against the v8 rubric (durable on-disk state > token efficiency > context-window mgmt; reliability/parity rank below and are *served* by these) and pressure-tested with an adversarial advisor pass.
