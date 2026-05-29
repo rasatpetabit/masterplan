@@ -1,5 +1,27 @@
 # WORKLOG
 
+## 2026-05-29 — v8 (masterplan-ng): dogfood bug-fix — Issue C: `decide` archived mid-design (pre-execute) runs
+
+Third bug from the same openxcvr `commercial-license-lock` analysis, surfaced by an advisor done-check. **Live data-loss hazard:** `decideNextAction` returned `{action:'complete'}` for ANY zero-pending bundle regardless of `phase`, because the pure control core ignored `state.phase` entirely (the `pending.length===0 → complete` early return). A brainstorm/plan bundle legitimately carries `tasks:[]` (no plan built yet), so a bare `/masterplan` resume of an in-progress design would have **archived a mid-plan run**. Verified live: `mp decide` on the real `phase:plan` openxcvr bundle returned `complete`. Two-sided defect — (a) data loss; (b) bare-resume of an in-progress brainstorm/plan was impossible.
+
+**Fix (scoped to the pure function — the spine "NEVER decides in prose", so the guard can't live in §2):** in the `pending.length===0` branch, divert pre-execute phases with no plan: `(phase==='brainstorm'||phase==='plan') && tasks.length===0 → {action:'resume_phase', phase}`. Everything else (execute / phaseless / migrated / all-tasks-done) keeps disk-derived `complete` — minimal blast radius. `complete` is a disk fact (tasks ran & recorded `done`), not a phase label.
+
+**Bounded per advisor — `resume_phase` is HONEST, not fabricated machinery.** §3's `{brainstorm|plan}` row only *seeds* a new bundle; resuming an in-progress one is **step-7** (unwired). So the §2 `resume_phase` row routes to an `AskUserQuestion` (continue / restart / stop) and **never falls through to `complete`** — full pre-execute resume stays step 7. Even an un-updated shell fails SAFE on the unknown action (no `complete` → no archive).
+
+Synced across all four locations (anti-pattern #4): `lib/resume.mjs` header doc + impl · `commands/masterplan.md` §2 action table + step-5 closer list · `test/resume.test.mjs` (4 new cases: brainstorm+0→resume_phase, plan+0→resume_phase [the live shape], execute+done→complete, plan+pending→dispatch_wave) · `test/bin-masterplan.test.mjs` (FLIPPED the now-wrong "fresh seed → complete" assertion to `resume_phase`; a fresh seed is a mid-design run, not a finished one). Suite: `node --test test/` → **253 pass / 0 fail**. Verified live: locally-fixed `mp decide` on the real openxcvr `plan` bundle → `{action:'resume_phase',phase:'plan'}`; fresh seed → `resume_phase/brainstorm`.
+
+**Live-run caveat:** epyc2 still runs the OLD cached v8 — until the (gated) re-propagation, a bare `/masterplan` on the openxcvr bundle STILL archives it. Don't bare-resume it pre-propagation.
+
+## 2026-05-29 — v8 (masterplan-ng): dogfood bug-fix — `mp seed`/`mp event` (anti-flood) + `pending_gate` validator
+
+Found by analyzing the live openxcvr `commercial-license-lock` dogfood run (NFS-readable bundle). Two real bugs, both fixed + suite-green (`node --test test/` → **249 pass / 0 fail**, was 239). Commit + epyc2 re-propagation are **gated** (not done here).
+
+**Issue A — diff-flood (the user-flagged "Easy One": "you were asked not to show these diffs").** The v8 orchestrator raw-`Write`-d `state.yml` + `events.jsonl` during the brainstorm/seed step because **no `mp` writer existed for them** — so CD-7 (bin is sole writer) forced a tool-`Write`, which renders a full-file diff. The prior terse-narration directive (§2a step 3) only covered *wave-commit* writes, not the §3 *seed* step, so it never closed this. Fix: added `mp seed` (creates a core-valid v8 brainstorm bundle, refuse-if-exists unless `--force`) and `mp event` (append one JSON line to the sibling `events.jsonl`), both backed by pure `lib/bundle.mjs` helpers (`buildSeedState`, `appendEvent`). Both print **one terse JSON line**, never a diff. Wired §3 to use them and **promoted the CD-7 note to the header** forbidding raw `Write`/`Edit` of `state.yml` *or* `events.jsonl` anywhere — with the anti-flood rationale inline.
+
+**Issue B — `validateCoreState` false-positived every gated bundle.** The rule demanded `pending_gate` be `string|null`, but `openGate`/`migrate`/`mp open-gate` all write the v8 one-marker **object** `{id, opened_at}` (the v5/v7 string dual-form is gone — `migrate.mjs:140`). So `doctor`/`validate` flagged every open gate. Fix: rule now accepts `null` or an object with a string `id`; flags string/number/array/id-less object. Verified against the **live** bundle (`validateCoreState → []`). `lib/doctor/state-schema.mjs` consumes this validator, so the fix propagates to `doctor` for free.
+
+**Real acceptance test is a fresh dogfood brainstorm on the re-propagated epyc2 plugin** — the unit suite proves the binary; only a re-run proves the *orchestrator prompt* now calls `mp seed` instead of `Write`. (One caveat: a brainstorm still does a single `Write WORKLOG.md` handoff — that's repo-handoff doc, not bundle state, and was not part of the flagged flood.)
+
 ## 2026-05-29 — v8 (masterplan-ng): removed ALL per-verb skill dirs + terse-narration directive (pre-cutover hygiene)
 
 Two user-directed changes landed ahead of the (still-gated) cutover; both are scoped, local, and suite-green (`node --test test/*.test.mjs` → **239 pass / 0 fail**).

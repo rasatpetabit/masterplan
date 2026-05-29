@@ -18,6 +18,8 @@ import {
   markTask,
   CORE_REQUIRED_FIELDS,
   validateCoreState,
+  buildSeedState,
+  appendEvent,
 } from '../lib/bundle.mjs';
 
 test('round-trips scalars with correct types', () => {
@@ -134,7 +136,14 @@ test('validateCoreState: tasks present-but-not-array, and bad active_run/pending
   const core = { schema_version: 6, slug: 'r', status: 's', phase: 'p' };
   assert.ok(validateCoreState({ ...core, tasks: {} }).some((p) => /tasks must be an array/.test(p)));
   assert.ok(validateCoreState({ ...core, active_run: 'wf_x' }).some((p) => /active_run must be an object or null/.test(p)));
-  assert.ok(validateCoreState({ ...core, pending_gate: 42 }).some((p) => /pending_gate must be a string or null/.test(p)));
+  // pending_gate is the v8 one-marker object form (or null) — NOT the legacy string. Regression: the
+  // old "string or null" rule contradicted openGate/migrate/`mp open-gate`, false-positiving doctor on
+  // every gated bundle. A string/number is now flagged; the {id,…} object is accepted.
+  assert.ok(validateCoreState({ ...core, pending_gate: 42 }).some((p) => /pending_gate must be null or an object with a string id/.test(p)));
+  assert.ok(validateCoreState({ ...core, pending_gate: 'plan_approval' }).some((p) => /pending_gate must be null or an object/.test(p)));
+  assert.ok(validateCoreState({ ...core, pending_gate: {} }).some((p) => /pending_gate must be null or an object/.test(p))); // object without an id
+  assert.deepEqual(validateCoreState({ ...core, pending_gate: { id: 'plan_approval', opened_at: 't' } }), []); // the canonical open-gate form is valid
+  assert.deepEqual(validateCoreState({ ...core, pending_gate: null }), []);
 });
 
 test('validateCoreState: non-object input is reported, never throws', () => {
@@ -158,5 +167,60 @@ test('parseState∘serializeState round-trips a fuzz of scalar / object / array 
   ];
   for (const s of samples) {
     assert.deepEqual(parseState(serializeState(s)), s, `round-trip failed for ${JSON.stringify(s)}`);
+  }
+});
+
+test('buildSeedState: a minimal seed is a core-valid v8 brainstorm bundle with the right defaults', () => {
+  const s = buildSeedState({ slug: 'demo', topic: 'a topic', createdAt: '2026-05-29T00:00:00Z' });
+  assert.deepEqual(validateCoreState(s), []); // valid by construction (the builder also asserts this)
+  assert.equal(s.schema_version, 8);
+  assert.equal(s.phase, 'brainstorm');
+  assert.equal(s.status, 'in-progress');
+  assert.equal(s.slug, 'demo');
+  assert.equal(s.topic, 'a topic');
+  assert.equal(s.created_at, '2026-05-29T00:00:00Z');
+  assert.deepEqual(s.tasks, []);
+  assert.equal(s.active_run, null);
+  assert.equal(s.pending_gate, null);
+  assert.equal(s.complexity, null); // optional fields default to null, not undefined (round-trippable)
+  assert.deepEqual(parseState(serializeState(s)), s); // survives the on-disk format
+});
+
+test('buildSeedState: optional fields and overrides are carried through', () => {
+  const s = buildSeedState({
+    slug: 'r', topic: 't', createdAt: 'T', phase: 'plan', status: 'planning', schemaVersion: 9,
+    complexity: 'high', complexitySource: 'interview', autonomy: 'loose',
+    predecessorTranscript: '/p/x.jsonl', specPath: 'd/spec.md', planPath: 'd/plan.md', planIndexPath: 'd/plan.index.json',
+  });
+  assert.equal(s.phase, 'plan');
+  assert.equal(s.status, 'planning');
+  assert.equal(s.schema_version, 9);
+  assert.equal(s.complexity, 'high');
+  assert.equal(s.complexity_source, 'interview');
+  assert.equal(s.autonomy, 'loose');
+  assert.equal(s.predecessor_transcript, '/p/x.jsonl');
+  assert.equal(s.spec_path, 'd/spec.md');
+  assert.equal(s.plan_index_path, 'd/plan.index.json');
+});
+
+test('buildSeedState: refuses an incomplete seed (slug/topic/createdAt all required)', () => {
+  assert.throws(() => buildSeedState({ topic: 't', createdAt: 'T' }), /slug is required/);
+  assert.throws(() => buildSeedState({ slug: 's', createdAt: 'T' }), /topic is required/);
+  assert.throws(() => buildSeedState({ slug: 's', topic: 't' }), /createdAt is required/);
+});
+
+test('appendEvent: writes one JSON line per call, accumulating, into a sibling events.jsonl', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-events-'));
+  try {
+    const sp = path.join(dir, 'state.yml');
+    const ep = appendEvent(sp, { type: 'seeded', ts: 'T1' });
+    assert.equal(ep, path.join(dir, 'events.jsonl')); // derived as a sibling of state.yml
+    appendEvent(sp, { type: 'gate_opened', ts: 'T2', data: { id: 'plan_approval' } });
+    const lines = fs.readFileSync(ep, 'utf8').trim().split('\n');
+    assert.equal(lines.length, 2);
+    assert.deepEqual(JSON.parse(lines[0]), { type: 'seeded', ts: 'T1' });
+    assert.deepEqual(JSON.parse(lines[1]), { type: 'gate_opened', ts: 'T2', data: { id: 'plan_approval' } });
+  } finally {
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ }
   }
 });

@@ -18,6 +18,12 @@
 //   detect-host [--agent-is-codex] [--native-tools] [--agents-md]
 //                                               -> {isCodex, reasons, suppressRescue}
 //   decide --state=PATH [--alive]               -> the decideNextAction result (migrates in-memory)
+//   seed --state=PATH --slug=S --topic=STR [--phase=P] [--status=S] [--schema-version=N]
+//        [--created-at=T] [--complexity=C] [--complexity-source=SRC] [--autonomy=A]
+//        [--predecessor-transcript=PATH] [--spec-path=P] [--plan-path=P] [--plan-index-path=P] [--force]
+//                                               -> CD-7 write: create a fresh v8 brainstorm bundle (refuse if exists)
+//   event --state=PATH --type=T [--phase=P] [--note=STR] [--data=JSON] [--ts=T]
+//                                               -> append one JSON line to the bundle's events.jsonl
 //   migrate-bundle --state=PATH                 -> back up + persist a legacy bundle as v8 (no-op if v8)
 //   backfill-waves --state=PATH --plan-index=PATH -> set each task's {wave,files} from plan.index.json
 //   prepare-wave --state=PATH --plan-index=PATH --wave=N [--routing=M] [--codex-suppressed]
@@ -36,7 +42,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask } from '../lib/bundle.mjs';
+import { readState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, buildSeedState, appendEvent } from '../lib/bundle.mjs';
 import { migrate, detectSchemaVersion, MigrationError } from '../lib/migrate.mjs';
 import { decideNextAction } from '../lib/resume.mjs';
 import { prepareWave, declaredScope, verifyScope } from '../lib/wave.mjs';
@@ -193,6 +199,65 @@ function main() {
       } catch (e) {
         die(e.message); // e.g. the non-integer-wave guard: shell must backfill-waves first
       }
+      break;
+    }
+    case 'seed': {
+      // Create a fresh v8 brainstorm bundle. The shell's "seed the bundle" step (§3) routes HERE
+      // instead of raw-Writing state.yml — keeps bin the sole writer (CD-7) and emits no screen-
+      // flooding diff (anti-flood). Refuse an existing bundle unless --force (seed is for NEW runs;
+      // the resume controller only calls it when no active bundle was found).
+      const p = need(flags, 'state');
+      if (fs.existsSync(p) && !flags.force) {
+        die(`seed: ${p} already exists — pass --force to overwrite (this replaces the bundle's core state).`, 1);
+      }
+      const dir = path.dirname(p);
+      let state;
+      try {
+        state = buildSeedState({
+          slug: need(flags, 'slug'),
+          topic: need(flags, 'topic'),
+          createdAt: flags['created-at'] ?? new Date().toISOString(),
+          phase: flags.phase ?? 'brainstorm',
+          status: flags.status ?? 'in-progress',
+          schemaVersion: flags['schema-version'] !== undefined ? Number(flags['schema-version']) : 8,
+          complexity: flags.complexity,
+          complexitySource: flags['complexity-source'],
+          autonomy: flags.autonomy,
+          predecessorTranscript: flags['predecessor-transcript'],
+          // Path fields default to siblings of the BUNDLE DIR (its authoritative location), so a
+          // non-canonical seed path stays self-consistent; explicit flags override.
+          specPath: flags['spec-path'] ?? path.join(dir, 'spec.md'),
+          planPath: flags['plan-path'] ?? path.join(dir, 'plan.md'),
+          planIndexPath: flags['plan-index-path'] ?? path.join(dir, 'plan.index.json'),
+        });
+      } catch (e) {
+        die(e.message, 1);
+      }
+      writeState(p, state);
+      out({ seeded: state.slug, phase: state.phase, status: state.status, path: p }); // terse: no full-state echo (anti-flood)
+      break;
+    }
+    case 'event': {
+      // Append one activity line to the bundle's events.jsonl. Sole writer of that file alongside
+      // seed; the shell records lifecycle milestones HERE, never via raw Write/Edit (CD-7 + anti-flood).
+      const p = need(flags, 'state');
+      const record = { type: need(flags, 'type'), ts: flags.ts ?? new Date().toISOString() };
+      if (flags.phase !== undefined) record.phase = flags.phase;
+      if (flags.note !== undefined) record.note = flags.note;
+      if (flags.data !== undefined) {
+        try {
+          record.data = JSON.parse(flags.data);
+        } catch {
+          die(`event: --data must be valid JSON (got ${JSON.stringify(flags.data)})`, 1);
+        }
+      }
+      let eventsPath;
+      try {
+        eventsPath = appendEvent(p, record);
+      } catch (e) {
+        die(e.message, 1);
+      }
+      out({ event: record.type, ts: record.ts, path: eventsPath }); // terse confirmation
       break;
     }
     case 'migrate-bundle': {

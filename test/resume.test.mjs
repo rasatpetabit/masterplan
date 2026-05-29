@@ -110,8 +110,41 @@ test('all tasks done -> complete', () => {
   assert.equal(decideNextAction(base({ tasks: [t(1, 1, 'done'), t(2, 2, 'done')] }), {}).action, 'complete');
 });
 
-test('no tasks -> complete', () => {
+test('no tasks, NO phase (phaseless/legacy) -> complete', () => {
+  // base() sets no `phase`. A phaseless/legacy bundle keeps the disk-derived completion semantics
+  // (this is the read-only status/next path on completed & migrated runs). Only a bundle whose
+  // phase is explicitly a pre-execute phase diverts — see the resume_phase tests below.
   assert.equal(decideNextAction(base(), {}).action, 'complete');
+});
+
+test('PRE-EXECUTE GUARD: brainstorm phase + tasks:[] -> resume_phase (a fresh seed is NOT finished)', () => {
+  // A just-seeded bundle (phase:brainstorm, no plan built). `complete` here would archive a run
+  // that never ran. Hand to §3 instead.
+  const d = decideNextAction(base({ phase: 'brainstorm' }), {});
+  assert.equal(d.action, 'resume_phase');
+  assert.equal(d.phase, 'brainstorm');
+});
+
+test('PRE-EXECUTE GUARD: plan phase + tasks:[] -> resume_phase (the live openxcvr data-loss hazard)', () => {
+  // The exact shape of commercial-license-lock: phase:plan, tasks:[]. A bare `/masterplan` resume
+  // must NOT finalize/archive a mid-plan run.
+  const d = decideNextAction(base({ phase: 'plan' }), {});
+  assert.equal(d.action, 'resume_phase');
+  assert.equal(d.phase, 'plan');
+});
+
+test('execute phase, all tasks done -> complete (genuinely finished run still finalizes)', () => {
+  // The guard is scoped to PRE-execute phases AND tasks:[] — a real run that built tasks and ran
+  // them all `done` finalizes regardless of phase label. Completion is a disk fact, not a label.
+  assert.equal(decideNextAction(base({ phase: 'execute', tasks: [t(1, 1, 'done')] }), {}).action, 'complete');
+});
+
+test('plan phase WITH pending tasks -> dispatch_wave (never reaches the guard)', () => {
+  // A plan-phase bundle that already built tasks dispatches normally — pending.length>0 short-
+  // circuits the pending===0 branch entirely, so the pre-execute guard is irrelevant here.
+  const d = decideNextAction(base({ phase: 'plan', tasks: [t(1, 1, 'pending', ['a.txt'])] }), {});
+  assert.equal(d.action, 'dispatch_wave');
+  assert.equal(d.wave, 1);
 });
 
 test('GUARD: a pending task with a non-integer (null) wave throws — waves not backfilled', () => {

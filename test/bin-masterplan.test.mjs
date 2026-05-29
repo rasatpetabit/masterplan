@@ -164,6 +164,68 @@ test('write ops refuse an un-migrated legacy bundle (no silent overwrite before 
   assert.match(r.stderr, /migrate-bundle/);
 });
 
+// ---- integration: seed + event (CD-7 writers that retire the raw-Write diff-flood) ----
+test('seed: creates a core-valid v8 brainstorm bundle with sibling artifact paths; output is terse', () => {
+  const dir = tmpDir('mp-seed-');
+  const p = path.join(dir, 'state.yml');
+  const r = run(['seed', `--state=${p}`, '--slug=demo-run', '--topic=A licensing topic', '--created-at=2026-05-29T00:00:00Z',
+                 '--complexity=high', '--autonomy=loose']);
+  assert.equal(r.status, 0);
+  const s = read(p);
+  assert.equal(s.schema_version, 8);
+  assert.equal(s.phase, 'brainstorm');
+  assert.equal(s.status, 'in-progress');
+  assert.equal(s.slug, 'demo-run');
+  assert.equal(s.topic, 'A licensing topic');
+  assert.equal(s.complexity, 'high');
+  assert.equal(s.autonomy, 'loose');
+  assert.deepEqual(s.tasks, []);
+  assert.equal(s.active_run, null);
+  assert.equal(s.pending_gate, null);
+  assert.equal(s.spec_path, path.join(dir, 'spec.md')); // derived as siblings of the bundle dir
+  assert.equal(s.plan_path, path.join(dir, 'plan.md'));
+  assert.equal(s.plan_index_path, path.join(dir, 'plan.index.json'));
+  // a fresh seed is a mid-design (brainstorm-phase, tasks:[]) bundle — NOT a finished run. `decide`
+  // must hand it to the phase lifecycle, never `complete` (which would archive a run that never ran).
+  const seedDecision = JSON.parse(run(['decide', `--state=${p}`]).stdout);
+  assert.equal(seedDecision.action, 'resume_phase');
+  assert.equal(seedDecision.phase, 'brainstorm');
+  // terse stdout: a short confirmation, NOT a full-state echo (anti-flood — the whole point of the fix)
+  const o = JSON.parse(r.stdout);
+  assert.deepEqual(Object.keys(o).sort(), ['path', 'phase', 'seeded', 'status']);
+  assert.ok(!r.stdout.includes('A licensing topic'));
+});
+test('seed: refuses an existing bundle unless --force', () => {
+  const p = path.join(tmpDir('mp-seed2-'), 'state.yml');
+  assert.equal(run(['seed', `--state=${p}`, '--slug=x', '--topic=t']).status, 0);
+  const refused = run(['seed', `--state=${p}`, '--slug=x', '--topic=t']);
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /already exists/);
+  assert.equal(run(['seed', `--state=${p}`, '--slug=x', '--topic=t', '--force']).status, 0); // --force overwrites
+});
+test('seed: a missing required flag fails loud', () => {
+  const p = path.join(tmpDir('mp-seed3-'), 'state.yml');
+  assert.equal(run(['seed', `--state=${p}`, '--slug=x']).status, 2); // no --topic -> need() dies (exit 2)
+});
+test('event: appends one JSON line per call to the bundle\'s events.jsonl, accumulating', () => {
+  const p = path.join(tmpDir('mp-event-'), 'state.yml');
+  const ep = path.join(path.dirname(p), 'events.jsonl');
+  const r1 = run(['event', `--state=${p}`, '--type=seeded', '--ts=T1', '--phase=brainstorm']);
+  assert.equal(r1.status, 0);
+  assert.equal(JSON.parse(r1.stdout).path, ep); // events.jsonl is a sibling of state.yml
+  run(['event', `--state=${p}`, '--type=gate_opened', '--ts=T2', '--data={"id":"plan_approval"}']);
+  const lines = fs.readFileSync(ep, 'utf8').trim().split('\n');
+  assert.equal(lines.length, 2);
+  assert.deepEqual(JSON.parse(lines[0]), { type: 'seeded', ts: 'T1', phase: 'brainstorm' });
+  assert.deepEqual(JSON.parse(lines[1]), { type: 'gate_opened', ts: 'T2', data: { id: 'plan_approval' } });
+});
+test('event: rejects non-JSON --data', () => {
+  const p = path.join(tmpDir('mp-event2-'), 'state.yml');
+  const r = run(['event', `--state=${p}`, '--type=x', '--data=not json']);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /must be valid JSON/);
+});
+
 // ---- regression coverage: the three Codex-review findings (2026-05-28) ----
 test('promote-active-run without a phase-1 launching marker is refused (HIGH: no wave-less active_run)', () => {
   const p = tmpBundle(v8()); // active_run: null — no set-active-run was called
