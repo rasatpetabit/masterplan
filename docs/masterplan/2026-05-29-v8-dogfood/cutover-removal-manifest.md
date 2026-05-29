@@ -46,7 +46,7 @@ Table L81/L82/L83. Confirmed: `commands/masterplan.md` references **no** `parts/
 - `parts/step-0.md`, `step-a.md`, `step-b.md`, `step-c-{dispatch,resume,verification,completion}.md` → L1/L2 (table L81)
 - `parts/import.md` → **RESOLVED → DELETE.** The `import` *verb itself survives* (v8 routing table `commands/masterplan.md:136` → `mp migrate-bundle`, implemented `bin/masterplan.mjs:193` + `lib/migrate.mjs`); only the 17.7 KB v7 prose step-file dies. The `skills/import` entry-point shim is KEEP (Tier 3).
 - `parts/.gitkeep` → delete with the tree
-- `parts/contracts/` → dies with `parts/`, **but port-check first** — see the Tier-2 row (TRANSFORM-INCOMPLETE: confirm v8 represents the still-live contract content before deleting).
+- `parts/contracts/` → dies with `parts/`, **but 3 of its 8 files carry pre-delete port-actions** (2 DEFERRED-SPEC port-blockers + 1 thin-slice). Port-check **RESOLVED 2026-05-29** — see the Tier-2 table for the per-file disposition and Tier-4 items 8–11 for the ports that must precede `git rm parts/`.
 
 ### v7 test harness (`tests/` — entire tree, 302 files)
 
@@ -66,21 +66,46 @@ v7 `tests/doctor-fixtures/` block-YAML "tests the deleted doctor".
 
 ---
 
-## Tier 2 — DECISION REQUIRED before delete
+## Tier 2 — RESOLVED (decisions made; ports moved to Tier 4)
 
-> **2026-05-29 — four of the original six Tier-2 items RESOLVED** by a read-only
-> tree investigation (subagent, evidence-cited). The corrected verdicts: the
-> per-verb `skills/` dirs (incl. `stats`, `import`) are **KEEP** — they are
-> *entry-point delegators*, not v7 prose (moved to Tier 3); `skills/masterplan-detect`
-> and `parts/import.md` are **DELETE** (moved to Tier 1). The earlier "the v8 shell
-> references none of them → v7 surface" reasoning was **wrong** (confirmation bias,
-> anti-pattern #5): the skills *call into* the shell, so the shell referencing them
-> back was never expected. **Only the two rows below remain genuinely unresolved.**
+> **2026-05-29 — all six original Tier-2 items RESOLVED.** First four (prior pass):
+> per-verb `skills/` dirs (incl. `stats`, `import`) are **KEEP** entry-point delegators
+> (→ Tier 3); `skills/masterplan-detect` + `parts/import.md` are **DELETE** (→ Tier 1).
+> The earlier "the v8 shell references none of them → v7 surface" reasoning was **wrong**
+> (confirmation bias, anti-pattern #5): the skills *call into* the shell. **Last two
+> (this pass), evidence-cited below:** the `parts/contracts/` port-check is decided
+> per-file, and `Makefile` is decided to TRIM. **No open Tier-2 items remain** — the
+> three surviving port-actions live in Tier 4 (items 8–11), so the cutover is fully
+> mechanical once those run.
 
-| Path / subsystem | Verdict | Open question + evidence |
+**`parts/contracts/` — per-file disposition (port-check complete).** This is
+*operational-prose contracts* — a **different artifact** from the v8
+`commands/masterplan-contracts.md` (a YAML return-shape *registry*), so "it migrated
+to commands/" was always false. The 8 files split three ways. The discriminator (advisor-
+vetted): a file is a **port-blocker** only if **its v8 replacement does not yet exist AND
+it is the sole canonical home of the spec** — otherwise it is DEAD (replacement exists /
+intentional removal) or REPRESENTED (content lives in a surviving artifact).
+
+| File (size) | Verdict | Evidence |
 |---|---|---|
-| `parts/contracts/` (prose-contract dir) | **DELETE-with-`parts/`, but PORT-CHECK first** (TRANSFORM-INCOMPLETE) | This is *operational-prose contracts* — a **different artifact** from the v8 `commands/masterplan-contracts.md` (which is a YAML return-shape *registry*), so "it migrated to commands/" is false. Confirmed-dead members: `taskcreate-projection.md` (plan L86 DIES), `run-bundle.md` (→ `lib/bundle.mjs`), `cd-rules.md` (→ `lib/`). The whole dir dies with the v7 prose orchestrator — **but before `git rm`, verify v8 represents the still-live content of:** `plan-annotations.md` (plan-annotation syntax), `agent-dispatch.md` (dispatch model → check `agents/*.md` + `workflows/execute.workflow.js`), `codex-review.md` (dispatch/parse → check `lib/codex-host.mjs` + `agents/mp-codex-reviewer.md` + `extractVerdict`), `brainstorm-anchor.md`, `coordinator.md`. If any is unported, that's a **v8 gap to fill first**, not just a deletion. (Note `codex-review.md` is referenced by `parts/step-b.md` — but that's a *within-v7* ref; both die together.) |
-| `Makefile` | **TRIM** (not full delete, not full keep) | All 5 targets (`help`, `test`, `test-static`, `test-doctor-fixtures`, `test-python`) wire to the v7 `tests/` tree; **none** invoke the v8 `node:test` suite (that's `npm test` via `package.json`). v7-only targets (`test-python`, `test-doctor-fixtures`, structural) die with `tests/`. The `test-static` format-level checks (manifest-drift, yaml-frontmatter) may still apply. Decision: trim to the surviving subset + add a `test-node` target, **or** delete the Makefile and make `npm test` / `node --test test/` the sole entry point. |
+| `taskcreate-projection.md` (8.4K) | **DEAD** | v8 has no TaskCreate projection layer (plan L86 DIES). |
+| `agent-dispatch.md` (13.2K) | **DEAD** | DISPATCH-SITE / telemetry / per-turn machinery intentionally removed in v8 (CC-3 trampoline gone, `commands/masterplan.md:150`). Model tiers survive in `agents/*.md` frontmatter. |
+| `brainstorm-anchor.md` (5.7K) | **DEAD** | v7 three-Haiku fan-out superseded by `superpowers:brainstorming` delegation (`commands/masterplan.md:133`); the anchor *extraction* behavior survives as `coordinator-brainstorm-anchor-v1` (`masterplan-contracts.md:367-382`, full anchor schema). |
+| `coordinator.md` (2.2K) | **REPRESENTED → safe-delete** | the 5 coordinator contracts live in `commands/masterplan-contracts.md:367-458`. |
+| `run-bundle.md` (10.8K) | **REPRESENTED → safe-delete** | schema → `lib/bundle.mjs`; `plan.index.json` → `agents/mp-planner.md` + `lib/routing.mjs` + `bin/masterplan.mjs`; scalar-cap → `lib/doctor/scalar-cap.mjs`. |
+| `plan-annotations.md` (2.9K) | **⚠ PORT-BLOCKER (DEFERRED-SPEC)** | **sole** home of the Step-B2 *writing-plans brief* (Codex/parallel-group/verify-pattern/skip directives, complexity-aware brief, `### Task <N>:` + `**Codex:**` plan-format markers). `masterplan-contracts.md:139` only **name-drops** the directives; `mp-planner.md` has the `plan.index.json` *output* schema, not this *input* brief. Needed by the step-7 `plan` verb (`commands/masterplan.md:133` "[lifecycle wiring = step 7]", **not yet built**). → **Tier-4 #8.** |
+| `cd-rules.md` (2.9K) | **⚠ PORT-BLOCKER (DEFERRED-SPEC)** | **sole** canonical home of the CD-1…CD-10 *body* definitions. `docs/internals.md:15` only **cites** "CD-7" in a table row — it does not define them. `CD-N` is cited across **live v8 code** (CLAUDE.md, `agents/*.md`, `commands/masterplan.md`, `workflows/execute.workflow.js`), so deleting this dangles every citation **immediately** (not at step-7). → **Tier-4 #9 (mandatory pre-delete port).** |
+| `codex-review.md` (10.6K) | **DEAD except a thin slice → verify-action** | the JSON `{verdict,findings[]}` parse contract + dispatch mechanism are superseded by `agents/mp-codex-reviewer.md` (CD-10 severity-first text shape, `verdict: blocking\|advisory\|clean\|inconclusive`). **But** the six B2/B3 review *dimensions* (`completeness/correctness/security/consistency/naming/scope`, `codex-review.md:64`) are **not** carried in `mp-codex-reviewer.md` (which holds only the output shape + Codex-CLI invocation + fail rule). Those dimensions are step-7 spec/plan-review spec. → **Tier-4 #10.** |
+
+**`Makefile` — TRIM (resolved).** Keep `make test` → `npm test` (the v8 `node --test
+test/*.test.mjs` gate, 239/239 green) and `make help`; **delete** the four v7-coupled
+targets (`test-static`, `test-doctor-fixtures`, `test-python`, `test-e2e`), all of which
+wire to the dying `tests/` tree. The still-relevant `test-static` checks are **already
+covered by `npm test`**: `test/publish-hygiene.test.mjs` Guard 2 (lines 118-133) is the
+LIVE cross-manifest **version-sync** gate and Guard 3 (170-177) the **namespace/verb-router**
+gate. (v7 `test-static` also did a frontmatter-`description:` table sync against the v7
+prose verb table; that table is gone in the thin v8 shell — no v8 gap, but the namespace
+guard already polices the surviving verb router.) → **Tier-4 #11.**
 
 ---
 
@@ -106,13 +131,22 @@ v7 `tests/doctor-fixtures/` block-YAML "tests the deleted doctor".
 4. **`CHANGELOG.md`** v8.0.0 entry (the clean-core rebuild — link the plan + this bundle).
 5. **Doc rewrites (stale-architecture — REQUIRED).** Both the project `CLAUDE.md` and `README.md` currently document the **v7 surface as current**: `CLAUDE.md`'s "What this codebase IS" lists `hooks/masterplan-telemetry.sh`, `bin/masterplan-state.sh`, `skills/masterplan-detect/SKILL.md`, and "a single ~2150-line markdown orchestrator at `commands/masterplan.md`" with "no code in the conventional sense / tests are grep + bash -n" — all false post-cutover (v8 is Node-primary `lib/*.mjs` + `node:test`, the orchestrator is a thin shell, telemetry/state.sh are deleted). Rewrite "What this codebase IS", "Where to read first", "Build/test/lint" (→ `npm test` / `node --test test/`), and the anti-patterns to the 5-layer v8 architecture. README's install/usage/architecture prose likewise. (`docs/internals.md` is the v8 source-of-truth to pull from.)
 6. **Pre-merge gate:** `node --test test/` fully green **and** the publish-hygiene guard (`test/publish-hygiene.test.mjs`: fixture-identifier scan, cross-manifest version sync, namespace collision) green.
-7. **The merge itself** (`masterplan-ng` → `main`) — the user-gated cutover. After it, the shipped `/masterplan` becomes v8; the v7 surface is gone from `main`.
+7. **Tag the pre-cutover HEAD** as `v7.2.3-final` (or `pre-v8-cutover`) **before any `git rm`**, so every deleted v7 artifact — including any un-ported `parts/contracts/` spec — stays recoverable. This is the safety net that makes "recover-from-tag" a real fallback for the DEFERRED-SPEC ports below.
+8. **Port `plan-annotations.md` (Step-B2 writing-plans brief)** → `agents/mp-planner.md` (or `docs/conventions/plan-annotations.md`) **before `git rm parts/contracts/`**. The step-7 `plan` verb that consumes it is unbuilt, so both port-now and recover-from-tag (item 7) are defensible — **port recommended** (~3K brief; cheaper than re-deriving from a tag when step-7 lands).
+9. **Port `cd-rules.md` (CD-1…CD-10 bodies)** → `docs/internals.md` (or `docs/conventions/cd-rules.md`), **preserving the `CD-N` IDs**, before `git rm parts/contracts/`. **Mandatory, not deferrable** — live v8 code cites `CD-N` *today*, so deletion dangles those citations immediately (not at step-7). Re-run the item-1 reference scrub against the new home.
+10. **Port `codex-review.md` six review dimensions** (`completeness/correctness/security/consistency/naming/scope`) → the step-7 spec/plan-review brief (`mp-planner.md` or `docs/conventions/`), since `mp-codex-reviewer.md` carries only the output shape. Step-7 territory → **port-recommended, tag-recoverable** (item 7).
+11. **Trim the `Makefile`** — keep `test` → `npm test` + `help`; delete `test-static`, `test-doctor-fixtures`, `test-python`, `test-e2e` (their still-relevant checks — version-sync, namespace — are already in `test/publish-hygiene.test.mjs`).
+12. **The merge itself** (`masterplan-ng` → `main`) — the user-gated cutover. After it, the shipped `/masterplan` becomes v8; the v7 surface is gone from `main`.
 
 ---
 
 ## Sequencing recap
 
 `fresh-session true-parity run` ([`parity-runbook.md`](./parity-runbook.md)) **→** then this
-cutover (Tiers 1–4) **→** merge to `main`. All of it **user-gated**; do not start
-the cutover unprompted. The telemetry-hook deletion (Tier 1, row 1) is already
-**decided** (gate closed) but executes here, with the rest of the surface, as one diff.
+cutover: **tag HEAD (Tier-4 #7) → ports (#8–#10, #9 mandatory) → `git rm` Tier-1/2 +
+reference scrub (#1) → version/doc/Makefile (#3–#5, #11) → pre-merge gate (#6) → merge
+(#12)**. All of it **user-gated**; do not start the cutover unprompted. The telemetry-hook
+deletion (Tier 1, row 1) is already **decided** (gate closed) but executes here, with the
+rest of the surface, as one diff. With the two port-blockers (`plan-annotations`,
+`cd-rules`) and the one thin-slice (`codex-review` dimensions) now captured as explicit
+pre-delete ports, **no analysis remains — the cutover is fully mechanical.**
