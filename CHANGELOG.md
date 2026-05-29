@@ -317,7 +317,7 @@ Patch release. Pre-publication finalization for plugin distribution from arbitra
 ### Fixed
 
 - **Hardcoded developer-path leaks (3 docs files):** `docs/internals.md` and `parts/failure-classes.md` carried literal `~/.claude/projects/-home-ras-dev-masterplan/hook-errors.log` examples; replaced with a `<slugified-worktree>` placeholder + one-line explanation matching the actual hook behavior at `hooks/masterplan-telemetry.sh:571`. `README.md` "Optional Telemetry Hook" section restored from collateral stripping (prior refactor left it as a comment-only JSON block).
-- **`AGENTS.md`** — dropped private-repo refs (`~/dev/petabit-handbook/*`); now generically points at `CLAUDE.md` + optional org-wide guide.
+- **`AGENTS.md`** — dropped private-repo refs (a sibling repo's docs glob); now generically points at `CLAUDE.md` + optional org-wide guide.
 - **Python `~/dev` defaults:** `lib/masterplan_session_audit.py` and `lib/masterplan_wipe_telemetry.py` derived `MASTERPLAN_REPO_ROOTS` from `~/dev`; both now derive from `Path(__file__).resolve().parent.parent.parent` so discovery works without assuming the developer's home layout.
 - **Hostname leaks:** `epyc1`/`epyc2` references in `docs/internals.md` and two `docs/masterplan/` bundles generalized to "one host" / "every host that has the plugin installed".
 - **`pending_gate_orphaned` false positive on YAML-cleared gates** (`lib/masterplan_session_audit.py`). Sentinel values `null`, `~`, `[]`, `{}` are now treated as "no gate" regardless of staleness.
@@ -936,7 +936,7 @@ Doctor lint-only runs with auto-fixable findings now close with an AUQ offering 
 
 ## [2.14.1] — 2026-05-07 — Step I1 brief tightening: filter symbolic `refs/remotes/<remote>/HEAD` by full refname
 
-Follow-up to v2.14.0 issue #3, surfaced by smoke-testing against `petabit-os-mgmt`. Fix: `git for-each-ref --format='%(refname:short)'` renders `refs/remotes/origin/HEAD` as bare `origin`, not catchable by `grep -v HEAD`. New brief uses `--format='%(refname)|%(refname:short)'` and filters on full refname (drop lines ending in `/HEAD`), use short name for display.
+Follow-up to v2.14.0 issue #3, surfaced by smoke-testing against a sibling project. Fix: `git for-each-ref --format='%(refname:short)'` renders `refs/remotes/origin/HEAD` as bare `origin`, not catchable by `grep -v HEAD`. New brief uses `--format='%(refname)|%(refname:short)'` and filters on full refname (drop lines ending in `/HEAD`), use short name for display.
 
 ## [2.14.0] — 2026-05-07 — Step I1 ref enumeration fix + doctor `--fix` actionability (cache rebuild, stray-orphan rm, no-fix diagnostic)
 
@@ -948,7 +948,7 @@ Fix: marketplace installer deployed to `~/.claude/plugins/marketplaces/.../comma
 
 ## [2.13.0] — 2026-05-06 — CC-2 threshold tightening + CC-3-TRAMPOLINE close-turn discipline + stats `--plan` slug fix
 
-Fix: `stats --plan=<bare-slug>` returned zero records because on-disk filenames have `YYYY-MM-DD-` prefix; `bin/masterplan-routing-stats.sh` now falls back to date-prefix-stripped match. CC-2 thresholds tightened: Bash output 100→50 lines, file-read 300→50, plus two new triggers (coordinated ≥2-file edits, cumulative >5 inline Edits per file) to catch inline Opus token burn not covered by the v2.12.0 subagent passthrough fix. CC-3-TRAMPOLINE: new ~20-line rule standardizes every turn-close site through a 3-step sequence (dispatch summary → pre-close action → closer); 19 sites converted to `→ CLOSE-TURN` convention. (Fix originally landed as commit `24e6546d` in petabit-os-mgmt; promoted to HEAD here.)
+Fix: `stats --plan=<bare-slug>` returned zero records because on-disk filenames have `YYYY-MM-DD-` prefix; `bin/masterplan-routing-stats.sh` now falls back to date-prefix-stripped match. CC-2 thresholds tightened: Bash output 100→50 lines, file-read 300→50, plus two new triggers (coordinated ≥2-file edits, cumulative >5 inline Edits per file) to catch inline Opus token burn not covered by the v2.12.0 subagent passthrough fix. CC-3-TRAMPOLINE: new ~20-line rule standardizes every turn-close site through a 3-step sequence (dispatch summary → pre-close action → closer); 19 sites converted to `→ CLOSE-TURN` convention. (Fix originally landed in a sibling project as commit `24e6546d`; promoted to HEAD here.)
 
 ## [2.12.0] — 2026-05-06 — per-turn subagent summary + model attribution enforcement
 
