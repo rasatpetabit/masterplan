@@ -51,7 +51,7 @@ The spine. It NEVER decides in prose — it asks `mp decide` and executes the re
    `AskUserQuestion` picker; none → there is no active run (route by verb, or offer to start one).
 2. **Migrate-on-load if legacy.** Run `mp migrate-bundle --state=<path>`. If it reports
    `migrated:true`, the tasks now carry `wave:null` — ensure a `plan.index.json` exists (re-parse
-   `plan.md` via the `masterplan:mp-planner` / `masterplan:mp-explorer` agent if it's missing), then
+   `plan.md` via the `masterplan:mp-planner` agent if it's missing), then
    `mp backfill-waves --state=<path> --plan-index=<path>` so every task carries a real wave.
 3. **Probe liveness.** If `state.active_run` has a `task_id`, check that run with `TaskGet(task_id)`:
    still running → pass `--alive` in the next step. (A phase-1 `launching` marker has no `task_id` —
