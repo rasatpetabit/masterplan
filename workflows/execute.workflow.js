@@ -55,7 +55,8 @@ const baseline = Array.isArray(A.baseline) ? A.baseline : []; // git-touched set
 const repoRoot = A.repoRoot ?? '(launch cwd)';
 const reviewOn = (A.review ?? 'off') === 'on';
 
-// DOGFOOD SEAM (uncommitted; parity-dogfood step 8). The engine hardcodes the `masterplan:` agentType
+// DOGFOOD SEAM (committed 561f348 as a prod-inert testability hook; exercised by the parity-dogfood
+// wave-2 run, 2026-05-29 — general-purpose+sonnet implementer, codex:codex-rescue reviewer). The engine hardcodes the `masterplan:` agentType
 // prefix, which only resolves when the dev plugin is installed — so the L2 engine cannot run in an
 // uninstalled dev worktree as-is. To dogfood it, L1 may inject a resolvable agentType + an explicit
 // model. Production NEVER sets these args, so the defaults reproduce shipping behavior byte-for-byte:
