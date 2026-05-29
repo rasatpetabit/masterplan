@@ -1,5 +1,19 @@
 # WORKLOG
 
+## 2026-05-28 — v8 (masterplan-ng): step 5 (doctor L4) STARTED — dispatcher + first 3-module slice (suite 146/146)
+
+Began the L4 doctor port. Built the load-bearing **contract + dispatcher** plus a 3-module slice chosen to prove all three `opts` shapes at once; the remaining 7 modules are a batched port (next).
+
+**Contract (advisor-pressure-tested, settled here):** each `lib/doctor/<name>.mjs` exports a **synchronous** `check(repoRoot, opts) -> Finding[]`, `Finding = {id, severity: 'PASS'|'WARN'|'ERROR'|'SKIP', summary, fix}`. The decisive change from the orientation sketch: **`Finding[]`, not a singular `{severity,fix}`** — `worktree-integrity` alone scans N bundles × {worktree, branch} with distinct fixes; collapsing would gut actionable remediation. A module **owns its scope** (plan-scoped globs `docs/masterplan/*` internally; user-scoped ignores `repoRoot`, reads host paths via `opts`), always returns **≥1 finding** (PASS clean / SKIP n/a), and `opts` is the testability seam (`homeDir` / `gitExec`+`repoRoot` / `now`). **`SKIP` is first-class** (codex-absent, not-a-git-repo, no bundles) — the doctor runs anywhere.
+
+**`bin/doctor.mjs`** (was a stub): discover `lib/doctor/*.mjs` → run each **crash-isolated** (a throw → one synthesized ERROR; a single buggy check can never abort the run) → flatten → print → exit non-zero **iff any ERROR** (WARN/SKIP → exit 0). An unknown severity is forced to ERROR (fail loud).
+
+**Slice (3 of ~10), each a distinct opts shape:** `scalar-cap` (#32, pure-bundle, no opts), `worktree-integrity` (#3/#4/#29(a), git via injected `gitExec`), `codex-auth` (#39, host path + injected `homeDir`/`now`). Reused `resolveRunsDir`/`bundleArtifacts`/`parseState` from the lib layer (dogfood the canonical reader). **#29(b)/#48 orphan-untracked-worktree deliberately NOT ported** — it false-positives on every ordinary worktree incl. masterplan-ng's own (why v7 bash only did the missing half); we flag bundle→git drift, never git→bundle.
+
+**FIXTURE DEVIATION from the approved plan (surfaced, not silent):** the plan says "reuse `tests/doctor-fixtures/`", but that set is v7 block-YAML (`schema_version: 3`) testing the v7 doctor being deleted. New v8 root `test/fixtures/doctor/<check>/<scenario>/`; scenario dir-prefix (`pass-/warn-/error-/skip-`) encodes expected worst-severity (replaces the v7 `expected.txt` substring harness). Flat-compatible v7 fixtures (check-32, check-39 data) copied into the v8 root; the rest authored fresh. The v7 `tests/doctor-fixtures/run.sh` harness is left to die with the v7 doctor.
+
+**Verification.** New `test/doctor.test.mjs` (22 tests: dispatcher crash-isolation/exit-codes/discovery + all 3 modules fixture-driven + SKIP edge cases) → full suite **146/146** (was 124). **End-to-end `node bin/doctor.mjs .` against the live worktree** found a *real* WARN (`concurrency-guards` bundle's 281-char `worktree_decision_note`) and PASSed worktree-integrity **without** false-positiving on this worktree — confirming both that it works on real data and that the #29(b) scope call was right. `main` untouched. Next: batched Sonnet port of the 7 remaining modules (`state-schema` #9+#10-folded minimal, `legacy-bundle` #1, `codex-plugin-presence` #18, `index-staleness` #34, `stale-lock` #42, `stale-codex-task` #49, `plugin-registry-drift` #50) + fresh-eyes review (anti-pattern #5).
+
 ## 2026-05-28 — v8 (masterplan-ng): R2b (codex watcher-harness) RESOLVED by construction — analysis turn, no code
 
 The user picked "R2b — codex watcher-harness" as the next build item. Investigation (advisor-pressure-tested) found the runtime path is **already R2b-safe by construction**, so the honest deliverable is to *record that* + flag the one cross-project residual, NOT build a detached watcher (which would be regressive — it re-adds the machinery v8 deletes).

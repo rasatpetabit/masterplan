@@ -1,0 +1,6 @@
+slug: p1
+status: in-progress
+phase: building
+worktree: /repo/.worktrees/gone
+branch: ghost
+worktree_disposition: removed_after_merge
