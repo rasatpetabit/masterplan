@@ -69,3 +69,14 @@ legacy/
 !test/fixtures/**/.claude-plugin/
 !test/fixtures/**/auth.json
 !test/fixtures/**
+# Re-ignore secret-file globs that the catch-all above would otherwise re-admit.
+# auth.json is intentionally NOT listed here — the !test/fixtures/**/auth.json
+# negation above keeps codex-auth fixtures tracked.
+test/fixtures/**/.env
+test/fixtures/**/.env.*
+test/fixtures/**/*.key
+test/fixtures/**/*.pem
+test/fixtures/**/*.p12
+test/fixtures/**/*.pfx
+test/fixtures/**/id_rsa
+test/fixtures/**/id_ed25519

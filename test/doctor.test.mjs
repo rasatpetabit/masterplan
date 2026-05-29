@@ -108,6 +108,7 @@ test('scalar-cap: fixtures match dir-prefix severity', async (t) => {
 test('scalar-cap: SKIP when there are no run bundles', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-scalar-'));
   const findings = scalarCap(tmp);
+  assertFindingShape(findings);
   assert.equal(maxSeverity(findings), 'SKIP');
 });
 
@@ -126,13 +127,16 @@ test('worktree-integrity: fixtures match dir-prefix severity (stubbed git)', asy
 test('worktree-integrity: SKIP when git is unavailable', () => {
   const root = path.join(FX, 'worktree-integrity', 'pass-registered');
   const findings = worktreeIntegrity(root, { gitExec: () => { throw new Error('not a git repository'); } });
+  assertFindingShape(findings);
   assert.equal(maxSeverity(findings), 'SKIP');
   assert.match(findings[0].summary, /git unavailable/);
 });
 
 test('worktree-integrity: SKIP when there are no run bundles', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-wt-'));
-  assert.equal(maxSeverity(worktreeIntegrity(tmp, { gitExec: GIT_STUB })), 'SKIP');
+  const findings = worktreeIntegrity(tmp, { gitExec: GIT_STUB });
+  assertFindingShape(findings);
+  assert.equal(maxSeverity(findings), 'SKIP');
 });
 
 // ---- codex-auth (host path + injected homeDir/now) ---------------------------
@@ -204,12 +208,22 @@ test('legacy-bundle: SKIP when no bundles and no docs/superpowers', () => {
   assert.equal(maxSeverity(findings), 'SKIP');
 });
 
-test('legacy-bundle: WARN for docs/superpowers even when no bundle slugs', () => {
+test('legacy-bundle: WARN when docs/superpowers contains actual artifacts (no bundle slugs)', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-lb-sp-'));
-  fs.mkdirSync(path.join(tmp, 'docs', 'superpowers', 'old'), { recursive: true });
+  fs.mkdirSync(path.join(tmp, 'docs', 'superpowers', 'plans'), { recursive: true });
+  fs.writeFileSync(path.join(tmp, 'docs', 'superpowers', 'plans', 'foo.md'), '# legacy artifact');
   const findings = legacyBundle(tmp);
   assertFindingShape(findings);
   assert.equal(maxSeverity(findings), 'WARN');
+});
+
+test('legacy-bundle: no WARN when docs/superpowers is empty container (no bundle slugs)', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-lb-sp-empty-'));
+  fs.mkdirSync(path.join(tmp, 'docs', 'superpowers', 'old'), { recursive: true });
+  const findings = legacyBundle(tmp);
+  assertFindingShape(findings);
+  assert.ok(!findings.some((f) => f.severity === 'WARN' || f.severity === 'ERROR'),
+    'empty docs/superpowers container must not produce WARN or ERROR');
 });
 
 // ---- codex-plugin-presence (hybrid: plan-scoped + host-path) ----------------
