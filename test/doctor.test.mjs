@@ -189,6 +189,18 @@ test('state-schema: legacy bundle (schema_version < 6) is silently skipped (not 
   assert.equal(maxSeverity(findings), 'PASS', 'silent-skip of legacy bundle leaves all-pass result');
 });
 
+test('state-schema: WARN (not silent skip) for a slug dir missing state.yml (Codex #4)', () => {
+  // A slug dir with no readable state.yml is an orphan/incomplete bundle. Previously skipped
+  // silently → an all-orphan docs/masterplan falsely returned PASS. Now it must WARN (exit 0).
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-ss-orphan-'));
+  fs.mkdirSync(path.join(tmp, 'docs', 'masterplan', 'orphan-slug'), { recursive: true });
+  fs.writeFileSync(path.join(tmp, 'docs', 'masterplan', 'orphan-slug', 'plan.md'), '# Plan\n');
+  const findings = stateSchema(tmp);
+  assertFindingShape(findings);
+  assert.equal(maxSeverity(findings), 'WARN', JSON.stringify(findings));
+  assert.match(findings[0].summary, /state\.yml is missing or unreadable/);
+});
+
 // ---- legacy-bundle (#1, WARN) ------------------------------------------------
 
 test('legacy-bundle: fixtures match dir-prefix severity', async (t) => {
@@ -404,6 +416,59 @@ test('plugin-registry-drift: SKIP when masterplan entry absent from registry', (
   const findings = pluginRegistryDrift('/unused', { homeDir: tmp });
   assertFindingShape(findings);
   assert.equal(maxSeverity(findings), 'SKIP');
+});
+
+// ---- plugin-registry-drift: same-version stale cache (Codex #1, injected gitExec) -----------
+// The pass-match fixture has installed.version === marketplace.version === 7.2.3 and records
+// gitCommitSha 'def5678'. With versions equal, the gitCommitSha-vs-HEAD compare decides. The
+// auto-discovery harness above passes no gitExec, so these paths are only reachable inline.
+
+const PRD_MATCH_HOME = path.join(FX, 'plugin-registry-drift', 'pass-match', 'home');
+
+test('plugin-registry-drift: PASS when versions match and installed sha == marketplace HEAD', () => {
+  const findings = pluginRegistryDrift('/unused', { homeDir: PRD_MATCH_HOME, gitExec: () => 'def5678' });
+  assertFindingShape(findings);
+  assert.equal(maxSeverity(findings), 'PASS', JSON.stringify(findings));
+});
+
+test('plugin-registry-drift: WARN when versions match but installed sha != marketplace HEAD (stale cache)', () => {
+  const findings = pluginRegistryDrift('/unused', {
+    homeDir: PRD_MATCH_HOME,
+    gitExec: () => 'fed8765aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+  });
+  assertFindingShape(findings);
+  assert.equal(maxSeverity(findings), 'WARN', JSON.stringify(findings));
+  assert.match(findings[0].summary, /stale/);
+});
+
+test('plugin-registry-drift: PASS (graceful) when git HEAD is unavailable', () => {
+  // gitExec returns null (no .git / git absent) → fall through to version-only match.
+  const findings = pluginRegistryDrift('/unused', { homeDir: PRD_MATCH_HOME, gitExec: () => null });
+  assertFindingShape(findings);
+  assert.equal(maxSeverity(findings), 'PASS', JSON.stringify(findings));
+});
+
+test('plugin-registry-drift: PASS (graceful) when gitExec throws', () => {
+  const findings = pluginRegistryDrift('/unused', {
+    homeDir: PRD_MATCH_HOME,
+    gitExec: () => { throw new Error('not a git repository'); },
+  });
+  assertFindingShape(findings);
+  assert.equal(maxSeverity(findings), 'PASS', JSON.stringify(findings));
+});
+
+test('plugin-registry-drift: PASS when entry has no gitCommitSha (nothing to compare)', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-prd-nosha-'));
+  const pluginsDir = path.join(tmp, '.claude', 'plugins');
+  const mktDir = path.join(pluginsDir, 'marketplaces', 'rasatpetabit-masterplan', '.claude-plugin');
+  fs.mkdirSync(mktDir, { recursive: true });
+  fs.writeFileSync(path.join(pluginsDir, 'installed_plugins.json'),
+    JSON.stringify({ plugins: { 'masterplan@rasatpetabit-masterplan': [{ version: '7.2.3' }] } }));
+  fs.writeFileSync(path.join(mktDir, 'plugin.json'), JSON.stringify({ name: 'masterplan', version: '7.2.3' }));
+  // gitExec returns a sha, but the recorded sha is absent → no compare → PASS.
+  const findings = pluginRegistryDrift('/unused', { homeDir: tmp, gitExec: () => 'anysha123' });
+  assertFindingShape(findings);
+  assert.equal(maxSeverity(findings), 'PASS', JSON.stringify(findings));
 });
 
 // ---- dispatcher: all 10 modules auto-discovered ----------------------------
