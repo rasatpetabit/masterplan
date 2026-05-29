@@ -1,131 +1,100 @@
 ---
-description: Lazy-loading orchestrator router for /masterplan. Dispatches verbs to parts/step-{0,a,b,c}.md and parts/{doctor,import}.md.
+description: "Resumable orchestrator for /masterplan: brainstorm→plan→execute on durable run bundles. Verbs: full, brainstorm, plan, execute, retro, import, doctor, status, validate, stats, clean, next, verbs."
 ---
 
-# /masterplan Router (v5.0)
+# /masterplan — thin resumable shell (v8)
 
-> v5.0 router. Phase content lives in parts/. Doctor lives in parts/doctor.md. Contracts in parts/contracts/.
+> v8 clean-core. The DECISIONS live in `lib/*.mjs` behind `bin/masterplan.mjs` (deterministic,
+> zero-LLM-token, unit-tested) — this shell only **sequences**. Durable state lives in
+> `docs/masterplan/<slug>/` (`state.yml` is the source of truth). CD-7: the shell is the SOLE
+> state writer, via `bin`; never hand-edit `state.yml`. Work goes to dedicated agents
+> (`agents/*.md`), the L2 Workflow engine (`workflows/execute.workflow.js`), and `superpowers`
+> skills — never run substantive work inline in this context (it holds sequencing state only).
 
-## CC-1 — Arg-lock guard
+Throughout, **`mp`** denotes `node "${CLAUDE_PLUGIN_ROOT}/bin/masterplan.mjs"`. Every decision and
+every state write goes through it. It is fs-only — **git (commit, and the recover-path
+`git checkout`) is this shell's job, not `bin`'s.** Results print as JSON on stdout; on a non-zero
+exit, read stderr and act on it.
 
-**Verb tokens are reserved.** Any topic literally named `full`, `brainstorm`, `plan`, `execute`, `retro`, `import`, `doctor`, `status`, `stats`, `clean`, `validate`, or `next` requires another word in front via the catch-all (for example, `/masterplan add brainstorm session timer`).
+## 0 — Boot (every invocation, unconditional)
 
-**Argument-parse precedence (in parts/step-0.md, after config + git_state cache):**
-0. If invoked with no args (zero tokens after the command name): route to the resume-first controller in `parts/step-0.md` (Step M0).
-1. Match the first token against `{full, brainstorm, plan, execute, retro, import, doctor, status, stats, clean, validate, next}`. On match: set `requested_verb = <matched-verb>`, set `halt_mode` per the routing table in `parts/step-0.md`, consume the verb, and pass remaining args to the route in the dispatch table below.
-2. If unmatched and the first arg starts with `--`: load `parts/step-0.md` and let bootstrap resolve flag-only behavior (notably `--resume=<path>` / `--resume <path>`, which alias to `execute <path>`).
-3. If unmatched and the first arg is a non-flag word: treat the full arg string as the topic and route to Step B via `parts/step-0.md` (back-compat catch-all).
+1. **Version banner — FIRST, before anything else**, even on a compaction-resume / `invoked_skills`
+   re-injection (it is the lone CC-2 survivor; build NO enforcement/telemetry apparatus around it):
+   run `mp version --args="<verbatim $ARGUMENTS, or empty>" --cwd="<repo root or pwd>"` and print the
+   single line it returns.
+2. **Host detect.** Run `mp detect-host` with the signals you can observe (`--agent-is-codex` if the
+   session identifies the agent as Codex, `--native-tools` if Codex-native tools like `apply_patch`/
+   `update_plan` are exposed, `--agents-md` if an `AGENTS.md` is present). If the result's
+   `suppressRescue` is true, do NOT dispatch the `codex:codex-rescue` companion anywhere this
+   invocation (it would recurse — Codex calling Codex). Persisted `codex.routing`/`codex.review` are
+   unaffected.
 
-## CC-2 — Boot banner
+## 1 — Parse the verb
 
-Emit ONE plain-text line before anything else (first output of every turn).
+Reserved verbs: `full, brainstorm, plan, execute, retro, import, doctor, status, validate, stats,
+clean, next, verbs`. Precedence:
 
-**Step 1.** Use the **Read tool** (mandatory — do not skip, paraphrase, or infer from memory) to load `.claude-plugin/plugin.json` from the first readable candidate:
+0. **No args** → the **resume controller** (§2).
+1. First token is a reserved verb → that verb; consume it, the rest are its args.
+2. First arg starts with `--` → `--resume=<path>` / `--resume <path>` alias `execute <path>`;
+   other `--flags` are config overrides.
+3. Otherwise → treat the whole arg string as a **brainstorm topic** (catch-all).
 
-1. `~/.claude/plugins/marketplaces/rasatpetabit-masterplan/.claude-plugin/plugin.json` — canonical installed location
-2. `<cwd>/.claude-plugin/plugin.json` — dev checkout
-3. `~/.claude/plugins/cache/rasatpetabit-masterplan/masterplan/<latest-version>/.claude-plugin/plugin.json` — last resort; glob highest semver
+A topic literally named after a reserved verb needs a word in front (`/masterplan add plan timer`).
 
-**Step 2.** Emit: `-> /masterplan v<semver> args: '<args-or-(empty)>' cwd: <repo-root-or-pwd>`. Substitute actual values; `(empty)` when no args. Truncate args at 120 chars; total sentinel ≤200 chars. Plain stdout, NOT inside AskUserQuestion/tool call/CC-3-trampoline.
+## 2 — Resume controller (bare entry, `execute`, and after every durable transition)
 
-**Fallback (ALL three Read attempts fail):** render `vUNKNOWN`. No other fallback permitted.
+The spine. It NEVER decides in prose — it asks `mp decide` and executes the returned action.
 
-**Strict prohibitions.** Version slot must be parsed semver or literal `vUNKNOWN`. Never emit: any placeholder (`v?`, `vTBD`, etc.); the template token `v<version-from-plugin.json>` itself (angle brackets = you skipped the Read); a semver from session memory — always Read fresh.
+1. **Locate the bundle.** `execute <path>` → that `state.yml`. Else discover
+   `docs/masterplan/*/state.yml` whose status is not archived: exactly one → use it; several → an
+   `AskUserQuestion` picker; none → there is no active run (route by verb, or offer to start one).
+2. **Migrate-on-load if legacy.** Run `mp migrate-bundle --state=<path>`. If it reports
+   `migrated:true`, the tasks now carry `wave:null` — ensure a `plan.index.json` exists (re-parse
+   `plan.md` via the `masterplan:mp-planner` / `masterplan:mp-explorer` agent if it's missing), then
+   `mp backfill-waves --state=<path> --plan-index=<path>` so every task carries a real wave.
+3. **Probe liveness.** If `state.active_run` has a `task_id`, check that run with `TaskGet(task_id)`:
+   still running → pass `--alive` in the next step. (A phase-1 `launching` marker has no `task_id` —
+   skip the probe; `decide` treats it as crashed-in-launch.)
+4. **Decide.** `mp decide --state=<path> [--alive]` → an action JSON. If it exits non-zero citing
+   "backfill waves", the bundle wasn't backfilled — return to step 2.
+5. **Execute the action.** After `finalize_run`, loop back to step 4 (re-decide); `dispatch_wave` /
+   `recover_and_redispatch` end by awaiting a launched run; `wait` / `surface_gate` / `complete` close.
 
-**Compaction-resume / `invoked_skills` re-injection — CRITICAL.** Production telemetry (83% miss rate on compaction-resume turns) confirms the most common CC-2 failure is skipping Steps 1–2 on compaction-resume turns. An `invoked_skills` re-injection after a context rollover or ctrl+O compact is a full re-invocation. The sentinel is unconditional — emit it BEFORE resuming any in-progress task, even when the plan state is already loaded in context and the next action is known. A missing sentinel on a compaction-resume turn is a CC-2 violation; it must be treated the same as a missing sentinel on a fresh invocation. See `parts/step-0.md §Invocation sentinel` for the full compaction-resume prohibition.
+   | action | do |
+   |---|---|
+   | `surface_gate` | Re-render the gate's `AskUserQuestion` (CD-9). A named option → act, `mp clear-gate`, commit, re-decide. Free-text / no clear answer → keep the gate, respond, close. NEVER auto-proceed regardless of autonomy (the durable marker outranks a native AUQ that can't survive compaction). |
+   | `wait` | A live run owns the wave. Report it and close — the Workflow completion notification re-invokes this controller. |
+   | `finalize_run` | The wave's tasks are all `done` on disk. `mp clear-active-run`, commit, then re-decide (→ next wave, or `complete`). |
+   | `recover_and_redispatch` | Crash recovery. If `staleTaskId` ≠ null: `TaskList` → `TaskStop` any surviving run for it (a backgrounded Workflow MAY outlive session death — reconcile before touching files). Then RESET scope: `git checkout -- <resetPaths>` and `git clean -fd` any new paths. Then dispatch the wave (below). Idempotent — agents never commit. |
+   | `dispatch_wave` | `mp set-active-run --wave=N` (phase-1 marker, written BEFORE launch) → launch the L2 engine for these tasks → `mp promote-active-run --run-id=… --task-id=…` (phase-2). Close to await completion. **[L2 launch = step 4 (`workflows/execute.workflow.js`). Until wired: dispatch each task inline (`masterplan:mp-implementer`), `mp mark-task --state=<path> --id=… --status=done` per success, commit, re-decide.]** |
+   | `complete` | All tasks done → completion: write `retro.md`, archive the bundle, commit. |
 
-**Step 3 — Codex health indicator (v5.1.1+, v5.2.3+).** Conditional second sentinel line, emitted ONLY when Codex routing/review is configured on AND `~/.codex/auth.json` shows actual auth degradation.
+6. **CD-7 commit discipline.** Each durable change = a `mp` write (atomic) FOLLOWED BY a `git commit`
+   of the bundle. A crash between write and commit is safe — `state.yml` leads, resume re-commits.
+   Wave members (agents / the L2 engine) return digests only; they NEVER write `state.yml` or commit,
+   which is exactly what makes re-dispatch idempotent.
 
-1. **Skip gate.** If `codex.routing == off` AND `codex.review == off`, emit nothing.
-2. **Read auth file.** Read `~/.codex/auth.json`; if absent, emit nothing.
-3. **Cosmetic-shape early-exit.** If `auth_mode == "chatgpt"` AND `tokens.refresh_token` non-empty, emit nothing — skip steps 4 and 5 entirely. ChatGPT auto-refreshes `id_token` on every Codex invocation; neither `id_token.exp` nor `last_refresh` age is a meaningful health signal for this mode. (`schema_v3+`: tokens under `.tokens.*`; jq fallback in step 4 handles both.)
-4. **Decode JWT exp claims.** For each of `id_token` and `access_token`: `jq -r ".tokens.$f // .$f // empty" ~/.codex/auth.json | cut -d. -f2 | base64 -d 2>/dev/null | jq -r .exp`. On decode error, treat as unknown.
-5. **Compare to now.** `now="$(date +%s)"`. Expired when `now > exp`.
-6. **Emit.** When ≥1 token expired: `↳ Codex: degraded (id_token expired Nd ago, access_token expired Md ago) — run \`codex login\` to refresh` (omit tokens where decode failed or exp ≥ now). When both decode cleanly + not expired + `last_refresh` > 30d (non-chatgpt only): `↳ Codex: stale (last_refresh Nd ago — consider running \`codex login\`)`. Both healthy + ≤30d: silent.
+## 3 — Other verbs (sequencing only — content lives elsewhere)
 
-Plain stdout, NOT part of CC-3-trampoline. Cost: 1 Read + ≤2 base64-decodes (cosmetic-shape gate skips decodes under healthy ChatGPT auth). Doctor #39 surfaces the same expiry with more detail.
+| verb | v8 target |
+|---|---|
+| `full` / `brainstorm` / `plan` | Locate or seed the bundle, then invoke the `superpowers` skill directly — `superpowers:brainstorming` (B), then `writing-plans` (plan); plan output → `plan.index.json`. Gates via `mp open-gate` + an `AskUserQuestion`. **[lifecycle wiring = step 7.]** |
+| `execute` | The resume controller (§2). |
+| `retro` | Generate `retro.md` for the bundle (the completion subroutine), then close. |
+| `import` | Legacy intake → a v8 bundle: `mp migrate-bundle` an in-place legacy `state.yml` (backs up the original). |
+| `doctor` | `node "${CLAUDE_PLUGIN_ROOT}/bin/doctor.mjs" [--fix]`. **[checks = step 5.]** |
+| `status` | Read-only: `mp decide` (no writes) + a one-screen situation report from `state.yml`. |
+| `validate` | Parse-check `state.yml` + config; report findings. No writes. |
+| `stats` | `jq` roll-up over `events.jsonl` if present (replaces the v7 telemetry scripts). |
+| `clean` | Archive / prune completed bundles. |
+| `next` | `mp decide` → describe the next action without executing it. |
+| `verbs` | Print the reserved-verb list above. |
 
-## CC-3-trampoline
+## 4 — Turn-close (CD-9)
 
-Every turn-close in this orchestrator MUST route through the following sequence. This is the single enforcement point for CC-3 and the documented exclusion point for narrower close-site duties. Replace any bare "end the turn" directive in loaded parts with `-> CLOSE-TURN` to signal that this sequence runs before yielding.
-
-**Sequence (execute in order, skip silently if condition not met):**
-
-1. **CC-3 check** — if `subagents_this_turn` is non-empty, emit the plain-text summary block per `parts/contracts/agent-dispatch.md` §Per-turn dispatch tracking. Format, record shape, and reset rules defined there. Emit before any `AskUserQuestion` or terminal render. Immediately after the summary block, emit the marker `<masterplan-trace event=summary_block_emitted dispatch_count=<N>>` on its own line (where `<N>` = `len(subagents_this_turn)`); this is the inert textual signal the Stop hook scans to write the corresponding `events.jsonl` row (D19). Zero-dispatch turns: skip silently — emit neither block nor marker.
-2. **Pre-close action** — perform any commit, state write, ledger append, or timer disclosure that the calling part mandates before yielding. These obligations stay documented at the call site.
-3. **Breadcrumb render** — emit one plain-text navigation line at **two** sites so the breadcrumb survives manual interruption. After each breadcrumb line, emit `<masterplan-trace event=breadcrumb_emitted site=<tag>>` on its own line as the inert textual signal for the Stop hook (D19; the hook converts this to an `events.jsonl` row used by Check #51).
-   - **Step entry** — immediately after each `<masterplan-trace step=X phase=in>` marker (every step that emits a phase-in trace must follow it with the breadcrumb on the next line, then `<masterplan-trace event=breadcrumb_emitted site=step-entry-<phase>>` on the line after that).
-   - **AUQ close-site** — before every `AskUserQuestion` Closer. No routing-question exception — every AUQ requires a breadcrumb line, followed by `<masterplan-trace event=breadcrumb_emitted site=auq-close-<gate>>` (or `<masterplan-trace event=breadcrumb_emitted site=auq-close-routing>` for non-gate AUQs like the plan picker). (Skip only for `ScheduleWakeup` and non-interactive terminal renders that never surface to the user.)
-
-   Format:
-   ```
-   /masterplan {verb} › {phase-label} › {gate-id}  [{slug}]
-   ```
-   - `{verb}`: the resolved verb for this invocation (`full`, `brainstorm`, `plan`, `execute`, `doctor`, etc.).
-   - `{phase-label}`: human-readable current step — derive from the current `<masterplan-trace step=X phase=in>` marker: `step-b1`→`Brainstorm`, `step-b2`→`Plan`, `step-b3`→`Plan-approval`, `step-c-resume`→`Execute`, `step-c-dispatch`→`Execute (dispatch)`, `step-c-verification`→`Execute (verify)`, `step-c-completion`→`Execute (complete)`, `doctor`→`Doctor`, `retro`→`Retro`, `step-a`→`Plan picker`, `step-0`→`Bootstrap`, `step-b0`→`Worktree setup`. When no step trace exists this turn, omit this segment.
-   - `{gate-id}`: the `id` field of the gate being surfaced. At step-entry sites (no gate yet), omit. At AUQ close-sites, include when the AUQ is a formal planning gate; omit for routing questions (plan picker, complexity choice).
-   - `[{slug}]`: the active run bundle slug if available. Omit when no bundle is loaded.
-   - Example (step entry): `/masterplan full › Brainstorm  [my-feature]`
-   - Example (AUQ gate): `/masterplan full › Brainstorm › spec_approval  [my-feature]`
-   - Example (AUQ routing): `/masterplan plan ›  Plan picker`
-4. **Closer** — fire the `AskUserQuestion`, `ScheduleWakeup`, or terminal render that ends the turn. **Before** any `AskUserQuestion` tool call, emit `<masterplan-trace event=auq_render site=<tag>>` on its own line (use the same `<tag>` from the preceding breadcrumb's `site=auq-close-<gate>`, normalized — e.g., `b2-spec-approval`, `b3-plan-approval`, `c4b-failure`, `routing-plan-picker`). This is the hook-side signal that drives Check #51's AUQ-side counter (D19). Skip for `ScheduleWakeup` and non-interactive renders (they never present an AUQ to the user).
-
-> CC-1 compact-suggest and timer-disclosure are not part of this trampoline. New end-of-turn obligations go into this sequence. Authoring rule: write `-> CLOSE-TURN` as the close directive; "end the turn" only in negation contexts or YAML examples.
-
-**Subagent-dispatch marker rule (D19).** Every site that invokes the `Agent`, `Task`, `codex:codex-rescue`, `WebFetch`, or any other dispatch-class tool MUST emit `<masterplan-trace event=subagent_dispatched type=<subagent_type> model=<model> task=<short-label>>` on its own line immediately before the dispatch tool call. `<subagent_type>` matches the tool's `subagent_type` parameter (e.g., `Explore`, `general-purpose`, `Plan`, `feature-dev:code-architect`, `codex:codex-rescue`). `<model>` matches the dispatched tier (`haiku`, `sonnet`, `opus`, or `codex` for codex dispatches). `<short-label>` is a kebab-case identifier ≤32 chars (e.g., `grep-batch`, `B2-spec-review`, `wave-1-task-3`). The Stop hook converts each marker to an `events.jsonl` row that Check #52 cross-references against `subagents.jsonl` for drift detection (D4). This rule is referenced from `parts/contracts/agent-dispatch.md` §Per-turn dispatch tracking; the marker MUST be emitted in addition to (not instead of) the `subagents_this_turn` list append.
-
-## Verb dispatch table
-
-| Verb | Routes to | Notes |
-|---|---|---|
-| _(empty)_ | parts/step-0.md (Step M0 resume-first) | inline status orientation + auto-resume |
-| `full` | parts/step-0.md → parts/step-b.md → parts/step-c-resume.md | full kickoff (B0→B1→B2→B3→C) |
-| `brainstorm` | parts/step-0.md → parts/step-b.md | halts at B1 close-out gate (halt_mode=post-brainstorm) |
-| `plan` | parts/step-0.md → parts/step-a.md (spec-pick) or parts/step-b.md | halts at B3 close-out gate (halt_mode=post-plan) |
-| `execute` | parts/step-0.md → parts/step-c-resume.md (resume) or parts/step-a.md (picker) | state-path resumes; topic/no-args picks |
-| `retro` | parts/step-0.md → parts/step-c-resume.md (Step R subroutine) | generate retrospective |
-| `import` | parts/step-0.md → parts/import.md | legacy migration (Step I) |
-| `doctor` | parts/step-0.md → parts/doctor.md | all 52 checks (Step D) |
-| `status` | parts/step-0.md (Step S subroutine) | read-only situation report |
-| `validate` | parts/step-0.md (reads docs/config-schema.md inline) | config + state schema check |
-| `stats` | parts/step-0.md (Step T subroutine) | telemetry roll-up |
-| `clean` | parts/step-0.md (Step CL subroutine) | archive + prune |
-| `next` | parts/step-0.md (Step N subroutine) | what's-next router |
-| `--resume=<path>` | parts/step-0.md → parts/step-c-resume.md | alias for `execute <path>` |
-
-## Codex host detection
-
-If invoked via `/masterplan:masterplan` (Codex host), set `codex.host=true` and load `parts/codex-host.md` before phase dispatch. Suppresses `codex:codex-rescue` companion dispatch to prevent recursion.
-
-## Phase-prompt loader
-
-After step-0.md completes bootstrap, route by verb. For `full`, `brainstorm`, `plan`, `execute`, `retro`, and `--resume=<path>`, load `parts/step-{state.yml.current_phase}.md`. The phase file is self-contained; it loads contracts on demand. Subroutine verbs (`status`, `stats`, `clean`, `next`, `validate`) execute inline within step-0.md and do not load additional phase files.
-
-**step-c split (v6.0).** `step-c.md` is replaced by 4 load-on-demand sub-files: `step-c-resume.md` (entry + step 1), `step-c-dispatch.md` (wave assembly + routing), `step-c-verification.md` (post-task finalize), `step-c-completion.md` (loop scheduling + completion). Load `step-c-resume.md` as the execution entry point; sub-file headers cross-reference each next sub-file.
-
-## Doctor entry point
-
-For doctor verb: after step-0.md bootstrap, dispatch coordinator-doctor:
-
-```
-DISPATCH-SITE: coordinator-doctor
-contract_id: "coordinator-doctor-v1"
-Tier: sonnet
-Goal: Load parts/doctor.md internally; run all checks; apply safe fixes when fix_flag=true.
-Inputs: fix_flag=<true|false>, bundle_path=<active-bundle-path or null>
-Scope: read parts/doctor.md + all referenced state files; write only when fix_flag=true.
-Constraints: CD-7 (orchestrator writes state.yml from coordinator results only).
-Return shape: {pass, warn, error, findings: [{id, severity, summary, fix_available}], fix_applied, coordinator_version}
-```
-
-**Fallback** (coordinator errors): log `coordinator_fallback` and load `parts/doctor.md` inline (pre-v6 behavior).
-
-Check #36 verifies this router stays ≤20480 bytes. Extended rationale: `docs/internals/doctor.md`.
-
-## Config reference
-
-Schema documented in `docs/config-schema.md`. Loaded only on validate verb.
-
-## Reserved verbs warning
-
-The following verbs are reserved and require another word in front when used as topics (e.g., `/masterplan add brainstorm session timer`): `full`, `brainstorm`, `plan`, `execute`, `retro`, `import`, `doctor`, `status`, `stats`, `clean`, `validate`, `next`.
+End any turn that needs input with `AskUserQuestion` (2–4 concrete options) — never a free-text
+question (sessions compact between turns; a free-text prompt becomes a dead end) and never a silent
+stop while a decision is pending. Otherwise close cleanly. The v7 CC-3 trampoline — trace markers,
+breadcrumbs, per-turn summary-block hook signals — is **gone**; the banner (§0) and this AUQ-close
+are the only ceremony that survives.
