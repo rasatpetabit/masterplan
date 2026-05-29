@@ -26,23 +26,30 @@ test('pending_gate takes priority with no active run', () => {
   assert.equal(decideNextAction(s, {}).action, 'surface_gate');
 });
 
-test('active run alive -> wait', () => {
+test('active run alive -> wait (drop liveness.resultsRecorded — completion now derives from disk)', () => {
   const run = { run_id: 'wf_1', task_id: 'k1', wave: 1 };
   const s = base({ active_run: run, tasks: [t(1, 1, 'pending')] });
-  const d = decideNextAction(s, { alive: true, resultsRecorded: false });
+  const d = decideNextAction(s, { alive: true });
   assert.equal(d.action, 'wait');
   assert.deepEqual(d.run, run);
 });
 
-test('active run dead WITH results on disk -> finalize_run (crash after results, before clearing marker)', () => {
+test('active run alive even with all wave tasks done -> wait (never second-guess a live run)', () => {
   const run = { run_id: 'wf_1', task_id: 'k1', wave: 1 };
-  const s = base({ active_run: run, tasks: [t(1, 1, 'pending')] });
-  const d = decideNextAction(s, { alive: false, resultsRecorded: true });
+  const s = base({ active_run: run, tasks: [t(1, 1, 'done')] });
+  assert.equal(decideNextAction(s, { alive: true }).action, 'wait');
+});
+
+test('active run dead, ALL wave tasks done on disk -> finalize_run (orphan window: run set, work recorded)', () => {
+  // "results recorded" is DERIVED — every task of the run's wave is `done` in state.yml — not a probe.
+  const run = { run_id: 'wf_1', task_id: 'k1', wave: 1 };
+  const s = base({ active_run: run, tasks: [t(1, 1, 'done'), t(2, 1, 'done')] });
+  const d = decideNextAction(s, { alive: false });
   assert.equal(d.action, 'finalize_run');
   assert.deepEqual(d.run, run);
 });
 
-test('active run dead WITHOUT results -> recover_and_redispatch (reset only the incomplete tasks of that wave)', () => {
+test('active run dead with work outstanding -> recover; reset only the wave\'s incomplete tasks + carry staleTaskId', () => {
   const run = { run_id: 'wf_1', task_id: 'k1', wave: 2 };
   const s = base({
     active_run: run,
@@ -53,17 +60,32 @@ test('active run dead WITHOUT results -> recover_and_redispatch (reset only the 
       t(4, 3, 'pending', ['e.txt']),
     ],
   });
-  const d = decideNextAction(s, { alive: false, resultsRecorded: false });
+  const d = decideNextAction(s, { alive: false });
   assert.equal(d.action, 'recover_and_redispatch');
   assert.equal(d.wave, 2);
   assert.deepEqual(d.tasks.map((x) => x.id), [2]);
   assert.deepEqual(d.resetPaths, ['b.txt', 'c.txt']);
+  assert.equal(d.staleTaskId, 'k1'); // the shell reconciles (TaskList/TaskStop) before reset+redispatch
 });
 
-test('missing liveness while active run set -> treated as dead/no-results -> recover', () => {
+test('missing liveness while active run set (has task_id) -> treated as dead -> recover, staleTaskId carried', () => {
   const run = { run_id: 'wf_1', task_id: 'k1', wave: 1 };
   const s = base({ active_run: run, tasks: [t(1, 1, 'pending', ['a.txt'])] });
-  assert.equal(decideNextAction(s).action, 'recover_and_redispatch');
+  const d = decideNextAction(s);
+  assert.equal(d.action, 'recover_and_redispatch');
+  assert.equal(d.staleTaskId, 'k1');
+});
+
+test('active_run phase-1 (launching, NO task_id) -> recover, staleTaskId null (crashed in the launch gap)', () => {
+  // The marker is written {wave, phase:'launching'} BEFORE launch returns a task_id. A crash here
+  // has no task to probe and nothing to reconcile (no task_id), so reset+redispatch is safe and
+  // prevents a double-dispatch onto a Workflow that may or may not have actually started.
+  const s = base({ active_run: { wave: 2, phase: 'launching' }, tasks: [t(1, 1, 'done'), t(2, 2, 'pending', ['b.txt'])] });
+  const d = decideNextAction(s, {});
+  assert.equal(d.action, 'recover_and_redispatch');
+  assert.equal(d.wave, 2);
+  assert.deepEqual(d.tasks.map((x) => x.id), [2]);
+  assert.equal(d.staleTaskId, null);
 });
 
 test('no active run, pending tasks -> dispatch the lowest pending wave only', () => {
@@ -110,6 +132,6 @@ test('GUARD: all-done tasks with null waves still resume to complete (guard not 
 test('is pure: does not mutate the input state', () => {
   const s = base({ active_run: { run_id: 'wf_1', task_id: 'k1', wave: 1 }, tasks: [t(1, 1, 'pending', ['a'])] });
   const snapshot = JSON.stringify(s);
-  decideNextAction(s, { alive: false, resultsRecorded: false });
+  decideNextAction(s, { alive: false });
   assert.equal(JSON.stringify(s), snapshot);
 });
