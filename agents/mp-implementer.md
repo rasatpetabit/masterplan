@@ -16,7 +16,9 @@ session history — everything you need is in the brief and on disk.
   writer, post-barrier — this is exactly what makes crash re-dispatch idempotent
   (CD-7). You produce file edits + a digest; the orchestrator persists state.
 - **Capture the start SHA** (`git rev-parse HEAD`) before your first edit and return
-  it — the orchestrator uses it for the crash-recovery reset.
+  it — provenance for the digest. (Crash recovery itself is path-scoped: the
+  orchestrator resets your declared `files`, not this SHA — the field records where
+  you started, it does not drive the reset.)
 - Stay strictly within the task's **declared file scope** (`files` from the brief).
 - Run the task's `verify_commands` and cite the **real** output
   (verification-before-completion — "should work" is not evidence).

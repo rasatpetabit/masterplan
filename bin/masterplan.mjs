@@ -20,6 +20,11 @@
 //   decide --state=PATH [--alive]               -> the decideNextAction result (migrates in-memory)
 //   migrate-bundle --state=PATH                 -> back up + persist a legacy bundle as v8 (no-op if v8)
 //   backfill-waves --state=PATH --plan-index=PATH -> set each task's {wave,files} from plan.index.json
+//   prepare-wave --state=PATH --plan-index=PATH --wave=N [--routing=M] [--codex-suppressed]
+//                [--linked-worktree] [--review=on|off]
+//                                               -> {wave, tasks:[lean routed payload], review} for the L2 `args`
+//                                                  (--review overrides state.codex.review; else read from state)
+//   verify-scope --state=PATH --wave=N --before=JSON --after=JSON -> {ok, touched, outOfScope} (D6 post-barrier)
 //   mark-task --state=PATH --id=N --status=S    -> CD-7 write: set a task's status
 //   open-gate --state=PATH --id=X [--opened-at=T] -> CD-7 write: open the durable approval gate
 //   clear-gate --state=PATH                     -> CD-7 write: clear the gate
@@ -34,6 +39,7 @@ import { fileURLToPath } from 'node:url';
 import { readState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask } from '../lib/bundle.mjs';
 import { migrate, detectSchemaVersion, MigrationError } from '../lib/migrate.mjs';
 import { decideNextAction } from '../lib/resume.mjs';
+import { prepareWave, declaredScope, verifyScope } from '../lib/wave.mjs';
 import { detectHost, suppressRescue } from '../lib/codex-host.mjs';
 import { resolveConfigDir } from '../lib/paths.mjs';
 
@@ -222,6 +228,54 @@ function main() {
       }
       writeState(p, next);
       out({ updated: tasks.filter((task) => Number.isInteger(task.wave)).length, total: tasks.length });
+      break;
+    }
+    case 'prepare-wave': {
+      // Pre-resolve everything the L2 workflow needs for one wave, since a Workflow script has
+      // NO module/fs access — "L2 consumes routing.mjs" can only mean L1 resolves routing here and
+      // hands lean payloads down via `args`. loadForWrite is the strict-v8 guard (this is a read,
+      // but mid-run the bundle is already v8; a legacy one reaching here should fail loud, not route).
+      const p = need(flags, 'state');
+      const state = loadForWrite(p);
+      const planIndex = JSON.parse(readText(need(flags, 'plan-index')));
+      const wave = coerceId(need(flags, 'wave'));
+      // routing config: persisted `codex.routing` wins; --routing overrides; default 'auto'. env facts
+      // (host-suppression, linked-worktree) are git/host-probed by the shell and passed as flags.
+      const config = { routing: state.codex?.routing ?? flags.routing ?? 'auto' };
+      const env = {
+        codexHostSuppressed: !!flags['codex-suppressed'],
+        linkedWorktree: !!flags['linked-worktree'],
+      };
+      let result;
+      try {
+        result = prepareWave(state, planIndex, wave, config, env); // throws: non-integer wave / drift
+      } catch (e) {
+        die(e.message);
+      }
+      // Surface the review mode from the SAME read so the shell needn't parse state.yml itself; the
+      // workflow gates review on `=== 'on'`. Normalize leniently (config schema is finalized in step 7).
+      const rawReview = state.codex?.review ?? flags.review;
+      const review = rawReview === true || rawReview === 'on' || rawReview === 'true' ? 'on' : 'off';
+      out({ ...result, review });
+      break;
+    }
+    case 'verify-scope': {
+      // The D6/F-SCOPE post-barrier check. declared = every wave-N task's files (done included — at
+      // the barrier nothing is committed yet); before/after are the git-touched path sets the SHELL
+      // captures (git stays in the shell; bin is fs-only) and passes as JSON arrays. verifyScope does
+      // the (after - before) ⊆ declared set math. The shell resets/ surfaces any outOfScope path.
+      const p = need(flags, 'state');
+      const wave = coerceId(need(flags, 'wave'));
+      const declared = declaredScope(loadForWrite(p), wave);
+      let before;
+      let after;
+      try {
+        before = JSON.parse(flags.before ?? '[]');
+        after = JSON.parse(flags.after ?? '[]');
+      } catch (e) {
+        die(`verify-scope: --before/--after must be JSON arrays of paths (${e.message})`);
+      }
+      out(verifyScope(declared, before, after));
       break;
     }
     case 'mark-task': {
