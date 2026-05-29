@@ -217,7 +217,8 @@ function main() {
       const stuck = tasks.filter((task) => task.status !== 'done' && !Number.isInteger(task.wave));
       if (stuck.length) {
         die(`backfill-waves: ${stuck.length} pending task(s) still have no integer wave after applying ` +
-            `plan-index (ids: ${stuck.map((t) => t.id).join(', ')}) — id mismatch or missing wave/parallel_group.`, 1);
+            `plan-index (ids: ${stuck.map((t) => t.id).join(', ')}) — id mismatch, missing wave/parallel_group, ` +
+            `or a non-integer wave value (e.g. "2" instead of 2) in plan.index.json.`, 1);
       }
       writeState(p, next);
       out({ updated: tasks.filter((task) => Number.isInteger(task.wave)).length, total: tasks.length });
@@ -255,7 +256,16 @@ function main() {
     }
     case 'set-active-run': {
       const p = need(flags, 'state');
-      const run = { wave: coerceId(need(flags, 'wave')), phase: 'launching' };
+      const wave = coerceId(need(flags, 'wave'));
+      // set-active-run is the SOLE ORIGIN of the active_run wave; enforce the integer-wave invariant
+      // HERE at the source (mirror of promote's guard below). Without it a `--wave=2.0`/`--wave=foo`/
+      // bare `--wave` persists a phase-1 marker that decideNextAction then throws on at the next
+      // `decide`, wedging the loop until a manual clear-active-run. Fail loud on bad input instead.
+      if (!Number.isInteger(wave)) {
+        die(`set-active-run: --wave must be an integer (got ${JSON.stringify(flags.wave)}) — it is the ` +
+            `phase-1 launching marker's wave that decideNextAction resumes on.`);
+      }
+      const run = { wave, phase: 'launching' };
       writeState(p, setActiveRun(loadForWrite(p), run));
       out({ active_run: run });
       break;

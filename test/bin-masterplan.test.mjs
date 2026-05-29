@@ -199,3 +199,25 @@ test('applyPlanIndex matches across id type (LOW: string plan id vs numeric stat
   assert.equal(r.tasks[0].wave, 3);
   assert.deepEqual(r.tasks[0].files, ['x']);
 });
+
+// ---- fresh-eyes review follow-up (2026-05-28): the set-active-run origin guard + backfill message ----
+test('set-active-run refuses a non-integer wave at the origin (MEDIUM: a bad --wave never persists to wedge decide)', () => {
+  const p = tmpBundle(v8());
+  const bad = run(['set-active-run', `--state=${p}`, '--wave=2.0']); // float string — not an integer
+  assert.notEqual(bad.status, 0);
+  assert.match(bad.stderr, /--wave must be an integer/);
+  assert.equal(read(p).active_run, null); // state untouched — nothing persisted to throw on the next decide
+  assert.notEqual(run(['set-active-run', `--state=${p}`, '--wave']).status, 0); // bare --wave (boolean) also refused
+  // happy path still works: an integer wave writes the phase-1 launching marker
+  assert.deepEqual(JSON.parse(run(['set-active-run', `--state=${p}`, '--wave=0']).stdout).active_run, { wave: 0, phase: 'launching' });
+});
+test('backfill-waves: a present-but-string wave is caught and named (LOW: message covers non-integer, not just missing)', () => {
+  const dir = tmpDir('mp-bf3-');
+  const p = path.join(dir, 'state.yml');
+  fs.writeFileSync(p, serializeState(v8({ tasks: [{ id: 1, status: 'pending', wave: null, files: [] }] })));
+  const planIdx = path.join(dir, 'plan.index.json');
+  fs.writeFileSync(planIdx, JSON.stringify([{ id: 1, wave: '0', files: ['a'] }])); // wave is a STRING, not 0
+  const r = run(['backfill-waves', `--state=${p}`, `--plan-index=${planIdx}`]);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /non-integer wave value/); // the clarified message names this cause
+});
