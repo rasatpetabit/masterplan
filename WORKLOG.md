@@ -1,5 +1,18 @@
 # WORKLOG
 
+## 2026-05-29 — v8 (masterplan-ng): pre-ported the 3 DEFERRED-SPEC slices → `docs/conventions/` (additive; cutover still NOT started)
+
+Collapsed all cutover-time *porting* into **additive commits now**, so the eventual v7→v8 cutover is pure deletion + version/doc-rewrite with **no spec at risk**. A Sonnet implementer extracted the three port-blocker slices identified in the prior Tier-2 close-out **verbatim**, into the established reference home `docs/conventions/` (alongside `autonomy-policy.md`, `api-retry-policy.md`). **No deletions — `parts/contracts/` untouched; nothing in the cutover started.**
+
+**Three new files (all additive):**
+- `docs/conventions/cd-rules.md` — verbatim CD-1…CD-10 *bodies* (the **mandatory** port: live v8 code in `CLAUDE.md`/`agents/*.md`/`commands/masterplan.md`/`workflows/execute.workflow.js` cites `CD-N` IDs today; deleting `parts/contracts/cd-rules.md` would dangle them). **Verified byte-identical from the CD-1 heading onward** vs source. Note: CD-7's verbatim title is "Durable handoff state" — the v8 "single-writer" framing is a *mechanism* of that principle, not a retitle; the port keeps the original heading.
+- `docs/conventions/plan-annotations.md` — the Step-B2 writing-plans brief (Codex / parallel-group / verify-pattern / skip-handoff / complexity-aware / plan-format v5.0 directives). Sole canonical home; `masterplan-contracts.md:139` only name-drops the directive keywords.
+- `docs/conventions/codex-review-dimensions.md` — the six B2/B3 review *dimensions* (`completeness, correctness, security, consistency, naming, scope`). Thin slice only: the JSON-parse/dispatch/codex-host-fallback contract is **DEAD** (superseded by `agents/mp-codex-reviewer.md`), explicitly stated in the file header; per-dimension prose isn't in source (source only lists the keys), so none was invented.
+
+**Two cross-refs (additive):** `docs/internals.md` Architecture Overview now points to `conventions/cd-rules.md` as the canonical CD-body home (+1 line); `agents/mp-planner.md` gained a `## Plan annotation spec` pointer to `conventions/plan-annotations.md` (+3 lines).
+
+**Manifest updated to match:** `cutover-removal-manifest.md` Tier-2 table verdicts for the 3 slices → **✅ PRE-PORTED** (with destinations); Tier-4 #8/#9/#10 → **✅ DONE — PRE-PORTED 2026-05-29**; #7 (tag HEAD) reworded to belt-and-suspenders; sequencing recap now reads "tag → `git rm` + scrub → version/doc/Makefile → gate → merge" (ports dropped out). Fresh-eyes verify PASS (5/5): CD bodies byte-identical, six dimensions present, no dead content leaked, cross-refs minimal, `parts/contracts/` untouched. Orchestrator sole committer (CD-7). **Not pushed** (awaiting gate).
+
 ## 2026-05-29 — v8 (masterplan-ng): closed the last 2 Tier-2 items in the removal-manifest (cutover now fully mechanical)
 
 Resolved the two remaining open Tier-2 rows in `cutover-removal-manifest.md` so the cutover needs no further analysis — planning doc only, **no deletions, cutover NOT started.**

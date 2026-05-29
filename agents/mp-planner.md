@@ -22,6 +22,9 @@ Codex-routing calls, and choosing verify commands that actually prove each task.
   here: emit the `tasks` array (the judgment); the shell stamps `plan_hash` /
   `generated_at` when it persists. Don't fabricate them.
 
+## Plan annotation spec
+See [`docs/conventions/plan-annotations.md`](../docs/conventions/plan-annotations.md) for the plan-annotation / writing-plans brief (Codex, parallel-group, verify-pattern, skip handoff, complexity-aware, and plan-format markers).
+
 ## The plan.index.json schema (authoritative — keep byte-synced with lib/routing.mjs)
 
 Top level:
