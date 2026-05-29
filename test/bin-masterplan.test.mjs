@@ -155,3 +155,47 @@ test('write ops refuse an un-migrated legacy bundle (no silent overwrite before 
   assert.equal(r.status, 2);
   assert.match(r.stderr, /migrate-bundle/);
 });
+
+// ---- regression coverage: the three Codex-review findings (2026-05-28) ----
+test('promote-active-run without a phase-1 launching marker is refused (HIGH: no wave-less active_run)', () => {
+  const p = tmpBundle(v8()); // active_run: null — no set-active-run was called
+  const r = run(['promote-active-run', `--state=${p}`, '--run-id=wf_9', '--task-id=k9']);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /set-active-run/);
+  assert.equal(read(p).active_run, null); // state untouched — nothing orphaned
+});
+test('decide refuses a wave-less active_run (HIGH: fail loud, never finalize while tasks pend)', () => {
+  const p = tmpBundle(v8({ active_run: { run_id: 'wf_x', task_id: 'k', wave: null } }));
+  const r = run(['decide', `--state=${p}`]);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /non-integer wave/);
+});
+test('mark-task refuses an unknown id and an invalid status (MEDIUM: no phantom success)', () => {
+  const p = tmpBundle(v8());
+  const unknown = run(['mark-task', `--state=${p}`, '--id=99', '--status=done']);
+  assert.notEqual(unknown.status, 0);
+  assert.match(unknown.stderr, /no task with id/);
+  assert.deepEqual(read(p).tasks.map((t) => t.status), ['pending', 'pending']); // unchanged
+  const bad = run(['mark-task', `--state=${p}`, '--id=1', '--status=DONE']);
+  assert.notEqual(bad.status, 0);
+  assert.match(bad.stderr, /invalid --status/);
+});
+test('backfill-waves fails loud when a pending task stays wave-less (LOW: no phantom success)', () => {
+  const dir = tmpDir('mp-bf2-');
+  const p = path.join(dir, 'state.yml');
+  fs.writeFileSync(p, serializeState(v8({ tasks: [
+    { id: 1, status: 'pending', wave: null, files: [] },
+    { id: 2, status: 'pending', wave: null, files: [] },
+  ] })));
+  const planIdx = path.join(dir, 'plan.index.json');
+  fs.writeFileSync(planIdx, JSON.stringify([{ id: 1, wave: 0, files: ['a'] }])); // omits id 2
+  const r = run(['backfill-waves', `--state=${p}`, `--plan-index=${planIdx}`]);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /still have no integer wave/);
+});
+test('applyPlanIndex matches across id type (LOW: string plan id vs numeric state id)', () => {
+  const state = { tasks: [{ id: 1, status: 'pending', wave: null, files: [] }] };
+  const r = applyPlanIndex(state, [{ id: '1', wave: 3, files: ['x'] }]); // string id on the plan side
+  assert.equal(r.tasks[0].wave, 3);
+  assert.deepEqual(r.tasks[0].files, ['x']);
+});

@@ -65,6 +65,12 @@ function need(flags, key) {
   return flags[key];
 }
 
+// Valid task statuses the v8 shell may WRITE via mark-task. Minimal + decide-consistent:
+// decideNextAction treats anything !== 'done' as "still needs work", so pending/in_progress map
+// correctly and a typo ('doen', 'complete') is rejected rather than silently mis-recorded. (Legacy
+// v7 statuses like 'skipped'/'in-progress' live only in pre-migration bundles — migrate's concern.)
+const VALID_TASK_STATUS = ['pending', 'in_progress', 'done'];
+
 // ---- read helpers: decide migrates in-memory; write ops require an already-v8 bundle ----
 function readText(p) {
   try {
@@ -128,9 +134,12 @@ export function formatBanner(version, args, cwd) {
 // once the plan is (re-)parsed; satisfies decideNextAction's non-integer-wave guard). ----
 export function applyPlanIndex(state, planIndex) {
   const list = Array.isArray(planIndex) ? planIndex : Array.isArray(planIndex?.tasks) ? planIndex.tasks : [];
-  const byId = new Map(list.map((p) => [p.id ?? p.idx, p]));
+  // Key by STRING id on both sides: plan.index.json ids are often strings ("1") while migrated
+  // state task ids are numbers (1). A raw-keyed Map misses on that type mismatch, leaving wave:null
+  // (then decide's non-integer-wave guard throws). Normalize so the lookup is type-insensitive.
+  const byId = new Map(list.map((p) => [String(p.id ?? p.idx), p]));
   const tasks = (state.tasks ?? []).map((task) => {
-    const p = byId.get(task.id);
+    const p = byId.get(String(task.id));
     if (!p) return task;
     const wave = p.wave ?? p.parallel_group ?? task.wave;
     const files = p.files ?? task.files ?? [];
@@ -202,15 +211,32 @@ function main() {
       const state = loadForWrite(p);
       const planIndex = JSON.parse(readText(need(flags, 'plan-index')));
       const next = applyPlanIndex(state, planIndex);
+      const tasks = next.tasks ?? [];
+      // Don't report success while pending tasks remain wave-less — decide would throw on the next
+      // resume. Fail loud (before writing) with the offending ids so the user can fix plan.index.
+      const stuck = tasks.filter((task) => task.status !== 'done' && !Number.isInteger(task.wave));
+      if (stuck.length) {
+        die(`backfill-waves: ${stuck.length} pending task(s) still have no integer wave after applying ` +
+            `plan-index (ids: ${stuck.map((t) => t.id).join(', ')}) — id mismatch or missing wave/parallel_group.`, 1);
+      }
       writeState(p, next);
-      out({ updated: next.tasks.length });
+      out({ updated: tasks.filter((task) => Number.isInteger(task.wave)).length, total: tasks.length });
       break;
     }
     case 'mark-task': {
       const p = need(flags, 'state');
       const id = coerceId(need(flags, 'id'));
       const status = need(flags, 'status');
-      writeState(p, markTask(loadForWrite(p), id, status));
+      if (!VALID_TASK_STATUS.includes(status)) {
+        die(`invalid --status '${status}' — expected one of: ${VALID_TASK_STATUS.join(', ')}`);
+      }
+      let next;
+      try {
+        next = markTask(loadForWrite(p), id, status); // throws on unknown id — refuse a phantom success
+      } catch (e) {
+        die(e.message);
+      }
+      writeState(p, next);
       out({ id, status });
       break;
     }
@@ -238,6 +264,13 @@ function main() {
       const p = need(flags, 'state');
       const state = loadForWrite(p);
       const prev = state.active_run ?? {};
+      // Phase-2 promotion MUST follow a phase-1 launching marker carrying an integer wave
+      // (set-active-run --wave=N). Promoting without it writes a wave-less active_run that
+      // decideNextAction then mis-finalizes while tasks pend (orphan / double-dispatch). Fail loud.
+      if (!Number.isInteger(prev.wave)) {
+        die(`promote-active-run: no phase-1 launching marker with an integer wave ` +
+            `(active_run=${JSON.stringify(state.active_run ?? null)}) — call \`set-active-run --wave=N\` first.`);
+      }
       const run = { wave: prev.wave, run_id: need(flags, 'run-id'), task_id: need(flags, 'task-id') };
       writeState(p, setActiveRun(state, run));
       out({ active_run: run });

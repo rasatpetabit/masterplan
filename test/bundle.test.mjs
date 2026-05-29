@@ -89,3 +89,26 @@ test('state transforms are pure and correct', () => {
 
   assert.equal(JSON.stringify(base), frozen); // never mutated
 });
+
+test('markTask throws on an unknown id (no silent no-op that fakes success)', () => {
+  // MEDIUM regression: markTask used to return state UNCHANGED for an unknown id, so the bin
+  // reported success and the shell believed a result was recorded — recovery would then re-dispatch
+  // already-done work. The transform now refuses a phantom write.
+  const s = { tasks: [{ id: 1, wave: 1, status: 'pending', files: [] }] };
+  assert.throws(() => markTask(s, 99, 'done'), /no task with id 99/);
+  assert.equal(markTask(s, 1, 'done').tasks[0].status, 'done'); // known id still works
+});
+
+test('parseState∘serializeState round-trips a fuzz of scalar / object / array shapes', () => {
+  const samples = [
+    { k: 0 }, { k: -42 }, { k: 3.14 }, { k: true }, { k: false }, { k: null },
+    { k: '' }, { k: 'plain' }, { k: 'has space' }, { k: 'a: b # c' }, { k: 'em—dash café' },
+    { k: '123' }, { k: '6.0' }, { k: 'true' }, { k: 'null' }, { k: '~' },
+    { k: 'sha256:ab-CD.0' }, { k: '2026-05-28T16:00:00Z' },
+    { k: [] }, { k: [1, 2, 3] }, { k: ['a', 'b'] }, { k: {} }, { k: { a: 1, b: 'x', c: [true, null] } },
+    { a: 1, b: 'two', c: { d: [3] }, e: null, f: '' },
+  ];
+  for (const s of samples) {
+    assert.deepEqual(parseState(serializeState(s)), s, `round-trip failed for ${JSON.stringify(s)}`);
+  }
+});

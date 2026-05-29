@@ -135,3 +135,15 @@ test('is pure: does not mutate the input state', () => {
   decideNextAction(s, { alive: false });
   assert.equal(JSON.stringify(s), snapshot);
 });
+
+test('GUARD: a promoted active_run with a non-integer (null) wave throws — never silently finalizes', () => {
+  // The HIGH regression: promote-active-run with no phase-1 launching marker wrote {wave:null,…};
+  // the activeRun branch then computed incomplete=[] (null matches no integer-wave task) and
+  // returned finalize_run while tasks were still pending — clearing the marker, orphaning the run.
+  // The guard mirrors the dispatch-branch non-integer-wave guard: fail loud, don't finalize.
+  const s = base({
+    active_run: { run_id: 'wf_1', task_id: 'k1', wave: null },
+    tasks: [t(1, 1, 'pending', ['a.txt'])],
+  });
+  assert.throws(() => decideNextAction(s, { alive: false }), /non-integer wave/);
+});
