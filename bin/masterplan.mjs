@@ -38,6 +38,10 @@
 //   set-phase --state=PATH --phase=P [--force]  -> CD-7 write: advance the lifecycle phase (brainstorm|plan|execute)
 //                                                  (refuse entering execute with 0 tasks — run seed-tasks first — w/o --force)
 //   set-status --state=PATH --status=S          -> CD-7 write: set the run status (in-progress|archived)
+//   set-worktree-disposition --state=PATH --disposition=D
+//                                               -> CD-7 write: record the worktree's disposition
+//                                                  (active|removed_after_merge|kept_by_user); the
+//                                                  doctor's worktree-integrity check SKIPs on retirement
 //   open-gate --state=PATH --id=X [--opened-at=T] -> CD-7 write: open the durable approval gate
 //   clear-gate --state=PATH                     -> CD-7 write: clear the gate
 //   set-active-run --state=PATH --wave=N        -> CD-7 write: phase-1 marker {wave, phase:'launching'}
@@ -48,7 +52,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, buildSeedState, buildTasksFromPlanIndex, appendEvent } from '../lib/bundle.mjs';
+import { readState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, setWorktreeDisposition, buildSeedState, buildTasksFromPlanIndex, appendEvent } from '../lib/bundle.mjs';
 import { migrate, detectSchemaVersion, MigrationError } from '../lib/migrate.mjs';
 import { decideNextAction } from '../lib/resume.mjs';
 import { prepareWave, declaredScope, verifyScope } from '../lib/wave.mjs';
@@ -97,6 +101,13 @@ const VALID_TASK_STATUS = ['pending', 'in_progress', 'done'];
 // ordering (recovery/restart legitimately moves phase backward; a re-opened run goes archived→in-progress).
 const VALID_PHASE = ['brainstorm', 'plan', 'execute'];
 const VALID_STATUS = ['in-progress', 'archived'];
+
+// Valid worktree dispositions the shell may WRITE via set-worktree-disposition. The doctor's
+// worktree-integrity check SKIPs a bundle whose worktree was intentionally retired
+// (removed_after_merge | kept_by_user); 'active' is the seed/default and is included so a
+// premature retirement can be reverted via the SAME verb (no CD-7 hand-edit). Value-enum only —
+// the active→removed_after_merge transition is not ordered (a re-opened run may go back to active).
+const VALID_WORKTREE_DISPOSITION = ['active', 'removed_after_merge', 'kept_by_user'];
 
 // ---- read helpers: decide migrates in-memory; write ops require an already-v8 bundle ----
 function readText(p) {
@@ -492,6 +503,16 @@ function main() {
       }
       writeState(p, setStatus(loadForWrite(p), status));
       out({ status });
+      break;
+    }
+    case 'set-worktree-disposition': {
+      const p = need(flags, 'state');
+      const disposition = need(flags, 'disposition');
+      if (!VALID_WORKTREE_DISPOSITION.includes(disposition)) {
+        die(`invalid --disposition '${disposition}' — expected one of: ${VALID_WORKTREE_DISPOSITION.join(', ')}`);
+      }
+      writeState(p, setWorktreeDisposition(loadForWrite(p), disposition));
+      out({ worktree_disposition: disposition });
       break;
     }
     default:

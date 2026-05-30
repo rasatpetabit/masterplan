@@ -137,8 +137,25 @@ test('fail-loud: a task with idx but no status throws (no silent partial)', () =
 test('fail-loud: non-null pending_gate with no extractable id throws; with id extracts {id}', () => {
   const noId = 'schema_version: "5.0"\nslug: x\npending_gate:\n  opened_at: "t"\ntasks: []\n';
   assert.throws(() => migrate(noId), MigrationError);
-  const withId = 'schema_version: "5.0"\nslug: x\npending_gate:\n  id: plan_approval\n  opened_at: "t"\ntasks: []\n';
+  // current_phase makes this a structurally-valid bundle so it clears the C2 core-field gate; the
+  // assertion under test is unchanged (pending_gate.id extraction).
+  const withId = 'schema_version: "5.0"\nslug: x\ncurrent_phase: plan\npending_gate:\n  id: plan_approval\n  opened_at: "t"\ntasks: []\n';
   assert.equal(migrate(withId).pending_gate.id, 'plan_approval');
+});
+
+// ---- C2: a missing core identity field fails loud, not silently into invalid v8 state ----
+test('fail-loud: a 5.x bundle missing slug throws MigrationError (no null-core v8 state with no `mp` repair)', () => {
+  // current_phase present (so status falls back to it) but slug absent -> slug is null after mapLegacyToV8.
+  const noSlug = 'schema_version: "5.0"\ncurrent_phase: plan\ntasks: []\n';
+  assert.throws(() => migrate(noSlug), (e) => {
+    assert.ok(e instanceof MigrationError);
+    assert.match(e.message, /slug/);                       // names the missing field
+    assert.match(e.message, /missing required core field/);
+    return true;
+  });
+  // No phase anywhere -> both phase and the status fallback are null; still fails loud.
+  const noPhase = 'schema_version: "5.0"\nslug: x\ntasks: []\n';
+  assert.throws(() => migrate(noPhase), MigrationError);
 });
 
 // ---- purity ----

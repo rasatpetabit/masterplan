@@ -124,6 +124,22 @@ test('worktree-integrity: fixtures match dir-prefix severity (stubbed git)', asy
   }
 });
 
+test('worktree-integrity: ERROR fix messages prescribe the `mp` verb, not a CD-7 hand-edit', () => {
+  // Regression for the fix-message defect (C3): the worktree-missing / branch-missing remediation used to
+  // tell the operator to hand-edit state.yml (`worktree_disposition: …` / `status: archived`) — a CD-7
+  // violation with (for disposition) no writer at all. The fix now names the verb that performs the write.
+  const wt = worktreeIntegrity(path.join(FX, 'worktree-integrity', 'error-missing-worktree'), { gitExec: GIT_STUB });
+  const wtErr = wt.find((f) => f.severity === 'ERROR' && /worktree/.test(f.summary));
+  assert.ok(wtErr, JSON.stringify(wt));
+  assert.match(wtErr.fix, /mp set-worktree-disposition .*--disposition=removed_after_merge/);
+  assert.doesNotMatch(wtErr.fix, /in the bundle state\.yml/); // no hand-edit prescription survives
+
+  const br = worktreeIntegrity(path.join(FX, 'worktree-integrity', 'error-missing-branch'), { gitExec: GIT_STUB });
+  const brErr = br.find((f) => f.severity === 'ERROR' && /branch/.test(f.summary));
+  assert.ok(brErr, JSON.stringify(br));
+  assert.match(brErr.fix, /mp set-status .*--status=archived/);
+});
+
 test('worktree-integrity: SKIP when git is unavailable', () => {
   const root = path.join(FX, 'worktree-integrity', 'pass-registered');
   const findings = worktreeIntegrity(root, { gitExec: () => { throw new Error('not a git repository'); } });

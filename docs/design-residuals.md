@@ -46,7 +46,7 @@ Issue E chose this deliberately ("no auto-event; the shell pairs `mp event`").
 
 ---
 
-## Residual 2 — sub-5.0 bundle: post-`migrate-bundle`-refusal behavior is unspecified **(OPEN)**
+## Residual 2 — sub-5.0 bundle: post-`migrate-bundle`-refusal behavior is unspecified **(RESOLVED — 2A shipped as Issue H, 2026-05-30)**
 
 **Observed in wild (yanos phase-37):** the bundle was schema-3. `mp migrate-bundle` **deliberately
 refuses pre-5.0 loudly** (`lib/migrate.mjs` L198–207 throws; header L10 *"pre-5.0 is REFUSED loudly
@@ -121,3 +121,118 @@ in both directions — and the net swings back to **2A**:
 
 **Net recommendation after census: 2A** (was already 2A pre-census; the evidence now reconciles the 2B
 ruling against the data). Re-surfacing to the user for a final go/no-go rather than silently switching.
+
+**OUTCOME (2026-05-30):** user approved the 2A pivot off 2B; **2A shipped as Issue H** — two additive,
+schema-agnostic edits (`lib/migrate.mjs:26` `GUIDANCE` now leads with *"Do NOT hand-rewrite state.yml…
+(CD-7 violation)"* + names the seed-fresh path; `commands/masterplan.md:55` §2 step-2 adds the refusal
+branch). No floor change. See WORKLOG `## 2026-05-30 — Issue H SHIPPED — 2A`. **This residual is closed.**
+
+---
+
+## Residual 3 — Codex wave-execution scope: a **code-assumes-(a) vs product-commits-(b) mismatch** that the cutover surfaces **(RULED 3B, 2026-05-30 — full-lifecycle Codex committed; implementation gated on the B1 parity run + deferred)**
+
+This is where the v7-audit B2 finding (the `check_taskcreate_gate` red on `commands/masterplan.md:87`)
+finally rests — **not** as the declined one-line "Claude Code only" guard, but as the design question
+that guard was gesturing at. Resting on in-repo facts only:
+
+**The two host readings the code and the product disagree on.** "Codex host" has two real meanings:
+**(a)** a Claude-Code session *aware of* Codex context (the Workflow/Task tools are present), and
+**(b)** a session running *genuinely inside* Codex (CC tools must be remapped to Codex-native ones —
+`apply_patch`/`shell`/`update_plan`/`request_user_input`). A fresh-eyes Explore of this tree concluded
+the **code is written for (a)**; the **product commits to (b)**. That mismatch is the residual.
+
+- **Code assumes (a).** `lib/codex-host.mjs:5-6` (Tier-3 KEEP) records that the bespoke v7
+  `codex_host_perf_guard` was *"dropped in favor of the Workflow tool's native `budget`"* — i.e. it
+  presumes the Workflow tool exists wherever execution runs. `commands/masterplan.md:115` (§2a, Tier-3
+  KEEP) launches `workflows/execute.workflow.js` via the **Workflow tool, unconditionally — no host
+  branch**; and `:87` crash-recovery reconciles that same backgrounded Workflow via `TaskList`/`TaskStop`
+  (also CC-only primitives). §0 host-detect (`commands/masterplan.md` step 2) wires **only** `suppressRescue`
+  + `--codex-suppressed` to `prepare-wave`; it does **not** branch wave dispatch on host.
+- **Product commits to (b).** Project `CLAUDE.md` states *"Codex can host the command through
+  `/masterplan:masterplan`"*; `skills/masterplan/SKILL.md:3` (Tier-3 KEEP) routes **all** verbs (incl.
+  `execute`/`full`) through the one command; its Codex tool-adaptation table (`SKILL.md:135-146`, **a
+  surviving keeper**) maps **every** CC tool to a Codex-native substitute (Read→shell, Edit→apply_patch,
+  Bash→exec_command, AskUserQuestion→request_user_input, Task/Todo→update_plan) **— except the Workflow
+  tool, which has no listed Codex substitute.** The one tool §2a's wave dispatch depends on is the one
+  tool the adaptation table omits.
+
+**Why it's a cutover obligation, not a live defect.** On the **current hybrid branch** the gap is hedged:
+`parts/codex-host.md:77-78` (Tier-1 DELETE) frames host-suppressed mode as *"a bounded interactive mode —
+not a license to execute the whole workflow inline,"* and `parts/contracts/taskcreate-projection.md`
+(Tier-1 DELETE) carries the *"Claude Code only, no-op under Codex"* projection. That prose is precisely what
+makes the surviving `SKILL.md` table's Workflow-tool omission **harmless today** — it scopes naive Codex
+hosting away from full-workflow-inline execution. **Cutover deletes that hedge** (both files are Tier-1),
+leaving the surviving keepers — `SKILL.md`'s "every tool maps" table (minus the Workflow row) +
+`codex-host.mjs`'s "native budget" rationale + §2a's unconditional Workflow dispatch — to imply, unhedged,
+that a genuine-(b) Codex host can run waves, with no specified path to do so. The defect **materializes at
+the deletion**, which is why it belongs to cutover completeness.
+
+**What I deliberately did NOT assert.** Whether Codex's runtime literally provides a Workflow-equivalent /
+any background-task primitive is **not** an in-repo fact and I have not verified it — so this residual does
+not claim it. That question is settled **empirically by the fresh-session parity run**
+([`docs/masterplan/2026-05-29-v8-dogfood/parity-runbook.md`](./masterplan/2026-05-29-v8-dogfood/parity-runbook.md)),
+not pre-judged here. The residual rests only on the four in-repo facts above (assume-(a) code, commit-(b)
+product, omitted Workflow row, deleted hedge).
+
+**Honest provenance.** The Explore verdict on *this code* was reading (a) ("Workflow tool present"); the
+push toward (b) comes from the **product** surface (CLAUDE.md / SKILL.md). I am not silently overriding my
+own evidence — both are true, and the *mismatch between them* is the finding. This is the same B2 finding in
+its third and final location: v7-audit artifact (declined guard) → reconciled-to-dying-target → **this
+code-vs-product scope residual**. It survives scrutiny only as the mismatch, never as a Codex-runtime claim.
+
+**Options (the scope decision is the user's; the parity-run fact reveals whether 3B is *forced* or execution already works under Codex):**
+- **(3A) Scope Codex-host to non-execution → Codex becomes plan-only. Lean rec on *implementation cost*, but a real product-scope narrowing.** Document that §2a's background-Workflow dispatch is **supported only under a
+  Claude Code host**: add a Workflow-tool row to the `SKILL.md` Codex adaptation table reading *"execution
+  (`§2a` wave dispatch) is supported only under a Claude Code host — Codex hosts brainstorm/plan/import/status/doctor"*
+  (a deliberate **support-scope** statement, **not** a *"no Codex substitute exists"* capability claim — that
+  claim could be **false** in the World-2 parity branch below), plus a one-line host-scope note near
+  `commands/masterplan.md:115`. This **narrows** the full-lifecycle Codex reach `SKILL.md:3` currently implies
+  (all verbs incl. `execute`/`full`) down to **plan-only**. Under this scope the `codex-host.mjs` "native
+  budget" comment stands (execution only ever runs under CC). Additive doc-only and **safe in both parity
+  worlds** (worded as support-scope, it never makes a false claim and never crashes) — but it is a *scope
+  decision*, not a cleanup. Honestly labeled **audit-surfaced (cutover-completeness), additive-doc**.
+- **(3B) Scope Codex-host to INCLUDE execution — real code, gated on the parity-run fact.** Specify a Codex
+  foreground-sequential wave-dispatch path (no Workflow tool: `mp prepare-wave` then dispatch `mp-implementer`
+  agents sequentially, `update_plan` to track — the bound the v7 `codex_host_perf_guard` once provided), and
+  add an explicit `if host.isCodex` execution branch at §2a. Then the `codex-host.mjs:5-6` "native budget"
+  comment is **wrong** and must be corrected. Only viable **if** the parity run shows Codex genuinely cannot
+  run the Workflow tool **and** full-lifecycle Codex execution is wanted; it is new, unverified execution-model
+  code, so it is the heavier, riskier path.
+- **(3C) Status quo / defer to the parity run.** Record the residual; let the parity run reveal empirically
+  whether the Workflow tool exists under a (b)-host, and settle 3A vs 3B on that result. Leaves the hedge-loss
+  unaddressed if cutover lands before the parity run does — so if 3C, **gate cutover on resolving this first**
+  (Tier-4 #13).
+
+**Follow-up (do NOT do now — gated on the scope ruling):** correcting the `codex-host.mjs:5-6` "native
+budget" comment is a real edit, but its *direction* depends on the ruling (3A → comment is fine, no edit;
+3B → comment is wrong, correct it). Making it now would bake in an unmade decision. Noted, deferred.
+
+**Recommendation: 3A on *implementation cost* — but it is a genuine product-scope ruling, not a cleanup, and
+the user owns it.** 3A is additive/doc-only and *safe in both parity worlds* (worded as support-scope it never
+makes a false capability claim and never crashes), **but** it **narrows** Codex from the full-lifecycle reach
+`SKILL.md:3` implies (all verbs incl. `execute`/`full`) down to **plan-only**. The honest decision is *"narrow
+Codex to plan-only (3A) vs. honor full-lifecycle Codex with real foreground-dispatch code (3B)"* — low
+*implementation* cost ≠ low *stakes*. The parity-run fact does not pick 3A-vs-3B for you; it reveals **which
+world the decision lives in**: if Codex *cannot* host the Workflow tool, status-quo (3C-as-ship) is broken and
+the live choice is 3A (accept plan-only) vs 3B (build the foreground path); if Codex *can*, §2a already works
+under Codex and 3A becomes a *deliberate* narrowing (still legitimate, just no longer forced) while 3B is
+unnecessary. Surfacing to the user for the scope ruling rather than authoring it.
+
+**OUTCOME (2026-05-30): user ruled 3B over the 3A recommendation — v8 commits to full-lifecycle Codex
+(execute included).** This resolves the *"AND full-lifecycle Codex execution is wanted"* half of 3B's gate:
+the product goal is now decided, not deferred (the user picked 3B *over* 3C-defer-to-parity). What remains
+parity-dependent is the **mechanism, not the commitment**:
+- **If the B1 parity run shows Codex *cannot* host the Workflow tool** → build 3B's foreground-sequential
+  path (`mp prepare-wave` → dispatch `mp-implementer` sequentially, `update_plan` to track), add the
+  `if host.isCodex` execution branch at §2a, and **correct** the `codex-host.mjs:5-6` "native budget" comment
+  (it is wrong under a (b)-host that lacks the Workflow tool).
+- **If parity shows Codex *can* host it** → §2a already works under Codex as-is; "3B" reduces to *documenting*
+  that Codex-execute is supported via the Workflow-tool path, and the `codex-host.mjs` comment **stands**.
+- The most robust design — under Codex always dispatch foreground-sequential and never depend on the Workflow
+  tool — is parity-independent, but is real execution-model code best informed by the parity fact (does Codex
+  expose the sub-agent dispatch `mp-implementer` needs?).
+
+**Implementation is DEFERRED** per the user's same-turn choice to mine the next dogfood bug next; it is **not**
+abandoned. The cutover gate (manifest **Tier-4 #13**) is updated from *"rule 3A or 3B"* to *"3B's code must
+land before the v7 Codex hedge is `git rm`'d"*. The `codex-host.mjs:5-6` comment-fix stays gated on the parity
+branch above (correct it only in the cannot-host-Workflow world).

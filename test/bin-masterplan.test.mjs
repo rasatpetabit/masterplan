@@ -169,6 +169,24 @@ test('set-phase / set-status: write the lifecycle fields; reject a value outside
   assert.equal(read(p).phase, 'plan');       // unchanged by the rejected writes
   assert.equal(read(p).status, 'archived');
 });
+test('set-worktree-disposition: write the field; reject a value outside the enum (C3)', () => {
+  // CD-7 closure for the worktree-integrity fix message: the disposition the doctor reads to SKIP a retired
+  // worktree now has an `mp` writer, so a post-merge active→removed_after_merge transition never forces a
+  // raw hand-edit of state.yml (the only path that existed before this verb).
+  const p = tmpBundle(v8());
+  assert.equal(
+    JSON.parse(run(['set-worktree-disposition', `--state=${p}`, '--disposition=removed_after_merge']).stdout).worktree_disposition,
+    'removed_after_merge');
+  assert.equal(read(p).worktree_disposition, 'removed_after_merge');
+  // revertible via the SAME verb — 'active' is a valid value, so a premature retirement isn't a one-way door
+  assert.equal(JSON.parse(run(['set-worktree-disposition', `--state=${p}`, '--disposition=active']).stdout).worktree_disposition, 'active');
+  assert.equal(read(p).worktree_disposition, 'active');
+  // Enum guard: a typo must die at the bin boundary, leaving the field untouched.
+  const bad = run(['set-worktree-disposition', `--state=${p}`, '--disposition=removed']);
+  assert.notEqual(bad.status, 0);
+  assert.match(bad.stderr, /invalid --disposition/);
+  assert.equal(read(p).worktree_disposition, 'active'); // unchanged by the rejected write
+});
 test('active_run two-phase: set (launching) -> recover w/ null staleTaskId; promote -> wait(alive)/recover(dead, staleTaskId)', () => {
   const p = tmpBundle(v8());
   assert.deepEqual(JSON.parse(run(['set-active-run', `--state=${p}`, '--wave=0']).stdout).active_run, { wave: 0, phase: 'launching' });
