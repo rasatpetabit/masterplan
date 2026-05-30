@@ -127,6 +127,91 @@ test('migrated bundle: backfill-waves satisfies the guard -> decide dispatches',
   assert.equal(d.wave, 0);
 });
 
+// ---- integration: load-plan (the plan→execute seam — step 7) ----
+// REGRESSION for the cutover-blocker the fresh-eyes review caught: a planned bundle that lands on
+// phase=execute with tasks:[] is data loss, because decideNextAction reads the TASK LIST (not the
+// phase label) — a bare `set-phase execute` would make the very next `decide` return `complete` →
+// ARCHIVE the just-planned bundle. The suite was 299/299 WITH this bug present (the dogfood hand-
+// seeded `tasks`), so the regression must drive the ACTUAL transition end-to-end, not a unit test.
+function planIndexFixture() {
+  return {
+    schema_version: '6.0',
+    tasks: [
+      { id: 1, wave: 0, description: 'greet', files: ['src/greet.mjs'], verify_commands: ['true'], codex: null },
+      { id: 2, wave: 0, description: 'farewell', files: ['src/farewell.mjs'], verify_commands: ['true'], codex: null },
+      { id: 3, wave: 1, description: 'index', files: ['src/index.mjs'], verify_commands: ['true'], codex: 'ok' },
+    ],
+  };
+}
+test('load-plan: materializes tasks + advances phase→execute atomically; decide then DISPATCHES (not completes)', () => {
+  const dir = tmpDir('mp-loadplan-');
+  const p = path.join(dir, 'state.yml');
+  // a freshly-planned bundle: phase=plan, NO tasks yet (the exact seam the dogfood hand-seeded around)
+  fs.writeFileSync(p, serializeState(v8({ phase: 'plan', tasks: [] })));
+  const planIdx = path.join(dir, 'plan.index.json');
+  fs.writeFileSync(planIdx, JSON.stringify(planIndexFixture()));
+
+  const r = run(['load-plan', `--state=${p}`, `--plan-index=${planIdx}`]);
+  assert.equal(r.status, 0);
+  assert.deepEqual(JSON.parse(r.stdout), { loaded: 3, waves: 2, phase: 'execute' });
+
+  const s = read(p);
+  assert.equal(s.phase, 'execute');                                   // phase advanced…
+  assert.deepEqual(s.tasks.map((t) => t.id), [1, 2, 3]);             // …AND tasks materialized (atomic)
+  assert.deepEqual(s.tasks.map((t) => t.status), ['pending', 'pending', 'pending']);
+  assert.deepEqual(s.tasks.map((t) => t.wave), [0, 0, 1]);
+  assert.deepEqual(s.tasks[2].files, ['src/index.mjs']);
+  // state.tasks carries ONLY {id,status,wave,files}; codex stays in plan.index.json (no drift — the
+  // exact field-duplication class 3dbad7f was built to kill; prepare-wave reads codex from the index).
+  assert.ok(!('codex' in s.tasks[2]), 'state.tasks must NOT duplicate the codex routing field');
+
+  // THE regression: decide must DISPATCH the planned wave, not COMPLETE→archive it.
+  const d = JSON.parse(run(['decide', `--state=${p}`]).stdout);
+  assert.equal(d.action, 'dispatch_wave');
+  assert.equal(d.wave, 0);
+
+  // …and the codex:"ok" task (wave 1) routes by ANNOTATION, not the heuristic — empirical proof the
+  // {id,status,wave,files} field set is correct (prepare-wave sources codex from the index by id).
+  const pw = JSON.parse(run(['prepare-wave', `--state=${p}`, `--plan-index=${planIdx}`, '--wave=1']).stdout);
+  const t3 = pw.tasks.find((t) => t.id === 3);
+  assert.equal(t3.target, 'codex');
+  assert.equal(t3.eligible, true);
+  assert.equal(t3.reason, 'annotation-ok');
+});
+test('load-plan: refuses a bundle that already has tasks (no clobber of execution state)', () => {
+  const dir = tmpDir('mp-loadplan2-');
+  const p = path.join(dir, 'state.yml');
+  fs.writeFileSync(p, serializeState(v8({ phase: 'plan' })));        // v8() ships 2 tasks
+  const planIdx = path.join(dir, 'plan.index.json');
+  fs.writeFileSync(planIdx, JSON.stringify(planIndexFixture()));
+  const r = run(['load-plan', `--state=${p}`, `--plan-index=${planIdx}`]);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /already has 2 task/);
+  assert.equal(read(p).phase, 'plan');                               // untouched — NOT advanced to execute
+});
+test('load-plan: refuses an invalid plan.index.json (the compensating gate for the direct mp-planner write)', () => {
+  const dir = tmpDir('mp-loadplan3-');
+  const p = path.join(dir, 'state.yml');
+  fs.writeFileSync(p, serializeState(v8({ phase: 'plan', tasks: [] })));
+  const planIdx = path.join(dir, 'plan.index.json');
+  // codex:"maybe" is the exact silent-heuristic-fallthrough class validatePlanIndex rejects.
+  fs.writeFileSync(planIdx, JSON.stringify({ tasks: [{ id: 1, wave: 0, description: 'x', files: [], codex: 'maybe' }] }));
+  const r = run(['load-plan', `--state=${p}`, `--plan-index=${planIdx}`]);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /codex must be/);
+  assert.deepEqual(read(p).tasks, []);                               // nothing materialized
+});
+test('load-plan: refuses an un-migrated legacy bundle (no silent overwrite before backup)', () => {
+  const dir = tmpDir('mp-loadplan4-');
+  const p = path.join(dir, 'state.yml');
+  fs.copyFileSync(SAMPLE, p);                                        // schema 5.0 — pre-v8
+  const planIdx = path.join(dir, 'plan.index.json');
+  fs.writeFileSync(planIdx, JSON.stringify(planIndexFixture()));
+  const r = run(['load-plan', `--state=${p}`, `--plan-index=${planIdx}`]);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /migrate-bundle/);
+});
+
 // ---- integration: CD-7 single-writer ops ----
 test('mark-task: write updates status; decide then advances to the next wave', () => {
   const p = tmpBundle(v8());
@@ -169,6 +254,20 @@ test('active_run two-phase: set (launching) -> recover w/ null staleTaskId; prom
   run(['clear-active-run', `--state=${p}`]);
   assert.equal(read(p).active_run, null);
 });
+test('planning active_run: set --kind=plan writes launching marker without --wave', () => {
+  const p = tmpBundle(v8());
+  const r = run(['set-active-run', `--state=${p}`, '--kind=plan']);
+  assert.equal(r.status, 0);
+  assert.deepEqual(JSON.parse(r.stdout).active_run, { kind: 'plan', phase: 'launching' });
+  assert.deepEqual(read(p).active_run, { kind: 'plan', phase: 'launching' });
+});
+test('planning active_run: promote attaches run and task handles without a wave', () => {
+  const p = tmpBundle(v8({ active_run: { kind: 'plan', phase: 'launching' } }));
+  const r = run(['promote-active-run', `--state=${p}`, '--run-id=R', '--task-id=T']);
+  assert.equal(r.status, 0);
+  assert.deepEqual(JSON.parse(r.stdout).active_run, { kind: 'plan', run_id: 'R', task_id: 'T' });
+  assert.deepEqual(read(p).active_run, { kind: 'plan', run_id: 'R', task_id: 'T' });
+});
 test('open-gate / clear-gate write the durable marker', () => {
   const p = tmpBundle(v8());
   run(['open-gate', `--state=${p}`, '--id=spec_approval', '--opened-at=2026-05-28']);
@@ -199,6 +298,7 @@ test('seed: creates a core-valid v8 brainstorm bundle with sibling artifact path
   assert.equal(s.topic, 'A licensing topic');
   assert.equal(s.complexity, 'high');
   assert.equal(s.autonomy, 'loose');
+  assert.equal(s.planning_mode, 'auto');
   assert.deepEqual(s.tasks, []);
   assert.equal(s.active_run, null);
   assert.equal(s.pending_gate, null);
@@ -214,6 +314,17 @@ test('seed: creates a core-valid v8 brainstorm bundle with sibling artifact path
   const o = JSON.parse(r.stdout);
   assert.deepEqual(Object.keys(o).sort(), ['path', 'phase', 'seeded', 'status']);
   assert.ok(!r.stdout.includes('A licensing topic'));
+});
+test('seed: accepts and validates --planning-mode', () => {
+  const good = path.join(tmpDir('mp-seed-plan-mode-'), 'state.yml');
+  const r = run(['seed', `--state=${good}`, '--slug=demo-run', '--topic=A topic', '--planning-mode=parallel']);
+  assert.equal(r.status, 0);
+  assert.equal(read(good).planning_mode, 'parallel');
+
+  const bad = path.join(tmpDir('mp-seed-plan-mode-bad-'), 'state.yml');
+  const rejected = run(['seed', `--state=${bad}`, '--slug=demo-run', '--topic=A topic', '--planning-mode=bogus']);
+  assert.notEqual(rejected.status, 0);
+  assert.match(rejected.stderr, /invalid --planning-mode/);
 });
 test('seed: refuses an existing bundle unless --force', () => {
   const p = path.join(tmpDir('mp-seed2-'), 'state.yml');

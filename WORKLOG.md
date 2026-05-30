@@ -1,5 +1,13 @@
 # WORKLOG
 
+## 2026-05-30 — v8 (masterplan-ng): second-opinion review of `load-plan` materialization
+
+Read-only review of the plan→execute materialization fix found the main seam sound: `load-plan` validates the index, writes `state.tasks` and `phase=execute` together, `decide` dispatches afterward, and re-running `load-plan` refuses to clobber an already-loaded bundle. Noted one low-risk adjacent hardening gap: `prepareWave` currently prefers `plan.index.json`'s `files` while D6 `declaredScope` uses `state.tasks[].files`, so a post-load index drift can dispatch a different scope than verification permits; fix by asserting equality or making state files authoritative in `prepareWave`. Full `node --test test/` remains sandbox-limited by nested `spawnSync` EPERM in `bin-masterplan`/`gitignore`; pure tests and direct CLI probes were used.
+
+## 2026-05-30 — v8 (masterplan-ng): discriminated planning active_run + planning_mode seed
+
+Added the planning-run discriminant to the resume spine so L2 parallel-planning background runs are not interpreted as execute waves: `{kind:'plan',phase:'launching'}` now recovers without requiring a wave, promoted `{kind:'plan',run_id,task_id}` waits only while live, and dead/launching planning runs return `recover_plan_run` because plan fragments are completed by the L1 plan protocol rather than disk-derived wave finalization. Seed state now carries flat `planning_mode` (`auto` default; CLI-validates `serial|parallel|auto`) so `resume_phase` can echo the mode for pre-execute plan resumption. Direct CLI smoke passed for planning seed/mode validation and plan marker promotion; full `node --test test/` remains blocked in this sandbox by existing nested `child_process` EPERM in `bin-masterplan`/`gitignore` harnesses, while pure resume/bundle tests pass.
+
 ## 2026-05-29 — v8 (masterplan-ng): dogfood bug-fix — Issue E: no `mp` writer for the `phase`/`status` fields
 
 Fourth bug from the same openxcvr `commercial-license-lock` transcript scan. **Same CD-7 hand-edit class as Issue A, but for the lifecycle fields:** the live transcript (line 333) shows the v8 orchestrator hand-`Edit`-ing `state.yml` to advance the phase, citing "no `set-phase` command exists" (lines 286, 332). v8 had `mp` writers for seed / mark-task / gates / active-run but **none for the `phase` and `status` fields** — yet the brainstorm→plan→execute lifecycle and the clean/retro/complete archival both require advancing them, so CD-7 (bin is sole writer) forced a hand-edit.

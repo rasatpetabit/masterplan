@@ -18,6 +18,7 @@ import {
   setPhase,
   setStatus,
   markTask,
+  loadPlanTasks,
   CORE_REQUIRED_FIELDS,
   validateCoreState,
   buildSeedState,
@@ -108,6 +109,25 @@ test('markTask throws on an unknown id (no silent no-op that fakes success)', ()
   assert.equal(markTask(s, 1, 'done').tasks[0].status, 'done'); // known id still works
 });
 
+test('loadPlanTasks: materializes {id,status,wave,files} + sets phase=execute in one object (the atomic seam)', () => {
+  const base = { slug: 'x', phase: 'plan', tasks: [] };
+  const idx = { tasks: [
+    { id: '1', wave: 0, description: 'a', files: ['a.mjs'], verify_commands: ['true'], codex: null },
+    { id: 2, parallel_group: undefined, wave: 1, description: 'b', files: ['b.mjs'], codex: 'ok' },
+  ] };
+  const next = loadPlanTasks(base, idx);
+  assert.equal(next.phase, 'execute'); // phase + tasks land together (the bin writes this one object atomically)
+  assert.deepEqual(next.tasks, [
+    { id: 1, status: 'pending', wave: 0, files: ['a.mjs'] }, // numeric-string id → Number; codex/verify_commands dropped
+    { id: 2, status: 'pending', wave: 1, files: ['b.mjs'] },
+  ]);
+});
+test('loadPlanTasks: refuses a non-empty task list, an empty index, and a non-integer wave', () => {
+  assert.throws(() => loadPlanTasks({ tasks: [{ id: 1 }] }, { tasks: [{ id: 1, wave: 0 }] }), /already has 1 task/);
+  assert.throws(() => loadPlanTasks({ tasks: [] }, { tasks: [] }), /no tasks/);
+  assert.throws(() => loadPlanTasks({ tasks: [] }, { tasks: [{ id: 1, wave: '0' }] }), /non-integer wave/);
+});
+
 test('validateCoreState: a well-formed v8 core (with tasks) is valid', () => {
   const ok = {
     schema_version: 6, slug: 'r', status: 'executing', phase: 'execute',
@@ -188,13 +208,14 @@ test('buildSeedState: a minimal seed is a core-valid v8 brainstorm bundle with t
   assert.equal(s.active_run, null);
   assert.equal(s.pending_gate, null);
   assert.equal(s.complexity, null); // optional fields default to null, not undefined (round-trippable)
+  assert.equal(s.planning_mode, 'auto');
   assert.deepEqual(parseState(serializeState(s)), s); // survives the on-disk format
 });
 
 test('buildSeedState: optional fields and overrides are carried through', () => {
   const s = buildSeedState({
     slug: 'r', topic: 't', createdAt: 'T', phase: 'plan', status: 'planning', schemaVersion: 9,
-    complexity: 'high', complexitySource: 'interview', autonomy: 'loose',
+    complexity: 'high', complexitySource: 'interview', autonomy: 'loose', planningMode: 'serial',
     predecessorTranscript: '/p/x.jsonl', specPath: 'd/spec.md', planPath: 'd/plan.md', planIndexPath: 'd/plan.index.json',
   });
   assert.equal(s.phase, 'plan');
@@ -203,6 +224,7 @@ test('buildSeedState: optional fields and overrides are carried through', () => 
   assert.equal(s.complexity, 'high');
   assert.equal(s.complexity_source, 'interview');
   assert.equal(s.autonomy, 'loose');
+  assert.equal(s.planning_mode, 'serial');
   assert.equal(s.predecessor_transcript, '/p/x.jsonl');
   assert.equal(s.spec_path, 'd/spec.md');
   assert.equal(s.plan_index_path, 'd/plan.index.json');

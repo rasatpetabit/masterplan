@@ -9,7 +9,7 @@ description: "Resumable orchestrator for /masterplan: brainstorm→plan→execut
 > `docs/masterplan/<slug>/` (`state.yml` is the source of truth). CD-7: the shell is the SOLE
 > state writer, via `bin` — **never** hand-edit, `Write`, or `Edit` `state.yml` or `events.jsonl`;
 > every mutation goes through an `mp` subcommand (`seed`, `set-phase`, `set-status`, `mark-task`,
-> `open-gate`, `clear-gate`, `event`, …). A raw `Write`/`Edit` both violates CD-7 **and** floods the screen with the file diff
+> `load-plan`, `open-gate`, `clear-gate`, `event`, …). A raw `Write`/`Edit` both violates CD-7 **and** floods the screen with the file diff
 > (anti-flood) — `mp` writes the file server-side and returns one terse JSON line. Work goes to
 > dedicated agents (`agents/*.md`), the L2 Workflow engine (`workflows/execute.workflow.js`), and
 > `superpowers` skills — never run substantive work inline in this context (it holds sequencing state only).
@@ -59,8 +59,10 @@ The spine. It NEVER decides in prose — it asks `mp decide` and executes the re
 3. **Probe liveness — or catch a completion.** If `state.active_run` has a `task_id`:
    - **A Workflow completion notification re-invoked you** and its `<result>{…}</result>` (run/task
      matching `active_run`) is in front of you → do NOT probe or `decide` yet: first run the
-     **completion protocol (§2a)** to record the in-hand digests (mark each `done`, D6 `verify-scope`,
-     commit). Recording BEFORE `decide` is load-bearing — a finished run whose tasks are still
+     **completion protocol — §2a for an execute wave, §2b for a planning run** (branch on
+     `active_run.kind`: `'plan'` → §2b, else → §2a) to record the in-hand digests (execute: mark each
+     `done`, D6 `verify-scope`, commit; plan: merge fragments → validate → review → advance).
+     Recording BEFORE `decide` is load-bearing — a finished run whose tasks are still
      `pending` on disk looks like a crash to `decide` (→ `recover_and_redispatch`), so deciding first
      re-runs a wave you already hold results for. After recording, fall through to step 4 (no `--alive`).
    - **Otherwise** probe with `TaskGet(task_id)`: still running → pass `--alive` to step 4 (→ `wait`).
@@ -70,8 +72,8 @@ The spine. It NEVER decides in prose — it asks `mp decide` and executes the re
 4. **Decide.** `mp decide --state=<path> [--alive]` → an action JSON. If it exits non-zero citing
    "backfill waves", the bundle wasn't backfilled — return to step 2.
 5. **Execute the action.** After `finalize_run`, loop back to step 4 (re-decide); `dispatch_wave` /
-   `recover_and_redispatch` end by awaiting a launched run; `wait` / `surface_gate` / `resume_phase` /
-   `complete` close.
+   `recover_and_redispatch` / `recover_plan_run` end by awaiting a launched run; `resume_phase` hands
+   to the plan lifecycle (§3a); `wait` / `surface_gate` / `complete` close.
 
    | action | do |
    |---|---|
@@ -79,8 +81,9 @@ The spine. It NEVER decides in prose — it asks `mp decide` and executes the re
    | `wait` | A live run owns the wave. Report it and close — its Workflow completion notification re-invokes this controller, which records the result via the completion protocol (**§2a**, step 3). |
    | `finalize_run` | The wave's tasks are all `done` on disk. `mp clear-active-run`, commit, then re-decide (→ next wave, or `complete`). |
    | `recover_and_redispatch` | Crash recovery. If `staleTaskId` ≠ null: `TaskList` → `TaskStop` any surviving run for it (a backgrounded Workflow MAY outlive session death — reconcile before touching files). Then RESET scope: `git checkout -- <resetPaths>` and, **only when `resetPaths` is non-empty**, `git clean -fd -- <resetPaths>` — scope the clean to the reset paths; a bare `git clean -fd` (or one with an empty pathspec) would wipe unrelated user-owned untracked files. Then dispatch the wave via **§2a**. Idempotent — agents never commit. |
+   | `recover_plan_run` | Crash recovery for a planning fan-out (`active_run.kind:'plan'`). If `staleTaskId` ≠ null: `TaskList` → `TaskStop` any surviving run. **No git scope reset** — the subsystem drafters are read-only, so nothing was written to revert. Re-launch the fan-out via **§2b** (re-dispatch `mp-spec-decomposer` if the subsystem set isn't in hand). Idempotent. |
    | `dispatch_wave` | Launch one wave through the L2 engine — full sequence in **§2a**. In brief: `mp prepare-wave` (resolves routing) → capture the git baseline → `mp set-active-run --wave=N` (phase-1, BEFORE launch) → launch `workflows/execute.workflow.js` in the background with `args={wave,tasks,baseline,repoRoot,review}` → `mp promote-active-run --run-id=… --task-id=…` (phase-2) → close to await its completion notification. |
-   | `resume_phase` | The bundle is mid-`{brainstorm\|plan}` with no plan built yet (`tasks:[]`). Hand to §3's named-phase lifecycle for that `phase`. **Do NOT finalize/archive** — that would destroy a mid-design run. Full pre-execute resume (re-entering an in-progress brainstorm/plan and continuing the superpowers skill) is **not yet wired (step 7)**, so for now SURFACE it via `AskUserQuestion` — offer to continue the phase, restart it, or stop — and close. Never fall through to `complete`. |
+   | `resume_phase` | The bundle is mid-`{brainstorm\|plan}` with no plan built yet (`tasks:[]`). **Do NOT finalize/archive** — that would destroy a mid-design run. `phase==plan` → hand to the **plan lifecycle (§3a)** with the action's `planning_mode`. `phase==brainstorm` → re-entering an in-progress `superpowers:brainstorming` is still deferred (step 7), so SURFACE via `AskUserQuestion` — continue the phase, restart it, or stop — and close. Never fall through to `complete`. |
    | `complete` | All tasks done → completion: write `retro.md`, archive the bundle (`mp set-status --state=<path> --status=archived` — the sole archival mechanism wherever a bundle is archived; never hand-edit `state.yml`), commit. |
 
 6. **CD-7 commit discipline.** Each durable change = a `mp` write (atomic) FOLLOWED BY a `git commit`
@@ -134,11 +137,63 @@ dispatches agents and echoes the baseline.
    scope-reverted) drives `recover_and_redispatch` for ONLY those, idempotently. Surface failed/blocked
    tasks or a `blocking` verdict via `AskUserQuestion` (§4) — never silently loop.
 
+## 2b — Parallel-plan dispatch + completion (the planning L1↔L2 seam)
+
+`workflows/plan.workflow.js` (L2) fans out **one `mp-subsystem-planner` per subsystem** in a single
+parallel barrier and returns **fragments only** — it never writes artifacts or commits. This shell
+owns the decomposition (the subsystem list), the deterministic merge, and the gate. It mirrors §2a
+**minus the wave loop and minus any scope capture** — the drafters are read-only, so there is no D6
+baseline and no `verify-scope`. `active_run.kind:'plan'` carries **no wave**.
+
+**Launch** (reached from §3a's parallel branch, and from `recover_plan_run`):
+
+1. **Subsystems in hand.** Use the decomposition from §3a (`mp-spec-decomposer`'s `{subsystems}`). On
+   `recover_plan_run` with none in hand, re-dispatch `mp-spec-decomposer` first — the fan-out is
+   idempotent, so re-deriving the seam map is safe.
+2. **Phase-1 plan marker.** `mp set-active-run --state=<path> --kind=plan` — a planning marker (no
+   wave) written BEFORE launch so a crash in the launch gap resumes as `recover_plan_run`, not a
+   blind re-dispatch.
+3. **Launch in the background.** Start `workflows/plan.workflow.js` via the Workflow tool with
+   `args = { subsystems:<step 1>, specPath:<spec_path>, repoRoot:<repo> }`. Background so it outlives
+   the turn; its completion notification re-invokes this controller (→ §2 step 3 → here).
+4. **Phase-2 handles.** `mp promote-active-run --state=<path> --run-id=<id> --task-id=<id>`.
+5. **Close** to await completion. Do NOT merge or commit here — the fan-out is in flight.
+
+**Completion** (re-invoked holding the engine's `<result>` = `{ subsystems:[…fragments…], specPath,
+repoRoot }`, reached from §2 step 3 when `active_run.kind==='plan'`):
+
+1. **Reconcile coverage.** Diff the returned fragment `key`s against the requested subsystem keys;
+   **surface any missing subsystem** (a drafter that errored/skipped nulls out — never fake it). A
+   missing drafter is a `REVISE`-class gate, not a silent drop.
+2. **Stage the fragments.** Write the returned `subsystems` array to `<bundle-dir>/.plan-fragments.json`
+   (a plain `Write` — `plan.index.json` / `plan.md` / fragments are **ARTIFACTS, not CD-7 state**, so
+   this write is allowed outside the `mp`-only rule).
+3. **Merge (deterministic).** `mp merge-plan-fragments --fragments=<bundle-dir>/.plan-fragments.json
+   --out=<plan_index_path> --plan-md=<plan_path> --meta='{"title":"<topic>","spec":"<spec_path>"}'` —
+   assigns global ids/waves, normalises `codex`, **validates BEFORE writing**, and stamps
+   `plan_hash`/`generated_at` onto both artifacts. A merge error (dup key, dangling/cyclic dep, invalid
+   index) exits non-zero and writes nothing — surface it and stop.
+4. **Explicit gate.** `mp validate-plan-index --plan-index=<plan_index_path>` — the standalone strict
+   check, the compensating layer now that fragments crossed a background-Workflow boundary (the
+   `FRAGMENT` tool-schema enum guarded the foreground path; this re-guards `codex` shape + same-wave
+   file-disjointness on disk).
+5. **Review.** Dispatch `agents/mp-plan-reviewer` against `plan.md` / `plan.index.json` / `spec.md`
+   → `PASS | REVISE | FAIL`.
+   - **PASS** → `mp clear-active-run`; **`mp load-plan --state=<path> --plan-index=<plan_index_path>`**
+     (materializes `state.tasks` from the plan **and** advances `phase→execute` in one atomic write — the
+     plan→execute seam; a bare `set-phase execute` would leave `tasks:[]`, so the next `decide` would
+     `complete`→archive the just-planned bundle) + `mp event --state=<path> --type=phase_transition
+     --phase=execute`; commit `plan.index.json` + `plan.md` + `state.yml` together (terse 1–2 line
+     narration, never the diff — anti-flood); then re-decide (§2 step 4 → `dispatch_wave`).
+   - **REVISE / FAIL** (or a missing subsystem from step 1) → `mp clear-active-run`; surface the
+     reviewer's findings via `AskUserQuestion` (§4) — revise-and-replan / accept-as-is (REVISE only) /
+     stop — and keep `phase=plan`. Never auto-advance past a non-PASS verdict.
+
 ## 3 — Other verbs (sequencing only — content lives elsewhere)
 
 | verb | v8 target |
 |---|---|
-| `full` / `brainstorm` / `plan` | Locate the bundle, or **seed a new one** — `mp seed --state=<path> --slug=<slug> --topic="<topic>" [--complexity=… --autonomy=… --predecessor-transcript=…]` (writes a valid v8 brainstorm-phase bundle; refuses an existing one unless `--force`). Then invoke the `superpowers` skill directly — `superpowers:brainstorming` (B), then `writing-plans` (plan); plan output → `plan.index.json`. **Advance the phase at each transition** (never hand-edit `state.yml` — that is a CD-7 violation): run `mp set-phase --state=<path> --phase=plan` once brainstorm's spec is approved, then `mp set-phase --state=<path> --phase=execute` once the plan is built. Pair each transition with `mp event --state=<path> --type=phase_transition --phase=<new>`. Log other lifecycle milestones with `mp event --state=<path> --type=<event> [--phase=… --note=… --data=JSON]`. Gates via `mp open-gate` + an `AskUserQuestion`. **[full skill-invocation lifecycle wiring = step 7.]** |
+| `full` / `brainstorm` / `plan` | Locate the bundle, or **seed a new one** — `mp seed --state=<path> --slug=<slug> --topic="<topic>" [--complexity=… --autonomy=… --planning-mode=serial\|parallel\|auto --predecessor-transcript=…]` (writes a valid v8 brainstorm-phase bundle; refuses an existing one unless `--force`). **Brainstorm:** invoke `superpowers:brainstorming` directly; on spec approval, `mp set-phase --state=<path> --phase=plan` + `mp event --state=<path> --type=phase_transition --phase=plan` (never hand-edit `state.yml` — CD-7). **Plan:** hand to the **plan lifecycle (§3a)**, which selects serial vs parallel per `planning.mode` and advances to `execute` itself. Log other milestones with `mp event …`; gates via `mp open-gate` + an `AskUserQuestion`. (`brainstorm` stops once the plan phase is reached; `plan` runs §3a; `full` continues through execution via §2.) |
 | `execute` | The resume controller (§2). |
 | `retro` | Generate `retro.md` for the bundle, then close. Archival is `complete`'s terminal step (§2), NOT this verb's — a standalone `retro` must NOT `set-status archived` (that would strand a run with pending tasks: the §2 discover filter hides archived bundles). Safe to (re)generate a retro on an in-progress or finished run. |
 | `import` | Legacy intake → a v8 bundle: `mp migrate-bundle` an in-place legacy `state.yml` (backs up the original). |
@@ -149,6 +204,36 @@ dispatches agents and echoes the baseline.
 | `clean` | Archive (`mp set-status --state=<path> --status=archived`) / prune completed bundles. |
 | `next` | `mp decide` → describe the next action without executing it. |
 | `verbs` | Print the reserved-verb list above. |
+
+## 3a — Plan lifecycle (serial | parallel — the `planning.mode` gate)
+
+Reached when a bundle is in `phase=plan` with no plan yet: from §3's `full`/`plan` seed path (after
+brainstorm's spec is approved and `mp set-phase plan` ran) and from §2's `resume_phase`. Selects
+between the serial `superpowers:writing-plans` path and the parallel fan-out (§2b) per `planning.mode`.
+
+1. **Resolve the mode.** `serial | parallel | auto`, from the `resume_phase` action's `planning_mode`
+   (default `auto`); set at seed via `mp seed --planning-mode=…`.
+2. **Decompose (unless `serial`).** For `parallel`/`auto`, dispatch `agents/mp-spec-decomposer` against
+   `spec.md` → `{ subsystems, recommend_parallel, reason }`.
+   - `parallel` → parallel branch (step 4) with this decomposition.
+   - `auto` → parallel **iff** `recommend_parallel && subsystems.length ≥ 2`; otherwise serial (step 3).
+     Carry the decomposer's `reason` into your narration.
+   - `serial` → skip the decomposer → step 3.
+3. **Serial path.** Invoke `superpowers:writing-plans` directly → it authors `plan.md`. Parse it into
+   the index with the `masterplan:mp-planner` agent → `plan.index.json`. Gate it:
+   `mp validate-plan-index --plan-index=<plan_index_path>` (on failure, fix and re-parse — never advance
+   on an invalid index). Then **`mp load-plan --state=<path> --plan-index=<plan_index_path>`**
+   (materializes `state.tasks` from the plan **and** advances `phase→execute` atomically — a bare
+   `set-phase execute` would leave `tasks:[]` and the next `decide` would `complete`→archive the bundle)
+   + `mp event --state=<path> --type=phase_transition --phase=execute`, commit, and hand to the resume
+   controller (§2 → `dispatch_wave`).
+4. **Parallel path.** Hand the decomposition to **§2b**'s plan launch (background fan-out → merge →
+   validate → `mp-plan-reviewer` → execute). The phase advances to `execute` inside §2b's completion
+   gate, not here.
+
+Both paths converge on the same post-condition — a validated `plan.index.json` + `plan.md`, the
+plan's tasks materialized into `state.tasks` and `phase=execute` (both via `mp load-plan`), committed
+— after which §2 drives the wave loop.
 
 ## 4 — Turn-close (CD-9)
 

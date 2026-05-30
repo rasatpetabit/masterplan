@@ -253,6 +253,8 @@ complexity: medium           # low | medium | high
 runs_path: docs/masterplan
 parallelism:
   enabled: true              # wave dispatch on; set false to force serial
+planning:
+  mode: auto                 # auto | serial | parallel — auto fans out subsystem drafters when the spec partitions cleanly, else plans serially
 codex:
   routing: auto              # auto | on | off (auto respects plan annotations)
   review: on                 # on | off (toggle Codex reviews of Sonnet code)

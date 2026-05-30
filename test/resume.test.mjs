@@ -88,6 +88,33 @@ test('active_run phase-1 (launching, NO task_id) -> recover, staleTaskId null (c
   assert.equal(d.staleTaskId, null);
 });
 
+test('planning active_run phase-1 (launching, NO task_id) -> recover_plan_run with null staleTaskId', () => {
+  const s = base({ active_run: { kind: 'plan', phase: 'launching' }, tasks: [t(1, null, 'pending', ['a.txt'])] });
+  const d = decideNextAction(s, {});
+  assert.equal(d.action, 'recover_plan_run');
+  assert.equal(d.staleTaskId, null);
+});
+
+test('planning active_run phase-2 alive -> wait', () => {
+  const run = { kind: 'plan', run_id: 'r', task_id: 't' };
+  const s = base({ active_run: run, tasks: [t(1, null, 'pending', ['a.txt'])] });
+  const d = decideNextAction(s, { alive: true });
+  assert.equal(d.action, 'wait');
+  assert.deepEqual(d.run, run);
+});
+
+test('planning active_run phase-2 dead -> recover_plan_run with staleTaskId', () => {
+  const s = base({ active_run: { kind: 'plan', run_id: 'r', task_id: 't' }, tasks: [t(1, null, 'pending', ['a.txt'])] });
+  const d = decideNextAction(s, { alive: false });
+  assert.equal(d.action, 'recover_plan_run');
+  assert.equal(d.staleTaskId, 't');
+});
+
+test('planning active_run does not require an integer wave', () => {
+  const s = base({ active_run: { kind: 'plan', phase: 'launching' }, tasks: [t(1, null, 'pending', ['a.txt'])] });
+  assert.doesNotThrow(() => decideNextAction(s, {}));
+});
+
 test('no active run, pending tasks -> dispatch the lowest pending wave only', () => {
   const s = base({
     tasks: [t(1, 1, 'done'), t(2, 2, 'pending', ['b.txt']), t(3, 2, 'pending', ['c.txt']), t(4, 3, 'pending', ['e.txt'])],
@@ -131,6 +158,20 @@ test('PRE-EXECUTE GUARD: plan phase + tasks:[] -> resume_phase (the live openxcv
   const d = decideNextAction(base({ phase: 'plan' }), {});
   assert.equal(d.action, 'resume_phase');
   assert.equal(d.phase, 'plan');
+});
+
+test('PRE-EXECUTE GUARD: plan phase + tasks:[] echoes planning_mode', () => {
+  const d = decideNextAction(base({ phase: 'plan', planning_mode: 'parallel' }), {});
+  assert.equal(d.action, 'resume_phase');
+  assert.equal(d.phase, 'plan');
+  assert.equal(d.planning_mode, 'parallel');
+});
+
+test('PRE-EXECUTE GUARD: plan phase + tasks:[] defaults planning_mode to auto', () => {
+  const d = decideNextAction(base({ phase: 'plan' }), {});
+  assert.equal(d.action, 'resume_phase');
+  assert.equal(d.phase, 'plan');
+  assert.equal(d.planning_mode, 'auto');
 });
 
 test('execute phase, all tasks done -> complete (genuinely finished run still finalizes)', () => {

@@ -20,12 +20,16 @@
 //   decide --state=PATH [--alive]               -> the decideNextAction result (migrates in-memory)
 //   seed --state=PATH --slug=S --topic=STR [--phase=P] [--status=S] [--schema-version=N]
 //        [--created-at=T] [--complexity=C] [--complexity-source=SRC] [--autonomy=A]
-//        [--predecessor-transcript=PATH] [--spec-path=P] [--plan-path=P] [--plan-index-path=P] [--force]
+//        [--planning-mode=serial|parallel|auto] [--predecessor-transcript=PATH]
+//        [--spec-path=P] [--plan-path=P] [--plan-index-path=P] [--force]
 //                                               -> CD-7 write: create a fresh v8 brainstorm bundle (refuse if exists)
 //   event --state=PATH --type=T [--phase=P] [--note=STR] [--data=JSON] [--ts=T]
 //                                               -> append one JSON line to the bundle's events.jsonl
 //   migrate-bundle --state=PATH                 -> back up + persist a legacy bundle as v8 (no-op if v8)
 //   backfill-waves --state=PATH --plan-index=PATH -> set each task's {wave,files} from plan.index.json
+//   load-plan --state=PATH --plan-index=PATH    -> CD-7 write: materialize state.tasks from a fresh
+//                                                  plan.index.json AND advance phase→execute, ATOMICALLY
+//                                                  (the plan→execute seam; refuses a bundle with tasks)
 //   prepare-wave --state=PATH --plan-index=PATH --wave=N [--routing=M] [--codex-suppressed]
 //                [--linked-worktree] [--review=on|off]
 //                                               -> {wave, tasks:[lean routed payload], review} for the L2 `args`
@@ -37,6 +41,7 @@
 //   open-gate --state=PATH --id=X [--opened-at=T] -> CD-7 write: open the durable approval gate
 //   clear-gate --state=PATH                     -> CD-7 write: clear the gate
 //   set-active-run --state=PATH --wave=N        -> CD-7 write: phase-1 marker {wave, phase:'launching'}
+//   set-active-run --state=PATH --kind=plan     -> CD-7 write: planning marker {kind:'plan', phase:'launching'}
 //   promote-active-run --state=PATH --run-id=X --task-id=Y -> phase-2: attach the launch handles
 //   clear-active-run --state=PATH               -> CD-7 write: clear the run marker
 //   merge-plan-fragments --fragments=PATH --out=PATH [--plan-md=PATH] [--meta=JSON] [--generated-at=T]
@@ -49,7 +54,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, buildSeedState, appendEvent } from '../lib/bundle.mjs';
+import { readState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, loadPlanTasks, buildSeedState, appendEvent } from '../lib/bundle.mjs';
 import { migrate, detectSchemaVersion, MigrationError } from '../lib/migrate.mjs';
 import { decideNextAction } from '../lib/resume.mjs';
 import { prepareWave, declaredScope, verifyScope } from '../lib/wave.mjs';
@@ -100,6 +105,7 @@ const VALID_TASK_STATUS = ['pending', 'in_progress', 'done'];
 // ordering (recovery/restart legitimately moves phase backward; a re-opened run goes archived→in-progress).
 const VALID_PHASE = ['brainstorm', 'plan', 'execute'];
 const VALID_STATUS = ['in-progress', 'archived'];
+const VALID_PLANNING_MODE = ['serial', 'parallel', 'auto'];
 
 // ---- read helpers: decide migrates in-memory; write ops require an already-v8 bundle ----
 function readText(p) {
@@ -228,6 +234,9 @@ function main() {
       if (fs.existsSync(p) && !flags.force) {
         die(`seed: ${p} already exists — pass --force to overwrite (this replaces the bundle's core state).`, 1);
       }
+      if (flags['planning-mode'] !== undefined && !VALID_PLANNING_MODE.includes(flags['planning-mode'])) {
+        die(`invalid --planning-mode '${flags['planning-mode']}' — expected one of: ${VALID_PLANNING_MODE.join(', ')}`);
+      }
       const dir = path.dirname(p);
       let state;
       try {
@@ -241,6 +250,7 @@ function main() {
           complexity: flags.complexity,
           complexitySource: flags['complexity-source'],
           autonomy: flags.autonomy,
+          planningMode: flags['planning-mode'],
           predecessorTranscript: flags['predecessor-transcript'],
           // Path fields default to siblings of the BUNDLE DIR (its authoritative location), so a
           // non-canonical seed path stays self-consistent; explicit flags override.
@@ -316,6 +326,38 @@ function main() {
       }
       writeState(p, next);
       out({ updated: tasks.filter((task) => Number.isInteger(task.wave)).length, total: tasks.length });
+      break;
+    }
+    case 'load-plan': {
+      // The plan→execute seam. Materialize state.tasks from a freshly-built plan.index.json AND advance
+      // phase→execute in ONE writeState. This is the single crash-safe ordering: decideNextAction
+      // dispatches off the task list (not the phase label), so a `set-phase execute` that left tasks:[]
+      // would make the next `decide` return `complete` → ARCHIVE the just-planned bundle (data loss).
+      // loadPlanTasks bundles tasks + phase into one state object; the atomic tmp+rename lands both or
+      // neither. Validate the index FIRST — the serial path's mp-planner Writes plan.index.json directly
+      // (unguarded by merge-plan-fragments' pre-write validation), so this is the compensating gate.
+      const p = need(flags, 'state');
+      const state = loadForWrite(p);
+      const planIndexPath = need(flags, 'plan-index');
+      let index;
+      try {
+        index = JSON.parse(readText(planIndexPath));
+      } catch (e) {
+        die(`load-plan: ${planIndexPath} is not valid JSON (${e.message})`, 1);
+      }
+      const errors = validatePlanIndex(index);
+      if (errors.length) {
+        for (const e of errors) process.stderr.write(`  - ${e}\n`);
+        die(`load-plan: ${errors.length} error(s) in ${planIndexPath} — refusing to materialize an invalid plan.`, 1);
+      }
+      let next;
+      try {
+        next = loadPlanTasks(state, index); // throws: bundle already has tasks / empty index / non-integer wave
+      } catch (e) {
+        die(e.message, 1);
+      }
+      writeState(p, next);
+      out({ loaded: next.tasks.length, waves: new Set(next.tasks.map((t) => t.wave)).size, phase: next.phase });
       break;
     }
     case 'prepare-wave': {
@@ -398,6 +440,15 @@ function main() {
     }
     case 'set-active-run': {
       const p = need(flags, 'state');
+      if (flags.kind !== undefined) {
+        if (flags.kind !== 'plan') {
+          die(`invalid --kind '${flags.kind}' — expected: plan`);
+        }
+        const run = { kind: 'plan', phase: 'launching' };
+        writeState(p, setActiveRun(loadForWrite(p), run));
+        out({ active_run: run });
+        break;
+      }
       const wave = coerceId(need(flags, 'wave'));
       // set-active-run is the SOLE ORIGIN of the active_run wave; enforce the integer-wave invariant
       // HERE at the source (mirror of promote's guard below). Without it a `--wave=2.0`/`--wave=foo`/
@@ -416,6 +467,12 @@ function main() {
       const p = need(flags, 'state');
       const state = loadForWrite(p);
       const prev = state.active_run ?? {};
+      if (prev.kind === 'plan') {
+        const run = { kind: 'plan', run_id: need(flags, 'run-id'), task_id: need(flags, 'task-id') };
+        writeState(p, setActiveRun(state, run));
+        out({ active_run: run });
+        break;
+      }
       // Phase-2 promotion MUST follow a phase-1 launching marker carrying an integer wave
       // (set-active-run --wave=N). Promoting without it writes a wave-less active_run that
       // decideNextAction then mis-finalizes while tasks pend (orphan / double-dispatch). Fail loud.
