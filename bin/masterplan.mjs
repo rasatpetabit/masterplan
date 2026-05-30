@@ -42,6 +42,10 @@
 //                                               -> CD-7 write: record the worktree's disposition
 //                                                  (active|removed_after_merge|kept_by_user); the
 //                                                  doctor's worktree-integrity check SKIPs on retirement
+//   set-codex-config --state=PATH [--routing=R] [--review=B]
+//                                               -> CD-7 write: set the NESTED codex.{routing,review}
+//                                                  (routing: auto|on|off; review: true|false); the
+//                                                  codex-plugin-presence check SKIPs once both are off
 //   open-gate --state=PATH --id=X [--opened-at=T] -> CD-7 write: open the durable approval gate
 //   clear-gate --state=PATH                     -> CD-7 write: clear the gate
 //   set-active-run --state=PATH --wave=N        -> CD-7 write: phase-1 marker {wave, phase:'launching'}
@@ -52,7 +56,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, setWorktreeDisposition, buildSeedState, buildTasksFromPlanIndex, appendEvent } from '../lib/bundle.mjs';
+import { readState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, setWorktreeDisposition, setCodexConfig, buildSeedState, buildTasksFromPlanIndex, appendEvent } from '../lib/bundle.mjs';
 import { migrate, detectSchemaVersion, MigrationError } from '../lib/migrate.mjs';
 import { decideNextAction } from '../lib/resume.mjs';
 import { prepareWave, declaredScope, verifyScope } from '../lib/wave.mjs';
@@ -108,6 +112,12 @@ const VALID_STATUS = ['in-progress', 'archived'];
 // premature retirement can be reverted via the SAME verb (no CD-7 hand-edit). Value-enum only —
 // the active→removed_after_merge transition is not ordered (a re-opened run may go back to active).
 const VALID_WORKTREE_DISPOSITION = ['active', 'removed_after_merge', 'kept_by_user'];
+
+// Valid codex routing values the shell may WRITE via set-codex-config. The codex-plugin-presence doctor
+// SKIPs a bundle once routing is 'off' AND review is off; 'auto'/'on' keep codex engaged. Writes the
+// NESTED state.codex.routing (the shape the dispatch path reads) — NOT the flat codex_routing key the old
+// fix text named. Value-enum only — no transition ordering (a bundle may re-engage codex later).
+const VALID_CODEX_ROUTING = ['auto', 'on', 'off'];
 
 // ---- read helpers: decide migrates in-memory; write ops require an already-v8 bundle ----
 function readText(p) {
@@ -513,6 +523,30 @@ function main() {
       }
       writeState(p, setWorktreeDisposition(loadForWrite(p), disposition));
       out({ worktree_disposition: disposition });
+      break;
+    }
+    case 'set-codex-config': {
+      const p = need(flags, 'state');
+      const hasRouting = flags.routing !== undefined;
+      const hasReview = flags.review !== undefined;
+      if (!hasRouting && !hasReview) {
+        die('set-codex-config: provide at least one of --routing or --review', 1);
+      }
+      if (hasRouting && !VALID_CODEX_ROUTING.includes(flags.routing)) {
+        die(`invalid --routing '${flags.routing}' — expected one of: ${VALID_CODEX_ROUTING.join(', ')}`);
+      }
+      const patch = {};
+      if (hasRouting) patch.routing = flags.routing;
+      if (hasReview) {
+        // --review=true|on enables; --review=false|off disables; bare --review (=== true) enables.
+        // Normalize to the BOOLEAN the dispatch path and wantsCodex compare against (review === true).
+        if (!['true', 'on', 'false', 'off'].includes(String(flags.review))) {
+          die(`invalid --review '${flags.review}' — expected one of: true, false, on, off`);
+        }
+        patch.review = flags.review === true || flags.review === 'true' || flags.review === 'on';
+      }
+      writeState(p, setCodexConfig(loadForWrite(p), patch));
+      out({ codex: patch });
       break;
     }
     default:

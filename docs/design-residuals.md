@@ -236,3 +236,33 @@ parity-dependent is the **mechanism, not the commitment**:
 abandoned. The cutover gate (manifest **Tier-4 #13**) is updated from *"rule 3A or 3B"* to *"3B's code must
 land before the v7 Codex hedge is `git rm`'d"*. The `codex-host.mjs:5-6` comment-fix stays gated on the parity
 branch above (correct it only in the cannot-host-Workflow world).
+
+---
+
+## Residual 4 — `wantsCodex` flat-key fallback can disagree with dispatch (detection-layer silent-false-negative) — FOUND-NOT-FIXED, candidate next bug
+
+Surfaced *while* fixing the `codex-plugin-presence` doctor's fix message (the `mp set-codex-config` verb, 2026-05-30; see WORKLOG). It is **not** the A–G missing-writer class — it is a new sub-class: **the doctor's "wants codex" DETECTION can disagree with what the DISPATCH path actually does.**
+
+`wantsCodex` (`lib/doctor/codex-plugin-presence.mjs:25-33`) is defensively flat-OR-nested:
+`routing = state.codex?.routing ?? state.codex_routing`. Dispatch (`bin/masterplan.mjs:371/384`) is
+nested-ONLY: `state.codex?.routing ?? flags.routing ?? 'auto'`. So a bundle carrying a **flat** `codex_routing: off`
+with **no nested `codex` block** → `wantsCodex` reads the flat `off` → returns false → doctor SKIPs ("codex off,
+nothing to warn") — while dispatch ignores the flat key entirely and falls through to **`'auto'` → codex still
+routes.** That is the *exact* silent-false-fix the verb work eliminated at the *advice* layer, still latent one
+layer up at *detection*. (The inverse — flat `codex_review: on`, no nested block — makes the doctor WARN for a
+bundle dispatch treats as review-off; same root divergence, lower stakes.)
+
+**Why not folded into the verb fix:** the verb work was a clean *additive* writer + message rewrite with no
+detection-behavior change. Making `wantsCodex` authoritative on the nested shape (or treating a flat-only value
+as "misconfigured → warn", not "off") is a *semantic* change to detection that churns the doctor fixtures which
+deliberately exercise the flat fallback (`test/doctor.test.mjs` + the `codex-plugin-presence` fixtures). Correct
+to keep that out of the additive fix; **wrong to call it benign.** This records it.
+
+**Fix direction (when picked up):** reconcile detection with dispatch's nested-only read. Either (a) drop the
+flat fallback from `wantsCodex` and migrate the fixtures to the nested shape (matches dispatch exactly; the flat
+keys become dead input the doctor no longer honors), or (b) keep reading flat keys but classify a flat-only codex
+config as a distinct **misconfig WARN** ("flat `codex_routing`/`codex_review` present but dispatch reads only
+nested `codex.{…}` — run `mp set-codex-config` to migrate") rather than silently trusting it. (a) is simpler and
+removes a shape the rest of v8 never writes; (b) preserves a louder diagnostic for legacy hand-edited bundles.
+Needs the same confirm-at-tip + honest-label + own-test discipline as the verb fix. **Does not block** the
+shipped verb fix — that fix is correct for its scope.

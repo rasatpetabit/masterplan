@@ -268,6 +268,18 @@ test('codex-plugin-presence: fixtures match dir-prefix severity', async (t) => {
   }
 });
 
+test('codex-plugin-presence: WARN fix cites `mp set-codex-config` (CD-7-honest; no flat-key hand-edit)', () => {
+  // The fix the doctor emits when a bundle wants codex but the plugin is absent must name the `mp` writer
+  // and the NESTED codex.{routing,review} the dispatch path reads — not the old `set codex_routing: off ...`
+  // flat hand-edit (CD-7-violating AND ineffective: flat keys never reach the dispatch layer).
+  const root = path.join(FX, 'codex-plugin-presence', 'warn-wants-no-plugin');
+  const findings = codexPluginPresence(root, { homeDir: path.join(root, 'home') });
+  const warn = findings.find((f) => f.severity === 'WARN');
+  assert.ok(warn, JSON.stringify(findings));
+  assert.match(warn.fix, /mp set-codex-config .*--routing=off --review=false/); // the verb, nested-aware
+  assert.doesNotMatch(warn.fix, /set codex_routing: off and codex_review: false/); // old CD-7-violating advice
+});
+
 test('codex-plugin-presence: SKIP when no bundles', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-cpp-'));
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-cpp-home-'));

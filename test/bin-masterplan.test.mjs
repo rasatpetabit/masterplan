@@ -189,6 +189,30 @@ test('set-worktree-disposition: write the field; reject a value outside the enum
   assert.match(bad.stderr, /invalid --disposition/);
   assert.equal(read(p).worktree_disposition, 'active'); // unchanged by the rejected write
 });
+test('set-codex-config: write NESTED codex.{routing,review}; merge-preserve; reject bad value / empty patch (codex CD-7)', () => {
+  // CD-7 closure for the codex-plugin-presence fix message: the codex config the dispatch path reads
+  // (state.codex.routing/.review) now has an `mp` writer, so turning codex off for a bundle never forces a
+  // raw hand-edit of state.yml. Writes the NESTED shape — not the flat codex_routing the old fix text named.
+  const p = tmpBundle(v8());
+  const o = JSON.parse(run(['set-codex-config', `--state=${p}`, '--routing=off', '--review=false']).stdout);
+  assert.deepEqual(o.codex, { routing: 'off', review: false });
+  assert.deepEqual(read(p).codex, { routing: 'off', review: false }); // persisted as the nested object
+  // partial set merge-preserves the other facet: flip routing back to auto, review stays false
+  assert.deepEqual(JSON.parse(run(['set-codex-config', `--state=${p}`, '--routing=auto']).stdout).codex, { routing: 'auto' });
+  assert.deepEqual(read(p).codex, { routing: 'auto', review: false });
+  // review normalizes on/true -> the boolean `true` the dispatch path and wantsCodex compare against
+  const q = tmpBundle(v8());
+  assert.equal(JSON.parse(run(['set-codex-config', `--state=${q}`, '--review=on']).stdout).codex.review, true);
+  assert.equal(read(q).codex.review, true);
+  // Enum guard + empty-patch guard: both die at the bin boundary, leaving state untouched.
+  const badRouting = run(['set-codex-config', `--state=${p}`, '--routing=sometimes']);
+  assert.notEqual(badRouting.status, 0);
+  assert.match(badRouting.stderr, /invalid --routing/);
+  const empty = run(['set-codex-config', `--state=${p}`]);
+  assert.notEqual(empty.status, 0);
+  assert.match(empty.stderr, /at least one of --routing or --review/);
+  assert.deepEqual(read(p).codex, { routing: 'auto', review: false }); // unchanged by the rejected writes
+});
 test('active_run two-phase: set (launching) -> recover w/ null staleTaskId; promote -> wait(alive)/recover(dead, staleTaskId)', () => {
   const p = tmpBundle(v8());
   assert.deepEqual(JSON.parse(run(['set-active-run', `--state=${p}`, '--wave=0']).stdout).active_run, { wave: 0, phase: 'launching' });
