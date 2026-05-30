@@ -112,13 +112,13 @@ test('markTask throws on an unknown id (no silent no-op that fakes success)', ()
 test('loadPlanTasks: materializes {id,status,wave,files} + sets phase=execute in one object (the atomic seam)', () => {
   const base = { slug: 'x', phase: 'plan', tasks: [] };
   const idx = { tasks: [
-    { id: '1', wave: 0, description: 'a', files: ['a.mjs'], verify_commands: ['true'], codex: null },
+    { id: 1, wave: 0, description: 'a', files: ['a.mjs'], verify_commands: ['true'], codex: null },
     { id: 2, parallel_group: undefined, wave: 1, description: 'b', files: ['b.mjs'], codex: 'ok' },
   ] };
   const next = loadPlanTasks(base, idx);
   assert.equal(next.phase, 'execute'); // phase + tasks land together (the bin writes this one object atomically)
   assert.deepEqual(next.tasks, [
-    { id: 1, status: 'pending', wave: 0, files: ['a.mjs'] }, // numeric-string id → Number; codex/verify_commands dropped
+    { id: 1, status: 'pending', wave: 0, files: ['a.mjs'] }, // only {id,status,wave,files} kept; codex/verify_commands dropped
     { id: 2, status: 'pending', wave: 1, files: ['b.mjs'] },
   ]);
 });

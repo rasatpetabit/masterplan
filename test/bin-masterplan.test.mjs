@@ -195,7 +195,8 @@ test('load-plan: refuses an invalid plan.index.json (the compensating gate for t
   fs.writeFileSync(p, serializeState(v8({ phase: 'plan', tasks: [] })));
   const planIdx = path.join(dir, 'plan.index.json');
   // codex:"maybe" is the exact silent-heuristic-fallthrough class validatePlanIndex rejects.
-  fs.writeFileSync(planIdx, JSON.stringify({ tasks: [{ id: 1, wave: 0, description: 'x', files: [], codex: 'maybe' }] }));
+  // schema_version:'6.0' clears the v8-floor gate so this exercises the STRUCTURAL rejection, not the floor.
+  fs.writeFileSync(planIdx, JSON.stringify({ schema_version: '6.0', tasks: [{ id: 1, wave: 0, description: 'x', files: [], codex: 'maybe' }] }));
   const r = run(['load-plan', `--state=${p}`, `--plan-index=${planIdx}`]);
   assert.equal(r.status, 1);
   assert.match(r.stderr, /codex must be/);
@@ -210,6 +211,32 @@ test('load-plan: refuses an un-migrated legacy bundle (no silent overwrite befor
   const r = run(['load-plan', `--state=${p}`, `--plan-index=${planIdx}`]);
   assert.equal(r.status, 2);
   assert.match(r.stderr, /migrate-bundle/);
+});
+test('load-plan: refuses a pre-v8 plan.index.json (schema_version floor — mirrors the doctor + loadForWrite major<6 gate)', () => {
+  const dir = tmpDir('mp-loadplan5-');
+  const p = path.join(dir, 'state.yml');
+  fs.writeFileSync(p, serializeState(v8({ phase: 'plan', tasks: [] })));
+  const planIdx = path.join(dir, 'plan.index.json');
+  // structurally fine, but a legacy schema_version — must be refused at the seam, BEFORE materializing.
+  fs.writeFileSync(planIdx, JSON.stringify({ ...planIndexFixture(), schema_version: 5 }));
+  const r = run(['load-plan', `--state=${p}`, `--plan-index=${planIdx}`]);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /schema_version|v8 floor/);
+  assert.deepEqual(read(p).tasks, []);                               // nothing materialized
+  assert.equal(read(p).phase, 'plan');                               // phase untouched
+});
+test('set-phase: refuses --phase=execute on an empty-tasks bundle (the data-loss footgun, companion to load-plan)', () => {
+  // Even a hand-run `set-phase --phase=execute` on a freshly-planned bundle (tasks:[]) must die — it
+  // would strand the bundle in the state where the next `decide` reads the empty list and archives it.
+  const empty = tmpBundle(v8({ phase: 'plan', tasks: [] }));
+  const r = run(['set-phase', `--state=${empty}`, '--phase=execute']);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /refusing --phase=execute/);
+  assert.equal(read(empty).phase, 'plan');                           // untouched — NOT advanced to execute
+  // …but advancing a bundle that DOES have tasks (v8 ships 2) is still allowed.
+  const withTasks = tmpBundle(v8({ phase: 'plan' }));
+  assert.equal(JSON.parse(run(['set-phase', `--state=${withTasks}`, '--phase=execute']).stdout).phase, 'execute');
+  assert.equal(read(withTasks).phase, 'execute');
 });
 
 // ---- integration: CD-7 single-writer ops ----

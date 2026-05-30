@@ -345,6 +345,18 @@ function main() {
       } catch (e) {
         die(`load-plan: ${planIndexPath} is not valid JSON (${e.message})`, 1);
       }
+      // Schema floor: refuse to materialize a pre-v8 index. Mirrors the doctor's plan-index-schema
+      // gate (lib/doctor/plan-index-schema.mjs) and loadForWrite's `major < 6` guard — parse the
+      // major the same way so both '6.0' (string, from merge-plan-fragments) and 6 (number) pass.
+      const major = Number(String(index?.schema_version ?? '').split('.')[0]);
+      if (!Number.isInteger(major) || major < 6) {
+        die(
+          `load-plan: ${planIndexPath} has schema_version ${JSON.stringify(index?.schema_version)} — ` +
+            `expected the v8 floor (>= 6, canonical '6.0'). Rebuild with merge-plan-fragments, or ` +
+            `migrate a legacy index, before materializing.`,
+          1
+        );
+      }
       const errors = validatePlanIndex(index);
       if (errors.length) {
         for (const e of errors) process.stderr.write(`  - ${e}\n`);
@@ -497,7 +509,20 @@ function main() {
       if (!VALID_PHASE.includes(phase)) {
         die(`invalid --phase '${phase}' — expected one of: ${VALID_PHASE.join(', ')}`);
       }
-      writeState(p, setPhase(loadForWrite(p), phase));
+      const cur = loadForWrite(p);
+      // Data-loss guard: decideNextAction dispatches off the task list, NOT the phase label, so a
+      // bare `set-phase --phase=execute` on a bundle with tasks:[] makes the very next `decide`
+      // return `complete` → archive the just-planned bundle (silent data loss). Materializing tasks
+      // and advancing phase is load-plan's atomic job; set-phase must refuse to strand a bundle here.
+      if (phase === 'execute' && (cur.tasks?.length ?? 0) === 0) {
+        die(
+          `set-phase: refusing --phase=execute on a bundle with no tasks — the next \`decide\` would ` +
+            `read the empty task list and archive the bundle (data loss). Use \`load-plan ` +
+            `--plan-index=<plan.index.json>\` to materialize tasks AND advance phase atomically.`,
+          1
+        );
+      }
+      writeState(p, setPhase(cur, phase));
       out({ phase });
       break;
     }
