@@ -1,0 +1,8 @@
+---
+schema_version: 6
+slug: 2026-05-29-v8-dogfood
+status: executing
+phase: C
+pending_gate: null
+active_run: null
+tasks: [{"id":1,"status":"done","wave":1,"files":["src/greet.mjs"]},{"id":2,"status":"done","wave":1,"files":["src/farewell.mjs"]},{"id":3,"status":"done","wave":2,"files":["src/index.mjs"]}]

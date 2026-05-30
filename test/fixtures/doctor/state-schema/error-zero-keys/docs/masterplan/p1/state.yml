@@ -1,0 +1,3 @@
+  - this is block yaml that won't parse to any flat key: value pairs
+  - second item
+  - third item

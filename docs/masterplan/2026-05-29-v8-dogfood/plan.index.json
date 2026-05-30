@@ -1,0 +1,29 @@
+{
+  "schema_version": "6.0",
+  "tasks": [
+    {
+      "id": 1,
+      "wave": 1,
+      "description": "Create src/greet.mjs exporting a named function greet(name) that returns the string `Hello, ${name}!`.",
+      "files": ["src/greet.mjs"],
+      "verify_commands": ["node -e \"import('./src/greet.mjs').then(m=>{if(m.greet('World')!=='Hello, World!'){console.error('FAIL',m.greet('World'));process.exit(1)}console.log('ok')})\""],
+      "codex": null
+    },
+    {
+      "id": 2,
+      "wave": 1,
+      "description": "Create src/farewell.mjs exporting a named function farewell(name) that returns the string `Goodbye, ${name}.`.",
+      "files": ["src/farewell.mjs"],
+      "verify_commands": ["node -e \"import('./src/farewell.mjs').then(m=>{if(m.farewell('World')!=='Goodbye, World.'){console.error('FAIL',m.farewell('World'));process.exit(1)}console.log('ok')})\""],
+      "codex": null
+    },
+    {
+      "id": 3,
+      "wave": 2,
+      "description": "Create src/index.mjs that imports greet from ./greet.mjs and farewell from ./farewell.mjs, and exports a named function conversation(name) returning `${greet(name)} ${farewell(name)}`.",
+      "files": ["src/index.mjs"],
+      "verify_commands": ["node -e \"import('./src/index.mjs').then(m=>{if(m.conversation('World')!=='Hello, World! Goodbye, World.'){console.error('FAIL',m.conversation('World'));process.exit(1)}console.log('ok')})\""],
+      "codex": "ok"
+    }
+  ]
+}

@@ -20,6 +20,7 @@
 - **Router + verbs:** `commands/masterplan.md`
 - **Bootstrap + Codex detection:** `parts/step-0.md`
 - **CD rules, run-bundle schema, agent-dispatch, coordinator contract:** `parts/contracts/`
+- **CD-1…CD-10 rule bodies (canonical home):** [`docs/conventions/cd-rules.md`](conventions/cd-rules.md)
 
 ## Migration Note
 

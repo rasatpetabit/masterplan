@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.0.0 — clean-core rebuild (branch `masterplan-ng`; deployed to ras@epyc2, not yet merged to `main`)
+
+Version label bumped 7.2.3 → 8.0.0 so the registry-swapped install reads **v8** in `claude plugin list` (previously both the v7.2.3 and the v8 install reported `7.2.3`, distinguishable only by `gitCommitSha`). The full clean-core rebuild — 5-layer Node-primary architecture (durable run bundle · thin resumable shell · Workflow-tool engine · plugin-root agents · doctor checks), ~80% line reduction, and removal of the per-verb `/masterplan:<verb>` skill namespace — ships on this branch. Finalized release notes land at the v7 → v8 cutover merge to `main`.
+
 ## v7.2.3 — Codex review dispatch guard + runtime-drift detection (2026-05-27)
 
 ### Fixed
@@ -316,10 +320,10 @@ Patch release. Pre-publication finalization for plugin distribution from arbitra
 
 ### Fixed
 
-- **Hardcoded developer-path leaks (3 docs files):** `docs/internals.md` and `parts/failure-classes.md` carried literal `~/.claude/projects/-home-ras-dev-masterplan/hook-errors.log` examples; replaced with a `<slugified-worktree>` placeholder + one-line explanation matching the actual hook behavior at `hooks/masterplan-telemetry.sh:571`. `README.md` "Optional Telemetry Hook" section restored from collateral stripping (prior refactor left it as a comment-only JSON block).
-- **`AGENTS.md`** — dropped private-repo refs (`~/dev/petabit-handbook/*`); now generically points at `CLAUDE.md` + optional org-wide guide.
+- **Hardcoded developer-path leaks (3 docs files):** `docs/internals.md` and `parts/failure-classes.md` carried literal `~/.claude/projects/-home-<user>-dev-masterplan/hook-errors.log` examples; replaced with a `<slugified-worktree>` placeholder + one-line explanation matching the actual hook behavior at `hooks/masterplan-telemetry.sh:571`. `README.md` "Optional Telemetry Hook" section restored from collateral stripping (prior refactor left it as a comment-only JSON block).
+- **`AGENTS.md`** — dropped private-repo refs (a sibling repo's docs glob); now generically points at `CLAUDE.md` + optional org-wide guide.
 - **Python `~/dev` defaults:** `lib/masterplan_session_audit.py` and `lib/masterplan_wipe_telemetry.py` derived `MASTERPLAN_REPO_ROOTS` from `~/dev`; both now derive from `Path(__file__).resolve().parent.parent.parent` so discovery works without assuming the developer's home layout.
-- **Hostname leaks:** `epyc1`/`epyc2` references in `docs/internals.md` and two `docs/masterplan/` bundles generalized to "one host" / "every host that has the plugin installed".
+- **Hostname leaks:** bare dev-host references in `docs/internals.md` and two `docs/masterplan/` bundles generalized to "one host" / "every host that has the plugin installed".
 - **`pending_gate_orphaned` false positive on YAML-cleared gates** (`lib/masterplan_session_audit.py`). Sentinel values `null`, `~`, `[]`, `{}` are now treated as "no gate" regardless of staleness.
 
 ### Compatibility
@@ -364,7 +368,7 @@ This bundle adds (a) new policy that flips a default behavior the plan-writer ap
 
 ### Rollout
 
-Per the patched rollout macro: `claude plugin marketplace update` + `claude plugin update "masterplan@rasatpetabit-masterplan"` for Claude Code AND `codex plugin marketplace upgrade rasatpetabit-masterplan` for Codex CLI, on both ras@epyc2 and grojas@epyc1.
+Per the patched rollout macro: `claude plugin marketplace update` + `claude plugin update "masterplan@rasatpetabit-masterplan"` for Claude Code AND `codex plugin marketplace upgrade rasatpetabit-masterplan` for Codex CLI, on both dev hosts.
 
 ## [5.7.3] — 2026-05-16 — telemetry: fix parent_turn duplication in emit_parent_turns
 
@@ -432,7 +436,7 @@ A new telemetry field plus a new audit rollup is a versioned capability boundary
 
 ### Rollout
 
-- Dual-surface refresh per the patched rollout macro: `claude plugin marketplace update` + `claude plugin update "masterplan@rasatpetabit-masterplan"` for Claude Code AND `codex plugin marketplace upgrade rasatpetabit-masterplan` for Codex CLI, on both ras@epyc2 and grojas@epyc1.
+- Dual-surface refresh per the patched rollout macro: `claude plugin marketplace update` + `claude plugin update "masterplan@rasatpetabit-masterplan"` for Claude Code AND `codex plugin marketplace upgrade rasatpetabit-masterplan` for Codex CLI, on both dev hosts.
 
 ## [5.5.0] — 2026-05-15 — Three-layer regression test suite: static battery + doctor-fixtures (9 checks, 24 fixtures) + e2e claude --print harness
 
@@ -462,7 +466,7 @@ A complete sequenced test suite is a versioned milestone: it formalizes a regres
 
 ### Rollout
 
-- Dual-surface refresh per the patched rollout macro: `claude plugin marketplace update` + `claude plugin update "masterplan@rasatpetabit-masterplan"` for Claude Code AND `codex plugin marketplace upgrade rasatpetabit-masterplan` for Codex CLI, on both ras@epyc2 and grojas@epyc1.
+- Dual-surface refresh per the patched rollout macro: `claude plugin marketplace update` + `claude plugin update "masterplan@rasatpetabit-masterplan"` for Claude Code AND `codex plugin marketplace upgrade rasatpetabit-masterplan` for Codex CLI, on both dev hosts.
 
 ## [5.4.0] — 2026-05-15 — Parallelism wave: doctor repo-scoped Haiku batch + intent-anchor 3-way fan-out + parent re-verify parallel Bash + eligibility cache sharding
 
@@ -488,7 +492,7 @@ New parallel dispatch sites are behavior-affecting (different observable telemet
 
 ### Rollout
 
-- Dual-surface refresh per the patched rollout macro: `claude plugin marketplace update` + `claude plugin update "masterplan@rasatpetabit-masterplan"` for Claude Code AND `codex plugin marketplace upgrade rasatpetabit-masterplan` for Codex CLI, on both ras@epyc2 and grojas@epyc1.
+- Dual-surface refresh per the patched rollout macro: `claude plugin marketplace update` + `claude plugin update "masterplan@rasatpetabit-masterplan"` for Claude Code AND `codex plugin marketplace upgrade rasatpetabit-masterplan` for Codex CLI, on both dev hosts.
 
 ## [5.3.3] — 2026-05-15 — Plugins UI errors: frontmatter on contract registry + drop dead auq-guard.sh
 
@@ -533,7 +537,7 @@ Patch release. Fixes a pre-existing bug in `parts/doctor.md` Check #41 bash (int
 
 ## [5.3.0] — 2026-05-15 — Step 0: scan-then-ping detection default + Doctor #41 ERROR escalation
 
-Fixes a recurring false-positive class where `/masterplan` emits `⚠ Codex plugin not detected — codex_routing and codex_review are degraded to off for this run` against installs where Codex is fully present and actively dispatching. Repro that motivated this release: `/loop /masterplan --autonomy=full` in `yanos-mgmt/.worktrees/pivot-landing-4b-yanos-wireguard` on epyc2 emitted the warning while the session's own system-reminder skills list contained `codex:codex-rescue`, `codex:setup`, `codex:rescue`, etc., and `bin/masterplan-codex-usage.sh` showed the same host actively dispatching Codex in the same window.
+Fixes a recurring false-positive class where `/masterplan` emits `⚠ Codex plugin not detected — codex_routing and codex_review are degraded to off for this run` against installs where Codex is fully present and actively dispatching. Repro that motivated this release: `/loop /masterplan --autonomy=full` in a sibling-project worktree on one dev host emitted the warning while the session's own system-reminder skills list contained `codex:codex-rescue`, `codex:setup`, `codex:rescue`, etc., and `bin/masterplan-codex-usage.sh` showed the same host actively dispatching Codex in the same window.
 
 ### Changed
 
@@ -936,7 +940,7 @@ Doctor lint-only runs with auto-fixable findings now close with an AUQ offering 
 
 ## [2.14.1] — 2026-05-07 — Step I1 brief tightening: filter symbolic `refs/remotes/<remote>/HEAD` by full refname
 
-Follow-up to v2.14.0 issue #3, surfaced by smoke-testing against `petabit-os-mgmt`. Fix: `git for-each-ref --format='%(refname:short)'` renders `refs/remotes/origin/HEAD` as bare `origin`, not catchable by `grep -v HEAD`. New brief uses `--format='%(refname)|%(refname:short)'` and filters on full refname (drop lines ending in `/HEAD`), use short name for display.
+Follow-up to v2.14.0 issue #3, surfaced by smoke-testing against a sibling project. Fix: `git for-each-ref --format='%(refname:short)'` renders `refs/remotes/origin/HEAD` as bare `origin`, not catchable by `grep -v HEAD`. New brief uses `--format='%(refname)|%(refname:short)'` and filters on full refname (drop lines ending in `/HEAD`), use short name for display.
 
 ## [2.14.0] — 2026-05-07 — Step I1 ref enumeration fix + doctor `--fix` actionability (cache rebuild, stray-orphan rm, no-fix diagnostic)
 
@@ -948,7 +952,7 @@ Fix: marketplace installer deployed to `~/.claude/plugins/marketplaces/.../comma
 
 ## [2.13.0] — 2026-05-06 — CC-2 threshold tightening + CC-3-TRAMPOLINE close-turn discipline + stats `--plan` slug fix
 
-Fix: `stats --plan=<bare-slug>` returned zero records because on-disk filenames have `YYYY-MM-DD-` prefix; `bin/masterplan-routing-stats.sh` now falls back to date-prefix-stripped match. CC-2 thresholds tightened: Bash output 100→50 lines, file-read 300→50, plus two new triggers (coordinated ≥2-file edits, cumulative >5 inline Edits per file) to catch inline Opus token burn not covered by the v2.12.0 subagent passthrough fix. CC-3-TRAMPOLINE: new ~20-line rule standardizes every turn-close site through a 3-step sequence (dispatch summary → pre-close action → closer); 19 sites converted to `→ CLOSE-TURN` convention. (Fix originally landed as commit `24e6546d` in petabit-os-mgmt; promoted to HEAD here.)
+Fix: `stats --plan=<bare-slug>` returned zero records because on-disk filenames have `YYYY-MM-DD-` prefix; `bin/masterplan-routing-stats.sh` now falls back to date-prefix-stripped match. CC-2 thresholds tightened: Bash output 100→50 lines, file-read 300→50, plus two new triggers (coordinated ≥2-file edits, cumulative >5 inline Edits per file) to catch inline Opus token burn not covered by the v2.12.0 subagent passthrough fix. CC-3-TRAMPOLINE: new ~20-line rule standardizes every turn-close site through a 3-step sequence (dispatch summary → pre-close action → closer); 19 sites converted to `→ CLOSE-TURN` convention. (Fix originally landed in a sibling project as commit `24e6546d`; promoted to HEAD here.)
 
 ## [2.12.0] — 2026-05-06 — per-turn subagent summary + model attribution enforcement
 
