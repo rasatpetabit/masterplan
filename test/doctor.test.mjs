@@ -280,6 +280,22 @@ test('codex-plugin-presence: WARN fix cites `mp set-codex-config` (CD-7-honest; 
   assert.doesNotMatch(warn.fix, /set codex_routing: off and codex_review: false/); // old CD-7-violating advice
 });
 
+test('codex-plugin-presence: flat codex_routing:off (no nested) is NOT trusted as off — mirrors dispatch (Residual 4)', () => {
+  // The keystone divergence-closer. A bundle with a FLAT `codex_routing: off` and NO nested codex
+  // object used to SKIP (the old wantsCodex honored the flat key) — but dispatch (bin:381) reads the
+  // nested object ONLY and falls through to routing='auto', so codex STILL routes. wantsCodex now
+  // mirrors dispatch: the flat key is dead input, routing defaults to 'auto' → the bundle "wants" codex
+  // → WARN when the plugin is absent, NOT a silent SKIP. This case PASSED (as SKIP) under the old code;
+  // asserting WARN here is what closes Residual 4. (The `warn-flat-off-ignored` fixture also drives the
+  // dir-prefix scenario loop above — this named test pins the intent + the not-SKIP invariant.)
+  const root = path.join(FX, 'codex-plugin-presence', 'warn-flat-off-ignored');
+  const findings = codexPluginPresence(root, { homeDir: path.join(root, 'home') });
+  assertFindingShape(findings);
+  assert.equal(maxSeverity(findings), 'WARN', JSON.stringify(findings));
+  assert.ok(!findings.some((f) => f.severity === 'SKIP'),
+    'flat-only codex_routing:off must NOT produce a SKIP (that was the Residual 4 false-negative)');
+});
+
 test('codex-plugin-presence: SKIP when no bundles', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-cpp-'));
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-cpp-home-'));

@@ -239,7 +239,7 @@ branch above (correct it only in the cannot-host-Workflow world).
 
 ---
 
-## Residual 4 — `wantsCodex` flat-key fallback can disagree with dispatch (detection-layer silent-false-negative) — FOUND-NOT-FIXED, candidate next bug
+## Residual 4 — `wantsCodex` flat-key fallback can disagree with dispatch (detection-layer silent-false-negative) — FIXED (a-full: mirror dispatch, drop flat fallback; 2026-05-30)
 
 Surfaced *while* fixing the `codex-plugin-presence` doctor's fix message (the `mp set-codex-config` verb, 2026-05-30; see WORKLOG). It is **not** the A–G missing-writer class — it is a new sub-class: **the doctor's "wants codex" DETECTION can disagree with what the DISPATCH path actually does.**
 
@@ -266,3 +266,36 @@ nested `codex.{…}` — run `mp set-codex-config` to migrate") rather than sile
 removes a shape the rest of v8 never writes; (b) preserves a louder diagnostic for legacy hand-edited bundles.
 Needs the same confirm-at-tip + honest-label + own-test discipline as the verb fix. **Does not block** the
 shipped verb fix — that fix is correct for its scope.
+
+**OUTCOME (2026-05-30) — chose (a) "drop the flat fallback", implemented as (a-FULL).** Option (a) as
+*literally worded* ("drop the flat fallback") is **insufficient on its own**: with the flat read gone but the
+old `routing !== undefined` test kept, a flat-only `codex_routing: off` / no-nested bundle leaves
+`routing === undefined → routingOn false → still SKIP`, while dispatch reads `undefined ?? 'auto' → routes` —
+the divergence survives. The TRUE "matches dispatch exactly" fix (advisor-confirmed) **also defaults routing
+to `'auto'`** in `wantsCodex`, mirroring `bin/masterplan.mjs:381` (`state.codex?.routing ?? … 'auto'`) and
+`:394` (`state.codex?.review`; on = `true` / `'on'` / `'true'`) verbatim: NESTED-only, flat keys dropped as
+dead input, routing-absent ⇒ `'auto'` ⇒ wants. The doctor's "wants" predicate now **IS** dispatch's effective
+"would-route" predicate — the matrix is closed in BOTH directions (the flat-`off` false-negative AND the
+flat-`review:on` false-positive both gone).
+
+**(b) rejected** (keep flat reads + classify a flat-only config as a misconfig WARN): it leaves the *no-config*
+case still divergent (doctor SKIP vs dispatch `'auto'`) — the false-negative direction, **not** benign — and
+preserves a read of a shape v8 never writes. (a-full) is simpler and removes that dead shape entirely.
+
+**Over-warn footprint (named, not buried):** under (a-full) every bundle whose nested routing is not `'off'`
+"wants" codex, so in a plugin-**ABSENT** env more bundles WARN than before (a flat `codex_routing: off` no
+longer buys a SKIP). This is *accurate* — those bundles DO route codex — and in a codex-equipped repo (plugin
+present) they PASS. The lone inaccurate residue is archived/done bundles with no nested-`off` in a plugin-absent
+env (they WARN "dispatch will fail" though they'll never dispatch) — an **extension** of the pre-existing
+archived+auto false-positive class, not a new one. A `status` filter on the slug loop would remove it but is
+beyond this residual's scope (document-and-defer).
+
+**Test discipline (own-test, confirm-at-tip):** the 3 `codex-plugin-presence` fixtures migrated flat →
+v8-canonical inline-JSON nested (`codex: {"routing": …, "review": …}` — the shape `setCodexConfig` writes;
+`skip-routing-off` → nested `off`, so its SKIP is now dispatch-honest rather than the baked-in bug). Added the
+keystone `warn-flat-off-ignored` fixture (flat `codex_routing: off`, **no** nested, plugin absent) + a named
+regression test asserting it resolves **WARN, never SKIP** — the exact case that PASSED (as SKIP) under the old
+code and is now locked closed. **272/272** node:test (270 baseline + the new dir-prefix scenario subtest + the
+named test); each fixture's resolved severity was live-confirmed via a direct `check()` call (skip / pass / warn
+/ warn, as intended). Files: `lib/doctor/codex-plugin-presence.mjs` (`wantsCodex` + header), the 4 fixtures,
+`test/doctor.test.mjs`.
