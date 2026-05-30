@@ -22,6 +22,9 @@
 //        [--created-at=T] [--complexity=C] [--complexity-source=SRC] [--autonomy=A]
 //        [--predecessor-transcript=PATH] [--spec-path=P] [--plan-path=P] [--plan-index-path=P] [--force]
 //                                               -> CD-7 write: create a fresh v8 brainstorm bundle (refuse if exists)
+//   seed-tasks --state=PATH --plan-index=PATH [--force]
+//                                               -> CD-7 write: populate state.tasks {id,status,wave,files} from plan.index.json
+//                                                  (the fresh-plan path; refuse clobber of a non-empty task list w/o --force)
 //   event --state=PATH --type=T [--phase=P] [--note=STR] [--data=JSON] [--ts=T]
 //                                               -> append one JSON line to the bundle's events.jsonl
 //   migrate-bundle --state=PATH                 -> back up + persist a legacy bundle as v8 (no-op if v8)
@@ -44,7 +47,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, buildSeedState, appendEvent } from '../lib/bundle.mjs';
+import { readState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, buildSeedState, buildTasksFromPlanIndex, appendEvent } from '../lib/bundle.mjs';
 import { migrate, detectSchemaVersion, MigrationError } from '../lib/migrate.mjs';
 import { decideNextAction } from '../lib/resume.mjs';
 import { prepareWave, declaredScope, verifyScope } from '../lib/wave.mjs';
@@ -246,6 +249,37 @@ function main() {
       }
       writeState(p, state);
       out({ seeded: state.slug, phase: state.phase, status: state.status, path: p }); // terse: no full-state echo (anti-flood)
+      break;
+    }
+    case 'seed-tasks': {
+      // Populate state.tasks from plan.index.json — the fresh-plan path's missing CD-7 writer. After
+      // the planner writes plan.index.json (§3), this loads those tasks into the bundle so the execute
+      // loop has a wave/task list. Without it the shell had to hand-rewrite state.yml (CD-7 violation +
+      // screen-flooding diff), and — worse — a `decide` at phase=execute over tasks:[] FINALIZES an
+      // empty run (resume.mjs's zero-task diversion only covers brainstorm|plan). So §3 MUST run this
+      // BEFORE `set-phase --phase=execute`. Refuse to clobber a non-empty task list unless --force
+      // (mid-run safety, mirror of `seed`). Reuse backfill-waves' integer-wave stuck-guard so a
+      // string/missing wave fails loud HERE, before writing, not on the next `decide`.
+      const p = need(flags, 'state');
+      const state = loadForWrite(p);
+      const existing = state.tasks ?? [];
+      if (existing.length && !flags.force) {
+        die(`seed-tasks: ${p} already has ${existing.length} task(s) — pass --force to replace them ` +
+            `(discards their statuses). seed-tasks is the initial plan→state population, not a re-sync.`, 1);
+      }
+      let tasks;
+      try {
+        tasks = buildTasksFromPlanIndex(JSON.parse(readText(need(flags, 'plan-index'))));
+      } catch (e) {
+        die(e.message, 1);
+      }
+      const stuck = tasks.filter((task) => task.status !== 'done' && !Number.isInteger(task.wave));
+      if (stuck.length) {
+        die(`seed-tasks: ${stuck.length} task(s) have no integer wave (ids: ${stuck.map((t) => t.id).join(', ')}) ` +
+            `— missing wave/parallel_group or a non-integer value (e.g. "2" instead of 2) in plan.index.json.`, 1);
+      }
+      writeState(p, { ...state, tasks });
+      out({ seeded_tasks: tasks.length, waves: [...new Set(tasks.map((t) => t.wave))].sort((a, b) => a - b) }); // terse (anti-flood)
       break;
     }
     case 'event': {

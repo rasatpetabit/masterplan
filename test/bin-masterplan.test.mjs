@@ -246,6 +246,73 @@ test('event: rejects non-JSON --data', () => {
   assert.match(r.stderr, /must be valid JSON/);
 });
 
+// ---- integration: seed-tasks (the fresh-plan plan.index.json -> state.tasks writer) ----
+test('seed-tasks: populates state.tasks from plan.index.json so a freshly-planned run dispatches instead of finalizing empty', () => {
+  // The fresh-plan path's missing CD-7 writer: a brainstorm bundle seeds tasks:[]; nothing loaded the
+  // plan's tasks until now, forcing a hand-rewrite of state.yml (CD-7 violation + diff-flood). Feed the
+  // REAL openxcvr shape — 42 tasks, numeric id/wave, the full routing key set — and assert the minimal
+  // 4-field task lands, the rich fields stay in plan.index, and decide then dispatches wave 0.
+  const dir = tmpDir('mp-seedtasks-');
+  const p = path.join(dir, 'state.yml');
+  run(['seed', `--state=${p}`, '--slug=lic-lock', '--topic=commercial license lock']);
+  run(['set-phase', `--state=${p}`, '--phase=plan']);
+  const planIdx = path.join(dir, 'plan.index.json');
+  const planTasks = Array.from({ length: 42 }, (_, i) => ({
+    id: i + 1, wave: Math.floor(i / 6), files: [`src/f${i}.rs`], description: `task ${i + 1}`,
+    verify_commands: ['cargo test'], codex: i % 2 ? 'ok' : 'no', sensitive: i === 0, conversational: false,
+  }));
+  fs.writeFileSync(planIdx, JSON.stringify({ schema_version: '6.0', tasks: planTasks }));
+  const r = run(['seed-tasks', `--state=${p}`, `--plan-index=${planIdx}`]);
+  assert.equal(r.status, 0);
+  const o = JSON.parse(r.stdout);
+  assert.equal(o.seeded_tasks, 42);                 // terse: count + waves only, no full-state echo (anti-flood)
+  assert.deepEqual(o.waves, [0, 1, 2, 3, 4, 5, 6]);
+  assert.ok(!r.stdout.includes('cargo test'));      // routing fields never hit the screen
+  const s = read(p);
+  assert.equal(s.tasks.length, 42);
+  assert.deepEqual(s.tasks[0], { id: 1, status: 'pending', wave: 0, files: ['src/f0.rs'] }); // minimal shell-owned shape
+  assert.ok(!('description' in s.tasks[0]) && !('codex' in s.tasks[0]));                      // rich fields stay in plan.index
+  // BEFORE this fix the orchestrator had to hand-write state.yml here. With tasks loaded, at
+  // phase=execute decide dispatches wave 0 — NOT `complete` over an empty run.
+  run(['set-phase', `--state=${p}`, '--phase=execute']);
+  const d = JSON.parse(run(['decide', `--state=${p}`]).stdout);
+  assert.equal(d.action, 'dispatch_wave');
+  assert.equal(d.wave, 0);
+});
+test('seed-tasks: refuses to clobber a non-empty task list unless --force', () => {
+  const p = tmpBundle(v8()); // v8() already carries 2 tasks
+  const planIdx = path.join(path.dirname(p), 'plan.index.json');
+  fs.writeFileSync(planIdx, JSON.stringify([{ id: 9, wave: 0, files: [] }]));
+  const refused = run(['seed-tasks', `--state=${p}`, `--plan-index=${planIdx}`]);
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /already has 2 task/);
+  assert.equal(read(p).tasks.length, 2);            // untouched — no silent overwrite of in-flight statuses
+  assert.equal(run(['seed-tasks', `--state=${p}`, `--plan-index=${planIdx}`, '--force']).status, 0);
+  assert.deepEqual(read(p).tasks, [{ id: 9, status: 'pending', wave: 0, files: [] }]); // --force replaces
+});
+test('seed-tasks: a non-integer wave fails loud BEFORE writing (mirror of backfill-waves stuck-guard)', () => {
+  const dir = tmpDir('mp-seedtasks3-');
+  const p = path.join(dir, 'state.yml');
+  run(['seed', `--state=${p}`, '--slug=x', '--topic=t']);
+  const planIdx = path.join(dir, 'plan.index.json');
+  fs.writeFileSync(planIdx, JSON.stringify([{ id: 1, wave: 0, files: [] }, { id: 2, wave: '1', files: [] }]));
+  const r = run(['seed-tasks', `--state=${p}`, `--plan-index=${planIdx}`]);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /no integer wave.*2/);
+  assert.deepEqual(read(p).tasks, []);              // guard fired before writeState — bundle untouched
+});
+test('seed-tasks: a task with no id fails loud (mark-task could never address it)', () => {
+  const dir = tmpDir('mp-seedtasks4-');
+  const p = path.join(dir, 'state.yml');
+  run(['seed', `--state=${p}`, '--slug=x', '--topic=t']);
+  const planIdx = path.join(dir, 'plan.index.json');
+  fs.writeFileSync(planIdx, JSON.stringify([{ wave: 0, files: [] }]));
+  const r = run(['seed-tasks', `--state=${p}`, `--plan-index=${planIdx}`]);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /has no id/);
+  assert.deepEqual(read(p).tasks, []);
+});
+
 // ---- regression coverage: the three Codex-review findings (2026-05-28) ----
 test('promote-active-run without a phase-1 launching marker is refused (HIGH: no wave-less active_run)', () => {
   const p = tmpBundle(v8()); // active_run: null — no set-active-run was called
