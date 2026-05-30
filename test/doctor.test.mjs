@@ -1,4 +1,4 @@
-// test/doctor.test.mjs — v8 L4 doctor: dispatcher + all 10 check modules.
+// test/doctor.test.mjs — v8 L4 doctor: dispatcher + all 11 check modules.
 //
 // The slice covers all three opts shapes deliberately: scalar-cap (pure-bundle, no opts),
 // worktree-integrity (git via injected gitExec), codex-auth (host path + injected homeDir/now).
@@ -24,6 +24,7 @@ import { check as indexStaleness } from '../lib/doctor/index-staleness.mjs';
 import { check as staleLock } from '../lib/doctor/stale-lock.mjs';
 import { check as staleCodexTask } from '../lib/doctor/stale-codex-task.mjs';
 import { check as pluginRegistryDrift } from '../lib/doctor/plugin-registry-drift.mjs';
+import { check as planIndexSchema } from '../lib/doctor/plan-index-schema.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const FX = path.join(here, 'fixtures', 'doctor');
@@ -471,15 +472,77 @@ test('plugin-registry-drift: PASS when entry has no gitCommitSha (nothing to com
   assert.equal(maxSeverity(findings), 'PASS', JSON.stringify(findings));
 });
 
-// ---- dispatcher: all 10 modules auto-discovered ----------------------------
+// ---- plan-index-schema: the parallel-planning anomaly guard ----------------
+// Built in-code with tmp bundles (not committed fixtures): the canonical-vs-legacy schema gate
+// and the object-codex / same-wave-overlap WARNs are the load-bearing paths, and a tmp repo
+// exercises resolveRunsDir(repoRoot) end-to-end the way a real `doctor` run does.
 
-test('dispatcher: discovers all 10 check modules', async () => {
+function pisRepo(bundles = {}) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-pis-'));
+  for (const [slug, index] of Object.entries(bundles)) {
+    const dir = path.join(tmp, 'docs', 'masterplan', slug);
+    fs.mkdirSync(dir, { recursive: true });
+    const body = typeof index === 'string' ? index : JSON.stringify(index, null, 2);
+    fs.writeFileSync(path.join(dir, 'plan.index.json'), body);
+  }
+  return tmp;
+}
+const PIS_TASK = (over = {}) => ({ id: 1, description: 'do a thing', wave: 0, files: ['a.js'], verify_commands: ['t a'], codex: null, ...over });
+
+test('plan-index-schema: SKIP when no run bundles exist', () => {
+  const findings = planIndexSchema(pisRepo());
+  assertFindingShape(findings);
+  assert.equal(maxSeverity(findings), 'SKIP', JSON.stringify(findings));
+});
+
+test('plan-index-schema: PASS for a clean canonical index', () => {
+  const findings = planIndexSchema(pisRepo({ ok: { schema_version: '6.0', tasks: [PIS_TASK()] } }));
+  assertFindingShape(findings);
+  assert.equal(maxSeverity(findings), 'PASS', JSON.stringify(findings));
+});
+
+test('plan-index-schema: WARN on object codex (anomaly 1 — silent routing fallthrough)', () => {
+  const findings = planIndexSchema(pisRepo({
+    bad: { schema_version: '6.0', tasks: [PIS_TASK({ codex: { eligible: true } })] },
+  }));
+  assert.equal(maxSeverity(findings), 'WARN', JSON.stringify(findings));
+  assert.match(findings.find((f) => f.severity === 'WARN').summary, /codex/);
+});
+
+test('plan-index-schema: WARN on same-wave file overlap (anomaly 2 — re-waved index)', () => {
+  const findings = planIndexSchema(pisRepo({
+    bad: { schema_version: '6.0', tasks: [
+      PIS_TASK({ id: 1, files: ['shared.js'] }),
+      PIS_TASK({ id: 2, files: ['shared.js'] }),
+    ] },
+  }));
+  assert.equal(maxSeverity(findings), 'WARN', JSON.stringify(findings));
+});
+
+test('plan-index-schema: WARN on malformed JSON, even with no canonical index present', () => {
+  const findings = planIndexSchema(pisRepo({ broke: '{ not json' }));
+  assert.equal(maxSeverity(findings), 'WARN', JSON.stringify(findings));
+  assert.match(findings[0].summary, /not valid JSON/);
+});
+
+test('plan-index-schema: SKIP for a legacy pre-6 index (migrate\'s concern, not a schema violation)', () => {
+  // schema 5.0 legacy shape (idx/parallel_group/boolean codex) the validator must NOT flag.
+  const findings = planIndexSchema(pisRepo({
+    legacy: { schema_version: '5.0', tasks: [{ idx: 1, name: 'x', parallel_group: 0, codex: false }] },
+  }));
+  assertFindingShape(findings);
+  assert.equal(maxSeverity(findings), 'SKIP', JSON.stringify(findings));
+});
+
+// ---- dispatcher: all 11 modules auto-discovered ----------------------------
+
+test('dispatcher: discovers all 11 check modules', async () => {
   const checks = await discoverChecks(path.join(here, '..', 'lib', 'doctor'));
   const names = checks.map((c) => c.name);
   const expected = [
     'codex-auth', 'codex-plugin-presence', 'index-staleness', 'legacy-bundle',
-    'plugin-registry-drift', 'scalar-cap', 'stale-codex-task', 'stale-lock',
-    'state-schema', 'worktree-integrity',
+    'plan-index-schema', 'plugin-registry-drift', 'scalar-cap', 'stale-codex-task',
+    'stale-lock', 'state-schema', 'worktree-integrity',
   ];
   for (const n of expected) {
     assert.ok(names.includes(n), `discovered ${n}`);

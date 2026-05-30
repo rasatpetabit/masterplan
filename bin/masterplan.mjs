@@ -39,6 +39,11 @@
 //   set-active-run --state=PATH --wave=N        -> CD-7 write: phase-1 marker {wave, phase:'launching'}
 //   promote-active-run --state=PATH --run-id=X --task-id=Y -> phase-2: attach the launch handles
 //   clear-active-run --state=PATH               -> CD-7 write: clear the run marker
+//   merge-plan-fragments --fragments=PATH --out=PATH [--plan-md=PATH] [--meta=JSON] [--generated-at=T]
+//                                               -> ARTIFACT write: deterministic plan.index.json + plan.md
+//                                                  from subsystem fragments (assigns ids/waves, normalises
+//                                                  codex, validates before writing; NOT CD-7 state)
+//   validate-plan-index --plan-index=PATH       -> strict structural validation (exit!=0 on any error)
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -50,6 +55,8 @@ import { decideNextAction } from '../lib/resume.mjs';
 import { prepareWave, declaredScope, verifyScope } from '../lib/wave.mjs';
 import { detectHost, suppressRescue } from '../lib/codex-host.mjs';
 import { resolveConfigDir } from '../lib/paths.mjs';
+import { createHash } from 'node:crypto';
+import { mergePlanFragments, validatePlanIndex, renderPlanMd } from '../lib/plan-merge.mjs';
 
 // ---- tiny arg parser: positional[], flags{} (--k=v, or --k as boolean true) ----
 function parseArgs(argv) {
@@ -445,6 +452,65 @@ function main() {
       }
       writeState(p, setStatus(loadForWrite(p), status));
       out({ status });
+      break;
+    }
+    // Parallel-planning: assemble subsystem fragments → canonical plan.index.json + plan.md.
+    // The LLM drafters return fragments only; deterministic JS (lib/plan-merge.mjs) owns ids,
+    // waves, and codex normalisation. This is an ARTIFACT write (plain fs), NOT a CD-7 state
+    // mutation — plan.index.json/plan.md are products, not bundle state. We validate BEFORE
+    // writing, so an invalid merge never lands on disk.
+    case 'merge-plan-fragments': {
+      const fragsPath = need(flags, 'fragments');
+      const outIndex = need(flags, 'out');
+      const planMdPath = flags['plan-md'] ?? path.join(path.dirname(outIndex), 'plan.md');
+      const meta = flags.meta ? JSON.parse(flags.meta) : {};
+      let fragments;
+      try {
+        fragments = JSON.parse(readText(fragsPath));
+      } catch (e) {
+        die(`merge-plan-fragments: --fragments must be valid JSON (${e.message})`, 1);
+      }
+      let index;
+      try {
+        // schemaVersion left to mergePlanFragments' own SCHEMA_VERSION default (single source of truth).
+        index = mergePlanFragments(fragments, { schemaVersion: meta.schemaVersion });
+      } catch (e) {
+        die(`merge-plan-fragments: ${e.message}`, 1);
+      }
+      const errors = validatePlanIndex(index);
+      if (errors.length) {
+        die(`merge-plan-fragments: produced an invalid index:\n  - ${errors.join('\n  - ')}`, 1);
+      }
+      const planMd = renderPlanMd(index, meta);
+      // Stamp plan_hash = sha256 of plan.md (mirrors the index-staleness doctor check's source).
+      index.plan_hash = `sha256:${createHash('sha256').update(planMd).digest('hex')}`;
+      index.generated_at = flags['generated-at'] ?? new Date().toISOString();
+      fs.writeFileSync(planMdPath, planMd);
+      fs.writeFileSync(outIndex, JSON.stringify(index, null, 2) + '\n');
+      out({
+        tasks: index.tasks.length,
+        waves: new Set(index.tasks.map((t) => t.wave)).size,
+        plan_index: outIndex,
+        plan_md: planMdPath,
+        plan_hash: index.plan_hash,
+      });
+      break;
+    }
+    // Standalone strict validator for an existing plan.index.json (CI / manual / pre-execute gate).
+    case 'validate-plan-index': {
+      const p = need(flags, 'plan-index');
+      let index;
+      try {
+        index = JSON.parse(readText(p));
+      } catch (e) {
+        die(`validate-plan-index: ${p} is not valid JSON (${e.message})`, 1);
+      }
+      const errors = validatePlanIndex(index);
+      if (errors.length) {
+        for (const e of errors) process.stderr.write(`  - ${e}\n`);
+        die(`validate-plan-index: ${errors.length} error(s) in ${p}`, 1);
+      }
+      out({ valid: true, tasks: Array.isArray(index.tasks) ? index.tasks.length : 0, path: p });
       break;
     }
     default:
