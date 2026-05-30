@@ -35,7 +35,8 @@
 //                                                  (--review overrides state.codex.review; else read from state)
 //   verify-scope --state=PATH --wave=N --before=JSON --after=JSON -> {ok, touched, outOfScope} (D6 post-barrier)
 //   mark-task --state=PATH --id=N --status=S    -> CD-7 write: set a task's status
-//   set-phase --state=PATH --phase=P            -> CD-7 write: advance the lifecycle phase (brainstorm|plan|execute)
+//   set-phase --state=PATH --phase=P [--force]  -> CD-7 write: advance the lifecycle phase (brainstorm|plan|execute)
+//                                                  (refuse entering execute with 0 tasks — run seed-tasks first — w/o --force)
 //   set-status --state=PATH --status=S          -> CD-7 write: set the run status (in-progress|archived)
 //   open-gate --state=PATH --id=X [--opened-at=T] -> CD-7 write: open the durable approval gate
 //   clear-gate --state=PATH                     -> CD-7 write: clear the gate
@@ -467,7 +468,19 @@ function main() {
       if (!VALID_PHASE.includes(phase)) {
         die(`invalid --phase '${phase}' — expected one of: ${VALID_PHASE.join(', ')}`);
       }
-      writeState(p, setPhase(loadForWrite(p), phase));
+      const state = loadForWrite(p);
+      // §3 ordering invariant: `mp seed-tasks` loads the plan into state.tasks BEFORE entering execute.
+      // Entering execute with 0 tasks creates the state decideNextAction refuses to finalize (it would
+      // mis-archive a planned-but-unseeded run — data loss). Refuse HERE, at the violation point, so the
+      // operator runs seed-tasks first. --force still moves the phase pointer (recovery / scripting) but
+      // does NOT suppress the decide-layer backstop: an unseeded execute run is never "complete". Mirror
+      // of the seed-tasks clobber guard.
+      if (phase === 'execute' && !(state.tasks?.length) && !flags.force) {
+        die(`set-phase: refusing to enter 'execute' with 0 tasks — run \`mp seed-tasks --state=${p} ` +
+            `--plan-index=<bundle>/plan.index.json\` first to load the plan into state.tasks (§3 ordering). ` +
+            `Pass --force to advance the phase anyway.`, 1);
+      }
+      writeState(p, setPhase(state, phase));
       out({ phase });
       break;
     }

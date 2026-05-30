@@ -312,6 +312,38 @@ test('seed-tasks: a task with no id fails loud (mark-task could never address it
   assert.match(r.stderr, /has no id/);
   assert.deepEqual(read(p).tasks, []);
 });
+test('ISSUE G: set-phase execute over 0 tasks is refused (--force advances but decide still refuses to finalize)', () => {
+  // Write-side prevention + read-side backstop for the §3 ordering invariant (`mp seed-tasks` loads
+  // the plan into state.tasks BEFORE `set-phase execute`). Without it the bundle carries tasks:[];
+  // entering execute there is the exact shape decideNextAction would mis-finalize — a planned-but-
+  // unseeded run archived as "done" (data loss). Same-class preventive: the openxcvr operator hand-
+  // populated tasks first, so the wild run never hit this; this is the defensive completion of the
+  // pre-execute (brainstorm|plan) guard for the phase it skipped.
+  const dir = tmpDir('mp-issueg-');
+  const p = path.join(dir, 'state.yml');
+  run(['seed', `--state=${p}`, '--slug=lic-lock', '--topic=commercial license lock']);
+  run(['set-phase', `--state=${p}`, '--phase=plan']);
+  // (1) write guard: refuse to enter execute with 0 tasks; phase stays 'plan', nothing written.
+  const refused = run(['set-phase', `--state=${p}`, '--phase=execute']);
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /refusing to enter 'execute' with 0 tasks/);
+  assert.equal(read(p).phase, 'plan');
+  // (2) --force advances the phase pointer (recovery / scripting) ...
+  assert.equal(run(['set-phase', `--state=${p}`, '--phase=execute', '--force']).status, 0);
+  assert.equal(read(p).phase, 'execute');
+  // (3) ... but does NOT enable silent finalize: decide on the forced execute+empty bundle throws,
+  //     surfaced as a clean die by the caller (NOT {action:'complete'}). The universal backstop.
+  const decided = run(['decide', `--state=${p}`]);
+  assert.notEqual(decided.status, 0);
+  assert.match(decided.stderr, /phase is 'execute' but state\.tasks is empty/);
+  // (4) seed-tasks loads the plan -> the SAME execute bundle now dispatches instead of throwing.
+  const planIdx = path.join(dir, 'plan.index.json');
+  fs.writeFileSync(planIdx, JSON.stringify({ schema_version: '6.0', tasks: [{ id: 1, wave: 0, files: ['a.rs'], description: 'x', verify_commands: ['cargo test'] }] }));
+  assert.equal(run(['seed-tasks', `--state=${p}`, `--plan-index=${planIdx}`]).status, 0);
+  const d = JSON.parse(run(['decide', `--state=${p}`]).stdout);
+  assert.equal(d.action, 'dispatch_wave');
+  assert.equal(d.wave, 0);
+});
 
 // ---- regression coverage: the three Codex-review findings (2026-05-28) ----
 test('promote-active-run without a phase-1 launching marker is refused (HIGH: no wave-less active_run)', () => {
