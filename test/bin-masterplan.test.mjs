@@ -111,7 +111,9 @@ test('migrate-bundle: backs up original + rewrites as v8; second run is a no-op'
   assert.equal(r.migrated, true);
   assert.equal(r.from, '5.0');
   assert.ok(fs.existsSync(r.backup)); // original preserved verbatim
-  assert.equal(read(p).schema_version, '6.0');
+  const migrated = read(p);
+  assert.equal(migrated.schema_version, 8); // canonical v8 schema NUMBER (was string '6.0' — the doctor false-ERROR fix)
+  assert.equal(typeof migrated.schema_version, 'number'); // on-disk type the doctor's validateCoreState requires
   assert.equal(JSON.parse(run(['migrate-bundle', `--state=${p}`]).stdout).migrated, false); // idempotent
 });
 test('ISSUE H: migrate-bundle on a sub-5.0 bundle refuses + surfaces the CD-7/seed-fresh guidance over the WIRE (operator surface, not just lib)', () => {

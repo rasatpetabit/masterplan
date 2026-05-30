@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { migrate, detectSchemaVersion, extractLegacyFields, MigrationError } from '../lib/migrate.mjs';
 import { decideNextAction } from '../lib/resume.mjs';
-import { parseState, serializeState } from '../lib/bundle.mjs';
+import { parseState, serializeState, validateCoreState } from '../lib/bundle.mjs';
 
 const fx = (name) => readFileSync(new URL(`./fixtures/legacy-bundles/${name}`, import.meta.url), 'utf8');
 const SAMPLE = fx('5.0-inflight-sample.yml');
@@ -74,10 +74,10 @@ test('extract(cc3 5.1): no tasks block -> empty task list; nested blobs ignored'
   assert.deepEqual(f.tasks, []);
 });
 
-// ---- migrate(): one-shot 5.x -> 6.0 field map ----
+// ---- migrate(): one-shot 5.x -> schema 8 field map ----
 test('migrate(sample 5.0): -> 6.0, provenance, task shape, in_progress normalizes to pending', () => {
   const s = migrate(SAMPLE);
-  assert.equal(s.schema_version, '6.0');
+  assert.equal(s.schema_version, 8);
   assert.equal(s.migrated_from, '5.0');
   assert.equal(s.active_run, null); // dead session — no live workflow survives
   assert.equal(s.pending_gate, null);
@@ -88,13 +88,13 @@ test('migrate(sample 5.0): -> 6.0, provenance, task shape, in_progress normalize
 });
 test('migrate(codex 5.0): all 15 tasks -> done', () => {
   const s = migrate(CODEX);
-  assert.equal(s.schema_version, '6.0');
+  assert.equal(s.schema_version, 8);
   assert.equal(s.tasks.length, 15);
   assert.ok(s.tasks.every((t) => t.status === 'done'));
 });
 test('migrate(cc3 5.1): no tasks -> resume controller decides complete', () => {
   const s = migrate(CC3);
-  assert.equal(s.schema_version, '6.0');
+  assert.equal(s.schema_version, 8);
   assert.deepEqual(s.tasks, []);
   assert.equal(decideNextAction(s, {}).action, 'complete'); // end-to-end: migrated state resumes cleanly
 });
@@ -103,6 +103,19 @@ test('migrate(sample 5.0) + resume: in-flight migrated tasks carry null waves ->
   // bundle carries wave:null; decideNextAction must fail loud, not silently dispatch an empty wave.
   // The L1 shell backfills waves from a plan.md re-parse (step-2 contract) before resume.
   assert.throws(() => decideNextAction(migrate(SAMPLE), {}), /backfill waves from plan\.index\.json/);
+});
+
+// ---- regression: migrate output must clear the doctor's core validator (no false schema_version
+// ERROR). state-schema.mjs:83 runs validateCoreState on every >=6 bundle; its `typeof === number`
+// rule false-ERRORed every migrated bundle while migrate emitted the STRING '6.0'. ----
+test('migrate output passes validateCoreState — schema_version is the canonical number (doctor false-ERROR fix)', () => {
+  const s = migrate(SAMPLE);
+  assert.equal(typeof s.schema_version, 'number'); // not a string — the bug was '6.0'
+  assert.equal(s.schema_version, 8);               // canonical v8 schema, matching buildSeedState
+  assert.deepEqual(
+    validateCoreState(s).filter((p) => /schema_version/.test(p)),
+    [], // doctor would have ERROR'd: schema_version must be a number >= 6 (got "6.0")
+  );
 });
 
 // ---- 6.0 passthrough: already-v8 flat state round-trips unchanged ----
