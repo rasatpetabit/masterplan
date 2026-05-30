@@ -55,7 +55,11 @@ The spine. It NEVER decides in prose — it asks `mp decide` and executes the re
 2. **Migrate-on-load if legacy.** Run `mp migrate-bundle --state=<path>`. If it reports
    `migrated:true`, the tasks now carry `wave:null` — ensure a `plan.index.json` exists (re-parse
    `plan.md` via the `masterplan:mp-planner` agent if it's missing), then
-   `mp backfill-waves --state=<path> --plan-index=<path>` so every task carries a real wave.
+   `mp backfill-waves --state=<path> --plan-index=<path>` so every task carries a real wave. **If it
+   instead REFUSES** (pre-5.0 floor / unparseable legacy — the deliberate R3 refusal), do **NOT**
+   raw-rewrite `state.yml` to schema 6 (a CD-7 violation). Treat the legacy bundle as read-only
+   reference and either `mp seed` a FRESH schema-6 bundle (re-deriving its tasks via the §3
+   brainstorm→plan→`seed-tasks` path), finish the run under masterplan v7, or stop and ask the user.
 3. **Probe liveness — or catch a completion.** If `state.active_run` has a `task_id`:
    - **A Workflow completion notification re-invoked you** and its `<result>{…}</result>` (run/task
      matching `active_run`) is in front of you → do NOT probe or `decide` yet: first run the
@@ -143,7 +147,7 @@ dispatches agents and echoes the baseline.
 | `full` / `brainstorm` / `plan` | Locate the bundle, or **seed a new one** — `mp seed --state=<path> --slug=<slug> --topic="<topic>" [--complexity=… --autonomy=… --predecessor-transcript=…]` (writes a valid v8 brainstorm-phase bundle; refuses an existing one unless `--force`). Then invoke the `superpowers` skill directly. **Never hand-edit `state.yml` to advance the phase — that is a CD-7 violation; each transition is an `mp set-phase` call paired with `mp event --state=<path> --type=phase_transition --phase=<new>`.** In execution order: **(1)** `superpowers:brainstorming` (B) → spec; on spec approval, `mp set-phase --state=<path> --phase=plan`. **(2)** `superpowers:writing-plans` → `plan.md` + `plan.index.json`. **(3) Load the plan's tasks into the bundle** — `mp seed-tasks --state=<path> --plan-index=<path>` (builds `state.tasks` `{id,status:pending,wave,files}` from the index; the rich routing fields stay in `plan.index.json`, which `prepare-wave` reads at dispatch; refuses to clobber a non-empty list without `--force`; fails loud on a non-integer wave). **(4) Only after `seed-tasks` has populated the tasks**, `mp set-phase --state=<path> --phase=execute`. (Order is load-bearing and now guard-enforced: `mp set-phase --phase=execute` refuses a 0-task bundle without `--force`, and `decide` *throws* on a `phase:execute` + `tasks:[]` bundle rather than finalizing an *empty* run — so violating the order fails loud instead of silently archiving an unseeded plan. The resume-layer's soft zero-task *diversion* to `resume_phase` still covers only brainstorm/plan; execute gets the throw.) Log other lifecycle milestones with `mp event --state=<path> --type=<event> [--phase=… --note=… --data=JSON]`. Gates via `mp open-gate` + an `AskUserQuestion`. **[full skill-invocation lifecycle wiring = step 7.]** |
 | `execute` | The resume controller (§2). |
 | `retro` | Generate `retro.md` for the bundle, then close. Archival is `complete`'s terminal step (§2), NOT this verb's — a standalone `retro` must NOT `set-status archived` (that would strand a run with pending tasks: the §2 discover filter hides archived bundles). Safe to (re)generate a retro on an in-progress or finished run. |
-| `import` | Legacy intake → a v8 bundle: `mp migrate-bundle` an in-place legacy `state.yml` (backs up the original). |
+| `import` | Legacy intake → a v8 bundle: `mp migrate-bundle` an in-place legacy `state.yml` (backs up the original). **On a pre-5.0 refusal the §2 step-2 rule applies: do NOT raw-rewrite `state.yml` (CD-7) — treat the legacy bundle as read-only and `mp seed` a fresh one, finish under v7, or stop and ask.** |
 | `doctor` | `node "${CLAUDE_PLUGIN_ROOT}/bin/doctor.mjs" [--fix]`. **[checks = step 5.]** |
 | `status` | Read-only: `mp decide` (no writes) + a one-screen situation report from `state.yml`. |
 | `validate` | Parse-check `state.yml` + config; report findings. No writes. |

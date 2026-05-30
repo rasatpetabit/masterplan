@@ -114,6 +114,21 @@ test('migrate-bundle: backs up original + rewrites as v8; second run is a no-op'
   assert.equal(read(p).schema_version, '6.0');
   assert.equal(JSON.parse(run(['migrate-bundle', `--state=${p}`]).stdout).migrated, false); // idempotent
 });
+test('ISSUE H: migrate-bundle on a sub-5.0 bundle refuses + surfaces the CD-7/seed-fresh guidance over the WIRE (operator surface, not just lib)', () => {
+  // The operator never calls migrate() directly — they hit `mp migrate-bundle`, whose throw->die wrapper
+  // (bin :320-322) must carry the refusal GUIDANCE intact to stderr. Pins that operator-facing contract so
+  // a future bin change can't silently swallow the CD-7 prohibition. Real phase-37 was schema-3; migrate()
+  // throws BEFORE the backup/write (:325-327), so the original stays byte-identical (refuse, never corrupt).
+  const orig = 'schema_version: 3\nslug: ancient\nphase: execution\n';
+  const p = path.join(tmpDir('mp-h-'), 'state.yml');
+  fs.writeFileSync(p, orig);
+  const r = run(['migrate-bundle', `--state=${p}`]);
+  assert.equal(r.status, 2);                              // refused, non-zero exit
+  assert.match(r.stderr, /predates the supported floor/); // the deliberate R3 floor refusal
+  assert.match(r.stderr, /do not hand-rewrite|CD-7/i);    // 2A: the CD-7 prohibition reaches the operator
+  assert.match(r.stderr, /mp seed|seed-tasks|fresh/i);    // 2A: the seed-fresh recovery path reaches the operator
+  assert.equal(fs.readFileSync(p, 'utf8'), orig);         // refused BEFORE writing — original untouched
+});
 test('migrated bundle: backfill-waves satisfies the guard -> decide dispatches', () => {
   const dir = tmpDir('mp-bf-');
   const p = path.join(dir, 'state.yml');

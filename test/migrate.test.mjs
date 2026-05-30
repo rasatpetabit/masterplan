@@ -118,10 +118,12 @@ test('migrate(6.1 / 7.0): future flat versions also pass through', () => {
 });
 
 // ---- refuse pre-5.0 loudly (R3: don't silently break; backup preserved by caller) ----
-test('migrate(<5.0): throws MigrationError with recovery guidance', () => {
+test('migrate(<5.0): throws MigrationError; message refuses raw-rewrite (CD-7) + names the seed-fresh path', () => {
   assert.throws(() => migrate('schema_version: "4.0"\nslug: old\n'), (e) => {
     assert.ok(e instanceof MigrationError);
-    assert.match(e.message, /v7|re-import|brainstorm/i);
+    assert.match(e.message, /v7|re-import|brainstorm/i); // still points at a supported recovery path
+    assert.match(e.message, /do not hand-rewrite|CD-7/i); // 2A: pins the CD-7 prohibition at point of friction
+    assert.match(e.message, /mp seed|seed-tasks|fresh/i); // 2A: pins the seed-a-fresh-bundle path
     return true;
   });
   assert.throws(() => migrate('slug: ancient\ncurrent_phase: foo\n'), MigrationError); // no version at all
