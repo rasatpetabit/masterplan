@@ -362,6 +362,22 @@ test('index-staleness: PASS via plan.index.json fallback when hash matches', () 
   assert.equal(maxSeverity(indexStaleness(tmp)), 'PASS');
 });
 
+test('index-staleness: stale state.plan_hash fix-text names `mp migrate-bundle`, not a phantom plan-index command (fix-text defect)', () => {
+  // Regression for a verified non-completing fix-text defect. The old :71 fix prescribed "re-index
+  // with the plan-index command to refresh plan_hash in state.yml", but NO command writes
+  // state.plan_hash (build-index writes plan.index.json only), so following it never cleared the
+  // WARN. The remedy that actually clears a stale legacy state.plan_hash is `mp migrate-bundle` —
+  // migrate whitelist-rebuilds state.yml and DROPS plan_hash (proven empirically). WL:84's
+  // dormant-gap finding stands; this branch is legacy-only and this guards the fix-text accuracy.
+  const findings = indexStaleness(path.join(FX, 'index-staleness', 'warn-stale-state-hash'));
+  assertFindingShape(findings);
+  const warns = findings.filter((f) => f.severity === 'WARN');
+  assert.equal(warns.length, 1, `expected exactly one state.plan_hash WARN, got ${JSON.stringify(findings)}`);
+  assert.match(warns[0].fix, /migrate-bundle/, 'fix must name the actionable `mp migrate-bundle` remedy');
+  assert.ok(!/plan-index command/.test(warns[0].fix),
+    'fix must NOT name the phantom "plan-index command" that writes the wrong file (the original defect)');
+});
+
 // ---- stale-lock (mtime-based, injected clock) --------------------------------
 
 test('stale-lock: WARN for stale .lock (mtime set 2h ago via utimesSync)', () => {
