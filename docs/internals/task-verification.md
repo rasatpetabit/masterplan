@@ -132,7 +132,8 @@ scope, and its verify commands. It runs the verify commands and returns the IMPL
 
 A missing or errored digest synthesises a `failed` record — the task is never silently dropped.
 
-**Review (config-gated):** if the run bundle's `codex.review` is `"on"`, `mp-codex-reviewer`
+**Review (config-gated):** if the run bundle's `codex.review` is `true` (which `mp prepare-wave`
+normalizes to the `"on"` payload the L2 workflow gates on), `mp-codex-reviewer`
 (sonnet) runs a synchronous adversarial second-opinion pass on each `done` task immediately
 after its implementer finishes. Review is gated by config only — not by `target` or routing
 eligibility. Judgment-heavy, inline-routed tasks need the second opinion most; gating by

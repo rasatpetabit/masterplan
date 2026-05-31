@@ -232,7 +232,7 @@ The L2 execute path runs **one wave per workflow launch**:
 
 - `pipeline(tasks, implement, review)` is **non-barrier**: a task's review starts the moment its implement finishes.
 - Implementation is **inline-only** via `mp-implementer` (no Codex implementer path). Each implementer runs the task's `verify_commands` and returns a digest citing real output.
-- Review is **config-gated**: `mp-codex-reviewer` runs only when the bundle's `codex.review` is `"on"`.
+- Review is **config-gated**: `mp-codex-reviewer` runs only when the bundle's `codex.review` is `true` (which `mp prepare-wave` surfaces to the L2 path as the `"on"` payload it gates on).
 
 After the wave barrier, L1 runs **D6 scope verification**:
 

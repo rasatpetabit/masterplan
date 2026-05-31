@@ -218,6 +218,9 @@ unrelated_dirty, base, retro_present, verified, verify_commands, worktree_dispos
    prior turn (a compaction landed between resolve and archive) → jump to step 6 (archive). Else continue.
 2. **Dirty check (thin net).** §2a commits at every wave boundary, so dirt is rare here. If
    `task_scope_dirty`, commit `task_scope_paths`. **Leave `unrelated_dirty` untouched** (protect-user-work).
+   **Committing here moves HEAD** — re-run the `mp finish-status` snapshot (fresh `git rev-parse HEAD`)
+   before step 3, so `verified` reflects the new commit; a stale `verified=true` carried from the
+   pre-commit snapshot would otherwise skip verification on an as-yet-untested commit.
 3. **Verification gate — `superpowers:verification-before-completion`.** If `verified` (a recorded SHA
    == HEAD) → skip (already proven at this commit). Else IDENTIFY → RUN fresh → **cite real output +
    exit code** (CD-3; "should pass" is not evidence). Command source: `verify_commands` (the union of
@@ -247,15 +250,28 @@ unrelated_dirty, base, retro_present, verified, verify_commands, worktree_dispos
   re-entry doesn't re-loop the same failure) → `mp clear-gate` → re-decide (→ `complete` → §2c:
   verification now skipped → retro → `branch_finish`). *Abort finish*: `mp clear-gate`, close (the run
   stays resumable; nothing archived).
-- **`branch_finish`** — delegate to `superpowers:finishing-a-development-branch` with the option
-  **pre-decided** + **"tests verified at SHA `<X>`, base = `<base>`"** so it skips its own option
-  prompt (a re-asserted hard-gate re-running a green suite at unchanged HEAD is redundant-but-harmless;
-  if it double-prompts or fights the durable gate, run the git steps directly using the skill as
-  reference). It executes merge / push+PR / discard / keep + worktree cleanup. Then: `mp
+- **`no_verification_command`** — opened by §2c step 3 when no command is found under `--autonomy=full`.
+  *Specify a command*: RUN it fresh, **cite output** (CD-3) → PASS: `mp record-verification
+  --state=<path> --sha="$(git rev-parse HEAD)"` + `mp clear-gate` + re-decide (→ retro → `branch_finish`);
+  FAIL: hand to `verification_failed` (`mp open-gate --id=verification_failed` overwrites the single
+  `pending_gate` slot — no separate `clear-gate` needed; its acts are above). *Proceed
+  without*: `mp record-verification --state=<path> --sha="$(git rev-parse HEAD)"` — the reviewed "no
+  verification available" override (mirrors `verification_failed`'s *Proceed anyway* so a re-entry
+  doesn't re-open this gate) — `mp clear-gate`, re-decide. Never silently skip verification or archive.
+- **`branch_finish`** — **re-entry guard first:** re-read `mp finish-status`; if `worktree_disposition`
+  is already a retirement value (`removed_after_merge` | `kept_by_user`), the action ran AND its
+  disposition was recorded in a prior turn (a compaction landed before `clear-gate`) → do **not** re-run
+  the action; just `mp clear-gate` + re-decide (→ `complete` → §2c step-1 shortcut → **archive**).
+  Otherwise: delegate to `superpowers:finishing-a-development-branch` with the option **pre-decided** +
+  **"tests verified at SHA `<X>`, base = `<base>`"** so it skips its own option prompt (a re-asserted
+  hard-gate re-running a green suite at unchanged HEAD is redundant-but-harmless; if it double-prompts
+  or fights the durable gate, run the git steps directly using the skill as reference). It executes
+  merge / push+PR / discard / keep + worktree cleanup. **Immediately on success** record `mp
   set-worktree-disposition --state=<path> --disposition=<dispositions[choice]>` (the value from
   finish-status's `dispositions` map — `lib/finish.mjs` is its single source of truth, never hardcode
-  the enum), `mp event --state=<path> --type=branch_finish --note=<choice>`, `mp clear-gate`, commit,
-  re-decide → `complete` → §2c → step-1 shortcut → **archive**.
+  the enum) — this is what arms the guard above against a re-entry — then `mp event --state=<path>
+  --type=branch_finish --note=<choice>`, `mp clear-gate`, commit, re-decide → `complete` → §2c →
+  step-1 shortcut → **archive**.
 
 **Manual entry — `/masterplan finish`.** Bare `finish` locates the bundle and `mp decide`s: `complete`
 → run this flow; tasks still pending (or a run live) → AUQ "N task(s) pending — finalize anyway?
