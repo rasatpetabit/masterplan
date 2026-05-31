@@ -22,6 +22,7 @@ import {
   CORE_REQUIRED_FIELDS,
   validateCoreState,
   buildSeedState,
+  buildTasksFromPlanIndex,
   appendEvent,
 } from '../lib/bundle.mjs';
 
@@ -234,6 +235,41 @@ test('buildSeedState: refuses an incomplete seed (slug/topic/createdAt all requi
   assert.throws(() => buildSeedState({ topic: 't', createdAt: 'T' }), /slug is required/);
   assert.throws(() => buildSeedState({ slug: 's', createdAt: 'T' }), /topic is required/);
   assert.throws(() => buildSeedState({ slug: 's', topic: 't' }), /createdAt is required/);
+});
+
+test('buildTasksFromPlanIndex: plan.index -> minimal {id,status,wave,files}; numeric-string id->Number; idx/parallel_group aliases', () => {
+  // The fresh-plan writer behind `mp seed-tasks`: plan.index.json -> state.tasks. Only the four
+  // shell-owned fields land in state; the rich routing fields (description/verify_commands/codex/…)
+  // stay in plan.index (prepareWave reads them THERE — one source of truth). This is what populated a
+  // freshly-planned run was missing, forcing a CD-7 hand-rewrite of state.yml.
+  const planIndex = { tasks: [
+    { id: 1, wave: 0, files: ['a.txt'], description: 'do a', verify_commands: ['t'], codex: 'no', sensitive: true },
+    { id: '2', parallel_group: 1, files: ['b.txt'] }, // numeric-string id -> Number; parallel_group -> wave
+    { idx: 3, wave: 1 },                              // idx alias for id; files default to []
+  ] };
+  assert.deepEqual(buildTasksFromPlanIndex(planIndex), [
+    { id: 1, status: 'pending', wave: 0, files: ['a.txt'] },
+    { id: 2, status: 'pending', wave: 1, files: ['b.txt'] },
+    { id: 3, status: 'pending', wave: 1, files: [] },
+  ]);
+  // the rich routing fields are intentionally NOT duplicated into state
+  const t0 = buildTasksFromPlanIndex(planIndex)[0];
+  assert.ok(!('description' in t0) && !('verify_commands' in t0) && !('codex' in t0) && !('sensitive' in t0));
+});
+
+test('buildTasksFromPlanIndex: bare array accepted; a missing wave passes through as null (never coerced to 0); empty -> []', () => {
+  // wave is NEVER Number()-coerced: Number(null) === 0 would silently bucket a wave-less task into
+  // wave 0. Passed through raw so the bin's integer-wave stuck-guard catches it instead.
+  const tasks = buildTasksFromPlanIndex([{ id: 1, files: [] }]);
+  assert.equal(tasks[0].wave, null);
+  assert.deepEqual(buildTasksFromPlanIndex({}), []);   // no tasks -> empty, not a throw
+  assert.deepEqual(buildTasksFromPlanIndex([]), []);
+});
+
+test('buildTasksFromPlanIndex: a task with no id fails loud (mark-task could never address it)', () => {
+  assert.throws(() => buildTasksFromPlanIndex([{ wave: 0, files: [] }]), /has no id/);
+  assert.throws(() => buildTasksFromPlanIndex([{ id: '', wave: 0 }]), /has no id/);
+  assert.throws(() => buildTasksFromPlanIndex([{ id: null, wave: 0 }]), /has no id/);
 });
 
 test('appendEvent: writes one JSON line per call, accumulating, into a sibling events.jsonl', () => {

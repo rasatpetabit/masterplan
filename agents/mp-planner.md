@@ -31,8 +31,10 @@ Top level:
 
     { "schema_version": "6.0", "tasks": [ <task>, ... ] }
 
-Each `<task>` — emit the **canonical** field names below. `lib/routing.mjs` and
-`applyPlanIndex` (in `bin/masterplan.mjs`) read these exact keys:
+Each `<task>` — emit the **canonical** field names below. `lib/routing.mjs`,
+`applyPlanIndex` (`bin/masterplan.mjs`), and `buildTasksFromPlanIndex`
+(`lib/bundle.mjs`, the plan→`state.tasks` loader behind `mp seed-tasks`) read
+these exact keys:
 
 | field | type | meaning |
 |---|---|---|
@@ -54,8 +56,8 @@ Each `<task>` — emit the **canonical** field names below. `lib/routing.mjs` an
    carried under a `name:` key leaves its design verb invisible → wrongly routed to
    Codex.
 3. **`wave` and `id` are integers, not strings.** A string `wave` fails the
-   `Number.isInteger` guard in `backfill-waves` / `set-active-run` (hard crash on
-   write); a string `id` becomes a phantom-write throw in `markTask`.
+   `Number.isInteger` guard in `seed-tasks` / `backfill-waves` / `set-active-run`
+   (hard crash on write); a string `id` becomes a phantom-write throw in `markTask`.
 
 (`idx`→`id` and `parallel_group`→`wave` are bridged as read-only aliases by
 `applyPlanIndex`. The legacy `name` field is **not read anywhere** in v8 — routing

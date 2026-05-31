@@ -180,6 +180,15 @@ test('execute phase, all tasks done -> complete (genuinely finished run still fi
   assert.equal(decideNextAction(base({ phase: 'execute', tasks: [t(1, 1, 'done')] }), {}).action, 'complete');
 });
 
+test('ISSUE G GUARD: execute phase + tasks:[] throws — an unseeded run must not silently finalize', () => {
+  // The execute-phase counterpart to the pre-execute guard above. brainstorm|plan + tasks:[] is a
+  // resumable mid-design state (resume_phase); execute + tasks:[] is IMPOSSIBLE under correct
+  // operation — §3 runs `mp seed-tasks` BEFORE `set-phase execute`. It only arises when that ordering
+  // was violated (hand-edit / migration / --force). Returning `complete` would archive a planned-but-
+  // unseeded run (the plan's work abandoned as "done" = data loss). Fail loud, like the wave guard.
+  assert.throws(() => decideNextAction(base({ phase: 'execute' }), {}), /phase is 'execute' but state\.tasks is empty/);
+});
+
 test('plan phase WITH pending tasks -> dispatch_wave (never reaches the guard)', () => {
   // A plan-phase bundle that already built tasks dispatches normally — pending.length>0 short-
   // circuits the pending===0 branch entirely, so the pre-execute guard is irrelevant here.

@@ -55,7 +55,11 @@ The spine. It NEVER decides in prose — it asks `mp decide` and executes the re
 2. **Migrate-on-load if legacy.** Run `mp migrate-bundle --state=<path>`. If it reports
    `migrated:true`, the tasks now carry `wave:null` — ensure a `plan.index.json` exists (re-parse
    `plan.md` via the `masterplan:mp-planner` agent if it's missing), then
-   `mp backfill-waves --state=<path> --plan-index=<path>` so every task carries a real wave.
+   `mp backfill-waves --state=<path> --plan-index=<path>` so every task carries a real wave. **If it
+   instead REFUSES** (pre-5.0 floor / unparseable legacy — the deliberate R3 refusal), do **NOT**
+   raw-rewrite `state.yml` to schema 6 (a CD-7 violation). Treat the legacy bundle as read-only
+   reference and either `mp seed` a FRESH schema-6 bundle (re-deriving its tasks via the §3
+   brainstorm→plan→`load-plan` path), finish the run under masterplan v7, or stop and ask the user.
 3. **Probe liveness — or catch a completion.** If `state.active_run` has a `task_id`:
    - **A Workflow completion notification re-invoked you** and its `<result>{…}</result>` (run/task
      matching `active_run`) is in front of you → do NOT probe or `decide` yet: first run the
@@ -70,7 +74,10 @@ The spine. It NEVER decides in prose — it asks `mp decide` and executes the re
      (→ `decide` returns `recover_and_redispatch`; the reset + re-dispatch is idempotent).
    (A phase-1 `launching` marker has no `task_id` — skip the probe; `decide` treats it as crashed-in-launch.)
 4. **Decide.** `mp decide --state=<path> [--alive]` → an action JSON. If it exits non-zero citing
-   "backfill waves", the bundle wasn't backfilled — return to step 2.
+   "backfill waves", the bundle wasn't backfilled — return to step 2; if it cites "phase is 'execute'
+   but state.tasks is empty", the plan was never loaded into the bundle — run `mp seed-tasks
+   --state=<path> --plan-index=<path>` to materialize the tasks (the bundle is already `phase:execute`,
+   so seed-tasks alone suffices — the load-plan seam in §3/§3a was bypassed) before resuming.
 5. **Execute the action.** After `finalize_run`, loop back to step 4 (re-decide); `dispatch_wave` /
    `recover_and_redispatch` / `recover_plan_run` end by awaiting a launched run; `resume_phase` hands
    to the plan lifecycle (§3a); `wait` / `surface_gate` / `complete` close.
@@ -193,10 +200,10 @@ repoRoot }`, reached from §2 step 3 when `active_run.kind==='plan'`):
 
 | verb | v8 target |
 |---|---|
-| `full` / `brainstorm` / `plan` | Locate the bundle, or **seed a new one** — `mp seed --state=<path> --slug=<slug> --topic="<topic>" [--complexity=… --autonomy=… --planning-mode=serial\|parallel\|auto --predecessor-transcript=…]` (writes a valid v8 brainstorm-phase bundle; refuses an existing one unless `--force`). **Brainstorm:** invoke `superpowers:brainstorming` directly; on spec approval, `mp set-phase --state=<path> --phase=plan` + `mp event --state=<path> --type=phase_transition --phase=plan` (never hand-edit `state.yml` — CD-7). **Plan:** hand to the **plan lifecycle (§3a)**, which selects serial vs parallel per `planning.mode` and advances to `execute` itself. Log other milestones with `mp event …`; gates via `mp open-gate` + an `AskUserQuestion`. (`brainstorm` stops once the plan phase is reached; `plan` runs §3a; `full` continues through execution via §2.) |
+| `full` / `brainstorm` / `plan` | Locate the bundle, or **seed a new one** — `mp seed --state=<path> --slug=<slug> --topic="<topic>" [--complexity=… --autonomy=… --planning-mode=serial\|parallel\|auto --predecessor-transcript=…]` (writes a valid v8 brainstorm-phase bundle; refuses an existing one unless `--force`). **Brainstorm:** invoke `superpowers:brainstorming` directly; on spec approval, `mp set-phase --state=<path> --phase=plan` + `mp event --state=<path> --type=phase_transition --phase=plan` (never hand-edit `state.yml` — CD-7). **Plan:** hand to the **plan lifecycle (§3a)**, which selects serial vs parallel per `planning.mode`, then materializes `state.tasks` **and** advances `phase→execute` in one atomic `mp load-plan` write (the plan→execute seam; the lower-level `mp seed-tasks` populates tasks *without* touching phase, for recovering an already-`execute` bundle). The seam is guard-enforced: `mp set-phase --phase=execute` refuses a 0-task bundle without `--force`, and `decide` *throws* on a `phase:execute` + `tasks:[]` bundle rather than finalizing an unseeded run — so a bare `set-phase execute` can never silently archive a planned-but-unseeded run. Log other milestones with `mp event …`; gates via `mp open-gate` + an `AskUserQuestion`. (`brainstorm` stops once the plan phase is reached; `plan` runs §3a; `full` continues through execution via §2.) |
 | `execute` | The resume controller (§2). |
 | `retro` | Generate `retro.md` for the bundle, then close. Archival is `complete`'s terminal step (§2), NOT this verb's — a standalone `retro` must NOT `set-status archived` (that would strand a run with pending tasks: the §2 discover filter hides archived bundles). Safe to (re)generate a retro on an in-progress or finished run. |
-| `import` | Legacy intake → a v8 bundle: `mp migrate-bundle` an in-place legacy `state.yml` (backs up the original). |
+| `import` | Legacy intake → a v8 bundle: `mp migrate-bundle` an in-place legacy `state.yml` (backs up the original). **On a pre-5.0 refusal the §2 step-2 rule applies: do NOT raw-rewrite `state.yml` (CD-7) — treat the legacy bundle as read-only and `mp seed` a fresh one, finish under v7, or stop and ask.** |
 | `doctor` | `node "${CLAUDE_PLUGIN_ROOT}/bin/doctor.mjs" [--fix]`. **[checks = step 5.]** |
 | `status` | Read-only: `mp decide` (no writes) + a one-screen situation report from `state.yml`. |
 | `validate` | Parse-check `state.yml` + config; report findings. No writes. |

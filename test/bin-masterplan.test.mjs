@@ -111,8 +111,25 @@ test('migrate-bundle: backs up original + rewrites as v8; second run is a no-op'
   assert.equal(r.migrated, true);
   assert.equal(r.from, '5.0');
   assert.ok(fs.existsSync(r.backup)); // original preserved verbatim
-  assert.equal(read(p).schema_version, '6.0');
+  const migrated = read(p);
+  assert.equal(migrated.schema_version, 8); // canonical v8 schema NUMBER (was string '6.0' — the doctor false-ERROR fix)
+  assert.equal(typeof migrated.schema_version, 'number'); // on-disk type the doctor's validateCoreState requires
   assert.equal(JSON.parse(run(['migrate-bundle', `--state=${p}`]).stdout).migrated, false); // idempotent
+});
+test('ISSUE H: migrate-bundle on a sub-5.0 bundle refuses + surfaces the CD-7/seed-fresh guidance over the WIRE (operator surface, not just lib)', () => {
+  // The operator never calls migrate() directly — they hit `mp migrate-bundle`, whose throw->die wrapper
+  // (bin :320-322) must carry the refusal GUIDANCE intact to stderr. Pins that operator-facing contract so
+  // a future bin change can't silently swallow the CD-7 prohibition. Real phase-37 was schema-3; migrate()
+  // throws BEFORE the backup/write (:325-327), so the original stays byte-identical (refuse, never corrupt).
+  const orig = 'schema_version: 3\nslug: ancient\nphase: execution\n';
+  const p = path.join(tmpDir('mp-h-'), 'state.yml');
+  fs.writeFileSync(p, orig);
+  const r = run(['migrate-bundle', `--state=${p}`]);
+  assert.equal(r.status, 2);                              // refused, non-zero exit
+  assert.match(r.stderr, /predates the supported floor/); // the deliberate R3 floor refusal
+  assert.match(r.stderr, /do not hand-rewrite|CD-7/i);    // 2A: the CD-7 prohibition reaches the operator
+  assert.match(r.stderr, /mp seed|seed-tasks|fresh/i);    // 2A: the seed-fresh recovery path reaches the operator
+  assert.equal(fs.readFileSync(p, 'utf8'), orig);         // refused BEFORE writing — original untouched
 });
 test('migrated bundle: backfill-waves satisfies the guard -> decide dispatches', () => {
   const dir = tmpDir('mp-bf-');
@@ -225,15 +242,24 @@ test('load-plan: refuses a pre-v8 plan.index.json (schema_version floor — mirr
   assert.deepEqual(read(p).tasks, []);                               // nothing materialized
   assert.equal(read(p).phase, 'plan');                               // phase untouched
 });
-test('set-phase: refuses --phase=execute on an empty-tasks bundle (the data-loss footgun, companion to load-plan)', () => {
+test('set-phase: refuses --phase=execute on an empty-tasks bundle, names both seed-tasks + load-plan, honors --force', () => {
   // Even a hand-run `set-phase --phase=execute` on a freshly-planned bundle (tasks:[]) must die — it
-  // would strand the bundle in the state where the next `decide` reads the empty list and archives it.
+  // would strand the bundle in the state where the next `decide` throws (refuses to finalize an unseeded
+  // run). The guard names BOTH materialization remedies: `seed-tasks` (populate only) and `load-plan`
+  // (populate + advance phase atomically). --force still moves the phase pointer (recovery/scripting) —
+  // but the decide-layer backstop (resume.test.mjs) still refuses to finalize the resulting empty run.
   const empty = tmpBundle(v8({ phase: 'plan', tasks: [] }));
   const r = run(['set-phase', `--state=${empty}`, '--phase=execute']);
   assert.equal(r.status, 1);
-  assert.match(r.stderr, /refusing --phase=execute/);
+  assert.match(r.stderr, /refusing to enter 'execute' with 0 tasks/);
+  assert.match(r.stderr, /seed-tasks/);                              // the populate-only remedy
+  assert.match(r.stderr, /load-plan/);                               // the atomic populate+advance remedy
   assert.equal(read(empty).phase, 'plan');                           // untouched — NOT advanced to execute
-  // …but advancing a bundle that DOES have tasks (v8 ships 2) is still allowed.
+  // --force escape: advances the phase pointer even on an empty-tasks bundle (recovery / scripting).
+  const forced = tmpBundle(v8({ phase: 'plan', tasks: [] }));
+  assert.equal(JSON.parse(run(['set-phase', `--state=${forced}`, '--phase=execute', '--force']).stdout).phase, 'execute');
+  assert.equal(read(forced).phase, 'execute');
+  // …and advancing a bundle that DOES have tasks (v8 ships 2) is still allowed without --force.
   const withTasks = tmpBundle(v8({ phase: 'plan' }));
   assert.equal(JSON.parse(run(['set-phase', `--state=${withTasks}`, '--phase=execute']).stdout).phase, 'execute');
   assert.equal(read(withTasks).phase, 'execute');
@@ -265,6 +291,48 @@ test('set-phase / set-status: write the lifecycle fields; reject a value outside
   assert.match(badStatus.stderr, /invalid --status/);
   assert.equal(read(p).phase, 'plan');       // unchanged by the rejected writes
   assert.equal(read(p).status, 'archived');
+});
+test('set-worktree-disposition: write the field; reject a value outside the enum (C3)', () => {
+  // CD-7 closure for the worktree-integrity fix message: the disposition the doctor reads to SKIP a retired
+  // worktree now has an `mp` writer, so a post-merge active→removed_after_merge transition never forces a
+  // raw hand-edit of state.yml (the only path that existed before this verb).
+  const p = tmpBundle(v8());
+  assert.equal(
+    JSON.parse(run(['set-worktree-disposition', `--state=${p}`, '--disposition=removed_after_merge']).stdout).worktree_disposition,
+    'removed_after_merge');
+  assert.equal(read(p).worktree_disposition, 'removed_after_merge');
+  // revertible via the SAME verb — 'active' is a valid value, so a premature retirement isn't a one-way door
+  assert.equal(JSON.parse(run(['set-worktree-disposition', `--state=${p}`, '--disposition=active']).stdout).worktree_disposition, 'active');
+  assert.equal(read(p).worktree_disposition, 'active');
+  // Enum guard: a typo must die at the bin boundary, leaving the field untouched.
+  const bad = run(['set-worktree-disposition', `--state=${p}`, '--disposition=removed']);
+  assert.notEqual(bad.status, 0);
+  assert.match(bad.stderr, /invalid --disposition/);
+  assert.equal(read(p).worktree_disposition, 'active'); // unchanged by the rejected write
+});
+test('set-codex-config: write NESTED codex.{routing,review}; merge-preserve; reject bad value / empty patch (codex CD-7)', () => {
+  // CD-7 closure for the codex-plugin-presence fix message: the codex config the dispatch path reads
+  // (state.codex.routing/.review) now has an `mp` writer, so turning codex off for a bundle never forces a
+  // raw hand-edit of state.yml. Writes the NESTED shape — not the flat codex_routing the old fix text named.
+  const p = tmpBundle(v8());
+  const o = JSON.parse(run(['set-codex-config', `--state=${p}`, '--routing=off', '--review=false']).stdout);
+  assert.deepEqual(o.codex, { routing: 'off', review: false });
+  assert.deepEqual(read(p).codex, { routing: 'off', review: false }); // persisted as the nested object
+  // partial set merge-preserves the other facet: flip routing back to auto, review stays false
+  assert.deepEqual(JSON.parse(run(['set-codex-config', `--state=${p}`, '--routing=auto']).stdout).codex, { routing: 'auto' });
+  assert.deepEqual(read(p).codex, { routing: 'auto', review: false });
+  // review normalizes on/true -> the boolean `true` the dispatch path and wantsCodex compare against
+  const q = tmpBundle(v8());
+  assert.equal(JSON.parse(run(['set-codex-config', `--state=${q}`, '--review=on']).stdout).codex.review, true);
+  assert.equal(read(q).codex.review, true);
+  // Enum guard + empty-patch guard: both die at the bin boundary, leaving state untouched.
+  const badRouting = run(['set-codex-config', `--state=${p}`, '--routing=sometimes']);
+  assert.notEqual(badRouting.status, 0);
+  assert.match(badRouting.stderr, /invalid --routing/);
+  const empty = run(['set-codex-config', `--state=${p}`]);
+  assert.notEqual(empty.status, 0);
+  assert.match(empty.stderr, /at least one of --routing or --review/);
+  assert.deepEqual(read(p).codex, { routing: 'auto', review: false }); // unchanged by the rejected writes
 });
 test('active_run two-phase: set (launching) -> recover w/ null staleTaskId; promote -> wait(alive)/recover(dead, staleTaskId)', () => {
   const p = tmpBundle(v8());
@@ -382,6 +450,105 @@ test('event: rejects non-JSON --data', () => {
   const r = run(['event', `--state=${p}`, '--type=x', '--data=not json']);
   assert.equal(r.status, 1);
   assert.match(r.stderr, /must be valid JSON/);
+});
+
+// ---- integration: seed-tasks (the fresh-plan plan.index.json -> state.tasks writer) ----
+test('seed-tasks: populates state.tasks from plan.index.json so a freshly-planned run dispatches instead of finalizing empty', () => {
+  // The fresh-plan path's missing CD-7 writer: a brainstorm bundle seeds tasks:[]; nothing loaded the
+  // plan's tasks until now, forcing a hand-rewrite of state.yml (CD-7 violation + diff-flood). Feed the
+  // REAL openxcvr shape — 42 tasks, numeric id/wave, the full routing key set — and assert the minimal
+  // 4-field task lands, the rich fields stay in plan.index, and decide then dispatches wave 0.
+  const dir = tmpDir('mp-seedtasks-');
+  const p = path.join(dir, 'state.yml');
+  run(['seed', `--state=${p}`, '--slug=lic-lock', '--topic=commercial license lock']);
+  run(['set-phase', `--state=${p}`, '--phase=plan']);
+  const planIdx = path.join(dir, 'plan.index.json');
+  const planTasks = Array.from({ length: 42 }, (_, i) => ({
+    id: i + 1, wave: Math.floor(i / 6), files: [`src/f${i}.rs`], description: `task ${i + 1}`,
+    verify_commands: ['cargo test'], codex: i % 2 ? 'ok' : 'no', sensitive: i === 0, conversational: false,
+  }));
+  fs.writeFileSync(planIdx, JSON.stringify({ schema_version: '6.0', tasks: planTasks }));
+  const r = run(['seed-tasks', `--state=${p}`, `--plan-index=${planIdx}`]);
+  assert.equal(r.status, 0);
+  const o = JSON.parse(r.stdout);
+  assert.equal(o.seeded_tasks, 42);                 // terse: count + waves only, no full-state echo (anti-flood)
+  assert.deepEqual(o.waves, [0, 1, 2, 3, 4, 5, 6]);
+  assert.ok(!r.stdout.includes('cargo test'));      // routing fields never hit the screen
+  const s = read(p);
+  assert.equal(s.tasks.length, 42);
+  assert.deepEqual(s.tasks[0], { id: 1, status: 'pending', wave: 0, files: ['src/f0.rs'] }); // minimal shell-owned shape
+  assert.ok(!('description' in s.tasks[0]) && !('codex' in s.tasks[0]));                      // rich fields stay in plan.index
+  // BEFORE this fix the orchestrator had to hand-write state.yml here. With tasks loaded, at
+  // phase=execute decide dispatches wave 0 — NOT `complete` over an empty run.
+  run(['set-phase', `--state=${p}`, '--phase=execute']);
+  const d = JSON.parse(run(['decide', `--state=${p}`]).stdout);
+  assert.equal(d.action, 'dispatch_wave');
+  assert.equal(d.wave, 0);
+});
+test('seed-tasks: refuses to clobber a non-empty task list unless --force', () => {
+  const p = tmpBundle(v8()); // v8() already carries 2 tasks
+  const planIdx = path.join(path.dirname(p), 'plan.index.json');
+  fs.writeFileSync(planIdx, JSON.stringify([{ id: 9, wave: 0, files: [] }]));
+  const refused = run(['seed-tasks', `--state=${p}`, `--plan-index=${planIdx}`]);
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /already has 2 task/);
+  assert.equal(read(p).tasks.length, 2);            // untouched — no silent overwrite of in-flight statuses
+  assert.equal(run(['seed-tasks', `--state=${p}`, `--plan-index=${planIdx}`, '--force']).status, 0);
+  assert.deepEqual(read(p).tasks, [{ id: 9, status: 'pending', wave: 0, files: [] }]); // --force replaces
+});
+test('seed-tasks: a non-integer wave fails loud BEFORE writing (mirror of backfill-waves stuck-guard)', () => {
+  const dir = tmpDir('mp-seedtasks3-');
+  const p = path.join(dir, 'state.yml');
+  run(['seed', `--state=${p}`, '--slug=x', '--topic=t']);
+  const planIdx = path.join(dir, 'plan.index.json');
+  fs.writeFileSync(planIdx, JSON.stringify([{ id: 1, wave: 0, files: [] }, { id: 2, wave: '1', files: [] }]));
+  const r = run(['seed-tasks', `--state=${p}`, `--plan-index=${planIdx}`]);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /no integer wave.*2/);
+  assert.deepEqual(read(p).tasks, []);              // guard fired before writeState — bundle untouched
+});
+test('seed-tasks: a task with no id fails loud (mark-task could never address it)', () => {
+  const dir = tmpDir('mp-seedtasks4-');
+  const p = path.join(dir, 'state.yml');
+  run(['seed', `--state=${p}`, '--slug=x', '--topic=t']);
+  const planIdx = path.join(dir, 'plan.index.json');
+  fs.writeFileSync(planIdx, JSON.stringify([{ wave: 0, files: [] }]));
+  const r = run(['seed-tasks', `--state=${p}`, `--plan-index=${planIdx}`]);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /has no id/);
+  assert.deepEqual(read(p).tasks, []);
+});
+test('ISSUE G: set-phase execute over 0 tasks is refused (--force advances but decide still refuses to finalize)', () => {
+  // Write-side prevention + read-side backstop for the §3 ordering invariant (`mp seed-tasks` loads
+  // the plan into state.tasks BEFORE `set-phase execute`). Without it the bundle carries tasks:[];
+  // entering execute there is the exact shape decideNextAction would mis-finalize — a planned-but-
+  // unseeded run archived as "done" (data loss). Same-class preventive: the openxcvr operator hand-
+  // populated tasks first, so the wild run never hit this; this is the defensive completion of the
+  // pre-execute (brainstorm|plan) guard for the phase it skipped.
+  const dir = tmpDir('mp-issueg-');
+  const p = path.join(dir, 'state.yml');
+  run(['seed', `--state=${p}`, '--slug=lic-lock', '--topic=commercial license lock']);
+  run(['set-phase', `--state=${p}`, '--phase=plan']);
+  // (1) write guard: refuse to enter execute with 0 tasks; phase stays 'plan', nothing written.
+  const refused = run(['set-phase', `--state=${p}`, '--phase=execute']);
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /refusing to enter 'execute' with 0 tasks/);
+  assert.equal(read(p).phase, 'plan');
+  // (2) --force advances the phase pointer (recovery / scripting) ...
+  assert.equal(run(['set-phase', `--state=${p}`, '--phase=execute', '--force']).status, 0);
+  assert.equal(read(p).phase, 'execute');
+  // (3) ... but does NOT enable silent finalize: decide on the forced execute+empty bundle throws,
+  //     surfaced as a clean die by the caller (NOT {action:'complete'}). The universal backstop.
+  const decided = run(['decide', `--state=${p}`]);
+  assert.notEqual(decided.status, 0);
+  assert.match(decided.stderr, /phase is 'execute' but state\.tasks is empty/);
+  // (4) seed-tasks loads the plan -> the SAME execute bundle now dispatches instead of throwing.
+  const planIdx = path.join(dir, 'plan.index.json');
+  fs.writeFileSync(planIdx, JSON.stringify({ schema_version: '6.0', tasks: [{ id: 1, wave: 0, files: ['a.rs'], description: 'x', verify_commands: ['cargo test'] }] }));
+  assert.equal(run(['seed-tasks', `--state=${p}`, `--plan-index=${planIdx}`]).status, 0);
+  const d = JSON.parse(run(['decide', `--state=${p}`]).stdout);
+  assert.equal(d.action, 'dispatch_wave');
+  assert.equal(d.wave, 0);
 });
 
 // ---- regression coverage: the three Codex-review findings (2026-05-28) ----

@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { migrate, detectSchemaVersion, extractLegacyFields, MigrationError } from '../lib/migrate.mjs';
 import { decideNextAction } from '../lib/resume.mjs';
-import { parseState, serializeState } from '../lib/bundle.mjs';
+import { parseState, serializeState, validateCoreState } from '../lib/bundle.mjs';
 
 const fx = (name) => readFileSync(new URL(`./fixtures/legacy-bundles/${name}`, import.meta.url), 'utf8');
 const SAMPLE = fx('5.0-inflight-sample.yml');
@@ -74,10 +74,10 @@ test('extract(cc3 5.1): no tasks block -> empty task list; nested blobs ignored'
   assert.deepEqual(f.tasks, []);
 });
 
-// ---- migrate(): one-shot 5.x -> 6.0 field map ----
+// ---- migrate(): one-shot 5.x -> schema 8 field map ----
 test('migrate(sample 5.0): -> 6.0, provenance, task shape, in_progress normalizes to pending', () => {
   const s = migrate(SAMPLE);
-  assert.equal(s.schema_version, '6.0');
+  assert.equal(s.schema_version, 8);
   assert.equal(s.migrated_from, '5.0');
   assert.equal(s.active_run, null); // dead session — no live workflow survives
   assert.equal(s.pending_gate, null);
@@ -88,13 +88,13 @@ test('migrate(sample 5.0): -> 6.0, provenance, task shape, in_progress normalize
 });
 test('migrate(codex 5.0): all 15 tasks -> done', () => {
   const s = migrate(CODEX);
-  assert.equal(s.schema_version, '6.0');
+  assert.equal(s.schema_version, 8);
   assert.equal(s.tasks.length, 15);
   assert.ok(s.tasks.every((t) => t.status === 'done'));
 });
 test('migrate(cc3 5.1): no tasks -> resume controller decides complete', () => {
   const s = migrate(CC3);
-  assert.equal(s.schema_version, '6.0');
+  assert.equal(s.schema_version, 8);
   assert.deepEqual(s.tasks, []);
   assert.equal(decideNextAction(s, {}).action, 'complete'); // end-to-end: migrated state resumes cleanly
 });
@@ -103,6 +103,19 @@ test('migrate(sample 5.0) + resume: in-flight migrated tasks carry null waves ->
   // bundle carries wave:null; decideNextAction must fail loud, not silently dispatch an empty wave.
   // The L1 shell backfills waves from a plan.md re-parse (step-2 contract) before resume.
   assert.throws(() => decideNextAction(migrate(SAMPLE), {}), /backfill waves from plan\.index\.json/);
+});
+
+// ---- regression: migrate output must clear the doctor's core validator (no false schema_version
+// ERROR). state-schema.mjs:83 runs validateCoreState on every >=6 bundle; its `typeof === number`
+// rule false-ERRORed every migrated bundle while migrate emitted the STRING '6.0'. ----
+test('migrate output passes validateCoreState — schema_version is the canonical number (doctor false-ERROR fix)', () => {
+  const s = migrate(SAMPLE);
+  assert.equal(typeof s.schema_version, 'number'); // not a string — the bug was '6.0'
+  assert.equal(s.schema_version, 8);               // canonical v8 schema, matching buildSeedState
+  assert.deepEqual(
+    validateCoreState(s).filter((p) => /schema_version/.test(p)),
+    [], // doctor would have ERROR'd: schema_version must be a number >= 6 (got "6.0")
+  );
 });
 
 // ---- 6.0 passthrough: already-v8 flat state round-trips unchanged ----
@@ -118,10 +131,12 @@ test('migrate(6.1 / 7.0): future flat versions also pass through', () => {
 });
 
 // ---- refuse pre-5.0 loudly (R3: don't silently break; backup preserved by caller) ----
-test('migrate(<5.0): throws MigrationError with recovery guidance', () => {
+test('migrate(<5.0): throws MigrationError; message refuses raw-rewrite (CD-7) + names the seed-fresh path', () => {
   assert.throws(() => migrate('schema_version: "4.0"\nslug: old\n'), (e) => {
     assert.ok(e instanceof MigrationError);
-    assert.match(e.message, /v7|re-import|brainstorm/i);
+    assert.match(e.message, /v7|re-import|brainstorm/i); // still points at a supported recovery path
+    assert.match(e.message, /do not hand-rewrite|CD-7/i); // 2A: pins the CD-7 prohibition at point of friction
+    assert.match(e.message, /mp seed|seed-tasks|fresh/i); // 2A: pins the seed-a-fresh-bundle path
     return true;
   });
   assert.throws(() => migrate('slug: ancient\ncurrent_phase: foo\n'), MigrationError); // no version at all
@@ -135,8 +150,25 @@ test('fail-loud: a task with idx but no status throws (no silent partial)', () =
 test('fail-loud: non-null pending_gate with no extractable id throws; with id extracts {id}', () => {
   const noId = 'schema_version: "5.0"\nslug: x\npending_gate:\n  opened_at: "t"\ntasks: []\n';
   assert.throws(() => migrate(noId), MigrationError);
-  const withId = 'schema_version: "5.0"\nslug: x\npending_gate:\n  id: plan_approval\n  opened_at: "t"\ntasks: []\n';
+  // current_phase makes this a structurally-valid bundle so it clears the C2 core-field gate; the
+  // assertion under test is unchanged (pending_gate.id extraction).
+  const withId = 'schema_version: "5.0"\nslug: x\ncurrent_phase: plan\npending_gate:\n  id: plan_approval\n  opened_at: "t"\ntasks: []\n';
   assert.equal(migrate(withId).pending_gate.id, 'plan_approval');
+});
+
+// ---- C2: a missing core identity field fails loud, not silently into invalid v8 state ----
+test('fail-loud: a 5.x bundle missing slug throws MigrationError (no null-core v8 state with no `mp` repair)', () => {
+  // current_phase present (so status falls back to it) but slug absent -> slug is null after mapLegacyToV8.
+  const noSlug = 'schema_version: "5.0"\ncurrent_phase: plan\ntasks: []\n';
+  assert.throws(() => migrate(noSlug), (e) => {
+    assert.ok(e instanceof MigrationError);
+    assert.match(e.message, /slug/);                       // names the missing field
+    assert.match(e.message, /missing required core field/);
+    return true;
+  });
+  // No phase anywhere -> both phase and the status fallback are null; still fails loud.
+  const noPhase = 'schema_version: "5.0"\nslug: x\ntasks: []\n';
+  assert.throws(() => migrate(noPhase), MigrationError);
 });
 
 // ---- purity ----

@@ -23,6 +23,9 @@
 //        [--planning-mode=serial|parallel|auto] [--predecessor-transcript=PATH]
 //        [--spec-path=P] [--plan-path=P] [--plan-index-path=P] [--force]
 //                                               -> CD-7 write: create a fresh v8 brainstorm bundle (refuse if exists)
+//   seed-tasks --state=PATH --plan-index=PATH [--force]
+//                                               -> CD-7 write: populate state.tasks {id,status,wave,files} from plan.index.json
+//                                                  (the fresh-plan path; refuse clobber of a non-empty task list w/o --force)
 //   event --state=PATH --type=T [--phase=P] [--note=STR] [--data=JSON] [--ts=T]
 //                                               -> append one JSON line to the bundle's events.jsonl
 //   migrate-bundle --state=PATH                 -> back up + persist a legacy bundle as v8 (no-op if v8)
@@ -36,8 +39,17 @@
 //                                                  (--review overrides state.codex.review; else read from state)
 //   verify-scope --state=PATH --wave=N --before=JSON --after=JSON -> {ok, touched, outOfScope} (D6 post-barrier)
 //   mark-task --state=PATH --id=N --status=S    -> CD-7 write: set a task's status
-//   set-phase --state=PATH --phase=P            -> CD-7 write: advance the lifecycle phase (brainstorm|plan|execute)
+//   set-phase --state=PATH --phase=P [--force]  -> CD-7 write: advance the lifecycle phase (brainstorm|plan|execute)
+//                                                  (refuse entering execute with 0 tasks — run seed-tasks first — w/o --force)
 //   set-status --state=PATH --status=S          -> CD-7 write: set the run status (in-progress|archived)
+//   set-worktree-disposition --state=PATH --disposition=D
+//                                               -> CD-7 write: record the worktree's disposition
+//                                                  (active|removed_after_merge|kept_by_user); the
+//                                                  doctor's worktree-integrity check SKIPs on retirement
+//   set-codex-config --state=PATH [--routing=R] [--review=B]
+//                                               -> CD-7 write: set the NESTED codex.{routing,review}
+//                                                  (routing: auto|on|off; review: true|false); the
+//                                                  codex-plugin-presence check SKIPs once both are off
 //   open-gate --state=PATH --id=X [--opened-at=T] -> CD-7 write: open the durable approval gate
 //   clear-gate --state=PATH                     -> CD-7 write: clear the gate
 //   set-active-run --state=PATH --wave=N        -> CD-7 write: phase-1 marker {wave, phase:'launching'}
@@ -54,7 +66,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, loadPlanTasks, buildSeedState, appendEvent } from '../lib/bundle.mjs';
+import { readState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, setWorktreeDisposition, setCodexConfig, loadPlanTasks, buildSeedState, buildTasksFromPlanIndex, appendEvent } from '../lib/bundle.mjs';
 import { migrate, detectSchemaVersion, MigrationError } from '../lib/migrate.mjs';
 import { decideNextAction } from '../lib/resume.mjs';
 import { prepareWave, declaredScope, verifyScope } from '../lib/wave.mjs';
@@ -106,6 +118,19 @@ const VALID_TASK_STATUS = ['pending', 'in_progress', 'done'];
 const VALID_PHASE = ['brainstorm', 'plan', 'execute'];
 const VALID_STATUS = ['in-progress', 'archived'];
 const VALID_PLANNING_MODE = ['serial', 'parallel', 'auto'];
+
+// Valid worktree dispositions the shell may WRITE via set-worktree-disposition. The doctor's
+// worktree-integrity check SKIPs a bundle whose worktree was intentionally retired
+// (removed_after_merge | kept_by_user); 'active' is the seed/default and is included so a
+// premature retirement can be reverted via the SAME verb (no CD-7 hand-edit). Value-enum only —
+// the active→removed_after_merge transition is not ordered (a re-opened run may go back to active).
+const VALID_WORKTREE_DISPOSITION = ['active', 'removed_after_merge', 'kept_by_user'];
+
+// Valid codex routing values the shell may WRITE via set-codex-config. The codex-plugin-presence doctor
+// SKIPs a bundle once routing is 'off' AND review is off; 'auto'/'on' keep codex engaged. Writes the
+// NESTED state.codex.routing (the shape the dispatch path reads) — NOT the flat codex_routing key the old
+// fix text named. Value-enum only — no transition ordering (a bundle may re-engage codex later).
+const VALID_CODEX_ROUTING = ['auto', 'on', 'off'];
 
 // ---- read helpers: decide migrates in-memory; write ops require an already-v8 bundle ----
 function readText(p) {
@@ -263,6 +288,37 @@ function main() {
       }
       writeState(p, state);
       out({ seeded: state.slug, phase: state.phase, status: state.status, path: p }); // terse: no full-state echo (anti-flood)
+      break;
+    }
+    case 'seed-tasks': {
+      // Populate state.tasks from plan.index.json — the fresh-plan path's missing CD-7 writer. After
+      // the planner writes plan.index.json (§3), this loads those tasks into the bundle so the execute
+      // loop has a wave/task list. Without it the shell had to hand-rewrite state.yml (CD-7 violation +
+      // screen-flooding diff), and — worse — a `decide` at phase=execute over tasks:[] FINALIZES an
+      // empty run (resume.mjs's zero-task diversion only covers brainstorm|plan). So §3 MUST run this
+      // BEFORE `set-phase --phase=execute`. Refuse to clobber a non-empty task list unless --force
+      // (mid-run safety, mirror of `seed`). Reuse backfill-waves' integer-wave stuck-guard so a
+      // string/missing wave fails loud HERE, before writing, not on the next `decide`.
+      const p = need(flags, 'state');
+      const state = loadForWrite(p);
+      const existing = state.tasks ?? [];
+      if (existing.length && !flags.force) {
+        die(`seed-tasks: ${p} already has ${existing.length} task(s) — pass --force to replace them ` +
+            `(discards their statuses). seed-tasks is the initial plan→state population, not a re-sync.`, 1);
+      }
+      let tasks;
+      try {
+        tasks = buildTasksFromPlanIndex(JSON.parse(readText(need(flags, 'plan-index'))));
+      } catch (e) {
+        die(e.message, 1);
+      }
+      const stuck = tasks.filter((task) => task.status !== 'done' && !Number.isInteger(task.wave));
+      if (stuck.length) {
+        die(`seed-tasks: ${stuck.length} task(s) have no integer wave (ids: ${stuck.map((t) => t.id).join(', ')}) ` +
+            `— missing wave/parallel_group or a non-integer value (e.g. "2" instead of 2) in plan.index.json.`, 1);
+      }
+      writeState(p, { ...state, tasks });
+      out({ seeded_tasks: tasks.length, waves: [...new Set(tasks.map((t) => t.wave))].sort((a, b) => a - b) }); // terse (anti-flood)
       break;
     }
     case 'event': {
@@ -509,20 +565,19 @@ function main() {
       if (!VALID_PHASE.includes(phase)) {
         die(`invalid --phase '${phase}' — expected one of: ${VALID_PHASE.join(', ')}`);
       }
-      const cur = loadForWrite(p);
-      // Data-loss guard: decideNextAction dispatches off the task list, NOT the phase label, so a
-      // bare `set-phase --phase=execute` on a bundle with tasks:[] makes the very next `decide`
-      // return `complete` → archive the just-planned bundle (silent data loss). Materializing tasks
-      // and advancing phase is load-plan's atomic job; set-phase must refuse to strand a bundle here.
-      if (phase === 'execute' && (cur.tasks?.length ?? 0) === 0) {
-        die(
-          `set-phase: refusing --phase=execute on a bundle with no tasks — the next \`decide\` would ` +
-            `read the empty task list and archive the bundle (data loss). Use \`load-plan ` +
-            `--plan-index=<plan.index.json>\` to materialize tasks AND advance phase atomically.`,
-          1
-        );
+      const state = loadForWrite(p);
+      // §3 ordering invariant + data-loss guard: decideNextAction dispatches off the TASK LIST, not the
+      // phase label, so entering execute with 0 tasks is the degenerate state decide refuses to finalize
+      // (it would mis-archive a planned-but-unseeded run — data loss). Refuse HERE, at the violation point,
+      // so the operator materializes tasks first: `mp seed-tasks` (populate state.tasks only) or `mp load-plan`
+      // (populate AND advance phase atomically). --force still moves the phase pointer (recovery / scripting)
+      // but does NOT suppress the decide-layer backstop: an unseeded execute run is never "complete".
+      if (phase === 'execute' && !(state.tasks?.length) && !flags.force) {
+        die(`set-phase: refusing to enter 'execute' with 0 tasks — run \`mp seed-tasks --state=${p} ` +
+            `--plan-index=<bundle>/plan.index.json\` (or \`mp load-plan\`, which advances phase atomically) ` +
+            `first to load the plan into state.tasks (§3 ordering). Pass --force to advance the phase anyway.`, 1);
       }
-      writeState(p, setPhase(cur, phase));
+      writeState(p, setPhase(state, phase));
       out({ phase });
       break;
     }
@@ -593,6 +648,40 @@ function main() {
         die(`validate-plan-index: ${errors.length} error(s) in ${p}`, 1);
       }
       out({ valid: true, tasks: Array.isArray(index.tasks) ? index.tasks.length : 0, path: p });
+      break;
+    }
+    case 'set-worktree-disposition': {
+      const p = need(flags, 'state');
+      const disposition = need(flags, 'disposition');
+      if (!VALID_WORKTREE_DISPOSITION.includes(disposition)) {
+        die(`invalid --disposition '${disposition}' — expected one of: ${VALID_WORKTREE_DISPOSITION.join(', ')}`);
+      }
+      writeState(p, setWorktreeDisposition(loadForWrite(p), disposition));
+      out({ worktree_disposition: disposition });
+      break;
+    }
+    case 'set-codex-config': {
+      const p = need(flags, 'state');
+      const hasRouting = flags.routing !== undefined;
+      const hasReview = flags.review !== undefined;
+      if (!hasRouting && !hasReview) {
+        die('set-codex-config: provide at least one of --routing or --review', 1);
+      }
+      if (hasRouting && !VALID_CODEX_ROUTING.includes(flags.routing)) {
+        die(`invalid --routing '${flags.routing}' — expected one of: ${VALID_CODEX_ROUTING.join(', ')}`);
+      }
+      const patch = {};
+      if (hasRouting) patch.routing = flags.routing;
+      if (hasReview) {
+        // --review=true|on enables; --review=false|off disables; bare --review (=== true) enables.
+        // Normalize to the BOOLEAN the dispatch path and wantsCodex compare against (review === true).
+        if (!['true', 'on', 'false', 'off'].includes(String(flags.review))) {
+          die(`invalid --review '${flags.review}' — expected one of: true, false, on, off`);
+        }
+        patch.review = flags.review === true || flags.review === 'true' || flags.review === 'on';
+      }
+      writeState(p, setCodexConfig(loadForWrite(p), patch));
+      out({ codex: patch });
       break;
     }
     default:
