@@ -1,0 +1,18 @@
+---
+schema_version: 8
+slug: github-coordination
+status: in-progress
+phase: brainstorm
+topic: "Add the ability to use GitHub for coordination rather than only local files, in order to scale development up across many more LLMs"
+complexity: high
+complexity_source: null
+autonomy: full
+planning_mode: auto
+created_at: 2026-05-31T18:47:41.240Z
+predecessor_transcript: null
+spec_path: /srv/dev/masterplan/.worktrees/masterplan-ng/docs/masterplan/github-coordination/spec.md
+plan_path: /srv/dev/masterplan/.worktrees/masterplan-ng/docs/masterplan/github-coordination/plan.md
+plan_index_path: /srv/dev/masterplan/.worktrees/masterplan-ng/docs/masterplan/github-coordination/plan.index.json
+tasks: []
+active_run: null
+pending_gate: null
