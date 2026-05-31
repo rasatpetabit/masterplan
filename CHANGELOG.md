@@ -5,9 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v8.0.0 — clean-core rebuild (branch `masterplan-ng`; deployed to ras@epyc2, not yet merged to `main`)
+## v8.0.0 — clean-core rebuild (2026-05-31)
 
-Version label bumped 7.2.3 → 8.0.0 so the registry-swapped install reads **v8** in `claude plugin list` (previously both the v7.2.3 and the v8 install reported `7.2.3`, distinguishable only by `gitCommitSha`). The full clean-core rebuild — 5-layer Node-primary architecture (durable run bundle · thin resumable shell · Workflow-tool engine · plugin-root agents · doctor checks), ~80% line reduction, and removal of the per-verb `/masterplan:<verb>` skill namespace — ships on this branch. Finalized release notes land at the v7 → v8 cutover merge to `main`.
+The full clean-core rebuild lands on `main`. masterplan is now a **five-layer Node-primary architecture** — durable run bundle (`docs/masterplan/<slug>/state.yml`, the CD-7 single source of truth) · thin resumable shell (`commands/masterplan.md` sequencer + `bin/masterplan.mjs` + `lib/*.mjs` as the sole durable state writer) · Workflow-tool execution engine · plugin-root agents · `doctor` health checks — replacing the v7 markdown monolith with an ~80% line reduction and unit-tested deterministic logic. The per-verb `/masterplan:<verb>` skill namespace is removed; every verb now routes through the bare `/masterplan` command via `bin`.
+
+### Added
+
+- **PR-awareness in the report verbs + finish gate.** `status` / `next` / `clean` surface an open GitHub PR for the run's branch (report-only, never auto-merge; `gh` is best-effort and degrades silently when absent), and the `branch_finish` gate relabels when a PR already exists. New pure helper `summarizePr` (`lib/finish.mjs`) + `mp pr-summary` subcommand.
+- **Explicit autonomy contract** (`commands/masterplan.md` §2d). Under loose/full autonomy the orchestrator auto-progresses through successful steps and stops only at genuine gates, emitting an `<mp-autoprogress>` marker so the end-of-turn guard stands down instead of forcing ceremonial confirmations between waves.
+
+### Notes
+
+- This is an **additive** release. The v7 markdown / self-instrumentation surface (`parts/`, the legacy `tests/` battery, `hooks/masterplan-telemetry.sh`) is retained dormant and will be removed in a follow-up once the remaining Codex full-lifecycle execution path lands and the affected docs are rewritten.
 
 ## v7.2.3 — Codex review dispatch guard + runtime-drift detection (2026-05-27)
 

@@ -121,8 +121,10 @@ test('LIVE: every tracked manifest version field agrees with README Current rele
   const mkt = JSON.parse(readRepo('.claude-plugin/marketplace.json'));
   const claudePlugin = JSON.parse(readRepo('.claude-plugin/plugin.json'));
   const codexPlugin = JSON.parse(readRepo('.codex-plugin/plugin.json'));
-  // package.json is EXCLUDED — it carries the private dev marker (8.0.0-ng.0) until parity cutover.
+  // package.json is now INCLUDED — the v8.0.0 release retires the dev marker, so it must agree too.
+  const pkg = JSON.parse(readRepo('package.json'));
   const entries = [
+    { file: 'package.json', field: 'version', version: pkg.version },
     { file: '.claude-plugin/marketplace.json', field: 'version', version: mkt.version },
     { file: '.claude-plugin/marketplace.json', field: 'plugins[0].version', version: mkt.plugins?.[0]?.version },
     { file: '.claude-plugin/plugin.json', field: 'version', version: claudePlugin.version },
