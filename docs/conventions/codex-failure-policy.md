@@ -1,6 +1,6 @@
 # Codex Failure Policy
 
-**Applies to:** the two live v8 Codex surfaces — the optional per-task **review** path (`agents/mp-codex-reviewer.md`, dispatched by `workflows/execute.workflow.js` when the run bundle's `codex.review === "on"`) and the on-demand **rescue** path (`codex:codex-rescue`).
+**Applies to:** the two live v8 Codex surfaces — the optional per-task **review** path (`agents/mp-codex-reviewer.md`, dispatched by `workflows/execute.workflow.js` when the run bundle's `codex.review` is enabled) and the on-demand **rescue** path (`codex:codex-rescue`).
 **Rewritten:** v8 (supersedes the v6.2.1 original, which governed a now-removed Codex *implementer* dispatch).
 **Scope:** Codex-specific infrastructure failures where the transport succeeds but Codex doesn't usefully execute — the slice NOT covered by `docs/conventions/api-retry-policy.md` (transport-level 429 / 5xx / TCP timeout).
 

@@ -1,6 +1,6 @@
 ---
 name: mp-codex-reviewer
-description: Adversarial second-opinion review of a completed masterplan task. Shells out to the Codex CLI out-of-process and returns a severity-first findings digest (CD-10). Runs per done task during execution when the run bundle's codex.review is "on" — not gated by task Codex-eligibility.
+description: Adversarial second-opinion review of a completed masterplan task. Shells out to the Codex CLI out-of-process and returns a severity-first findings digest (CD-10). Runs per done task during execution when the run bundle's codex.review is enabled — not gated by task Codex-eligibility.
 model: sonnet
 tools: Bash, Read
 ---
