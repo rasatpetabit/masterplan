@@ -11,6 +11,7 @@ import {
   collectVerifyCommands,
   isVerified,
   dispositionForChoice,
+  summarizePr,
 } from '../lib/finish.mjs';
 
 // ---- classifyDirt: task-scope vs user-owned dirt -----------------------------
@@ -178,4 +179,53 @@ test('dispositionForChoice: pr and keep retain the worktree', () => {
 test('dispositionForChoice: an unknown choice → null (caller leaves disposition untouched)', () => {
   assert.equal(dispositionForChoice('bogus'), null);
   assert.equal(dispositionForChoice(undefined), null);
+});
+
+// ---- summarizePr: open-PR awareness (report-only) ----------------------------
+
+test('summarizePr: a mergeable PR maps to the compact report shape', () => {
+  const gh = JSON.stringify([
+    { number: 42, title: 'feat: thing', mergeable: 'MERGEABLE', url: 'https://gh/pr/42' },
+  ]);
+  assert.deepEqual(summarizePr(gh), {
+    hasPr: true,
+    number: 42,
+    title: 'feat: thing',
+    url: 'https://gh/pr/42',
+    mergeable: 'yes',
+  });
+});
+
+test('summarizePr: CONFLICTING → mergeable "no"', () => {
+  assert.equal(summarizePr(JSON.stringify([{ number: 1, mergeable: 'CONFLICTING' }])).mergeable, 'no');
+});
+
+test('summarizePr: GitHub\'s async UNKNOWN (or an absent field) → mergeable "unknown"', () => {
+  assert.equal(summarizePr(JSON.stringify([{ number: 1, mergeable: 'UNKNOWN' }])).mergeable, 'unknown');
+  assert.equal(summarizePr(JSON.stringify([{ number: 1 }])).mergeable, 'unknown');
+});
+
+test('summarizePr: the first PR wins when gh returns more than one for the head', () => {
+  const gh = JSON.stringify([
+    { number: 7, mergeable: 'MERGEABLE' },
+    { number: 3, mergeable: 'CONFLICTING' },
+  ]);
+  assert.equal(summarizePr(gh).number, 7);
+});
+
+test('summarizePr: missing/empty/[] input (gh absent or no open PR) → { hasPr:false }', () => {
+  assert.deepEqual(summarizePr(''), { hasPr: false });
+  assert.deepEqual(summarizePr('   '), { hasPr: false });
+  assert.deepEqual(summarizePr('[]'), { hasPr: false });
+  assert.deepEqual(summarizePr(undefined), { hasPr: false });
+});
+
+test('summarizePr: malformed JSON or a non-array payload → { hasPr:false } (never throws)', () => {
+  assert.deepEqual(summarizePr('not json {['), { hasPr: false });
+  assert.deepEqual(summarizePr('{"number":1}'), { hasPr: false });
+});
+
+test('summarizePr: a PR with no usable number → { hasPr:false }', () => {
+  assert.deepEqual(summarizePr(JSON.stringify([{ title: 'x' }])), { hasPr: false });
+  assert.deepEqual(summarizePr(JSON.stringify(['not-an-object'])), { hasPr: false });
 });

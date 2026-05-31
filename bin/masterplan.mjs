@@ -85,7 +85,7 @@ import { detectHost, suppressRescue } from '../lib/codex-host.mjs';
 import { resolveConfigDir } from '../lib/paths.mjs';
 import { createHash } from 'node:crypto';
 import { mergePlanFragments, validatePlanIndex, renderPlanMd } from '../lib/plan-merge.mjs';
-import { classifyDirt, detectBase, collectVerifyCommands, isVerified, dispositionForChoice } from '../lib/finish.mjs';
+import { classifyDirt, detectBase, collectVerifyCommands, isVerified, dispositionForChoice, summarizePr } from '../lib/finish.mjs';
 
 // ---- tiny arg parser: positional[], flags{} (--k=v, or --k as boolean true) ----
 function parseArgs(argv) {
@@ -752,6 +752,15 @@ function main() {
         worktree_disposition: worktreeDisposition,
         dispositions: Object.fromEntries(BRANCH_CHOICES.map((c) => [c, dispositionForChoice(c)])),
       });
+      break;
+    }
+    case 'pr-summary': {
+      // Open-PR awareness for the report verbs (status / next / clean) + the branch_finish gate label.
+      // bin stays fs/compute-only: the SHELL runs `gh pr list --head <branch> --state open --json
+      // number,title,mergeable,url` (best-effort, `2>/dev/null`) and passes the JSON in via --gh-json.
+      // An absent/unauthed gh, no remote, or a non-GitHub origin → '' → { hasPr:false }. Pure transform,
+      // REPORT-ONLY (never triggers a merge), no state write.
+      out(summarizePr(typeof flags['gh-json'] === 'string' ? flags['gh-json'] : ''));
       break;
     }
     case 'record-verification': {
