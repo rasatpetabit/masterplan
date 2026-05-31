@@ -2,7 +2,7 @@
 schema_version: 8
 slug: github-coordination
 status: in-progress
-phase: plan
+phase: execute
 topic: "Add the ability to use GitHub for coordination rather than only local files, in order to scale development up across many more LLMs"
 complexity: high
 complexity_source: null
@@ -13,6 +13,6 @@ predecessor_transcript: null
 spec_path: /srv/dev/masterplan/.worktrees/masterplan-ng/docs/masterplan/github-coordination/spec.md
 plan_path: /srv/dev/masterplan/.worktrees/masterplan-ng/docs/masterplan/github-coordination/plan.md
 plan_index_path: /srv/dev/masterplan/.worktrees/masterplan-ng/docs/masterplan/github-coordination/plan.index.json
-tasks: []
+tasks: [{"id":1,"status":"pending","wave":0,"files":["lib/github-coord.mjs","test/github-coord.test.mjs"]},{"id":2,"status":"pending","wave":1,"files":["lib/paths.mjs","test/paths.test.mjs"]},{"id":3,"status":"pending","wave":1,"files":["lib/bundle.mjs","test/bundle.test.mjs"]},{"id":4,"status":"pending","wave":1,"files":["lib/resume.mjs","test/resume.test.mjs"]},{"id":5,"status":"pending","wave":1,"files":["lib/doctor/coord-drift.mjs","bin/doctor.mjs","test/doctor.test.mjs"]},{"id":6,"status":"pending","wave":2,"files":["bin/masterplan.mjs","test/bin-masterplan.test.mjs"]},{"id":7,"status":"pending","wave":3,"files":["commands/masterplan.md","README.md","docs/verbs.md","test/publish-hygiene.test.mjs"]}]
 active_run: null
 pending_gate: null

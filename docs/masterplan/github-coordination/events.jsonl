@@ -4,3 +4,4 @@
 {"type":"phase_transition","ts":"2026-05-31T21:03:23.025Z","phase":"plan"}
 {"type":"design_approved","ts":"2026-05-31T21:04:08.721Z","note":"user gate: design approved; contract-ref Option B dedicated ref; wave-batched kept in v1"}
 {"type":"phase_transition","ts":"2026-05-31T21:04:09.023Z","phase":"plan"}
+{"type":"phase_transition","ts":"2026-05-31T23:50:36.899Z","phase":"execute"}
