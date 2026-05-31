@@ -19,11 +19,24 @@ session**, started *after* an additive dev-plugin install, is mandatory.
 
 ---
 
+## Working copy — use the canonical clone, NOT the /srv worktree
+
+Run this in **`/home/ras/.local/share/masterplan-v8`** (branch `masterplan-ng`,
+== `origin/masterplan-ng` HEAD `8ed4249`). This is the copy that carries **every
+dogfood-campaign fix** (`162f3da` set-worktree-disposition … `8ed4249` fresh-eyes
+sweep) and is the artifact the v7→v8 cutover will ship.
+
+> ⚠️ Do **NOT** use `/srv/dev/masterplan/.worktrees/masterplan-ng`. That worktree
+> forked from the shared base `a087a5f` **before** the campaign and carries 2
+> unpushed local commits (`a2336da`, `3dbad7f` "parallel planning machinery") that
+> are absent from the remote — it is a different, pre-campaign engine. Parity proven
+> there would not transfer to the ship artifact.
+
 ## Preconditions
 
-- [ ] Working in the `masterplan-ng` worktree (`/srv/dev/masterplan/.worktrees/masterplan-ng`), branch `masterplan-ng`, clean except untracked `src/`.
+- [ ] Working in **`/home/ras/.local/share/masterplan-v8`**, branch `masterplan-ng`. Clean except the intentional local-only ` M .claude-plugin/marketplace.json` override; `src/` does **not** exist yet in this copy and is seeded in Step 3.
 - [ ] `codex` binary present + authed (the real `masterplan:mp-codex-reviewer` runs a synchronous foreground `codex exec`; without it the reviewer returns an inconclusive NOTE, which would *not* close confirmation (ii)).
-- [ ] Node ≥ whatever `package.json` engines pins; `node --test test/` green before starting (baseline 239/239).
+- [ ] Node ≥ whatever `package.json` engines pins; `npm test` green before starting (baseline 273/273).
 
 ---
 
@@ -35,8 +48,10 @@ mp-planner / mp-codex-reviewer`. This is the **one** step that needs the user's
 terminal (a fresh `claude` launch); everything after is in-session.
 
 ```bash
-# [USER-INTERACTIVE] — run in your terminal; cwd inside the worktree is fine
-claude --plugin-dir /srv/dev/masterplan/.worktrees/masterplan-ng
+# [USER-INTERACTIVE] — run in your terminal. cd into the clone first so the
+# runbook's relative paths (docs/…, bin/…, src/) resolve against it.
+cd /home/ras/.local/share/masterplan-v8
+claude --plugin-dir /home/ras/.local/share/masterplan-v8
 ```
 
 **Why `--plugin-dir` and NOT `/plugin marketplace add`** (claude-code-guide-verified
@@ -62,8 +77,8 @@ Precondition (already verified 2026-05-29, re-runnable any time):
 
 ```bash
 # [SCRIPTABLE]
-jq -r '.name' /srv/dev/masterplan/.worktrees/masterplan-ng/.claude-plugin/plugin.json  # → masterplan
-ls -1 /srv/dev/masterplan/.worktrees/masterplan-ng/agents/mp-*.md                       # → 4 agents
+jq -r '.name' /home/ras/.local/share/masterplan-v8/.claude-plugin/plugin.json  # → masterplan
+ls -1 /home/ras/.local/share/masterplan-v8/agents/mp-*.md                       # → 4 agents
 ```
 
 ## Step 2 — In the fresh session, verify `masterplan:*` registered
@@ -82,21 +97,35 @@ re-probe. Do not fall back to stand-ins (that just reproduces the existing resid
 Bundle: `docs/masterplan/2026-05-29-v8-dogfood/`. All 3 tasks are currently
 `done`; `active_run` and `pending_gate` are already `null`.
 
-1. Edit `state.yml` — flip **only task 3** back to `pending` (leave tasks 1–2 `done`):
+1. **Seed the wave-1 `src/` fixtures** — this clone has no `src/` yet (the fixtures
+   are untracked and lived only in the bundle's original run copy). Create the two
+   wave-1 modules task 3 imports; leave `index.mjs` absent so the implementer
+   recreates it:
+
+   ```bash
+   mkdir -p src
+   cat > src/greet.mjs <<'EOF'
+   export function greet(name) {
+     return `Hello, ${name}!`;
+   }
+   EOF
+   cat > src/farewell.mjs <<'EOF'
+   export function farewell(name) {
+     return `Goodbye, ${name}.`;
+   }
+   EOF
+   ls src/                    # expect: farewell.mjs  greet.mjs   (no index.mjs)
+   git status -s src/         # expect: ?? src/   (entirely untracked)
+   ```
+
+2. Edit `state.yml` — flip **only task 3** back to `pending` (leave tasks 1–2 `done`):
 
    ```yaml
    tasks: [{"id":1,"status":"done","wave":1,"files":["src/greet.mjs"]},{"id":2,"status":"done","wave":1,"files":["src/farewell.mjs"]},{"id":3,"status":"pending","wave":2,"files":["src/index.mjs"]}]
    ```
 
-2. Remove the wave-2 artifact so the implementer recreates it; **keep** the wave-1
-   files (task 3 imports them, and the verify command needs them):
-
-   ```bash
-   rm -f src/index.mjs        # src/ is entirely untracked (git status -s src/ → "?? src/")
-   ls src/                    # expect: farewell.mjs  greet.mjs   (no index.mjs)
-   ```
-
-3. `active_run` is already `null` — no `clear-active-run` needed.
+3. `active_run` is already `null` — no `clear-active-run` needed. `src/index.mjs` is
+   absent after the seed above, so no `rm` is needed; the implementer creates it.
 
 `node bin/masterplan.mjs decide --state=docs/masterplan/2026-05-29-v8-dogfood/state.yml`
 should now return `{"action":"dispatch_wave","wave":2,…}`.

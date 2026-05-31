@@ -1,4 +1,4 @@
-// test/doctor.test.mjs — v8 L4 doctor: dispatcher + all 10 check modules.
+// test/doctor.test.mjs — v8 L4 doctor: dispatcher + all 11 check modules.
 //
 // The slice covers all three opts shapes deliberately: scalar-cap (pure-bundle, no opts),
 // worktree-integrity (git via injected gitExec), codex-auth (host path + injected homeDir/now).
@@ -24,6 +24,7 @@ import { check as indexStaleness } from '../lib/doctor/index-staleness.mjs';
 import { check as staleLock } from '../lib/doctor/stale-lock.mjs';
 import { check as staleCodexTask } from '../lib/doctor/stale-codex-task.mjs';
 import { check as pluginRegistryDrift } from '../lib/doctor/plugin-registry-drift.mjs';
+import { check as planIndexSchema } from '../lib/doctor/plan-index-schema.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const FX = path.join(here, 'fixtures', 'doctor');
@@ -122,6 +123,22 @@ test('worktree-integrity: fixtures match dir-prefix severity (stubbed git)', asy
       assert.equal(maxSeverity(findings), expectedSeverity(sc), JSON.stringify(findings));
     });
   }
+});
+
+test('worktree-integrity: ERROR fix messages prescribe the `mp` verb, not a CD-7 hand-edit', () => {
+  // Regression for the fix-message defect (C3): the worktree-missing / branch-missing remediation used to
+  // tell the operator to hand-edit state.yml (`worktree_disposition: …` / `status: archived`) — a CD-7
+  // violation with (for disposition) no writer at all. The fix now names the verb that performs the write.
+  const wt = worktreeIntegrity(path.join(FX, 'worktree-integrity', 'error-missing-worktree'), { gitExec: GIT_STUB });
+  const wtErr = wt.find((f) => f.severity === 'ERROR' && /worktree/.test(f.summary));
+  assert.ok(wtErr, JSON.stringify(wt));
+  assert.match(wtErr.fix, /mp set-worktree-disposition .*--disposition=removed_after_merge/);
+  assert.doesNotMatch(wtErr.fix, /in the bundle state\.yml/); // no hand-edit prescription survives
+
+  const br = worktreeIntegrity(path.join(FX, 'worktree-integrity', 'error-missing-branch'), { gitExec: GIT_STUB });
+  const brErr = br.find((f) => f.severity === 'ERROR' && /branch/.test(f.summary));
+  assert.ok(brErr, JSON.stringify(br));
+  assert.match(brErr.fix, /mp set-status .*--status=archived/);
 });
 
 test('worktree-integrity: SKIP when git is unavailable', () => {
@@ -252,6 +269,34 @@ test('codex-plugin-presence: fixtures match dir-prefix severity', async (t) => {
   }
 });
 
+test('codex-plugin-presence: WARN fix cites `mp set-codex-config` (CD-7-honest; no flat-key hand-edit)', () => {
+  // The fix the doctor emits when a bundle wants codex but the plugin is absent must name the `mp` writer
+  // and the NESTED codex.{routing,review} the dispatch path reads — not the old `set codex_routing: off ...`
+  // flat hand-edit (CD-7-violating AND ineffective: flat keys never reach the dispatch layer).
+  const root = path.join(FX, 'codex-plugin-presence', 'warn-wants-no-plugin');
+  const findings = codexPluginPresence(root, { homeDir: path.join(root, 'home') });
+  const warn = findings.find((f) => f.severity === 'WARN');
+  assert.ok(warn, JSON.stringify(findings));
+  assert.match(warn.fix, /mp set-codex-config .*--routing=off --review=false/); // the verb, nested-aware
+  assert.doesNotMatch(warn.fix, /set codex_routing: off and codex_review: false/); // old CD-7-violating advice
+});
+
+test('codex-plugin-presence: flat codex_routing:off (no nested) is NOT trusted as off — mirrors dispatch (Residual 4)', () => {
+  // The keystone divergence-closer. A bundle with a FLAT `codex_routing: off` and NO nested codex
+  // object used to SKIP (the old wantsCodex honored the flat key) — but dispatch (bin:381) reads the
+  // nested object ONLY and falls through to routing='auto', so codex STILL routes. wantsCodex now
+  // mirrors dispatch: the flat key is dead input, routing defaults to 'auto' → the bundle "wants" codex
+  // → WARN when the plugin is absent, NOT a silent SKIP. This case PASSED (as SKIP) under the old code;
+  // asserting WARN here is what closes Residual 4. (The `warn-flat-off-ignored` fixture also drives the
+  // dir-prefix scenario loop above — this named test pins the intent + the not-SKIP invariant.)
+  const root = path.join(FX, 'codex-plugin-presence', 'warn-flat-off-ignored');
+  const findings = codexPluginPresence(root, { homeDir: path.join(root, 'home') });
+  assertFindingShape(findings);
+  assert.equal(maxSeverity(findings), 'WARN', JSON.stringify(findings));
+  assert.ok(!findings.some((f) => f.severity === 'SKIP'),
+    'flat-only codex_routing:off must NOT produce a SKIP (that was the Residual 4 false-negative)');
+});
+
 test('codex-plugin-presence: SKIP when no bundles', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-cpp-'));
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-cpp-home-'));
@@ -316,6 +361,22 @@ test('index-staleness: PASS via plan.index.json fallback when hash matches', () 
   // plan.index.json with matching hash
   fs.writeFileSync(path.join(bundleDir, 'plan.index.json'), JSON.stringify({ plan_hash: actualHash }), 'utf8');
   assert.equal(maxSeverity(indexStaleness(tmp)), 'PASS');
+});
+
+test('index-staleness: stale state.plan_hash fix-text names `mp migrate-bundle`, not a phantom plan-index command (fix-text defect)', () => {
+  // Regression for a verified non-completing fix-text defect. The old :71 fix prescribed "re-index
+  // with the plan-index command to refresh plan_hash in state.yml", but NO command writes
+  // state.plan_hash (build-index writes plan.index.json only), so following it never cleared the
+  // WARN. The remedy that actually clears a stale legacy state.plan_hash is `mp migrate-bundle` —
+  // migrate whitelist-rebuilds state.yml and DROPS plan_hash (proven empirically). WL:84's
+  // dormant-gap finding stands; this branch is legacy-only and this guards the fix-text accuracy.
+  const findings = indexStaleness(path.join(FX, 'index-staleness', 'warn-stale-state-hash'));
+  assertFindingShape(findings);
+  const warns = findings.filter((f) => f.severity === 'WARN');
+  assert.equal(warns.length, 1, `expected exactly one state.plan_hash WARN, got ${JSON.stringify(findings)}`);
+  assert.match(warns[0].fix, /migrate-bundle/, 'fix must name the actionable `mp migrate-bundle` remedy');
+  assert.ok(!/plan-index command/.test(warns[0].fix),
+    'fix must NOT name the phantom "plan-index command" that writes the wrong file (the original defect)');
 });
 
 // ---- stale-lock (mtime-based, injected clock) --------------------------------
@@ -471,15 +532,77 @@ test('plugin-registry-drift: PASS when entry has no gitCommitSha (nothing to com
   assert.equal(maxSeverity(findings), 'PASS', JSON.stringify(findings));
 });
 
-// ---- dispatcher: all 10 modules auto-discovered ----------------------------
+// ---- plan-index-schema: the parallel-planning anomaly guard ----------------
+// Built in-code with tmp bundles (not committed fixtures): the canonical-vs-legacy schema gate
+// and the object-codex / same-wave-overlap WARNs are the load-bearing paths, and a tmp repo
+// exercises resolveRunsDir(repoRoot) end-to-end the way a real `doctor` run does.
 
-test('dispatcher: discovers all 10 check modules', async () => {
+function pisRepo(bundles = {}) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-pis-'));
+  for (const [slug, index] of Object.entries(bundles)) {
+    const dir = path.join(tmp, 'docs', 'masterplan', slug);
+    fs.mkdirSync(dir, { recursive: true });
+    const body = typeof index === 'string' ? index : JSON.stringify(index, null, 2);
+    fs.writeFileSync(path.join(dir, 'plan.index.json'), body);
+  }
+  return tmp;
+}
+const PIS_TASK = (over = {}) => ({ id: 1, description: 'do a thing', wave: 0, files: ['a.js'], verify_commands: ['t a'], codex: null, ...over });
+
+test('plan-index-schema: SKIP when no run bundles exist', () => {
+  const findings = planIndexSchema(pisRepo());
+  assertFindingShape(findings);
+  assert.equal(maxSeverity(findings), 'SKIP', JSON.stringify(findings));
+});
+
+test('plan-index-schema: PASS for a clean canonical index', () => {
+  const findings = planIndexSchema(pisRepo({ ok: { schema_version: '6.0', tasks: [PIS_TASK()] } }));
+  assertFindingShape(findings);
+  assert.equal(maxSeverity(findings), 'PASS', JSON.stringify(findings));
+});
+
+test('plan-index-schema: WARN on object codex (anomaly 1 — silent routing fallthrough)', () => {
+  const findings = planIndexSchema(pisRepo({
+    bad: { schema_version: '6.0', tasks: [PIS_TASK({ codex: { eligible: true } })] },
+  }));
+  assert.equal(maxSeverity(findings), 'WARN', JSON.stringify(findings));
+  assert.match(findings.find((f) => f.severity === 'WARN').summary, /codex/);
+});
+
+test('plan-index-schema: WARN on same-wave file overlap (anomaly 2 — re-waved index)', () => {
+  const findings = planIndexSchema(pisRepo({
+    bad: { schema_version: '6.0', tasks: [
+      PIS_TASK({ id: 1, files: ['shared.js'] }),
+      PIS_TASK({ id: 2, files: ['shared.js'] }),
+    ] },
+  }));
+  assert.equal(maxSeverity(findings), 'WARN', JSON.stringify(findings));
+});
+
+test('plan-index-schema: WARN on malformed JSON, even with no canonical index present', () => {
+  const findings = planIndexSchema(pisRepo({ broke: '{ not json' }));
+  assert.equal(maxSeverity(findings), 'WARN', JSON.stringify(findings));
+  assert.match(findings[0].summary, /not valid JSON/);
+});
+
+test('plan-index-schema: SKIP for a legacy pre-6 index (migrate\'s concern, not a schema violation)', () => {
+  // schema 5.0 legacy shape (idx/parallel_group/boolean codex) the validator must NOT flag.
+  const findings = planIndexSchema(pisRepo({
+    legacy: { schema_version: '5.0', tasks: [{ idx: 1, name: 'x', parallel_group: 0, codex: false }] },
+  }));
+  assertFindingShape(findings);
+  assert.equal(maxSeverity(findings), 'SKIP', JSON.stringify(findings));
+});
+
+// ---- dispatcher: all 11 modules auto-discovered ----------------------------
+
+test('dispatcher: discovers all 11 check modules', async () => {
   const checks = await discoverChecks(path.join(here, '..', 'lib', 'doctor'));
   const names = checks.map((c) => c.name);
   const expected = [
     'codex-auth', 'codex-plugin-presence', 'index-staleness', 'legacy-bundle',
-    'plugin-registry-drift', 'scalar-cap', 'stale-codex-task', 'stale-lock',
-    'state-schema', 'worktree-integrity',
+    'plan-index-schema', 'plugin-registry-drift', 'scalar-cap', 'stale-codex-task',
+    'stale-lock', 'state-schema', 'worktree-integrity',
   ];
   for (const n of expected) {
     assert.ok(names.includes(n), `discovered ${n}`);

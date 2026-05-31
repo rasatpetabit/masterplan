@@ -2,4 +2,5 @@ schema_version: 6
 slug: p1
 status: in-progress
 phase: building
-codex: {"routing": "off", "review": false}
+codex_routing: off
+codex_review: false

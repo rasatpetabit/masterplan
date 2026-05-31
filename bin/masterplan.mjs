@@ -20,7 +20,8 @@
 //   decide --state=PATH [--alive]               -> the decideNextAction result (migrates in-memory)
 //   seed --state=PATH --slug=S --topic=STR [--phase=P] [--status=S] [--schema-version=N]
 //        [--created-at=T] [--complexity=C] [--complexity-source=SRC] [--autonomy=A]
-//        [--predecessor-transcript=PATH] [--spec-path=P] [--plan-path=P] [--plan-index-path=P] [--force]
+//        [--planning-mode=serial|parallel|auto] [--predecessor-transcript=PATH]
+//        [--spec-path=P] [--plan-path=P] [--plan-index-path=P] [--force]
 //                                               -> CD-7 write: create a fresh v8 brainstorm bundle (refuse if exists)
 //   seed-tasks --state=PATH --plan-index=PATH [--force]
 //                                               -> CD-7 write: populate state.tasks {id,status,wave,files} from plan.index.json
@@ -29,6 +30,9 @@
 //                                               -> append one JSON line to the bundle's events.jsonl
 //   migrate-bundle --state=PATH                 -> back up + persist a legacy bundle as v8 (no-op if v8)
 //   backfill-waves --state=PATH --plan-index=PATH -> set each task's {wave,files} from plan.index.json
+//   load-plan --state=PATH --plan-index=PATH    -> CD-7 write: materialize state.tasks from a fresh
+//                                                  plan.index.json AND advance phase→execute, ATOMICALLY
+//                                                  (the plan→execute seam; refuses a bundle with tasks)
 //   prepare-wave --state=PATH --plan-index=PATH --wave=N [--routing=M] [--codex-suppressed]
 //                [--linked-worktree] [--review=on|off]
 //                                               -> {wave, tasks:[lean routed payload], review} for the L2 `args`
@@ -38,22 +42,50 @@
 //   set-phase --state=PATH --phase=P [--force]  -> CD-7 write: advance the lifecycle phase (brainstorm|plan|execute)
 //                                                  (refuse entering execute with 0 tasks — run seed-tasks first — w/o --force)
 //   set-status --state=PATH --status=S          -> CD-7 write: set the run status (in-progress|archived)
+//   set-worktree-disposition --state=PATH --disposition=D
+//                                               -> CD-7 write: record the worktree's disposition
+//                                                  (active|removed_after_merge|kept_by_user); the
+//                                                  doctor's worktree-integrity check SKIPs on retirement
+//   set-codex-config --state=PATH [--routing=R] [--review=B]
+//                                               -> CD-7 write: set the NESTED codex.{routing,review}
+//                                                  (routing: auto|on|off; review: true|false); the
+//                                                  codex-plugin-presence check SKIPs once both are off
 //   open-gate --state=PATH --id=X [--opened-at=T] -> CD-7 write: open the durable approval gate
 //   clear-gate --state=PATH                     -> CD-7 write: clear the gate
 //   set-active-run --state=PATH --wave=N        -> CD-7 write: phase-1 marker {wave, phase:'launching'}
+//   set-active-run --state=PATH --kind=plan     -> CD-7 write: planning marker {kind:'plan', phase:'launching'}
 //   promote-active-run --state=PATH --run-id=X --task-id=Y -> phase-2: attach the launch handles
 //   clear-active-run --state=PATH               -> CD-7 write: clear the run marker
+//   merge-plan-fragments --fragments=PATH --out=PATH [--plan-md=PATH] [--meta=JSON] [--generated-at=T]
+//                                               -> ARTIFACT write: deterministic plan.index.json + plan.md
+//                                                  from subsystem fragments (assigns ids/waves, normalises
+//                                                  codex, validates before writing; NOT CD-7 state)
+//   validate-plan-index --plan-index=PATH       -> strict structural validation (exit!=0 on any error)
+//   finish-status --state=PATH [--head=SHA] [--porcelain=STR] [--branches=STR]
+//                                               -> the §2 finish-flow snapshot {task_scope_dirty,
+//                                                  unrelated_dirty, base, retro_present, head_sha,
+//                                                  verified_sha, verified, verify_commands,
+//                                                  worktree_disposition, dispositions}.
+//                                                  git facts are PASSED IN (bin is fs-only); all git
+//                                                  flags optional (a fs-only call still reports
+//                                                  retro/verified/commands). verify_commands is read
+//                                                  from plan.index.json (the exec projection state drops)
+//   record-verification --state=PATH --sha=SHA  -> CD-7 write: record verified_sha (the verified-at-SHA
+//                                                  skip — re-entry at unchanged HEAD won't re-run the suite)
 
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, buildSeedState, buildTasksFromPlanIndex, appendEvent } from '../lib/bundle.mjs';
+import { readState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, setWorktreeDisposition, setVerifiedSha, setCodexConfig, loadPlanTasks, buildSeedState, buildTasksFromPlanIndex, appendEvent } from '../lib/bundle.mjs';
 import { migrate, detectSchemaVersion, MigrationError } from '../lib/migrate.mjs';
 import { decideNextAction } from '../lib/resume.mjs';
 import { prepareWave, declaredScope, verifyScope } from '../lib/wave.mjs';
 import { detectHost, suppressRescue } from '../lib/codex-host.mjs';
 import { resolveConfigDir } from '../lib/paths.mjs';
+import { createHash } from 'node:crypto';
+import { mergePlanFragments, validatePlanIndex, renderPlanMd } from '../lib/plan-merge.mjs';
+import { classifyDirt, detectBase, collectVerifyCommands, isVerified, dispositionForChoice, summarizePr } from '../lib/finish.mjs';
 
 // ---- tiny arg parser: positional[], flags{} (--k=v, or --k as boolean true) ----
 function parseArgs(argv) {
@@ -97,6 +129,26 @@ const VALID_TASK_STATUS = ['pending', 'in_progress', 'done'];
 // ordering (recovery/restart legitimately moves phase backward; a re-opened run goes archived→in-progress).
 const VALID_PHASE = ['brainstorm', 'plan', 'execute'];
 const VALID_STATUS = ['in-progress', 'archived'];
+const VALID_PLANNING_MODE = ['serial', 'parallel', 'auto'];
+
+// Valid worktree dispositions the shell may WRITE via set-worktree-disposition. The doctor's
+// worktree-integrity check SKIPs a bundle whose worktree was intentionally retired
+// (removed_after_merge | kept_by_user); 'active' is the seed/default and is included so a
+// premature retirement can be reverted via the SAME verb (no CD-7 hand-edit). Value-enum only —
+// the active→removed_after_merge transition is not ordered (a re-opened run may go back to active).
+const VALID_WORKTREE_DISPOSITION = ['active', 'removed_after_merge', 'kept_by_user'];
+
+// Valid codex routing values the shell may WRITE via set-codex-config. The codex-plugin-presence doctor
+// SKIPs a bundle once routing is 'off' AND review is off; 'auto'/'on' keep codex engaged. Writes the
+// NESTED state.codex.routing (the shape the dispatch path reads) — NOT the flat codex_routing key the old
+// fix text named. Value-enum only — no transition ordering (a bundle may re-engage codex later).
+const VALID_CODEX_ROUTING = ['auto', 'on', 'off'];
+
+// The four resolved choices the §2 finish-flow's durable `branch_finish` gate offers (merge to base /
+// push+PR / keep as-is / discard). finish-status maps each to its worktree disposition via
+// lib/finish.mjs dispositionForChoice, so the shell reads the value data-driven from the emitted
+// `dispositions` map rather than hardcoding the {removed_after_merge|kept_by_user} enum in prose.
+const BRANCH_CHOICES = ['merge', 'pr', 'keep', 'discard'];
 
 // ---- read helpers: decide migrates in-memory; write ops require an already-v8 bundle ----
 function readText(p) {
@@ -225,6 +277,9 @@ function main() {
       if (fs.existsSync(p) && !flags.force) {
         die(`seed: ${p} already exists — pass --force to overwrite (this replaces the bundle's core state).`, 1);
       }
+      if (flags['planning-mode'] !== undefined && !VALID_PLANNING_MODE.includes(flags['planning-mode'])) {
+        die(`invalid --planning-mode '${flags['planning-mode']}' — expected one of: ${VALID_PLANNING_MODE.join(', ')}`);
+      }
       const dir = path.dirname(p);
       let state;
       try {
@@ -238,6 +293,7 @@ function main() {
           complexity: flags.complexity,
           complexitySource: flags['complexity-source'],
           autonomy: flags.autonomy,
+          planningMode: flags['planning-mode'],
           predecessorTranscript: flags['predecessor-transcript'],
           // Path fields default to siblings of the BUNDLE DIR (its authoritative location), so a
           // non-canonical seed path stays self-consistent; explicit flags override.
@@ -346,6 +402,50 @@ function main() {
       out({ updated: tasks.filter((task) => Number.isInteger(task.wave)).length, total: tasks.length });
       break;
     }
+    case 'load-plan': {
+      // The plan→execute seam. Materialize state.tasks from a freshly-built plan.index.json AND advance
+      // phase→execute in ONE writeState. This is the single crash-safe ordering: decideNextAction
+      // dispatches off the task list (not the phase label), so a `set-phase execute` that left tasks:[]
+      // would make the next `decide` return `complete` → ARCHIVE the just-planned bundle (data loss).
+      // loadPlanTasks bundles tasks + phase into one state object; the atomic tmp+rename lands both or
+      // neither. Validate the index FIRST — the serial path's mp-planner Writes plan.index.json directly
+      // (unguarded by merge-plan-fragments' pre-write validation), so this is the compensating gate.
+      const p = need(flags, 'state');
+      const state = loadForWrite(p);
+      const planIndexPath = need(flags, 'plan-index');
+      let index;
+      try {
+        index = JSON.parse(readText(planIndexPath));
+      } catch (e) {
+        die(`load-plan: ${planIndexPath} is not valid JSON (${e.message})`, 1);
+      }
+      // Schema floor: refuse to materialize a pre-v8 index. Mirrors the doctor's plan-index-schema
+      // gate (lib/doctor/plan-index-schema.mjs) and loadForWrite's `major < 6` guard — parse the
+      // major the same way so both '6.0' (string, from merge-plan-fragments) and 6 (number) pass.
+      const major = Number(String(index?.schema_version ?? '').split('.')[0]);
+      if (!Number.isInteger(major) || major < 6) {
+        die(
+          `load-plan: ${planIndexPath} has schema_version ${JSON.stringify(index?.schema_version)} — ` +
+            `expected the v8 floor (>= 6, canonical '6.0'). Rebuild with merge-plan-fragments, or ` +
+            `migrate a legacy index, before materializing.`,
+          1
+        );
+      }
+      const errors = validatePlanIndex(index);
+      if (errors.length) {
+        for (const e of errors) process.stderr.write(`  - ${e}\n`);
+        die(`load-plan: ${errors.length} error(s) in ${planIndexPath} — refusing to materialize an invalid plan.`, 1);
+      }
+      let next;
+      try {
+        next = loadPlanTasks(state, index); // throws: bundle already has tasks / empty index / non-integer wave
+      } catch (e) {
+        die(e.message, 1);
+      }
+      writeState(p, next);
+      out({ loaded: next.tasks.length, waves: new Set(next.tasks.map((t) => t.wave)).size, phase: next.phase });
+      break;
+    }
     case 'prepare-wave': {
       // Pre-resolve everything the L2 workflow needs for one wave, since a Workflow script has
       // NO module/fs access — "L2 consumes routing.mjs" can only mean L1 resolves routing here and
@@ -426,6 +526,15 @@ function main() {
     }
     case 'set-active-run': {
       const p = need(flags, 'state');
+      if (flags.kind !== undefined) {
+        if (flags.kind !== 'plan') {
+          die(`invalid --kind '${flags.kind}' — expected: plan`);
+        }
+        const run = { kind: 'plan', phase: 'launching' };
+        writeState(p, setActiveRun(loadForWrite(p), run));
+        out({ active_run: run });
+        break;
+      }
       const wave = coerceId(need(flags, 'wave'));
       // set-active-run is the SOLE ORIGIN of the active_run wave; enforce the integer-wave invariant
       // HERE at the source (mirror of promote's guard below). Without it a `--wave=2.0`/`--wave=foo`/
@@ -444,6 +553,12 @@ function main() {
       const p = need(flags, 'state');
       const state = loadForWrite(p);
       const prev = state.active_run ?? {};
+      if (prev.kind === 'plan') {
+        const run = { kind: 'plan', run_id: need(flags, 'run-id'), task_id: need(flags, 'task-id') };
+        writeState(p, setActiveRun(state, run));
+        out({ active_run: run });
+        break;
+      }
       // Phase-2 promotion MUST follow a phase-1 launching marker carrying an integer wave
       // (set-active-run --wave=N). Promoting without it writes a wave-less active_run that
       // decideNextAction then mis-finalizes while tasks pend (orphan / double-dispatch). Fail loud.
@@ -469,16 +584,16 @@ function main() {
         die(`invalid --phase '${phase}' — expected one of: ${VALID_PHASE.join(', ')}`);
       }
       const state = loadForWrite(p);
-      // §3 ordering invariant: `mp seed-tasks` loads the plan into state.tasks BEFORE entering execute.
-      // Entering execute with 0 tasks creates the state decideNextAction refuses to finalize (it would
-      // mis-archive a planned-but-unseeded run — data loss). Refuse HERE, at the violation point, so the
-      // operator runs seed-tasks first. --force still moves the phase pointer (recovery / scripting) but
-      // does NOT suppress the decide-layer backstop: an unseeded execute run is never "complete". Mirror
-      // of the seed-tasks clobber guard.
+      // §3 ordering invariant + data-loss guard: decideNextAction dispatches off the TASK LIST, not the
+      // phase label, so entering execute with 0 tasks is the degenerate state decide refuses to finalize
+      // (it would mis-archive a planned-but-unseeded run — data loss). Refuse HERE, at the violation point,
+      // so the operator materializes tasks first: `mp seed-tasks` (populate state.tasks only) or `mp load-plan`
+      // (populate AND advance phase atomically). --force still moves the phase pointer (recovery / scripting)
+      // but does NOT suppress the decide-layer backstop: an unseeded execute run is never "complete".
       if (phase === 'execute' && !(state.tasks?.length) && !flags.force) {
         die(`set-phase: refusing to enter 'execute' with 0 tasks — run \`mp seed-tasks --state=${p} ` +
-            `--plan-index=<bundle>/plan.index.json\` first to load the plan into state.tasks (§3 ordering). ` +
-            `Pass --force to advance the phase anyway.`, 1);
+            `--plan-index=<bundle>/plan.index.json\` (or \`mp load-plan\`, which advances phase atomically) ` +
+            `first to load the plan into state.tasks (§3 ordering). Pass --force to advance the phase anyway.`, 1);
       }
       writeState(p, setPhase(state, phase));
       out({ phase });
@@ -492,6 +607,171 @@ function main() {
       }
       writeState(p, setStatus(loadForWrite(p), status));
       out({ status });
+      break;
+    }
+    // Parallel-planning: assemble subsystem fragments → canonical plan.index.json + plan.md.
+    // The LLM drafters return fragments only; deterministic JS (lib/plan-merge.mjs) owns ids,
+    // waves, and codex normalisation. This is an ARTIFACT write (plain fs), NOT a CD-7 state
+    // mutation — plan.index.json/plan.md are products, not bundle state. We validate BEFORE
+    // writing, so an invalid merge never lands on disk.
+    case 'merge-plan-fragments': {
+      const fragsPath = need(flags, 'fragments');
+      const outIndex = need(flags, 'out');
+      const planMdPath = flags['plan-md'] ?? path.join(path.dirname(outIndex), 'plan.md');
+      const meta = flags.meta ? JSON.parse(flags.meta) : {};
+      let fragments;
+      try {
+        fragments = JSON.parse(readText(fragsPath));
+      } catch (e) {
+        die(`merge-plan-fragments: --fragments must be valid JSON (${e.message})`, 1);
+      }
+      let index;
+      try {
+        // schemaVersion left to mergePlanFragments' own SCHEMA_VERSION default (single source of truth).
+        index = mergePlanFragments(fragments, { schemaVersion: meta.schemaVersion });
+      } catch (e) {
+        die(`merge-plan-fragments: ${e.message}`, 1);
+      }
+      const errors = validatePlanIndex(index);
+      if (errors.length) {
+        die(`merge-plan-fragments: produced an invalid index:\n  - ${errors.join('\n  - ')}`, 1);
+      }
+      const planMd = renderPlanMd(index, meta);
+      // Stamp plan_hash = sha256 of plan.md (mirrors the index-staleness doctor check's source).
+      index.plan_hash = `sha256:${createHash('sha256').update(planMd).digest('hex')}`;
+      index.generated_at = flags['generated-at'] ?? new Date().toISOString();
+      fs.writeFileSync(planMdPath, planMd);
+      fs.writeFileSync(outIndex, JSON.stringify(index, null, 2) + '\n');
+      out({
+        tasks: index.tasks.length,
+        waves: new Set(index.tasks.map((t) => t.wave)).size,
+        plan_index: outIndex,
+        plan_md: planMdPath,
+        plan_hash: index.plan_hash,
+      });
+      break;
+    }
+    // Standalone strict validator for an existing plan.index.json (CI / manual / pre-execute gate).
+    case 'validate-plan-index': {
+      const p = need(flags, 'plan-index');
+      let index;
+      try {
+        index = JSON.parse(readText(p));
+      } catch (e) {
+        die(`validate-plan-index: ${p} is not valid JSON (${e.message})`, 1);
+      }
+      const errors = validatePlanIndex(index);
+      if (errors.length) {
+        for (const e of errors) process.stderr.write(`  - ${e}\n`);
+        die(`validate-plan-index: ${errors.length} error(s) in ${p}`, 1);
+      }
+      out({ valid: true, tasks: Array.isArray(index.tasks) ? index.tasks.length : 0, path: p });
+      break;
+    }
+    case 'set-worktree-disposition': {
+      const p = need(flags, 'state');
+      const disposition = need(flags, 'disposition');
+      if (!VALID_WORKTREE_DISPOSITION.includes(disposition)) {
+        die(`invalid --disposition '${disposition}' — expected one of: ${VALID_WORKTREE_DISPOSITION.join(', ')}`);
+      }
+      writeState(p, setWorktreeDisposition(loadForWrite(p), disposition));
+      out({ worktree_disposition: disposition });
+      break;
+    }
+    case 'set-codex-config': {
+      const p = need(flags, 'state');
+      const hasRouting = flags.routing !== undefined;
+      const hasReview = flags.review !== undefined;
+      if (!hasRouting && !hasReview) {
+        die('set-codex-config: provide at least one of --routing or --review', 1);
+      }
+      if (hasRouting && !VALID_CODEX_ROUTING.includes(flags.routing)) {
+        die(`invalid --routing '${flags.routing}' — expected one of: ${VALID_CODEX_ROUTING.join(', ')}`);
+      }
+      const patch = {};
+      if (hasRouting) patch.routing = flags.routing;
+      if (hasReview) {
+        // --review=true|on enables; --review=false|off disables; bare --review (=== true) enables.
+        // Normalize to the BOOLEAN the dispatch path and wantsCodex compare against (review === true).
+        if (!['true', 'on', 'false', 'off'].includes(String(flags.review))) {
+          die(`invalid --review '${flags.review}' — expected one of: true, false, on, off`);
+        }
+        patch.review = flags.review === true || flags.review === 'true' || flags.review === 'on';
+      }
+      writeState(p, setCodexConfig(loadForWrite(p), patch));
+      out({ codex: patch });
+      break;
+    }
+    case 'finish-status': {
+      // The §2 finish-flow snapshot (READ-ONLY): the `complete` handler sequences on this. bin stays
+      // fs/compute-only — the SHELL runs git and passes its output as flags (the verify-scope pattern):
+      //   --head=<git rev-parse HEAD>           current commit, for the verified-at-SHA skip
+      //   --porcelain=<git status --porcelain>  raw, for task-scope-vs-unrelated dirt classification
+      //   --branches=<git branch ...>           raw (one name/line), for base detection (main|master)
+      // All git flags are OPTIONAL: a fs-only call (no git facts) still reports retro/verified/commands.
+      const p = need(flags, 'state');
+      const state = loadForWrite(p);
+      const dir = path.dirname(p);
+      const head = typeof flags.head === 'string' && flags.head.trim() ? flags.head.trim() : null;
+      const taskFiles = (Array.isArray(state.tasks) ? state.tasks : []).flatMap((t) =>
+        Array.isArray(t.files) ? t.files : []
+      );
+      const dirt = classifyDirt(typeof flags.porcelain === 'string' ? flags.porcelain : '', taskFiles);
+      const base = detectBase(typeof flags.branches === 'string' ? flags.branches : '');
+      const retroPresent = fs.existsSync(path.join(dir, 'retro.md'));
+      const verifiedSha = state.verified_sha ?? null;
+      // The branch_finish RE-ENTRY shortcut: a retirement disposition means the gate already resolved
+      // AND executed in a prior turn (a compaction landed between resolve and the archive-LAST step), so
+      // the §2c handler jumps straight to archive instead of re-opening the gate (the double-prompt gap).
+      const worktreeDisposition = state.worktree_disposition ?? null;
+      // verify_commands lives in plan.index.json (the exec projection bundle.mjs drops from state.tasks).
+      // Prefer the bundle's recorded plan_index_path, else the conventional sibling. SOFT read: an
+      // absent/invalid index → [] (the shell falls back to verification-before-completion's IDENTIFY
+      // step), never a hard die — finish-status must stay queryable on a partially-built bundle.
+      const planIndexPath =
+        typeof state.plan_index_path === 'string' && state.plan_index_path
+          ? state.plan_index_path
+          : path.join(dir, 'plan.index.json');
+      let verifyCommands = [];
+      try {
+        verifyCommands = collectVerifyCommands(JSON.parse(fs.readFileSync(planIndexPath, 'utf8')));
+      } catch {
+        /* no/invalid plan.index.json — fall back to the skill's IDENTIFY step */
+      }
+      out({
+        task_scope_dirty: dirt.taskScopeDirty,
+        unrelated_dirty: dirt.unrelatedDirty,
+        task_scope_paths: dirt.taskScopePaths,
+        unrelated_paths: dirt.unrelatedPaths,
+        base,
+        retro_present: retroPresent,
+        head_sha: head,
+        verified_sha: verifiedSha,
+        verified: isVerified(verifiedSha, head),
+        verify_commands: verifyCommands,
+        worktree_disposition: worktreeDisposition,
+        dispositions: Object.fromEntries(BRANCH_CHOICES.map((c) => [c, dispositionForChoice(c)])),
+      });
+      break;
+    }
+    case 'pr-summary': {
+      // Open-PR awareness for the report verbs (status / next / clean) + the branch_finish gate label.
+      // bin stays fs/compute-only: the SHELL runs `gh pr list --head <branch> --state open --json
+      // number,title,mergeable,url` (best-effort, `2>/dev/null`) and passes the JSON in via --gh-json.
+      // An absent/unauthed gh, no remote, or a non-GitHub origin → '' → { hasPr:false }. Pure transform,
+      // REPORT-ONLY (never triggers a merge), no state write.
+      out(summarizePr(typeof flags['gh-json'] === 'string' ? flags['gh-json'] : ''));
+      break;
+    }
+    case 'record-verification': {
+      // Persist the verified-at-SHA marker after the finish-flow verification suite passes (the shell
+      // passes the HEAD it just verified + cited). A re-entry of the complete handler at unchanged HEAD
+      // then skips re-running it (isVerified). CD-7 write via the bundle.mjs setter; bin enum-free
+      // (a sha is free-form — serializeState round-trips any key/value).
+      const p = need(flags, 'state');
+      const sha = String(need(flags, 'sha'));
+      writeState(p, setVerifiedSha(loadForWrite(p), sha));
+      out({ verified_sha: sha });
       break;
     }
     default:

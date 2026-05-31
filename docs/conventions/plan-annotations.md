@@ -1,54 +1,82 @@
-# Plan Annotations Contract
+# Plan Annotation Contract
 
-This is the plan-annotation / writing-plans spec for the step-7 plan phase, consumed by `superpowers:writing-plans` and `agents/mp-planner.md`. Migrated from `parts/contracts/plan-annotations.md` ahead of the v8 cutover.
+The field contract for masterplan v8 planning. Both planner agents emit task data
+against it; the deterministic merge (`lib/plan-merge.mjs`) then owns id assignment,
+wave layering, and `codex` normalisation. **The LLM never authors the final
+`plan.index.json` bytes** — it proposes task fields; JavaScript computes the rest.
+Mechanism detail lives in [`docs/internals/plan-parser.md`](../internals/plan-parser.md);
+this file is the field-level convention the planner agents are briefed against.
 
----
+## Who produces what
 
-## Writing-plans Brief (Step B2)
+- **Serial path — `agents/mp-planner.md` (opus).** Reads the approved spec and writes
+  both `plan.md` and `plan.index.json` directly into the run-bundle dir, emitting the
+  canonical task fields below with `id`/`wave`/`codex` already set. `mp
+  validate-plan-index` re-checks the result before L1 accepts it.
+- **Parallel path — `agents/mp-subsystem-planner.md` (opus), one per subsystem.** Each
+  returns a **fragment** — a subsystem-scoped task list **without** global `id`s or
+  `wave`s. `mp merge-plan-fragments` flattens fragments, assigns ids, and derives waves.
+  Drafters never see each other's tasks.
 
-Brief `superpowers:writing-plans` with these annotation directives in addition to CD-1 + CD-6:
+## Canonical task fields
 
-### Codex annotation
+Emit these exact keys — the canonical names `lib/routing.mjs`, `applyPlanIndex`
+(`bin/masterplan.mjs`), and `buildTasksFromPlanIndex` (`lib/bundle.mjs`) read:
 
-Default every single-file task to `**Codex:** ok` — code edits AND doc edits. Mark `**Codex:** no` only when ANY of: (a) multi-file edit, (b) ambiguous scope, (c) no known verification command, (d) explicit scope-out from the user. The orchestrator's eligibility cache parses these as overrides on the heuristic checklist.
+| field | type | meaning |
+|---|---|---|
+| `description` | string (required) | What the task does. Routing scans **this** field for design-judgment / sensitive verbs — never `name`/`title`. |
+| `files` | array of repo-relative paths | Declared write scope. `> 3` files ⇒ Codex-ineligible by heuristic. Same-wave tasks MUST have disjoint `files`. |
+| `verify_commands` | array of shell strings | Commands that prove the task. **Empty ⇒ Codex-ineligible** and unverifiable (the implementer reports that fact). |
+| `codex` | string `"ok"` \| `"no"` \| `null` | Routing override; `null` defers to the heuristic. **Never a boolean** (trap 1). |
+| `sensitive` | bool (optional) | `true` ⇒ Codex-ineligible (also auto-detected from `description`). |
+| `conversational` | bool (optional) | `true` ⇒ Codex-ineligible. |
+| `spec_refs` | array of strings (optional) | Provenance back into `spec.md`. |
 
-### Parallel-group annotation (v2.0.0+)
+**Fragment-only fields (parallel path — drive the merge, dropped from the final index):**
 
-When you identify mutually-independent verification, inference, lint, type-check, or doc-generation tasks, group them with `**parallel-group:** <thematic-name>` (e.g., `verification`, `lint-pass`, `inference-batch`). Each parallel-grouped task MUST have a complete `**Files:**` block declaring its exhaustive scope. Codex-eligible tasks should NOT be parallel-grouped — they fall out of waves at dispatch time per FM-4. Use `**parallel-group:**` for read-only or gitignored-paths-only tasks. Place parallel-grouped tasks contiguously in plan-order.
+| field | type | meaning |
+|---|---|---|
+| `key` | string, unique | Stable task key (e.g. `"auth.token-store"`). Targets of `deps`. Duplicate keys across fragments throw. |
+| `deps` | array of `key`s | Dependency edges; every entry must reference an existing key (dangling ⇒ throw). The merge derives `wave` from this DAG via Kahn order. |
 
-### Verify-pattern annotation (v2.8.0+, optional)
+**Computed fields (the merge assigns these on the parallel path — do NOT hand-author
+on a fragment; the serial `mp-planner` path emits them directly):**
 
-When a task's verification command output does NOT match the default PASS pattern (`PASSED?|OK|0 errors|0 failures|exit 0|✓`), add `**verify-pattern:** <regex>` in the per-task `**Files:**` block. The implementer's `commands_run_excerpts` (1–3 trailing output lines per command) is regex-matched at trust-skip time per G.1 mitigation. Codex-routed tasks ignore this annotation (Codex review at 4b is the verifier).
+| field | type | meaning |
+|---|---|---|
+| `id` | integer, 1-based, unique | Task identity; propagates verbatim into `state.yml`. |
+| `wave` | integer ≥ 0 | Tasks sharing a wave run as one `parallel()` batch; a dependency ⇒ a higher wave. |
 
-### Skip handoff
+## Codex routing annotation
 
-**Skip your Execution Handoff prompt** ("Plan complete… Which approach?"). /masterplan has already decided execution mode — do not ask the user. Write the plan and return control.
+- `codex: "ok"` — only for mechanical, well-bounded work: ≤ 3 files, concrete
+  `verify_commands`, no design judgment.
+- `codex: "no"` — anything needing taste, cross-file reasoning, or touching secrets /
+  auth / production / schema migrations.
+- `codex: null` (or omit) — defer to `lib/routing.mjs`'s heuristic.
+- Routing's `target` is **informational** in v8: implementation is inline-only (there
+  is no Codex implementer). `codex` records what a future implementer tier *could*
+  offload, but in v8 it gates **no** runtime behaviour — the optional review stage is
+  gated solely by the bundle's `codex.review` config, independent of any task's
+  `codex`/`target`.
 
-### Complexity-aware brief
+## Three silent-fallthrough traps
 
-The orchestrator passes `resolved_complexity` (`low`, `medium`, `high`). Adjust accordingly:
+These fail by doing the **wrong** thing, not by erroring:
 
-- `low` — flat task list ~3–7 tasks; single-file `**Codex:** ok` default; SKIP `**parallel-group:**` guidance; `**Files:**` blocks OPTIONAL.
-- `medium` — current defaults apply; `**Files:**` encouraged; `**parallel-group:**` optional.
-- `high` — REQUIRE `**Files:**` block per task (exhaustive); REQUIRE `**Codex:**` annotation per task; ENCOURAGE `**parallel-group:**` for verification/lint/inference clusters. Because every task carries a well-formed annotation pair, Step C step 1's Build path always takes the inline fast-path at `high`.
+1. **`codex` is a STRING, never a boolean.** `routing.mjs` tests `=== 'no'` / `=== 'ok'`;
+   a boolean matches neither and falls through to the heuristic. `normalizeCodex` coerces
+   `true`/`false`/`{eligible}` back to the enum as a backstop, but emit `"ok"`/`"no"`/`null`.
+2. **`description`, not `name`.** Routing scans `description`; a judgment task carried
+   under `name` reads as an empty description and is misrouted to Codex.
+3. **`wave`/`id` are integers, not strings.** A string fails the `Number.isInteger`
+   guards on write (hard crash) and the strict `===` match in `markTask` (phantom write).
 
-### Plan-format markers (v5.0)
+## Wave / parallelism rule
 
-Every task MUST include these structured markers in order before the task body (parsed by `bin/masterplan-state.sh build-index`):
-
-~~~markdown
-### Task <N>: <name>
-
-**Files:** <comma-separated paths>
-**Parallel-group:** <wave-X or none>
-**Codex:** <ok|no|true|false>
-**Spec:** [spec.md#L<a>-L<b>](spec.md#L<a>-L<b>)
-**Verify:**
-```bash
-<verify commands>
-```
-
-<task body>
-~~~
-
-Doctor check #35 enforces this on v5.0 plans. Plans without annotations fall back to heuristic-only.
+Tasks in the **same wave** MUST have **disjoint `files`** — the L2 engine runs a wave as
+a `parallel()` barrier and each implementer asserts its own scope post-run. On the parallel
+path the merge enforces this automatically (file-conflict wave bump); on the serial path
+the planner hand-assigns waves so same-wave file sets are disjoint. `mp validate-plan-index`
+rejects any plan that violates it.

@@ -57,6 +57,7 @@ id_ed25519.*
 # write decisions here for the next session, not the public.
 WORKLOG.md
 legacy/
+docs/notes/
 
 # --- Doctor test fixtures are CI ground truth and MUST be committed ---
 # They deliberately mirror the real host layout the doctor probes (.claude/,

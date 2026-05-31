@@ -121,8 +121,10 @@ test('LIVE: every tracked manifest version field agrees with README Current rele
   const mkt = JSON.parse(readRepo('.claude-plugin/marketplace.json'));
   const claudePlugin = JSON.parse(readRepo('.claude-plugin/plugin.json'));
   const codexPlugin = JSON.parse(readRepo('.codex-plugin/plugin.json'));
-  // package.json is EXCLUDED — it carries the private dev marker (8.0.0-ng.0) until parity cutover.
+  // package.json is now INCLUDED — the v8.0.0 release retires the dev marker, so it must agree too.
+  const pkg = JSON.parse(readRepo('package.json'));
   const entries = [
+    { file: 'package.json', field: 'version', version: pkg.version },
     { file: '.claude-plugin/marketplace.json', field: 'version', version: mkt.version },
     { file: '.claude-plugin/marketplace.json', field: 'plugins[0].version', version: mkt.plugins?.[0]?.version },
     { file: '.claude-plugin/plugin.json', field: 'version', version: claudePlugin.version },
@@ -142,7 +144,7 @@ const RESERVED_VERBS = parseReservedVerbs(readRepo('commands/masterplan.md'));
 // vacuously (or, for the live check, over-flag) — assert the exact canonical list it must extract.
 test('namespace: parseReservedVerbs extracts the canonical verb list from the orchestrator prompt', () => {
   assert.deepEqual(RESERVED_VERBS, [
-    'full', 'brainstorm', 'plan', 'execute', 'retro', 'import',
+    'full', 'brainstorm', 'plan', 'execute', 'finish', 'retro', 'import',
     'doctor', 'status', 'validate', 'stats', 'clean', 'next', 'verbs',
   ]);
 });

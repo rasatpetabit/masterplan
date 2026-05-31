@@ -137,13 +137,26 @@ guard already polices the surviving verb router.) → **Tier-4 #11.**
 10. ✅ **DONE — `codex-review.md` six review dimensions PRE-PORTED** → `docs/conventions/codex-review-dimensions.md` (2026-05-29); the dead JSON-parse/dispatch content was deliberately NOT ported. Safe to `git rm` at cutover.
 11. **Trim the `Makefile`** — keep `test` → `npm test` + `help`; delete `test-static`, `test-doctor-fixtures`, `test-python`, `test-e2e` (their still-relevant checks — version-sync, namespace — are already in `test/publish-hygiene.test.mjs`). *(Mechanical; do at cutover.)*
 12. **The merge itself** (`masterplan-ng` → `main`) — the user-gated cutover. After it, the shipped `/masterplan` becomes v8; the v7 surface is gone from `main`.
+13. **RULED 3B (2026-05-30) — land 3B's code BEFORE `git rm` of the v7 Codex hedge** (`parts/codex-host.md`,
+    `parts/contracts/taskcreate-projection.md` — both Tier-1). Deleting them removes the *"bounded interactive
+    mode — not a license to execute the whole workflow inline"* hedge that currently makes the **surviving**
+    `skills/masterplan/SKILL.md:135-146` Codex tool-adaptation table's **omitted Workflow-tool row** harmless.
+    The user **ruled 3B** — full-lifecycle Codex (execute included) — over the 3A doc-only recommendation
+    (see [`../../design-residuals.md` §Residual 3 OUTCOME](../../design-residuals.md)). So the gate is no longer
+    *"rule 3A or 3B"* — the goal is decided; what remains is **shipping 3B's implementation**: a Codex
+    foreground-sequential wave-dispatch path (`mp prepare-wave` → sequential `mp-implementer` → `update_plan`),
+    an `if host.isCodex` execution branch at §2a, and — in the parity branch where Codex cannot host the
+    Workflow tool — correcting the `codex-host.mjs:5-6` "native budget" comment. The **mechanism** (and whether
+    the comment-fix is needed) is gated on the B1 parity run; the **commitment** is not. Do not delete the hedge
+    until 3B's code has landed, or full-lifecycle Codex ships unimplemented and the gap reaches `main`.
 
 ---
 
 ## Sequencing recap
 
 `fresh-session true-parity run` ([`parity-runbook.md`](./parity-runbook.md)) **→** then this
-cutover: **tag HEAD (Tier-4 #7) → `git rm` Tier-1/2 + reference scrub (#1) →
+cutover: **tag HEAD (Tier-4 #7) → land 3B's Codex full-lifecycle execution code (#13, RULED — BEFORE deleting
+the Codex hedge; mechanism gated on the parity run) → `git rm` Tier-1/2 + reference scrub (#1) →
 version/doc/Makefile (#3–#5, #11) → pre-merge gate (#6) → merge (#12)**. All of it
 **user-gated**; do not start the cutover unprompted. The telemetry-hook deletion (Tier 1,
 row 1) is already **decided** (gate closed) but executes here, with the rest of the surface,
