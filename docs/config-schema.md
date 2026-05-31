@@ -1,5 +1,16 @@
 # Configuration Schema
 
+> **Legacy (pre-v8); retained for history.** This describes the v5–v7
+> `.masterplan.yaml` precedence hierarchy (CLI → repo-local → user-global →
+> defaults), loaded on the `validate` verb. **v8 does not read `.masterplan.yaml`.**
+> Configuration in v8 is supplied as **seed-time CLI flags** (e.g. `--autonomy`,
+> `--codex`, `--codex-review`) that are persisted into the run bundle's
+> `docs/masterplan/<slug>/state.yml` and read back through `mp` subcommands —
+> there is no merged-config object and no file hierarchy. This doc is kept because
+> the inert `parts/` tree and historical run-bundle artifacts still reference it;
+> for live v8 config behaviour see `commands/masterplan.md` (seed flags) and
+> `lib/*.mjs`.
+
 ## Configuration: .masterplan.yaml
 
 ### Precedence (shallow merge, top-level keys only)
