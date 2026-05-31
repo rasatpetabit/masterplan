@@ -2,3 +2,5 @@
 {"type":"spec_revised","ts":"2026-05-31T20:48:23.018Z","note":"draft 2: incorporated Codex FAIL findings (3 BLOCKER/4 MAJOR/2 MINOR/1 NIT) + codebase fact-check corrections; resolved 5 open questions inline; added 16 review-incorporation traceability table"}
 {"type":"design_approved","ts":"2026-05-31T21:03:22.728Z","note":"user gate: design approved; contract-ref Option B dedicated ref; wave-batched kept in v1"}
 {"type":"phase_transition","ts":"2026-05-31T21:03:23.025Z","phase":"plan"}
+{"type":"design_approved","ts":"2026-05-31T21:04:08.721Z","note":"user gate: design approved; contract-ref Option B dedicated ref; wave-batched kept in v1"}
+{"type":"phase_transition","ts":"2026-05-31T21:04:09.023Z","phase":"plan"}
