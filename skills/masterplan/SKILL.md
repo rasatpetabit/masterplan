@@ -1,6 +1,6 @@
 ---
 name: masterplan
-description: "Generic/Codex entrypoint for masterplan: bare /masterplan, /masterplan:masterplan, $masterplan, or any verb. All verbs (full, brainstorm, plan, execute, retro, import, doctor, status, validate, stats, clean, next, verbs) route through this single command — v8 ships NO per-verb /masterplan:<verb> skills (they shadowed Claude Code built-ins like /plan, /status, /doctor and added nothing over bare-command routing)."
+description: "Generic/Codex entrypoint for masterplan: bare /masterplan, /masterplan:masterplan, $masterplan, or any verb. All verbs (full, brainstorm, plan, execute, finish, retro, import, doctor, status, validate, stats, clean, next, verbs) route through this single command — v8 ships NO per-verb /masterplan:<verb> skills (they shadowed Claude Code built-ins like /plan, /status, /doctor and added nothing over bare-command routing)."
 ---
 
 # Codex entrypoint for Superpowers Masterplan
@@ -8,65 +8,65 @@ description: "Generic/Codex entrypoint for masterplan: bare /masterplan, /master
 This skill is the Codex-visible entrypoint for Superpowers Masterplan. Its job is
 to load the canonical command prompt and adapt it to the current Codex runtime.
 
-## Source of truth (v5.0 lazy-load layout)
+## Source of truth (v8 clean-core layout)
 
-As of v5.0, `commands/masterplan.md` is a thin router (≤20 KB; enforced by
-doctor check #36). Per-phase behavior lives in `parts/step-{0,a,b,c}.md`,
-doctor lives in `parts/doctor.md`, import lives in `parts/import.md`, and
-cross-cutting contracts live under `parts/contracts/`. Codex-hosted runs
-should load the router first, then load only the phase file the router
-dispatches to. Do not pre-read all phase files.
+As of v8, `commands/masterplan.md` is a **self-contained** thin orchestrator
+(~251 lines) that sequences the whole workflow inline — there are **no**
+`parts/` phase files to lazy-load. The deterministic decisions live in
+`lib/*.mjs` behind `bin/masterplan.mjs` subcommands (invoked as `mp`), and
+`doctor` is `bin/doctor.mjs` + the `lib/doctor/*.mjs` modules. Load the command
+prompt once and follow its own §0 Boot → §1 Parse verb → §2 Resume sequencing;
+do not look for per-phase files.
 
-Resolve the router and phase files in this order:
+Resolve `commands/masterplan.md` in this order (its siblings `bin/` and `lib/`
+sit beside it at the plugin root):
 
-1. `../../commands/masterplan.md` and `../../parts/` relative to this `SKILL.md` file.
-2. `$PWD/commands/masterplan.md` and `$PWD/parts/` when running inside the plugin repo.
-3. `/path/to/masterplan/commands/masterplan.md` (+ sibling `parts/`).
-4. `$HOME/.codex/.tmp/marketplaces/rasatpetabit-masterplan/commands/masterplan.md` (+ sibling `parts/`).
-5. `$HOME/.claude/plugins/marketplaces/rasatpetabit-masterplan/commands/masterplan.md` (+ sibling `parts/`).
+1. `../../commands/masterplan.md` relative to this `SKILL.md` file.
+2. `$PWD/commands/masterplan.md` when running inside the plugin repo.
+3. `/path/to/masterplan/commands/masterplan.md`.
+4. `$HOME/.codex/.tmp/marketplaces/rasatpetabit-masterplan/commands/masterplan.md`.
+5. `$HOME/.claude/plugins/marketplaces/rasatpetabit-masterplan/commands/masterplan.md`.
 6. `$HOME/.claude/commands/masterplan.md`.
 
 If none exists, say the local masterplan command file is missing and stop before
 inventing behavior.
 
-For ordinary runtime invocations, load the router (`commands/masterplan.md`)
-and dispatch by verb to the right phase file:
+Run the deterministic core with the Node entrypoints that sit beside the command
+file. The prompt writes them as `node "${CLAUDE_PLUGIN_ROOT}/bin/masterplan.mjs"`
+and `node "${CLAUDE_PLUGIN_ROOT}/bin/doctor.mjs"`; `${CLAUDE_PLUGIN_ROOT}` is a
+Claude Code variable that may be unset under Codex, so resolve `bin/` as the
+sibling of the located `commands/masterplan.md`:
 
-- Bare `/masterplan` and `status` / `next`: router only — Step M / Step N /
-  Step S live inline in `parts/step-0.md`.
-- `brainstorm` / `plan` / `full`: load `parts/step-0.md` then `parts/step-b.md`
-  (and `parts/step-a.md` for spec-pick).
-- `execute` / `--resume=<path>`: load `parts/step-0.md` then `parts/step-c.md`
-  plus the current run's `state.yml` and the specific current task block from
-  `plan.md`.
-- `doctor`: load `parts/doctor.md` (36 checks — v5.0 added #32–#36 covering
-  200-char scalar cap (#32), projection mode (#33), plan.index staleness
-  (#34), plan-format conformance (#35), router byte ceiling (#36)).
-- `import`: load `parts/import.md`.
-- `retro`: load `parts/step-c.md` (Step R subroutine).
+- `mp <subcommand>` → `node <plugin-root>/bin/masterplan.mjs <subcommand> …` —
+  the state reads/writes (`decide`, `finish-status`, gate verbs, `set-status`).
+  This is the **sole** state writer; the shell owns git (commit/checkout), the
+  bin is fs-only.
+- `doctor` → `node <plugin-root>/bin/doctor.mjs`.
 
 In Codex, prefer summary-first inventory (`rg --files docs/masterplan` plus
 targeted `state.yml` reads) before opening plan/spec artifacts. Avoid
 exploratory full-file dumps of large prompt, plan, transcript, or event-log
 files.
 
-## Config bootstrap
+## Configuration (seed flags + `set-codex-config` → state.yml)
 
-Before deriving defaults, selecting a route, creating state, or asking any
-workflow question, load the same config tiers as Step 0 in
-`commands/masterplan.md`:
+v8 has **no `.masterplan.yaml` config hierarchy** — there is no
+built-in/user-global/repo-local merge step to perform. Configuration is set on the
+run bundle and read back from `docs/masterplan/<slug>/state.yml`:
 
-1. Read `$HOME/.masterplan.yaml` (`~/.masterplan.yaml`) if it exists.
-2. Resolve the current repo root with `git rev-parse --show-toplevel`, then read
-   `<repo-root>/.masterplan.yaml` if it exists.
-3. Shallow-merge in this order:
-   built-in defaults < user-global < repo-local < invocation flags.
+- **Seed-time flags** (`mp seed`): `--autonomy`, `--complexity`, `--planning-mode`
+  (`serial|parallel|auto`) — persisted into `state.yml` at run creation.
+- **Codex routing/review** (`mp set-codex-config --routing=auto|on|off
+  --review=true|false`): a CD-7 write to the nested `state.codex.{routing,review}`.
+  The dispatch path reads `state.codex.routing` (default `auto`) and gates the
+  optional review stage on `state.codex.review === true` (default off).
 
-Use the merged config for Codex-hosted runs too. Codex host suppression only
-forces the effective `codex.routing` / `codex.review` behavior off for the
-current invocation to avoid recursive dispatch; it does not bypass or rewrite
-user-global defaults such as `autonomy`, `complexity`, `runs_path`, or
-`parallelism`.
+Read the run's config from `state.yml`; do not look for or merge any config file.
+
+When Codex hosts the run, host suppression only forces the effective
+`codex.routing` / `codex.review` behavior off for the current invocation to avoid
+recursive Codex-on-Codex dispatch; it does not rewrite the persisted `state.yml`
+values, which still apply to future Claude Code runs.
 
 ## Invocation mapping
 
@@ -86,8 +86,8 @@ Treat these user inputs as this skill:
 
 **No per-verb skills (v8).** masterplan ships exactly two skill dirs — this one
 and `masterplan-detect`. There are **no** `/masterplan:<verb>` per-verb skills:
-every verb (`brainstorm`, `full`, `execute`, `retro`, `import`, `doctor`,
-`status`, `validate`, `stats`, `clean`, `next`, `verbs`, and `plan`) is dispatched
+every verb (`brainstorm`, `full`, `execute`, `finish`, `retro`, `import`,
+`doctor`, `status`, `validate`, `stats`, `clean`, `next`, `verbs`, and `plan`) is dispatched
 by the bare `/masterplan <verb>` command through `bin/masterplan.mjs` (verb
 routing in `commands/masterplan.md` §1/§3). The per-verb namespace was removed
 because it added nothing over bare-command routing and the reserved words

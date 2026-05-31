@@ -142,7 +142,7 @@ const RESERVED_VERBS = parseReservedVerbs(readRepo('commands/masterplan.md'));
 // vacuously (or, for the live check, over-flag) — assert the exact canonical list it must extract.
 test('namespace: parseReservedVerbs extracts the canonical verb list from the orchestrator prompt', () => {
   assert.deepEqual(RESERVED_VERBS, [
-    'full', 'brainstorm', 'plan', 'execute', 'retro', 'import',
+    'full', 'brainstorm', 'plan', 'execute', 'finish', 'retro', 'import',
     'doctor', 'status', 'validate', 'stats', 'clean', 'next', 'verbs',
   ]);
 });

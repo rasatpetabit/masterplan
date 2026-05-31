@@ -59,7 +59,7 @@ test('normalizeResumeHint: unrecoverable input -> recovered false', () => {
   assert.equal(r.event, null);
 });
 test('normalizeResumeHint: NEVER emits a raw $masterplan or /masterplan (Codex mangles both)', () => {
-  for (const inp of ['$masterplan next', '/masterplan retro', 'masterplan status foo']) {
+  for (const inp of ['$masterplan next', '/masterplan finish', 'masterplan status foo']) {
     const c = normalizeResumeHint(inp).command;
     assert.ok(!c.includes('$masterplan') && !c.includes('/masterplan'), `leaked raw token: ${c}`);
     assert.ok(c.startsWith(CODEX_ENTRYPOINT));

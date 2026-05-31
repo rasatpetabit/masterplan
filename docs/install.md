@@ -52,7 +52,7 @@ If your Codex build registers the marketplace but a fresh prompt does not list `
 
 When running inside Codex, masterplan disables the separate Claude Code `codex:codex-rescue` companion path for that invocation to avoid recursive Codex-on-Codex dispatch; persisted `codex.routing` / `codex.review` settings remain unchanged for future Claude Code runs.
 
-Full Codex-host behavior differences and suppression rules: [`parts/codex-host.md`](../parts/codex-host.md).
+Full Codex-host behavior differences and suppression rules live in the Codex entrypoint skill ([`skills/masterplan/SKILL.md`](../skills/masterplan/SKILL.md)) and the orchestrator's §0 host-detect + Codex tool-adaptation rules in [`commands/masterplan.md`](../commands/masterplan.md).
 
 ## Dependencies
 

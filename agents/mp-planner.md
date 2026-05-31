@@ -22,8 +22,13 @@ Codex-routing calls, and choosing verify commands that actually prove each task.
   here: emit the `tasks` array (the judgment); the shell stamps `plan_hash` /
   `generated_at` when it persists. Don't fabricate them.
 
-## Plan annotation spec
-See [`docs/conventions/plan-annotations.md`](../docs/conventions/plan-annotations.md) for the plan-annotation / writing-plans brief (Codex, parallel-group, verify-pattern, skip handoff, complexity-aware, and plan-format markers).
+## Plan annotation contract
+The canonical field contract is the `plan.index.json` schema below;
+[`docs/conventions/plan-annotations.md`](../docs/conventions/plan-annotations.md)
+states the same contract at the convention level (and the extra fragment fields
+the parallel `mp-subsystem-planner` path uses). `lib/plan-merge.mjs` owns id
+assignment, wave layering, and `codex` normalisation deterministically — see
+[`docs/internals/plan-parser.md`](../docs/internals/plan-parser.md).
 
 ## The plan.index.json schema (authoritative — keep byte-synced with lib/routing.mjs)
 

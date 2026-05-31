@@ -1,6 +1,6 @@
 ---
 name: mp-codex-reviewer
-description: Adversarial second-opinion review at masterplan checkpoints. Shells out to the Codex CLI out-of-process and returns a severity-first findings digest (CD-10). Used for spec/quality review when a task is Codex-eligible.
+description: Adversarial second-opinion review of a completed masterplan task. Shells out to the Codex CLI out-of-process and returns a severity-first findings digest (CD-10). Runs per done task during execution when the run bundle's codex.review is "on" — not gated by task Codex-eligibility.
 model: sonnet
 tools: Bash, Read
 ---
@@ -9,7 +9,7 @@ tools: Bash, Read
 
 Delegates the actual review to Codex via the `codex` CLI **out-of-process** (a Bash
 call inside this agent — NOT a Workflow nesting, so it does not hit the one-level
-`workflow()` cap; R2). This agent only invokes that call and shapes the result into a
+`workflow()` cap). This agent only invokes that call and shapes the result into a
 digest.
 
 ## The invocation (synchronous, foreground, time-capped)

@@ -61,12 +61,23 @@
 //                                                  from subsystem fragments (assigns ids/waves, normalises
 //                                                  codex, validates before writing; NOT CD-7 state)
 //   validate-plan-index --plan-index=PATH       -> strict structural validation (exit!=0 on any error)
+//   finish-status --state=PATH [--head=SHA] [--porcelain=STR] [--branches=STR]
+//                                               -> the §2 finish-flow snapshot {task_scope_dirty,
+//                                                  unrelated_dirty, base, retro_present, head_sha,
+//                                                  verified_sha, verified, verify_commands,
+//                                                  worktree_disposition, dispositions}.
+//                                                  git facts are PASSED IN (bin is fs-only); all git
+//                                                  flags optional (a fs-only call still reports
+//                                                  retro/verified/commands). verify_commands is read
+//                                                  from plan.index.json (the exec projection state drops)
+//   record-verification --state=PATH --sha=SHA  -> CD-7 write: record verified_sha (the verified-at-SHA
+//                                                  skip — re-entry at unchanged HEAD won't re-run the suite)
 
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, setWorktreeDisposition, setCodexConfig, loadPlanTasks, buildSeedState, buildTasksFromPlanIndex, appendEvent } from '../lib/bundle.mjs';
+import { readState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, setWorktreeDisposition, setVerifiedSha, setCodexConfig, loadPlanTasks, buildSeedState, buildTasksFromPlanIndex, appendEvent } from '../lib/bundle.mjs';
 import { migrate, detectSchemaVersion, MigrationError } from '../lib/migrate.mjs';
 import { decideNextAction } from '../lib/resume.mjs';
 import { prepareWave, declaredScope, verifyScope } from '../lib/wave.mjs';
@@ -74,6 +85,7 @@ import { detectHost, suppressRescue } from '../lib/codex-host.mjs';
 import { resolveConfigDir } from '../lib/paths.mjs';
 import { createHash } from 'node:crypto';
 import { mergePlanFragments, validatePlanIndex, renderPlanMd } from '../lib/plan-merge.mjs';
+import { classifyDirt, detectBase, collectVerifyCommands, isVerified, dispositionForChoice } from '../lib/finish.mjs';
 
 // ---- tiny arg parser: positional[], flags{} (--k=v, or --k as boolean true) ----
 function parseArgs(argv) {
@@ -131,6 +143,12 @@ const VALID_WORKTREE_DISPOSITION = ['active', 'removed_after_merge', 'kept_by_us
 // NESTED state.codex.routing (the shape the dispatch path reads) — NOT the flat codex_routing key the old
 // fix text named. Value-enum only — no transition ordering (a bundle may re-engage codex later).
 const VALID_CODEX_ROUTING = ['auto', 'on', 'off'];
+
+// The four resolved choices the §2 finish-flow's durable `branch_finish` gate offers (merge to base /
+// push+PR / keep as-is / discard). finish-status maps each to its worktree disposition via
+// lib/finish.mjs dispositionForChoice, so the shell reads the value data-driven from the emitted
+// `dispositions` map rather than hardcoding the {removed_after_merge|kept_by_user} enum in prose.
+const BRANCH_CHOICES = ['merge', 'pr', 'keep', 'discard'];
 
 // ---- read helpers: decide migrates in-memory; write ops require an already-v8 bundle ----
 function readText(p) {
@@ -682,6 +700,69 @@ function main() {
       }
       writeState(p, setCodexConfig(loadForWrite(p), patch));
       out({ codex: patch });
+      break;
+    }
+    case 'finish-status': {
+      // The §2 finish-flow snapshot (READ-ONLY): the `complete` handler sequences on this. bin stays
+      // fs/compute-only — the SHELL runs git and passes its output as flags (the verify-scope pattern):
+      //   --head=<git rev-parse HEAD>           current commit, for the verified-at-SHA skip
+      //   --porcelain=<git status --porcelain>  raw, for task-scope-vs-unrelated dirt classification
+      //   --branches=<git branch ...>           raw (one name/line), for base detection (main|master)
+      // All git flags are OPTIONAL: a fs-only call (no git facts) still reports retro/verified/commands.
+      const p = need(flags, 'state');
+      const state = loadForWrite(p);
+      const dir = path.dirname(p);
+      const head = typeof flags.head === 'string' && flags.head.trim() ? flags.head.trim() : null;
+      const taskFiles = (Array.isArray(state.tasks) ? state.tasks : []).flatMap((t) =>
+        Array.isArray(t.files) ? t.files : []
+      );
+      const dirt = classifyDirt(typeof flags.porcelain === 'string' ? flags.porcelain : '', taskFiles);
+      const base = detectBase(typeof flags.branches === 'string' ? flags.branches : '');
+      const retroPresent = fs.existsSync(path.join(dir, 'retro.md'));
+      const verifiedSha = state.verified_sha ?? null;
+      // The branch_finish RE-ENTRY shortcut: a retirement disposition means the gate already resolved
+      // AND executed in a prior turn (a compaction landed between resolve and the archive-LAST step), so
+      // the §2c handler jumps straight to archive instead of re-opening the gate (the double-prompt gap).
+      const worktreeDisposition = state.worktree_disposition ?? null;
+      // verify_commands lives in plan.index.json (the exec projection bundle.mjs drops from state.tasks).
+      // Prefer the bundle's recorded plan_index_path, else the conventional sibling. SOFT read: an
+      // absent/invalid index → [] (the shell falls back to verification-before-completion's IDENTIFY
+      // step), never a hard die — finish-status must stay queryable on a partially-built bundle.
+      const planIndexPath =
+        typeof state.plan_index_path === 'string' && state.plan_index_path
+          ? state.plan_index_path
+          : path.join(dir, 'plan.index.json');
+      let verifyCommands = [];
+      try {
+        verifyCommands = collectVerifyCommands(JSON.parse(fs.readFileSync(planIndexPath, 'utf8')));
+      } catch {
+        /* no/invalid plan.index.json — fall back to the skill's IDENTIFY step */
+      }
+      out({
+        task_scope_dirty: dirt.taskScopeDirty,
+        unrelated_dirty: dirt.unrelatedDirty,
+        task_scope_paths: dirt.taskScopePaths,
+        unrelated_paths: dirt.unrelatedPaths,
+        base,
+        retro_present: retroPresent,
+        head_sha: head,
+        verified_sha: verifiedSha,
+        verified: isVerified(verifiedSha, head),
+        verify_commands: verifyCommands,
+        worktree_disposition: worktreeDisposition,
+        dispositions: Object.fromEntries(BRANCH_CHOICES.map((c) => [c, dispositionForChoice(c)])),
+      });
+      break;
+    }
+    case 'record-verification': {
+      // Persist the verified-at-SHA marker after the finish-flow verification suite passes (the shell
+      // passes the HEAD it just verified + cited). A re-entry of the complete handler at unchanged HEAD
+      // then skips re-running it (isVerified). CD-7 write via the bundle.mjs setter; bin enum-free
+      // (a sha is free-form — serializeState round-trips any key/value).
+      const p = need(flags, 'state');
+      const sha = String(need(flags, 'sha'));
+      writeState(p, setVerifiedSha(loadForWrite(p), sha));
+      out({ verified_sha: sha });
       break;
     }
     default:

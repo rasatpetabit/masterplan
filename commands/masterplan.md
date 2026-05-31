@@ -1,5 +1,5 @@
 ---
-description: "Resumable orchestrator for /masterplan: brainstorm→plan→execute on durable run bundles. Verbs: full, brainstorm, plan, execute, retro, import, doctor, status, validate, stats, clean, next, verbs."
+description: "Resumable orchestrator for /masterplan: brainstorm→plan→execute on durable run bundles. Verbs: full, brainstorm, plan, execute, finish, retro, import, doctor, status, validate, stats, clean, next, verbs."
 ---
 
 # /masterplan — thin resumable shell (v8)
@@ -34,8 +34,8 @@ exit, read stderr and act on it.
 
 ## 1 — Parse the verb
 
-Reserved verbs: `full, brainstorm, plan, execute, retro, import, doctor, status, validate, stats,
-clean, next, verbs`. Precedence:
+Reserved verbs: `full, brainstorm, plan, execute, finish, retro, import, doctor, status, validate,
+stats, clean, next, verbs`. Precedence:
 
 0. **No args** → the **resume controller** (§2).
 1. First token is a reserved verb → that verb; consume it, the rest are its args.
@@ -80,18 +80,18 @@ The spine. It NEVER decides in prose — it asks `mp decide` and executes the re
    so seed-tasks alone suffices — the load-plan seam in §3/§3a was bypassed) before resuming.
 5. **Execute the action.** After `finalize_run`, loop back to step 4 (re-decide); `dispatch_wave` /
    `recover_and_redispatch` / `recover_plan_run` end by awaiting a launched run; `resume_phase` hands
-   to the plan lifecycle (§3a); `wait` / `surface_gate` / `complete` close.
+   to the plan lifecycle (§3a); `complete` runs the finalization flow (§2c); `wait` / `surface_gate` close.
 
    | action | do |
    |---|---|
-   | `surface_gate` | Re-render the gate's `AskUserQuestion` (CD-9). A named option → act, `mp clear-gate`, commit, re-decide. Free-text / no clear answer → keep the gate, respond, close. NEVER auto-proceed regardless of autonomy (the durable marker outranks a native AUQ that can't survive compaction). |
+   | `surface_gate` | Re-render the gate's `AskUserQuestion` (CD-9). A named option → act, `mp clear-gate`, commit, re-decide. Free-text / no clear answer → keep the gate, respond, close. NEVER auto-proceed regardless of autonomy (the durable marker outranks a native AUQ that can't survive compaction). For the finalization gates (`branch_finish`, `verification_failed`), the per-option **act** is specified in **§2c**. |
    | `wait` | A live run owns the wave. Report it and close — its Workflow completion notification re-invokes this controller, which records the result via the completion protocol (**§2a**, step 3). |
    | `finalize_run` | The wave's tasks are all `done` on disk. `mp clear-active-run`, commit, then re-decide (→ next wave, or `complete`). |
    | `recover_and_redispatch` | Crash recovery. If `staleTaskId` ≠ null: `TaskList` → `TaskStop` any surviving run for it (a backgrounded Workflow MAY outlive session death — reconcile before touching files). Then RESET scope: `git checkout -- <resetPaths>` and, **only when `resetPaths` is non-empty**, `git clean -fd -- <resetPaths>` — scope the clean to the reset paths; a bare `git clean -fd` (or one with an empty pathspec) would wipe unrelated user-owned untracked files. Then dispatch the wave via **§2a**. Idempotent — agents never commit. |
    | `recover_plan_run` | Crash recovery for a planning fan-out (`active_run.kind:'plan'`). If `staleTaskId` ≠ null: `TaskList` → `TaskStop` any surviving run. **No git scope reset** — the subsystem drafters are read-only, so nothing was written to revert. Re-launch the fan-out via **§2b** (re-dispatch `mp-spec-decomposer` if the subsystem set isn't in hand). Idempotent. |
    | `dispatch_wave` | Launch one wave through the L2 engine — full sequence in **§2a**. In brief: `mp prepare-wave` (resolves routing) → capture the git baseline → `mp set-active-run --wave=N` (phase-1, BEFORE launch) → launch `workflows/execute.workflow.js` in the background with `args={wave,tasks,baseline,repoRoot,review}` → `mp promote-active-run --run-id=… --task-id=…` (phase-2) → close to await its completion notification. |
    | `resume_phase` | The bundle is mid-`{brainstorm\|plan}` with no plan built yet (`tasks:[]`). **Do NOT finalize/archive** — that would destroy a mid-design run. `phase==plan` → hand to the **plan lifecycle (§3a)** with the action's `planning_mode`. `phase==brainstorm` → re-entering an in-progress `superpowers:brainstorming` is still deferred (step 7), so SURFACE via `AskUserQuestion` — continue the phase, restart it, or stop — and close. Never fall through to `complete`. |
-   | `complete` | All tasks done → completion: write `retro.md`, archive the bundle (`mp set-status --state=<path> --status=archived` — the sole archival mechanism wherever a bundle is archived; never hand-edit `state.yml`), commit. |
+   | `complete` | All execute tasks done → the **finalization flow (§2c)**: verify-before-completion (cite output) → write `retro.md` → the durable `branch_finish` gate → archive **LAST**. NEVER a silent archive — the v8 regression §2c restores. |
 
 6. **CD-7 commit discipline.** Each durable change = a `mp` write (atomic) FOLLOWED BY a `git commit`
    of the bundle. A crash between write and commit is safe — `state.yml` leads, resume re-commits.
@@ -196,13 +196,80 @@ repoRoot }`, reached from §2 step 3 when `active_run.kind==='plan'`):
      reviewer's findings via `AskUserQuestion` (§4) — revise-and-replan / accept-as-is (REVISE only) /
      stop — and keep `phase=plan`. Never auto-advance past a non-PASS verdict.
 
+## 2c — Finalization flow (the `complete` action + the `finish` verb)
+
+`complete` is no longer a silent archive — it is the umbrella **finish** flow: verify the work (and
+cite it), write the retro, then surface a **durable** `branch_finish` gate before archiving. It
+composes two `superpowers` skills — `verification-before-completion` (the authoritative claim-done
+gate, step 3) and `finishing-a-development-branch` (executes the chosen disposition on resolve) —
+driven by `mp finish-status` (the SHELL runs git and passes its output as flags; `bin` stays fs-only,
+the §2a verify-scope pattern). **Every step is re-entrant** (disposition shortcut · verified-at-SHA
+skip · write-if-absent), so a compaction at any point resumes cleanly. **Archive is LAST**: archiving
+earlier strands the run — the §2-step-1 discover filter hides archived bundles, so the gate could
+never re-surface (the one thing v7's flow got wrong; do not copy it).
+
+**Snapshot first** (the SHELL runs git, `bin` stays fs-only): `mp finish-status --state=<path>
+--head="$(git rev-parse HEAD)" --porcelain="$(git -c core.quotePath=false status --porcelain)"
+--branches="$(git branch --format='%(refname:short)')"` → `{task_scope_dirty, task_scope_paths,
+unrelated_dirty, base, retro_present, verified, verify_commands, worktree_disposition, dispositions}`.
+
+1. **Branch already resolved? (re-entry shortcut).** If `worktree_disposition` is a retirement value
+   (`removed_after_merge` | `kept_by_user`), the `branch_finish` gate was resolved AND executed in a
+   prior turn (a compaction landed between resolve and archive) → jump to step 6 (archive). Else continue.
+2. **Dirty check (thin net).** §2a commits at every wave boundary, so dirt is rare here. If
+   `task_scope_dirty`, commit `task_scope_paths`. **Leave `unrelated_dirty` untouched** (protect-user-work).
+3. **Verification gate — `superpowers:verification-before-completion`.** If `verified` (a recorded SHA
+   == HEAD) → skip (already proven at this commit). Else IDENTIFY → RUN fresh → **cite real output +
+   exit code** (CD-3; "should pass" is not evidence). Command source: `verify_commands` (the union of
+   the plan tasks'); if empty, the skill's own IDENTIFY; if STILL none under `--autonomy=full`,
+   `mp open-gate --id=no_verification_command` + AUQ (specify one / proceed without) — never silently skip.
+   - **PASS** → `mp record-verification --state=<path> --sha="$(git rev-parse HEAD)"` (durable; a
+     re-entry at unchanged HEAD then skips the re-run).
+   - **FAIL** → `mp open-gate --id=verification_failed` + AUQ (*Fix first & re-run* / *Proceed anyway
+     (reviewed)* / *Abort finish*), close. Resolution = the surface_gate act, below.
+4. **Retro (write-if-absent).** If `!retro_present`, generate `retro.md` (idempotent — a re-entry skips
+   it). This subsumes the old `retro` verb.
+5. **Branch-finish gate (durable — the v8 regression this restores).** `mp open-gate
+   --id=branch_finish`, then AUQ labelled with `base`: `Merge to <base> locally (Recommended)` · `Push
+   and open a PR` · `Keep branch + worktree as-is` · `Discard everything` (the skill then requires a
+   typed "discard"). This AUQ is the turn-close. On any resume while open, `decide` → `surface_gate`
+   re-renders it (CD-9); a **free-text / "not ready" answer holds the gate and chats** (§2 surface_gate
+   rule) — the "not done yet" escape, nothing archives.
+6. **Archive LAST.** Reached only via step 1 (gate already resolved): `mp set-status --state=<path>
+   --status=archived` (the sole archival mechanism — never hand-edit `state.yml`), commit, close. The
+   §2 discover filter now hides the bundle → the run goes quiet. Done.
+
+**Gate resolution** (the `surface_gate` **act** — the turn AFTER the user picks a named option):
+
+- **`verification_failed`** — *Fix first*: `mp clear-gate`, close (fix code + commit, then re-invoke
+  `finish`/resume → verification re-runs fresh and re-opens the gate if still red). *Proceed anyway*:
+  `mp record-verification --state=<path> --sha="$(git rev-parse HEAD)"` (a reviewed override, so a
+  re-entry doesn't re-loop the same failure) → `mp clear-gate` → re-decide (→ `complete` → §2c:
+  verification now skipped → retro → `branch_finish`). *Abort finish*: `mp clear-gate`, close (the run
+  stays resumable; nothing archived).
+- **`branch_finish`** — delegate to `superpowers:finishing-a-development-branch` with the option
+  **pre-decided** + **"tests verified at SHA `<X>`, base = `<base>`"** so it skips its own option
+  prompt (a re-asserted hard-gate re-running a green suite at unchanged HEAD is redundant-but-harmless;
+  if it double-prompts or fights the durable gate, run the git steps directly using the skill as
+  reference). It executes merge / push+PR / discard / keep + worktree cleanup. Then: `mp
+  set-worktree-disposition --state=<path> --disposition=<dispositions[choice]>` (the value from
+  finish-status's `dispositions` map — `lib/finish.mjs` is its single source of truth, never hardcode
+  the enum), `mp event --state=<path> --type=branch_finish --note=<choice>`, `mp clear-gate`, commit,
+  re-decide → `complete` → §2c → step-1 shortcut → **archive**.
+
+**Manual entry — `/masterplan finish`.** Bare `finish` locates the bundle and `mp decide`s: `complete`
+→ run this flow; tasks still pending (or a run live) → AUQ "N task(s) pending — finalize anyway?
+(→ §2c) / keep working (→ §2) / just re-write the retro (→ `--retro-only`)" — never silent-archive an
+incomplete run. `finish --retro-only` runs **only** step 4 (the old `retro` behavior).
+
 ## 3 — Other verbs (sequencing only — content lives elsewhere)
 
 | verb | v8 target |
 |---|---|
 | `full` / `brainstorm` / `plan` | Locate the bundle, or **seed a new one** — `mp seed --state=<path> --slug=<slug> --topic="<topic>" [--complexity=… --autonomy=… --planning-mode=serial\|parallel\|auto --predecessor-transcript=…]` (writes a valid v8 brainstorm-phase bundle; refuses an existing one unless `--force`). **Brainstorm:** invoke `superpowers:brainstorming` directly; on spec approval, `mp set-phase --state=<path> --phase=plan` + `mp event --state=<path> --type=phase_transition --phase=plan` (never hand-edit `state.yml` — CD-7). **Plan:** hand to the **plan lifecycle (§3a)**, which selects serial vs parallel per `planning.mode`, then materializes `state.tasks` **and** advances `phase→execute` in one atomic `mp load-plan` write (the plan→execute seam; the lower-level `mp seed-tasks` populates tasks *without* touching phase, for recovering an already-`execute` bundle). The seam is guard-enforced: `mp set-phase --phase=execute` refuses a 0-task bundle without `--force`, and `decide` *throws* on a `phase:execute` + `tasks:[]` bundle rather than finalizing an unseeded run — so a bare `set-phase execute` can never silently archive a planned-but-unseeded run. Log other milestones with `mp event …`; gates via `mp open-gate` + an `AskUserQuestion`. (`brainstorm` stops once the plan phase is reached; `plan` runs §3a; `full` continues through execution via §2.) |
 | `execute` | The resume controller (§2). |
-| `retro` | Generate `retro.md` for the bundle, then close. Archival is `complete`'s terminal step (§2), NOT this verb's — a standalone `retro` must NOT `set-status archived` (that would strand a run with pending tasks: the §2 discover filter hides archived bundles). Safe to (re)generate a retro on an in-progress or finished run. |
+| `finish` | The finalization verb → the flow in **§2c** (verify → retro → durable `branch_finish` gate → archive **LAST**). Bare `finish` = run §2c (on pending tasks, AUQ "finalize anyway / keep working / `--retro-only`" — never silent-archive an incomplete run). `finish --retro-only` = (re)generate `retro.md` only — no verification, no gate, no archive (the old `retro` behavior); safe on an in-progress or finished run, and it must NOT `set-status archived` (that would strand a run: the §2 discover filter hides archived bundles). |
+| `retro` | Deprecated alias for `finish --retro-only`. Print a one-line "`retro` was renamed to `finish` (running `finish --retro-only`)" notice, then run it. Kept for muscle-memory/back-compat. |
 | `import` | Legacy intake → a v8 bundle: `mp migrate-bundle` an in-place legacy `state.yml` (backs up the original). **On a pre-5.0 refusal the §2 step-2 rule applies: do NOT raw-rewrite `state.yml` (CD-7) — treat the legacy bundle as read-only and `mp seed` a fresh one, finish under v7, or stop and ask.** |
 | `doctor` | `node "${CLAUDE_PLUGIN_ROOT}/bin/doctor.mjs" [--fix]`. **[checks = step 5.]** |
 | `status` | Read-only: `mp decide` (no writes) + a one-screen situation report from `state.yml`. |
@@ -226,8 +293,8 @@ between the serial `superpowers:writing-plans` path and the parallel fan-out (§
    - `auto` → parallel **iff** `recommend_parallel && subsystems.length ≥ 2`; otherwise serial (step 3).
      Carry the decomposer's `reason` into your narration.
    - `serial` → skip the decomposer → step 3.
-3. **Serial path.** Invoke `superpowers:writing-plans` directly → it authors `plan.md`. Parse it into
-   the index with the `masterplan:mp-planner` agent → `plan.index.json`. Gate it:
+3. **Serial path.** Dispatch the `masterplan:mp-planner` agent against the approved `spec.md` → it writes
+   both `plan.md` and `plan.index.json` directly (sole producer). Gate it:
    `mp validate-plan-index --plan-index=<plan_index_path>` (on failure, fix and re-parse — never advance
    on an invalid index). Then **`mp load-plan --state=<path> --plan-index=<plan_index_path>`**
    (materializes `state.tasks` from the plan **and** advances `phase→execute` atomically — a bare
@@ -246,6 +313,8 @@ plan's tasks materialized into `state.tasks` and `phase=execute` (both via `mp l
 
 End any turn that needs input with `AskUserQuestion` (2–4 concrete options) — never a free-text
 question (sessions compact between turns; a free-text prompt becomes a dead end) and never a silent
-stop while a decision is pending. Otherwise close cleanly. The v7 CC-3 trampoline — trace markers,
+stop while a decision is pending. Completion is no longer a silent archive either — the §2c
+finalization flow always surfaces the `branch_finish` gate (a risky-action AUQ) before archiving.
+Otherwise close cleanly. The v7 CC-3 trampoline — trace markers,
 breadcrumbs, per-turn summary-block hook signals — is **gone**; the banner (§0) and this AUQ-close
 are the only ceremony that survives.
