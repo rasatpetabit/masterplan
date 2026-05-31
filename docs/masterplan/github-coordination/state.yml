@@ -2,7 +2,7 @@
 schema_version: 8
 slug: github-coordination
 status: in-progress
-phase: brainstorm
+phase: plan
 topic: "Add the ability to use GitHub for coordination rather than only local files, in order to scale development up across many more LLMs"
 complexity: high
 complexity_source: null
