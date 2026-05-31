@@ -1,12 +1,14 @@
 # GitHub Coordination for masterplan — v1 Design Spec
 
-**Status:** Draft 2 (brainstorm phase) — revised after cross-vendor Codex adversarial review + codebase fact-check
+**Status:** Draft 3 (brainstorm phase) — design approved at the user review gate (2026-05-31); contract-ref **Option B** selected
 **Date:** 2026-05-31
 **Bundle:** `docs/masterplan/github-coordination/`
 **Complexity:** high · **Autonomy:** full · **Planning mode:** auto
 **Scope of this spec:** v1 walking skeleton only. Named follow-on phases are in §13; they are explicitly out of scope.
 
 > **Terminology note (read first).** Throughout, **"single-writer"** means *the lead is the sole writer of the canonical `state.yml`/`events.jsonl`* — this is masterplan's **L1 single-writer convention** (stated in `CLAUDE.md` / `commands/masterplan.md`), which the codebase informally labels "CD-7". The canonical `docs/conventions/cd-rules.md` **CD-7** is the broader *durable-handoff-state* rule. This spec leans on the **single-writer convention**; where it says "single-writer (the L1 convention)" that is the precise referent. (Fact-check correction — draft 1 conflated the two.)
+
+> **Decision log.** Draft 1 → cross-vendor Codex adversarial review returned **FAIL** (3 BLOCKER / 4 MAJOR / 2 MINOR / 1 NIT) + a Sonnet codebase fact-check. Draft 2 incorporated every finding (§16). At the design-approval gate the user selected **Option B** for the contract ref (dedicated immutable ref + separate integration branch — the *structural* tier separation, Codex's recommendation) over the simpler run-branch+guard, and kept wave-batched merge in v1. Draft 3 bakes B in.
 
 ---
 
@@ -57,18 +59,18 @@ Followers are wave members that happen to run in other sessions/machines; GitHub
 
 ## 4. The augment boundary (three tiers) — and how single-writer is preserved
 
-GitHub **augments** the local bundle; it does not replace it. Each artifact lives in exactly one tier:
+GitHub **augments** the local bundle; it does not replace it. Each artifact lives in exactly one tier. **Option B (selected): the dedicated-ref model** — the cleanest separation, in which tier-2 is *structurally absent* from GitHub rather than present-but-guarded:
 
-1. **Immutable contract → PUBLISHED to GitHub (followers' read-only input).**
-   `spec.md`, `plan.md`, `plan.index.json`. The published contract a follower builds against. Already committed to the run branch by the normal plan flow; followers fetch them **read-only** at a pinned `base_sha`.
+1. **Immutable contract → PUBLISHED to a dedicated ref (followers' read-only input).**
+   `spec.md`, `plan.md`, `plan.index.json`. Published as an **immutable, tier-1-only** git ref `mp-coord/<slug>/<plan_hash>` that the lead synthesizes — a tree carrying *only* these three files. Followers fetch it **read-only**. Immutable per `plan_hash`: a plan change publishes a *new* ref, never mutating an old one. It carries no tier-2 and no source.
 
-2. **Canonical mutable state → WRITTEN ONLY BY THE LEAD.**
-   `state.yml`, `events.jsonl` (the bundle dir `docs/masterplan/<slug>/`). These files **exist on the run branch** (the plan flow commits them), but the invariant that matters is: **only the lead ever commits changes to them**, and **the lead reads only its local copy** — GitHub's copy is never read back as authoritative. **Follower PRs are forbidden from touching the bundle dir** (enforced — §7.2). So GitHub never becomes a *writer* of canonical state; single-writer holds. (Correction vs draft 1: the earlier "tier-2 is never on GitHub" was wrong — the run branch does carry `state.yml`. The real invariant is *lead-only-writer*, not *absent-from-GitHub*.)
+2. **Canonical mutable state → WRITTEN ONLY BY THE LEAD, NEVER PUSHED.**
+   `state.yml`, `events.jsonl` (the bundle dir `docs/masterplan/<slug>/`) live **only on the lead's local run branch, which is never pushed**. GitHub never sees tier-2 at all — neither the contract ref nor the integration branch (tier 3) carries it. The lead is the sole writer *and* the only reader of its canonical copy. This is the dedicated-ref model's payoff: *absent-from-GitHub* and *lead-only-writer* both hold, resolving the draft-1 boundary contradiction **structurally**, not by a runtime guard.
 
 3. **Coordination projection → NATIVE GitHub.**
-   Issues, labels, PRs. The ephemeral, multi-writer coordination layer — *derived from* tier 1, *driving updates to* tier 2 via the lead's reconciliation (§7.2). Owned by GitHub's native concurrency primitives.
+   Issues, labels, PRs, and the **integration branch** `mp-int/<slug>` — the PR base, carrying the **source tree only** (constructed from `base_sha` with the run bundle dir excluded; §7.1). The ephemeral, multi-writer coordination layer — *derived from* tier 1, *driving updates to* tier 2 via the lead's reconciliation (§7.2). Owned by GitHub's native concurrency primitives.
 
-**The invariant, precisely:** tier-2 files are written by **the lead alone**; follower PRs never touch the bundle dir; the lead never treats GitHub's tier-2 copy as authoritative. That is what keeps the single-writer convention true across the fan-out.
+**The invariant, precisely:** tier-2 is **never pushed** and is written by **the lead alone**; everything GitHub carries (contract ref + integration branch + issues/PRs) is tier-1 or source. Structural separation — not a runtime guard — keeps the single-writer convention true across the fan-out. (A bundle-dir PR guard, §7.2, remains as **defense-in-depth**, but tier-2's absence from every pushed ref is the *primary* protection.)
 
 ---
 
@@ -76,9 +78,9 @@ GitHub **augments** the local bundle; it does not replace it. Each artifact live
 
 The standing masterplan rule is "**never auto-merge**" (PR-awareness is report-only; merge happens only at the `branch_finish` gate or by the user on GitHub — see `lib/finish.mjs:summarizePr`, surfaced via `mp pr-summary`). This spec **keeps that rule verbatim**: followers' PRs are *surfaced*, never auto-merged.
 
-The lead's role at merge time is to **surface a wave's ready PRs** and let a human — or the lead acting at a human-authorized gate — merge them, **one task at a time**, after the per-PR safety checks of §7.2. To keep the gated path from becoming a per-PR chore at scale, the lead **batches the *presentation*** of a wave's ready PRs (one approval surface), but **still merges sequentially with a mergeability re-check between each** (§6/§7.2) — batching the *decision*, not bypassing the per-merge safety step.
+The lead's role at merge time is to **surface a wave's ready PRs** and let a human — or the lead acting at a human-authorized gate — merge them into the integration branch `mp-int/<slug>`, **one task at a time**, after the per-PR safety checks of §7.2. To keep the gated path from becoming a per-PR chore at scale, the lead **batches the *presentation*** of a wave's ready PRs (one approval surface), but **still merges sequentially with a mergeability re-check between each** (§6/§7.2) — batching the *decision*, not bypassing the per-merge safety step.
 
-> **v1 scope flag (deferrable):** wave-batched *presentation* is the mitigation for the grain×merge tension (§6). It is the one piece that could drop to **v1.1** if implementation proves heavy — a correct v1 can present/merge strictly one PR at a time. The per-merge re-check is **not** deferrable; it is load-bearing for conflict-safety.
+> **v1 scope flag (deferrable):** wave-batched *presentation* is the mitigation for the grain×merge tension (§6). It is the one piece that could drop to **v1.1** if implementation proves heavy — a correct v1 can present/merge strictly one PR at a time. The per-merge re-check is **not** deferrable; it is load-bearing for conflict-safety. **(User confirmed: keep in v1, flagged deferrable.)**
 
 This is the one place we *revise a standing rule's framing* (single-machine → fleet), so it is called out explicitly: **merge authority stays human-gated; only the number of PRs flowing into the gate changes.**
 
@@ -96,7 +98,7 @@ The claimable unit is **a single plan task** (the finest grain). One task → on
 - **Renames / deletes / directory-vs-file conflicts / binary or submodule changes** can conflict even across disjoint path sets.
 - **Moving base** — each merge advances the integration branch, so a PR mergeable before merge *k* may become un-mergeable after it.
 
-**Mitigation (load-bearing, not deferrable):** a PR is eligible to merge only after **(a)** lead-side diff-scope verification (the PR's actual diff ⊆ the task's declared scope **and** does not touch the bundle dir), and **(b)** a fresh GitHub mergeability re-check **after every preceding merge in the batch** (§7.2). With these, sequential merges within a wave are safe; without them, the textual guarantee does not hold.
+**Mitigation (load-bearing, not deferrable):** a PR is eligible to merge only after **(a)** lead-side diff-scope verification (the PR's actual diff ⊆ the task's declared scope **and** does not touch the bundle dir — defense-in-depth; the integration branch carries no bundle anyway), and **(b)** a fresh GitHub mergeability re-check **after every preceding merge in the batch** (§7.2). With these, sequential merges within a wave are safe; without them, the textual guarantee does not hold.
 
 **No new *semantic* guarantee.** Two disjoint files can still be logically incompatible — exactly the semantic-conflict risk the current single-machine wave model already carries. No regression, no new promise; semantic conflicts surface where they always have: verification and review.
 
@@ -112,16 +114,19 @@ All new logic follows v8 layering: the **shell** (`commands/masterplan.md`) sequ
 
 **`publish`** *(lead → GitHub).* Projects the **current wave only** of a planned run onto GitHub:
 - **Preflight (fail loud — §9)** before any mutation.
-- For each task in the wave with no existing issue (dedup — below): `gh issue create` with a body serialized by `lib/github-coord.mjs` carrying a **machine-readable metadata block** `{run_slug, task_id, plan_hash, base_sha, wave, files[], verify_commands[], deps[], contract_ref}` plus a human title `T<id>: <task title>`. Labels: `mp:run-<slug>`, `mp:wave-N`, `mp:open`.
-- Pins `contract_ref` + `base_sha` to the run-branch HEAD that already includes all merged prior-wave work (wave ordering — §8).
+- **First publish of a run also provisions the two refs (idempotent):**
+  - synthesize/update the immutable contract ref `mp-coord/<slug>/<plan_hash>` (tier-1 only — a tree of just `spec.md`/`plan.md`/`plan.index.json`);
+  - create the integration branch `mp-int/<slug>` from the source tree at `base_sha` **with the run bundle dir (`docs/masterplan/<slug>/`) excluded**, so tier-2 never reaches GitHub (§4).
+- For each task in the wave with no existing issue (dedup — below): `gh issue create` with a body serialized by `lib/github-coord.mjs` carrying a **machine-readable metadata block** `{run_slug, task_id, plan_hash, base_sha, wave, files[], verify_commands[], deps[], contract_ref, integration_branch}` plus a human title `T<id>: <task title>`. Labels: `mp:run-<slug>`, `mp:wave-N`, `mp:open`.
+- Pins `contract_ref` (= `mp-coord/<slug>/<plan_hash>`) + `base_sha` (= the **integration-branch** HEAD that already includes all merged prior-wave work — wave ordering, §8).
 - **Idempotent dedup by the metadata key** `{run_slug, task_id}` parsed from the issue body (not the human title — titles/labels are editable), queried with an **explicit `--limit`**. On detecting an *unexpected duplicate* (two issues, same `{run_slug, task_id}`) → **fail loud**, do not silently update (§9).
 - Publishes wave **N+1 only after wave N is fully merged** (§8).
 
 **`follow`** *(a session → follower).* Claims and delivers one unit:
 1. **Preflight (fail loud — §9).**
 2. **Claim** (optimistic, tightened — §8): pick a claimable issue, `gh issue edit --add-assignee @me`, relabel `mp:open → mp:claimed`, re-read and **settle only if** (assignees == [me]) ∧ (label == `mp:claimed`) ∧ (no open PR already exists for the task). Lost settle → release (`mp:claimed → mp:open`, drop self-assignment) and pick another.
-3. **Build** via the **existing execute machinery**: seed an **ephemeral local bundle** in a path **outside tracked `docs/masterplan/`** (e.g. a temp dir / `.git/mp-coord/<slug>/<task>/`) from the fetched contract at `base_sha`, scoped to the single claimed task; run the normal `mp-implementer` dispatch + `verifyScope` (D6) + `verify_commands`, on a branch `mp/<slug>/t<id>` based on `base_sha`.
-4. **Deliver**: open a PR (base = the integration branch = the run branch, §4/§7.4) with `Closes #<n>`; relabel `mp:claimed → mp:pr-open`. Discard the ephemeral bundle — canonical state is the lead's.
+3. **Build** via the **existing execute machinery**: fetch the contract from `mp-coord/<slug>/<plan_hash>` (read-only) and seed an **ephemeral local bundle** in a path **outside tracked `docs/masterplan/`** (e.g. a temp dir / `.git/mp-coord/<slug>/<task>/`), scoped to the single claimed task; run the normal `mp-implementer` dispatch + `verifyScope` (D6) + `verify_commands`, on a branch `mp/<slug>/t<id>` cut from the **integration branch** `mp-int/<slug>` at `base_sha`.
+4. **Deliver**: open a PR (**base = the integration branch `mp-int/<slug>`** — never the lead's local run branch, §4/§7.4) with `Closes #<n>`; relabel `mp:claimed → mp:pr-open`. Discard the ephemeral bundle — canonical state is the lead's.
    - Verification **failure** → do **not** open a non-draft PR; surface the failure on the issue (comment) and release the claim (`mp:claimed → mp:open`) for reclaim. Failures never silently merge.
 
 ### 7.2 Integration: no new verb (reuse the existing loop) — atomic & idempotent write-back
@@ -130,20 +135,20 @@ Integration reuses the v8 **`next`/`status`** report verbs and `summarizePr`/`mp
 
 1. `next`/`status` lists the run's `mp:pr-open` issues, runs `gh pr list` + `mp pr-summary` per PR, and surfaces the wave's **ready** (mergeable) PRs (batched *presentation* — §5).
 2. **Per-PR merge protocol (gated, the BLOCKER-2 fix — atomic & ordered):** for each chosen PR, in sequence:
-   a. **Re-read & dedup:** confirm exactly one open PR for the task (close any duplicate first); re-check GitHub mergeability *now* (after any preceding merge in the batch — §6).
-   b. **Diff-scope guard:** assert the PR diff ⊆ the task's declared scope **and** touches no bundle-dir path. A violation → refuse the merge, surface it.
-   c. **Merge:** `gh pr merge` (closes the linked issue).
-   d. **Fetch & assert:** `git fetch`; assert the PR's **merge SHA is an ancestor of local HEAD** (fast-forward / verify) before recording — so `state.yml`-done never outruns the merged code at local HEAD.
-   e. **Write-back (single-writer):** `mp mark-task --status=done` + `mp event` recording `{issue, pr, merge_sha}` for the task, then **commit** `state.yml` (state leads git — a crash before the commit re-derives on resume).
-3. **Resume reconciliation (idempotent — the BLOCKER-2 fix).** On restart, for each issue the lead reconciles GitHub state (merged?) against local state (task done?) using the recorded `issue_map` (§7.4): merged-but-not-marked → re-run step 2d–e; marked-but-not-merged → surface. Reconciliation is a pure function (`reconcileIntegration`, §7.3) over `{localState, ghIssues}`.
+   a. **Re-read & dedup:** confirm exactly one open PR for the task (close any duplicate first); re-check GitHub mergeability *now* against the current `mp-int/<slug>` HEAD (after any preceding merge in the batch — §6).
+   b. **Diff-scope guard:** assert the PR diff ⊆ the task's declared scope **and** touches no bundle-dir path (defense-in-depth — the integration branch carries no tier-2 anyway, §4). A violation → refuse the merge, surface it.
+   c. **Merge:** `gh pr merge` into `mp-int/<slug>` (closes the linked issue).
+   d. **Reconcile into the local run branch & assert:** `git fetch`; fast-forward/merge the new `mp-int/<slug>` source into the lead's **local run branch**; assert the PR's **merge SHA is an ancestor of the local run-branch HEAD** before recording — so tier-2 `done` never outruns the merged code the lead actually holds.
+   e. **Write-back (single-writer, local only):** `mp mark-task --status=done` + `mp event` recording `{issue, pr, merge_sha}` for the task, then **commit** the bundle on the local run branch (state leads git; never pushed — a crash before the commit re-derives on resume).
+3. **Resume reconciliation (idempotent — the BLOCKER-2 fix).** On restart, for each issue the lead reconciles GitHub state (PR merged into `mp-int/<slug>`?) against local state (task done?) using the recorded `issue_map` (§7.4): merged-but-not-marked → re-run step 2d–e (fetch + reconcile source + write-back); marked-but-not-merged → surface. Reconciliation is a pure function (`reconcileIntegration`, §7.3) over `{localState, ghIssues}`.
 4. When **all** of the current wave's issues are merged/closed and marked done, the lead runs `publish` for wave N+1.
 
 ### 7.3 New pure module `lib/github-coord.mjs` (unit-tested)
 
 All coordination *logic* is pure here; `gh`/`git` stay shell-side; `bin` wrappers are fs-only. Sketched surface (final names settled in the plan phase):
 
-- `issueBodyForTask(task, { contractRef, baseSha, planHash, runSlug })` → issue-body string with the machine-readable metadata block (serialize).
-- `parseIssueBody(body)` → `{run_slug, task_id, plan_hash, base_sha, …}` (deserialize).
+- `issueBodyForTask(task, { contractRef, integrationBranch, baseSha, planHash, runSlug })` → issue-body string with the machine-readable metadata block (serialize).
+- `parseIssueBody(body)` → `{run_slug, task_id, plan_hash, base_sha, contract_ref, integration_branch, …}` (deserialize).
 - `dedupKey(parsed)` → `"<run_slug>#<task_id>"`; `findDuplicates(issues)` → conflicting groups (fail-loud input).
 - `canTransition(from, to)` → boolean — label state machine `open → claimed → pr-open → closed` (+ release edge `claimed → open`).
 - `validateClaimSettle(issueAfterReread, myActor, existingPrsForTask)` → `won | lost` (the tightened single-assignee + no-existing-PR rule).
@@ -161,11 +166,12 @@ A run is **local-execute** (today's path) or **GitHub-coordinated**. Invoking `p
 ```
 coordination:
   mode: github
-  contract_ref: <branch/ref followers fetch>
-  integration_branch: <PR base = run branch in v1>
+  contract_ref: mp-coord/<slug>/<plan_hash>   # immutable, tier-1 only
+  integration_branch: mp-int/<slug>           # PR base; source only, tier-2 excluded
+  local_run_branch: <name>                    # lead-only, NEVER pushed (holds the bundle)
   current_wave: N
   published_waves: [..]
-  base_sha_by_wave: { N: <sha>, .. }
+  base_sha_by_wave: { N: <sha>, .. }          # integration-branch HEAD per wave
   issue_map: { <task_id>: { issue: <n>, pr: <n|null>, merge_sha: <sha|null>, status: open|claimed|pr-open|merged } }
 ```
 
@@ -184,15 +190,15 @@ A follower on the lead's machine is just another `follow` session; the lead proc
 - **Optimistic claim, tightened (BLOCKER-3 fix).** GitHub assignees are **multi-valued**, so naive assign+relabel can leave two followers both "claimed." Settle therefore requires **all** of: assignees == [me], label == `mp:claimed`, and **no pre-existing open PR for the task**. The lead additionally enforces **one open PR per task** at merge time (close duplicates before merging — §7.2 step 2a).
 - **Worst-case outcome, restated honestly.** *With* the tightened settle + lead-side one-PR-per-task dedup: worst case is **duplicated work** (two followers build the same task; the loser's PR is closed unmerged) — never base corruption. *Without* the lead-side dedup-before-merge, two PRs for the same task (same files) could double-merge and corrupt the base — so that guard is load-bearing, not optional. (Draft 1's flat "never corruption" was true only with these guards; they are now explicit.)
 - **File-disjoint = textually conflict-free, conditionally (§6).** Within a wave, sequential merges of same-wave PRs are conflict-free **given** declared-scope discipline + the per-merge mergeability re-check.
-- **Wave ordering.** The lead publishes wave N+1 only after wave N is fully merged (`nextWaveToPublish`), stamping `base_sha_by_wave[N+1]` to the merged HEAD so wave N+1 followers build on merged wave-N work.
+- **Wave ordering.** The lead publishes wave N+1 only after wave N is fully merged (`nextWaveToPublish`), stamping `base_sha_by_wave[N+1]` to the merged `mp-int/<slug>` HEAD so wave N+1 followers build on merged wave-N work.
 - **Liveness / deadlock.** A wave that never fully merges (a task whose followers keep dying) blocks wave N+1. v1 handling: **manual reclaim** (relabel `claimed→open`) surfaced by the `coord-drift` doctor check (§12). Auto-TTL reclaim + heartbeat are deferred (§13) — this is a *known* v1 liveness gap, operator-resolved, not a silent hang.
-- **Stale-plan detection.** Each issue body carries `plan_hash`; a follower compares it to the current published `plan.index.json` `plan_hash`; mismatch → release + resync (re-fetch the contract) rather than building stale.
+- **Stale-plan detection.** Each issue body carries `plan_hash`; a follower compares it to the current published `plan.index.json` `plan_hash` (the `mp-coord/<slug>/<plan_hash>` ref name itself encodes it); mismatch → release + resync (re-fetch the contract ref) rather than building stale.
 
 ---
 
 ## 9. Error handling, failure modes & preflight
 
-**Preflight (both verbs, fail loud — the MINOR fix).** Before any mutation, assert: `gh auth status` OK; the repo grants **write + issues + PR** capability; **label upsert** permission (create the `mp:*` labels if absent); **rate-limit headroom**; and (follower) a writable **ephemeral bundle path outside tracked `docs/masterplan/`**. Any failure → a clear, actionable error, **not** a silent no-op.
+**Preflight (both verbs, fail loud — the MINOR fix).** Before any mutation, assert: `gh auth status` OK; the repo grants **write + issues + PR** capability; **label upsert** permission (create the `mp:*` labels if absent); **ref/branch create** permission (for `mp-coord/*` + `mp-int/*`); **rate-limit headroom**; and (follower) a writable **ephemeral bundle path outside tracked `docs/masterplan/`**. Any failure → a clear, actionable error, **not** a silent no-op.
 
 - **`gh` missing / unauthed / no remote → FAIL LOUD.** Unlike report-only `summarizePr` (best-effort silent skip), `publish`/`follow` *require* `gh` — it is the mechanism.
 - **Claim race →** tightened settle (§8); worst case duplicate work.
@@ -214,7 +220,7 @@ A **trusted fleet**: cooperating LLM sessions under one operator, all with write
 - No fork isolation, no PR sandboxing, no adversarial-diff defense.
 - Claims assumed honest (the settle protocol guards *races*, not *malice*).
 - **Same-repo branches only** (no cross-fork PRs in v1 — resolves former open-Q5).
-- **Single lead per run**, operator-enforced. Nothing in v1 prevents two leads integrating the same run; a multi-lead lease/heartbeat is the deferred remainder of Guard D (§13). The lead's single-writer commits to one local bundle make a *second* lead an operator error, not a corruption-by-design.
+- **Single lead per run**, operator-enforced. Nothing in v1 prevents two leads integrating the same run; a multi-lead lease/heartbeat is the deferred remainder of Guard D (§13). The lead's single-writer commits to one local (never-pushed) bundle make a *second* lead an operator error, not a corruption-by-design.
 
 If this ever opens to untrusted contributors, that is a different, larger design (sandboxed CI, required reviews, fork-based PRs) — explicitly **not** this spec.
 
@@ -244,35 +250,34 @@ Two new verbs (`publish`, `follow`) ⇒ this prose sync is paid twice (~5 locati
 - **Pure unit tests (the bulk)** for `lib/github-coord.mjs`: issue-body round-trip (`issueBodyForTask`↔`parseIssueBody`), `dedupKey`/`findDuplicates`, `canTransition` (legal/illegal/release edges), `validateClaimSettle` (the single-assignee + no-existing-PR rule — won/lost), `selectClaimableUnits`, `nextWaveToPublish` (blocks until wave fully merged), **`reconcileIntegration`** (merged-not-marked → write-back; marked-not-merged → surface; idempotent on re-run), `mergeBatchPlan` (ordering + re-check points). No network — the shell supplies `gh` JSON, exactly like `summarizePr`.
 - **`mp` wrapper tests** for the fs-only transforms (input JSON → normalized output).
 - **`coord-drift` doctor check** (light, v1): for a coordinated run, flag (WARN) issues for already-`done` tasks still open, `mp:claimed` issues with no PR (orphan claims — §8), and `published_waves`/`issue_map` drift vs the plan. Wired into `bin/doctor.mjs` + a test (the doctor-check sync of anti-pattern #4).
-- **Manual integration smoke (the acceptance gate, CD-3).** Unit tests can't exercise real `gh`/PR flow, so v1 acceptance is a manual smoke: `publish` a real run, `follow` it from a second session/machine, open + merge a PR through the §7.2 protocol, kill a follower mid-build to exercise orphan-reclaim, crash between merge and write-back to exercise resume reconciliation, and confirm wave advance. "Should work" is not evidence.
+- **Manual integration smoke (the acceptance gate, CD-3).** Unit tests can't exercise real `gh`/PR flow, so v1 acceptance is a manual smoke: `publish` a real run (provisions both refs), `follow` it from a second session/machine, open + merge a PR through the §7.2 protocol, kill a follower mid-build to exercise orphan-reclaim, crash between merge and write-back to exercise resume reconciliation, and confirm wave advance. "Should work" is not evidence.
 
 ---
 
 ## 13. v1 scope vs deferred phases
 
 **In v1 (the walking skeleton):**
-- `publish` (current wave → issues + labels + contract pin), `follow` (tightened claim → build via existing machinery → PR), integration via the existing `next`/`status` loop + the atomic/idempotent §7.2 write-back protocol.
+- `publish` (provision `mp-coord` ref + `mp-int` branch on first call; current wave → issues + labels + contract pin), `follow` (tightened claim → build via existing machinery → PR against `mp-int`), integration via the existing `next`/`status` loop + the atomic/idempotent §7.2 write-back protocol.
 - `lib/github-coord.mjs` pure logic + fs-only `mp` wrappers.
-- Tightened optimistic claim, label state machine, wave-ordered publish, `plan_hash` staleness, three-tier augment boundary with the lead-only-writer invariant, declared-scope discipline + per-merge mergeability re-check.
+- Tightened optimistic claim, label state machine, wave-ordered publish, `plan_hash` staleness; the three-tier augment boundary via the **dedicated immutable contract ref `mp-coord/<slug>/<plan_hash>` + separate integration branch `mp-int/<slug>` (tier-2 never pushed)**; declared-scope discipline + per-merge mergeability re-check.
 - `coordination` state object + the `publish_needed`/`coordinate` `decideNextAction` branches.
 - `coord-drift` doctor check.
-- Gated merge; wave-batched **presentation** (deferrable to v1.1 — §5).
+- Gated merge; wave-batched **presentation** (kept in v1, deferrable to v1.1 — §5).
 
 **Deferred (named future phases — not designed here):**
 - **CI-native automation** (approach B): GitHub Actions drive claim/verify/merge.
 - **Coordinator daemon** (approach C): a long-lived assigner.
 - **Tiered / auto-merge** (the speed path): trusted auto-merge of green PRs.
 - **Auto-TTL stale-claim reclaim** + **cross-machine heartbeat / multi-lead lease** (the rest of concurrency-guards Guard D).
-- **Dedicated immutable contract ref** (`mp-coord/<slug>/<plan_hash>` carrying *only* tier-1) — the cleaner tier separation, if v1's run-branch-+-bundle-guard proves insufficient (§14 decision 1).
 - **Untrusted / open contribution** (fork isolation, sandboxed CI, required reviews).
 
 ---
 
 ## 14. Resolved design decisions (formerly open questions)
 
-The Codex review flagged that these are load-bearing prerequisites, not polish, so they are **resolved here** (with the alternative noted) rather than left open. Decisions 1 and (scope) §5's wave-batched flag are surfaced to the user at the review gate for override.
+The Codex review flagged that these are load-bearing prerequisites, not polish, so they are **resolved** rather than left open.
 
-1. **Contract ref / PR base — DECIDED: run branch @ pinned `base_sha`, with a bundle-dir merge guard.** Followers fetch the run branch read-only at `base_sha` (contract) and PR against it (integration branch). The lead enforces that no follower PR touches `docs/masterplan/<slug>/` (§4/§7.2), preserving single-writer without a second ref. **Alternative (deferred hardening):** a dedicated immutable `mp-coord/<slug>/<plan_hash>` ref carrying only tier-1 + a separate integration branch (Codex's recommendation — cleaner separation, more machinery than a skeleton needs). *Lean: run branch for v1; promote to the dedicated ref if the guard proves leaky.* **(User override point.)**
+1. **Contract ref / PR base — DECIDED (user gate, 2026-05-31): Option B — dedicated immutable contract ref + separate integration branch.** The contract is published as `mp-coord/<slug>/<plan_hash>` (tier-1 only, immutable per `plan_hash`); followers PR against the integration branch `mp-int/<slug>` (source only); the canonical bundle (tier-2) stays on the lead's **local run branch, never pushed** (§4/§7). This is the cleanest tier separation — tier-2 is *structurally absent* from GitHub, not merely guarded — and was Codex's recommendation. **Considered & rejected for v1:** run-branch-as-both-contract-and-base + a bundle-dir guard (simpler, one ref, but leaves tier-2 present-though-guarded on GitHub). The user selected the dedicated-ref model at the design-approval gate; its extra machinery (synthesizing the tier-1 tree, constructing/maintaining the integration branch, and the lead reconciling it into the local run branch — §7.2 step 2d) is accepted.
 2. **Coordinated-mode resume — DECIDED: the `decideNextAction` branches** (`publish_needed` + `coordinate`, §7.4), for resume correctness over a bare warn.
 3. **Board — DECIDED: labels-only.** GitHub Projects is a deferred visualization nicety.
 4. **Issue identity / idempotency — DECIDED: machine-readable body key** `{run_slug, task_id}` (+ `plan_hash`, `base_sha`) parsed from the issue body, queried with explicit `--limit`, fail-loud on duplicates. The human title `T<id>:` is for people, not dedup.
@@ -282,23 +287,25 @@ The Codex review flagged that these are load-bearing prerequisites, not polish, 
 
 ## 15. Summary
 
-GitHub coordination is masterplan's existing shell↔worker contract projected onto GitHub: the **lead** stays the sole writer of the canonical bundle and the sole merge authority; **followers** are stateless wave members in other sessions that claim one task each (tightened single-assignee settle), build it with the existing execute machinery in an ephemeral out-of-tree bundle, and return a PR; **GitHub Issues/labels/PRs** are the wave-dispatch and delivery channel. Two new verbs (`publish`, `follow`), one new pure module (`lib/github-coord.mjs`), a `coordination` state object with `publish_needed`/`coordinate` resume branches, and reuse of the existing `next`/`mp pr-summary` loop for a gated, atomic, idempotent integration. The plan's declared-file-disjoint wave invariant makes concurrent task PRs textually conflict-free **conditionally** (declared-scope discipline + per-merge re-check); merge stays human-gated; v1 is a trusted-fleet, single-lead walking skeleton with CI/daemon/auto-merge/auto-reclaim/heartbeat/dedicated-contract-ref explicitly deferred.
+GitHub coordination is masterplan's existing shell↔worker contract projected onto GitHub: the **lead** stays the sole writer of the canonical bundle (tier-2 never leaves its **local, never-pushed run branch**) and the sole merge authority; **followers** are stateless wave members in other sessions that claim one task each (tightened single-assignee settle), fetch the contract from an **immutable tier-1-only ref `mp-coord/<slug>/<plan_hash>`**, build it with the existing execute machinery in an ephemeral out-of-tree bundle, and return a PR **against the integration branch `mp-int/<slug>`**; **GitHub Issues/labels/PRs** are the wave-dispatch and delivery channel. Two new verbs (`publish`, `follow`), one new pure module (`lib/github-coord.mjs`), a `coordination` state object with `publish_needed`/`coordinate` resume branches, and reuse of the existing `next`/`mp pr-summary` loop for a gated, atomic, idempotent integration. The plan's declared-file-disjoint wave invariant makes concurrent task PRs textually conflict-free **conditionally** (declared-scope discipline + per-merge re-check); merge stays human-gated; v1 is a trusted-fleet, single-lead walking skeleton with CI/daemon/auto-merge/auto-reclaim/heartbeat/multi-lead-lease explicitly deferred.
 
 ---
 
-## 16. Review incorporation (Codex adversarial pass + codebase fact-check → draft 2)
+## 16. Review incorporation (Codex adversarial pass + codebase fact-check → draft 2 → user gate → draft 3)
 
 | Finding | Severity | Resolution |
 |---|---|---|
-| Tier boundary contradiction (run branch carries `state.yml`) | BLOCKER | §4 reframed: invariant is **lead-only-writer**, not absent-from-GitHub; bundle-dir merge guard added (§7.2); contract-ref decided (§14.1). |
-| Write-back not atomic/idempotent | BLOCKER | §7.2 per-PR protocol (re-read→diff-guard→merge→fetch+ancestor-assert→write+commit) + idempotent resume reconciliation (`reconcileIntegration`). |
+| Tier boundary contradiction (run branch carries `state.yml`) | BLOCKER | Resolved **structurally** (user gate → Option B): dedicated tier-1-only contract ref `mp-coord/<slug>/<plan_hash>` + separate integration branch `mp-int/<slug>`; **tier-2 never pushed** (lead's local run branch only). Bundle-dir guard kept as defense-in-depth (§4/§7/§14.1). |
+| Write-back not atomic/idempotent | BLOCKER | §7.2 per-PR protocol (re-read→diff-guard→merge into `mp-int`→fetch+reconcile-into-local-run-branch+ancestor-assert→write+commit) + idempotent resume reconciliation (`reconcileIntegration`). |
 | Claim protocol multi-assignee / dual-PR corruption | BLOCKER | §8 tightened settle (single-assignee ∧ no-existing-PR) + lead-side one-PR-per-task before merge; worst-case restated honestly. |
 | File-disjoint conflict-free overclaim | MAJOR | §6 made conditional (undeclared/generated/lockfiles, renames, moving base) + declared-scope discipline + per-merge re-check. |
 | Guard D not actually closed | MAJOR | §1/§10 narrowed to the follower-fan-out dimension; multi-lead/heartbeat deferred (§13); single-lead v1 assumption stated. |
 | `coordinate` strands partial runs | MAJOR | §7.4 `coordination` state object + `publish_needed` vs `coordinate` split. |
-| v1 not minimal-correct; §14 are prerequisites | MAJOR | §14 questions resolved inline; wave-batched flagged deferrable (§5); per-merge re-check kept as load-bearing. |
+| v1 not minimal-correct; §14 are prerequisites | MAJOR | §14 questions resolved; contract-ref taken to the user gate (Option B chosen); wave-batched kept in v1 but flagged deferrable (§5); per-merge re-check kept as load-bearing. |
 | Re-publish idempotency fragile | MINOR | §7.1/§14.4 machine-readable body key + `--limit` + fail-loud. |
-| Operational prerequisites underspecified | MINOR | §9 preflight (auth, capabilities, label upsert, rate-limit, ephemeral path). |
+| Operational prerequisites underspecified | MINOR | §9 preflight (auth, capabilities, label upsert, ref/branch create, rate-limit, ephemeral path). |
 | CD-7 terminology conflation | NIT | Terminology note (top) + "single-writer (L1 convention)" used throughout. |
 | Fact-check: no `RESERVED_VERBS`; `docs/internals.md` no verb table | — | §11 corrected; planner to fix `CLAUDE.md` anti-pattern #4 text. |
 | Fact-check: `mp pr-summary` is the CLI surface for `summarizePr` | — | §5/§7 clarified. |
+| **User gate (2026-05-31): contract-ref Option B over A** | DECISION | Drives §4/§7/§14.1/§15: dedicated-ref model, tier-2 structurally absent. |
+| **User gate (2026-05-31): wave-batched merge stays in v1** | DECISION | §5/§13: kept, flagged deferrable to v1.1. |
