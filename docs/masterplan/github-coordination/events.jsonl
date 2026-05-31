@@ -1,1 +1,2 @@
 {"type":"spec_authored","ts":"2026-05-31T20:27:11.554Z","note":"v1 brainstorm spec written: Issue-board swarm + gated wave-batched merge + task grain + publish/follow verbs + lib/github-coord.mjs"}
+{"type":"spec_revised","ts":"2026-05-31T20:48:23.018Z","note":"draft 2: incorporated Codex FAIL findings (3 BLOCKER/4 MAJOR/2 MINOR/1 NIT) + codebase fact-check corrections; resolved 5 open questions inline; added 16 review-incorporation traceability table"}
