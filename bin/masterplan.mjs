@@ -17,6 +17,7 @@
 //   version [--args=STR] [--cwd=DIR]            -> the CC-2 banner line (the lone CC-2/CC-3 survivor)
 //   detect-host [--agent-is-codex] [--native-tools] [--agents-md]
 //                                               -> {isCodex, reasons, suppressRescue}
+//   discover [--cwd=DIR]                        -> {bundles:[abs <runsDir>/<slug>/state.yml]} (honors MASTERPLAN_RUNS_DIR)
 //   decide --state=PATH [--alive]               -> the decideNextAction result (migrates in-memory)
 //   seed --state=PATH --slug=S --topic=STR [--phase=P] [--status=S] [--schema-version=N]
 //        [--created-at=T] [--complexity=C] [--complexity-source=SRC] [--autonomy=A]
@@ -86,6 +87,7 @@ import { resolveConfigDir } from '../lib/paths.mjs';
 import { createHash } from 'node:crypto';
 import { mergePlanFragments, validatePlanIndex, renderPlanMd } from '../lib/plan-merge.mjs';
 import { classifyDirt, detectBase, collectVerifyCommands, isVerified, dispositionForChoice, summarizePr } from '../lib/finish.mjs';
+import { discoverBundles } from '../lib/discover.mjs';
 
 // ---- tiny arg parser: positional[], flags{} (--k=v, or --k as boolean true) ----
 function parseArgs(argv) {
@@ -241,6 +243,14 @@ function main() {
     case 'version': {
       const cwd = flags.cwd || process.cwd();
       out(formatBanner(readPluginVersion(cwd, process.env), flags.args || '', cwd));
+      break;
+    }
+    case 'discover': {
+      // List existing run bundles under the (possibly redirected) runs dir. Honors MASTERPLAN_RUNS_DIR
+      // (default docs/masterplan) via lib/paths.resolveRunsDir, so the §2 resume scan finds bundles even
+      // when the runs dir is redirected. Read-only; no state mutation.
+      const cwd = flags.cwd || process.cwd();
+      out({ bundles: discoverBundles(cwd, process.env) });
       break;
     }
     case 'detect-host': {

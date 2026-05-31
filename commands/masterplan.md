@@ -52,9 +52,10 @@ A topic literally named after a reserved verb needs a word in front (`/masterpla
 
 The spine. It NEVER decides in prose — it asks `mp decide` and executes the returned action.
 
-1. **Locate the bundle.** `execute <path>` → that `state.yml`. Else discover
-   `docs/masterplan/*/state.yml` whose status is not archived: exactly one → use it; several → an
-   `AskUserQuestion` picker; none → there is no active run (route by verb, or offer to start one).
+1. **Locate the bundle.** `execute <path>` → that `state.yml`. Else run
+   `mp discover --cwd=<repo root>` (honors `MASTERPLAN_RUNS_DIR`, default `docs/masterplan`) and take
+   its `bundles` list, keeping only those whose status is not archived: exactly one → use it; several
+   → an `AskUserQuestion` picker; none → there is no active run (route by verb, or offer to start one).
 2. **Migrate-on-load if legacy.** Run `mp migrate-bundle --state=<path>`. If it reports
    `migrated:true`, the tasks now carry `wave:null` — ensure a `plan.index.json` exists (re-parse
    `plan.md` via the `masterplan:mp-planner` agent if it's missing), then
