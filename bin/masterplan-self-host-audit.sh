@@ -216,8 +216,8 @@ check_drift() {
   done
 
   if [[ -f "${repo_hooks_json}" ]]; then
-    if ! grep -q '<!-- masterplan-shim: v3 -->' "${repo_hooks_json}" 2>/dev/null; then
-      echo "⚠️  hooks/hooks.json — SessionStart hook must install the compact masterplan-shim v3"
+    if ! grep -q '<!-- masterplan-shim: v4 -->' "${repo_hooks_json}" 2>/dev/null; then
+      echo "⚠️  hooks/hooks.json — SessionStart hook must install the compact masterplan-shim v4"
       EXIT=1
     fi
     if grep -q 'ln -sf .*commands/masterplan.md' "${repo_hooks_json}" 2>/dev/null; then
@@ -369,10 +369,14 @@ check_codex_packaging() {
     EXIT=1
   fi
 
-  if ! grep -q '~/.masterplan.yaml' "${codex_entry_skill}" 2>/dev/null; then
-    echo "⚠️  skills/masterplan/SKILL.md — must explicitly load user-global ~/.masterplan.yaml config"
-    EXIT=1
-  fi
+  # v8 removed the ~/.masterplan.yaml config hierarchy (no built-in/user-global/
+  # repo-local merge step). Configuration is now seed-time flags persisted into
+  # the run bundle's state.yml (SKILL.md §Configuration). No code loads a
+  # user-global ~/.masterplan.yaml; the only surviving .masterplan.yaml read is
+  # the per-worktree failure_reporting block used by the anomaly framework
+  # (bin/masterplan-{failure-analyze,findings-to-issues,anomaly-flush}.sh). The
+  # old "SKILL.md must load user-global ~/.masterplan.yaml" check was retired
+  # here because it enforced the removed v7 config-hierarchy contract.
 
   # v5.8.0 README rewrite intentionally moved internal Codex-host detail
   # (entrypoint skill, recursive-dispatch suppression, normal-chat resume hint)
@@ -492,11 +496,20 @@ check_codex_packaging() {
   # v5.0+: the "completed plan with confirmed implementation gaps must
   # materialize structured follow-ups before completion" rule moved from
   # commands/masterplan.md (legacy `completed_with_follow_up` next_action
-  # sentinel) into parts/step-c.md's completion-write phase, which now
-  # uses the canonical "completed meta-plan" + "confirmed implementation
-  # gaps" + "follow_ups" language.
-  if ! grep -qF 'completed meta-plan' "${REPO_ROOT}/parts/step-c.md" 2>/dev/null; then
-    echo "⚠️  parts/step-c.md — clean/completion must handle completed meta-plans with confirmed implementation gaps"
+  # sentinel) into the completion-write phase. v8 split the monolithic
+  # parts/step-c.md into step-c-{resume,dispatch,verification,completion}.md.
+  # The completion WRITE that materializes structured `follow_ups` for a
+  # completed meta-plan with confirmed implementation gaps lives in
+  # parts/step-c-completion.md; the corresponding clean/advance ASSERTION
+  # lives in parts/step-c-verification.md. Audit BOTH surfaces so a
+  # regression in either the writer or the guard is caught.
+  if ! grep -qF 'confirmed implementation gaps' "${REPO_ROOT}/parts/step-c-completion.md" 2>/dev/null; then
+    echo "⚠️  parts/step-c-completion.md — completion write must materialize structured follow_ups for completed meta-plans with confirmed implementation gaps"
+    EXIT=1
+  fi
+
+  if ! grep -qF 'completed meta-plan' "${REPO_ROOT}/parts/step-c-verification.md" 2>/dev/null; then
+    echo "⚠️  parts/step-c-verification.md — clean/completion must handle completed meta-plans with confirmed implementation gaps"
     EXIT=1
   fi
 
@@ -525,12 +538,20 @@ check_brainstorm_anchor() {
   # regressions.json was archived to legacy/.archive/ (gitignored) when the
   # dev-phase bundle was retired; the 14-sentinel contract scan below is
   # the durable regression net now that the contract is locked in code.
-  local source_file="${REPO_ROOT}/parts/step-b.md"
+  #
+  # v8 extracted the Haiku fan-out / merge / YAML-shape half of the contract
+  # into parts/contracts/brainstorm-anchor.md while the gate/brief/interview
+  # half stayed in parts/step-b.md. Each sentinel must appear in EITHER file,
+  # so the scan unions both (grep -qF over both paths passes if found in one).
+  local stepb_file="${REPO_ROOT}/parts/step-b.md"
+  local contract_file="${REPO_ROOT}/parts/contracts/brainstorm-anchor.md"
 
-  if [[ ! -f "${source_file}" ]]; then
-    echo "Skipping brainstorm-anchor check: ${source_file} not found"
-    return
-  fi
+  for f in "${stepb_file}" "${contract_file}"; do
+    if [[ ! -f "${f}" ]]; then
+      echo "Skipping brainstorm-anchor check: ${f#${REPO_ROOT}/} not found"
+      return
+    fi
+  done
 
   local patterns=(
     "brainstorm_anchor:"
@@ -542,17 +563,20 @@ check_brainstorm_anchor() {
     "Scope Boundary"
     "verification_ceiling"
     "feature-idea funnels unless"
-    "native multi-select UI or arbitrary free-form ID entry"
+    "avoid native multi-select UI"
     "Problem Interview Contract"
     "interview_depth"
     "target_question_count"
     "understanding_level"
   )
 
-  _check_sentinels_in_file \
-    "Step B1 brainstorm anchor contract" \
-    "${source_file}" \
-    "${patterns[@]}"
+  local pattern
+  for pattern in "${patterns[@]}"; do
+    if ! grep -qF "${pattern}" "${stepb_file}" "${contract_file}" 2>/dev/null; then
+      echo "⚠️  brainstorm anchor contract — missing sentinel (step-b.md ∪ contracts/brainstorm-anchor.md): ${pattern}"
+      EXIT=1
+    fi
+  done
 
   if [[ "${EXIT}" -eq 0 ]]; then
     echo "✓ brainstorm anchor contract clean"
@@ -741,19 +765,24 @@ check_session_audit() {
 # ---------------------------------------------------------------------------------
 check_loop_first_contract() {
   # v5.0+: loop-first stop/resume contract spans multiple modularized files.
-  # parts/step-c.md      — wave/stop-reason/critical_error machinery
+  # v8 split the monolithic parts/step-c.md into step-c-{resume,dispatch,
+  # verification,completion}.md; the wave/stop-reason/critical_error machinery
+  # now lives across two of those leaves:
+  #   parts/step-c-dispatch.md    — "Loop-first stop contract", "Record critical error and stop"
+  #   parts/step-c-completion.md  — "critical_error: null", "loop_quota_exhausted"
   # parts/step-0.md      — Resume controller entry-point
   # docs/internals.md    — state-shape and conceptual rules (blocked = critical)
   # lib/masterplan_session_audit.py  — stop_kind classifier
   # tests/test_masterplan_session_audit.py — stop-kind fixtures
-  local stepc_file="${REPO_ROOT}/parts/step-c.md"
+  local stepc_dispatch_file="${REPO_ROOT}/parts/step-c-dispatch.md"
+  local stepc_completion_file="${REPO_ROOT}/parts/step-c-completion.md"
   local step0_file="${REPO_ROOT}/parts/step-0.md"
   local internals_file="${REPO_ROOT}/docs/internals.md"
   local audit_module="${REPO_ROOT}/lib/masterplan_session_audit.py"
   local audit_tests="${REPO_ROOT}/tests/test_masterplan_session_audit.py"
 
   local missing=0
-  for file in "${stepc_file}" "${step0_file}" "${internals_file}" "${audit_module}" "${audit_tests}"; do
+  for file in "${stepc_dispatch_file}" "${stepc_completion_file}" "${step0_file}" "${internals_file}" "${audit_module}" "${audit_tests}"; do
     if [[ ! -f "${file}" ]]; then
       echo "⚠️  loop-first contract — missing ${file#${REPO_ROOT}/}"
       EXIT=1
@@ -762,16 +791,23 @@ check_loop_first_contract() {
   done
   [[ "${missing}" -eq 1 ]] && return
 
-  local stepc_patterns=(
+  local stepc_dispatch_patterns=(
     "Loop-first stop contract"
-    "critical_error: null"
     "Record critical error and stop"
+  )
+  _check_sentinels_in_file \
+    "loop-first contract" \
+    "${stepc_dispatch_file}" \
+    "${stepc_dispatch_patterns[@]}"
+
+  local stepc_completion_patterns=(
+    "critical_error: null"
     "loop_quota_exhausted"
   )
   _check_sentinels_in_file \
     "loop-first contract" \
-    "${stepc_file}" \
-    "${stepc_patterns[@]}"
+    "${stepc_completion_file}" \
+    "${stepc_completion_patterns[@]}"
 
   local step0_patterns=(
     "Resume controller"

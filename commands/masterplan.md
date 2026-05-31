@@ -29,7 +29,10 @@ exit, read stderr and act on it.
    session identifies the agent as Codex, `--native-tools` if Codex-native tools like `apply_patch`/
    `update_plan` are exposed, `--agents-md` if an `AGENTS.md` is present). If the result's
    `suppressRescue` is true, do NOT dispatch the `codex:codex-rescue` companion anywhere this
-   invocation (it would recurse — Codex calling Codex). Persisted `codex.routing`/`codex.review` are
+   invocation (it would recurse — Codex calling Codex). The same true result is the
+   **`codex_host_suppressed`** condition the downstream paths check: it gates the Claude-Code-only
+   native task tools in §2a recovery (`recover_and_redispatch` / `recover_plan_run`) and supplies
+   `mp prepare-wave --codex-suppressed`. Persisted `codex.routing`/`codex.review` are
    unaffected.
 
 ## 1 — Parse the verb
@@ -87,8 +90,8 @@ The spine. It NEVER decides in prose — it asks `mp decide` and executes the re
    | `surface_gate` | Re-render the gate's `AskUserQuestion` (CD-9). A named option → act, `mp clear-gate`, commit, re-decide. Free-text / no clear answer → keep the gate, respond, close. NEVER auto-proceed regardless of autonomy (the durable marker outranks a native AUQ that can't survive compaction). For the finalization gates (`branch_finish`, `verification_failed`), the per-option **act** is specified in **§2c**. |
    | `wait` | A live run owns the wave. Report it and close — its Workflow completion notification re-invokes this controller, which records the result via the completion protocol (**§2a**, step 3). |
    | `finalize_run` | The wave's tasks are all `done` on disk. `mp clear-active-run`, commit, then re-decide (→ next wave, or `complete`). |
-   | `recover_and_redispatch` | Crash recovery. If `staleTaskId` ≠ null: `TaskList` → `TaskStop` any surviving run for it (a backgrounded Workflow MAY outlive session death — reconcile before touching files). Then RESET scope: `git checkout -- <resetPaths>` and, **only when `resetPaths` is non-empty**, `git clean -fd -- <resetPaths>` — scope the clean to the reset paths; a bare `git clean -fd` (or one with an empty pathspec) would wipe unrelated user-owned untracked files. Then dispatch the wave via **§2a**. Idempotent — agents never commit. |
-   | `recover_plan_run` | Crash recovery for a planning fan-out (`active_run.kind:'plan'`). If `staleTaskId` ≠ null: `TaskList` → `TaskStop` any surviving run. **No git scope reset** — the subsystem drafters are read-only, so nothing was written to revert. Re-launch the fan-out via **§2b** (re-dispatch `mp-spec-decomposer` if the subsystem set isn't in hand). Idempotent. |
+   | `recover_and_redispatch` | Crash recovery. If `staleTaskId` ≠ null: `TaskList` → `TaskStop` (**Claude Code only** — no-op when `codex_host_suppressed == true`, where the native task tools are absent and reconciliation leans on the on-disk `active_run` marker) any surviving run for it (a backgrounded Workflow MAY outlive session death — reconcile before touching files). Then RESET scope: `git checkout -- <resetPaths>` and, **only when `resetPaths` is non-empty**, `git clean -fd -- <resetPaths>` — scope the clean to the reset paths; a bare `git clean -fd` (or one with an empty pathspec) would wipe unrelated user-owned untracked files. Then dispatch the wave via **§2a**. Idempotent — agents never commit. |
+   | `recover_plan_run` | Crash recovery for a planning fan-out (`active_run.kind:'plan'`). If `staleTaskId` ≠ null: `TaskList` → `TaskStop` (**Claude Code only** — no-op when `codex_host_suppressed == true`) any surviving run. **No git scope reset** — the subsystem drafters are read-only, so nothing was written to revert. Re-launch the fan-out via **§2b** (re-dispatch `mp-spec-decomposer` if the subsystem set isn't in hand). Idempotent. |
    | `dispatch_wave` | Launch one wave through the L2 engine — full sequence in **§2a**. In brief: `mp prepare-wave` (resolves routing) → capture the git baseline → `mp set-active-run --wave=N` (phase-1, BEFORE launch) → launch `workflows/execute.workflow.js` in the background with `args={wave,tasks,baseline,repoRoot,review}` → `mp promote-active-run --run-id=… --task-id=…` (phase-2) → close to await its completion notification. |
    | `resume_phase` | The bundle is mid-`{brainstorm\|plan}` with no plan built yet (`tasks:[]`). **Do NOT finalize/archive** — that would destroy a mid-design run. `phase==plan` → hand to the **plan lifecycle (§3a)** with the action's `planning_mode`. `phase==brainstorm` → re-entering an in-progress `superpowers:brainstorming` is still deferred (step 7), so SURFACE via `AskUserQuestion` — continue the phase, restart it, or stop — and close. Never fall through to `complete`. |
    | `complete` | All execute tasks done → the **finalization flow (§2c)**: verify-before-completion (cite output) → write `retro.md` → the durable `branch_finish` gate → archive **LAST**. NEVER a silent archive — the v8 regression §2c restores. |
@@ -308,6 +311,8 @@ turn hit none of these, it MUST auto-progress, not ask:
 **Explicitly forbidden** orchestrator-added asks (these ARE the over-asking the contract kills — never
 emit them under loose/full):
 
+<!-- cd9-exempt: this list QUOTES forbidden asks as anti-pattern examples to ban them; it does not emit them. -->
+
 - "Run codex or not?" — routing is decided by `mp prepare-wave` (`routeTask`), never by asking.
 - "What should I do next?" / "dispatch the next wave?" — between successful steps you **auto-proceed**:
   record digests → commit → dispatch the next wave **in the same turn** (§2a completion → re-decide).
@@ -322,6 +327,12 @@ wave) and you are closing **without** an AUQ — end the turn's text with the li
 AUQ onto an authorized autonomous turn. **Never** emit it on a turn that surfaces a stop-set gate (the
 gate's own AUQ is the turn-close) or when `autonomy` is neither loose nor full. It is a stand-down
 signal for *this plugin's* authorized auto-progress, mirroring the user-side `<no-auq>` hatch.
+
+**Turn-close routing (CC-3-trampoline).** Every turn-close in this shell — a stop-set gate's AUQ, an
+auto-progress `<mp-autoprogress>` close, or a plain stop — routes through the canonical
+**CC-3-trampoline** sequence defined in `parts/step-0.md` (§ "CC-3-trampoline anchor"). That phase file
+is the single enforcement point; this router only names the entry so the sequence is discoverable from
+the orchestrator root rather than duplicated here.
 
 ## 3 — Other verbs (sequencing only — content lives elsewhere)
 
@@ -396,6 +407,10 @@ text with the `<mp-autoprogress>` marker (§2d) so the global guard stands down.
 "what next?" / "run codex?" / "Ready for Wave N" question — that over-asking is exactly what §2d forbids.
 Reserve the AUQ for the genuine stop-set.
 
-Otherwise close cleanly. The v7 CC-3 trampoline — trace markers,
-breadcrumbs, per-turn summary-block hook signals — is **gone**; the banner (§0) and this AUQ-close
-are the only ceremony that survives.
+Otherwise close cleanly. What's gone from v7 is the *hook-driven per-turn* ceremony — trace
+markers, breadcrumbs, and summary-block signals fired on every turn by Stop-hook machinery. v8
+consolidates these into a single prompt-driven close: the **CC-3-trampoline anchor** in
+`parts/step-0.md` (named at §2d "Turn-close routing"), which emits the summary block + exit
+breadcrumb **once, at turn-close**, then closes with this AUQ at a stop-set gate. (The §0 version
+banner is an *invocation*-time obligation — first, before anything — not part of turn-close.) That
+anchor is the only ceremony that survives.

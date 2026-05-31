@@ -33,6 +33,25 @@ into a canonical `plan.index.json` using Kahn topological order for wave
 assignment. Task routing decisions live in `lib/routing.mjs`. Scope
 verification (D6) runs in `lib/wave.mjs`.
 
+## Run-bundle State Shape & Stop Contract
+
+`state.yml` is the CD-7 single source of truth. Beyond `phase`, the loop-first
+stop/resume contract turns on two fields:
+
+```yaml
+stop_reason: null | question | critical_error | complete | scheduled_yield
+critical_error: null
+```
+
+**Blocked means critical error only.** Routine blockers, quota exhaustion, weak
+gate evidence, host-budget yields, and background polling all stay
+`status: in-progress` with `stop_reason: question` or `scheduled_yield`. Set
+`status: blocked` only together with `stop_reason: critical_error` and a
+populated `critical_error` object. The `stop_kind` classifier in
+`lib/masterplan_session_audit.py` enforces this mapping; the resume controller
+that reads it back is documented in
+[bundle-resume.md](internals/bundle-resume.md).
+
 ## Core Mechanisms Map
 
 | Leaf | What it documents | Primary source |
@@ -53,3 +72,16 @@ verification (D6) runs in `lib/wave.mjs`.
   the leaves above.
 - **Plan annotation format:** [`docs/conventions/plan-annotations.md`](conventions/plan-annotations.md).
 - **Codex failure policy:** [`docs/conventions/codex-failure-policy.md`](conventions/codex-failure-policy.md).
+- **Deferred follow-ups:** [deferred-followups.md](internals/deferred-followups.md) — tracked, intentionally-deferred review findings (so they read as known, not as fresh churn).
+- **Codex entrypoint skill:** [`skills/masterplan/SKILL.md`](../skills/masterplan/SKILL.md)
+  is the Codex-visible entrypoint — it loads `commands/masterplan.md` as the
+  behaviour source of truth, points Codex at existing `docs/masterplan/*/state.yml`
+  run bundles, and adapts tool names for the Codex host.
+- **Codex host suppression:** when masterplan runs *inside* Codex
+  (`/masterplan:masterplan`), §0 host-detect sets `codex_host_suppressed=true`:
+  it skips the Codex availability ping/scan/trust checks and treats effective
+  `codex_routing` / `codex_review` as off for that invocation **without**
+  rewriting persisted config, preventing recursive Codex-on-Codex dispatch.
+  Persisted defaults such as `autonomy`, `complexity`, and `parallelism` are
+  unaffected, and the suppressed run still scans existing run bundles. Routing
+  precedence detail: [wave-dispatch.md](internals/wave-dispatch.md).

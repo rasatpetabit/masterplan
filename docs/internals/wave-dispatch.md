@@ -100,6 +100,17 @@ before the wave commit.
 
 ---
 
+## API Error Handling
+
+Transient API errors (429 rate-limit, 5xx, transport timeout) are distinct from task blockers. The
+retry policy, backoff schedule, user-facing notices, and scope (Codex vs inline dispatch) are
+documented in `docs/conventions/api-retry-policy.md`.
+
+The key invariant: API retries happen *before* the blocker re-engagement ladder (CD-4). Only after
+the retries are exhausted does the task promote to a blocker and enter CD-4.
+
+---
+
 ## Blocker Re-Engagement (CD-4)
 
 A task that returns `status: 'failed'` or `status: 'blocked'` is surfaced to the user. CD-4 governs
