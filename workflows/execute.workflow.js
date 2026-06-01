@@ -113,21 +113,32 @@ function shq(s) {
   return `'${String(s).replace(/'/g, `'\\''`)}'`;
 }
 
-// Build the EXACT path-filtered diff command the reviewer must run. Path scoping is the whole point
-// of the hardening: Codex reviews ONLY this task's declared files, never a bare `git diff`/`git status`
-// of the read-only tree — which also holds unrelated uncommitted changes from sibling same-wave tasks
-// (file-disjoint by the planner invariant) and the user, a verdict-pollution + wrong-focus vector.
-// No commits happen mid-wave (agents never commit), so `git diff -- <files>` ≡ the task's edits since
-// its start SHA; the path filter, not a SHA range, is what isolates. Canonical shape — agents/
-// mp-codex-reviewer.md ("Scope the review to the task's diff") mirrors it; keep them synced.
+// Build the EXACT path-filtered diff command the reviewer must run, scoped to the task's DECLARED
+// files. Path scoping is the whole point of the hardening: Codex reviews ONLY this task's files, never
+// a bare `git diff`/`git status` of the read-only tree — which also holds unrelated uncommitted changes
+// from sibling same-wave tasks (file-disjoint by the planner invariant) and the user, a verdict-
+// pollution + wrong-focus vector. The command must capture the task's FULL change set, because agents
+// create-but-never-commit: `git diff HEAD` covers tracked edits (staged AND unstaged) vs HEAD, and
+// `ls-files --others` + `git diff --no-index /dev/null` renders each NEW UNTRACKED file (the common
+// case) as a full new-file diff — a plain `git diff` would show NEITHER staged nor untracked changes,
+// so a new-file task would review an EMPTY diff and read clean (the gap this fix closes). `|| true` on
+// the per-file `--no-index` keeps the one-liner exit-0 under a reviewer shell running `set -e`/
+// `pipefail` (`git diff --no-index` exits 1 when the files differ). MUST stay a single line (no embedded
+// newlines) — the reviewer agent runs it VERBATIM, and a multi-statement one-liner is exactly what an
+// LLM "helpfully" rewrites. Edge cases left unhandled BY DESIGN (low-urgency given planner-controlled
+// declared paths): filenames with embedded newlines, git pathspec magic (`:(exclude)…`), and renames
+// surfacing as add+delete. Canonical shape — agents/mp-codex-reviewer.md ("Scope the review to the
+// task's diff") mirrors it; keep them synced.
 function scopedDiffCmd(files) {
-  return files.length ? `git diff -- ${files.map(shq).join(' ')}` : null;
+  if (!files.length) return null;
+  const q = files.map(shq).join(' ');
+  return `git diff HEAD -- ${q}; git ls-files --others --exclude-standard -- ${q} | while IFS= read -r u; do printf '\\n=== untracked %s ===\\n' "$u"; git diff --no-index -- /dev/null "$u" || true; done`;
 }
 
 function reviewerPrompt(task, files) {
   const diffCmd = scopedDiffCmd(files);
   const scopeLine = diffCmd
-    ? `Scope the review to a PRE-BUILT diff. Run EXACTLY this command and review ONLY its output:\n    ${diffCmd}\nReview nothing outside that diff. Do NOT run a bare \`git diff\`/\`git status\`: the read-only tree also holds unrelated uncommitted changes (sibling same-wave tasks, user edits) that would pollute the verdict and point Codex at files this task never touched.`
+    ? `Scope the review to a PRE-BUILT diff of this task's DECLARED files (it already captures NEW/untracked files — you do NOT need \`git status\` to find them). Run this command EXACTLY as given, on ONE line — do not edit, split, reorder, or "simplify" it — and review ONLY its output:\n    ${diffCmd}\nReview nothing outside that diff. Do NOT run a bare \`git diff\`/\`git status\`: the read-only tree also holds unrelated uncommitted changes (sibling same-wave tasks, user edits) that would pollute the verdict and point Codex at files this task never touched.`
     : `No declared file scope for this task — review the task intent against the working tree, and open your findings with a NOTE that the review is UNSCOPED (no file list to diff).`;
   return [
     `Adversarially review masterplan task ${task.id} (Codex second opinion).`,
@@ -183,7 +194,11 @@ async function implement(t) {
 // re-derivation. That contract is why reviewerPrompt(task, …) can read task.id/description directly.
 async function review(item, task) {
   if (!reviewOn || item.digest?.status !== 'done') return item;
-  const files = Array.isArray(item.digest.files_changed) ? item.digest.files_changed : [];
+  // Scope the review to the task's DECLARED files (planner-set, trusted) — NOT the implementer's
+  // self-reported `files_changed`: an under-reported digest must not silently shrink the review
+  // window (the agent doc's "declared files" contract). Filter blanks so a stray '' can't degrade to
+  // a whole-tree pathspec (`git diff -- ''`), resurrecting the very verdict-pollution this scoping kills.
+  const files = (Array.isArray(task.files) ? task.files : []).filter((f) => typeof f === 'string' && f.trim());
   let verdict = 'inconclusive';
   let findings = 'NOTE — Codex review inconclusive (no output). verdict: inconclusive';
   try {

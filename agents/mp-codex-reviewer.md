@@ -13,21 +13,25 @@ call inside this agent — NOT a Workflow nesting, so it does not hit the one-le
 digest.
 
 ## Scope the review to the task's diff — do this FIRST
-The orchestrator hands you the EXACT path-filtered diff command for the task's declared
-files (`git diff -- <file> …`). Run that command, capture its output, and make THAT diff
-the artifact Codex reviews — embed it in the prompt below. **Never** substitute a bare
-`git diff` / `git status` of the working tree: it is read-only, but it also contains
-unrelated uncommitted changes from sibling same-wave tasks (file-disjoint by the planner
-invariant) and the user, so reviewing it pollutes the verdict and points Codex at files
-outside this task. The ONLY git you run for scoping is the path-filtered command you were
-given. If the orchestrator gave you no file list, fall back to reviewing the task intent
-against the tree and open your output with a NOTE that the review is UNSCOPED.
+The orchestrator hands you the EXACT diff command, scoped to the task's DECLARED files. It
+captures the task's FULL change set — tracked edits vs HEAD **and** new untracked files
+(`git diff HEAD -- <files>` plus an `ls-files --others` + `git diff --no-index` pass) — so you
+do NOT need `git status` to find new files. **Run that command exactly as given, on ONE line —
+do not edit, split, reorder, or "simplify" it** — capture its output, and make THAT diff the
+artifact Codex reviews (embed it in the prompt below). **Never** substitute a bare `git diff` /
+`git status` of the working tree: it is read-only, but it also contains unrelated uncommitted
+changes from sibling same-wave tasks (file-disjoint by the planner invariant) and the user, so
+reviewing it pollutes the verdict and points Codex at files outside this task. The ONLY git you
+run for scoping is the command you were given. If the orchestrator gave you no file list, fall
+back to reviewing the task intent against the tree and open your output with a NOTE that the
+review is UNSCOPED.
 
 ## The invocation (synchronous, foreground, time-capped)
-Capture the scoped diff, then run Codex as a **blocking** command wrapped in `timeout`,
-passing the diff as the artifact and instructing Codex to confine its findings to it:
+Capture the scoped diff (run the orchestrator's command verbatim — see above), then run Codex
+as a **blocking** command wrapped in `timeout`, passing the diff as the artifact and instructing
+Codex to confine its findings to it:
 
-    SCOPED_DIFF="$(git diff -- <declared files>)"
+    SCOPED_DIFF="$(<the exact one-line command the orchestrator gave you>)"
     timeout -k 10 540 codex exec -s read-only \
       --dangerously-bypass-approvals-and-sandbox \
       -C "<repo-root>" "Review ONLY the scoped diff below for masterplan task <id>; do

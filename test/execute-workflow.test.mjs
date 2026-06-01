@@ -105,22 +105,32 @@ test('malformed string args → throws (fail-loud, not a silent zero-task wave)'
 
 // --- SCOPED-DIFF HARDENING: the reviewer is handed a pre-built, path-filtered diff, never told to
 //     free-roam the working tree (which holds unrelated sibling-task + user dirty files → verdict
-//     pollution). reviewerPrompt now emits an EXACT `git diff -- <quoted files>` and a "review ONLY
-//     this" instruction; the old "find the wave's changes" free-roam phrasing is gone. ---
-test('review ON → reviewer prompt carries a pre-built scoped diff, not a free-roam git instruction', async () => {
+//     pollution). reviewerPrompt emits an EXACT command and a "review ONLY this" instruction; the old
+//     "find the wave's changes" free-roam phrasing is gone. The command (a) scopes off the task's
+//     DECLARED files — NOT the implementer's self-reported files_changed (an under-report must not
+//     shrink the review window), and (b) captures tracked (`git diff HEAD`) AND new untracked files
+//     (`ls-files --others` + `git diff --no-index`), so a create-but-never-commit task is not reviewed
+//     against an empty diff. ---
+test('review ON → reviewer prompt scopes a pre-built diff off DECLARED files (not the self-report), capturing tracked + untracked', async () => {
+  // DECLARED scope (the trusted authority). The implementer's self-report is deliberately made to
+  // DISAGREE — task 2 reports an unrelated file and omits its real ones — to prove the diff is built
+  // from task.files, never the digest.
+  const TASKS = [
+    { id: 1, description: 'greet', files: ['src/greet.mjs'], verify_commands: [], target: 'inline', reason: 'judgment' },
+    { id: 2, description: 'farewell', files: ['src/farewell.mjs', "src/o'brien.mjs"], verify_commands: [], target: 'inline', reason: 'judgment' },
+  ];
   const agentImpl = async (prompt, opts) => {
-    // Reviewer calls return text (ignored — we assert on the PROMPT). Implementer calls return a
-    // task-specific digest so the scoped diff is built from real, per-task file lists.
     if (opts.phase === 'Review') return 'NOTE — mock. verdict: clean';
     const isTask1 = /task 1\b/.test(prompt);
     return {
       task_id: isTask1 ? 1 : 2,
       status: 'done',
-      files_changed: isTask1 ? ['src/greet.mjs'] : ['src/farewell.mjs', "src/o'brien.mjs"],
+      // Self-report intentionally WRONG for task 2 (omits its declared files, names a phantom one).
+      files_changed: isTask1 ? ['src/greet.mjs'] : ['src/SELF-REPORT-WRONG.mjs'],
       summary: 'mock',
     };
   };
-  const args = { wave: 1, tasks: WAVE1, baseline: [], repoRoot: '/tmp/x', review: 'on' };
+  const args = { wave: 1, tasks: TASKS, baseline: [], repoRoot: '/tmp/x', review: 'on' };
   const { result, calls } = await runEngine(args, { agentImpl });
   assert.equal(result.summary.reviewOn, true);
   assert.equal(result.summary.reviewed, 2, 'both done tasks reviewed');
@@ -129,26 +139,39 @@ test('review ON → reviewer prompt carries a pre-built scoped diff, not a free-
   assert.equal(reviewPrompts.length, 2, 'one reviewer dispatch per done task');
   const joined = reviewPrompts.join('\n---\n');
 
-  // (a) the pre-built, path-filtered diff command — single file
-  assert.ok(joined.includes(`git diff -- 'src/greet.mjs'`), 'task 1 reviewer gets a scoped diff of its file');
-  // (b) multi-file + a single-quote in the path is shell-escaped (injection-safe)
-  assert.ok(joined.includes(`git diff -- 'src/farewell.mjs' 'src/o'\\''brien.mjs'`), 'multi-file + odd name single-quote-escaped');
-  // (c) the pollution trigger is GONE
+  // (a) tracked changes captured vs HEAD (a plain `git diff` would miss staged edits) — single file
+  assert.ok(joined.includes(`git diff HEAD -- 'src/greet.mjs'`), 'task 1 reviewer gets a HEAD-scoped diff of its declared file');
+  // (b) multi-file + a single-quote in the path is shell-escaped (injection-safe), from the DECLARED scope
+  assert.ok(joined.includes(`git diff HEAD -- 'src/farewell.mjs' 'src/o'\\''brien.mjs'`), 'declared multi-file scope, odd name single-quote-escaped');
+  // (c) the scope comes from declared task.files, NOT the implementer self-report
+  assert.ok(!/SELF-REPORT-WRONG/.test(joined), 'reviewer scope ignores files_changed; uses declared task.files');
+  // (d) new untracked files in scope are captured (create-but-never-commit is the common case)
+  assert.ok(/git ls-files --others --exclude-standard --/.test(joined), 'untracked files in scope are enumerated');
+  assert.ok(/git diff --no-index -- \/dev\/null/.test(joined), 'each untracked file rendered as a full new-file diff');
+  // (e) the one-liner stays exit-0 under a `set -e`/`pipefail` reviewer shell
+  assert.ok(/git diff --no-index -- \/dev\/null "\$u" \|\| true/.test(joined), 'per-file --no-index neutralized with || true');
+  // (f) the pollution trigger is GONE
   assert.ok(!/find the wave's changes/.test(joined), "the old free-roam 'find the changes' instruction is removed");
-  // (d) reviewer confined to the diff and warned off a whole-tree diff
+  // (g) reviewer confined to the diff and warned off a whole-tree diff
   assert.ok(/review ONLY its output/i.test(joined), 'reviewer confined to the scoped diff');
   assert.ok(/Do NOT run a bare `git diff`/i.test(joined), 'reviewer warned off the whole-tree diff');
+  // (h) the run-verbatim imperative is present (the compound one-liner must not be "simplified")
+  assert.ok(/EXACTLY as given, on ONE line/i.test(joined), 'reviewer told to run the command verbatim, one line');
 });
 
-test('review ON + no declared files → reviewer prompt falls back to an explicit UNSCOPED note', async () => {
+test('review ON + no DECLARED files → reviewer prompt falls back to an explicit UNSCOPED note (ignoring any self-report)', async () => {
+  // Empty DECLARED scope → UNSCOPED, even though the implementer self-reports a changed file: scope is
+  // declared-driven, so a self-report can neither create nor populate the diff window.
   const agentImpl = async (prompt, opts) => {
     if (opts.phase === 'Review') return 'NOTE — mock. verdict: clean';
-    return { task_id: 1, status: 'done', files_changed: [], summary: 'mock' };
+    return { task_id: 1, status: 'done', files_changed: ['src/sneaky.mjs'], summary: 'mock' };
   };
-  const args = { wave: 1, tasks: [WAVE1[0]], baseline: [], repoRoot: '/tmp/x', review: 'on' };
+  const TASK = { id: 1, description: 'greet', files: [], verify_commands: [], target: 'inline', reason: 'judgment' };
+  const args = { wave: 1, tasks: [TASK], baseline: [], repoRoot: '/tmp/x', review: 'on' };
   const { calls } = await runEngine(args, { agentImpl });
   const review = calls.agentPrompts.find((c) => c.opts.phase === 'Review');
   assert.ok(review, 'reviewer dispatched for the done task');
-  assert.ok(/UNSCOPED/.test(review.prompt), 'no file list → explicit UNSCOPED caveat');
-  assert.ok(!/git diff --/.test(review.prompt), 'no scoped diff command emitted when there are no files');
+  assert.ok(/UNSCOPED/.test(review.prompt), 'no declared file list → explicit UNSCOPED caveat');
+  assert.ok(!/git diff/.test(review.prompt), 'no scoped diff command emitted when there are no declared files');
+  assert.ok(!/sneaky/.test(review.prompt), 'self-reported files_changed does not leak into an UNSCOPED review');
 });
