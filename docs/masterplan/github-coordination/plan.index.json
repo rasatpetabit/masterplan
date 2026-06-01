@@ -1,0 +1,110 @@
+{
+  "schema_version": "6.0",
+  "tasks": [
+    {
+      "id": 1,
+      "description": "Design and implement lib/github-coord.mjs as a pure module (no fs, no network) exporting the ten spec section 7.3 functions: issueBodyForTask, parseIssueBody, dedupKey, findDuplicates, canTransition, validateClaimSettle, selectClaimableUnits, nextWaveToPublish, reconcileIntegration, mergeBatchPlan. Choose the machine-readable metadata-block serialization format and the label-state-machine edges. Add test/github-coord.test.mjs covering each (happy + edge): the issueBodyForTask/parseIssueBody round-trip (A2), already-claimed rejection plus same-assignee re-claim (A3), disjoint-file and wave-order selection (A4), and reconcile idempotence as a pure-state property (A6). Everything downstream imports this; nothing else can start until it lands.",
+      "wave": 0,
+      "files": [
+        "lib/github-coord.mjs",
+        "test/github-coord.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/github-coord.test.mjs"
+      ],
+      "codex": "no",
+      "spec_refs": ["7.3", "8#A1", "8#A2", "8#A3", "8#A4", "8#A6", "12"]
+    },
+    {
+      "id": 2,
+      "description": "Add an ephemeral out-of-tree bundle-path helper to lib/paths.mjs so followers can work in a temporary bundle, reusing the existing MASTERPLAN_RUNS_DIR-driven resolveBundleDir/resolveStatePath wiring. Cover the new helper in test/paths.test.mjs.",
+      "wave": 1,
+      "files": [
+        "lib/paths.mjs",
+        "test/paths.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/paths.test.mjs"
+      ],
+      "codex": "ok",
+      "spec_refs": ["7.1", "12"]
+    },
+    {
+      "id": 3,
+      "description": "Add the coordination state object (section 6 schema: mode, contract_ref, integration_branch, local_run_branch, current_wave, published_waves, base_sha_by_wave, issue_map) to lib/bundle.mjs so it round-trips through state.yml (write then read yields deep-equal). Cover the round-trip in test/bundle.test.mjs (A5). Keep the single-agent path unchanged when coordination is absent.",
+      "wave": 1,
+      "files": [
+        "lib/bundle.mjs",
+        "test/bundle.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/bundle.test.mjs"
+      ],
+      "codex": "ok",
+      "spec_refs": ["6", "7.4", "8#A5", "8#A9", "12"]
+    },
+    {
+      "id": 4,
+      "description": "Add the publish_needed and coordinate branches to decideNextAction in lib/resume.mjs (section 7.4): publish_needed when the run is coordinated and the current wave has unpublished pending tasks; coordinate when the current wave is fully published with tasks still pending (halt local dispatch, never dispatch_wave). Gate both behind the coordination state object so single-agent resume decisions stay byte-identical. Cover ordering (publish_needed before coordinate, neither firing for an uncoordinated run) in test/resume.test.mjs (A7, A9).",
+      "wave": 1,
+      "files": [
+        "lib/resume.mjs",
+        "test/resume.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/resume.test.mjs"
+      ],
+      "codex": "no",
+      "spec_refs": ["7.4", "8#A7", "8#A9"]
+    },
+    {
+      "id": 5,
+      "description": "Implement the doctor coord-drift check: new lib/doctor/coord-drift.mjs that, for a coordinated run, flags (WARN) done-but-still-open issues, mp:claimed issues with no PR (orphan claims), and published_waves/issue_map drift vs the plan; and returns SKIP when no coordinated bundle exists so node bin/doctor.mjs stays exit-0 on the live repo. Wire it into bin/doctor.mjs. Update test/doctor.test.mjs: extend the explicit expected[] check-name array from 11 to 12 (asserted with assert.equal(names.length, expected.length)) AND add the matching fixture dir for the new check. These edits are one coupling and all live in this task.",
+      "wave": 1,
+      "files": [
+        "lib/doctor/coord-drift.mjs",
+        "bin/doctor.mjs",
+        "test/doctor.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/doctor.test.mjs",
+        "node bin/doctor.mjs"
+      ],
+      "codex": "no",
+      "spec_refs": ["8#A8", "9#R4", "12"]
+    },
+    {
+      "id": 6,
+      "description": "Add the six fs-only mp subcommands to bin/masterplan.mjs (gh-issue-body, parse-issue, validate-claim, select-claimable, reconcile-integration, coord-status) wrapping the pure lib/github-coord.mjs logic and reading/writing the coordination object via lib/bundle.mjs. Keep bin/masterplan.mjs strictly fs-only: no git, no gh (the shell supplies gh JSON on stdin/args, exactly like mp pr-summary). Cover the subcommands in test/bin-masterplan.test.mjs, including the gh-issue-body/parse-issue CLI round-trip (A2), validate-claim accept/reject (A3), select-claimable disjoint-file and wave-order guarantees (A4), and reconcile-integration idempotence (A6).",
+      "wave": 2,
+      "files": [
+        "bin/masterplan.mjs",
+        "test/bin-masterplan.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/bin-masterplan.test.mjs"
+      ],
+      "codex": "no",
+      "spec_refs": ["5", "7.3", "8#A2", "8#A3", "8#A4", "8#A6", "12"]
+    },
+    {
+      "id": 7,
+      "description": "Design and wire the publish/follow shell sequencing into commands/masterplan.md AND sync the two new verbs across every prose surface + the hygiene assertion in ONE task (they are edit-coupled: the moment the Reserved verbs line gains publish/follow, parseReservedVerbs returns 16 and the hardcoded RESERVED_VERBS assertion must change in the same step). In commands/masterplan.md: the publish flow gh/git side effects (section 7.1, including provisioning the mp-coord contract ref + mp-int integration branch on first publish), the per-PR integration-merge loop with re-check + diff-scope guard + conflict-abort (section 7.2), the publish and follow verb bodies, the frontmatter description (line 2), the section 1 reserved-verbs list + arg-precedence, and the section 3 routing table. Choose how the merge-conflict abort surfaces to the operator. Then sync README.md verb table, docs/verbs.md, and update the deepEqual RESERVED_VERBS array (11->14 existing + publish + follow) in test/publish-hygiene.test.mjs. All git/gh side effects live here; bin stays fs-only. Run the full suite and doctor to prove the whole change set integrates and the single-agent path is unbroken (A9, A10).",
+      "wave": 3,
+      "files": [
+        "commands/masterplan.md",
+        "README.md",
+        "docs/verbs.md",
+        "test/publish-hygiene.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/publish-hygiene.test.mjs",
+        "grep -nE 'Reserved verbs:.*(publish|follow)' commands/masterplan.md",
+        "node --test test/*.test.mjs",
+        "node bin/doctor.mjs"
+      ],
+      "codex": "no",
+      "spec_refs": ["7.1", "7.2", "11", "8#A9", "8#A10", "9#R2"]
+    }
+  ]
+}

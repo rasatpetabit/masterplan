@@ -187,6 +187,8 @@ All verbs route through the single `/masterplan <verb>` command. v8 ships no per
 | `next` | Route to the next actionable in-progress bundle |
 | `verbs` | Print this verb list |
 | `retro` | **Deprecated alias** → `finish --retro-only` |
+| `publish` | Lead → GitHub: project the current wave onto GitHub issues + provision refs (spec §7.1) |
+| `follow` | Follower session: claim one task, build it, and open a PR against the integration branch (spec §7.1) |
 | *(bare)* | Resume controller — re-reads active bundle and continues |
 
 ---

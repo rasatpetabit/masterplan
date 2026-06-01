@@ -1,5 +1,5 @@
 ---
-description: "Resumable orchestrator for /masterplan: brainstorm→plan→execute on durable run bundles. Verbs: full, brainstorm, plan, execute, finish, retro, import, doctor, status, validate, stats, clean, next, verbs."
+description: "Resumable orchestrator for /masterplan: brainstorm→plan→execute on durable run bundles. Verbs: full, brainstorm, plan, execute, finish, retro, import, doctor, status, validate, stats, clean, next, verbs, publish, follow."
 ---
 
 # /masterplan — thin resumable shell (v8)
@@ -38,7 +38,7 @@ exit, read stderr and act on it.
 ## 1 — Parse the verb
 
 Reserved verbs: `full, brainstorm, plan, execute, finish, retro, import, doctor, status, validate,
-stats, clean, next, verbs`. Precedence:
+stats, clean, next, verbs, publish, follow`. Precedence:
 
 0. **No args** → the **resume controller** (§2).
 1. First token is a reserved verb → that verb; consume it, the rest are its args.
@@ -350,6 +350,8 @@ the orchestrator root rather than duplicated here.
 | `clean` | Archive (`mp set-status --state=<path> --status=archived`) / prune completed bundles. **PR-aware:** before archiving a bundle whose branch has an open PR, AUQ-**warn** (`bundle <slug>: branch has open PR #<n> — archive anyway?`) — warn, don't hard-block (archiving doesn't touch the PR; the user may still want the bundle gone). |
 | `next` | `mp decide` → describe the next action without executing it. **PR-aware:** if the branch has an open PR, append the **advisory** `↪ Open PR #<n> ready — merge on GitHub or via /masterplan finish` (advisory only — never a `decide` action, never a blocking AUQ; this is how "a PR to merge" enters the what-do-I-do-next routine without becoming a per-resume nag). |
 | `verbs` | Print the reserved-verb list above. |
+| `publish` | **Lead → GitHub coordination** (§7.1 — spec §7). Preflight (`mp coord-status --fail-if-unpublishable`), then provision refs on first use (idempotent): synthesize/push the immutable contract ref `mp-coord/<slug>/<plan_hash>` (tier-1: `spec.md`/`plan.md`/`plan.index.json` only) via `git commit-tree` + `git update-ref` + `git push`; create the integration branch `mp-int/<slug>` from `base_sha` with the bundle dir excluded (`git commit-tree` on a tree that drops `docs/masterplan/<slug>/`) + `git push --no-verify`. Then for each task in the current wave with no existing issue (dedup by `{run_slug, task_id}` — `gh issue list --search "run_slug:<slug>" --label "mp:run-<slug>" --limit 200 | mp parse-issue | mp select-claimable`): `gh issue create --title "T<id>: <title>" --body "$(mp gh-issue-body --task-id=<id> --contract-ref=<ref> --integration-branch=<int-branch> --base-sha=<sha> --plan-hash=<hash>)" --label "mp:run-<slug>,mp:wave-<N>,mp:open"`. On unexpected duplicate (two issues, same key — `mp validate-claim` detects): fail loud, do NOT silently update. Pin `contract_ref` + `base_sha` into `state.coordination` via `mp set-coord --state=<path> --wave=N --base-sha=<sha> --contract-ref=<ref> --integration-branch=<int-branch>` + `mp event --state=<path> --type=wave_published --wave=N`. Commit the bundle. Publish wave N+1 only after wave N is fully merged (guard via `mp coord-status`). |
+| `follow` | **Follower session → claim + deliver one task** (§7.1 — spec §7). 1. Preflight (`mp coord-status --fail-if-unconfigured`). 2. **Claim**: `gh issue list --label "mp:open,mp:run-<slug>" --limit 200` → `mp select-claimable --deps-from-coord-status` to pick one; `gh issue edit <n> --add-assignee @me`; `gh label add mp:claimed`; re-read (`gh issue view <n> --json assignees,labels`) + `mp validate-claim --actor=@me` → won/lost. On lost settle: release (`gh issue edit <n> --remove-assignee @me`; `gh label remove mp:claimed`; `gh label add mp:open`) and retry. 3. **Build**: fetch contract (`git fetch origin refs/mp-coord/<slug>/<plan_hash>:refs/mp-coord/<slug>/<plan_hash>`); create ephemeral bundle outside tracked `docs/masterplan/` (e.g. `.git/mp-coord/<slug>/t<id>/state.yml`) scoped to the single claimed task; cut branch `mp/<slug>/t<id>` from `mp-int/<slug>` at `base_sha`; dispatch the existing `mp-implementer` agent + D6 `verify-scope` + `verify_commands`. 4. **Deliver**: on verify pass — `gh pr create --base mp-int/<slug> --head mp/<slug>/t<id> --title "T<id>: <title>" --body "Closes #<n>"` + `gh label remove mp:claimed` + `gh label add mp:pr-open`. On verify failure — comment on the issue (`gh issue comment <n> --body "Verify failed: <summary>"`); release the claim (`gh label remove mp:claimed`; `gh label add mp:open`). Discard the ephemeral bundle — the lead's canonical state.yml is the source of truth. |
 
 **PR probe (`status` · `next` · `clean` — report-only, never auto-merge).** These three verbs check
 for an open PR on the run's branch. Run **shell-side** (the established split — the shell owns git/`gh`,

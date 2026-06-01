@@ -1,4 +1,4 @@
-// test/doctor.test.mjs — v8 L4 doctor: dispatcher + all 11 check modules.
+// test/doctor.test.mjs — v8 L4 doctor: dispatcher + all 12 check modules.
 //
 // The slice covers all three opts shapes deliberately: scalar-cap (pure-bundle, no opts),
 // worktree-integrity (git via injected gitExec), codex-auth (host path + injected homeDir/now).
@@ -25,6 +25,7 @@ import { check as staleLock } from '../lib/doctor/stale-lock.mjs';
 import { check as staleCodexTask } from '../lib/doctor/stale-codex-task.mjs';
 import { check as pluginRegistryDrift } from '../lib/doctor/plugin-registry-drift.mjs';
 import { check as planIndexSchema } from '../lib/doctor/plan-index-schema.mjs';
+import { check as coordDrift } from '../lib/doctor/coord-drift.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const FX = path.join(here, 'fixtures', 'doctor');
@@ -594,13 +595,63 @@ test('plan-index-schema: SKIP for a legacy pre-6 index (migrate\'s concern, not 
   assert.equal(maxSeverity(findings), 'SKIP', JSON.stringify(findings));
 });
 
-// ---- dispatcher: all 11 modules auto-discovered ----------------------------
+// ---- coord-drift (plan-scoped, coordination state drift) --------------------
 
-test('dispatcher: discovers all 11 check modules', async () => {
+test('coord-drift: fixtures match dir-prefix severity', async (t) => {
+  for (const sc of scenarios('coord-drift')) {
+    await t.test(sc, () => {
+      const findings = coordDrift(path.join(FX, 'coord-drift', sc));
+      assertFindingShape(findings);
+      assert.equal(maxSeverity(findings), expectedSeverity(sc), JSON.stringify(findings));
+    });
+  }
+});
+
+test('coord-drift: SKIP when no run bundles', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-cd-'));
+  const findings = coordDrift(tmp);
+  assertFindingShape(findings);
+  assert.equal(maxSeverity(findings), 'SKIP');
+});
+
+test('coord-drift: SKIP when bundles exist but none are coordinated', () => {
+  const findings = coordDrift(path.join(FX, 'coord-drift', 'skip-no-coord'));
+  assertFindingShape(findings);
+  assert.equal(maxSeverity(findings), 'SKIP');
+  assert.match(findings[0].summary, /no coordinated run bundles/);
+});
+
+test('coord-drift: WARN for orphan claim (claimed with no PR)', () => {
+  const findings = coordDrift(path.join(FX, 'coord-drift', 'warn-orphan-claim'));
+  assertFindingShape(findings);
+  assert.equal(maxSeverity(findings), 'WARN', JSON.stringify(findings));
+  const warn = findings.find((f) => f.severity === 'WARN');
+  assert.ok(warn, 'expected a WARN finding');
+  assert.match(warn.summary, /orphan claim/);
+});
+
+test('coord-drift: WARN for done-but-not-merged task', () => {
+  const findings = coordDrift(path.join(FX, 'coord-drift', 'warn-done-but-open'));
+  assertFindingShape(findings);
+  assert.equal(maxSeverity(findings), 'WARN', JSON.stringify(findings));
+  const warn = findings.find((f) => f.severity === 'WARN');
+  assert.ok(warn, 'expected a WARN finding');
+  assert.match(warn.summary, /locally done but issue_map status/);
+});
+
+test('coord-drift: PASS for a clean coordinated bundle', () => {
+  const findings = coordDrift(path.join(FX, 'coord-drift', 'pass-clean'));
+  assertFindingShape(findings);
+  assert.equal(maxSeverity(findings), 'PASS', JSON.stringify(findings));
+});
+
+// ---- dispatcher: all 12 modules auto-discovered ----------------------------
+
+test('dispatcher: discovers all 12 check modules', async () => {
   const checks = await discoverChecks(path.join(here, '..', 'lib', 'doctor'));
   const names = checks.map((c) => c.name);
   const expected = [
-    'codex-auth', 'codex-plugin-presence', 'index-staleness', 'legacy-bundle',
+    'codex-auth', 'codex-plugin-presence', 'coord-drift', 'index-staleness', 'legacy-bundle',
     'plan-index-schema', 'plugin-registry-drift', 'scalar-cap', 'stale-codex-task',
     'stale-lock', 'state-schema', 'worktree-integrity',
   ];

@@ -1,0 +1,5 @@
+schema_version: 8
+slug: p1
+status: in-progress
+phase: execute
+tasks: [{"id":1,"status":"pending","wave":0,"files":["a.js"]}]
