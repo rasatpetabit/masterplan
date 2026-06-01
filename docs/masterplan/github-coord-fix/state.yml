@@ -1,7 +1,7 @@
 ---
 schema_version: 8
 slug: github-coord-fix
-status: in-progress
+status: archived
 phase: execute
 topic: "Repair github-coordination publish/follow (§7) wiring so publish/follow execute end-to-end (9 bin↔orchestrator gaps)"
 complexity: medium
