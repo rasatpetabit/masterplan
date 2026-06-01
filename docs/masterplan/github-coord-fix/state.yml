@@ -1,0 +1,18 @@
+---
+schema_version: 8
+slug: github-coord-fix
+status: in-progress
+phase: brainstorm
+topic: "Repair github-coordination publish/follow (§7) wiring so publish/follow execute end-to-end (9 bin↔orchestrator gaps)"
+complexity: medium
+complexity_source: null
+autonomy: loose
+planning_mode: auto
+created_at: 2026-06-01T04:38:07.761Z
+predecessor_transcript: null
+spec_path: docs/masterplan/github-coord-fix/spec.md
+plan_path: docs/masterplan/github-coord-fix/plan.md
+plan_index_path: docs/masterplan/github-coord-fix/plan.index.json
+tasks: []
+active_run: null
+pending_gate: null
