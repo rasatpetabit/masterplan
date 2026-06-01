@@ -616,3 +616,393 @@ test('backfill-waves: a present-but-string wave is caught and named (LOW: messag
   assert.notEqual(r.status, 0);
   assert.match(r.stderr, /non-integer wave value/); // the clarified message names this cause
 });
+
+// ============================================================================
+// GitHub coordination CLI subcommands (§7.3) — task 6 additions
+// ============================================================================
+
+// ---- helpers ----
+function makeIssueFixture(taskId, labels, depsOverride) {
+  // Build a minimal issue object with a metadata-bearing body, suitable for CLI input.
+  // The body encodes the given taskId + deps; callers supply labels.
+  const task = { id: taskId, deps: depsOverride ?? [] };
+  // Build the body by calling gh-issue-body via the CLI (A2 round-trip), so the helper
+  // uses the same serialization path under test.
+  const bodyResult = run(['gh-issue-body',
+    `--task=${JSON.stringify(task)}`,
+    '--run-slug=test-run',
+  ]);
+  if (bodyResult.status !== 0) throw new Error(`makeIssueFixture failed: ${bodyResult.stderr}`);
+  return { body: bodyResult.stdout.trimEnd(), labels };
+}
+
+// ---- A2: gh-issue-body / parse-issue CLI round-trip ----
+test('A2 CLI: gh-issue-body emits a markdown body containing the task metadata block', () => {
+  const task = { id: 7, description: 'Implement coordinator', files: ['lib/github-coord.mjs'], verify_commands: ['node --test'], deps: ['3', '4'] };
+  const r = run(['gh-issue-body',
+    `--task=${JSON.stringify(task)}`,
+    '--run-slug=my-run',
+    '--contract-ref=mp-coord/my-run/abc123',
+    '--integration-branch=mp-int/my-run',
+    '--base-sha=deadbeef',
+    '--plan-hash=abc123',
+    '--wave=2',
+  ]);
+  assert.equal(r.status, 0);
+  assert.match(r.stdout, /T7: Implement coordinator/);
+  assert.match(r.stdout, /<!-- mp-coord-meta/);
+  assert.match(r.stdout, /mp-coord-meta -->/);
+  assert.match(r.stdout, /"run_slug":"my-run"/);
+  assert.match(r.stdout, /"task_id":"7"/);
+  assert.match(r.stdout, /"wave":2/);
+});
+
+test('A2 CLI: parse-issue reads body from stdin and returns parsed metadata JSON', () => {
+  const task = { id: 42, description: 'parse me', files: ['x.mjs'], verify_commands: ['true'], deps: ['1'] };
+  const bodyR = run(['gh-issue-body', `--task=${JSON.stringify(task)}`, '--run-slug=slugA', '--plan-hash=hash1', '--base-sha=sha1', '--wave=3']);
+  assert.equal(bodyR.status, 0);
+  // pipe the body back through parse-issue
+  const parseR = run(['parse-issue'], { input: bodyR.stdout });
+  assert.equal(parseR.status, 0);
+  const meta = JSON.parse(parseR.stdout);
+  assert.equal(meta.run_slug, 'slugA');
+  assert.equal(meta.task_id, '42');
+  assert.equal(meta.plan_hash, 'hash1');
+  assert.equal(meta.base_sha, 'sha1');
+  assert.equal(meta.wave, 3);
+  assert.deepEqual(meta.files, ['x.mjs']);
+  assert.deepEqual(meta.verify_commands, ['true']);
+  assert.deepEqual(meta.deps, ['1']);
+});
+
+test('A2 CLI: gh-issue-body/parse-issue round-trip preserves all fields (end-to-end A2)', () => {
+  const task = { id: 99, description: 'round-trip', files: ['a.mjs', 'b.mjs'], verify_commands: ['npm test', 'true'], deps: ['10', '11'] };
+  const opts = { runSlug: 'rt-run', contractRef: 'mp-coord/rt-run/xyz', integrationBranch: 'mp-int/rt-run', baseSha: 'cafebabe', planHash: 'hashXYZ', wave: 5 };
+  const bodyR = run(['gh-issue-body',
+    `--task=${JSON.stringify(task)}`,
+    `--run-slug=${opts.runSlug}`,
+    `--contract-ref=${opts.contractRef}`,
+    `--integration-branch=${opts.integrationBranch}`,
+    `--base-sha=${opts.baseSha}`,
+    `--plan-hash=${opts.planHash}`,
+    `--wave=${opts.wave}`,
+  ]);
+  assert.equal(bodyR.status, 0);
+  const parseR = run(['parse-issue'], { input: bodyR.stdout });
+  assert.equal(parseR.status, 0);
+  const meta = JSON.parse(parseR.stdout);
+  assert.equal(meta.run_slug, opts.runSlug);
+  assert.equal(meta.task_id, '99');
+  assert.equal(meta.contract_ref, opts.contractRef);
+  assert.equal(meta.integration_branch, opts.integrationBranch);
+  assert.equal(meta.base_sha, opts.baseSha);
+  assert.equal(meta.plan_hash, opts.planHash);
+  assert.equal(meta.wave, opts.wave);
+  assert.deepEqual(meta.files, task.files);
+  assert.deepEqual(meta.verify_commands, task.verify_commands);
+  assert.deepEqual(meta.deps, task.deps);
+});
+
+test('A2 CLI: gh-issue-body fails without --task; parse-issue fails on body without metadata block', () => {
+  // missing --task
+  const noTask = run(['gh-issue-body', '--run-slug=x']);
+  assert.notEqual(noTask.status, 0);
+  assert.match(noTask.stderr, /missing required --task/);
+  // parse-issue on a plain body
+  const noMeta = run(['parse-issue'], { input: 'just a plain issue body with no metadata\n' });
+  assert.notEqual(noMeta.status, 0);
+  assert.match(noMeta.stderr, /no mp-coord-meta block/);
+});
+
+// ---- A3: validate-claim accept/reject ----
+test('A3 CLI: validate-claim returns won for sole assignee + mp:claimed label + no PRs', () => {
+  const issue = { assignees: ['alice'], labels: ['mp:claimed'], state: 'open' };
+  const r = run(['validate-claim', `--issue=${JSON.stringify(issue)}`, '--actor=alice', '--prs=[]']);
+  assert.equal(r.status, 0);
+  assert.equal(JSON.parse(r.stdout).result, 'won');
+});
+
+test('A3 CLI: validate-claim returns lost when another assignee holds the claim', () => {
+  const issue = { assignees: ['bob'], labels: ['mp:claimed'], state: 'open' };
+  const r = run(['validate-claim', `--issue=${JSON.stringify(issue)}`, '--actor=alice']);
+  assert.equal(r.status, 0);
+  assert.equal(JSON.parse(r.stdout).result, 'lost');
+});
+
+test('A3 CLI: validate-claim returns lost when label is mp:open (not yet claimed)', () => {
+  const issue = { assignees: ['alice'], labels: ['mp:open'] };
+  const r = run(['validate-claim', `--issue=${JSON.stringify(issue)}`, '--actor=alice']);
+  assert.equal(r.status, 0);
+  assert.equal(JSON.parse(r.stdout).result, 'lost');
+});
+
+test('A3 CLI: validate-claim returns lost when an existing PR is present', () => {
+  const issue = { assignees: ['alice'], labels: ['mp:claimed'], state: 'open' };
+  const prs = [{ number: 42, state: 'open' }];
+  const r = run(['validate-claim', `--issue=${JSON.stringify(issue)}`, '--actor=alice', `--prs=${JSON.stringify(prs)}`]);
+  assert.equal(r.status, 0);
+  assert.equal(JSON.parse(r.stdout).result, 'lost');
+});
+
+test('A3 CLI: validate-claim returns lost for multiple assignees (race condition)', () => {
+  const issue = { assignees: ['alice', 'bob'], labels: ['mp:claimed'] };
+  const r = run(['validate-claim', `--issue=${JSON.stringify(issue)}`, '--actor=alice']);
+  assert.equal(r.status, 0);
+  assert.equal(JSON.parse(r.stdout).result, 'lost');
+});
+
+test('A3 CLI: validate-claim same-assignee re-claim returns won (idempotent recover)', () => {
+  // alice re-claims after a crash — sole assignee, mp:claimed present, no existing PRs
+  const issue = { assignees: ['alice'], labels: ['mp:claimed'], state: 'open' };
+  const r = run(['validate-claim', `--issue=${JSON.stringify(issue)}`, '--actor=alice', '--prs=[]']);
+  assert.equal(r.status, 0);
+  assert.equal(JSON.parse(r.stdout).result, 'won');
+});
+
+test('A3 CLI: validate-claim fails on missing required flags', () => {
+  const issue = { assignees: ['alice'], labels: ['mp:claimed'] };
+  const noActor = run(['validate-claim', `--issue=${JSON.stringify(issue)}`]);
+  assert.notEqual(noActor.status, 0);
+  assert.match(noActor.stderr, /missing required --actor/);
+  const noIssue = run(['validate-claim', '--actor=alice']);
+  assert.notEqual(noIssue.status, 0);
+  assert.match(noIssue.stderr, /missing required --issue/);
+});
+
+// ---- A4: select-claimable disjoint-file and wave-order (dep satisfaction) guarantees ----
+test('A4 CLI: select-claimable returns all open issues with no deps and no merged tasks', () => {
+  const issues = [
+    makeIssueFixture(1, ['mp:open']),
+    makeIssueFixture(2, ['mp:open']),
+  ];
+  const r = run(['select-claimable', `--issues=${JSON.stringify(issues)}`, '--merged=[]']);
+  assert.equal(r.status, 0);
+  const { claimable } = JSON.parse(r.stdout);
+  assert.equal(claimable.length, 2);
+});
+
+test('A4 CLI: select-claimable excludes claimed/pr-open/closed issues', () => {
+  const issues = [
+    makeIssueFixture(1, ['mp:open']),
+    makeIssueFixture(2, ['mp:claimed']),
+    makeIssueFixture(3, ['mp:pr-open']),
+    makeIssueFixture(4, ['mp:closed']),
+  ];
+  const r = run(['select-claimable', `--issues=${JSON.stringify(issues)}`]);
+  assert.equal(r.status, 0);
+  const { claimable } = JSON.parse(r.stdout);
+  assert.equal(claimable.length, 1);
+  // Only task 1 (mp:open) is claimable
+  const parseR = run(['parse-issue'], { input: claimable[0].body });
+  assert.equal(JSON.parse(parseR.stdout).task_id, '1');
+});
+
+test('A4 CLI: wave-order guarantee — issues with unsatisfied deps are gated out', () => {
+  // Issues for tasks in a later wave with deps on earlier wave tasks.
+  // File-disjointness is a plan-build property; we assert dep-gating enforces wave ordering.
+  const issues = [
+    makeIssueFixture(10, ['mp:open'], ['5', '6']), // deps 5 and 6 not yet merged
+    makeIssueFixture(11, ['mp:open'], ['5']),       // dep 5 not merged
+    makeIssueFixture(12, ['mp:open'], []),           // no deps → claimable regardless of wave
+  ];
+  // No merged tasks → only task 12 (no deps) is claimable
+  const blocked = run(['select-claimable', `--issues=${JSON.stringify(issues)}`, '--merged=[]']);
+  assert.equal(blocked.status, 0);
+  const blockedResult = JSON.parse(blocked.stdout);
+  assert.equal(blockedResult.claimable.length, 1);
+  const bMeta = JSON.parse(run(['parse-issue'], { input: blockedResult.claimable[0].body }).stdout);
+  assert.equal(bMeta.task_id, '12');
+
+  // Once deps 5 and 6 are merged, both tasks 10 and 11 become claimable
+  const satisfied = run(['select-claimable', `--issues=${JSON.stringify(issues)}`, `--merged=${JSON.stringify(['5', '6'])}`]);
+  assert.equal(satisfied.status, 0);
+  assert.equal(JSON.parse(satisfied.stdout).claimable.length, 3);
+});
+
+test('A4 CLI: disjoint-file guarantee — two wave-0 tasks with distinct files are both claimable concurrently', () => {
+  // File disjointness is a plan-build property (§6) — NOT computed by selectClaimableUnits.
+  // This test verifies that the CLI returns both issues when no deps exist, confirming that
+  // concurrent claiming is possible for disjoint-file tasks (the plan builder's guarantee survives
+  // the selection step unchanged).
+  const issues = [
+    { ...makeIssueFixture(20, ['mp:open']), files: ['lib/a.mjs'] }, // disjoint file set
+    { ...makeIssueFixture(21, ['mp:open']), files: ['lib/b.mjs'] }, // disjoint file set
+  ];
+  const r = run(['select-claimable', `--issues=${JSON.stringify(issues)}`, '--merged=[]']);
+  assert.equal(r.status, 0);
+  const { claimable } = JSON.parse(r.stdout);
+  // Both are claimable — disjoint files means no concurrency risk
+  assert.equal(claimable.length, 2);
+});
+
+test('A4 CLI: --plan-deps override wins over body deps', () => {
+  // Issue body says dep '99' (not merged), but planIndexDeps says no deps for task 30
+  const issues = [makeIssueFixture(30, ['mp:open'], ['99'])]; // body says dep 99
+  const planDeps = { '30': [] }; // override: no deps
+  const r = run(['select-claimable', `--issues=${JSON.stringify(issues)}`, `--plan-deps=${JSON.stringify(planDeps)}`]);
+  assert.equal(r.status, 0);
+  assert.equal(JSON.parse(r.stdout).claimable.length, 1, '--plan-deps override should make the issue claimable');
+});
+
+test('A4 CLI: select-claimable returns empty on non-array or empty issues', () => {
+  const r = run(['select-claimable', '--issues=[]']);
+  assert.equal(r.status, 0);
+  assert.deepEqual(JSON.parse(r.stdout).claimable, []);
+});
+
+// ---- A6: reconcile-integration idempotence ----
+
+function makeGhIssueForReconcile(taskId, merged, prNumber, mergeSha) {
+  // Build a gh-style issue object whose body has the mp-coord-meta block for the given taskId.
+  const bodyR = run(['gh-issue-body', `--task=${JSON.stringify({ id: taskId })}`, '--run-slug=run']);
+  if (bodyR.status !== 0) throw new Error(`makeGhIssueForReconcile failed: ${bodyR.stderr}`);
+  return {
+    number: 100 + Number(taskId),
+    body: bodyR.stdout.trimEnd(),
+    state: merged ? 'closed' : 'open',
+    labels: merged ? ['mp:closed'] : ['mp:pr-open'],
+    pr: merged
+      ? { merged: true, number: prNumber, merge_sha: mergeSha }
+      : { merged: false, number: prNumber },
+  };
+}
+
+test('A6 CLI: reconcile-integration emits mark_done for merged-but-not-local-done task', () => {
+  const p = tmpBundle(v8({
+    tasks: [
+      { id: 1, status: 'pending', wave: 0, files: ['a.txt'] },
+      { id: 2, status: 'pending', wave: 1, files: ['b.txt'] },
+    ],
+    coordination: {
+      issue_map: {
+        '1': { issue: 101, pr: 201, merge_sha: null, status: 'pr-open' },
+        '2': { issue: 102, pr: 202, merge_sha: null, status: 'pr-open' },
+      },
+    },
+  }));
+  const ghIssues = [
+    makeGhIssueForReconcile('1', true, 201, 'sha-abc'),  // merged
+    makeGhIssueForReconcile('2', false, 202, null),       // not merged
+  ];
+  const r = run(['reconcile-integration', `--state=${p}`], { input: JSON.stringify(ghIssues) });
+  assert.equal(r.status, 0);
+  const { actions } = JSON.parse(r.stdout);
+  const markDone = actions.filter((a) => a.action === 'mark_done');
+  assert.equal(markDone.length, 1);
+  assert.equal(markDone[0].task_id, '1');
+  assert.equal(markDone[0].merge_sha, 'sha-abc');
+  // read-only: the bundle's task statuses are unchanged
+  const state = read(p);
+  assert.deepEqual(state.tasks.map((t) => t.status), ['pending', 'pending']);
+});
+
+test('A6 CLI: reconcile-integration emits surface for locally-done-but-not-merged task', () => {
+  const p = tmpBundle(v8({
+    tasks: [
+      { id: 1, status: 'done', wave: 0, files: ['a.txt'] },  // done locally
+      { id: 2, status: 'pending', wave: 1, files: ['b.txt'] },
+    ],
+    coordination: {
+      issue_map: {
+        '1': { issue: 101, pr: 201, merge_sha: null, status: 'pr-open' },
+        '2': { issue: 102, pr: 202, merge_sha: null, status: 'pr-open' },
+      },
+    },
+  }));
+  const ghIssues = [
+    makeGhIssueForReconcile('1', false, 201, null),  // NOT merged on GitHub
+    makeGhIssueForReconcile('2', false, 202, null),
+  ];
+  const r = run(['reconcile-integration', `--state=${p}`], { input: JSON.stringify(ghIssues) });
+  assert.equal(r.status, 0);
+  const { actions } = JSON.parse(r.stdout);
+  const surface = actions.filter((a) => a.action === 'surface');
+  assert.equal(surface.length, 1);
+  assert.equal(surface[0].task_id, '1');
+  assert.equal(surface[0].reason, 'locally-done-but-not-merged');
+});
+
+test('A6 CLI: reconcile-integration idempotence — applying mark_done then re-running yields zero new mark_done', () => {
+  const p = tmpBundle(v8({
+    tasks: [
+      { id: 1, status: 'pending', wave: 0, files: ['a.txt'] },
+      { id: 2, status: 'pending', wave: 1, files: ['b.txt'] },
+    ],
+    coordination: {
+      issue_map: {
+        '1': { issue: 101, pr: 201, merge_sha: null, status: 'pr-open' },
+        '2': { issue: 102, pr: 202, merge_sha: null, status: 'pr-open' },
+      },
+    },
+  }));
+  const ghIssues = [
+    makeGhIssueForReconcile('1', true, 201, 'sha-abc'),
+    makeGhIssueForReconcile('2', true, 202, 'sha-def'),
+  ];
+  // First reconcile: both tasks need mark_done
+  const r1 = run(['reconcile-integration', `--state=${p}`], { input: JSON.stringify(ghIssues) });
+  assert.equal(r1.status, 0);
+  const actions1 = JSON.parse(r1.stdout).actions.filter((a) => a.action === 'mark_done');
+  assert.equal(actions1.length, 2);
+
+  // Apply the mark_done actions via mark-task (the shell would do this)
+  for (const action of actions1) {
+    const mr = run(['mark-task', `--state=${p}`, `--id=${action.task_id}`, '--status=done']);
+    assert.equal(mr.status, 0);
+  }
+
+  // Second reconcile: same GitHub state, tasks now done → zero new mark_done
+  const r2 = run(['reconcile-integration', `--state=${p}`], { input: JSON.stringify(ghIssues) });
+  assert.equal(r2.status, 0);
+  const markDone2 = JSON.parse(r2.stdout).actions.filter((a) => a.action === 'mark_done');
+  assert.equal(markDone2.length, 0, 'idempotent: no new mark_done actions after applying them');
+});
+
+test('A6 CLI: reconcile-integration emits no actions when local and GitHub agree (both done)', () => {
+  const p = tmpBundle(v8({
+    tasks: [{ id: 1, status: 'done', wave: 0, files: ['a.txt'] }],
+    coordination: {
+      issue_map: { '1': { issue: 101, pr: 201, merge_sha: 'sha-xyz', status: 'merged' } },
+    },
+  }));
+  const ghIssues = [makeGhIssueForReconcile('1', true, 201, 'sha-xyz')];
+  const r = run(['reconcile-integration', `--state=${p}`], { input: JSON.stringify(ghIssues) });
+  assert.equal(r.status, 0);
+  assert.deepEqual(JSON.parse(r.stdout).actions, []);
+});
+
+// ---- coord-status: READ-ONLY snapshot ----
+test('coord-status: returns null coordination when not a coordinated run', () => {
+  const p = tmpBundle(v8()); // no coordination field
+  const r = run(['coord-status', `--state=${p}`]);
+  assert.equal(r.status, 0);
+  assert.deepEqual(JSON.parse(r.stdout), { coordination: null });
+});
+
+test('coord-status: returns the coordination object when present', () => {
+  const coord = {
+    mode: 'github',
+    contract_ref: 'mp-coord/my-run/abc',
+    integration_branch: 'mp-int/my-run',
+    current_wave: 1,
+    published_waves: [0],
+    issue_map: {},
+  };
+  const p = tmpBundle(v8({ coordination: coord }));
+  const r = run(['coord-status', `--state=${p}`]);
+  assert.equal(r.status, 0);
+  const { coordination } = JSON.parse(r.stdout);
+  assert.equal(coordination.mode, 'github');
+  assert.equal(coordination.contract_ref, 'mp-coord/my-run/abc');
+  assert.equal(coordination.integration_branch, 'mp-int/my-run');
+  assert.equal(coordination.current_wave, 1);
+  assert.deepEqual(coordination.published_waves, [0]);
+});
+
+test('coord-status: is read-only (does not write to state)', () => {
+  const p = tmpBundle(v8());
+  const before = fs.readFileSync(p, 'utf8');
+  run(['coord-status', `--state=${p}`]);
+  const after = fs.readFileSync(p, 'utf8');
+  assert.equal(before, after, 'coord-status must not modify the bundle');
+});

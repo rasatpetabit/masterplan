@@ -72,12 +72,25 @@
 //                                                  from plan.index.json (the exec projection state drops)
 //   record-verification --state=PATH --sha=SHA  -> CD-7 write: record verified_sha (the verified-at-SHA
 //                                                  skip — re-entry at unchanged HEAD won't re-run the suite)
+//   gh-issue-body --task=JSON [--run-slug=S] [--contract-ref=R] [--integration-branch=B]
+//                 [--base-sha=SHA] [--plan-hash=H] [--wave=N]
+//                                               -> raw markdown string: the GitHub issue body for a plan task
+//                                                  (A1/A2 serialization; the shell calls `gh issue create`)
+//   parse-issue                                 -> parse metadata block from GitHub issue body on stdin
+//                                                  (A2 deserialization; body is multiline, passed via stdin)
+//   validate-claim --issue=JSON --actor=STRING [--prs=JSON]
+//                                               -> { result: 'won' | 'lost' } (A3 settle rule)
+//   select-claimable --issues=JSON [--merged=JSON] [--plan-deps=JSON]
+//                                               -> { claimable: [issue, ...] } (A4 dep-satisfaction filter)
+//   reconcile-integration --state=PATH          -> { actions: [...] } (A6 pure-state reconcile; gh JSON on stdin)
+//   coord-status --state=PATH                   -> { coordination: {...} | null } (READ-ONLY snapshot)
 
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, setWorktreeDisposition, setVerifiedSha, setCodexConfig, loadPlanTasks, buildSeedState, buildTasksFromPlanIndex, appendEvent } from '../lib/bundle.mjs';
+import { issueBodyForTask, parseIssueBody, validateClaimSettle, selectClaimableUnits, reconcileIntegration } from '../lib/github-coord.mjs';
 import { migrate, detectSchemaVersion, MigrationError } from '../lib/migrate.mjs';
 import { decideNextAction } from '../lib/resume.mjs';
 import { prepareWave, declaredScope, verifyScope } from '../lib/wave.mjs';
@@ -774,6 +787,152 @@ function main() {
       out({ verified_sha: sha });
       break;
     }
+
+    // ---- GitHub coordination subcommands (§7.3) ----
+    // These six subcommands wrap pure lib/github-coord.mjs logic. ALL are fs-only: no git, no gh.
+    // The shell supplies gh JSON on stdin (exactly like pr-summary). State reads go through loadForWrite;
+    // no subcommand here writes state (setCoordination belongs to the `publish` verb, not here).
+
+    case 'gh-issue-body': {
+      // Build a GitHub issue body for a single plan task (A1/A2).
+      // Input: task JSON via --task=JSON, opts as flags.
+      // Output: the raw markdown string (stdout), not a JSON wrapper — the body is multiline markdown.
+      // bin stays fs-only: no git calls, no gh calls.
+      let task;
+      try {
+        task = JSON.parse(need(flags, 'task'));
+      } catch (e) {
+        die(`gh-issue-body: --task must be valid JSON (${e.message})`, 1);
+      }
+      const opts = {};
+      if (flags['run-slug'] !== undefined) opts.runSlug = flags['run-slug'];
+      if (flags['contract-ref'] !== undefined) opts.contractRef = flags['contract-ref'];
+      if (flags['integration-branch'] !== undefined) opts.integrationBranch = flags['integration-branch'];
+      if (flags['base-sha'] !== undefined) opts.baseSha = flags['base-sha'];
+      if (flags['plan-hash'] !== undefined) opts.planHash = flags['plan-hash'];
+      if (flags.wave !== undefined) opts.wave = coerceId(flags.wave);
+      let body;
+      try {
+        body = issueBodyForTask(task, opts);
+      } catch (e) {
+        die(`gh-issue-body: ${e.message}`, 1);
+      }
+      process.stdout.write(body + '\n');
+      break;
+    }
+    case 'parse-issue': {
+      // Parse the metadata block from a GitHub issue body (A2).
+      // Input: issue body on stdin (multiline markdown — not suitable as a flag value).
+      // Output: the parsed metadata JSON object.
+      // bin stays fs-only: no git calls, no gh calls.
+      // Use fd 0 (not /dev/stdin) so the read works both with shell pipes and execFileSync's { input }.
+      let body;
+      try {
+        body = fs.readFileSync(0, 'utf8');
+      } catch (e) {
+        die(`parse-issue: failed to read stdin (${e.message})`, 1);
+      }
+      let meta;
+      try {
+        meta = parseIssueBody(body);
+      } catch (e) {
+        die(`parse-issue: ${e.message}`, 1);
+      }
+      out(meta);
+      break;
+    }
+    case 'validate-claim': {
+      // Settle a claim attempt: won | lost (A3).
+      // Input: issue JSON via --issue=JSON (the re-read issue after the claim attempt),
+      //        --actor=STRING (the claimant's GitHub login),
+      //        --prs=JSON (array of open PRs already filed for this task — defaults to []).
+      // Output: { result: 'won' | 'lost' }
+      let issue;
+      try {
+        issue = JSON.parse(need(flags, 'issue'));
+      } catch (e) {
+        die(`validate-claim: --issue must be valid JSON (${e.message})`, 1);
+      }
+      const actor = need(flags, 'actor');
+      let prs = [];
+      if (flags.prs !== undefined) {
+        try {
+          prs = JSON.parse(flags.prs);
+        } catch (e) {
+          die(`validate-claim: --prs must be valid JSON (${e.message})`, 1);
+        }
+      }
+      const result = validateClaimSettle(issue, actor, prs);
+      out({ result });
+      break;
+    }
+    case 'select-claimable': {
+      // Return the subset of issues that are currently claimable (A4).
+      // Input: --issues=JSON (array of issue objects with body + labels),
+      //        --merged=JSON (array of already-merged task IDs — defaults to []),
+      //        --plan-deps=JSON (optional: object mapping task_id->dep_ids[], for override).
+      // Output: { claimable: [issue, ...] }
+      let issues;
+      try {
+        issues = JSON.parse(need(flags, 'issues'));
+      } catch (e) {
+        die(`select-claimable: --issues must be valid JSON (${e.message})`, 1);
+      }
+      let mergedTaskIds = [];
+      if (flags.merged !== undefined) {
+        try {
+          mergedTaskIds = JSON.parse(flags.merged);
+        } catch (e) {
+          die(`select-claimable: --merged must be valid JSON (${e.message})`, 1);
+        }
+      }
+      let planIndexDeps = null;
+      if (flags['plan-deps'] !== undefined) {
+        try {
+          const depsObj = JSON.parse(flags['plan-deps']);
+          planIndexDeps = new Map(Object.entries(depsObj));
+        } catch (e) {
+          die(`select-claimable: --plan-deps must be valid JSON object (${e.message})`, 1);
+        }
+      }
+      const claimable = selectClaimableUnits(issues, mergedTaskIds, planIndexDeps);
+      out({ claimable });
+      break;
+    }
+    case 'reconcile-integration': {
+      // Compare lead's local state vs GitHub issue state and return ordered write-back actions (A6).
+      // Input: --state=PATH (the bundle's state.yml), gh issues JSON on stdin.
+      // Output: { actions: [...] }
+      // Read-only: never writes state (mark_done actions are applied by the shell via mark-task).
+      // bin stays fs-only: the shell runs gh and pipes the JSON here.
+      // Use fd 0 (not /dev/stdin) so the read works both with shell pipes and execFileSync's { input }.
+      const p = need(flags, 'state');
+      const state = loadForWrite(p);
+      let ghJson;
+      try {
+        ghJson = fs.readFileSync(0, 'utf8');
+      } catch (e) {
+        die(`reconcile-integration: failed to read stdin (${e.message})`, 1);
+      }
+      let ghIssues;
+      try {
+        ghIssues = JSON.parse(ghJson);
+      } catch (e) {
+        die(`reconcile-integration: stdin must be a JSON array of gh issues (${e.message})`, 1);
+      }
+      const actions = reconcileIntegration(state, ghIssues);
+      out({ actions });
+      break;
+    }
+    case 'coord-status': {
+      // Report the coordination object from the bundle (READ-ONLY snapshot).
+      // Output: the state.coordination object (or null if the run is not GitHub-coordinated).
+      const p = need(flags, 'state');
+      const state = loadForWrite(p);
+      out({ coordination: state.coordination ?? null });
+      break;
+    }
+
     default:
       die(`unknown subcommand: ${cmd ?? '(none)'}`, 2);
   }
