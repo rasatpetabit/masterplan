@@ -1,0 +1,6 @@
+schema_version: 8
+slug: p1
+status: in-progress
+phase: execute
+tasks: [{"id":1,"status":"done","wave":0,"files":["a.js"]}]
+coordination: {"published_waves":[0],"issue_map":{"1":{"issue":10,"pr":null,"merge_sha":null,"status":"open","wave":0}}}

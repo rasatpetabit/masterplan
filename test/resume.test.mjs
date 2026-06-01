@@ -212,6 +212,131 @@ test('GUARD: all-done tasks with null waves still resume to complete (guard not 
   assert.equal(decideNextAction(s, {}).action, 'complete');
 });
 
+// ---------------------------------------------------------------------------
+// A9 — Coordination gate: uncoordinated path byte-identical
+// ---------------------------------------------------------------------------
+
+test('A9: no coordination object -> dispatch_wave (single-agent path unchanged)', () => {
+  // An uncoordinated run (no `coordination` field in state) must produce exactly
+  // the same dispatch_wave decision it would under a pre-coordination build.
+  // The coordination gate must be entirely absent from the decision path.
+  const s = base({ tasks: [t(1, 1, 'pending', ['a.txt']), t(2, 2, 'pending', ['b.txt'])] });
+  const d = decideNextAction(s, {});
+  assert.equal(d.action, 'dispatch_wave');
+  assert.equal(d.wave, 1);
+  assert.deepEqual(d.tasks.map((x) => x.id), [1]);
+});
+
+test('A9: coordination: null -> dispatch_wave (explicit null treated as uncoordinated)', () => {
+  const s = base({
+    coordination: null,
+    tasks: [t(1, 1, 'pending', ['a.txt'])],
+  });
+  assert.equal(decideNextAction(s, {}).action, 'dispatch_wave');
+});
+
+// ---------------------------------------------------------------------------
+// A7 — Coordination gate: publish_needed / coordinate ordering
+// ---------------------------------------------------------------------------
+
+test('A7: coordinated run, current wave has unpublished pending tasks -> publish_needed', () => {
+  // Task 1 is pending and absent from issue_map -> unpublished.
+  // publish_needed fires so a partial/failed publish is recovered before stranding the run.
+  const s = base({
+    coordination: { mode: 'github', current_wave: 1, issue_map: {} },
+    tasks: [t(1, 1, 'pending', ['a.txt']), t(2, 2, 'pending', ['b.txt'])],
+  });
+  const d = decideNextAction(s, {});
+  assert.equal(d.action, 'publish_needed');
+  assert.equal(d.wave, 1);
+  assert.deepEqual(d.tasks.map((x) => x.id), [1]);
+});
+
+test('A7: publish_needed carries only the unpublished tasks (partial publish)', () => {
+  // Task 1 already published (in issue_map), task 2 not yet.
+  const s = base({
+    coordination: {
+      mode: 'github',
+      current_wave: 1,
+      issue_map: { '1': { issue: 10, pr: null, merge_sha: null, status: 'open' } },
+    },
+    tasks: [t(1, 1, 'pending', ['a.txt']), t(2, 1, 'pending', ['b.txt'])],
+  });
+  const d = decideNextAction(s, {});
+  assert.equal(d.action, 'publish_needed');
+  assert.equal(d.wave, 1);
+  assert.deepEqual(d.tasks.map((x) => x.id), [2]); // only the unpublished task
+});
+
+test('A7: coordinated run, fully published wave with pending tasks -> coordinate (halt local dispatch)', () => {
+  // Both wave-1 tasks are in issue_map -> fully published. Tasks still pending locally.
+  // coordinate must fire; never dispatch_wave.
+  const s = base({
+    coordination: {
+      mode: 'github',
+      current_wave: 1,
+      issue_map: {
+        '1': { issue: 10, pr: null, merge_sha: null, status: 'open' },
+        '2': { issue: 11, pr: null, merge_sha: null, status: 'open' },
+      },
+    },
+    tasks: [t(1, 1, 'pending', ['a.txt']), t(2, 1, 'pending', ['b.txt'])],
+  });
+  const d = decideNextAction(s, {});
+  assert.equal(d.action, 'coordinate');
+  assert.equal(d.wave, 1);
+});
+
+test('A7: ordering — publish_needed fires BEFORE coordinate (unpublished tasks present)', () => {
+  // When there are both published and unpublished tasks, publish_needed fires first —
+  // it takes priority over coordinate in the ordering.
+  const s = base({
+    coordination: {
+      mode: 'github',
+      current_wave: 2,
+      issue_map: {
+        '1': { issue: 10, pr: null, merge_sha: null, status: 'open' }, // wave 2, published
+      },
+    },
+    tasks: [
+      t(1, 2, 'pending', ['a.txt']), // published
+      t(2, 2, 'pending', ['b.txt']), // unpublished → triggers publish_needed
+    ],
+  });
+  const d = decideNextAction(s, {});
+  assert.equal(d.action, 'publish_needed'); // NOT coordinate
+});
+
+test('A7: coordinated run with ALL tasks done -> complete (coordination gate not reached)', () => {
+  // All tasks done -> pending.length === 0 -> early complete before the coordination gate.
+  const s = base({
+    coordination: { mode: 'github', current_wave: 1, issue_map: { '1': {} } },
+    tasks: [t(1, 1, 'done', ['a.txt'])],
+  });
+  assert.equal(decideNextAction(s, {}).action, 'complete');
+});
+
+test('A7: coordinated run, done tasks in wave do not count as unpublished', () => {
+  // Done tasks are filtered out of `pending` before the coordination gate is reached.
+  // Only pending tasks that lack an issue_map entry are "unpublished".
+  const s = base({
+    coordination: {
+      mode: 'github',
+      current_wave: 1,
+      issue_map: {
+        '2': { issue: 11, pr: null, merge_sha: null, status: 'open' },
+      },
+    },
+    tasks: [
+      t(1, 1, 'done', ['a.txt']),    // done — not counted
+      t(2, 1, 'pending', ['b.txt']), // pending + published -> coordinate
+    ],
+  });
+  const d = decideNextAction(s, {});
+  assert.equal(d.action, 'coordinate'); // not publish_needed, because task 2 is published
+  assert.equal(d.wave, 1);
+});
+
 test('is pure: does not mutate the input state', () => {
   const s = base({ active_run: { run_id: 'wf_1', task_id: 'k1', wave: 1 }, tasks: [t(1, 1, 'pending', ['a'])] });
   const snapshot = JSON.stringify(s);

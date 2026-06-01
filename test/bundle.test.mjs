@@ -24,6 +24,8 @@ import {
   buildSeedState,
   buildTasksFromPlanIndex,
   appendEvent,
+  setCoordination,
+  clearCoordination,
 } from '../lib/bundle.mjs';
 
 test('round-trips scalars with correct types', () => {
@@ -286,4 +288,85 @@ test('appendEvent: writes one JSON line per call, accumulating, into a sibling e
   } finally {
     try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ }
   }
+});
+
+// A5 — coordination state object (§6 schema, spec §7.4): round-trip + single-agent path unchanged.
+test('A5: setCoordination round-trips the full §6 schema through state.yml (write→read→deepEqual)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-coord-'));
+  try {
+    const sp = path.join(dir, 'state.yml');
+    const base = {
+      schema_version: 8, slug: 'demo', status: 'in-progress', phase: 'execute',
+      tasks: [{ id: 1, wave: 0, status: 'pending', files: ['a.mjs'] }],
+      active_run: null, pending_gate: null,
+    };
+    // Full §6 coordination object (all eight fields populated)
+    const fullCoord = {
+      mode: 'github',
+      contract_ref: 'mp-coord/demo/abc123',
+      integration_branch: 'mp-int/demo',
+      local_run_branch: 'mp-run/demo',
+      current_wave: 0,
+      published_waves: [0],
+      base_sha_by_wave: { 0: 'sha0abc' },
+      issue_map: {
+        1: { issue: 42, pr: null, merge_sha: null, status: 'open' },
+      },
+    };
+    const coordinated = setCoordination(base, fullCoord);
+
+    // 1. The §6 fields survive a write→read round-trip (the load-bearing assertion)
+    writeState(sp, coordinated);
+    const roundTripped = readState(sp);
+    assert.deepEqual(roundTripped, coordinated);
+
+    // 2. All eight coordination fields are present and deep-equal (not collapsed/mangled)
+    assert.deepEqual(roundTripped.coordination, fullCoord);
+    assert.equal(roundTripped.coordination.mode, 'github');
+    assert.equal(roundTripped.coordination.contract_ref, 'mp-coord/demo/abc123');
+    assert.equal(roundTripped.coordination.integration_branch, 'mp-int/demo');
+    assert.equal(roundTripped.coordination.local_run_branch, 'mp-run/demo');
+    assert.equal(roundTripped.coordination.current_wave, 0);
+    assert.deepEqual(roundTripped.coordination.published_waves, [0]);
+    assert.deepEqual(roundTripped.coordination.base_sha_by_wave, { 0: 'sha0abc' });
+    assert.deepEqual(roundTripped.coordination.issue_map, {
+      1: { issue: 42, pr: null, merge_sha: null, status: 'open' },
+    });
+
+    // 3. Pure serialize→parse also round-trips (no disk required)
+    assert.deepEqual(parseState(serializeState(coordinated)), coordinated);
+  } finally {
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ }
+  }
+});
+
+test('A5: setCoordination is a pure merge-update — partial patch preserves existing fields', () => {
+  const base = { slug: 'r', coordination: { mode: 'github', current_wave: 0, published_waves: [] } };
+  const frozen = JSON.stringify(base);
+
+  // Partial patch: only update current_wave; other fields survive
+  const updated = setCoordination(base, { current_wave: 1, published_waves: [0] });
+  assert.equal(updated.coordination.mode, 'github');          // preserved
+  assert.equal(updated.coordination.current_wave, 1);         // updated
+  assert.deepEqual(updated.coordination.published_waves, [0]); // updated
+  assert.equal(JSON.stringify(base), frozen);                  // base not mutated
+});
+
+test('A5: single-agent path unchanged — buildSeedState emits no coordination key (A9 invariant)', () => {
+  // A9: all new behaviour is gated behind the presence of the `coordination` state object;
+  // the local single-agent seed must stay byte-identical — no `coordination` key.
+  const seed = buildSeedState({ slug: 'r', topic: 't', createdAt: 'T' });
+  assert.ok(!('coordination' in seed), 'buildSeedState must not emit coordination for single-agent runs');
+  assert.deepEqual(parseState(serializeState(seed)), seed); // seed still round-trips cleanly
+});
+
+test('A5: clearCoordination removes the coordination key entirely', () => {
+  const coordinated = setCoordination(
+    { slug: 'r', phase: 'execute' },
+    { mode: 'github', current_wave: 0, published_waves: [], base_sha_by_wave: {}, issue_map: {} }
+  );
+  assert.ok('coordination' in coordinated);
+  const cleared = clearCoordination(coordinated);
+  assert.ok(!('coordination' in cleared));
+  assert.deepEqual(cleared, { slug: 'r', phase: 'execute' }); // only coordination removed
 });

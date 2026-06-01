@@ -6,3 +6,4 @@
 {"type":"phase_transition","ts":"2026-05-31T21:04:09.023Z","phase":"plan"}
 {"type":"phase_transition","ts":"2026-05-31T23:50:36.899Z","phase":"execute"}
 {"type":"wave_complete","ts":"2026-06-01T00:05:01.389Z","note":"wave 0: task #1 lib/github-coord.mjs + test (53/53, suite 411/411)"}
+{"type":"wave_complete","ts":"2026-06-01T00:11:25.053Z","note":"wave 1: tasks #2-5 (paths 15/15, bundle 29/29, resume 35/35, doctor 100/100 + doctor exit-0); task #5 added test/fixtures/doctor/coord-drift/ (4 fixtures, required by its passing test, kept)"}
