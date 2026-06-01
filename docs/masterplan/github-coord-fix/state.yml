@@ -15,5 +15,5 @@ plan_path: docs/masterplan/github-coord-fix/plan.md
 plan_index_path: docs/masterplan/github-coord-fix/plan.index.json
 tasks: [{"id":1,"status":"done","wave":0,"files":["bin/masterplan.mjs","test/coord-writer.test.mjs"]},{"id":2,"status":"done","wave":0,"files":["lib/doctor/coord-drift.mjs"]},{"id":3,"status":"done","wave":1,"files":["commands/masterplan.md"]}]
 active_run: null
-pending_gate: null
+pending_gate: {"id":"branch_finish","opened_at":"2026-06-01T19:26:55Z"}
 verified_sha: 0cd990aec6129e22f2ccdaca4c3e7701ac8d9a45
