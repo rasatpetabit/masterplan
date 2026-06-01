@@ -345,6 +345,22 @@ test('coord-status: --fail-if-unpublishable exits 0 when publishable (execute ph
   assert.equal(r.status, 0);
 });
 
+test("coord-status: --fail-if-unpublishable exits 0 when last wave's entries are 'merged' (G9 write-back is terminal)", () => {
+  // After follow → reconcile-integration, the G9 write-back sets issue_map entries to 'merged'
+  // (NOT 'closed'). A fully-followed prior wave MUST be publishable, else the publish↔follow
+  // hand-off deadlocks and wave N+1 can never be published. Regression for the closed-only bug.
+  const p = tmpBundle(v8({
+    phase: 'execute',
+    tasks: [{ id: 1, status: 'done', wave: 0, files: ['a.txt'] }],
+    coordination: {
+      published_waves: [0],
+      issue_map: { '1': { issue: 101, pr: 7, merge_sha: 'abc123', status: 'merged', wave: 0 } },
+    },
+  }));
+  const r = run(['coord-status', `--state=${p}`, '--fail-if-unpublishable']);
+  assert.equal(r.status, 0);
+});
+
 test('coord-status: --fail-if-unpublishable exits 0 when no waves published yet', () => {
   // No published waves → no last-wave check needed
   const p = tmpBundle(v8({
@@ -377,7 +393,7 @@ test('coord-status: --fail-if-unpublishable exits 1 when most-recent published w
     coordination: {
       published_waves: [0],
       issue_map: {
-        '1': { issue: 101, status: 'pr-open', wave: 0 },  // 'pr-open' is NOT 'closed'
+        '1': { issue: 101, status: 'pr-open', wave: 0 },  // 'pr-open' is neither 'merged' nor 'closed'
       },
     },
   }));

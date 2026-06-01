@@ -1038,7 +1038,7 @@ function main() {
       // Output: the state.coordination object (or null if the run is not GitHub-coordinated).
       // --fail-if-unconfigured: exit non-zero if coordination is absent OR missing contract_ref/integration_branch.
       // --fail-if-unpublishable: exit non-zero if phase!=='execute' OR tasks empty OR the most-recently-published
-      //   wave still has a non-terminal (not 'closed') issue_map entry.
+      //   wave still has a non-terminal (neither 'merged' nor 'closed') issue_map entry.
       // Both flags absent → emit {coordination} exit 0 unchanged.
       const p = need(flags, 'state');
       const state = loadForWrite(p);
@@ -1063,7 +1063,10 @@ function main() {
           process.exit(1);
         }
         // Guard 2: if any waves have been published, the most-recently-published wave must have all
-        // issue_map entries in a terminal state ('closed') before we can re-publish (advance).
+        // issue_map entries in a terminal state ('merged' or 'closed') before we can re-publish (advance).
+        // The G9 reconcile write-back sets entries to 'merged', so 'merged' MUST count as terminal —
+        // otherwise a fully-followed prior wave would wrongly block the next publish (the publish↔follow
+        // hand-off this path exists to repair).
         const publishedWaves = Array.isArray(coord?.published_waves) ? coord.published_waves : [];
         if (publishedWaves.length > 0) {
           const mostRecentWave = Math.max(...publishedWaves);
@@ -1072,7 +1075,8 @@ function main() {
           const waveEntries = Object.values(issueMap).filter(
             (entry) => entry && typeof entry === 'object' && coerceId(entry.wave) === mostRecentWave
           );
-          const nonTerminal = waveEntries.filter((entry) => entry.status !== 'closed');
+          const TERMINAL_STATUSES = new Set(['merged', 'closed']);
+          const nonTerminal = waveEntries.filter((entry) => !TERMINAL_STATUSES.has(entry.status));
           if (nonTerminal.length > 0) {
             process.stderr.write(
               `masterplan: coord-status: not publishable — wave ${mostRecentWave} has ${nonTerminal.length} non-terminal issue_map entry(ies)\n`
