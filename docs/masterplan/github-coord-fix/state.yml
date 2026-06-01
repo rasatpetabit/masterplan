@@ -14,5 +14,5 @@ spec_path: docs/masterplan/github-coord-fix/spec.md
 plan_path: docs/masterplan/github-coord-fix/plan.md
 plan_index_path: docs/masterplan/github-coord-fix/plan.index.json
 tasks: [{"id":1,"status":"done","wave":0,"files":["bin/masterplan.mjs","test/coord-writer.test.mjs"]},{"id":2,"status":"done","wave":0,"files":["lib/doctor/coord-drift.mjs"]},{"id":3,"status":"done","wave":1,"files":["commands/masterplan.md"]}]
-active_run: {"wave":1,"run_id":"wf_beb2b4d3-a0c","task_id":"wdvebdglh"}
+active_run: null
 pending_gate: null
