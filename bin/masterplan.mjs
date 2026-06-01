@@ -83,13 +83,23 @@
 //   select-claimable --issues=JSON [--merged=JSON] [--plan-deps=JSON]
 //                                               -> { claimable: [issue, ...] } (A4 dep-satisfaction filter)
 //   reconcile-integration --state=PATH          -> { actions: [...] } (A6 pure-state reconcile; gh JSON on stdin)
-//   coord-status --state=PATH                   -> { coordination: {...} | null } (READ-ONLY snapshot)
+//   set-coord --state=PATH [--wave=N] [--base-sha=SHA] [--contract-ref=R] [--integration-branch=B]
+//             [--local-run-branch=L] [--mode=M] [--mark-published]
+//                                               -> CD-7 write: per-key merge of coordination fields;
+//                                                  --base-sha/--mark-published require --wave; emits {coordination}
+//   update-issue-map --state=PATH --task-id=N [--issue=N] [--pr=N] [--merge-sha=SHA]
+//                    [--status=S] [--wave=N]
+//                                               -> CD-7 write: create/shallow-merge issue_map[task_id];
+//                                                  requires at least one mutating flag; emits {task_id,entry}
+//   coord-status --state=PATH [--fail-if-unconfigured] [--fail-if-unpublishable]
+//                                               -> { coordination: {...} | null } (READ-ONLY snapshot;
+//                                                  non-zero exit on guard flag violations)
 
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, setWorktreeDisposition, setVerifiedSha, setCodexConfig, loadPlanTasks, buildSeedState, buildTasksFromPlanIndex, appendEvent } from '../lib/bundle.mjs';
+import { readState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, setWorktreeDisposition, setVerifiedSha, setCodexConfig, loadPlanTasks, buildSeedState, buildTasksFromPlanIndex, appendEvent, setCoordination } from '../lib/bundle.mjs';
 import { issueBodyForTask, parseIssueBody, validateClaimSettle, selectClaimableUnits, reconcileIntegration } from '../lib/github-coord.mjs';
 import { migrate, detectSchemaVersion, MigrationError } from '../lib/migrate.mjs';
 import { decideNextAction } from '../lib/resume.mjs';
@@ -449,6 +459,25 @@ function main() {
         for (const e of errors) process.stderr.write(`  - ${e}\n`);
         die(`load-plan: ${errors.length} error(s) in ${planIndexPath} — refusing to materialize an invalid plan.`, 1);
       }
+      // A3: plan_hash parity — if the loaded index lacks plan_hash, compute sha256:<hex of plan.md>
+      // in the exact merge-plan-fragments form and stamp it + generated_at into the index file.
+      // Graceful: skip silently if plan_hash already present OR plan.md is not readable (the test
+      // fixtures don't create plan.md, so a hard die would break existing tests). Idempotent: a
+      // second load-plan at unchanged plan.md leaves the index byte-for-byte the same.
+      if (!index.plan_hash) {
+        const planMdPath = flags['plan-md'] ?? path.join(path.dirname(planIndexPath), 'plan.md');
+        let planMdText;
+        try {
+          planMdText = fs.readFileSync(planMdPath, 'utf8');
+        } catch {
+          planMdText = null; // plan.md absent or unreadable — skip stamping
+        }
+        if (planMdText !== null) {
+          index.plan_hash = `sha256:${createHash('sha256').update(planMdText).digest('hex')}`;
+          if (!index.generated_at) index.generated_at = new Date().toISOString();
+          fs.writeFileSync(planIndexPath, JSON.stringify(index, null, 2) + '\n');
+        }
+      }
       let next;
       try {
         next = loadPlanTasks(state, index); // throws: bundle already has tasks / empty index / non-integer wave
@@ -789,10 +818,90 @@ function main() {
     }
 
     // ---- GitHub coordination subcommands (§7.3) ----
-    // These six subcommands wrap pure lib/github-coord.mjs logic. ALL are fs-only: no git, no gh.
-    // The shell supplies gh JSON on stdin (exactly like pr-summary). State reads go through loadForWrite;
-    // no subcommand here writes state (setCoordination belongs to the `publish` verb, not here).
+    // These subcommands wrap lib/github-coord.mjs logic and coordination state writes. ALL are fs-only:
+    // no git, no gh. The shell supplies gh JSON on stdin (exactly like pr-summary). State reads/writes
+    // go through loadForWrite/writeState; set-coord and update-issue-map are the CD-7 writers for
+    // coordination state (via setCoordination → writeState). Read-only subcommands never write state.
 
+    case 'set-coord': {
+      // CD-7 write: per-key merge of coordination fields onto state.coordination.
+      // --base-sha and --mark-published both require --wave (they address a per-wave slot).
+      // Scalar fields (contract-ref, integration-branch, local-run-branch, mode) are applied
+      // without --wave. base_sha_by_wave and published_waves are merged against existing values
+      // (not overwritten wholesale) so idempotent re-runs are safe.
+      const p = need(flags, 'state');
+      const state = loadForWrite(p);
+
+      // Guard: --base-sha / --mark-published require --wave
+      const hasBaseSha = flags['base-sha'] !== undefined;
+      const hasMarkPublished = flags['mark-published'] !== undefined && flags['mark-published'] !== false;
+      const hasWave = flags.wave !== undefined;
+      if ((hasBaseSha || hasMarkPublished) && !hasWave) {
+        die('set-coord: --base-sha and --mark-published require --wave', 1);
+      }
+
+      const wave = hasWave ? coerceId(flags.wave) : undefined;
+      const existing = state.coordination && typeof state.coordination === 'object' ? state.coordination : {};
+
+      const patch = {};
+      if (flags.mode !== undefined) patch.mode = flags.mode;
+      if (flags['contract-ref'] !== undefined) patch.contract_ref = flags['contract-ref'];
+      if (flags['integration-branch'] !== undefined) patch.integration_branch = flags['integration-branch'];
+      if (flags['local-run-branch'] !== undefined) patch.local_run_branch = flags['local-run-branch'];
+
+      // base_sha_by_wave: merge the per-wave entry rather than overwriting the whole object
+      if (hasBaseSha) {
+        patch.base_sha_by_wave = { ...(existing.base_sha_by_wave ?? {}), [wave]: flags['base-sha'] };
+      }
+
+      // published_waves: dedup-union of existing + wave
+      if (hasMarkPublished) {
+        const prev = Array.isArray(existing.published_waves) ? existing.published_waves : [];
+        patch.published_waves = [...new Set([...prev, wave])];
+      }
+
+      const next = setCoordination(state, patch);
+      writeState(p, next);
+      out({ coordination: next.coordination ?? null });
+      break;
+    }
+    case 'update-issue-map': {
+      // CD-7 write: create or shallow-merge an issue_map entry for task_id.
+      // Requires at least one mutating field beyond --task-id; no mutation → die.
+      // Numeric ids (--issue / --pr) are coerced; other fields are stored as provided.
+      const p = need(flags, 'state');
+      const taskId = String(coerceId(need(flags, 'task-id')));
+      const state = loadForWrite(p);
+
+      // Collect provided mutating fields
+      const hasIssue = flags.issue !== undefined;
+      const hasPr = flags.pr !== undefined;
+      const hasMergeSha = flags['merge-sha'] !== undefined;
+      const hasStatus = flags.status !== undefined;
+      const hasWave = flags.wave !== undefined;
+
+      if (!hasIssue && !hasPr && !hasMergeSha && !hasStatus && !hasWave) {
+        die('update-issue-map: provide at least one of --issue, --pr, --merge-sha, --status, --wave', 1);
+      }
+
+      const existing = state.coordination && typeof state.coordination === 'object' ? state.coordination : {};
+      const issueMap = existing.issue_map && typeof existing.issue_map === 'object' ? existing.issue_map : {};
+      const prev = issueMap[taskId] && typeof issueMap[taskId] === 'object' ? issueMap[taskId] : {};
+
+      // Build the updated entry — shallow merge, only assign provided fields
+      const entry = { ...prev };
+      if (hasIssue) entry.issue = coerceId(flags.issue);
+      if (hasPr) entry.pr = coerceId(flags.pr);
+      if (hasMergeSha) entry.merge_sha = flags['merge-sha'];
+      if (hasStatus) entry.status = flags.status;
+      if (hasWave) entry.wave = coerceId(flags.wave);
+
+      const nextIssueMap = { ...issueMap, [taskId]: entry };
+      const next = setCoordination(state, { issue_map: nextIssueMap });
+      writeState(p, next);
+      out({ task_id: taskId, entry });
+      break;
+    }
     case 'gh-issue-body': {
       // Build a GitHub issue body for a single plan task (A1/A2).
       // Input: task JSON via --task=JSON, opts as flags.
@@ -927,9 +1036,53 @@ function main() {
     case 'coord-status': {
       // Report the coordination object from the bundle (READ-ONLY snapshot).
       // Output: the state.coordination object (or null if the run is not GitHub-coordinated).
+      // --fail-if-unconfigured: exit non-zero if coordination is absent OR missing contract_ref/integration_branch.
+      // --fail-if-unpublishable: exit non-zero if phase!=='execute' OR tasks empty OR the most-recently-published
+      //   wave still has a non-terminal (not 'closed') issue_map entry.
+      // Both flags absent → emit {coordination} exit 0 unchanged.
       const p = need(flags, 'state');
       const state = loadForWrite(p);
-      out({ coordination: state.coordination ?? null });
+      const coord = state.coordination && typeof state.coordination === 'object' ? state.coordination : null;
+
+      if (flags['fail-if-unconfigured']) {
+        if (!coord || !coord.contract_ref || !coord.integration_branch) {
+          process.stderr.write('masterplan: coord-status: coordination not configured (missing contract_ref or integration_branch)\n');
+          process.exit(1);
+        }
+      }
+
+      if (flags['fail-if-unpublishable']) {
+        // Guard 1: must be in execute phase with tasks
+        if (state.phase !== 'execute') {
+          process.stderr.write(`masterplan: coord-status: not publishable — phase is '${state.phase}' (expected 'execute')\n`);
+          process.exit(1);
+        }
+        const tasks = Array.isArray(state.tasks) ? state.tasks : [];
+        if (tasks.length === 0) {
+          process.stderr.write('masterplan: coord-status: not publishable — no tasks\n');
+          process.exit(1);
+        }
+        // Guard 2: if any waves have been published, the most-recently-published wave must have all
+        // issue_map entries in a terminal state ('closed') before we can re-publish (advance).
+        const publishedWaves = Array.isArray(coord?.published_waves) ? coord.published_waves : [];
+        if (publishedWaves.length > 0) {
+          const mostRecentWave = Math.max(...publishedWaves);
+          const issueMap = coord?.issue_map && typeof coord.issue_map === 'object' ? coord.issue_map : {};
+          // Find issue_map entries belonging to the most recent published wave
+          const waveEntries = Object.values(issueMap).filter(
+            (entry) => entry && typeof entry === 'object' && coerceId(entry.wave) === mostRecentWave
+          );
+          const nonTerminal = waveEntries.filter((entry) => entry.status !== 'closed');
+          if (nonTerminal.length > 0) {
+            process.stderr.write(
+              `masterplan: coord-status: not publishable — wave ${mostRecentWave} has ${nonTerminal.length} non-terminal issue_map entry(ies)\n`
+            );
+            process.exit(1);
+          }
+        }
+      }
+
+      out({ coordination: coord });
       break;
     }
 

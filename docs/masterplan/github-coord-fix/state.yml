@@ -13,6 +13,6 @@ predecessor_transcript: null
 spec_path: docs/masterplan/github-coord-fix/spec.md
 plan_path: docs/masterplan/github-coord-fix/plan.md
 plan_index_path: docs/masterplan/github-coord-fix/plan.index.json
-tasks: [{"id":1,"status":"pending","wave":0,"files":["bin/masterplan.mjs","test/coord-writer.test.mjs"]},{"id":2,"status":"pending","wave":0,"files":["lib/doctor/coord-drift.mjs"]},{"id":3,"status":"pending","wave":1,"files":["commands/masterplan.md"]}]
-active_run: null
+tasks: [{"id":1,"status":"done","wave":0,"files":["bin/masterplan.mjs","test/coord-writer.test.mjs"]},{"id":2,"status":"done","wave":0,"files":["lib/doctor/coord-drift.mjs"]},{"id":3,"status":"pending","wave":1,"files":["commands/masterplan.md"]}]
+active_run: {"wave":0,"run_id":"wf_c58adde9-88c","task_id":"wvfqddxcg"}
 pending_gate: null
