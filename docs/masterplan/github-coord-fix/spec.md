@@ -24,8 +24,8 @@ dormant-by-default guarantee.
 | **G2** | serial `load-plan` | `plan_hash` stamped only in `merge-plan-fragments`; serial path never stamps it → contract-ref name undefined | publish |
 | **G3/G3b** | `coord-status --fail-if-unpublishable` / `--fail-if-unconfigured` | flags ignored, always exit 0 | preflight no-ops |
 | **G4** | orch `gh-issue-body --task-id=<id>` | handler wants `--task=<JSON>` (full object); orch passes wrong flag + scalar | publish |
-| **G5** | orch `gh issue list \| mp parse-issue \| mp select-claimable` | `parse-issue` parses ONE body; `select-claimable` wants `--issues=<JSON array>` — pipeline shape mismatch | follow |
-| **G6** | orch `select-claimable --deps-from-coord-status` | phantom flag (real: `--plan-deps=<json>`) | follow |
+| **G5** | orch **publish dedup** `… \| mp parse-issue \| mp select-claimable` (`:353`) | `select-claimable` is the FOLLOW claim-filter, the wrong tool for dedup, and gets no `--issues` → `die`; the whole pipe is the wrong mechanism | **publish blocker** |
+| **G6** | orch **follow claim** `mp select-claimable --deps-from-coord-status` (`:354`) | phantom flag; **and** `select-claimable` receives no `--issues=<JSON array>` here either → `die` | follow |
 | **G7** | orch `validate-claim --actor=@me` | literal `@me` compared to real login in `validateClaimSettle` → always `'lost'` | **follow blocker** |
 | **G8** | doctor `coord-drift.mjs:89` | fix-hints cite phantom `mp reconcile` / `mp set-coordination` | bad hint |
 | **G9** | post-`reconcile-integration` write-back | reconcile is read-only (correct); after `mark_done` the shell must update `issue_map` — needs the G1 writer | wave never advances |
@@ -137,11 +137,23 @@ All shell-side (shell owns git/`gh`; `bin` is fs-only). Edit the `publish` and
 
 - **G4 (publish, issue body):** replace `mp gh-issue-body --task-id=<id> …` with
   `mp gh-issue-body --task="$(jq -c '.tasks[] | select(.id==<id>)' plan.index.json)" --contract-ref=<ref> --integration-branch=<int> --base-sha=<sha> --plan-hash=<hash> --wave=<N> --run-slug=<slug>` — pass the **full task object** as JSON.
-- **G5 (follow, claim filter):** drop `parse-issue` from the pipe. Gather issues as
-  a JSON array and pass directly:
-  `gh issue list --label "mp:open,mp:run-<slug>" --json number,title,body,labels,assignees --limit 200` → `mp select-claimable --issues="$(…)" --plan-deps="$(…)"` (select-claimable parses each body internally). `parse-issue` stays a valid standalone single-body subcommand — just not in this pipe.
-- **G6 (follow, deps):** replace the phantom `--deps-from-coord-status` with
-  `--plan-deps="$(jq -c '[.tasks[] | {key: (.id|tostring), value: .deps}] | from_entries' plan.index.json)"`.
+- **G5 (publish dedup, `:353`):** the broken `… | mp parse-issue | mp select-claimable`
+  pipe lives HERE, not in `follow`. `select-claimable` is the follow-side claim-filter —
+  the wrong tool for publish dedup — and it receives no `--issues`, so it `die`s. **Dedup is
+  issue_map-based**, the mechanism `decideNextAction` already implements
+  (`resume.mjs:165`: unpublished wave tasks = those with no `coordination.issue_map[<task_id>]`
+  entry; returned as the `publish_needed` action's `tasks`). Replace the pipe: compute the
+  wave's unpublished tasks by filtering wave tasks against `coordination.issue_map` (read via
+  `mp coord-status`; on first publish the map is empty → all wave tasks), and iterate that set
+  for `gh issue create`. Keep the "fail loud on unexpected duplicate" backstop as a gh-side
+  check (the existing `findDuplicates`/`validate-claim` guard). `parse-issue` and
+  `select-claimable` remain valid standalone subcommands — neither belongs in publish dedup.
+- **G6 + follow-claim shape (`:354`):** `select-claimable` IS the right tool for the follow
+  claim; fix BOTH defects on this row. Replace the phantom `--deps-from-coord-status` with
+  `--plan-deps="$(jq -c '[.tasks[] | {key:(.id|tostring), value:.deps}] | from_entries' plan.index.json)"`,
+  AND supply the issues array it requires:
+  `gh issue list --label "mp:open,mp:run-<slug>" --json number,title,body,labels,assignees --limit 200`
+  → `mp select-claimable --issues="$(…)" --plan-deps="$(…)"` (it parses each body internally).
 - **G7 (follow, claim validation):** resolve `@me` to the real login first —
   `actor="$(gh api user --jq .login)"` — then `mp validate-claim --issue=<json> --actor="$actor" --prs=<json>`.
 - **G9 (follow/reconcile write-back):** after `mp reconcile-integration` returns
