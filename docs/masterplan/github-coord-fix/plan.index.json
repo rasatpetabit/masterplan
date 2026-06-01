@@ -1,0 +1,76 @@
+{
+  "schema_version": "6.0",
+  "tasks": [
+    {
+      "id": 1,
+      "wave": 0,
+      "description": "coord-writers: wire the GitHub-coordination bin glue in bin/masterplan.mjs (G1/G2/G3). Add the `set-coord` case (A1: --wave/--base-sha/--contract-ref/--integration-branch/--local-run-branch/--mode/--mark-published; per-key merge of base_sha_by_wave and published_waves against existing values, then setCoordination → writeState → emit {coordination}; --base-sha/--mark-published without --wave → die). Add the `update-issue-map` case (A2: --task-id required + --issue/--pr/--merge-sha/--status/--wave; entry={...issue_map[task_id]}, assign only provided fields via coerceId, setCoordination({issue_map}) → writeState → emit {task_id,entry}; no mutating flag → die). Amend `load-plan` ~418 for plan_hash parity (A3: optional --plan-md; when the loaded index lacks plan_hash, compute sha256:<hex of plan.md> in the exact merge-plan-fragments ~654 form, stamp plan_hash + generated_at if absent, write the index file back, then materialize tasks; idempotent when plan_hash already present). Amend `coord-status` ~927 (A4: --fail-if-unconfigured exits non-zero on absent coordination or missing contract_ref/integration_branch; --fail-if-unpublishable exits non-zero on phase!=='execute' OR empty tasks OR most-recently-published wave still has a non-terminal issue_map entry; both flags absent → emit {coordination} exit 0 unchanged). Add test/coord-writer.test.mjs covering set-coord field pins + base_sha_by_wave merge + --mark-published dedup + missing-wave error, update-issue-map create + shallow-merge + numeric coercion, load-plan parity (stamps vs idempotent), and coord-status flag exit codes (per spec Test strategy). No change to lib/github-coord.mjs or resume.mjs; dormant-by-default preserved.",
+      "files": [
+        "bin/masterplan.mjs",
+        "test/coord-writer.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/coord-writer.test.mjs",
+        "node --test test/*.test.mjs",
+        "node bin/doctor.mjs"
+      ],
+      "codex": "no",
+      "sensitive": false,
+      "deps": [],
+      "spec_refs": [
+        "Implementation surface A1-A4",
+        "Data model state.coordination",
+        "Test strategy (Unit)",
+        "Gaps G1/G2/G3/G3b"
+      ]
+    },
+    {
+      "id": 2,
+      "wave": 0,
+      "description": "doctor-hint (G8): correct the phantom fix-hint command names in lib/doctor/coord-drift.mjs line ~89. Change `mp reconcile` → `mp reconcile-integration` and `mp set-coordination` → `mp set-coord` in the WARN finding's fix string. Hint text only — no logic change, no severity change, no exit-code change.",
+      "files": [
+        "lib/doctor/coord-drift.mjs"
+      ],
+      "verify_commands": [
+        "grep -q 'mp reconcile-integration' lib/doctor/coord-drift.mjs",
+        "grep -q 'mp set-coord' lib/doctor/coord-drift.mjs",
+        "node bin/doctor.mjs"
+      ],
+      "codex": "ok",
+      "sensitive": false,
+      "deps": [],
+      "spec_refs": [
+        "Implementation surface C",
+        "Gap G8"
+      ]
+    },
+    {
+      "id": 3,
+      "wave": 1,
+      "description": "orchestrator (G4/G5/G6/G7/G9 + publish coordination writes): in commands/masterplan.md §7 publish/follow rows (~353-354), reason across the call-sites and correct each to match the bin subcommands task 1 lands. G4: replace `mp gh-issue-body --task-id=<id>` with `mp gh-issue-body --task=\"$(jq -c '.tasks[]|select(.id==<id>)' plan.index.json)\" --contract-ref=<ref> --integration-branch=<int> --base-sha=<sha> --plan-hash=<hash> --wave=<N> --run-slug=<slug>` (full task object as JSON). G5 (publish dedup, :353): drop the broken `… | mp parse-issue | mp select-claimable` pipe entirely — `select-claimable` is the follow-side claim-filter and the wrong tool for publish dedup; it receives no `--issues` here so it `die`s. Replace the pipe with issue_map-based dedup: compute the wave's unpublished tasks by filtering wave tasks against `coordination.issue_map` (read via `mp coord-status`; on first publish the map is empty so all wave tasks are unpublished), then iterate that set for `gh issue create`. Keep the gh-side `findDuplicates`/`validate-claim` backstop as a \"fail loud on unexpected duplicate\" guard. `parse-issue` and `select-claimable` remain valid standalone subcommands — neither belongs in publish dedup. G6 (follow claim, :354): `select-claimable` IS the right tool here; fix BOTH defects on this row: (1) replace phantom `--deps-from-coord-status` with `--plan-deps=\"$(jq -c '[.tasks[]|{key:(.id|tostring),value:.deps}]|from_entries' plan.index.json)\"`, AND (2) supply the issues array it requires: `--issues=\"$(gh issue list --label \"mp:open,mp:run-<slug>\" --json number,title,body,labels,assignees --limit 200)\"`. G7: resolve `@me` first via `actor=\"$(gh api user --jq .login)\"`, then `mp validate-claim --actor=\"$actor\"`. G9: after `mp reconcile-integration`, for each mark_done action also call `mp update-issue-map --task-id=<id> --merge-sha=<sha> --status=merged`; surface actions via AskUserQuestion. Wire publish coordination writes: `mp set-coord …` + per-issue `mp update-issue-map --task-id=<id> --issue=<n> --status=open --wave=<N>`, and make preflights real (`mp coord-status --fail-if-unpublishable` for publish, `--fail-if-unconfigured` for follow). Shell-side only (shell owns git/gh; bin is fs-only). No new verb; dormant-by-default preserved.",
+      "files": [
+        "commands/masterplan.md"
+      ],
+      "verify_commands": [
+        "grep -q 'gh-issue-body --task=' commands/masterplan.md",
+        "grep -q -- '--plan-deps=' commands/masterplan.md",
+        "! grep -q -- '--deps-from-coord-status' commands/masterplan.md",
+        "! grep -q -- 'validate-claim --actor=@me' commands/masterplan.md",
+        "node --test test/publish-hygiene.test.mjs",
+        "! grep -q 'parse-issue | mp select-claimable' commands/masterplan.md",
+        "grep -q -- '--issues=' commands/masterplan.md",
+        "grep -q 'update-issue-map' commands/masterplan.md",
+        "grep -q 'set-coord' commands/masterplan.md"
+      ],
+      "codex": "no",
+      "sensitive": false,
+      "deps": [
+        1
+      ],
+      "spec_refs": [
+        "Implementation surface B",
+        "Gaps G4/G5/G6/G7/G9"
+      ]
+    }
+  ]
+}

@@ -2,7 +2,7 @@
 schema_version: 8
 slug: github-coord-fix
 status: in-progress
-phase: plan
+phase: execute
 topic: "Repair github-coordination publish/follow (§7) wiring so publish/follow execute end-to-end (9 bin↔orchestrator gaps)"
 complexity: medium
 complexity_source: null
@@ -13,6 +13,6 @@ predecessor_transcript: null
 spec_path: docs/masterplan/github-coord-fix/spec.md
 plan_path: docs/masterplan/github-coord-fix/plan.md
 plan_index_path: docs/masterplan/github-coord-fix/plan.index.json
-tasks: []
+tasks: [{"id":1,"status":"pending","wave":0,"files":["bin/masterplan.mjs","test/coord-writer.test.mjs"]},{"id":2,"status":"pending","wave":0,"files":["lib/doctor/coord-drift.mjs"]},{"id":3,"status":"pending","wave":1,"files":["commands/masterplan.md"]}]
 active_run: null
 pending_gate: null
