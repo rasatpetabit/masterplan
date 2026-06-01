@@ -6,7 +6,7 @@ verb is dispatched by the single `/masterplan <verb>` command, which parses the 
 subcommands (`node bin/masterplan.mjs …`). There are no `parts/` phase files.
 
 Reserved verbs: `full · brainstorm · plan · execute · finish · retro · import · doctor ·
-status · validate · stats · clean · next · verbs`. With no verb, the bare command runs
+status · validate · stats · clean · next · verbs · publish · follow`. With no verb, the bare command runs
 the resume controller (active bundle → re-decide; none → offer to start one).
 
 ## `full`
@@ -69,3 +69,18 @@ What's-next router: `mp decide` → describe the next action without executing i
 
 ## `verbs`
 Print the reserved-verb list.
+
+## `publish`
+Lead → GitHub coordination. Projects the **current wave only** of a planned run onto GitHub:
+provisions the immutable contract ref `mp-coord/<slug>/<plan_hash>` (tier-1: `spec.md` /
+`plan.md` / `plan.index.json` only) and the integration branch `mp-int/<slug>` on first use
+(idempotent); then creates one GitHub issue per task in the wave (dedup by `{run_slug, task_id}`).
+Spec §7.1. Gated: only when a valid `plan.index.json` exists and the coordination config is
+initialised. Publishes wave N+1 only after wave N is fully merged.
+
+## `follow`
+Follower session: claim one unassigned task from a coordinated run, build it using the standard
+`mp-implementer` path against an ephemeral local bundle, and open a PR against `mp-int/<slug>`.
+Steps: preflight → optimistic claim (settle guard) → build (fetch contract ref, dispatch
+`mp-implementer` + D6 `verify-scope` + `verify_commands`) → deliver PR (on pass) or release
+claim with a failure comment (on fail). Spec §7.1.
