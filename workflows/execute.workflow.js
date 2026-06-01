@@ -108,11 +108,31 @@ function implementerPrompt(t) {
   ].join('\n');
 }
 
+// Shell-single-quote a path so the scoped-diff command is injection-safe for odd file names.
+function shq(s) {
+  return `'${String(s).replace(/'/g, `'\\''`)}'`;
+}
+
+// Build the EXACT path-filtered diff command the reviewer must run. Path scoping is the whole point
+// of the hardening: Codex reviews ONLY this task's declared files, never a bare `git diff`/`git status`
+// of the read-only tree — which also holds unrelated uncommitted changes from sibling same-wave tasks
+// (file-disjoint by the planner invariant) and the user, a verdict-pollution + wrong-focus vector.
+// No commits happen mid-wave (agents never commit), so `git diff -- <files>` ≡ the task's edits since
+// its start SHA; the path filter, not a SHA range, is what isolates. Canonical shape — agents/
+// mp-codex-reviewer.md ("Scope the review to the task's diff") mirrors it; keep them synced.
+function scopedDiffCmd(files) {
+  return files.length ? `git diff -- ${files.map(shq).join(' ')}` : null;
+}
+
 function reviewerPrompt(task, files) {
+  const diffCmd = scopedDiffCmd(files);
+  const scopeLine = diffCmd
+    ? `Scope the review to a PRE-BUILT diff. Run EXACTLY this command and review ONLY its output:\n    ${diffCmd}\nReview nothing outside that diff. Do NOT run a bare \`git diff\`/\`git status\`: the read-only tree also holds unrelated uncommitted changes (sibling same-wave tasks, user edits) that would pollute the verdict and point Codex at files this task never touched.`
+    : `No declared file scope for this task — review the task intent against the working tree, and open your findings with a NOTE that the review is UNSCOPED (no file list to diff).`;
   return [
     `Adversarially review masterplan task ${task.id} (Codex second opinion).`,
     `Task intent: ${task.description}`,
-    `Focus on these changed files: ${files || "(use git in your launch cwd to find the wave's changes)"}`,
+    scopeLine,
     'Run the Codex CLI per your invocation contract (read-only, time-capped). Return the CD-10 severity-first findings + a closing `verdict:` line. Never block on a wedged Codex.',
   ].join('\n');
 }
@@ -163,7 +183,7 @@ async function implement(t) {
 // re-derivation. That contract is why reviewerPrompt(task, …) can read task.id/description directly.
 async function review(item, task) {
   if (!reviewOn || item.digest?.status !== 'done') return item;
-  const files = (item.digest.files_changed ?? []).join(', ');
+  const files = Array.isArray(item.digest.files_changed) ? item.digest.files_changed : [];
   let verdict = 'inconclusive';
   let findings = 'NOTE — Codex review inconclusive (no output). verdict: inconclusive';
   try {

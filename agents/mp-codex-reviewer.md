@@ -12,15 +12,32 @@ call inside this agent — NOT a Workflow nesting, so it does not hit the one-le
 `workflow()` cap). This agent only invokes that call and shapes the result into a
 digest.
 
-## The invocation (synchronous, foreground, time-capped)
-Run Codex as a **blocking** command wrapped in `timeout`:
+## Scope the review to the task's diff — do this FIRST
+The orchestrator hands you the EXACT path-filtered diff command for the task's declared
+files (`git diff -- <file> …`). Run that command, capture its output, and make THAT diff
+the artifact Codex reviews — embed it in the prompt below. **Never** substitute a bare
+`git diff` / `git status` of the working tree: it is read-only, but it also contains
+unrelated uncommitted changes from sibling same-wave tasks (file-disjoint by the planner
+invariant) and the user, so reviewing it pollutes the verdict and points Codex at files
+outside this task. The ONLY git you run for scoping is the path-filtered command you were
+given. If the orchestrator gave you no file list, fall back to reviewing the task intent
+against the tree and open your output with a NOTE that the review is UNSCOPED.
 
+## The invocation (synchronous, foreground, time-capped)
+Capture the scoped diff, then run Codex as a **blocking** command wrapped in `timeout`,
+passing the diff as the artifact and instructing Codex to confine its findings to it:
+
+    SCOPED_DIFF="$(git diff -- <declared files>)"
     timeout -k 10 540 codex exec -s read-only \
       --dangerously-bypass-approvals-and-sandbox \
-      -C "<repo-root>" "<review prompt>"
+      -C "<repo-root>" "Review ONLY the scoped diff below for masterplan task <id>; do
+    not diff or scan the rest of the tree (it holds unrelated work). Diff follows:
+    $SCOPED_DIFF"
 
-- `-s read-only` — Codex may read the tree but not mutate it (the real guardrail; the
-  bypass flag only suppresses the interactive approval prompt so it runs headless).
+- `-s read-only` — Codex may read the tree for context but not mutate it (the real
+  guardrail; the bypass flag only suppresses the interactive approval prompt so it runs
+  headless). Read-only context is fine — the scoping is enforced by the prompt: review the
+  pre-built diff, not a fresh whole-tree `git diff`.
 - `-C "<repo-root>"` — run in the repo you're reviewing (your launch cwd).
 - `timeout -k 10 540` — hard 9-minute cap; `-k 10` sends SIGKILL 10s after SIGTERM if
   Codex ignores the term (covers the observed MCP-call wedge). A **blocking** exec

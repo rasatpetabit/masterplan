@@ -102,3 +102,53 @@ test('string "{}" args → empty result, no throw', async () => {
 test('malformed string args → throws (fail-loud, not a silent zero-task wave)', async () => {
   await assert.rejects(() => runEngine('{not valid json'), /JSON|Unexpected|token/i);
 });
+
+// --- SCOPED-DIFF HARDENING: the reviewer is handed a pre-built, path-filtered diff, never told to
+//     free-roam the working tree (which holds unrelated sibling-task + user dirty files → verdict
+//     pollution). reviewerPrompt now emits an EXACT `git diff -- <quoted files>` and a "review ONLY
+//     this" instruction; the old "find the wave's changes" free-roam phrasing is gone. ---
+test('review ON → reviewer prompt carries a pre-built scoped diff, not a free-roam git instruction', async () => {
+  const agentImpl = async (prompt, opts) => {
+    // Reviewer calls return text (ignored — we assert on the PROMPT). Implementer calls return a
+    // task-specific digest so the scoped diff is built from real, per-task file lists.
+    if (opts.phase === 'Review') return 'NOTE — mock. verdict: clean';
+    const isTask1 = /task 1\b/.test(prompt);
+    return {
+      task_id: isTask1 ? 1 : 2,
+      status: 'done',
+      files_changed: isTask1 ? ['src/greet.mjs'] : ['src/farewell.mjs', "src/o'brien.mjs"],
+      summary: 'mock',
+    };
+  };
+  const args = { wave: 1, tasks: WAVE1, baseline: [], repoRoot: '/tmp/x', review: 'on' };
+  const { result, calls } = await runEngine(args, { agentImpl });
+  assert.equal(result.summary.reviewOn, true);
+  assert.equal(result.summary.reviewed, 2, 'both done tasks reviewed');
+
+  const reviewPrompts = calls.agentPrompts.filter((c) => c.opts.phase === 'Review').map((c) => c.prompt);
+  assert.equal(reviewPrompts.length, 2, 'one reviewer dispatch per done task');
+  const joined = reviewPrompts.join('\n---\n');
+
+  // (a) the pre-built, path-filtered diff command — single file
+  assert.ok(joined.includes(`git diff -- 'src/greet.mjs'`), 'task 1 reviewer gets a scoped diff of its file');
+  // (b) multi-file + a single-quote in the path is shell-escaped (injection-safe)
+  assert.ok(joined.includes(`git diff -- 'src/farewell.mjs' 'src/o'\\''brien.mjs'`), 'multi-file + odd name single-quote-escaped');
+  // (c) the pollution trigger is GONE
+  assert.ok(!/find the wave's changes/.test(joined), "the old free-roam 'find the changes' instruction is removed");
+  // (d) reviewer confined to the diff and warned off a whole-tree diff
+  assert.ok(/review ONLY its output/i.test(joined), 'reviewer confined to the scoped diff');
+  assert.ok(/Do NOT run a bare `git diff`/i.test(joined), 'reviewer warned off the whole-tree diff');
+});
+
+test('review ON + no declared files → reviewer prompt falls back to an explicit UNSCOPED note', async () => {
+  const agentImpl = async (prompt, opts) => {
+    if (opts.phase === 'Review') return 'NOTE — mock. verdict: clean';
+    return { task_id: 1, status: 'done', files_changed: [], summary: 'mock' };
+  };
+  const args = { wave: 1, tasks: [WAVE1[0]], baseline: [], repoRoot: '/tmp/x', review: 'on' };
+  const { calls } = await runEngine(args, { agentImpl });
+  const review = calls.agentPrompts.find((c) => c.opts.phase === 'Review');
+  assert.ok(review, 'reviewer dispatched for the done task');
+  assert.ok(/UNSCOPED/.test(review.prompt), 'no file list → explicit UNSCOPED caveat');
+  assert.ok(!/git diff --/.test(review.prompt), 'no scoped diff command emitted when there are no files');
+});
