@@ -100,7 +100,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, setWorktreeDisposition, setVerifiedSha, setCodexConfig, loadPlanTasks, buildSeedState, buildTasksFromPlanIndex, appendEvent, setCoordination } from '../lib/bundle.mjs';
-import { issueBodyForTask, parseIssueBody, validateClaimSettle, selectClaimableUnits, reconcileIntegration } from '../lib/github-coord.mjs';
+import { issueBodyForTask, parseIssueBody, validateClaimSettle, selectClaimableUnits, reconcileIntegration, isTerminalIssueStatus, isValidIssueStatus, ISSUE_MAP_STATUSES } from '../lib/github-coord.mjs';
 import { migrate, detectSchemaVersion, MigrationError } from '../lib/migrate.mjs';
 import { decideNextAction } from '../lib/resume.mjs';
 import { prepareWave, declaredScope, verifyScope } from '../lib/wave.mjs';
@@ -883,6 +883,11 @@ function main() {
       if (!hasIssue && !hasPr && !hasMergeSha && !hasStatus && !hasWave) {
         die('update-issue-map: provide at least one of --issue, --pr, --merge-sha, --status, --wave', 1);
       }
+      // Typo-guard: a misspelled --status would otherwise silently write an off-vocabulary value
+      // that no consumer (coord-status terminal check, coord-drift doctor) recognizes.
+      if (hasStatus && !isValidIssueStatus(flags.status)) {
+        die(`update-issue-map: invalid --status '${flags.status}' (expected one of: ${ISSUE_MAP_STATUSES.join(', ')})`, 1);
+      }
 
       const existing = state.coordination && typeof state.coordination === 'object' ? state.coordination : {};
       const issueMap = existing.issue_map && typeof existing.issue_map === 'object' ? existing.issue_map : {};
@@ -1075,8 +1080,8 @@ function main() {
           const waveEntries = Object.values(issueMap).filter(
             (entry) => entry && typeof entry === 'object' && coerceId(entry.wave) === mostRecentWave
           );
-          const TERMINAL_STATUSES = new Set(['merged', 'closed']);
-          const nonTerminal = waveEntries.filter((entry) => !TERMINAL_STATUSES.has(entry.status));
+          // Terminal set is the single source of truth in lib/github-coord.mjs (isTerminalIssueStatus).
+          const nonTerminal = waveEntries.filter((entry) => !isTerminalIssueStatus(entry.status));
           if (nonTerminal.length > 0) {
             process.stderr.write(
               `masterplan: coord-status: not publishable — wave ${mostRecentWave} has ${nonTerminal.length} non-terminal issue_map entry(ies)\n`

@@ -196,6 +196,18 @@ test('update-issue-map: missing --task-id exits non-zero', () => {
   assert.match(r.stderr, /task-id/);
 });
 
+test('update-issue-map: invalid --status (typo) exits non-zero and writes nothing', () => {
+  // Guards the publish↔follow deadlock: a misspelled status (e.g. `merge`) would otherwise
+  // write a never-terminal value that blocks the next publish forever.
+  const p = tmpBundle(v8());
+  const r = run(['update-issue-map', `--state=${p}`, '--task-id=1', '--status=merge']);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /invalid --status/);
+  assert.match(r.stderr, /merged/, 'error lists the valid vocabulary including merged');
+  // No write occurred — coordination stays unset.
+  assert.equal(read(p).coordination ?? null, null);
+});
+
 // ===========================================================================
 // A3 — load-plan plan_hash parity
 // ===========================================================================

@@ -20,6 +20,9 @@ import {
   nextWaveToPublish,
   reconcileIntegration,
   mergeBatchPlan,
+  isTerminalIssueStatus,
+  isValidIssueStatus,
+  ISSUE_MAP_STATUSES,
 } from '../lib/github-coord.mjs';
 
 // ============================================================================
@@ -183,6 +186,44 @@ test('canTransition: self-loops return false', () => {
 test('canTransition: unknown states return false', () => {
   assert.equal(canTransition('unknown', 'open'), false);
   assert.equal(canTransition('open', 'unknown'), false);
+});
+
+// ============================================================================
+// A2b — issue_map.status vocabulary (DISTINCT from the label machine above)
+// ============================================================================
+
+test('A2b: ISSUE_MAP_STATUSES is the full local-status vocabulary', () => {
+  assert.deepEqual(ISSUE_MAP_STATUSES, ['open', 'claimed', 'pr-open', 'merged', 'closed']);
+});
+
+test('A2b: isTerminalIssueStatus — BOTH merged and closed are terminal', () => {
+  // The load-bearing invariant: the G9 reconcile write-back sets `merged`, and nothing
+  // writes local `closed`, so treating only `closed` as terminal deadlocks publish↔follow.
+  assert.ok(isTerminalIssueStatus('merged'), 'merged is terminal');
+  assert.ok(isTerminalIssueStatus('closed'), 'closed is terminal');
+});
+
+test('A2b: isTerminalIssueStatus — non-terminal and unknown statuses are false', () => {
+  assert.equal(isTerminalIssueStatus('open'), false);
+  assert.equal(isTerminalIssueStatus('claimed'), false);
+  assert.equal(isTerminalIssueStatus('pr-open'), false);
+  assert.equal(isTerminalIssueStatus('merge'), false, 'typo is not terminal');
+  assert.equal(isTerminalIssueStatus(undefined), false);
+  assert.equal(isTerminalIssueStatus(null), false);
+});
+
+test('A2b: isValidIssueStatus — accepts every vocabulary member', () => {
+  for (const s of ISSUE_MAP_STATUSES) {
+    assert.ok(isValidIssueStatus(s), `${s} is valid`);
+  }
+});
+
+test('A2b: isValidIssueStatus — rejects typos and off-vocabulary values', () => {
+  assert.equal(isValidIssueStatus('merge'), false, 'merged typo');
+  assert.equal(isValidIssueStatus('done'), false, 'local-task vocab, not issue_map vocab');
+  assert.equal(isValidIssueStatus('OPEN'), false, 'case-sensitive');
+  assert.equal(isValidIssueStatus(''), false);
+  assert.equal(isValidIssueStatus(undefined), false);
 });
 
 // ============================================================================
