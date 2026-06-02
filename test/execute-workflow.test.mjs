@@ -175,3 +175,50 @@ test('review ON + no DECLARED files → reviewer prompt falls back to an explici
   assert.ok(!/git diff/.test(review.prompt), 'no scoped diff command emitted when there are no declared files');
   assert.ok(!/sneaky/.test(review.prompt), 'self-reported files_changed does not leak into an UNSCOPED review');
 });
+
+// --- IMPLEMENTER BACKEND (contract-first seam) ---
+// A wave task now carries a `backend` descriptor (stamped by prepareWave). implement(t) switches on
+// backend.kind: 'qctl' -> NotYetBound blocked digest, NO agent; 'agent' (and the absent-backend
+// legacy path) -> today's dispatch, byte-for-byte unchanged (the implAgentType/implModel seam still
+// governs agentType/model).
+const QCTL_TASK = {
+  id: 1, description: 'greet', files: ['src/greet.mjs'], verify_commands: [],
+  target: 'inline', reason: 'judgment',
+  backend: { kind: 'qctl', scope: ['src/greet.mjs'], verify: [], deliver: 'patch' },
+};
+const AGENT_TASK = {
+  id: 1, description: 'greet', files: ['src/greet.mjs'], verify_commands: [],
+  target: 'inline', reason: 'judgment',
+  backend: { kind: 'agent' },
+};
+
+test('qctl backend -> NotYetBound: recorded blocked, NO agent dispatched (contract-first guard)', async () => {
+  const args = { wave: 1, tasks: [QCTL_TASK], baseline: [], repoRoot: '/tmp/x', review: 'off' };
+  const { result, calls } = await runEngine(args);
+  assert.equal(calls.agent, 0, 'a qctl backend dispatches NO implementer agent (not yet bound)');
+  assert.equal(result.summary.total, 1);
+  assert.equal(result.summary.done, 0);
+  assert.equal(result.summary.failed, 1, 'a blocked task counts toward not-done');
+  assert.equal(result.tasks[0].digest.status, 'blocked');
+  assert.equal(result.tasks[0].digest.blockers, 'qctl-not-bound');
+});
+
+test('agent backend (flag off) -> today\'s dispatch byte-identical: mp-implementer, no model override', async () => {
+  const args = { wave: 1, tasks: [AGENT_TASK], baseline: [], repoRoot: '/tmp/x', review: 'off' };
+  const { result, calls } = await runEngine(args);
+  assert.equal(calls.agent, 1, 'agent backend dispatches the implementer exactly as today');
+  assert.equal(result.summary.done, 1);
+  assert.equal(calls.agentPrompts[0].opts.agentType, 'masterplan:mp-implementer');
+  assert.equal('model' in calls.agentPrompts[0].opts, false, 'no model override in prod (frontmatter governs)');
+});
+
+test('agent backend + dogfood implAgentType/implModel args -> the seam still wins (backend never restates them)', async () => {
+  const args = JSON.stringify({
+    wave: 1, tasks: [AGENT_TASK], baseline: [], repoRoot: '/tmp/x', review: 'off',
+    implAgentType: 'general-purpose', implModel: 'sonnet',
+  });
+  const { calls } = await runEngine(args);
+  assert.equal(calls.agent, 1);
+  assert.equal(calls.agentPrompts[0].opts.agentType, 'general-purpose', 'dogfood seam overrides — {kind:agent} carries no agentType');
+  assert.equal(calls.agentPrompts[0].opts.model, 'sonnet');
+});

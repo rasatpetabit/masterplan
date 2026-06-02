@@ -1006,3 +1006,31 @@ test('coord-status: is read-only (does not write to state)', () => {
   const after = fs.readFileSync(p, 'utf8');
   assert.equal(before, after, 'coord-status must not modify the bundle');
 });
+
+// --- prepare-wave: state.implementer threads to a per-task backend descriptor (the bin wire) ---
+// wave.test passes config directly; THIS proves the state.implementer -> config -> backend wire
+// through the real CLI. buildSeedState never emits `implementer`, so the default is byte-identical.
+test('prepare-wave: default (no implementer in state) -> every payload task carries backend {kind:agent}', () => {
+  const dir = tmpDir('mp-backend-default-');
+  const p = path.join(dir, 'state.yml');
+  fs.writeFileSync(p, serializeState(v8()));                 // v8(): task 1 wave 0, task 2 wave 1
+  const planIdx = path.join(dir, 'plan.index.json');
+  fs.writeFileSync(planIdx, JSON.stringify(planIndexFixture()));
+  const pw = JSON.parse(run(['prepare-wave', `--state=${p}`, `--plan-index=${planIdx}`, '--wave=0']).stdout);
+  assert.ok(pw.tasks.length >= 1);
+  for (const t of pw.tasks) assert.deepEqual(t.backend, { kind: 'agent' });
+});
+
+test('prepare-wave: state.implementer.qctl.enabled=true -> backend {kind:qctl} (scope==task.files, deliver=patch)', () => {
+  const dir = tmpDir('mp-backend-qctl-');
+  const p = path.join(dir, 'state.yml');
+  fs.writeFileSync(p, serializeState(v8({ implementer: { qctl: { enabled: true } } })));
+  const planIdx = path.join(dir, 'plan.index.json');
+  fs.writeFileSync(planIdx, JSON.stringify(planIndexFixture()));
+  const pw = JSON.parse(run(['prepare-wave', `--state=${p}`, `--plan-index=${planIdx}`, '--wave=0']).stdout);
+  const t1 = pw.tasks.find((t) => t.id === 1);
+  assert.equal(t1.backend.kind, 'qctl');
+  assert.deepEqual(t1.backend.scope, ['src/greet.mjs']);   // task 1's plan.index files
+  assert.deepEqual(t1.backend.verify, ['true']);           // task 1's verify_commands
+  assert.equal(t1.backend.deliver, 'patch');
+});

@@ -158,6 +158,26 @@ function extractVerdict(text) {
 // Stage 1: implement one task. Always returns an object (never throws) so the item never silently
 // nulls out of the pipeline — a vanished item would read as "wave smaller than it is".
 async function implement(t) {
+  // CONTRACT-FIRST SEAM (design spec §A3/§5): a qctl-backed task has no live binding yet — the Qwen
+  // Work Fabric must ship `qctl` (task 11) + `gate.py` (task 12) first, and the workflow itself cannot
+  // shell `qctl`/`git apply`. Record a NotYetBound *blocked* digest (NOT a throw: a throw nulls the
+  // pipeline item -> silent vanish -> re-dispatch loop; a blocked digest fails loud via L1's surface).
+  // Flag off -> prepareWave only ever stamps {kind:'agent'}, so this guard is never taken in prod.
+  if (t.backend?.kind === 'qctl') {
+    log(`  task ${t.id}: qctl backend NOT YET BOUND (contract-first) -> recorded blocked`);
+    return {
+      task_id: t.id,
+      target: t.target,
+      digest: {
+        task_id: t.id,
+        status: 'blocked',
+        files_changed: [],
+        summary: 'qctl implementer backend not yet bound (contract-first stub — see design spec §A3/§5)',
+        blockers: 'qctl-not-bound',
+      },
+      review: null,
+    };
+  }
   let digest = null;
   const opts = { label: `impl:task-${t.id}`, phase: 'Dispatch', agentType: implAgentType, schema: IMPL_DIGEST };
   if (implModel) opts.model = implModel; // omitted in prod → frontmatter model governs (see seam note)
