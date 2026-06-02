@@ -499,7 +499,14 @@ function main() {
       const wave = coerceId(need(flags, 'wave'));
       // routing config: persisted `codex.routing` wins; --routing overrides; default 'auto'. env facts
       // (host-suppression, linked-worktree) are git/host-probed by the shell and passed as flags.
-      const config = { routing: state.codex?.routing ?? flags.routing ?? 'auto' };
+      const config = {
+        routing: state.codex?.routing ?? flags.routing ?? 'auto',
+        // Pluggable implementer backend (contract-first; default OFF). Always {} today since
+        // buildSeedState never emits `implementer` -> resolveImplementerBackend returns
+        // {kind:'agent'} -> byte-identical to shipping. Flipping the live qctl binding is a
+        // binding-time concern (design spec §5).
+        implementer: state.implementer ?? {},
+      };
       const env = {
         codexHostSuppressed: !!flags['codex-suppressed'],
         linkedWorktree: !!flags['linked-worktree'],
