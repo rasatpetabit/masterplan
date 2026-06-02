@@ -1,0 +1,93 @@
+{
+  "schema_version": "6.0",
+  "tasks": [
+    {
+      "id": 1,
+      "wave": 1,
+      "description": "resolveImplementerBackend resolver in lib/routing.mjs — the dispatch-descriptor sibling of routeTask. Tagged union: {kind:'agent'} reproduces shipping; {kind:'qctl'} only when config.implementer.qctl.enabled === true.",
+      "files": [
+        "lib/routing.mjs",
+        "test/routing.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/routing.test.mjs"
+      ],
+      "codex": null
+    },
+    {
+      "id": 2,
+      "wave": 2,
+      "description": "Attach the backend descriptor in prepareWave (lib/wave.mjs) — leanPayload gains a backend param+key; prepareWave calls resolveImplementerBackend per task.",
+      "files": [
+        "lib/wave.mjs",
+        "test/wave.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/wave.test.mjs"
+      ],
+      "codex": null
+    },
+    {
+      "id": 5,
+      "wave": 2,
+      "description": "Resolve the descriptor in the follow prose (commands/masterplan.md) — follow verb step 3 resolves resolveImplementerBackend instead of hard-coding mp-implementer; qctl kind surfaces NotYetBound, never silently falls back.",
+      "files": [
+        "commands/masterplan.md"
+      ],
+      "verify_commands": [
+        "grep -n 'resolveImplementerBackend' commands/masterplan.md"
+      ],
+      "codex": null
+    },
+    {
+      "id": 6,
+      "wave": 2,
+      "description": "Document the flag (docs/config-schema.md) — insert the default-off implementer.qctl.enabled block.",
+      "files": [
+        "docs/config-schema.md"
+      ],
+      "verify_commands": [
+        "grep -n 'implementer:' docs/config-schema.md"
+      ],
+      "codex": null
+    },
+    {
+      "id": 3,
+      "wave": 3,
+      "description": "Thread state.implementer into the prepare-wave config (bin/masterplan.mjs) — the prepare-wave case threads implementer: state.implementer ?? {} into the config passed to prepareWave.",
+      "files": [
+        "bin/masterplan.mjs",
+        "test/bin-masterplan.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/bin-masterplan.test.mjs"
+      ],
+      "codex": null
+    },
+    {
+      "id": 4,
+      "wave": 4,
+      "description": "NotYetBound guard in implement(t) (workflows/execute.workflow.js) — a qctl kind returns a blocked digest (qctl-not-bound); the agent path stays byte-for-byte identical.",
+      "files": [
+        "workflows/execute.workflow.js",
+        "test/execute-workflow.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/execute-workflow.test.mjs"
+      ],
+      "codex": null
+    },
+    {
+      "id": 7,
+      "wave": 5,
+      "description": "Full-suite green + byte-identical audit (flag off ⇒ dispatch path unchanged) + Codex defect pass before declaring done. Nothing pushed without explicit user approval.",
+      "files": [],
+      "verify_commands": [
+        "node --test"
+      ],
+      "codex": "ok"
+    }
+  ],
+  "plan_hash": "sha256:669b1d2b49f36b106fd6013a26041677e4d97707d018889ea9c6fa4436ec6bf0",
+  "generated_at": "2026-06-02T15:28:24.387Z"
+}

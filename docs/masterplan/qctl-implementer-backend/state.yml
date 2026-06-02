@@ -1,0 +1,19 @@
+---
+schema_version: 8
+slug: qctl-implementer-backend
+status: archived
+phase: execute
+topic: "qctl Implementer-Backend Seam (Part A) — pluggable implementer-backend descriptor (default agent; optional qctl behind a default-off flag); contract-first, implemented + merged in #15"
+complexity: medium
+complexity_source: null
+autonomy: loose
+planning_mode: serial
+created_at: 2026-06-01T00:00:00.000Z
+predecessor_transcript: null
+spec_path: docs/masterplan/qctl-implementer-backend/spec.md
+plan_path: docs/masterplan/qctl-implementer-backend/plan.md
+plan_index_path: docs/masterplan/qctl-implementer-backend/plan.index.json
+tasks: [{"id":1,"status":"done","wave":1,"files":["lib/routing.mjs","test/routing.test.mjs"]},{"id":2,"status":"done","wave":2,"files":["lib/wave.mjs","test/wave.test.mjs"]},{"id":5,"status":"done","wave":2,"files":["commands/masterplan.md"]},{"id":6,"status":"done","wave":2,"files":["docs/config-schema.md"]},{"id":3,"status":"done","wave":3,"files":["bin/masterplan.mjs","test/bin-masterplan.test.mjs"]},{"id":4,"status":"done","wave":4,"files":["workflows/execute.workflow.js","test/execute-workflow.test.mjs"]},{"id":7,"status":"done","wave":5,"files":[]}]
+active_run: null
+pending_gate: null
+verified_sha: 8b30aaff8075962741dd76a0e4705f3daed24229
