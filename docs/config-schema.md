@@ -118,6 +118,17 @@ codex:
                                       # Migration: users with explicit `detection_mode: ping` keep ping-only semantics.
                                       # Only the unset default flips from `ping` → `scan-then-ping`.
 
+# Pluggable implementer backend (contract-first; default OFF) — design spec:
+# docs/superpowers/specs/2026-06-01-qctl-implementer-backend-design.md
+# When qctl.enabled is true, `mp prepare-wave` stamps a {kind:'qctl'} backend descriptor on each
+# wave task instead of the default {kind:'agent'}. The LIVE qctl binding is DEFERRED until the Qwen
+# Work Fabric ships `qctl` + `gate.py`; until then a qctl-kind task is recorded blocked (NotYetBound).
+# buildSeedState never emits this key, so an absent block == default-off == byte-identical to today.
+implementer:
+  qctl:
+    enabled: false           # off | true (strict === true) — true offloads task implementation to
+                             # the Qwen pi/qctl worker. Any non-true value behaves as false.
+
 # Intra-plan task parallelism (v2.0.0+) — Slice α (read-only parallel waves)
 # When enabled, contiguous tasks sharing the same `**parallel-group:**` annotation
 # in a plan dispatch as one parallel wave (verification, inference, lint,
