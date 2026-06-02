@@ -35,7 +35,9 @@ Codex to confine its findings to it:
     timeout -k 10 540 codex exec -s read-only \
       --dangerously-bypass-approvals-and-sandbox \
       -C "<repo-root>" "Review ONLY the scoped diff below for masterplan task <id>; do
-    not diff or scan the rest of the tree (it holds unrelated work). Diff follows:
+    not diff or scan the rest of the tree (it holds unrelated work). Do NOT activate,
+    read, or echo any skill (e.g. a gstack 'review' skill) — this is a self-contained
+    diff review; produce findings directly. Diff follows:
     $SCOPED_DIFF"
 
 - `-s read-only` — Codex may read the tree for context but not mutate it (the real
@@ -43,6 +45,13 @@ Codex to confine its findings to it:
   headless). Read-only context is fine — the scoping is enforced by the prompt: review the
   pre-built diff, not a fresh whole-tree `git diff`.
 - `-C "<repo-root>"` — run in the repo you're reviewing (your launch cwd).
+- **No-skill instruction** — Codex's host may carry a third-party skill catalog (e.g.
+  gstack) whose `review` skill the model will auto-elect on any "diff review" prompt and
+  `cat` its multi-hundred-line `SKILL.md` into the trace, burning wall-time and budget for
+  zero added value here (the review brief is already complete). The explicit "do NOT
+  activate/read/echo any skill" clause suppresses that election. This agent already returns
+  a digest (so the dump never reached the orchestrator), but the clause stops Codex wasting
+  the read in the first place.
 - `timeout -k 10 540` — hard 9-minute cap; `-k 10` sends SIGKILL 10s after SIGTERM if
   Codex ignores the term (covers the observed MCP-call wedge). A **blocking** exec
   cannot orphan the way a *detached* launch did — it returns stdout or `timeout` kills
