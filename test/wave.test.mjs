@@ -56,7 +56,7 @@ test('prepareWave emits ONLY the lean payload keys (goal 3 — nothing heavy tra
   const { tasks } = prepareWave(state(), planIndex(), 0, {}, {});
   assert.deepEqual(
     Object.keys(tasks[0]).sort(),
-    ['description', 'eligible', 'files', 'id', 'reason', 'target', 'verify_commands'],
+    ['backend', 'description', 'eligible', 'files', 'id', 'reason', 'target', 'verify_commands'],
   );
 });
 
@@ -114,4 +114,23 @@ test('verifyScope: a pre-existing dirty file is NOT a breach (baseline subtracti
 
 test('verifyScope: empty everything → vacuously ok', () => {
   assert.deepEqual(verifyScope([], [], []), { ok: true, touched: [], outOfScope: [] });
+});
+
+// --- prepareWave: the implementer-backend descriptor (resolveImplementerBackend) ---
+test('prepareWave attaches a {kind:agent} backend to every task by default (flag off)', () => {
+  const { tasks } = prepareWave(state(), planIndex(), 0, { routing: 'auto' }, {});
+  assert.ok(tasks.length >= 1);
+  for (const t of tasks) assert.deepEqual(t.backend, { kind: 'agent' });
+});
+
+test('prepareWave attaches a {kind:qctl} backend when implementer.qctl.enabled (scope == task.files)', () => {
+  const { tasks } = prepareWave(
+    state(), planIndex(), 0,
+    { routing: 'auto', implementer: { qctl: { enabled: true } } }, {},
+  );
+  const t1 = tasks.find((t) => t.id === 1);
+  assert.equal(t1.backend.kind, 'qctl');
+  assert.deepEqual(t1.backend.scope, ['a.js']);          // task 1's plan.index files
+  assert.deepEqual(t1.backend.verify, ['node --test']);  // task 1's verify_commands
+  assert.equal(t1.backend.deliver, 'patch');
 });
