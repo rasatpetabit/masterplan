@@ -4,7 +4,7 @@
 // eligibility is computed here over the plan.index.json task at dispatch time.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { routeTask } from '../lib/routing.mjs';
+import { routeTask, resolveImplementerBackend } from '../lib/routing.mjs';
 
 // A task the heuristic should accept: <=3 files, unambiguous, has verify, not sensitive.
 const clean = (over = {}) => ({
@@ -94,4 +94,59 @@ test('does not mutate inputs', () => {
   const frozen = JSON.stringify(task);
   routeTask(task, { routing: 'auto' }, {});
   assert.equal(JSON.stringify(task), frozen);
+});
+
+// --- resolveImplementerBackend: the dispatch-backend descriptor (sibling of routeTask) ---
+// A tagged union: {kind:'agent'} reproduces shipping (agentType/model live in the
+// execute.workflow.js seam, NOT here); {kind:'qctl'} only when the flag is strictly true.
+test('resolveImplementerBackend: default (no implementer config) -> {kind:agent}', () => {
+  assert.deepEqual(resolveImplementerBackend(clean(), {}, {}), { kind: 'agent' });
+});
+
+test('resolveImplementerBackend: qctl flag false -> {kind:agent}', () => {
+  assert.deepEqual(
+    resolveImplementerBackend(clean(), { implementer: { qctl: { enabled: false } } }, {}),
+    { kind: 'agent' },
+  );
+});
+
+test('resolveImplementerBackend: any non-true enabled value -> {kind:agent} (strict === true)', () => {
+  for (const v of [undefined, null, 'true', 'on', 1, {}, 'enabled']) {
+    assert.deepEqual(
+      resolveImplementerBackend(clean(), { implementer: { qctl: { enabled: v } } }, {}),
+      { kind: 'agent' },
+      `enabled=${JSON.stringify(v)} must NOT activate qctl`,
+    );
+  }
+});
+
+test('resolveImplementerBackend: qctl flag === true -> {kind:qctl} with scope/verify/deliver', () => {
+  const d = resolveImplementerBackend(clean(), { implementer: { qctl: { enabled: true } } }, {});
+  assert.equal(d.kind, 'qctl');
+  assert.deepEqual(d.scope, ['a.js']);          // == task.files
+  assert.deepEqual(d.verify, ['node --test']);  // == task.verify_commands
+  assert.equal(d.deliver, 'patch');
+});
+
+test('resolveImplementerBackend: qctl descriptor carries NO repo/base (binding-time fields, spec §4/B1)', () => {
+  const d = resolveImplementerBackend(clean(), { implementer: { qctl: { enabled: true } } }, {});
+  assert.equal('repo' in d, false, 'repo is stamped at binding time, not by the resolver');
+  assert.equal('base' in d, false, 'base is stamped at binding time, not by the resolver');
+});
+
+test('resolveImplementerBackend: empty task -> scope/verify default to []', () => {
+  const d = resolveImplementerBackend({}, { implementer: { qctl: { enabled: true } } }, {});
+  assert.deepEqual(d.scope, []);
+  assert.deepEqual(d.verify, []);
+  assert.equal(d.deliver, 'patch');
+});
+
+test('resolveImplementerBackend: does not mutate inputs', () => {
+  const task = clean();
+  const config = { implementer: { qctl: { enabled: true } } };
+  const ft = JSON.stringify(task);
+  const fc = JSON.stringify(config);
+  resolveImplementerBackend(task, config, {});
+  assert.equal(JSON.stringify(task), ft);
+  assert.equal(JSON.stringify(config), fc);
 });
