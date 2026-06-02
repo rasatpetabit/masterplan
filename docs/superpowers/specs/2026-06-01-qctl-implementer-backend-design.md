@@ -76,18 +76,22 @@ A tagged union — the single object both consumer paths *and* the fabric agree 
 beside `routeTask`.
 
 ```js
-// kind:'agent' — today's default; reproduces shipping byte-for-byte
-{ kind: 'agent',
-  agentType: 'masterplan:mp-implementer',
-  model: undefined }                      // (or A.implModel when set)
+// kind:'agent' — today's default; reproduces shipping byte-for-byte.
+// Carries ONLY the discriminant. agentType/model resolution stays in the
+// existing execute.workflow.js seam (the prod-inert implAgentType/implModel
+// hook, commit 561f348), which the workflow already holds — the descriptor
+// does NOT restate fields the dispatch site already has.
+{ kind: 'agent' }
 
-// kind:'qctl' — shipped, but the resolver emits it ONLY when the flag is on
+// kind:'qctl' — shipped, but the resolver emits it ONLY when the flag is on.
 { kind: 'qctl',
-  repo,            // target repo path (under /srv/dev)
-  base,            // ref the patch applies against (HEAD sha at dispatch)
-  scope,           // declared file scope (== task.files / D6 verify-scope set)
-  verify,          // verify_commands (union, as today)
-  deliver: 'patch' // delivery primitive: portable unified diff vs `base`
+  scope,            // declared file scope (== task.files / D6 verify-scope set)
+  verify,           // verify_commands (union, as today)
+  deliver: 'patch'  // delivery primitive: portable unified diff vs `base`
+  // repo, base — NOT resolver-time. They are stamped by the dispatch-locus
+  // consumer at binding time (runtime repo root + HEAD sha). The resolver
+  // emits only task-intrinsic fields; see §5. §4/B1 is where repo/base appear,
+  // populated at the binding-time crossing.
 }
 ```
 
@@ -97,10 +101,12 @@ beside `routeTask`.
 a **sibling** to `routeTask` (it produces the *dispatch* descriptor; `routeTask`'s
 `target` stays log-only and untouched).
 
-- Default (no config) → `{ kind:'agent', agentType:'masterplan:mp-implementer',
-  model: config?.implModel }` — reproduces shipping exactly.
-- `config.implementer?.qctl?.enabled === true` (**default false**) AND the task
-  matches the qctl routing predicate → `{ kind:'qctl', … }`.
+- Default → `{ kind:'agent' }` — the workflow's existing seam owns
+  agentType/model, so the descriptor reproduces shipping without restating them.
+- `config.implementer?.qctl?.enabled === true` (**default false**, strict
+  `=== true`; any other value → `kind:'agent'`) → `{ kind:'qctl', scope, verify,
+  deliver:'patch' }`. The flag itself is the predicate for now (qctl for every
+  task when enabled); a finer per-task predicate is a binding-time concern (YAGNI).
 
 The function is pure (`task, config, env` in → descriptor out) and unit-tested in
 isolation, mirroring `routeTask`'s testability.
@@ -109,22 +115,28 @@ isolation, mirroring `routeTask`'s testability.
 
 `mp prepare-wave` (L1) already resolves routing per task and hands the wave payload
 to the L2 workflow. It gains a per-task `backend` descriptor on each wave-task,
-computed via `resolveImplementerBackend`. `execute.workflow.js` `implement(t)`
-switches on `t.backend.kind`:
+computed via `resolveImplementerBackend`. `execute.workflow.js` `implement(t)` gains
+a **single guard at the top**, leaving the existing dispatch path untouched:
 
-- `'agent'` → `agent(implementerPrompt(t), { agentType: t.backend.agentType,
-  model: t.backend.model, schema: IMPL_DIGEST })` — **exactly today's dispatch**
-  (this is the promotion of the prod-inert `implAgentType`/`implModel` hook,
-  commit `561f348`, into a config-driven descriptor).
-- `'qctl'` → a **NotYetBound** stub: raise a clear error
-  (`"qctl backend resolved but not yet bound — see qctl results-contract spec"`).
-  The real dispatch locus is the deferred binding-time decision the workflow's
-  no-subprocess/no-fs/no-git constraint forces (the workflow *cannot* shell `qctl`
-  or `git apply` itself; binding must happen at L1 or in an agentic consumer).
+- `t.backend?.kind === 'qctl'` → return a **NotYetBound** synthesized digest
+  (`status:'blocked'`, `blockers:'qctl-not-bound'`, summary citing this spec). A
+  blocked digest — *not* a thrown error — is the established workflow pattern: a
+  throw inside a pipeline stage nulls the item → silent vanish → re-dispatch loop;
+  a blocked digest fails loud via the §2a AUQ. The real dispatch locus is the
+  deferred binding-time decision the workflow's no-subprocess/no-fs/no-git
+  constraint forces (the workflow *cannot* shell `qctl` or `git apply` itself;
+  binding must happen at L1 or in an agentic consumer).
+- otherwise (the `agent` kind, **and** the absent-`backend` legacy path) → fall
+  through to **today's dispatch, byte-for-byte unchanged**. The existing top-of-
+  workflow seam (`implAgentType ?? 'masterplan:mp-implementer'` / `implModel`,
+  commit `561f348`) still governs agentType/model; the `agent` descriptor does not
+  restate those fields — it merely routes around the qctl guard.
 
 **Production invariant:** with the flag off, `resolveImplementerBackend` returns
-`kind:'agent'` for every task, so the workflow path is byte-identical to shipping;
-the `backend` field is inert ballast threaded but never branched on.
+`{ kind:'agent' }` for every task, the guard is never taken, and the workflow path
+is byte-identical to shipping; the `backend` field is inert ballast threaded but
+never branched on. The change is visually auditable — the agent path is literally
+the same code, and all new behavior is the one guard block.
 
 ### A4. Threading — the follow path
 
@@ -144,13 +156,18 @@ byte-identical until someone flips the flag against a real `qctl`.
 
 ### A6. Tests (extend the existing `test/` suite)
 
-- `resolveImplementerBackend` returns `kind:'agent'` (default config) and
-  `kind:'qctl'` (flag on + matching predicate).
-- Default-config descriptor reproduces today's dispatch args
-  (`agentType:'masterplan:mp-implementer'`, `model` honoring `implModel`).
+- `resolveImplementerBackend` returns `{ kind:'agent' }` (default / flag-off) and
+  `{ kind:'qctl', scope, verify, deliver:'patch' }` (flag on, strict `=== true`).
+- Byte-identical default: an `agent`-backend task with no `args` override dispatches
+  through the untouched seam → `opts.agentType==='masterplan:mp-implementer'`, no
+  `model` — proving the agent path is unchanged.
+- Dogfood override still wins: an `agent`-backend task plus `args.implAgentType`
+  routes to the override (the seam, not the descriptor) — the existing dogfood test
+  keeps passing untouched.
 - Flag-off proves `kind:'qctl'` is never emitted (the prod-inert invariant).
-- The NotYetBound guard raises a clear error if a `kind:'qctl'` descriptor reaches
-  the workflow without a bound dispatch.
+- The NotYetBound guard returns a `status:'blocked'`, `blockers:'qctl-not-bound'`
+  digest (and dispatches NO agent) if a `kind:'qctl'` descriptor reaches the
+  workflow without a bound dispatch.
 
 ### A7. File touchpoints (masterplan)
 
@@ -158,7 +175,7 @@ byte-identical until someone flips the flag against a real `qctl`.
 |---|---|
 | `lib/routing.mjs` | Add `resolveImplementerBackend()` + the descriptor union. |
 | `bin/masterplan.mjs` (`prepare-wave`) | Attach per-task `backend` descriptor to the wave payload. |
-| `workflows/execute.workflow.js` | `implement(t)` switches on `t.backend.kind`; `'agent'` = today; `'qctl'` = NotYetBound guard. |
+| `workflows/execute.workflow.js` | `implement(t)` gains a top guard: `t.backend?.kind==='qctl'` → NotYetBound blocked-digest; otherwise today's dispatch byte-for-byte (seam untouched). |
 | `commands/masterplan.md` (§7 step 3, `follow`) | Resolve the descriptor instead of hard-coding `mp-implementer`. |
 | config schema + defaults | `implementer.qctl.enabled` (default false). |
 | `test/…` | Resolver + invariant + NotYetBound coverage. |
@@ -179,7 +196,9 @@ producer-local copy).
   verify_commands }   // commands that must exit 0 on the applied result
 ```
 
-This is the `kind:'qctl'` descriptor minus `deliver`.
+This is the `kind:'qctl'` descriptor (`scope`, `verify`) plus the `task_id`,
+`repo`, and `base` that the dispatch-locus consumer stamps at binding time
+(`deliver` is a masterplan-side delivery hint, not part of the qctl input).
 
 ### B2. Output — qctl → masterplan
 
