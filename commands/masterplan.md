@@ -87,7 +87,7 @@ The spine. It NEVER decides in prose — it asks `mp decide` and executes the re
 
    | action | do |
    |---|---|
-   | `surface_gate` | Re-render the gate's `AskUserQuestion` (CD-9). A named option → act, `mp clear-gate`, commit, re-decide. Free-text / no clear answer → keep the gate, respond, close. NEVER auto-proceed regardless of autonomy (the durable marker outranks a native AUQ that can't survive compaction). For the finalization gates (`branch_finish`, `verification_failed`), the per-option **act** is specified in **§2c**. |
+   | `surface_gate` | Re-render the gate's `AskUserQuestion` (CD-9). A named option → act, `mp clear-gate`, commit, re-decide. Free-text / no clear answer → keep the gate, respond, close. NEVER auto-proceed regardless of autonomy (the durable marker outranks a native AUQ that can't survive compaction). When re-rendering `branch_finish`, **rehydrate the codex-review digest**: `mp codex-review-status --state=<path> --sha=$(git rev-parse HEAD)` — on `{present:true}` fold its `digest`/`count`/`base` back into the re-rendered AUQ (the live step-5 digest doesn't survive compaction; the durable event does). For the finalization gates (`branch_finish`, `verification_failed`), the per-option **act** is specified in **§2c**. |
    | `wait` | A live run owns the wave. Report it and close — its Workflow completion notification re-invokes this controller, which records the result via the completion protocol (**§2a**, step 3). |
    | `finalize_run` | The wave's tasks are all `done` on disk. `mp clear-active-run`, commit, then re-decide (→ next wave, or `complete`). |
    | `recover_and_redispatch` | Crash recovery. If `staleTaskId` ≠ null: `TaskList` → `TaskStop` (**Claude Code only** — no-op when `codex_host_suppressed == true`, where the native task tools are absent and reconciliation leans on the on-disk `active_run` marker) any surviving run for it (a backgrounded Workflow MAY outlive session death — reconcile before touching files). Then RESET scope: `git checkout -- <resetPaths>` and, **only when `resetPaths` is non-empty**, `git clean -fd -- <resetPaths>` — scope the clean to the reset paths; a bare `git clean -fd` (or one with an empty pathspec) would wipe unrelated user-owned untracked files. Then dispatch the wave via **§2a**. Idempotent — agents never commit. |
@@ -214,7 +214,9 @@ never re-surface (the one thing v7's flow got wrong; do not copy it).
 **Snapshot first** (the SHELL runs git, `bin` stays fs-only): `mp finish-status --state=<path>
 --head="$(git rev-parse HEAD)" --porcelain="$(git -c core.quotePath=false status --porcelain)"
 --branches="$(git branch --format='%(refname:short)')"` → `{task_scope_dirty, task_scope_paths,
-unrelated_dirty, base, retro_present, verified, verify_commands, worktree_disposition, dispositions}`.
+unrelated_dirty, base, retro_present, verified, verify_commands, worktree_disposition, codex_review,
+dispositions}` (`codex_review` mirrors the dispatch predicate `state.codex.review === true|'on'|'true'`
+— it arms the step-5 whole-branch review).
 
 1. **Branch already resolved? (re-entry shortcut).** If `worktree_disposition` is a retirement value
    (`removed_after_merge` | `kept_by_user`), the `branch_finish` gate was resolved AND executed in a
@@ -235,7 +237,52 @@ unrelated_dirty, base, retro_present, verified, verify_commands, worktree_dispos
      (reviewed)* / *Abort finish*), close. Resolution = the surface_gate act, below.
 4. **Retro (write-if-absent).** If `!retro_present`, generate `retro.md` (idempotent — a re-entry skips
    it). This subsumes the old `retro` verb.
-5. **Branch-finish gate (durable — the v8 regression this restores).** First **probe for an open PR**
+5. **Branch-finish gate (durable — the v8 regression this restores).**
+   - **Whole-branch codex review first (runs once, before the gate opens).** When *all four* hold —
+     `finish_status.codex_review` is true (the dispatch predicate: `state.codex.review` armed — same
+     field, same meaning as prepare-wave) ∧ `base` is non-null ∧ §0 host-detect did **not** set
+     `codex_host_suppressed` (Codex hosting the command must not review-via-Codex — that recurses) ∧
+     `mp codex-companion-path` resolves to an existing script (`{resolved:true, exists:true, path}`) —
+     first the **durable re-entry guard**: `mp codex-review-status --state=<path> --sha=$(git rev-parse
+     HEAD)`; on `{present:true}` the review already ran at this exact HEAD (a death between the review
+     and `open-gate` is replaying), so **skip the re-run**, rehydrate its `digest`/`count`/`base` into
+     the gate AUQ below, write **no** event, and fall straight through to the PR probe. Otherwise
+     run the native whole-branch reviewer **foreground/blocking**, bounded by an OUTER `timeout`
+     ceiling above the companion's internal 240 s status-wait so a network hang can never wedge finish:
+     `timeout 600 node "<path from mp codex-companion-path>" review --scope branch --base <base>`
+     (`review` mode is the one place review's whole-branch unit is correct; its `--wait`/`--background`
+     flags are no-ops — `review` always runs foreground — so no `--wait` is needed). **Fail-soft,
+     never wedge finish:** ANY non-success — non-zero exit, `timeout`'s `124`, unresolved/missing path,
+     `codex_host_suppressed`, or `codex_review` off — is **not** a blocker; emit `mp event
+     --state=<path> --type=codex_review_skipped --summary="whole-branch codex-companion review skipped
+     (degraded) — <tight reason>"` and PROCEED to the PR probe (the hyphenated "codex-companion …
+     skipped" deliberately does **not** match the audit's `\bcodex\s+review\b`, so a degraded finish
+     where nothing reviewed still trips `codex_review_configured_but_zero_invocations` — correct). On
+     **exit 0**, fold the rendered findings into the gate AUQ below (a brief digest + count, not the
+     raw dump) and emit the **durable** record. The digest is review-derived free text — a stray
+     quote/backtick/`$()`/newline interpolated into a `--note="…"` shell word would break the command
+     (dropping the event → re-introducing the durability bug) or inject a later flag, so transport it
+     **shell-safely**: `Write` the brief digest to `<bundle>/codex-review-digest.txt` (the Write tool
+     is not shell-evaluated, so arbitrary bytes are safe), then `mp event --state=<path>
+     --type=codex_review --summary="codex review complete (whole-branch, base <base>) — <n> findings"
+     --data '{"sha":"<HEAD sha>","base":"<base>","count":<n>}'
+     --note-file=<bundle>/codex-review-digest.txt`. Three channels, three jobs: `--summary` is the
+     audit signal (the literal "codex review" **does** match `\bcodex\s+review\b` → satisfies the
+     configured-but-zero-invocations check, the one invocation this finish owes); `--data` carries the
+     quote-safe machine scalars the re-entry guard keys on (`sha`/`base`/`count` only — git-derived,
+     never the free-text digest, whose stray quote/backtick/newline would break the subcommand's
+     `JSON.parse(--data)` and silently drop the record); `--note-file` carries the digest bytes
+     verbatim (`bin` reads the file, never shell-evaluates it) for the gate to rehydrate. This write
+     lands **before** `mp open-gate` below — so if the session dies in that window, resume re-runs §2c,
+     the guard above finds `{present:true}` at the unchanged HEAD, and the review is **not** re-run (it
+     rehydrates instead). **Residual window:** a death *between* the reviewer exiting 0 and this event
+     landing leaves no durable record at HEAD, so resume re-runs the review — harmless and idempotent
+     at an unchanged tree (the only cost is one more network review; `open-gate` itself is idempotent,
+     so the gate never double-opens). Once the gate IS open a resume is `surface_gate`, which
+     re-renders the AUQ and re-reads `codex-review-status` to restore the digest (§2 surface_gate row)
+     — the live in-context digest does not survive compaction, the durable event does.
+
+   First **probe for an open PR**
    on the branch (the §3 PR probe: `gh pr list --head "<branch>" … | mp pr-summary`). `mp open-gate
    --id=branch_finish`, then AUQ labelled with `base`: `Merge to <base> locally (Recommended)` · `Push
    and open a PR` · `Keep branch + worktree as-is` · `Discard everything` (the skill then requires a
@@ -329,10 +376,13 @@ gate's own AUQ is the turn-close) or when `autonomy` is neither loose nor full. 
 signal for *this plugin's* authorized auto-progress, mirroring the user-side `<no-auq>` hatch.
 
 **Turn-close routing (CC-3-trampoline).** Every turn-close in this shell — a stop-set gate's AUQ, an
-auto-progress `<mp-autoprogress>` close, or a plain stop — routes through the canonical
-**CC-3-trampoline** sequence defined in `parts/step-0.md` (§ "CC-3-trampoline anchor"). That phase file
-is the single enforcement point; this router only names the entry so the sequence is discoverable from
-the orchestrator root rather than duplicated here.
+auto-progress `<mp-autoprogress>` close, or a plain stop — runs the same canonical **CC-3-trampoline**
+sequence, defined **here**: emit the turn's summary block + exit breadcrumb **exactly once**, at
+turn-close (never per-tool-call — the v7 hook-driven per-turn ceremony is gone, §5), then close with
+the right terminator — an `AskUserQuestion` at a stop-set gate (CD-9), or the `<mp-autoprogress>`
+marker on an authorized auto-progress (above). The §0 version banner is an *invocation*-time
+obligation (first, before anything), **not** part of this turn-close sequence. This router is the
+single in-file enforcement point — no phase-file indirection.
 
 ## 3 — Other verbs (sequencing only — content lives elsewhere)
 
@@ -411,11 +461,11 @@ Reserve the AUQ for the genuine stop-set.
 
 Otherwise close cleanly. What's gone from v7 is the *hook-driven per-turn* ceremony — trace
 markers, breadcrumbs, and summary-block signals fired on every turn by Stop-hook machinery. v8
-consolidates these into a single prompt-driven close: the **CC-3-trampoline anchor** in
-`parts/step-0.md` (named at §2d "Turn-close routing"), which emits the summary block + exit
-breadcrumb **once, at turn-close**, then closes with this AUQ at a stop-set gate. (The §0 version
-banner is an *invocation*-time obligation — first, before anything — not part of turn-close.) That
-anchor is the only ceremony that survives.
+consolidates these into a single prompt-driven close: the **CC-3-trampoline** sequence defined in-file
+at §2d "Turn-close routing", which emits the summary block + exit breadcrumb **once, at turn-close**,
+then closes with this AUQ at a stop-set gate. (The §0 version banner is an *invocation*-time
+obligation — first, before anything — not part of turn-close.) That sequence is the only ceremony
+that survives.
 
 ## 6.5 — Multi-repo apply/verify/commit orchestration (the shell's job, not `bin`'s)
 

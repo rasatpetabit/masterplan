@@ -335,6 +335,20 @@ test('set-codex-config: write NESTED codex.{routing,review}; merge-preserve; rej
   assert.match(empty.stderr, /at least one of --routing or --review/);
   assert.deepEqual(read(p).codex, { routing: 'auto', review: false }); // unchanged by the rejected writes
 });
+test('finish-status: codex_review mirrors state.codex.review (the predicate that arms the §2c whole-branch gate)', () => {
+  // The §2c finish-gate runs the whole-branch codex-companion review only when review is armed. finish-status
+  // surfaces that as a normalized boolean using the SAME predicate as the dispatch/prepare-wave path
+  // (rawReview === true|'on'|'true'), so the gate and the wave workflow can never disagree on "review is on".
+  const p = tmpBundle(v8());
+  // Default bundle — no codex config → not armed.
+  assert.equal(JSON.parse(run(['finish-status', `--state=${p}`]).stdout).codex_review, false);
+  // set-codex-config --review=on persists the boolean true; finish-status reports the gate armed.
+  run(['set-codex-config', `--state=${p}`, '--review=on']);
+  assert.equal(JSON.parse(run(['finish-status', `--state=${p}`]).stdout).codex_review, true);
+  // …and back off — the gate disarms (the value is read live from state each snapshot).
+  run(['set-codex-config', `--state=${p}`, '--review=off']);
+  assert.equal(JSON.parse(run(['finish-status', `--state=${p}`]).stdout).codex_review, false);
+});
 test('active_run two-phase: set (launching) -> recover w/ null staleTaskId; promote -> wait(alive)/recover(dead, staleTaskId)', () => {
   const p = tmpBundle(v8());
   assert.deepEqual(JSON.parse(run(['set-active-run', `--state=${p}`, '--wave=0']).stdout).active_run, { wave: 0, phase: 'launching' });
@@ -441,16 +455,107 @@ test('event: appends one JSON line per call to the bundle\'s events.jsonl, accum
   assert.equal(r1.status, 0);
   assert.equal(JSON.parse(r1.stdout).path, ep); // events.jsonl is a sibling of state.yml
   run(['event', `--state=${p}`, '--type=gate_opened', '--ts=T2', '--data={"id":"plan_approval"}']);
+  // --summary is the AUDIT-SCANNED signal channel (lib/masterplan_session_audit.py's _event_text reads
+  // type/kind/event/message/detail/summary/notes/status — NOT note). The §2c whole-branch finish-gate
+  // emits its codex_review invocation here so the audit COUNTS it (suppressing
+  // codex_review_configured_but_zero_invocations); --note remains the un-scanned free-text channel. Assert
+  // both land as DISTINCT fields from one call.
+  run(['event', `--state=${p}`, '--type=codex_review', '--ts=T3', '--note=fyi', '--summary=codex review complete (whole-branch, base main) — 3 findings']);
   const lines = fs.readFileSync(ep, 'utf8').trim().split('\n');
-  assert.equal(lines.length, 2);
+  assert.equal(lines.length, 3);
   assert.deepEqual(JSON.parse(lines[0]), { type: 'seeded', ts: 'T1', phase: 'brainstorm' });
   assert.deepEqual(JSON.parse(lines[1]), { type: 'gate_opened', ts: 'T2', data: { id: 'plan_approval' } });
+  assert.deepEqual(JSON.parse(lines[2]), {
+    type: 'codex_review', ts: 'T3', note: 'fyi',
+    summary: 'codex review complete (whole-branch, base main) — 3 findings',
+  });
 });
 test('event: rejects non-JSON --data', () => {
   const p = path.join(tmpDir('mp-event2-'), 'state.yml');
   const r = run(['event', `--state=${p}`, '--type=x', '--data=not json']);
   assert.equal(r.status, 1);
   assert.match(r.stderr, /must be valid JSON/);
+});
+
+// ---- integration: codex-review-status (the §2c step-5 durable re-entry guard's fs front) ----
+test('codex-review-status: reads back a durable codex_review event for a given HEAD (the P2 re-entry guard)', () => {
+  // The §2c finish-gate writes a codex_review event (data:{sha,base,count}, note:<digest>) BEFORE
+  // open-gate. On resume the step-5 guard reads it via this subcommand: present at HEAD ⇒ skip the
+  // network re-run + rehydrate the digest. End-to-end: `mp event` writes, `mp codex-review-status` reads.
+  const p = path.join(tmpDir('mp-crs-'), 'state.yml');
+  const HEAD = 'deadbeef123';
+  // Absent events.jsonl → {present:false}, no throw.
+  assert.deepEqual(JSON.parse(run(['codex-review-status', `--state=${p}`, `--sha=${HEAD}`]).stdout),
+    { present: false, digest: null, count: null, base: null });
+  // Write the durable record exactly as step-5's exit-0 path does (the channel split: scalars→--data,
+  // free-text digest→--note, audit signal→--summary).
+  run(['event', `--state=${p}`, '--type=codex_review', '--ts=T1',
+    '--summary=codex review complete (whole-branch, base main) — 2 findings',
+    `--data={"sha":"${HEAD}","base":"main","count":2}`, '--note=P2: stale lock; P3: naming']);
+  assert.deepEqual(JSON.parse(run(['codex-review-status', `--state=${p}`, `--sha=${HEAD}`]).stdout),
+    { present: true, digest: 'P2: stale lock; P3: naming', count: 2, base: 'main' });
+  // A different HEAD does not match (the guard keys on the exact tree).
+  assert.equal(JSON.parse(run(['codex-review-status', `--state=${p}`, '--sha=other999']).stdout).present, false);
+  // A degraded codex_review_skipped record at HEAD must NOT satisfy the guard (a skip ≠ a review).
+  run(['event', `--state=${p}`, '--type=codex_review_skipped', '--ts=T2',
+    '--summary=whole-branch codex-companion review skipped (degraded) — no network',
+    `--data={"sha":"${HEAD}"}`]);
+  // The earlier success still wins; the skip is ignored either way.
+  assert.equal(JSON.parse(run(['codex-review-status', `--state=${p}`, `--sha=${HEAD}`]).stdout).present, true);
+});
+
+test('event --note-file: reads arbitrary bytes verbatim into record.note (the shell-safe digest transport)', () => {
+  // The §2c finish-gate's codex-review digest is review-derived free text. Interpolating it into a
+  // `--note="<digest>"` shell word is an injection/quoting hazard (quote/backtick/$()/newline). The fix:
+  // the shell Writes the digest to a file (Write is not shell-evaluated) and passes the PATH; bin reads
+  // the bytes verbatim. Round-trip a digest packed with every char that would break a shell word.
+  const dir = tmpDir('mp-notefile-');
+  const p = path.join(dir, 'state.yml');
+  const HEAD = 'cafef00d';
+  const adversarial = 'P2: a "quoted" $(rm -rf /) `backtick`\nsecond line; --data={"sha":"evil"}\n';
+  const digestFile = path.join(dir, 'codex-review-digest.txt');
+  fs.writeFileSync(digestFile, adversarial);
+  run(['event', `--state=${p}`, '--type=codex_review', '--ts=T1',
+    '--summary=codex review complete (whole-branch, base main) — 1 findings',
+    `--data={"sha":"${HEAD}","base":"main","count":1}`, `--note-file=${digestFile}`]);
+  // The bytes survive verbatim — no shell ever saw them, and the injected `--data=` is inert text.
+  const status = JSON.parse(run(['codex-review-status', `--state=${p}`, `--sha=${HEAD}`]).stdout);
+  assert.equal(status.present, true);
+  assert.equal(status.digest, adversarial);
+  assert.equal(status.count, 1);
+  assert.equal(status.base, 'main');
+});
+
+test('event: --note and --note-file are mutually exclusive (die, no event written)', () => {
+  const dir = tmpDir('mp-notefile-mx-');
+  const p = path.join(dir, 'state.yml');
+  const digestFile = path.join(dir, 'd.txt');
+  fs.writeFileSync(digestFile, 'x');
+  const r = run(['event', `--state=${p}`, '--type=codex_review', `--note=inline`, `--note-file=${digestFile}`]);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /mutually exclusive/);
+  // The collision aborts before any append — no events.jsonl materializes.
+  assert.equal(fs.existsSync(path.join(dir, 'events.jsonl')), false);
+});
+
+test('event: --note-file pointing at a missing path dies loud (not a silent empty note)', () => {
+  const dir = tmpDir('mp-notefile-enoent-');
+  const p = path.join(dir, 'state.yml');
+  const r = run(['event', `--state=${p}`, '--type=codex_review', `--note-file=${path.join(dir, 'nope.txt')}`]);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /note-file unreadable/);
+});
+
+test('codex-review-status: a non-ENOENT events.jsonl read error fails loud (never masquerades as present:false)', () => {
+  // ENOENT == no review yet → {present:false}. But any OTHER read error (here: events.jsonl is a
+  // directory → EISDIR) must NOT be swallowed — a silent {present:false} would falsely re-run the
+  // network gate or look "skipped". The subcommand must die.
+  const dir = tmpDir('mp-crs-eisdir-');
+  const p = path.join(dir, 'state.yml');
+  fs.mkdirSync(path.join(dir, 'events.jsonl')); // sibling of state.yml, as a directory
+  const r = run(['codex-review-status', `--state=${p}`, '--sha=deadbeef']);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /events\.jsonl unreadable/);
 });
 
 // ---- integration: seed-tasks (the fresh-plan plan.index.json -> state.tasks writer) ----

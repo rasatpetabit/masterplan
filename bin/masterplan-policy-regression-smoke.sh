@@ -120,6 +120,21 @@ codex_routing: off
 codex_review: on
 last_activity: 2026-05-15T00:00:00Z' '### Task 1' '{"ts":"2026-05-15T00:00:00Z","type":"task_complete","message":"done"}'
 
+# 4b. codex_review_configured_but_zero_invocations SUPPRESSED — identical to #4 EXCEPT the event is the
+# real record the §2c whole-branch finish-gate emits: `mp event --type=codex_review --summary=...`. This
+# is the gating proof that the gate's audit-count mechanism works: the audit's _event_text scans the
+# `summary` field (NOT the free-text `note`), and "codex review …" matches EVENT_CODEX_REVIEW_RE, so the
+# invocation count goes >0 and the warning is suppressed. Only the event differs from #4 → if #4 fires and
+# this does not, the summary record is provably what counts. (cd3_verification_missing_on_complete still
+# fires here — no verify event — and is irrelevant to this assertion.)
+write_plan review-summary '---
+phase: complete
+status: ok
+complexity: medium
+codex_routing: off
+codex_review: on
+last_activity: 2026-05-15T00:00:00Z' '### Task 1' '{"type":"codex_review","ts":"2026-05-15T00:00:00Z","summary":"codex review complete (whole-branch, base main) — 3 findings"}'
+
 # 5. missing_codex_ping_event — events exist (>=3), no codex_ping
 write_plan no-ping '---
 phase: executing
@@ -276,6 +291,9 @@ assert_grep "annot-gap fires codex_annotation_gap_on_high" "codex_annotation_gap
 assert_grep "no-pg fires codex_parallel_group_missing_on_high" "codex_parallel_group_missing_on_high" <(get_warnings_for "no-pg")
 assert_grep "no-route fires codex_routing_configured_but_zero_dispatches" "codex_routing_configured_but_zero_dispatches" <(get_warnings_for "no-route")
 assert_grep "no-review fires codex_review_configured_but_zero_invocations" "codex_review_configured_but_zero_invocations" <(get_warnings_for "no-review")
+# Paired negative: the real `mp event --type=codex_review --summary=...` record the §2c finish-gate emits
+# must SUPPRESS the same warning (the summary field is audit-scanned; the count goes >0).
+assert_not_grep "review-summary suppresses codex_review_configured_but_zero_invocations (mp event --summary counts)" "codex_review_configured_but_zero_invocations" <(get_warnings_for "review-summary")
 assert_grep "no-ping fires missing_codex_ping_event" "missing_codex_ping_event" <(get_warnings_for "no-ping")
 assert_grep "silent-degrade fires silent_codex_degradation" "silent_codex_degradation" <(get_warnings_for "silent-degrade")
 assert_grep "pending-stale fires pending_gate_orphaned" "pending_gate_orphaned" <(get_warnings_for "pending-stale")
