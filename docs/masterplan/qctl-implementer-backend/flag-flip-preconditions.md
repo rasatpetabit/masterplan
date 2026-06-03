@@ -57,16 +57,21 @@ only theorized.
 
 Confirm: rollback of an applied qctl patch was demonstrated at least once.
 
-### 5. Eligibility-allowlist production wiring (`--repos-allowlist`)
+### 5. Eligibility-allowlist production wiring (`--repos-allowlist`) — ✅ WIRED
 
-Before the flag is flipped, the L1 shell (`bin/masterplan.mjs`
-`prepare-wave` case) MUST be wired to load `scripts/qwen-fabric/config/repos.yml`,
-parse it into a JSON object, and pass it as the sixth argument (`reposAllowlist`)
-to `prepareWave`. Currently `bin/masterplan.mjs` calls `prepareWave` with five
-arguments — no `reposAllowlist` — so the eligibility predicate is permanently
-dormant regardless of flag state.
+**Code wiring complete (commit `472f034`).** The L1 shell (`bin/masterplan.mjs`
+`prepare-wave` case) now parses an optional `--repos-allowlist` (JSON = parsed
+`repos.yml`) and threads it as the sixth argument (`reposAllowlist`) to
+`prepareWave`. Malformed JSON, or a non-object value, exits non-zero with a hint
+(matching the `enqueue-key --scope` idiom). When the flag is absent the arg is
+`undefined`, the `qctlEligible` gate fail-closes, and every `{kind:'qctl'}` route
+downgrades to `{kind:'agent'}` — byte-identical to the pre-wiring build. Covered
+by `test/bin-masterplan.test.mjs` (qctl-positive, non-covering negative control,
+malformed-JSON) and `test/wave.test.mjs` (lib-level 6-arg `prepareWave`).
 
-The production wiring, once implemented, looks like:
+**Operator action that remains:** at flip time the operator MUST actually pass
+`--repos-allowlist` on each `mp prepare-wave` invocation (the loader is plumbed,
+but the shell does not auto-read `repos.yml` — it is supplied per call):
 
 ```
 # shell: load and parse the allowlist
