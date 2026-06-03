@@ -81,6 +81,13 @@
 //                                                  (version-agnostic). { resolved, path, version, installPath,
 //                                                  exists } | { resolved:false, reason }. The §2c finish-gate
 //                                                  review invokes <path> when resolved && exists.
+//   codex-review-status --state=PATH --sha=SHA   -> READ-ONLY: is there a durable whole-branch codex-review
+//                                                  record at SHA? { present, digest, count, base }. The §2c
+//                                                  step-5 guard reads this on (re-)entry: present at HEAD ⇒
+//                                                  skip the network-bound re-run AND rehydrate the findings
+//                                                  digest into the re-rendered gate AUQ (closes the P2 re-run-
+//                                                  on-death + digest-loss-on-compaction window). Absent
+//                                                  events.jsonl == no review yet.
 //   gh-issue-body --task=JSON [--run-slug=S] [--contract-ref=R] [--integration-branch=B]
 //                 [--base-sha=SHA] [--plan-hash=H] [--wave=N]
 //                                               -> raw markdown string: the GitHub issue body for a plan task
@@ -128,7 +135,7 @@ import { migrate, detectSchemaVersion, MigrationError } from '../lib/migrate.mjs
 import { decideNextAction } from '../lib/resume.mjs';
 import { prepareWave, declaredScope, verifyScope } from '../lib/wave.mjs';
 import { detectHost, suppressRescue } from '../lib/codex-host.mjs';
-import { selectCodexInstall, companionScriptPath } from '../lib/codex-companion.mjs';
+import { selectCodexInstall, companionScriptPath, selectCodexReviewForHead } from '../lib/codex-companion.mjs';
 import { resolveConfigDir } from '../lib/paths.mjs';
 import { createHash } from 'node:crypto';
 import { mergePlanFragments, validatePlanIndex, renderPlanMd } from '../lib/plan-merge.mjs';
@@ -894,6 +901,26 @@ function main() {
         installPath: install.installPath,
         exists,
       });
+      break;
+    }
+    case 'codex-review-status': {
+      // READ-ONLY: does a durable whole-branch codex-review record exist at a given HEAD? The §2c
+      // finish-gate's step-5 guard calls this on (re-)entry — a present record for the current HEAD
+      // means the review already ran at this exact tree, so skip the network-bound re-run AND rehydrate
+      // the findings digest into the re-rendered gate AUQ. The `codex_review` event is written BEFORE
+      // `open-gate`, so a death in between still skips on resume (closes the P2 durability window). bin
+      // owns the fs read; lib/codex-companion.mjs scans the text purely. Absent events.jsonl == no
+      // review yet → { present:false }.
+      const p = need(flags, 'state');
+      const sha = String(need(flags, 'sha'));
+      const eventsPath = path.join(path.dirname(p), 'events.jsonl');
+      let text = '';
+      try {
+        text = fs.readFileSync(eventsPath, 'utf8');
+      } catch {
+        /* absent == no events yet; pure helper returns { present:false } for '' */
+      }
+      out(selectCodexReviewForHead(text, sha));
       break;
     }
     case 'record-verification': {

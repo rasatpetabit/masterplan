@@ -477,6 +477,33 @@ test('event: rejects non-JSON --data', () => {
   assert.match(r.stderr, /must be valid JSON/);
 });
 
+// ---- integration: codex-review-status (the §2c step-5 durable re-entry guard's fs front) ----
+test('codex-review-status: reads back a durable codex_review event for a given HEAD (the P2 re-entry guard)', () => {
+  // The §2c finish-gate writes a codex_review event (data:{sha,base,count}, note:<digest>) BEFORE
+  // open-gate. On resume the step-5 guard reads it via this subcommand: present at HEAD ⇒ skip the
+  // network re-run + rehydrate the digest. End-to-end: `mp event` writes, `mp codex-review-status` reads.
+  const p = path.join(tmpDir('mp-crs-'), 'state.yml');
+  const HEAD = 'deadbeef123';
+  // Absent events.jsonl → {present:false}, no throw.
+  assert.deepEqual(JSON.parse(run(['codex-review-status', `--state=${p}`, `--sha=${HEAD}`]).stdout),
+    { present: false, digest: null, count: null, base: null });
+  // Write the durable record exactly as step-5's exit-0 path does (the channel split: scalars→--data,
+  // free-text digest→--note, audit signal→--summary).
+  run(['event', `--state=${p}`, '--type=codex_review', '--ts=T1',
+    '--summary=codex review complete (whole-branch, base main) — 2 findings',
+    `--data={"sha":"${HEAD}","base":"main","count":2}`, '--note=P2: stale lock; P3: naming']);
+  assert.deepEqual(JSON.parse(run(['codex-review-status', `--state=${p}`, `--sha=${HEAD}`]).stdout),
+    { present: true, digest: 'P2: stale lock; P3: naming', count: 2, base: 'main' });
+  // A different HEAD does not match (the guard keys on the exact tree).
+  assert.equal(JSON.parse(run(['codex-review-status', `--state=${p}`, '--sha=other999']).stdout).present, false);
+  // A degraded codex_review_skipped record at HEAD must NOT satisfy the guard (a skip ≠ a review).
+  run(['event', `--state=${p}`, '--type=codex_review_skipped', '--ts=T2',
+    '--summary=whole-branch codex-companion review skipped (degraded) — no network',
+    `--data={"sha":"${HEAD}"}`]);
+  // The earlier success still wins; the skip is ignored either way.
+  assert.equal(JSON.parse(run(['codex-review-status', `--state=${p}`, `--sha=${HEAD}`]).stdout).present, true);
+});
+
 // ---- integration: seed-tasks (the fresh-plan plan.index.json -> state.tasks writer) ----
 test('seed-tasks: populates state.tasks from plan.index.json so a freshly-planned run dispatches instead of finalizing empty', () => {
   // The fresh-plan path's missing CD-7 writer: a brainstorm bundle seeds tasks:[]; nothing loaded the
