@@ -26,8 +26,10 @@
 //   seed-tasks --state=PATH --plan-index=PATH [--force]
 //                                               -> CD-7 write: populate state.tasks {id,status,wave,files} from plan.index.json
 //                                                  (the fresh-plan path; refuse clobber of a non-empty task list w/o --force)
-//   event --state=PATH --type=T [--phase=P] [--note=STR] [--data=JSON] [--ts=T]
+//   event --state=PATH --type=T [--phase=P] [--note=STR] [--summary=STR] [--data=JSON] [--ts=T]
 //                                               -> append one JSON line to the bundle's events.jsonl
+//                                                  (--summary is the audit-scanned signal channel vs the
+//                                                  free-text --note; see the case body)
 //   migrate-bundle --state=PATH                 -> back up + persist a legacy bundle as v8 (no-op if v8)
 //   backfill-waves --state=PATH --plan-index=PATH -> set each task's {wave,files} from plan.index.json
 //   load-plan --state=PATH --plan-index=PATH    -> CD-7 write: materialize state.tasks from a fresh
@@ -65,13 +67,20 @@
 //                                               -> the §2 finish-flow snapshot {task_scope_dirty,
 //                                                  unrelated_dirty, base, retro_present, head_sha,
 //                                                  verified_sha, verified, verify_commands,
-//                                                  worktree_disposition, dispositions}.
+//                                                  worktree_disposition, codex_review, dispositions}.
+//                                                  codex_review mirrors the dispatch predicate (state.
+//                                                  codex.review === true|'on'|'true') — arms the §2c gate.
 //                                                  git facts are PASSED IN (bin is fs-only); all git
 //                                                  flags optional (a fs-only call still reports
 //                                                  retro/verified/commands). verify_commands is read
 //                                                  from plan.index.json (the exec projection state drops)
 //   record-verification --state=PATH --sha=SHA  -> CD-7 write: record verified_sha (the verified-at-SHA
 //                                                  skip — re-entry at unchanged HEAD won't re-run the suite)
+//   codex-companion-path                         -> READ-ONLY: resolve the active codex-companion.mjs script
+//                                                  path from <configDir>/plugins/installed_plugins.json
+//                                                  (version-agnostic). { resolved, path, version, installPath,
+//                                                  exists } | { resolved:false, reason }. The §2c finish-gate
+//                                                  review invokes <path> when resolved && exists.
 //   gh-issue-body --task=JSON [--run-slug=S] [--contract-ref=R] [--integration-branch=B]
 //                 [--base-sha=SHA] [--plan-hash=H] [--wave=N]
 //                                               -> raw markdown string: the GitHub issue body for a plan task
@@ -119,6 +128,7 @@ import { migrate, detectSchemaVersion, MigrationError } from '../lib/migrate.mjs
 import { decideNextAction } from '../lib/resume.mjs';
 import { prepareWave, declaredScope, verifyScope } from '../lib/wave.mjs';
 import { detectHost, suppressRescue } from '../lib/codex-host.mjs';
+import { selectCodexInstall, companionScriptPath } from '../lib/codex-companion.mjs';
 import { resolveConfigDir } from '../lib/paths.mjs';
 import { createHash } from 'node:crypto';
 import { mergePlanFragments, validatePlanIndex, renderPlanMd } from '../lib/plan-merge.mjs';
@@ -387,6 +397,11 @@ function main() {
       const record = { type: need(flags, 'type'), ts: flags.ts ?? new Date().toISOString() };
       if (flags.phase !== undefined) record.phase = flags.phase;
       if (flags.note !== undefined) record.note = flags.note;
+      // --summary is the SIGNAL channel (vs free-text --note): the session audit's _event_text scans
+      // type/kind/event/message/detail/summary/notes/status — NOT note. So a milestone whose phrasing
+      // a policy-watcher must COUNT (e.g. the §2c whole-branch "codex review" gate, which trips
+      // codex_review_configured_but_zero_invocations when uncounted) puts that phrasing here.
+      if (flags.summary !== undefined) record.summary = flags.summary;
       if (flags.data !== undefined) {
         try {
           record.data = JSON.parse(flags.data);
@@ -821,6 +836,11 @@ function main() {
       } catch {
         /* no/invalid plan.index.json — fall back to the skill's IDENTIFY step */
       }
+      // codex_review: whether the §2c whole-branch finish-gate review is ARMED. Reuse the EXACT
+      // dispatch/prepare-wave predicate (rawReview === true|'on'|'true') so the gate and the wave
+      // workflow agree on what "review is on" means from the one config field — same string, same place.
+      const rawReview = state.codex?.review;
+      const codexReview = rawReview === true || rawReview === 'on' || rawReview === 'true';
       out({
         task_scope_dirty: dirt.taskScopeDirty,
         unrelated_dirty: dirt.unrelatedDirty,
@@ -833,6 +853,7 @@ function main() {
         verified: isVerified(verifiedSha, head),
         verify_commands: verifyCommands,
         worktree_disposition: worktreeDisposition,
+        codex_review: codexReview,
         dispositions: Object.fromEntries(BRANCH_CHOICES.map((c) => [c, dispositionForChoice(c)])),
       });
       break;
@@ -844,6 +865,35 @@ function main() {
       // An absent/unauthed gh, no remote, or a non-GitHub origin → '' → { hasPr:false }. Pure transform,
       // REPORT-ONLY (never triggers a merge), no state write.
       out(summarizePr(typeof flags['gh-json'] === 'string' ? flags['gh-json'] : ''));
+      break;
+    }
+    case 'codex-companion-path': {
+      // READ-ONLY resolver for the §2c finish-gate review. The codex-companion.mjs script lives in a
+      // version-pinned cache dir whose <version> segment moves with every plugin update, so the gate must
+      // NOT hardcode it. installed_plugins.json's installPath is the authoritative live install (see
+      // lib/codex-companion.mjs). bin owns the fs (read + existence probe); lib stays pure.
+      const configDir = resolveConfigDir(process.env, os.homedir());
+      const installedPath = path.join(configDir, 'plugins', 'installed_plugins.json');
+      let install = null;
+      try {
+        install = selectCodexInstall(JSON.parse(fs.readFileSync(installedPath, 'utf8')));
+      } catch {
+        out({ resolved: false, reason: `installed_plugins.json unreadable at ${installedPath}` });
+        break;
+      }
+      if (!install) {
+        out({ resolved: false, reason: 'no codex plugin entry in installed_plugins.json' });
+        break;
+      }
+      const scriptPath = companionScriptPath(install.installPath);
+      const exists = scriptPath ? fs.existsSync(scriptPath) : false;
+      out({
+        resolved: exists,
+        path: scriptPath,
+        version: install.version,
+        installPath: install.installPath,
+        exists,
+      });
       break;
     }
     case 'record-verification': {
