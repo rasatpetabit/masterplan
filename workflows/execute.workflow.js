@@ -158,22 +158,28 @@ function extractVerdict(text) {
 // Stage 1: implement one task. Always returns an object (never throws) so the item never silently
 // nulls out of the pipeline — a vanished item would read as "wave smaller than it is".
 async function implement(t) {
-  // CONTRACT-FIRST SEAM (design spec §A3/§5): a qctl-backed task has no live binding yet — the Qwen
-  // Work Fabric must ship `qctl` (task 11) + `gate.py` (task 12) first, and the workflow itself cannot
-  // shell `qctl`/`git apply`. Record a NotYetBound *blocked* digest (NOT a throw: a throw nulls the
-  // pipeline item -> silent vanish -> re-dispatch loop; a blocked digest fails loud via L1's surface).
+  // CONTRACT-FIRST SEAM (design spec §A3/§5): a qctl-backed task must NOT be dispatched inline —
+  // L2 CANNOT shell `qctl`/`git apply` (the Workflow runtime has no subprocess / fs access). The
+  // apply/verify logic lives in bin/masterplan.mjs + the L1 shell. The workflow's job here is to
+  // ECHO the descriptor + baseline back so the L1 completion-turn controller can drive it (mirror
+  // of how `baseline` is echoed at the wave level for verify-scope). A synthetic 'qctl' status —
+  // not 'blocked' — is returned: L1's current digest loop ignores unknown statuses (neither
+  // marks done nor surfaces as failure), so the task stays pending and L1's future qctl-dispatch
+  // path (a separate task, sibling to this one) picks it up via `backend.kind === 'qctl'`.
+  // NOT a throw: a throw nulls the pipeline item -> silent vanish -> re-dispatch loop.
   // Flag off -> prepareWave only ever stamps {kind:'agent'}, so this guard is never taken in prod.
   if (t.backend?.kind === 'qctl') {
-    log(`  task ${t.id}: qctl backend NOT YET BOUND (contract-first) -> recorded blocked`);
+    log(`  task ${t.id}: qctl backend — echoing descriptor for L1 pickup (no inline agent dispatch)`);
     return {
       task_id: t.id,
       target: t.target,
+      backend: t.backend,  // echo the descriptor: L1 reads backend.kind === 'qctl' to dispatch
       digest: {
         task_id: t.id,
-        status: 'blocked',
+        status: 'qctl',      // synthetic: not 'blocked' — L1's qctl path is the consumer, not the AUQ surface
         files_changed: [],
-        summary: 'qctl implementer backend not yet bound (contract-first stub — see design spec §A3/§5)',
-        blockers: 'qctl-not-bound',
+        summary: 'qctl task: descriptor echoed for L1 pickup (apply/verify via bin/masterplan.mjs + shell)',
+        blockers: null,
       },
       review: null,
     };
@@ -258,10 +264,13 @@ if (codexCount) {
 const results = (await pipeline(tasks, implement, review)).filter(Boolean);
 
 const done = results.filter((r) => r.digest?.status === 'done').length;
-const failed = results.length - done;
+const qctl = results.filter((r) => r.digest?.status === 'qctl').length;
+const failed = results.length - done - qctl;
 const reviewed = results.filter((r) => r.review).length;
-log(`masterplan-execute: wave ${wave} complete — ${done}/${results.length} done, ${failed} not-done, ${reviewed} reviewed. Spent ~${Math.round(budget.spent() / 1000)}k output tok.`);
+log(`masterplan-execute: wave ${wave} complete — ${done}/${results.length} done, ${failed} not-done, ${qctl} qctl-pending, ${reviewed} reviewed. Spent ~${Math.round(budget.spent() / 1000)}k output tok.`);
 
-// Digests only. L1 records each done task (`mp mark-task`), surfaces failed/blocked, runs the D6
-// `mp verify-scope` using `baseline` as `before` vs a fresh `after`, then commits + advances.
-return { wave, baseline, tasks: results, summary: { total: tasks.length, done, failed, reviewed, reviewOn } };
+// Digests only. L1 records each done task (`mp mark-task`), surfaces failed/blocked, drives any
+// qctl-pending tasks (digest.status==='qctl') via bin/masterplan.mjs + shell (their `backend`
+// descriptor is echoed at result.tasks[i].backend for L1 pickup), runs the D6 `mp verify-scope`
+// using `baseline` as `before` vs a fresh `after`, then commits + advances.
+return { wave, baseline, tasks: results, summary: { total: tasks.length, done, failed, qctl, reviewed, reviewOn } };

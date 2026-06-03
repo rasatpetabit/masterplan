@@ -11,6 +11,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { formatBanner, applyPlanIndex, readPluginVersion } from '../bin/masterplan.mjs';
 import { serializeState, parseState } from '../lib/bundle.mjs';
+import { createHash } from 'node:crypto';
 
 const BIN = fileURLToPath(new URL('../bin/masterplan.mjs', import.meta.url));
 const SAMPLE = fileURLToPath(new URL('./fixtures/legacy-bundles/5.0-inflight-sample.yml', import.meta.url));
@@ -1021,7 +1022,13 @@ test('prepare-wave: default (no implementer in state) -> every payload task carr
   for (const t of pw.tasks) assert.deepEqual(t.backend, { kind: 'agent' });
 });
 
-test('prepare-wave: state.implementer.qctl.enabled=true -> backend {kind:qctl} (scope==task.files, deliver=patch)', () => {
+test('prepare-wave: qctl.enabled=true with no --repos-allowlist wired -> backend {kind:agent} (predicate dormant until flip-time loader)', () => {
+  // bin/masterplan.mjs calls prepareWave with 5 args (no reposAllowlist) — the production
+  // allowlist loader is a deliberate flip-time precondition (see plan.index task C.flag-flip),
+  // NOT implemented in this build. With the flag on but no allowlist threaded through, the
+  // qctlEligible gate (lib/wave.mjs) fail-closes and downgrades {kind:qctl} -> {kind:agent}.
+  // The qctl-positive descriptor (scope==task.files, deliver=patch) is proven at the lib level
+  // in test/wave.test.mjs with a fixture allowlist passed directly to prepareWave.
   const dir = tmpDir('mp-backend-qctl-');
   const p = path.join(dir, 'state.yml');
   fs.writeFileSync(p, serializeState(v8({ implementer: { qctl: { enabled: true } } })));
@@ -1029,8 +1036,199 @@ test('prepare-wave: state.implementer.qctl.enabled=true -> backend {kind:qctl} (
   fs.writeFileSync(planIdx, JSON.stringify(planIndexFixture()));
   const pw = JSON.parse(run(['prepare-wave', `--state=${p}`, `--plan-index=${planIdx}`, '--wave=0']).stdout);
   const t1 = pw.tasks.find((t) => t.id === 1);
-  assert.equal(t1.backend.kind, 'qctl');
-  assert.deepEqual(t1.backend.scope, ['src/greet.mjs']);   // task 1's plan.index files
-  assert.deepEqual(t1.backend.verify, ['true']);           // task 1's verify_commands
-  assert.equal(t1.backend.deliver, 'patch');
+  assert.deepEqual(t1.backend, { kind: 'agent' });
+});
+
+// ---- qctl async-loop subcommands (§6) ----
+
+// ---- record-qctl-job: durable job_id persistence (the CD-7 single-writer path) ----
+test('record-qctl-job: round-trips a durable job_id to state.qctl_jobs[task_id]', () => {
+  const p = tmpBundle(v8());
+  const r = run(['record-qctl-job', `--state=${p}`, '--task-id=1', '--job-id=qwen-job-0042', '--key=abc123']);
+  assert.equal(r.status, 0, `expected exit 0, got stderr: ${r.stderr}`);
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.task_id, '1');
+  assert.equal(out.job_id, 'qwen-job-0042');
+  assert.equal(out.key, 'abc123');
+
+  // Verify durable persistence: the key round-trips through serializeState/parseState
+  const state = read(p);
+  assert.ok(state.qctl_jobs && typeof state.qctl_jobs === 'object', 'qctl_jobs must be persisted');
+  assert.equal(state.qctl_jobs['1'].job_id, 'qwen-job-0042');
+  assert.equal(state.qctl_jobs['1'].key, 'abc123');
+});
+
+test('record-qctl-job: idempotent re-write with same data (overwrite is byte-identical)', () => {
+  const p = tmpBundle(v8());
+  run(['record-qctl-job', `--state=${p}`, '--task-id=2', '--job-id=qwen-job-0099', '--key=deadbeef']);
+  // Second call with identical args
+  const r2 = run(['record-qctl-job', `--state=${p}`, '--task-id=2', '--job-id=qwen-job-0099', '--key=deadbeef']);
+  assert.equal(r2.status, 0);
+  const state = read(p);
+  assert.equal(state.qctl_jobs['2'].job_id, 'qwen-job-0099');
+  assert.equal(state.qctl_jobs['2'].key, 'deadbeef');
+});
+
+test('record-qctl-job: multiple tasks stored independently', () => {
+  const p = tmpBundle(v8());
+  run(['record-qctl-job', `--state=${p}`, '--task-id=1', '--job-id=job-A', '--key=key-A']);
+  run(['record-qctl-job', `--state=${p}`, '--task-id=2', '--job-id=job-B', '--key=key-B']);
+  const state = read(p);
+  assert.equal(state.qctl_jobs['1'].job_id, 'job-A');
+  assert.equal(state.qctl_jobs['2'].job_id, 'job-B');
+});
+
+test('record-qctl-job: fails on missing required flags', () => {
+  const p = tmpBundle(v8());
+  const noJobId = run(['record-qctl-job', `--state=${p}`, '--task-id=1', '--key=k']);
+  assert.notEqual(noJobId.status, 0);
+  assert.match(noJobId.stderr, /missing required --job-id/);
+  const noKey = run(['record-qctl-job', `--state=${p}`, '--task-id=1', '--job-id=j']);
+  assert.notEqual(noKey.status, 0);
+  assert.match(noKey.stderr, /missing required --key/);
+});
+
+// ---- enqueue-key: idempotency check (upsert → record → reuse) ----
+test('enqueue-key: no prior job -> action:upsert with key, job:null', () => {
+  const p = tmpBundle(v8());
+  const r = run(['enqueue-key', `--state=${p}`, '--run-slug=my-run', '--wave=0', '--task-id=1', '--base=abc123sha']);
+  assert.equal(r.status, 0);
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.action, 'upsert');
+  assert.match(out.key, /^[0-9a-f]{64}$/);
+  assert.equal(out.job, null);
+});
+
+test('enqueue-key: idempotent under a repeated call — record-qctl-job then re-enqueue -> action:reuse', () => {
+  const p = tmpBundle(v8());
+  // First call: no job stored yet → upsert
+  const r1 = run(['enqueue-key', `--state=${p}`, '--run-slug=my-run', '--wave=0', '--task-id=1', '--base=sha-abc', '--scope=["lib/a.mjs"]']);
+  assert.equal(r1.status, 0);
+  const out1 = JSON.parse(r1.stdout);
+  assert.equal(out1.action, 'upsert');
+
+  // Shell "mints" a job_id and persists it
+  const fakeJobId = 'qwen-job-0001';
+  const recR = run(['record-qctl-job', `--state=${p}`, '--task-id=1', `--job-id=${fakeJobId}`, `--key=${out1.key}`]);
+  assert.equal(recR.status, 0);
+
+  // Second call with SAME tuple → action:reuse, job contains the stored entry
+  const r2 = run(['enqueue-key', `--state=${p}`, '--run-slug=my-run', '--wave=0', '--task-id=1', '--base=sha-abc', '--scope=["lib/a.mjs"]']);
+  assert.equal(r2.status, 0);
+  const out2 = JSON.parse(r2.stdout);
+  assert.equal(out2.action, 'reuse', 'same tuple after record-qctl-job must return reuse');
+  assert.equal(out2.job.job_id, fakeJobId);
+  assert.equal(out2.key, out1.key, 'key must be stable across repeated calls with same inputs');
+});
+
+test('enqueue-key: drifted base SHA -> action:upsert (new identity)', () => {
+  const p = tmpBundle(v8());
+  // Record a job for the first base
+  const r1 = run(['enqueue-key', `--state=${p}`, '--run-slug=my-run', '--wave=0', '--task-id=1', '--base=base-sha-1']);
+  const key1 = JSON.parse(r1.stdout).key;
+  run(['record-qctl-job', `--state=${p}`, '--task-id=1', '--job-id=job-1', `--key=${key1}`]);
+  // Now call with a DIFFERENT base SHA — must upsert (new identity)
+  const r2 = run(['enqueue-key', `--state=${p}`, '--run-slug=my-run', '--wave=0', '--task-id=1', '--base=base-sha-2']);
+  assert.equal(r2.status, 0);
+  const out2 = JSON.parse(r2.stdout);
+  assert.equal(out2.action, 'upsert', 'drifted base must trigger upsert');
+  assert.notEqual(out2.key, key1);
+});
+
+// ---- artifact-verify: integrity check and digest projection ----
+test('artifact-verify: verifyArtifact mode — matching digest -> ok:true', () => {
+  const dir = tmpDir('mp-av-');
+  const patchContent = '--- a/foo.js\n+++ b/foo.js\n@@ -1 +1 @@\n-old\n+new\n';
+  const patchFile = path.join(dir, 'patch.txt');
+  fs.writeFileSync(patchFile, patchContent);
+  const declared = createHash('sha256').update(patchContent, 'utf8').digest('hex');
+  const r = run(['artifact-verify', `--declared-sha256=${declared}`, `--bytes-file=${patchFile}`]);
+  assert.equal(r.status, 0);
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.ok, true);
+  assert.equal(out.reason, null);
+});
+
+test('artifact-verify: verifyArtifact mode — mismatched digest -> ok:false, reason:sha256-mismatch', () => {
+  const dir = tmpDir('mp-av2-');
+  const patchFile = path.join(dir, 'patch.txt');
+  fs.writeFileSync(patchFile, 'correct bytes');
+  const wrongDigest = 'a'.repeat(64);
+  const r = run(['artifact-verify', `--declared-sha256=${wrongDigest}`, `--bytes-file=${patchFile}`]);
+  assert.equal(r.status, 0);
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.ok, false);
+  assert.equal(out.reason, 'sha256-mismatch');
+});
+
+test('artifact-verify: parseQctlDigest mode (--result=JSON) -> task_id + status + files_changed + summary', () => {
+  const result = JSON.stringify({ task_id: 5, status: 'accepted', files_changed: ['a.mjs'], summary: 'ok', extra: 'ignored' });
+  const r = run(['artifact-verify', `--result=${result}`]);
+  assert.equal(r.status, 0);
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.task_id, 5);
+  assert.equal(out.status, 'accepted');
+  assert.deepEqual(out.files_changed, ['a.mjs']);
+  assert.equal(out.summary, 'ok');
+  // extra fields are dropped
+  assert.ok(!('extra' in out));
+});
+
+// ---- status-map: §6.2 qctl producer status mapping ----
+test('status-map: accepted -> task_status:done, flags:[]', () => {
+  const r = run(['status-map', '--producer-status=accepted']);
+  assert.equal(r.status, 0);
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.task_status, 'done');
+  assert.deepEqual(out.flags, []);
+  assert.equal(out.producer_status, 'accepted');
+});
+
+test('status-map: review -> task_status:done, flags:[claude-review]', () => {
+  const r = run(['status-map', '--producer-status=review']);
+  assert.equal(r.status, 0);
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.task_status, 'done');
+  assert.deepEqual(out.flags, ['claude-review']);
+});
+
+test('status-map: dead-letter -> task_status:failed', () => {
+  const r = run(['status-map', '--producer-status=dead-letter']);
+  assert.equal(r.status, 0);
+  assert.equal(JSON.parse(r.stdout).task_status, 'failed');
+});
+
+test('status-map: accepted + apply-ok=false -> task_status:blocked (override)', () => {
+  const r = run(['status-map', '--producer-status=accepted', '--apply-ok=false']);
+  assert.equal(r.status, 0);
+  assert.equal(JSON.parse(r.stdout).task_status, 'blocked');
+});
+
+test('status-map: accepted + d6-ok=false -> task_status:failed (override)', () => {
+  const r = run(['status-map', '--producer-status=accepted', '--d6-ok=false']);
+  assert.equal(r.status, 0);
+  assert.equal(JSON.parse(r.stdout).task_status, 'failed');
+});
+
+// ---- base-drift: §6.3 base-drift requeue decision ----
+test('base-drift: matching SHAs -> action:apply, requeueBase:null', () => {
+  const r = run(['base-drift', '--recorded-base=abc123', '--current-head=abc123']);
+  assert.equal(r.status, 0);
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.action, 'apply');
+  assert.equal(out.requeueBase, null);
+});
+
+test('base-drift: differing SHAs -> action:requeue, requeueBase=currentHead', () => {
+  const r = run(['base-drift', '--recorded-base=old-sha', '--current-head=new-sha']);
+  assert.equal(r.status, 0);
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.action, 'requeue');
+  assert.equal(out.requeueBase, 'new-sha');
+});
+
+test('base-drift: missing recorded-base -> action:requeue (safety-first)', () => {
+  const r = run(['base-drift', '--recorded-base=', '--current-head=some-head']);
+  assert.equal(r.status, 0);
+  assert.equal(JSON.parse(r.stdout).action, 'requeue');
 });

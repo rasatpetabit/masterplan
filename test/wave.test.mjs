@@ -4,7 +4,9 @@
 // here and is asserted directly — deterministic, no LLM, no fs.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { prepareWave, declaredScope, verifyScope } from '../lib/wave.mjs';
+import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { prepareWave, declaredScope, verifyScope, qctlEligible } from '../lib/wave.mjs';
 
 // A state bundle (v8 shape) + a matching plan.index.json. Two waves; task 4 already done.
 const state = () => ({
@@ -123,10 +125,19 @@ test('prepareWave attaches a {kind:agent} backend to every task by default (flag
   for (const t of tasks) assert.deepEqual(t.backend, { kind: 'agent' });
 });
 
+// Fixture allowlist that covers task 1 (files: ['a.js']) and task 4 (files: ['d.js']).
+// The scope globs deliberately use "/**" form to exercise the glob matcher.
+const fixtureAllowlist = {
+  'test-repo': {
+    scope: ['a.js', 'b.js', 'd.js/**', 'd.js'],
+  },
+};
+
 test('prepareWave attaches a {kind:qctl} backend when implementer.qctl.enabled (scope == task.files)', () => {
   const { tasks } = prepareWave(
     state(), planIndex(), 0,
     { routing: 'auto', implementer: { qctl: { enabled: true } } }, {},
+    fixtureAllowlist,
   );
   const t1 = tasks.find((t) => t.id === 1);
   assert.equal(t1.backend.kind, 'qctl');
@@ -134,3 +145,172 @@ test('prepareWave attaches a {kind:qctl} backend when implementer.qctl.enabled (
   assert.deepEqual(t1.backend.verify, ['node --test']);  // task 1's verify_commands
   assert.equal(t1.backend.deliver, 'patch');
 });
+
+// --- qctlEligible: eligibility predicate tests -----------------------------------------------
+
+// (a) Flag-off routes byte-identically to {kind:'agent'} — no allowlist needed, never consulted.
+test('qctlEligible (a): flag-off backend is byte-identical {kind:agent} with NO allowlist passed', () => {
+  // Flag-off: no allowlist at all. Must NOT throw or deref allowlist.
+  const { tasks } = prepareWave(
+    state(), planIndex(), 0,
+    { routing: 'auto', implementer: { qctl: { enabled: false } } }, {},
+    // deliberately omit reposAllowlist — it must never be touched
+  );
+  for (const t of tasks) {
+    assert.deepEqual(t.backend, { kind: 'agent' },
+      `flag-off: task ${t.id} should be {kind:'agent'} but got ${JSON.stringify(t.backend)}`);
+  }
+});
+
+test('qctlEligible (a): flag completely absent backend is byte-identical {kind:agent}', () => {
+  const { tasks } = prepareWave(state(), planIndex(), 0, {}, {});
+  for (const t of tasks) {
+    assert.deepEqual(t.backend, { kind: 'agent' });
+  }
+});
+
+// (b) Flag-on + fixture allowlist: infra task excluded, allowlisted bounded task eligible.
+test('qctlEligible (b): infra/systemd file is excluded even with flag on', () => {
+  const infraTask = {
+    files: ['etc/systemd/system/foo.service'],
+    verify_commands: ['node --test'],
+    sensitive: false,
+  };
+  assert.equal(qctlEligible(infraTask, fixtureAllowlist), false,
+    'systemd file must be ineligible regardless of allowlist');
+});
+
+test('qctlEligible (b): allowlisted bounded task is eligible', () => {
+  const boundedTask = {
+    files: ['a.js'],
+    verify_commands: ['node --test'],
+    sensitive: false,
+  };
+  assert.equal(qctlEligible(boundedTask, fixtureAllowlist), true,
+    'allowlisted bounded task must be eligible');
+});
+
+test('qctlEligible (b): task not in allowlist is not eligible (flag on)', () => {
+  const outsideTask = {
+    files: ['some/other/repo/file.js'],
+    verify_commands: ['node --test'],
+    sensitive: false,
+  };
+  assert.equal(qctlEligible(outsideTask, fixtureAllowlist), false,
+    'file outside any allowlist scope must be ineligible');
+});
+
+test('qctlEligible (b): prepareWave with flag-on + fixture allowlist — infra task downgrades to {kind:agent}', () => {
+  const infraState = {
+    tasks: [
+      { id: 1, wave: 0, status: 'pending', files: ['etc/systemd/system/foo.service'] },
+    ],
+  };
+  const infraPlanIndex = {
+    tasks: [
+      {
+        id: 1,
+        description: 'Wire the systemd unit',
+        files: ['etc/systemd/system/foo.service'],
+        verify_commands: ['systemctl --version'],
+        codex: null,
+      },
+    ],
+  };
+  const { tasks } = prepareWave(
+    infraState, infraPlanIndex, 0,
+    { routing: 'auto', implementer: { qctl: { enabled: true } } }, {},
+    fixtureAllowlist,
+  );
+  assert.equal(tasks[0].backend.kind, 'agent',
+    'infra/systemd task with flag-on must downgrade to {kind:agent}');
+});
+
+test('qctlEligible (b): sensitive task is excluded even with flag on and allowlisted files', () => {
+  const sensitiveTask = {
+    files: ['a.js'],
+    verify_commands: ['node --test'],
+    sensitive: true,
+  };
+  assert.equal(qctlEligible(sensitiveTask, fixtureAllowlist), false);
+});
+
+test('qctlEligible (b): no verify_commands → not eligible', () => {
+  const noVerify = {
+    files: ['a.js'],
+    verify_commands: [],
+    sensitive: false,
+  };
+  assert.equal(qctlEligible(noVerify, fixtureAllowlist), false);
+});
+
+test('qctlEligible (b): router/serving path is excluded (infra hard-block)', () => {
+  const routerTask = {
+    files: ['config/router/haproxy.cfg'],
+    verify_commands: ['node --test'],
+    sensitive: false,
+  };
+  assert.equal(qctlEligible(routerTask, fixtureAllowlist), false);
+});
+
+test('qctlEligible (b): .github/workflows/deploy.yml is excluded (infra hard-block)', () => {
+  const ciTask = {
+    files: ['.github/workflows/deploy.yml'],
+    verify_commands: ['node --test'],
+    sensitive: false,
+  };
+  assert.equal(qctlEligible(ciTask, fixtureAllowlist), false);
+});
+
+// (c) Cross-repo agreement test: shells to python3 to parse the REAL repos.yml and asserts
+//     the predicate agrees petabit-sysadmin (P1 target) is eligible and an infra task is not.
+//     Skip-gated cleanly when the sibling fabric file or python/pyyaml is absent.
+{
+  const REPOS_YML = '/srv/dev/petabit/skynet/scripts/qwen-fabric/config/repos.yml';
+
+  // Probe whether python3 + pyyaml are available.
+  let pythonAvail = false;
+  try {
+    execFileSync('python3', ['-c', 'import yaml,json'], { stdio: 'ignore' });
+    pythonAvail = true;
+  } catch (_) { /* pyyaml absent */ }
+
+  const canRun = existsSync(REPOS_YML) && pythonAvail;
+
+  test(
+    'qctlEligible (c): cross-repo agreement — petabit-sysadmin eligible; infra task not',
+    { skip: !canRun ? 'repos.yml absent or python/pyyaml unavailable' : false },
+    () => {
+      // Parse the REAL repos.yml via python3 (masterplan stays YAML-dependency-free in Node).
+      // Path is a module-level constant — no user input, no injection risk.
+      const raw = execFileSync(
+        'python3',
+        ['-c', `import yaml,json; print(json.dumps(yaml.safe_load(open('${REPOS_YML}'))))`],
+        { encoding: 'utf8' },
+      );
+      const reposAllowlist = JSON.parse(raw);
+
+      // Verify petabit-sysadmin is in the parsed allowlist.
+      assert.ok('petabit-sysadmin' in reposAllowlist,
+        'petabit-sysadmin must be present in repos.yml');
+
+      // A bounded task within petabit-sysadmin's allowed scope should be eligible.
+      const p1Task = {
+        files: ['scripts/buildrack/mqm9700-health-report/health_report.py'],
+        verify_commands: ['python3 -m pytest tests/test_mqm9700_health_report.py -q'],
+        sensitive: false,
+      };
+      assert.equal(qctlEligible(p1Task, reposAllowlist), true,
+        'petabit-sysadmin bounded task within scope must be eligible');
+
+      // An infra/systemd task must be ineligible regardless of allowlist.
+      const infraTask = {
+        files: ['etc/systemd/system/myservice.service'],
+        verify_commands: ['systemctl --version'],
+        sensitive: false,
+      };
+      assert.equal(qctlEligible(infraTask, reposAllowlist), false,
+        'infra/systemd task must be ineligible even against real repos.yml');
+    },
+  );
+}

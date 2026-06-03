@@ -94,6 +94,20 @@
 //   coord-status --state=PATH [--fail-if-unconfigured] [--fail-if-unpublishable]
 //                                               -> { coordination: {...} | null } (READ-ONLY snapshot;
 //                                                  non-zero exit on guard flag violations)
+//
+// ---- qctl async-loop subcommands (§6 — drive the async qctl backend) ----
+//   record-qctl-job --state=PATH --task-id=N --job-id=S --key=S
+//                                               -> CD-7 write: persist {job_id, key} into state.qctl_jobs[task_id]
+//                                                  (the durable job_id path — CD-7 single-writer)
+//   enqueue-key --state=PATH --run-slug=S --wave=N --task-id=N --base=SHA [--scope=JSON]
+//                                               -> { action:'reuse'|'upsert', key, job } (idempotency check;
+//                                                  action:'upsert' -> shell must enqueue + record-qctl-job)
+//   artifact-verify --declared-sha256=S --bytes-file=PATH
+//                   OR --result=JSON            -> verifyArtifact or parseQctlDigest result
+//   status-map --producer-status=S [--apply-ok=B] [--d6-ok=B]
+//                                               -> { task_status, flags, producer_status } (§6.2 mapping)
+//   base-drift --recorded-base=SHA --current-head=SHA [--scope=JSON]
+//                                               -> { action:'apply'|'requeue', requeueBase } (base-drift check)
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -109,6 +123,10 @@ import { resolveConfigDir } from '../lib/paths.mjs';
 import { createHash } from 'node:crypto';
 import { mergePlanFragments, validatePlanIndex, renderPlanMd } from '../lib/plan-merge.mjs';
 import { classifyDirt, detectBase, collectVerifyCommands, isVerified, dispositionForChoice, summarizePr } from '../lib/finish.mjs';
+import { computeEnqueueKey, decideEnqueue } from '../lib/qctl-enqueue.mjs';
+import { verifyArtifact, parseQctlDigest } from '../lib/qctl-artifact.mjs';
+import { mapQctlStatus } from '../lib/qctl-status.mjs';
+import { decideBaseDrift } from '../lib/qctl-requeue.mjs';
 
 // ---- tiny arg parser: positional[], flags{} (--k=v, or --k as boolean true) ----
 function parseArgs(argv) {
@@ -1099,6 +1117,109 @@ function main() {
       }
 
       out({ coordination: coord });
+      break;
+    }
+
+    // ---- qctl async-loop subcommands (§6 — drive the async qctl backend) ----
+    // ALL are fs-only: no git, no qctl subprocess. The shell owns UUIDs, git, and subprocess calls;
+    // these subcommands compute + persist only. The CD-7 single-writer invariant applies: state writes
+    // go via loadForWrite/writeState, never via raw file manipulation.
+
+    case 'record-qctl-job': {
+      // CD-7 write: persist {job_id, key} into state.qctl_jobs[task_id].
+      // This is the durable job_id path — the shell calls it immediately after `qctl enqueue` returns
+      // the new job_id (and after computing the key via the `enqueue-key` subcommand). Idempotent:
+      // re-running with the same (task_id, job_id, key) overwrites with identical data.
+      const p = need(flags, 'state');
+      const taskId = String(coerceId(need(flags, 'task-id')));
+      const jobId = String(need(flags, 'job-id'));
+      const key = String(need(flags, 'key'));
+
+      const state = loadForWrite(p);
+      const existing = state.qctl_jobs && typeof state.qctl_jobs === 'object' ? state.qctl_jobs : {};
+      const entry = { job_id: jobId, key };
+      const next = { ...state, qctl_jobs: { ...existing, [taskId]: entry } };
+      writeState(p, next);
+      out({ task_id: taskId, job_id: jobId, key });
+      break;
+    }
+    case 'enqueue-key': {
+      // Compute the enqueue key and decide reuse vs upsert for the qctl async-loop (§6.1).
+      // Reads the stored qctl_jobs[task_id] from the bundle and runs decideEnqueue.
+      // action:'reuse' → job is already in flight, shell waits on it.
+      // action:'upsert' → shell must call `qctl enqueue`, then `mp record-qctl-job`.
+      // --scope is optional; pass as a JSON array of file paths.
+      const p = need(flags, 'state');
+      const runSlug = need(flags, 'run-slug');
+      const wave = coerceId(need(flags, 'wave'));
+      const taskId = coerceId(need(flags, 'task-id'));
+      const base = need(flags, 'base');
+      let scope = [];
+      if (flags.scope !== undefined) {
+        try {
+          scope = JSON.parse(flags.scope);
+        } catch (e) {
+          die(`enqueue-key: --scope must be a JSON array (${e.message})`, 1);
+        }
+        if (!Array.isArray(scope)) die('enqueue-key: --scope must be a JSON array', 1);
+      }
+
+      const state = loadForWrite(p);
+      const jobs = state.qctl_jobs && typeof state.qctl_jobs === 'object' ? state.qctl_jobs : {};
+      const existingJob = jobs[String(taskId)] ?? null;
+      const key = computeEnqueueKey({ run_slug: runSlug, wave, task_id: taskId, base, scope });
+      const { action, job } = decideEnqueue(existingJob, key);
+      out({ action, key, job });
+      break;
+    }
+    case 'artifact-verify': {
+      // Two modes:
+      //   --declared-sha256=S --bytes-file=PATH  → verifyArtifact (integrity check; shell passes file path)
+      //   --result=JSON                          → parseQctlDigest (extract IMPL_DIGEST projection)
+      // bin is fs-only: bytes are read from a file the shell passes in (not from qctl directly).
+      if (flags['result'] !== undefined) {
+        // parseQctlDigest mode
+        const digest = parseQctlDigest(flags['result']);
+        out(digest);
+      } else {
+        // verifyArtifact mode
+        const declaredSha256 = need(flags, 'declared-sha256');
+        const bytesFile = need(flags, 'bytes-file');
+        let bytes;
+        try {
+          bytes = fs.readFileSync(bytesFile);
+        } catch (e) {
+          die(`artifact-verify: cannot read --bytes-file ${bytesFile} (${e.message})`, 1);
+        }
+        out(verifyArtifact({ declaredSha256, bytes }));
+      }
+      break;
+    }
+    case 'status-map': {
+      // Map a qctl producer status to the masterplan task_status (§6.2 lossless mapping).
+      // --producer-status is required; --apply-ok and --d6-ok are booleans (tri-state: absent=not tested).
+      const producerStatus = need(flags, 'producer-status');
+      const applyResult = flags['apply-ok'] !== undefined ? { ok: flags['apply-ok'] === 'true' || flags['apply-ok'] === true } : undefined;
+      const d6Result = flags['d6-ok'] !== undefined ? { ok: flags['d6-ok'] === 'true' || flags['d6-ok'] === true } : undefined;
+      out(mapQctlStatus({ producerStatus, applyResult, d6Result }));
+      break;
+    }
+    case 'base-drift': {
+      // Decide whether a qctl patch's recorded base still matches the current HEAD (§6.3 requeue).
+      // action:'apply' → safe to git-apply; action:'requeue' → shell must re-enqueue against currentHead.
+      // git facts are passed in by the shell (bin is fs-only — git stays in the markdown shell).
+      // --scope is optional and carried through for consumer context; does not affect the decision.
+      const recordedBase = need(flags, 'recorded-base');
+      const currentHead = need(flags, 'current-head');
+      let declaredScope$1 = undefined;
+      if (flags.scope !== undefined) {
+        try {
+          declaredScope$1 = JSON.parse(flags.scope);
+        } catch (e) {
+          die(`base-drift: --scope must be a JSON array (${e.message})`, 1);
+        }
+      }
+      out(decideBaseDrift({ recordedBase, currentHead, declaredScope: declaredScope$1 }));
       break;
     }
 

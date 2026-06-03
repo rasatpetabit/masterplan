@@ -192,15 +192,26 @@ const AGENT_TASK = {
   backend: { kind: 'agent' },
 };
 
-test('qctl backend -> NotYetBound: recorded blocked, NO agent dispatched (contract-first guard)', async () => {
-  const args = { wave: 1, tasks: [QCTL_TASK], baseline: [], repoRoot: '/tmp/x', review: 'off' };
+test('qctl backend -> descriptor echoed for L1 pickup, NO agent dispatched, no hard-block', async () => {
+  const args = { wave: 1, tasks: [QCTL_TASK], baseline: ['prior.mjs'], repoRoot: '/tmp/x', review: 'off' };
   const { result, calls } = await runEngine(args);
-  assert.equal(calls.agent, 0, 'a qctl backend dispatches NO implementer agent (not yet bound)');
+  // (a) No inline agent dispatched — the apply/verify logic belongs to bin/masterplan.mjs + L1 shell.
+  assert.equal(calls.agent, 0, 'a qctl backend dispatches NO implementer agent');
   assert.equal(result.summary.total, 1);
   assert.equal(result.summary.done, 0);
-  assert.equal(result.summary.failed, 1, 'a blocked task counts toward not-done');
-  assert.equal(result.tasks[0].digest.status, 'blocked');
-  assert.equal(result.tasks[0].digest.blockers, 'qctl-not-bound');
+  // (b) Not counted as failed — the qctl bucket is separate so L1 does NOT surface it as an error.
+  assert.equal(result.summary.failed, 0, 'qctl task must NOT inflate the failed counter');
+  assert.equal(result.summary.qctl, 1, 'qctl-pending tasks are counted in their own bucket');
+  // (c) Synthetic 'qctl' status — not 'blocked' (no hard-block, no permanent re-dispatch loop).
+  assert.equal(result.tasks[0].digest.status, 'qctl', "status is 'qctl', never 'blocked'");
+  assert.equal(result.tasks[0].digest.blockers, null, 'no blockers field on a qctl-pending task');
+  // (d) Descriptor echoed at the item level (not buried inside digest) so L1 can read backend.kind.
+  assert.deepEqual(result.tasks[0].backend, QCTL_TASK.backend, 'backend descriptor echoed for L1 pickup');
+  // (e) Scope/verify/deliver fields are present so L1 has the qctl input contract (spec §B1).
+  assert.deepEqual(result.tasks[0].backend.scope, QCTL_TASK.files, 'scope matches declared files');
+  assert.equal(result.tasks[0].backend.deliver, 'patch');
+  // (f) Baseline is still echoed at the wave level (verify-scope contract unchanged).
+  assert.deepEqual(result.baseline, ['prior.mjs'], 'baseline echoed at wave level for D6 verify-scope');
 });
 
 test('agent backend (flag off) -> today\'s dispatch byte-identical: mp-implementer, no model override', async () => {
