@@ -87,7 +87,7 @@ The spine. It NEVER decides in prose — it asks `mp decide` and executes the re
 
    | action | do |
    |---|---|
-   | `surface_gate` | Re-render the gate's `AskUserQuestion` (CD-9). A named option → act, `mp clear-gate`, commit, re-decide. Free-text / no clear answer → keep the gate, respond, close. NEVER auto-proceed regardless of autonomy (the durable marker outranks a native AUQ that can't survive compaction). When re-rendering `branch_finish`, **rehydrate the codex-review digest**: `mp codex-review-status --state=<path> --sha=$(git rev-parse HEAD)` — on `{present:true}` fold its `digest`/`count` back into the re-rendered AUQ (the live step-5 digest doesn't survive compaction; the durable `--note` does). For the finalization gates (`branch_finish`, `verification_failed`), the per-option **act** is specified in **§2c**. |
+   | `surface_gate` | Re-render the gate's `AskUserQuestion` (CD-9). A named option → act, `mp clear-gate`, commit, re-decide. Free-text / no clear answer → keep the gate, respond, close. NEVER auto-proceed regardless of autonomy (the durable marker outranks a native AUQ that can't survive compaction). When re-rendering `branch_finish`, **rehydrate the codex-review digest**: `mp codex-review-status --state=<path> --sha=$(git rev-parse HEAD)` — on `{present:true}` fold its `digest`/`count`/`base` back into the re-rendered AUQ (the live step-5 digest doesn't survive compaction; the durable event does). For the finalization gates (`branch_finish`, `verification_failed`), the per-option **act** is specified in **§2c**. |
    | `wait` | A live run owns the wave. Report it and close — its Workflow completion notification re-invokes this controller, which records the result via the completion protocol (**§2a**, step 3). |
    | `finalize_run` | The wave's tasks are all `done` on disk. `mp clear-active-run`, commit, then re-decide (→ next wave, or `complete`). |
    | `recover_and_redispatch` | Crash recovery. If `staleTaskId` ≠ null: `TaskList` → `TaskStop` (**Claude Code only** — no-op when `codex_host_suppressed == true`, where the native task tools are absent and reconciliation leans on the on-disk `active_run` marker) any surviving run for it (a backgrounded Workflow MAY outlive session death — reconcile before touching files). Then RESET scope: `git checkout -- <resetPaths>` and, **only when `resetPaths` is non-empty**, `git clean -fd -- <resetPaths>` — scope the clean to the reset paths; a bare `git clean -fd` (or one with an empty pathspec) would wipe unrelated user-owned untracked files. Then dispatch the wave via **§2a**. Idempotent — agents never commit. |
@@ -259,20 +259,28 @@ dispositions}` (`codex_review` mirrors the dispatch predicate `state.codex.revie
      skipped" deliberately does **not** match the audit's `\bcodex\s+review\b`, so a degraded finish
      where nothing reviewed still trips `codex_review_configured_but_zero_invocations` — correct). On
      **exit 0**, fold the rendered findings into the gate AUQ below (a brief digest + count, not the
-     raw dump) and emit the **durable** record — `mp event --state=<path> --type=codex_review
-     --summary="codex review complete (whole-branch, base <base>) — <n> findings" --data
-     '{"sha":"<HEAD sha>","base":"<base>","count":<n>}' --note="<the brief findings digest>"`. Three
-     channels, three jobs: `--summary` is the audit signal (the literal "codex review" **does** match
-     `\bcodex\s+review\b` → satisfies the configured-but-zero-invocations check, the one invocation this
-     finish owes); `--data` carries the quote-safe machine scalars the re-entry guard keys on
-     (`sha`/`base`/`count` only — **never** the free-text digest, whose stray quote/backtick/newline
-     would break the subcommand's `JSON.parse(--data)` and silently drop the record); `--note` carries
-     the digest the gate rehydrates. This write lands **before** `mp open-gate` below — so if the
-     session dies in that window, resume re-runs §2c, the guard above finds `{present:true}` at the
-     unchanged HEAD, and the review is **not** re-run (it rehydrates instead). Once the gate IS open a
-     resume is `surface_gate`, which re-renders the AUQ and re-reads `codex-review-status` to restore
-     the digest (§2 surface_gate row) — the live `--note` digest does not survive compaction, the
-     durable event does.
+     raw dump) and emit the **durable** record. The digest is review-derived free text — a stray
+     quote/backtick/`$()`/newline interpolated into a `--note="…"` shell word would break the command
+     (dropping the event → re-introducing the durability bug) or inject a later flag, so transport it
+     **shell-safely**: `Write` the brief digest to `<bundle>/codex-review-digest.txt` (the Write tool
+     is not shell-evaluated, so arbitrary bytes are safe), then `mp event --state=<path>
+     --type=codex_review --summary="codex review complete (whole-branch, base <base>) — <n> findings"
+     --data '{"sha":"<HEAD sha>","base":"<base>","count":<n>}'
+     --note-file=<bundle>/codex-review-digest.txt`. Three channels, three jobs: `--summary` is the
+     audit signal (the literal "codex review" **does** match `\bcodex\s+review\b` → satisfies the
+     configured-but-zero-invocations check, the one invocation this finish owes); `--data` carries the
+     quote-safe machine scalars the re-entry guard keys on (`sha`/`base`/`count` only — git-derived,
+     never the free-text digest, whose stray quote/backtick/newline would break the subcommand's
+     `JSON.parse(--data)` and silently drop the record); `--note-file` carries the digest bytes
+     verbatim (`bin` reads the file, never shell-evaluates it) for the gate to rehydrate. This write
+     lands **before** `mp open-gate` below — so if the session dies in that window, resume re-runs §2c,
+     the guard above finds `{present:true}` at the unchanged HEAD, and the review is **not** re-run (it
+     rehydrates instead). **Residual window:** a death *between* the reviewer exiting 0 and this event
+     landing leaves no durable record at HEAD, so resume re-runs the review — harmless and idempotent
+     at an unchanged tree (the only cost is one more network review; `open-gate` itself is idempotent,
+     so the gate never double-opens). Once the gate IS open a resume is `surface_gate`, which
+     re-renders the AUQ and re-reads `codex-review-status` to restore the digest (§2 surface_gate row)
+     — the live in-context digest does not survive compaction, the durable event does.
 
    First **probe for an open PR**
    on the branch (the §3 PR probe: `gh pr list --head "<branch>" … | mp pr-summary`). `mp open-gate

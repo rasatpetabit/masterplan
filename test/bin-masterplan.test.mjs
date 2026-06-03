@@ -504,6 +504,60 @@ test('codex-review-status: reads back a durable codex_review event for a given H
   assert.equal(JSON.parse(run(['codex-review-status', `--state=${p}`, `--sha=${HEAD}`]).stdout).present, true);
 });
 
+test('event --note-file: reads arbitrary bytes verbatim into record.note (the shell-safe digest transport)', () => {
+  // The §2c finish-gate's codex-review digest is review-derived free text. Interpolating it into a
+  // `--note="<digest>"` shell word is an injection/quoting hazard (quote/backtick/$()/newline). The fix:
+  // the shell Writes the digest to a file (Write is not shell-evaluated) and passes the PATH; bin reads
+  // the bytes verbatim. Round-trip a digest packed with every char that would break a shell word.
+  const dir = tmpDir('mp-notefile-');
+  const p = path.join(dir, 'state.yml');
+  const HEAD = 'cafef00d';
+  const adversarial = 'P2: a "quoted" $(rm -rf /) `backtick`\nsecond line; --data={"sha":"evil"}\n';
+  const digestFile = path.join(dir, 'codex-review-digest.txt');
+  fs.writeFileSync(digestFile, adversarial);
+  run(['event', `--state=${p}`, '--type=codex_review', '--ts=T1',
+    '--summary=codex review complete (whole-branch, base main) — 1 findings',
+    `--data={"sha":"${HEAD}","base":"main","count":1}`, `--note-file=${digestFile}`]);
+  // The bytes survive verbatim — no shell ever saw them, and the injected `--data=` is inert text.
+  const status = JSON.parse(run(['codex-review-status', `--state=${p}`, `--sha=${HEAD}`]).stdout);
+  assert.equal(status.present, true);
+  assert.equal(status.digest, adversarial);
+  assert.equal(status.count, 1);
+  assert.equal(status.base, 'main');
+});
+
+test('event: --note and --note-file are mutually exclusive (die, no event written)', () => {
+  const dir = tmpDir('mp-notefile-mx-');
+  const p = path.join(dir, 'state.yml');
+  const digestFile = path.join(dir, 'd.txt');
+  fs.writeFileSync(digestFile, 'x');
+  const r = run(['event', `--state=${p}`, '--type=codex_review', `--note=inline`, `--note-file=${digestFile}`]);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /mutually exclusive/);
+  // The collision aborts before any append — no events.jsonl materializes.
+  assert.equal(fs.existsSync(path.join(dir, 'events.jsonl')), false);
+});
+
+test('event: --note-file pointing at a missing path dies loud (not a silent empty note)', () => {
+  const dir = tmpDir('mp-notefile-enoent-');
+  const p = path.join(dir, 'state.yml');
+  const r = run(['event', `--state=${p}`, '--type=codex_review', `--note-file=${path.join(dir, 'nope.txt')}`]);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /note-file unreadable/);
+});
+
+test('codex-review-status: a non-ENOENT events.jsonl read error fails loud (never masquerades as present:false)', () => {
+  // ENOENT == no review yet → {present:false}. But any OTHER read error (here: events.jsonl is a
+  // directory → EISDIR) must NOT be swallowed — a silent {present:false} would falsely re-run the
+  // network gate or look "skipped". The subcommand must die.
+  const dir = tmpDir('mp-crs-eisdir-');
+  const p = path.join(dir, 'state.yml');
+  fs.mkdirSync(path.join(dir, 'events.jsonl')); // sibling of state.yml, as a directory
+  const r = run(['codex-review-status', `--state=${p}`, '--sha=deadbeef']);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /events\.jsonl unreadable/);
+});
+
 // ---- integration: seed-tasks (the fresh-plan plan.index.json -> state.tasks writer) ----
 test('seed-tasks: populates state.tasks from plan.index.json so a freshly-planned run dispatches instead of finalizing empty', () => {
   // The fresh-plan path's missing CD-7 writer: a brainstorm bundle seeds tasks:[]; nothing loaded the

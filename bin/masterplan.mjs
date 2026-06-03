@@ -26,10 +26,12 @@
 //   seed-tasks --state=PATH --plan-index=PATH [--force]
 //                                               -> CD-7 write: populate state.tasks {id,status,wave,files} from plan.index.json
 //                                                  (the fresh-plan path; refuse clobber of a non-empty task list w/o --force)
-//   event --state=PATH --type=T [--phase=P] [--note=STR] [--summary=STR] [--data=JSON] [--ts=T]
+//   event --state=PATH --type=T [--phase=P] [--note=STR | --note-file=PATH] [--summary=STR] [--data=JSON] [--ts=T]
 //                                               -> append one JSON line to the bundle's events.jsonl
 //                                                  (--summary is the audit-scanned signal channel vs the
-//                                                  free-text --note; see the case body)
+//                                                  free-text --note; --note-file is the shell-safe transport
+//                                                  for untrusted note text — reads PATH's bytes verbatim,
+//                                                  mutually exclusive with --note; see the case body)
 //   migrate-bundle --state=PATH                 -> back up + persist a legacy bundle as v8 (no-op if v8)
 //   backfill-waves --state=PATH --plan-index=PATH -> set each task's {wave,files} from plan.index.json
 //   load-plan --state=PATH --plan-index=PATH    -> CD-7 write: materialize state.tasks from a fresh
@@ -404,6 +406,20 @@ function main() {
       const record = { type: need(flags, 'type'), ts: flags.ts ?? new Date().toISOString() };
       if (flags.phase !== undefined) record.phase = flags.phase;
       if (flags.note !== undefined) record.note = flags.note;
+      // --note-file is the SHELL-SAFE transport for free-text the caller can't trust on a command line.
+      // The §2c finish-gate's codex-review digest is review-derived text — a stray quote/backtick/$()/
+      // newline interpolated into `mp event --note="<digest>"` would break the bash word (dropping the
+      // event → re-introducing the P2) or inject. So the shell `Write`s the digest to a file (Write is
+      // not shell-evaluated) and passes the PATH; bin reads the bytes verbatim into record.note. The
+      // path itself is caller-controlled (safe). Mutually exclusive with --note.
+      if (flags['note-file'] !== undefined) {
+        if (flags.note !== undefined) die('event: --note and --note-file are mutually exclusive', 1);
+        try {
+          record.note = fs.readFileSync(String(flags['note-file']), 'utf8');
+        } catch (e) {
+          die(`event: --note-file unreadable: ${e.message}`, 1);
+        }
+      }
       // --summary is the SIGNAL channel (vs free-text --note): the session audit's _event_text scans
       // type/kind/event/message/detail/summary/notes/status — NOT note. So a milestone whose phrasing
       // a policy-watcher must COUNT (e.g. the §2c whole-branch "codex review" gate, which trips
@@ -917,8 +933,11 @@ function main() {
       let text = '';
       try {
         text = fs.readFileSync(eventsPath, 'utf8');
-      } catch {
-        /* absent == no events yet; pure helper returns { present:false } for '' */
+      } catch (e) {
+        // ENOENT == no events yet → the pure helper returns { present:false } for ''. Any OTHER
+        // error (EACCES, EISDIR, I/O) must fail loud, not silently masquerade as "no review yet" —
+        // a swallowed read error would falsely re-run the network gate (or worse, look "skipped").
+        if (e.code !== 'ENOENT') die(`codex-review-status: events.jsonl unreadable: ${e.message}`, 1);
       }
       out(selectCodexReviewForHead(text, sha));
       break;
