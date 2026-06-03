@@ -1039,6 +1039,48 @@ test('prepare-wave: qctl.enabled=true with no --repos-allowlist wired -> backend
   assert.deepEqual(t1.backend, { kind: 'agent' });
 });
 
+// flag-flip precondition #5: the production --repos-allowlist loader. prepare-wave now parses an
+// optional --repos-allowlist (JSON = parsed repos.yml) and threads it as prepareWave's 6th arg, so
+// with the flag ON the qctlEligible gate can finally pass. This is the wire the line-1025 test noted
+// as deliberately absent; it is now present.
+test('prepare-wave: qctl.enabled=true WITH --repos-allowlist covering the task files -> backend {kind:qctl}', () => {
+  const dir = tmpDir('mp-backend-qctl-allow-');
+  const p = path.join(dir, 'state.yml');
+  fs.writeFileSync(p, serializeState(v8({ implementer: { qctl: { enabled: true } } })));
+  const planIdx = path.join(dir, 'plan.index.json');
+  fs.writeFileSync(planIdx, JSON.stringify(planIndexFixture()));
+  // task 1's plan.index files are ['src/greet.mjs'] (verify ['true'], non-infra) — covered by the glob.
+  const allowlist = JSON.stringify({ 'test-repo': { scope: ['src/greet.mjs', 'src/**'] } });
+
+  const pw = JSON.parse(run([
+    'prepare-wave', `--state=${p}`, `--plan-index=${planIdx}`, '--wave=0', `--repos-allowlist=${allowlist}`,
+  ]).stdout);
+  const t1 = pw.tasks.find((t) => t.id === 1);
+  assert.equal(t1.backend.kind, 'qctl');
+  assert.deepEqual(t1.backend.scope, ['src/greet.mjs']);   // task 1's plan.index files
+  assert.deepEqual(t1.backend.verify, ['true']);           // task 1's verify_commands
+  assert.equal(t1.backend.deliver, 'patch');
+
+  // Negative control: the gate is genuinely consulted (not flag-only). An allowlist that does NOT
+  // cover the files fail-closes back to {kind:agent} even with the flag on AND parsed.
+  const noCover = JSON.stringify({ 'test-repo': { scope: ['other/**'] } });
+  const pw2 = JSON.parse(run([
+    'prepare-wave', `--state=${p}`, `--plan-index=${planIdx}`, '--wave=0', `--repos-allowlist=${noCover}`,
+  ]).stdout);
+  assert.deepEqual(pw2.tasks.find((t) => t.id === 1).backend, { kind: 'agent' });
+});
+
+test('prepare-wave: a malformed --repos-allowlist (not JSON) exits non-zero with a hint', () => {
+  const dir = tmpDir('mp-backend-qctl-badjson-');
+  const p = path.join(dir, 'state.yml');
+  fs.writeFileSync(p, serializeState(v8({ implementer: { qctl: { enabled: true } } })));
+  const planIdx = path.join(dir, 'plan.index.json');
+  fs.writeFileSync(planIdx, JSON.stringify(planIndexFixture()));
+  const r = run(['prepare-wave', `--state=${p}`, `--plan-index=${planIdx}`, '--wave=0', '--repos-allowlist=not-json']);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /repos-allowlist.*JSON/);
+});
+
 // ---- qctl async-loop subcommands (§6) ----
 
 // ---- record-qctl-job: durable job_id persistence (the CD-7 single-writer path) ----

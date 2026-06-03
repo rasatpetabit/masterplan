@@ -529,9 +529,25 @@ function main() {
         codexHostSuppressed: !!flags['codex-suppressed'],
         linkedWorktree: !!flags['linked-worktree'],
       };
+      // Flag-flip precondition #5: the production repos.yml loader. Optional --repos-allowlist carries
+      // the parsed repos.yml (the shell does `python3 -c 'yaml->json' < repos.yml`); it is threaded as
+      // prepareWave's 6th arg so the qctlEligible gate can pass. Absent → undefined → the gate
+      // fail-closes (every qctl route downgrades to {kind:agent}), so omitting it is byte-identical to
+      // the pre-wiring build. Parsed leniently (any JSON-decodable value Object.values can walk).
+      let reposAllowlist;
+      if (flags['repos-allowlist'] !== undefined) {
+        try {
+          reposAllowlist = JSON.parse(flags['repos-allowlist']);
+        } catch (e) {
+          die(`prepare-wave: --repos-allowlist must be valid JSON (${e.message})`, 1);
+        }
+        if (reposAllowlist === null || typeof reposAllowlist !== 'object') {
+          die('prepare-wave: --repos-allowlist must be a JSON object (parsed repos.yml)', 1);
+        }
+      }
       let result;
       try {
-        result = prepareWave(state, planIndex, wave, config, env); // throws: non-integer wave / drift
+        result = prepareWave(state, planIndex, wave, config, env, reposAllowlist); // throws: non-integer wave / drift
       } catch (e) {
         die(e.message);
       }
