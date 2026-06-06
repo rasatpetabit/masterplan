@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { prepareWave, declaredScope, verifyScope, qctlEligible } from '../lib/wave.mjs';
+import { prepareWave, declaredScope, verifyScope, qctlEligible, checkWaveDisjoint } from '../lib/wave.mjs';
 
 // A state bundle (v8 shape) + a matching plan.index.json. Two waves; task 4 already done.
 const state = () => ({
@@ -86,11 +86,137 @@ test('prepareWave does not mutate its inputs', () => {
   assert.equal(JSON.stringify(st) + JSON.stringify(pidx), frozen);
 });
 
+// --- prepareWave: the two dispatch-time concurrency gates (Phase 3a) ----------------------
+// Each task's dispatch files are RESOLVED once (plan-wins-when-present) and that ONE set drives
+// routing, the payload, and the F-SCOPE allow-set. Two gates fail loud BEFORE launch.
+
+test('prepareWave throws (fail loud) when a task\'s plan-side and state-side file sets DIVERGE', () => {
+  const st = { tasks: [{ id: 1, wave: 0, status: 'pending', files: ['state-side.js'] }] };
+  const pidx = { tasks: [{ id: 1, description: 'x', files: ['plan-side.js'], verify_commands: ['node --test'], codex: null }] };
+  // Both sides declare files and they disagree → drift (dispatching one scope while F-SCOPE polices
+  // the other). Mirror the no-plan-entry throw rather than silently trusting one side.
+  assert.throws(() => prepareWave(st, pidx, 0, {}, {}), /divergent file sets/);
+});
+
+test('prepareWave: plan-side files win when state omits them (resolved set = plan)', () => {
+  const st = { tasks: [{ id: 1, wave: 0, status: 'pending' }] }; // no files key
+  const pidx = { tasks: [{ id: 1, description: 'x', files: ['plan-side.js'], verify_commands: ['node --test'], codex: null }] };
+  const { tasks } = prepareWave(st, pidx, 0, {}, {});
+  assert.deepEqual(tasks[0].files, ['plan-side.js']);
+});
+
+test('prepareWave: state-side files used when plan omits them (resolved set = state)', () => {
+  const st = { tasks: [{ id: 1, wave: 0, status: 'pending', files: ['state-side.js'] }] };
+  const pidx = { tasks: [{ id: 1, description: 'x', files: [], verify_commands: ['node --test'], codex: null }] };
+  const { tasks } = prepareWave(st, pidx, 0, {}, {});
+  assert.deepEqual(tasks[0].files, ['state-side.js']);
+});
+
+test('prepareWave throws when same-wave tasks COLLIDE on the resolved set — the keystone gap validatePlanIndex misses', () => {
+  // Plan.index omits files for both tasks → validatePlanIndex's static lint passes (empty sets never
+  // overlap). But prepareWave's resolved set falls back to state, which collides. Only a dispatch-time
+  // recheck on the RESOLVED payload catches it.
+  const st = {
+    tasks: [
+      { id: 1, wave: 0, status: 'pending', files: ['shared.js'] },
+      { id: 2, wave: 0, status: 'pending', files: ['shared.js'] },
+    ],
+  };
+  const pidx = {
+    tasks: [
+      { id: 1, description: 'a', files: [], verify_commands: ['node --test'], codex: null },
+      { id: 2, description: 'b', files: [], verify_commands: ['node --test'], codex: null },
+    ],
+  };
+  assert.throws(() => prepareWave(st, pidx, 0, {}, {}), /collide on shared file\(s\) at dispatch/);
+});
+
+// --- checkWaveDisjoint: the pure pairwise overlap check (composed into prepareWave) -------
+
+test('checkWaveDisjoint: disjoint file sets → ok with no conflicts', () => {
+  const r = checkWaveDisjoint([
+    { id: 1, files: ['a.js'] },
+    { id: 2, files: ['b.js'] },
+    { id: 3, files: ['c.js', 'd.js'] },
+  ]);
+  assert.deepEqual(r, { ok: true, conflicts: [] });
+});
+
+test('checkWaveDisjoint: a shared file → ok:false with the colliding pair {a,b,shared}', () => {
+  const r = checkWaveDisjoint([
+    { id: 1, files: ['a.js', 'shared.js'] },
+    { id: 2, files: ['b.js', 'shared.js'] },
+  ]);
+  assert.equal(r.ok, false);
+  assert.deepEqual(r.conflicts, [{ a: 1, b: 2, shared: ['shared.js'] }]);
+});
+
+test('checkWaveDisjoint: reports EVERY colliding pair (full pairwise sweep)', () => {
+  const r = checkWaveDisjoint([
+    { id: 1, files: ['shared.js'] },
+    { id: 2, files: ['shared.js'] },
+    { id: 3, files: ['shared.js'] },
+  ]);
+  assert.equal(r.ok, false);
+  assert.deepEqual(r.conflicts, [
+    { a: 1, b: 2, shared: ['shared.js'] },
+    { a: 1, b: 3, shared: ['shared.js'] },
+    { a: 2, b: 3, shared: ['shared.js'] },
+  ]);
+});
+
+test('checkWaveDisjoint: tolerates missing/empty files and an empty/absent list', () => {
+  assert.deepEqual(checkWaveDisjoint([]), { ok: true, conflicts: [] });
+  assert.deepEqual(checkWaveDisjoint(), { ok: true, conflicts: [] });
+  const r = checkWaveDisjoint([
+    { id: 1 },              // no files key
+    { id: 2, files: [] },   // empty
+    { id: 3, files: ['x.js'] },
+  ]);
+  assert.deepEqual(r, { ok: true, conflicts: [] });
+});
+
 // --- declaredScope: the allowed-dirty union (done included) -------------------------------
 
 test('declaredScope unions ALL wave tasks files, done included', () => {
   assert.deepEqual(declaredScope(state(), 0).sort(), ['a.js', 'b.js', 'c.js']); // c.js is the done task's
   assert.deepEqual(declaredScope(state(), 1), ['d.js']);
+});
+
+test('declaredScope is state-only (the fallback) — it does NOT read plan.index, even if passed a third arg', () => {
+  // declaredScope is the back-compat fallback for a run with no launch-time active_run.scope snapshot.
+  // The plan-wins resolution now lives in prepareWave's `scope` (the immutable snapshot), NOT here:
+  // re-reading the mutable plan.index post-barrier was the F-SCOPE tamper hole (Codex Round-2 MAJOR), so
+  // declaredScope deliberately ignores any extra argument and reads only the frozen-at-seed state files.
+  const st = { tasks: [{ id: 1, wave: 0, status: 'pending', files: ['state-side.js'] }] };
+  const pidx = { tasks: [{ id: 1, files: ['plan-side.js'] }] };
+  assert.deepEqual(declaredScope(st, 0), ['state-side.js']);
+  assert.deepEqual(declaredScope(st, 0, pidx), ['state-side.js']); // extra arg ignored — no plan.index read
+});
+
+// --- prepareWave.scope: the IMMUTABLE launch-time F-SCOPE snapshot -------------------------
+
+test('prepareWave returns a `scope` = the resolved file UNION across the wave (plan-wins, deduped)', () => {
+  const st = {
+    tasks: [
+      { id: 1, wave: 0, status: 'pending', files: [] },         // state omits -> plan-side wins
+      { id: 2, wave: 0, status: 'pending', files: ['shared.js'] },
+    ],
+  };
+  const pidx = {
+    tasks: [
+      { id: 1, description: 'a', files: ['plan-1.js'] }, // plan-side wins (state omitted)
+      { id: 2, description: 'b', files: ['shared.js'] }, // plan == state
+    ],
+  };
+  const { scope } = prepareWave(st, pidx, 0, {}, {});
+  assert.deepEqual(scope.sort(), ['plan-1.js', 'shared.js']); // exactly what each task was dispatched with
+});
+
+test('prepareWave.scope equals the union of the dispatched tasks[].files (dispatch === policed set)', () => {
+  const { tasks, scope } = prepareWave(state(), planIndex(), 0, { routing: 'auto' }, {});
+  const union = [...new Set(tasks.flatMap((t) => t.files))].sort();
+  assert.deepEqual([...scope].sort(), union);
 });
 
 // --- verifyScope: (after - before) ⊆ declared ---------------------------------------------

@@ -41,7 +41,9 @@
 //                [--linked-worktree] [--review=on|off]
 //                                               -> {wave, tasks:[lean routed payload], review} for the L2 `args`
 //                                                  (--review overrides state.codex.review; else read from state)
-//   verify-scope --state=PATH --wave=N --before=JSON --after=JSON -> {ok, touched, outOfScope} (D6 post-barrier)
+//   verify-scope --state=PATH --wave=N --before=JSON --after=JSON -> {ok, touched, outOfScope} (D6 post-barrier;
+//                                                  allow-set = the immutable active_run.scope launch snapshot,
+//                                                  else state-only declaredScope fallback — never re-reads plan.index)
 //   mark-task --state=PATH --id=N --status=S    -> CD-7 write: set a task's status
 //   set-phase --state=PATH --phase=P [--force]  -> CD-7 write: advance the lifecycle phase (brainstorm|plan|execute)
 //                                                  (refuse entering execute with 0 tasks — run seed-tasks first — w/o --force)
@@ -56,7 +58,8 @@
 //                                                  codex-plugin-presence check SKIPs once both are off
 //   open-gate --state=PATH --id=X [--opened-at=T] -> CD-7 write: open the durable approval gate
 //   clear-gate --state=PATH                     -> CD-7 write: clear the gate
-//   set-active-run --state=PATH --wave=N        -> CD-7 write: phase-1 marker {wave, phase:'launching'}
+//   set-active-run --state=PATH --wave=N [--scope=JSON] -> CD-7 write: phase-1 marker {wave, phase:'launching'
+//                                                  [, scope]}; --scope is the immutable F-SCOPE allow-set snapshot
 //   set-active-run --state=PATH --kind=plan     -> CD-7 write: planning marker {kind:'plan', phase:'launching'}
 //   promote-active-run --state=PATH --run-id=X --task-id=Y -> phase-2: attach the launch handles
 //   clear-active-run --state=PATH               -> CD-7 write: clear the run marker
@@ -126,12 +129,28 @@
 //                                               -> { task_status, flags, producer_status } (§6.2 mapping)
 //   base-drift --recorded-base=SHA --current-head=SHA [--scope=JSON]
 //                                               -> { action:'apply'|'requeue', requeueBase } (base-drift check)
+//   acquire-owner  --state=PATH [--session=ID] [--host=H] [--now=MS] [--ttl-ms=N] [--force]
+//   heartbeat-owner --state=PATH [--session=ID] [--host=H] [--now=MS]
+//   release-owner  --state=PATH [--session=ID] [--host=H] [--now=MS] [--ttl-ms=N] [--force]
+//                                               -> Guard D NFS-safe owner sentinel (lib/owner-fs.mjs).
+//                                                  Identity is the LLM SESSION (CLAUDE_CODE_SESSION_ID),
+//                                                  NOT the ephemeral mp process; lock dir = dirname(state).
+//                                                  acquire → {outcome: acquire|held-by-self|steal|force|
+//                                                  blocked}; heartbeat → held-by-self|lost-to-other;
+//                                                  release → released|not-owner|stale-not-released (the
+//                                                  freshness gate: a stale owned lock is left for reclaim).
+//                                                  fs-only (link/stat/
+//                                                  rename/unlink); the .owner.lock is NOT CD-7 state.
 
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, setWorktreeDisposition, setVerifiedSha, setCodexConfig, loadPlanTasks, buildSeedState, buildTasksFromPlanIndex, appendEvent, setCoordination } from '../lib/bundle.mjs';
+import { readState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, setWorktree, setWorktreeDisposition, setVerifiedSha, setCodexConfig, loadPlanTasks, buildSeedState, buildTasksFromPlanIndex, appendEvent, setCoordination } from '../lib/bundle.mjs';
+import { planWorktreeCreate, parseWorktreeList, classifyWorktrees, normalizeDisposition, dispositionAfterTeardown } from '../lib/worktree.mjs';
+import { collectDiskDirs, collectBundleRecords } from '../lib/worktree-fs.mjs';
+import { buildOwnerIdentity } from '../lib/owner.mjs';
+import { acquireOwner, heartbeatOwner, releaseOwner } from '../lib/owner-fs.mjs';
 import { issueBodyForTask, parseIssueBody, validateClaimSettle, selectClaimableUnits, reconcileIntegration, isTerminalIssueStatus, isValidIssueStatus, ISSUE_MAP_STATUSES } from '../lib/github-coord.mjs';
 import { migrate, detectSchemaVersion, MigrationError } from '../lib/migrate.mjs';
 import { decideNextAction } from '../lib/resume.mjs';
@@ -295,7 +314,7 @@ export function applyPlanIndex(state, planIndex) {
 // ---- subcommand dispatch ----
 function main() {
   const [cmd, ...rest] = process.argv.slice(2);
-  const { flags } = parseArgs(rest);
+  const { positional, flags } = parseArgs(rest);
 
   switch (cmd) {
     case 'version': {
@@ -597,17 +616,29 @@ function main() {
       break;
     }
     case 'verify-scope': {
-      // The D6/F-SCOPE post-barrier check. declared = every wave-N task's files (done included — at
-      // the barrier nothing is committed yet); before/after are the git-touched path sets the SHELL
-      // captures (git stays in the shell; bin is fs-only) and passes as JSON arrays. verifyScope does
-      // the (after - before) ⊆ declared set math. The shell resets/ surfaces any outOfScope path.
+      // The D6/F-SCOPE post-barrier check. The allow-set is the IMMUTABLE launch-time scope snapshot
+      // (active_run.scope), captured by `set-active-run --scope` from prepareWave's resolved file union
+      // BEFORE any agent ran. We deliberately do NOT re-derive scope from plan.index.json/state.yml here:
+      // re-reading a mutable artifact post-barrier lets a rogue agent widen its own allow-set mid-wave
+      // (edit plan.index to add rogue.js, then edit rogue.js) — the Codex tamper MAJOR. before/after are
+      // the git-touched path sets the SHELL captures (git stays in the shell; bin is fs-only) and passes
+      // as JSON arrays; verifyScope does the (after - before) ⊆ declared math. Fallback: a run with no
+      // snapshot (predates this field) uses the state-only declaredScope — best-effort, frozen-at-seed.
       const p = need(flags, 'state');
       const wave = coerceId(need(flags, 'wave'));
-      const declared = declaredScope(loadForWrite(p), wave);
+      const state = loadForWrite(p);
+      const snapshot = Array.isArray(state.active_run?.scope) ? state.active_run.scope : null;
+      const declared = snapshot ?? declaredScope(state, wave);
       let before;
       let after;
       try {
-        before = JSON.parse(flags.before ?? '[]');
+        // --before fallback: on the normal completion path the shell passes the workflow's echoed
+        // `before`; on a finalize_run RESUME after a crash (the workflow result is gone) it is omitted, so
+        // fall back to the baseline persisted in the marker (set-active-run --baseline) — the Codex P1 fix
+        // that makes verify-scope re-runnable on resume rather than silently skipped.
+        const persistedBaseline = Array.isArray(state.active_run?.baseline) ? state.active_run.baseline : null;
+        before =
+          flags.before !== undefined ? JSON.parse(flags.before) : persistedBaseline ?? [];
         after = JSON.parse(flags.after ?? '[]');
       } catch (e) {
         die(`verify-scope: --before/--after must be JSON arrays of paths (${e.message})`);
@@ -665,7 +696,41 @@ function main() {
         die(`set-active-run: --wave must be an integer (got ${JSON.stringify(flags.wave)}) — it is the ` +
             `phase-1 launching marker's wave that decideNextAction resumes on.`);
       }
+      // Optional --scope (JSON array): the IMMUTABLE F-SCOPE allow-set snapshot, captured at LAUNCH from
+      // prepareWave's resolved file union and frozen into the phase-1 marker. verify-scope reads it
+      // post-barrier instead of re-deriving scope from mutable plan.index/state — closing the tamper hole
+      // where a rogue agent widens its own allow-set mid-wave. Absent → no snapshot (verify-scope falls
+      // back to state-only declaredScope, the back-compat path).
       const run = { wave, phase: 'launching' };
+      if (flags.scope !== undefined) {
+        let scope;
+        try {
+          scope = JSON.parse(flags.scope);
+        } catch (e) {
+          die(`set-active-run: --scope must be a JSON array of paths (${e.message})`);
+        }
+        if (!Array.isArray(scope)) {
+          die('set-active-run: --scope must be a JSON array of paths');
+        }
+        run.scope = scope;
+      }
+      // Optional --baseline (JSON array): the D6 `before` touched-set captured at LAUNCH (before any
+      // agent ran). Persisted so that if the session dies AFTER `mp mark-task` but BEFORE the wave's
+      // verify-scope/code-commit, the resume `finalize_run` can RE-RUN verify-scope (the workflow result
+      // carrying `before` is gone, but the marker still has it) — closing the Codex P1 crash-trace gap
+      // where verify-scope was silently skipped. verify-scope falls back to this when --before is omitted.
+      if (flags.baseline !== undefined) {
+        let baseline;
+        try {
+          baseline = JSON.parse(flags.baseline);
+        } catch (e) {
+          die(`set-active-run: --baseline must be a JSON array of paths (${e.message})`);
+        }
+        if (!Array.isArray(baseline)) {
+          die('set-active-run: --baseline must be a JSON array of paths');
+        }
+        run.baseline = baseline;
+      }
       writeState(p, setActiveRun(loadForWrite(p), run));
       out({ active_run: run });
       break;
@@ -687,7 +752,15 @@ function main() {
         die(`promote-active-run: no phase-1 launching marker with an integer wave ` +
             `(active_run=${JSON.stringify(state.active_run ?? null)}) — call \`set-active-run --wave=N\` first.`);
       }
+      // Carry the launch-time F-SCOPE snapshot forward: promotion replaces active_run wholesale, so
+      // without this the phase-2 marker would drop active_run.scope and verify-scope would silently fall
+      // back to the mutable state-only path. Preserve the frozen array set at phase-1.
       const run = { wave: prev.wave, run_id: need(flags, 'run-id'), task_id: need(flags, 'task-id') };
+      if (Array.isArray(prev.scope)) run.scope = prev.scope;
+      // Carry the launch-time D6 baseline forward too (mirror of scope): the phase-2 marker is what a
+      // post-completion-crash resume reads, so without this the finalize_run reconciliation would lose the
+      // `before` set it needs to re-run verify-scope.
+      if (Array.isArray(prev.baseline)) run.baseline = prev.baseline;
       writeState(p, setActiveRun(state, run));
       out({ active_run: run });
       break;
@@ -797,6 +870,132 @@ function main() {
       }
       writeState(p, setWorktreeDisposition(loadForWrite(p), disposition));
       out({ worktree_disposition: disposition });
+      break;
+    }
+    case 'worktree': {
+      // The worktree-lifecycle subcommands (Phase 1). All decidable logic is the PURE lib/worktree.mjs
+      // core; bin only does fs (readdir/read) + state writes. git (`worktree add|repair|remove|prune`)
+      // stays in the SHELL (CD-7): `plan`/`reconcile` EMIT a plan the shell executes; `record` persists
+      // the confirmed outcome. Sub-dispatch on the first positional.
+      const sub = positional[0];
+      switch (sub) {
+        case 'plan': {
+          // Create-or-reuse decision at kickoff (READ-ONLY: the shell runs the emitted gitArgs, then
+          // records via `worktree record`). slug/existing come from --state when given, else flags.
+          const repoRoot = need(flags, 'repo-root');
+          let slug = flags.slug;
+          let existing = flags.existing ?? null;
+          if (flags.state) {
+            const st = loadForWrite(flags.state);
+            slug = slug ?? st.slug;
+            if (existing == null) existing = st.worktree ?? null;
+          }
+          if (!slug) die('worktree plan: --slug (or --state carrying a slug) is required', 1);
+          let plan;
+          try {
+            plan = planWorktreeCreate({
+              slug,
+              repoRoot,
+              branch: typeof flags.branch === 'string' ? flags.branch : undefined,
+              existing,
+              branchExists: !!flags['branch-exists'],
+              // The crash-window idempotency signal (Codex P1): the shell sets --worktree-registered when
+              // the canonical WT path already appears in `git worktree list` (a crash between `worktree
+              // add` and `worktree record` left a live worktree with no state.worktree). Then plan = reuse,
+              // not a doomed second `worktree add` on the already-present dir.
+              registered: !!flags['worktree-registered'],
+            });
+          } catch (e) {
+            die(e.message, 1);
+          }
+          out(plan);
+          break;
+        }
+        case 'record': {
+          // Persist the confirmed outcome (WRITE). Three (composable) modes:
+          //   --worktree=PATH                         record the owned worktree path.
+          //   --disposition=D                         record an EXPLICIT lifecycle value, NORMALIZED
+          //                                           (legacy 'missing' → removed_after_merge; unknown dies).
+          //   --choice=C [--removal-confirmed]        record the CRASH-SAFE teardown disposition computed by
+          //                                           lib/worktree.dispositionAfterTeardown(choice, confirmed)
+          //                                           — merge/discard flip to removed_after_merge ONLY when the
+          //                                           shell confirmed the git removal; an unconfirmed teardown
+          //                                           stays `active` (reaped on the next reconcile), never the
+          //                                           phantom `missing`. This is the §2c teardown's writer:
+          //                                           the decision stays in lib (CD-7), invoked through mp, not
+          //                                           reconstructed in orchestrator prose.
+          // --disposition and --choice both write the disposition field, so they are mutually exclusive.
+          const p = need(flags, 'state');
+          const hasWt = flags.worktree !== undefined;
+          const hasDisp = flags.disposition !== undefined;
+          const hasChoice = flags.choice !== undefined;
+          if (!hasWt && !hasDisp && !hasChoice) {
+            die('worktree record: provide at least one of --worktree, --disposition, or --choice', 1);
+          }
+          if (hasDisp && hasChoice) {
+            die('worktree record: --disposition and --choice are mutually exclusive (both set the disposition)', 1);
+          }
+          let st = loadForWrite(p);
+          if (hasWt) st = setWorktree(st, flags.worktree);
+          if (hasDisp) {
+            const norm = normalizeDisposition(flags.disposition);
+            if (norm === null) {
+              die(
+                `worktree record: invalid --disposition '${flags.disposition}' — expected one of: ${VALID_WORKTREE_DISPOSITION.join(', ')} (legacy 'missing' is accepted and normalized)`,
+                1
+              );
+            }
+            st = setWorktreeDisposition(st, norm);
+          }
+          if (hasChoice) {
+            const disp = dispositionAfterTeardown(flags.choice, !!flags['removal-confirmed']);
+            if (disp === null) {
+              die(
+                `worktree record: unknown --choice '${flags.choice}' — expected one of: ${BRANCH_CHOICES.join(', ')}`,
+                1
+              );
+            }
+            st = setWorktreeDisposition(st, disp);
+          }
+          writeState(p, st);
+          out({ worktree: st.worktree ?? null, worktree_disposition: st.worktree_disposition ?? null });
+          break;
+        }
+        case 'reconcile': {
+          // The global orphan sweep (READ-ONLY: emits {actions, findings}). bin fs-collects the disk
+          // dirs + bundle records; the shell passes git's `worktree list --porcelain` and the absolute
+          // common git dir in (git stays in the shell). The shell then runs git repair/remove/prune for
+          // each action and `worktree record` for normalize. Re-runnable (no side effects).
+          const repoRoot = need(flags, 'repo-root');
+          const repoGitDir = typeof flags['repo-git-dir'] === 'string' && flags['repo-git-dir'].trim()
+            ? flags['repo-git-dir'].trim()
+            : path.join(repoRoot, '.git');
+          // Canonicalize the admin dir so classifyWorktrees can match an OUR-repo worktree reached
+          // through a symlink / NFS alias (realpath is an fs read — bin's boundary, not git). MUST stay
+          // NULL when it can't resolve — NOT a lexical fallback — so a canonical mismatch we couldn't fully
+          // prove can never trigger a foreign `remove` (the Codex Round-2 BLOCKER); classifyWorktrees
+          // downgrades such a stray to `manual`.
+          let repoGitDirCanonical = null;
+          try {
+            repoGitDirCanonical = fs.realpathSync.native(repoGitDir);
+          } catch {
+            /* unresolvable — leave NULL so remove can never fire on a canonical mismatch */
+          }
+          const gitList = parseWorktreeList(typeof flags['worktree-list'] === 'string' ? flags['worktree-list'] : '');
+          out(
+            classifyWorktrees({
+              repoGitDir,
+              repoGitDirCanonical,
+              gitList,
+              diskDirs: collectDiskDirs(repoRoot),
+              bundleRecords: collectBundleRecords(repoRoot),
+            })
+          );
+          break;
+        }
+        default:
+          die(`unknown worktree subcommand '${sub ?? ''}' — expected: plan | record | reconcile`, 1);
+      }
       break;
     }
     case 'set-codex-config': {
@@ -1335,6 +1534,58 @@ function main() {
       break;
     }
 
+    case 'acquire-owner':
+    case 'heartbeat-owner':
+    case 'release-owner': {
+      // Guard D: NFS-safe cross-session owner sentinel (lib/owner.mjs decision + lib/owner-fs.mjs fs).
+      // Identity is the LLM SESSION (CLAUDE_CODE_SESSION_ID), not the ephemeral mp process. The bundle
+      // dir (where .owner.lock lives) is dirname(--state). All ops are filesystem (link/stat/rename/
+      // unlink) — squarely inside bin's fs-only mandate; no git, no CD-7 conflict.
+      const statePath = need(flags, 'state');
+      const bundleDir = path.dirname(statePath);
+      const host =
+        typeof flags.host === 'string' && flags.host.trim() ? flags.host.trim() : os.hostname();
+      const session =
+        typeof flags.session === 'string' && flags.session.trim()
+          ? flags.session.trim()
+          : String(process.env.CLAUDE_CODE_SESSION_ID ?? '').trim();
+      if (!session) {
+        die('owner: no session id — pass --session or set CLAUDE_CODE_SESSION_ID', 1);
+      }
+      // slug is best-effort metadata for the lock payload (not required; acquire may precede a full seed).
+      let slug = typeof flags.slug === 'string' ? flags.slug : undefined;
+      if (slug == null) {
+        try {
+          slug = readState(statePath).slug;
+        } catch {
+          /* bundle not yet readable — leave slug undefined */
+        }
+      }
+      const now = Number.isFinite(Number(flags.now)) ? Number(flags.now) : Date.now();
+      const ttlMs = Number.isFinite(Number(flags['ttl-ms'])) ? Number(flags['ttl-ms']) : undefined;
+      let self;
+      try {
+        self = buildOwnerIdentity({ host, session, slug, now });
+      } catch (e) {
+        die(`owner: ${e.message}`, 1);
+      }
+      if (cmd === 'acquire-owner') {
+        // The bundle dir must exist to hold the lock; a kickoff acquire may run just before/at seed.
+        try {
+          fs.mkdirSync(bundleDir, { recursive: true });
+        } catch {
+          /* exists or unwritable — acquire will surface a real error if it can't write */
+        }
+        out(acquireOwner(bundleDir, self, { now, force: !!flags.force, ttlMs }));
+      } else if (cmd === 'heartbeat-owner') {
+        out(heartbeatOwner(bundleDir, self, { now }));
+      } else {
+        // Thread now+ttlMs so releaseOwner's freshness gate engages: a path-unlink is safe only when our
+        // lock is still within TTL (a successor can only steal a STALE lock).
+        out(releaseOwner(bundleDir, self, { force: !!flags.force, now, ttlMs }));
+      }
+      break;
+    }
     default:
       die(`unknown subcommand: ${cmd ?? '(none)'}`, 2);
   }

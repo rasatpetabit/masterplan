@@ -26,6 +26,9 @@ import { check as staleCodexTask } from '../lib/doctor/stale-codex-task.mjs';
 import { check as pluginRegistryDrift } from '../lib/doctor/plugin-registry-drift.mjs';
 import { check as planIndexSchema } from '../lib/doctor/plan-index-schema.mjs';
 import { check as coordDrift } from '../lib/doctor/coord-drift.mjs';
+import { check as ownerSentinel } from '../lib/doctor/owner-sentinel.mjs';
+import { acquireOwner } from '../lib/owner-fs.mjs';
+import { buildOwnerIdentity, ownerLockPath, ownerHeartbeatPath } from '../lib/owner.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const FX = path.join(here, 'fixtures', 'doctor');
@@ -46,6 +49,7 @@ const scenarios = (checkName) =>
 const GIT_STUB = (args) => {
   if (args[0] === 'worktree') return 'worktree /repo\nworktree /repo/.worktrees/feat\n';
   if (args[0] === 'branch') return 'main\nfeat\n';
+  if (args[0] === 'rev-parse') return '.git\n'; // --git-common-dir, resolved against repoRoot by the check
   throw new Error(`unexpected git args: ${args.join(' ')}`);
 };
 
@@ -155,6 +159,129 @@ test('worktree-integrity: SKIP when there are no run bundles', () => {
   const findings = worktreeIntegrity(tmp, { gitExec: GIT_STUB });
   assertFindingShape(findings);
   assert.equal(maxSeverity(findings), 'SKIP');
+});
+
+test('worktree-integrity: git->bundle reconcile surfaces strays as WARN (foreign-leftover / repo-move dedup / crash-leak / legacy-missing)', () => {
+  // Phase 2: the doctor runs the SAME pure classifyWorktrees `mp worktree reconcile` does, so on-disk
+  // strays the per-bundle loop structurally cannot see become WARNs — and a recoverable repo-move or a
+  // legacy `missing` disposition is reported ONCE (as the WARN remedy), never also as a bundle->git ERROR.
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-wt-recon-'));
+  const wt = (name, gitdir) => {
+    const d = path.join(tmp, '.worktrees', name);
+    fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(path.join(d, '.git'), `gitdir: ${gitdir}\n`); // a linked worktree's .git is a FILE
+    return d;
+  };
+  const movedPath = wt('moved', path.join(tmp, '.git', 'worktrees', 'moved')); // into repo, unregistered -> repo-move
+  const crashedPath = wt('crashed', path.join(tmp, '.git', 'worktrees', 'crashed')); // into repo, registered+retired -> crash-leak
+  // The foreign target must EXIST on disk so canonicalization can PROVE it foreign — an unresolvable
+  // target is left untouched as foreign-unverified, never auto-removed (the Codex realpath BLOCKER).
+  const foreignAdmin = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'mp-foreign-')), '.git', 'worktrees', 'cc3');
+  fs.mkdirSync(foreignAdmin, { recursive: true });
+  wt('cc3', foreignAdmin); // foreign target that resolves outside the repo -> foreign-leftover
+  const bundle = (slug, body) => {
+    const d = path.join(tmp, 'docs', 'masterplan', slug);
+    fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(path.join(d, 'state.yml'), body);
+  };
+  bundle('movedbundle', `slug: movedbundle\nstatus: in-progress\nworktree: ${movedPath}\n`);
+  bundle('crashedbundle', `slug: crashedbundle\nstatus: in-progress\nworktree: ${crashedPath}\nworktree_disposition: removed_after_merge\n`);
+  bundle('legacy', `slug: legacy\nstatus: in-progress\nworktree: /repo/.worktrees/legacy\nworktree_disposition: missing\n`);
+
+  // git knows only the main checkout + the crash-leak worktree (moved/cc3 are unregistered strays).
+  const gitExec = (args) => {
+    if (args[0] === 'worktree') return `worktree ${tmp}\nworktree ${crashedPath}\n`;
+    if (args[0] === 'branch') return 'main\n';
+    if (args[0] === 'rev-parse') return '.git\n'; // --git-common-dir -> resolves to tmp/.git (the admin root)
+    throw new Error(`unexpected git args: ${args.join(' ')}`);
+  };
+  const findings = worktreeIntegrity(tmp, { gitExec });
+  assertFindingShape(findings);
+  assert.equal(maxSeverity(findings), 'WARN', JSON.stringify(findings));
+  assert.ok(!findings.some((f) => f.severity === 'ERROR'),
+    `no bundle->git ERROR survives: legacy normalizes + moved is a handled repo-move — ${JSON.stringify(findings)}`);
+  const sums = findings.filter((f) => f.severity === 'WARN').map((f) => f.summary).join('\n');
+  assert.match(sums, /foreign-repo leftover/, 'cc3 foreign-leftover WARN');
+  assert.match(sums, /repo-move/, 'moved repo-move WARN');
+  assert.match(sums, /crash-leak/, 'crashed crash-leak WARN');
+  assert.match(sums, /legacy phantom value/, 'legacy `missing` normalize WARN');
+});
+
+test('worktree-integrity: a linked-cwd run classifies an on-disk retired worktree as crash-leak, NOT prune (the two-roots fix)', () => {
+  // Codex Round-2 MAJOR: when the doctor runs INSIDE a linked worktree, repoGitDir resolves to the
+  // COMMON (main) .git, but the disk + bundle scan must use that SAME main root. Scanning the linked
+  // checkout's (empty) .worktrees instead made a retired worktree still ON DISK under main/.worktrees
+  // look gone -> mis-emit `prune` instead of `crash-leak`. mainRepoRoot = dirname(commonGitDir) unifies
+  // the three classifier inputs.
+  const main = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-main-'));
+  const wt = (root, name, gitdir) => {
+    const d = path.join(root, '.worktrees', name);
+    fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(path.join(d, '.git'), `gitdir: ${gitdir}\n`);
+    return d;
+  };
+  const oldPath = wt(main, 'old', path.join(main, '.git', 'worktrees', 'old')); // on disk, registered, retired
+  const devPath = wt(main, 'dev', path.join(main, '.git', 'worktrees', 'dev')); // the linked checkout we run FROM
+  // The retired bundle that owns `old`, visible from BOTH checkouts (a committed bundle).
+  for (const repo of [main, devPath]) {
+    const d = path.join(repo, 'docs', 'masterplan', 'old');
+    fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(path.join(d, 'state.yml'),
+      `slug: old\nstatus: archived\nworktree: ${oldPath}\nworktree_disposition: removed_after_merge\n`);
+  }
+  // Run FROM the linked checkout: --git-common-dir reports the ABSOLUTE main .git (not cwd's .git FILE).
+  const gitExec = (args) => {
+    if (args[0] === 'worktree') return `worktree ${main}\nworktree ${oldPath}\nworktree ${devPath}\n`;
+    if (args[0] === 'branch') return 'main\n';
+    if (args[0] === 'rev-parse') return `${main}/.git\n`; // common git dir = MAIN's .git (absolute)
+    throw new Error(`unexpected git args: ${args.join(' ')}`);
+  };
+  const findings = worktreeIntegrity(devPath, { gitExec });
+  assertFindingShape(findings);
+  const sums = findings.map((f) => f.summary).join('\n');
+  assert.match(sums, /crash-leak/, `on-disk retired worktree must be crash-leak — ${JSON.stringify(findings)}`);
+  assert.ok(!/dangling admin entry/.test(sums), `must NOT mis-emit prune from a linked cwd — ${JSON.stringify(findings)}`);
+});
+
+test('worktree-integrity: a LIVE bundle\'s unregistered, foreign-resolving worktree surfaces a manual WARN AND still earns the bundle->git ERROR (Codex Round-2 BLOCKER)', () => {
+  // Codex Round-2 BLOCKER: a live (non-retired) run whose worktree git lost the registration AND whose
+  // .git resolves PROVABLY foreign must NOT be auto-removed — it gets classifyWorktrees `manual`
+  // (active-unregistered), which is NOT in handledPaths (only `repair` repo-moves suppress the ERROR), so
+  // the per-bundle bundle->git ERROR "is not a registered git worktree" STILL fires. Suppressing it would
+  // hide a real broken live reference; auto-removing it would be silent mid-run data loss.
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-wt-live-'));
+  // The repo's own admin dir EXISTS so repoGitDirCanonical resolves — making the foreign .git below
+  // PROVABLY foreign. The live-bundle claim must override the `remove` ladder even then.
+  fs.mkdirSync(path.join(tmp, '.git', 'worktrees'), { recursive: true });
+  const liveDir = path.join(tmp, '.worktrees', 'livewt');
+  fs.mkdirSync(liveDir, { recursive: true });
+  // .git points at a foreign admin dir that EXISTS on disk → canonicalization PROVES it foreign. Even so,
+  // the live bundle claim must override the `remove` ladder and force `manual`.
+  const foreignAdmin = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'mp-foreign-live-')), '.git', 'worktrees', 'livewt');
+  fs.mkdirSync(foreignAdmin, { recursive: true });
+  fs.writeFileSync(path.join(liveDir, '.git'), `gitdir: ${foreignAdmin}\n`);
+  const bdir = path.join(tmp, 'docs', 'masterplan', 'livebundle');
+  fs.mkdirSync(bdir, { recursive: true });
+  // in-progress, NO retired disposition → a genuinely live reference (rec && !recRetired).
+  fs.writeFileSync(path.join(bdir, 'state.yml'), `slug: livebundle\nstatus: in-progress\nworktree: ${liveDir}\n`);
+
+  // git knows ONLY the main checkout — livewt is an unregistered stray AND absent from `worktree list`.
+  const gitExec = (args) => {
+    if (args[0] === 'worktree') return `worktree ${tmp}\n`;
+    if (args[0] === 'branch') return 'main\n';
+    if (args[0] === 'rev-parse') return '.git\n';
+    throw new Error(`unexpected git args: ${args.join(' ')}`);
+  };
+  const findings = worktreeIntegrity(tmp, { gitExec });
+  assertFindingShape(findings);
+  // The manual WARN surfaces the live-bundle stray for human restore — never auto-removed.
+  const manualWarn = findings.find((f) => f.severity === 'WARN' && /claimed by a LIVE bundle/.test(f.summary));
+  assert.ok(manualWarn, `active-unregistered manual WARN must surface — ${JSON.stringify(findings)}`);
+  assert.match(manualWarn.fix, /git worktree repair/, 'manual fix restores, never removes');
+  assert.doesNotMatch(manualWarn.summary, /foreign-repo leftover/, 'must NOT be classified as a removable foreign-leftover');
+  // The bundle->git ERROR is NOT suppressed (active-unregistered is not in handledPaths).
+  const liveErr = findings.find((f) => f.severity === 'ERROR' && /livebundle/.test(f.summary) && /not a registered git worktree/.test(f.summary));
+  assert.ok(liveErr, `bundle->git ERROR must still fire for the live unregistered worktree — ${JSON.stringify(findings)}`);
 });
 
 // ---- codex-auth (host path + injected homeDir/now) ---------------------------
@@ -645,14 +772,67 @@ test('coord-drift: PASS for a clean coordinated bundle', () => {
   assert.equal(maxSeverity(findings), 'PASS', JSON.stringify(findings));
 });
 
-// ---- dispatcher: all 12 modules auto-discovered ----------------------------
+// ---- owner-sentinel (Guard D: stale/corrupt owner locks; recorded-ts based, injected clock) ----
 
-test('dispatcher: discovers all 12 check modules', async () => {
+// Build a bundle dir under a tmp repoRoot with an owner lock acquired at `acquiredAt`.
+function ownerBundle(slug, self, acquiredAt) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-own-'));
+  const bundleDir = path.join(root, 'docs', 'masterplan', slug);
+  fs.mkdirSync(bundleDir, { recursive: true });
+  acquireOwner(bundleDir, self, { now: acquiredAt });
+  return { root, bundleDir };
+}
+const OWNER = (now) => buildOwnerIdentity({ host: 'epyc1', session: 'sess-A', slug: 'p', now });
+
+test('owner-sentinel: SKIP when no run bundles', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-own-skip-'));
+  const findings = ownerSentinel(tmp, { now: NOW });
+  assertFindingShape(findings);
+  assert.equal(maxSeverity(findings), 'SKIP');
+});
+
+test('owner-sentinel: PASS for a fresh (within-TTL) lock', () => {
+  const { root } = ownerBundle('p', OWNER(NOW), NOW);
+  const findings = ownerSentinel(root, { now: NOW });
+  assertFindingShape(findings);
+  assert.equal(maxSeverity(findings), 'PASS', JSON.stringify(findings));
+});
+
+test('owner-sentinel: WARN for a stale (past-TTL) lock; fix recommends release-owner --force', () => {
+  const { root } = ownerBundle('p', OWNER(NOW - 5_000_000), NOW - 5_000_000);
+  const findings = ownerSentinel(root, { now: NOW, ttlMs: 1_000 });
+  assertFindingShape(findings);
+  assert.equal(maxSeverity(findings), 'WARN', JSON.stringify(findings));
+  assert.match(findings.find((f) => f.severity === 'WARN').fix, /release-owner .*--force/);
+});
+
+test('owner-sentinel: WARN for a corrupt lock', () => {
+  const { root, bundleDir } = ownerBundle('p', OWNER(NOW), NOW);
+  fs.writeFileSync(ownerLockPath(bundleDir), '{not json');
+  const findings = ownerSentinel(root, { now: NOW });
+  assertFindingShape(findings);
+  assert.equal(maxSeverity(findings), 'WARN', JSON.stringify(findings));
+  assert.match(findings.find((f) => f.severity === 'WARN').summary, /corrupt/);
+});
+
+test('owner-sentinel: WARN for an orphan heartbeat file with no lock', () => {
+  const { root, bundleDir } = ownerBundle('p', OWNER(NOW), NOW);
+  fs.unlinkSync(ownerLockPath(bundleDir)); // remove the lock, leave the hb behind
+  assert.ok(fs.existsSync(ownerHeartbeatPath(bundleDir, OWNER(NOW))));
+  const findings = ownerSentinel(root, { now: NOW });
+  assertFindingShape(findings);
+  assert.equal(maxSeverity(findings), 'WARN', JSON.stringify(findings));
+  assert.match(findings.find((f) => f.severity === 'WARN').summary, /orphan/);
+});
+
+// ---- dispatcher: all 13 modules auto-discovered ----------------------------
+
+test('dispatcher: discovers all 13 check modules', async () => {
   const checks = await discoverChecks(path.join(here, '..', 'lib', 'doctor'));
   const names = checks.map((c) => c.name);
   const expected = [
     'codex-auth', 'codex-plugin-presence', 'coord-drift', 'index-staleness', 'legacy-bundle',
-    'plan-index-schema', 'plugin-registry-drift', 'scalar-cap', 'stale-codex-task',
+    'owner-sentinel', 'plan-index-schema', 'plugin-registry-drift', 'scalar-cap', 'stale-codex-task',
     'stale-lock', 'state-schema', 'worktree-integrity',
   ];
   for (const n of expected) {

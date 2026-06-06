@@ -311,6 +311,156 @@ test('set-worktree-disposition: write the field; reject a value outside the enum
   assert.match(bad.stderr, /invalid --disposition/);
   assert.equal(read(p).worktree_disposition, 'active'); // unchanged by the rejected write
 });
+
+// ---- worktree plan|record|reconcile (Phase 1 lifecycle subcommands) ----------
+
+test('worktree plan: a fresh kickoff emits a create plan with `git worktree add … -b <branch>`', () => {
+  const out = JSON.parse(run(['worktree', 'plan', '--slug=brave-fox', '--repo-root=/r']).stdout);
+  assert.equal(out.action, 'create');
+  assert.equal(out.path, '/r/.worktrees/brave-fox');
+  assert.equal(out.branch, 'masterplan/brave-fox');
+  assert.deepEqual(out.gitArgs, ['worktree', 'add', '/r/.worktrees/brave-fox', '-b', 'masterplan/brave-fox']);
+});
+
+test('worktree plan: reads slug + existing worktree from --state; canonical existing → reuse', () => {
+  const p = tmpBundle(v8({ slug: 'brave-fox', worktree: '/r/.worktrees/brave-fox' }));
+  const out = JSON.parse(run(['worktree', 'plan', `--state=${p}`, '--repo-root=/r']).stdout);
+  assert.equal(out.action, 'reuse');
+  assert.equal(out.gitArgs, undefined);
+});
+
+test('worktree plan: --branch-exists drops `-b` (attach the existing branch)', () => {
+  const out = JSON.parse(run(['worktree', 'plan', '--slug=x', '--repo-root=/r', '--branch-exists']).stdout);
+  assert.deepEqual(out.gitArgs, ['worktree', 'add', '/r/.worktrees/x', 'masterplan/x']);
+});
+
+test('worktree plan: missing --repo-root dies', () => {
+  const bad = run(['worktree', 'plan', '--slug=x']);
+  assert.notEqual(bad.status, 0);
+  assert.match(bad.stderr, /repo-root/);
+});
+
+test('worktree record: --worktree records the path; --disposition records the lifecycle field', () => {
+  const p = tmpBundle(v8());
+  const out = JSON.parse(
+    run(['worktree', 'record', `--state=${p}`, '--worktree=/r/.worktrees/demo', '--disposition=active']).stdout
+  );
+  assert.equal(out.worktree, '/r/.worktrees/demo');
+  assert.equal(out.worktree_disposition, 'active');
+  assert.equal(read(p).worktree, '/r/.worktrees/demo');
+  assert.equal(read(p).worktree_disposition, 'active');
+});
+
+test('worktree record: legacy --disposition=missing is NORMALIZED to removed_after_merge', () => {
+  const p = tmpBundle(v8());
+  const out = JSON.parse(run(['worktree', 'record', `--state=${p}`, '--disposition=missing']).stdout);
+  assert.equal(out.worktree_disposition, 'removed_after_merge');
+  assert.equal(read(p).worktree_disposition, 'removed_after_merge');
+});
+
+test('worktree record: an unknown disposition dies, leaving state untouched', () => {
+  const p = tmpBundle(v8({ worktree_disposition: 'active' }));
+  const bad = run(['worktree', 'record', `--state=${p}`, '--disposition=bogus']);
+  assert.notEqual(bad.status, 0);
+  assert.match(bad.stderr, /invalid --disposition/);
+  assert.equal(read(p).worktree_disposition, 'active');
+});
+
+test('worktree record: neither --worktree, --disposition, nor --choice dies', () => {
+  const p = tmpBundle(v8());
+  const bad = run(['worktree', 'record', `--state=${p}`]);
+  assert.notEqual(bad.status, 0);
+  assert.match(bad.stderr, /at least one of --worktree, --disposition, or --choice/);
+});
+
+test('worktree record: --choice=merge --removal-confirmed records removed_after_merge', () => {
+  const p = tmpBundle(v8({ worktree_disposition: 'active' }));
+  const out = JSON.parse(
+    run(['worktree', 'record', `--state=${p}`, '--choice=merge', '--removal-confirmed']).stdout
+  );
+  assert.equal(out.worktree_disposition, 'removed_after_merge');
+  assert.equal(read(p).worktree_disposition, 'removed_after_merge');
+});
+
+test('worktree record: --choice=merge WITHOUT --removal-confirmed stays active (unconfirmed teardown)', () => {
+  const p = tmpBundle(v8({ worktree_disposition: 'active' }));
+  const out = JSON.parse(run(['worktree', 'record', `--state=${p}`, '--choice=merge']).stdout);
+  assert.equal(out.worktree_disposition, 'active');
+  assert.equal(read(p).worktree_disposition, 'active');
+});
+
+test('worktree record: --choice=keep records kept_by_user regardless of removal-confirmed', () => {
+  const p = tmpBundle(v8());
+  const out = JSON.parse(run(['worktree', 'record', `--state=${p}`, '--choice=keep']).stdout);
+  assert.equal(out.worktree_disposition, 'kept_by_user');
+});
+
+test('worktree record: an unknown --choice dies, leaving state untouched', () => {
+  const p = tmpBundle(v8({ worktree_disposition: 'active' }));
+  const bad = run(['worktree', 'record', `--state=${p}`, '--choice=bogus']);
+  assert.notEqual(bad.status, 0);
+  assert.match(bad.stderr, /unknown --choice/);
+  assert.equal(read(p).worktree_disposition, 'active');
+});
+
+test('worktree record: --disposition and --choice together die (mutually exclusive)', () => {
+  const p = tmpBundle(v8({ worktree_disposition: 'active' }));
+  const bad = run(['worktree', 'record', `--state=${p}`, '--disposition=active', '--choice=merge']);
+  assert.notEqual(bad.status, 0);
+  assert.match(bad.stderr, /mutually exclusive/);
+  assert.equal(read(p).worktree_disposition, 'active');
+});
+
+test('worktree reconcile: classifies a foreign-leftover (remove) + a legacy-missing bundle (normalize)', () => {
+  const root = tmpDir('mp-wt-');
+  // The repo's OWN admin dir must EXIST on disk so the bin caller's realpath resolves it (a `remove`
+  // requires BOTH sides canonicalize — the Codex Round-2 BLOCKER; an unresolvable repo .git can never
+  // auto-remove a stray). A real repo always has one.
+  fs.mkdirSync(path.join(root, '.git', 'worktrees'), { recursive: true });
+  // A foreign-repo leftover checkout under .worktrees/ (its .git points at a DIFFERENT repo). The
+  // foreign admin dir must EXIST on disk so canonicalization can PROVE it foreign — an unresolvable
+  // target is left untouched as foreign-unverified, never auto-removed (the Codex realpath BLOCKER).
+  const foreignAdmin = path.join(tmpDir('mp-foreign-'), '.git', 'worktrees', 'cc3');
+  fs.mkdirSync(foreignAdmin, { recursive: true });
+  fs.mkdirSync(path.join(root, '.worktrees', 'cc3'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.worktrees', 'cc3', '.git'), `gitdir: ${foreignAdmin}\n`);
+  // A bundle still carrying the phantom `missing` disposition.
+  const bdir = path.join(root, 'docs', 'masterplan', 'legacy');
+  fs.mkdirSync(bdir, { recursive: true });
+  fs.writeFileSync(
+    path.join(bdir, 'state.yml'),
+    serializeState({
+      schema_version: '6.0', slug: 'legacy', status: 'archived', phase: 'execute',
+      worktree: '/x', worktree_disposition: 'missing',
+    })
+  );
+  const res = run(['worktree', 'reconcile', `--repo-root=${root}`, `--repo-git-dir=${root}/.git`, '--worktree-list=']);
+  assert.equal(res.status, 0, res.stderr);
+  const out = JSON.parse(res.stdout);
+  const foreign = out.actions.find((a) => a.reason === 'foreign-leftover');
+  assert.ok(foreign, 'expected a foreign-leftover action');
+  assert.equal(foreign.action, 'remove');
+  assert.equal(foreign.registered, false);
+  const norm = out.actions.find((a) => a.reason === 'legacy-missing');
+  assert.ok(norm, 'expected a legacy-missing normalize action');
+  assert.equal(norm.action, 'normalize');
+  assert.equal(norm.slug, 'legacy');
+  assert.equal(out.findings.length, 2); // both non-none actions surface as WARN findings
+});
+
+test('worktree reconcile: a repo with no .worktrees/ and no bundles → empty plan', () => {
+  const root = tmpDir('mp-wt-empty-');
+  const out = JSON.parse(
+    run(['worktree', 'reconcile', `--repo-root=${root}`, '--worktree-list=']).stdout
+  );
+  assert.deepEqual(out, { actions: [], findings: [] });
+});
+
+test('worktree: an unknown subcommand dies with the expected list', () => {
+  const bad = run(['worktree', 'frobnicate']);
+  assert.notEqual(bad.status, 0);
+  assert.match(bad.stderr, /plan \| record \| reconcile/);
+});
 test('set-codex-config: write NESTED codex.{routing,review}; merge-preserve; reject bad value / empty patch (codex CD-7)', () => {
   // CD-7 closure for the codex-plugin-presence fix message: the codex config the dispatch path reads
   // (state.codex.routing/.review) now has an `mp` writer, so turning codex off for a bundle never forces a
@@ -363,6 +513,69 @@ test('active_run two-phase: set (launching) -> recover w/ null staleTaskId; prom
   assert.equal(d2.staleTaskId, 'k9'); // dead -> shell reconciles this handle before reset+redispatch
   run(['clear-active-run', `--state=${p}`]);
   assert.equal(read(p).active_run, null);
+});
+test('F-SCOPE snapshot: set-active-run --scope freezes the allow-set; promote preserves it; verify-scope reads it (immune to a mid-wave state.tasks edit)', () => {
+  const p = tmpBundle(v8({ tasks: [{ id: 1, status: 'pending', wave: 0, files: ['a.js'] }] }));
+  // 1) Launch-time snapshot: set-active-run --wave --scope freezes the resolved file union.
+  const set = JSON.parse(run(['set-active-run', `--state=${p}`, '--wave=0', '--scope=["a.js"]']).stdout);
+  assert.deepEqual(set.active_run, { wave: 0, phase: 'launching', scope: ['a.js'] });
+  // 2) Promotion preserves the frozen scope through the phase-1 -> phase-2 transition.
+  const prom = JSON.parse(run(['promote-active-run', `--state=${p}`, '--run-id=wf_1', '--task-id=k1']).stdout);
+  assert.deepEqual(prom.active_run, { wave: 0, run_id: 'wf_1', task_id: 'k1', scope: ['a.js'] });
+  // 3) Simulate a ROGUE mid-wave widening of state.tasks[].files to include rogue.js — exactly the tamper
+  //    the snapshot defends against. If verify-scope re-derived the allow-set from state (the pre-fix
+  //    path), rogue.js would now be ALLOWED and this test would pass vacuously. It must instead read the
+  //    frozen active_run.scope (['a.js']) and STILL reject rogue.js.
+  const tampered = read(p);
+  tampered.tasks[0].files = ['a.js', 'rogue.js'];
+  fs.writeFileSync(p, serializeState(tampered));
+  assert.deepEqual(read(p).active_run.scope, ['a.js'], 'the frozen snapshot survives the state.tasks tamper');
+  const vs = JSON.parse(run(['verify-scope', `--state=${p}`, '--wave=0', '--before=[]', '--after=["a.js","rogue.js"]']).stdout);
+  assert.equal(vs.ok, false);
+  assert.deepEqual(vs.outOfScope, ['rogue.js']);
+});
+test('F-SCOPE snapshot: a run with NO active_run.scope falls back to state-only declaredScope (back-compat)', () => {
+  const p = tmpBundle(v8({ tasks: [{ id: 1, status: 'pending', wave: 0, files: ['a.js'] }], active_run: null }));
+  // No snapshot -> declared comes from state.tasks[].files; a.js is allowed, rogue.js is the breach.
+  const vs = JSON.parse(run(['verify-scope', `--state=${p}`, '--wave=0', '--before=[]', '--after=["a.js","rogue.js"]']).stdout);
+  assert.equal(vs.ok, false);
+  assert.deepEqual(vs.outOfScope, ['rogue.js']);
+});
+test('set-active-run --scope rejects a non-array JSON value (fail loud)', () => {
+  const p = tmpBundle(v8());
+  const bad = run(['set-active-run', `--state=${p}`, '--wave=0', '--scope={"x":1}']);
+  assert.notEqual(bad.status, 0);
+  assert.match(bad.stderr, /must be a JSON array/);
+});
+test('D6 baseline: set-active-run --baseline persists; promote carries it; verify-scope falls back to it when --before is omitted (crash-resume)', () => {
+  const p = tmpBundle(v8({ tasks: [{ id: 1, status: 'pending', wave: 0, files: ['a.js'] }] }));
+  // 1) Launch: freeze BOTH the scope allow-set and the D6 `before` baseline into the phase-1 marker.
+  const set = JSON.parse(run(['set-active-run', `--state=${p}`, '--wave=0', '--scope=["a.js"]', '--baseline=["pre.js"]']).stdout);
+  assert.deepEqual(set.active_run, { wave: 0, phase: 'launching', scope: ['a.js'], baseline: ['pre.js'] });
+  // 2) Promotion carries the baseline forward (mirror of scope) so a post-completion-crash resume still has it.
+  const prom = JSON.parse(run(['promote-active-run', `--state=${p}`, '--run-id=wf_1', '--task-id=k1']).stdout);
+  assert.deepEqual(prom.active_run, { wave: 0, run_id: 'wf_1', task_id: 'k1', scope: ['a.js'], baseline: ['pre.js'] });
+  // 3) finalize_run RESUME path: verify-scope is called with NO --before (the workflow result is gone),
+  //    so it must fall back to active_run.baseline (['pre.js']). pre.js is in `before` -> excluded from the
+  //    diff; a.js is in scope -> allowed; rogue.js is the out-of-scope breach the re-run still catches.
+  const vs = JSON.parse(run(['verify-scope', `--state=${p}`, '--wave=0', '--after=["pre.js","a.js","rogue.js"]']).stdout);
+  assert.equal(vs.ok, false);
+  assert.deepEqual(vs.outOfScope, ['rogue.js']);
+});
+test('set-active-run --baseline rejects a non-array JSON value (fail loud)', () => {
+  const p = tmpBundle(v8());
+  const bad = run(['set-active-run', `--state=${p}`, '--wave=0', '--baseline={"x":1}']);
+  assert.notEqual(bad.status, 0);
+  assert.match(bad.stderr, /must be a JSON array/);
+});
+test('worktree plan --worktree-registered reuses even with no recorded worktree (crash-between-add-and-record idempotency)', () => {
+  const p = tmpBundle(v8({ slug: 'reg-slug' }));
+  // No state.worktree recorded; the canonical path is already a registered worktree (the shell probed it).
+  const r = run(['worktree', 'plan', `--state=${p}`, '--repo-root=/r', '--branch=masterplan/reg-slug', '--branch-exists', '--worktree-registered']);
+  assert.equal(r.status, 0);
+  const plan = JSON.parse(r.stdout);
+  assert.equal(plan.action, 'reuse');
+  assert.equal(plan.gitArgs, undefined);
 });
 test('planning active_run: set --kind=plan writes launching marker without --wave', () => {
   const p = tmpBundle(v8());
@@ -1116,10 +1329,23 @@ test('coord-status: is read-only (does not write to state)', () => {
 // --- prepare-wave: state.implementer threads to a per-task backend descriptor (the bin wire) ---
 // wave.test passes config directly; THIS proves the state.implementer -> config -> backend wire
 // through the real CLI. buildSeedState never emits `implementer`, so the default is byte-identical.
+//
+// loadPlanTasks seeds state.tasks[].files FROM plan.index (lib/bundle.mjs), so a REAL bundle's state
+// and plan file sets are identical by construction. The generic v8() uses a.txt/b.txt while
+// planIndexFixture() uses src/*.mjs — independently authored, a shape that never co-occurs live — so
+// these align the state files to the plan fixture, the in-sync shape prepareWave's dispatch-time
+// plan/state divergence gate (lib/wave.mjs) expects. (Waves stay v8's: task 1 wave 0, task 2 wave 1.)
+const v8AlignedToPlanFixture = (over = {}) => v8({
+  tasks: [
+    { id: 1, status: 'pending', wave: 0, files: ['src/greet.mjs'] },
+    { id: 2, status: 'pending', wave: 1, files: ['src/farewell.mjs'] },
+  ],
+  ...over,
+});
 test('prepare-wave: default (no implementer in state) -> every payload task carries backend {kind:agent}', () => {
   const dir = tmpDir('mp-backend-default-');
   const p = path.join(dir, 'state.yml');
-  fs.writeFileSync(p, serializeState(v8()));                 // v8(): task 1 wave 0, task 2 wave 1
+  fs.writeFileSync(p, serializeState(v8AlignedToPlanFixture()));  // task 1 wave 0 (files match plan)
   const planIdx = path.join(dir, 'plan.index.json');
   fs.writeFileSync(planIdx, JSON.stringify(planIndexFixture()));
   const pw = JSON.parse(run(['prepare-wave', `--state=${p}`, `--plan-index=${planIdx}`, '--wave=0']).stdout);
@@ -1136,7 +1362,7 @@ test('prepare-wave: qctl.enabled=true with no --repos-allowlist wired -> backend
   // in test/wave.test.mjs with a fixture allowlist passed directly to prepareWave.
   const dir = tmpDir('mp-backend-qctl-');
   const p = path.join(dir, 'state.yml');
-  fs.writeFileSync(p, serializeState(v8({ implementer: { qctl: { enabled: true } } })));
+  fs.writeFileSync(p, serializeState(v8AlignedToPlanFixture({ implementer: { qctl: { enabled: true } } })));
   const planIdx = path.join(dir, 'plan.index.json');
   fs.writeFileSync(planIdx, JSON.stringify(planIndexFixture()));
   const pw = JSON.parse(run(['prepare-wave', `--state=${p}`, `--plan-index=${planIdx}`, '--wave=0']).stdout);
@@ -1151,7 +1377,7 @@ test('prepare-wave: qctl.enabled=true with no --repos-allowlist wired -> backend
 test('prepare-wave: qctl.enabled=true WITH --repos-allowlist covering the task files -> backend {kind:qctl}', () => {
   const dir = tmpDir('mp-backend-qctl-allow-');
   const p = path.join(dir, 'state.yml');
-  fs.writeFileSync(p, serializeState(v8({ implementer: { qctl: { enabled: true } } })));
+  fs.writeFileSync(p, serializeState(v8AlignedToPlanFixture({ implementer: { qctl: { enabled: true } } })));
   const planIdx = path.join(dir, 'plan.index.json');
   fs.writeFileSync(planIdx, JSON.stringify(planIndexFixture()));
   // task 1's plan.index files are ['src/greet.mjs'] (verify ['true'], non-infra) — covered by the glob.
@@ -1178,7 +1404,7 @@ test('prepare-wave: qctl.enabled=true WITH --repos-allowlist covering the task f
 test('prepare-wave: a malformed --repos-allowlist (not JSON) exits non-zero with a hint', () => {
   const dir = tmpDir('mp-backend-qctl-badjson-');
   const p = path.join(dir, 'state.yml');
-  fs.writeFileSync(p, serializeState(v8({ implementer: { qctl: { enabled: true } } })));
+  fs.writeFileSync(p, serializeState(v8AlignedToPlanFixture({ implementer: { qctl: { enabled: true } } })));
   const planIdx = path.join(dir, 'plan.index.json');
   fs.writeFileSync(planIdx, JSON.stringify(planIndexFixture()));
   const r = run(['prepare-wave', `--state=${p}`, `--plan-index=${planIdx}`, '--wave=0', '--repos-allowlist=not-json']);
