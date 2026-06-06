@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.1.0 — worktree lifecycle & cross-session concurrency hardening (2026-06-06)
+
+Closes the worktree-lifecycle and concurrency gaps the v8 clean-core rebuild left behind (it kept the worktree *scaffolding* but dropped the *lifecycle*). All deterministic logic is new pure `lib/*.mjs` behind fs-only `mp` subcommands; git stays in the shell (CD-7). Suite 791/791, doctor exit 0.
+
+### Added
+
+- **Worktree lifecycle as code.** New pure `lib/worktree.mjs` + `lib/worktree-fs.mjs` — deterministic naming, a create/reuse planner, and a single `classifyWorktrees` reconciler distinguishing active / repo-move / crash-leak / foreign-leftover / legacy-`missing`, each carrying a per-mode action (`repair` / `prune` / `remove` / `normalize` / `none`). Shared by the new fs-only `mp worktree plan|record|reconcile` subcommands **and** the doctor check (one classification source). Orphans are reaped by a global reconcile that the next masterplan kickoff/resume runs across all bundles (a dead session can't tear itself down).
+- **Doctor git→bundle direction.** `lib/doctor/worktree-integrity.mjs` now closes its long-standing blind spot by calling the same `classifyWorktrees`, emitting per-mode WARN+fix findings.
+- **Dispatch-time disjointness recheck.** New pure `checkWaveDisjoint` in `lib/wave.mjs`, composed into `prepareWave`: fails when a task's plan-side and state-side file sets diverge, runs disjointness on the *resolved* payload, and unifies `verifyScope` on that same set so dispatch and the post-barrier F-SCOPE check can't disagree.
+- **Guard D — NFS-safe cross-session owner sentinel.** New `lib/owner.mjs` + `lib/owner-fs.mjs` + `lib/doctor/owner-sentinel.mjs` + `mp acquire-owner|heartbeat-owner|release-owner [--force]`. Identity is the LLM **session** (`{host, CLAUDE_CODE_SESSION_ID}`), not the ephemeral `mp` process; liveness is heartbeat-age TTL (30m default). Immutable `.owner.lock` via atomic `link()`+`stat().nlink===2` plus a per-owner heartbeat file. Guarantee: perfect mutual exclusion for live contention (unit of protection = the turn); one documented benign residual (a >TTL-abandoned owner resurrecting at the instant of reclaim). A release-path freshness gate (added after cross-vendor Codex review) only path-unlinks a lock proven within-TTL, returning `stale-not-released` otherwise so a mid-takeover successor is never clobbered.
+
+### Changed
+
+- `missing` worktree disposition is normalized to `removed_after_merge` on the **read path** for all schemas (the enum stays 3-value); failed teardown stays `active`, never the phantom `missing`.
+
 ## v8.0.0 — clean-core rebuild (2026-05-31)
 
 The full clean-core rebuild lands on `main`. masterplan is now a **five-layer Node-primary architecture** — durable run bundle (`docs/masterplan/<slug>/state.yml`, the CD-7 single source of truth) · thin resumable shell (`commands/masterplan.md` sequencer + `bin/masterplan.mjs` + `lib/*.mjs` as the sole durable state writer) · Workflow-tool execution engine · plugin-root agents · `doctor` health checks — replacing the v7 markdown monolith with an ~80% line reduction and unit-tested deterministic logic. The per-verb `/masterplan:<verb>` skill namespace is removed; every verb now routes through the bare `/masterplan` command via `bin`.

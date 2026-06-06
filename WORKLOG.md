@@ -1,6 +1,10 @@
 # WORKLOG
 
-## 2026-06-06 — Guard D: NFS-safe cross-session owner sentinel (Phase 3b) — provisional-acquire, live-perfect / stale-benign — NOT committed (main index wiped)
+## 2026-06-06 — Release v8.1.0: worktree lifecycle + Guard D shipped; branch/PR landscape resolved
+
+The worktree-lifecycle + dispatch-disjointness + Guard D hardening (the entry below) **shipped**: committed `7e604a5` on `main`, ff-merged, pushed to GitHub. Manifests bumped `8.0.0 → 8.1.0`, CHANGELOG v8.1.0 added, tagged `v8.1.0`. Branch/PR sweep: every "ahead" branch verified **already-in-main or superseded by the v8 rebuild** (none carried live unmerged work) — `qctl-implementer-backend`/PR #14 would *revert* main (main is a strict content superset); `fix/codex-degraded-false-positive`/`codex-routing-fix`/`chore-handbook` are pre-v8 surfaces; `feat/b3-push-waiter` clean-merges but only edits dead `parts/step-b.md` (inert in the v8 sequencer). Remote-branch deletes, PR #14 close, and the b3 port were gated to the user. **Deploy:** grojas marketplace clone ff'd; `/plugin marketplace update` + `/reload-plugins` is user-only; `ras@epyc2` unreachable from this host (no DNS/hosts/ssh-config entry, `/srv/dev` is ZFS not NFS).
+
+## 2026-06-06 — Guard D: NFS-safe cross-session owner sentinel (Phase 3b) — provisional-acquire, live-perfect / stale-benign — SHIPPED in v8.1.0 (7e604a5, pushed)
 
 Built the never-shipped Guard D from the worktree/concurrency hardening plan (task #6): mutual exclusion for two LLM sessions operating the **same run bundle** concurrently (epyc1/epyc2, NFS). `state.yml` can't provide it (`writeState` is an atomic write, not test-and-set), so this is a dedicated NFS-safe lock.
 
