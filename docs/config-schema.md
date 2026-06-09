@@ -119,7 +119,7 @@ codex:
                                       # Only the unset default flips from `ping` → `scan-then-ping`.
 
 # Pluggable implementer backend (contract-first; default OFF) — design spec:
-# docs/superpowers/specs/2026-06-01-qctl-implementer-backend-design.md
+# docs/superpowers/archived-specs/2026-06-01-qctl-implementer-backend-design.md
 # When qctl.enabled is true, `mp prepare-wave` stamps a {kind:'qctl'} backend descriptor on each
 # wave task instead of the default {kind:'agent'}. The LIVE qctl binding is DEFERRED until the Qwen
 # Work Fabric ships `qctl` + `gate.py`; until then a qctl-kind task is recorded blocked (NotYetBound).
@@ -232,4 +232,3 @@ adversarial_review: both   # off | spec | plan | both
 Treat the schema as additive — new keys land in built-in defaults first, then become configurable. Unknown keys in user files are tolerated (forward-compat) but logged once at load time.
 
 ---
-
