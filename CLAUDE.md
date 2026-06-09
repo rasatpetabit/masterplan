@@ -2,6 +2,14 @@
 
 You are working in `masterplan`, a Claude Code (and Codex) plugin that provides the `/masterplan` slash command. It orchestrates a **brainstorm → plan → execute → finish** development workflow on top of [`obra/superpowers`](https://github.com/obra/superpowers) skills.
 
+> **Agent-doc convention — documented exception.** The org-wide convention
+> (`~/.claude/AGENTS.md`) is AGENTS.md-primary: each repo's `AGENTS.md` is the
+> substantive canonical doc and `CLAUDE.md` is a thin Claude overlay. This repo
+> is the deliberate exception — `CLAUDE.md` stays the primary project-context
+> file because the plugin's project doc *is* its `CLAUDE.md`; `AGENTS.md` here
+> stays a thin pointer back to this file. Convention sweeps and the per-repo
+> agent-doc lint must whitelist `masterplan`.
+
 ## What this codebase IS
 
 As of **v8**, masterplan is a real Node codebase, not a markdown monolith. The deterministic decisions live in **`lib/*.mjs`** behind **`bin/masterplan.mjs`** (invoked throughout as `mp`) — zero-LLM-token, unit-tested. The markdown prompt is now a thin **~251-line sequencer** that only orders `mp` calls, agent dispatches, and gates. Durable state lives in `docs/masterplan/<slug>/state.yml`.
