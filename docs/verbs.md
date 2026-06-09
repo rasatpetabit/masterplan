@@ -74,9 +74,13 @@ Print the reserved-verb list.
 Lead → GitHub coordination. Projects the **current wave only** of a planned run onto GitHub:
 provisions the immutable contract ref `mp-coord/<slug>/<plan_hash>` (tier-1: `spec.md` /
 `plan.md` / `plan.index.json` only) and the integration branch `mp-int/<slug>` on first use
-(idempotent); then creates one GitHub issue per task in the wave (dedup by `{run_slug, task_id}`).
-Spec §7.1. Gated: only when a valid `plan.index.json` exists and the coordination config is
-initialised. Publishes wave N+1 only after wave N is fully merged.
+(idempotent); then creates one GitHub issue per task in the wave, labeled
+`mp:run-<slug>` / `mp:wave-<N>` / `mp:open` (dedup by `{run_slug, task_id}`).
+Coordination state — `contract_ref`, `integration_branch`, `issue_map`,
+`published_waves` — is pinned into `state.coordination` (the CD-7 single writer is
+`mp set-coord`). Spec §7.1. Gated: only when a valid `plan.index.json` exists; the
+coordination config is **auto-provisioned on first publish** (no manual `mp set-coord`
+prerequisite). Publishes wave N+1 only after wave N is fully merged.
 
 ## `follow`
 Follower session: claim one unassigned task from a coordinated run, build it using the standard
