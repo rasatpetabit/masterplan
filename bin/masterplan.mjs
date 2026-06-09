@@ -105,9 +105,11 @@
 //                                               -> { claimable: [issue, ...] } (A4 dep-satisfaction filter)
 //   reconcile-integration --state=PATH          -> { actions: [...] } (A6 pure-state reconcile; gh JSON on stdin)
 //   set-coord --state=PATH [--wave=N] [--base-sha=SHA] [--contract-ref=R] [--integration-branch=B]
-//             [--local-run-branch=L] [--mode=M] [--mark-published]
+//             [--local-run-branch=L] [--mode=M] [--mark-published] [--bootstrap]
 //                                               -> CD-7 write: per-key merge of coordination fields;
-//                                                  --base-sha/--mark-published require --wave; emits {coordination}
+//                                                  --base-sha/--mark-published require --wave; emits {coordination}.
+//                                                  --bootstrap derives {contract_ref, integration_branch}
+//                                                  from slug + plan_hash (idempotent, all-or-nothing).
 //   update-issue-map --state=PATH --task-id=N [--issue=N] [--pr=N] [--merge-sha=SHA]
 //                    [--status=S] [--wave=N]
 //                                               -> CD-7 write: create/shallow-merge issue_map[task_id];
@@ -151,7 +153,7 @@ import { planWorktreeCreate, parseWorktreeList, classifyWorktrees, normalizeDisp
 import { collectDiskDirs, collectBundleRecords } from '../lib/worktree-fs.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
 import { acquireOwner, heartbeatOwner, releaseOwner } from '../lib/owner-fs.mjs';
-import { issueBodyForTask, parseIssueBody, validateClaimSettle, selectClaimableUnits, reconcileIntegration, isTerminalIssueStatus, isValidIssueStatus, ISSUE_MAP_STATUSES } from '../lib/github-coord.mjs';
+import { issueBodyForTask, parseIssueBody, validateClaimSettle, selectClaimableUnits, reconcileIntegration, isTerminalIssueStatus, isValidIssueStatus, ISSUE_MAP_STATUSES, computeCoordDefaults } from '../lib/github-coord.mjs';
 import { migrate, detectSchemaVersion, MigrationError } from '../lib/migrate.mjs';
 import { decideNextAction } from '../lib/resume.mjs';
 import { prepareWave, declaredScope, verifyScope } from '../lib/wave.mjs';
@@ -1185,6 +1187,42 @@ function main() {
       if (flags['integration-branch'] !== undefined) patch.integration_branch = flags['integration-branch'];
       if (flags['local-run-branch'] !== undefined) patch.local_run_branch = flags['local-run-branch'];
 
+      // --bootstrap: derive {contract_ref, integration_branch} from state.slug + the bundle's
+      // plan_hash (§7.1 publish default-enable). Idempotent + all-or-nothing:
+      //   - no-op if BOTH refs are already set (explicit flags or a prior bootstrap),
+      //   - refuse a partial provision when plan_hash is absent (computeCoordDefaults → contract_ref
+      //     null): a contract ref needs a plan hash to be resumable, so we pin NEITHER ref and let the
+      //     publish preflight's `coord-status --fail-if-unconfigured` fail loud instead.
+      // Explicit --contract-ref / --integration-branch still win (they're applied above; bootstrap
+      // only fills a key the caller didn't set and the state doesn't already carry).
+      if (flags.bootstrap !== undefined && flags.bootstrap !== false) {
+        const bothSet = existing.contract_ref && existing.integration_branch;
+        if (!bothSet) {
+          // Soft-read plan_hash from the bundle's plan.index.json (sibling of state.yml, or the
+          // recorded plan_index_path). Absent/invalid index → planHash null → no contract_ref.
+          const planIndexPath =
+            typeof state.plan_index_path === 'string' && state.plan_index_path
+              ? state.plan_index_path
+              : path.join(path.dirname(p), 'plan.index.json');
+          let planHash = null;
+          try {
+            planHash = JSON.parse(fs.readFileSync(planIndexPath, 'utf8'))?.plan_hash ?? null;
+          } catch {
+            planHash = null; // index absent/unreadable — not bootstrappable yet
+          }
+          const defaults = computeCoordDefaults(state.slug, planHash);
+          // All-or-nothing: only provision when BOTH derived refs are non-null (plan_hash present).
+          if (defaults.contract_ref && defaults.integration_branch) {
+            if (patch.contract_ref === undefined && !existing.contract_ref) {
+              patch.contract_ref = defaults.contract_ref;
+            }
+            if (patch.integration_branch === undefined && !existing.integration_branch) {
+              patch.integration_branch = defaults.integration_branch;
+            }
+          }
+        }
+      }
+
       // base_sha_by_wave: merge the per-wave entry rather than overwriting the whole object
       if (hasBaseSha) {
         patch.base_sha_by_wave = { ...(existing.base_sha_by_wave ?? {}), [wave]: flags['base-sha'] };
@@ -1194,6 +1232,17 @@ function main() {
       if (hasMarkPublished) {
         const prev = Array.isArray(existing.published_waves) ? existing.published_waves : [];
         patch.published_waves = [...new Set([...prev, wave])];
+      }
+
+      // No effective change — e.g. `--bootstrap` on a not-bootstrappable bundle (no plan_hash), or no
+      // mutating flags at all. Do NOT materialize an empty coordination object: decideNextAction treats
+      // ANY non-null coordination as a coordinated run (resume.mjs §4 — empty issue_map ⇒ all wave tasks
+      // "unpublished"), so writing {} onto an uncoordinated bundle would hijack later resumes into
+      // publish_needed/coordinate while `coord-status --fail-if-unconfigured` still fails — stranding
+      // normal local dispatch behind the publish flow. Emit the current coordination, write nothing.
+      if (Object.keys(patch).length === 0) {
+        out({ coordination: state.coordination ?? null });
+        break;
       }
 
       const next = setCoordination(state, patch);

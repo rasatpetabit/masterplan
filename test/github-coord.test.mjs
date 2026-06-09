@@ -23,6 +23,8 @@ import {
   isTerminalIssueStatus,
   isValidIssueStatus,
   ISSUE_MAP_STATUSES,
+  refSafePlanHash,
+  computeCoordDefaults,
 } from '../lib/github-coord.mjs';
 
 // ============================================================================
@@ -553,4 +555,49 @@ test('mergeBatchPlan: does not mutate input array', () => {
   const origFirst = prs[0].task_id;
   mergeBatchPlan(prs);
   assert.equal(prs[0].task_id, origFirst, 'input array must not be mutated');
+});
+
+// ============================================================================
+// A8 — refSafePlanHash / computeCoordDefaults (publish bootstrap, §7.1)
+// ============================================================================
+
+test('refSafePlanHash: strips a leading sha256: prefix (git refs forbid colon)', () => {
+  const hex = 'a'.repeat(64);
+  assert.equal(refSafePlanHash('sha256:' + hex), hex);
+  assert.ok(!refSafePlanHash('sha256:' + hex).includes(':'));
+});
+
+test('refSafePlanHash: passes through an already-bare hash unchanged', () => {
+  assert.equal(refSafePlanHash('abc123'), 'abc123');
+});
+
+test('refSafePlanHash: strips any algorithm prefix, not just sha256', () => {
+  assert.equal(refSafePlanHash('sha1:deadbeef'), 'deadbeef');
+});
+
+test('refSafePlanHash: returns null for null/undefined/empty', () => {
+  assert.equal(refSafePlanHash(null), null);
+  assert.equal(refSafePlanHash(undefined), null);
+  assert.equal(refSafePlanHash(''), null);
+  assert.equal(refSafePlanHash('   '), null);
+});
+
+test('computeCoordDefaults: derives both refs from slug + plan_hash (colon-free contract_ref)', () => {
+  const hex = 'b'.repeat(64);
+  const d = computeCoordDefaults('myrun', 'sha256:' + hex);
+  assert.equal(d.contract_ref, `mp-coord/myrun/${hex}`);
+  assert.equal(d.integration_branch, 'mp-int/myrun');
+  assert.ok(!d.contract_ref.includes(':'), 'contract_ref must be a valid git ref');
+});
+
+test('computeCoordDefaults: contract_ref is null when plan_hash is absent (not bootstrappable)', () => {
+  const d = computeCoordDefaults('myrun', null);
+  assert.equal(d.contract_ref, null);
+  // integration_branch does not depend on the hash, so it is still derivable
+  assert.equal(d.integration_branch, 'mp-int/myrun');
+});
+
+test('computeCoordDefaults: throws when slug is missing', () => {
+  assert.throws(() => computeCoordDefaults('', 'sha256:abc'), /slug is required/);
+  assert.throws(() => computeCoordDefaults(undefined, 'sha256:abc'), /slug is required/);
 });

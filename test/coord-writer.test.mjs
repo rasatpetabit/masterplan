@@ -384,6 +384,122 @@ test('coord-status: --fail-if-unpublishable exits 0 when no waves published yet'
   assert.equal(r.status, 0);
 });
 
+// ===========================================================================
+// A5 — set-coord --bootstrap (publish default-enable, §7.1)
+// ===========================================================================
+
+// Build a bundle dir with state.yml + a sibling plan.index.json.
+//   planHash === NO_INDEX  → write NO index file at all (not bootstrappable).
+//   planHash === null      → write an index WITHOUT plan_hash (present but unbootstrappable).
+//   planHash === 'sha256:..'→ write an index carrying that plan_hash.
+// (A Symbol sentinel, not `undefined`, marks "no index" — passing `undefined`
+//  positionally would trigger the default-parameter hash instead.)
+const NO_INDEX = Symbol('no-index');
+function bootstrapBundle(stateOver = {}, planHash = 'sha256:' + 'a'.repeat(64)) {
+  const dir = tmpDir('mp-boot-');
+  const p = path.join(dir, 'state.yml');
+  fs.writeFileSync(p, serializeState(v8(stateOver)));
+  if (planHash !== NO_INDEX) {
+    const idx = {
+      schema_version: '6.0',
+      tasks: [{ id: 1, wave: 0, description: 'x', files: ['a.txt'], verify_commands: ['true'], codex: null }],
+    };
+    if (planHash !== null) idx.plan_hash = planHash;
+    fs.writeFileSync(path.join(dir, 'plan.index.json'), JSON.stringify(idx));
+  }
+  return p;
+}
+
+test('set-coord --bootstrap: derives contract_ref + integration_branch (sha256: prefix stripped → git-valid ref)', () => {
+  const hex = 'b'.repeat(64);
+  const p = bootstrapBundle({}, 'sha256:' + hex);
+  const r = run(['set-coord', `--state=${p}`, '--bootstrap']);
+  assert.equal(r.status, 0);
+  const { coordination } = JSON.parse(r.stdout);
+  assert.equal(coordination.contract_ref, `mp-coord/demo/${hex}`); // NO sha256: prefix
+  assert.equal(coordination.integration_branch, 'mp-int/demo');
+  // A git ref component cannot contain ':' — this is the whole point of refSafePlanHash.
+  assert.ok(!coordination.contract_ref.includes(':'), 'contract_ref must be a valid git ref (no colon)');
+  // persisted to disk
+  assert.equal(read(p).coordination.contract_ref, `mp-coord/demo/${hex}`);
+});
+
+test('set-coord --bootstrap: idempotent — re-run leaves pinned refs unchanged', () => {
+  const hex = 'c'.repeat(64);
+  const p = bootstrapBundle({}, 'sha256:' + hex);
+  run(['set-coord', `--state=${p}`, '--bootstrap']);
+  const r2 = run(['set-coord', `--state=${p}`, '--bootstrap']);
+  assert.equal(r2.status, 0);
+  const { coordination } = JSON.parse(r2.stdout);
+  assert.equal(coordination.contract_ref, `mp-coord/demo/${hex}`);
+  assert.equal(coordination.integration_branch, 'mp-int/demo');
+});
+
+test('set-coord --bootstrap: does NOT clobber already-set refs (both-set no-op)', () => {
+  const p = bootstrapBundle(
+    { coordination: { contract_ref: 'mp-coord/demo/preexisting', integration_branch: 'mp-int/custom' } },
+    'sha256:' + 'd'.repeat(64)
+  );
+  const r = run(['set-coord', `--state=${p}`, '--bootstrap']);
+  assert.equal(r.status, 0);
+  const { coordination } = JSON.parse(r.stdout);
+  assert.equal(coordination.contract_ref, 'mp-coord/demo/preexisting');
+  assert.equal(coordination.integration_branch, 'mp-int/custom');
+});
+
+test('set-coord --bootstrap: all-or-nothing — pins NEITHER ref when plan_hash is absent', () => {
+  const p = bootstrapBundle({}, null); // index present but no plan_hash
+  const r = run(['set-coord', `--state=${p}`, '--bootstrap']);
+  assert.equal(r.status, 0);
+  const coord = JSON.parse(r.stdout).coordination;
+  assert.ok(!coord || !coord.contract_ref, 'contract_ref must be absent when plan_hash missing');
+  assert.ok(!coord || !coord.integration_branch, 'integration_branch must not be partially pinned');
+  // The publish early-fail gate then trips loud (the design intent):
+  const g = run(['coord-status', `--state=${p}`, '--fail-if-unconfigured']);
+  assert.equal(g.status, 1);
+  assert.match(g.stderr, /not configured/);
+});
+
+test('set-coord --bootstrap: does NOT materialize an empty coordination object (resume-hijack regression)', () => {
+  // A no-op bootstrap must leave state UNCOORDINATED. decideNextAction (resume.mjs §4) treats ANY
+  // non-null coordination as a coordinated run, so an empty {} would hijack later resumes into
+  // publish_needed/coordinate while coord-status --fail-if-unconfigured still fails — stranding normal
+  // local dispatch behind the publish flow. Both the index-absent and the hash-absent cases must NOT write.
+  for (const planHash of [NO_INDEX, null]) {
+    const p = bootstrapBundle({}, planHash);
+    const r = run(['set-coord', `--state=${p}`, '--bootstrap']);
+    assert.equal(r.status, 0);
+    assert.equal(JSON.parse(r.stdout).coordination, null, 'stdout coordination must be null, not {}');
+    // The decisive check: nothing materialized on disk → run stays on the uncoordinated dispatch path.
+    assert.ok(!read(p).coordination, 'must NOT write an empty coordination object to state.yml');
+  }
+});
+
+test('set-coord --bootstrap: no-op when plan.index.json is absent (not bootstrappable yet)', () => {
+  const p = bootstrapBundle({}, NO_INDEX); // no index file at all
+  const r = run(['set-coord', `--state=${p}`, '--bootstrap']);
+  assert.equal(r.status, 0);
+  const coord = JSON.parse(r.stdout).coordination;
+  assert.ok(!coord || !coord.contract_ref, 'no contract_ref without a plan index');
+});
+
+test('set-coord --bootstrap: explicit --contract-ref wins over the derived default', () => {
+  const p = bootstrapBundle({}, 'sha256:' + 'f'.repeat(64));
+  const r = run(['set-coord', `--state=${p}`, '--bootstrap', '--contract-ref=mp-coord/demo/explicit']);
+  assert.equal(r.status, 0);
+  const { coordination } = JSON.parse(r.stdout);
+  assert.equal(coordination.contract_ref, 'mp-coord/demo/explicit');
+  // integration_branch still derived (caller didn't set it)
+  assert.equal(coordination.integration_branch, 'mp-int/demo');
+});
+
+test('set-coord --bootstrap: end-to-end — coord-status --fail-if-unconfigured passes after bootstrap', () => {
+  const p = bootstrapBundle({}, 'sha256:' + 'e'.repeat(64));
+  run(['set-coord', `--state=${p}`, '--bootstrap']);
+  const g = run(['coord-status', `--state=${p}`, '--fail-if-unconfigured']);
+  assert.equal(g.status, 0);
+});
+
 test('coord-status: --fail-if-unpublishable exits 1 when phase is not execute', () => {
   const p = tmpBundle(v8({ phase: 'plan' }));
   const r = run(['coord-status', `--state=${p}`, '--fail-if-unpublishable']);
