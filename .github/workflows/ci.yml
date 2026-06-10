@@ -1,4 +1,4 @@
-name: release-gate
+name: ci
 
 on:
   push:
@@ -12,112 +12,32 @@ permissions:
   contents: read
 
 jobs:
-  release-gate:
+  test:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
+      - name: Set up Node
+        uses: actions/setup-node@v4
         with:
-          python-version: "3.11"
+          node-version: '20'
 
-      - name: Install jq + pyyaml
-        run: |
-          sudo apt-get update && sudo apt-get install -y jq
-          python3 -m pip install --quiet pyyaml
+      - name: Unit suite
+        run: node --test test/*.test.mjs
 
-      - name: Configure git identity (needed by guard-b-smoke fixtures)
-        run: |
-          git config --global user.email "ci@masterplan.local"
-          git config --global user.name "release-gate CI"
+      - name: Doctor
+        run: node bin/doctor.mjs
 
-      - name: Seed gitignored plugin manifests from README
+      - name: Plugin symlink resolves
         run: |
           set -euo pipefail
-          readme_version=$(grep -oE 'Current release:[[:space:]]*\*\*v[0-9]+\.[0-9]+\.[0-9]+\*\*' README.md \
-            | sed -E 's/.*v([0-9]+\.[0-9]+\.[0-9]+).*/\1/' \
-            | head -1)
-          if [ -z "${readme_version:-}" ]; then
-            echo "FAIL: could not parse 'Current release: **vX.Y.Z**' from README.md" >&2
-            exit 2
-          fi
-          echo "Seeding manifests at version ${readme_version}"
-          mkdir -p .claude-plugin .codex-plugin .agents/plugins
-          cat > .claude-plugin/plugin.json <<EOF
-          {
-            "name": "masterplan",
-            "version": "${readme_version}",
-            "description": "Multi-hour engineering workflow plugin (brainstorm → plan → execute) with durable run bundles, wave dispatch, and asymmetric review.",
-            "url": "https://github.com/rasatpetabit/masterplan"
-          }
-          EOF
-          cat > .claude-plugin/marketplace.json <<EOF
-          {
-            "name": "rasatpetabit-masterplan",
-            "version": "${readme_version}",
-            "plugins": [
-              {
-                "name": "masterplan",
-                "version": "${readme_version}",
-                "source": "."
-              }
-            ]
-          }
-          EOF
-          cat > .codex-plugin/plugin.json <<EOF
-          {
-            "name": "masterplan",
-            "version": "${readme_version}",
-            "description": "Multi-hour engineering workflow plugin (brainstorm → plan → execute) with durable run bundles, wave dispatch, and asymmetric review.",
-            "url": "https://github.com/rasatpetabit/masterplan"
-          }
-          EOF
-          cat > .agents/plugins/marketplace.json <<'EOF'
-          {
-            "name": "rasatpetabit-masterplan",
-            "interface": {
-              "displayName": "rasatpetabit masterplan"
-            },
-            "plugins": [
-              {
-                "name": "masterplan",
-                "source": {
-                  "source": "local",
-                  "path": "./plugins/masterplan"
-                },
-                "policy": {
-                  "installation": "INSTALLED_BY_DEFAULT",
-                  "authentication": "ON_INSTALL"
-                },
-                "category": "Coding"
-              }
-            ]
-          }
-          EOF
-
-      - name: Seed user-level plugin registry (suppresses drift-check warnings)
-        run: |
-          set -euo pipefail
-          mkdir -p "${HOME}/.claude/plugins"
-          cat > "${HOME}/.claude/plugins/installed_plugins.json" <<'EOF'
-          {
-            "plugins": {
-              "masterplan@rasatpetabit-masterplan": {
-                "name": "masterplan",
-                "marketplace": "rasatpetabit-masterplan"
-              }
-            }
-          }
-          EOF
-
-      - name: Run release gate
-        run: bash bin/masterplan-release-gate.sh
+          [ "$(readlink plugins/masterplan)" = ".." ]
+          [ -f plugins/masterplan/commands/masterplan.md ]
 
   release-publish:
-    needs: release-gate
+    needs: test
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     timeout-minutes: 5
