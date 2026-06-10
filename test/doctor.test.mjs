@@ -169,14 +169,17 @@ test('scalar-cap: fix moves overlong flat string scalars to a bundle-local overf
   assert.deepEqual(scalarCapFix(tmp), [], 'second fix run is idempotent');
 });
 
-test('scalar-cap: fix leaves overlong structured fields untouched', () => {
+test('scalar-cap: overlong structured fields are exempt from the cap and untouched by fix', () => {
+  // The cap is a prose-scalar discipline. `tasks` inline JSON is the v8 writer's own
+  // canonical output — the check must not warn on it (it would fight the writer) and
+  // the fixer must not move it (an overflow pointer there would corrupt resume).
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-scalar-structured-'));
   const bundleDir = path.join(tmp, 'docs', 'masterplan', 'p1');
   fs.mkdirSync(bundleDir, { recursive: true });
   const tasks = JSON.stringify([{ id: 1, status: 'done', files: ['x'.repeat(240)] }]);
   fs.writeFileSync(path.join(bundleDir, 'state.yml'), `slug: p1\ntasks: ${tasks}\nstatus: in-progress\n`, 'utf8');
 
-  assert.equal(maxSeverity(scalarCap(tmp)), 'WARN');
+  assert.equal(maxSeverity(scalarCap(tmp)), 'PASS');
   assert.deepEqual(scalarCapFix(tmp), []);
   assert.equal(fs.existsSync(path.join(bundleDir, 'state-overflow.md')), false);
   assert.match(fs.readFileSync(path.join(bundleDir, 'state.yml'), 'utf8'), /^tasks: \[/m);

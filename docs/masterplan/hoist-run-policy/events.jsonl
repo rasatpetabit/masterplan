@@ -1,6 +1,0 @@
-{"type": "run_created", "phase": "worktree_decided", "progress_kind": "implementation_plan_created", "slug": "hoist-run-policy", "worktree": "/srv/dev/superpowers-masterplan", "branch": "main", "ts": "2026-05-23T00:00:00Z"}
-{"type": "brainstorm_started", "ts": "2026-05-23T00:00:00Z"}
-{"type": "spec_written", "ts": "2026-05-23T00:00:00Z", "path": "docs/masterplan/hoist-run-policy/spec.md"}
-{"type": "gate_closed", "gate": "brainstorm_closeout", "ts": "2026-05-23T00:00:00Z"}
-{"event":"plan_approval_auto_accepted","ts":"2026-05-23T00:01:00.000000+00:00","autonomy":"loose","tasks":4}
-{"event":"execution_complete","ts":"2026-05-23T01:00:00.000000+00:00","tasks_completed":4,"tests":"11/11"}

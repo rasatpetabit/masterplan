@@ -1,6 +1,0 @@
-{"type":"run_created","phase":"worktree_decided","progress_kind":"implementation_plan_created","slug":"improve-regression-detection","worktree":"/srv/dev/superpowers-masterplan/.worktrees/improve-regression-detection","branch":"worktree-improve-regression-detection","ts":"2026-05-22T00:00:00Z"}
-{"type":"brainstorm_started","ts":"2026-05-22T00:00:00Z"}
-{"type":"spec_written","ts":"2026-05-22T00:00:00Z","path":"docs/masterplan/improve-regression-detection/spec.md"}
-{"type":"gate_closed","gate":"brainstorm_closeout","ts":"2026-05-22T00:00:00Z"}
-{"type": "planning_started", "ts": "2026-05-23T01:48:25.861858+00:00", "codex_ping": "ok", "detection_source": "scan"}
-{"event":"plan_written","timestamp":"2026-05-23T04:15:00.000000+00:00","artifact":"docs/masterplan/improve-regression-detection/plan.md","task_count":15,"notes":"15-task plan covering tiered test runner, structural tests, doctor check bash blocks (#1-#45), hook unit tests, bin aliases"}
