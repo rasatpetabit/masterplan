@@ -148,7 +148,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, setWorktree, setWorktreeDisposition, setVerifiedSha, setCodexConfig, loadPlanTasks, buildSeedState, buildTasksFromPlanIndex, appendEvent, setCoordination } from '../lib/bundle.mjs';
+import { readState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, setWorktree, setWorktreeDisposition, setVerifiedSha, setCodexConfig, loadPlanTasks, buildSeedState, buildTasksFromPlanIndex, appendEvent, setCoordination, applyPlanIndex } from '../lib/bundle.mjs';
 import { planWorktreeCreate, parseWorktreeList, classifyWorktrees, normalizeDisposition, dispositionAfterTeardown, VALID_DISPOSITIONS as VALID_WORKTREE_DISPOSITION } from '../lib/worktree.mjs';
 import { collectDiskDirs, collectBundleRecords } from '../lib/worktree-fs.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
@@ -168,6 +168,8 @@ import { verifyArtifact, parseQctlDigest } from '../lib/qctl-artifact.mjs';
 import { mapQctlStatus } from '../lib/qctl-status.mjs';
 import { decideBaseDrift } from '../lib/qctl-requeue.mjs';
 import { recordWaveResult } from '../lib/wave-commit.mjs';
+import { continueRun } from '../lib/continue.mjs';
+import { sweepWorktrees } from '../lib/sweep.mjs';
 
 // ---- tiny arg parser: positional[], flags{} (--k=v, or --k as boolean true) ----
 function parseArgs(argv) {
@@ -325,24 +327,9 @@ export function formatBanner(version, args, cwd) {
   return `→ /masterplan ${v} args: '${a}' cwd: ${cwd}`;
 }
 
-// ---- backfill-waves: re-derive each task's {wave, files} from plan.index.json (migrate contract:
-// a legacy bundle has no v8 plan.index.json, so migrate leaves wave:null and the shell calls this
-// once the plan is (re-)parsed; satisfies decideNextAction's non-integer-wave guard). ----
-export function applyPlanIndex(state, planIndex) {
-  const list = Array.isArray(planIndex) ? planIndex : Array.isArray(planIndex?.tasks) ? planIndex.tasks : [];
-  // Key by STRING id on both sides: plan.index.json ids are often strings ("1") while migrated
-  // state task ids are numbers (1). A raw-keyed Map misses on that type mismatch, leaving wave:null
-  // (then decide's non-integer-wave guard throws). Normalize so the lookup is type-insensitive.
-  const byId = new Map(list.map((p) => [String(p.id ?? p.idx), p]));
-  const tasks = (state.tasks ?? []).map((task) => {
-    const p = byId.get(String(task.id));
-    if (!p) return task;
-    const wave = p.wave ?? p.parallel_group ?? task.wave;
-    const files = p.files ?? task.files ?? [];
-    return { ...task, wave, files };
-  });
-  return { ...state, tasks };
-}
+// applyPlanIndex (backfill-waves) moved to lib/bundle.mjs for T2.3 so lib/continue.mjs can
+// backfill without importing the CLI; re-exported here to keep bin's public import surface.
+export { applyPlanIndex };
 
 // ---- subcommand dispatch ----
 function main() {
@@ -392,6 +379,9 @@ function main() {
       if (flags['planning-mode'] !== undefined && !VALID_PLANNING_MODE.includes(flags['planning-mode'])) {
         die(`invalid --planning-mode '${flags['planning-mode']}' — expected one of: ${VALID_PLANNING_MODE.join(', ')}`);
       }
+      if (flags['owner-lock'] !== undefined && !['on', 'off'].includes(flags['owner-lock'])) {
+        die(`invalid --owner-lock '${flags['owner-lock']}' — expected on or off`);
+      }
       const dir = path.dirname(p);
       let state;
       try {
@@ -412,6 +402,7 @@ function main() {
           specPath: flags['spec-path'] ?? path.join(dir, 'spec.md'),
           planPath: flags['plan-path'] ?? path.join(dir, 'plan.md'),
           planIndexPath: flags['plan-index-path'] ?? path.join(dir, 'plan.index.json'),
+          ownerLock: flags['owner-lock'],
         });
       } catch (e) {
         die(e.message, 1);
@@ -1657,6 +1648,74 @@ function main() {
       }
       // lost-to-other exits 0 with JSON — a valid outcome the shell surfaces as an AUQ
       // (with `mp acquire-owner --force` as an option), not an mp error.
+      out(res);
+      break;
+    }
+
+    case 'continue': {
+      // T2.3: the trampoline — migrate-on-load → Guard D acquire/confirm → wave backfill →
+      // alive-probe gating → the bounded decide loop, returning ONE typed op per call
+      // ({op: launch_workflow|run_skill|record_result|ask|probe|shell|stop|…}). The shell
+      // stops sequencing §2 by prose: it calls `mp continue`, executes the op, repeats.
+      // Same git-in-bin seam as record-result: LOCAL git only, network ops stay shell-side.
+      const statePath = need(flags, 'state');
+      // Guard D identity is resolved ONLY when the bundle hasn't opted out — resolveOwnerSelf
+      // dies without a session id, and an owner_lock=off bundle legitimately has none.
+      let lockOff = false;
+      try {
+        lockOff = readState(statePath)?.concurrency?.owner_lock === 'off';
+      } catch {
+        /* unreadable/legacy — continueRun's migrate-on-load handles it; assume lock on */
+      }
+      let self = null;
+      let now = Number.isFinite(Number(flags.now)) ? Number(flags.now) : Date.now();
+      let ttlMs = Number.isFinite(Number(flags['ttl-ms'])) ? Number(flags['ttl-ms']) : undefined;
+      if (!lockOff) {
+        ({ self, now, ttlMs } = resolveOwnerSelf(flags, statePath));
+      }
+      // --alive/--dead: the shell's answer to a prior {op:'probe'}; absent = not yet probed.
+      const alive = flags.alive ? true : flags.dead ? false : null;
+      let reposAllowlist;
+      if (flags['repos-allowlist'] !== undefined) {
+        try {
+          reposAllowlist = JSON.parse(flags['repos-allowlist']);
+        } catch (e) {
+          die(`continue: --repos-allowlist must be JSON (${e.message})`, 1);
+        }
+      }
+      let op;
+      try {
+        op = continueRun({
+          statePath,
+          self,
+          now,
+          ttlMs,
+          alive,
+          staleReconciled: !!flags['stale-reconciled'],
+          force: !!flags.force,
+          codexSuppressed: !!flags['codex-suppressed'],
+          routing: typeof flags.routing === 'string' ? flags.routing : undefined,
+          review: flags.review,
+          reposAllowlist,
+        });
+      } catch (e) {
+        die(e.message);
+      }
+      out(op);
+      break;
+    }
+
+    case 'sweep': {
+      // T2.3: the §2e orphan sweep with the safety inversion the user ruled on — DRY-RUN
+      // by default (reports {actions, findings} only); --apply executes repair/remove/prune/
+      // normalize. `manual` actions are never executed in either mode.
+      const repoRoot = need(flags, 'repo-root');
+      let res;
+      try {
+        res = sweepWorktrees({ repoRoot, apply: !!flags.apply });
+      } catch (e) {
+        die(e.message);
+      }
       out(res);
       break;
     }

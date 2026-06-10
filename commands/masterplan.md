@@ -15,9 +15,11 @@ description: "Resumable orchestrator for /masterplan: brainstorm→plan→execut
 > `superpowers` skills — never run substantive work inline in this context (it holds sequencing state only).
 
 Throughout, **`mp`** denotes `node "${CLAUDE_PLUGIN_ROOT}/bin/masterplan.mjs"`. Every decision and
-every state write goes through it. It is fs-only — **git (commit, and the recover-path
-`git checkout`) is this shell's job, not `bin`'s.** Results print as JSON on stdout; on a non-zero
-exit, read stderr and act on it. **Every run executes in a per-run linked worktree (code) with its
+every state write goes through it. **The v9 seam:** `mp` runs the LOCAL git its transactions need
+(`record-result`'s split commit, `continue`'s worktree create + recovery reset, `sweep`'s removals —
+always `-C`-qualified to loci it derives itself); **network git (`push`, `gh`), every commit outside
+those transactions, and all dispatch stay this shell's job.** Results print as JSON on stdout; on a
+non-zero exit, read stderr and act on it. **Every run executes in a per-run linked worktree (code) with its
 bundle in the MAIN checkout (state); every shell `git` is therefore `-C`-qualified by locus — see the
 worktree locus model in §2e (bare `git` is forbidden in this shell).**
 
@@ -33,8 +35,8 @@ worktree locus model in §2e (bare `git` is forbidden in this shell).**
    `suppressRescue` is true, do NOT dispatch the `codex:codex-rescue` companion anywhere this
    invocation (it would recurse — Codex calling Codex). The same true result is the
    **`codex_host_suppressed`** condition the downstream paths check: it gates the Claude-Code-only
-   native task tools in §2a recovery (`recover_and_redispatch` / `recover_plan_run`) and supplies
-   `mp prepare-wave --codex-suppressed`. Persisted `codex.routing`/`codex.review` are
+   native task tools in the §2 `probe` ops (liveness/reap recovery) and supplies
+   `mp continue --codex-suppressed`. Persisted `codex.routing`/`codex.review` are
    unaffected.
 
 ## 1 — Parse the verb
@@ -52,145 +54,81 @@ A topic literally named after a reserved verb needs a word in front (`/masterpla
 
 ## 2 — Resume controller (bare entry, `execute`, and after every durable transition)
 
-The spine. It NEVER decides in prose — it asks `mp decide` and executes the returned action.
+The spine, now a TRAMPOLINE: locate the bundle, call `mp continue`, and execute the ONE typed op it
+returns — re-invoking until an op closes the turn. `mp continue` internalizes what used to be prose
+here: Guard D acquire + confirm (every entry; the per-entry re-acquire IS the open-turn heartbeat,
+§2e¶8), migrate-on-load (with a `<state>.v<N>.bak` backup), wave backfill from `plan.index.json`,
+worktree create-or-reuse (§2e¶4), the crash-recovery scope reset, the phase-1 `active_run` marker
+(frozen F-SCOPE `scope` + D6 `baseline`), per-task routing (`routeTask`), and the inline
+`finalize_run` reconcile (the same `mp record-result --reconcile` transaction). It runs the LOCAL git
+those steps need itself (`-C`-qualified to loci it derives); the shell keeps Workflow/Agent/skill
+dispatch, every `AskUserQuestion`, and ALL network ops (`git push`, `gh`, codex-companion).
 
 1. **Derive MAIN, then locate the bundle.** **MAIN must be derived FIRST** (§2e¶1:
-   `MAIN="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"`) — the discovery glob
-   and every bundle path depend on it, and cwd may already be a linked worktree. Then locate the bundle:
-   `execute <path>` → that `state.yml`. Else discover `<MAIN>/docs/masterplan/*/state.yml` (absolute-MAIN,
-   §2e¶1) whose status is not archived: exactly one → use it; several → an `AskUserQuestion` picker;
-   none → there is no active run (route by verb, or offer to start one).
-1.5. **Establish WT/branch + session sweep.** With the bundle's slug now known, derive `WT` / `branch`
-   per **§2e¶1** (all subsequent git is `-C`-qualified by locus, §2e¶2; the no-active-run branch has no
-   slug → no WT/branch, which is fine — there is no run to dispatch). On the **first** §2 entry of this
-   session — any bundle, even the no-active-run branch (the sweep is MAIN-only, slug-independent) — run
-   the **global orphan sweep** (**§2e¶5**) to reap crash-leaked worktrees from prior/abandoned runs
-   before this run proceeds (idempotent, MAIN-derivable). Skip on later §2 entries this session
-   (create-or-reuse stays per-entry; only the sweep is session-gated).
-1.6. **Acquire the owner lock (Guard D — cross-session mutual exclusion, §2e¶8).** Only when there IS an
-   active bundle (skip the no-active-run branch — nothing to own): `mp acquire-owner
-   --state=<MAIN>/docs/masterplan/<slug>/state.yml`. The identity is THIS LLM session
-   (`CLAUDE_CODE_SESSION_ID`, passed via env), so the call is idempotent across this session's turns —
-   it returns `held-by-self` and refreshes the heartbeat on every later §2 entry (that per-turn refresh
-   IS the open-turn heartbeat; the 30-min TTL covers the closed-turn background-wave gap). Branch on
-   `outcome`:
-   - `held-by-self` → we already hold the lock (idempotent re-entry); proceed.
-   - `acquire` | `steal` | `force` → we **PROVISIONALLY** won. Acquire is optimistic: a stale-break removes
-     the dead lock via a path-based rename that is NOT atomic on NFS, so under a concurrent break storm more
-     than one session can transiently believe it won. The heartbeat re-check is the boundary that resolves
-     that transient churn into a single proceeding writer, so **immediately confirm** with `mp heartbeat-owner
-     --state=<path>` *before* any worktree mutation or wave dispatch: `held-by-self` → confirmed sole owner,
-     proceed · `lost-to-other` → another session won the race; do NOT write state or dispatch — treat exactly
-     as `blocked` (surface the same take-over / abort / read-only AUQ below). (Guard D guarantees perfect
-     mutual exclusion for LIVE contention — a fresh contended lock is an atomic link() create; the only
-     residual is the documented benign case of a >TTL-abandoned owner resurrecting at the instant of reclaim.)
-   - `blocked` → **another live session owns this bundle.** Do NOT write state or dispatch. Surface an
-     `AskUserQuestion` (CD-9) with the incumbent's `host`/`session` from the result: **Take over
-     (force)** → `mp acquire-owner --state=<path> --force` then proceed · **Abort** → close without
-     touching the bundle (the other session keeps it) · **Read-only** → answer/inspect this session but
-     make NO state mutations, commits, or dispatches. NEVER auto-force regardless of autonomy — a live
-     second writer is a risky-action gate.
-2. **Migrate-on-load if legacy.** Run `mp migrate-bundle --state=<path>`. If it reports
-   `migrated:true`, the tasks now carry `wave:null` — ensure a `plan.index.json` exists (re-parse
-   `plan.md` via the `masterplan:mp-planner` agent if it's missing), then
-   `mp backfill-waves --state=<path> --plan-index=<path>` so every task carries a real wave. **If it
-   instead REFUSES** (pre-5.0 floor / unparseable legacy — the deliberate R3 refusal), do **NOT**
-   raw-rewrite `state.yml` to schema 6 (a CD-7 violation). Treat the legacy bundle as read-only
-   reference and either `mp seed` a FRESH schema-6 bundle (re-deriving its tasks via the §3
-   brainstorm→plan→`load-plan` path), finish the run under masterplan v7, or stop and ask the user.
-3. **Probe liveness — or catch a completion.** If `state.active_run` has a `task_id`:
-   - **A Workflow completion notification re-invoked you** and its `<result>{…}</result>` (run/task
-     matching `active_run`) is in front of you → do NOT probe or `decide` yet: first run the
-     **completion protocol — §2a for an execute wave, §2b for a planning run** (branch on
-     `active_run.kind`: `'plan'` → §2b, else → §2a) to record the in-hand digests (execute: one
-     `mp record-result` transaction; plan: merge fragments → validate → review → advance).
-     Recording BEFORE `decide` is load-bearing — a finished run whose tasks are still
-     `pending` on disk looks like a crash to `decide` (→ `recover_and_redispatch`), so deciding first
-     re-runs a wave you already hold results for. After recording, fall through to step 4 (no `--alive`).
-   - **Otherwise** probe with `TaskGet(task_id)`: still running → pass `--alive` to step 4 (→ `wait`).
-     Finished/absent with no result in hand (compaction dropped the notification) → no `--alive`
-     (→ `decide` returns `recover_and_redispatch`; the reset + re-dispatch is idempotent).
-   (A phase-1 `launching` marker has no `task_id` — skip the probe; `decide` treats it as crashed-in-launch.)
-4. **Decide.** `mp decide --state=<path> [--alive]` → an action JSON. If it exits non-zero citing
-   "backfill waves", the bundle wasn't backfilled — return to step 2; if it cites "phase is 'execute'
-   but state.tasks is empty", the plan was never loaded into the bundle — run `mp seed-tasks
-   --state=<path> --plan-index=<path>` to materialize the tasks (the bundle is already `phase:execute`,
-   so seed-tasks alone suffices — the load-plan seam in §3/§3a was bypassed) before resuming.
-5. **Execute the action.** After `finalize_run`, loop back to step 4 (re-decide); `dispatch_wave` /
-   `recover_and_redispatch` / `recover_plan_run` end by awaiting a launched run; `resume_phase` hands
-   to the plan lifecycle (§3a); `complete` runs the finalization flow (§2c); `wait` / `surface_gate` close.
+   `MAIN="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"` — the sole
+   sanctioned bare git) — the discovery glob and every bundle path depend on it, and cwd may already
+   be a linked worktree. Then: `execute <path>` → that `state.yml`. Else discover
+   `<MAIN>/docs/masterplan/*/state.yml` (absolute-MAIN, §2e¶1) whose status is not archived: exactly
+   one → use it; several → an `AskUserQuestion` picker; none → there is no active run (route by
+   verb, or offer to start one).
+2. **Session sweep — first §2 entry per session, MAIN-only (§2e¶5).** `mp sweep --repo-root="<MAIN>"
+   --apply` — classification AND execution live in the subcommand (dry-run is its bare default; the
+   session sweep applies per the Q2 contract: auto repair/prune/remove/normalize, trust the
+   classifier's proof-gate). `manual` entries return in `skipped` — surface them as WARNs, take NO
+   automated action. Skip the sweep on later §2 entries this session.
+3. **Catch a completion first.** If a Workflow completion notification re-invoked you and its
+   `<result>{…}</result>` (run/task matching `active_run`) is in front of you → do NOT call
+   `continue` yet: run the **completion protocol — §2a for an execute wave, §2b for a planning run**
+   (branch on `active_run.kind`). Recording BEFORE `continue` is load-bearing — a finished run whose
+   tasks are still `pending` on disk looks like a crash (→ a re-dispatch of a wave you already hold
+   results for). Then fall through to step 4.
+4. **The loop.** `mp continue --state=<MAIN>/docs/masterplan/<slug>/state.yml [--alive|--dead]
+   [--stale-reconciled] [--force] [--codex-suppressed]` → ONE op JSON. Execute it per the table;
+   `probe` ops re-invoke `continue` with the answer, everything else ends the loop. Pass
+   `--codex-suppressed` when §0 host-detect set `suppressRescue`. A non-zero exit is a loud
+   invariant — read stderr (e.g. `phase is 'execute' but tasks is empty` → the plan was never
+   loaded: `mp seed-tasks --state=<path> --plan-index=<path>`, then re-enter).
 
-   | action | do |
+   | op | do |
    |---|---|
-   | `surface_gate` | Re-render the gate's `AskUserQuestion` (CD-9). A named option → act, `mp clear-gate`, `git -C "<MAIN>"` commit the bundle (state, §2e¶2), re-decide. Free-text / no clear answer → keep the gate, respond, close. NEVER auto-proceed regardless of autonomy (the durable marker outranks a native AUQ that can't survive compaction). When re-rendering `branch_finish`, **rehydrate the codex-review digest**: `mp codex-review-status --state=<path> --sha=$(git -C "<WT>" rev-parse HEAD)` (the code tip under review, §2e¶2) — on `{present:true}` fold its `digest`/`count`/`base` back into the re-rendered AUQ (the live step-5 digest doesn't survive compaction; the durable event does). For the finalization gates (`branch_finish`, `verification_failed`), the per-option **act** is specified in **§2c**. |
-   | `wait` | A live run owns the wave. Report it and close — its Workflow completion notification re-invokes this controller, which records the result via the completion protocol (**§2a** Completion). |
-   | `finalize_run` | The wave's tasks are all `done` on disk but the marker survived — a crash somewhere in the record tail (the normal completion path clears the marker itself, so this fires only on resume). `mp record-result --state=<path> --reconcile` re-runs that tail as ONE transaction off the persisted marker: capture `after` → verify-scope against the frozen `active_run.{scope,baseline}` → revert any out-of-scope in WT → **code** commit (WT) → clear `active_run` → **state** commit (MAIN) — a clean WT degrades every git step to a no-op (the marker clear + state commit still land). Act on the returned `next` (implementation: `lib/wave-commit.mjs`, trace §2e¶6). |
-   | `recover_and_redispatch` | Crash recovery. If `staleTaskId` ≠ null: `TaskList` → `TaskStop` (**Claude Code only** — no-op when `codex_host_suppressed == true`, where the native task tools are absent and reconciliation leans on the on-disk `active_run` marker) any surviving run for it (a backgrounded Workflow MAY outlive session death — reconcile before touching files). Then RESET scope **in the code worktree** (§2e¶2): `git -C "<WT>" checkout -- <resetPaths>` and, **only when `resetPaths` is non-empty**, `git -C "<WT>" clean -fd -- <resetPaths>` — scope the clean to the reset paths; a bare `git clean -fd` (or one with an empty pathspec) would wipe unrelated user-owned untracked files. Then dispatch the wave via **§2a**. Idempotent — agents never commit. |
-   | `recover_plan_run` | Crash recovery for a planning fan-out (`active_run.kind:'plan'`). If `staleTaskId` ≠ null: `TaskList` → `TaskStop` (**Claude Code only** — no-op when `codex_host_suppressed == true`) any surviving run. **No git scope reset** — the subsystem drafters are read-only, so nothing was written to revert. Re-launch the fan-out via **§2b** (re-dispatch `mp-spec-decomposer` if the subsystem set isn't in hand). Idempotent. |
-   | `dispatch_wave` | Launch one wave through the L2 engine — full sequence in **§2a**. In brief: ensure the run's worktree (create-or-reuse, §2e¶4) → `mp prepare-wave` (resolves routing + `scope`) → capture the WT git baseline → `mp set-active-run --wave=N --scope='<prepare-wave.scope JSON>'` (phase-1 + frozen F-SCOPE snapshot, BEFORE launch) → `cd "<WT>"` (the write-only cwd signal, §2e¶3) → launch `workflows/execute.workflow.js` in the background with `args={wave,tasks,baseline,repoRoot:<WT>,review}` → `mp promote-active-run --run-id=… --task-id=…` (phase-2) → close to await its completion notification. |
-   | `resume_phase` | The bundle is mid-`{brainstorm\|plan}` with no plan built yet (`tasks:[]`). **Do NOT finalize/archive** — that would destroy a mid-design run. `phase==plan` → hand to the **plan lifecycle (§3a)** with the action's `planning_mode`. `phase==brainstorm` → re-entering an in-progress `superpowers:brainstorming` is still deferred (step 7), so SURFACE via `AskUserQuestion` — continue the phase, restart it, or stop — and close. Never fall through to `complete`. |
-   | `complete` | All execute tasks done → the **finalization flow (§2c)**: verify-before-completion (cite output) → write `retro.md` → the durable `branch_finish` gate → archive **LAST**. NEVER a silent archive — the v8 regression §2c restores. |
+   | `launch_workflow` | `cd "<op.cwd>"` FIRST — the write-only cwd signal the about-to-launch agents inherit (§2e¶3); never read cwd back. Launch `workflows/<op.workflow>.workflow.js` in the BACKGROUND via the Workflow tool with `args = op.args` (`workflow:'plan'` carries no args — supply `{ subsystems, specPath, repoRoot }` from §3a/§2b, re-dispatching `mp-spec-decomposer` first if the decomposition isn't in hand). Then `mp promote-active-run --state=<path> --run-id=<id> --task-id=<id>` (the op's `next`) and close to await the completion notification. Do NOT mark tasks or commit here — the engine has them in flight. |
+   | `probe` `kind:'alive'` | `TaskGet(op.task_id)`: still running → re-invoke `continue --alive` (→ `stop wait`); finished/absent with no result in hand (compaction dropped the notification) → `continue --dead` (recovery is idempotent — agents never commit). |
+   | `probe` `kind:'reap'` | A dead session's backgrounded Workflow MAY still be running: `TaskList` → `TaskStop` any surviving run for `op.task_id` (**Claude Code only** — no-op when `codex_host_suppressed`, where native task tools are absent), then re-invoke `continue --dead --stale-reconciled` — `continue` then resets the wave scope in WT and re-launches. |
+   | `ask` `ask:'gate'` | Re-render the durable gate's `AskUserQuestion` (CD-9). Named option → act (per-option acts for the finalization gates are in **§2c**), `mp clear-gate`, `git -C "<MAIN>"` commit the bundle, re-enter the loop. Free-text / no clear answer → keep the gate, respond, close. NEVER auto-proceed regardless of autonomy (the durable marker outranks a native AUQ that can't survive compaction). Re-rendering `branch_finish` rehydrates the codex digest: `mp codex-review-status --state=<path> --sha=$(git -C "<WT>" rev-parse HEAD)` → fold `digest`/`count`/`base` back in. |
+   | `ask` `ask:'owner-blocked'` \| `'owner-lost'` | Guard D (§2e¶8): another live session owns — or mid-turn took over — this bundle; NOTHING was written. AUQ with the incumbent's `host`/`session`: **Take over (force)** → re-invoke `continue --force` · **Abort** → close without touching the bundle · **Read-only** → answer/inspect, NO mutations or dispatches. NEVER auto-force regardless of autonomy. |
+   | `ask` `ask:'legacy-refused'` | Pre-5.0 / unparseable legacy (the deliberate R3 refusal; `op.backup` holds the untouched original). Do NOT raw-rewrite `state.yml` (CD-7) — `mp seed` a FRESH bundle (re-deriving tasks via §3), finish the run under masterplan v7, or stop and ask. |
+   | `ask` `ask:'waves-unbackfillable'` | Tasks carry `wave:null` and `plan.index.json` is missing/insufficient. Re-derive the index (re-parse `plan.md` via the `masterplan:mp-planner` agent), then re-enter the loop — `continue` backfills durably itself. |
+   | `ask` `ask:'dispatch-error'` \| `'decide-error'` | A loud invariant fired (plan/state file-set drift, missing plan.index entry, decide-loop exhaustion). Surface `op.error` via AUQ — never paper over a thrown invariant. |
+   | `run_skill` `skill:'resume-phase'` | Mid-`{brainstorm\|plan}` with no plan built (`tasks:[]`). **Do NOT finalize/archive.** `phase==plan` → the plan lifecycle (**§3a**) with `op.planning_mode`. `phase==brainstorm` → re-entering a live brainstorm stays deferred: AUQ continue / restart / stop. |
+   | `run_skill` `skill:'finish'` | All execute tasks done → the **finalization flow (§2c)**: verify-before-completion (cite output) → `retro.md` → durable `branch_finish` gate → archive **LAST**. NEVER a silent archive. |
+   | `stop` `reason:'wait'` | A live run owns the wave. Report it and close — its completion notification re-invokes this controller (→ step 3). |
+   | `stop` (coordination) | `publish_needed` / `coordinate` → the §7 coordination playbook, with the op's facts. |
 
-6. **CD-7 commit discipline.** Each durable change = a `mp` write (atomic) FOLLOWED BY a `git commit`.
-   The **bundle** commit is `git -C "<MAIN>"` (state lives in MAIN); **code** commits are
-   `git -C "<WT>"` (the split commit, §2e¶6) — never one mixed `commit -am`. On the wave path BOTH
-   sides run **inside `mp record-result`** (`mp` is the sole writer of state AND the sole executor of
-   the local git bracketing it); elsewhere the shell commits after the `mp` write. A crash between
-   write and commit is safe — `state.yml` leads, resume re-commits (§2e¶6). Wave members (agents /
-   the L2 engine) return digests only; they NEVER write `state.yml` or commit, which is exactly what
-   makes re-dispatch idempotent.
+5. **CD-7 commit discipline.** Each durable change = an `mp` write (atomic) FOLLOWED BY a `git
+   commit` — **bundle** commits `git -C "<MAIN>"`, **code** commits `git -C "<WT>"` (the split
+   commit, §2e¶6) — never one mixed `commit -am`. On the wave path BOTH sides run inside
+   `mp record-result`; `mp continue` writes state (markers, backfill, worktree record) but never
+   commits — its writes are swept into the next state commit, and a crash between write and commit
+   is safe (`state.yml` leads, resume re-commits). Wave members (agents / the L2 engine) return
+   digests only; they NEVER write `state.yml` or commit, which is exactly what makes re-dispatch
+   idempotent.
 
-## 2a — Wave dispatch + completion protocol (the L1↔L2 seam)
+## 2a — Wave completion protocol (the L1↔L2 seam)
 
-`workflows/execute.workflow.js` (L2) runs **exactly one wave per launch**; this shell drives the
-wave loop. A Workflow script has no module/fs/git access, so the shell resolves routing and captures
-git *here*, threading data in via `args` and reading digests back out — the workflow itself only
-dispatches agents and echoes the baseline.
-
-**Launch** (the tail of `dispatch_wave`, and of `recover_and_redispatch` after its scope reset):
-
-0. **Ensure the worktree (create-or-reuse, §2e¶4 — the canonical recipe).** Before the FIRST wave
-   dispatch of this run (and idempotently on resume): probe `branchExists` **and** `worktreeRegistered`
-   (the canonical `<WT>` already in `git -C "<MAIN>" worktree list` — the crash-between-add-and-record
-   guard, §2e¶4), `mp worktree plan … [--branch-exists] [--worktree-registered]` → run the emitted
-   `gitArgs` via `git -C "<MAIN>" …` on `create` → `mp worktree record
-   --state=<MAIN>/docs/masterplan/<slug>/state.yml --worktree="<WT>"`. Later waves (and a reuse-planned
-   resume) — no-op.
-1. **Resolve the wave.** `mp prepare-wave --state=<MAIN>/docs/masterplan/<slug>/state.yml
-   --plan-index=<MAIN>/docs/masterplan/<slug>/plan.index.json --wave=N [--codex-suppressed]
-   --linked-worktree` → `{wave, tasks:[…lean, already-routed…], scope, review}`. Pass `--codex-suppressed`
-   when §0 host-detect set `suppressRescue`. Pass **`--linked-worktree` ALWAYS** — every v8 run executes
-   in a per-run linked WT (§2e), and the flag only flips the cosmetic logged `target`, **never** review
-   (config-gated) or `scope` (the file union). Routing (`routeTask`) is decided HERE, never in the
-   workflow. `scope` is the resolved file union across this wave's tasks — the F-SCOPE allow-set.
-   (`prepare-wave` filters out `done` tasks, so a recover re-runs ONLY the incomplete ones.)
-2. **Capture the D6 baseline** in the code worktree (§2e¶2). `before = ( git -C "<WT>"
-   -c core.quotePath=false diff --name-only HEAD ) ∪ ( git -C "<WT>" ls-files -o --exclude-standard )` —
-   the already-touched path set, as a JSON array.
-3. **Phase-1 marker — with the immutable scope snapshot AND the D6 baseline.** `mp set-active-run
-   --state=<path> --wave=N --scope='<step 1's scope>' --baseline='<step 2's before>'` — written BEFORE
-   launch so a crash in the launch gap resumes as `recover_and_redispatch`, not a blind re-dispatch.
-   Freezing `scope` HERE (before any agent runs) is what lets the post-barrier `verify-scope` police the
-   EXACT set dispatched, immune to a mid-wave edit of plan.index/state. Persisting `baseline` (the
-   step-2 `before`) is what lets a **post-completion crash** resume re-run verify-scope from
-   `finalize_run` (the workflow result carrying `before` is gone by then; the marker still has it) —
-   without it that one wave's scope check would be silently skipped (Codex P1).
-4. **`cd "<WT>"`, then launch in the background.** Immediately before launch, `cd "<WT>"` — the
-   write-only cwd signal the implementer agents inherit (§2e¶3), so their relative-path edits land on
-   `masterplan/<slug>`. Start `workflows/execute.workflow.js` via the Workflow tool with
-   `args = { wave:N, tasks:<step 1>, baseline:<step 2>, repoRoot:"<WT>", review:<step 1's review> }`
-   (`repoRoot` is WT, matching the cwd the agents see). Background so it outlives the turn; its
-   completion notification re-invokes this controller.
-5. **Phase-2 handles.** `mp promote-active-run --state=<path> --run-id=<id> --task-id=<id>` with the
-   launched run's handles.
-6. **Close** to await completion. Do NOT mark tasks or commit here — the engine has them in flight.
+`workflows/execute.workflow.js` (L2) runs **exactly one wave per launch**; the LAUNCH half now lives
+inside `mp continue` (§2): it resolves routing (`routeTask`) + the frozen F-SCOPE `scope`, captures
+the D6 baseline, ensures the worktree (create-or-reuse, §2e¶4), writes the phase-1 marker, and
+returns the `launch_workflow` op the shell executes (`cd "<WT>"` → background Workflow → promote →
+close). A Workflow script has no module/fs/git access — the op threads data in via `args`; the
+workflow itself only dispatches agents and echoes the baseline. This section is the RESULT half:
+what to do when the engine's completion notification re-invokes the controller (§2 step 3).
 
 **Completion** (re-invoked holding the engine's `<result>` — reached from §2 step 3):
 
 The whole record transaction is ONE subcommand — heartbeat → mark digests → D6 verify-scope →
 out-of-scope revert → split commit (code→WT, state→MAIN) → marker clear (iff the whole wave is done)
-→ re-decide — implemented in `lib/wave-commit.mjs`, crash-safe at every prefix (any crash resumes
-via the §2 `finalize_run` row's `--reconcile`):
+→ the `next` advisory — implemented in `lib/wave-commit.mjs`, crash-safe at every prefix (any crash resumes
+via `mp continue`'s inline `finalize_run` reconcile — the same transaction, `--reconcile` mode):
 
 1. **Record.** Write the engine's whole `<result>` JSON to a scratch file OUTSIDE the bundle dir
    (e.g. `/tmp/mp-result-<slug>.json` — a bundle-dir scratch would be swept into the state commit),
@@ -205,8 +143,9 @@ via the §2 `finalize_run` row's `--reconcile`):
    - `scope.ok:false` → the offenders were already reverted in WT (`reverted[]`); surface the
      breach. In-scope work stands.
    - Otherwise **narrate tersely** — at most a 1–2 line wave summary (what completed / what's
-     next), NEVER the `state.yml` or `WORKLOG.md` diff (anti-flood) — and execute `next`
-     (§2 step 5 table).
+     next), NEVER the `state.yml` or `WORKLOG.md` diff (anti-flood) — and **re-enter the §2 loop**
+     (step 4): `mp continue` derives the next op itself (the next wave's `launch_workflow`, or
+     `run_skill finish`).
 
 ## 2b — Parallel-plan dispatch + completion (the planning L1↔L2 seam)
 
@@ -216,19 +155,19 @@ owns the decomposition (the subsystem list), the deterministic merge, and the ga
 **minus the wave loop and minus any scope capture** — the drafters are read-only, so there is no D6
 baseline and no `verify-scope`. `active_run.kind:'plan'` carries **no wave**.
 
-**Launch** (reached from §3a's parallel branch, and from `recover_plan_run`):
+**Launch** (reached from §3a's parallel branch, and from crash recovery):
 
 1. **Subsystems in hand.** Use the decomposition from §3a (`mp-spec-decomposer`'s `{subsystems}`). On
-   `recover_plan_run` with none in hand, re-dispatch `mp-spec-decomposer` first — the fan-out is
+   a recovery re-entry with none in hand, re-dispatch `mp-spec-decomposer` first — the fan-out is
    idempotent, so re-deriving the seam map is safe.
 2. **Phase-1 plan marker.** `mp set-active-run --state=<path> --kind=plan` — a planning marker (no
-   wave) written BEFORE launch so a crash in the launch gap resumes as `recover_plan_run`, not a
-   blind re-dispatch.
-3. **Launch in the background.** Start `workflows/plan.workflow.js` via the Workflow tool with
-   `args = { subsystems:<step 1>, specPath:<spec_path>, repoRoot:<repo> }`. Background so it outlives
-   the turn; its completion notification re-invokes this controller (→ §2 step 3 → here).
-4. **Phase-2 handles.** `mp promote-active-run --state=<path> --run-id=<id> --task-id=<id>`.
-5. **Close** to await completion. Do NOT merge or commit here — the fan-out is in flight.
+   wave) written BEFORE launch so a crash in the launch gap resumes as recovery, not a blind
+   re-dispatch.
+3. **Re-enter the §2 loop.** `mp continue` now returns the `launch_workflow workflow:'plan'` op —
+   per the §2 table: launch `workflows/plan.workflow.js` in the background with
+   `args = { subsystems:<step 1>, specPath:<spec_path>, repoRoot:<repo> }`, promote the handles
+   (`mp promote-active-run --run-id=<id> --task-id=<id>`), close to await the completion
+   notification (→ §2 step 3 → here). Do NOT merge or commit here — the fan-out is in flight.
 
 **Completion** (re-invoked holding the engine's `<result>` = `{ subsystems:[…fragments…], specPath,
 repoRoot }`, reached from §2 step 3 when `active_run.kind==='plan'`):
@@ -257,7 +196,8 @@ repoRoot }`, reached from §2 step 3 when `active_run.kind==='plan'`):
      `complete`→archive the just-planned bundle) + `mp event --state=<path> --type=phase_transition
      --phase=execute`; `git -C "<MAIN>"` commit `plan.index.json` + `plan.md` + `state.yml` together
      (all bundle artifacts, MAIN-resident, §2e¶2; terse 1–2 line narration, never the diff — anti-flood);
-     then re-decide (§2 step 4 → `dispatch_wave`, which create-or-reuses the worktree, §2e¶4).
+     then re-enter the §2 loop (step 4 — `mp continue` returns the wave-1 `launch_workflow` op,
+     creating-or-reusing the worktree itself, §2e¶4).
    - **REVISE / FAIL** (or a missing subsystem from step 1) → `mp clear-active-run`; surface the
      reviewer's findings via `AskUserQuestion` (§4) — revise-and-replan / accept-as-is (REVISE only) /
      stop — and keep `phase=plan`. Never auto-advance past a non-PASS verdict.
@@ -312,13 +252,13 @@ dispositions}` (`codex_review` mirrors the dispatch predicate `state.codex.revie
    - **PASS** → `mp record-verification --state=<path> --sha="$(git -C "<WT>" rev-parse HEAD)"` (durable; a
      re-entry at unchanged HEAD then skips the re-run).
    - **FAIL** → `mp open-gate --id=verification_failed` + AUQ (*Fix first & re-run* / *Proceed anyway
-     (reviewed)* / *Abort finish*), close. Resolution = the surface_gate act, below.
+     (reviewed)* / *Abort finish*), close. Resolution = the `ask:'gate'` act, below.
 4. **Retro (write-if-absent).** If `!retro_present`, generate `retro.md` (idempotent — a re-entry skips
    it). This subsumes the old `retro` verb.
 5. **Branch-finish gate (durable — the v8 regression this restores).**
    - **Whole-branch codex review first (runs once, before the gate opens).** When *all four* hold —
      `finish_status.codex_review` is true (the dispatch predicate: `state.codex.review` armed — same
-     field, same meaning as prepare-wave) ∧ `base` is non-null ∧ §0 host-detect did **not** set
+     field, same meaning as the per-wave review `mp continue` arms) ∧ `base` is non-null ∧ §0 host-detect did **not** set
      `codex_host_suppressed` (Codex hosting the command must not review-via-Codex — that recurses) ∧
      `mp codex-companion-path` resolves to an existing script (`{resolved:true, exists:true, path}`) —
      first the **durable re-entry guard**: `mp codex-review-status --state=<path> --sha=$(git -C "<WT>"
@@ -358,8 +298,8 @@ dispositions}` (`codex_review` mirrors the dispatch predicate `state.codex.revie
      rehydrates instead). **Residual window:** a death *between* the reviewer exiting 0 and this event
      landing leaves no durable record at HEAD, so resume re-runs the review — harmless and idempotent
      at an unchanged tree (the only cost is one more network review; `open-gate` itself is idempotent,
-     so the gate never double-opens). Once the gate IS open a resume is `surface_gate`, which
-     re-renders the AUQ and re-reads `codex-review-status` to restore the digest (§2 surface_gate row)
+     so the gate never double-opens). Once the gate IS open a resume is the §2 `ask:'gate'` op, which
+     re-renders the AUQ and re-reads `codex-review-status` to restore the digest (§2 `ask:'gate'` row)
      — the live in-context digest does not survive compaction, the durable event does.
 
    First **probe for an open PR**
@@ -370,8 +310,8 @@ dispositions}` (`codex_review` mirrors the dispatch predicate `state.codex.revie
    open PR #<n> (mergeable: <yes|no|unknown>)` — the branch is already pushed with a PR open, so "open a
    PR" would be a duplicate. That option keeps the `pr` choice (→ `kept_by_user`): its resolution is a
    no-op push (the branch is already up) that just surfaces the existing PR URL, never opening a second
-   one. This AUQ is the turn-close. On any resume while open, `decide` → `surface_gate`
-   re-renders it (CD-9); a **free-text / "not ready" answer holds the gate and chats** (§2 surface_gate
+   one. This AUQ is the turn-close. On any resume while open, `mp continue` → the `ask:'gate'` op
+   re-renders it (CD-9); a **free-text / "not ready" answer holds the gate and chats** (§2 `ask:'gate'`
    rule) — the "not done yet" escape, nothing archives.
 6. **Archive LAST.** Reached only via step 1 (gate already resolved): `mp set-status --state=<path>
    --status=archived` (the sole archival mechanism — never hand-edit `state.yml`), then `git -C "<MAIN>"`
@@ -381,26 +321,28 @@ dispositions}` (`codex_review` mirrors the dispatch predicate `state.codex.revie
    Done. (The worktree was already removed + its disposition recorded by the `branch_finish` teardown,
    §2e¶7.)
 
-**Gate resolution** (the `surface_gate` **act** — the turn AFTER the user picks a named option):
+**Gate resolution** (the §2 `ask:'gate'` **act** — the turn AFTER the user picks a named option):
 
 - **`verification_failed`** — *Fix first*: `mp clear-gate`, close (fix code + commit, then re-invoke
   `finish`/resume → verification re-runs fresh and re-opens the gate if still red). *Proceed anyway*:
   `mp record-verification --state=<path> --sha="$(git -C "<WT>" rev-parse HEAD)"` (a reviewed override, so a
-  re-entry doesn't re-loop the same failure) → `mp clear-gate` → re-decide (→ `complete` → §2c:
-  verification now skipped → retro → `branch_finish`). *Abort finish*: `mp clear-gate`, close (the run
+  re-entry doesn't re-loop the same failure) → `mp clear-gate` → re-enter the §2 loop (→ the
+  `finish` op → §2c: verification now skipped → retro → `branch_finish`). *Abort finish*: `mp clear-gate`, close (the run
   stays resumable; nothing archived).
 - **`no_verification_command`** — opened by §2c step 3 when no command is found under `--autonomy=full`.
   *Specify a command*: RUN it fresh, **cite output** (CD-3) → PASS: `mp record-verification
-  --state=<path> --sha="$(git -C "<WT>" rev-parse HEAD)"` + `mp clear-gate` + re-decide (→ retro → `branch_finish`);
+  --state=<path> --sha="$(git -C "<WT>" rev-parse HEAD)"` + `mp clear-gate` + re-enter the §2 loop (→ retro → `branch_finish`);
   FAIL: hand to `verification_failed` (`mp open-gate --id=verification_failed` overwrites the single
   `pending_gate` slot — no separate `clear-gate` needed; its acts are above). *Proceed
   without*: `mp record-verification --state=<path> --sha="$(git -C "<WT>" rev-parse HEAD)"` — the reviewed "no
   verification available" override (mirrors `verification_failed`'s *Proceed anyway* so a re-entry
-  doesn't re-open this gate) — `mp clear-gate`, re-decide. Never silently skip verification or archive.
+  doesn't re-open this gate) — `mp clear-gate`, re-enter the §2 loop. Never silently skip
+  verification or archive.
 - **`branch_finish`** — **re-entry guard first:** re-read `mp finish-status`; if `worktree_disposition`
   is already a retirement value (`removed_after_merge` | `kept_by_user`), the action ran AND its
   disposition was recorded in a prior turn (a compaction landed before `clear-gate`) → do **not** re-run
-  the action; just `mp clear-gate` + re-decide (→ `complete` → §2c step-1 shortcut → **archive**).
+  the action; just `mp clear-gate` + re-enter the §2 loop (→ the `finish` op → §2c step-1 shortcut
+  → **archive**).
   Otherwise: delegate to `superpowers:finishing-a-development-branch` with the option **pre-decided** +
   **"tests verified at SHA `<X>`, base = `<base>`"** so it skips its own option prompt (a re-asserted
   hard-gate re-running a green suite at unchanged HEAD is redundant-but-harmless; if it double-prompts
@@ -421,7 +363,8 @@ dispositions}` (`codex_review` mirrors the dispatch predicate `state.codex.revie
     static-map write: the disposition now turns on whether the removal actually happened, not on `choice`
     alone. The recorded retirement value is what arms the re-entry guard above.
   Then `mp event --state=<path> --type=branch_finish --note=<choice>`, `mp clear-gate`,
-  `git -C "<MAIN>"` commit the bundle, re-decide → `complete` → §2c → step-1 shortcut → **archive**.
+  `git -C "<MAIN>"` commit the bundle, re-enter the §2 loop → the `finish` op → §2c → step-1
+  shortcut → **archive**.
 
 **Manual entry — `/masterplan finish`.** Bare `finish` locates the bundle and `mp decide`s: `complete`
 → run this flow; tasks still pending (or a run live) → AUQ "N task(s) pending — finalize anyway?
@@ -439,11 +382,11 @@ read `autonomy`; it only ever returns real actions). Under `autonomy ∈ {loose,
 **The COMPLETE stop-set** — the *only* things that may end a turn with an AUQ under loose/full; if the
 turn hit none of these, it MUST auto-progress, not ask:
 
-- `surface_gate` for any durable gate: `branch_finish`, `verification_failed`, `no_verification_command`.
+- The §2 `ask:'gate'` op for any durable gate: `branch_finish`, `verification_failed`, `no_verification_command`.
 - A spec/plan **review FAIL** or a missing-subsystem REVISE (§2b step 5 / §3a).
 - A wave that surfaced a **failure** — a `failed`/`blocked` task or a `blocking` review verdict (§2a
   completion) — or **blocker re-engagement** after the CD-4 ladder fails its rungs.
-- Re-entering an **in-progress brainstorm** (`resume_phase`, `phase==brainstorm`): continue / restart / stop.
+- Re-entering an **in-progress brainstorm** (`run_skill resume-phase`, `phase==brainstorm`): continue / restart / stop.
 - The §2-step-1 **multi-bundle discover picker**, and the bare-`finish` **pending-tasks** prompt
   (finalize anyway / keep working / `--retro-only`, §2c manual entry) — both genuine "which path?" forks.
 - An explicit **risky-action** confirmation: push / merge / discard / force / external message / secrets.
@@ -453,15 +396,15 @@ emit them under loose/full):
 
 <!-- cd9-exempt: this list QUOTES forbidden asks as anti-pattern examples to ban them; it does not emit them. -->
 
-- "Run codex or not?" — routing is decided by `mp prepare-wave` (`routeTask`), never by asking.
+- "Run codex or not?" — routing is decided inside `mp continue` (`routeTask`), never by asking.
 - "What should I do next?" / "dispatch the next wave?" — between successful steps you **auto-proceed**:
   `mp record-result` → dispatch the next wave **in the same turn** (§2a completion → execute `next`).
 - Per-small-task "looks good?" / "shall I continue?" confirmations.
 - "Ready for Wave N" / "awaiting completion" / "status this turn:" ceremonial closers.
 
-**Carve-out marker.** On an **auto-progress turn** — work done, re-decide returned a non-gate action
-(`dispatch_wave` / `recover_and_redispatch` / `recover_plan_run` / `finalize_run` / `wait` / a committed
-wave) and you are closing **without** an AUQ — end the turn's text with the literal token
+**Carve-out marker.** On an **auto-progress turn** — work done, the §2 loop returned a non-gate op
+(`launch_workflow` / `probe` / `stop wait` / a committed + reconciled wave) and you are closing
+**without** an AUQ — end the turn's text with the literal token
 **`<mp-autoprogress>`**. The global Stop guard
 (`~/.claude/hooks/auq-guard.sh`) stands down when it sees this marker, so it won't force a ceremonial
 AUQ onto an authorized autonomous turn. **Never** emit it on a turn that surfaces a stop-set gate (the
@@ -480,10 +423,10 @@ single in-file enforcement point — no phase-file indirection.
 ## 2e — Worktree locus model (bundle-in-MAIN, code-in-WT — create / sweep / commit / teardown)
 
 Every v8 run executes in a **per-run linked worktree holding code only**; its run bundle stays in the
-MAIN checkout. This section DEFINES the two loci, the create-or-reuse path, the global orphan sweep,
-the split commit, and the teardown — referenced by §2 (loci + sweep), §2a (launch + commit), §2c
-(teardown), and §3a/§2b (the single creation home is here). The compute core is `lib/worktree.mjs`
-behind `mp worktree plan|record|reconcile`; all git stays in this shell (CD-7).
+MAIN checkout. This section DEFINES the two loci, the split commit, and the teardown — and points at
+where create (¶4) and sweep (¶5) now execute. The compute core is `lib/worktree.mjs`; create-or-reuse
+runs inside `mp continue` and the sweep inside `mp sweep` (local git in `mp` — the v9 seam); the
+teardown git (¶7) stays in this shell.
 
 1. **Two loci, one object store.**
    - **MAIN** = the primary worktree (repo root). Re-derive every turn, cwd-independent:
@@ -522,46 +465,23 @@ behind `mp worktree plan|record|reconcile`; all git stays in this shell (CD-7).
    is explicit-`-C`, ¶2). `execute.workflow.js`'s "your launch cwd IS the target repo (${repoRoot})"
    holds iff we cd'd to WT and pass `repoRoot:<WT>` in the launch args.
 
-4. **Create-or-reuse — the ONLY creation path (per §2 entry, idempotent).** Before the first wave
-   dispatch of a run, and idempotently on every resume:
-   - probe **two** signals (¶1): `branchExists` ⇔ `git -C "<MAIN>" rev-parse --verify --quiet
-     refs/heads/masterplan/<slug>`; `worktreeRegistered` ⇔ the canonical `<WT>` line is present in
-     `git -C "<MAIN>" worktree list --porcelain` (i.e. `… worktree list --porcelain | grep -Fxq
-     "worktree <WT>"`). `worktreeRegistered` is the **crash-idempotency** signal: a death between
-     `git worktree add` and the `mp worktree record` below leaves a live, registered WT with **no**
-     `state.worktree` — without this probe the next `plan` would emit a second `create` and the
-     `git worktree add` would fail on the already-present dir.
-   - `mp worktree plan --repo-root="<MAIN>" --state=<MAIN>/docs/masterplan/<slug>/state.yml
-     --branch=masterplan/<slug> [--branch-exists] [--worktree-registered]` → `{action, path, branch,
-     gitArgs?}` (`reuse` when the path is recorded **or** already registered).
-   - `action:'create'` → the SHELL runs `git -C "<MAIN>" <gitArgs>` (=
-     `worktree add <WT> [-b] masterplan/<slug>`); `action:'reuse'` → nothing. `mp` NEVER runs git
-     (CD-7) — it emits `gitArgs`, the shell runs them.
-   - then `mp worktree record --state=<MAIN>/docs/masterplan/<slug>/state.yml --worktree="<WT>"` to
-     persist the owned path (idempotent — re-recording the same path is a no-op write).
+4. **Create-or-reuse — internalized in `mp continue`.** The worktree probe (`branchExists` +
+   `worktreeRegistered`, the crash-between-`add`-and-record guard), the `git worktree add`, and the
+   durable `state.worktree` record all run inside `mp continue` before each launch op
+   (`lib/continue.mjs` `ensureWorktree`, composing `lib/worktree.mjs` `planWorktreeCreate`). The
+   shell never creates a run worktree by hand; `mp worktree record --choice=…` remains the
+   TEARDOWN recorder (¶7).
 
-5. **Global orphan sweep — once per SESSION, at first §2 entry (a dead run can't reap itself).**
-   Teardown for an abandoned/crashed run is done by the NEXT live runner. On the **first** §2 entry
-   this session — for ANY bundle, even the no-active-run branch (the sweep is MAIN-derivable):
-   - `git -C "<MAIN>" worktree list --porcelain` → `mp worktree reconcile --repo-root="<MAIN>"
-     --repo-git-dir="$(git -C "<MAIN>" rev-parse --path-format=absolute --git-common-dir)"
-     --worktree-list='<porcelain>'` → `{actions, findings}`.
-   - per action — Q2 contract: **auto repair/prune/remove; gate only `manual`; trust the classifier's
-     proof-gate for deletion**:
-     - `repair` → `git -C "<MAIN>" worktree repair <path>`
-     - `prune` → `git -C "<MAIN>" worktree prune`
-     - `remove` → `registered:true` (a crash-leak of OUR retired bundle) → `git -C "<MAIN>" worktree
-       remove --force <path>`; `registered:false` (a PROVABLY-foreign leftover) → `rm -rf <path>` +
-       `git -C "<MAIN>" worktree prune`
-     - `normalize` → `mp worktree record --state=<that bundle's MAIN state> --disposition=removed_after_merge`
-       (a pure state write — no git)
-     - `manual` → surface as a WARN, take NO automated git/rm action (the proof-gate deliberately
-       withholds the unprovable cases — `foreign-unverified`, `active-unregistered`,
-       `duplicate-ownership`; the live `.worktrees/cc3-visibility` orphan classifies `foreign-unverified`
-       → manual → stays human-gated)
-     - `none` → no-op.
-   - This is the only crash-leak reaper. Per-§2-entry create-or-reuse (¶4) stays per-entry; only the
-     sweep is session-gated (re-running it every wave is wasteful + noisy).
+5. **Global orphan sweep — `mp sweep`, once per SESSION at first §2 entry (a dead run can't reap
+   itself).** Teardown for an abandoned/crashed run is done by the NEXT live runner. Classification
+   (the proof-gated ladder in `lib/worktree.mjs`) and execution both live in the subcommand: dry-run
+   by default (report-only), `--apply` executes repair / prune / `worktree remove --force` (a
+   registered crash-leak of OUR retired bundle) / `rm -rf` + prune (a PROVABLY-foreign leftover) /
+   the durable `normalize` state rewrite. `manual` is NEVER automated in either mode (the proof-gate
+   deliberately withholds the unprovable cases — `foreign-unverified`, `active-unregistered`,
+   `duplicate-ownership`; the live `.worktrees/cc3-visibility` orphan classifies `foreign-unverified`
+   → manual → stays human-gated) — surface its `skipped` entries as WARNs. This is the only
+   crash-leak reaper; only the sweep is session-gated (re-running it every wave is wasteful + noisy).
 
 6. **Split commit — state and code commit SEPARATELY, to two loci/branches.**
    - **Code** → WT, path-scoped to the wave's in-scope files ONLY — NEVER `add -A` / `commit -am`
@@ -569,9 +489,10 @@ behind `mp worktree plan|record|reconcile`; all git stays in this shell (CD-7).
    - **State** → `docs/masterplan/<slug>` in MAIN (Guard D sentinels excluded by pathspec).
    - On the wave path BOTH commits execute inside `mp record-result` (`lib/wave-commit.mjs`). The
      LEADING durable action is its atomic state WRITE, then code commit (WT), then state commit
-     (MAIN) — so any crash prefix re-derives: `decide` → `finalize_run` → `mp record-result
-     --reconcile` off the persisted `active_run.{scope,baseline}` (a clean WT no-ops down to the
-     marker clear). §2c's finish-path commits still follow the same two-loci discipline shell-side.
+     (MAIN) — so any crash prefix re-derives: `mp continue` re-runs the tail inline (the
+     `finalize_run` reconcile: `mp record-result --reconcile`) off the persisted
+     `active_run.{scope,baseline}` (a clean WT no-ops down to the marker clear). §2c's finish-path
+     commits still follow the same two-loci discipline shell-side.
 
 7. **Teardown — layered onto `finishing-a-development-branch` (§2c), NOT a replacement.** The skill
    executes the chosen disposition (merge / push+PR / discard / keep) — its merge + push run in MAIN
@@ -595,8 +516,8 @@ behind `mp worktree plan|record|reconcile`; all git stays in this shell (CD-7).
    created by an atomic `link()` and confirmed via `stat().nlink` — all FILESYSTEM ops in `mp` (no git,
    no CD-7 conflict; the lock is NOT state.yml). The identity is the **LLM session** (`CLAUDE_CODE_SESSION_ID`),
    not the ephemeral `mp` process — stable across this session's turns, so the gate is idempotent.
-   - **Acquire** at kickoff — §2 step **1.6** (every §2 entry with an active bundle; `blocked` → the
-     force/abort/read-only AUQ; the per-turn re-acquire doubles as the open-turn heartbeat).
+   - **Acquire** at kickoff — inside `mp continue` (every §2 entry with an active bundle; `blocked` →
+     the §2 `ask:'owner-blocked'` AUQ; the per-entry re-acquire doubles as the open-turn heartbeat).
    - **Heartbeat** before the state-mutating completion — executed INSIDE `mp record-result` (step 0
      of its transaction; `lost-to-other` → it returns with zero writes, a second session took over).
    - **Release** at finish — §2c step **6**, after archive (frees the bundle so no successor is blocked).
@@ -607,7 +528,7 @@ behind `mp worktree plan|record|reconcile`; all git stays in this shell (CD-7).
    - `--force` (on acquire or release) is the human takeover — never auto-invoked under any autonomy.
    - **Guarantee (and its honest limit).** Guard D gives PERFECT mutual exclusion for **live** contention —
      a fresh contended lock is an atomic `link()` create, so two live sessions never both proceed. The unit
-     of protection is the **turn** (re-heartbeat at step 1.6 / inside `mp record-result`), not the individual write. The one
+     of protection is the **turn** (re-heartbeat inside `mp continue` / `mp record-result`), not the individual write. The one
      residual, accepted by design (perfect single-writer is impossible on NFS without a lock manager): a
      `>TTL`-abandoned owner that resurrects at the exact instant a reclaimer breaks its lock. Narrow, benign,
      documented — NOT a gap to close with another mechanism.
@@ -620,7 +541,7 @@ behind `mp worktree plan|record|reconcile`; all git stays in this shell (CD-7).
 | `execute` | The resume controller (§2). |
 | `finish` | The finalization verb → the flow in **§2c** (verify → retro → durable `branch_finish` gate → archive **LAST**). Bare `finish` = run §2c (on pending tasks, AUQ "finalize anyway / keep working / `--retro-only`" — never silent-archive an incomplete run). `finish --retro-only` = (re)generate `retro.md` only — no verification, no gate, no archive (the old `retro` behavior); safe on an in-progress or finished run, and it must NOT `set-status archived` (that would strand a run: the §2 discover filter hides archived bundles). |
 | `retro` | Deprecated alias for `finish --retro-only`. Print a one-line "`retro` was renamed to `finish` (running `finish --retro-only`)" notice, then run it. Kept for muscle-memory/back-compat. |
-| `import` | Legacy intake → a v8 bundle: `mp migrate-bundle` an in-place legacy `state.yml` (backs up the original). **On a pre-5.0 refusal the §2 step-2 rule applies: do NOT raw-rewrite `state.yml` (CD-7) — treat the legacy bundle as read-only and `mp seed` a fresh one, finish under v7, or stop and ask.** |
+| `import` | Legacy intake → a v8 bundle: `mp migrate-bundle` an in-place legacy `state.yml` (backs up the original). **On a pre-5.0 refusal the §2 `ask:'legacy-refused'` rule applies: do NOT raw-rewrite `state.yml` (CD-7) — treat the legacy bundle as read-only and `mp seed` a fresh one, finish under v7, or stop and ask.** |
 | `doctor` | `node "${CLAUDE_PLUGIN_ROOT}/bin/doctor.mjs" [--fix]`. **[checks = step 5.]** |
 | `status` | Read-only: `mp decide` (no writes) + a one-screen situation report from `state.yml`. **PR-aware** (PR probe ↓): if the branch has an open PR, append the `↪ Open PR #<n> …` line. |
 | `validate` | Parse-check `state.yml` + config; report findings. No writes. |
@@ -647,10 +568,10 @@ happens only via the §2c `branch_finish` gate's Merge path or the user on GitHu
 ## 3a — Plan lifecycle (serial | parallel — the `planning.mode` gate)
 
 Reached when a bundle is in `phase=plan` with no plan yet: from §3's `full`/`plan` seed path (after
-brainstorm's spec is approved and `mp set-phase plan` ran) and from §2's `resume_phase`. Selects
+brainstorm's spec is approved and `mp set-phase plan` ran) and from §2's `run_skill resume-phase` op. Selects
 between the serial `superpowers:writing-plans` path and the parallel fan-out (§2b) per `planning.mode`.
 
-1. **Resolve the mode.** `serial | parallel | auto`, from the `resume_phase` action's `planning_mode`
+1. **Resolve the mode.** `serial | parallel | auto`, from the `resume-phase` op's `planning_mode`
    (default `auto`); set at seed via `mp seed --planning-mode=…`.
 2. **Decompose (unless `serial`).** For `parallel`/`auto`, dispatch `agents/mp-spec-decomposer` against
    `spec.md` → `{ subsystems, recommend_parallel, reason }`.
@@ -665,8 +586,9 @@ between the serial `superpowers:writing-plans` path and the parallel fan-out (§
    (materializes `state.tasks` from the plan **and** advances `phase→execute` atomically — a bare
    `set-phase execute` would leave `tasks:[]` and the next `decide` would `complete`→archive the bundle)
    + `mp event --state=<path> --type=phase_transition --phase=execute`, `git -C "<MAIN>"` commit the
-   bundle (MAIN-resident, §2e¶2), and hand to the resume controller (§2 → `dispatch_wave`, which
-   create-or-reuses the worktree per §2e¶4 — the single creation home is §2a/§2e, never here).
+   bundle (MAIN-resident, §2e¶2), and hand to the resume controller (§2 — `mp continue` returns the
+   wave-1 `launch_workflow` op, creating-or-reusing the worktree itself per §2e¶4; the single
+   creation home is `mp continue`, never here).
 4. **Parallel path.** Hand the decomposition to **§2b**'s plan launch (background fan-out → merge →
    validate → `mp-plan-reviewer` → execute). The phase advances to `execute` inside §2b's completion
    gate, not here.
