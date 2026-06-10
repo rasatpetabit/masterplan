@@ -44,7 +44,7 @@ masterplan v8 is a five-layer system. Each layer delegates downward and never wr
                         │ read / atomic write (CD-7)
 ┌───────────────────────▼─────────────────────────────────────┐
 │  L1 — Thin shell                                             │
-│  commands/masterplan.md  (~251-line verb sequencer)          │
+│  commands/masterplan.md  (~800-line verb sequencer)          │
 │  bin/masterplan.mjs  (mp — filesystem-only subcommands)      │
 │  lib/resume.mjs  (pure decideNextAction)                     │
 │  ← SOLE durable state writer; git commit/checkout live here  │
@@ -70,7 +70,7 @@ masterplan v8 is a five-layer system. Each layer delegates downward and never wr
 ┌───────────────────────▼─────────────────────────────────────┐
 │  L4 — Doctor                                                 │
 │  bin/doctor.mjs  dispatcher                                  │
-│  lib/doctor/*.mjs  (11 check modules, auto-discovered)       │
+│  lib/doctor/*.mjs  (13 check modules, auto-discovered)       │
 │  ← Finding {id, severity, summary, fix}; non-zero on ERROR   │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -105,35 +105,6 @@ codex plugin marketplace add rasatpetabit/masterplan
 
 Codex hosts the orchestrator under `/masterplan:masterplan`. See [Codex hosting](#codex-hosting) below for suppression and behavior details.
 
-### Optional Telemetry Hook
-
-To enable `/masterplan stats` and roll-up metrics, wire the telemetry hook as a Stop hook:
-
-```bash
-mkdir -p ~/.claude/hooks
-cp hooks/masterplan-telemetry.sh ~/.claude/hooks/
-chmod +x ~/.claude/hooks/masterplan-telemetry.sh
-```
-
-```json
-{
-  "hooks": {
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"$HOME/.claude/hooks/masterplan-telemetry.sh\"",
-            "timeout": 3,
-            "async": true
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
 ---
 
 ## Usage / Quick Start
@@ -162,7 +133,7 @@ chmod +x ~/.claude/hooks/masterplan-telemetry.sh
 
 ```
 /masterplan status               # active bundle summary
-/masterplan doctor               # structural lint (11 check modules)
+/masterplan doctor               # structural lint (13 check modules)
 ```
 
 ---
@@ -182,7 +153,7 @@ All verbs route through the single `/masterplan <verb>` command. v8 ships no per
 | `doctor [--fix]` | Structural lint across all bundles; `--fix` repairs repairable issues |
 | `status` | Visual summary of the active bundle: phase, wave, recent events |
 | `validate` | Schema-validity check on `state.yml` bundles |
-| `stats` | Token usage, run-times, and per-subagent telemetry (requires telemetry hook) |
+| `stats` | Telemetry roll-up — a `jq` summary over the bundle's `events.jsonl` |
 | `clean` | Archive stale bundles (`mp set-status --status=archived`) and prune orphan artifacts |
 | `next` | Route to the next actionable in-progress bundle |
 | `verbs` | Print this verb list |
@@ -276,7 +247,7 @@ Crash before a commit is safe: `state.yml` leads git, so `decideNextAction` re-d
 
 ## Doctor
 
-`node bin/doctor.mjs` runs 11 check modules under `lib/doctor/*.mjs`, auto-discovered alphabetically. Each module exports:
+`node bin/doctor.mjs` runs 13 check modules under `lib/doctor/*.mjs`, auto-discovered alphabetically. Each module exports:
 
 ```js
 check(repoRoot, opts) -> Finding[]
@@ -335,11 +306,6 @@ node --test test/*.test.mjs
 node bin/doctor.mjs
 ```
 
-**Syntax check the telemetry hook:**
-
-```sh
-bash -n hooks/masterplan-telemetry.sh
-```
 
 **Verify a specific edit (grep discriminator pattern):**
 

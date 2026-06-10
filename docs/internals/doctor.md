@@ -1,7 +1,7 @@
 # Doctor Checks — Internals
 
 > **Audience:** Maintainers adding or fixing doctor checks.
-> **Source:** `bin/doctor.mjs` (dispatcher) + `lib/doctor/*.mjs` (11 check modules).
+> **Source:** `bin/doctor.mjs` (dispatcher) + `lib/doctor/*.mjs` (13 check modules).
 
 ## How the doctor works
 
@@ -49,14 +49,16 @@ unit-testable without touching the real host. The main CLI passes
   (e.g. `homeDir`). They `SKIP` gracefully when the relevant tooling is not
   installed.
 
-## The 11 check modules
+## The 13 check modules
 
 | Module | Purpose |
 |---|---|
 | `codex-auth` | Reads `~/.codex/auth.json`; warns on expired or expiring-soon JWT claims. ChatGPT auth mode (`auth_mode: chatgpt` + `refresh_token`) short-circuits to `PASS` because Codex auto-refreshes the id_token per invocation. `SKIP` when auth.json is absent. |
 | `codex-plugin-presence` | Mirrors the dispatch path (`bin/masterplan.mjs` nested `state.codex.{routing,review}`) to detect which bundles request Codex; warns when any requesting bundle cannot find the Codex plugin on the host. `SKIP` when no bundle uses Codex. |
+| `coord-drift` | For GitHub-coordinated runs (bundles with a `coordination` object in `state.yml`): pure-filesystem drift detection between durable plan state and the published GitHub projection — done tasks whose `issue_map` entry is still open/claimed, orphan claims (claimed with no PR), `issue_map` vs `state.tasks` task-ID drift, and `published_waves` mismatches. No `gh`/network calls. `SKIP` when no bundle is coordinated. |
 | `index-staleness` | For each bundle with a `plan.md`, computes a sha256 and compares it against the recorded hash in `plan.index.json` (and, for migrated-in-place bundles, `state.plan_hash`). `WARN` on mismatch; `SKIP` when no bundle has a plan. |
 | `legacy-bundle` | Warns on any bundle with `schema_version < 6` (not yet migrated to v8) and on any actual planning artifacts remaining under `docs/superpowers/`. `SKIP` only when no bundles exist and `docs/superpowers/` is absent. |
+| `owner-sentinel` | Guard D hygiene: scans `docs/masterplan/<slug>/.owner.lock` + `.owner.hb.*` heartbeats; `WARN` on a corrupt lock (unparseable), a stale lock (no heartbeat within TTL — recommends `release-owner --force` when no live session holds it), or orphan heartbeat files with no lock. Fresh locks emit nothing; `SKIP` when no bundles exist. |
 | `plan-index-schema` | Runs `lib/plan-merge.validatePlanIndex` against every `plan.index.json` with `schema_version >= 6`; catches non-string `codex` fields and same-wave file overlaps that silently mis-route. `SKIP` when no canonical index exists. |
 | `plugin-registry-drift` | Compares the installed masterplan plugin version in `installed_plugins.json` against the marketplace `plugin.json`; also compares `gitCommitSha` against marketplace HEAD to catch same-version stale caches. `SKIP` when either file is absent. |
 | `scalar-cap` | Validates that no flat `key: value` line in `state.yml` exceeds 200 characters, and that every `*overflow at <file> L<n>*` pointer resolves to a real file and line within the same bundle directory. |

@@ -12,7 +12,7 @@ masterplan v8 is a 5-layer system. Each layer is thin and delegates downward:
   `plan.index.json`, `retro.md`, `events.jsonl` (append-only), and
   `handoff.md`. The `phase` field in `state.yml` is the only authoritative
   progress enum (`brainstorm | plan | execute`).
-- **L1 — Thin shell:** `commands/masterplan.md` (~251-line verb sequencer) +
+- **L1 — Thin shell:** `commands/masterplan.md` (~800-line verb sequencer) +
   `bin/masterplan.mjs` (filesystem-only subcommands, invoked as `mp`; git stays
   in the shell) + `lib/resume.mjs` (pure `decideNextAction`). L1 is the
   **only** durable writer of run-bundle state (CD-7).
@@ -24,7 +24,7 @@ masterplan v8 is a 5-layer system. Each layer is thin and delegates downward:
   `mp-implementer`, `mp-planner`, `mp-codex-reviewer`, `mp-plan-reviewer`,
   `mp-subsystem-planner`, `mp-spec-decomposer`). Agents receive bounded briefs
   and return structured output; they do not inherit session history.
-- **L4 — Doctor:** `bin/doctor.mjs` dispatcher + 11 check modules under
+- **L4 — Doctor:** `bin/doctor.mjs` dispatcher + 13 check modules under
   `lib/doctor/*.mjs`. Auto-discovered alphabetically; each module exports a
   synchronous `check(repoRoot, opts) -> Finding[]`. See `doctor.md` below.
 
@@ -61,7 +61,7 @@ fields back is documented in [bundle-resume.md](internals/bundle-resume.md).
 | [plan-parser.md](internals/plan-parser.md) | Deterministic plan compile: fragment merge, wave assignment, `plan.index.json` schema | `lib/plan-merge.mjs` |
 | [wave-dispatch.md](internals/wave-dispatch.md) | Routing decisions and one-wave dispatch: how `lib/routing.mjs` classifies tasks and `workflows/execute.workflow.js` runs a single wave | `lib/routing.mjs` + `workflows/execute.workflow.js` |
 | [task-verification.md](internals/task-verification.md) | D6 scope verify and the review stage: acceptance criteria, trust-skip conditions | `lib/wave.mjs` |
-| [doctor.md](internals/doctor.md) | Doctor contract: discovery, crash isolation, Finding shape, all 11 check modules | `bin/doctor.mjs` + `lib/doctor/*.mjs` |
+| [doctor.md](internals/doctor.md) | Doctor contract: discovery, crash isolation, Finding shape, all 13 check modules | `bin/doctor.mjs` + `lib/doctor/*.mjs` |
 
 ## Cross-cutting References
 

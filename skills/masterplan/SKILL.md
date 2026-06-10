@@ -1,6 +1,6 @@
 ---
 name: masterplan
-description: "Generic/Codex entrypoint for masterplan: bare /masterplan, /masterplan:masterplan, $masterplan, or any verb. All verbs (full, brainstorm, plan, execute, finish, retro, import, doctor, status, validate, stats, clean, next, verbs) route through this single command — v8 ships NO per-verb /masterplan:<verb> skills (they shadowed Claude Code built-ins like /plan, /status, /doctor and added nothing over bare-command routing)."
+description: "Generic/Codex entrypoint for masterplan: bare /masterplan, /masterplan:masterplan, $masterplan, or any verb. All verbs (full, brainstorm, plan, execute, finish, retro, import, doctor, status, validate, stats, clean, next, verbs, publish, follow) route through this single command — v8 ships NO per-verb /masterplan:<verb> skills (they shadowed Claude Code built-ins like /plan, /status, /doctor and added nothing over bare-command routing)."
 ---
 
 # Codex entrypoint for Superpowers Masterplan
@@ -11,7 +11,7 @@ to load the canonical command prompt and adapt it to the current Codex runtime.
 ## Source of truth (v8 clean-core layout)
 
 As of v8, `commands/masterplan.md` is a **self-contained** thin orchestrator
-(~251 lines) that sequences the whole workflow inline — there are **no**
+(~800 lines) that sequences the whole workflow inline — there are **no**
 `parts/` phase files to lazy-load. The deterministic decisions live in
 `lib/*.mjs` behind `bin/masterplan.mjs` subcommands (invoked as `mp`), and
 `doctor` is `bin/doctor.mjs` + the `lib/doctor/*.mjs` modules. Load the command
@@ -87,7 +87,7 @@ Treat these user inputs as this skill:
 **No per-verb skills (v8).** masterplan ships exactly two skill dirs — this one
 and `masterplan-detect`. There are **no** `/masterplan:<verb>` per-verb skills:
 every verb (`brainstorm`, `full`, `execute`, `finish`, `retro`, `import`,
-`doctor`, `status`, `validate`, `stats`, `clean`, `next`, `verbs`, and `plan`) is dispatched
+`doctor`, `status`, `validate`, `stats`, `clean`, `next`, `verbs`, `publish`, `follow`, and `plan`) is dispatched
 by the bare `/masterplan <verb>` command through `bin/masterplan.mjs` (verb
 routing in `commands/masterplan.md` §1/§3). The per-verb namespace was removed
 because it added nothing over bare-command routing and the reserved words
