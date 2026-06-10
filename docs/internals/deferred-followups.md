@@ -29,7 +29,13 @@ regression surface.
 repoint the `parts/` references), **or** add a packaging exclude so the file ships
 without registering as a command. Re-verify autocomplete + publish-hygiene after.
 
-## DF-2 — `docs/install.md` shim version marker drift
+## DF-2 — `docs/install.md` shim version marker drift — **RESOLVED (2026-06-10)**
+
+> Not drift: the marker versions the **shim body**, not the plugin. The shim's
+> delegation contract (`/masterplan:masterplan $ARGUMENTS`) is unchanged under v8
+> packaging — the namespaced command still resolves — so `v3` is current.
+> `docs/install.md` now states the marker's semantics explicitly so the plugin
+> version can advance without re-raising this.
 
 **Finding (non-blocking, pre-existing):** `docs/install.md` documents the offline
 shim with marker `<!-- masterplan-shim: v3 -->`. The plugin is at v8; the shim

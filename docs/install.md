@@ -33,6 +33,8 @@ cp -r skills/masterplan-detect ~/.claude/skills/
 
 The shim makes `/masterplan` resolve to the namespaced plugin command once the plugin itself is available; the `masterplan-detect` skill auto-suggests `/masterplan import` when legacy planning artifacts are found.
 
+The `masterplan-shim` marker versions the **shim body** (the delegation contract above), not the plugin: it bumps only when the shim's own content changes. `v3` is current — the one-line `/masterplan:masterplan $ARGUMENTS` delegation is unchanged under v8 packaging.
+
 ## Codex CLI invocation
 
 The marketplace add command installs the plugin and registers a `masterplan` skill that new Codex sessions see in their available-skills list. That skill is the portable Codex entrypoint: it loads `commands/masterplan.md` and recognizes run bundles created by any host under `docs/masterplan/<slug>/`.
