@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [9.1.1] — 2026-06-10 — doctor checks stop fighting the writer
+
+### Fixed
+
+- **`scalar-cap` no longer warns on the writer's own output.** The 200-char cap is a prose-scalar discipline; values that parse to structured data — the inline-JSON `tasks` line `lib/bundle.mjs` itself emits — are now exempt from the WARN, matching the `--fix` handler's existing refusal to move them (an overflow pointer in `tasks` would corrupt resume, which is exactly what the old WARN's fix text told operators to do by hand).
+- **`legacy-bundle` honors its documented README exemption.** The check's contract says a `docs/superpowers/` holding only README pointer files must not warn, but `hasLegacyArtifacts` flagged any `.md` including READMEs. Code now matches the contract.
+
+### Removed
+
+- Dev-repo cruft prune (the `clean` verb's designed path; all bundles archived, history in git): 8 legacy schema<6 run bundles, the empty `docs/superpowers/` container, and the fully-discharged `docs/design-residuals.md` decision memo. Dev-repo doctor: 15 WARN → 0.
+
 ## [9.1.0] — 2026-06-10 — finish-time docs normalization + doctor autofix
 
 ### Added

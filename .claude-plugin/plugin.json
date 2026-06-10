@@ -1,6 +1,6 @@
 {
   "name": "masterplan",
-  "version": "9.1.0",
+  "version": "9.1.1",
   "description": "Brainstorm, plan, execute, resume, import, lint, and retrospect long-running Claude Code work with durable run bundles and strict context control.",
   "author": {
     "name": "Richard A Steenbergen",

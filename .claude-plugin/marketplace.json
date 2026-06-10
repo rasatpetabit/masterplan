@@ -5,7 +5,7 @@
     "email": "ras@petabitscale.com"
   },
   "description": "Marketplace catalog for the masterplan Claude Code plugin.",
-  "version": "9.1.0",
+  "version": "9.1.1",
   "allowCrossMarketplaceDependenciesOn": [
     "claude-plugins-official"
   ],
@@ -14,7 +14,7 @@
       "name": "masterplan",
       "source": "./",
       "description": "Brainstorm, plan, execute, resume, import, lint, and retrospect long-running Claude Code work with durable run bundles.",
-      "version": "9.1.0",
+      "version": "9.1.1",
       "author": {
         "name": "Richard A Steenbergen",
         "email": "ras@petabitscale.com"
