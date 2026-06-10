@@ -30,13 +30,13 @@ the parallel `mp-subsystem-planner` path uses). `lib/plan-merge.mjs` owns id
 assignment, wave layering, and `codex` normalisation deterministically — see
 [`docs/internals/plan-parser.md`](../docs/internals/plan-parser.md).
 
-## The plan.index.json schema (authoritative — keep byte-synced with lib/routing.mjs)
+## The plan.index.json schema (authoritative — keep byte-synced with lib/dispatch/routing.mjs)
 
 Top level:
 
     { "schema_version": "6.0", "tasks": [ <task>, ... ] }
 
-Each `<task>` — emit the **canonical** field names below. `lib/routing.mjs`,
+Each `<task>` — emit the **canonical** field names below. `lib/dispatch/routing.mjs`,
 `applyPlanIndex` (`bin/masterplan.mjs`), and `buildTasksFromPlanIndex`
 (`lib/bundle.mjs`, the plan→`state.tasks` loader behind `mp seed-tasks`) read
 these exact keys:
@@ -80,7 +80,7 @@ the same file, put them in different (sequential) waves.
   `verify_commands`, no design judgment.
 - `codex: "no"` for anything needing taste, cross-file reasoning, or touching
   secrets / auth / production / schema migrations.
-- `null` to defer to `lib/routing.mjs`'s heuristic.
+- `null` to defer to `lib/dispatch/routing.mjs`'s heuristic.
 - Phrase `description` so a genuine design task literally contains a judgment verb
   (consider / decide / choose between / design / explore) — routing keys on those.
 

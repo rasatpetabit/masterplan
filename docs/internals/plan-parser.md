@@ -105,7 +105,7 @@ Called during merge step 1 on every task's raw `codex` value:
 
 This is the belt-and-suspenders layer (layer 2 of the anomaly-1 defence). Even if the tool
 boundary admits a malformed value, `normalizeCodex` collapses it to the string enum before it
-can reach `lib/routing.mjs`.
+can reach `lib/dispatch/routing.mjs`.
 
 ## Schema validation (`validatePlanIndex`)
 

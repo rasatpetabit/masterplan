@@ -9,8 +9,11 @@ const stubs = [
   '../lib/paths.mjs',
   '../lib/bundle.mjs',
   '../lib/resume.mjs',
-  '../lib/routing.mjs',
-  '../lib/codex-host.mjs',
+  '../lib/dispatch/index.mjs',
+  '../lib/dispatch/routing.mjs',
+  '../lib/dispatch/backend.mjs',
+  '../lib/dispatch/host.mjs',
+  '../lib/dispatch/ops.mjs',
   '../lib/migrate.mjs',
 ];
 

@@ -159,7 +159,7 @@ import { issueBodyForTask, parseIssueBody, validateClaimSettle, selectClaimableU
 import { migrate, detectSchemaVersion, MigrationError } from '../lib/migrate.mjs';
 import { decideNextAction } from '../lib/resume.mjs';
 import { prepareWave, declaredScope, verifyScope } from '../lib/wave.mjs';
-import { detectHost, suppressRescue } from '../lib/codex-host.mjs';
+import { detectHost, suppressRescue } from '../lib/dispatch/index.mjs';
 import { selectCodexInstall, companionScriptPath, selectCodexReviewForHead } from '../lib/codex-companion.mjs';
 import { resolveConfigDir } from '../lib/paths.mjs';
 import { createHash } from 'node:crypto';
@@ -602,7 +602,7 @@ function main() {
     }
     case 'prepare-wave': {
       // Pre-resolve everything the L2 workflow needs for one wave, since a Workflow script has
-      // NO module/fs access — "L2 consumes routing.mjs" can only mean L1 resolves routing here and
+      // NO module/fs access — "L2 consumes lib/dispatch/" can only mean L1 resolves routing here and
       // hands lean payloads down via `args`. loadForWrite is the strict-v8 guard (this is a read,
       // but mid-run the bundle is already v8; a legacy one reaching here should fail loud, not route).
       const p = need(flags, 'state');

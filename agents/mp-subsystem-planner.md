@@ -55,7 +55,7 @@ A single object, validated at the tool boundary:
   parallel — declare a `dep` between them so the merge serializes them into different waves. Keep
   each task's `files` tight.
 - **`codex` is an ADVISORY string** (`"ok"` | `"no"` | `null`), never a boolean or object. It is
-  only a hint — final routing is `lib/routing.mjs`. Prefer `null` (let the heuristic decide) unless
+  only a hint — final routing is `lib/dispatch/routing.mjs`. Prefer `null` (let the heuristic decide) unless
   you are certain: `"ok"` only for mechanical ≤3-file work with concrete verify commands; `"no"`
   for anything touching taste, cross-file reasoning, secrets, auth, production, or schema.
 - **`description` carries the judgment signal.** Phrase a genuine design task so its description

@@ -8,7 +8,7 @@
 // that one wave's declared scope. A multi-wave workflow would make active_run/recovery ambiguous.
 //
 // THE L1<->L2 SEAM (load-bearing). A Workflow script has NO module/fs/git access, so it CANNOT
-// import lib/routing.mjs and CANNOT run git. "L2 consumes routing.mjs" therefore means L1 PRE-
+// import lib/dispatch/ and CANNOT run git. "L2 consumes the dispatch module" therefore means L1 PRE-
 // RESOLVES routing (`mp prepare-wave`, which runs routeTask) and passes lean, already-routed task
 // payloads down via `args`. The git baseline for the D6/F-SCOPE check is likewise captured by the
 // shell and threaded through `args.baseline`; this workflow only ECHOES it back in its result so the

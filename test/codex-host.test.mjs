@@ -3,7 +3,7 @@
 // `$masterplan` shell-trap normalization are correctness invariants carried from v7.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { detectHost, suppressRescue, normalizeResumeHint, CODEX_ENTRYPOINT } from '../lib/codex-host.mjs';
+import { detectHost, suppressRescue, normalizeResumeHint, CODEX_ENTRYPOINT } from '../lib/dispatch/index.mjs';
 
 test('detectHost: no signals -> not codex', () => {
   const h = detectHost({});

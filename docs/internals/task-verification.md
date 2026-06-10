@@ -97,7 +97,7 @@ prepareWave(state, planIndex, wave, config, env)
 
 For each `pending` wave-N task it merges `state.tasks[i]` (id, wave, status, files) with the
 corresponding `plan.index.json` entry (description, verify_commands, codex, sensitive,
-conversational) and calls `routeTask` (`lib/routing.mjs`). The result is a lean payload — no
+conversational) and calls `routeTask` (`lib/dispatch/routing.mjs`). The result is a lean payload — no
 spec excerpts, no raw file contents — because it transits the orchestrator context.
 
 `routeTask` returns `{ target: 'codex'|'inline'|'ask', eligible, reason }`. In v8 `target`

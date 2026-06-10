@@ -1,8 +1,9 @@
 # Wave Dispatch — Internals
 
-> **Audience:** Maintainers working on task routing (`lib/routing.mjs`), wave preparation
-> (`lib/wave.mjs`), or the execution engine (`workflows/execute.workflow.js`).
-> **Source files:** `lib/routing.mjs`, `lib/wave.mjs`, `workflows/execute.workflow.js`.
+> **Audience:** Maintainers working on dispatch decisions (`lib/dispatch/` — routing, backend
+> selection, host detection, op construction), wave preparation (`lib/wave.mjs`), or the
+> execution engine (`workflows/execute.workflow.js`).
+> **Source files:** `lib/dispatch/`, `lib/wave.mjs`, `workflows/execute.workflow.js`.
 
 ---
 
@@ -30,8 +31,12 @@ L1 pre-resolves routing before launch. `lib/wave.mjs:prepareWave` merges each pe
 state fields (`id`, `wave`, `status`, `files`) with its `plan.index.json` fields
 (`description`, `verify_commands`, `codex`, `sensitive`, `conversational`), runs
 `routeTask(merged, config, env)`, and emits a lean routed payload that is passed to the workflow
-via `args`. The workflow has no module or filesystem access; it cannot import `lib/routing.mjs`
+via `args`. The workflow has no module or filesystem access; it cannot import `lib/dispatch/`
 directly.
+
+All dispatch *decision* logic — `routeTask`, the qctl backend gate, host detection, and the
+wave-dispatch op shapes — lives in the pure `lib/dispatch/` package (import via
+`lib/dispatch/index.mjs`). `lib/wave.mjs` and `lib/continue.mjs` are consumers, not owners.
 
 `routeTask` returns `{ target: 'codex'|'inline'|'ask', eligible, reason }`.
 

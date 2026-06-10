@@ -30,8 +30,9 @@ masterplan v8 is a 5-layer system. Each layer is thin and delegates downward:
 
 Deterministic planning support: `lib/plan-merge.mjs` merges drafter fragments
 into a canonical `plan.index.json` using Kahn topological order for wave
-assignment. Task routing decisions live in `lib/routing.mjs`. Scope
-verification (D6) runs in `lib/wave.mjs`.
+assignment. Dispatch decisions (task routing, qctl backend gating, host
+detection, wave-dispatch op shapes) live in the pure `lib/dispatch/`
+package. Scope verification (D6) runs in `lib/wave.mjs`.
 
 ## Run-bundle State Shape & Stop Contract
 
@@ -59,7 +60,7 @@ fields back is documented in [bundle-resume.md](internals/bundle-resume.md).
 |---|---|---|
 | [bundle-resume.md](internals/bundle-resume.md) | Resume controller: how `lib/resume.mjs` reads `state.yml` and decides the next action | `lib/resume.mjs` |
 | [plan-parser.md](internals/plan-parser.md) | Deterministic plan compile: fragment merge, wave assignment, `plan.index.json` schema | `lib/plan-merge.mjs` |
-| [wave-dispatch.md](internals/wave-dispatch.md) | Routing decisions and one-wave dispatch: how `lib/routing.mjs` classifies tasks and `workflows/execute.workflow.js` runs a single wave | `lib/routing.mjs` + `workflows/execute.workflow.js` |
+| [wave-dispatch.md](internals/wave-dispatch.md) | Routing decisions and one-wave dispatch: how `lib/dispatch/` classifies tasks and `workflows/execute.workflow.js` runs a single wave | `lib/dispatch/` + `workflows/execute.workflow.js` |
 | [task-verification.md](internals/task-verification.md) | D6 scope verify and the review stage: acceptance criteria, trust-skip conditions | `lib/wave.mjs` |
 | [doctor.md](internals/doctor.md) | Doctor contract: discovery, crash isolation, Finding shape, all 13 check modules | `bin/doctor.mjs` + `lib/doctor/*.mjs` |
 

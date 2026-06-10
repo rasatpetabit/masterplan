@@ -4,7 +4,7 @@
 // eligibility is computed here over the plan.index.json task at dispatch time.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { routeTask, resolveImplementerBackend } from '../lib/routing.mjs';
+import { routeTask, resolveImplementerBackend } from '../lib/dispatch/index.mjs';
 
 // A task the heuristic should accept: <=3 files, unambiguous, has verify, not sensitive.
 const clean = (over = {}) => ({

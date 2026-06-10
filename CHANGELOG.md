@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Agent-dispatch decision logic consolidated into `lib/dispatch/`** — preparation for a unified cross-tool agent-dispatch system. `lib/routing.mjs` → `lib/dispatch/routing.mjs` and `lib/codex-host.mjs` → `lib/dispatch/host.mjs` (git-mv, contents unchanged); the qctl eligibility gate + backend resolution lifted out of `lib/wave.mjs` into `lib/dispatch/backend.mjs` (`resolveBackend` is now the public `resolveTaskBackend`); the dispatch-vehicle fork (Residual-3B `dispatch_foreground` vs `launch_workflow`) lifted out of `lib/continue.mjs` into `lib/dispatch/ops.mjs` (`buildWaveDispatchOp`, `normalizeReviewMode`). One import surface: `lib/dispatch/index.mjs`. Boundary rule documented in the index header: decision logic in (pure — no fs/clock/subprocess/git), state machine out (`lib/wave.mjs`, `lib/continue.mjs`, the L2 engine stay consumers). Behavior byte-identical; new `test/dispatch.test.mjs` pins the facade surface and the op-shape wire contract. Suite 893 → 903.
+
 ## [9.1.1] — 2026-06-10 — doctor checks stop fighting the writer
 
 ### Fixed

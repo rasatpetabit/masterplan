@@ -54,7 +54,7 @@ masterplan v8 is a five-layer system. Each layer delegates downward and never wr
 │  L2 — Workflow engine                                        │
 │  workflows/execute.workflow.js  (one wave per launch)        │
 │  workflows/plan.workflow.js     (subsystem fan-out)          │
-│  lib/plan-merge.mjs  lib/routing.mjs  lib/wave.mjs           │
+│  lib/plan-merge.mjs  lib/dispatch/  lib/wave.mjs             │
 │  ← returns digests/fragments only; never writes disk/git     │
 └───────────────────────┬─────────────────────────────────────┘
                         │ bounded briefs / structured digests
