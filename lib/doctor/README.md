@@ -27,8 +27,8 @@ where a `Finding` is `{ id, severity: 'PASS' | 'WARN' | 'ERROR' | 'SKIP', summar
 
 **Fixtures** live under `test/fixtures/doctor/<check>/<scenario>/`; the scenario dir-name
 prefix (`pass-`/`warn-`/`error-`/`skip-`) encodes the expected worst-severity. This is a
-deliberate deviation from the plan's "reuse `tests/doctor-fixtures/`": that v7 set is
-block-YAML (`schema_version: 3`) and tests the v7 doctor being deleted. Flat v8-compatible v7
+deliberate deviation from the plan's "reuse `tests/doctor-fixtures/`": that v7 set was
+block-YAML (`schema_version: 3`) and tested the v7 doctor — both deleted at the v8.2.0 cutover. Flat v8-compatible v7
 fixtures (e.g. check-32, check-39 data) are copied into this single v8 root; schema-coupled
 checks get fresh v8-flat fixtures.
 

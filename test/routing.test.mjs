@@ -1,5 +1,5 @@
 // test/routing.test.mjs — Codex eligibility/routing truth table (pure; kills fragility #2).
-// Ports v7's eligibility checklist + precedence (parts/step-c-dispatch.md) into deterministic
+// Ports v7's eligibility checklist + precedence (v7 parts/step-c-dispatch.md, deleted at the cutover; see tag v8.1.0-pre-cruft-removal) into deterministic
 // code: same task -> same route, every run, fully testable. The v7 eligibility_cache dies;
 // eligibility is computed here over the plan.index.json task at dispatch time.
 import { test } from 'node:test';

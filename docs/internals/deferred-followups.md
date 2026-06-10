@@ -7,7 +7,11 @@
 Each entry records the finding, why it is deferred, and the resolution shape so a
 future pass can close it deliberately instead of re-litigating it.
 
-## DF-1 — `commands/masterplan-contracts.md` is on the command surface
+## DF-1 — `commands/masterplan-contracts.md` is on the command surface — **RESOLVED (v8.2.0 cutover)**
+
+> Relocated to `docs/contracts/masterplan-contracts.md` with frontmatter dropped;
+> `commands/` now ships only `masterplan.md`, so no accidental
+> `/masterplan-contracts` command registers. Original finding below for provenance.
 
 **Finding (recurring, P3):** Files under `commands/` are auto-discovered by Claude
 Code as slash commands. `commands/masterplan-contracts.md` is an internal contract
@@ -38,7 +42,10 @@ a gate-checked surface. No flood / CI impact.
 (confirm whether v3 still resolves correctly under v8 packaging) and bump the marker
 if the shim body changed.
 
-## DF-3 — `parts/step-b.md:176` points at the wrong file for the YAML shape
+## DF-3 — `parts/step-b.md:176` points at the wrong file for the YAML shape — **MOOT (v8.2.0 cutover)**
+
+> `parts/step-b.md` and both `parts/contracts/*` files it cited were deleted at
+> the cutover (recoverable at tag `v8.1.0-pre-cruft-removal`). Nothing to repoint.
 
 **Finding (non-blocking, pre-existing):** The merge-rules pointer in `parts/step-b.md`
 cites `parts/contracts/plan-annotations.md §brainstorm_anchor YAML Shape`, but the

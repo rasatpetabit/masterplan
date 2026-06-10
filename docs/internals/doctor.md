@@ -67,8 +67,8 @@ unit-testable without touching the real host. The main CLI passes
 
 ## What changed from v7
 
-v7's `parts/doctor.md` was a single ~2,116-line markdown file encoding 53 prose
-checks interpreted by a Sonnet coordinator at runtime. This had two structural
+v7's `parts/doctor.md` (deleted at the v8.2.0 cutover) was a single ~2,116-line
+markdown file encoding 53 prose checks interpreted by a Sonnet coordinator at runtime. This had two structural
 problems: the coordinator had to re-parse and re-interpret the prose on every
 run, and the checks were untestable in isolation.
 

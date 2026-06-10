@@ -8,7 +8,7 @@
 // checks ignore repoRoot and read host paths via opts (homeDir / now / gitExec), which keeps
 // them unit-testable without touching the real host. This dispatcher only DISCOVERS, RUNS
 // (crash-isolated), aggregates, prints, and exits non-zero iff any finding is ERROR. No check
-// logic lives here. Replaces the 2,116-line parts/doctor.md (53 prose checks) with ~11
+// logic lives here. Replaces v7's 2,116-line parts/doctor.md (53 prose checks; deleted at the cutover) with 13
 // testable modules; the ~38 self-instrumentation checks are deleted, release-hygiene -> CI.
 import { readdirSync } from 'node:fs';
 import path from 'node:path';

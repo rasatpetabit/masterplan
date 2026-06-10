@@ -1,8 +1,11 @@
----
-description: "Internal subagent contract registry — read by orchestrator dispatch briefs in parts/step-b.md and parts/doctor.md. Not user-invokable; this command file is a registry doc, not an action."
----
-
 # Masterplan subagent contract registry
+
+> Relocated from `commands/masterplan-contracts.md` at the v8.2.0 cutover
+> (deferred-followups DF-1): living in `commands/` auto-registered it as an
+> accidental `/masterplan-contracts` slash command. It is a registry doc, not
+> an action. Contracts marked **Historical (v7)** referenced the `parts/` +
+> `tests/` surface deleted at the cutover (recoverable at tag
+> `v8.1.0-pre-cruft-removal`) and are retained for provenance only.
 
 Each lifecycle subagent dispatch declares a `contract_id`. The orchestrator validates the return before acting on it. If validation fails, the orchestrator re-runs the invariant check locally and emits a `contract_violation` event.
 
@@ -70,7 +73,10 @@ return_shape: |
   coverage: {expected: int, processed: int}
 ```
 
-## Contract: doctor.repo_scoped.schema_v1
+## Contract: doctor.repo_scoped.schema_v1 — **Historical (v7)**
+
+> The numbered-check doctor and its `parts/doctor.md` recipes were deleted at
+> the v8 cutover; v8's doctor is `bin/doctor.mjs` + `lib/doctor/*.mjs`.
 
 ```yaml
 purpose: Run the fourteen repo-scoped doctor checks (#26, #30, #31, #36, #39, #44, #46, #47, #48, #49, #50, #51, #52, #53) in one Haiku batch (v5.4.0+)
@@ -380,10 +386,11 @@ return_shape: |
   processed_paths: [state.yml]
   violations: []
   coverage: {expected: 1, processed: 1}
-  # Anchor fields are returned TOP-LEVEL (parts/step-b.md §Step B1 parses these
-  # directly; a return missing top-level mode/repo_role/verification_ceiling is
-  # treated as malformed → brainstorm_anchor_audit_mode gate). Shape matches
-  # docs/internals/brainstorm-anchor.md §Coordinator Dispatch.
+  # Anchor fields are returned TOP-LEVEL (v7's parts/step-b.md §Step B1 parsed
+  # these directly; a return missing top-level mode/repo_role/verification_ceiling
+  # was treated as malformed → brainstorm_anchor_audit_mode gate). Historical (v7):
+  # the consumers (parts/step-b.md, docs/internals/brainstorm-anchor.md) were
+  # deleted at the cutover.
   mode: "<mode>"
   repo_role: "<string>"
   yocto_ownership: <bsp|app|distro|null>
@@ -452,6 +459,8 @@ return_shape: |
 ```
 
 ## Contract: coordinator-doctor-v1
+
+**Historical (v7)** — executed the bash recipes in `parts/doctor.md`, deleted at the cutover.
 
 ```yaml
 purpose: Run a subset of doctor checks and return structured findings

@@ -530,3 +530,7 @@ Scoped v8 deploy to ras@epyc2 by swapping in the registry-backed `masterplan-v8`
 - 2026-05-22 — doctor --fix run (v5.8.3)
 - 2026-05-22 — execution complete: masterplan-token-efficiency → v6.0.0
 - 2026-05-22 — hotfix: Codex sandbox worktree compatibility
+
+## 2026-06-10 — Adversarial architecture review of v8.1.0 control plane
+
+Read-only design review of masterplan v8.1.0. Key conclusion: the live surface has grown beyond the documented thin-shell model; the highest-risk assumptions are prompt-as-control-plane, disproportional single-operator concurrency/distribution machinery, and stale/dormant v7/qctl/GitHub surfaces that should be pruned or moved behind explicit support gates. No source changes made.

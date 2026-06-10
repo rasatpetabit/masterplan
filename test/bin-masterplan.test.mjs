@@ -668,8 +668,8 @@ test('event: appends one JSON line per call to the bundle\'s events.jsonl, accum
   assert.equal(r1.status, 0);
   assert.equal(JSON.parse(r1.stdout).path, ep); // events.jsonl is a sibling of state.yml
   run(['event', `--state=${p}`, '--type=gate_opened', '--ts=T2', '--data={"id":"plan_approval"}']);
-  // --summary is the AUDIT-SCANNED signal channel (lib/masterplan_session_audit.py's _event_text reads
-  // type/kind/event/message/detail/summary/notes/status — NOT note). The §2c whole-branch finish-gate
+  // --summary is the structured signal channel (v7's audit scanner — lib/masterplan_session_audit.py,
+  // deleted at the cutover — read type/kind/event/message/detail/summary/notes/status; NOT note). The §2c whole-branch finish-gate
   // emits its codex_review invocation here so the audit COUNTS it (suppressing
   // codex_review_configured_but_zero_invocations); --note remains the un-scanned free-text channel. Assert
   // both land as DISTINCT fields from one call.

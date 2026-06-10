@@ -47,10 +47,11 @@ critical_error: null
 gate evidence, host-budget yields, and background polling all stay
 `status: in-progress` with `stop_reason: question` or `scheduled_yield`. Set
 `status: blocked` only together with `stop_reason: critical_error` and a
-populated `critical_error` object. The `stop_kind` classifier in
-`lib/masterplan_session_audit.py` enforces this mapping; the resume controller
-that reads it back is documented in
-[bundle-resume.md](internals/bundle-resume.md).
+populated `critical_error` object. This mapping is a shell-enforced contract
+(the orchestrator's autonomy rules, `commands/masterplan.md` §2d) — the v7
+`stop_kind` classifier in `lib/masterplan_session_audit.py` that machine-checked
+it was deleted at the v8.2.0 cutover. The resume controller that reads the
+fields back is documented in [bundle-resume.md](internals/bundle-resume.md).
 
 ## Core Mechanisms Map
 

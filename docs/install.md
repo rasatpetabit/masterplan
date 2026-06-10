@@ -63,41 +63,6 @@ Full Codex-host behavior differences and suppression rules live in the Codex ent
 
 If dependency resolution reports `superpowers@claude-plugins-official` missing, refresh the official marketplace with `/plugin marketplace update claude-plugins-official`, or add it with `/plugin marketplace add anthropics/claude-plugins-official`, then retry the install.
 
-## Optional telemetry Stop hook
-
-`/masterplan` can append per-turn telemetry to `docs/masterplan/<slug>/telemetry.jsonl` and per-subagent cost records to `docs/masterplan/<slug>/subagents.jsonl`. These sidecars are local-only: the hook and command add ignore patterns to `.git/info/exclude` before writing, and this repository's `.gitignore` ignores its own generated telemetry.
-
-Install the Stop hook:
-
-```bash
-mkdir -p ~/.claude/hooks
-cp hooks/masterplan-telemetry.sh ~/.claude/hooks/
-chmod +x ~/.claude/hooks/masterplan-telemetry.sh
-```
-
-Wire it into `~/.claude/settings.json`:
-
-```json
-{
-  "hooks": {
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"$HOME/.claude/hooks/masterplan-telemetry.sh\"",
-            "timeout": 3,
-            "async": true
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-The hook bails silently outside `/masterplan`-managed plans. Per-plan opt-out: add `telemetry: off` to `state.yml`. Field-by-field signal definitions and `jq` queries: [`docs/design/telemetry-signals.md`](./design/telemetry-signals.md).
-
 ## Verifying the install
 
 After install:
