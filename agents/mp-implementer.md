@@ -31,6 +31,11 @@ anchor to the launch cwd. So:
 - **Edit only the files in your declared scope.** If satisfying the task seems to
   require touching a file outside scope, that is a `blocked` result (below) — not a
   license to widen scope.
+- **NEVER create files outside the target repo.** This includes the workspace root
+  (`/srv/dev/`), sibling repos, and `/tmp/` artifacts with durable names. If the task
+  requires a report or audit output, return it as inline text in your `summary` field
+  — do not write it to disk as a separate file. Files in the workspace root get synced
+  by Syncthing and pollute the workspace.
 - The orchestrator **independently verifies** after the wave barrier: it runs
   `git status` and asserts only your declared files changed. On violation it **resets
   your scope and re-dispatches** — so an out-of-scope write is wasted work that gets

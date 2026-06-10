@@ -58,8 +58,10 @@
 //                                                  codex-plugin-presence check SKIPs once both are off
 //   open-gate --state=PATH --id=X [--opened-at=T] -> CD-7 write: open the durable approval gate
 //   clear-gate --state=PATH                     -> CD-7 write: clear the gate
-//   set-active-run --state=PATH --wave=N [--scope=JSON] -> CD-7 write: phase-1 marker {wave, phase:'launching'
-//                                                  [, scope]}; --scope is the immutable F-SCOPE allow-set snapshot
+//   set-active-run --state=PATH --wave=N [--scope=JSON] [--baseline=JSON] [--ws-baseline=JSON]
+//                                                  -> CD-7 write: phase-1 marker {wave, phase:'launching'
+//                                                  [, scope, baseline, wsBaseline]}; --ws-baseline captures
+//                                                  workspace root entries at launch for post-wave drift detection
 //   set-active-run --state=PATH --kind=plan     -> CD-7 write: planning marker {kind:'plan', phase:'launching'}
 //   promote-active-run --state=PATH --run-id=X --task-id=Y -> phase-2: attach the launch handles
 //   clear-active-run --state=PATH               -> CD-7 write: clear the run marker
@@ -756,6 +758,21 @@ function main() {
         }
         run.baseline = baseline;
       }
+      // Optional --ws-baseline (JSON array): workspace root entries captured at LAUNCH.
+      // Post-wave, any new non-hidden entries in the workspace root (vs this baseline)
+      // are removed — agents must never create loose files in the workspace root.
+      if (flags['ws-baseline'] !== undefined) {
+        let wsBaseline;
+        try {
+          wsBaseline = JSON.parse(flags['ws-baseline']);
+        } catch (e) {
+          die(`set-active-run: --ws-baseline must be a JSON array of entries (${e.message})`);
+        }
+        if (!Array.isArray(wsBaseline)) {
+          die('set-active-run: --ws-baseline must be a JSON array of entries');
+        }
+        run.wsBaseline = wsBaseline;
+      }
       writeState(p, setActiveRun(loadForWrite(p), run));
       out({ active_run: run });
       break;
@@ -786,6 +803,7 @@ function main() {
       // post-completion-crash resume reads, so without this the finalize_run reconciliation would lose the
       // `before` set it needs to re-run verify-scope.
       if (Array.isArray(prev.baseline)) run.baseline = prev.baseline;
+      if (Array.isArray(prev.wsBaseline)) run.wsBaseline = prev.wsBaseline;
       writeState(p, setActiveRun(state, run));
       out({ active_run: run });
       break;
