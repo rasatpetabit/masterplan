@@ -806,12 +806,14 @@ For each target repo, the shell executes this sequence in order:
 
 | Responsibility | Owner |
 |---|---|
-| `qctl enqueue / wait / results` | **Shell** (L1 — can shell) |
-| sha256 artifact verification | **Shell** |
+| `qctl enqueue / wait / results` | **Shell** (L1 — can shell); `mp enqueue-key` decides reuse-vs-upsert before any enqueue |
+| sha256 artifact verification | **Shell** reads the bytes; **`mp artifact-verify`** checks the sha256 / parses the IMPL_DIGEST |
 | `git apply --index --check` (dry run, isolated index) | **Shell** |
 | `git apply --index` (per-task atomic apply) | **Shell** |
 | Per-task rollback (`git checkout -- <files>`) | **Shell** |
 | Serial-per-repo ordering | **Shell** |
+| producer status → task_status mapping | **`mp status-map`** (§6.2 lossless mapping) |
+| base-drift decision (apply vs requeue) | **`mp base-drift`** (shell passes recorded base + current HEAD) |
 | `mp verify-scope` (D6 — authoritative gate) | **Shell** calls `bin` |
 | `mp mark-task`, `mp record-qctl-job` (state writes) | **`bin`** (fs-only, sole state writer) |
 | `git commit` (wave-end, per repo) | **Shell** |

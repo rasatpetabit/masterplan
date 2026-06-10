@@ -149,7 +149,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, setWorktree, setWorktreeDisposition, setVerifiedSha, setCodexConfig, loadPlanTasks, buildSeedState, buildTasksFromPlanIndex, appendEvent, setCoordination } from '../lib/bundle.mjs';
-import { planWorktreeCreate, parseWorktreeList, classifyWorktrees, normalizeDisposition, dispositionAfterTeardown } from '../lib/worktree.mjs';
+import { planWorktreeCreate, parseWorktreeList, classifyWorktrees, normalizeDisposition, dispositionAfterTeardown, VALID_DISPOSITIONS as VALID_WORKTREE_DISPOSITION } from '../lib/worktree.mjs';
 import { collectDiskDirs, collectBundleRecords } from '../lib/worktree-fs.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
 import { acquireOwner, heartbeatOwner, releaseOwner } from '../lib/owner-fs.mjs';
@@ -212,12 +212,9 @@ const VALID_PHASE = ['brainstorm', 'plan', 'execute'];
 const VALID_STATUS = ['in-progress', 'archived'];
 const VALID_PLANNING_MODE = ['serial', 'parallel', 'auto'];
 
-// Valid worktree dispositions the shell may WRITE via set-worktree-disposition. The doctor's
-// worktree-integrity check SKIPs a bundle whose worktree was intentionally retired
-// (removed_after_merge | kept_by_user); 'active' is the seed/default and is included so a
-// premature retirement can be reverted via the SAME verb (no CD-7 hand-edit). Value-enum only —
-// the active→removed_after_merge transition is not ordered (a re-opened run may go back to active).
-const VALID_WORKTREE_DISPOSITION = ['active', 'removed_after_merge', 'kept_by_user'];
+// Worktree dispositions the shell may WRITE via set-worktree-disposition come from
+// lib/worktree.mjs VALID_DISPOSITIONS (imported above as VALID_WORKTREE_DISPOSITION —
+// single source; a premature retirement is reverted via the SAME verb, no CD-7 hand-edit).
 
 // Valid codex routing values the shell may WRITE via set-codex-config. The codex-plugin-presence doctor
 // SKIPs a bundle once routing is 'off' AND review is off; 'auto'/'on' keep codex engaged. Writes the
