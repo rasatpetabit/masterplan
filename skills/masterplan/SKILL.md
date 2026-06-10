@@ -3,6 +3,11 @@ name: masterplan
 description: "Generic/Codex entrypoint for masterplan: bare /masterplan, /masterplan:masterplan, $masterplan, or any verb. All verbs (full, brainstorm, plan, execute, finish, retro, import, doctor, status, validate, stats, clean, next, verbs, publish, follow) route through this single command — v8 ships NO per-verb /masterplan:<verb> skills (they shadowed Claude Code built-ins like /plan, /status, /doctor and added nothing over bare-command routing)."
 ---
 
+## Central agent policy
+
+AUQ, RTK, Serena, Hindsight, context-mode, and agent policy is centralized in `/srv/dev/agent-dispatch/AGENTS.md`. This skill must not duplicate or override dispatch rules. User-facing choices must use `ask_user_question` / `AskUserQuestion`, never prose questions.
+
+
 # Codex entrypoint for Superpowers Masterplan
 
 This skill is the Codex-visible entrypoint for Superpowers Masterplan. Its job is

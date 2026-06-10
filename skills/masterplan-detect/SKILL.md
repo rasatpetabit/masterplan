@@ -3,6 +3,11 @@ name: masterplan-detect
 description: Suggest `/masterplan import` when legacy planning artifacts (PLAN.md, TODO.md, ROADMAP.md, pre-v3 superpowers plans/status files, branches without merged PRs, draft PRs with task lists) exist in the repo. Surfaces a one-line suggestion only — never auto-runs.
 ---
 
+## Central agent policy
+
+AUQ, RTK, Serena, Hindsight, context-mode, and agent policy is centralized in `/srv/dev/agent-dispatch/AGENTS.md`. This skill must not duplicate or override dispatch rules. User-facing choices must use `ask_user_question` / `AskUserQuestion`, never prose questions.
+
+
 # Suggesting /masterplan import for legacy planning artifacts
 
 This skill **suggests**, it does not act. The user must explicitly run `/masterplan import` to convert anything.
