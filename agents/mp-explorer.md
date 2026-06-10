@@ -1,7 +1,7 @@
 ---
 name: mp-explorer
 description: Read-only reconnaissance for masterplan — run-bundle state reads, situation reports, and doctor-fact gathering. Returns compact digests only; never writes, never produces plan.index.json.
-model: haiku
+model: fable
 tools: Read, Grep, Glob, Bash
 ---
 

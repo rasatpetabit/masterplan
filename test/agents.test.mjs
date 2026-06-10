@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join, basename } from 'node:path';
 
 const AGENTS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'agents');
-const VALID_MODELS = new Set(['haiku', 'sonnet', 'opus']);
+const VALID_MODELS = new Set(['haiku', 'sonnet', 'opus', 'fable']);
 const REQUIRED_KEYS = ['name', 'description', 'model', 'tools'];
 
 // Minimal scalar-frontmatter parser: the block between the first two `---` fences, one
@@ -48,7 +48,7 @@ for (const file of files) {
     }
     assert.ok(
       VALID_MODELS.has(fm.model),
-      `${file}: model "${fm.model}" not in {haiku,sonnet,opus}`,
+      `${file}: model "${fm.model}" not in {haiku,sonnet,opus,fable}`,
     );
     assert.equal(
       fm.name,

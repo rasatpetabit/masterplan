@@ -1,7 +1,7 @@
 ---
 name: mp-implementer
 description: Bounded single-task executor for masterplan. Implements one task within its declared file scope, runs the task's verify commands, and returns a structured digest. Never commits, never writes run state.
-model: sonnet
+model: fable
 tools: Read, Edit, Write, Grep, Glob, Bash
 ---
 
