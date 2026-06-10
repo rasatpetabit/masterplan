@@ -1,6 +1,6 @@
 // test/qctl-apply-rollback.test.mjs — §10 'per-task rollback leaves siblings intact' binding test
 //
-// Reenacts the §6.5 documented isolated-index per-task apply sequence against a temp git repo:
+// Reenacts the documented isolated-index per-task apply sequence (docs/design/qctl-multi-repo-apply.md, formerly commands/masterplan.md §6.5) against a temp git repo:
 //   • one GOOD task with a clean patch (git apply --index --check passes → apply proceeds)
 //   • one CONFLICTING task whose patch fails --check (conflicts with existing content)
 //

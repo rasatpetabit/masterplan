@@ -650,8 +650,8 @@ behind `mp worktree plan|record|reconcile`; all git stays in this shell (CD-7).
 | `clean` | Archive (`mp set-status --state=<path> --status=archived`) / prune completed bundles. **PR-aware:** before archiving a bundle whose branch has an open PR, AUQ-**warn** (`bundle <slug>: branch has open PR #<n> — archive anyway?`) — warn, don't hard-block (archiving doesn't touch the PR; the user may still want the bundle gone). |
 | `next` | `mp decide` → describe the next action without executing it. **PR-aware:** if the branch has an open PR, append the **advisory** `↪ Open PR #<n> ready — merge on GitHub or via /masterplan finish` (advisory only — never a `decide` action, never a blocking AUQ; this is how "a PR to merge" enters the what-do-I-do-next routine without becoming a per-resume nag). |
 | `verbs` | Print the reserved-verb list above. |
-| `publish` | **Lead → GitHub coordination** (§7.1 — spec §7). **Bootstrap (default-enable, idempotent):** before the preflight, if `state.coordination` is unconfigured (no `contract_ref`/`integration_branch` — check `mp coord-status`) **and** a GitHub remote exists (`git remote get-url origin` resolves to a github.com URL) **and** `plan.index.json` is present, run `mp set-coord --state=<path> --bootstrap` to pin coordination defaults, then **early-fail gate** `mp coord-status --state=<path> --fail-if-unconfigured` (fails loud here if the plan has no `plan_hash` yet — `--bootstrap` is all-or-nothing and pins nothing in that case). Then preflight (`mp coord-status --fail-if-unpublishable`), then provision refs on first use (idempotent): synthesize/push the immutable contract ref pinned in `coordination.contract_ref` — `mp-coord/<slug>/<plan_hash>` where `<plan_hash>` is the **ref-safe** hash (the `sha256:` prefix stripped, since git refs forbid `:` — this is `computeCoordDefaults`/`refSafePlanHash` in `lib/github-coord.mjs`, the single source of truth both the bootstrap pin and this push read so they agree) (tier-1: `spec.md`/`plan.md`/`plan.index.json` only) via `git commit-tree` + `git update-ref` + `git push`; create the integration branch `mp-int/<slug>` from `base_sha` with the bundle dir excluded (`git commit-tree` on a tree that drops `docs/masterplan/<slug>/`) + `git push --no-verify`. Then compute unpublished tasks: read `coordination.issue_map` via `mp coord-status` (empty on first publish → all wave tasks are unpublished); for each unpublished task in the current wave: `gh issue create --title "T<id>: <title>" --body "$(mp gh-issue-body --task="$(jq -c '.tasks[]|select(.id==<id>)' plan.index.json)" --contract-ref=<ref> --integration-branch=<int-branch> --base-sha=<sha> --plan-hash=<hash> --wave=<N> --run-slug=<slug>)" --label "mp:run-<slug>,mp:wave-<N>,mp:open"` + `mp update-issue-map --task-id=<id> --issue=<n> --status=open --wave=<N> --state=<path>`. On unexpected duplicate (two issues, same key — `mp validate-claim`/gh-side `findDuplicates` backstop): fail loud, do NOT silently update. Pin `contract_ref` + `base_sha` into `state.coordination` **and record wave N as published** — `--mark-published` is what populates `published_waves`, which the next wave's `--fail-if-unpublishable` preflight gates on; omit it and the publish-advance guard silently no-ops — via `mp set-coord --state=<path> --wave=N --base-sha=<sha> --contract-ref=<ref> --integration-branch=<int-branch> --mark-published` + `mp event --state=<path> --type=wave_published --wave=N`. Commit the bundle. After follower PRs land, run `mp reconcile-integration --state=<path>`; for each `mark_done` action in the reconcile output, also call `mp update-issue-map --task-id=<id> --merge-sha=<sha> --status=merged --state=<path>`; surface reconcile actions via `AskUserQuestion` before applying. Publish wave N+1 only after wave N is fully merged (guard via `mp coord-status`). |
-| `follow` | **Follower session → claim + deliver one task** (§7.1 — spec §7). 1. Preflight (`mp coord-status --fail-if-unconfigured`). 2. **Claim**: `issues="$(gh issue list --label "mp:open,mp:run-<slug>" --json number,title,body,labels,assignees --limit 200)"` → `mp select-claimable --plan-deps="$(jq -c '[.tasks[]|{key:(.id|tostring),value:.deps}]|from_entries' plan.index.json)" --issues="$issues"` to pick one; `gh issue edit <n> --add-assignee @me`; `gh label add mp:claimed`; re-read (`gh issue view <n> --json assignees,labels`) + `actor="$(gh api user --jq .login)"` + `mp validate-claim --actor="$actor"` → won/lost. On lost settle: release (`gh issue edit <n> --remove-assignee @me`; `gh label remove mp:claimed`; `gh label add mp:open`) and retry. 3. **Build**: fetch contract (`git fetch origin refs/<contract_ref>:refs/<contract_ref>` where `<contract_ref>` is the ref carried in the claimed issue's `mp-coord-meta` block — `mp-coord/<slug>/<plan_hash>` with the `sha256:` prefix already stripped (`refSafePlanHash`), so the follower never re-derives and can't disagree with the lead's pushed ref); create ephemeral bundle outside tracked `docs/masterplan/` (e.g. `.git/mp-coord/<slug>/t<id>/state.yml`) scoped to the single claimed task; cut branch `mp/<slug>/t<id>` from `mp-int/<slug>` at `base_sha`; honor the implementer backend **descriptor the lead stamped at publish time** (lead-side `resolveImplementerBackend(task, config={ implementer: state.implementer ?? {} }, env)` — the lead holds the run's `state.implementer`; the follower does **not** carry lead state, so it reads the carried descriptor and never re-resolves from follower-local state, which would always be `{}` → falsely `{kind:'agent'}`). Today no descriptor is carried — threading it onto the issue/contract is deferred to binding time (design spec §2/§5) — so the follower runs the default `{kind:'agent'}` path → dispatch the existing `mp-implementer` agent (**identical to today**). Once binding lands and the carried descriptor is `{kind:'qctl'}` → **NotYetBound** (design spec §A4/§5): comment the blocker on the issue and surface the task as **blocked** — `gh issue edit <n> --remove-assignee @me`; `gh label remove mp:claimed`; `gh label add mp:blocked`; do **not** re-add `mp:open` (a NotYetBound task must leave the claimable queue, else the next follower re-claims it in a comment/release loop) — and **never** silently fall back to `mp-implementer`. Then D6 `verify-scope` + `verify_commands`. 4. **Deliver**: on verify pass — `gh pr create --base mp-int/<slug> --head mp/<slug>/t<id> --title "T<id>: <title>" --body "Closes #<n>"` + `gh label remove mp:claimed` + `gh label add mp:pr-open`. On verify failure — comment on the issue (`gh issue comment <n> --body "Verify failed: <summary>"`); release the claim (`gh label remove mp:claimed`; `gh label add mp:open`). Discard the ephemeral bundle — the lead's canonical state.yml is the source of truth. |
+| `publish` | **Lead → GitHub coordination** (spec §7 — **IMPLEMENTED-UNVERIFIED**, never dogfooded end-to-end). Full procedure: [`docs/coordination-playbook.md`](../docs/coordination-playbook.md) §publish — bootstrap defaults (`mp set-coord --bootstrap`) → preflight (`mp coord-status --fail-if-unpublishable`) → provision the `mp-coord/<slug>/<plan_hash>` contract ref + `mp-int/<slug>` integration branch → one `gh issue create` per unpublished wave task (`mp gh-issue-body`, `mp update-issue-map`) → `mp set-coord --mark-published` + commit. **Follow the playbook exactly — do not improvise the steps from memory.** |
+| `follow` | **Follower session → claim + deliver one task** (spec §7 — same playbook, same caveat). Full procedure: [`docs/coordination-playbook.md`](../docs/coordination-playbook.md) §follow — preflight → claim (`mp select-claimable`, assign, `mp validate-claim` won/lost) → build on branch `mp/<slug>/t<id>` from the pinned contract ref (ephemeral bundle outside `docs/masterplan/`) → D6 `verify-scope` + `verify_commands` → PR to `mp-int/<slug>` on pass, release the claim on fail. |
 
 **PR probe (`status` · `next` · `clean` — report-only, never auto-merge).** These three verbs check
 for an open PR on the run's branch. Run **shell-side** (the established split — the shell owns git/`gh`,
@@ -719,101 +719,8 @@ then closes with this AUQ at a stop-set gate. (The §0 version banner is an *inv
 obligation — first, before anything — not part of turn-close.) That sequence is the only ceremony
 that survives.
 
-## 6.5 — Multi-repo apply/verify/commit orchestration (the shell's job, not `bin`'s)
+## 6.5 — Multi-repo apply (qctl backend) — flag-off spec, relocated
 
-> **Architectural note:** `bin` is fs-only; L2 (`execute.workflow.js`) has no process/fs/git access.
-> Only **this shell** (L1) can run `git` and shell commands. Multi-repo apply, verify, and commit are
-> therefore **entirely L1's responsibility** — never delegated to `bin` subcommands or the L2 engine.
-
-The program spans three repos: `petabit-skynet` (fabric + bundle home), `/srv/dev/masterplan`
-(the binding seam), and `petabit-sysadmin` (the P1 target). D6 scope-verify and commit are
-single-repo operations, so the multi-repo sequence is decomposed per repo, applied **serial-per-repo**,
-and committed independently. **No cross-repo atomicity is claimed**: each repo's changes commit on
-their own; a multi-repo task is decomposed into per-repo subtasks each carrying their own `target_repo`
-and `base` SHA. If true cross-repo atomicity is ever required it becomes its own design — flagged, not faked.
-
-### Per-repo apply sequence
-
-For each target repo, the shell executes this sequence in order:
-
-1. **Pull the artifact by reference.** `qctl results --job <id> --patch --out <file> --print-sha` —
-   the patch arrives as a file on disk, never as LLM text (a patch transported through an LLM context
-   can be corrupted or truncated). The returned `patch_sha256` is the integrity anchor.
-
-2. **sha256 verify before any mutation.** Compute `sha256(<file>)` and compare against the declared
-   `patch_sha256` from the job result. On mismatch: reject immediately — do **not** attempt to apply a
-   patch whose integrity cannot be confirmed. Surface the breach and requeue.
-
-3. **Isolated-index `--check` before any mutation.** Run `git apply --index --check <file>` against
-   an **isolated** index/worktree — either a `GIT_INDEX_FILE=<tmp>` overlay or a detached linked
-   worktree — so that a failing check leaves neither the working tree nor the shared index in a
-   partially-mutated state. This is a read-only dry run: if it exits non-zero the patch conflicts with
-   the current tree or has already drifted from its `base` SHA.
-
-4. **Base-drift check — deterministic requeue, never force-apply.** If the `--check` fails because
-   `HEAD` has drifted from the patch's declared `base` (e.g. a sibling task already committed
-   in-scope edits to this repo), the task is **requeued** with the updated base SHA — `mp
-   record-qctl-job` updates the persisted `base` so the next enqueue uses the correct parent. A
-   force-apply against a drifted tree is never attempted: apply failures are deterministic, not
-   transient, and a drifted base means the worker's diff context is stale.
-
-5. **Per-task atomic apply.** Only after a clean `--check`: `git apply --index <file>` applies the
-   patch into the index (staged, not yet committed). Each task's patch is applied and verified in
-   isolation before the next task's patch is touched.
-
-6. **Per-task D6 verify-scope.** After the isolated apply, `mp verify-scope` re-checks
-   `git diff --cached ⊆ task.files ∧ verify_commands rc == 0` in the **target repo**. The
-   fabric green gate is advisory; masterplan D6 is authoritative — an out-of-scope staged change or a
-   failing verify command causes an immediate rollback of this task (step 7) regardless of the
-   producer's reported `status`.
-
-7. **Rollback on failure.** If `--check`, sha256 verify, D6 scope, or `verify_commands` fails for a
-   task: `git checkout -- <task.files>` (and `git clean -fd -- <task.files>` if new files were
-   staged) in the **target repo** to reset only that task's declared paths. The task is marked
-   `pending` (→ idempotent re-dispatch via `recover_and_redispatch`). **Sibling tasks whose patches
-   already passed and were staged are left intact** — rollback is scoped to the failing task's
-   declared files, not to the whole wave or the whole index. This is the §10 'per-task rollback
-   leaves siblings intact' guarantee.
-
-8. **Serial-per-repo merge.** Across a wave, all tasks targeting the same repo are applied
-   **serially** in wave order (not in parallel). Serial ordering makes base-drift the exception —
-   once task N's patch is staged, task N+1's `--check` sees the N-already-applied tree, which is
-   exactly the state task N+1's `base` was computed against if N and N+1 were wave-sequential. Waves
-   are **homogeneous** in v1: the planner groups qctl-eligible tasks into their own waves, separate
-   from agent-backed waves, so there is no mixed-wave reconciliation to manage.
-
-9. **Commit once per repo after all tasks pass.** When all tasks targeting a given repo have passed
-   their per-task verify and are staged, commit `state.yml` AND the wave's in-scope file edits
-   together in that repo (CD-7: state leads git; a crash before commit re-derives from the
-   marked-`done` state on resume). Different repos commit independently — the `petabit-skynet`,
-   `/srv/dev/masterplan`, and `petabit-sysadmin` commits are separate git operations with no shared
-   transaction.
-
-### Crash recovery
-
-`mp` persists the durable `job_id` and `base` SHA for each in-flight qctl task. On resume:
-
-- Re-attach to the job (`qctl status`/`wait`) instead of re-enqueuing — `enqueue` is key-idempotent
-  (upserts on `hash(run_slug, wave, task_id, base, scope)`), so a retry never creates a duplicate GPU run.
-- If the artifact was already pulled and sha256-verified (recorded in state), skip the pull and
-  re-run from step 3.
-- If the apply was attempted but the commit did not land (crash between apply and commit): the staged
-  index state may be partially applied — run the rollback (step 7) for each task that lacks a
-  `done` marker, then re-apply from step 3. The apply sequence is idempotent for the same `base` +
-  patch bytes combination.
-
-### Summary: what the shell does, what `bin` does
-
-| Responsibility | Owner |
-|---|---|
-| `qctl enqueue / wait / results` | **Shell** (L1 — can shell); `mp enqueue-key` decides reuse-vs-upsert before any enqueue |
-| sha256 artifact verification | **Shell** reads the bytes; **`mp artifact-verify`** checks the sha256 / parses the IMPL_DIGEST |
-| `git apply --index --check` (dry run, isolated index) | **Shell** |
-| `git apply --index` (per-task atomic apply) | **Shell** |
-| Per-task rollback (`git checkout -- <files>`) | **Shell** |
-| Serial-per-repo ordering | **Shell** |
-| producer status → task_status mapping | **`mp status-map`** (§6.2 lossless mapping) |
-| base-drift decision (apply vs requeue) | **`mp base-drift`** (shell passes recorded base + current HEAD) |
-| `mp verify-scope` (D6 — authoritative gate) | **Shell** calls `bin` |
-| `mp mark-task`, `mp record-qctl-job` (state writes) | **`bin`** (fs-only, sole state writer) |
-| `git commit` (wave-end, per repo) | **Shell** |
+The qctl GPU-worker implementer backend's multi-repo apply/verify/commit procedure is a **spec for a
+feature that is OFF** (`state.implementer.qctl.enabled` — nothing sets it yet). The full sequence
+lives in `docs/design/qctl-multi-repo-apply.md`; do not execute any of it unless that flag is true.
