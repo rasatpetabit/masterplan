@@ -1633,7 +1633,20 @@ function main() {
       } else if (!flags.reconcile) {
         die('record-result: pass --result-file/--result, or --reconcile for the crash-reconcile path');
       }
-      const { self, now } = resolveOwnerSelf(flags, statePath);
+      // Guard D identity is resolved ONLY when the bundle hasn't opted out (mirror of the
+      // `continue` case below) — resolveOwnerSelf dies without a session id, and an
+      // owner_lock=off bundle legitimately has none (Codex P2, 2026-06-10).
+      let lockOff = false;
+      try {
+        lockOff = readState(statePath)?.concurrency?.owner_lock === 'off';
+      } catch {
+        /* unreadable — recordWaveResult fails loudly itself; assume lock on */
+      }
+      let self = null;
+      let now = Number.isFinite(Number(flags.now)) ? Number(flags.now) : Date.now();
+      if (!lockOff) {
+        ({ self, now } = resolveOwnerSelf(flags, statePath));
+      }
       let res;
       try {
         res = recordWaveResult({

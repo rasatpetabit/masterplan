@@ -320,3 +320,25 @@ test('qctl digest: stays pending (not a failure), surfaced with its backend desc
   assert.equal(res.cleared, false, 'qctl task is still pending — marker stays for the L1 qctl path');
   assert.deepEqual(readState(fx.statePath).tasks.map((t) => t.status), ['done', 'pending']);
 });
+
+test('bin record-result honors owner_lock=off: no session id required (Codex P2 regression)', () => {
+  // The bin glue must NOT resolve a Guard D identity before recordWaveResult's own
+  // owner_lock check — a Codex/single-agent host has no CLAUDE_CODE_SESSION_ID at all.
+  const fx = makeFixture({
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    activeRun: { wave: 1, run_id: 'r1', task_id: 'wf1', scope: ['src/a.txt'], baseline: [] },
+  });
+  writeState(fx.statePath, { ...readState(fx.statePath), concurrency: { owner_lock: 'off' } });
+  write(fx.WT, 'src/a.txt', 'A\n');
+  const BIN = path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'bin', 'masterplan.mjs');
+  const resultPath = path.join(fx.bundleDir, 'r.json');
+  fs.writeFileSync(resultPath, JSON.stringify({ wave: 1, baseline: [], tasks: [digest(1, 'done')] }));
+  const env = { ...process.env };
+  delete env.CLAUDE_CODE_SESSION_ID;
+  const stdout = String(execFileSync('node', [BIN, 'record-result',
+    `--state=${fx.statePath}`, `--result-file=${resultPath}`], { encoding: 'utf8', env }));
+  const res = JSON.parse(stdout.slice(stdout.indexOf('{')));
+  assert.equal(res.outcome, 'recorded');
+  assert.deepEqual(res.recorded, [1]);
+  assert.equal(readState(fx.statePath).tasks[0].status, 'done');
+});
