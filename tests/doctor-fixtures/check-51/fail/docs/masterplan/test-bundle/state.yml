@@ -1,5 +1,0 @@
-schema_version: "5.1"
-slug: test-bundle
-
-artifacts:
-  events: tests/doctor-fixtures/check-51/fail/docs/masterplan/test-bundle/events.jsonl

@@ -1,5 +1,0 @@
-slug: p1
-codex_routing: auto
-
-artifacts:
-  events: tests/doctor-fixtures/check-20/fail-routing-events-no-cache/docs/masterplan/p1/events.jsonl

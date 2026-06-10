@@ -1,3 +1,0 @@
-WARN
-scalar exceeds 200 chars
-Check #32: WARN

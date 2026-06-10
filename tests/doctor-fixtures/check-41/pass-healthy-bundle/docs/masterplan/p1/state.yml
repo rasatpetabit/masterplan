@@ -1,9 +1,0 @@
-slug: p1
-status: in-progress
-phase: building
-codex_routing: auto
-codex_review: auto
-complexity: medium
-
-artifacts:
-  events: tests/doctor-fixtures/check-41/pass-healthy-bundle/docs/masterplan/p1/events.jsonl

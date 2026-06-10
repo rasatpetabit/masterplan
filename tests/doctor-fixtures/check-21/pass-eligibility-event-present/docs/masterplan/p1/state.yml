@@ -1,5 +1,0 @@
-slug: p1
-codex_routing: auto
-
-artifacts:
-  events: tests/doctor-fixtures/check-21/pass-eligibility-event-present/docs/masterplan/p1/events.jsonl

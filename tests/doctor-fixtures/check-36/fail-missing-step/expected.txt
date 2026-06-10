@@ -1,2 +1,0 @@
-parts/step-a.md missing
-Check #36: WARN

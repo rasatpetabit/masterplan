@@ -1,2 +1,0 @@
-plan_hash drift
-Check #34: WARN

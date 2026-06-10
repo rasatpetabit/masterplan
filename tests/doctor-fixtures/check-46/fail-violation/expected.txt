@@ -1,2 +1,0 @@
-WARN parts/step-0.md
-Check #46: WARN

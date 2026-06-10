@@ -1,3 +1,0 @@
-Check #39: PASS
-auth_mode=chatgpt
-refresh_token present

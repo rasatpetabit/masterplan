@@ -1,4 +1,0 @@
-slug: p1
-
-artifacts:
-  events: tests/doctor-fixtures/check-43/fail-uncovered-completions/docs/masterplan/p1/events.jsonl

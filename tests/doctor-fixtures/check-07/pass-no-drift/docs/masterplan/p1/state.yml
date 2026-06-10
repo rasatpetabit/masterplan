@@ -1,5 +1,0 @@
-slug: p1
-
-artifacts:
-  plan: tests/doctor-fixtures/check-07/pass-no-drift/docs/masterplan/p1/plan.md
-  events: tests/doctor-fixtures/check-07/pass-no-drift/docs/masterplan/p1/events.jsonl

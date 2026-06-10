@@ -1,3 +1,0 @@
-INFO p1: codex_routing=auto; ping returned ok
-zero routing→[codex] events
-Check #41: WARN
