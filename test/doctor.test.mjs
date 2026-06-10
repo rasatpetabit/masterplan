@@ -13,8 +13,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
-import { runChecks, discoverChecks } from '../bin/doctor.mjs';
-import { check as scalarCap } from '../lib/doctor/scalar-cap.mjs';
+import { runChecks, runFixes, parseArgs, discoverChecks } from '../bin/doctor.mjs';
+import { check as scalarCap, fix as scalarCapFix } from '../lib/doctor/scalar-cap.mjs';
 import { check as worktreeIntegrity } from '../lib/doctor/worktree-integrity.mjs';
 import { check as codexAuth } from '../lib/doctor/codex-auth.mjs';
 import { check as stateSchema } from '../lib/doctor/state-schema.mjs';
@@ -27,6 +27,7 @@ import { check as pluginRegistryDrift } from '../lib/doctor/plugin-registry-drif
 import { check as planIndexSchema } from '../lib/doctor/plan-index-schema.mjs';
 import { check as coordDrift } from '../lib/doctor/coord-drift.mjs';
 import { check as ownerSentinel } from '../lib/doctor/owner-sentinel.mjs';
+import { check as planDocCruft } from '../lib/doctor/plan-doc-cruft.mjs';
 import { acquireOwner } from '../lib/owner-fs.mjs';
 import { buildOwnerIdentity, ownerLockPath, ownerHeartbeatPath } from '../lib/owner.mjs';
 
@@ -99,6 +100,36 @@ test('dispatcher: discovers the lib/doctor check modules', async () => {
   }
 });
 
+test('dispatcher: parseArgs accepts --fix before or after optional repo root', () => {
+  const cwd = process.cwd();
+  assert.deepEqual(parseArgs(['--fix']), { repoRoot: cwd, fix: true });
+  assert.deepEqual(parseArgs(['/repo', '--fix']), { repoRoot: '/repo', fix: true });
+  assert.deepEqual(parseArgs(['--fix', '/repo']), { repoRoot: '/repo', fix: true });
+  assert.deepEqual(parseArgs(['/repo']), { repoRoot: '/repo', fix: false });
+});
+
+test('dispatcher: parseArgs rejects unknown flags and multiple repo roots', () => {
+  assert.throws(() => parseArgs(['--wat']), /unknown option/);
+  assert.throws(() => parseArgs(['/a', '/b']), /multiple repo roots/);
+});
+
+test('dispatcher: runFixes calls optional handlers and crash-isolates thrown fixes', () => {
+  const findings = [
+    { id: 'safe', severity: 'WARN', summary: 'w', fix: 'f' },
+    { id: 'boom', severity: 'WARN', summary: 'w', fix: 'f' },
+    { id: 'nofix', severity: 'WARN', summary: 'w', fix: 'f' },
+  ];
+  const repairs = runFixes([
+    { name: 'safe', fix: (_repo, fsIn) => [{ id: 'safe', summary: `saw ${fsIn.length}` }] },
+    { name: 'boom', fix: () => { throw new Error('nope'); } },
+    { name: 'nofix', fix: null },
+  ], '/repo', findings);
+  assert.deepEqual(repairs, [
+    { id: 'safe', status: 'FIXED', summary: 'saw 1' },
+    { id: 'boom', status: 'ERROR', summary: 'fix threw: nope' },
+  ]);
+});
+
 // ---- scalar-cap (pure-bundle) ------------------------------------------------
 
 test('scalar-cap: fixtures match dir-prefix severity', async (t) => {
@@ -116,6 +147,39 @@ test('scalar-cap: SKIP when there are no run bundles', () => {
   const findings = scalarCap(tmp);
   assertFindingShape(findings);
   assert.equal(maxSeverity(findings), 'SKIP');
+});
+
+test('scalar-cap: fix moves overlong flat string scalars to a bundle-local overflow file', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-scalar-fix-'));
+  const bundleDir = path.join(tmp, 'docs', 'masterplan', 'p1');
+  fs.mkdirSync(bundleDir, { recursive: true });
+  const longValue = '"' + 'x'.repeat(240) + '"';
+  fs.writeFileSync(path.join(bundleDir, 'state.yml'), `slug: p1\ntopic: ${longValue}\nstatus: in-progress\n`, 'utf8');
+
+  assert.equal(maxSeverity(scalarCap(tmp)), 'WARN');
+  const repairs = scalarCapFix(tmp);
+  assert.equal(repairs.length, 1, JSON.stringify(repairs));
+  assert.match(repairs[0].summary, /state-overflow\.md L\d+/);
+
+  const state = fs.readFileSync(path.join(bundleDir, 'state.yml'), 'utf8');
+  assert.match(state, /topic: "\*overflow at state-overflow\.md L\d+\*"/);
+  const overflow = fs.readFileSync(path.join(bundleDir, 'state-overflow.md'), 'utf8');
+  assert.match(overflow, new RegExp(`topic: ${longValue}`));
+  assert.equal(maxSeverity(scalarCap(tmp)), 'PASS');
+  assert.deepEqual(scalarCapFix(tmp), [], 'second fix run is idempotent');
+});
+
+test('scalar-cap: fix leaves overlong structured fields untouched', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-scalar-structured-'));
+  const bundleDir = path.join(tmp, 'docs', 'masterplan', 'p1');
+  fs.mkdirSync(bundleDir, { recursive: true });
+  const tasks = JSON.stringify([{ id: 1, status: 'done', files: ['x'.repeat(240)] }]);
+  fs.writeFileSync(path.join(bundleDir, 'state.yml'), `slug: p1\ntasks: ${tasks}\nstatus: in-progress\n`, 'utf8');
+
+  assert.equal(maxSeverity(scalarCap(tmp)), 'WARN');
+  assert.deepEqual(scalarCapFix(tmp), []);
+  assert.equal(fs.existsSync(path.join(bundleDir, 'state-overflow.md')), false);
+  assert.match(fs.readFileSync(path.join(bundleDir, 'state.yml'), 'utf8'), /^tasks: \[/m);
 });
 
 // ---- worktree-integrity (git via injected gitExec) ---------------------------
@@ -825,18 +889,92 @@ test('owner-sentinel: WARN for an orphan heartbeat file with no lock', () => {
   assert.match(findings.find((f) => f.severity === 'WARN').summary, /orphan/);
 });
 
-// ---- dispatcher: all 13 modules auto-discovered ----------------------------
+// ---- dispatcher: all 14 modules auto-discovered ----------------------------
 
-test('dispatcher: discovers all 13 check modules', async () => {
+test('dispatcher: discovers all 14 check modules', async () => {
   const checks = await discoverChecks(path.join(here, '..', 'lib', 'doctor'));
   const names = checks.map((c) => c.name);
   const expected = [
     'codex-auth', 'codex-plugin-presence', 'coord-drift', 'index-staleness', 'legacy-bundle',
-    'owner-sentinel', 'plan-index-schema', 'plugin-registry-drift', 'scalar-cap', 'stale-codex-task',
-    'stale-lock', 'state-schema', 'worktree-integrity',
+    'owner-sentinel', 'plan-doc-cruft', 'plan-index-schema', 'plugin-registry-drift', 'scalar-cap',
+    'stale-codex-task', 'stale-lock', 'state-schema', 'worktree-integrity',
   ];
   for (const n of expected) {
     assert.ok(names.includes(n), `discovered ${n}`);
   }
   assert.equal(names.length, expected.length, `expected ${expected.length} checks, found ${names.length}: ${names.join(', ')}`);
+});
+
+// ---- plan-doc-cruft (#14, WARN) ------------------------------------------------
+
+test('plan-doc-cruft: fixtures match dir-prefix severity', async (t) => {
+  for (const sc of scenarios('plan-doc-cruft')) {
+    await t.test(sc, () => {
+      const findings = planDocCruft(path.join(FX, 'plan-doc-cruft', sc));
+      assertFindingShape(findings);
+      assert.equal(maxSeverity(findings), expectedSeverity(sc), JSON.stringify(findings));
+    });
+  }
+});
+
+test('plan-doc-cruft: SKIP when no runs dir at all', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-pdc-'));
+  const findings = planDocCruft(tmp);
+  assertFindingShape(findings);
+  assert.equal(maxSeverity(findings), 'SKIP');
+});
+
+test('plan-doc-cruft: WARN names the offending file, slug, and signal; fix points at the finish gate', () => {
+  const bySignal = {
+    'warn-slug-in-filename': /t9-cleanup \(filename\)/,
+    'warn-plan-path-reference': /t9-cleanup \(bundle-path reference\)/,
+    'warn-slug-in-heading': /t9-cleanup \(heading\)/,
+  };
+  for (const [sc, re] of Object.entries(bySignal)) {
+    const findings = planDocCruft(path.join(FX, 'plan-doc-cruft', sc));
+    const warns = findings.filter((f) => f.severity === 'WARN');
+    assert.equal(warns.length, 1, `${sc}: exactly one offending file — ${JSON.stringify(findings)}`);
+    assert.match(warns[0].summary, re, sc);
+    assert.match(warns[0].fix, /docs_normalize/, `${sc}: fix routes future runs at the finish gate`);
+  }
+});
+
+test('plan-doc-cruft: slug matches whole tokens only (no substring false positives)', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-pdc-tok-'));
+  fs.mkdirSync(path.join(tmp, 'docs', 'masterplan', 't9'), { recursive: true });
+  fs.writeFileSync(path.join(tmp, 'docs', 'masterplan', 't9', 'state.yml'),
+    'schema_version: 6\nslug: t9\nstatus: archived\nphase: building\n');
+  // "t9x" and "at9" embed the slug but are not whole tokens; "t9-design.md" IS (hyphen boundary).
+  fs.writeFileSync(path.join(tmp, 'docs', 'at9x-notes.md'), '# notes\n\nmentions t9x and at9 only.\n');
+  const clean = planDocCruft(tmp);
+  assert.equal(maxSeverity(clean), 'PASS', JSON.stringify(clean));
+  fs.writeFileSync(path.join(tmp, 'docs', 't9-design.md'), '# design\n');
+  const hit = planDocCruft(tmp);
+  assert.equal(maxSeverity(hit), 'WARN', JSON.stringify(hit));
+  const warns = hit.filter((f) => f.severity === 'WARN');
+  assert.equal(warns.length, 1);
+  assert.match(warns[0].summary, /t9-design\.md/);
+});
+
+test('plan-doc-cruft: single-word slugs never match headings (hyphenated-only signal)', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-pdc-head-'));
+  fs.mkdirSync(path.join(tmp, 'docs', 'masterplan', 'cleanup'), { recursive: true });
+  fs.writeFileSync(path.join(tmp, 'docs', 'masterplan', 'cleanup', 'state.yml'),
+    'schema_version: 6\nslug: cleanup\nstatus: archived\nphase: building\n');
+  fs.writeFileSync(path.join(tmp, 'docs', 'guide.md'), '# Repo cleanup guide\n\nProse about cleanup.\n');
+  const findings = planDocCruft(tmp);
+  assert.equal(maxSeverity(findings), 'PASS', JSON.stringify(findings));
+});
+
+test('plan-doc-cruft: dot-directories and node_modules are never scanned', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-pdc-dot-'));
+  fs.mkdirSync(path.join(tmp, 'docs', 'masterplan', 't9-cleanup'), { recursive: true });
+  fs.writeFileSync(path.join(tmp, 'docs', 'masterplan', 't9-cleanup', 'state.yml'),
+    'schema_version: 6\nslug: t9-cleanup\nstatus: archived\nphase: building\n');
+  for (const dir of ['.claude/plans', '.worktrees/x/docs', 'node_modules/pkg']) {
+    fs.mkdirSync(path.join(tmp, dir), { recursive: true });
+    fs.writeFileSync(path.join(tmp, dir, 't9-cleanup-design.md'), '# t9-cleanup\n');
+  }
+  const findings = planDocCruft(tmp);
+  assert.equal(maxSeverity(findings), 'PASS', JSON.stringify(findings));
 });

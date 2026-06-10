@@ -412,6 +412,139 @@ test('gate-resolution and archive each commit the bundle in MAIN (split-commit d
   assert.ok(!shown.includes('.owner'), 'owner sentinels never committed');
 });
 
+// Commit a markdown doc on the WT branch so the docs_normalize offer has a candidate.
+function addDoc(fx, rel = 'docs/plans/t24-design.md', content = '# plan t24\n') {
+  write(fx.WT, rel, content);
+  git(fx.WT, 'add', '.');
+  git(fx.WT, 'commit', '-q', '-m', 'docs');
+}
+
+test('docs_normalize: offer fires on branch-touched markdown; bare re-entry re-renders with recomputed candidates', () => {
+  const fx = makeFixture();
+  addDoc(fx);
+  let op = fx.step();
+  assert.equal(op.op, 'ask');
+  assert.equal(op.gate, 'docs_normalize');
+  assert.deepEqual(op.candidates, ['docs/plans/t24-design.md']);
+  assert.equal(op.base, 'main');
+  assert.equal(op.head, git(fx.WT, 'rev-parse', 'HEAD'));
+  assert.equal(readState(fx.statePath).pending_gate?.id, 'docs_normalize');
+  // bare re-entry: the durable gate re-renders; candidates recomputed, never persisted
+  op = fx.step();
+  assert.equal(op.gate, 'docs_normalize');
+  assert.deepEqual(op.candidates, ['docs/plans/t24-design.md']);
+  assert.equal(readState(fx.statePath).pending_gate.candidates, undefined,
+    'gate payload stays minimal — the list is recomputed, not stored (scalar-cap discipline)');
+});
+
+test('docs_normalize: --docs-normalized writes the durable event, clears the gate, verification covers the FINAL tree', () => {
+  const fx = makeFixture();
+  addDoc(fx);
+  assert.equal(fx.step().gate, 'docs_normalize');
+  // the shell's LLM half: fold the plan doc into a category doc in WT and commit
+  fs.rmSync(path.join(fx.WT, 'docs/plans/t24-design.md'));
+  write(fx.WT, 'docs/design.md', '# design\n');
+  git(fx.WT, 'add', '-A');
+  git(fx.WT, 'commit', '-q', '-m', 'normalize docs');
+  const newHead = git(fx.WT, 'rev-parse', 'HEAD');
+  const op = fx.step({ docs: 'normalized', docsCount: 1 });
+  assert.equal(op.op, 'run_verify');
+  assert.equal(op.head, newHead, 'the normalization commit lands BEFORE verified_sha is recorded');
+  assert.equal(readState(fx.statePath).pending_gate, null);
+  const ev = readEvents(fx.bundleDir).find((e) => e.type === 'docs_normalize');
+  assert.match(ev.summary, /1 file\(s\) folded/);
+  assert.equal(ev.data.sha, newHead);
+  assert.equal(ev.data.count, 1);
+  // the presence-keyed event guard: a re-walk never re-offers (HEAD moved, diff is NOT self-clearing)
+  assert.equal(fx.step().op, 'run_verify');
+});
+
+test('docs_normalize: --docs-skipped records the durable skip event and never re-offers', () => {
+  const fx = makeFixture();
+  addDoc(fx);
+  assert.equal(fx.step().gate, 'docs_normalize');
+  const op = fx.step({ docs: 'skipped', docsReason: 'keep plan layout' });
+  assert.equal(op.op, 'run_verify');
+  assert.equal(readState(fx.statePath).pending_gate, null);
+  const ev = readEvents(fx.bundleDir).find((e) => e.type === 'docs_normalize_skipped');
+  assert.match(ev.summary, /skipped — keep plan layout/);
+  assert.equal(fx.step().op, 'run_verify', 'skip is durable — no re-offer on re-walk');
+});
+
+test('docs_normalize: silent (no gate, NO event) for zero candidates, non-md changes, bundle-dir-only docs', () => {
+  // base fixture: the branch's only change is src/a.txt (non-md) → straight to verification
+  const fx = makeFixture();
+  assert.equal(fx.step().op, 'run_verify');
+  assert.equal(readState(fx.statePath).pending_gate, null);
+  assert.equal(readEvents(fx.bundleDir).filter((e) => String(e.type).startsWith('docs_normalize')).length, 0,
+    'a non-offer is recomputed deterministically — nothing to make durable');
+  // bundle-dir markdown is the archived audit record — filtered out, still no offer
+  const fx2 = makeFixture({ slug: 't24b' });
+  addDoc(fx2, 'docs/masterplan/t24b/notes.md', 'bundle-internal\n');
+  assert.equal(fx2.step().op, 'run_verify');
+  assert.equal(readState(fx2.statePath).pending_gate, null);
+});
+
+test('docs_normalize: state.docs.normalize off suppresses; --docs-suppressed is per-invocation only', () => {
+  const fx = makeFixture({ state: { docs: { normalize: 'off' } } });
+  addDoc(fx);
+  assert.equal(fx.step().op, 'run_verify');
+  const fx2 = makeFixture({ slug: 't24sup' });
+  addDoc(fx2);
+  assert.equal(fx2.step({ docsSuppressed: true }).op, 'run_verify');
+  // one-invocation suppression: an unsuppressed re-entry still offers (no event was written)
+  assert.equal(fx2.step().gate, 'docs_normalize');
+});
+
+test('docs_normalize: undetectable base → silent skip (fail-soft, mirrors the codex row)', () => {
+  const fx = makeFixture();
+  addDoc(fx);
+  git(fx.MAIN, 'branch', '-m', 'main', 'trunk');
+  assert.equal(fx.step().op, 'run_verify');
+  assert.equal(readState(fx.statePath).pending_gate, null);
+});
+
+test('docs_normalize: replayed answer after a crash between event append and clear-gate is idempotent', () => {
+  const fx = makeFixture();
+  addDoc(fx);
+  assert.equal(fx.step().gate, 'docs_normalize');
+  assert.equal(fx.step({ docs: 'skipped' }).op, 'run_verify');
+  // simulate the crash window: the event landed but clearGate never ran → gate re-opened
+  writeState(fx.statePath, { ...readState(fx.statePath), pending_gate: { id: 'docs_normalize', opened_at: 2000 } });
+  assert.equal(fx.step({ docs: 'skipped' }).op, 'run_verify');
+  assert.equal(readEvents(fx.bundleDir).filter((e) => e.type === 'docs_normalize_skipped').length, 1,
+    'the presence guard blocks a duplicate event');
+  assert.equal(readState(fx.statePath).pending_gate, null, 'the replay still clears the gate');
+});
+
+test('docs_normalize: a dirty task-scope .md is dirty-committed FIRST and appears in the candidates', () => {
+  const fx = makeFixture({
+    state: { tasks: [{ id: 1, status: 'done', wave: 1, files: ['src/a.txt', 'docs/notes.md'] }] },
+  });
+  addDoc(fx, 'docs/notes.md', 'v1\n'); // committed on the branch…
+  write(fx.WT, 'docs/notes.md', 'v2 — dirty edit\n'); // …then modified, uncommitted at finish
+  const op = fx.step();
+  assert.equal(op.gate, 'docs_normalize');
+  assert.ok(op.candidates.includes('docs/notes.md'), 'step 4 dirty-commit precedes candidate detection');
+  assert.equal(op.head, git(fx.WT, 'rev-parse', 'HEAD'));
+  assert.equal(git(fx.WT, 'status', '--porcelain'), '', 'the .md was committed, not left dirty');
+});
+
+test('docs_normalize: full flow — normalize then verify → retro → branch_finish → archived', () => {
+  const fx = makeFixture();
+  addDoc(fx);
+  assert.equal(fx.step().gate, 'docs_normalize');
+  let op = fx.step({ docs: 'normalized', docsCount: 1 });
+  assert.equal(op.op, 'run_verify');
+  op = fx.step({ verify: 'pass' });
+  assert.equal(op.op, 'write_retro');
+  fs.writeFileSync(op.path, '# retro\n');
+  op = fx.step();
+  assert.equal(op.gate, 'branch_finish');
+  assert.equal(fx.step({ choice: 'merge' }).reason, 'archived');
+  assert.equal(readState(fx.statePath).status, 'archived');
+});
+
 test('full-teardown crash replay (Codex r6 P2): branch already deleted — merge is skipped, replay retires', () => {
   const fx = makeFixture();
   walkToGate(fx);

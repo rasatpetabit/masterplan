@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [9.1.0] — 2026-06-10 — finish-time docs normalization + doctor autofix
+
+### Added
+
+- **`doctor --fix` autofix pass.** Check modules may export an optional `fix(repoRoot, findings, opts) -> Repair[]` handler; the dispatcher calls handlers only under an explicit `--fix`, crash-isolates throwing fixes, and reports `FIXED`/`ERROR` repairs. First autofix shipped: `scalar-cap` moves overlong flat `state.yml` scalars to a bundle-local overflow file and replaces them with the `*overflow at <file> L<n>*` pointer.
+- **Finish-time docs-normalization offer (`docs_normalize` gate).** `mp finish-step` step 4.5: after the dirty-commit, before verification, the machine diffs the run branch for `*.md` it created/modified (three-dot vs base, run bundle excluded) and — when candidates exist — opens a durable, compaction-safe gate offering to fold them into the repo's category-organized docs and strip plan provenance (slugs, wave/task numbers, "implemented by plan X" phrasing). Two-phase like `push_pr`: nothing durable changes until `--docs-normalized`/`--docs-skipped` arrives, so a crash mid-edit re-renders the offer. Once per run via presence-keyed `docs_normalize`/`docs_normalize_skipped` events; zero candidates → fully silent; `state.docs.normalize: off` or `--docs-suppressed` suppresses. The normalization commit moves HEAD *before* `verified_sha` is recorded, so verification and the codex review cover the final tree.
+- **`plan-doc-cruft` doctor check** (module #14) — the repo-wide backstop: anchored to archived bundles, warns on markdown outside the runs dir still carrying plan provenance (slug-named files, `docs/masterplan/<slug>` references, hyphenated slugs in headings). Always WARN, never ERROR; SKIP with no archived bundles.
+
+### Fixed
+
+- `commands/masterplan.md` no longer names the absorbed `dispatch_wave` op in the §2d forbidden-asks prose (the prompt-structure guard bans resurrected references).
+
 ## [9.0.0] — 2026-06-10 — prose → code: the LLM stops being the transaction engine
 
 Delivers the full Thrust-2 architecture program (`~/.claude/plans/bubbly-doodling-sparkle.md`, increments 1–5): every multi-step git/state transaction the v8 prompt executed as prose now runs as tested deterministic code behind `mp` subcommands. CD-7 strengthens — `mp` is the sole writer of durable state **and** the sole executor of the *local* git bracketing it; network ops (`git push`, `gh`, codex-companion) stay shell-side as typed `shell` ops. The sequencer shrinks 818 → 509 lines; each increment deleted exactly the prose its code replaced. Suite 864/864, doctor exit 0; seven consecutive cross-vendor Codex review rounds (r1–r7), final verdict PASS with zero findings.

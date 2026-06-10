@@ -52,12 +52,13 @@ test('prompt teaches the replacements (mp continue trampoline + mp sweep)', () =
 test('prompt teaches the finish trampoline (mp finish-step op table, T2.4)', () => {
   assert.ok(prompt.includes('mp finish-step'), 'the §2c contract must name mp finish-step');
   for (const op of ['run_verify', 'write_retro', 'run_codex_review', "gate:'branch_finish'",
-    "gate:'verification_failed'", "kind:'push_pr'", "reason:'archived'", "reason:'retro_done'"]) {
+    "gate:'verification_failed'", "gate:'docs_normalize'", "kind:'push_pr'", "reason:'archived'",
+    "reason:'retro_done'"]) {
     assert.ok(prompt.includes(op), `§2c op table missing ${op}`);
   }
   // The answer flags ARE the resolution surface — each must be taught or a gate dead-ends.
   for (const flag of ['--verify-passed', '--verify-failed', '--codex-done', '--codex-skipped',
-    '--choice=', '--pushed', '--removal-force', '--retro-only']) {
+    '--docs-normalized', '--docs-skipped', '--choice=', '--pushed', '--removal-force', '--retro-only']) {
     assert.ok(prompt.includes(flag), `§2c answer flag missing ${flag}`);
   }
 });

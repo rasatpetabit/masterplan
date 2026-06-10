@@ -2,7 +2,7 @@
 
 > A Claude Code & Codex CLI plugin for durable multi-hour engineering work — brainstorm → plan → execute → finish on top of `obra/superpowers` skills.
 
-Current release: **v9.0.0** · **License:** MIT · **Works with:** Claude Code, Codex CLI · See [CHANGELOG.md](./CHANGELOG.md)
+Current release: **v9.1.0** · **License:** MIT · **Works with:** Claude Code, Codex CLI · See [CHANGELOG.md](./CHANGELOG.md)
 
 ---
 
@@ -70,7 +70,7 @@ masterplan v8 is a five-layer system. Each layer delegates downward and never wr
 ┌───────────────────────▼─────────────────────────────────────┐
 │  L4 — Doctor                                                 │
 │  bin/doctor.mjs  dispatcher                                  │
-│  lib/doctor/*.mjs  (13 check modules, auto-discovered)       │
+│  lib/doctor/*.mjs  (14 check modules, auto-discovered)       │
 │  ← Finding {id, severity, summary, fix}; non-zero on ERROR   │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -133,7 +133,7 @@ Codex hosts the orchestrator under `/masterplan:masterplan`. See [Codex hosting]
 
 ```
 /masterplan status               # active bundle summary
-/masterplan doctor               # structural lint (13 check modules)
+/masterplan doctor               # structural lint (14 check modules)
 ```
 
 ---
@@ -247,7 +247,7 @@ Crash before a commit is safe: `state.yml` leads git, so `decideNextAction` re-d
 
 ## Doctor
 
-`node bin/doctor.mjs` runs 13 check modules under `lib/doctor/*.mjs`, auto-discovered alphabetically. Each module exports:
+`node bin/doctor.mjs` runs 14 check modules under `lib/doctor/*.mjs`, auto-discovered alphabetically. Each module exports:
 
 ```js
 check(repoRoot, opts) -> Finding[]
@@ -255,7 +255,7 @@ check(repoRoot, opts) -> Finding[]
 
 A Finding has the shape `{id, severity, summary, fix}` where `severity` is one of `PASS | WARN | ERROR | SKIP`. The process exits non-zero if any Finding has severity `ERROR`.
 
-`/masterplan doctor --fix` instructs modules to apply their `fix` where possible.
+`/masterplan doctor --fix` applies safe automatic repairs for checks that implement an autofix handler, then reruns the doctor. Findings whose remedies require human judgment remain report-only.
 
 See [docs/internals/doctor.md](docs/internals/doctor.md) for the full check catalog and crash-isolation contract.
 

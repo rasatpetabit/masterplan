@@ -1,7 +1,7 @@
 # Doctor Checks — Internals
 
 > **Audience:** Maintainers adding or fixing doctor checks.
-> **Source:** `bin/doctor.mjs` (dispatcher) + `lib/doctor/*.mjs` (13 check modules).
+> **Source:** `bin/doctor.mjs` (dispatcher) + `lib/doctor/*.mjs` (14 check modules).
 
 ## How the doctor works
 
@@ -13,7 +13,10 @@
 2. **Runs** each module's `check` function in **crash isolation**: if a module throws,
    the dispatcher converts the exception into one `ERROR` finding rather than aborting
    the whole run. A doctor that dies on its own bug is worse than useless.
-3. **Aggregates** findings, prints them, and **exits non-zero iff any finding has
+3. When invoked with `--fix`, calls optional module `fix(repoRoot, findings, opts)`
+   handlers for checks that implement safe automatic repairs, then reruns all checks.
+   Findings whose remedies require human judgment stay report-only.
+4. **Aggregates** findings, prints them, and **exits non-zero iff any finding has
    severity `ERROR`**.
 
 ### Finding shape
@@ -33,6 +36,11 @@ Every module returns `Finding[]` (or a single `Finding`) from a synchronous
 A finding with an absent or unrecognised severity is forced to `ERROR` — a
 malformed finding must never read as clean.
 
+A module may also export a synchronous `fix(repoRoot, findings, opts) -> Repair[]`
+handler. `--fix` handlers must be conservative: only safe, local, deterministic
+repairs should be automated. Destructive, host-global, networked, or ambiguous
+remedies should remain as `fix` text for the operator.
+
 ### Injectable seams
 
 `opts.homeDir` (user home path), `opts.now` (epoch milliseconds), and
@@ -49,7 +57,7 @@ unit-testable without touching the real host. The main CLI passes
   (e.g. `homeDir`). They `SKIP` gracefully when the relevant tooling is not
   installed.
 
-## The 13 check modules
+## The 14 check modules
 
 | Module | Purpose |
 |---|---|
@@ -59,6 +67,7 @@ unit-testable without touching the real host. The main CLI passes
 | `index-staleness` | For each bundle with a `plan.md`, computes a sha256 and compares it against the recorded hash in `plan.index.json` (and, for migrated-in-place bundles, `state.plan_hash`). `WARN` on mismatch; `SKIP` when no bundle has a plan. |
 | `legacy-bundle` | Warns on any bundle with `schema_version < 6` (not yet migrated to v8) and on any actual planning artifacts remaining under `docs/superpowers/`. `SKIP` only when no bundles exist and `docs/superpowers/` is absent. |
 | `owner-sentinel` | Guard D hygiene: scans `docs/masterplan/<slug>/.owner.lock` + `.owner.hb.*` heartbeats; `WARN` on a corrupt lock (unparseable), a stale lock (no heartbeat within TTL — recommends `release-owner --force` when no live session holds it), or orphan heartbeat files with no lock. Fresh locks emit nothing; `SKIP` when no bundles exist. |
+| `plan-doc-cruft` | Repo-wide backstop for the finish flow's `docs_normalize` gate: anchored to **archived** bundles, it warns on markdown outside the runs dir that still carries plan provenance — an archived slug as a whole token in a filename, a body reference to `docs/masterplan/<slug>`, or a hyphenated slug in a heading line. Excludes the runs dir itself, `docs/superpowers/` (legacy-bundle owns that), dot-directories, node_modules, root history files (`WORKLOG`/`CHANGELOG*`/`HISTORY`), and files >1 MiB. Always `WARN`, never `ERROR`; `SKIP` when no archived bundles exist. |
 | `plan-index-schema` | Runs `lib/plan-merge.validatePlanIndex` against every `plan.index.json` with `schema_version >= 6`; catches non-string `codex` fields and same-wave file overlaps that silently mis-route. `SKIP` when no canonical index exists. |
 | `plugin-registry-drift` | Compares the installed masterplan plugin version in `installed_plugins.json` against the marketplace `plugin.json`; also compares `gitCommitSha` against marketplace HEAD to catch same-version stale caches. `SKIP` when either file is absent. |
 | `scalar-cap` | Validates that no flat `key: value` line in `state.yml` exceeds 200 characters, and that every `*overflow at <file> L<n>*` pointer resolves to a real file and line within the same bundle directory. |
@@ -85,8 +94,11 @@ to CI via `lib/hygiene.mjs`, driven by `test/publish-hygiene.test.mjs`.
 
 1. Create `lib/doctor/<name>.mjs` exporting a synchronous
    `check(repoRoot, opts) -> Finding[]` function.
-2. No registration step: `bin/doctor.mjs` discovers all `*.mjs` files
+2. Add an optional synchronous `fix(repoRoot, findings, opts) -> Repair[]` export
+   only when the repair is safe to apply automatically under `--fix`.
+3. No registration step: `bin/doctor.mjs` discovers all `*.mjs` files
    alphabetically at runtime. The new module is live immediately.
-3. Follow the scope conventions above (plan-scoped vs user-scoped).
-4. Add a unit test in `test/` covering PASS, WARN/ERROR, and SKIP branches.
-5. Add a one-line entry to the module table in this file.
+4. Follow the scope conventions above (plan-scoped vs user-scoped).
+5. Add a unit test in `test/` covering PASS, WARN/ERROR, and SKIP branches; add
+   an idempotent `--fix` test when a fix handler exists.
+6. Add a one-line entry to the module table in this file.

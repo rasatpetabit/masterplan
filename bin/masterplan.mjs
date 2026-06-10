@@ -1754,7 +1754,7 @@ function main() {
       // WT snapshot + dirty-commit, verified-at-SHA check, retro write-if-absent, the codex
       // durable guard + event, the branch_finish gate, the chosen disposition (local merge +
       // worktree teardown), archive-LAST + owner release. ONE typed op per call; the shell's
-      // answers thread back as --verify/--codex/--choice. Same git-in-bin seam as record-result
+      // answers thread back as --verify/--codex/--docs/--choice. Same git-in-bin seam as record-result
       // and continue: LOCAL git only, network ops (push/gh/codex-companion) stay shell-side.
       const statePath = need(flags, 'state');
       let lockOff = false;
@@ -1771,6 +1771,7 @@ function main() {
       }
       const verify = flags['verify-passed'] ? 'pass' : flags['verify-failed'] ? 'fail' : null;
       const codexAns = flags['codex-done'] ? 'done' : flags['codex-skipped'] ? 'skipped' : null;
+      const docsAns = flags['docs-normalized'] ? 'normalized' : flags['docs-skipped'] ? 'skipped' : null;
       let op;
       try {
         op = finishStep({
@@ -1786,6 +1787,10 @@ function main() {
           codexBase: typeof flags['codex-base'] === 'string' ? flags['codex-base'] : null,
           codexDigestFile: typeof flags['codex-digest-file'] === 'string' ? flags['codex-digest-file'] : null,
           codexReason: typeof flags['codex-reason'] === 'string' ? flags['codex-reason'] : null,
+          docsSuppressed: !!flags['docs-suppressed'],
+          docs: docsAns,
+          docsCount: flags['docs-count'],
+          docsReason: typeof flags['docs-reason'] === 'string' ? flags['docs-reason'] : null,
           choice: typeof flags.choice === 'string' ? flags.choice : null,
           pushed: !!flags.pushed,
           removalForce: !!flags['removal-force'],
