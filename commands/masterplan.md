@@ -453,7 +453,9 @@ brainstorm's spec is approved and `mp set-phase plan` ran) and from §2's `run_s
 between the serial `superpowers:writing-plans` path and the parallel fan-out (§2b) per `planning.mode`.
 
 1. **Resolve the mode.** `serial | parallel | auto`, from the `resume-phase` op's `planning_mode`
-   (default `auto`); set at seed via `mp seed --planning-mode=…`.
+   (default `auto`); set at seed via `mp seed --planning-mode=…`. Under host suppression the op
+   always carries `serial` (`mp continue` forces it — the plan fan-out needs the Workflow tool,
+   which a suppressed host lacks); never route a suppressed host to the parallel branch.
 2. **Decompose (unless `serial`).** For `parallel`/`auto`, dispatch `agents/mp-spec-decomposer` against
    `spec.md` → `{ subsystems, recommend_parallel, reason }`.
    - `parallel` → parallel branch (step 4) with this decomposition.

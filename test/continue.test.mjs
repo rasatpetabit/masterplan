@@ -327,3 +327,46 @@ test('codex-suppressed (Residual 3B): waves dispatch as dispatch_foreground; rec
   const bg = continueRun({ statePath: fx2.statePath, self: fx2.self, now: 2000, codexSuppressed: false });
   assert.equal(bg.op, 'launch_workflow');
 });
+
+test('codex-suppressed planning (Codex r6 P2): serial forced on resume_phase; plan-run recovery reroutes to serial instead of launch_workflow', () => {
+  // (a) Fresh plan-phase entry: the resume-phase op must carry planning_mode 'serial' under
+  // suppression regardless of the seeded mode — the plan fan-out needs the Workflow tool.
+  const fx = makeFixture({
+    tasks: [],
+    phase: 'plan',
+    slug: 't25plan',
+    extra: { planning_mode: 'auto' },
+  });
+  const op = continueRun({ statePath: fx.statePath, self: fx.self, now: 2000, codexSuppressed: true });
+  assert.equal(op.op, 'run_skill');
+  assert.equal(op.skill, 'resume-phase');
+  assert.equal(op.phase, 'plan');
+  assert.equal(op.planning_mode, 'serial');
+  // Unsuppressed, the seeded mode passes through untouched.
+  const cc = continueRun({ statePath: fx.statePath, self: fx.self, now: 2000 });
+  assert.equal(cc.planning_mode, 'auto');
+
+  // (b) Cross-host resume of a CC-launched plan fan-out: a suppressed host can't relaunch the
+  // workflow — the marker is dropped and §3a's serial path takes over.
+  const fx2 = makeFixture({
+    tasks: [],
+    phase: 'plan',
+    activeRun: { kind: 'plan', phase: 'launching' },
+    slug: 't25prec',
+  });
+  const rec = continueRun({ statePath: fx2.statePath, self: fx2.self, now: 2000, codexSuppressed: true });
+  assert.equal(rec.op, 'run_skill');
+  assert.equal(rec.skill, 'resume-phase');
+  assert.equal(rec.planning_mode, 'serial');
+  assert.equal(readState(fx2.statePath).active_run, null, 'plan marker dropped durably');
+  // Unsuppressed recovery still relaunches the fan-out.
+  const fx3 = makeFixture({
+    tasks: [],
+    phase: 'plan',
+    activeRun: { kind: 'plan', phase: 'launching' },
+    slug: 't25prel',
+  });
+  const rel = continueRun({ statePath: fx3.statePath, self: fx3.self, now: 2000 });
+  assert.equal(rel.op, 'launch_workflow');
+  assert.equal(rel.workflow, 'plan');
+});

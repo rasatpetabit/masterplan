@@ -141,13 +141,15 @@ When the command prompt names Claude Code tools, use the local Codex equivalents
   one concise prose question and wait.
 - Task/Todo task tracking: `update_plan`.
 - Workflow: **no Codex equivalent — and none needed.** Under host suppression
-  `mp continue` never returns `launch_workflow`; waves come back as the
-  `dispatch_foreground` op (Residual 3B, delivered): run `op.tasks` one at a
-  time in this session from `op.cwd` (track with `update_plan`), honor each
-  task's `files` scope, then assemble the standard per-task digest array and
-  feed it to `mp record-result` exactly as the §2 op table describes. Never
-  run the execute workflow itself inline — the foreground-sequential op IS
-  the Codex execution path.
+  `mp continue` never returns `launch_workflow`: execute waves come back as
+  the `dispatch_foreground` op (Residual 3B, delivered) — run `op.tasks` one
+  at a time in this session from `op.cwd` (track with `update_plan`), honor
+  each task's `files` scope, then assemble the standard per-task digest array
+  and feed it to `mp record-result` exactly as the §2 op table describes —
+  and planning is forced onto §3a's SERIAL path (`planning_mode: serial` in
+  the `resume-phase` op; the parallel plan fan-out is CC-only). Never run
+  either workflow inline — the foreground-sequential op IS the Codex
+  execution path.
 - Skill: open the referenced `SKILL.md` and follow it.
 - Agent/Subagent/Parallel: only spawn agents when the user explicitly asked for
   subagents or parallel agent work; otherwise run sequentially in this Codex

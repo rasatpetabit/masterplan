@@ -411,3 +411,20 @@ test('gate-resolution and archive each commit the bundle in MAIN (split-commit d
   const shown = git(fx.MAIN, 'show', '--stat', '--format=', 'HEAD');
   assert.ok(!shown.includes('.owner'), 'owner sentinels never committed');
 });
+
+test('full-teardown crash replay (Codex r6 P2): branch already deleted — merge is skipped, replay retires', () => {
+  const fx = makeFixture();
+  walkToGate(fx);
+  // Simulate a death AFTER the whole teardown (merge → worktree remove → branch -d) but
+  // BEFORE the disposition write: the branch ref is gone, so a naive replay's re-merge
+  // would fail and strand the run on dispatch-error.
+  git(fx.MAIN, 'merge', '--no-edit', '-q', 'masterplan/t24');
+  git(fx.MAIN, 'worktree', 'remove', '--force', fx.WT);
+  git(fx.MAIN, 'branch', '-d', 'masterplan/t24');
+  const op = fx.step({ choice: 'merge' });
+  assert.equal(op.reason, 'archived');
+  const st = readState(fx.statePath);
+  assert.equal(st.worktree_disposition, 'removed_after_merge');
+  assert.equal(st.status, 'archived');
+  assert.ok(git(fx.MAIN, 'log', '--oneline').includes('task 1'), 'the prior merge is intact');
+});
