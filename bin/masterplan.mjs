@@ -330,6 +330,16 @@ export function formatBanner(version, args, cwd) {
   return `→ /masterplan ${v} args: '${a}' cwd: ${cwd}`;
 }
 
+export function shouldSuppressWorkflow(flags = {}, env = process.env) {
+  // `codexSuppressed` is the historical internal name for the no-Workflow path:
+  // the host runs wave tasks foreground-sequential and records the standard result.
+  // Pi exposes subagents/tools but not Claude Code's Workflow launch/promote handle,
+  // so returning `launch_workflow` there strands a phase-1 `{wave,phase:'launching'}`
+  // marker at the user-facing `/masterplan next` boundary. Treat Pi as no-Workflow by
+  // default; callers can still pass the explicit flag on any host.
+  return !!flags['codex-suppressed'] || !!flags['no-workflow'] || env.PI_CODING_AGENT === 'true';
+}
+
 // applyPlanIndex (backfill-waves) moved to lib/bundle.mjs for T2.3 so lib/continue.mjs can
 // backfill without importing the CLI; re-exported here to keep bin's public import surface.
 export { applyPlanIndex };
@@ -1687,8 +1697,10 @@ function main() {
     case 'continue': {
       // T2.3: the trampoline — migrate-on-load → Guard D acquire/confirm → wave backfill →
       // alive-probe gating → the bounded decide loop, returning ONE typed op per call
-      // ({op: launch_workflow|run_skill|record_result|ask|probe|shell|stop|…}). The shell
-      // stops sequencing §2 by prose: it calls `mp continue`, executes the op, repeats.
+      // ({op: launch_workflow|dispatch_foreground|run_skill|record_result|ask|probe|shell|stop|…}).
+      // The shell stops sequencing §2 by prose: it calls `mp continue`, executes the op, repeats.
+      // Hosts without Claude Code Workflow handles (PI_CODING_AGENT or --no-workflow) are routed
+      // to dispatch_foreground so a phase-1 launch marker is consumed instead of user-stranded.
       // Same git-in-bin seam as record-result: LOCAL git only, network ops stay shell-side.
       const statePath = need(flags, 'state');
       // Guard D identity is resolved ONLY when the bundle hasn't opted out — resolveOwnerSelf
@@ -1725,7 +1737,7 @@ function main() {
           alive,
           staleReconciled: !!flags['stale-reconciled'],
           force: !!flags.force,
-          codexSuppressed: !!flags['codex-suppressed'],
+          codexSuppressed: shouldSuppressWorkflow(flags, process.env),
           routing: typeof flags.routing === 'string' ? flags.routing : undefined,
           review: flags.review,
           reposAllowlist,

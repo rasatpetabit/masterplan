@@ -65,7 +65,10 @@ scripts).
 Archive stale bundles (`mp set-status --status=archived`) and prune orphan artifacts.
 
 ## `next`
-What's-next router: `mp decide` → describe the next action without executing it.
+Action router: execute the resume controller (`mp continue`) for non-gate work. Report-only
+inspection belongs to `status` or `next --dry-run`. On hosts without Claude Code Workflow handles
+(including Pi), the no-Workflow foreground path is used so launch-gap recovery cannot strand the
+user at `recover_and_redispatch`.
 
 ## `verbs`
 Print the reserved-verb list.

@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { formatBanner, applyPlanIndex, readPluginVersion } from '../bin/masterplan.mjs';
+import { formatBanner, applyPlanIndex, readPluginVersion, shouldSuppressWorkflow } from '../bin/masterplan.mjs';
 import { serializeState, parseState } from '../lib/bundle.mjs';
 import { createHash } from 'node:crypto';
 
@@ -47,6 +47,14 @@ test('formatBanner: version + args + cwd', () => {
 });
 test('formatBanner: no version -> vUNKNOWN; empty args -> (empty)', () => {
   assert.equal(formatBanner(null, '', '/x'), "→ /masterplan vUNKNOWN args: '(empty)' cwd: /x");
+});
+
+test('shouldSuppressWorkflow: Pi/no-workflow hosts use foreground dispatch instead of launch_workflow', () => {
+  assert.equal(shouldSuppressWorkflow({}, {}), false);
+  assert.equal(shouldSuppressWorkflow({ 'codex-suppressed': true }, {}), true);
+  assert.equal(shouldSuppressWorkflow({ 'no-workflow': true }, {}), true);
+  assert.equal(shouldSuppressWorkflow({}, { PI_CODING_AGENT: 'true' }), true);
+  assert.equal(shouldSuppressWorkflow({}, { PI_CODING_AGENT: 'false' }), false);
 });
 test('readPluginVersion: CLAUDE_PLUGIN_ROOT (the loaded plugin) wins over marketplace-name-specific paths', () => {
   // regression: a registry swap under a non-canonical marketplace name (masterplan-v8 scoped deploy)

@@ -275,7 +275,11 @@ emit them under loose/full):
 
 - "Run codex or not?" — routing is decided inside `mp continue` (`routeTask`), never by asking.
 - "What should I do next?" / "dispatch the next wave?" — between successful steps you **auto-proceed**:
-  `mp record-result` → dispatch the next wave **in the same turn** (§2a completion → execute `next`).
+  `mp record-result` → dispatch the next wave **in the same turn** (§2a completion → execute `next`). A non-gate
+  `recover_and_redispatch`, `dispatch_wave`, `launch_workflow`, or no-Workflow `dispatch_foreground` op is an
+  instruction to act, not a reportable stopping state. If the host cannot launch Claude Code Workflow handles,
+  invoke `mp continue --no-workflow` (alias of the foreground path) rather than leaving a phase-1
+  `{wave, phase:'launching'}` marker stranded for the user.
 - Per-small-task "looks good?" / "shall I continue?" confirmations.
 - "Ready for Wave N" / "awaiting completion" / "status this turn:" ceremonial closers.
 
@@ -428,13 +432,14 @@ create-or-reuse runs inside `mp continue`, the sweep inside `mp sweep`, and the 
 | `validate` | Parse-check `state.yml` + config; report findings. No writes. |
 | `stats` | `jq` roll-up over `events.jsonl` if present (replaces the v7 telemetry scripts). |
 | `clean` | Archive (`mp set-status --state=<path> --status=archived`) / prune completed bundles. **PR-aware:** before archiving a bundle whose branch has an open PR, AUQ-**warn** (`bundle <slug>: branch has open PR #<n> — archive anyway?`) — warn, don't hard-block (archiving doesn't touch the PR; the user may still want the bundle gone). |
-| `next` | `mp decide` → describe the next action without executing it. **PR-aware:** if the branch has an open PR, append the **advisory** `↪ Open PR #<n> ready — merge on GitHub or via /masterplan finish` (advisory only — never a `decide` action, never a blocking AUQ; this is how "a PR to merge" enters the what-do-I-do-next routine without becoming a per-resume nag). |
+| `next` | **Action router, not a blocker:** call `mp continue` and execute the returned non-gate op. `next --dry-run` / `status` are the report-only paths. On hosts without Claude Code Workflow handles (including Pi), use `mp continue --no-workflow` / the auto-detected no-Workflow path so a launch-gap marker is consumed as foreground dispatch instead of surfaced as a loop. **PR-aware:** if the branch has an open PR, append the **advisory** `↪ Open PR #<n> ready — merge on GitHub or via /masterplan finish` (advisory only — never a `decide` action, never a blocking AUQ; this is how "a PR to merge" enters the what-do-I-do-next routine without becoming a per-resume nag). |
 | `verbs` | Print the reserved-verb list above. |
 | `publish` | **Lead → GitHub coordination** (spec §7 — **IMPLEMENTED-UNVERIFIED**, never dogfooded end-to-end). Full procedure: [`docs/coordination-playbook.md`](../docs/coordination-playbook.md) §publish — bootstrap defaults (`mp set-coord --bootstrap`) → preflight (`mp coord-status --fail-if-unpublishable`) → provision the `mp-coord/<slug>/<plan_hash>` contract ref + `mp-int/<slug>` integration branch → one `gh issue create` per unpublished wave task (`mp gh-issue-body`, `mp update-issue-map`) → `mp set-coord --mark-published` + commit. **Follow the playbook exactly — do not improvise the steps from memory.** |
 | `follow` | **Follower session → claim + deliver one task** (spec §7 — same playbook, same caveat). Full procedure: [`docs/coordination-playbook.md`](../docs/coordination-playbook.md) §follow — preflight → claim (`mp select-claimable`, assign, `mp validate-claim` won/lost) → build on branch `mp/<slug>/t<id>` from the pinned contract ref (ephemeral bundle outside `docs/masterplan/`) → D6 `verify-scope` + `verify_commands` → PR to `mp-int/<slug>` on pass, release the claim on fail. |
 
-**PR probe (`status` · `next` · `clean` — report-only, never auto-merge).** These three verbs check
-for an open PR on the run's branch. Run **shell-side** (the established split — the shell owns git/`gh`,
+**PR probe (`status` · `next` · `clean` — never auto-merge).** These three verbs check
+for an open PR on the run's branch. `status` and `clean` are report/control verbs; `next` still executes the
+resume router when there is local work to do, but the PR line remains advisory and never auto-merges. Run **shell-side** (the established split — the shell owns git/`gh`,
 `bin` is fs-only): resolve `branch` = `state.branch` or, as a fallback, `git -C "<WT>" rev-parse
 --abbrev-ref HEAD` (the run branch is checked out in **WT**, §2e¶2 — `-C`-qualified, not bare), then
 `gh pr list --head "<branch>" --state open --json number,title,mergeable,url 2>/dev/null` piped to
