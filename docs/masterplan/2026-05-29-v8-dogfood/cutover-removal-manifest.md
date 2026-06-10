@@ -164,3 +164,28 @@ as one diff. The three DEFERRED-SPEC slices (`plan-annotations`, `cd-rules`,
 `codex-review` dimensions) are **already pre-ported to `docs/conventions/`** (Tier-4 #8–#10
 DONE 2026-05-29), so **no analysis remains and no spec is at risk — the cutover is now pure
 deletion + version/doc-rewrite.**
+
+---
+
+## Errata / execution addendum (2026-06-10, v8.2.0 cutover)
+
+The cutover **executed** on branch `feat/v8.2.0-cruft-cutover` (suite 806/806 green at every phase,
+doctor exit 0; pre-deletion content tagged `v8.1.0-pre-cruft-removal`). Two rulings changed against
+the Tier-1 text above, in line with the later entries of this same manifest:
+
+1. **`skills/masterplan-detect/` — KEPT** (Tier-1 row said DELETE). The Tier-3 skills-reversal in this
+   manifest ("Only `skills/masterplan/` + `skills/masterplan-detect/` survive"), the implemented
+   `INFRA_SKILL_NAMES = ['masterplan', 'masterplan-detect']` guard in `lib/hygiene.mjs`, and
+   `skills/masterplan/SKILL.md`'s "exactly two skill dirs" prose all agree the skill is live v8
+   surface. The Tier-1 row's soft caveat (ambient legacy-artifact detection is worth retaining) won.
+2. **Tier-4 #13 — discharged via attic, not 3B-first.** `parts/codex-host.md` +
+   `parts/contracts/taskcreate-projection.md` moved to `docs/attic/v7-codex-hedge/` (not `git rm`'d),
+   and the hedge's substance was ported into the surviving surface: `skills/masterplan/SKILL.md`'s
+   Codex tool-adaptation table now carries an explicit **Workflow row** (bounded-interactive only;
+   full-lifecycle Codex = Residual 3B, still unimplemented). The attic is deleted when 3B's
+   foreground-sequential execute path ships. This unblocked the cutover without abandoning the 3B
+   commitment.
+
+Also: `commands/masterplan-contracts.md` was **relocated** to `docs/contracts/` (DF-1) rather than
+kept-in-place as the Tier-3 table assumed — its only live consumer (`tests/static/test-cross-refs.sh`)
+died in this same cutover.

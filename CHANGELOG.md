@@ -5,7 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v8.1.0 — worktree lifecycle & cross-session concurrency hardening (2026-06-06)
+## [8.2.0] — 2026-06-10 — v7 cruft cutover & CI realignment
+
+Executes the long-deferred removal manifest (`docs/masterplan/2026-05-29-v8-dogfood/cutover-removal-manifest.md`): the dormant v7 surface is deleted (~2.2 MB tracked, ~17.5k lines) and `main`'s CI now runs the real test suite. Every deleted byte is recoverable at tag `v8.1.0-pre-cruft-removal`. Suite 806/806, doctor exit 0.
+
+### Changed
+
+- **CI rewritten.** `ci.yml` now runs `node --test test/*.test.mjs` + `node bin/doctor.mjs` + a plugin-symlink assert, replacing the v7 `bin/masterplan-release-gate.sh` battery. `ng-ci.yml` deleted — it was bound to the `masterplan-ng` branch (removed 2026-06-06), so the real suite had **no** CI on `main` until this release. The `release-publish` job is unchanged; the 8.x CHANGELOG headers are normalized to the bracketed `## [x.y.z]` form its notes-extraction awk expects.
+- **Codex hedge attic'd, not deleted** (manifest Tier-4 #13): `parts/codex-host.md` + `parts/contracts/taskcreate-projection.md` → `docs/attic/v7-codex-hedge/`, and the previously-missing **Workflow row** is added to `skills/masterplan/SKILL.md`'s Codex tool-adaptation table (host-suppressed mode stays bounded-interactive; full-lifecycle Codex is design-residuals Residual 3B, still unimplemented). The attic is deleted when 3B ships.
+- **Contracts registry relocated** `commands/masterplan-contracts.md` → `docs/contracts/masterplan-contracts.md` (resolves deferred-followup DF-1 — it auto-registered as an accidental `/masterplan-contracts` slash command); its v7-era contracts are marked Historical. DF-3 is moot (subject deleted).
+- **Docs realigned to shipped reality:** sequencer line-count claims fixed (~800, not "~251") in CLAUDE.md / README / SKILL.md / internals; doctor module count 11 → **13** with `coord-drift` + `owner-sentinel` rows added to `docs/internals/doctor.md`; CLAUDE.md's verb-sync list now names `parseReservedVerbs()` (the `RESERVED_VERBS` constant never existed) and drops a phantom internals routing table; `publish`/`follow` added to SKILL.md's verb lists; CD-1…CD-9 → CD-1…CD-10; README's `stats` row corrected (it reads the bundle's `events.jsonl` — the deleted telemetry hook never fed it in v8).
+- `bin/masterplan.mjs` now imports `VALID_DISPOSITIONS` from `lib/worktree.mjs` instead of carrying a duplicate enum, and the four implemented-but-undocumented qctl helper subcommands (`enqueue-key`, `artifact-verify`, `status-map`, `base-drift`) are named in §6.5's shell-vs-bin ownership table.
+
+### Removed
+
+- All 16 `bin/masterplan-*.sh` v7 scripts (incl. `masterplan-release-gate.sh`, superseded by the node suite + `test/publish-hygiene.test.mjs`), `bin/run-tests{,-fast}.sh`, `hooks/masterplan-telemetry.sh` (+ its install docs in README/install.md), the `lib/*.py` audit tooling, the entire `parts/` prose orchestrator, and the legacy `tests/` tree (302 files). Makefile trimmed to `help` + `test` → `npm test`.
+- Orphaned/zero-reference archival docs (~160 KB): `docs/config-schema.md`, `docs/internals/{failure-instrumentation,brainstorm-anchor}.md`, `docs/audit-2026-05-05-subagent-execution.md`, the archived qctl plan+spec pair, `docs/design/{telemetry-signals,intra-plan-parallelism}.md`, `docs/github-coordination-qwen-fabric-fit.md`, `docs/release-submission.md`, empty `docs/failure-analysis/`.
+
+## [8.1.0] — 2026-06-06 — worktree lifecycle & cross-session concurrency hardening
 
 Closes the worktree-lifecycle and concurrency gaps the v8 clean-core rebuild left behind (it kept the worktree *scaffolding* but dropped the *lifecycle*). All deterministic logic is new pure `lib/*.mjs` behind fs-only `mp` subcommands; git stays in the shell (CD-7). Suite 791/791, doctor exit 0.
 
@@ -20,7 +37,7 @@ Closes the worktree-lifecycle and concurrency gaps the v8 clean-core rebuild lef
 
 - `missing` worktree disposition is normalized to `removed_after_merge` on the **read path** for all schemas (the enum stays 3-value); failed teardown stays `active`, never the phantom `missing`.
 
-## v8.0.0 — clean-core rebuild (2026-05-31)
+## [8.0.0] — 2026-05-31 — clean-core rebuild
 
 The full clean-core rebuild lands on `main`. masterplan is now a **five-layer Node-primary architecture** — durable run bundle (`docs/masterplan/<slug>/state.yml`, the CD-7 single source of truth) · thin resumable shell (`commands/masterplan.md` sequencer + `bin/masterplan.mjs` + `lib/*.mjs` as the sole durable state writer) · Workflow-tool execution engine · plugin-root agents · `doctor` health checks — replacing the v7 markdown monolith with an ~80% line reduction and unit-tested deterministic logic. The per-verb `/masterplan:<verb>` skill namespace is removed; every verb now routes through the bare `/masterplan` command via `bin`.
 
