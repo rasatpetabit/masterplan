@@ -94,13 +94,13 @@ dispatch, every `AskUserQuestion`, and ALL network ops (`git push`, `gh`, codex-
    | `launch_workflow` | `cd "<op.cwd>"` FIRST — the write-only cwd signal the about-to-launch agents inherit (§2e¶3); never read cwd back. Launch `workflows/<op.workflow>.workflow.js` in the BACKGROUND via the Workflow tool with `args = op.args` (`workflow:'plan'` carries no args — supply `{ subsystems, specPath, repoRoot }` from §3a/§2b, re-dispatching `mp-spec-decomposer` first if the decomposition isn't in hand). Then `mp promote-active-run --state=<path> --run-id=<id> --task-id=<id>` (the op's `next`) and close to await the completion notification. Do NOT mark tasks or commit here — the engine has them in flight. |
    | `probe` `kind:'alive'` | `TaskGet(op.task_id)`: still running → re-invoke `continue --alive` (→ `stop wait`); finished/absent with no result in hand (compaction dropped the notification) → `continue --dead` (recovery is idempotent — agents never commit). |
    | `probe` `kind:'reap'` | A dead session's backgrounded Workflow MAY still be running: `TaskList` → `TaskStop` any surviving run for `op.task_id` (**Claude Code only** — no-op when `codex_host_suppressed`, where native task tools are absent), then re-invoke `continue --dead --stale-reconciled` — `continue` then resets the wave scope in WT and re-launches. |
-   | `ask` `ask:'gate'` | Re-render the durable gate's `AskUserQuestion` (CD-9). Named option → act (per-option acts for the finalization gates are in **§2c**), `mp clear-gate`, `git -C "<MAIN>"` commit the bundle, re-enter the loop. Free-text / no clear answer → keep the gate, respond, close. NEVER auto-proceed regardless of autonomy (the durable marker outranks a native AUQ that can't survive compaction). Re-rendering `branch_finish` rehydrates the codex digest: `mp codex-review-status --state=<path> --sha=$(git -C "<WT>" rev-parse HEAD)` → fold `digest`/`count`/`base` back in. |
+   | `ask` `ask:'gate'` | Re-render the durable gate's `AskUserQuestion` (CD-9). **Finalization gates** (`verification_failed` / `no_verification_command` / `branch_finish`): re-render via `mp finish-step --state=<path>` — its `ask:'gate'` op carries the full payload (incl. the rehydrated codex digest for `branch_finish`) — and act per the **§2c** answer flags (the clear-gate + bundle commit run inside the subcommand). Other gates: named option → act, `mp clear-gate`, `git -C "<MAIN>"` commit the bundle, re-enter the loop. Free-text / no clear answer → keep the gate, respond, close. NEVER auto-proceed regardless of autonomy (the durable marker outranks a native AUQ that can't survive compaction). |
    | `ask` `ask:'owner-blocked'` \| `'owner-lost'` | Guard D (§2e¶8): another live session owns — or mid-turn took over — this bundle; NOTHING was written. AUQ with the incumbent's `host`/`session`: **Take over (force)** → re-invoke `continue --force` · **Abort** → close without touching the bundle · **Read-only** → answer/inspect, NO mutations or dispatches. NEVER auto-force regardless of autonomy. |
    | `ask` `ask:'legacy-refused'` | Pre-5.0 / unparseable legacy (the deliberate R3 refusal; `op.backup` holds the untouched original). Do NOT raw-rewrite `state.yml` (CD-7) — `mp seed` a FRESH bundle (re-deriving tasks via §3), finish the run under masterplan v7, or stop and ask. |
    | `ask` `ask:'waves-unbackfillable'` | Tasks carry `wave:null` and `plan.index.json` is missing/insufficient. Re-derive the index (re-parse `plan.md` via the `masterplan:mp-planner` agent), then re-enter the loop — `continue` backfills durably itself. |
    | `ask` `ask:'dispatch-error'` \| `'decide-error'` | A loud invariant fired (plan/state file-set drift, missing plan.index entry, decide-loop exhaustion). Surface `op.error` via AUQ — never paper over a thrown invariant. |
    | `run_skill` `skill:'resume-phase'` | Mid-`{brainstorm\|plan}` with no plan built (`tasks:[]`). **Do NOT finalize/archive.** `phase==plan` → the plan lifecycle (**§3a**) with `op.planning_mode`. `phase==brainstorm` → re-entering a live brainstorm stays deferred: AUQ continue / restart / stop. |
-   | `run_skill` `skill:'finish'` | All execute tasks done → the **finalization flow (§2c)**: verify-before-completion (cite output) → `retro.md` → durable `branch_finish` gate → archive **LAST**. NEVER a silent archive. |
+   | `run_skill` `skill:'finish'` | All execute tasks done → the **finalization flow (§2c)**: drive `mp finish-step` one op per call — verify-before-completion (cite output) → `retro.md` → durable `branch_finish` gate → archive **LAST**. NEVER a silent archive. |
    | `stop` `reason:'wait'` | A live run owns the wave. Report it and close — its completion notification re-invokes this controller (→ step 3). |
    | `stop` (coordination) | `publish_needed` / `coordinate` → the §7 coordination playbook, with the op's facts. |
 
@@ -202,174 +202,50 @@ repoRoot }`, reached from §2 step 3 when `active_run.kind==='plan'`):
      reviewer's findings via `AskUserQuestion` (§4) — revise-and-replan / accept-as-is (REVISE only) /
      stop — and keep `phase=plan`. Never auto-advance past a non-PASS verdict.
 
-## 2c — Finalization flow (the `complete` action + the `finish` verb)
+## 2c — Finalization flow (the `complete` action + the `finish` verb — `mp finish-step`)
 
 `complete` is no longer a silent archive — it is the umbrella **finish** flow: verify the work (and
-cite it), write the retro, then surface a **durable** `branch_finish` gate before archiving. It
-composes two `superpowers` skills — `verification-before-completion` (the authoritative claim-done
-gate, step 3) and `finishing-a-development-branch` (executes the chosen disposition on resolve) —
-driven by `mp finish-status` (the SHELL runs git and passes its output as flags; `bin` stays fs-only,
-the §2a verify-scope pattern). **Every step is re-entrant** (disposition shortcut · verified-at-SHA
-skip · write-if-absent), so a compaction at any point resumes cleanly. **Archive is LAST**: archiving
-earlier strands the run — the §2-step-1 discover filter hides archived bundles, so the gate could
-never re-surface (the one thing v7's flow got wrong; do not copy it).
+cite it), write the retro, then surface a **durable** `branch_finish` gate before archiving. The
+state machine lives in **`mp finish-step`** (`lib/finish-step.mjs`) — a re-entrant trampoline, the §2
+pattern: the shell calls it, executes the ONE op returned, and re-calls with the answer threaded back
+as flags. Every durable transaction — verified-SHA record, gate open/clear, the codex events, merge +
+worktree teardown + disposition, archive + owner release, and the bundle commits bracketing them —
+runs INSIDE the subcommand; the shell keeps only the genuinely-LLM/network work: running verification
+(skill), writing the retro, running the codex-companion review, the PR probe, the push, and the AUQs.
+**Archive is LAST** and reachable only through a retired disposition — archiving earlier strands the
+run (the §2-step-1 discover filter hides archived bundles, so the gate could never re-surface; the
+one thing v7's flow got wrong).
 
-**Re-entry shortcut precedes the snapshot** (the WT may already be gone). Read `worktree_disposition`
-from `state.yml` **MAIN-side, with NO WT git** (a plain `mp`/state read — the §2e¶7 teardown removes
-`<WT>` BEFORE re-entering `complete`, so a WT snapshot here would die on a missing worktree, the Codex P1):
-if it is already a retirement value (`removed_after_merge` | `kept_by_user`), the `branch_finish` gate
-was resolved AND executed in a prior turn (a compaction landed between resolve and archive) → jump
-straight to **step 6 (archive)** and do **not** snapshot WT. Else (disposition still `active`/unset → WT
-still present) continue to the snapshot.
+**Loop:** `mp finish-step --state=<MAIN>/docs/masterplan/<slug>/state.yml [answer flags]
+[--codex-suppressed]` (pass `--codex-suppressed` when §0 host-detect set `suppressRescue` — Codex
+hosting the command must not review-via-Codex; that recurses). It handles with NO prose steps: Guard D
+acquire/heartbeat (`owner-blocked`/`owner-lost` mirror §2's rows), the retired-disposition re-entry
+shortcut (MAIN-side, NO WT git — the teardown removes `<WT>` before archive, so a WT snapshot there
+would die; the Codex P1), the WT snapshot, the task-scope dirty-commit (unrelated dirt untouched —
+protect-user-work; committing moves HEAD, so the verified check re-keys automatically), the
+verified-at-SHA skip, retro write-if-absent gating, the durable sha-keyed codex-review re-entry guard
+(`codex_review` / `codex_review_skipped` events), the `branch_finish` gate open + resolution
+transaction, and archive + release-owner. A compaction at ANY point resumes cleanly: re-invoke with no
+answer flags and the same op (or the open gate) comes back.
 
-**Snapshot** (only on the not-yet-retired path; the SHELL runs git, `bin` stays fs-only). The branch
-being finished lives in the code worktree, so HEAD/porcelain are read from **WT** (§2e¶2) — which also
-isolates the snapshot from any MAIN-side dirt (a wiped index, an unrelated dirty `WORKLOG.md`),
-satisfying protect-user-work for free:
-`mp finish-status --state=<path>
---head="$(git -C "<WT>" rev-parse HEAD)" --porcelain="$(git -C "<WT>" -c core.quotePath=false status --porcelain)"
---branches="$(git -C "<WT>" branch --format='%(refname:short)')"` → `{task_scope_dirty, task_scope_paths,
-unrelated_dirty, base, retro_present, verified, verify_commands, worktree_disposition, codex_review,
-dispositions}` (`codex_review` mirrors the dispatch predicate `state.codex.review === true|'on'|'true'`
-— it arms the step-5 whole-branch review).
-
-1. **Branch already resolved? (re-entry shortcut — belt-and-suspenders).** The pre-snapshot check above
-   already caught the retired case; `finish-status.worktree_disposition` re-confirms it from the same
-   read. If `worktree_disposition` is a retirement value (`removed_after_merge` | `kept_by_user`) → jump
-   to step 6 (archive). Else continue.
-2. **Dirty check (thin net).** §2a commits at every wave boundary, so dirt is rare here. If
-   `task_scope_dirty`, commit `task_scope_paths` **in WT** (`git -C "<WT>"` — these are code paths on the
-   run branch, §2e¶2). **Leave `unrelated_dirty` untouched** (protect-user-work; MAIN dirt is already
-   isolated by reading the snapshot from WT). **Committing here moves the WT HEAD** — re-run the
-   `mp finish-status` snapshot (fresh `git -C "<WT>" rev-parse HEAD`) before step 3, so `verified`
-   reflects the new commit; a stale `verified=true` carried from the pre-commit snapshot would otherwise
-   skip verification on an as-yet-untested commit.
-3. **Verification gate — `superpowers:verification-before-completion`.** If `verified` (a recorded SHA
-   == HEAD) → skip (already proven at this commit). Else IDENTIFY → RUN fresh → **cite real output +
-   exit code** (CD-3; "should pass" is not evidence). Command source: `verify_commands` (the union of
-   the plan tasks'); if empty, the skill's own IDENTIFY; if STILL none under `--autonomy=full`,
-   `mp open-gate --id=no_verification_command` + AUQ (specify one / proceed without) — never silently skip.
-   - **PASS** → `mp record-verification --state=<path> --sha="$(git -C "<WT>" rev-parse HEAD)"` (durable; a
-     re-entry at unchanged HEAD then skips the re-run).
-   - **FAIL** → `mp open-gate --id=verification_failed` + AUQ (*Fix first & re-run* / *Proceed anyway
-     (reviewed)* / *Abort finish*), close. Resolution = the `ask:'gate'` act, below.
-4. **Retro (write-if-absent).** If `!retro_present`, generate `retro.md` (idempotent — a re-entry skips
-   it). This subsumes the old `retro` verb.
-5. **Branch-finish gate (durable — the v8 regression this restores).**
-   - **Whole-branch codex review first (runs once, before the gate opens).** When *all four* hold —
-     `finish_status.codex_review` is true (the dispatch predicate: `state.codex.review` armed — same
-     field, same meaning as the per-wave review `mp continue` arms) ∧ `base` is non-null ∧ §0 host-detect did **not** set
-     `codex_host_suppressed` (Codex hosting the command must not review-via-Codex — that recurses) ∧
-     `mp codex-companion-path` resolves to an existing script (`{resolved:true, exists:true, path}`) —
-     first the **durable re-entry guard**: `mp codex-review-status --state=<path> --sha=$(git -C "<WT>"
-     rev-parse HEAD)` (the WT code tip, §2e¶2); on `{present:true}` the review already ran at this exact
-     HEAD (a death between the review and `open-gate` is replaying), so **skip the re-run**, rehydrate its
-     `digest`/`count`/`base` into the gate AUQ below, write **no** event, and fall straight through to the
-     PR probe. Otherwise run the native whole-branch reviewer **foreground/blocking from WT** (cwd = the
-     branch's worktree, so `--scope branch` diffs `masterplan/<slug>` against `base` correctly), bounded
-     by an OUTER `timeout` ceiling above the companion's internal 240 s status-wait so a network hang can
-     never wedge finish: `( cd "<WT>" && timeout 600 node "<path from mp codex-companion-path>" review --scope branch --base <base> )`
-     (`review` mode is the one place review's whole-branch unit is correct; its `--wait`/`--background`
-     flags are no-ops — `review` always runs foreground — so no `--wait` is needed). **Fail-soft,
-     never wedge finish:** ANY non-success — non-zero exit, `timeout`'s `124`, unresolved/missing path,
-     `codex_host_suppressed`, or `codex_review` off — is **not** a blocker; emit `mp event
-     --state=<path> --type=codex_review_skipped --summary="whole-branch codex-companion review skipped
-     (degraded) — <tight reason>"` and PROCEED to the PR probe (the hyphenated "codex-companion …
-     skipped" deliberately does **not** match the audit's `\bcodex\s+review\b`, so a degraded finish
-     where nothing reviewed still trips `codex_review_configured_but_zero_invocations` — correct). On
-     **exit 0**, fold the rendered findings into the gate AUQ below (a brief digest + count, not the
-     raw dump) and emit the **durable** record. The digest is review-derived free text — a stray
-     quote/backtick/`$()`/newline interpolated into a `--note="…"` shell word would break the command
-     (dropping the event → re-introducing the durability bug) or inject a later flag, so transport it
-     **shell-safely**: `Write` the brief digest to `<MAIN>/docs/masterplan/<slug>/codex-review-digest.txt`
-     (absolute-MAIN, §2e¶1 — never a relative path, since cwd may be a worktree; the Write tool
-     is not shell-evaluated, so arbitrary bytes are safe), then `mp event --state=<path>
-     --type=codex_review --summary="codex review complete (whole-branch, base <base>) — <n> findings"
-     --data '{"sha":"<HEAD sha>","base":"<base>","count":<n>}'
-     --note-file=<MAIN>/docs/masterplan/<slug>/codex-review-digest.txt`. Three channels, three jobs: `--summary` is the
-     audit signal (the literal "codex review" **does** match `\bcodex\s+review\b` → satisfies the
-     configured-but-zero-invocations check, the one invocation this finish owes); `--data` carries the
-     quote-safe machine scalars the re-entry guard keys on (`sha`/`base`/`count` only — git-derived,
-     never the free-text digest, whose stray quote/backtick/newline would break the subcommand's
-     `JSON.parse(--data)` and silently drop the record); `--note-file` carries the digest bytes
-     verbatim (`bin` reads the file, never shell-evaluates it) for the gate to rehydrate. This write
-     lands **before** `mp open-gate` below — so if the session dies in that window, resume re-runs §2c,
-     the guard above finds `{present:true}` at the unchanged HEAD, and the review is **not** re-run (it
-     rehydrates instead). **Residual window:** a death *between* the reviewer exiting 0 and this event
-     landing leaves no durable record at HEAD, so resume re-runs the review — harmless and idempotent
-     at an unchanged tree (the only cost is one more network review; `open-gate` itself is idempotent,
-     so the gate never double-opens). Once the gate IS open a resume is the §2 `ask:'gate'` op, which
-     re-renders the AUQ and re-reads `codex-review-status` to restore the digest (§2 `ask:'gate'` row)
-     — the live in-context digest does not survive compaction, the durable event does.
-
-   First **probe for an open PR**
-   on the branch (the §3 PR probe: `gh pr list --head "<branch>" … | mp pr-summary`). `mp open-gate
-   --id=branch_finish`, then AUQ labelled with `base`: `Merge to <base> locally (Recommended)` · `Push
-   and open a PR` · `Keep branch + worktree as-is` · `Discard everything` (the skill then requires a
-   typed "discard"). **If the probe found a PR (`hasPr`), relabel the second option** → `View / merge
-   open PR #<n> (mergeable: <yes|no|unknown>)` — the branch is already pushed with a PR open, so "open a
-   PR" would be a duplicate. That option keeps the `pr` choice (→ `kept_by_user`): its resolution is a
-   no-op push (the branch is already up) that just surfaces the existing PR URL, never opening a second
-   one. This AUQ is the turn-close. On any resume while open, `mp continue` → the `ask:'gate'` op
-   re-renders it (CD-9); a **free-text / "not ready" answer holds the gate and chats** (§2 `ask:'gate'`
-   rule) — the "not done yet" escape, nothing archives.
-6. **Archive LAST.** Reached only via step 1 (gate already resolved): `mp set-status --state=<path>
-   --status=archived` (the sole archival mechanism — never hand-edit `state.yml`), then `git -C "<MAIN>"`
-   commit the bundle (state lives in MAIN, §2e¶2). **Then release the owner lock (Guard D, §2e¶8):**
-   `mp release-owner --state=<path>` (drops `.owner.lock` + our heartbeat — the bundle is done, no
-   successor should be blocked). Close. The §2 discover filter now hides the bundle → the run goes quiet.
-   Done. (The worktree was already removed + its disposition recorded by the `branch_finish` teardown,
-   §2e¶7.)
-
-**Gate resolution** (the §2 `ask:'gate'` **act** — the turn AFTER the user picks a named option):
-
-- **`verification_failed`** — *Fix first*: `mp clear-gate`, close (fix code + commit, then re-invoke
-  `finish`/resume → verification re-runs fresh and re-opens the gate if still red). *Proceed anyway*:
-  `mp record-verification --state=<path> --sha="$(git -C "<WT>" rev-parse HEAD)"` (a reviewed override, so a
-  re-entry doesn't re-loop the same failure) → `mp clear-gate` → re-enter the §2 loop (→ the
-  `finish` op → §2c: verification now skipped → retro → `branch_finish`). *Abort finish*: `mp clear-gate`, close (the run
-  stays resumable; nothing archived).
-- **`no_verification_command`** — opened by §2c step 3 when no command is found under `--autonomy=full`.
-  *Specify a command*: RUN it fresh, **cite output** (CD-3) → PASS: `mp record-verification
-  --state=<path> --sha="$(git -C "<WT>" rev-parse HEAD)"` + `mp clear-gate` + re-enter the §2 loop (→ retro → `branch_finish`);
-  FAIL: hand to `verification_failed` (`mp open-gate --id=verification_failed` overwrites the single
-  `pending_gate` slot — no separate `clear-gate` needed; its acts are above). *Proceed
-  without*: `mp record-verification --state=<path> --sha="$(git -C "<WT>" rev-parse HEAD)"` — the reviewed "no
-  verification available" override (mirrors `verification_failed`'s *Proceed anyway* so a re-entry
-  doesn't re-open this gate) — `mp clear-gate`, re-enter the §2 loop. Never silently skip
-  verification or archive.
-- **`branch_finish`** — **re-entry guard first:** re-read `mp finish-status`; if `worktree_disposition`
-  is already a retirement value (`removed_after_merge` | `kept_by_user`), the action ran AND its
-  disposition was recorded in a prior turn (a compaction landed before `clear-gate`) → do **not** re-run
-  the action; just `mp clear-gate` + re-enter the §2 loop (→ the `finish` op → §2c step-1 shortcut
-  → **archive**).
-  Otherwise: delegate to `superpowers:finishing-a-development-branch` with the option **pre-decided** +
-  **"tests verified at SHA `<X>`, base = `<base>`"** so it skips its own option prompt (a re-asserted
-  hard-gate re-running a green suite at unchanged HEAD is redundant-but-harmless; if it double-prompts
-  or fights the durable gate, run the git steps directly using the skill as reference). It executes the
-  branch disposition — merge / push+PR / discard / keep — with its git run **in MAIN**
-  (`git -C "<MAIN>" merge masterplan/<slug>`, the push). (If the `pr` choice was taken on a branch that
-  step 5's probe found **already has an open PR**, the push is a fast-forward no-op and no second PR is
-  opened — surface the existing PR's URL.) **Then layer the worktree teardown on top (§2e¶7), NOT a
-  replacement** — the skill finished the *branch*; the shell now retires the *worktree* and records the
-  disposition from the ACTUAL removal outcome:
-  - merge / discard → `git -C "<MAIN>" worktree remove "<WT>"` (add `--force` only if intended-dirty);
-    `removalConfirmed` = (that command exited 0). keep / pr → no removal.
-  - record via `mp worktree record --state=<path> --choice=<merge|discard|keep|pr> [--removal-confirmed]`
-    — `bin` computes the crash-safe disposition with `dispositionAfterTeardown(choice, confirmed)`
-    (merge/discard + confirmed → `removed_after_merge`; keep/pr → `kept_by_user`; merge/discard + NOT
-    confirmed → `active`, so an unconfirmed teardown is retried on the next §2e¶5 sweep — never the
-    phantom `missing`). This SUPERSEDES the old `set-worktree-disposition --disposition=<dispositions[choice]>`
-    static-map write: the disposition now turns on whether the removal actually happened, not on `choice`
-    alone. The recorded retirement value is what arms the re-entry guard above.
-  Then `mp event --state=<path> --type=branch_finish --note=<choice>`, `mp clear-gate`,
-  `git -C "<MAIN>"` commit the bundle, re-enter the §2 loop → the `finish` op → §2c → step-1
-  shortcut → **archive**.
+| op | do (then re-invoke `mp finish-step` with the answer flag) |
+|---|---|
+| `run_verify` `{commands, head, wt}` | `superpowers:verification-before-completion`: RUN fresh, **cite real output + exit code** (CD-3; "should pass" is not evidence). Command source: `op.commands` (the union of the plan tasks' `verify_commands`); if empty, the skill's own IDENTIFY; if STILL none under `--autonomy=full`, `mp open-gate --id=no_verification_command` + AUQ (specify one / proceed without) — never silently skip. PASS → re-invoke with `--verify-passed` (records the SHA durably; a re-entry at unchanged HEAD skips the re-run). FAIL → `--verify-failed` (opens the durable `verification_failed` gate; the returned `ask` is the turn-close). |
+| `write_retro` `{path, retro_only?}` | Generate `retro.md` at `op.path` (write-if-absent — finish-step re-checks the fs, so a re-entry skips it). Then re-invoke with no new flags. Subsumes the old `retro` verb. |
+| `run_codex_review` `{base, head, wt, digest_path}` | The whole-branch cross-vendor review — network, stays shell-side. Resolve the script (`mp codex-companion-path` → `{resolved, exists, path}`), then run foreground from WT bounded by an OUTER `timeout` ceiling above the companion's internal 240 s status-wait so a network hang can never wedge finish: `( cd "<op.wt>" && timeout 600 node "<path>" review --scope branch --base <op.base> )`. **Fail-soft, never wedge finish:** ANY non-success — non-zero exit, `timeout`'s `124`, unresolved/missing path — → `--codex-skipped --codex-reason="<tight reason>"`; finish-step writes the sha-keyed skip event whose hyphenated "codex-companion … skipped" summary deliberately does NOT match the audit's `\bcodex\s+review\b`, so a degraded finish still trips `codex_review_configured_but_zero_invocations` — correct. On **exit 0**: `Write` a brief digest (count + top findings, not the raw dump) to `op.digest_path` (absolute-MAIN, §2e¶1; the Write tool is not shell-evaluated, so arbitrary review bytes are safe — never interpolate the digest into a shell word), then `--codex-done --codex-count=<n> --codex-base=<op.base> --codex-digest-file=<op.digest_path>` — finish-step emits the durable `codex_review` event (its `summary` is the audit signal that DOES match `\bcodex\s+review\b`; `data.sha/base/count` are the quote-safe machine scalars the re-entry guard keys on; `note` carries the digest verbatim for gate rehydration). Residual window: a death between the reviewer's exit 0 and the re-invoke leaves no record at HEAD, so resume re-runs the review — harmless and idempotent at an unchanged tree. |
+| `ask` `ask:'gate'` `gate:'branch_finish'` `{head, branch, base, dispositions, codex}` | First **probe for an open PR** (the §3 probe: `gh pr list --head "<op.branch>" … \| mp pr-summary`). AUQ labelled with `op.base`: `Merge to <base> locally (Recommended)` · `Push and open a PR` · `Keep branch + worktree as-is` · `Discard everything` (typed "discard" required). If the probe found a PR (`hasPr`), relabel the second option → `View / merge open PR #<n> (mergeable: <yes\|no\|unknown>)` — same `pr` choice; its resolution is a no-op push surfacing the existing PR's URL, never a second one. Fold `op.codex` (`{present, digest, count, base}`, rehydrated from the durable event — the live in-context digest does not survive compaction, the event does) into the AUQ when present. This AUQ is the turn-close. Resolution = re-invoke with `--choice=<merge\|pr\|keep\|discard>` (add `--removal-force` only for an intended-dirty teardown): finish-step runs the disposition transaction (§2e¶7) and archives. A free-text / "not ready" answer holds the gate and chats (§2 `ask:'gate'` rule) — the "not done yet" escape, nothing archives. |
+| `ask` `ask:'gate'` `gate:'verification_failed'` (and `no_verification_command`, shell-opened above) | AUQ: *Fix first & re-run* → `mp clear-gate`, close (fix code + commit, then resume → verification re-runs fresh and re-opens the gate if still red). *Proceed anyway (reviewed)* → `--verify-passed` — the reviewed override records the SHA AND clears the gate, so a re-entry doesn't re-loop the same failure. *Abort finish* → `mp clear-gate`, close (the run stays resumable; nothing archived). For `no_verification_command`: *Specify a command* → RUN it fresh, **cite output** (CD-3) → PASS = `--verify-passed`, FAIL = `--verify-failed`; *Proceed without* = `--verify-passed` (the reviewed "no verification available" override). Never silently skip verification or archive. |
+| `ask` `ask:'owner-blocked'` \| `'owner-lost'` | Guard D (§2e¶8) — same acts as the §2 rows: take over (`--force`) / abort / read-only. NEVER auto-force regardless of autonomy. |
+| `ask` `ask:'dispatch-error'` | A loud invariant: WT missing without a retired disposition (reconcile via `mp sweep`); merge conflict (already aborted — MAIN left clean, the gate stays open); worktree removal failed (disposition stays `active`, reaped by the next sweep — or re-run with `--removal-force`). Surface `op.error` via AUQ — never paper over. |
+| `shell` `{kind:'push_pr', branch, base, wt}` | The network half of the `pr` choice (disposition `kept_by_user` already recorded): `git -C "<op.wt>" push -u origin <op.branch>` then `gh pr create --base <op.base> …` — or, when the probe found an open PR, the push is a fast-forward no-op and no second PR is opened; surface the existing URL. Then re-invoke — the retired disposition archives. |
+| `stop` `reason:'archived'` | Done — owner lock released, the §2 discover filter now hides the bundle, the run goes quiet. Narrate 1–2 lines. |
+| `stop` `reason:'retro_done'` | The `--retro-only` terminal: retro exists; nothing archived, no gates. |
 
 **Manual entry — `/masterplan finish`.** Bare `finish` locates the bundle and `mp decide`s: `complete`
-→ run this flow; tasks still pending (or a run live) → AUQ "N task(s) pending — finalize anyway?
+→ drive this loop; tasks still pending (or a run live) → AUQ "N task(s) pending — finalize anyway?
 (→ §2c) / keep working (→ §2) / just re-write the retro (→ `--retro-only`)" — never silent-archive an
-incomplete run. `finish --retro-only` runs **only** step 4 (the old `retro` behavior).
+incomplete run. `finish --retro-only` passes `--retro-only` (retro write-if-absent → `retro_done`; the
+old `retro` behavior — never archives, never gates).
 
 ## 2d — Autonomy contract (loose / full — when a turn may auto-progress)
 
@@ -424,9 +300,9 @@ single in-file enforcement point — no phase-file indirection.
 
 Every v8 run executes in a **per-run linked worktree holding code only**; its run bundle stays in the
 MAIN checkout. This section DEFINES the two loci, the split commit, and the teardown — and points at
-where create (¶4) and sweep (¶5) now execute. The compute core is `lib/worktree.mjs`; create-or-reuse
-runs inside `mp continue` and the sweep inside `mp sweep` (local git in `mp` — the v9 seam); the
-teardown git (¶7) stays in this shell.
+where create (¶4), sweep (¶5), and teardown (¶7) now execute. The compute core is `lib/worktree.mjs`;
+create-or-reuse runs inside `mp continue`, the sweep inside `mp sweep`, and the teardown inside
+`mp finish-step` (local git in `mp` — the v9 seam).
 
 1. **Two loci, one object store.**
    - **MAIN** = the primary worktree (repo root). Re-derive every turn, cwd-independent:
@@ -446,12 +322,13 @@ teardown git (¶7) stays in this shell.
 
 2. **Every shell git is `-C`-qualified by locus — bare `git` is forbidden in this shell.** Because cwd
    is deliberately moved to WT before each wave (¶3), an un-`-C`'d `git` would hit the wrong locus.
-   - **MAIN locus** (`git -C "<MAIN>" …`): bundle discovery, the global sweep, every **state** commit,
-     the §2c teardown's merge + `worktree remove`, the `branchExists` predicate.
+   - **MAIN locus** (`git -C "<MAIN>" …`): bundle discovery, gate-resolution **state** commits, the
+     `branchExists` predicate. (The teardown's merge + `worktree remove`, the sweep, and the archive
+     commit now run inside `mp` — §2c/¶5/¶7 — with the same `-C` discipline in code.)
    - **WT locus** (`git -C "<WT>" …`): code edits, the D6 `before`/`after` capture, `verify-scope`
-     reverts, the **code** commit, and the §2c finish snapshot's `rev-parse HEAD` / `status --porcelain`
-     of the branch under review. **Every `git rev-parse HEAD` in §2a/§2c is the CODE tip → `git -C
-     "<WT>" rev-parse HEAD`.** The orchestrator's own git NEVER relies on ambient cwd — re-derive
+     reverts, the **code** commit, and the `pr` push. **Every `git rev-parse HEAD` this shell runs is
+     the CODE tip → `git -C "<WT>" rev-parse HEAD`** (the §2c snapshot itself is inside `mp
+     finish-step`). The orchestrator's own git NEVER relies on ambient cwd — re-derive
      MAIN→WT→branch from the slug each turn (compaction-safe).
    - **Sole sanctioned bare git:** the ¶1 bootstrap `git rev-parse --path-format=absolute
      --git-common-dir` that *derives* MAIN. It is cwd-independent by construction (it resolves the same
@@ -469,8 +346,8 @@ teardown git (¶7) stays in this shell.
    `worktreeRegistered`, the crash-between-`add`-and-record guard), the `git worktree add`, and the
    durable `state.worktree` record all run inside `mp continue` before each launch op
    (`lib/continue.mjs` `ensureWorktree`, composing `lib/worktree.mjs` `planWorktreeCreate`). The
-   shell never creates a run worktree by hand; `mp worktree record --choice=…` remains the
-   TEARDOWN recorder (¶7).
+   shell never creates a run worktree by hand; teardown is likewise internalized (¶7, inside
+   `mp finish-step` — `mp worktree record --choice=…` stays as the manual out-of-band recorder).
 
 5. **Global orphan sweep — `mp sweep`, once per SESSION at first §2 entry (a dead run can't reap
    itself).** Teardown for an abandoned/crashed run is done by the NEXT live runner. Classification
@@ -491,23 +368,21 @@ teardown git (¶7) stays in this shell.
      LEADING durable action is its atomic state WRITE, then code commit (WT), then state commit
      (MAIN) — so any crash prefix re-derives: `mp continue` re-runs the tail inline (the
      `finalize_run` reconcile: `mp record-result --reconcile`) off the persisted
-     `active_run.{scope,baseline}` (a clean WT no-ops down to the marker clear). §2c's finish-path
-     commits still follow the same two-loci discipline shell-side.
+     `active_run.{scope,baseline}` (a clean WT no-ops down to the marker clear). On the finish path
+     the same two-loci discipline runs inside `mp finish-step` (§2c) — the task-scope dirty-commit in
+     WT, the gate/archive bundle commits in MAIN.
 
-7. **Teardown — layered onto `finishing-a-development-branch` (§2c), NOT a replacement.** The skill
-   executes the chosen disposition (merge / push+PR / discard / keep) — its merge + push run in MAIN
-   (`git -C "<MAIN>" merge masterplan/<slug>`, the push). AFTER it returns, the shell does WT removal in
-   MAIN and records the disposition from the ACTUAL removal outcome:
-   - merge / discard → `git -C "<MAIN>" worktree remove "<WT>"` (add `--force` only if intended-dirty);
-     `removalConfirmed` = (that command exited 0).
-   - keep / pr → no removal.
-   - record via `mp worktree record --state=<MAIN>/docs/masterplan/<slug>/state.yml
-     --choice=<merge|discard|keep|pr> [--removal-confirmed]` — `bin` calls
-     `dispositionAfterTeardown(choice, confirmed)`: merge/discard + confirmed → `removed_after_merge`;
-     keep/pr → `kept_by_user`; merge/discard + NOT confirmed → `active` (teardown retried on the next
-     sweep — never the phantom `missing`). This REPLACES §2c's old `set-worktree-disposition
-     --disposition=<dispositions[choice]>` static-map write: the disposition now depends on whether
-     removal actually happened, not on `choice` alone.
+7. **Teardown — internalized in `mp finish-step` (§2c).** The `--choice` resolution transaction runs
+   the disposition git in MAIN — `merge --no-edit masterplan/<slug>` (a conflict aborts cleanly and
+   surfaces as `dispatch-error`; the gate stays open), then for merge / discard `worktree remove
+   "<WT>"` (`--force` only on discard or an explicit `--removal-force`) and a best-effort branch
+   retire (`-d` after merge, `-D` on discard). keep / pr → no removal. The disposition is recorded
+   from the ACTUAL removal outcome via `dispositionAfterTeardown(choice, confirmed)`: merge/discard +
+   confirmed → `removed_after_merge`; keep/pr → `kept_by_user`; merge/discard + NOT confirmed →
+   `active` (teardown retried on the next sweep — never the phantom `missing`). The recorded
+   retirement value is what arms the §2c re-entry guard, so a replayed `--choice` never re-runs the
+   action. Only the network half (push + PR) returns to the shell, as the `shell push_pr` op.
+   `mp worktree record --choice=…` remains available as the manual recorder for out-of-band teardowns.
 
 8. **Owner sentinel — Guard D, cross-session mutual exclusion (NFS-safe).** Two sessions (possibly on
    different NFS clients — epyc1/epyc2) must not operate the SAME bundle concurrently. `writeState` is an
@@ -520,7 +395,8 @@ teardown git (¶7) stays in this shell.
      the §2 `ask:'owner-blocked'` AUQ; the per-entry re-acquire doubles as the open-turn heartbeat).
    - **Heartbeat** before the state-mutating completion — executed INSIDE `mp record-result` (step 0
      of its transaction; `lost-to-other` → it returns with zero writes, a second session took over).
-   - **Release** at finish — §2c step **6**, after archive (frees the bundle so no successor is blocked).
+   - **Release** at finish — inside `mp finish-step`'s archive transaction (§2c), after the archive
+     commit (frees the bundle so no successor is blocked).
    - **Liveness is heartbeat-age TTL only** (default 30m, must exceed the max single background wave — an
      LLM session is not a probeable process, so there is no same-host PID check). A crashed session's
      lock ages out after the TTL and the next acquirer `steal`s it; the `owner-sentinel` doctor check

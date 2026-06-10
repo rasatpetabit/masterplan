@@ -169,6 +169,7 @@ import { mapQctlStatus } from '../lib/qctl-status.mjs';
 import { decideBaseDrift } from '../lib/qctl-requeue.mjs';
 import { recordWaveResult } from '../lib/wave-commit.mjs';
 import { continueRun } from '../lib/continue.mjs';
+import { finishStep } from '../lib/finish-step.mjs';
 import { sweepWorktrees } from '../lib/sweep.mjs';
 
 // ---- tiny arg parser: positional[], flags{} (--k=v, or --k as boolean true) ----
@@ -1710,6 +1711,54 @@ function main() {
           routing: typeof flags.routing === 'string' ? flags.routing : undefined,
           review: flags.review,
           reposAllowlist,
+        });
+      } catch (e) {
+        die(e.message);
+      }
+      out(op);
+      break;
+    }
+
+    case 'finish-step': {
+      // T2.4: the §2c finalization flow as a re-entrant state machine — re-entry shortcuts,
+      // WT snapshot + dirty-commit, verified-at-SHA check, retro write-if-absent, the codex
+      // durable guard + event, the branch_finish gate, the chosen disposition (local merge +
+      // worktree teardown), archive-LAST + owner release. ONE typed op per call; the shell's
+      // answers thread back as --verify/--codex/--choice. Same git-in-bin seam as record-result
+      // and continue: LOCAL git only, network ops (push/gh/codex-companion) stay shell-side.
+      const statePath = need(flags, 'state');
+      let lockOff = false;
+      try {
+        lockOff = readState(statePath)?.concurrency?.owner_lock === 'off';
+      } catch {
+        /* unreadable — finishStep fails loudly itself; assume lock on */
+      }
+      let self = null;
+      let now = Number.isFinite(Number(flags.now)) ? Number(flags.now) : Date.now();
+      let ttlMs = Number.isFinite(Number(flags['ttl-ms'])) ? Number(flags['ttl-ms']) : undefined;
+      if (!lockOff) {
+        ({ self, now, ttlMs } = resolveOwnerSelf(flags, statePath));
+      }
+      const verify = flags['verify-passed'] ? 'pass' : flags['verify-failed'] ? 'fail' : null;
+      const codexAns = flags['codex-done'] ? 'done' : flags['codex-skipped'] ? 'skipped' : null;
+      let op;
+      try {
+        op = finishStep({
+          statePath,
+          self,
+          now,
+          ttlMs,
+          force: !!flags.force,
+          codexSuppressed: !!flags['codex-suppressed'],
+          verify,
+          codex: codexAns,
+          codexCount: flags['codex-count'],
+          codexBase: typeof flags['codex-base'] === 'string' ? flags['codex-base'] : null,
+          codexDigestFile: typeof flags['codex-digest-file'] === 'string' ? flags['codex-digest-file'] : null,
+          codexReason: typeof flags['codex-reason'] === 'string' ? flags['codex-reason'] : null,
+          choice: typeof flags.choice === 'string' ? flags.choice : null,
+          removalForce: !!flags['removal-force'],
+          retroOnly: !!flags['retro-only'],
         });
       } catch (e) {
         die(e.message);

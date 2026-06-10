@@ -22,6 +22,13 @@ const ABSORBED = [
   'dispatch_wave', // launch prep → the launch_workflow op
   'recover_plan_run', // plan-run recovery → continueRun probe/reap path
   /(?<![-a-z])re-decide/, // the per-turn decide loop → the §2 trampoline
+  // T2.4 — sequences absorbed into mp finish-step (lib/finish-step.mjs):
+  'mp finish-status', // the WT snapshot (head/porcelain/branches flags) → finishStep's own git
+  'record-verification', // verified-at-SHA record → --verify-passed
+  'codex-review-status', // the durable codex re-entry guard → sha-keyed event scan in finishStep
+  'set-worktree-disposition', // the old static-map write → dispositionAfterTeardown in --choice
+  '--type=codex_review', // the event is emitted by finishStep (--codex-done/skipped), not mp event
+  '--type=branch_finish', // ditto — the --choice transaction events internally
 ];
 
 for (const seq of ABSORBED) {
@@ -39,6 +46,19 @@ test('prompt teaches the replacements (mp continue trampoline + mp sweep)', () =
   for (const op of ['launch_workflow', 'probe', 'run_skill', "ask:'gate'", "ask:'owner-blocked'",
     "ask:'legacy-refused'", "ask:'waves-unbackfillable'", "reason:'wait'"]) {
     assert.ok(prompt.includes(op), `op table missing ${op}`);
+  }
+});
+
+test('prompt teaches the finish trampoline (mp finish-step op table, T2.4)', () => {
+  assert.ok(prompt.includes('mp finish-step'), 'the §2c contract must name mp finish-step');
+  for (const op of ['run_verify', 'write_retro', 'run_codex_review', "gate:'branch_finish'",
+    "gate:'verification_failed'", "kind:'push_pr'", "reason:'archived'", "reason:'retro_done'"]) {
+    assert.ok(prompt.includes(op), `§2c op table missing ${op}`);
+  }
+  // The answer flags ARE the resolution surface — each must be taught or a gate dead-ends.
+  for (const flag of ['--verify-passed', '--verify-failed', '--codex-done', '--codex-skipped',
+    '--choice=', '--removal-force', '--retro-only']) {
+    assert.ok(prompt.includes(flag), `§2c answer flag missing ${flag}`);
   }
 });
 
