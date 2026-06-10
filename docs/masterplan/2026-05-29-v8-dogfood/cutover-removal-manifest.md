@@ -185,6 +185,11 @@ the Tier-1 text above, in line with the later entries of this same manifest:
    full-lifecycle Codex = Residual 3B, still unimplemented). The attic is deleted when 3B's
    foreground-sequential execute path ships. This unblocked the cutover without abandoning the 3B
    commitment.
+   **ADDENDUM (2026-06-10) — #13 FULLY DISCHARGED.** 3B's foreground-sequential path shipped
+   (`mp continue` returns `dispatch_foreground` under host suppression; see design-residuals
+   Residual 3 closing addendum), the attic `docs/attic/v7-codex-hedge/` is `git rm`'d (text at tag
+   `v8.1.0-pre-cruft-removal`), and the SKILL.md Workflow row now teaches the delivered op instead
+   of the hedge. Empirical Codex-hosted parity dogfood remains outstanding (unit-verified only).
 
 Also: `commands/masterplan-contracts.md` was **relocated** to `docs/contracts/` (DF-1) rather than
 kept-in-place as the Tier-3 table assumed — its only live consumer (`tests/static/test-cross-refs.sh`)

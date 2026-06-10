@@ -43,8 +43,8 @@ test('prompt teaches the replacements (mp continue trampoline + mp sweep)', () =
   assert.ok(prompt.includes('mp continue'), 'the §2 trampoline contract must name mp continue');
   assert.ok(prompt.includes('mp sweep'), 'the session sweep must name mp sweep');
   // The op table is the contract's load-bearing surface — every typed op must be taught.
-  for (const op of ['launch_workflow', 'probe', 'run_skill', "ask:'gate'", "ask:'owner-blocked'",
-    "ask:'legacy-refused'", "ask:'waves-unbackfillable'", "reason:'wait'"]) {
+  for (const op of ['launch_workflow', 'dispatch_foreground', 'probe', 'run_skill', "ask:'gate'",
+    "ask:'owner-blocked'", "ask:'legacy-refused'", "ask:'waves-unbackfillable'", "reason:'wait'"]) {
     assert.ok(prompt.includes(op), `op table missing ${op}`);
   }
 });
@@ -57,7 +57,7 @@ test('prompt teaches the finish trampoline (mp finish-step op table, T2.4)', () 
   }
   // The answer flags ARE the resolution surface — each must be taught or a gate dead-ends.
   for (const flag of ['--verify-passed', '--verify-failed', '--codex-done', '--codex-skipped',
-    '--choice=', '--removal-force', '--retro-only']) {
+    '--choice=', '--pushed', '--removal-force', '--retro-only']) {
     assert.ok(prompt.includes(flag), `§2c answer flag missing ${flag}`);
   }
 });

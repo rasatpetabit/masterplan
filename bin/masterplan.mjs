@@ -1757,6 +1757,7 @@ function main() {
           codexDigestFile: typeof flags['codex-digest-file'] === 'string' ? flags['codex-digest-file'] : null,
           codexReason: typeof flags['codex-reason'] === 'string' ? flags['codex-reason'] : null,
           choice: typeof flags.choice === 'string' ? flags.choice : null,
+          pushed: !!flags.pushed,
           removalForce: !!flags['removal-force'],
           retroOnly: !!flags['retro-only'],
         });

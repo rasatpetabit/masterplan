@@ -140,12 +140,14 @@ When the command prompt names Claude Code tools, use the local Codex equivalents
 - AskUserQuestion/Question: `request_user_input` when available; otherwise ask
   one concise prose question and wait.
 - Task/Todo task tracking: `update_plan`.
-- Workflow: **no Codex equivalent — do not execute the wave workflow inline.**
-  Host-suppressed mode is a bounded interactive mode, not a license to run the
-  whole execute workflow in this session. Full-lifecycle Codex execution is a
-  committed product goal (design-residuals Residual 3, RULED 3B) whose
-  foreground-sequential dispatch path has **not yet landed**; until it does,
-  Codex hosts brainstorm/plan/import/status/doctor-class verbs only.
+- Workflow: **no Codex equivalent — and none needed.** Under host suppression
+  `mp continue` never returns `launch_workflow`; waves come back as the
+  `dispatch_foreground` op (Residual 3B, delivered): run `op.tasks` one at a
+  time in this session from `op.cwd` (track with `update_plan`), honor each
+  task's `files` scope, then assemble the standard per-task digest array and
+  feed it to `mp record-result` exactly as the §2 op table describes. Never
+  run the execute workflow itself inline — the foreground-sequential op IS
+  the Codex execution path.
 - Skill: open the referenced `SKILL.md` and follow it.
 - Agent/Subagent/Parallel: only spawn agents when the user explicitly asked for
   subagents or parallel agent work; otherwise run sequentially in this Codex

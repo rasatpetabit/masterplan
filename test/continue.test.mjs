@@ -271,3 +271,59 @@ test('dispatch guards: missing plan.index at dispatch, and prepareWave drift, su
   assert.equal(op2.ask, 'dispatch-error');
   assert.match(op2.error, /divergent file sets/);
 });
+
+test('codex-suppressed (Residual 3B): waves dispatch as dispatch_foreground; record-result drives the same lifecycle', () => {
+  const fx = makeFixture({
+    tasks: [
+      { id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] },
+      { id: 2, status: 'pending', wave: 2, files: ['src/b.txt'] },
+    ],
+    planIndex: [planEntry(1, 1, ['src/a.txt']), planEntry(2, 2, ['src/b.txt'])],
+    slug: 't25fg',
+  });
+  const base = { statePath: fx.statePath, self: fx.self, now: 2000, codexSuppressed: true };
+
+  // 1. Foreground op — routed tasks, frozen baseline, the record-result advisory. No promote handle:
+  //    there is no background task, so no task_id ever lands on the marker.
+  const op1 = continueRun(base);
+  assert.equal(op1.op, 'dispatch_foreground');
+  assert.equal(op1.wave, 1);
+  assert.equal(op1.next, 'record-result');
+  assert.deepEqual(op1.tasks.map((t) => t.id), [1]);
+  assert.deepEqual(op1.baseline, []);
+  assert.equal(op1.review, 'off');
+  const WT = op1.cwd;
+  assert.ok(fs.existsSync(path.join(WT, '.git')), 'worktree created');
+  const marker = readState(fx.statePath).active_run;
+  assert.equal(marker.phase, 'launching');
+  assert.equal(marker.task_id, undefined, 'phase-1 marker only — nothing to probe');
+
+  // 2. A crash mid-foreground resumes through recover_and_redispatch and re-emits the SAME op
+  //    (no reap probe — no task_id means no background run to stop).
+  const again = continueRun(base);
+  assert.equal(again.op, 'dispatch_foreground');
+  assert.equal(again.wave, 1);
+
+  // 3. The host's sequential digests feed the standard record transaction, and the next continue
+  //    dispatches wave 2 foreground; the final continue hands to finish — identical lifecycle.
+  write(WT, 'src/a.txt', 'A\n');
+  const rec1 = recordWaveResult({ statePath: fx.statePath, self: fx.self, now: 2000, result: { wave: 1, baseline: [], tasks: [digest(1, 'done')] } });
+  assert.equal(rec1.outcome, 'recorded');
+  const op2 = continueRun(base);
+  assert.equal(op2.op, 'dispatch_foreground');
+  assert.equal(op2.wave, 2);
+  assert.equal(op2.cwd, WT, 'same worktree reused');
+  write(WT, 'src/b.txt', 'B\n');
+  recordWaveResult({ statePath: fx.statePath, self: fx.self, now: 2000, result: { wave: 2, baseline: [], tasks: [digest(2, 'done')] } });
+  assert.deepEqual(continueRun(base), { op: 'run_skill', skill: 'finish' });
+
+  // Suppression off on the SAME bundle → the background path again (the flag is per-invocation,
+  // never persisted): a fresh wave-2-style fixture isn't needed — assert via a new pending task.
+  const fx2 = makeFixture({
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    planIndex: [planEntry(1, 1, ['src/a.txt'])],
+    slug: 't25bg',
+  });
+  const bg = continueRun({ statePath: fx2.statePath, self: fx2.self, now: 2000, codexSuppressed: false });
+  assert.equal(bg.op, 'launch_workflow');
+});

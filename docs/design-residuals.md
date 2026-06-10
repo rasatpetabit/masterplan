@@ -129,7 +129,7 @@ branch). No floor change. See WORKLOG `## 2026-05-30 — Issue H SHIPPED — 2A`
 
 ---
 
-## Residual 3 — Codex wave-execution scope: a **code-assumes-(a) vs product-commits-(b) mismatch** that the cutover surfaces **(RULED 3B, 2026-05-30 — full-lifecycle Codex committed; implementation gated on the B1 parity run + deferred)**
+## Residual 3 — Codex wave-execution scope: a **code-assumes-(a) vs product-commits-(b) mismatch** that the cutover surfaces **(RULED 3B 2026-05-30; foreground-sequential path DELIVERED 2026-06-10 — see the closing addendum)**
 
 This is where the v7-audit B2 finding (the `check_taskcreate_gate` red on `commands/masterplan.md:87`)
 finally rests — **not** as the declined one-line "Claude Code only" guard, but as the design question
@@ -157,10 +157,11 @@ the **code is written for (a)**; the **product commits to (b)**. That mismatch i
   tool the adaptation table omits.
 
 **Why it's a cutover obligation, not a live defect.** On the **current hybrid branch** the gap is hedged:
-`docs/attic/v7-codex-hedge/codex-host.md` (attic'd from `parts/codex-host.md` at the v8.2.0 cutover per
-Tier-4 #13) frames host-suppressed mode as *"a bounded interactive mode —
-not a license to execute the whole workflow inline,"* and `docs/attic/v7-codex-hedge/taskcreate-projection.md`
-carries the *"Claude Code only, no-op under Codex"* projection. That prose is precisely what
+the v7 hedge pair `codex-host.md` + `taskcreate-projection.md` (attic'd from `parts/` at the v8.2.0
+cutover per Tier-4 #13 as `docs/attic/v7-codex-hedge/`; **deleted 2026-06-10 when 3B's code landed** —
+text retrievable at tag `v8.1.0-pre-cruft-removal`) frames host-suppressed mode as *"a bounded
+interactive mode — not a license to execute the whole workflow inline,"* plus the *"Claude Code only,
+no-op under Codex"* projection. That prose is precisely what
 makes the surviving `SKILL.md` table's Workflow-tool omission **harmless today** — it scopes naive Codex
 hosting away from full-workflow-inline execution. *(v8.2.0 update: the hedge survived the cutover in the
 attic, and `SKILL.md`'s adaptation table now carries an explicit Workflow row stating the same scope —
@@ -239,6 +240,19 @@ parity-dependent is the **mechanism, not the commitment**:
 abandoned. The cutover gate (manifest **Tier-4 #13**) is updated from *"rule 3A or 3B"* to *"3B's code must
 land before the v7 Codex hedge is `git rm`'d"*. The `codex-host.mjs:5-6` comment-fix stays gated on the parity
 branch above (correct it only in the cannot-host-Workflow world).
+
+**CLOSED (2026-06-10): 3B's foreground-sequential path DELIVERED — the parity-independent "most robust
+design" option above.** Under host suppression (`codexHostSuppressed`), `mp continue`'s `dispatchWave`
+(`lib/continue.mjs`) returns `{op:'dispatch_foreground', wave, cwd, tasks, baseline, review,
+next:'record-result'}` instead of `launch_workflow` — same scope, baseline, and launching marker, so a
+crash resumes through the ordinary `recover_and_redispatch` path by re-emitting the same op. The host
+(Codex inline + `update_plan`; CC fallback sequential `mp-implementer` agents) runs the routed tasks one
+at a time and feeds the standard digest array to `mp record-result` — the identical lifecycle from there.
+Taught in the §2 op table (`commands/masterplan.md`) and `skills/masterplan/SKILL.md`'s Workflow row;
+op-shape + two-wave lifecycle covered in `test/continue.test.mjs`. The v7 hedge attic is deleted
+(Tier-4 #13 fully discharged) and the `codex-host.mjs:5-6` comment repointed at the tag. Per plan, the
+**empirical gate stays open**: the path is unit-verified only; honesty requires a Codex-hosted parity
+run before claiming dogfooded support (tracked in WORKLOG).
 
 ---
 

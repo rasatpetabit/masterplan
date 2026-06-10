@@ -242,22 +242,73 @@ test('discard: forced teardown, branch -D, kept dirt discarded, archived', () =>
   assert.equal(readState(fx.statePath).worktree_disposition, 'removed_after_merge');
 });
 
-test('pr: records kept_by_user, returns the push_pr shell op; next call archives', () => {
+test('pr: two-phase handshake — push_pr leaves the gate open; --pushed retires and archives', () => {
   const fx = makeFixture();
   walkToGate(fx);
+  // Phase 1: the shell op, with NOTHING durable changed — a death before the push must
+  // re-render the gate, never silently archive with no PR (Codex r5 P1).
   let op = fx.step({ choice: 'pr' });
   assert.equal(op.op, 'shell');
   assert.equal(op.kind, 'push_pr');
   assert.equal(op.branch, 'masterplan/t24');
   assert.equal(op.base, 'main');
-  const st = readState(fx.statePath);
+  let st = readState(fx.statePath);
+  assert.notEqual(st.worktree_disposition, 'kept_by_user', 'not retired before the push is confirmed');
+  assert.equal(st.pending_gate?.id, 'branch_finish', 'gate stays open across the network half');
+  assert.ok(fs.existsSync(fx.WT), 'pr keeps the worktree');
+
+  // Crash before the push: a bare re-call re-renders the gate — nothing archived.
+  op = fx.step();
+  assert.equal(op.op, 'ask');
+  assert.equal(op.gate, 'branch_finish');
+  assert.notEqual(readState(fx.statePath).status, 'archived');
+
+  // Re-issuing the choice re-emits the shell op (the push is idempotent shell-side).
+  op = fx.step({ choice: 'pr' });
+  assert.equal(op.kind, 'push_pr');
+
+  // Phase 2: the shell confirms the push → retire, clear the gate, archive.
+  op = fx.step({ choice: 'pr', pushed: true });
+  assert.equal(op.reason, 'archived');
+  st = readState(fx.statePath);
   assert.equal(st.worktree_disposition, 'kept_by_user');
   assert.equal(st.pending_gate, null);
-  assert.ok(fs.existsSync(fx.WT), 'pr keeps the worktree');
-  // the shell pushed (network, out of scope) → re-call archives via the retirement shortcut
-  op = fx.step();
+  assert.equal(st.status, 'archived');
+});
+
+test('merge target guard: MAIN checked out on a non-base branch → dispatch-error, nothing merged', () => {
+  const fx = makeFixture();
+  walkToGate(fx);
+  git(fx.MAIN, 'checkout', '-q', '-b', 'unrelated-feature');
+  const op = fx.step({ choice: 'merge' });
+  assert.equal(op.op, 'ask');
+  assert.equal(op.ask, 'dispatch-error');
+  assert.match(op.error, /merge target mismatch/);
+  assert.match(op.error, /unrelated-feature/);
+  assert.equal(readState(fx.statePath).pending_gate?.id, 'branch_finish', 'gate intact');
+  // back on the base, the same choice completes the transaction
+  git(fx.MAIN, 'checkout', '-q', 'main');
+  assert.equal(fx.step({ choice: 'merge' }).reason, 'archived');
+  assert.ok(git(fx.MAIN, 'log', '--oneline').includes('task 1'), 'merge landed on main');
+});
+
+test('teardown crash window: WT removed but disposition not recorded — gate re-renders MAIN-side, choice replay retires by absence', () => {
+  const fx = makeFixture();
+  walkToGate(fx);
+  // simulate a death between `worktree remove` and the disposition write
+  git(fx.MAIN, 'merge', '--no-edit', '-q', 'masterplan/t24');
+  git(fx.MAIN, 'worktree', 'remove', '--force', fx.WT);
+  // bare re-call: the open gate re-renders from MAIN-side refs instead of dying on WT git
+  let op = fx.step();
+  assert.equal(op.op, 'ask');
+  assert.equal(op.gate, 'branch_finish');
+  assert.equal(op.wt_missing, true);
+  assert.ok(op.head, 'head hydrated from the surviving branch ref');
+  assert.equal(op.base, 'main');
+  // replaying the same choice treats the missing path as removal-confirmed and retires
+  op = fx.step({ choice: 'merge' });
   assert.equal(op.reason, 'archived');
-  assert.equal(readState(fx.statePath).status, 'archived');
+  assert.equal(readState(fx.statePath).worktree_disposition, 'removed_after_merge');
 });
 
 test('keep: kept_by_user, worktree + branch survive, archived in the same call', () => {
