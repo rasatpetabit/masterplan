@@ -167,6 +167,7 @@ import { computeEnqueueKey, decideEnqueue } from '../lib/qctl-enqueue.mjs';
 import { verifyArtifact, parseQctlDigest } from '../lib/qctl-artifact.mjs';
 import { mapQctlStatus } from '../lib/qctl-status.mjs';
 import { decideBaseDrift } from '../lib/qctl-requeue.mjs';
+import { recordWaveResult } from '../lib/wave-commit.mjs';
 
 // ---- tiny arg parser: positional[], flags{} (--k=v, or --k as boolean true) ----
 function parseArgs(argv) {
@@ -194,6 +195,39 @@ function die(msg, code = 2) {
 function need(flags, key) {
   if (flags[key] === undefined) die(`missing required --${key}`);
   return flags[key];
+}
+
+// Guard D owner identity, resolved once for every verb that touches the sentinel
+// (acquire/heartbeat/release-owner + record-result). Identity is the LLM SESSION
+// (CLAUDE_CODE_SESSION_ID), not the ephemeral mp process; slug is best-effort lock metadata.
+function resolveOwnerSelf(flags, statePath) {
+  const bundleDir = path.dirname(statePath);
+  const host =
+    typeof flags.host === 'string' && flags.host.trim() ? flags.host.trim() : os.hostname();
+  const session =
+    typeof flags.session === 'string' && flags.session.trim()
+      ? flags.session.trim()
+      : String(process.env.CLAUDE_CODE_SESSION_ID ?? '').trim();
+  if (!session) {
+    die('owner: no session id — pass --session or set CLAUDE_CODE_SESSION_ID', 1);
+  }
+  let slug = typeof flags.slug === 'string' ? flags.slug : undefined;
+  if (slug == null) {
+    try {
+      slug = readState(statePath).slug;
+    } catch {
+      /* bundle not yet readable — leave slug undefined */
+    }
+  }
+  const now = Number.isFinite(Number(flags.now)) ? Number(flags.now) : Date.now();
+  const ttlMs = Number.isFinite(Number(flags['ttl-ms'])) ? Number(flags['ttl-ms']) : undefined;
+  let self;
+  try {
+    self = buildOwnerIdentity({ host, session, slug, now });
+  } catch (e) {
+    die(`owner: ${e.message}`, 1);
+  }
+  return { bundleDir, self, now, ttlMs };
 }
 
 // Valid task statuses the v8 shell may WRITE via mark-task. Minimal + decide-consistent:
@@ -1580,41 +1614,61 @@ function main() {
       break;
     }
 
+    case 'record-result': {
+      // T2.2: the §2a wave-completion transaction in code — owner heartbeat → mark digests →
+      // verify-scope → out-of-scope revert → split commit (code in WT, state in MAIN) → decide.
+      // The ONE deliberate v9 relaxation of "bin is fs-only": record-result runs LOCAL git,
+      // -C-qualified to loci lib/wave-commit.mjs derives itself (MAIN from the bundle's
+      // --git-common-dir, WT from state/--worktree). Network git (push/gh) stays shell-side.
+      const statePath = need(flags, 'state');
+      // The L2 workflow's WHOLE result object ({wave, baseline, tasks:[{task_id, digest,
+      // review}]}) via --result-file (preferred — no shell-quoting hazards) or --result inline.
+      // --reconcile runs the finalize_run crash-reconciliation with NO result: no marks, the
+      // verify → revert → commit → clear tail only (a clean WT degrades to pure no-ops).
+      let result = null;
+      if (flags['result-file'] !== undefined || flags.result !== undefined) {
+        try {
+          const raw =
+            flags['result-file'] !== undefined
+              ? fs.readFileSync(String(flags['result-file']), 'utf8')
+              : String(flags.result);
+          result = JSON.parse(raw);
+        } catch (e) {
+          die(`record-result: could not parse workflow result (${e.message})`);
+        }
+        if (result === null || typeof result !== 'object') {
+          die('record-result: workflow result must be a JSON object');
+        }
+      } else if (!flags.reconcile) {
+        die('record-result: pass --result-file/--result, or --reconcile for the crash-reconcile path');
+      }
+      const { self, now } = resolveOwnerSelf(flags, statePath);
+      let res;
+      try {
+        res = recordWaveResult({
+          statePath,
+          result,
+          self,
+          now,
+          worktree: typeof flags.worktree === 'string' ? flags.worktree : undefined,
+        });
+      } catch (e) {
+        die(e.message);
+      }
+      // lost-to-other exits 0 with JSON — a valid outcome the shell surfaces as an AUQ
+      // (with `mp acquire-owner --force` as an option), not an mp error.
+      out(res);
+      break;
+    }
+
     case 'acquire-owner':
     case 'heartbeat-owner':
     case 'release-owner': {
       // Guard D: NFS-safe cross-session owner sentinel (lib/owner.mjs decision + lib/owner-fs.mjs fs).
-      // Identity is the LLM SESSION (CLAUDE_CODE_SESSION_ID), not the ephemeral mp process. The bundle
-      // dir (where .owner.lock lives) is dirname(--state). All ops are filesystem (link/stat/rename/
-      // unlink) — squarely inside bin's fs-only mandate; no git, no CD-7 conflict.
+      // The bundle dir (where .owner.lock lives) is dirname(--state). All ops are filesystem
+      // (link/stat/rename/unlink) — squarely inside bin's fs-only mandate; no git, no CD-7 conflict.
       const statePath = need(flags, 'state');
-      const bundleDir = path.dirname(statePath);
-      const host =
-        typeof flags.host === 'string' && flags.host.trim() ? flags.host.trim() : os.hostname();
-      const session =
-        typeof flags.session === 'string' && flags.session.trim()
-          ? flags.session.trim()
-          : String(process.env.CLAUDE_CODE_SESSION_ID ?? '').trim();
-      if (!session) {
-        die('owner: no session id — pass --session or set CLAUDE_CODE_SESSION_ID', 1);
-      }
-      // slug is best-effort metadata for the lock payload (not required; acquire may precede a full seed).
-      let slug = typeof flags.slug === 'string' ? flags.slug : undefined;
-      if (slug == null) {
-        try {
-          slug = readState(statePath).slug;
-        } catch {
-          /* bundle not yet readable — leave slug undefined */
-        }
-      }
-      const now = Number.isFinite(Number(flags.now)) ? Number(flags.now) : Date.now();
-      const ttlMs = Number.isFinite(Number(flags['ttl-ms'])) ? Number(flags['ttl-ms']) : undefined;
-      let self;
-      try {
-        self = buildOwnerIdentity({ host, session, slug, now });
-      } catch (e) {
-        die(`owner: ${e.message}`, 1);
-      }
+      const { bundleDir, self, now, ttlMs } = resolveOwnerSelf(flags, statePath);
       if (cmd === 'acquire-owner') {
         // The bundle dir must exist to hold the lock; a kickoff acquire may run just before/at seed.
         try {

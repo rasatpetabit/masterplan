@@ -102,8 +102,8 @@ The spine. It NEVER decides in prose — it asks `mp decide` and executes the re
    - **A Workflow completion notification re-invoked you** and its `<result>{…}</result>` (run/task
      matching `active_run`) is in front of you → do NOT probe or `decide` yet: first run the
      **completion protocol — §2a for an execute wave, §2b for a planning run** (branch on
-     `active_run.kind`: `'plan'` → §2b, else → §2a) to record the in-hand digests (execute: mark each
-     `done`, D6 `verify-scope`, commit; plan: merge fragments → validate → review → advance).
+     `active_run.kind`: `'plan'` → §2b, else → §2a) to record the in-hand digests (execute: one
+     `mp record-result` transaction; plan: merge fragments → validate → review → advance).
      Recording BEFORE `decide` is load-bearing — a finished run whose tasks are still
      `pending` on disk looks like a crash to `decide` (→ `recover_and_redispatch`), so deciding first
      re-runs a wave you already hold results for. After recording, fall through to step 4 (no `--alive`).
@@ -124,7 +124,7 @@ The spine. It NEVER decides in prose — it asks `mp decide` and executes the re
    |---|---|
    | `surface_gate` | Re-render the gate's `AskUserQuestion` (CD-9). A named option → act, `mp clear-gate`, `git -C "<MAIN>"` commit the bundle (state, §2e¶2), re-decide. Free-text / no clear answer → keep the gate, respond, close. NEVER auto-proceed regardless of autonomy (the durable marker outranks a native AUQ that can't survive compaction). When re-rendering `branch_finish`, **rehydrate the codex-review digest**: `mp codex-review-status --state=<path> --sha=$(git -C "<WT>" rev-parse HEAD)` (the code tip under review, §2e¶2) — on `{present:true}` fold its `digest`/`count`/`base` back into the re-rendered AUQ (the live step-5 digest doesn't survive compaction; the durable event does). For the finalization gates (`branch_finish`, `verification_failed`), the per-option **act** is specified in **§2c**. |
    | `wait` | A live run owns the wave. Report it and close — its Workflow completion notification re-invokes this controller, which records the result via the completion protocol (**§2a**, step 3). |
-   | `finalize_run` | The wave's tasks are all `done` on disk. **First reconcile a crash between `mark-task` and the wave's split-commit (§2e¶6):** if `active_run.wave` is set and `git -C "<WT>" status --porcelain` is non-empty, the wave recorded task status but its verify-scope + code commit didn't run — re-run that tail (the §2a completion steps 2–3) against the **persisted** baseline: capture `after` (the two `git -C "<WT>"` touched-set commands), `mp verify-scope --state=<path> --wave=<active_run.wave> --after='<after>'` (no `--before` → `bin` uses `active_run.baseline`, §2a launch step 3), revert any out-of-scope in WT (§2a completion step 2), then the **code** commit in WT (§2e¶6). Then `mp clear-active-run`, `git -C "<MAIN>"` commit the bundle (state, §2e¶2), then re-decide (→ next wave, or `complete`). On the normal path the wave already committed → WT is clean → the reconciliation no-ops. |
+   | `finalize_run` | The wave's tasks are all `done` on disk but the marker survived — a crash somewhere in the record tail (the normal completion path clears the marker itself, so this fires only on resume). `mp record-result --state=<path> --reconcile` re-runs that tail as ONE transaction off the persisted marker: capture `after` → verify-scope against the frozen `active_run.{scope,baseline}` → revert any out-of-scope in WT → **code** commit (WT) → clear `active_run` → **state** commit (MAIN) — a clean WT degrades every git step to a no-op (the marker clear + state commit still land). Act on the returned `next` (implementation: `lib/wave-commit.mjs`, trace §2e¶6). |
    | `recover_and_redispatch` | Crash recovery. If `staleTaskId` ≠ null: `TaskList` → `TaskStop` (**Claude Code only** — no-op when `codex_host_suppressed == true`, where the native task tools are absent and reconciliation leans on the on-disk `active_run` marker) any surviving run for it (a backgrounded Workflow MAY outlive session death — reconcile before touching files). Then RESET scope **in the code worktree** (§2e¶2): `git -C "<WT>" checkout -- <resetPaths>` and, **only when `resetPaths` is non-empty**, `git -C "<WT>" clean -fd -- <resetPaths>` — scope the clean to the reset paths; a bare `git clean -fd` (or one with an empty pathspec) would wipe unrelated user-owned untracked files. Then dispatch the wave via **§2a**. Idempotent — agents never commit. |
    | `recover_plan_run` | Crash recovery for a planning fan-out (`active_run.kind:'plan'`). If `staleTaskId` ≠ null: `TaskList` → `TaskStop` (**Claude Code only** — no-op when `codex_host_suppressed == true`) any surviving run. **No git scope reset** — the subsystem drafters are read-only, so nothing was written to revert. Re-launch the fan-out via **§2b** (re-dispatch `mp-spec-decomposer` if the subsystem set isn't in hand). Idempotent. |
    | `dispatch_wave` | Launch one wave through the L2 engine — full sequence in **§2a**. In brief: ensure the run's worktree (create-or-reuse, §2e¶4) → `mp prepare-wave` (resolves routing + `scope`) → capture the WT git baseline → `mp set-active-run --wave=N --scope='<prepare-wave.scope JSON>'` (phase-1 + frozen F-SCOPE snapshot, BEFORE launch) → `cd "<WT>"` (the write-only cwd signal, §2e¶3) → launch `workflows/execute.workflow.js` in the background with `args={wave,tasks,baseline,repoRoot:<WT>,review}` → `mp promote-active-run --run-id=… --task-id=…` (phase-2) → close to await its completion notification. |
@@ -133,10 +133,12 @@ The spine. It NEVER decides in prose — it asks `mp decide` and executes the re
 
 6. **CD-7 commit discipline.** Each durable change = a `mp` write (atomic) FOLLOWED BY a `git commit`.
    The **bundle** commit is `git -C "<MAIN>"` (state lives in MAIN); **code** commits are
-   `git -C "<WT>"` (the split commit, §2e¶6) — never one mixed `commit -am`. A crash between write and
-   commit is safe — `state.yml` leads, resume re-commits (the crash-between-the-two-commits trace is
-   §2e¶6). Wave members (agents / the L2 engine) return digests only; they NEVER write `state.yml` or
-   commit, which is exactly what makes re-dispatch idempotent.
+   `git -C "<WT>"` (the split commit, §2e¶6) — never one mixed `commit -am`. On the wave path BOTH
+   sides run **inside `mp record-result`** (`mp` is the sole writer of state AND the sole executor of
+   the local git bracketing it); elsewhere the shell commits after the `mp` write. A crash between
+   write and commit is safe — `state.yml` leads, resume re-commits (§2e¶6). Wave members (agents /
+   the L2 engine) return digests only; they NEVER write `state.yml` or commit, which is exactly what
+   makes re-dispatch idempotent.
 
 ## 2a — Wave dispatch + completion protocol (the L1↔L2 seam)
 
@@ -185,42 +187,26 @@ dispatches agents and echoes the baseline.
 
 **Completion** (re-invoked holding the engine's `<result>` — reached from §2 step 3):
 
-0. **Heartbeat re-check before any state write (Guard D, §2e¶8).** `mp heartbeat-owner
-   --state=<path>`. `held-by-self` → proceed (the heartbeat is refreshed). `lost-to-other` → a second
-   session took this bundle over while our wave ran in the background; **STOP** — do NOT mark tasks,
-   verify-scope, or commit (that would corrupt another owner's run). Surface the takeover via
-   `AskUserQuestion` (reclaim via `mp acquire-owner --force`, or abandon this session's recording). This
-   is the load-bearing pre-write guard the held-by-self/lost-to-other split exists for.
-1. **Record digests — BEFORE any `decide`.** For each `result.tasks[i]`: `digest.status==='done'` →
-   `mp mark-task --state=<path> --id=<id> --status=done`; `failed`/`blocked` → leave it `pending` and
-   collect it to surface (those statuses are not writable — `recover_and_redispatch` re-runs them).
-   Note any `review.verdict==='blocking'` to surface even on a `done` task.
-2. **D6 scope verify.** Capture `after` (the same two `git -C "<WT>"` commands as Launch step 2), then
-   `mp verify-scope --state=<path> --wave=N --before='<result.baseline>' --after='<after>'`. The allow-set is the
-   IMMUTABLE `active_run.scope` snapshot frozen at launch (Launch step 3) — `verify-scope` reads it
-   itself, so there is NO `--plan-index` to pass and NO re-resolution from the now-mutable
-   plan.index/state. That is the point: a rogue agent that edits `plan.index.json` mid-wave to widen its
-   own scope can't move the allow-set, so its out-of-scope edit is still caught. On `ok:false` an agent
-   wrote outside declared scope: revert the offenders **in the code worktree** (§2e¶2) —
-   `git -C "<WT>" checkout -- <outOfScope>` and (non-empty) `git -C "<WT>" clean -fd -- <outOfScope>` —
-   and surface the breach (`-fd`, matching the recover path, so an out-of-scope new directory is removed
-   too). In-scope work stands.
-3. **Split commit (§2e¶6).** The code edits and the state live on different branches/loci, so commit
-   each scoped: **code** → `git -C "<WT>" add <the wave's in-scope code files ONLY>` + `git -C "<WT>"
-   commit` (never `add -A` / `commit -am`); **state** → `git -C "<MAIN>" add docs/masterplan/<slug>` +
-   `git -C "<MAIN>" commit`. The leading durable action is the `mp mark-task` WRITE (step 1), not either
-   commit — state leads git (CD-7): a crash anywhere in `mark-task → code commit → state commit`
-   re-derives on the next resume — the marked-`done` state drives `decide` to `finalize_run`, whose
-   reconciliation (§2 finalize_run row) re-runs verify-scope (off the persisted `active_run.baseline`)
-   and the code commit for the uncommitted tip, so neither the scope check nor the code is lost (full
-   trace §2e¶6).
-   **Narrate tersely:** after the commits, print at most a 1–2 line wave summary (what completed /
-   what's next) — NEVER echo the `state.yml` or `WORKLOG.md` diff to screen (anti-flood; the full
-   record lives in the bundle + `git log`).
-4. **Re-decide.** Re-enter step 4. With the wave's tasks now `done`, `decide` returns `finalize_run`
-   (→ clear `active_run` → next wave, or `complete`); any task left `pending` (failed/blocked, or
-   scope-reverted) drives `recover_and_redispatch` for ONLY those, idempotently. Surface failed/blocked
-   tasks or a `blocking` verdict via `AskUserQuestion` (§4) — never silently loop.
+The whole record transaction is ONE subcommand — heartbeat → mark digests → D6 verify-scope →
+out-of-scope revert → split commit (code→WT, state→MAIN) → marker clear (iff the whole wave is done)
+→ re-decide — implemented in `lib/wave-commit.mjs`, crash-safe at every prefix (any crash resumes
+via the §2 `finalize_run` row's `--reconcile`):
+
+1. **Record.** Write the engine's whole `<result>` JSON to a scratch file OUTSIDE the bundle dir
+   (e.g. `/tmp/mp-result-<slug>.json` — a bundle-dir scratch would be swept into the state commit),
+   then `mp record-result --state=<path> --result-file=<that file>`.
+2. **Act on the returned JSON.**
+   - `outcome:'lost-to-other'` → NOTHING was written; a second session took this bundle over while
+     our wave ran. **STOP** — surface the takeover via `AskUserQuestion` (reclaim via
+     `mp acquire-owner --force`, or abandon this session's recording) (Guard D, §2e¶8).
+   - `failed[]` / `qctl[]` / `blocking_reviews[]` non-empty → surface via `AskUserQuestion` (§4) —
+     never silently loop. Failed/blocked tasks stay `pending` with the marker intact; `next` is
+     `recover_and_redispatch` for ONLY those. `qctl` tasks hand to §6.
+   - `scope.ok:false` → the offenders were already reverted in WT (`reverted[]`); surface the
+     breach. In-scope work stands.
+   - Otherwise **narrate tersely** — at most a 1–2 line wave summary (what completed / what's
+     next), NEVER the `state.yml` or `WORKLOG.md` diff (anti-flood) — and execute `next`
+     (§2 step 5 table).
 
 ## 2b — Parallel-plan dispatch + completion (the planning L1↔L2 seam)
 
@@ -456,7 +442,7 @@ turn hit none of these, it MUST auto-progress, not ask:
 - `surface_gate` for any durable gate: `branch_finish`, `verification_failed`, `no_verification_command`.
 - A spec/plan **review FAIL** or a missing-subsystem REVISE (§2b step 5 / §3a).
 - A wave that surfaced a **failure** — a `failed`/`blocked` task or a `blocking` review verdict (§2a
-  step 4) — or **blocker re-engagement** after the CD-4 ladder fails its rungs.
+  completion) — or **blocker re-engagement** after the CD-4 ladder fails its rungs.
 - Re-entering an **in-progress brainstorm** (`resume_phase`, `phase==brainstorm`): continue / restart / stop.
 - The §2-step-1 **multi-bundle discover picker**, and the bare-`finish` **pending-tasks** prompt
   (finalize anyway / keep working / `--retro-only`, §2c manual entry) — both genuine "which path?" forks.
@@ -469,7 +455,7 @@ emit them under loose/full):
 
 - "Run codex or not?" — routing is decided by `mp prepare-wave` (`routeTask`), never by asking.
 - "What should I do next?" / "dispatch the next wave?" — between successful steps you **auto-proceed**:
-  record digests → commit → dispatch the next wave **in the same turn** (§2a completion → re-decide).
+  `mp record-result` → dispatch the next wave **in the same turn** (§2a completion → execute `next`).
 - Per-small-task "looks good?" / "shall I continue?" confirmations.
 - "Ready for Wave N" / "awaiting completion" / "status this turn:" ceremonial closers.
 
@@ -577,23 +563,15 @@ behind `mp worktree plan|record|reconcile`; all git stays in this shell (CD-7).
    - This is the only crash-leak reaper. Per-§2-entry create-or-reuse (¶4) stays per-entry; only the
      sweep is session-gated (re-running it every wave is wasteful + noisy).
 
-6. **Split commit — state and code commit SEPARATELY, to two loci/branches.** Wherever §2a/§2c say
-   "commit `state.yml` AND the wave's in-scope file edits together", that is now two scoped commits:
-   - **Code** → `git -C "<WT>" add <in-scope code files ONLY>` then `git -C "<WT>" commit` — NEVER
-     `add -A` / `commit -am` (WT's frozen bundle-dir checkout, if present, must not be swept into the
-     branch; path-scope to the wave's in-scope code paths).
-   - **State** → `git -C "<MAIN>" add docs/masterplan/<slug>` then `git -C "<MAIN>" commit`.
-   - **Crash between the two commits (CD-7 trace):** the LEADING durable action is NEITHER commit — it
-     is the `mp` state WRITE (`mark-task`). Order: `mp mark-task` (durable, atomic) → code commit (WT)
-     → state commit (MAIN). Any prefix resumes cleanly:
-     - crash after `mark-task` but before EITHER commit → `decide` sees the tasks `done` → `finalize_run`,
-       whose reconciliation (§2 finalize_run row) finds the dirty WT and re-runs **verify-scope** (off
-       the persisted `active_run.baseline` — that is why §2a launch step 3 freezes it) **and** the code
-       commit before clearing the marker + committing state. Neither the scope check nor the code is
-       lost — the earlier, weaker "finalize just commits state" behavior is exactly the Codex P1 this
-       reconciliation closes.
-     - crash after the code commit but before the state commit → the WT is clean, so the reconciliation
-       no-ops; `finalize_run` re-commits state. State leads git; git re-derives.
+6. **Split commit — state and code commit SEPARATELY, to two loci/branches.**
+   - **Code** → WT, path-scoped to the wave's in-scope files ONLY — NEVER `add -A` / `commit -am`
+     (WT's frozen bundle-dir checkout, if present, must not be swept into the branch).
+   - **State** → `docs/masterplan/<slug>` in MAIN (Guard D sentinels excluded by pathspec).
+   - On the wave path BOTH commits execute inside `mp record-result` (`lib/wave-commit.mjs`). The
+     LEADING durable action is its atomic state WRITE, then code commit (WT), then state commit
+     (MAIN) — so any crash prefix re-derives: `decide` → `finalize_run` → `mp record-result
+     --reconcile` off the persisted `active_run.{scope,baseline}` (a clean WT no-ops down to the
+     marker clear). §2c's finish-path commits still follow the same two-loci discipline shell-side.
 
 7. **Teardown — layered onto `finishing-a-development-branch` (§2c), NOT a replacement.** The skill
    executes the chosen disposition (merge / push+PR / discard / keep) — its merge + push run in MAIN
@@ -619,8 +597,8 @@ behind `mp worktree plan|record|reconcile`; all git stays in this shell (CD-7).
    not the ephemeral `mp` process — stable across this session's turns, so the gate is idempotent.
    - **Acquire** at kickoff — §2 step **1.6** (every §2 entry with an active bundle; `blocked` → the
      force/abort/read-only AUQ; the per-turn re-acquire doubles as the open-turn heartbeat).
-   - **Heartbeat** before the state-mutating completion — §2a Completion step **0** (`lost-to-other` →
-     STOP writing, a second session took over).
+   - **Heartbeat** before the state-mutating completion — executed INSIDE `mp record-result` (step 0
+     of its transaction; `lost-to-other` → it returns with zero writes, a second session took over).
    - **Release** at finish — §2c step **6**, after archive (frees the bundle so no successor is blocked).
    - **Liveness is heartbeat-age TTL only** (default 30m, must exceed the max single background wave — an
      LLM session is not a probeable process, so there is no same-host PID check). A crashed session's
@@ -629,7 +607,7 @@ behind `mp worktree plan|record|reconcile`; all git stays in this shell (CD-7).
    - `--force` (on acquire or release) is the human takeover — never auto-invoked under any autonomy.
    - **Guarantee (and its honest limit).** Guard D gives PERFECT mutual exclusion for **live** contention —
      a fresh contended lock is an atomic `link()` create, so two live sessions never both proceed. The unit
-     of protection is the **turn** (re-heartbeat at step 1.6 / §2a step 0), not the individual write. The one
+     of protection is the **turn** (re-heartbeat at step 1.6 / inside `mp record-result`), not the individual write. The one
      residual, accepted by design (perfect single-writer is impossible on NFS without a lock manager): a
      `>TTL`-abandoned owner that resurrects at the exact instant a reclaimer breaks its lock. Narrow, benign,
      documented — NOT a gap to close with another mechanism.
