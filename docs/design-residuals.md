@@ -157,11 +157,14 @@ the **code is written for (a)**; the **product commits to (b)**. That mismatch i
   tool the adaptation table omits.
 
 **Why it's a cutover obligation, not a live defect.** On the **current hybrid branch** the gap is hedged:
-`parts/codex-host.md:77-78` (Tier-1 DELETE) frames host-suppressed mode as *"a bounded interactive mode —
-not a license to execute the whole workflow inline,"* and `parts/contracts/taskcreate-projection.md`
-(Tier-1 DELETE) carries the *"Claude Code only, no-op under Codex"* projection. That prose is precisely what
+`docs/attic/v7-codex-hedge/codex-host.md` (attic'd from `parts/codex-host.md` at the v8.2.0 cutover per
+Tier-4 #13) frames host-suppressed mode as *"a bounded interactive mode —
+not a license to execute the whole workflow inline,"* and `docs/attic/v7-codex-hedge/taskcreate-projection.md`
+carries the *"Claude Code only, no-op under Codex"* projection. That prose is precisely what
 makes the surviving `SKILL.md` table's Workflow-tool omission **harmless today** — it scopes naive Codex
-hosting away from full-workflow-inline execution. **Cutover deletes that hedge** (both files are Tier-1),
+hosting away from full-workflow-inline execution. *(v8.2.0 update: the hedge survived the cutover in the
+attic, and `SKILL.md`'s adaptation table now carries an explicit Workflow row stating the same scope —
+the omission this paragraph describes is closed.)* **Cutover would have deleted that hedge** (both files were Tier-1),
 leaving the surviving keepers — `SKILL.md`'s "every tool maps" table (minus the Workflow row) +
 `codex-host.mjs`'s "native budget" rationale + §2a's unconditional Workflow dispatch — to imply, unhedged,
 that a genuine-(b) Codex host can run waves, with no specified path to do so. The defect **materializes at

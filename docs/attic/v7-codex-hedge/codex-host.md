@@ -1,3 +1,10 @@
+> **ATTIC — v7 Codex hedge.** Retained per cutover-removal-manifest Tier-4 #13 /
+> design-residuals Residual 3 (RULED 3B 2026-05-30: full-lifecycle Codex committed,
+> implementation deferred). This file scopes naive Codex hosting away from
+> full-workflow-inline execution until the foreground-sequential execute path lands.
+> Delete this directory when 3B ships (Thrust 2 increment 5). Moved from parts/ at
+> the v8.2.0 cutover; pre-cutover content recoverable at tag v8.1.0-pre-cruft-removal.
+
 # Codex Host Suppression
 
 Loaded by the router only when `/masterplan` is hosted by Codex (slash path resolves to `/masterplan:masterplan`).
