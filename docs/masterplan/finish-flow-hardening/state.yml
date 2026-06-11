@@ -1,0 +1,18 @@
+---
+schema_version: 8
+slug: finish-flow-hardening
+status: in-progress
+phase: brainstorm
+topic: "Harden masterplan's finish flow: finish verification must run against a committed tree (no dirty-worktree verification), dirty-commits must not silently drop out-of-scope repairs, and the engine bugs surfaced by recent runs (missed-deliverable commits; D6 dir-scope, already fixed) get regression coverage"
+complexity: null
+complexity_source: null
+autonomy: full
+planning_mode: auto
+created_at: 2026-06-11T22:33:18.680Z
+predecessor_transcript: null
+spec_path: /srv/dev/masterplan/docs/masterplan/finish-flow-hardening/spec.md
+plan_path: /srv/dev/masterplan/docs/masterplan/finish-flow-hardening/plan.md
+plan_index_path: /srv/dev/masterplan/docs/masterplan/finish-flow-hardening/plan.index.json
+tasks: []
+active_run: null
+pending_gate: null
