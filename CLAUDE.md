@@ -17,4 +17,5 @@ policy here.
 - Use Claude Code plugins, hooks, plan mode, and slash commands only as documented by repo-local `AGENTS.md` or active plugin settings.
 
 <!-- agentic-dispatch:claude-notes — repo-specific Claude notes below this line survive re-migration -->
+
 - This repo IS the Claude Code plugin: `/masterplan` routes through `commands/masterplan.md`; manifests live in `.claude-plugin/`. Project context (layers, anti-patterns, build/test) is canonical in AGENTS.md — imported above.
