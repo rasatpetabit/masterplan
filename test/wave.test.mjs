@@ -240,6 +240,25 @@ test('verifyScope: a pre-existing dirty file is NOT a breach (baseline subtracti
   assert.deepEqual(r.touched, ['a.js']); // user-wip.js was already dirty → not "introduced"
 });
 
+test('verifyScope: a declared directory scope (trailing /) covers every path under it', () => {
+  const r = verifyScope(['test/fixtures/'], [], ['test/fixtures/a.json', 'test/fixtures/sub/b.json']);
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.outOfScope, []);
+});
+
+test('verifyScope: a directory scope does NOT cover paths outside it', () => {
+  const r = verifyScope(['test/fixtures/'], [], ['test/fixtures/a.json', 'lib/rogue.js']);
+  assert.equal(r.ok, false);
+  assert.deepEqual(r.outOfScope, ['lib/rogue.js']);
+});
+
+test('verifyScope: a directory-name prefix without the slash is not a dir scope match', () => {
+  // 'test/fixtures' (file entry) must not accidentally allow 'test/fixtures-evil.js'.
+  const r = verifyScope(['test/fixtures/'], [], ['test/fixtures-evil.js']);
+  assert.equal(r.ok, false);
+  assert.deepEqual(r.outOfScope, ['test/fixtures-evil.js']);
+});
+
 test('verifyScope: empty everything → vacuously ok', () => {
   assert.deepEqual(verifyScope([], [], []), { ok: true, touched: [], outOfScope: [] });
 });
