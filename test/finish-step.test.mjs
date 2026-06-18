@@ -35,7 +35,7 @@ function readEvents(bundleDir) {
 
 // A MAIN repo on `main`, a linked worktree on masterplan/<slug> with one committed task file,
 // a bundle whose single task is done, and the owner lock held by sess-A.
-function makeFixture({ slug = 't24', state: over = {}, ownerLockOff = false, verifyCommands = null } = {}) {
+function makeFixture({ slug = 't24', state: over = {}, ownerLockOff = false, verifyCommands = null, explicitCodex = true } = {}) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-finishstep-'));
   const MAIN = path.join(tmp, 'main');
   fs.mkdirSync(MAIN, { recursive: true });
@@ -53,7 +53,7 @@ function makeFixture({ slug = 't24', state: over = {}, ownerLockOff = false, ver
   git(WT, 'commit', '-q', '-m', 'task 1');
   const bundleDir = path.join(MAIN, 'docs', 'masterplan', slug);
   const statePath = path.join(bundleDir, 'state.yml');
-  writeState(statePath, {
+  const stateObj = {
     schema_version: 8,
     slug,
     status: 'in-progress',
@@ -62,12 +62,14 @@ function makeFixture({ slug = 't24', state: over = {}, ownerLockOff = false, ver
     pending_gate: null,
     active_run: null,
     tasks: [{ id: 1, status: 'done', wave: 1, files: ['src/a.txt'] }],
-    // Explicit opt-out by default — pre-spec §4.2-C bundles without state.codex would now be
-    // defensively armed; tests that want to exercise that path must override to codex:undefined.
-    codex: { review: false },
     ...(ownerLockOff ? { concurrency: { owner_lock: 'off' } } : {}),
     ...over,
-  });
+  };
+  // Default: explicit opt-out (pre-spec §4.2-C bundles without state.codex would now be defensively
+  // armed, breaking every existing test). Tests that want to exercise the legacy/defensive path
+  // pass explicitCodex: false to omit state.codex entirely.
+  if (explicitCodex && stateObj.codex === undefined) stateObj.codex = { review: false };
+  writeState(statePath, stateObj);
   if (verifyCommands) {
     fs.writeFileSync(path.join(bundleDir, 'plan.index.json'),
       JSON.stringify({ tasks: [{ id: 1, verify_commands: verifyCommands }] }));
@@ -231,6 +233,93 @@ test('codex review skip: durable skip event at SHA prevents a re-ask loop; suppr
   fx2.step({ verify: 'pass' });
   fs.writeFileSync(path.join(fx2.bundleDir, 'retro.md'), '# retro\n');
   assert.equal(fx2.step({ codexSuppressed: true }).gate, 'branch_finish');
+});
+
+// ---- defensive arming (spec §4.2-C) -------------------------------------------
+
+test('defensive arm: state.codex missing entirely → armed once + skip event never emitted', () => {
+  // Legacy bundle: pre-spec §4.2-C seed, no state.codex block at all. Defensive arm fires (one-time
+  // per bundle, presence-scoped) and the gate proceeds to run review because base exists.
+  const fx = makeFixture({ explicitCodex: false });
+  fx.step({ verify: 'pass' });
+  fs.writeFileSync(path.join(fx.bundleDir, 'retro.md'), '# retro\n');
+  const op = fx.step();
+  assert.equal(op.op, 'run_codex_review', 'defensive arm makes the gate fire review');
+  const events = readEvents(fx.bundleDir);
+  const armEvent = events.find((e) => e.type === 'codex_review_defensively_armed');
+  assert.ok(armEvent, 'codex_review_defensively_armed event emitted');
+  assert.match(armEvent.data.sha, /^[0-9a-f]{40}$/, 'data.sha is a real SHA');
+  // re-entry: defensive-arm event presence prevents re-emission, but the gate doesn't loop on this alone
+  assert.ok(events.filter((e) => e.type === 'codex_review_defensively_armed').length === 1, 'emitted exactly once');
+});
+
+test('defensive arm: state.codex present but review=undefined → NOT defensively armed', () => {
+  // Explicit codex block without review is NOT a legacy bundle — user is presumed to know.
+  // codexArmed(undefined) is false; the gate falls through with a typed skip event.
+  const fx = makeFixture({ state: { codex: { routing: 'auto' } } });
+  fx.step({ verify: 'pass' });
+  fs.writeFileSync(path.join(fx.bundleDir, 'retro.md'), '# retro\n');
+  const op = fx.step();
+  assert.equal(op.op, 'ask');
+  assert.equal(op.gate, 'branch_finish');
+  const events = readEvents(fx.bundleDir);
+  assert.ok(!events.some((e) => e.type === 'codex_review_defensively_armed'), 'no defensive-arm event for explicit codex block');
+  const skip = events.find((e) => e.type === 'codex_review_skipped');
+  assert.match(skip.summary, /state.codex.review not armed/);
+});
+
+test('skip events: typed reasons land in events.jsonl with sha + reason fields', () => {
+  const fx = makeFixture({ state: { codex: { review: false } } });
+  fx.step({ verify: 'pass' });
+  fs.writeFileSync(path.join(fx.bundleDir, 'retro.md'), '# retro\n');
+  fx.step(); // gate
+  const skip = readEvents(fx.bundleDir).find((e) => e.type === 'codex_review_skipped');
+  assert.ok(skip, 'codex_review_skipped emitted');
+  assert.equal(skip.data.reason, 'state.codex.review not armed');
+  assert.ok(skip.data.sha, 'sha recorded for the re-entry guard');
+});
+
+test('skip events: re-entry at same SHA does NOT re-emit the skip', () => {
+  // Open a gate, force a skip event, re-enter: the sha-keyed guard (hasCodexSkipAtSha) prevents
+  // a second skip event at the same head — durable event is one-per-SHA.
+  const fx = makeFixture({ state: { codex: { review: false } } });
+  fx.step({ verify: 'pass' });
+  fs.writeFileSync(path.join(fx.bundleDir, 'retro.md'), '# retro\n');
+  fx.step(); // gate + skip event emitted
+  // open the gate for re-entry
+  writeState(fx.statePath, { ...readState(fx.statePath), pending_gate: null });
+  fx.step(); // re-render: skip event NOT re-emitted
+  const skips = readEvents(fx.bundleDir).filter((e) => e.type === 'codex_review_skipped');
+  assert.equal(skips.length, 1, 'one skip event per HEAD');
+});
+
+test('branch_finish AUQ: notice field surfaces the skip reason (spec §4.2-D)', () => {
+  const fx = makeFixture({ state: { codex: { review: false } } });
+  fx.step({ verify: 'pass' });
+  fs.writeFileSync(path.join(fx.bundleDir, 'retro.md'), '# retro\n');
+  const op = fx.step();
+  assert.equal(op.gate, 'branch_finish');
+  assert.match(op.notice, /codex review skipped — state.codex.review not armed/);
+});
+
+test('branch_finish AUQ: notice field surfaces suppression when --codex-suppressed', () => {
+  const fx = makeFixture({ state: { codex: { review: 'on' } } });
+  fx.step({ verify: 'pass' });
+  fs.writeFileSync(path.join(fx.bundleDir, 'retro.md'), '# retro\n');
+  const op = fx.step({ codexSuppressed: true });
+  assert.equal(op.gate, 'branch_finish');
+  assert.match(op.notice, /codex review skipped — codex_host_suppressed/);
+});
+
+test('branch_finish AUQ: notice field surfaces defensive-arm note for legacy bundles', () => {
+  const fx = makeFixture({ explicitCodex: false });
+  fx.step({ verify: 'pass' });
+  fs.writeFileSync(path.join(fx.bundleDir, 'retro.md'), '# retro\n');
+  const op = fx.step({ codex: 'skipped', codexReason: 'companion unresolved' });
+  // After the shell answers with codex='skipped', re-enter: branch_finish rehydrates from the
+  // defensive-arm event (which IS still in events.jsonl) so the notice shows defensive.
+  assert.equal(op.gate, 'branch_finish');
+  assert.match(op.notice, /defensively armed/);
 });
 
 test('discard: forced teardown, branch -D, kept dirt discarded, archived', () => {
