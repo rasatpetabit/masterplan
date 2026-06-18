@@ -657,6 +657,30 @@ test('seed: accepts and validates --planning-mode', () => {
   assert.notEqual(rejected.status, 0);
   assert.match(rejected.stderr, /invalid --planning-mode/);
 });
+test('seed: defaults state.codex.review=true at seed time (spec §4.1 default-on)', () => {
+  const p = path.join(tmpDir('mp-seed-codex-default-'), 'state.yml');
+  const r = run(['seed', `--state=${p}`, '--slug=demo', '--topic=A topic']);
+  assert.equal(r.status, 0);
+  assert.deepEqual(read(p).codex, { routing: 'auto', review: true });
+});
+test('seed: --codex-review=on arms explicitly (matches default behavior)', () => {
+  const p = path.join(tmpDir('mp-seed-codex-on-'), 'state.yml');
+  const r = run(['seed', `--state=${p}`, '--slug=demo', '--topic=A topic', '--codex-review=on']);
+  assert.equal(r.status, 0);
+  assert.deepEqual(read(p).codex, { routing: 'auto', review: true });
+});
+test('seed: --codex-review=off opts out (omits state.codex entirely, A9 absent-field style)', () => {
+  const p = path.join(tmpDir('mp-seed-codex-off-'), 'state.yml');
+  const r = run(['seed', `--state=${p}`, '--slug=demo', '--topic=A topic', '--codex-review=off']);
+  assert.equal(r.status, 0);
+  assert.ok(!('codex' in read(p)), 'explicit opt-out must leave state.codex absent');
+});
+test('seed: --codex-review rejects bogus values loud (on/off only)', () => {
+  const p = path.join(tmpDir('mp-seed-codex-bogus-'), 'state.yml');
+  const r = run(['seed', `--state=${p}`, '--slug=demo', '--topic=A topic', '--codex-review=maybe']);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /invalid --codex-review/);
+});
 test('seed: refuses an existing bundle unless --force', () => {
   const p = path.join(tmpDir('mp-seed2-'), 'state.yml');
   assert.equal(run(['seed', `--state=${p}`, '--slug=x', '--topic=t']).status, 0);

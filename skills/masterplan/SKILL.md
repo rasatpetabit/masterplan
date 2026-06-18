@@ -60,11 +60,15 @@ built-in/user-global/repo-local merge step to perform. Configuration is set on t
 run bundle and read back from `docs/masterplan/<slug>/state.yml`:
 
 - **Seed-time flags** (`mp seed`): `--autonomy`, `--complexity`, `--planning-mode`
-  (`serial|parallel|auto`) — persisted into `state.yml` at run creation.
+  (`serial|parallel|auto`), **`--codex-review=on|off` (default `on`)** — persisted into
+  `state.yml` at run creation. The default-on review arm is the hindsight-historian fix:
+  every fresh bundle now arms `state.codex.review: true` automatically; pass `off` for
+  explicit opt-out.
 - **Codex routing/review** (`mp set-codex-config --routing=auto|on|off
   --review=true|false`): a CD-7 write to the nested `state.codex.{routing,review}`.
   The dispatch path reads `state.codex.routing` (default `auto`) and gates the
-  optional review stage on `state.codex.review === true` (default off).
+  optional review stage on `state.codex.review === true`. New bundles inherit `true`
+  from the seed-time default; pass `--review=false` post-seed to opt out.
 
 Read the run's config from `state.yml`; do not look for or merge any config file.
 

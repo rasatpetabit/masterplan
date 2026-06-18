@@ -8,6 +8,8 @@ import assert from 'node:assert/strict';
 import {
   classifyDirt,
   detectBase,
+  detectBaseAuto,
+  EMPTY_TREE_SHA,
   collectVerifyCommands,
   isVerified,
   dispositionForChoice,
@@ -99,6 +101,48 @@ test('detectBase: strips the `* ` current-branch marker from plain `git branch` 
 test('detectBase: empty/blank input → null', () => {
   assert.equal(detectBase(''), null);
   assert.equal(detectBase('   \n  '), null);
+});
+
+// ---- detectBaseAuto: expanded base resolution (spec §4.2-A) -------------------
+
+test('detectBaseAuto: local main wins over any remote', () => {
+  const local = 'main\nfeature/x';
+  const remote = 'origin/main\norigin/master\nupstream/main';
+  assert.deepEqual(detectBaseAuto(local, remote), { base: 'main', source: 'local' });
+});
+
+test('detectBaseAuto: falls back to origin/main when no local main/master', () => {
+  assert.deepEqual(detectBaseAuto('feature/x\ndevelop', 'origin/main\nupstream/main'),
+    { base: 'main', source: 'origin' });
+});
+
+test('detectBaseAuto: falls back to origin/master when no local main/master', () => {
+  assert.deepEqual(detectBaseAuto('feature/x', 'origin/master\nupstream/main'),
+    { base: 'master', source: 'origin' });
+});
+
+test('detectBaseAuto: falls back to ANY remote main when no origin', () => {
+  const result = detectBaseAuto('feature/x', 'upstream/main\nfork/master');
+  assert.equal(result.base, 'main');
+  assert.equal(result.source, 'remote');
+  assert.equal(result.ref, 'upstream/main');
+});
+
+test('detectBaseAuto: returns null when no local or remote main/master', () => {
+  assert.equal(detectBaseAuto('feature/x', 'upstream/feature'), null);
+  assert.equal(detectBaseAuto('', ''), null);
+});
+
+test('detectBaseAuto: tolerates empty inputs without throwing', () => {
+  assert.equal(detectBaseAuto('', 'origin/main').base, 'main');
+  assert.equal(detectBaseAuto('', 'origin/main').source, 'origin');
+});
+
+test('EMPTY_TREE_SHA: the universal-diff baseline is the well-known empty-tree constant', () => {
+  // git's empty-tree SHA is a stable, documented constant — if this changes, every diff-against-empty
+  // tool on Earth breaks. The assertion is the canonical hex SHA, not a derived value.
+  assert.equal(EMPTY_TREE_SHA, '4b825dc642cb6eb9a060e54bf8d69288fbee4904');
+  assert.equal(EMPTY_TREE_SHA.length, 40); // SHA-1 hex
 });
 
 // ---- collectVerifyCommands: the finish-time verification source ---------------

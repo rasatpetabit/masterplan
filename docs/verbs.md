@@ -12,7 +12,8 @@ the resume controller (active bundle → re-decide; none → offer to start one)
 ## `full`
 Begin a new run end-to-end: brainstorm → plan → execute → finish. Seeds a bundle
 (`mp seed`), runs `superpowers:brainstorming`, the plan lifecycle (§3a), the wave loop
-(§2/§2a), then the finish flow (§2c).
+(§2/§2a), then the finish flow (§2c). New bundles are seeded with `--codex-review=on`
+by default (finish-time Codex review armed); pass `--codex-review=off` to opt out.
 
 ## `brainstorm`
 Brainstorm phase only. Invokes `superpowers:brainstorming`; on spec approval advances

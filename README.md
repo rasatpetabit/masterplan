@@ -272,13 +272,24 @@ There is no `.masterplan.yaml` config-file hierarchy in v8. Configuration lives 
 | `--autonomy` | `gated \| loose \| full` | unset | `gated`/unset halts at every gate; `loose` auto-advances through successful gates; `full` runs maximally non-interactive (even the finish-flow verification auto-fires). The branch-finish gate always halts regardless. |
 | `--complexity` | `low \| medium \| high` | auto-detected | Influences planning depth; `--complexity-source` records how it was set |
 | `--planning-mode` | `serial \| parallel \| auto` | `auto` | `serial` = one `mp-planner`; `parallel` = `mp-subsystem-planner` fan-out merged by `lib/plan-merge.mjs` |
+| `--codex-review` | `on \| off` | `on` | Default-on finish-time Codex review. New bundles arm `state.codex.review: true` automatically; pass `off` to opt out. Legacy bundles (seeded before this default) without `state.codex.review` are defensively armed at the finish gate with a `codex_review_defensively_armed` audit event. |
 
 **Codex config** (`mp set-codex-config`, a CD-7 write to nested `state.codex.{routing,review}` on an existing bundle — *not* a seed flag):
 
 | Flag | Values | Default | Notes |
 |---|---|---|---|
 | `--routing` | `auto \| on \| off` | `auto` | Codex task routing (`auto` respects plan annotations) |
-| `--review` | `true \| false` | `false` | Enable `mp-codex-reviewer` on Sonnet-produced diffs |
+| `--review` | `true \| false` | inherits seed | Override the seed-time default. New bundles inherit `true` from `--codex-review=on`; pass `--review=false` to opt out post-seed. |
+
+### Finish-time review audit channel
+
+Every finish-time review outcome — success, skip, or defensive arm — emits a durable event to `events.jsonl`. Searchable by `codex_review*` prefix:
+
+- `codex_review` — review completed (summary: `codex review complete ...`).
+- `codex_review_skipped` — review was configured but didn't run (summary includes a typed reason: `state.codex.review not armed`, `codex_host_suppressed`, `no_base_branch`, `companion_unresolved`, or `companion_timeout`).
+- `codex_review_defensively_armed` — legacy bundle missing `state.codex.review` was defensively armed once at the finish gate (one-time per bundle, presence-scoped).
+
+A future `codex_review_configured_but_zero_invocations` audit (not yet implemented) would flag bundles where `state.codex.review` is on but no `codex review` event landed.
 
 ---
 

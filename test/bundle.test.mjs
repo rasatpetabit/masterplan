@@ -212,7 +212,26 @@ test('buildSeedState: a minimal seed is a core-valid v8 brainstorm bundle with t
   assert.equal(s.pending_gate, null);
   assert.equal(s.complexity, null); // optional fields default to null, not undefined (round-trippable)
   assert.equal(s.planning_mode, 'auto');
+  // Spec §4.1: default-on at seed arms finish-time Codex review via the nested state.codex key
+  // the dispatch path reads. Routing stays at the existing default ('auto').
+  assert.deepEqual(s.codex, { routing: 'auto', review: true });
   assert.deepEqual(parseState(serializeState(s)), s); // survives the on-disk format
+});
+
+test('buildSeedState: codexReview opt-out omits the nested codex field (A9 absent-field style)', () => {
+  const s = buildSeedState({
+    slug: 'r', topic: 't', createdAt: 'T', codexReview: false,
+  });
+  assert.ok(!('codex' in s), 'explicit opt-out leaves state.codex absent (A9 absent-field style)');
+  // Round-trip: the absent field stays absent through serialize/parse.
+  assert.deepEqual(parseState(serializeState(s)), s);
+});
+
+test('buildSeedState: codexReview explicit true is identical to default true', () => {
+  const def = buildSeedState({ slug: 'r', topic: 't', createdAt: 'T' });
+  const explicit = buildSeedState({ slug: 'r', topic: 't', createdAt: 'T', codexReview: true });
+  assert.deepEqual(def.codex, explicit.codex);
+  assert.deepEqual(def.codex, { routing: 'auto', review: true });
 });
 
 test('buildSeedState: optional fields and overrides are carried through', () => {
