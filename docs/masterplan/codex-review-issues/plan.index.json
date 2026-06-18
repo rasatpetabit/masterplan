@@ -1,0 +1,86 @@
+{
+  "schema_version": "6.0",
+  "tasks": [
+    {
+      "id": 1,
+      "description": "Default new run bundles to finish-time Codex review on and add the seed CLI opt-out, including focused seed tests.",
+      "wave": 0,
+      "files": [
+        "lib/bundle.mjs",
+        "bin/masterplan.mjs",
+        "test/bundle.test.mjs",
+        "test/bin-masterplan.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/bundle.test.mjs test/bin-masterplan.test.mjs"
+      ],
+      "codex": "no",
+      "spec_refs": [
+        "spec.md §4.1",
+        "spec.md §4.3",
+        "spec.md §5"
+      ]
+    },
+    {
+      "id": 2,
+      "description": "Design and implement the finish-step defensive Codex review gate: expanded base resolution, legacy defensive arming, typed skip events, and suppression notice.",
+      "wave": 1,
+      "files": [
+        "lib/finish-step.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/finish-step.test.mjs"
+      ],
+      "codex": "no",
+      "spec_refs": [
+        "spec.md §4.2",
+        "spec.md §5",
+        "spec.md §7"
+      ]
+    },
+    {
+      "id": 3,
+      "description": "Add extended regression tests for seed defaults, seed flag parsing, defensive arming, durable skip events, suppression notice, and base fallback behavior.",
+      "wave": 2,
+      "files": [
+        "test/bundle.test.mjs",
+        "test/bin-masterplan.test.mjs",
+        "test/finish-step.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/bundle.test.mjs test/bin-masterplan.test.mjs test/finish-step.test.mjs",
+        "node --test test/*.test.mjs"
+      ],
+      "codex": "ok",
+      "spec_refs": [
+        "spec.md §4.1",
+        "spec.md §4.2",
+        "spec.md §5"
+      ]
+    },
+    {
+      "id": 4,
+      "description": "Document the default-on review behavior, seed opt-out flag, defensive legacy arming, and durable review skip events across synchronized user-facing surfaces.",
+      "wave": 3,
+      "files": [
+        "README.md",
+        "docs/verbs.md",
+        "commands/masterplan.md",
+        "skills/masterplan/SKILL.md",
+        "CHANGELOG.md",
+        "WORKLOG.md"
+      ],
+      "verify_commands": [
+        "node --test test/publish-hygiene.test.mjs test/prompt-structure.test.mjs",
+        "node bin/doctor.mjs"
+      ],
+      "codex": null,
+      "spec_refs": [
+        "spec.md §4.3",
+        "spec.md §5"
+      ]
+    }
+  ],
+  "plan_hash": "sha256:28e9bf69792ea895bcdcfc86437b8d1fc93d04eeefcda93fc3df80202b986b98",
+  "generated_at": "2026-06-18T20:46:47.570Z"
+}
