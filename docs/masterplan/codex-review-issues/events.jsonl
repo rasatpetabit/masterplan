@@ -2,3 +2,4 @@
 {"type":"phase_transition","ts":"2026-06-18T20:46:53.253Z","phase":"execute"}
 {"type":"wave_recorded","ts":"2026-06-18T21:02:30.306Z","phase":"execute","note":"wave 0 record: 1 done, 0 failed/blocked, 0 qctl"}
 {"type":"wave_recorded","ts":"2026-06-18T21:08:43.112Z","phase":"execute","note":"wave 1 record: 1 done, 0 failed/blocked, 0 qctl"}
+{"type":"wave_recorded","ts":"2026-06-18T21:15:07.822Z","phase":"execute","note":"wave 2 record: 1 done, 0 failed/blocked, 0 qctl; reverted 1 out-of-scope"}
