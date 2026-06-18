@@ -1,2 +1,3 @@
 {"type":"phase_transition","ts":"2026-06-18T20:32:42.218Z","phase":"plan"}
 {"type":"phase_transition","ts":"2026-06-18T20:46:53.253Z","phase":"execute"}
+{"type":"wave_recorded","ts":"2026-06-18T21:02:30.306Z","phase":"execute","note":"wave 0 record: 1 done, 0 failed/blocked, 0 qctl"}
