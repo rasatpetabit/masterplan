@@ -62,6 +62,9 @@ function makeFixture({ slug = 't24', state: over = {}, ownerLockOff = false, ver
     pending_gate: null,
     active_run: null,
     tasks: [{ id: 1, status: 'done', wave: 1, files: ['src/a.txt'] }],
+    // Explicit opt-out by default — pre-spec §4.2-C bundles without state.codex would now be
+    // defensively armed; tests that want to exercise that path must override to codex:undefined.
+    codex: { review: false },
     ...(ownerLockOff ? { concurrency: { owner_lock: 'off' } } : {}),
     ...over,
   });
