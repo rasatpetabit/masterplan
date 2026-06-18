@@ -17,3 +17,5 @@ tasks: [{"id":1,"status":"done","wave":0,"files":["lib/bundle.mjs","bin/masterpl
 active_run: null
 pending_gate: null
 worktree: /srv/dev/masterplan/.worktrees/codex-review-issues
+verified_sha: 96c8dddc0154b402da11fcf00646768c7ee0cc78
+worktree_disposition: removed_after_merge
