@@ -395,6 +395,12 @@ function main() {
       if (flags['owner-lock'] !== undefined && !['on', 'off'].includes(flags['owner-lock'])) {
         die(`invalid --owner-lock '${flags['owner-lock']}' — expected on or off`);
       }
+      // --codex-review: opt-out for the new default-on finish-time review. Accepts on|off (the
+      // set-codex-config subcommand accepts the same vocabulary). Undefined → buildSeedState's
+      // default-true applies (spec §4.1).
+      if (flags['codex-review'] !== undefined && !['on', 'off'].includes(flags['codex-review'])) {
+        die(`invalid --codex-review '${flags['codex-review']}' — expected on or off`);
+      }
       const dir = path.dirname(p);
       let state;
       try {
@@ -416,6 +422,7 @@ function main() {
           planPath: flags['plan-path'] ?? path.join(dir, 'plan.md'),
           planIndexPath: flags['plan-index-path'] ?? path.join(dir, 'plan.index.json'),
           ownerLock: flags['owner-lock'],
+          codexReview: flags['codex-review'] === undefined ? true : flags['codex-review'] === 'on',
         });
       } catch (e) {
         die(e.message, 1);
