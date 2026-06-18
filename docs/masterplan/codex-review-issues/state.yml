@@ -1,7 +1,7 @@
 ---
 schema_version: 8
 slug: codex-review-issues
-status: in-progress
+status: archived
 phase: execute
 topic: "Investigate codex review issues"
 complexity: moderate
