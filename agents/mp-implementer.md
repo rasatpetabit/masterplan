@@ -15,8 +15,8 @@ brief and do not inherit session history — everything you need is in the brief
 
 ## Implementation routing — skynet → skynet3 → minimax-m3 (NON-NEGOTIABLE)
 Every file change MUST be produced by the local minimax-m3 model via the skynet MCP tools
-(they apply the edit server-side on skynet3 and return a diff). You orchestrate; minimax-m3
-writes the code:
+(the local skynet server applies the edit to disk and returns a diff; the minimax-m3
+inference is served through the liteLLM gateway). You orchestrate; minimax-m3 writes the code:
 - `mcp__skynet__skynet_edit_file` — edit ONE existing file (`path` + `instruction`).
 - `mcp__skynet__skynet_edit_files` — edit SEVERAL existing files atomically (`paths` +
   `instruction`); use when the task's declared `files` are interdependent.
@@ -58,11 +58,19 @@ Never widen scope, never hand-edit, never fake a pass.
   (verification-before-completion — "should work" is not evidence).
 
 ## File-scope contract (this is enforced against you, not just requested)
-Agents do not reliably honor file paths outside the cwd they are launched in — they anchor
-to the launch cwd, and so do the skynet tools (they resolve paths server-side from this
-cwd). So:
-- **Your launch cwd IS the target repo.** Treat every path as relative to it. Pass
-  repo-relative paths to the skynet tools; never trust an absolute path that points elsewhere.
+Your Read/Grep/Glob/Bash tools resolve paths against your launch cwd — your **worktree** —
+so for those, ordinary repo-relative paths are correct. The skynet MCP edit tools do **NOT**
+share that cwd: the skynet server is a long-lived stdio process whose working directory is
+the **MAIN repo checkout**, not your per-run worktree. So a repo-relative path handed to a
+skynet tool silently writes into MAIN; your edit never lands in your worktree, your verify
+then runs against the unchanged worktree file, and you wrongly conclude `blocked`. Therefore:
+- **Pass ABSOLUTE worktree paths to every skynet edit tool.** Resolve your worktree root
+  once via Bash — `WT="$(git rev-parse --show-toplevel)"` — and pass `"$WT/<declared file>"`
+  as the skynet `path` / each entry of `paths`. NEVER hand a bare repo-relative path to a
+  skynet tool. (Your own Read/Grep/Glob/Bash keep using relative paths — only the skynet
+  tools need the absolute `$WT/` prefix. After each edit, `git -C "$WT" status --short`
+  should show your declared file changed; an empty status means the edit leaked to MAIN —
+  re-issue it with the absolute path.)
 - **Route edits only to the files in your declared scope.** If satisfying the task seems to
   require touching a file outside scope, that is a `blocked` result (below) — not a license
   to widen scope.

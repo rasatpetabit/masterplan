@@ -15,7 +15,7 @@
 > Only **this shell** (L1) can run `git` and shell commands. Multi-repo apply, verify, and commit are
 > therefore **entirely L1's responsibility** — never delegated to `bin` subcommands or the L2 engine.
 
-The program spans three repos: `petabit-skynet` (fabric + bundle home), `/srv/dev/masterplan`
+The program spans three repos: `petabit-skynet` (fabric + bundle home), `/srv/dev/ras/masterplan`
 (the binding seam), and `petabit-sysadmin` (the P1 target). D6 scope-verify and commit are
 single-repo operations, so the multi-repo sequence is decomposed per repo, applied **serial-per-repo**,
 and committed independently. **No cross-repo atomicity is claimed**: each repo's changes commit on
@@ -76,7 +76,7 @@ For each target repo, the shell executes this sequence in order:
    their per-task verify and are staged, commit `state.yml` AND the wave's in-scope file edits
    together in that repo (CD-7: state leads git; a crash before commit re-derives from the
    marked-`done` state on resume). Different repos commit independently — the `petabit-skynet`,
-   `/srv/dev/masterplan`, and `petabit-sysadmin` commits are separate git operations with no shared
+   `/srv/dev/ras/masterplan`, and `petabit-sysadmin` commits are separate git operations with no shared
    transaction.
 
 ### Crash recovery

@@ -26,7 +26,7 @@ Run this in **`/home/ras/.local/share/masterplan-v8`** (branch `masterplan-ng`,
 dogfood-campaign fix** (`162f3da` set-worktree-disposition … `8ed4249` fresh-eyes
 sweep) and is the artifact the v7→v8 cutover will ship.
 
-> ⚠️ Do **NOT** use `/srv/dev/masterplan/.worktrees/masterplan-ng`. That worktree
+> ⚠️ Do **NOT** use `/srv/dev/ras/masterplan/.worktrees/masterplan-ng`. That worktree
 > forked from the shared base `a087a5f` **before** the campaign and carries 2
 > unpushed local commits (`a2336da`, `3dbad7f` "parallel planning machinery") that
 > are absent from the remote — it is a different, pre-campaign engine. Parity proven
