@@ -16,7 +16,7 @@
 // Subcommands:
 //   version [--args=STR] [--cwd=DIR]            -> the CC-2 banner line (the lone CC-2/CC-3 survivor)
 //   detect-host [--agent-is-codex] [--native-tools] [--agents-md]
-//                                               -> {isCodex, reasons, suppressRescue}
+//                                               -> {isCodex, reasons}
 //   decide --state=PATH [--alive]               -> the decideNextAction result (migrates in-memory)
 //   seed --state=PATH --slug=S --topic=STR [--phase=P] [--status=S] [--schema-version=N]
 //        [--created-at=T] [--complexity=C] [--complexity-source=SRC] [--autonomy=A]
@@ -52,10 +52,10 @@
 //                                               -> CD-7 write: record the worktree's disposition
 //                                                  (active|removed_after_merge|kept_by_user); the
 //                                                  doctor's worktree-integrity check SKIPs on retirement
-//   set-codex-config --state=PATH [--routing=R] [--review=B]
-//                                               -> CD-7 write: set the NESTED codex.{routing,review}
-//                                                  (routing: auto|on|off; review: true|false); the
-//                                                  codex-plugin-presence check SKIPs once both are off
+//   set-review-config --state=PATH [--review=B] [--routing=R]  (alias: set-codex-config)
+//                                               -> CD-7 write: arm state.review.adversary (review:
+//                                                  true|false); --routing is the legacy per-task
+//                                                  dispatch default (state.codex.routing: auto|on|off)
 //   open-gate --state=PATH --id=X [--opened-at=T] -> CD-7 write: open the durable approval gate
 //   clear-gate --state=PATH                     -> CD-7 write: clear the gate
 //   set-active-run --state=PATH --wave=N [--scope=JSON] [--baseline=JSON] [--ws-baseline=JSON]
@@ -74,23 +74,20 @@
 //                                               -> the §2 finish-flow snapshot {task_scope_dirty,
 //                                                  unrelated_dirty, base, retro_present, head_sha,
 //                                                  verified_sha, verified, verify_commands,
-//                                                  worktree_disposition, codex_review, dispositions}.
-//                                                  codex_review mirrors the dispatch predicate (state.
-//                                                  codex.review === true|'on'|'true') — arms the §2c gate.
+//                                                  worktree_disposition, adversary_review, dispositions}.
+//                                                  adversary_review mirrors the dispatch predicate (state.
+//                                                  review.adversary ?? legacy state.codex.review) — arms §2c.
 //                                                  git facts are PASSED IN (bin is fs-only); all git
 //                                                  flags optional (a fs-only call still reports
 //                                                  retro/verified/commands). verify_commands is read
 //                                                  from plan.index.json (the exec projection state drops)
 //   record-verification --state=PATH --sha=SHA  -> CD-7 write: record verified_sha (the verified-at-SHA
 //                                                  skip — re-entry at unchanged HEAD won't re-run the suite)
-//   codex-companion-path                         -> READ-ONLY: resolve the active codex-companion.mjs script
-//                                                  path from <configDir>/plugins/installed_plugins.json
-//                                                  (version-agnostic). { resolved, path, version, installPath,
-//                                                  exists } | { resolved:false, reason }. The §2c finish-gate
-//                                                  review invokes <path> when resolved && exists.
-//   codex-review-status --state=PATH --sha=SHA   -> READ-ONLY: is there a durable whole-branch codex-review
-//                                                  record at SHA? { present, digest, count, base }. The §2c
-//                                                  step-5 guard reads this on (re-)entry: present at HEAD ⇒
+//   adversary-review-status --state=PATH --sha=SHA  -> READ-ONLY: is there a durable whole-branch review
+//                                                  (alias: codex-review-status)
+//                                                  record at SHA? { present, digest, count, base } — matches
+//                                                  both adversary_review and legacy codex_review events. The §2c
+//                                                  step-7 guard reads this on (re-)entry: present at HEAD ⇒
 //                                                  skip the network-bound re-run AND rehydrate the findings
 //                                                  digest into the re-rendered gate AUQ (closes the P2 re-run-
 //                                                  on-death + digest-loss-on-compaction window). Absent
@@ -150,7 +147,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, setWorktree, setWorktreeDisposition, setVerifiedSha, setCodexConfig, loadPlanTasks, buildSeedState, buildTasksFromPlanIndex, appendEvent, setCoordination, applyPlanIndex } from '../lib/bundle.mjs';
+import { readState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, setWorktree, setWorktreeDisposition, setVerifiedSha, setCodexConfig, setReviewConfig, loadPlanTasks, buildSeedState, buildTasksFromPlanIndex, appendEvent, setCoordination, applyPlanIndex } from '../lib/bundle.mjs';
 import { planWorktreeCreate, parseWorktreeList, classifyWorktrees, normalizeDisposition, dispositionAfterTeardown, VALID_DISPOSITIONS as VALID_WORKTREE_DISPOSITION } from '../lib/worktree.mjs';
 import { collectDiskDirs, collectBundleRecords } from '../lib/worktree-fs.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
@@ -159,8 +156,8 @@ import { issueBodyForTask, parseIssueBody, validateClaimSettle, selectClaimableU
 import { migrate, detectSchemaVersion, MigrationError } from '../lib/migrate.mjs';
 import { decideNextAction } from '../lib/resume.mjs';
 import { prepareWave, declaredScope, verifyScope } from '../lib/wave.mjs';
-import { detectHost, suppressRescue } from '../lib/dispatch/index.mjs';
-import { selectCodexInstall, companionScriptPath, selectCodexReviewForHead } from '../lib/codex-companion.mjs';
+import { detectHost } from '../lib/dispatch/index.mjs';
+import { selectCodexReviewForHead } from '../lib/review-companion.mjs';
 import { resolveConfigDir } from '../lib/paths.mjs';
 import { createHash } from 'node:crypto';
 import { mergePlanFragments, validatePlanIndex, renderPlanMd } from '../lib/plan-merge.mjs';
@@ -361,7 +358,7 @@ function main() {
         codexNativeTools: !!flags['native-tools'],
         agentsMdPresent: !!flags['agents-md'],
       });
-      out({ ...host, suppressRescue: suppressRescue(host) });
+      out(host);
       break;
     }
     case 'decide': {
@@ -395,11 +392,12 @@ function main() {
       if (flags['owner-lock'] !== undefined && !['on', 'off'].includes(flags['owner-lock'])) {
         die(`invalid --owner-lock '${flags['owner-lock']}' — expected on or off`);
       }
-      // --codex-review: opt-out for the new default-on finish-time review. Accepts on|off (the
-      // set-codex-config subcommand accepts the same vocabulary). Undefined → buildSeedState's
-      // default-true applies (spec §4.1).
-      if (flags['codex-review'] !== undefined && !['on', 'off'].includes(flags['codex-review'])) {
-        die(`invalid --codex-review '${flags['codex-review']}' — expected on or off`);
+      // --adversary-review: opt-out for the default-on finish-time review (--codex-review is a hidden
+      // back-compat alias). Accepts on|off (the set-review-config subcommand accepts the same
+      // vocabulary). Undefined → buildSeedState's default-true applies (spec §4.1).
+      const reviewFlag = flags['adversary-review'] ?? flags['codex-review'];
+      if (reviewFlag !== undefined && !['on', 'off'].includes(reviewFlag)) {
+        die(`invalid --adversary-review '${reviewFlag}' — expected on or off`);
       }
       const dir = path.dirname(p);
       let state;
@@ -422,7 +420,7 @@ function main() {
           planPath: flags['plan-path'] ?? path.join(dir, 'plan.md'),
           planIndexPath: flags['plan-index-path'] ?? path.join(dir, 'plan.index.json'),
           ownerLock: flags['owner-lock'],
-          codexReview: flags['codex-review'] === undefined ? true : flags['codex-review'] === 'on',
+          codexReview: reviewFlag === undefined ? true : reviewFlag === 'on',
         });
       } catch (e) {
         die(e.message, 1);
@@ -654,7 +652,7 @@ function main() {
       }
       // Surface the review mode from the SAME read so the shell needn't parse state.yml itself; the
       // workflow gates review on `=== 'on'`. Normalize leniently (config schema is finalized in step 7).
-      const rawReview = state.codex?.review ?? flags.review;
+      const rawReview = state.review?.adversary ?? state.codex?.review ?? flags.review;
       const review = rawReview === true || rawReview === 'on' || rawReview === 'true' ? 'on' : 'off';
       out({ ...result, review });
       break;
@@ -1058,28 +1056,38 @@ function main() {
       }
       break;
     }
-    case 'set-codex-config': {
+    case 'set-review-config':
+    case 'set-codex-config': { // hidden back-compat alias for the pre-rename command name
       const p = need(flags, 'state');
+      // --review arms/disarms the finish-time adversary review → state.review.adversary (the key the
+      // finish-step gate reads). --routing is the LEGACY per-task dispatch default (state.codex.routing,
+      // still read by prepare-wave for in-flight bundles); new bundles never write it.
       const hasRouting = flags.routing !== undefined;
       const hasReview = flags.review !== undefined;
       if (!hasRouting && !hasReview) {
-        die('set-codex-config: provide at least one of --routing or --review', 1);
+        die('set-review-config: provide at least one of --routing or --review', 1);
       }
       if (hasRouting && !VALID_CODEX_ROUTING.includes(flags.routing)) {
         die(`invalid --routing '${flags.routing}' — expected one of: ${VALID_CODEX_ROUTING.join(', ')}`);
       }
-      const patch = {};
-      if (hasRouting) patch.routing = flags.routing;
+      let state = loadForWrite(p);
+      const result = {};
+      if (hasRouting) {
+        state = setCodexConfig(state, { routing: flags.routing });
+        result.routing = flags.routing;
+      }
       if (hasReview) {
         // --review=true|on enables; --review=false|off disables; bare --review (=== true) enables.
-        // Normalize to the BOOLEAN the dispatch path and wantsCodex compare against (review === true).
+        // Normalize to the BOOLEAN the dispatch path compares against (adversary === true).
         if (!['true', 'on', 'false', 'off'].includes(String(flags.review))) {
           die(`invalid --review '${flags.review}' — expected one of: true, false, on, off`);
         }
-        patch.review = flags.review === true || flags.review === 'true' || flags.review === 'on';
+        const armed = flags.review === true || flags.review === 'true' || flags.review === 'on';
+        state = setReviewConfig(state, { adversary: armed });
+        result.adversary = armed;
       }
-      writeState(p, setCodexConfig(loadForWrite(p), patch));
-      out({ codex: patch });
+      writeState(p, state);
+      out({ review: result });
       break;
     }
     case 'finish-status': {
@@ -1118,11 +1126,12 @@ function main() {
       } catch {
         /* no/invalid plan.index.json — fall back to the skill's IDENTIFY step */
       }
-      // codex_review: whether the §2c whole-branch finish-gate review is ARMED. Reuse the EXACT
-      // dispatch/prepare-wave predicate (rawReview === true|'on'|'true') so the gate and the wave
-      // workflow agree on what "review is on" means from the one config field — same string, same place.
-      const rawReview = state.codex?.review;
-      const codexReview = rawReview === true || rawReview === 'on' || rawReview === 'true';
+      // adversary_review: whether the §2c whole-branch finish-gate review is ARMED. Reads the new
+      // state.review.adversary key, falling back to the legacy state.codex.review for in-flight
+      // bundles, with the EXACT dispatch/prepare-wave predicate (raw === true|'on'|'true') so the gate
+      // and the wave workflow agree on what "review is on" means from one config field.
+      const rawReview = state.review?.adversary ?? state.codex?.review;
+      const adversaryReview = rawReview === true || rawReview === 'on' || rawReview === 'true';
       out({
         task_scope_dirty: dirt.taskScopeDirty,
         unrelated_dirty: dirt.unrelatedDirty,
@@ -1135,7 +1144,7 @@ function main() {
         verified: isVerified(verifiedSha, head),
         verify_commands: verifyCommands,
         worktree_disposition: worktreeDisposition,
-        codex_review: codexReview,
+        adversary_review: adversaryReview,
         dispositions: Object.fromEntries(BRANCH_CHOICES.map((c) => [c, dispositionForChoice(c)])),
       });
       break;
@@ -1149,43 +1158,15 @@ function main() {
       out(summarizePr(typeof flags['gh-json'] === 'string' ? flags['gh-json'] : ''));
       break;
     }
-    case 'codex-companion-path': {
-      // READ-ONLY resolver for the §2c finish-gate review. The codex-companion.mjs script lives in a
-      // version-pinned cache dir whose <version> segment moves with every plugin update, so the gate must
-      // NOT hardcode it. installed_plugins.json's installPath is the authoritative live install (see
-      // lib/codex-companion.mjs). bin owns the fs (read + existence probe); lib stays pure.
-      const configDir = resolveConfigDir(process.env, os.homedir());
-      const installedPath = path.join(configDir, 'plugins', 'installed_plugins.json');
-      let install = null;
-      try {
-        install = selectCodexInstall(JSON.parse(fs.readFileSync(installedPath, 'utf8')));
-      } catch {
-        out({ resolved: false, reason: `installed_plugins.json unreadable at ${installedPath}` });
-        break;
-      }
-      if (!install) {
-        out({ resolved: false, reason: 'no codex plugin entry in installed_plugins.json' });
-        break;
-      }
-      const scriptPath = companionScriptPath(install.installPath);
-      const exists = scriptPath ? fs.existsSync(scriptPath) : false;
-      out({
-        resolved: exists,
-        path: scriptPath,
-        version: install.version,
-        installPath: install.installPath,
-        exists,
-      });
-      break;
-    }
-    case 'codex-review-status': {
-      // READ-ONLY: does a durable whole-branch codex-review record exist at a given HEAD? The §2c
-      // finish-gate's step-5 guard calls this on (re-)entry — a present record for the current HEAD
+    case 'adversary-review-status':
+    case 'codex-review-status': { // hidden back-compat alias for the pre-rename command name
+      // READ-ONLY: does a durable whole-branch review record exist at a given HEAD? The §2c
+      // finish-gate's step-7 guard calls this on (re-)entry — a present record for the current HEAD
       // means the review already ran at this exact tree, so skip the network-bound re-run AND rehydrate
-      // the findings digest into the re-rendered gate AUQ. The `codex_review` event is written BEFORE
+      // the findings digest into the re-rendered gate AUQ. The `adversary_review` event is written BEFORE
       // `open-gate`, so a death in between still skips on resume (closes the P2 durability window). bin
-      // owns the fs read; lib/codex-companion.mjs scans the text purely. Absent events.jsonl == no
-      // review yet → { present:false }.
+      // owns the fs read; lib/review-companion.mjs scans the text purely (matching both the new and
+      // legacy event families). Absent events.jsonl == no review yet → { present:false }.
       const p = need(flags, 'state');
       const sha = String(need(flags, 'sha'));
       const eventsPath = path.join(path.dirname(p), 'events.jsonl');
@@ -1196,7 +1177,7 @@ function main() {
         // ENOENT == no events yet → the pure helper returns { present:false } for ''. Any OTHER
         // error (EACCES, EISDIR, I/O) must fail loud, not silently masquerade as "no review yet" —
         // a swallowed read error would falsely re-run the network gate (or worse, look "skipped").
-        if (e.code !== 'ENOENT') die(`codex-review-status: events.jsonl unreadable: ${e.message}`, 1);
+        if (e.code !== 'ENOENT') die(`adversary-review-status: events.jsonl unreadable: ${e.message}`, 1);
       }
       out(selectCodexReviewForHead(text, sha));
       break;
@@ -1762,7 +1743,7 @@ function main() {
       // durable guard + event, the branch_finish gate, the chosen disposition (local merge +
       // worktree teardown), archive-LAST + owner release. ONE typed op per call; the shell's
       // answers thread back as --verify/--codex/--docs/--choice. Same git-in-bin seam as record-result
-      // and continue: LOCAL git only, network ops (push/gh/codex-companion) stay shell-side.
+      // and continue: LOCAL git only, network ops (push/gh/agent-dispatch review) stay shell-side.
       const statePath = need(flags, 'state');
       let lockOff = false;
       try {
@@ -1777,8 +1758,15 @@ function main() {
         ({ self, now, ttlMs } = resolveOwnerSelf(flags, statePath));
       }
       const verify = flags['verify-passed'] ? 'pass' : flags['verify-failed'] ? 'fail' : null;
-      const codexAns = flags['codex-done'] ? 'done' : flags['codex-skipped'] ? 'skipped' : null;
+      // --review-done/--review-skipped are the model-generic flags; --codex-done/--codex-skipped are
+      // hidden back-compat aliases for in-flight orchestrator prose that still emits the old names.
+      const reviewAns = (flags['review-done'] || flags['codex-done']) ? 'done'
+                      : (flags['review-skipped'] || flags['codex-skipped']) ? 'skipped' : null;
       const docsAns = flags['docs-normalized'] ? 'normalized' : flags['docs-skipped'] ? 'skipped' : null;
+      const reviewCountFlag = flags['review-count'] ?? flags['codex-count'];
+      const reviewBaseFlag = flags['review-base'] ?? flags['codex-base'];
+      const reviewDigestFlag = flags['review-digest-file'] ?? flags['codex-digest-file'];
+      const reviewReasonFlag = flags['review-reason'] ?? flags['codex-reason'];
       let op;
       try {
         op = finishStep({
@@ -1787,13 +1775,12 @@ function main() {
           now,
           ttlMs,
           force: !!flags.force,
-          codexSuppressed: !!flags['codex-suppressed'],
           verify,
-          codex: codexAns,
-          codexCount: flags['codex-count'],
-          codexBase: typeof flags['codex-base'] === 'string' ? flags['codex-base'] : null,
-          codexDigestFile: typeof flags['codex-digest-file'] === 'string' ? flags['codex-digest-file'] : null,
-          codexReason: typeof flags['codex-reason'] === 'string' ? flags['codex-reason'] : null,
+          review: reviewAns,
+          reviewCount: reviewCountFlag,
+          reviewBase: typeof reviewBaseFlag === 'string' ? reviewBaseFlag : null,
+          reviewDigestFile: typeof reviewDigestFlag === 'string' ? reviewDigestFlag : null,
+          reviewReason: typeof reviewReasonFlag === 'string' ? reviewReasonFlag : null,
           docsSuppressed: !!flags['docs-suppressed'],
           docs: docsAns,
           docsCount: flags['docs-count'],

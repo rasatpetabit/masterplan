@@ -13,7 +13,7 @@ test('index facade: the unified dispatch surface is complete', () => {
   for (const name of [
     'routeTask', 'resolveImplementerBackend',         // routing.mjs
     'qctlEligible', 'resolveTaskBackend',             // backend.mjs
-    'detectHost', 'suppressRescue', 'normalizeResumeHint', // host.mjs
+    'detectHost', 'normalizeResumeHint',              // host.mjs
     'normalizeReviewMode', 'buildWaveDispatchOp',     // ops.mjs
   ]) {
     assert.equal(typeof dispatch[name], 'function', `missing export: ${name}`);

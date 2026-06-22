@@ -18,7 +18,7 @@ import {
 // ---- deterministic naming ----------------------------------------------------
 
 test('worktreePathFor: <repoRoot>/.worktrees/<slug>', () => {
-  assert.equal(worktreePathFor('/srv/dev/masterplan', 'brave-fox'), '/srv/dev/masterplan/.worktrees/brave-fox');
+  assert.equal(worktreePathFor('/srv/dev/ras/masterplan', 'brave-fox'), '/srv/dev/ras/masterplan/.worktrees/brave-fox');
 });
 
 test('worktreePathFor: coerces a non-string slug', () => {
@@ -96,19 +96,19 @@ test('planWorktreeCreate: missing slug / repoRoot fails loud', () => {
 
 test('parseWorktreeList: parses multiple blocks, stripping refs/heads/ from branch', () => {
   const porcelain = [
-    'worktree /srv/dev/masterplan',
+    'worktree /srv/dev/ras/masterplan',
     'HEAD abc123',
     'branch refs/heads/main',
     '',
-    'worktree /srv/dev/masterplan/.worktrees/brave-fox',
+    'worktree /srv/dev/ras/masterplan/.worktrees/brave-fox',
     'HEAD def456',
     'branch refs/heads/masterplan/brave-fox',
     '',
   ].join('\n');
   assert.deepEqual(parseWorktreeList(porcelain), [
-    { path: '/srv/dev/masterplan', head: 'abc123', branch: 'main', bare: false, detached: false },
+    { path: '/srv/dev/ras/masterplan', head: 'abc123', branch: 'main', bare: false, detached: false },
     {
-      path: '/srv/dev/masterplan/.worktrees/brave-fox',
+      path: '/srv/dev/ras/masterplan/.worktrees/brave-fox',
       head: 'def456',
       branch: 'masterplan/brave-fox',
       bare: false,
@@ -192,10 +192,10 @@ test('dispositionAfterTeardown: never emits the phantom `missing`', () => {
 
 // ---- classifyWorktrees: the five-mode reconciler -----------------------------
 
-const REPO_GIT = '/srv/dev/masterplan/.git';
+const REPO_GIT = '/srv/dev/ras/masterplan/.git';
 
 test('classifyWorktrees: a live, owned, registered worktree → action none', () => {
-  const dp = '/srv/dev/masterplan/.worktrees/brave-fox';
+  const dp = '/srv/dev/ras/masterplan/.worktrees/brave-fox';
   const { actions, findings } = classifyWorktrees({
     repoGitDir: REPO_GIT,
     gitList: [{ path: dp }],
@@ -208,7 +208,7 @@ test('classifyWorktrees: a live, owned, registered worktree → action none', ()
 });
 
 test('classifyWorktrees: a registered worktree whose bundle recorded it removed → crash-leak remove', () => {
-  const dp = '/srv/dev/masterplan/.worktrees/done-run';
+  const dp = '/srv/dev/ras/masterplan/.worktrees/done-run';
   const { actions, findings } = classifyWorktrees({
     repoGitDir: REPO_GIT,
     gitList: [{ path: dp }],
@@ -226,7 +226,7 @@ test('classifyWorktrees: a registered worktree whose bundle recorded it removed 
 });
 
 test('classifyWorktrees: a kept_by_user worktree is NEVER reaped even though retired', () => {
-  const dp = '/srv/dev/masterplan/.worktrees/kept';
+  const dp = '/srv/dev/ras/masterplan/.worktrees/kept';
   const { actions } = classifyWorktrees({
     repoGitDir: REPO_GIT,
     gitList: [{ path: dp }],
@@ -238,7 +238,7 @@ test('classifyWorktrees: a kept_by_user worktree is NEVER reaped even though ret
 });
 
 test('classifyWorktrees: an unregistered dir whose .git points INTO this repo → repair (repo-move)', () => {
-  const dp = '/srv/dev/masterplan/.worktrees/moved';
+  const dp = '/srv/dev/ras/masterplan/.worktrees/moved';
   const { actions } = classifyWorktrees({
     repoGitDir: REPO_GIT,
     gitList: [],
@@ -252,7 +252,7 @@ test('classifyWorktrees: an unregistered dir whose .git points INTO this repo �
 test('classifyWorktrees: the cc3-visibility foreign-leftover → remove (unregistered, foreign .git)', () => {
   // The canonical live case: a full checkout under .worktrees/ whose .git points at a DIFFERENT repo
   // and which does NOT appear in this repo's `git worktree list`.
-  const dp = '/srv/dev/masterplan/.worktrees/cc3-visibility';
+  const dp = '/srv/dev/ras/masterplan/.worktrees/cc3-visibility';
   const foreign = '/srv/dev/superpowers-masterplan/.git/worktrees/cc3-visibility';
   const { actions, findings } = classifyWorktrees({
     repoGitDir: REPO_GIT,
@@ -283,7 +283,7 @@ test('classifyWorktrees: a foreign target that is a SIBLING-PREFIX of the admin 
   // `.git/worktrees-decoy/x` string-prefixes `.git/worktrees` — a naive startsWith(base) would mis-read
   // a DIFFERENT repo's checkout as OUR repo-move and `git worktree repair` it (or skip the remove),
   // corrupting a foreign tree. The `base + path.sep` boundary keeps it foreign → remove.
-  const dp = '/srv/dev/masterplan/.worktrees/decoy';
+  const dp = '/srv/dev/ras/masterplan/.worktrees/decoy';
   const decoyTarget = `${REPO_GIT}/worktrees-decoy/decoy`;
   const { actions } = classifyWorktrees({
     repoGitDir: REPO_GIT,
@@ -301,7 +301,7 @@ test('classifyWorktrees: a foreign target that is a SIBLING-PREFIX of the admin 
 // containment test runs against BOTH the lexical and the canonical pair, so the canonical leg recognises
 // it as ours → repair. A lexical-only test mis-read it as foreign and emitted `remove` (data loss).
 test('classifyWorktrees: an NFS/symlink-aliased OUR-repo target (canonical resolves into the repo) → repair, never removed', () => {
-  const dp = '/srv/dev/masterplan/.worktrees/aliased';
+  const dp = '/srv/dev/ras/masterplan/.worktrees/aliased';
   const { actions } = classifyWorktrees({
     repoGitDir: REPO_GIT,
     repoGitDirCanonical: REPO_GIT,
@@ -324,7 +324,7 @@ test('classifyWorktrees: an NFS/symlink-aliased OUR-repo target (canonical resol
 // cc3-visibility-after-its-repo-was-deleted case is worth a human's eyes) but never auto-rm'd by the
 // shell. Only a target that RESOLVES outside the repo earns `remove`.
 test('classifyWorktrees: a stray with an unresolvable + not-lexically-ours gitdir target → manual WARN, NEVER removed', () => {
-  const dp = '/srv/dev/masterplan/.worktrees/ghost';
+  const dp = '/srv/dev/ras/masterplan/.worktrees/ghost';
   const { actions, findings } = classifyWorktrees({
     repoGitDir: REPO_GIT,
     gitList: [],
@@ -345,7 +345,7 @@ test('classifyWorktrees: a stray with an unresolvable + not-lexically-ours gitdi
 // owns — that would be silent data loss mid-run. It classifies as `manual` (reason active-unregistered);
 // the doctor's bundle->git ERROR is intentionally NOT suppressed for it (see test/doctor.test.mjs).
 test('classifyWorktrees: a LIVE bundle\'s unregistered worktree with a foreign-resolving .git → manual (active-unregistered), NEVER removed', () => {
-  const dp = '/srv/dev/masterplan/.worktrees/live-run';
+  const dp = '/srv/dev/ras/masterplan/.worktrees/live-run';
   const foreign = '/srv/dev/superpowers-other/.git/worktrees/live-run';
   const { actions, findings } = classifyWorktrees({
     repoGitDir: REPO_GIT,
@@ -368,7 +368,7 @@ test('classifyWorktrees: a LIVE bundle\'s unregistered worktree with a foreign-r
 // so a trailing ARCHIVED record flipped recRetired true and dropped the live-owned stray to `remove`.
 // The live claimant must dominate (→ active-unregistered, never remove), AND the duplicate is surfaced.
 test('classifyWorktrees: a RETIRED record listed AFTER a live one for the same path must NOT reach remove (dedup prefers live)', () => {
-  const dp = '/srv/dev/masterplan/.worktrees/shared';
+  const dp = '/srv/dev/ras/masterplan/.worktrees/shared';
   const foreign = '/srv/dev/superpowers-other/.git/worktrees/shared';
   const { actions, findings } = classifyWorktrees({
     repoGitDir: REPO_GIT,
@@ -404,7 +404,7 @@ test('classifyWorktrees: a RETIRED record listed AFTER a live one for the same p
 // list[0] pick could drop a deliberately-kept worktree to `remove`. And because the unregistered ladder
 // has NO kept guard of its own, the guard is hoisted to cover registered AND unregistered uniformly.
 test('classifyWorktrees: removed_after_merge listed BEFORE kept_by_user (unregistered, foreign) → none (kept), NEVER remove', () => {
-  const dp = '/srv/dev/masterplan/.worktrees/kept-dup';
+  const dp = '/srv/dev/ras/masterplan/.worktrees/kept-dup';
   const foreign = '/srv/dev/superpowers-other/.git/worktrees/kept-dup';
   const { actions } = classifyWorktrees({
     repoGitDir: REPO_GIT,
@@ -427,7 +427,7 @@ test('classifyWorktrees: removed_after_merge listed BEFORE kept_by_user (unregis
 // The same kept-by-user sacrosanctity for a SINGLE record on an unregistered, foreign-resolving dir —
 // the hoisted guard means even a lone kept_by_user worktree git forgot is never reaped (no duplicates).
 test('classifyWorktrees: a lone kept_by_user worktree that is unregistered + foreign-resolving is NEVER removed', () => {
-  const dp = '/srv/dev/masterplan/.worktrees/lone-kept';
+  const dp = '/srv/dev/ras/masterplan/.worktrees/lone-kept';
   const foreign = '/srv/dev/superpowers-other/.git/worktrees/lone-kept';
   const { actions } = classifyWorktrees({
     repoGitDir: REPO_GIT,
@@ -460,11 +460,11 @@ test('classifyWorktrees: an into-repo target with .. segments normalizes to repo
   // A target that RESOLVES inside the admin dir but carries `..` (git writes these for relatively-repaired
   // worktrees) must normalize before the containment test, or an OUR-repo worktree reads as foreign and
   // gets REMOVED (the data-loss BLOCKER). pointsIntoRepo path.resolves both sides.
-  const dp = '/srv/dev/masterplan/.worktrees/moved';
+  const dp = '/srv/dev/ras/masterplan/.worktrees/moved';
   const { actions } = classifyWorktrees({
     repoGitDir: REPO_GIT,
     gitList: [],
-    diskDirs: [{ name: 'moved', path: dp, gitdirTarget: '/srv/dev/masterplan/.worktrees/../.git/worktrees/moved' }],
+    diskDirs: [{ name: 'moved', path: dp, gitdirTarget: '/srv/dev/ras/masterplan/.worktrees/../.git/worktrees/moved' }],
     bundleRecords: [{ slug: 'moved', worktree: dp, worktree_disposition: 'active', status: 'in-progress' }],
   });
   assert.equal(actions[0].action, 'repair');
@@ -474,7 +474,7 @@ test('classifyWorktrees: an into-repo target with .. segments normalizes to repo
 // ---- Codex MAJOR regression: Pass C (git-centric) makes the `prune` action reachable — a registered
 // worktree GONE from disk whose bundle is retired. Pass A (disk-centric) structurally cannot see it.
 test('classifyWorktrees: a registered worktree gone from disk + bundle retired → prune (Pass C)', () => {
-  const dp = '/srv/dev/masterplan/.worktrees/pruneme';
+  const dp = '/srv/dev/ras/masterplan/.worktrees/pruneme';
   const { actions, findings } = classifyWorktrees({
     repoGitDir: REPO_GIT,
     gitList: [{ path: dp }], // git still has the admin entry
@@ -493,7 +493,7 @@ test('classifyWorktrees: a registered worktree gone from disk + bundle retired �
 test('classifyWorktrees: an ACTIVE bundle whose registered worktree is gone from disk is NOT pruned', () => {
   // Pass C only reaps RETIRED-owned stale pointers. An active run mid-flight (worktree absent from THIS
   // reconcile's disk scan) is left for the bundle->git ERROR path, never pruned out from under a live run.
-  const dp = '/srv/dev/masterplan/.worktrees/live';
+  const dp = '/srv/dev/ras/masterplan/.worktrees/live';
   const { actions } = classifyWorktrees({
     repoGitDir: REPO_GIT,
     gitList: [{ path: dp }],
@@ -506,7 +506,7 @@ test('classifyWorktrees: an ACTIVE bundle whose registered worktree is gone from
 test('classifyWorktrees: an unowned registered worktree gone from disk is NEVER pruned (no bundle = main/dev)', () => {
   // The main/dev worktree has no owning bundle record. Pass C requires a retired OWNING record, so a
   // record-less registered path is skipped — we never prune a worktree we do not own.
-  const dp = '/srv/dev/masterplan/.worktrees/masterplan-ng';
+  const dp = '/srv/dev/ras/masterplan/.worktrees/masterplan-ng';
   const { actions } = classifyWorktrees({
     repoGitDir: REPO_GIT,
     gitList: [{ path: dp }],
@@ -522,7 +522,7 @@ test('classifyWorktrees: a retired bundle whose worktree IS the repo root (ran o
   // linked worktree). The repo root is listed by `git worktree list` but lives OUTSIDE .worktrees/, so it
   // is never in diskDirs and looks "gone from disk" to Pass C — the underManagedWorktrees guard must skip
   // it. Pruning the primary worktree is never correct.
-  const repoRoot = '/srv/dev/masterplan';
+  const repoRoot = '/srv/dev/ras/masterplan';
   const { actions } = classifyWorktrees({
     repoGitDir: REPO_GIT,
     gitList: [{ path: repoRoot }, { path: `${repoRoot}/.worktrees/masterplan-ng` }],
@@ -535,7 +535,7 @@ test('classifyWorktrees: a retired bundle whose worktree IS the repo root (ran o
 test('classifyWorktrees: an unowned REGISTERED worktree (the dev worktree) is left alone', () => {
   // masterplan-ng: a real, registered worktree that simply has no masterplan bundle. v7 deliberately
   // never flagged this — reaping it is the exact false-positive to avoid.
-  const dp = '/srv/dev/masterplan/.worktrees/masterplan-ng';
+  const dp = '/srv/dev/ras/masterplan/.worktrees/masterplan-ng';
   const { actions, findings } = classifyWorktrees({
     repoGitDir: REPO_GIT,
     gitList: [{ path: dp }],
@@ -548,7 +548,7 @@ test('classifyWorktrees: an unowned REGISTERED worktree (the dev worktree) is le
 });
 
 test('classifyWorktrees: an unidentified dir (no gitdir pointer) is never touched', () => {
-  const dp = '/srv/dev/masterplan/.worktrees/scratch';
+  const dp = '/srv/dev/ras/masterplan/.worktrees/scratch';
   const { actions } = classifyWorktrees({
     repoGitDir: REPO_GIT,
     gitList: [],
@@ -580,7 +580,7 @@ test('classifyWorktrees: empty inputs → no actions, no findings', () => {
 });
 
 test('classifyWorktrees: findings are exactly the non-none actions, in doctor shape', () => {
-  const base = '/srv/dev/masterplan/.worktrees';
+  const base = '/srv/dev/ras/masterplan/.worktrees';
   const { actions, findings } = classifyWorktrees({
     repoGitDir: REPO_GIT,
     repoGitDirCanonical: REPO_GIT, // admin dir resolves → the foreign disk dir is PROVABLY foreign → remove

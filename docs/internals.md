@@ -21,7 +21,7 @@ masterplan v8 is a 5-layer system. Each layer is thin and delegates downward:
   `workflows/plan.workflow.js` (subsystem fan-out via `parallel()`). Workflows
   return digests and fragments only — never write to disk directly.
 - **L3 — Agents:** seven markdown agent briefs under `agents/` (`mp-explorer`,
-  `mp-implementer`, `mp-planner`, `mp-codex-reviewer`, `mp-plan-reviewer`,
+  `mp-implementer`, `mp-planner`, `mp-adversarial-reviewer`, `mp-plan-reviewer`,
   `mp-subsystem-planner`, `mp-spec-decomposer`). Agents receive bounded briefs
   and return structured output; they do not inherit session history.
 - **L4 — Doctor:** `bin/doctor.mjs` dispatcher + 13 check modules under
@@ -73,7 +73,7 @@ fields back is documented in [bundle-resume.md](internals/bundle-resume.md).
   writer) and CD-4 (blocker ladder) are the ones most frequently referenced in
   the leaves above.
 - **Plan annotation format:** [`docs/conventions/plan-annotations.md`](conventions/plan-annotations.md).
-- **Codex failure policy:** [`docs/conventions/codex-failure-policy.md`](conventions/codex-failure-policy.md).
+- **Adversarial review failure policy:** [`docs/conventions/adversarial-review-failure-policy.md`](conventions/adversarial-review-failure-policy.md).
 - **Deferred follow-ups:** [deferred-followups.md](internals/deferred-followups.md) — tracked, intentionally-deferred review findings (so they read as known, not as fresh churn).
 - **Codex entrypoint skill:** [`skills/masterplan/SKILL.md`](../skills/masterplan/SKILL.md)
   is the Codex-visible entrypoint — it loads `commands/masterplan.md` as the

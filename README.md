@@ -61,7 +61,7 @@ masterplan v8 is a five-layer system. Each layer delegates downward and never wr
 ┌───────────────────────▼─────────────────────────────────────┐
 │  L3 — Agents                                                 │
 │  agents/mp-explorer.md        agents/mp-implementer.md       │
-│  agents/mp-planner.md         agents/mp-codex-reviewer.md    │
+│  agents/mp-planner.md         agents/mp-adversarial-reviewer.md │
 │  agents/mp-plan-reviewer.md   agents/mp-subsystem-planner.md │
 │  agents/mp-spec-decomposer.md                                │
 │  ← no session history; return structured output only         │
@@ -205,7 +205,7 @@ The L2 execute path runs **one wave per workflow launch**:
 
 - `pipeline(tasks, implement, review)` is **non-barrier**: a task's review starts the moment its implement finishes.
 - Implementation is **inline-only** via `mp-implementer` (no Codex implementer path). Each implementer runs the task's `verify_commands` and returns a digest citing real output.
-- Review is **config-gated**: `mp-codex-reviewer` runs only when the bundle's `codex.review` is `true` (which `mp prepare-wave` surfaces to the L2 path as the `"on"` payload it gates on).
+- Review is **config-gated**: `mp-adversarial-reviewer` runs only when the bundle's review is armed (`state.review.adversary`, which `mp prepare-wave` surfaces to the L2 path as the `"on"` payload it gates on).
 
 After the wave barrier, L1 runs **D6 scope verification**:
 
@@ -263,7 +263,7 @@ See [docs/internals/doctor.md](docs/internals/doctor.md) for the full check cata
 
 ## Configuration
 
-There is no `.masterplan.yaml` config-file hierarchy in v8. Configuration lives on the run bundle in `state.yml` — set at seed time, or (for Codex) via `mp set-codex-config` — and read back at runtime.
+There is no `.masterplan.yaml` config-file hierarchy in v8. Configuration lives on the run bundle in `state.yml` — set at seed time, or via `mp set-review-config` — and read back at runtime.
 
 **Seed-time flags** (`mp seed`, persisted into `state.yml` at run creation):
 
@@ -272,24 +272,24 @@ There is no `.masterplan.yaml` config-file hierarchy in v8. Configuration lives 
 | `--autonomy` | `gated \| loose \| full` | unset | `gated`/unset halts at every gate; `loose` auto-advances through successful gates; `full` runs maximally non-interactive (even the finish-flow verification auto-fires). The branch-finish gate always halts regardless. |
 | `--complexity` | `low \| medium \| high` | auto-detected | Influences planning depth; `--complexity-source` records how it was set |
 | `--planning-mode` | `serial \| parallel \| auto` | `auto` | `serial` = one `mp-planner`; `parallel` = `mp-subsystem-planner` fan-out merged by `lib/plan-merge.mjs` |
-| `--codex-review` | `on \| off` | `on` | Default-on finish-time Codex review. New bundles arm `state.codex.review: true` automatically; pass `off` to opt out. Legacy bundles (seeded before this default) without `state.codex.review` are defensively armed at the finish gate with a `codex_review_defensively_armed` audit event. |
+| `--adversary-review` | `on \| off` | `on` | Default-on finish-time adversary review (routed through the agent-dispatch adversary lane). New bundles arm `state.review.adversary: true` automatically; pass `off` to opt out. Alias: `--codex-review`. Legacy bundles (no `state.review.adversary` and no legacy `state.codex.review`) are defensively armed at the finish gate with an `adversary_review_defensively_armed` audit event. |
 
-**Codex config** (`mp set-codex-config`, a CD-7 write to nested `state.codex.{routing,review}` on an existing bundle — *not* a seed flag):
+**Review config** (`mp set-review-config`, a CD-7 write on an existing bundle — *not* a seed flag; alias: `mp set-codex-config`):
 
 | Flag | Values | Default | Notes |
 |---|---|---|---|
-| `--routing` | `auto \| on \| off` | `auto` | Codex task routing (`auto` respects plan annotations) |
-| `--review` | `true \| false` | inherits seed | Override the seed-time default. New bundles inherit `true` from `--codex-review=on`; pass `--review=false` to opt out post-seed. |
+| `--review` | `true \| false` | inherits seed | Arms/disarms `state.review.adversary`. New bundles inherit `true` from `--adversary-review=on`; pass `--review=false` to opt out post-seed. |
+| `--routing` | `auto \| on \| off` | `auto` | Legacy per-task dispatch default (`state.codex.routing`), still read by `prepare-wave` for in-flight bundles. New bundles no longer write it (routing defaults to `auto`). |
 
 ### Finish-time review audit channel
 
-Every finish-time review outcome — success, skip, or defensive arm — emits a durable event to `events.jsonl`. Searchable by `codex_review*` prefix:
+Every finish-time review outcome — success, skip, or defensive arm — emits a durable event to `events.jsonl`. Searchable by `adversary_review*` prefix (legacy `codex_review*` events from in-flight bundles still satisfy the re-entry guard):
 
-- `codex_review` — review completed (summary: `codex review complete ...`).
-- `codex_review_skipped` — review was configured but didn't run (summary includes a typed reason: `state.codex.review not armed`, `codex_host_suppressed`, `no_base_branch`, `companion_unresolved`, or `companion_timeout`).
-- `codex_review_defensively_armed` — legacy bundle missing `state.codex.review` was defensively armed once at the finish gate (one-time per bundle, presence-scoped).
+- `adversary_review` — review completed (summary: `adversary review complete ...`).
+- `adversary_review_skipped` — review was configured but didn't run (summary includes a typed reason: `state.review.adversary not armed`, `codex_host_suppressed`, or `no_base_branch`).
+- `adversary_review_defensively_armed` — legacy bundle missing the review config was defensively armed once at the finish gate (one-time per bundle, presence-scoped).
 
-A future `codex_review_configured_but_zero_invocations` audit (not yet implemented) would flag bundles where `state.codex.review` is on but no `codex review` event landed.
+A future `adversary_review_configured_but_zero_invocations` audit (not yet implemented) would flag bundles where review is armed but no `adversary review` event landed.
 
 ---
 
@@ -298,8 +298,8 @@ A future `codex_review_configured_but_zero_invocations` audit (not yet implement
 Codex can host the command via `/masterplan:masterplan` through `skills/masterplan/SKILL.md`. When Codex-hosted:
 
 - The orchestrator runs `mp detect-host --agent-is-codex` at boot.
-- If `suppressRescue` is true in the result, the orchestrator does **not** dispatch the companion Codex rescue/review subagent for that invocation (it would recurse — Codex calling Codex).
-- Persisted `codex.routing` and `codex.review` in `state.yml` continue to apply to Claude Code runs unaffected.
+- A Codex host (`isCodex`) lacks Claude Code's Workflow tool, so waves run on the foreground-sequential path (`mp continue --codex-suppressed`) instead of a background workflow launch.
+- Persisted review config (`state.review.adversary`, or legacy `state.codex.{routing,review}`) in `state.yml` continues to apply to Claude Code runs unaffected. Whole-branch adversary review runs the same on either host — it routes to agent-dispatch's cross-vendor lane (gpt-5.5), not Codex, so there is no recursion to suppress.
 
 ---
 

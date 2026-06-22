@@ -19,23 +19,24 @@
 // writer, post-barrier. That is exactly what keeps crash re-dispatch idempotent (CD-7).
 //
 // DESIGN DECISION — inline-only implementation (Fork 1, resolved 2026-05-28: keep inline; no
-// codex-implementer). The agent roster is mp-implementer (sonnet) + mp-codex-reviewer ONLY; there is
-// intentionally no codex-IMPLEMENTER. A codex-implementer needs WRITE access, which drags back the
-// whole v7 sandbox/worktree-git/silent-exit/empty-diff/orphan hardening series that v8 exists to
-// delete — and parity ranks below durable-state/token-efficiency in the v8 rubric, so it buys nothing
-// the rubric rewards. The codex-REVIEWER is kept because a foreground `timeout codex exec` is
-// read-only and cannot orphan (the unsafe write-path is the implementer, not the reviewer; see
-// agents/mp-codex-reviewer.md + WORKLOG). So every task is IMPLEMENTED inline by mp-implementer
-// regardless of its routed `target`. `target` (from routeTask) is informational/logged-only: it
-// neither gates implementation (always inline) nor gates review (review is CONFIG-gated — see
-// review() below). It records which tasks a future codex-implementer COULD offload, never a silent cap.
+// codex-implementer). The agent roster is mp-implementer (sonnet) + mp-adversarial-reviewer ONLY;
+// there is intentionally no codex-IMPLEMENTER. A codex-implementer needs WRITE access, which drags
+// back the whole v7 sandbox/worktree-git/silent-exit/empty-diff/orphan hardening series that v8
+// exists to delete — and parity ranks below durable-state/token-efficiency in the v8 rubric, so it
+// buys nothing the rubric rewards. The adversarial REVIEWER is kept because a foreground
+// `agent-dispatch review` call is read-only and cannot orphan (the unsafe write-path is the
+// implementer, not the reviewer; see agents/mp-adversarial-reviewer.md + WORKLOG). So every task is
+// IMPLEMENTED inline by mp-implementer regardless of its routed `target`. `target` (from routeTask) is
+// informational/logged-only: it neither gates implementation (always inline) nor gates review (review
+// is CONFIG-gated — see review() below). It records which tasks a future codex-implementer COULD
+// offload, never a silent cap.
 
 export const meta = {
   name: 'masterplan-execute',
-  description: 'masterplan single-wave execution: one mp-implementer per task in parallel, optional config-gated Codex review, returns digests only (never writes state / never commits)',
+  description: 'masterplan single-wave execution: one mp-implementer per task in parallel, optional config-gated adversary review, returns digests only (never writes state / never commits)',
   phases: [
     { title: 'Dispatch', detail: 'one mp-implementer per task (wave barrier)' },
-    { title: 'Review', detail: 'config-gated mp-codex-reviewer per done task' },
+    { title: 'Review', detail: 'config-gated mp-adversarial-reviewer per done task' },
   ],
 };
 
@@ -65,7 +66,7 @@ const reviewOn = (A.review ?? 'off') === 'on';
 // model (opus), corrupting the token-budget capture this dogfood exists to take.
 const implAgentType = A.implAgentType ?? 'masterplan:mp-implementer';
 const implModel = A.implModel; // undefined in prod → agent-frontmatter model (sonnet) governs
-const reviewAgentType = A.reviewAgentType ?? 'masterplan:mp-codex-reviewer';
+const reviewAgentType = A.reviewAgentType ?? 'masterplan:mp-adversarial-reviewer';
 const reviewModel = A.reviewModel;
 
 // The mp-implementer digest, schema-validated at the tool boundary (mirror of agents/mp-implementer.md
@@ -114,8 +115,8 @@ function shq(s) {
 }
 
 // Build the EXACT path-filtered diff command the reviewer must run, scoped to the task's DECLARED
-// files. Path scoping is the whole point of the hardening: Codex reviews ONLY this task's files, never
-// a bare `git diff`/`git status` of the read-only tree — which also holds unrelated uncommitted changes
+// files. Path scoping is the whole point of the hardening: the reviewer sees ONLY this task's files,
+// never a bare `git diff`/`git status` of the read-only tree — which also holds unrelated uncommitted changes
 // from sibling same-wave tasks (file-disjoint by the planner invariant) and the user, a verdict-
 // pollution + wrong-focus vector. The command must capture the task's FULL change set, because agents
 // create-but-never-commit: `git diff HEAD` covers tracked edits (staged AND unstaged) vs HEAD, and
@@ -127,8 +128,8 @@ function shq(s) {
 // newlines) — the reviewer agent runs it VERBATIM, and a multi-statement one-liner is exactly what an
 // LLM "helpfully" rewrites. Edge cases left unhandled BY DESIGN (low-urgency given planner-controlled
 // declared paths): filenames with embedded newlines, git pathspec magic (`:(exclude)…`), and renames
-// surfacing as add+delete. Canonical shape — agents/mp-codex-reviewer.md ("Scope the review to the
-// task's diff") mirrors it; keep them synced.
+// surfacing as add+delete. Canonical shape — agents/mp-adversarial-reviewer.md ("Scope the review to
+// the task's diff") mirrors it; keep them synced.
 function scopedDiffCmd(files) {
   if (!files.length) return null;
   const q = files.map(shq).join(' ');
@@ -138,13 +139,13 @@ function scopedDiffCmd(files) {
 function reviewerPrompt(task, files) {
   const diffCmd = scopedDiffCmd(files);
   const scopeLine = diffCmd
-    ? `Scope the review to a PRE-BUILT diff of this task's DECLARED files (it already captures NEW/untracked files — you do NOT need \`git status\` to find them). Run this command EXACTLY as given, on ONE line — do not edit, split, reorder, or "simplify" it — and review ONLY its output:\n    ${diffCmd}\nReview nothing outside that diff. Do NOT run a bare \`git diff\`/\`git status\`: the read-only tree also holds unrelated uncommitted changes (sibling same-wave tasks, user edits) that would pollute the verdict and point Codex at files this task never touched.`
+    ? `Scope the review to a PRE-BUILT diff of this task's DECLARED files (it already captures NEW/untracked files — you do NOT need \`git status\` to find them). Run this command EXACTLY as given, on ONE line — do not edit, split, reorder, or "simplify" it — and review ONLY its output:\n    ${diffCmd}\nReview nothing outside that diff. Do NOT run a bare \`git diff\`/\`git status\`: the read-only tree also holds unrelated uncommitted changes (sibling same-wave tasks, user edits) that would pollute the verdict and point the reviewer at files this task never touched.`
     : `No declared file scope for this task — review the task intent against the working tree, and open your findings with a NOTE that the review is UNSCOPED (no file list to diff).`;
   return [
-    `Adversarially review masterplan task ${task.id} (Codex second opinion).`,
+    `Adversarially review masterplan task ${task.id} (cross-vendor second opinion).`,
     `Task intent: ${task.description}`,
     scopeLine,
-    'Run the Codex CLI per your invocation contract (read-only, time-capped). Return the CD-10 severity-first findings + a closing `verdict:` line. Never block on a wedged Codex.',
+    'Run the agent-dispatch adversary review per your invocation contract (read-only). Return the CD-10 severity-first findings + a closing `verdict:` line. Never block on a wedged reviewer.',
   ].join('\n');
 }
 
@@ -206,11 +207,11 @@ async function implement(t) {
   return { task_id: t.id, target: t.target, digest, review: null };
 }
 
-// Stage 2: optional Codex second opinion — PER-TASK single-pass (Fork 2, resolved 2026-05-28: keep
-// per-task; NOT per-wave, NOT spec+quality two-stage). Per-task is failure-isolated (one wedged Codex
+// Stage 2: optional adversary second opinion — PER-TASK single-pass (Fork 2, resolved 2026-05-28: keep
+// per-task; NOT per-wave, NOT spec+quality two-stage). Per-task is failure-isolated (one wedged reviewer
 // degrades one task's review, never the whole wave's), maps each finding to a task for re-dispatch,
 // and — since review is config-gated OFF by default — a fewer-calls topology wins nothing on the
-// common path. Two-stage's 2N Codex calls violate token-efficiency; v8 trims that self-checking.
+// common path. Two-stage's 2N reviewer calls violate token-efficiency; v8 trims that self-checking.
 // Gated by CONFIG only — NOT by `target`/eligibility:
 // judgment-heavy (inline-routed) tasks need a second opinion MORE, not less, so gating review by
 // codex-eligibility would skip exactly the riskiest work. Only review a task that actually got
@@ -226,7 +227,7 @@ async function review(item, task) {
   // a whole-tree pathspec (`git diff -- ''`), resurrecting the very verdict-pollution this scoping kills.
   const files = (Array.isArray(task.files) ? task.files : []).filter((f) => typeof f === 'string' && f.trim());
   let verdict = 'inconclusive';
-  let findings = 'NOTE — Codex review inconclusive (no output). verdict: inconclusive';
+  let findings = 'NOTE — adversary review inconclusive (no output). verdict: inconclusive';
   try {
     const ropts = { label: `review:task-${item.task_id}`, phase: 'Review', agentType: reviewAgentType };
     if (reviewModel) ropts.model = reviewModel; // omitted in prod → frontmatter model governs
@@ -251,11 +252,6 @@ if (tasks.length === 0) {
 
 log(`masterplan-execute: wave ${wave} — ${tasks.length} task(s); review ${reviewOn ? 'ON' : 'off'}`);
 for (const t of tasks) log(`  task ${t.id} → routed ${t.target} (${t.reason})`);
-const codexCount = tasks.filter((t) => t.target === 'codex').length;
-if (codexCount) {
-  log(`  note: ${codexCount} task(s) codex-eligible by routing, implemented INLINE by design ` +
-      '(v8 has no codex-implementer — see header). target is logged, never a silent cap.');
-}
 
 // pipeline (NOT a barrier between stages): task A's review starts the instant A implements, while B
 // is still implementing — A's review never depends on B's edit (disjoint same-wave scope is the

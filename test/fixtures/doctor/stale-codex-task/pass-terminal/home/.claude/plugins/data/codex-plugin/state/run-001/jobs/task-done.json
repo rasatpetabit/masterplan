@@ -1,7 +1,0 @@
-{
-  "id": "task-done",
-  "status": "completed",
-  "startedAt": "2026-05-26T00:00:00Z",
-  "summary": "Already finished task",
-  "workspaceRoot": "/tmp/workspace"
-}
