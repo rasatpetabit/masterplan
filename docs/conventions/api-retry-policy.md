@@ -1,6 +1,6 @@
 # API Retry Backoff Policy
 
-**Applies to:** All subagent dispatch in Step C — Codex (`codex:codex-rescue`) and inline (`Agent()`) calls.  
+**Applies to:** All subagent dispatch in Step C — `Agent()` calls.  
 **Added:** v5.9.0  
 **Status:** Documentation-only. Because this orchestrator is a markdown prompt, actual retries happen by re-dispatching the Agent call within the same turn after the backoff delay elapses.
 
@@ -59,8 +59,7 @@ On promotion to fatal after exhausting retries, emit before opening the blocker 
 ## Scope
 
 This policy applies to:
-- **Codex dispatch** — `codex:codex-rescue` subagent calls via the `Agent` tool with `subagent_type: "codex:codex-rescue"`.
-- **Inline subagent dispatch** — all other `Agent()` calls in Step C (implementer tasks, coordinator calls, reviewer subagents).
+- **Subagent dispatch** — all `Agent()` calls in Step C (implementer tasks, coordinator calls, reviewer subagents).
 
 This policy does NOT apply to:
 - Background process monitoring (Step B3 adversarial review polling) — that has its own `ScheduleWakeup`-based cadence.
