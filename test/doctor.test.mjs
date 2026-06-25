@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { runChecks, runFixes, parseArgs, discoverChecks } from '../bin/doctor.mjs';
 import { check as scalarCap, fix as scalarCapFix } from '../lib/doctor/scalar-cap.mjs';
-import { check as worktreeIntegrity } from '../lib/doctor/worktree-integrity.mjs';
+import { check as worktreeIntegrity, fix as worktreeIntegrityFix } from '../lib/doctor/worktree-integrity.mjs';
 import { check as codexAuth } from '../lib/doctor/codex-auth.mjs';
 import { check as stateSchema } from '../lib/doctor/state-schema.mjs';
 import { check as legacyBundle } from '../lib/doctor/legacy-bundle.mjs';
@@ -348,6 +348,127 @@ test('worktree-integrity: a LIVE bundle\'s unregistered, foreign-resolving workt
   // The bundle->git ERROR is NOT suppressed (active-unregistered is not in handledPaths).
   const liveErr = findings.find((f) => f.severity === 'ERROR' && /livebundle/.test(f.summary) && /not a registered git worktree/.test(f.summary));
   assert.ok(liveErr, `bundle->git ERROR must still fire for the live unregistered worktree — ${JSON.stringify(findings)}`);
+});
+
+// ---- worktree-integrity --fix (issue #7: clear stale pointers) ---------------
+// The autofix retires ONLY a bundle whose worktree is set, unregistered in git, AND gone from
+// disk — recording `removed_after_merge` (preserving the path as a memento). gone-from-disk is the
+// BLOCKER-respecting line: a worktree that no longer exists cannot be a live checkout, so the
+// `manual` active-unregistered case (which requires the dir to exist so its .git can be inspected)
+// is structurally excluded. archived bundles are check-skipped, so fix must skip them too — else it
+// would retire a bundle check() never ERROR'd. Status is NOT a discriminator (the only non-archived
+// status is in-progress, and issue #7's primary case is an unfinished bundle merged externally).
+
+test('worktree-integrity fix: retires a gone-from-disk, unregistered worktree (records removed_after_merge, preserves memento, idempotent) — issue #7', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-wt-fix-'));
+  const slug = 'merged-bundle';
+  const gonePath = path.join(tmp, '.worktrees', 'gone'); // deliberately never created on disk
+  const statePath = path.join(tmp, 'docs', 'masterplan', slug, 'state.yml');
+  fs.mkdirSync(path.dirname(statePath), { recursive: true });
+  fs.writeFileSync(statePath,
+    `schema_version: 6\nslug: ${slug}\nstatus: in-progress\nphase: execute\nworktree: ${gonePath}\nworktree_disposition: active\n`);
+  // git knows only the main checkout; the bundle's worktree is unregistered AND absent from disk.
+  const gitExec = (args) => {
+    if (args[0] === 'worktree') return `worktree ${tmp}\n`;
+    if (args[0] === 'branch') return 'main\n';
+    if (args[0] === 'rev-parse') return '.git\n';
+    throw new Error(`unexpected git args: ${args.join(' ')}`);
+  };
+  // precondition: check ERRORs on the stale pointer.
+  const before = worktreeIntegrity(tmp, { gitExec });
+  assert.ok(before.some((f) => f.severity === 'ERROR' && f.summary.includes(slug) && /not a registered git worktree/.test(f.summary)),
+    `precondition: check must ERROR on the stale worktree — ${JSON.stringify(before)}`);
+
+  const repairs = worktreeIntegrityFix(tmp, before, { gitExec });
+  assert.equal(repairs.length, 1, `exactly one retirement — ${JSON.stringify(repairs)}`);
+  assert.equal(repairs[0].id, 'worktree-integrity');
+  assert.equal(repairs[0].status, 'FIXED');
+  assert.match(repairs[0].summary, new RegExp(slug));
+  const text = fs.readFileSync(statePath, 'utf8');
+  assert.match(text, /worktree_disposition:\s*removed_after_merge/, 'disposition recorded');
+  assert.ok(text.includes(gonePath), 'worktree path preserved as a memento (not nulled)');
+
+  // re-check clears the ERROR (skip-disposition), and a second fix is a no-op (idempotent).
+  const recheck = worktreeIntegrity(tmp, { gitExec });
+  assert.ok(!recheck.some((f) => f.severity === 'ERROR'), `recheck clears the ERROR — ${JSON.stringify(recheck)}`);
+  assert.deepEqual(worktreeIntegrityFix(tmp, recheck, { gitExec }), [], 'idempotent: second fix is a no-op');
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+test('worktree-integrity fix: leaves an unregistered worktree that still EXISTS on disk untouched (BLOCKER — never silence a live reference) — issue #7', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-wt-fix-live-'));
+  const slug = 'live-bundle';
+  const liveDir = path.join(tmp, '.worktrees', 'livewt');
+  fs.mkdirSync(liveDir, { recursive: true }); // EXISTS on disk → a potential live checkout
+  const statePath = path.join(tmp, 'docs', 'masterplan', slug, 'state.yml');
+  fs.mkdirSync(path.dirname(statePath), { recursive: true });
+  const original = `schema_version: 6\nslug: ${slug}\nstatus: in-progress\nphase: execute\nworktree: ${liveDir}\nworktree_disposition: active\n`;
+  fs.writeFileSync(statePath, original);
+  const gitExec = (args) => {
+    if (args[0] === 'worktree') return `worktree ${tmp}\n`; // livewt unregistered
+    if (args[0] === 'branch') return 'main\n';
+    if (args[0] === 'rev-parse') return '.git\n';
+    throw new Error(`unexpected git args: ${args.join(' ')}`);
+  };
+  const repairs = worktreeIntegrityFix(tmp, [{ id: 'worktree-integrity', severity: 'ERROR', summary: `bundle ${slug}: stale`, fix: 'x' }], { gitExec });
+  assert.deepEqual(repairs, [], 'an on-disk unregistered worktree is NOT auto-retired (left for the operator)');
+  assert.equal(fs.readFileSync(statePath, 'utf8'), original, 'state.yml is byte-unchanged');
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+test('worktree-integrity fix: skips an archived bundle whose worktree is gone (subset of check-ERROR\'d) — issue #7', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-wt-fix-arch-'));
+  const slug = 'archived-bundle';
+  const gonePath = path.join(tmp, '.worktrees', 'gone-arch'); // never created
+  const statePath = path.join(tmp, 'docs', 'masterplan', slug, 'state.yml');
+  fs.mkdirSync(path.dirname(statePath), { recursive: true });
+  const original = `schema_version: 6\nslug: ${slug}\nstatus: archived\nphase: execute\nworktree: ${gonePath}\nworktree_disposition: active\n`;
+  fs.writeFileSync(statePath, original);
+  const gitExec = (args) => {
+    if (args[0] === 'worktree') return `worktree ${tmp}\n`;
+    if (args[0] === 'branch') return 'main\n';
+    if (args[0] === 'rev-parse') return '.git\n';
+    throw new Error(`unexpected git args: ${args.join(' ')}`);
+  };
+  // check() skips archived bundles → no ERROR; fix must mirror that skip, leaving state untouched.
+  assert.ok(!worktreeIntegrity(tmp, { gitExec }).some((f) => f.severity === 'ERROR'), 'archived bundle is not ERROR\'d by check');
+  assert.deepEqual(worktreeIntegrityFix(tmp, [], { gitExec }), [], 'archived bundle is not retired by fix');
+  assert.equal(fs.readFileSync(statePath, 'utf8'), original, 'state.yml is byte-unchanged');
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+test('worktree-integrity fix: clears a legacy schema<6 bundle (issue #7\'s real payload — the pre-rename /home/... cases) without dropping fields', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-wt-fix-legacy-'));
+  const slug = 'cli-oper-queries';
+  const gone = '/home/grojas/dev/petabit-os-stack/petabit-os-mgmt/.claude/worktrees/phase-25'; // pre-rename, gone
+  const statePath = path.join(tmp, 'docs', 'masterplan', slug, 'state.yml');
+  fs.mkdirSync(path.dirname(statePath), { recursive: true });
+  // A v5.0.1-era bundle: quoted '5.1' schema_version + flat worktree/branch + v7-only fields.
+  const original = `schema_version: '5.1'\nslug: ${slug}\nstatus: in-progress\nphase: execute\n` +
+    `started: 2026-04-01T10:00:00Z\nlast_activity: 2026-04-02T11:00:00Z\n` +
+    `worktree: ${gone}\nbranch: worktree-phase-25\nworktree_disposition: active\n`;
+  fs.writeFileSync(statePath, original);
+  const gitExec = (args) => {
+    if (args[0] === 'worktree') return `worktree ${tmp}\n`;
+    if (args[0] === 'branch') return 'main\n';
+    if (args[0] === 'rev-parse') return '.git\n';
+    throw new Error(`unexpected git args: ${args.join(' ')}`);
+  };
+  // check ERRORs on BOTH the dangling worktree and the dangling branch.
+  assert.equal(worktreeIntegrity(tmp, { gitExec }).filter((f) => f.severity === 'ERROR').length, 2,
+    'precondition: legacy bundle ERRORs on both worktree and branch');
+
+  assert.equal(worktreeIntegrityFix(tmp, [], { gitExec }).length, 1, 'one retirement');
+  const after = fs.readFileSync(statePath, 'utf8');
+  // The disposition skip (line 125, before BOTH checks) clears the worktree AND branch ERROR.
+  assert.deepEqual(worktreeIntegrity(tmp, { gitExec }).filter((f) => f.severity === 'ERROR'), [],
+    'fix clears both legacy ERRORs via the disposition skip');
+  assert.match(after, /worktree_disposition:\s*removed_after_merge/, 'disposition recorded');
+  // No field loss in the readState->writeState round-trip on a legacy bundle.
+  for (const k of ['slug', 'status', 'phase', 'started', 'last_activity', 'worktree', 'branch']) {
+    assert.match(after, new RegExp(`^${k}:`, 'm'), `legacy field '${k}' survives the round-trip`);
+  }
+  fs.rmSync(tmp, { recursive: true, force: true });
 });
 
 // ---- codex-auth (host path + injected homeDir/now) ---------------------------
