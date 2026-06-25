@@ -41,10 +41,9 @@ checks get fresh v8-flat fixtures.
 | `codex-auth` | #39 | WARN/SKIP | ✅ slice |
 | `state-schema` | #9 (+#10 folded) | ERROR | ✅ batch |
 | `legacy-bundle` | #1 | WARN | ✅ batch |
-| `codex-plugin-presence` | #18 | PASS/WARN/SKIP | ✅ batch |
+| `adversary-lane-health` | — | PASS/WARN | ✅ batch |
 | `index-staleness` | #34 | WARN | ✅ batch |
 | `stale-lock` | #42 | WARN | ✅ batch |
-| `stale-codex-task` | #49 | WARN | ✅ batch |
 | `plugin-registry-drift` | #50 | WARN | ✅ batch |
 
 **`#9` stays minimal** — v8 bundles are well-formed by construction (`serializeState`), so #9

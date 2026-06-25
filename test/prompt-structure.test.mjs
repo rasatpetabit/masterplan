@@ -25,9 +25,9 @@ const ABSORBED = [
   // T2.4 — sequences absorbed into mp finish-step (lib/finish-step.mjs):
   'mp finish-status', // the WT snapshot (head/porcelain/branches flags) → finishStep's own git
   'record-verification', // verified-at-SHA record → --verify-passed
-  'codex-review-status', // the durable codex re-entry guard → sha-keyed event scan in finishStep
+  'adversary-review-status', // the durable review re-entry guard → sha-keyed event scan in finishStep
   'set-worktree-disposition', // the old static-map write → dispositionAfterTeardown in --choice
-  '--type=codex_review', // the event is emitted by finishStep (--codex-done/skipped), not mp event
+  '--type=adversary_review', // the event is emitted by finishStep (--review-done/skipped), not mp event
   '--type=branch_finish', // ditto — the --choice transaction events internally
 ];
 
@@ -51,13 +51,13 @@ test('prompt teaches the replacements (mp continue trampoline + mp sweep)', () =
 
 test('prompt teaches the finish trampoline (mp finish-step op table, T2.4)', () => {
   assert.ok(prompt.includes('mp finish-step'), 'the §2c contract must name mp finish-step');
-  for (const op of ['run_verify', 'write_retro', 'run_codex_review', "gate:'branch_finish'",
+  for (const op of ['run_verify', 'write_retro', 'run_adversary_review', "gate:'branch_finish'",
     "gate:'verification_failed'", "gate:'docs_normalize'", "kind:'push_pr'", "reason:'archived'",
     "reason:'retro_done'"]) {
     assert.ok(prompt.includes(op), `§2c op table missing ${op}`);
   }
   // The answer flags ARE the resolution surface — each must be taught or a gate dead-ends.
-  for (const flag of ['--verify-passed', '--verify-failed', '--codex-done', '--codex-skipped',
+  for (const flag of ['--verify-passed', '--verify-failed', '--review-done', '--review-skipped',
     '--docs-normalized', '--docs-skipped', '--choice=', '--pushed', '--removal-force', '--retro-only']) {
     assert.ok(prompt.includes(flag), `§2c answer flag missing ${flag}`);
   }

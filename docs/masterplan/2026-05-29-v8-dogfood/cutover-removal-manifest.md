@@ -142,7 +142,7 @@ guard already polices the surviving verb router.) → **Tier-4 #11.**
     mode — not a license to execute the whole workflow inline"* hedge that currently makes the **surviving**
     `skills/masterplan/SKILL.md:135-146` Codex tool-adaptation table's **omitted Workflow-tool row** harmless.
     The user **ruled 3B** — full-lifecycle Codex (execute included) — over the 3A doc-only recommendation
-    (see [`../../design-residuals.md` §Residual 3 OUTCOME](../../design-residuals.md)). So the gate is no longer
+    (see §Residual 3 OUTCOME of `design-residuals.md` *(design doc — not created)*). So the gate is no longer
     *"rule 3A or 3B"* — the goal is decided; what remains is **shipping 3B's implementation**: a Codex
     foreground-sequential wave-dispatch path (`mp prepare-wave` → sequential `mp-implementer` → `update_plan`),
     an `if host.isCodex` execution branch at §2a, and — in the parity branch where Codex cannot host the

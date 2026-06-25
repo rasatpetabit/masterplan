@@ -19,7 +19,7 @@
 
 ## Branch + constraints
 
-- **Branch:** `qctl-implementer-backend` in `/srv/dev/masterplan` (already checked out; the design spec is committed at `12f6d11`). All work stays on this branch.
+- **Branch:** `qctl-implementer-backend` in `/srv/dev/ras/masterplan` (already checked out; the design spec is committed at `12f6d11`). All work stays on this branch.
 - **A Codex defect pass runs before declaring done** (Task 7). **Nothing is pushed without explicit user approval.**
 - This is a Petabit-owned repo, NOT a `yanos-*` repo — the umbrella YANOS codex-review *policy* does not apply, but the user's "masterplan source changes get a Codex defect pass" constraint does.
 

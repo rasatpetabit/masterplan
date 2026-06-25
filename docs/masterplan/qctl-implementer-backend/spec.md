@@ -1,10 +1,10 @@
 # qctl implementer-backend seam — design (contract-first)
 
 > **Status:** approved design (brainstorming → spec). Written 2026-06-01.
-> **Scope:** masterplan plugin (`/srv/dev/masterplan`) + a mirrored contract doc
+> **Scope:** masterplan plugin (`/srv/dev/ras/masterplan`) + a mirrored contract doc
 > in `petabit-sysadmin`. Buildable today; the *live binding* is deferred until the
 > Qwen Work Fabric ships `qctl` (its task 11) and `gate.py` (its task 12).
-> **Predecessor:** [`docs/github-coordination-qwen-fabric-fit.md`](../../github-coordination-qwen-fabric-fit.md)
+> **Predecessor:** `docs/github-coordination-qwen-fabric-fit.md` *(planned design doc — not yet created)*
 > (the fit/gap analysis this design acts on).
 
 ## 1. Motivation
@@ -67,7 +67,7 @@ small replacement, not a rewrite.
 | Diff git-context crossing | **Portable patch against a named base** | masterplan never reaches into the epyc1-local worktree (off /srv/dev, foreign git context). |
 | Gate authority | **masterplan D6 `verify-scope` authoritative; fabric green-gate advisory** | masterplan must not trust the worker's self-report — same principle the fabric itself enforces. |
 
-## 3. Part A — the masterplan seam (`/srv/dev/masterplan`)
+## 3. Part A — the masterplan seam (`/srv/dev/ras/masterplan`)
 
 ### A1. The descriptor (the contract object)
 
@@ -279,7 +279,7 @@ No rework of the descriptor or the contract — they are what tasks 11/12 target
 
 ## 8. References
 
-- Fit/gap analysis: [`docs/github-coordination-qwen-fabric-fit.md`](../../github-coordination-qwen-fabric-fit.md)
+- Fit/gap analysis: `docs/github-coordination-qwen-fabric-fit.md` *(planned design doc — not yet created)*
 - Qwen Work Fabric design: `petabit-sysadmin/docs/superpowers/specs/2026-05-31-qwen-work-fabric-design.md`
 - The prod-inert dogfood hook this promotes: `workflows/execute.workflow.js`
   (`implAgentType`/`implModel`/`reviewAgentType`/`reviewModel`), commit `561f348`.

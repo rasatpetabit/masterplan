@@ -1,6 +1,6 @@
 ---
 name: masterplan
-description: "Generic/Codex entrypoint for masterplan: bare /masterplan, /masterplan:masterplan, $masterplan, or any verb. All verbs (full, brainstorm, plan, execute, finish, retro, import, doctor, status, validate, stats, clean, next, verbs, publish, follow) route through this single command — v8 ships NO per-verb /masterplan:<verb> skills (they shadowed Claude Code built-ins like /plan, /status, /doctor and added nothing over bare-command routing)."
+description: "Generic/Codex entrypoint for masterplan: bare /masterplan, /masterplan:masterplan, $masterplan, or any verb. All verbs (full, brainstorm, plan, execute, finish, retro, import, doctor, status, validate, stats, clean, next, verbs, render, publish, follow) route through this single command — v8 ships NO per-verb /masterplan:<verb> skills (they shadowed Claude Code built-ins like /plan, /status, /doctor and added nothing over bare-command routing)."
 ---
 
 ## Central agent policy
@@ -53,25 +53,30 @@ targeted `state.yml` reads) before opening plan/spec artifacts. Avoid
 exploratory full-file dumps of large prompt, plan, transcript, or event-log
 files.
 
-## Configuration (seed flags + `set-codex-config` → state.yml)
+## Configuration (seed flags + `set-review-config` → state.yml)
 
 v8 has **no `.masterplan.yaml` config hierarchy** — there is no
 built-in/user-global/repo-local merge step to perform. Configuration is set on the
 run bundle and read back from `docs/masterplan/<slug>/state.yml`:
 
 - **Seed-time flags** (`mp seed`): `--autonomy`, `--complexity`, `--planning-mode`
-  (`serial|parallel|auto`) — persisted into `state.yml` at run creation.
-- **Codex routing/review** (`mp set-codex-config --routing=auto|on|off
-  --review=true|false`): a CD-7 write to the nested `state.codex.{routing,review}`.
-  The dispatch path reads `state.codex.routing` (default `auto`) and gates the
-  optional review stage on `state.codex.review === true` (default off).
+  (`serial|parallel|auto`), **`--adversary-review=on|off` (default `on`; alias
+  `--codex-review`)** — persisted into `state.yml` at run creation. Every fresh bundle
+  arms `state.review.adversary: true` automatically; pass `off` for explicit opt-out.
+- **Review config** (`mp set-review-config --review=true|false` [`--routing=auto|on|off`];
+  alias `mp set-codex-config`): a CD-7 write that arms `state.review.adversary`. The
+  finish-step gate gates the optional review stage on `state.review.adversary === true`
+  (falling back to the legacy `state.codex.review` for in-flight bundles). New bundles
+  inherit `true` from the seed-time default; pass `--review=false` post-seed to opt out.
+  `--routing` is the legacy per-task dispatch default (`state.codex.routing`), still read
+  by `prepare-wave` for in-flight bundles.
 
 Read the run's config from `state.yml`; do not look for or merge any config file.
 
-When Codex hosts the run, host suppression only forces the effective
-`codex.routing` / `codex.review` behavior off for the current invocation to avoid
-recursive Codex-on-Codex dispatch; it does not rewrite the persisted `state.yml`
-values, which still apply to future Claude Code runs.
+When Codex hosts the run, host suppression only forces the effective review behavior
+off for the current invocation to avoid recursive Codex-on-Codex dispatch; it does not
+rewrite the persisted `state.yml` values (`state.review.adversary`, or legacy
+`state.codex.{routing,review}`), which still apply to future Claude Code runs.
 
 ## Invocation mapping
 
@@ -92,7 +97,7 @@ Treat these user inputs as this skill:
 **No per-verb skills (v8).** masterplan ships exactly two skill dirs — this one
 and `masterplan-detect`. There are **no** `/masterplan:<verb>` per-verb skills:
 every verb (`brainstorm`, `full`, `execute`, `finish`, `retro`, `import`,
-`doctor`, `status`, `validate`, `stats`, `clean`, `next`, `verbs`, `publish`, `follow`, and `plan`) is dispatched
+`doctor`, `status`, `validate`, `stats`, `clean`, `next`, `verbs`, `render`, `publish`, `follow`, and `plan`) is dispatched
 by the bare `/masterplan <verb>` command through `bin/masterplan.mjs` (verb
 routing in `commands/masterplan.md` §1/§3). The per-verb namespace was removed
 because it added nothing over bare-command routing and the reserved words

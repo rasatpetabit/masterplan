@@ -84,13 +84,11 @@ test('version: emits the CC-2 banner (the lone CC-2/CC-3 survivor)', () => {
   assert.equal(r.status, 0);
   assert.match(r.stdout, /^→ \/masterplan v.+ args: 'doctor' cwd: \/repo\/x/);
 });
-test('detect-host: codex signal -> isCodex + suppressRescue; none -> both false', () => {
+test('detect-host: codex signal -> isCodex true; none -> false', () => {
   const yes = JSON.parse(run(['detect-host', '--agent-is-codex']).stdout);
   assert.equal(yes.isCodex, true);
-  assert.equal(yes.suppressRescue, true);
   const no = JSON.parse(run(['detect-host']).stdout);
   assert.equal(no.isCodex, false);
-  assert.equal(no.suppressRescue, false);
 });
 
 // ---- integration: decide (resume controller over the wire) ----
@@ -204,6 +202,75 @@ test('load-plan: materializes tasks + advances phase→execute atomically; decid
   assert.equal(t3.eligible, true);
   assert.equal(t3.reason, 'annotation-ok');
 });
+
+// ---- integration: plan.html render artifact (auto-emit at load-plan + the render-plan verb) ----
+test('load-plan: also auto-emits a static plan.html (minimal bundle: no spec.md/plan.md needed)', () => {
+  const dir = tmpDir('mp-loadplan-html-');
+  const p = path.join(dir, 'state.yml');
+  fs.writeFileSync(p, serializeState(v8({ phase: 'plan', tasks: [], slug: 'demo-run' })));
+  const planIdx = path.join(dir, 'plan.index.json');
+  fs.writeFileSync(planIdx, JSON.stringify(planIndexFixture()));
+
+  const r = run(['load-plan', `--state=${p}`, `--plan-index=${planIdx}`]);
+  assert.equal(r.status, 0);
+  const html = fs.readFileSync(path.join(dir, 'plan.html'), 'utf8');
+  assert.ok(html.startsWith('<!DOCTYPE html>'));
+  assert.ok(html.includes('greet') && html.includes('farewell') && html.includes('index'));
+  assert.ok(html.includes('badge status-pending'), 'freshly materialized tasks render as pending');
+  assert.ok(html.includes('demo-run'), 'title derives from the bundle slug');
+  // self-containment / headless-safety: no executable or remote-resource markup
+  assert.ok(!/<(script|img|iframe|link)\b/i.test(html), 'no script/img/iframe/link tags');
+});
+
+test('load-plan: a plan.html write failure is swallowed and never fails the atomic state write', () => {
+  const dir = tmpDir('mp-loadplan-htmlfail-');
+  const p = path.join(dir, 'state.yml');
+  fs.writeFileSync(p, serializeState(v8({ phase: 'plan', tasks: [] })));
+  const planIdx = path.join(dir, 'plan.index.json');
+  fs.writeFileSync(planIdx, JSON.stringify(planIndexFixture()));
+  fs.mkdirSync(path.join(dir, 'plan.html')); // EISDIR on write → forces a render/write failure
+
+  const r = run(['load-plan', `--state=${p}`, `--plan-index=${planIdx}`]);
+  assert.equal(r.status, 0, 'load-plan must succeed despite the artifact write failure');
+  assert.deepEqual(JSON.parse(r.stdout), { loaded: 3, waves: 2, phase: 'execute' });
+  assert.equal(read(p).phase, 'execute'); // the state transition still landed
+});
+
+test('render-plan: writes plan.html with live status from state.tasks and leaves state.yml byte-unchanged', () => {
+  const dir = tmpDir('mp-render-');
+  const p = path.join(dir, 'state.yml');
+  fs.writeFileSync(p, serializeState(v8({
+    phase: 'execute',
+    slug: 'live-run',
+    tasks: [
+      { id: 1, status: 'done', wave: 0, files: ['a.txt'] },
+      { id: 2, status: 'failed', wave: 1, files: ['b.txt'] },
+      { id: 3, status: 'in_progress', wave: 1, files: ['c.txt'] }, // not in the badge whitelist
+    ],
+  })));
+  const planIdx = path.join(dir, 'plan.index.json');
+  fs.writeFileSync(planIdx, JSON.stringify({
+    schema_version: '6.0',
+    tasks: [
+      { id: 1, wave: 0, description: 'first', files: ['a.txt'], verify_commands: ['true'], codex: null },
+      { id: 2, wave: 1, description: 'second', files: ['b.txt'], verify_commands: ['true'], codex: null },
+      { id: 3, wave: 1, description: 'third', files: ['c.txt'], verify_commands: ['true'], codex: null },
+    ],
+  }));
+  const before = fs.readFileSync(p);
+
+  const r = run(['render-plan', `--state=${p}`, `--plan-index=${planIdx}`]);
+  assert.equal(r.status, 0);
+  const html = fs.readFileSync(path.join(dir, 'plan.html'), 'utf8');
+  assert.ok(html.includes('badge status-done'), 'task 1 → done');
+  assert.ok(html.includes('badge status-failed'), 'task 2 → failed');
+  assert.ok(html.includes('badge status-pending'), 'task 3 unknown status → pending fallback');
+  assert.ok(!html.includes('badge status-in_progress'), 'unknown status never becomes a badge class');
+  assert.ok(html.includes('live-run'), 'title from slug');
+
+  assert.deepEqual(fs.readFileSync(p), before, 'render-plan must not mutate state.yml (read-only)');
+});
+
 test('load-plan: refuses a bundle that already has tasks (no clobber of execution state)', () => {
   const dir = tmpDir('mp-loadplan2-');
   const p = path.join(dir, 'state.yml');
@@ -469,43 +536,49 @@ test('worktree: an unknown subcommand dies with the expected list', () => {
   assert.notEqual(bad.status, 0);
   assert.match(bad.stderr, /plan \| record \| reconcile/);
 });
-test('set-codex-config: write NESTED codex.{routing,review}; merge-preserve; reject bad value / empty patch (codex CD-7)', () => {
-  // CD-7 closure for the codex-plugin-presence fix message: the codex config the dispatch path reads
-  // (state.codex.routing/.review) now has an `mp` writer, so turning codex off for a bundle never forces a
-  // raw hand-edit of state.yml. Writes the NESTED shape — not the flat codex_routing the old fix text named.
+test('set-review-config: writes state.review.adversary (+ legacy routing); merge-preserve; reject bad value / empty patch (CD-7)', () => {
+  // The review-arm config the finish-step gate reads (state.review.adversary) has an `mp` writer, so
+  // turning review off for a bundle never forces a raw hand-edit. --routing is the legacy per-task
+  // dispatch default (state.codex.routing) the prepare-wave path still reads for in-flight bundles.
   const p = tmpBundle(v8());
-  const o = JSON.parse(run(['set-codex-config', `--state=${p}`, '--routing=off', '--review=false']).stdout);
-  assert.deepEqual(o.codex, { routing: 'off', review: false });
-  assert.deepEqual(read(p).codex, { routing: 'off', review: false }); // persisted as the nested object
+  const o = JSON.parse(run(['set-review-config', `--state=${p}`, '--routing=off', '--review=false']).stdout);
+  assert.deepEqual(o.review, { routing: 'off', adversary: false });
+  assert.deepEqual(read(p).review, { adversary: false }); // review arm persisted to state.review
+  assert.deepEqual(read(p).codex, { routing: 'off' });     // legacy routing persisted to state.codex
   // partial set merge-preserves the other facet: flip routing back to auto, review stays false
-  assert.deepEqual(JSON.parse(run(['set-codex-config', `--state=${p}`, '--routing=auto']).stdout).codex, { routing: 'auto' });
-  assert.deepEqual(read(p).codex, { routing: 'auto', review: false });
-  // review normalizes on/true -> the boolean `true` the dispatch path and wantsCodex compare against
+  assert.deepEqual(JSON.parse(run(['set-review-config', `--state=${p}`, '--routing=auto']).stdout).review, { routing: 'auto' });
+  assert.deepEqual(read(p).codex, { routing: 'auto' });
+  assert.deepEqual(read(p).review, { adversary: false });
+  // review normalizes on/true -> the boolean `true` the gate predicate compares against
   const q = tmpBundle(v8());
-  assert.equal(JSON.parse(run(['set-codex-config', `--state=${q}`, '--review=on']).stdout).codex.review, true);
-  assert.equal(read(q).codex.review, true);
+  assert.equal(JSON.parse(run(['set-review-config', `--state=${q}`, '--review=on']).stdout).review.adversary, true);
+  assert.equal(read(q).review.adversary, true);
+  // Back-compat: the old command name `set-codex-config` is a hidden alias for the same handler.
+  const r = tmpBundle(v8());
+  assert.equal(JSON.parse(run(['set-codex-config', `--state=${r}`, '--review=on']).stdout).review.adversary, true);
+  assert.equal(read(r).review.adversary, true);
   // Enum guard + empty-patch guard: both die at the bin boundary, leaving state untouched.
-  const badRouting = run(['set-codex-config', `--state=${p}`, '--routing=sometimes']);
+  const badRouting = run(['set-review-config', `--state=${p}`, '--routing=sometimes']);
   assert.notEqual(badRouting.status, 0);
   assert.match(badRouting.stderr, /invalid --routing/);
-  const empty = run(['set-codex-config', `--state=${p}`]);
+  const empty = run(['set-review-config', `--state=${p}`]);
   assert.notEqual(empty.status, 0);
   assert.match(empty.stderr, /at least one of --routing or --review/);
-  assert.deepEqual(read(p).codex, { routing: 'auto', review: false }); // unchanged by the rejected writes
+  assert.deepEqual(read(p).review, { adversary: false }); // unchanged by the rejected writes
 });
-test('finish-status: codex_review mirrors state.codex.review (the predicate that arms the §2c whole-branch gate)', () => {
-  // The §2c finish-gate runs the whole-branch codex-companion review only when review is armed. finish-status
+test('finish-status: adversary_review mirrors state.review.adversary (the predicate that arms the §2c whole-branch gate)', () => {
+  // The §2c finish-gate runs the whole-branch adversary review only when review is armed. finish-status
   // surfaces that as a normalized boolean using the SAME predicate as the dispatch/prepare-wave path
-  // (rawReview === true|'on'|'true'), so the gate and the wave workflow can never disagree on "review is on".
+  // (raw === true|'on'|'true'), so the gate and the wave workflow can never disagree on "review is on".
   const p = tmpBundle(v8());
-  // Default bundle — no codex config → not armed.
-  assert.equal(JSON.parse(run(['finish-status', `--state=${p}`]).stdout).codex_review, false);
-  // set-codex-config --review=on persists the boolean true; finish-status reports the gate armed.
-  run(['set-codex-config', `--state=${p}`, '--review=on']);
-  assert.equal(JSON.parse(run(['finish-status', `--state=${p}`]).stdout).codex_review, true);
+  // Default bundle — no review config → not armed.
+  assert.equal(JSON.parse(run(['finish-status', `--state=${p}`]).stdout).adversary_review, false);
+  // set-review-config --review=on persists the boolean true; finish-status reports the gate armed.
+  run(['set-review-config', `--state=${p}`, '--review=on']);
+  assert.equal(JSON.parse(run(['finish-status', `--state=${p}`]).stdout).adversary_review, true);
   // …and back off — the gate disarms (the value is read live from state each snapshot).
-  run(['set-codex-config', `--state=${p}`, '--review=off']);
-  assert.equal(JSON.parse(run(['finish-status', `--state=${p}`]).stdout).codex_review, false);
+  run(['set-review-config', `--state=${p}`, '--review=off']);
+  assert.equal(JSON.parse(run(['finish-status', `--state=${p}`]).stdout).adversary_review, false);
 });
 test('active_run two-phase: set (launching) -> recover w/ null staleTaskId; promote -> wait(alive)/recover(dead, staleTaskId)', () => {
   const p = tmpBundle(v8());
@@ -657,6 +730,37 @@ test('seed: accepts and validates --planning-mode', () => {
   assert.notEqual(rejected.status, 0);
   assert.match(rejected.stderr, /invalid --planning-mode/);
 });
+test('seed: defaults state.review.adversary=true at seed time (spec §4.1 default-on)', () => {
+  const p = path.join(tmpDir('mp-seed-review-default-'), 'state.yml');
+  const r = run(['seed', `--state=${p}`, '--slug=demo', '--topic=A topic']);
+  assert.equal(r.status, 0);
+  assert.deepEqual(read(p).review, { adversary: true });
+  assert.ok(!('codex' in read(p)), 'vestigial state.codex routing is no longer seeded');
+});
+test('seed: --adversary-review=on arms explicitly (matches default behavior)', () => {
+  const p = path.join(tmpDir('mp-seed-review-on-'), 'state.yml');
+  const r = run(['seed', `--state=${p}`, '--slug=demo', '--topic=A topic', '--adversary-review=on']);
+  assert.equal(r.status, 0);
+  assert.deepEqual(read(p).review, { adversary: true });
+});
+test('seed: --codex-review=on is a hidden back-compat alias for --adversary-review', () => {
+  const p = path.join(tmpDir('mp-seed-review-alias-'), 'state.yml');
+  const r = run(['seed', `--state=${p}`, '--slug=demo', '--topic=A topic', '--codex-review=on']);
+  assert.equal(r.status, 0);
+  assert.deepEqual(read(p).review, { adversary: true });
+});
+test('seed: --adversary-review=off opts out (omits state.review entirely, A9 absent-field style)', () => {
+  const p = path.join(tmpDir('mp-seed-review-off-'), 'state.yml');
+  const r = run(['seed', `--state=${p}`, '--slug=demo', '--topic=A topic', '--adversary-review=off']);
+  assert.equal(r.status, 0);
+  assert.ok(!('review' in read(p)), 'explicit opt-out must leave state.review absent');
+});
+test('seed: --adversary-review rejects bogus values loud (on/off only)', () => {
+  const p = path.join(tmpDir('mp-seed-review-bogus-'), 'state.yml');
+  const r = run(['seed', `--state=${p}`, '--slug=demo', '--topic=A topic', '--adversary-review=maybe']);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /invalid --adversary-review/);
+});
 test('seed: refuses an existing bundle unless --force', () => {
   const p = path.join(tmpDir('mp-seed2-'), 'state.yml');
   assert.equal(run(['seed', `--state=${p}`, '--slug=x', '--topic=t']).status, 0);
@@ -698,30 +802,46 @@ test('event: rejects non-JSON --data', () => {
   assert.match(r.stderr, /must be valid JSON/);
 });
 
-// ---- integration: codex-review-status (the §2c step-5 durable re-entry guard's fs front) ----
-test('codex-review-status: reads back a durable codex_review event for a given HEAD (the P2 re-entry guard)', () => {
-  // The §2c finish-gate writes a codex_review event (data:{sha,base,count}, note:<digest>) BEFORE
-  // open-gate. On resume the step-5 guard reads it via this subcommand: present at HEAD ⇒ skip the
-  // network re-run + rehydrate the digest. End-to-end: `mp event` writes, `mp codex-review-status` reads.
-  const p = path.join(tmpDir('mp-crs-'), 'state.yml');
+// ---- integration: adversary-review-status (the §2c step-7 durable re-entry guard's fs front) ----
+test('adversary-review-status: reads back a durable adversary_review event for a given HEAD (the P2 re-entry guard)', () => {
+  // The §2c finish-gate writes an adversary_review event (data:{sha,base,count}, note:<digest>) BEFORE
+  // open-gate. On resume the step-7 guard reads it via this subcommand: present at HEAD ⇒ skip the
+  // network re-run + rehydrate the digest. End-to-end: `mp event` writes, `mp adversary-review-status` reads.
+  const p = path.join(tmpDir('mp-ars-'), 'state.yml');
   const HEAD = 'deadbeef123';
   // Absent events.jsonl → {present:false}, no throw.
-  assert.deepEqual(JSON.parse(run(['codex-review-status', `--state=${p}`, `--sha=${HEAD}`]).stdout),
+  assert.deepEqual(JSON.parse(run(['adversary-review-status', `--state=${p}`, `--sha=${HEAD}`]).stdout),
     { present: false, digest: null, count: null, base: null });
-  // Write the durable record exactly as step-5's exit-0 path does (the channel split: scalars→--data,
+  // Write the durable record exactly as step-7's exit-0 path does (the channel split: scalars→--data,
   // free-text digest→--note, audit signal→--summary).
-  run(['event', `--state=${p}`, '--type=codex_review', '--ts=T1',
-    '--summary=codex review complete (whole-branch, base main) — 2 findings',
+  run(['event', `--state=${p}`, '--type=adversary_review', '--ts=T1',
+    '--summary=adversary review complete (whole-branch, base main) — 2 findings',
     `--data={"sha":"${HEAD}","base":"main","count":2}`, '--note=P2: stale lock; P3: naming']);
-  assert.deepEqual(JSON.parse(run(['codex-review-status', `--state=${p}`, `--sha=${HEAD}`]).stdout),
+  assert.deepEqual(JSON.parse(run(['adversary-review-status', `--state=${p}`, `--sha=${HEAD}`]).stdout),
     { present: true, digest: 'P2: stale lock; P3: naming', count: 2, base: 'main' });
   // A different HEAD does not match (the guard keys on the exact tree).
-  assert.equal(JSON.parse(run(['codex-review-status', `--state=${p}`, '--sha=other999']).stdout).present, false);
-  // A degraded codex_review_skipped record at HEAD must NOT satisfy the guard (a skip ≠ a review).
-  run(['event', `--state=${p}`, '--type=codex_review_skipped', '--ts=T2',
-    '--summary=whole-branch codex-companion review skipped (degraded) — no network',
+  assert.equal(JSON.parse(run(['adversary-review-status', `--state=${p}`, '--sha=other999']).stdout).present, false);
+  // A degraded adversary_review_skipped record at HEAD must NOT satisfy the guard (a skip ≠ a review).
+  run(['event', `--state=${p}`, '--type=adversary_review_skipped', '--ts=T2',
+    '--summary=whole-branch adversary-review skipped (degraded) — no network',
     `--data={"sha":"${HEAD}"}`]);
   // The earlier success still wins; the skip is ignored either way.
+  assert.equal(JSON.parse(run(['adversary-review-status', `--state=${p}`, `--sha=${HEAD}`]).stdout).present, true);
+});
+
+test('adversary-review-status: the codex-review-status alias still works AND a legacy codex_review event satisfies the guard', () => {
+  // In-flight bundles: a run started before the rename writes type:'codex_review' and the orchestrator
+  // prose may still call `mp codex-review-status`. Both the alias command name and the legacy event
+  // family must keep working so a resumed run is not re-reviewed.
+  const p = path.join(tmpDir('mp-ars-legacy-'), 'state.yml');
+  const HEAD = 'legacyf00d';
+  run(['event', `--state=${p}`, '--type=codex_review', '--ts=T1',
+    '--summary=codex review complete (whole-branch, base main) — 1 findings',
+    `--data={"sha":"${HEAD}","base":"main","count":1}`, '--note=legacy digest']);
+  // Read via the new command name…
+  assert.deepEqual(JSON.parse(run(['adversary-review-status', `--state=${p}`, `--sha=${HEAD}`]).stdout),
+    { present: true, digest: 'legacy digest', count: 1, base: 'main' });
+  // …and via the back-compat alias.
   assert.equal(JSON.parse(run(['codex-review-status', `--state=${p}`, `--sha=${HEAD}`]).stdout).present, true);
 });
 
@@ -740,7 +860,7 @@ test('event --note-file: reads arbitrary bytes verbatim into record.note (the sh
     '--summary=codex review complete (whole-branch, base main) — 1 findings',
     `--data={"sha":"${HEAD}","base":"main","count":1}`, `--note-file=${digestFile}`]);
   // The bytes survive verbatim — no shell ever saw them, and the injected `--data=` is inert text.
-  const status = JSON.parse(run(['codex-review-status', `--state=${p}`, `--sha=${HEAD}`]).stdout);
+  const status = JSON.parse(run(['adversary-review-status', `--state=${p}`, `--sha=${HEAD}`]).stdout);
   assert.equal(status.present, true);
   assert.equal(status.digest, adversarial);
   assert.equal(status.count, 1);
@@ -767,14 +887,14 @@ test('event: --note-file pointing at a missing path dies loud (not a silent empt
   assert.match(r.stderr, /note-file unreadable/);
 });
 
-test('codex-review-status: a non-ENOENT events.jsonl read error fails loud (never masquerades as present:false)', () => {
+test('adversary-review-status: a non-ENOENT events.jsonl read error fails loud (never masquerades as present:false)', () => {
   // ENOENT == no review yet → {present:false}. But any OTHER read error (here: events.jsonl is a
   // directory → EISDIR) must NOT be swallowed — a silent {present:false} would falsely re-run the
   // network gate or look "skipped". The subcommand must die.
   const dir = tmpDir('mp-crs-eisdir-');
   const p = path.join(dir, 'state.yml');
   fs.mkdirSync(path.join(dir, 'events.jsonl')); // sibling of state.yml, as a directory
-  const r = run(['codex-review-status', `--state=${p}`, '--sha=deadbeef']);
+  const r = run(['adversary-review-status', `--state=${p}`, '--sha=deadbeef']);
   assert.notEqual(r.status, 0);
   assert.match(r.stderr, /events\.jsonl unreadable/);
 });

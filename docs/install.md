@@ -52,14 +52,14 @@ Slash-style text (`/masterplan` or `/masterplan:masterplan`) is accepted when th
 
 If your Codex build registers the marketplace but a fresh prompt does not list `masterplan`, enable `masterplan@rasatpetabit-masterplan` in Codex's plugin UI/config, or install a user-level bridge at `~/.codex/skills/masterplan/SKILL.md` from this repo's `skills/masterplan/` directory.
 
-When running inside Codex, masterplan disables the separate Claude Code `codex:codex-rescue` companion path for that invocation to avoid recursive Codex-on-Codex dispatch; persisted `codex.routing` / `codex.review` settings remain unchanged for future Claude Code runs.
+When running inside Codex, masterplan runs waves on the foreground-sequential path (the Codex host lacks Claude Code's Workflow tool); persisted review config (`state.review.adversary`, or legacy `state.codex.{routing,review}`) remains unchanged for future Claude Code runs. Whole-branch adversary review routes to agent-dispatch's cross-vendor lane (gpt-5.5) on either host.
 
 Full Codex-host behavior differences and suppression rules live in the Codex entrypoint skill ([`skills/masterplan/SKILL.md`](../skills/masterplan/SKILL.md)) and the orchestrator's §0 host-detect + Codex tool-adaptation rules in [`commands/masterplan.md`](../commands/masterplan.md).
 
 ## Dependencies
 
 - **Required:** [`superpowers`](https://github.com/obra/superpowers) — auto-resolved when installed via the marketplace catalog.
-- **Optional:** `codex` plugin for `codex:codex-rescue` execution and `codex:review` cross-model review.
+- **Optional:** `agent-dispatch` control plane for whole-branch adversary review (`agent-dispatch review --class adversary`, cross-vendor via the skynet gateway).
 - **Optional:** `context7` MCP for library-doc lookups during CD-4 recovery ladders.
 - **Optional:** `gh` CLI for GitHub issue/PR import (`/masterplan import --pr=...`) and retro PR lookup.
 

@@ -102,7 +102,7 @@ same-session fast-path ONLY when the worktree is undisturbed; after a crash-reco
 ## F-SCOPE 🚨 — agents do NOT reliably honor an out-of-cwd file path (new, design-changing)
 
 Both runs told agent2 to edit `/tmp/mp-spike-repo/file2.txt` (absolute). It instead edited
-**`/srv/dev/masterplan/file2.txt` — the orchestrator's cwd (the main repo working tree)** — while agent1 obeyed
+**`/srv/dev/ras/masterplan/file2.txt` — the orchestrator's cwd (the main repo working tree)** — while agent1 obeyed
 its `/tmp/…` path. Non-deterministic: agents anchor to the orchestrator cwd and may ignore an out-of-cwd absolute
 target. The stray file was untracked and has been removed; `main` is pristine (only the user's `M WORKLOG.md`).
 

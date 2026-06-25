@@ -92,7 +92,6 @@ algorithm: |
     #46 cc2_self_enforcement: Scan parts/step-*.md; for each file that invokes a coordinator-level dispatch, verify a CC-2 sentinel line is present.
     #47 return_shape_caps: Scan parts/step-*.md; for each Return shape: line in a dispatch block, verify a ≤N token/char cap is present.
     #48 codex_linked_worktree: Run git rev-parse --git-dir and --git-common-dir; if git_dir ≠ git_common AND show-superproject-working-tree is empty, report linked-worktree topology (Codex sandbox cannot commit).
-    #49 stale_codex_background_task: Scan ~/.claude/plugins/data/*/state/*/jobs/*.json; for each job whose status is non-terminal (not completed/done/cancelled/failed/error) and whose startedAt is >24h ago, emit a warning with task ID, workspace, summary, and suggested cancel command (node <companion> cancel <id>) if codex-companion.mjs is resolvable. Skip if plugin data directory absent.
     #50 plugin_registry_drift: Read ~/.claude/plugins/installed_plugins.json; extract masterplan@rasatpetabit-masterplan[0].version. Read ~/.claude/plugins/marketplaces/rasatpetabit-masterplan/.claude-plugin/plugin.json; extract .version. If either file is absent, skip. If versions differ, emit WARN with the active installPath and instructions to copy marketplace to a new cache dir, update the registry, and restart Claude Code.
     #51 disposition_filter_completeness: Run per Check #51's algorithm in parts/doctor.md.
     #52 bundle_artifacts_completeness: Run per Check #52's algorithm in parts/doctor.md.
@@ -231,11 +230,13 @@ return_shape: |
 ## Contract: step-c.codex_exec_v1
 
 ```yaml
-purpose: Step C step 3a Codex EXEC dispatch (v2.4.0+ pre-dispatch visibility, contractified v5.8.0)
+purpose: Step C step 3a serial implementer dispatch (v2.4.0+ pre-dispatch visibility, contractified v5.8.0)
 algorithm: |
-  Orchestrator dispatches codex:codex-rescue subagent in EXEC mode.
-  Codex sites are exempt from §Agent dispatch contract — do NOT pass
-  model: parameter.
+  Orchestrator dispatches the resolved implementer for the named serial
+  (non-wave) task — a `masterplan:mp-implementer` Agent under Claude Code,
+  or inline implementation under a Codex host. `routeTask`'s `target` is
+  log-only; the dispatched backend is `resolveImplementerBackend`
+  ({kind:'agent'} | {kind:'qctl'}).
 
   Brief (Goal/Inputs/Scope/Constraints/Return per CLAUDE.md):
     Goal: Implement the named task per the plan entry.
@@ -270,15 +271,18 @@ return_shape: |
   notes: str | null
 ```
 
-## Contract: step-c.codex_review_serial_v1
+## Contract: step-c.adversary_review_serial_v1
+
+> Renamed from `step-c.codex_review_serial_v1`; the old id is a back-compat alias.
 
 ```yaml
-purpose: Step C step 4b serial Codex REVIEW dispatch (v2.4.0+ pre-dispatch visibility, contractified v5.8.0)
+purpose: Step C step 4b serial adversary REVIEW dispatch (v2.4.0+ pre-dispatch visibility, contractified v5.8.0)
 algorithm: |
-  Orchestrator dispatches codex:codex-rescue subagent in REVIEW mode
-  for serial (non-wave) tasks. Asymmetric review rule applies:
-  dispatched_by == "codex" tasks skip serial 4b entirely (see Step
-  3a's post-Codex flow).
+  Orchestrator runs the agent-dispatch adversary lane
+  (`agent-dispatch review --class adversary`) for the serial (non-wave)
+  task — NO model is named; agent-dispatch resolves a cross-vendor
+  reviewer. Review applies uniformly: the lane is cross-vendor to both
+  Claude and Codex, so there is no same-vendor exemption.
 
   Brief (Goal/Inputs/Scope/Constraints/Return):
     Goal: Adversarial review of this task's diff against the spec and
@@ -298,7 +302,7 @@ algorithm: |
             file:line, OR the literal string "no findings" if clean.
 
 return_shape: |
-  contract_id: "step-c.codex_review_serial_v1"
+  contract_id: "step-c.adversary_review_serial_v1"
   task_idx: int
   task_name: str
   diff_range: "<task_start_sha>..HEAD"
@@ -308,12 +312,15 @@ return_shape: |
   notes: str | null
 ```
 
-## Contract: codex.review_wave_member_v1
+## Contract: adversary.review_wave_member_v1
+
+> Renamed from `codex.review_wave_member_v1` (the adversary review now routes through the
+> agent-dispatch control plane, not the Codex CLI). The old id is a back-compat alias.
 
 ```yaml
-purpose: Per-wave-member Codex REVIEW dispatch at wave-end Step 4b (v5.8.0+)
+purpose: Per-wave-member adversary REVIEW dispatch at wave-end Step 4b (v5.8.0+)
 algorithm: |
-  Orchestrator emits N parallel Codex REVIEW Agent calls in a single assistant
+  Orchestrator emits N parallel adversary REVIEW Agent calls in a single assistant
   message — one per qualifying wave member (one that passed gate eval +
   asymmetric-review rule). Each call is bounded to a single wave member.
 
@@ -335,7 +342,8 @@ algorithm: |
     Return: severity-ordered findings (high/medium/low) grounded in file:line,
             OR the literal string "no findings" if clean.
 
-  Codex sites are exempt from §Agent dispatch contract — do NOT pass model:.
+  Adversary review sites are exempt from §Agent dispatch contract — do NOT pass model: (the
+  agent-dispatch adversary lane resolves the reviewer model itself).
 
   Reviewer-batching: all N calls in ONE assistant message. Read-only
   reviewers do not conflict on shared state, so batching is correct
@@ -343,7 +351,7 @@ algorithm: |
   feature-dev:code-reviewer dispatches across independent tasks).
 
 return_shape: |
-  contract_id: "codex.review_wave_member_v1"
+  contract_id: "adversary.review_wave_member_v1"
   member_task_id: "<task name>"
   diff_range: "<wave_start_sha>..<wave_end_sha>"
   files_in_scope: [list of files]

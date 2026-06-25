@@ -58,7 +58,7 @@ on a fragment; the serial `mp-planner` path emits them directly):**
 - Routing's `target` is **informational** in v8: implementation is inline-only (there
   is no Codex implementer). `codex` records what a future implementer tier *could*
   offload, but in v8 it gates **no** runtime behaviour — the optional review stage is
-  gated solely by the bundle's `codex.review` config, independent of any task's
+  gated solely by the bundle's `state.review.adversary` config, independent of any task's
   `codex`/`target`.
 
 ## Three silent-fallthrough traps

@@ -1,7 +1,0 @@
-{
-  "id": "task-abc123",
-  "status": "verifying",
-  "startedAt": "2026-05-26T00:00:00Z",
-  "summary": "Implement the new feature",
-  "workspaceRoot": "/tmp/workspace"
-}

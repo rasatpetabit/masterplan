@@ -35,7 +35,7 @@ function readEvents(bundleDir) {
 
 // A MAIN repo on `main`, a linked worktree on masterplan/<slug> with one committed task file,
 // a bundle whose single task is done, and the owner lock held by sess-A.
-function makeFixture({ slug = 't24', state: over = {}, ownerLockOff = false, verifyCommands = null } = {}) {
+function makeFixture({ slug = 't24', state: over = {}, ownerLockOff = false, verifyCommands = null, explicitCodex = true } = {}) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-finishstep-'));
   const MAIN = path.join(tmp, 'main');
   fs.mkdirSync(MAIN, { recursive: true });
@@ -53,7 +53,7 @@ function makeFixture({ slug = 't24', state: over = {}, ownerLockOff = false, ver
   git(WT, 'commit', '-q', '-m', 'task 1');
   const bundleDir = path.join(MAIN, 'docs', 'masterplan', slug);
   const statePath = path.join(bundleDir, 'state.yml');
-  writeState(statePath, {
+  const stateObj = {
     schema_version: 8,
     slug,
     status: 'in-progress',
@@ -64,7 +64,14 @@ function makeFixture({ slug = 't24', state: over = {}, ownerLockOff = false, ver
     tasks: [{ id: 1, status: 'done', wave: 1, files: ['src/a.txt'] }],
     ...(ownerLockOff ? { concurrency: { owner_lock: 'off' } } : {}),
     ...over,
-  });
+  };
+  // Default: explicit opt-out (a bundle with NEITHER state.review nor state.codex would now be
+  // defensively armed, breaking every existing test). Tests that want to exercise the legacy/defensive
+  // path pass explicitCodex: false to omit both blocks entirely.
+  if (explicitCodex && stateObj.review === undefined && stateObj.codex === undefined) {
+    stateObj.review = { adversary: false };
+  }
+  writeState(statePath, stateObj);
   if (verifyCommands) {
     fs.writeFileSync(path.join(bundleDir, 'plan.index.json'),
       JSON.stringify({ tasks: [{ id: 1, verify_commands: verifyCommands }] }));
@@ -182,52 +189,144 @@ test('dirty task-scope paths commit in WT before verification; unrelated dirt un
   assert.equal(fx.step().op, 'run_verify', 'stale verified SHA does not skip the fresh commit');
 });
 
-test('codex review: armed → run_codex_review once; done-event is the durable re-entry guard', () => {
-  const fx = makeFixture({ state: { codex: { review: 'on' } } });
+test('adversary review: armed (new key) → run_adversary_review once; done-event is the durable re-entry guard', () => {
+  const fx = makeFixture({ state: { review: { adversary: 'on' } } });
   fx.step({ verify: 'pass' });
   fs.writeFileSync(path.join(fx.bundleDir, 'retro.md'), '# retro\n');
   let op = fx.step();
-  assert.equal(op.op, 'run_codex_review');
+  assert.equal(op.op, 'run_adversary_review');
   assert.equal(op.base, 'main');
   // resume before the answer lands → the SAME op (no event yet at this HEAD)
-  assert.equal(fx.step().op, 'run_codex_review');
+  assert.equal(fx.step().op, 'run_adversary_review');
   // the answer: event written by finish-step (digest via file — shell-safe transport)
-  const digestFile = path.join(fx.bundleDir, 'codex-review-digest.txt');
+  const digestFile = path.join(fx.bundleDir, 'adversary-review-digest.txt');
   fs.writeFileSync(digestFile, 'P2: tighten the thing\n');
-  op = fx.step({ codex: 'done', codexCount: 1, codexBase: 'main', codexDigestFile: digestFile });
+  op = fx.step({ review: 'done', reviewCount: 1, reviewBase: 'main', reviewDigestFile: digestFile });
   assert.equal(op.op, 'ask');
   assert.equal(op.gate, 'branch_finish');
-  assert.equal(op.codex.count, 1, 'gate AUQ carries the rehydrated digest');
-  assert.equal(op.codex.digest, 'P2: tighten the thing\n');
-  const ev = readEvents(fx.bundleDir).find((e) => e.type === 'codex_review');
-  assert.match(ev.summary, /codex review complete/);
+  assert.equal(op.review.count, 1, 'gate AUQ carries the rehydrated digest');
+  assert.equal(op.review.digest, 'P2: tighten the thing\n');
+  const ev = readEvents(fx.bundleDir).find((e) => e.type === 'adversary_review');
+  assert.match(ev.summary, /adversary review complete/);
   assert.equal(ev.data.sha, git(fx.WT, 'rev-parse', 'HEAD'));
   // re-entry after gate cleared: durable event at unchanged HEAD → review NOT re-run
   writeState(fx.statePath, { ...readState(fx.statePath), pending_gate: null });
   op = fx.step();
   assert.equal(op.gate, 'branch_finish');
-  assert.equal(op.codex.present, true);
+  assert.equal(op.review.present, true);
 });
 
-test('codex review skip: durable skip event at SHA prevents a re-ask loop; suppression never arms', () => {
-  const fx = makeFixture({ state: { codex: { review: true } } });
+test('adversary review: a LEGACY state.codex.review still arms the gate (in-flight bundle fallback)', () => {
+  // A bundle seeded before the codex→adversary rename has state.codex.review but no state.review.
+  // The finish-step gate reads state.review?.adversary ?? state.codex?.review, so it still arms.
+  const fx = makeFixture({ explicitCodex: false, state: { codex: { review: 'on' } } });
   fx.step({ verify: 'pass' });
   fs.writeFileSync(path.join(fx.bundleDir, 'retro.md'), '# retro\n');
-  assert.equal(fx.step().op, 'run_codex_review');
-  const op = fx.step({ codex: 'skipped', codexReason: 'companion unresolved' });
+  assert.equal(fx.step().op, 'run_adversary_review', 'legacy state.codex.review arms the gate');
+});
+
+test('adversary review skip: durable skip event at SHA prevents a re-ask loop; suppression never arms', () => {
+  const fx = makeFixture({ state: { review: { adversary: true } } });
+  fx.step({ verify: 'pass' });
+  fs.writeFileSync(path.join(fx.bundleDir, 'retro.md'), '# retro\n');
+  assert.equal(fx.step().op, 'run_adversary_review');
+  const op = fx.step({ review: 'skipped', reviewReason: 'agent-dispatch unavailable' });
   assert.equal(op.gate, 'branch_finish');
-  assert.equal(op.codex, null);
-  const ev = readEvents(fx.bundleDir).find((e) => e.type === 'codex_review_skipped');
-  assert.match(ev.summary, /codex-companion review skipped \(degraded\) — companion unresolved/);
-  // re-walk: the sha-keyed skip event suppresses another run_codex_review
+  assert.equal(op.review, null);
+  const ev = readEvents(fx.bundleDir).find((e) => e.type === 'adversary_review_skipped');
+  assert.match(ev.summary, /adversary-review skipped \(degraded\) — agent-dispatch unavailable/);
+  // re-walk: the sha-keyed skip event suppresses another run_adversary_review
   writeState(fx.statePath, { ...readState(fx.statePath), pending_gate: null });
   assert.equal(fx.step().gate, 'branch_finish');
+});
 
-  // suppression (Codex hosting): never returns run_codex_review at all
-  const fx2 = makeFixture({ slug: 't24s', state: { codex: { review: 'on' } } });
-  fx2.step({ verify: 'pass' });
-  fs.writeFileSync(path.join(fx2.bundleDir, 'retro.md'), '# retro\n');
-  assert.equal(fx2.step({ codexSuppressed: true }).gate, 'branch_finish');
+// ---- defensive arming (spec §4.2-C) -------------------------------------------
+
+test('defensive arm: state.review AND state.codex missing entirely → armed once + skip event never emitted', () => {
+  // Truly-legacy bundle: no state.review and no state.codex block at all. Defensive arm fires
+  // (one-time per bundle, presence-scoped) and the gate proceeds to run review because base exists.
+  const fx = makeFixture({ explicitCodex: false });
+  fx.step({ verify: 'pass' });
+  fs.writeFileSync(path.join(fx.bundleDir, 'retro.md'), '# retro\n');
+  const op = fx.step();
+  assert.equal(op.op, 'run_adversary_review', 'defensive arm makes the gate fire review');
+  const events = readEvents(fx.bundleDir);
+  const armEvent = events.find((e) => e.type === 'adversary_review_defensively_armed');
+  assert.ok(armEvent, 'adversary_review_defensively_armed event emitted');
+  assert.match(armEvent.data.sha, /^[0-9a-f]{40}$/, 'data.sha is a real SHA');
+  // re-entry: defensive-arm event presence prevents re-emission, but the gate doesn't loop on this alone
+  assert.ok(events.filter((e) => e.type === 'adversary_review_defensively_armed').length === 1, 'emitted exactly once');
+});
+
+test('defensive arm: state.review present but adversary=undefined → NOT defensively armed', () => {
+  // Explicit review block without adversary is NOT a legacy bundle — user is presumed to know.
+  // codexArmed(undefined) is false; the gate falls through with a typed skip event.
+  const fx = makeFixture({ explicitCodex: false, state: { review: { other: 'x' } } });
+  fx.step({ verify: 'pass' });
+  fs.writeFileSync(path.join(fx.bundleDir, 'retro.md'), '# retro\n');
+  const op = fx.step();
+  assert.equal(op.op, 'ask');
+  assert.equal(op.gate, 'branch_finish');
+  const events = readEvents(fx.bundleDir);
+  assert.ok(!events.some((e) => e.type === 'adversary_review_defensively_armed'), 'no defensive-arm event for explicit review block');
+  const skip = events.find((e) => e.type === 'adversary_review_skipped');
+  assert.match(skip.summary, /state.review.adversary not armed/);
+});
+
+test('skip events: typed reasons land in events.jsonl with sha + reason fields', () => {
+  const fx = makeFixture({ state: { review: { adversary: false } } });
+  fx.step({ verify: 'pass' });
+  fs.writeFileSync(path.join(fx.bundleDir, 'retro.md'), '# retro\n');
+  fx.step(); // gate
+  const skip = readEvents(fx.bundleDir).find((e) => e.type === 'adversary_review_skipped');
+  assert.ok(skip, 'adversary_review_skipped emitted');
+  assert.equal(skip.data.reason, 'state.review.adversary not armed');
+  assert.ok(skip.data.sha, 'sha recorded for the re-entry guard');
+});
+
+test('skip events: re-entry at same SHA does NOT re-emit the skip', () => {
+  // Open a gate, force a skip event, re-enter: the sha-keyed guard (hasCodexSkipAtSha) prevents
+  // a second skip event at the same head — durable event is one-per-SHA.
+  const fx = makeFixture({ state: { review: { adversary: false } } });
+  fx.step({ verify: 'pass' });
+  fs.writeFileSync(path.join(fx.bundleDir, 'retro.md'), '# retro\n');
+  fx.step(); // gate + skip event emitted
+  // open the gate for re-entry
+  writeState(fx.statePath, { ...readState(fx.statePath), pending_gate: null });
+  fx.step(); // re-render: skip event NOT re-emitted
+  const skips = readEvents(fx.bundleDir).filter((e) => e.type === 'adversary_review_skipped');
+  assert.equal(skips.length, 1, 'one skip event per HEAD');
+});
+
+test('branch_finish AUQ: notice field surfaces the skip reason (spec §4.2-D)', () => {
+  const fx = makeFixture({ state: { review: { adversary: false } } });
+  fx.step({ verify: 'pass' });
+  fs.writeFileSync(path.join(fx.bundleDir, 'retro.md'), '# retro\n');
+  const op = fx.step();
+  assert.equal(op.gate, 'branch_finish');
+  assert.match(op.notice, /adversary review skipped — state.review.adversary not armed/);
+});
+
+test('Codex host no longer suppresses adversary review (cross-vendor lane, no recursion)', () => {
+  // The legacy --codex-suppressed flag is inert at finish-step: whole-branch review now
+  // routes to agent-dispatch's cross-vendor adversary lane (gpt-5.5), not Codex, so there is
+  // no Codex-calling-Codex recursion to avoid — review runs regardless of host.
+  const fx = makeFixture({ state: { review: { adversary: 'on' } } });
+  fx.step({ verify: 'pass' });
+  fs.writeFileSync(path.join(fx.bundleDir, 'retro.md'), '# retro\n');
+  const op = fx.step({ codexSuppressed: true });
+  assert.equal(op.op, 'run_adversary_review');
+});
+
+test('branch_finish AUQ: notice field surfaces defensive-arm note for legacy bundles', () => {
+  const fx = makeFixture({ explicitCodex: false });
+  fx.step({ verify: 'pass' });
+  fs.writeFileSync(path.join(fx.bundleDir, 'retro.md'), '# retro\n');
+  const op = fx.step({ review: 'skipped', reviewReason: 'agent-dispatch unavailable' });
+  // After the shell answers with review='skipped', re-enter: branch_finish rehydrates from the
+  // defensive-arm event (which IS still in events.jsonl) so the notice shows defensive.
+  assert.equal(op.gate, 'branch_finish');
+  assert.match(op.notice, /defensively armed/);
 });
 
 test('discard: forced teardown, branch -D, kept dirt discarded, archived', () => {

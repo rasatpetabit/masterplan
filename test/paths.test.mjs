@@ -50,6 +50,7 @@ test('bundleArtifacts maps every bundle file under the bundle dir', () => {
   assert.equal(a.dir, '/repo/docs/masterplan/r');
   assert.equal(a.state, '/repo/docs/masterplan/r/state.yml');
   assert.equal(a.planIndex, '/repo/docs/masterplan/r/plan.index.json');
+  assert.equal(a.planHtml, '/repo/docs/masterplan/r/plan.html');
   assert.equal(a.events, '/repo/docs/masterplan/r/events.jsonl');
   assert.equal(a.retro, '/repo/docs/masterplan/r/retro.md');
 });

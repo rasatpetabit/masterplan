@@ -1,0 +1,21 @@
+---
+schema_version: 8
+slug: codex-review-issues
+status: archived
+phase: execute
+topic: "Investigate codex review issues"
+complexity: moderate
+complexity_source: null
+autonomy: full
+planning_mode: auto
+created_at: 2026-06-18T15:16:25.991Z
+predecessor_transcript: null
+spec_path: /srv/dev/masterplan/docs/masterplan/codex-review-issues/spec.md
+plan_path: /srv/dev/masterplan/docs/masterplan/codex-review-issues/plan.md
+plan_index_path: /srv/dev/masterplan/docs/masterplan/codex-review-issues/plan.index.json
+tasks: [{"id":1,"status":"done","wave":0,"files":["lib/bundle.mjs","bin/masterplan.mjs","test/bundle.test.mjs","test/bin-masterplan.test.mjs"]},{"id":2,"status":"done","wave":1,"files":["lib/finish-step.mjs"]},{"id":3,"status":"done","wave":2,"files":["test/bundle.test.mjs","test/bin-masterplan.test.mjs","test/finish-step.test.mjs"]},{"id":4,"status":"done","wave":3,"files":["README.md","docs/verbs.md","commands/masterplan.md","skills/masterplan/SKILL.md","CHANGELOG.md","WORKLOG.md"]}]
+active_run: null
+pending_gate: null
+worktree: /srv/dev/masterplan/.worktrees/codex-review-issues
+verified_sha: 96c8dddc0154b402da11fcf00646768c7ee0cc78
+worktree_disposition: removed_after_merge

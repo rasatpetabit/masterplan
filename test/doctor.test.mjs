@@ -19,10 +19,9 @@ import { check as worktreeIntegrity } from '../lib/doctor/worktree-integrity.mjs
 import { check as codexAuth } from '../lib/doctor/codex-auth.mjs';
 import { check as stateSchema } from '../lib/doctor/state-schema.mjs';
 import { check as legacyBundle } from '../lib/doctor/legacy-bundle.mjs';
-import { check as codexPluginPresence } from '../lib/doctor/codex-plugin-presence.mjs';
+import { check as adversaryLaneHealth } from '../lib/doctor/adversary-lane-health.mjs';
 import { check as indexStaleness } from '../lib/doctor/index-staleness.mjs';
 import { check as staleLock } from '../lib/doctor/stale-lock.mjs';
-import { check as staleCodexTask } from '../lib/doctor/stale-codex-task.mjs';
 import { check as pluginRegistryDrift } from '../lib/doctor/plugin-registry-drift.mjs';
 import { check as planIndexSchema } from '../lib/doctor/plan-index-schema.mjs';
 import { check as coordDrift } from '../lib/doctor/coord-drift.mjs';
@@ -450,54 +449,40 @@ test('legacy-bundle: no WARN when docs/superpowers is empty container (no bundle
     'empty docs/superpowers container must not produce WARN or ERROR');
 });
 
-// ---- codex-plugin-presence (hybrid: plan-scoped + host-path) ----------------
+// ---- adversary-lane-health (host-scoped; injectable agent-dispatch probe) ----
 
-test('codex-plugin-presence: fixtures match dir-prefix severity', async (t) => {
-  for (const sc of scenarios('codex-plugin-presence')) {
-    await t.test(sc, () => {
-      const root = path.join(FX, 'codex-plugin-presence', sc);
-      const home = path.join(root, 'home');
-      const findings = codexPluginPresence(root, { homeDir: home });
-      assertFindingShape(findings);
-      assert.equal(maxSeverity(findings), expectedSeverity(sc), JSON.stringify(findings));
-    });
-  }
+test('adversary-lane-health: healthy lane → PASS (route surfaced)', () => {
+  const probe = () => ({ onPath: true, resolves: true, route: 'skynet-local/dispatch-adversary', healthy: true, detail: null });
+  const findings = adversaryLaneHealth('/unused', { probe });
+  assertFindingShape(findings);
+  assert.equal(maxSeverity(findings), 'PASS', JSON.stringify(findings));
+  assert.match(findings[0].summary, /skynet-local\/dispatch-adversary/);
 });
 
-test('codex-plugin-presence: WARN fix cites `mp set-codex-config` (CD-7-honest; no flat-key hand-edit)', () => {
-  // The fix the doctor emits when a bundle wants codex but the plugin is absent must name the `mp` writer
-  // and the NESTED codex.{routing,review} the dispatch path reads — not the old `set codex_routing: off ...`
-  // flat hand-edit (CD-7-violating AND ineffective: flat keys never reach the dispatch layer).
-  const root = path.join(FX, 'codex-plugin-presence', 'warn-wants-no-plugin');
-  const findings = codexPluginPresence(root, { homeDir: path.join(root, 'home') });
-  const warn = findings.find((f) => f.severity === 'WARN');
-  assert.ok(warn, JSON.stringify(findings));
-  assert.match(warn.fix, /mp set-codex-config .*--routing=off --review=false/); // the verb, nested-aware
-  assert.doesNotMatch(warn.fix, /set codex_routing: off and codex_review: false/); // old CD-7-violating advice
-});
-
-test('codex-plugin-presence: flat codex_routing:off (no nested) is NOT trusted as off — mirrors dispatch (Residual 4)', () => {
-  // The keystone divergence-closer. A bundle with a FLAT `codex_routing: off` and NO nested codex
-  // object used to SKIP (the old wantsCodex honored the flat key) — but dispatch (bin:381) reads the
-  // nested object ONLY and falls through to routing='auto', so codex STILL routes. wantsCodex now
-  // mirrors dispatch: the flat key is dead input, routing defaults to 'auto' → the bundle "wants" codex
-  // → WARN when the plugin is absent, NOT a silent SKIP. This case PASSED (as SKIP) under the old code;
-  // asserting WARN here is what closes Residual 4. (The `warn-flat-off-ignored` fixture also drives the
-  // dir-prefix scenario loop above — this named test pins the intent + the not-SKIP invariant.)
-  const root = path.join(FX, 'codex-plugin-presence', 'warn-flat-off-ignored');
-  const findings = codexPluginPresence(root, { homeDir: path.join(root, 'home') });
+test('adversary-lane-health: agent-dispatch off PATH → WARN, never ERROR (review is advisory)', () => {
+  const probe = () => ({ onPath: false, resolves: false, route: null, healthy: null, detail: null });
+  const findings = adversaryLaneHealth('/unused', { probe });
   assertFindingShape(findings);
   assert.equal(maxSeverity(findings), 'WARN', JSON.stringify(findings));
-  assert.ok(!findings.some((f) => f.severity === 'SKIP'),
-    'flat-only codex_routing:off must NOT produce a SKIP (that was the Residual 4 false-negative)');
+  assert.match(findings[0].summary, /not on PATH/);
 });
 
-test('codex-plugin-presence: SKIP when no bundles', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-cpp-'));
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-cpp-home-'));
-  const findings = codexPluginPresence(tmp, { homeDir: home });
+test('adversary-lane-health: resolve fails → WARN (no adversary route)', () => {
+  const probe = () => ({ onPath: true, resolves: false, route: null, healthy: null, detail: 'no route for class adversary' });
+  const findings = adversaryLaneHealth('/unused', { probe });
   assertFindingShape(findings);
-  assert.equal(maxSeverity(findings), 'SKIP');
+  assert.equal(maxSeverity(findings), 'WARN', JSON.stringify(findings));
+  assert.match(findings[0].summary, /resolve --class adversary` failed/);
+});
+
+test('adversary-lane-health: resolves but backend unhealthy → WARN (advisory, not FAIL)', () => {
+  const probe = () => ({ onPath: true, resolves: true, route: 'skynet-local/dispatch-adversary', healthy: false, detail: 'backend unavailable' });
+  const findings = adversaryLaneHealth('/unused', { probe });
+  assertFindingShape(findings);
+  assert.equal(maxSeverity(findings), 'WARN', JSON.stringify(findings));
+  assert.match(findings[0].summary, /unhealthy/);
+  // advisory invariant: never ERROR
+  assert.ok(!findings.some((f) => f.severity === 'ERROR'), 'an advisory lane must never surface ERROR');
 });
 
 // ---- index-staleness (plan-scoped, node:crypto) ------------------------------
@@ -610,38 +595,6 @@ test('stale-lock: SKIP when no run bundles', () => {
   const findings = staleLock(tmp, { now: NOW });
   assertFindingShape(findings);
   assert.equal(maxSeverity(findings), 'SKIP');
-});
-
-// ---- stale-codex-task (user-scoped, injected homeDir/now) -------------------
-
-test('stale-codex-task: fixtures match dir-prefix severity', async (t) => {
-  for (const sc of scenarios('stale-codex-task')) {
-    await t.test(sc, () => {
-      const home = path.join(FX, 'stale-codex-task', sc, 'home');
-      const findings = staleCodexTask('/unused', { homeDir: home, now: NOW });
-      assertFindingShape(findings);
-      assert.equal(maxSeverity(findings), expectedSeverity(sc), JSON.stringify(findings));
-    });
-  }
-});
-
-test('stale-codex-task: SKIP when data dir absent', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-sct-'));
-  const findings = staleCodexTask('/unused', { homeDir: tmp, now: NOW });
-  assertFindingShape(findings);
-  assert.equal(maxSeverity(findings), 'SKIP');
-});
-
-test('stale-codex-task: PASS for non-terminal job started <24h ago', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-sct-fresh-'));
-  const jobsDir = path.join(tmp, '.claude', 'plugins', 'data', 'myplugin', 'state', 'run1', 'jobs');
-  fs.mkdirSync(jobsDir, { recursive: true });
-  // startedAt = 12 hours ago (within 24h threshold)
-  const freshStart = new Date(NOW - 12 * 3_600_000).toISOString();
-  fs.writeFileSync(path.join(jobsDir, 'j1.json'), JSON.stringify({ id: 'j1', status: 'verifying', startedAt: freshStart }));
-  const findings = staleCodexTask('/unused', { homeDir: tmp, now: NOW });
-  assertFindingShape(findings);
-  assert.equal(maxSeverity(findings), 'PASS');
 });
 
 // ---- plugin-registry-drift (user-scoped, injected homeDir) ------------------
@@ -892,15 +845,15 @@ test('owner-sentinel: WARN for an orphan heartbeat file with no lock', () => {
   assert.match(findings.find((f) => f.severity === 'WARN').summary, /orphan/);
 });
 
-// ---- dispatcher: all 14 modules auto-discovered ----------------------------
+// ---- dispatcher: all 13 modules auto-discovered ----------------------------
 
-test('dispatcher: discovers all 14 check modules', async () => {
+test('dispatcher: discovers all 13 check modules', async () => {
   const checks = await discoverChecks(path.join(here, '..', 'lib', 'doctor'));
   const names = checks.map((c) => c.name);
   const expected = [
-    'codex-auth', 'codex-plugin-presence', 'coord-drift', 'index-staleness', 'legacy-bundle',
+    'adversary-lane-health', 'codex-auth', 'coord-drift', 'index-staleness', 'legacy-bundle',
     'owner-sentinel', 'plan-doc-cruft', 'plan-index-schema', 'plugin-registry-drift', 'scalar-cap',
-    'stale-codex-task', 'stale-lock', 'state-schema', 'worktree-integrity',
+    'stale-lock', 'state-schema', 'worktree-integrity',
   ];
   for (const n of expected) {
     assert.ok(names.includes(n), `discovered ${n}`);

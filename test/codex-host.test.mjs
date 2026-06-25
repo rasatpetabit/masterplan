@@ -1,9 +1,9 @@
-// test/codex-host.test.mjs — Codex-host detection + rescue-suppression + shell-trap recovery.
-// Pure functions (signals/input injected); the recursive-dispatch suppression and the
-// `$masterplan` shell-trap normalization are correctness invariants carried from v7.
+// test/codex-host.test.mjs — Codex-host detection + shell-trap recovery.
+// Pure functions (signals/input injected); the `$masterplan` shell-trap
+// normalization is a correctness invariant carried from v7.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { detectHost, suppressRescue, normalizeResumeHint, CODEX_ENTRYPOINT } from '../lib/dispatch/index.mjs';
+import { detectHost, normalizeResumeHint, CODEX_ENTRYPOINT } from '../lib/dispatch/index.mjs';
 
 test('detectHost: no signals -> not codex', () => {
   const h = detectHost({});
@@ -24,13 +24,6 @@ test('detectHost: AGENTS.md presence signal', () => {
 test('detectHost: multiple signals -> all reasons, ordered', () => {
   const h = detectHost({ agentIsCodex: true, codexNativeTools: true, agentsMdPresent: true });
   assert.deepEqual(h.reasons, ['agent-id', 'native-tools', 'agents-md']);
-});
-
-test('suppressRescue iff the host is Codex', () => {
-  assert.equal(suppressRescue(detectHost({ agentIsCodex: true })), true);
-  assert.equal(suppressRescue(detectHost({})), false);
-  assert.equal(suppressRescue({ isCodex: true }), true);
-  assert.equal(suppressRescue({}), false);
 });
 
 test('normalizeResumeHint: $masterplan next -> chat form + recovery event', () => {

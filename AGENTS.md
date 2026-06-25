@@ -34,7 +34,7 @@ It is built in **five layers**:
   pure-logic modules — core: `resume.mjs`, `bundle.mjs`, `plan-merge.mjs`,
   `wave.mjs`, `routing.mjs`, `finish.mjs`; periphery: `worktree{,-fs}.mjs`,
   `owner{,-fs}.mjs` (Guard D), `github-coord.mjs`, `qctl-*.mjs`,
-  `codex-host.mjs`, `codex-companion.mjs`, `hygiene.mjs`, `migrate.mjs`,
+  `codex-host.mjs`, `review-companion.mjs`, `hygiene.mjs`, `migrate.mjs`,
   `paths.mjs`). **L1 is the SOLE durable state writer (CD-7); the shell owns
   git, `bin` is fs-only.**
 - **L2 — Workflow engine.** `workflows/execute.workflow.js` (one wave per
@@ -42,7 +42,7 @@ It is built in **five layers**:
   digests/fragments only — **never writes state or commits.**
 - **L3 — Agents.** `agents/*.md` (`mp-spec-decomposer`, `mp-planner`,
   `mp-subsystem-planner`, `mp-implementer`, `mp-plan-reviewer`,
-  `mp-codex-reviewer`, `mp-explorer`). Bounded briefs; no session history.
+  `mp-adversarial-reviewer`, `mp-explorer`). Bounded briefs; no session history.
 - **L4 — Doctor.** `bin/doctor.mjs` + `lib/doctor/*.mjs` modules. Each finding
   is `{id, severity ∈ PASS|WARN|ERROR|SKIP, summary, fix}`; non-zero exit iff
   any `ERROR`.
@@ -58,10 +58,10 @@ The rest of the package:
 - `.codex-plugin/plugin.json` — Codex plugin manifest for the same command surface
 
 Codex can host the command through `/masterplan:masterplan`. When it does, `§0`
-host-detect sets `suppressRescue` so the orchestrator does NOT dispatch the
-`codex:codex-rescue` companion for that invocation (Codex calling Codex would
-recurse); persisted `codex.routing` / `codex.review` are unaffected and still
-apply to Claude Code runs.
+host-detect reports a Codex host (`isCodex`), which lacks Claude Code's Workflow
+tool, so the orchestrator runs waves on the foreground-sequential path
+(`mp continue --codex-suppressed`); persisted `codex.routing` / `codex.review`
+are unaffected and still apply to Claude Code runs.
 
 ## Where to read first
 
@@ -112,14 +112,15 @@ run state in `docs/masterplan/*/state.yml`.
 5. **Don't trust your own confirmation bias on large markdown/code edits.**
    After a multi-edit pass, dispatch a fresh-eyes reader subagent over the
    changed files end-to-end for contradictions or dangling references, and for
-   a reviewable diff prefer a cross-vendor **Codex** pass (`codex:review`) over
-   a same-vendor self-check (central policy: diff-review routes cross-vendor).
-   Scope that pass correctly: `codex:review`'s default `working-tree` mode
-   reviews ALL uncommitted files (no path scoping) and rejects focus text, so
-   in a dirty bundle (active `state.yml`, `WORKLOG.md`, sibling-wave edits)
-   commit first and use `--scope branch --base <ref>`, or hand it a scoped
-   `git diff -- <paths>`. masterplan's own `mp-codex-reviewer` already does
-   this — it reviews a pre-built path-filtered diff, never a whole-tree scan.
+   a reviewable diff prefer a cross-vendor pass — `agent-dispatch review --class
+   adversary` (resolves to gpt-5.5 via the skynet gateway, cross-vendor to
+   Claude) — over a same-vendor self-check (central policy: diff-review routes
+   cross-vendor). Scope that pass correctly: hand it a path-filtered
+   `git diff -- <paths>` rather than a whole-tree scan; in a dirty bundle
+   (active `state.yml`, `WORKLOG.md`, sibling-wave edits) commit first and use
+   `--base <ref>`, or pass a scoped diff. masterplan's own
+   `mp-adversarial-reviewer` already does this — it reviews a pre-built
+   path-filtered diff, never a whole-tree scan.
 
 ## Operating principles (always-applicable)
 

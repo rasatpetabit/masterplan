@@ -75,7 +75,7 @@ Review is gated by **config only** (`review: 'on'|'off'`, default `'off'`), not 
 eligibility. Judgment-heavy tasks (which route `inline`) need a second opinion as much as
 annotation-approved tasks; gating review by eligibility would skip exactly the riskiest work.
 
-When review is on, `mp-codex-reviewer` (sonnet) runs per-task — not per-wave — immediately after
+When review is on, `mp-adversarial-reviewer` runs per-task — not per-wave — immediately after
 that task's implement finishes, failure-isolated from other tasks.
 
 ---

@@ -42,7 +42,7 @@ function walkFiles(dir) {
 // (a) Planted leaks — one per deny rule. Strings live HERE, never under test/fixtures/, so the live
 // sweep (which scopes to test/fixtures/) does not flag this file's own test data.
 const LEAKS = [
-  { label: 'absolute srv path', text: 'worktree: /srv/dev/masterplan/x', token: 'srv-path' },
+  { label: 'absolute srv path', text: 'worktree: /srv/dev/ras/masterplan/x', token: 'srv-path' },
   { label: 'real (non-user) home', text: 'path: /home/alice/.codex/auth.json', token: 'home-path' },
   { label: 'owner org', text: 'project: petabit-portal sync', token: 'petabit-org' },
   { label: 'codename', text: 'the coherent rollout phase', token: 'coherent-codename' },
@@ -146,7 +146,7 @@ test('namespace: parseReservedVerbs extracts the canonical verb list from the or
   assert.deepEqual(RESERVED_VERBS, [
     'full', 'brainstorm', 'plan', 'execute', 'finish', 'retro', 'import',
     'doctor', 'status', 'validate', 'stats', 'clean', 'next', 'verbs',
-    'publish', 'follow',
+    'render', 'publish', 'follow',
   ]);
 });
 
