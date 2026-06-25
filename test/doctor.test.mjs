@@ -400,6 +400,36 @@ test('state-schema: legacy bundle (schema_version < 6) is silently skipped (not 
   assert.equal(maxSeverity(findings), 'PASS', 'silent-skip of legacy bundle leaves all-pass result');
 });
 
+test('state-schema: a modern schema-6 nested-worktree bundle omitting the old v8 flat fields PASSes (issue #13 regression)', () => {
+  // Issue #13 (filed against v8): the old markdown "check #9" demanded a flat required-set —
+  // started / last_activity / compact_loop_recommended / artifacts.events / top-level `branch` —
+  // and grepped `^branch:` at column 0, so a conformant nested-`worktree:` bundle false-tripped
+  // ERROR and `--fix` would regress it. The v9 rewrite replaced that grep with structured
+  // validateCoreState (core set = schema_version/slug/status/phase; schema_version must be a
+  // number >= 6) shared with bundle creation. This pins that a schema-6 bundle carrying NONE of
+  // those old flat fields, with the branch nested under `worktree:`, reaches the real check
+  // (PASS, not SKIP) and raises no false-positive ERROR. Complements the schema<6 legacy-skip
+  // test above — that one asserts the SKIP path; this asserts the validated path.
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-ss-issue13-'));
+  const d = path.join(tmp, 'docs', 'masterplan', 'build-monitor-portal');
+  fs.mkdirSync(d, { recursive: true });
+  fs.writeFileSync(
+    path.join(d, 'state.yml'),
+    'schema_version: 6\nslug: build-monitor-portal\nstatus: complete\nphase: done\n' +
+      'worktree:\n  branch: feat/monitor-portal\n  path: /tmp/x\n',
+  );
+  const findings = stateSchema(tmp);
+  assertFindingShape(findings);
+  assert.ok(
+    !findings.some((f) => f.severity === 'ERROR'),
+    `no false-positive ERROR for a nested-worktree schema-6 bundle: ${JSON.stringify(findings)}`,
+  );
+  // PASS (not SKIP) proves the bundle actually reached validateCoreState rather than being
+  // deferred as legacy — i.e. the old flat fields are genuinely not required.
+  assert.equal(maxSeverity(findings), 'PASS', 'a conformant schema-6 bundle validates clean');
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
 test('state-schema: WARN (not silent skip) for a slug dir missing state.yml (Codex #4)', () => {
   // A slug dir with no readable state.yml is an orphan/incomplete bundle. Previously skipped
   // silently → an all-orphan docs/masterplan falsely returned PASS. Now it must WARN (exit 0).
