@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- *Nothing yet.*
+
+### Changed
+
+- *Nothing yet.*
+
+## [9.2.0] — 2026-06-25 — rendered plan view, consolidated dispatch, doctor `--fix` for stale worktree pointers
+
+### Added
+
 - **Rendered `plan.html` artifact + the `render` verb** (planf3-inspired UX). A new pure, deterministic `renderPlanHtml(index, meta)` in `lib/plan-merge.mjs` (mirroring `renderPlanMd`) emits a self-contained HTML view of the plan — inline CSS, status badges, and a wave-banded inline `<svg>` (explicitly **not** a dependency graph: the merged index carries no deps). It is **additive** — `plan.md` stays the canonical projection. Every interpolated field is neutralized (no executable/remote markup) — string fields HTML-escaped, numeric `id`/`wave` `Number()`-coerced; output is byte-identical for identical input (no clock/randomness). Two fs-only entry points: `mp load-plan` **best-effort auto-emits** a static `plan.html` (swallowed on failure, never perturbs the atomic state write), and the new **`render` verb** → `mp render-plan` re-renders it with **live** per-task status from `state.tasks` (**read-only** w.r.t. `state.yml`). `bundleArtifacts()` gains `planHtml`. AI-image diagrams (planf3 uses `gpt-image-2`) were considered and dropped to stay deterministic, dependency-free, headless-safe, and in-policy (no gateway-bypassing network/secret call). Verb wired across all sync surfaces (`commands/masterplan.md`, README, `docs/verbs.md`, `SKILL.md`, `RESERVED_VERBS`). New tests in `test/plan-merge.test.mjs` (escaping/injection, determinism, badge whitelist) and `test/bin-masterplan.test.mjs` (auto-emit, write-failure-swallowed, read-only render + byte-unchanged state). Plan hardened by a cross-vendor adversarial review (gpt-5.5).
 
 - **`doctor --fix` now clears stale worktree pointers** (issue #7). The `worktree-integrity` module gains a conservative `fix()` handler: for a bundle whose `worktree` is set, unregistered in git, **and gone from disk**, it records `worktree_disposition=removed_after_merge` — the same durable disposition `mp finish` / the sweep reconciler write — which the check's skip then honors, clearing the bundle→git ERROR (and the branch ERROR) without nulling either field (the path is preserved as a reversible memento). This stops the ever-growing doctor noise floor from bundles merged externally or whose worktree was reclaimed without running `mp finish`. **Design note:** the discriminator is **disk existence, not run status** — `complete` is not a valid bundle status (`VALID_STATUS = ['in-progress', 'archived']`), so gating on status would be vacuous (the only non-archived status is `in-progress`). gone-from-disk is the BLOCKER-respecting line: the protected `manual`/active-unregistered case requires the worktree dir to exist (so its `.git` can be inspected), so a vanished path can never be that live reference; an on-disk-but-unregistered worktree is left for the operator, and archived/already-retired bundles are skipped — making the fix set a strict subset of the ERROR set. Idempotent. New tests in `test/doctor.test.mjs` (retire+idempotent, on-disk-stray-untouched, archived-skipped). Cross-vendor adversarial pass pending (skynet gateway down at author time); reviewed same-vendor (advisor) as the sanctioned fallback.
