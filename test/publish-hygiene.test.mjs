@@ -146,7 +146,7 @@ test('namespace: parseReservedVerbs extracts the canonical verb list from the or
   assert.deepEqual(RESERVED_VERBS, [
     'full', 'brainstorm', 'plan', 'execute', 'finish', 'retro', 'import',
     'doctor', 'status', 'validate', 'stats', 'clean', 'next', 'verbs',
-    'publish', 'follow',
+    'render', 'publish', 'follow',
   ]);
 });
 

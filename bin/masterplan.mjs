@@ -36,7 +36,11 @@
 //   backfill-waves --state=PATH --plan-index=PATH -> set each task's {wave,files} from plan.index.json
 //   load-plan --state=PATH --plan-index=PATH    -> CD-7 write: materialize state.tasks from a fresh
 //                                                  plan.index.json AND advance phase→execute, ATOMICALLY
-//                                                  (the plan→execute seam; refuses a bundle with tasks)
+//                                                  (the plan→execute seam; refuses a bundle with tasks;
+//                                                  also best-effort auto-emits the rendered plan.html artifact)
+//   render-plan --state=PATH [--plan-index=PATH] [--plan-html=PATH]
+//                                               -> re-render plan.html with LIVE status from state.tasks
+//                                                  (READ-ONLY: no state write); backs the `render` verb
 //   prepare-wave --state=PATH --plan-index=PATH --wave=N [--routing=M] [--codex-suppressed]
 //                [--linked-worktree] [--review=on|off]
 //                                               -> {wave, tasks:[lean routed payload], review} for the L2 `args`
@@ -160,7 +164,7 @@ import { detectHost } from '../lib/dispatch/index.mjs';
 import { selectCodexReviewForHead } from '../lib/review-companion.mjs';
 import { resolveConfigDir } from '../lib/paths.mjs';
 import { createHash } from 'node:crypto';
-import { mergePlanFragments, validatePlanIndex, renderPlanMd } from '../lib/plan-merge.mjs';
+import { mergePlanFragments, validatePlanIndex, renderPlanMd, renderPlanHtml } from '../lib/plan-merge.mjs';
 import { classifyDirt, detectBase, collectVerifyCommands, isVerified, dispositionForChoice, summarizePr } from '../lib/finish.mjs';
 import { computeEnqueueKey, decideEnqueue } from '../lib/qctl-enqueue.mjs';
 import { verifyArtifact, parseQctlDigest } from '../lib/qctl-artifact.mjs';
@@ -252,10 +256,11 @@ const VALID_PLANNING_MODE = ['serial', 'parallel', 'auto'];
 // lib/worktree.mjs VALID_DISPOSITIONS (imported above as VALID_WORKTREE_DISPOSITION —
 // single source; a premature retirement is reverted via the SAME verb, no CD-7 hand-edit).
 
-// Valid codex routing values the shell may WRITE via set-codex-config. The codex-plugin-presence doctor
-// SKIPs a bundle once routing is 'off' AND review is off; 'auto'/'on' keep codex engaged. Writes the
-// NESTED state.codex.routing (the shape the dispatch path reads) — NOT the flat codex_routing key the old
-// fix text named. Value-enum only — no transition ordering (a bundle may re-engage codex later).
+// Valid codex routing values the shell may WRITE via set-codex-config. The codex routing annotation is
+// informational-only in v8 (no Codex implementer; see docs/conventions/plan-annotations.md). 'off'
+// disengages it, 'auto'/'on' keep it engaged. Writes the NESTED state.codex.routing (the shape the
+// dispatch path reads) — NOT the flat codex_routing key the old fix text named. Value-enum only — no
+// transition ordering (a bundle may re-engage codex later).
 const VALID_CODEX_ROUTING = ['auto', 'on', 'off'];
 
 // The four resolved choices the §2 finish-flow's durable `branch_finish` gate offers (merge to base /
@@ -601,8 +606,39 @@ function main() {
       } catch (e) {
         die(e.message, 1);
       }
+      // Auto-emit the rendered plan.html artifact (additive; plan.md stays canonical). BEST-EFFORT
+      // and BEFORE the state write: a render/write failure logs a warning and is swallowed — it must
+      // never fail load-plan or perturb the single atomic writeState below. Freshly materialized tasks
+      // are all 'pending', so the static emit has no live status map. Artifact write (fs), not CD-7 state.
+      try {
+        const planHtmlPath = flags['plan-html'] ?? path.join(path.dirname(planIndexPath), 'plan.html');
+        fs.writeFileSync(planHtmlPath, renderPlanHtml(index, { title: state.slug ?? 'Plan' }));
+      } catch (e) {
+        process.stderr.write(`load-plan: plan.html not emitted (${e.message})\n`);
+      }
       writeState(p, next);
       out({ loaded: next.tasks.length, waves: new Set(next.tasks.map((t) => t.wave)).size, phase: next.phase });
+      break;
+    }
+    case 'render-plan': {
+      // The `render` verb's engine. Re-render plan.html with LIVE status from state.tasks. READ-ONLY
+      // w.r.t. state — no writeState, no owner-lock mutation; state.yml bytes stay untouched. fs-only:
+      // no network, no secrets, deterministic. (Auto-emit at load-plan covers the static plan-finalize
+      // artifact; this regenerates it on demand with execution status.)
+      const p = need(flags, 'state');
+      const state = readState(p);
+      const planIndexPath = flags['plan-index'] ?? path.join(path.dirname(p), 'plan.index.json');
+      let index;
+      try {
+        index = JSON.parse(readText(planIndexPath));
+      } catch (e) {
+        die(`render-plan: ${planIndexPath} is not valid JSON (${e.message})`, 1);
+      }
+      const taskStatus = {};
+      for (const t of state.tasks ?? []) taskStatus[Number(t.id)] = t.status;
+      const planHtmlPath = flags['plan-html'] ?? path.join(path.dirname(planIndexPath), 'plan.html');
+      fs.writeFileSync(planHtmlPath, renderPlanHtml(index, { title: state.slug ?? 'Plan', taskStatus }));
+      out({ rendered: planHtmlPath, tasks: (state.tasks ?? []).length });
       break;
     }
     case 'prepare-wave': {

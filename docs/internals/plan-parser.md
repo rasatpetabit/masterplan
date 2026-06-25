@@ -130,6 +130,29 @@ drifting. The render groups tasks by wave, listing each task's files, verify com
 codex annotation. Because `plan.md` is a pure function of the index, any edit to task scope
 or ordering is made in the index; `plan.md` is regenerated.
 
+## plan.html as a rendered projection (`renderPlanHtml`)
+
+`plan.html` is a second, **additive** projection of the index — `plan.md` stays canonical;
+`plan.html` is the rendered, browser-openable view (planf3-inspired). Like `renderPlanMd`,
+`renderPlanHtml(index, meta)` is a **pure, deterministic** function: identical `(index, meta)`
+yields byte-identical output (including its SVG), with no clock/randomness/measured text — any
+timestamp shown comes from `index.generated_at`/`meta`, never `new Date()`. It is self-contained
+(inline CSS, no JS, no remote resources) and neutralizes every interpolated field so untrusted
+plan text can never become executable markup or a remote fetch — string fields are **HTML-escaped**,
+and the numeric `id`/`wave` fields (interpolated raw) are **`Number()`-coerced**, so a hand-edited
+index that smuggles markup through them renders as `NaN` rather than an open tag. The inline `<svg>` is a
+**wave-banded node layout, not a dependency graph** — the merged index carries no deps (the merge
+drops internal `key`/`deps`), so drawing dependency edges would be fabricated; nodes are grouped by
+wave and ordered by id.
+
+Two entry points (both fs-only, no network/secrets):
+- **Auto-emit** at the plan→execute seam: `mp load-plan` best-effort writes a static `plan.html`
+  (all tasks `pending`) right after the index validates and before the atomic state write. A
+  render/write failure is swallowed (logged) — it never fails `load-plan` or perturbs `state.yml`.
+- **`mp render-plan`** (the `render` verb): re-renders `plan.html` with **live** per-task status
+  read from `state.tasks` (badge values `pending`/`done`/`failed`/`blocked`; anything else →
+  `pending`). **Read-only w.r.t. state** — it never calls `writeState`.
+
 ## plan.index.json schema reference
 
 ```

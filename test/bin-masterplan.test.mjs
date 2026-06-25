@@ -202,6 +202,75 @@ test('load-plan: materializes tasks + advances phase→execute atomically; decid
   assert.equal(t3.eligible, true);
   assert.equal(t3.reason, 'annotation-ok');
 });
+
+// ---- integration: plan.html render artifact (auto-emit at load-plan + the render-plan verb) ----
+test('load-plan: also auto-emits a static plan.html (minimal bundle: no spec.md/plan.md needed)', () => {
+  const dir = tmpDir('mp-loadplan-html-');
+  const p = path.join(dir, 'state.yml');
+  fs.writeFileSync(p, serializeState(v8({ phase: 'plan', tasks: [], slug: 'demo-run' })));
+  const planIdx = path.join(dir, 'plan.index.json');
+  fs.writeFileSync(planIdx, JSON.stringify(planIndexFixture()));
+
+  const r = run(['load-plan', `--state=${p}`, `--plan-index=${planIdx}`]);
+  assert.equal(r.status, 0);
+  const html = fs.readFileSync(path.join(dir, 'plan.html'), 'utf8');
+  assert.ok(html.startsWith('<!DOCTYPE html>'));
+  assert.ok(html.includes('greet') && html.includes('farewell') && html.includes('index'));
+  assert.ok(html.includes('badge status-pending'), 'freshly materialized tasks render as pending');
+  assert.ok(html.includes('demo-run'), 'title derives from the bundle slug');
+  // self-containment / headless-safety: no executable or remote-resource markup
+  assert.ok(!/<(script|img|iframe|link)\b/i.test(html), 'no script/img/iframe/link tags');
+});
+
+test('load-plan: a plan.html write failure is swallowed and never fails the atomic state write', () => {
+  const dir = tmpDir('mp-loadplan-htmlfail-');
+  const p = path.join(dir, 'state.yml');
+  fs.writeFileSync(p, serializeState(v8({ phase: 'plan', tasks: [] })));
+  const planIdx = path.join(dir, 'plan.index.json');
+  fs.writeFileSync(planIdx, JSON.stringify(planIndexFixture()));
+  fs.mkdirSync(path.join(dir, 'plan.html')); // EISDIR on write → forces a render/write failure
+
+  const r = run(['load-plan', `--state=${p}`, `--plan-index=${planIdx}`]);
+  assert.equal(r.status, 0, 'load-plan must succeed despite the artifact write failure');
+  assert.deepEqual(JSON.parse(r.stdout), { loaded: 3, waves: 2, phase: 'execute' });
+  assert.equal(read(p).phase, 'execute'); // the state transition still landed
+});
+
+test('render-plan: writes plan.html with live status from state.tasks and leaves state.yml byte-unchanged', () => {
+  const dir = tmpDir('mp-render-');
+  const p = path.join(dir, 'state.yml');
+  fs.writeFileSync(p, serializeState(v8({
+    phase: 'execute',
+    slug: 'live-run',
+    tasks: [
+      { id: 1, status: 'done', wave: 0, files: ['a.txt'] },
+      { id: 2, status: 'failed', wave: 1, files: ['b.txt'] },
+      { id: 3, status: 'in_progress', wave: 1, files: ['c.txt'] }, // not in the badge whitelist
+    ],
+  })));
+  const planIdx = path.join(dir, 'plan.index.json');
+  fs.writeFileSync(planIdx, JSON.stringify({
+    schema_version: '6.0',
+    tasks: [
+      { id: 1, wave: 0, description: 'first', files: ['a.txt'], verify_commands: ['true'], codex: null },
+      { id: 2, wave: 1, description: 'second', files: ['b.txt'], verify_commands: ['true'], codex: null },
+      { id: 3, wave: 1, description: 'third', files: ['c.txt'], verify_commands: ['true'], codex: null },
+    ],
+  }));
+  const before = fs.readFileSync(p);
+
+  const r = run(['render-plan', `--state=${p}`, `--plan-index=${planIdx}`]);
+  assert.equal(r.status, 0);
+  const html = fs.readFileSync(path.join(dir, 'plan.html'), 'utf8');
+  assert.ok(html.includes('badge status-done'), 'task 1 → done');
+  assert.ok(html.includes('badge status-failed'), 'task 2 → failed');
+  assert.ok(html.includes('badge status-pending'), 'task 3 unknown status → pending fallback');
+  assert.ok(!html.includes('badge status-in_progress'), 'unknown status never becomes a badge class');
+  assert.ok(html.includes('live-run'), 'title from slug');
+
+  assert.deepEqual(fs.readFileSync(p), before, 'render-plan must not mutate state.yml (read-only)');
+});
+
 test('load-plan: refuses a bundle that already has tasks (no clobber of execution state)', () => {
   const dir = tmpDir('mp-loadplan2-');
   const p = path.join(dir, 'state.yml');

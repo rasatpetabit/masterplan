@@ -18,6 +18,7 @@ import {
   mergePlanFragments,
   validatePlanIndex,
   renderPlanMd,
+  renderPlanHtml,
   normalizeCodex,
 } from '../lib/plan-merge.mjs';
 
@@ -249,4 +250,77 @@ test('renderPlanMd is deterministic and contains every task', () => {
   assert.equal(md1, md2);
   for (const t of index.tasks) assert.ok(md1.includes(t.description), `plan.md missing "${t.description}"`);
   assert.ok(md1.includes('# Test plan'));
+});
+
+// ── renderPlanHtml: plan.html is a deterministic, escaped, self-contained projection ──
+// A fixed index literal (not via mergePlanFragments) so statuses/fields are controlled.
+const htmlIndex = {
+  schema_version: '6.0',
+  tasks: [
+    { id: 1, description: 'do a', wave: 0, files: ['a.js'], verify_commands: ['test a'], codex: null },
+    { id: 2, description: 'do b', wave: 0, files: ['b.js'], verify_commands: [], codex: 'ok' },
+    { id: 3, description: 'do c', wave: 1, files: ['c.js'], verify_commands: ['test c'], codex: 'no', spec_refs: ['S1'] },
+  ],
+};
+
+test('renderPlanHtml is deterministic and contains every task, every wave, and an inline SVG', () => {
+  const h1 = renderPlanHtml(htmlIndex, { title: 'Test plan' });
+  const h2 = renderPlanHtml(htmlIndex, { title: 'Test plan' });
+  assert.equal(h1, h2);
+  for (const t of htmlIndex.tasks) assert.ok(h1.includes(t.description), `plan.html missing "${t.description}"`);
+  assert.ok(h1.includes('Test plan'));
+  assert.ok(/Wave 0/.test(h1) && /Wave 1/.test(h1), 'both wave sections present');
+  assert.ok(/<svg/.test(h1), 'expected an inline SVG wave diagram');
+});
+
+test('renderPlanHtml output is independent of task input order (determinism, no leak)', () => {
+  const shuffled = { ...htmlIndex, tasks: [htmlIndex.tasks[2], htmlIndex.tasks[0], htmlIndex.tasks[1]] };
+  assert.equal(renderPlanHtml(htmlIndex, { title: 'T' }), renderPlanHtml(shuffled, { title: 'T' }));
+});
+
+test('renderPlanHtml escapes untrusted fields and embeds no executable or remote markup', () => {
+  const evil = {
+    schema_version: '6.0',
+    tasks: [{
+      id: 1,
+      description: '<script>alert(1)</script>',
+      wave: 0,
+      files: ['<img src=x onerror=alert(1)>'],
+      verify_commands: ['echo "&"'],
+      codex: null,
+      spec_refs: ['<b>ref</b>'],
+    }],
+  };
+  const h = renderPlanHtml(evil, { title: '<title-inject>' });
+  // With full escaping, the only real tags are the renderer's own — and it emits no
+  // script/img/iframe/link. Untrusted '<' must survive only as escaped text.
+  assert.ok(!h.includes('<script'), 'raw <script leaked into output');
+  assert.ok(!h.includes('<img'), 'raw <img leaked into output');
+  assert.ok(!/<(iframe|link)\b/i.test(h), 'no remote-resource tags');
+  assert.ok(h.includes('&lt;script&gt;alert(1)&lt;/script&gt;'), 'description must be HTML-escaped');
+  assert.ok(h.includes('&lt;img src=x onerror=alert(1)&gt;'), 'file value must be HTML-escaped');
+});
+
+test('renderPlanHtml numerically coerces id/wave so a corrupted index cannot inject markup through them', () => {
+  // render-plan does not run validatePlanIndex, so a hand-edited index could carry string id/wave.
+  const bad = {
+    schema_version: '6.0',
+    tasks: [{ id: '1<script>', description: 'x', wave: '0"><script>alert(1)</script>', files: [] }],
+  };
+  const h = renderPlanHtml(bad, { title: 'T' });
+  assert.ok(!h.includes('<script'), 'id/wave must be coerced to numbers, never interpolated as raw markup');
+});
+
+test('renderPlanHtml status badges reflect meta.taskStatus; unknown and missing fall back to pending', () => {
+  const h = renderPlanHtml(htmlIndex, { title: 'T', taskStatus: { 1: 'done', 2: 'bogus' } });
+  // Assert on the badge element class (not bare 'status-done', which appears in the inline CSS).
+  assert.ok(h.includes('badge status-done'), 'id 1 → done');
+  assert.ok(h.includes('badge status-pending'), 'id 2 bogus→pending and id 3 missing→pending');
+  assert.ok(!h.includes('badge status-bogus'), 'unknown status must never become a CSS class (whitelist)');
+});
+
+test('renderPlanHtml with no taskStatus renders every task as pending', () => {
+  const h = renderPlanHtml(htmlIndex, { title: 'T' });
+  assert.ok(h.includes('badge status-pending'));
+  assert.ok(!h.includes('badge status-done') && !h.includes('badge status-failed'));
 });

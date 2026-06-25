@@ -6,7 +6,7 @@ verb is dispatched by the single `/masterplan <verb>` command, which parses the 
 subcommands (`node bin/masterplan.mjs …`). There are no `parts/` phase files.
 
 Reserved verbs: `full · brainstorm · plan · execute · finish · retro · import · doctor ·
-status · validate · stats · clean · next · verbs · publish · follow`. With no verb, the bare command runs
+status · validate · stats · clean · next · verbs · render · publish · follow`. With no verb, the bare command runs
 the resume controller (active bundle → re-decide; none → offer to start one).
 
 ## `full`
@@ -73,6 +73,15 @@ user at `recover_and_redispatch`.
 
 ## `verbs`
 Print the reserved-verb list.
+
+## `render`
+Re-render the bundle's `plan.html` — a deterministic, self-contained (inline CSS + a
+wave-banded SVG, no JS, no remote resources) projection of `plan.index.json` — with **live**
+per-task status badges read from `state.tasks`: `mp render-plan --state=<path>`. **Read-only**
+w.r.t. state: it never writes `state.yml`. A static `plan.html` (every task `pending`) is also
+**auto-emitted** at the plan→execute seam (`mp load-plan`), so `plan.html` exists from
+plan-finalize onward; this verb refreshes it with execution status. No network, no secrets.
+On a headless host, `preview <path>` turns it into a PNG.
 
 ## `publish`
 Lead → GitHub coordination. Projects the **current wave only** of a planned run onto GitHub:

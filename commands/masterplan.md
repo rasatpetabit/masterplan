@@ -1,5 +1,5 @@
 ---
-description: "Resumable orchestrator for /masterplan: brainstorm→plan→execute on durable run bundles. Verbs: full, brainstorm, plan, execute, finish, retro, import, doctor, status, validate, stats, clean, next, verbs, publish, follow."
+description: "Resumable orchestrator for /masterplan: brainstorm→plan→execute on durable run bundles. Verbs: full, brainstorm, plan, execute, finish, retro, import, doctor, status, validate, stats, clean, next, verbs, render, publish, follow."
 ---
 
 # /masterplan — thin resumable shell (v8)
@@ -41,7 +41,7 @@ worktree locus model in §2e (bare `git` is forbidden in this shell).**
 ## 1 — Parse the verb
 
 Reserved verbs: `full, brainstorm, plan, execute, finish, retro, import, doctor, status, validate,
-stats, clean, next, verbs, publish, follow`. Precedence:
+stats, clean, next, verbs, render, publish, follow`. Precedence:
 
 0. **No args** → the **resume controller** (§2).
 1. First token is a reserved verb → that verb; consume it, the rest are its args.
@@ -434,6 +434,7 @@ create-or-reuse runs inside `mp continue`, the sweep inside `mp sweep`, and the 
 | `clean` | Archive (`mp set-status --state=<path> --status=archived`) / prune completed bundles. **PR-aware:** before archiving a bundle whose branch has an open PR, AUQ-**warn** (`bundle <slug>: branch has open PR #<n> — archive anyway?`) — warn, don't hard-block (archiving doesn't touch the PR; the user may still want the bundle gone). |
 | `next` | **Action router, not a blocker:** call `mp continue` and execute the returned non-gate op. `next --dry-run` / `status` are the report-only paths. On hosts without Claude Code Workflow handles (including Pi), use `mp continue --no-workflow` / the auto-detected no-Workflow path so a launch-gap marker is consumed as foreground dispatch instead of surfaced as a loop. **PR-aware:** if the branch has an open PR, append the **advisory** `↪ Open PR #<n> ready — merge on GitHub or via /masterplan finish` (advisory only — never a `decide` action, never a blocking AUQ; this is how "a PR to merge" enters the what-do-I-do-next routine without becoming a per-resume nag). |
 | `verbs` | Print the reserved-verb list above. |
+| `render` | Re-render the bundle's `plan.html` with **live** per-task status from `state.tasks`: `mp render-plan --state=<path>`. **Read-only** — never writes `state.yml`. A static `plan.html` (all tasks `pending`) is also **auto-emitted** at the plan→execute seam (`mp load-plan`), so this verb refreshes it mid/post-execution. Deterministic, self-contained (inline CSS + wave SVG), no network/secrets. Headless: turn it into a PNG with `preview <path>` for an image. |
 | `publish` | **Lead → GitHub coordination** (spec §7 — **IMPLEMENTED-UNVERIFIED**, never dogfooded end-to-end). Full procedure: [`docs/coordination-playbook.md`](../docs/coordination-playbook.md) §publish — bootstrap defaults (`mp set-coord --bootstrap`) → preflight (`mp coord-status --fail-if-unpublishable`) → provision the `mp-coord/<slug>/<plan_hash>` contract ref + `mp-int/<slug>` integration branch → one `gh issue create` per unpublished wave task (`mp gh-issue-body`, `mp update-issue-map`) → `mp set-coord --mark-published` + commit. **Follow the playbook exactly — do not improvise the steps from memory.** |
 | `follow` | **Follower session → claim + deliver one task** (spec §7 — same playbook, same caveat). Full procedure: [`docs/coordination-playbook.md`](../docs/coordination-playbook.md) §follow — preflight → claim (`mp select-claimable`, assign, `mp validate-claim` won/lost) → build on branch `mp/<slug>/t<id>` from the pinned contract ref (ephemeral bundle outside `docs/masterplan/`) → D6 `verify-scope` + `verify_commands` → PR to `mp-int/<slug>` on pass, release the claim on fail. |
 
