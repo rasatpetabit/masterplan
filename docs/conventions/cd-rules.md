@@ -43,3 +43,9 @@ Use `AskUserQuestion` with 2–4 concrete options, recommended option first mark
 ### CD-10: Severity-first review shape
 
 When reviewing code (Codex output, subagent output, plan tasks), lead with findings ordered by severity, grounded in `file_path:line_number`. Keep summaries secondary and short.
+
+---
+
+### CD-11: Identify the task before completing it
+
+Before substantive work, identify the task correctly: restate the requested outcome, the active repo/files, what is in scope vs out of scope, and the evidence that would prove completion. If those facts are ambiguous or contradict live state, resolve that ambiguity before implementing — never write claims about a file, service, or state you have not opened (a stale or inherited claim is not verification; read the grounding source first). This rule complements CD-3: CD-3 ensures you *verify* completion of the task; CD-11 ensures you identified the *right* task before you started. A correctly-verified completion of the wrong task is still a failure.
