@@ -1,6 +1,6 @@
 ---
 name: masterplan
-description: "Generic/Codex entrypoint for masterplan: bare /masterplan, /masterplan:masterplan, $masterplan, or any verb. All verbs (full, brainstorm, plan, execute, finish, retro, import, doctor, status, validate, stats, clean, next, verbs, publish, follow) route through this single command — v8 ships NO per-verb /masterplan:<verb> skills (they shadowed Claude Code built-ins like /plan, /status, /doctor and added nothing over bare-command routing)."
+description: "Generic/Codex entrypoint for masterplan: bare /masterplan, /masterplan:masterplan, $masterplan, or any verb. All verbs (full, brainstorm, plan, execute, finish, retro, import, doctor, status, validate, stats, clean, next, verbs, render, publish, follow) route through this single command — v8 ships NO per-verb /masterplan:<verb> skills (they shadowed Claude Code built-ins like /plan, /status, /doctor and added nothing over bare-command routing)."
 ---
 
 ## Central agent policy
@@ -97,7 +97,7 @@ Treat these user inputs as this skill:
 **No per-verb skills (v8).** masterplan ships exactly two skill dirs — this one
 and `masterplan-detect`. There are **no** `/masterplan:<verb>` per-verb skills:
 every verb (`brainstorm`, `full`, `execute`, `finish`, `retro`, `import`,
-`doctor`, `status`, `validate`, `stats`, `clean`, `next`, `verbs`, `publish`, `follow`, and `plan`) is dispatched
+`doctor`, `status`, `validate`, `stats`, `clean`, `next`, `verbs`, `render`, `publish`, `follow`, and `plan`) is dispatched
 by the bare `/masterplan <verb>` command through `bin/masterplan.mjs` (verb
 routing in `commands/masterplan.md` §1/§3). The per-verb namespace was removed
 because it added nothing over bare-command routing and the reserved words

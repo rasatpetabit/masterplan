@@ -2,7 +2,7 @@
 
 > A Claude Code & Codex CLI plugin for durable multi-hour engineering work — brainstorm → plan → execute → finish on top of `obra/superpowers` skills.
 
-Current release: **v9.1.1** · **License:** MIT · **Works with:** Claude Code, Codex CLI · See [CHANGELOG.md](./CHANGELOG.md)
+Current release: **v9.2.0** · **License:** MIT · **Works with:** Claude Code, Codex CLI · See [CHANGELOG.md](./CHANGELOG.md)
 
 ---
 
@@ -157,6 +157,7 @@ All verbs route through the single `/masterplan <verb>` command. v8 ships no per
 | `clean` | Archive stale bundles (`mp set-status --status=archived`) and prune orphan artifacts |
 | `next` | Route to the next actionable in-progress bundle |
 | `verbs` | Print this verb list |
+| `render` | Re-render `plan.html` with live per-task status from `state.tasks` (read-only; static `plan.html` is also auto-emitted at plan-finalize) |
 | `retro` | **Deprecated alias** → `finish --retro-only` |
 | `publish` | Lead → GitHub: project the current wave onto GitHub issues + provision refs (spec §7.1) |
 | `follow` | Follower session: claim one task, build it, and open a PR against the integration branch (spec §7.1) |
@@ -299,7 +300,7 @@ Codex can host the command via `/masterplan:masterplan` through `skills/masterpl
 
 - The orchestrator runs `mp detect-host --agent-is-codex` at boot.
 - A Codex host (`isCodex`) lacks Claude Code's Workflow tool, so waves run on the foreground-sequential path (`mp continue --codex-suppressed`) instead of a background workflow launch.
-- Persisted review config (`state.review.adversary`, or legacy `state.codex.{routing,review}`) in `state.yml` continues to apply to Claude Code runs unaffected. Whole-branch adversary review runs the same on either host — it routes to agent-dispatch's cross-vendor lane (gpt-5.5), not Codex, so there is no recursion to suppress.
+- Persisted review config (`state.review.adversary`, or legacy `state.codex.{routing,review}`) in `state.yml` continues to apply to Claude Code runs unaffected. Whole-branch adversary review runs the same on either host — it routes to agent-dispatch's cross-vendor lane (the reviewer is resolved by agent-dispatch — see `agent-dispatch digest`), not Codex, so there is no recursion to suppress.
 
 ---
 
