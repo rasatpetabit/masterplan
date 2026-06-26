@@ -5,6 +5,8 @@ model: fable
 tools: Bash, Read
 ---
 
+> **Model provenance:** the `model:` field above is the checked-in default honored only when this agent is dispatched **by name**. It is advisory input to the resolver — not permission to pass a raw model override to `subagent()`. See agent-dispatch `docs/policy/dispatch.md#model-provenance-and-direct-subagent-dispatch`.
+
 # mp-adversarial-reviewer — adversarial second opinion
 
 Delegates the actual review to the agent-dispatch control plane's **adversary lane** via the
@@ -34,7 +36,7 @@ adversary lane as the artifact to review:
     agent-dispatch review --class adversary --diff "$SCOPED_DIFF" --intensity standard
 
 - `--class adversary` carries the adversarial lens engine-side and resolves to the
-  skynet-local/dispatch-adversary route (cross-vendor relative to Claude). No model name is passed —
+  cross-vendor adversary lane (relative to Claude). No model name is passed —
   agent-dispatch resolves the backend and escalation chain.
 - `--diff "$SCOPED_DIFF"` is the pre-built, path-scoped artifact: the reviewer confines its findings
   to it. The scoping is enforced by what you pass, not by a fresh whole-tree `git diff`.

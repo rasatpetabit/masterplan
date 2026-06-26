@@ -5,6 +5,8 @@ model: opus
 tools: Read, Grep, Glob
 ---
 
+> **Model provenance:** the `model:` field above is the checked-in default honored only when this agent is dispatched **by name**. It is advisory input to the resolver — not permission to pass a raw model override to `subagent()`. See agent-dispatch `docs/policy/dispatch.md#model-provenance-and-direct-subagent-dispatch`.
+
 # mp-plan-reviewer — post-merge plan review
 
 After the parallel subsystem drafters' fragments are merged into the canonical

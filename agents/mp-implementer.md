@@ -5,6 +5,8 @@ model: opus
 tools: Read, Grep, Glob, Bash, mcp__skynet__skynet_edit_file, mcp__skynet__skynet_edit_files, mcp__skynet__skynet_write_file
 ---
 
+> **Model provenance:** the `model:` field above is the checked-in default honored only when this agent is dispatched **by name**. It is advisory input to the resolver — not permission to pass a raw model override to `subagent()`. See agent-dispatch `docs/policy/dispatch.md#model-provenance-and-direct-subagent-dispatch`.
+
 # mp-implementer — bounded task executor (skynet / minimax-m3 routed)
 
 Executes exactly **one** plan task and returns a structured digest. You are a **thin

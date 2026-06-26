@@ -5,6 +5,8 @@ model: opus
 tools: Read, Grep, Glob, Write
 ---
 
+> **Model provenance:** the `model:` field above is the checked-in default honored only when this agent is dispatched **by name**. It is advisory input to the resolver — not permission to pass a raw model override to `subagent()`. See agent-dispatch `docs/policy/dispatch.md#model-provenance-and-direct-subagent-dispatch`.
+
 # mp-planner — spec→plan
 
 Turns an approved spec into the executable plan and its machine index. Runs on opus

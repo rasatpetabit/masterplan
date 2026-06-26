@@ -190,7 +190,8 @@ repoRoot }`, reached from §2 step 3 when `active_run.kind==='plan'`):
    file-disjointness on disk).
 5. **Review.** Dispatch `agents/mp-plan-reviewer` against `plan.md` / `plan.index.json` / `spec.md`
    → `PASS | REVISE | FAIL`.
-   - **PASS** → `mp clear-active-run`; **`mp load-plan --state=<path> --plan-index=<plan_index_path>`**
+   - **PASS** → `mp clear-active-run`; satisfy the **plan gate** first (§3b — `mp load-plan` exits 3 with a
+     `run_gate_review` op until the cross-vendor pass is recorded via `mp record-gate-review --gate=plan`); then **`mp load-plan --state=<path> --plan-index=<plan_index_path>`**
      (materializes `state.tasks` from the plan **and** advances `phase→execute` in one atomic write — the
      plan→execute seam; a bare `set-phase execute` would leave `tasks:[]`, so the next `decide` would
      `complete`→archive the just-planned bundle) + `mp event --state=<path> --type=phase_transition
@@ -422,7 +423,7 @@ create-or-reuse runs inside `mp continue`, the sweep inside `mp sweep`, and the 
 
 | verb | v8 target |
 |---|---|
-| `full` / `brainstorm` / `plan` | Locate the bundle, or **seed a new one** — `mp seed --state=<path> --slug=<slug> --topic="<topic>" [--complexity=… --autonomy=… --planning-mode=serial\|parallel\|auto --adversary-review=on\|off --predecessor-transcript=…]` (writes a valid v8 brainstorm-phase bundle; refuses an existing one unless `--force`). `--adversary-review` defaults `on` (alias: `--codex-review`) — new bundles arm `state.review.adversary: true` automatically (the hindsight-historian fix: the finish-time review was silently skipping because the flag was never set at seed). Pass `off` for explicit opt-out. **Brainstorm:** invoke `superpowers:brainstorming` directly; on spec approval, `mp set-phase --state=<path> --phase=plan` + `mp event --state=<path> --type=phase_transition --phase=plan` (never hand-edit `state.yml` — CD-7). **Plan:** hand to the **plan lifecycle (§3a)**, which selects serial vs parallel per `planning.mode`, then materializes `state.tasks` **and** advances `phase→execute` in one atomic `mp load-plan` write (the plan→execute seam; the lower-level `mp seed-tasks` populates tasks *without* touching phase, for recovering an already-`execute` bundle). The seam is guard-enforced: `mp set-phase --phase=execute` refuses a 0-task bundle without `--force`, and `decide` *throws* on a `phase:execute` + `tasks:[]` bundle rather than finalizing an unseeded run — so a bare `set-phase execute` can never silently archive a planned-but-unseeded run. Log other milestones with `mp event …`; gates via `mp open-gate` + an `AskUserQuestion`. (`brainstorm` stops once the plan phase is reached; `plan` runs §3a; `full` continues through execution via §2.) |
+| `full` / `brainstorm` / `plan` | Locate the bundle, or **seed a new one** — `mp seed --state=<path> --slug=<slug> --topic="<topic>" [--complexity=… --autonomy=… --planning-mode=serial\|parallel\|auto --adversary-review=on\|off --predecessor-transcript=…]` (writes a valid v8 brainstorm-phase bundle; refuses an existing one unless `--force`). `--adversary-review` defaults `on` (alias: `--codex-review`) — new bundles arm `state.review.adversary: true` automatically (the hindsight-historian fix: the finish-time review was silently skipping because the flag was never set at seed). Pass `off` for explicit opt-out. **Brainstorm:** invoke `superpowers:brainstorming` directly; on spec approval, `mp set-phase --state=<path> --phase=plan` (this transition trips the **spec gate** — §3b: it exits 3 with a `run_gate_review` op until the cross-vendor adversarial pass over `spec.md` is recorded via `mp record-gate-review --gate=spec`; satisfy it, then re-run set-phase) + `mp event --state=<path> --type=phase_transition --phase=plan` (never hand-edit `state.yml` — CD-7). **Plan:** hand to the **plan lifecycle (§3a)**, which selects serial vs parallel per `planning.mode`, then materializes `state.tasks` **and** advances `phase→execute` in one atomic `mp load-plan` write (the plan→execute seam; the lower-level `mp seed-tasks` populates tasks *without* touching phase, for recovering an already-`execute` bundle). The seam is guard-enforced: `mp set-phase --phase=execute` refuses a 0-task bundle without `--force`, and `decide` *throws* on a `phase:execute` + `tasks:[]` bundle rather than finalizing an unseeded run — so a bare `set-phase execute` can never silently archive a planned-but-unseeded run. Log other milestones with `mp event …`; gates via `mp open-gate` + an `AskUserQuestion`. (`brainstorm` stops once the plan phase is reached; `plan` runs §3a; `full` continues through execution via §2.) |
 | `execute` | The resume controller (§2). |
 | `finish` | The finalization verb → the flow in **§2c** (docs-normalize offer → verify → retro → durable `branch_finish` gate → archive **LAST**). Bare `finish` = run §2c (on pending tasks, AUQ "finalize anyway / keep working / `--retro-only`" — never silent-archive an incomplete run). `finish --retro-only` = (re)generate `retro.md` only — no verification, no gate, no archive (the old `retro` behavior); safe on an in-progress or finished run, and it must NOT `set-status archived` (that would strand a run: the §2 discover filter hides archived bundles). |
 | `retro` | Deprecated alias for `finish --retro-only`. Print a one-line "`retro` was renamed to `finish` (running `finish --retro-only`)" notice, then run it. Kept for muscle-memory/back-compat. |
@@ -469,9 +470,16 @@ between the serial `superpowers:writing-plans` path and the parallel fan-out (§
      Carry the decomposer's `reason` into your narration.
    - `serial` → skip the decomposer → step 3.
 3. **Serial path.** Dispatch the `masterplan:mp-planner` agent against the approved `spec.md` → it writes
-   both `plan.md` and `plan.index.json` directly (sole producer). Gate it:
+   both `plan.md` and `plan.index.json` directly (sole producer). **Model provenance (non-negotiable):** the
+   planner runs on its checked-in frontmatter default *because it is dispatched by name* — that is the governed
+   path. Do **not** substitute a raw model override (`subagent({ model: "litellm/opus-4.8" })`) to get Write
+   access. If a dispatch class is used for the judgment instead (e.g. `architecture` for opus-tier design), it is
+   **chat-only** — apply **orchestrator-as-writer**: the dispatch returns the plan content, the **parent writes**
+   `plan.md`/`plan.index.json`; never bypass to a raw-frontier `subagent()` for the writes. See
+   `docs/policy/dispatch.md#model-provenance-and-direct-subagent-dispatch`. Gate it:
    `mp validate-plan-index --plan-index=<plan_index_path>` (on failure, fix and re-parse — never advance
-   on an invalid index). Then **`mp load-plan --state=<path> --plan-index=<plan_index_path>`**
+   on an invalid index). Then satisfy the **plan gate** (§3b — `mp load-plan` exits 3 with a `run_gate_review`
+   op until the cross-vendor pass is recorded via `mp record-gate-review --gate=plan`) and **`mp load-plan --state=<path> --plan-index=<plan_index_path>`**
    (materializes `state.tasks` from the plan **and** advances `phase→execute` atomically — a bare
    `set-phase execute` would leave `tasks:[]` and the next `decide` would `complete`→archive the bundle)
    + `mp event --state=<path> --type=phase_transition --phase=execute`, `git -C "<MAIN>"` commit the
@@ -485,6 +493,73 @@ between the serial `superpowers:writing-plans` path and the parallel fan-out (§
 Both paths converge on the same post-condition — a validated `plan.index.json` + `plan.md`, the
 plan's tasks materialized into `state.tasks` and `phase=execute` (both via `mp load-plan`), committed
 — after which §2 drives the wave loop.
+
+## 3b — Pre-execute adversary-review gates (spec & plan) — the `run_gate_review` op
+
+The two pre-execute transitions are **structurally gated** on a recorded cross-vendor adversarial pass:
+the **spec gate** fires on `mp set-phase --phase=plan` (brainstorm→plan); the **plan gate** fires on
+`mp load-plan` AND `mp set-phase --phase=execute` (plan→execute). The guard lives in `bin`
+(`lib/gate-review.mjs` is its pure core): it recomputes a content hash over the CURRENT gated artifacts
+— spec gate → `[spec.md]`; plan gate → `[spec.md, plan.md, plan.index.json]` (the index hashed with its
+own self-stamped `plan_hash`/`generated_at` stripped, so a re-stamp never moves the hash) — and looks
+for a review event recorded at that hash. **No record → the subcommand exits 3 and prints one op JSON:
+`{op:'run_gate_review', gate, hash, artifacts, message}`.** Editing any gated artifact changes the hash
+and RE-ARMS the gate — a stale review never satisfies an edited spec/plan. The guard is **unconditional
+and fail-closed**: it never reads a `state` flag, so a legacy/migrated bundle with no recorded review
+re-arms on its next transition (no `lib/migrate.mjs` change needed).
+
+**Exit 3 is the gate, NOT the loud invariant.** The §2 rule "a non-zero exit is a loud invariant — read
+stderr" still holds for every OTHER non-zero exit; **exit 3 carrying a `run_gate_review` op** is the
+distinct, EXPECTED signal that the mandatory cross-vendor pass has not run yet for these artifacts. Do
+not surface it as an error — satisfy it:
+
+1. **Run the lane** over `op.artifacts`, foreground, through the agent-dispatch control plane's adversary
+   lane (NO model named — `class=adversary`, `intensity=rigorous` resolve to a cross-vendor reviewer
+   engine-side): `mcp__agent-dispatch__dispatch_review` with the gated artifacts as the review target.
+   This is the SAME cross-vendor adversary lane the finish gate uses (§2c `run_adversary_review`), applied
+   at the spec- and plan-approval boundaries — the two points where a design error is cheapest to fix.
+2. **On a real review (the lane returned findings):** `Write` a brief digest (finding count + the top
+   severity-ordered findings, never the raw dump) to `<bundle>/gate-<gate>-review-digest.txt`
+   (absolute-MAIN, §2e¶1; the Write tool is not shell-evaluated, so arbitrary review bytes are safe —
+   never interpolate them into a shell word). **Surface the findings to the user** — the whole point is
+   that a blocking finding at the spec/plan boundary should CHANGE the artifact, not just get logged: if
+   the pass found blocking issues, treat it as REVISE — fix the spec/plan (which re-arms the gate at the
+   new hash) and re-run the lane. Otherwise record it satisfied with a **structured receipt** that binds
+   the recorded `done` to the actual lane call (a bare `--status=done` is no longer accepted):
+   1. `mp gate-hash --state=<path> --gate=<op.gate>` → `{ hash, artifacts }`. For the **plan** gate via
+      `load-plan`, pass the SAME `--plan-index`/`--plan-md` the load uses; the **spec** gate and BOTH
+      `set-phase` paths take NO path flags — their artifacts are always the canonical in-bundle
+      `spec.md`/`plan.md`/`plan.index.json` (realpath-confined to the bundle; a flag can't redirect them).
+   2. `Write` a receipt JSON to `<bundle>/gate-<gate>-receipt.json` with EXACTLY these fields:
+      `{ "gate":"<op.gate>", "hash":"<from gate-hash>", "artifacts":<from gate-hash>,
+      "dispatch_id":"<lane dispatch id>", "provider":"<lane provider>", "model":"<lane model>",
+      "output_tokens":<lane completion tokens>, "status":"done", "ts":"<iso>", "digest":"<findings text>" }`.
+      The `dispatch_id`/`provider`/`model`/`output_tokens` come straight from the `dispatch_review` result —
+      so a fabricated `done` cannot pass without an actual lane call having produced tokens.
+   3. `mp record-gate-review --state=<path> --gate=<op.gate> --status=done --receipt=<that receipt.json>
+      --count=<n> [--base=<base|''>]` (passing the SAME `--plan-index`/`--plan-md` for the
+      plan-via-`load-plan` gate). The recorder recomputes the hash + artifact set and REJECTS (exit 1) a
+      receipt that doesn't echo them, or that lacks provenance/positive tokens.
+   Then **re-run the original transition** — it now passes.
+3. **Skip ONLY on a genuine, evidenced lane failure** — a non-zero lane exit, the lane/gateway
+   unreachable, `agent-dispatch` missing, empty output. Capture the REAL error to a file and record it:
+   `mp record-gate-review --state=<path> --gate=<op.gate> --status=skipped --reason="<the actual error,
+   verbatim-tight>" --digest-file=<captured stderr>` — **both `--reason` (non-empty) AND `--digest-file`
+   (readable, non-empty) are REQUIRED**: a skip must carry evidence the operator looked, not a bare bypass.
+   Then re-run the transition (a recorded skip satisfies the gate — this lane is fail-soft by policy,
+   docs/policy/dispatch.md). **A skip is an evidenced lane outage, never a convenience.** Do NOT record
+   `skipped` because the review is inconvenient, slow, or "probably fine", and NEVER as an unconditional
+   "lane errored → skip → proceed" reflex — a casual skip rebuilds the exact hole these gates exist to
+   close (a recorded-but-unrun review is, after the fact, indistinguishable from the silent skip that
+   motivated this whole mechanism). If the lane is merely slow or you are unsure it truly failed, RETRY the
+   lane; do not skip.
+
+The gates are advisory in RESULT (a clean pass and an evidenced skip both advance) but mandatory in
+STEP (the run-and-record cannot be bypassed except by `--force`, reserved for the documented
+recovery/test paths — never a routine skip; a `--force` bypass appends a `<gate>_gate_bypassed` audit
+event so the shortcut is never silent). This is the structural inverse of the old failure mode,
+where "advisory" was misread as "optional" and the pass was silently skipped. Read-only status of a
+gate at any time: `mp gate-review-status --state=<path> --gate=<spec|plan>`.
 
 ## 4 — Turn-close (CD-9)
 
