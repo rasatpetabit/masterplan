@@ -5,7 +5,7 @@ description: Suggest `/masterplan import` when legacy planning artifacts (PLAN.m
 
 ## Central agent policy
 
-AUQ, RTK, Serena, Hindsight, context-mode, and agent policy is centralized in `AGENTS.md` in the agent-dispatch repo (`agent-dispatch where`). This skill must not duplicate or override dispatch rules. User-facing choices must use `ask_user_question` / `AskUserQuestion`, never prose questions.
+AUQ, Serena, Hindsight, context-mode, and agent policy is centralized in `AGENTS.md` in the agent-dispatch repo (`agent-dispatch where`). This skill must not duplicate or override dispatch rules. User-facing choices must use `ask_user_question` / `AskUserQuestion`, never prose questions.
 
 
 # Suggesting /masterplan import for legacy planning artifacts
