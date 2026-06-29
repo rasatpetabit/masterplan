@@ -55,8 +55,11 @@ for (const file of files) {
       basename(file, '.md'),
       `${file}: frontmatter name "${fm.name}" must match filename`,
     );
-    // tools is a comma-space list of tool names.
-    assert.match(fm.tools, /^[A-Za-z]+(,\s*[A-Za-z]+)*$/, `${file}: malformed tools list`);
+    // tools is a comma-space list of tool names. Allow word chars (letters, digits,
+    // underscore) so legitimate MCP-namespaced tools like `mcp__skynet__skynet_edit_file`
+    // pass — they are valid in both Claude Code (the `mcp__<server>__<tool>` convention)
+    // and pi (which accepts arbitrary tool-name strings).
+    assert.match(fm.tools, /^[\w]+(,\s*[\w]+)*$/, `${file}: malformed tools list`);
     // No scaffold TODO headers left behind.
     assert.doesNotMatch(body, /##\s*TODO\(step 3\)/, `${file}: unresolved TODO(step 3) header`);
   });
