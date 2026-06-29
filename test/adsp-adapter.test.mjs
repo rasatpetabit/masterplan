@@ -381,3 +381,88 @@ test('createBrokerClient export exists and returns an object with the required m
   assert.equal(typeof createBrokerClient, 'function');
   // We cannot safely call it without a real binary, so we only check the export type.
 });
+
+// ---------------------------------------------------------------------------
+// v3 cross-review escalation bridge (spec §6.8)
+// ---------------------------------------------------------------------------
+import {
+  escalateCrossReview,
+  revertCrossReview,
+} from '../lib/dispatch/adsp-adapter.mjs';
+import { writeFileSync, mkdtempSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+
+test('escalateCrossReview: rejects payloads that are not requires_human_decision', async () => {
+  const r = await escalateCrossReview('/tmp/x', 's1', { kind: 'brief' });
+  assert.equal(r.ok, false);
+  assert.equal(r.degraded, true);
+  assert.match(r.reason, /not a requires_human_decision/);
+});
+
+test('escalateCrossReview: spawns a fake masterplanBin and parses its gate_id', async () => {
+  // Create a tiny node script that mimics `mp open-gate` JSON output.
+  const dir = mkdtempSync(join(tmpdir(), 'adsp-cr-'));
+  const fakeBin = join(dir, 'fake-mp.mjs');
+  writeFileSync(fakeBin, "process.stdout.write(JSON.stringify({id:'cr-gate-42', gate_id:'cr-gate-42'})+'\\n');");
+  const r = await escalateCrossReview(
+    '/tmp/state.yml',
+    'cross-model-review',
+    { kind: 'requires_human_decision', reason: 'supervised-disagreement', review_record: { final_verdict: 'rework' } },
+    { masterplanBin: fakeBin }
+  );
+  assert.equal(r.ok, true);
+  assert.equal(r.gate_id, 'cr-gate-42');
+});
+
+test('escalateCrossReview: degraded when the masterplanBin exits non-zero', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'adsp-cr-'));
+  const fakeBin = join(dir, 'bad-mp.mjs');
+  writeFileSync(fakeBin, "process.stderr.write('boom\\n'); process.exit(2);");
+  const r = await escalateCrossReview(
+    '/tmp/state.yml',
+    'cross-model-review',
+    { kind: 'requires_human_decision', reason: 'rework-retries-exhausted' },
+    { masterplanBin: fakeBin }
+  );
+  assert.equal(r.ok, false);
+  assert.equal(r.degraded, true);
+  assert.match(r.reason, /exit 2/);
+});
+
+test('escalateCrossReview: when no masterplanBin is passed, resolves the bin portably via $MP_BIN (no hardcoded /home/<user>)', async () => {
+  // Portability contract: escalating without an explicit bin must NOT fall back to a hardcoded
+  // /home/ras/... literal. Set $MP_BIN to a fake bin and confirm the spawn uses it; unset/blank
+  // $MP_BIN must fall through to resolveMasterplanBin's marketplace install path.
+  const dir = mkdtempSync(join(tmpdir(), 'adsp-cr-'));
+  const fakeBin = join(dir, 'fake-mp.mjs');
+  writeFileSync(fakeBin, "process.stdout.write(JSON.stringify({gate_id:'via-mp-bin'})+'\\n');");
+  // Save/restore MP_BIN so this test doesn't leak env state into the suite.
+  const savedBin = process.env.MP_BIN;
+  try {
+    process.env.MP_BIN = fakeBin;
+    const r = await escalateCrossReview(
+      '/tmp/state.yml',
+      'portability-probe',
+      { kind: 'requires_human_decision', reason: 'supervised-disagreement', review_record: { final_verdict: 'rework' } },
+      // NO masterplanBin opt — forces the $MP_BIN / resolveMasterplanBin resolution path.
+    );
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.equal(r.gate_id, 'via-mp-bin');
+    assert.ok(!r.reason || !r.reason.includes('/home/ras'), `must not leak home path: ${r.reason}`);
+  } finally {
+    if (savedBin === undefined) delete process.env.MP_BIN; else process.env.MP_BIN = savedBin;
+  }
+});
+
+test('revertCrossReview: rejects empty wtPath', async () => {
+  const r = await revertCrossReview('', { files: ['x.js'] });
+  assert.equal(r.ok, false);
+  assert.equal(r.degraded, true);
+});
+
+test('revertCrossReview: returns ok + scope for a valid path (deferred impl)', async () => {
+  const r = await revertCrossReview('/srv/dev/.../worktree', { files: ['foo.js'] });
+  assert.equal(r.ok, true);
+  assert.equal(r.scope.files[0], 'foo.js');
+});

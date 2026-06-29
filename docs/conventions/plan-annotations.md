@@ -54,10 +54,11 @@ on a fragment; the serial `mp-planner` path emits them directly):**
   `verify_commands`, no design judgment.
 - `codex: "no"` — anything needing taste, cross-file reasoning, or touching secrets /
   auth / production / schema migrations.
-- `codex: null` (or omit) — defer to `lib/routing.mjs`'s heuristic.
+- `codex: null` (or omit) — defer to `lib/dispatch/routing.mjs`'s heuristic.
 - Routing's `target` is **informational** in v8: implementation is inline-only (there
   is no Codex implementer). `codex` records what a future implementer tier *could*
-  offload, but in v8 it gates **no** runtime behaviour — the optional review stage is
+  offload — that staged tier is the currently-unwired adsp-v1 broker adapter
+  (`lib/dispatch/adsp-adapter.mjs`) — but in v8 it gates **no** runtime behaviour — the optional review stage is
   gated solely by the bundle's `state.review.adversary` config, independent of any task's
   `codex`/`target`.
 

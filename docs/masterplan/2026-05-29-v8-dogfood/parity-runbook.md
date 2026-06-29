@@ -208,7 +208,7 @@ JSON.parse(args) : (args ?? {})` — no action needed.)
 When all three confirm:
 
 - Append a "RESIDUAL CLOSED" note to [`parity-report.md`](./parity-report.md) (real-agent run id, the three confirmations with evidence).
-- Update plan `/home/grojas/.claude/plans/i-feel-like-we-ve-swift-lampson.md` Build-step 8 status: residual retired.
+- Update plan `/home/ras/.claude/plans/i-feel-like-we-ve-swift-lampson.md` Build-step 8 status: residual retired.
 - Update memory `v8-clean-core-rebuild.md`: drop "ONE residual blocks the cutover" → "parity proven, cutover unblocked (user-gated)".
 - The cutover (merge to `main` + version bump + manifest swap + the decided full v7 self-instrumentation removal — see `parity-report.md` / WORKLOG telemetry-gate entry) is now the only remaining v8 work, and it **stays user-gated** — do not start it unprompted.
 

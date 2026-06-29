@@ -19,7 +19,7 @@ import { check as worktreeIntegrity, fix as worktreeIntegrityFix } from '../lib/
 import { check as codexAuth } from '../lib/doctor/codex-auth.mjs';
 import { check as stateSchema } from '../lib/doctor/state-schema.mjs';
 import { check as legacyBundle } from '../lib/doctor/legacy-bundle.mjs';
-import { check as adversaryLaneHealth } from '../lib/doctor/adversary-lane-health.mjs';
+import { check as adversaryLaneHealth, parseResolveOutput, parseConfiguredBackends } from '../lib/doctor/adversary-lane-health.mjs';
 import { check as indexStaleness } from '../lib/doctor/index-staleness.mjs';
 import { check as staleLock } from '../lib/doctor/stale-lock.mjs';
 import { check as pluginRegistryDrift } from '../lib/doctor/plugin-registry-drift.mjs';
@@ -440,7 +440,7 @@ test('worktree-integrity fix: skips an archived bundle whose worktree is gone (s
 test('worktree-integrity fix: clears a legacy schema<6 bundle (issue #7\'s real payload — the pre-rename /home/... cases) without dropping fields', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-wt-fix-legacy-'));
   const slug = 'cli-oper-queries';
-  const gone = '/home/grojas/dev/petabit-os-stack/petabit-os-mgmt/.claude/worktrees/phase-25'; // pre-rename, gone
+  const gone = '/home/ras/dev/petabit-os-stack/petabit-os-mgmt/.claude/worktrees/phase-25'; // pre-rename, gone
   const statePath = path.join(tmp, 'docs', 'masterplan', slug, 'state.yml');
   fs.mkdirSync(path.dirname(statePath), { recursive: true });
   // A v5.0.1-era bundle: quoted '5.1' schema_version + flat worktree/branch + v7-only fields.
@@ -634,6 +634,127 @@ test('adversary-lane-health: resolves but backend unhealthy → WARN (advisory, 
   assert.match(findings[0].summary, /unhealthy/);
   // advisory invariant: never ERROR
   assert.ok(!findings.some((f) => f.severity === 'ERROR'), 'an advisory lane must never surface ERROR');
+});
+
+// Real-world shape: `resolve --class adversary` THROWS (non-zero exit, e.g. chain_exhausted) when
+// the gateway backend is down, so the route+backend never materialize. The fallback probes the
+// CONFIGURED backends (via dispatch-policy.jsonc) so the WARN can name the sick backend — this is
+// the live state the audit's original fix failed to reach (its JSON-parse/backend-probe path was
+// unreachable because resolve itself threw before that code ran).
+test('adversary-lane-health: resolve throws but configured backend unhealthy → specific WARN naming the backend', () => {
+  const probe = () => ({
+    onPath: true,
+    resolves: false,
+    route: null,
+    healthy: null,
+    detail: null,
+    unhealthyBackends: ['dispatch-gateway'],
+  });
+  const findings = adversaryLaneHealth('/unused', { probe });
+  assertFindingShape(findings);
+  assert.equal(maxSeverity(findings), 'WARN', JSON.stringify(findings));
+  assert.match(findings[0].summary, /dispatch-gateway reports unhealthy/);
+  assert.match(findings[0].summary, /resolve --class adversary` exhausted/);
+  // advisory invariant: never ERROR
+  assert.ok(!findings.some((f) => f.severity === 'ERROR'), 'an advisory lane must never surface ERROR');
+});
+
+test('adversary-lane-health: resolve throws and no backend identifiable → generic resolve-failed WARN', () => {
+  const probe = () => ({
+    onPath: true,
+    resolves: false,
+    route: null,
+    healthy: null,
+    detail: 'no policy / no configured backends',
+    unhealthyBackends: null,
+  });
+  const findings = adversaryLaneHealth('/unused', { probe });
+  assertFindingShape(findings);
+  assert.equal(maxSeverity(findings), 'WARN', JSON.stringify(findings));
+  assert.match(findings[0].summary, /resolve --class adversary` failed/);
+});
+
+// ---- parseResolveOutput: pure parser for the flaky `resolve` stdout ----
+
+test('parseResolveOutput: valid JSON with backend → ok, route+backend extracted', () => {
+  const r = parseResolveOutput(JSON.stringify({ decision: 'dispatch', backend: 'dispatch-gateway', route: 'dispatch-adversary', provider: 'skynet' }));
+  assert.equal(r.ok, true);
+  assert.equal(r.backend, 'dispatch-gateway');
+  assert.equal(r.route, 'dispatch-adversary');
+  assert.equal(r.reason, null);
+});
+
+test('parseResolveOutput: empty output → unresolved (reason=empty)', () => {
+  const r = parseResolveOutput('   ');
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'empty');
+});
+
+test('parseResolveOutput: bare `chain_exhausted` token on stdout → unresolved', () => {
+  // The flaky gateway-down shape: `resolve` exits 0 but prints a bare failure token. The OLD
+  // code treated any non-JSON output as a route label (PASS) — this was the silent no-op.
+  const r = parseResolveOutput('chain_exhausted');
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'chain_exhausted');
+  assert.equal(r.backend, null);
+});
+
+test('parseResolveOutput: JSON with decision=escalate → unresolved', () => {
+  const r = parseResolveOutput(JSON.stringify({ decision: 'escalate', reason: 'confidence-below-threshold' }));
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'escalate');
+  assert.equal(r.backend, null);
+});
+
+test('parseResolveOutput: JSON with no backend → unresolved (reason=no_backend)', () => {
+  const r = parseResolveOutput(JSON.stringify({ decision: 'dispatch', route: 'dispatch-adversary' }));
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'no_backend');
+  assert.equal(r.backend, null);
+});
+
+test('parseResolveOutput: non-JSON non-failure string → unresolved (reason=non_json, route label kept)', () => {
+  // Legacy bare-string CLI output that isn't a known failure token: keep the label but treat as
+  // unresolved (no backend) so the fallback path can fire.
+  const r = parseResolveOutput('skynet-local/dispatch-adversary');
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'non_json');
+  assert.equal(r.route, 'skynet-local/dispatch-adversary');
+  assert.equal(r.backend, null);
+});
+
+// ---- parseConfiguredBackends: pure JSONC parser for dispatch-policy.jsonc ----
+
+test('parseConfiguredBackends: extracts the adversary class backend chain (JSONC tolerant)', () => {
+  const policy = `{
+    // line comment
+    /* block comment */
+    "classes": {
+      "adversary": {
+        "chain": [
+          { "backend": "dispatch-gateway", "capability": "review", },
+        ],
+      },
+      "critic": { "chain": [ { "backend": "other" } ] },
+    },
+  }`;
+  const backends = parseConfiguredBackends(policy);
+  assert.deepEqual(backends, ['dispatch-gateway']);
+});
+
+test('parseConfiguredBackends: empty/missing adversary → []', () => {
+  assert.deepEqual(parseConfiguredBackends('{}'), []);
+  assert.deepEqual(parseConfiguredBackends('{"classes":{}}'), []);
+  assert.deepEqual(parseConfiguredBackends(''), []);
+});
+
+test('parseConfiguredBackends: dedupes repeated backends preserving order', () => {
+  const policy = JSON.stringify({ classes: { adversary: { chain: [
+    { backend: 'dispatch-gateway' },
+    { backend: 'pi-subagent' },
+    { backend: 'dispatch-gateway' },
+  ] } } });
+  assert.deepEqual(parseConfiguredBackends(policy), ['dispatch-gateway', 'pi-subagent']);
 });
 
 // ---- index-staleness (plan-scoped, node:crypto) ------------------------------

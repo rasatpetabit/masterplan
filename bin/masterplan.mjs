@@ -151,7 +151,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, setWorktree, setWorktreeDisposition, setVerifiedSha, setCodexConfig, setReviewConfig, loadPlanTasks, buildSeedState, buildTasksFromPlanIndex, appendEvent, setCoordination, applyPlanIndex } from '../lib/bundle.mjs';
+import { readState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, setWorktree, setWorktreeDisposition, setVerifiedSha, setCodexConfig, setReviewConfig, loadPlanTasks, buildSeedState, buildTasksFromPlanIndex, appendEvent, setCoordination, applyPlanIndex, rebasePaths } from '../lib/bundle.mjs';
 import { planWorktreeCreate, parseWorktreeList, classifyWorktrees, normalizeDisposition, dispositionAfterTeardown, VALID_DISPOSITIONS as VALID_WORKTREE_DISPOSITION } from '../lib/worktree.mjs';
 import { collectDiskDirs, collectBundleRecords } from '../lib/worktree-fs.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
@@ -162,6 +162,7 @@ import { decideNextAction } from '../lib/resume.mjs';
 import { prepareWave, declaredScope, verifyScope } from '../lib/wave.mjs';
 import { detectHost } from '../lib/dispatch/index.mjs';
 import { selectCodexReviewForHead } from '../lib/review-companion.mjs';
+import { selectGateReview, gateEventTypes, validateGateReceipt } from '../lib/gate-review.mjs';
 import { resolveConfigDir } from '../lib/paths.mjs';
 import { createHash } from 'node:crypto';
 import { mergePlanFragments, validatePlanIndex, renderPlanMd, renderPlanHtml } from '../lib/plan-merge.mjs';
@@ -174,6 +175,156 @@ import { recordWaveResult } from '../lib/wave-commit.mjs';
 import { continueRun } from '../lib/continue.mjs';
 import { finishStep } from '../lib/finish-step.mjs';
 import { sweepWorktrees } from '../lib/sweep.mjs';
+
+// ---- spec/plan gate-review enforcement (the two PRE-EXECUTE adversary gates) ----
+// The bin fs boundary for lib/gate-review.mjs (the pure scanner). These two functions recompute a
+// content hash over the CURRENT bytes of a gate's reviewed artifacts so editing any input RE-ARMS the
+// gate (H1: never trust a hash stamped inside a mutable artifact). The plan gate NORMALIZES
+// plan.index.json — load-plan itself stamps plan_hash/generated_at DURING the load, so stripping those
+// fields keeps the gate key stable across that stamping (no spurious re-review on resume).
+// Resolve a gate's reviewed artifacts to CONFINED, role-tagged descriptors — the SINGLE source of truth
+// for enforce / record / gate-hash so a record and its guard can never hash different bytes. Every
+// candidate is realpathSync'd (existence is fail-closed; symlinks are resolved) then CONFINED to the
+// bundle dir: a path that escapes (../, or absolute after realpath — e.g. a symlink spec.md → /tmp/ok)
+// is refused on ALL ops, regardless of --force. set-phase NEVER honors path flags (canonical bundle
+// paths only), so a caller can't pass --plan-index=/tmp/reviewed to dodge the gate; load-plan / record /
+// gate-hash honor --plan-index/--plan-md because there the flag IS the operation target (still confined).
+function gateConfine(candidateAbs, bundleDirReal, label) {
+  let real;
+  try {
+    real = fs.realpathSync(candidateAbs);
+  } catch (e) {
+    die(`gate-review: ${label} unreadable (${candidateAbs}): ${e.message} — refusing (fail-closed: cannot gate a missing/unresolvable artifact).`, 1);
+  }
+  const rel = path.relative(bundleDirReal, real);
+  if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) {
+    die(`gate-review: ${label} resolves outside the bundle (${real} not under ${bundleDirReal}) — refusing (path/symlink escape).`, 1);
+  }
+  return { absPath: real, relName: rel };
+}
+function resolveGateArtifacts({ gate, statePath, state, flags, op }) {
+  let bundleDirReal;
+  try {
+    bundleDirReal = fs.realpathSync(path.dirname(statePath));
+  } catch (e) {
+    die(`gate-review: bundle directory unreadable: ${e.message}`, 1);
+  }
+  const honorFlags = op === 'load-plan' || op === 'record' || op === 'gate-hash';
+  const specRaw =
+    state && typeof state.spec_path === 'string' && state.spec_path
+      ? state.spec_path
+      : path.join(bundleDirReal, 'spec.md');
+  const spec = gateConfine(path.resolve(bundleDirReal, specRaw), bundleDirReal, 'spec.md');
+  if (gate === 'spec') return [{ role: 'spec', ...spec }];
+  if (gate === 'plan') {
+    const idxRaw = honorFlags && flags['plan-index'] ? flags['plan-index'] : path.join(bundleDirReal, 'plan.index.json');
+    const planIndex = gateConfine(path.resolve(bundleDirReal, idxRaw), bundleDirReal, 'plan.index.json');
+    const mdRaw = honorFlags && flags['plan-md'] ? flags['plan-md'] : path.join(path.dirname(planIndex.absPath), 'plan.md');
+    const planMd = gateConfine(path.resolve(bundleDirReal, mdRaw), bundleDirReal, 'plan.md');
+    // FIXED order — the hash is order-sensitive: spec, plan.md, plan.index.json.
+    return [{ role: 'spec', ...spec }, { role: 'planMd', ...planMd }, { role: 'planIndex', ...planIndex }];
+  }
+  throw new Error(`gate-review: unknown gate '${gate}' — expected 'spec' or 'plan'`);
+}
+// Strip the two SELF-STAMPED, mutable fields (load-plan writes plan_hash + generated_at DURING the load)
+// and re-serialize with sorted TOP-LEVEL keys, so the gate key is stable across that stamping and across
+// any top-level reordering. Nested order (the task list) is preserved — it is semantic.
+function normalizeIndexBytes(obj) {
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return Buffer.from(JSON.stringify(obj));
+  const copy = { ...obj };
+  delete copy.plan_hash;
+  delete copy.generated_at;
+  const sorted = {};
+  for (const k of Object.keys(copy).sort()) sorted[k] = copy[k];
+  return Buffer.from(JSON.stringify(sorted));
+}
+// Read a descriptor's gate-relevant bytes by ROLE (not basename — a --plan-index not literally named
+// plan.index.json must still be normalized). planIndex: JSON.parse (unparseable → fail-closed die on
+// EVERY path, never an empty-buffer pass) then normalize; spec/planMd: raw bytes. `preread` (load-plan's
+// already-parsed index) closes the read→hash TOCTOU: we hash the exact object we validate + materialize.
+function readGateArtifactBytes(descriptor, preread) {
+  if (descriptor.role === 'planIndex') {
+    let obj = preread;
+    if (obj === undefined) {
+      let text;
+      try {
+        text = fs.readFileSync(descriptor.absPath, 'utf8');
+      } catch (e) {
+        die(`gate-review: ${descriptor.relName} unreadable: ${e.message} — refusing (fail-closed).`, 1);
+      }
+      try {
+        obj = JSON.parse(text);
+      } catch (e) {
+        die(`gate-review: ${descriptor.relName} is not valid JSON (${e.message}) — refusing to gate an unparseable plan index.`, 1);
+      }
+    }
+    return normalizeIndexBytes(obj);
+  }
+  try {
+    return fs.readFileSync(descriptor.absPath);
+  } catch (e) {
+    die(`gate-review: ${descriptor.relName} unreadable: ${e.message} — refusing (fail-closed).`, 1);
+  }
+}
+function computeGateHash(descriptors, prereadIndex) {
+  const h = createHash('sha256');
+  for (const d of descriptors) {
+    h.update(d.relName);
+    h.update('\0');
+    h.update(readGateArtifactBytes(d, d.role === 'planIndex' ? prereadIndex : undefined));
+    h.update('\0');
+  }
+  return `sha256:${h.digest('hex')}`;
+}
+// The guard. UNCONDITIONAL: it never reads state.review.adversary — a missing/off flag must NOT be able
+// to silently disable enforcement (H5 fail-closed). A recorded done OR skipped event at the CURRENT hash
+// satisfies it (fail-soft: a degraded lane records a skip and the flow advances — docs/policy/dispatch.md,
+// the lane never hard-blocks). --force is the explicit escape hatch: it appends a `<gate>_gate_bypassed`
+// audit event and returns (no resolve/hash, so recovery works even with missing/escaping artifacts).
+// Otherwise it writes the actionable run_gate_review op to fd 1 with a SYNCHRONOUS write (never out()+exit
+// — process.exit can truncate a buffered large write) and EXITS NONZERO (3): a dumb caller fails loudly,
+// while the masterplan shell parses the op and satisfies it.
+function enforceGateReview(gate, statePath, flags, state, opts = {}) {
+  gateEventTypes(gate); // validate the gate name up front (throws on caller bug, even under --force)
+  if (flags.force) {
+    try {
+      appendEvent(statePath, {
+        type: `${gate}_gate_bypassed`,
+        ts: new Date().toISOString(),
+        data: { reason: 'force' },
+        summary: `${gate} gate bypassed via --force`,
+      });
+    } catch {
+      /* audit is best-effort — never block a --force recovery on an events.jsonl write */
+    }
+    return;
+  }
+  const op = opts.op || (gate === 'spec' ? 'set-phase' : 'load-plan');
+  const descriptors = resolveGateArtifacts({ gate, statePath, state, flags, op });
+  const hash = computeGateHash(descriptors, opts.prereadIndex);
+  const eventsPath = path.join(path.dirname(statePath), 'events.jsonl');
+  let text = '';
+  try {
+    text = fs.readFileSync(eventsPath, 'utf8');
+  } catch (e) {
+    if (e.code !== 'ENOENT') die(`gate-review: events.jsonl unreadable: ${e.message}`, 1);
+  }
+  if (selectGateReview(text, gate, hash).present) return;
+  const opObj = {
+    op: 'run_gate_review',
+    gate,
+    hash,
+    artifacts: descriptors.map((d) => d.relName),
+    message:
+      `${gate} gate: no cross-vendor adversarial review is recorded for the CURRENT ${gate} artifacts. ` +
+      `Run the adversary lane (agent-dispatch review --class adversary) over them, then record it: ` +
+      `\`mp record-gate-review --state=${statePath} --gate=${gate} --status=done --receipt=<receipt.json>\` ` +
+      `(or --status=skipped --reason=<why> --digest-file=<notes> if the lane is degraded), then retry this ` +
+      `transition. (--force bypasses for recovery/scripting and is audited.)`,
+  };
+  fs.writeSync(1, JSON.stringify(opObj) + '\n');
+  process.exit(3);
+}
 
 // ---- tiny arg parser: positional[], flags{} (--k=v, or --k as boolean true) ----
 function parseArgs(argv) {
@@ -557,7 +708,22 @@ function main() {
       // (unguarded by merge-plan-fragments' pre-write validation), so this is the compensating gate.
       const p = need(flags, 'state');
       const state = loadForWrite(p);
+      // Clobber guard FIRST (P3a): a bundle that already has tasks (a double-load / crash-recovery re-run
+      // on a populated bundle) is a cheap STRUCTURAL rejection — refuse it BEFORE reading/parsing/
+      // validating/gating an index we would never apply, so the operator sees the real "already populated"
+      // message rather than a confusing downstream parse/validate error. loadPlanTasks keeps its own
+      // identical guard (defense in depth for its other callers); this is the bin-layer hoist so the
+      // refusal precedes both index validation and the gate (mirrors set-phase's 0-task guard ordering).
+      if (state.tasks?.length) {
+        die(
+          `load-plan: ${p} already has ${state.tasks.length} task(s) — refusing to overwrite execution ` +
+            `state. (To re-derive waves on an existing task list, use backfill-waves.)`,
+          1
+        );
+      }
       const planIndexPath = need(flags, 'plan-index');
+      // Read + parse the index ONCE; reuse this object for validate + gate + stamp + materialize (closes
+      // the read→hash TOCTOU — the gate hashes the exact bytes we validated and will materialize).
       let index;
       try {
         index = JSON.parse(readText(planIndexPath));
@@ -581,6 +747,12 @@ function main() {
         for (const e of errors) process.stderr.write(`  - ${e}\n`);
         die(`load-plan: ${errors.length} error(s) in ${planIndexPath} — refusing to materialize an invalid plan.`, 1);
       }
+      // §plan gate: the plan→execute seam requires a recorded cross-vendor adversarial review of the
+      // CURRENT plan artifacts (spec.md + plan.md + normalized plan.index.json). AFTER the clobber guard
+      // (hoisted above) and index validation (don't gate a malformed plan), BEFORE the plan_hash stamping
+      // below (the gate hash normalizes that stamp out). Pass the already-parsed index as prereadIndex so
+      // the gate hashes exactly the bytes we validated and will materialize. Exits nonzero unless --force.
+      enforceGateReview('plan', p, flags, state, { op: 'load-plan', prereadIndex: index });
       // A3: plan_hash parity — if the loaded index lacks plan_hash, compute sha256:<hex of plan.md>
       // in the exact merge-plan-fragments form and stamp it + generated_at into the index file.
       // Graceful: skip silently if plan_hash already present OR plan.md is not readable (the test
@@ -883,6 +1055,11 @@ function main() {
             `--plan-index=<bundle>/plan.index.json\` (or \`mp load-plan\`, which advances phase atomically) ` +
             `first to load the plan into state.tasks (§3 ordering). Pass --force to advance the phase anyway.`, 1);
       }
+      // §spec/plan gate enforcement: --phase=plan is the brainstorm→plan (SPEC) advance; --phase=execute
+      // is the alt plan→execute (PLAN) path (load-plan is the normal one, gated identically below — H3
+      // closes this bypass). Emits run_gate_review + exits nonzero when unsatisfied; --force bypasses.
+      if (phase === 'plan') enforceGateReview('spec', p, flags, state, { op: 'set-phase' });
+      if (phase === 'execute') enforceGateReview('plan', p, flags, state, { op: 'set-phase' });
       writeState(p, setPhase(state, phase));
       out({ phase });
       break;
@@ -964,6 +1141,26 @@ function main() {
       }
       writeState(p, setWorktreeDisposition(loadForWrite(p), disposition));
       out({ worktree_disposition: disposition });
+      break;
+    }
+    case 'rebase-paths': {
+      // CD-7-compliant writer for the bundle's absolute path fields (spec_path / plan_path /
+      // plan_index_path / worktree) after a repo relocation. The ONLY writer for these fields besides
+      // `seed`; the hand-edit the 2026-06-22 user-owned workstream used was a CD-7 violation. Pure
+      // transform lives in lib/bundle.mjs `rebasePaths`; bin does the load/validate/write + reports
+      // the per-field count so the operator can confirm the rebased fields. Re-runnable: a second
+      // rebase against the already-rebased state is a no-op (the `from` prefix no longer matches).
+      const p = need(flags, 'state');
+      const fromRoot = need(flags, 'from');
+      const toRoot = need(flags, 'to');
+      let st;
+      try {
+        st = rebasePaths(loadForWrite(p), fromRoot, toRoot);
+      } catch (e) {
+        die(e.message, 1);
+      }
+      writeState(p, st);
+      out({ rebased: st._rebased ?? 0, from: fromRoot, to: toRoot });
       break;
     }
     case 'worktree': {
@@ -1227,6 +1424,149 @@ function main() {
       const sha = String(need(flags, 'sha'));
       writeState(p, setVerifiedSha(loadForWrite(p), sha));
       out({ verified_sha: sha });
+      break;
+    }
+    case 'record-gate-review': {
+      // CD-7 write (events.jsonl): record the cross-vendor adversarial review of a spec/plan gate's
+      // CURRENT artifacts so the guard (enforceGateReview) lets the transition proceed. Artifacts + hash
+      // come from the SAME resolver the guard uses — bin owns them; the shell never passes a hash, so a
+      // record and its guard can never disagree about what was reviewed. --status=done REQUIRES a
+      // structured --receipt that echoes THIS hash + artifact set and carries real lane provenance
+      // (validateGateReceipt); --status=skipped (degraded lane, fail-soft) REQUIRES a non-empty --reason
+      // AND a readable, non-empty --digest-file — evidence the operator looked, not a bare bypass.
+      const p = need(flags, 'state');
+      const gate = String(need(flags, 'gate'));
+      if (gate !== 'spec' && gate !== 'plan') {
+        die(`record-gate-review: --gate must be 'spec' or 'plan' (got ${JSON.stringify(gate)})`, 1);
+      }
+      const status = flags.status === undefined ? 'done' : String(flags.status);
+      if (status !== 'done' && status !== 'skipped') {
+        die(`record-gate-review: --status must be 'done' or 'skipped' (got ${JSON.stringify(status)})`, 1);
+      }
+      const state = loadForWrite(p);
+      const descriptors = resolveGateArtifacts({ gate, statePath: p, state, flags, op: 'record' });
+      const hash = computeGateHash(descriptors);
+      const artifacts = descriptors.map((d) => d.relName);
+      const { done, skipped } = gateEventTypes(gate);
+      const data = { hash };
+      // --count: findings tally — when given it must be a non-negative integer.
+      if (flags.count !== undefined) {
+        const n = Number(flags.count);
+        if (!Number.isInteger(n) || n < 0) {
+          die(`record-gate-review: --count must be a non-negative integer (got ${JSON.stringify(flags.count)})`, 1);
+        }
+        data.count = n;
+      }
+      let note;
+      if (status === 'done') {
+        // Structured receipt binding. --receipt is inline JSON (value starts with '{') or a path to a
+        // JSON file (shell-safe, like --digest-file). It must validate against the hash + artifacts above.
+        const receiptRaw = String(need(flags, 'receipt'));
+        let receiptText;
+        if (receiptRaw.trimStart().startsWith('{')) {
+          receiptText = receiptRaw;
+        } else {
+          try {
+            receiptText = fs.readFileSync(receiptRaw, 'utf8');
+          } catch (e) {
+            die(`record-gate-review: --receipt file unreadable: ${e.message}`, 1);
+          }
+        }
+        let receipt;
+        try {
+          receipt = JSON.parse(receiptText);
+        } catch (e) {
+          die(`record-gate-review: --receipt is not valid JSON (${e.message})`, 1);
+        }
+        const v = validateGateReceipt(receipt, { gate, hash, artifacts });
+        if (!v.ok) die(`record-gate-review: receipt rejected — ${v.error}`, 1);
+        data.receipt = {
+          dispatch_id: v.normalized.dispatch_id,
+          provider: v.normalized.provider,
+          model: v.normalized.model,
+          output_tokens: v.normalized.output_tokens,
+          ts: v.normalized.ts,
+        };
+        if (v.normalized.base) data.base = v.normalized.base;
+        else if (flags.base !== undefined) data.base = String(flags.base);
+        note = v.normalized.digest; // selectGateReview surfaces note as the findings digest
+      } else {
+        // skipped — degraded lane. Evidence required: non-empty reason AND a readable, non-empty digest.
+        const reason = String(need(flags, 'reason'));
+        if (!reason.trim()) die('record-gate-review: --reason must be non-empty for --status=skipped', 1);
+        const digestPath = String(need(flags, 'digest-file'));
+        let digestText;
+        try {
+          digestText = fs.readFileSync(digestPath, 'utf8');
+        } catch (e) {
+          die(`record-gate-review: --digest-file unreadable: ${e.message}`, 1);
+        }
+        if (!digestText.trim()) {
+          die(`record-gate-review: --digest-file is empty (${digestPath}) — record the degraded-lane evidence`, 1);
+        }
+        data.reason = reason;
+        if (flags.base !== undefined) data.base = String(flags.base);
+        note = digestText;
+      }
+      // --summary is the audit-scanned signal channel (the session audit counts \b(codex|adversary)\s+
+      // review\b) — default to that literal phrasing for parity with the finish-gate summary.
+      const record = {
+        type: status === 'done' ? done : skipped,
+        ts: flags.ts ?? new Date().toISOString(),
+        data,
+        note,
+        summary:
+          flags.summary !== undefined
+            ? String(flags.summary)
+            : status === 'done'
+              ? `${gate} adversary review complete${data.count !== undefined ? ` — ${data.count} findings` : ''}`
+              : `${gate} adversary review skipped (degraded) — ${data.reason}`,
+      };
+      let eventsPath;
+      try {
+        eventsPath = appendEvent(p, record);
+      } catch (e) {
+        die(e.message, 1);
+      }
+      out({ recorded: record.type, gate, status, hash, path: eventsPath });
+      break;
+    }
+    case 'gate-review-status': {
+      // READ-ONLY: is a spec/plan gate review recorded for the CURRENT artifacts? The shell calls this
+      // to decide whether it must run the review before a transition; enforceGateReview enforces it
+      // independently at the transition itself. Absent events.jsonl == no review yet → { present:false }.
+      const p = need(flags, 'state');
+      const gate = String(need(flags, 'gate'));
+      if (gate !== 'spec' && gate !== 'plan') {
+        die(`gate-review-status: --gate must be 'spec' or 'plan' (got ${JSON.stringify(gate)})`, 1);
+      }
+      const state = loadForWrite(p);
+      const descriptors = resolveGateArtifacts({ gate, statePath: p, state, flags, op: 'gate-hash' });
+      const hash = computeGateHash(descriptors);
+      const eventsPath = path.join(path.dirname(p), 'events.jsonl');
+      let text = '';
+      try {
+        text = fs.readFileSync(eventsPath, 'utf8');
+      } catch (e) {
+        if (e.code !== 'ENOENT') die(`gate-review-status: events.jsonl unreadable: ${e.message}`, 1);
+      }
+      out({ gate, hash, artifacts: descriptors.map((d) => d.relName), ...selectGateReview(text, gate, hash) });
+      break;
+    }
+    case 'gate-hash': {
+      // READ-ONLY: compute the gate hash + the relative artifact names for the CURRENT artifacts. The
+      // caller (the masterplan shell, or a test) runs this to learn the exact { hash, artifacts } to echo
+      // back into a --receipt for record-gate-review. Same resolver as enforce/record, so the values
+      // match what the guard will demand.
+      const p = need(flags, 'state');
+      const gate = String(need(flags, 'gate'));
+      if (gate !== 'spec' && gate !== 'plan') {
+        die(`gate-hash: --gate must be 'spec' or 'plan' (got ${JSON.stringify(gate)})`, 1);
+      }
+      const state = loadForWrite(p);
+      const descriptors = resolveGateArtifacts({ gate, statePath: p, state, flags, op: 'gate-hash' });
+      const hash = computeGateHash(descriptors);
+      out({ gate, hash, artifacts: descriptors.map((d) => d.relName) });
       break;
     }
 

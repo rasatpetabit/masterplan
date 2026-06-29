@@ -32,6 +32,52 @@ function tmpBundle(stateObj) {
   return p;
 }
 const read = (p) => parseState(fs.readFileSync(p, 'utf8'));
+// Satisfy a pre-execute gate the honest way: mint a structured receipt for the gate's CURRENT artifacts
+// and record it as done so enforceGateReview lets the transition proceed — exercising the real gate-
+// satisfied path, NEVER --force. The gate is fail-closed (required artifacts must exist on disk), so we
+// stub spec.md / plan.md / plan.index.json if the fixture didn't create them; `ensure` never clobbers a
+// file the test wrote. We learn the exact { hash, artifacts } via `gate-hash` and echo them into the
+// receipt (the same --plan-md/--plan-index in `extra` go to both, so the hashes match). Asserts it landed.
+function passGate(statePath, gate, extra = []) {
+  const dir = path.dirname(statePath);
+  const ensure = (name, content) => {
+    const fp = path.join(dir, name);
+    if (!fs.existsSync(fp)) fs.writeFileSync(fp, content);
+  };
+  ensure('spec.md', '# spec\nstub spec for gate test\n');
+  if (gate === 'plan') {
+    ensure('plan.md', '# plan\nstub plan for gate test\n');
+    ensure('plan.index.json', JSON.stringify({ schema_version: '6.0', tasks: [] }));
+  }
+  const gh = run(['gate-hash', `--state=${statePath}`, `--gate=${gate}`, ...extra]);
+  assert.equal(gh.status, 0, `passGate(${gate}) gate-hash must succeed: ${gh.stderr}`);
+  const { hash, artifacts } = JSON.parse(gh.stdout);
+  const receiptPath = path.join(dir, `gate-${gate}-receipt.json`);
+  fs.writeFileSync(
+    receiptPath,
+    JSON.stringify({
+      gate,
+      hash,
+      artifacts,
+      dispatch_id: 'test-dispatch',
+      provider: 'test',
+      model: 'test-model',
+      output_tokens: 1,
+      status: 'done',
+      ts: '2026-01-01T00:00:00Z',
+      digest: 'test findings: none blocking',
+    })
+  );
+  const r = run([
+    'record-gate-review',
+    `--state=${statePath}`,
+    `--gate=${gate}`,
+    '--status=done',
+    `--receipt=${receiptPath}`,
+    ...extra,
+  ]);
+  assert.equal(r.status, 0, `passGate(${gate}) must record cleanly: ${r.stderr}`);
+}
 const v8 = (over = {}) => ({
   schema_version: '6.0', slug: 'demo', pending_gate: null, active_run: null,
   tasks: [
@@ -175,6 +221,7 @@ test('load-plan: materializes tasks + advances phase→execute atomically; decid
   const planIdx = path.join(dir, 'plan.index.json');
   fs.writeFileSync(planIdx, JSON.stringify(planIndexFixture()));
 
+  passGate(p, 'plan');
   const r = run(['load-plan', `--state=${p}`, `--plan-index=${planIdx}`]);
   assert.equal(r.status, 0);
   assert.deepEqual(JSON.parse(r.stdout), { loaded: 3, waves: 2, phase: 'execute' });
@@ -211,6 +258,7 @@ test('load-plan: also auto-emits a static plan.html (minimal bundle: no spec.md/
   const planIdx = path.join(dir, 'plan.index.json');
   fs.writeFileSync(planIdx, JSON.stringify(planIndexFixture()));
 
+  passGate(p, 'plan');
   const r = run(['load-plan', `--state=${p}`, `--plan-index=${planIdx}`]);
   assert.equal(r.status, 0);
   const html = fs.readFileSync(path.join(dir, 'plan.html'), 'utf8');
@@ -230,6 +278,7 @@ test('load-plan: a plan.html write failure is swallowed and never fails the atom
   fs.writeFileSync(planIdx, JSON.stringify(planIndexFixture()));
   fs.mkdirSync(path.join(dir, 'plan.html')); // EISDIR on write → forces a render/write failure
 
+  passGate(p, 'plan');
   const r = run(['load-plan', `--state=${p}`, `--plan-index=${planIdx}`]);
   assert.equal(r.status, 0, 'load-plan must succeed despite the artifact write failure');
   assert.deepEqual(JSON.parse(r.stdout), { loaded: 3, waves: 2, phase: 'execute' });
@@ -337,6 +386,7 @@ test('set-phase: refuses --phase=execute on an empty-tasks bundle, names both se
   assert.equal(read(forced).phase, 'execute');
   // …and advancing a bundle that DOES have tasks (v8 ships 2) is still allowed without --force.
   const withTasks = tmpBundle(v8({ phase: 'plan' }));
+  passGate(withTasks, 'plan');
   assert.equal(JSON.parse(run(['set-phase', `--state=${withTasks}`, '--phase=execute']).stdout).phase, 'execute');
   assert.equal(read(withTasks).phase, 'execute');
 });
@@ -352,6 +402,7 @@ test('set-phase / set-status: write the lifecycle fields; reject a value outside
   // The CD-7 closure for the line-333 hand-edit: there is now an `mp` write for the phase/status
   // fields, so the orchestrator never hand-edits state.yml to advance a phase or archive a run.
   const p = tmpBundle(v8());
+  passGate(p, 'spec');
   assert.equal(JSON.parse(run(['set-phase', `--state=${p}`, '--phase=plan']).stdout).phase, 'plan');
   assert.equal(read(p).phase, 'plan');
   assert.equal(JSON.parse(run(['set-status', `--state=${p}`, '--status=archived']).stdout).status, 'archived');
@@ -385,6 +436,46 @@ test('set-worktree-disposition: write the field; reject a value outside the enum
   assert.notEqual(bad.status, 0);
   assert.match(bad.stderr, /invalid --disposition/);
   assert.equal(read(p).worktree_disposition, 'active'); // unchanged by the rejected write
+});
+
+test('rebase-paths: rewrite the absolute path fields under a new repo root (CD-7 writer for repo relocation)', () => {
+  // Closing the 2026-06-22 hand-edit gap: the bundle's absolute path fields (spec_path / plan_path /
+  // plan_index_path / worktree) get stale when the repo moves. `mp rebase-paths` is the single-writer
+  // (CD-7) replacement for hand-editing state.yml after a repo move. Reports the rebased field count.
+  const p = tmpBundle(v8({
+    spec_path: '/srv/dev/masterplan/docs/b/spec.md',
+    plan_path: '/srv/dev/masterplan/docs/b/plan.md',
+    plan_index_path: '/srv/dev/masterplan/docs/b/plan.index.json',
+    worktree: '/srv/dev/masterplan/.worktrees/b',
+    topic: 'unrelated',
+  }));
+  const out = JSON.parse(run(['rebase-paths', `--state=${p}`, '--from=/srv/dev/masterplan', '--to=/srv/dev/ras/masterplan']).stdout);
+  assert.equal(out.rebased, 4);
+  const after = read(p);
+  assert.equal(after.spec_path, '/srv/dev/ras/masterplan/docs/b/spec.md');
+  assert.equal(after.plan_path, '/srv/dev/ras/masterplan/docs/b/plan.md');
+  assert.equal(after.plan_index_path, '/srv/dev/ras/masterplan/docs/b/plan.index.json');
+  assert.equal(after.worktree, '/srv/dev/ras/masterplan/.worktrees/b');
+  assert.equal(after.topic, 'unrelated'); // unrelated field untouched
+});
+
+test('rebase-paths: re-running with the same `from` is a no-op (idempotent re-rebase)', () => {
+  const p = tmpBundle(v8({
+    spec_path: '/srv/dev/masterplan/docs/b/spec.md',
+    plan_path: '/srv/dev/masterplan/docs/b/plan.md',
+    plan_index_path: '/srv/dev/masterplan/docs/b/plan.index.json',
+    worktree: '/srv/dev/masterplan/.worktrees/b',
+  }));
+  run(['rebase-paths', `--state=${p}`, '--from=/srv/dev/masterplan', '--to=/srv/dev/ras/masterplan']);
+  const second = JSON.parse(run(['rebase-paths', `--state=${p}`, '--from=/srv/dev/masterplan', '--to=/srv/dev/ras/masterplan']).stdout);
+  assert.equal(second.rebased, 0); // already rebased — prefix no longer matches
+});
+
+test('rebase-paths: rejects a relative root at the bin boundary (validation surface)', () => {
+  const p = tmpBundle(v8({ spec_path: '/srv/dev/masterplan/docs/b/spec.md' }));
+  const bad = run(['rebase-paths', `--state=${p}`, '--from=relative/from', '--to=/srv/x']);
+  assert.notEqual(bad.status, 0);
+  assert.match(bad.stderr, /must be absolute paths/);
 });
 
 // ---- worktree plan|record|reconcile (Phase 1 lifecycle subcommands) ----------
@@ -908,7 +999,8 @@ test('seed-tasks: populates state.tasks from plan.index.json so a freshly-planne
   const dir = tmpDir('mp-seedtasks-');
   const p = path.join(dir, 'state.yml');
   run(['seed', `--state=${p}`, '--slug=lic-lock', '--topic=commercial license lock']);
-  run(['set-phase', `--state=${p}`, '--phase=plan']);
+  passGate(p, 'spec');
+  assert.equal(JSON.parse(run(['set-phase', `--state=${p}`, '--phase=plan']).stdout).phase, 'plan');
   const planIdx = path.join(dir, 'plan.index.json');
   const planTasks = Array.from({ length: 42 }, (_, i) => ({
     id: i + 1, wave: Math.floor(i / 6), files: [`src/f${i}.rs`], description: `task ${i + 1}`,
@@ -927,7 +1019,8 @@ test('seed-tasks: populates state.tasks from plan.index.json so a freshly-planne
   assert.ok(!('description' in s.tasks[0]) && !('codex' in s.tasks[0]));                      // rich fields stay in plan.index
   // BEFORE this fix the orchestrator had to hand-write state.yml here. With tasks loaded, at
   // phase=execute decide dispatches wave 0 — NOT `complete` over an empty run.
-  run(['set-phase', `--state=${p}`, '--phase=execute']);
+  passGate(p, 'plan');
+  assert.equal(JSON.parse(run(['set-phase', `--state=${p}`, '--phase=execute']).stdout).phase, 'execute');
   const d = JSON.parse(run(['decide', `--state=${p}`]).stdout);
   assert.equal(d.action, 'dispatch_wave');
   assert.equal(d.wave, 0);
@@ -975,7 +1068,8 @@ test('ISSUE G: set-phase execute over 0 tasks is refused (--force advances but d
   const dir = tmpDir('mp-issueg-');
   const p = path.join(dir, 'state.yml');
   run(['seed', `--state=${p}`, '--slug=lic-lock', '--topic=commercial license lock']);
-  run(['set-phase', `--state=${p}`, '--phase=plan']);
+  passGate(p, 'spec');
+  assert.equal(JSON.parse(run(['set-phase', `--state=${p}`, '--phase=plan']).stdout).phase, 'plan');
   // (1) write guard: refuse to enter execute with 0 tasks; phase stays 'plan', nothing written.
   const refused = run(['set-phase', `--state=${p}`, '--phase=execute']);
   assert.equal(refused.status, 1);
@@ -1732,4 +1826,153 @@ test('base-drift: missing recorded-base -> action:requeue (safety-first)', () =>
   const r = run(['base-drift', '--recorded-base=', '--current-head=some-head']);
   assert.equal(r.status, 0);
   assert.equal(JSON.parse(r.stdout).action, 'requeue');
+});
+
+// ---- integration: pre-execute gate enforcement (the adversarial-triage hardening) ----
+// Helpers local to this block: build a plan-phase bundle (tasks:[] to dodge the clobber guard) with the
+// required artifacts on disk so the plan gate is satisfiable.
+function planBundleWithArtifacts() {
+  const p = tmpBundle(v8({ phase: 'plan', tasks: [] }));
+  const dir = path.dirname(p);
+  fs.writeFileSync(path.join(dir, 'spec.md'), '# spec\nreal spec\n');
+  fs.writeFileSync(path.join(dir, 'plan.md'), '# plan\nreal plan\n');
+  const planIdx = path.join(dir, 'plan.index.json');
+  fs.writeFileSync(planIdx, JSON.stringify(planIndexFixture()));
+  return { p, dir, planIdx };
+}
+
+test('gate: unsatisfied set-phase→plan exits 3 with a run_gate_review op and does NOT advance phase', () => {
+  const p = tmpBundle(v8());
+  const dir = path.dirname(p);
+  fs.writeFileSync(path.join(dir, 'spec.md'), '# spec\nreal\n');
+  const before = read(p).phase;
+  const r = run(['set-phase', `--state=${p}`, '--phase=plan']);
+  assert.equal(r.status, 3, `expected exit 3, got ${r.status}: ${r.stderr}`);
+  const op = JSON.parse(r.stdout);
+  assert.equal(op.op, 'run_gate_review');
+  assert.equal(op.gate, 'spec');
+  assert.deepEqual(op.artifacts, ['spec.md']);
+  assert.equal(read(p).phase, before, 'phase must be unchanged when the gate refuses');
+});
+
+test('gate: unsatisfied load-plan exits 3 AFTER index validation and writes no tasks', () => {
+  const { p, planIdx } = planBundleWithArtifacts();
+  const r = run(['load-plan', `--state=${p}`, `--plan-index=${planIdx}`]);
+  assert.equal(r.status, 3, `expected exit 3, got ${r.status}: ${r.stderr}`);
+  assert.equal(JSON.parse(r.stdout).gate, 'plan');
+  assert.equal(read(p).tasks.length, 0, 'no tasks materialized when the gate refuses');
+});
+
+test('gate: editing spec.md re-arms the spec gate (a stale review no longer satisfies it)', () => {
+  const p = tmpBundle(v8());
+  passGate(p, 'spec'); // records done at the current spec.md hash
+  // set-phase would pass now; mutate the reviewed artifact and it must re-arm.
+  fs.appendFileSync(path.join(path.dirname(p), 'spec.md'), '\nNEW CONTENT after review\n');
+  const r = run(['set-phase', `--state=${p}`, '--phase=plan']);
+  assert.equal(r.status, 3, 'editing spec.md must re-arm the gate');
+  assert.equal(JSON.parse(r.stdout).gate, 'spec');
+});
+
+test('gate: editing ONLY plan_hash/generated_at does NOT re-arm the plan gate (they are normalized out)', () => {
+  const { p, planIdx } = planBundleWithArtifacts();
+  passGate(p, 'plan'); // records done over the normalized index
+  const idx = JSON.parse(fs.readFileSync(planIdx, 'utf8'));
+  idx.plan_hash = 'deadbeefdeadbeef';
+  idx.generated_at = '2026-06-25T12:00:00Z';
+  fs.writeFileSync(planIdx, JSON.stringify(idx));
+  const r = run(['load-plan', `--state=${p}`, `--plan-index=${planIdx}`]);
+  assert.equal(r.status, 0, `gate should still pass (normalized hash unchanged): ${r.stderr}${r.stdout}`);
+  assert.ok(read(p).tasks.length > 0, 'tasks materialized — the transition proceeded');
+});
+
+test('gate: --status=skipped requires both --reason and a non-empty --digest-file', () => {
+  const p = tmpBundle(v8());
+  fs.writeFileSync(path.join(path.dirname(p), 'spec.md'), '# spec\n');
+  // no digest-file (missing required flag → usage error)
+  const noDigest = run(['record-gate-review', `--state=${p}`, '--gate=spec', '--status=skipped', '--reason=lane down']);
+  assert.notEqual(noDigest.status, 0);
+  assert.match(noDigest.stderr, /digest-file/);
+  // empty digest-file
+  const empty = path.join(path.dirname(p), 'empty.txt');
+  fs.writeFileSync(empty, '   \n');
+  const emptyDigest = run(['record-gate-review', `--state=${p}`, '--gate=spec', '--status=skipped', '--reason=lane down', `--digest-file=${empty}`]);
+  assert.equal(emptyDigest.status, 1);
+  assert.match(emptyDigest.stderr, /empty/);
+});
+
+test('gate: a recorded skip (with evidence) satisfies the gate — fail-soft', () => {
+  const p = tmpBundle(v8());
+  fs.writeFileSync(path.join(path.dirname(p), 'spec.md'), '# spec\n');
+  const notes = path.join(path.dirname(p), 'lane-error.txt');
+  fs.writeFileSync(notes, 'gateway 503 — adversary lane unreachable\n');
+  const rec = run(['record-gate-review', `--state=${p}`, '--gate=spec', '--status=skipped', '--reason=gateway 503', `--digest-file=${notes}`]);
+  assert.equal(rec.status, 0, rec.stderr);
+  const sp = run(['set-phase', `--state=${p}`, '--phase=plan']);
+  assert.equal(sp.status, 0, `a recorded skip must satisfy the gate: ${sp.stderr}${sp.stdout}`);
+  assert.equal(read(p).phase, 'plan');
+});
+
+test('gate: a fabricated done is rejected — receipt must echo the recomputed hash and carry tokens', () => {
+  const { p, planIdx } = planBundleWithArtifacts();
+  const gh = JSON.parse(run(['gate-hash', `--state=${p}`, '--gate=plan']).stdout);
+  const base = { gate: 'plan', hash: gh.hash, artifacts: gh.artifacts, dispatch_id: 'd', provider: 'pv', model: 'm', output_tokens: 5, status: 'done', ts: 't', digest: 'ok' };
+  const write = (obj) => { const f = path.join(path.dirname(p), 'r.json'); fs.writeFileSync(f, JSON.stringify(obj)); return f; };
+  // wrong hash
+  let r = run(['record-gate-review', `--state=${p}`, '--gate=plan', '--status=done', `--receipt=${write({ ...base, hash: 'sha256:stale' })}`]);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /receipt rejected/);
+  // zero tokens
+  r = run(['record-gate-review', `--state=${p}`, '--gate=plan', '--status=done', `--receipt=${write({ ...base, output_tokens: 0 })}`]);
+  assert.equal(r.status, 1);
+  // a valid receipt is accepted, and then satisfies load-plan
+  const ok = run(['record-gate-review', `--state=${p}`, '--gate=plan', '--status=done', `--receipt=${write(base)}`]);
+  assert.equal(ok.status, 0, ok.stderr);
+  assert.equal(run(['load-plan', `--state=${p}`, `--plan-index=${planIdx}`]).status, 0);
+});
+
+test('gate: fail-closed on a missing required artifact — exit 1, not a silent empty-hash pass', () => {
+  const p = tmpBundle(v8()); // no spec.md on disk
+  const r = run(['set-phase', `--state=${p}`, '--phase=plan']);
+  assert.equal(r.status, 1, 'a missing spec.md must hard-fail, never hash as empty');
+  assert.match(r.stderr, /spec\.md.*(unreadable|fail-closed)/);
+  assert.notEqual(read(p).phase, 'plan');
+});
+
+test('gate: a --plan-md outside the bundle is refused (path/symlink escape)', () => {
+  const { p, planIdx } = planBundleWithArtifacts();
+  const outsideMd = path.join(tmpDir('mp-outside-'), 'plan.md');
+  fs.writeFileSync(outsideMd, '# evil\n');
+  const r = run(['load-plan', `--state=${p}`, `--plan-index=${planIdx}`, `--plan-md=${outsideMd}`]);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /outside the bundle/);
+});
+
+test('gate: a symlinked spec.md escaping the bundle is refused', () => {
+  const p = tmpBundle(v8());
+  const outside = path.join(tmpDir('mp-outside-'), 'real-spec.md');
+  fs.writeFileSync(outside, '# elsewhere\n');
+  fs.symlinkSync(outside, path.join(path.dirname(p), 'spec.md'));
+  const r = run(['set-phase', `--state=${p}`, '--phase=plan']);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /outside the bundle/);
+});
+
+test('gate: populated load-plan is refused at the clobber guard BEFORE index validation', () => {
+  const p = tmpBundle(v8()); // v8() ships 2 tasks
+  const dir = path.dirname(p);
+  const planIdx = path.join(dir, 'plan.index.json');
+  fs.writeFileSync(planIdx, JSON.stringify({ not: 'a valid index' })); // would fail validation IF reached
+  const r = run(['load-plan', `--state=${p}`, `--plan-index=${planIdx}`]);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /already has 2 task/);
+  assert.doesNotMatch(r.stderr, /invalid plan|schema_version/, 'clobber must precede validation');
+});
+
+test('gate: --force bypasses set-phase→plan and appends a spec_gate_bypassed audit event', () => {
+  const p = tmpBundle(v8()); // no spec.md — --force must still work (recovery, no resolve/hash)
+  const r = run(['set-phase', `--state=${p}`, '--phase=plan', '--force']);
+  assert.equal(r.status, 0, `--force should bypass the gate: ${r.stderr}`);
+  assert.equal(read(p).phase, 'plan');
+  const events = fs.readFileSync(path.join(path.dirname(p), 'events.jsonl'), 'utf8');
+  assert.match(events, /spec_gate_bypassed/);
 });

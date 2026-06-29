@@ -10,11 +10,11 @@ Before inventing a command, look for `Makefile`, `package.json` scripts, `Justfi
 
 ### CD-2: User-owned worktree
 
-Treat existing uncommitted changes as the user's in-progress work. Do not revert, reformat, or "clean up" files outside the current task's scope. Verification commands must not modify unrelated dirty files; if they would, say so and skip rather than overwrite.
+Treat existing uncommitted changes as the user's in-progress work. Do not revert, reformat, or "clean up" files outside the current task's scope. Verification commands must not modify unrelated dirty files; if they would, say so and skip rather than overwrite. Within the files you do edit, stay surgical: every changed line should trace to the request — don't improve, reformat, or refactor adjacent code that isn't broken, and match surrounding style even when you'd write it differently. Remove only the imports/vars/functions *your* change orphaned; pre-existing dead code you *mention*, you don't delete.
 
 ### CD-3: Verification before completion
 
-Never claim a task done without running the most relevant local verification commands and citing their output. A green test run, a clean lint pass, a successful build — concrete evidence, not "should work."
+Define success criteria before coding — convert vague asks into verifiable goals ("add validation" → "tests for invalid inputs pass"; "fix the bug" → "a test reproduces it, then passes") and state the per-step verify check in any multi-step plan; explicit criteria are what let you loop to done. Never claim a task done without running the most relevant local verification commands and citing their output. A green test run, a clean lint pass, a successful build — concrete evidence, not "should work." Test-first mechanics live in the superpowers TDD / verification-before-completion skills.
 
 ### CD-4: Persistence (work the ladder)
 

@@ -23,6 +23,7 @@ import {
   validateCoreState,
   buildSeedState,
   buildTasksFromPlanIndex,
+  rebasePaths,
   appendEvent,
   setCoordination,
   clearCoordination,
@@ -99,6 +100,32 @@ test('state transforms are pure and correct', () => {
 
   assert.equal(setPhase(base, 'plan').phase, 'plan');
   assert.equal(setStatus(base, 'archived').status, 'archived');
+
+  // rebasePaths: rewrite the absolute path fields under a new repo root (CD-7 writer for repo relocation).
+  const relocated = rebasePaths(
+    { ...base, spec_path: '/srv/dev/masterplan/docs/b/spec.md', plan_path: '/srv/dev/masterplan/docs/b/plan.md',
+      plan_index_path: '/srv/dev/masterplan/docs/b/plan.index.json', worktree: '/srv/dev/masterplan/.worktrees/b',
+      topic: 'unrelated' },
+    '/srv/dev/masterplan', '/srv/dev/ras/masterplan',
+  );
+  assert.equal(relocated.spec_path, '/srv/dev/ras/masterplan/docs/b/spec.md');
+  assert.equal(relocated.plan_path, '/srv/dev/ras/masterplan/docs/b/plan.md');
+  assert.equal(relocated.plan_index_path, '/srv/dev/ras/masterplan/docs/b/plan.index.json');
+  assert.equal(relocated.worktree, '/srv/dev/ras/masterplan/.worktrees/b');
+  assert.equal(relocated._rebased, 4);
+  assert.equal(relocated.topic, 'unrelated'); // unrelated field untouched
+
+  // re-running with the same `from` is a no-op (the prefix no longer matches)
+  const idempotent = rebasePaths(relocated, '/srv/dev/masterplan', '/srv/dev/ras/masterplan');
+  assert.equal(idempotent._rebased, 0);
+  assert.deepEqual(idempotent.spec_path, relocated.spec_path);
+
+  // non-string / relative roots are rejected; identical roots is a no-op (not a throw)
+  assert.throws(() => rebasePaths(base, null, '/x'), /must be strings/);
+  assert.throws(() => rebasePaths(base, 'relative/from', '/srv/x'), /must be absolute paths/);
+  assert.throws(() => rebasePaths(base, '/srv/x', 'relative/to'), /must be absolute paths/);
+  const sameRoot = rebasePaths(base, '/srv/dev/masterplan', '/srv/dev/masterplan');
+  assert.equal(sameRoot._rebased, 0);
 
   assert.equal(JSON.stringify(base), frozen); // never mutated
 });

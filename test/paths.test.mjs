@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import {
   resolveConfigDir,
+  resolveMasterplanBin,
   resolveRunsDir,
   resolveBundleDir,
   resolveStatePath,
@@ -92,4 +93,53 @@ test('resolveEphemeralBundleDir ignores MASTERPLAN_RUNS_DIR in the environment',
 test('resolveEphemeralBundleDir result is an absolute path', () => {
   const result = resolveEphemeralBundleDir('task-1', '/var/tmp/mp');
   assert.ok(path.isAbsolute(result));
+});
+// ---- resolveMasterplanBin: portable masterplan.mjs CLI resolution (no hardcoded user) ----
+
+const MP_BIN_PATH = path.join(HOME, '.claude', 'plugins', 'marketplaces', 'rasatpetabit-masterplan', 'bin', 'masterplan.mjs');
+
+test('resolveMasterplanBin: defaults to the marketplace install under ~/.claude (portable across accounts)', () => {
+  // The path must NOT hardcode any /home/<specific-user> literal — only the injected homeDir.
+  const resolved = resolveMasterplanBin({}, HOME);
+  assert.equal(resolved, MP_BIN_PATH);
+  assert.ok(!resolved.toString().includes('/home/ras'), `must not hardcode grojas: ${resolved}`);
+  assert.ok(!resolved.toString().includes('/home/ras'), `must not hardcode ras: ${resolved}`);
+});
+
+test('resolveMasterplanBin: honors $CLAUDE_CONFIG_DIR (custom Claude config root)', () => {
+  const resolved = resolveMasterplanBin({ CLAUDE_CONFIG_DIR: '/custom/cc' }, HOME);
+  assert.equal(resolved, path.join('/custom/cc', 'plugins', 'marketplaces', 'rasatpetabit-masterplan', 'bin', 'masterplan.mjs'));
+});
+
+test('resolveMasterplanBin: honors $MP_BIN (absolute path to the bin) over the marketplace path', () => {
+  const resolved = resolveMasterplanBin({ MP_BIN: '/opt/masterplan/bin/masterplan.mjs' }, HOME);
+  assert.equal(resolved, '/opt/masterplan/bin/masterplan.mjs');
+});
+
+test('resolveMasterplanBin: a relative $MP_BIN is joined to the home dir', () => {
+  const resolved = resolveMasterplanBin({ MP_BIN: 'local/masterplan.mjs' }, HOME);
+  assert.equal(resolved, path.join(HOME, 'local/masterplan.mjs'));
+});
+
+test('resolveMasterplanBin: honors $MP_MARKETPLACE_DIR over the default marketplace path', () => {
+  // Absolute marketplace dir
+  assert.equal(
+    resolveMasterplanBin({ MP_MARKETPLACE_DIR: '/opt/marketplaces/mp' }, HOME),
+    path.join('/opt/marketplaces/mp', 'bin', 'masterplan.mjs'),
+  );
+  // Relative marketplace dir → joined to HOME
+  assert.equal(
+    resolveMasterplanBin({ MP_MARKETPLACE_DIR: 'my-marketplaces/mp' }, HOME),
+    path.join(HOME, 'my-marketplaces/mp', 'bin', 'masterplan.mjs'),
+  );
+});
+
+test('resolveMasterplanBin: $MP_BIN wins over $MP_MARKETPLACE_DIR', () => {
+  const resolved = resolveMasterplanBin({ MP_BIN: '/x/mp.mjs', MP_MARKETPLACE_DIR: '/y/mp' }, HOME);
+  assert.equal(resolved, '/x/mp.mjs');
+});
+
+test('resolveMasterplanBin: a blank $MP_BIN is ignored (falls through to the marketplace path)', () => {
+  const resolved = resolveMasterplanBin({ MP_BIN: '   ' }, HOME);
+  assert.equal(resolved, MP_BIN_PATH);
 });

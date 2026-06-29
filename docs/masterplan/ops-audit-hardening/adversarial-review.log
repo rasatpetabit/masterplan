@@ -5,15 +5,15 @@
 [codex] Command completed: /bin/bash -lc "sed -n '1,220p' CLAUDE.md" (exit 0)
 [codex] Running command: /bin/bash -lc 'if [ -f WORKLOG.md ]; then tail -n 80 WORKLOG.md; else true; fi'
 [codex] Command completed: /bin/bash -lc 'if [ -f WORKLOG.md ]; then tail -n 80 WORKLOG.md; else true; fi' (exit 0)
-[codex] Running command: /bin/bash -lc "sed -n '1,220p' /home/grojas/.codex/skills/gstack/review/SKILL.md"
-[codex] Command completed: /bin/bash -lc "sed -n '1,220p' /home/grojas/.codex/skills/gstack/review/SKILL.md" (exit 0)
-[codex] Running command: /bin/bash -lc "sed -n '1,160p' /home/grojas/.agents/skills/auq-override/SKILL.md"
-[codex] Command completed: /bin/bash -lc "sed -n '1,160p' /home/grojas/.agents/skills/auq-override/SKILL.md" (exit 0)
+[codex] Running command: /bin/bash -lc "sed -n '1,220p' /home/ras/.codex/skills/gstack/review/SKILL.md"
+[codex] Command completed: /bin/bash -lc "sed -n '1,220p' /home/ras/.codex/skills/gstack/review/SKILL.md" (exit 0)
+[codex] Running command: /bin/bash -lc "sed -n '1,160p' /home/ras/.agents/skills/auq-override/SKILL.md"
+[codex] Command completed: /bin/bash -lc "sed -n '1,160p' /home/ras/.agents/skills/auq-override/SKILL.md" (exit 0)
 [codex] Reasoning summary captured: **Reviewing skill file workflow** I should think about whether I need to continue with the sk...
 [codex] Running command: /bin/bash -lc 'rg -n "''^## (Workflow|Steps|Review|Output|Step|Procedure|Findings)|Finding|Re...
 [codex] Command completed: /bin/bash -lc 'rg -n "''^## (Workflow|Steps|Review|Output|Step|Procedure|Findings)|Finding|Re... (exit 0)
-[codex] Running command: /bin/bash -lc "sed -n '682,1090p' /home/grojas/.codex/skills/gstack/review/SKILL.md"
-[codex] Command completed: /bin/bash -lc "sed -n '682,1090p' /home/grojas/.codex/skills/gstack/review/SKILL.md" (exit 0)
+[codex] Running command: /bin/bash -lc "sed -n '682,1090p' /home/ras/.codex/skills/gstack/review/SKILL.md"
+[codex] Command completed: /bin/bash -lc "sed -n '682,1090p' /home/ras/.codex/skills/gstack/review/SKILL.md" (exit 0)
 [codex] Reasoning summary captured: **Investigating target files** I need to inspect the target files and potentially the actual ...
 [codex] Running command: /bin/bash -lc 'git status --short'
 [codex] Command completed: /bin/bash -lc 'git status --short' (exit 0)

@@ -72,6 +72,10 @@ fields back is documented in [bundle-resume.md](internals/bundle-resume.md).
   [`docs/conventions/cd-rules.md`](conventions/cd-rules.md). CD-7 (single
   writer) and CD-4 (blocker ladder) are the ones most frequently referenced in
   the leaves above.
+- **Build/test/lint + contributor discipline:** [`docs/development.md`](development.md)
+  — the test/doctor commands plus the masterplan-specific working rules
+  (single-writer state, dispatch discipline, sync'd verb/doctor surfaces,
+  cross-vendor review).
 - **Plan annotation format:** [`docs/conventions/plan-annotations.md`](conventions/plan-annotations.md).
 - **Adversarial review failure policy:** [`docs/conventions/adversarial-review-failure-policy.md`](conventions/adversarial-review-failure-policy.md).
 - **Deferred follow-ups:** [deferred-followups.md](internals/deferred-followups.md) — tracked, intentionally-deferred review findings (so they read as known, not as fresh churn).

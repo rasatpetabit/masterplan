@@ -32,6 +32,52 @@ function tmpBundle(stateObj) {
   return p;
 }
 const read = (p) => parseState(fs.readFileSync(p, 'utf8'));
+// Satisfy a pre-execute gate the honest way: mint a structured receipt for the gate's CURRENT artifacts
+// and record it as done so enforceGateReview lets the transition proceed — exercising the real gate-
+// satisfied path, NEVER --force. The gate is fail-closed (required artifacts must exist on disk), so we
+// stub spec.md / plan.md / plan.index.json if the fixture didn't create them; `ensure` never clobbers a
+// file the test wrote. We learn the exact { hash, artifacts } via `gate-hash` and echo them into the
+// receipt (the same --plan-md/--plan-index in `extra` go to both, so the hashes match). Asserts it landed.
+function passGate(statePath, gate, extra = []) {
+  const dir = path.dirname(statePath);
+  const ensure = (name, content) => {
+    const fp = path.join(dir, name);
+    if (!fs.existsSync(fp)) fs.writeFileSync(fp, content);
+  };
+  ensure('spec.md', '# spec\nstub spec for gate test\n');
+  if (gate === 'plan') {
+    ensure('plan.md', '# plan\nstub plan for gate test\n');
+    ensure('plan.index.json', JSON.stringify({ schema_version: '6.0', tasks: [] }));
+  }
+  const gh = run(['gate-hash', `--state=${statePath}`, `--gate=${gate}`, ...extra]);
+  assert.equal(gh.status, 0, `passGate(${gate}) gate-hash must succeed: ${gh.stderr}`);
+  const { hash, artifacts } = JSON.parse(gh.stdout);
+  const receiptPath = path.join(dir, `gate-${gate}-receipt.json`);
+  fs.writeFileSync(
+    receiptPath,
+    JSON.stringify({
+      gate,
+      hash,
+      artifacts,
+      dispatch_id: 'test-dispatch',
+      provider: 'test',
+      model: 'test-model',
+      output_tokens: 1,
+      status: 'done',
+      ts: '2026-01-01T00:00:00Z',
+      digest: 'test findings: none blocking',
+    })
+  );
+  const r = run([
+    'record-gate-review',
+    `--state=${statePath}`,
+    `--gate=${gate}`,
+    '--status=done',
+    `--receipt=${receiptPath}`,
+    ...extra,
+  ]);
+  assert.equal(r.status, 0, `passGate(${gate}) must record cleanly: ${r.stderr}`);
+}
 const v8 = (over = {}) => ({
   schema_version: '6.0', slug: 'demo', pending_gate: null, active_run: null,
   phase: 'execute',
@@ -232,6 +278,7 @@ test('load-plan: stamps plan_hash when absent AND plan.md is readable', () => {
   const planIdx = path.join(dir, 'plan.index.json');
   fs.writeFileSync(planIdx, JSON.stringify(planIndexNoHash(dir)));
 
+  passGate(p, 'plan');
   const r = run(['load-plan', `--state=${p}`, `--plan-index=${planIdx}`]);
   assert.equal(r.status, 0);
 
@@ -255,6 +302,7 @@ test('load-plan: idempotent — does not re-stamp when plan_hash already present
   const planIdx = path.join(dir, 'plan.index.json');
   fs.writeFileSync(planIdx, JSON.stringify(indexWithHash));
 
+  passGate(p, 'plan');
   const r = run(['load-plan', `--state=${p}`, `--plan-index=${planIdx}`]);
   assert.equal(r.status, 0);
 
@@ -269,13 +317,18 @@ test('load-plan: gracefully skips stamping when plan.md is absent (no die)', () 
   const p = path.join(dir, 'state.yml');
   fs.writeFileSync(p, serializeState(v8({ phase: 'plan', tasks: [] })));
 
-  // No plan.md in the dir
+  // No plan.md in the dir, and no spec.md — the plan gate is now fail-closed on its required artifacts,
+  // so we exercise the stamping path via --force (the documented recovery bypass) to keep plan.md
+  // genuinely absent. load-plan must still SKIP stamping gracefully (not die). --force also appends a
+  // plan_gate_bypassed audit event (asserted below).
   const planIdx = path.join(dir, 'plan.index.json');
   fs.writeFileSync(planIdx, JSON.stringify(planIndexNoHash(dir)));
 
-  // Should succeed despite no plan.md
-  const r = run(['load-plan', `--state=${p}`, `--plan-index=${planIdx}`]);
+  const r = run(['load-plan', `--state=${p}`, `--plan-index=${planIdx}`, '--force']);
   assert.equal(r.status, 0);
+  // the --force bypass is audited, never silent
+  const events = fs.readFileSync(path.join(dir, 'events.jsonl'), 'utf8');
+  assert.match(events, /plan_gate_bypassed/, '--force bypass must append a plan_gate_bypassed audit event');
 
   // plan_hash remains absent
   const after = JSON.parse(fs.readFileSync(planIdx, 'utf8'));
@@ -294,6 +347,7 @@ test('load-plan: --plan-md flag overrides the default plan.md sibling path', () 
   const planIdx = path.join(dir, 'plan.index.json');
   fs.writeFileSync(planIdx, JSON.stringify(planIndexNoHash(dir)));
 
+  passGate(p, 'plan', [`--plan-md=${customPlanMd}`]);
   const r = run(['load-plan', `--state=${p}`, `--plan-index=${planIdx}`, `--plan-md=${customPlanMd}`]);
   assert.equal(r.status, 0);
 
