@@ -1,0 +1,19 @@
+---
+schema_version: 8
+slug: goal-tracking
+status: in-progress
+phase: brainstorm
+topic: "enhance masterplan to distill and track the plan's original goals, not just the spec+plan implementation of those goals — ensure goals are actually achieved by the end rather than drifting/forgetting"
+complexity: high
+complexity_source: null
+autonomy: null
+planning_mode: auto
+created_at: 2026-07-01T23:22:00.851Z
+predecessor_transcript: null
+spec_path: /srv/dev/ras/masterplan/docs/masterplan/goal-tracking/spec.md
+plan_path: /srv/dev/ras/masterplan/docs/masterplan/goal-tracking/plan.md
+plan_index_path: /srv/dev/ras/masterplan/docs/masterplan/goal-tracking/plan.index.json
+tasks: []
+active_run: null
+pending_gate: null
+review: {"adversary":true}
