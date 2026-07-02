@@ -1,0 +1,41 @@
+Plan gate — cross-vendor adversarial review digest (goal-tracking)
+
+Lane: agent-dispatch adversary (gpt-5.5 review xhigh via skynet gateway)
+Passes: rigorous @ plan_hash 2e2aae68… (2 reviewers, approve) → findings folded at commit 151c991
+        light @ plan_hash 64a4dece… / gate hash 5c09f486… (4 reviewers, approve, zero blocking)
+Verdict: approve. Also preceded by mp-plan-reviewer FAIL→PASS cycle (5 findings folded at merge).
+
+RESIDUAL IMPLEMENTER CONSTRAINTS (from the final approve pass — binding guidance for wave workers):
+
+1. CANONICAL CHECK TUPLE — define ONCE in lib/goals.mjs and reuse verbatim everywhere:
+   {goals_hash, head_sha, base_sha, diff_hash, verify_output_hash, clean_status}.
+   Goal checks, waivers, AND user-attested manual verdicts all bind this exact tuple; approval
+   receipts additionally bind purpose (load|amend|check|waive) so a load approval can never be
+   replayed as a waiver approval; amend approvals bind old+new goals hash.
+2. WAIVER vs SKIP RULE — a partial/missed goal_check at an unchanged tuple must NOT cause the
+   waiver append to be skipped as "already recorded": goal_check and goal_waived are distinct
+   event types; waiver append is idempotent per (tuple, goal id); tuple change invalidates.
+3. MANUAL MODE IS GATED — record-goal-check accepts a user-attested receipt ONLY while a durable
+   dispatch-failure/manual-mode gate is open (recorded event), never as a free alternative path;
+   manual receipts are schema-distinct (attested_by:'user' + approval receipt), can never
+   masquerade as assessor provenance, and are rendered distinctly in retro/doctor/status.
+4. VALIDATOR SPLIT — validateGoals = single-document schema only; validateAmendment(old, new) =
+   renumbering/deletion-vs-tombstone/content-diff rules. No overlap.
+5. PRE-CAPTURE WINDOW IS FAIL-CLOSED EVERYWHERE — the split-brain guard's pre-freeze no-op applies
+   ONLY where the run_goals_capture gate independently blocks advancement: set-phase --phase=plan,
+   load-plan, AND continue-past-brainstorm all fail closed (capture guidance) on a goals-enabled
+   bundle with no goals_frozen; "no lifecycle event" post-capture (state.goals present, events
+   missing) is corruption = hard error, not pre-capture.
+6. ONE-SHOT vs IDEMPOTENT RERUN — goals-load rerun with the IDENTICAL goals hash + approval
+   receipt after a committed goals_frozen is an idempotent no-op success; rerun after artifact
+   writes but before the event append rolls forward; anything with a different hash/receipt is
+   rejected (amend is the only change path).
+7. ASSESSOR READ-ONLY — recorder recomputes detached-worktree cleanliness itself (tracked AND
+   untracked) after assessment and rejects the receipt on any dirt; receipt fields are never
+   trusted for this. (Transient modify-then-revert remains a known accepted limit — documented,
+   not silently claimed as impossible.)
+8. ONE CLI SHAPE for waiving — pick a single stable syntax (record-goal-check --waive) and use it
+   identically in finish-step, docs/verbs.md, and tests.
+9. SPEC_REFS CONVENTION — resolve spec_refs repo-root-relative; validate-plan-index should check
+   each ref path resolves. (Current index mixes bare spec.md# and repo-root forms — normalize
+   during the coverage task.)

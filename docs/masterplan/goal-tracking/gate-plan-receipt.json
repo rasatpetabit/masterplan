@@ -1,0 +1,13 @@
+{
+  "status": "done",
+  "gate": "plan",
+  "hash": "sha256:5c09f48678e6a224bc58f6195035e033b9ed09703751c3f434cd65750db1ad09",
+  "artifacts": ["spec.md", "plan.md", "plan.index.json"],
+  "dispatch_id": "dispatch_review/adversary/rigorous+light/2026-07-01",
+  "provider": "openai (skynet gateway, dispatch-adversary lane)",
+  "model": "gpt-5.5 review xhigh",
+  "completion_tokens": 34731,
+  "ts": "2026-07-02T01:38:59Z",
+  "base": "477a962",
+  "digest": "Verdict approve. Rigorous pass (2 reviewers) over merged plan @ plan_hash 2e2aae68: 4 HIGH advisory findings (missing waiver recorder task, manual-verdict/receipt-validator conflict, capability-event vs one-shot goals-load conflict, pre-freeze split-brain guard) folded at commit 151c991. Light re-pass (4 chunk reviewers) @ gate hash 5c09f486: approve, zero blocking; 9 residual implementer constraints captured in gate-plan-review-digest.txt (canonical check tuple, waiver-vs-skip semantics, gated manual mode, validateGoals/validateAmendment split, fail-closed pre-capture window on load-plan/continue, idempotent goals-load rerun, recorder-recomputed assessor cleanliness, single waive CLI shape, repo-root spec_refs). Preceded by mp-plan-reviewer FAIL(5 findings)->PASS cycle."
+}
