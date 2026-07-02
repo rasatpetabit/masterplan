@@ -110,8 +110,21 @@ Steps: preflight → optimistic claim (settle guard) → build (fetch contract r
 claim with a failure comment (on fail). Spec §7.1.
 
 ## `goal-tracking mp subcommands`
-- `goals-load` — parse/load `goals.md` into `state` (`goals_enabled` bundles).
-- `goals-amend` — amend the captured goal set (add/edit/remove) before freeze.
-- `goals-status` — report per-goal coverage / met status (read-only).
-- `record-goal-check` — persist an `mp-goal-assessor` per-goal verdict into `state`.
-Pre-feature bundles without goals gracefully skip (no-op) all goal steps.
+- `goals-load` — parse `goals.md`, freeze the goal set into `state.goals` + a `goals_frozen`
+  event (hash-pinned; the split-brain guard checks this hash on `set-phase`/`load-plan`).
+- `goals-amend` — amend the frozen goal set (add/edit/remove; tombstones, never deletes);
+  appends `goal_amended`, re-pins the hash, and re-arms the spec gate.
+- `goals-status` — report per-goal coverage / check status (read-only).
+- `record-goal-check` — persist a goal-completeness assessment (mirrors `record-gate-review`,
+  anti-fabrication). Default mode validates a `--receipt` binding goals-hash + `--head-sha` +
+  `--base` + `--diff-hash` + the recomputed `--verify-output-hash` + clean status + a verdict
+  for every active goal, then appends `goal_check`; provenance is exactly one of assessor
+  (dispatch id/model/tokens) or user-attested (`attested_by: user` + approval receipt — a
+  manual receipt can never masquerade as assessor provenance). `--waive` mode validates a
+  `--waiver` (per-goal reasons + user-approval receipt over the same tuple) and appends
+  `goal_waived`. Refuses (exit 3) on a dirty worktree; re-entry at an unchanged tuple is
+  idempotent, and any goals amendment or later commit re-arms.
+Pre-feature bundles without goals gracefully skip (no-op) all goal steps. During finish,
+`finish-step` runs `run_goal_check` after verify and before the retro; any partial/missed
+goal opens the durable `goals_unmet` gate (fix / waive / abort — fail-closed on assessor
+dispatch failure), and the `branch_finish` payload carries a one-line goals summary.
