@@ -63,6 +63,19 @@ test('prompt teaches the finish trampoline (mp finish-step op table, T2.4)', () 
   }
 });
 
+test('prompt teaches the goal-tracking contract (typed ops, gate, capture verb + finish flags)', () => {
+  // The §2c goal ops + the goals gate are the load-bearing goal-tracking surface — each must be taught.
+  for (const op of ['run_goal_check', "gate:'goals_unmet'", 'run_goals_capture']) {
+    assert.ok(prompt.includes(op), `goal-tracking op/gate missing ${op}`);
+  }
+  // The goals-capture verb freezes the run's goals — without it a goals-enabled bundle can't be armed.
+  assert.ok(prompt.includes('mp goals-load'), 'the goals-capture contract must name mp goals-load');
+  // The goal-check answer flags ARE the resolution surface — each must be taught or the goal gate dead-ends.
+  for (const flag of ['--goals-met', '--goals-unmet', '--goals-waived', '--waiver-reason', '--manual-verdict']) {
+    assert.ok(prompt.includes(flag), `goal-check answer flag missing ${flag}`);
+  }
+});
+
 test('deliberate survivors stay (teardown recorder, plan marker, legacy import)', () => {
   // These mp verbs were NOT absorbed — their disappearance would mean an over-zealous scrub.
   for (const keep of ['mp worktree record', 'mp set-active-run', 'mp promote-active-run',

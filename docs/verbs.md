@@ -13,16 +13,21 @@ the resume controller (active bundle → re-decide; none → offer to start one)
 Begin a new run end-to-end: brainstorm → plan → execute → finish. Seeds a bundle
 (`mp seed`), runs `superpowers:brainstorming`, the plan lifecycle (§3a), the wave loop
 (§2/§2a), then the finish flow (§2c). New bundles are seeded with `--codex-review=on`
-by default (finish-time Codex review armed); pass `--codex-review=off` to opt out.
+by default (finish-time Codex review armed); pass `--codex-review=off` to opt out. On a
+`goals_enabled` bundle the spec→plan boundary captures + freezes `goals.md` (user-approved)
+before planning, and the plan gate additionally fails on any uncovered goal.
 
 ## `brainstorm`
 Brainstorm phase only. Invokes `superpowers:brainstorming`; on spec approval advances
-`phase→plan` and halts at the close-out gate.
+`phase→plan` and halts at the close-out gate. On a `goals_enabled` bundle, at the
+spec→plan boundary `goals.md` is captured + frozen (user-approved) before advancing.
 
 ## `plan`
 Plan phase only: decompose the approved spec into a validated `plan.index.json` + `plan.md`
 via the plan lifecycle (§3a) — serial, or a parallel `mp-subsystem-planner` fan-out merged
 deterministically by `lib/plan-merge.mjs`, selected per `planning.mode`. Halts before execution.
+On a `goals_enabled` bundle the plan gate additionally fails on any uncovered goal (every
+frozen goal must be covered by >=1 task).
 
 ## `execute`
 Resume or begin execution — the resume controller (§2). No path → the active-bundle picker;
@@ -36,7 +41,9 @@ Finalize a completed run (§2c): verify and **cite real output**
 `branch_finish` gate (merge / push+PR / keep / discard via
 `superpowers:finishing-a-development-branch`) → archive **last**. Auto-fires when the last wave
 completes; also invokable manually. On pending tasks it asks "finalize anyway / keep working /
-`--retro-only`" — never a silent archive.
+`--retro-only`" — never a silent archive. On a `goals_enabled` bundle, finish adds a per-goal
+check via the `mp-goal-assessor` agent, and a new `goals_unmet` gate (fix-&-continue / waiver /
+abort) fires before archive.
 Flag: `--retro-only` (re)generates just `retro.md` (no verification, no gate, no archive).
 
 ## `retro`
@@ -101,3 +108,23 @@ Follower session: claim one unassigned task from a coordinated run, build it usi
 Steps: preflight → optimistic claim (settle guard) → build (fetch contract ref, dispatch
 `mp-implementer` + D6 `verify-scope` + `verify_commands`) → deliver PR (on pass) or release
 claim with a failure comment (on fail). Spec §7.1.
+
+## `goal-tracking mp subcommands`
+- `goals-load` — parse `goals.md`, freeze the goal set into `state.goals` + a `goals_frozen`
+  event (hash-pinned; the split-brain guard checks this hash on `set-phase`/`load-plan`).
+- `goals-amend` — amend the frozen goal set (add/edit/remove; tombstones, never deletes);
+  appends `goal_amended`, re-pins the hash, and re-arms the spec gate.
+- `goals-status` — report per-goal coverage / check status (read-only).
+- `record-goal-check` — persist a goal-completeness assessment (mirrors `record-gate-review`,
+  anti-fabrication). Default mode validates a `--receipt` binding goals-hash + `--head-sha` +
+  `--base` + `--diff-hash` + the recomputed `--verify-output-hash` + clean status + a verdict
+  for every active goal, then appends `goal_check`; provenance is exactly one of assessor
+  (dispatch id/model/tokens) or user-attested (`attested_by: user` + approval receipt — a
+  manual receipt can never masquerade as assessor provenance). `--waive` mode validates a
+  `--waiver` (per-goal reasons + user-approval receipt over the same tuple) and appends
+  `goal_waived`. Refuses (exit 3) on a dirty worktree; re-entry at an unchanged tuple is
+  idempotent, and any goals amendment or later commit re-arms.
+Pre-feature bundles without goals gracefully skip (no-op) all goal steps. During finish,
+`finish-step` runs `run_goal_check` after verify and before the retro; any partial/missed
+goal opens the durable `goals_unmet` gate (fix / waive / abort — fail-closed on assessor
+dispatch failure), and the `branch_finish` payload carries a one-line goals summary.

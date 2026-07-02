@@ -4,7 +4,8 @@ The field contract for masterplan v8 planning. Both planner agents emit task dat
 against it; the deterministic merge (`lib/plan-merge.mjs`) then owns id assignment,
 wave layering, and `codex` normalisation. **The LLM never authors the final
 `plan.index.json` bytes** — it proposes task fields; JavaScript computes the rest.
-Mechanism detail lives in [`docs/internals/plan-parser.md`](../internals/plan-parser.md);
+Planner agents now receive `goals.md` alongside `spec.md` and annotate each task's
+`goals`. Mechanism detail lives in [`docs/internals/plan-parser.md`](../internals/plan-parser.md);
 this file is the field-level convention the planner agents are briefed against.
 
 ## Who produces what
@@ -32,6 +33,7 @@ Emit these exact keys — the canonical names `lib/routing.mjs`, `applyPlanIndex
 | `sensitive` | bool (optional) | `true` ⇒ Codex-ineligible (also auto-detected from `description`). |
 | `conversational` | bool (optional) | `true` ⇒ Codex-ineligible. |
 | `spec_refs` | array of strings (optional) | Provenance back into `spec.md`. |
+| `goals` | array of strings (optional) | Goal ids (from `goals.md`) this task serves. May be empty **only** for pure-infra tasks whose goal another task covers. `mp validate-plan-index` checks these referentially (each id must exist in `goals.md`), not semantically. |
 
 **Fragment-only fields (parallel path — drive the merge, dropped from the final index):**
 

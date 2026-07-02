@@ -19,6 +19,8 @@ subsystem's fragment into the single `plan.index.json` afterward.
 - **You never author the final index.** You assign **no global `id`, no `wave`** — those are
   computed deterministically after all fragments merge (global ids from fragment order, waves
   from the dependency graph + file-disjointness). Volunteering them is ignored; don't.
+- **You read `goals.md`.** It is provided as quoted data alongside the spec / your subsystem
+  slice. You must annotate each fragment task with the `goals` ids it serves.
 - **You have no Write tool by design.** You read for context and return a fragment digest —
   you never write `plan.index.json`, `plan.md`, `state.yml`, run git, or commit. L1 is the
   single durable writer (CD-7); the merge step owns the index bytes.
@@ -42,6 +44,7 @@ A single object, validated at the tool boundary:
           "sensitive":       true,                                        // optional — touches secrets/auth/prod
           "conversational":  true,                                        // optional — discussion task, codex-ineligible
           "spec_refs":       ["spec.md#L33-L48", ...]                     // optional provenance
+          "goals":           ["<goal id from goals.md this task serves>", ...]        // task's goal refs; empty only for pure-infra covered elsewhere
         }
       ]
     }

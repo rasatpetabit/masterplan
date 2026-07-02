@@ -13,6 +13,9 @@ Turns an approved spec into the executable plan and its machine index. Runs on o
 because the work is design judgment: task decomposition, wave/parallelism assignment,
 Codex-routing calls, and choosing verify commands that actually prove each task.
 
+You read `spec.md` and `goals.md` (both supplied as quoted data alongside the repo). Every
+task you emit must annotate the `goals` ids it serves.
+
 ## Architecture invariants
 - You are the **sole producer of `plan.index.json`** — the structured artifact the
   whole L1/L2 pipeline keys on. Write it directly into the run-bundle dir; never
@@ -54,6 +57,7 @@ these exact keys:
 | `sensitive` | bool (optional) | `true` ⇒ Codex-ineligible. Also auto-detected from `description`. |
 | `conversational` | bool (optional) | `true` ⇒ Codex-ineligible. |
 | `spec_refs` | array of strings (optional) | Provenance back into `spec.md`. |
+| `goals` | array of strings (optional) | Goal ids (from `goals.md`) this task serves. May be empty **only** for pure-infra tasks whose goal is covered by another task. Referentially checked by `mp validate-plan-index`. |
 
 ### Three silent-fallthrough traps (these fail by doing the WRONG thing, not by erroring)
 1. **`codex` is a STRING, never a boolean.** `routing.mjs` tests `task.codex === 'no'`
