@@ -2265,3 +2265,74 @@ test('goals-amend: invalidates existing goal-check receipts and waivers keyed to
   assert.equal(st.goals_md_hash, newHash);
   assert.notEqual(st.goals_md_hash, oldHash);
 });
+
+test('goals-status: unfrozen bundle reports no frozen goals', () => {
+  const p = goalsBundle();
+  const r = run(['goals-status', `--state=${p}`]);
+  assert.equal(r.status, 0, `goals-status should succeed: ${r.stderr}`);
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.goals_status, 'unfrozen');
+  assert.equal(out.frozen, false);
+  assert.equal(out.amendments, 0);
+  assert.deepEqual(out.goals, []);
+});
+
+test('goals-status: after goals-load reports frozen hash + active goals derived from goals.md', () => {
+  const p = goalsBundle();
+  const dir = path.dirname(p);
+  const hash = freezeInitialGoals(p, dir);
+  const r = run(['goals-status', `--state=${p}`]);
+  assert.equal(r.status, 0, `goals-status should succeed: ${r.stderr}`);
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.goals_status, 'frozen');
+  assert.equal(out.frozen, true);
+  assert.equal(out.frozen_hash, hash);
+  assert.equal(out.current_hash, hash);
+  assert.equal(out.amendments, 0);
+  assert.equal(out.hash_ok, true);
+  assert.equal(out.active, 2);
+  assert.equal(out.tombstoned, 0);
+  assert.equal(out.goals.length, 2);
+  assert.equal(out.goals[0].id, 'G1');
+  assert.equal(out.goals[0].tombstoned, false);
+});
+
+test('goals-status: after goals-amend reflects amended hash + tombstones', () => {
+  const p = goalsBundle();
+  const dir = path.dirname(p);
+  const oldHash = freezeInitialGoals(p, dir);
+  const newHash = goalsHashFn(AMEND_MD);
+  const gp = writeAmendGoals(dir, AMEND_MD);
+  const ap = writeAmendApproval(dir, oldHash, newHash);
+  assert.equal(
+    run(['goals-amend', `--state=${p}`, `--goals=${gp}`, `--approval=${ap}`, '--reason=descope']).status,
+    0
+  );
+  const r = run(['goals-status', `--state=${p}`]);
+  assert.equal(r.status, 0, `goals-status should succeed: ${r.stderr}`);
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.goals_status, 'amended');
+  assert.equal(out.frozen_hash, oldHash);
+  assert.equal(out.current_hash, newHash);
+  assert.equal(out.amendments, 1);
+  assert.equal(out.hash_ok, true);
+  assert.equal(out.active, 2);
+  assert.equal(out.tombstoned, 1);
+  const g2 = out.goals.find((g) => g.id === 'G2');
+  assert.equal(g2.tombstoned, true);
+  assert.equal(g2.tombstone_reason, 'descoped');
+});
+
+test('goals-status: derives from goals.md + events, not the stale state.goals cache', () => {
+  const p = goalsBundle();
+  const dir = path.dirname(p);
+  const hash = freezeInitialGoals(p, dir);
+  const st = read(p);
+  fs.writeFileSync(p, serializeState({ ...st, goals: [{ id: 'G9', text: 'stale cached goal', signal: 'test' }] }));
+  const r = run(['goals-status', `--state=${p}`]);
+  assert.equal(r.status, 0, `goals-status should succeed: ${r.stderr}`);
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.goals.length, 2);
+  assert.ok(!out.goals.some((g) => g.id === 'G9'));
+  assert.equal(out.current_hash, hash);
+});

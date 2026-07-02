@@ -899,6 +899,80 @@ function main() {
       });
       break;
     }
+    case 'goals-status': {
+      // Anti-forgetting mid-run: derive the CURRENT goal set from goals.md + events (NOT the possibly
+      // stale state.goals cache), surfacing tombstones and the frozen/amended hash lineage. Read-only —
+      // appends no event, writes no state. The current committed hash is the latest goal_amended's
+      // new_goals_hash, else the first goals_frozen's goals_hash; hash_ok flags whether goals.md on disk
+      // still matches that committed hash (a drift detector for a hand-edited or out-of-band goals.md).
+      const p = need(flags, 'state');
+      const dir = path.dirname(p);
+      readState(p); // validate the bundle is readable/parseable (read-only; result intentionally unused)
+      const eventsPath = path.join(dir, 'events.jsonl');
+      let eventsText = '';
+      try {
+        eventsText = fs.readFileSync(eventsPath, 'utf8');
+      } catch (e) {
+        if (e.code !== 'ENOENT') die(`goals-status: events.jsonl unreadable: ${e.message}`, 1);
+      }
+      const allEvents = eventsText
+        .split('\n')
+        .filter((l) => l.trim())
+        .map((l) => {
+          try {
+            return JSON.parse(l);
+          } catch {
+            return null;
+          }
+        })
+        .filter(Boolean);
+      const frozenEvents = allEvents.filter((e) => e.type === 'goals_frozen');
+      const amendEvents = allEvents.filter((e) => e.type === 'goal_amended');
+      if (!frozenEvents.length) {
+        out({ goals_status: 'unfrozen', frozen: false, amendments: 0, active: 0, tombstoned: 0, goals: [] });
+        break;
+      }
+      const frozenHash = frozenEvents[0].data?.goals_hash ?? null;
+      const lastAmend = amendEvents[amendEvents.length - 1];
+      const currentHash = lastAmend ? lastAmend.data?.new_goals_hash ?? null : frozenHash;
+      // Derive goals from goals.md on disk (the artifact), never state.goals — that is the whole point.
+      let goalsMdText = '';
+      let goalsMdPresent = true;
+      try {
+        goalsMdText = fs.readFileSync(path.join(dir, 'goals.md'), 'utf8');
+      } catch (e) {
+        if (e.code !== 'ENOENT') die(`goals-status: goals.md unreadable: ${e.message}`, 1);
+        goalsMdPresent = false;
+      }
+      const parsed = parseGoals(goalsMdText);
+      const computedHash = goalsMdPresent ? goalsHash(goalsMdText) : null;
+      const hashOk = goalsMdPresent && computedHash === currentHash;
+      const goals = parsed.goals.map((g) => ({
+        id: g.id,
+        text: g.text,
+        signal: g.signal,
+        tombstoned: !!g.tombstone,
+        ...(g.tombstone
+          ? { tombstone_reason: g.tombstone.reason ?? null, tombstone_at: g.tombstone.amended_at ?? null }
+          : {}),
+      }));
+      const active = goals.filter((g) => !g.tombstoned).length;
+      const tombstoned = goals.filter((g) => g.tombstoned).length;
+      out({
+        goals_status: amendEvents.length ? 'amended' : 'frozen',
+        frozen: true,
+        frozen_hash: frozenHash,
+        current_hash: currentHash,
+        amendments: amendEvents.length,
+        goals_md_present: goalsMdPresent,
+        goals_md_hash: computedHash,
+        hash_ok: hashOk,
+        active,
+        tombstoned,
+        goals,
+      });
+      break;
+    }
     case 'migrate-bundle': {
       const p = need(flags, 'state');
       const text = readText(p);
