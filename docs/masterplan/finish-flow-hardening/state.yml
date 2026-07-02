@@ -3,7 +3,7 @@ schema_version: 8
 slug: finish-flow-hardening
 status: in-progress
 phase: brainstorm
-topic: "Harden masterplan's finish flow: finish verification must run against a committed tree (no dirty-worktree verification), dirty-commits must not silently drop out-of-scope repairs, and the engine bugs surfaced by recent runs (missed-deliverable commits; D6 dir-scope, already fixed) get regression coverage"
+topic: "*overflow at state-overflow.md L3*"
 complexity: null
 complexity_source: null
 autonomy: full

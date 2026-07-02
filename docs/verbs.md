@@ -109,7 +109,7 @@ Steps: preflight → optimistic claim (settle guard) → build (fetch contract r
 `mp-implementer` + D6 `verify-scope` + `verify_commands`) → deliver PR (on pass) or release
 claim with a failure comment (on fail). Spec §7.1.
 
-## `goal-tracking mp subcommands`
+## Goal subcommands
 - `goals-load` — parse `goals.md`, freeze the goal set into `state.goals` + a `goals_frozen`
   event (hash-pinned; the split-brain guard checks this hash on `set-phase`/`load-plan`).
 - `goals-amend` — amend the frozen goal set (add/edit/remove; tombstones, never deletes);
