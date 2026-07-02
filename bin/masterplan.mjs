@@ -152,7 +152,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, setWorktree, setWorktreeDisposition, setVerifiedSha, setCodexConfig, setReviewConfig, loadPlanTasks, buildSeedState, buildTasksFromPlanIndex, appendEvent, setCoordination, applyPlanIndex, rebasePaths, GOAL_LIFECYCLE_EVENT_TYPES, inferGoalsCapability } from '../lib/bundle.mjs';
-import { parseGoals, validateGoals, goalsHash, validateUserApprovalReceipt, validateAmendment, amendmentDiff } from '../lib/goals.mjs';
+import { parseGoals, validateGoals, goalsHash, validateUserApprovalReceipt, validateAmendment, amendmentDiff, crossCheckGoals } from '../lib/goals.mjs';
 import { planWorktreeCreate, parseWorktreeList, classifyWorktrees, normalizeDisposition, dispositionAfterTeardown, VALID_DISPOSITIONS as VALID_WORKTREE_DISPOSITION } from '../lib/worktree.mjs';
 import { collectDiskDirs, collectBundleRecords } from '../lib/worktree-fs.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
@@ -443,6 +443,55 @@ function enforceGoalsSplitBrainGuard(statePath, state, transition) {
       1
     );
   }
+}
+// Load the goal list for machine-checked plan coverage (§3.2). On a goals_enabled bundle, parse
+// goals.md, verify its hash matches the committed goal set from the event log, cross-check it against
+// the derived state.goals cache (lib/goals.mjs), and return the parsed goal list so validatePlanIndex
+// can enforce coverage centrally — uncovered/unknown goal refs then make the caller exit non-zero.
+// Pre-feature bundles (no state.yml / no goals_enabled marker) return [] so coverage is a no-op.
+// fs-only.
+function loadGoalsForCoverage(statePath, label) {
+  let state = null;
+  try {
+    if (fs.existsSync(statePath)) state = readState(statePath);
+  } catch (e) {
+    die(`${label}: state.yml unreadable: ${e.message}`, 1);
+  }
+  const events = readBundleEventsForGoals(statePath, label);
+  if (!bundleGoalsEnabled(state, events)) return []; // pre-feature: coverage is a no-op
+  const goalsMdPath = path.join(path.dirname(statePath), 'goals.md');
+  let goalsMd;
+  try {
+    goalsMd = fs.readFileSync(goalsMdPath, 'utf8');
+  } catch (e) {
+    die(
+      `${label}: goals are enabled but goals.md is unreadable (${e.message}) — freeze the goal set ` +
+        'with `mp goals-load` before validating the plan.',
+      1
+    );
+  }
+  const mdGoals = parseGoals(goalsMd).goals;
+  const committed = committedGoalsHash(events);
+  const actual = goalsHash(goalsMd);
+  if (committed !== null && actual !== committed) {
+    die(
+      `${label}: goals.md hash ${actual} does not match the committed goal set ${committed} — reconcile ` +
+        'the split brain (`mp goals-amend`, or restore goals.md) before validating the plan.',
+      1
+    );
+  }
+  // Cross-check goals.md against the derived state.goals cache. When the hash matches the committed
+  // event set, goals.md IS that set, so it doubles as the event source for the three-way check.
+  const stateGoals = Array.isArray(state?.goals) ? state.goals : [];
+  const cc = crossCheckGoals(mdGoals, stateGoals, mdGoals);
+  if (!cc.ok) {
+    die(
+      `${label}: goals cross-check failed — ${cc.error} (state.goals cache diverged from goals.md; ` +
+        're-freeze via `mp goals-load` / `mp goals-amend`).',
+      1
+    );
+  }
+  return mdGoals;
 }
 
 // ---- tiny arg parser: positional[], flags{} (--k=v, or --k as boolean true) ----
@@ -1540,7 +1589,8 @@ function main() {
       } catch (e) {
         die(`merge-plan-fragments: ${e.message}`, 1);
       }
-      const errors = validatePlanIndex(index);
+      const mergeGoals = loadGoalsForCoverage(path.join(path.dirname(outIndex), 'state.yml'), 'merge-plan-fragments');
+      const errors = validatePlanIndex(index, mergeGoals);
       if (errors.length) {
         die(`merge-plan-fragments: produced an invalid index:\n  - ${errors.join('\n  - ')}`, 1);
       }
@@ -1568,7 +1618,8 @@ function main() {
       } catch (e) {
         die(`validate-plan-index: ${p} is not valid JSON (${e.message})`, 1);
       }
-      const errors = validatePlanIndex(index);
+      const validateGoals_ = loadGoalsForCoverage(path.join(path.dirname(p), 'state.yml'), 'validate-plan-index');
+      const errors = validatePlanIndex(index, validateGoals_);
       if (errors.length) {
         for (const e of errors) process.stderr.write(`  - ${e}\n`);
         die(`validate-plan-index: ${errors.length} error(s) in ${p}`, 1);

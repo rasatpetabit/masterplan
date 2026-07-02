@@ -2451,3 +2451,92 @@ test('pre-feature exempt: a non-goals bundle (no goals_enabled marker) skips the
   assert.equal(r.status, 3);
   assert.equal(JSON.parse(r.stdout).op, 'run_gate_review');
 });
+
+// ---- plan-index goal coverage: validate-plan-index + merge-plan-fragments enforce coverage ----
+// (goalsBundle / freezeInitialGoals / GOALS_MD reused from the goals sections above. freezeInitialGoals
+// freezes G1 + G2 into goals.md, state.goals, and the event log; coverage is enforced centrally by
+// validatePlanIndex once loadGoalsForCoverage feeds it the frozen goal list.)
+function writeCoverageIndex(dir, tasks) {
+  const ip = path.join(dir, 'plan.index.json');
+  fs.writeFileSync(ip, JSON.stringify({ schema_version: '6.0', tasks }));
+  return ip;
+}
+function writeCoverageFragments(dir, tasks) {
+  const fp = path.join(dir, 'fragments.json');
+  fs.writeFileSync(fp, JSON.stringify([{ key: 'sub', tasks }]));
+  return fp;
+}
+
+test('validate-plan-index: goals_enabled bundle passes when every goal is covered', () => {
+  const p = goalsBundle();
+  const dir = path.dirname(p);
+  freezeInitialGoals(p, dir);
+  const ip = writeCoverageIndex(dir, [
+    { id: 1, description: 'compile the widget', wave: 0, files: ['a.js'], verify_commands: [], codex: 'no', goals: ['G1'] },
+    { id: 2, description: 'document the widget', wave: 0, files: ['b.js'], verify_commands: [], codex: 'no', goals: ['G2'] },
+  ]);
+  const r = run(['validate-plan-index', `--plan-index=${ip}`]);
+  assert.equal(r.status, 0, `coverage should pass: ${r.stderr}`);
+  assert.equal(JSON.parse(r.stdout).valid, true);
+});
+
+test('validate-plan-index: goals_enabled bundle fails (exit 1) when a goal is uncovered', () => {
+  const p = goalsBundle();
+  const dir = path.dirname(p);
+  freezeInitialGoals(p, dir);
+  const ip = writeCoverageIndex(dir, [
+    { id: 1, description: 'compile the widget', wave: 0, files: ['a.js'], verify_commands: [], codex: 'no', goals: ['G1'] },
+  ]);
+  const r = run(['validate-plan-index', `--plan-index=${ip}`]);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /goal "G2" is not covered/);
+});
+
+test('validate-plan-index: pre-feature bundle (no goals_enabled) skips coverage', () => {
+  const dir = tmpDir('mp-cov-');
+  const ip = writeCoverageIndex(dir, [
+    { id: 1, description: 'do a thing', wave: 0, files: ['a.js'], verify_commands: [], codex: 'no' },
+  ]);
+  const r = run(['validate-plan-index', `--plan-index=${ip}`]);
+  assert.equal(r.status, 0, `pre-feature coverage must be a no-op: ${r.stderr}`);
+  assert.equal(JSON.parse(r.stdout).valid, true);
+});
+
+test('merge-plan-fragments: goals_enabled bundle passes when every goal is covered', () => {
+  const p = goalsBundle();
+  const dir = path.dirname(p);
+  freezeInitialGoals(p, dir);
+  const fp = writeCoverageFragments(dir, [
+    { key: 't1', description: 'compile the widget', files: ['a.js'], verify_commands: [], codex: 'no', goals: ['G1'] },
+    { key: 't2', description: 'document the widget', files: ['b.js'], verify_commands: [], codex: 'no', goals: ['G2'] },
+  ]);
+  const out = path.join(dir, 'plan.index.json');
+  const r = run(['merge-plan-fragments', `--fragments=${fp}`, `--out=${out}`, '--generated-at=2026-07-01T00:00:00Z']);
+  assert.equal(r.status, 0, `coverage should pass: ${r.stderr}`);
+  assert.equal(JSON.parse(r.stdout).tasks, 2);
+});
+
+test('merge-plan-fragments: goals_enabled bundle fails (exit 1) when a goal is uncovered', () => {
+  const p = goalsBundle();
+  const dir = path.dirname(p);
+  freezeInitialGoals(p, dir);
+  const fp = writeCoverageFragments(dir, [
+    { key: 't1', description: 'compile the widget', files: ['a.js'], verify_commands: [], codex: 'no', goals: ['G1'] },
+  ]);
+  const out = path.join(dir, 'plan.index.json');
+  const r = run(['merge-plan-fragments', `--fragments=${fp}`, `--out=${out}`]);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /goal "G2" is not covered/);
+  assert.equal(fs.existsSync(out), false, 'invalid merge must not land on disk');
+});
+
+test('merge-plan-fragments: pre-feature bundle (no goals_enabled) skips coverage', () => {
+  const dir = tmpDir('mp-cov-');
+  const fp = writeCoverageFragments(dir, [
+    { key: 't1', description: 'do a thing', files: ['a.js'], verify_commands: [], codex: 'no' },
+  ]);
+  const out = path.join(dir, 'plan.index.json');
+  const r = run(['merge-plan-fragments', `--fragments=${fp}`, `--out=${out}`]);
+  assert.equal(r.status, 0, `pre-feature coverage must be a no-op: ${r.stderr}`);
+  assert.equal(JSON.parse(r.stdout).tasks, 1);
+});
