@@ -324,3 +324,46 @@ test('renderPlanHtml with no taskStatus renders every task as pending', () => {
   assert.ok(h.includes('badge status-pending'));
   assert.ok(!h.includes('badge status-done') && !h.includes('badge status-failed'));
 });
+
+// ── goal tracking ────────────────────────────────────────────────────────────
+test('mergePlanFragments carries per-task goals through to the emitted index', () => {
+  const index = mergePlanFragments([
+    frag('s', [
+      task('a', { goals: ['G1', 'G2'] }),
+      task('b', { files: ['b.js'] }),
+    ]),
+  ]);
+  assert.deepEqual(byDesc(index, 'a').goals, ['G1', 'G2']);
+  assert.deepEqual(byDesc(index, 'b').goals, []);
+});
+
+test('validatePlanIndex flags an uncovered non-tombstoned goal', () => {
+  const index = mergePlanFragments([frag('s', [task('a', { goals: ['G1'] })])]);
+  const errors = validatePlanIndex(index, [{ id: 'G1' }, { id: 'G2' }]);
+  assert.ok(errors.some((e) => e.includes('G2') && e.includes('covered')), 'G2 must be flagged as uncovered');
+  assert.ok(!errors.some((e) => e.includes('G1')), 'G1 must not be flagged');
+});
+
+test('validatePlanIndex flags a task citing an unknown goal', () => {
+  const index = mergePlanFragments([frag('s', [task('a', { goals: ['G1', 'GX'] })])]);
+  const errors = validatePlanIndex(index, [{ id: 'G1' }]);
+  assert.ok(errors.some((e) => e.includes('GX') && e.includes('unknown')), 'GX must be flagged as unknown');
+});
+
+test('validatePlanIndex exempts a tombstoned goal from coverage', () => {
+  const index = mergePlanFragments([frag('s', [task('a', { goals: ['G1'] })])]);
+  const errors = validatePlanIndex(index, [{ id: 'G1' }, { id: 'G2', tombstone: true }]);
+  assert.ok(!errors.some((e) => e.includes('G2')), 'tombstoned G2 must not be flagged as uncovered');
+
+  const index2 = mergePlanFragments([frag('s', [task('a', { goals: ['G1', 'G2'] })])]);
+  const errors2 = validatePlanIndex(index2, [{ id: 'G1' }, { id: 'G2', tombstone: true }]);
+  assert.ok(!errors2.some((e) => e.includes('unknown')), 'citing a tombstoned goal must not be an unknown-ref error');
+});
+
+test('validatePlanIndex with an empty goals list is a no-op (pre-feature bundles)', () => {
+  const index = mergePlanFragments([
+    frag('s', [task('a', { goals: ['G1'] }), task('b', { files: ['b.js'] })]),
+  ]);
+  assert.deepEqual(validatePlanIndex(index), []);
+  assert.deepEqual(validatePlanIndex(index, []), []);
+});
