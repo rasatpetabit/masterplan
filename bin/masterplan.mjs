@@ -151,7 +151,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, setWorktree, setWorktreeDisposition, setVerifiedSha, setCodexConfig, setReviewConfig, loadPlanTasks, buildSeedState, buildTasksFromPlanIndex, appendEvent, setCoordination, applyPlanIndex, rebasePaths } from '../lib/bundle.mjs';
+import { readState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, setWorktree, setWorktreeDisposition, setVerifiedSha, setCodexConfig, setReviewConfig, loadPlanTasks, buildSeedState, buildTasksFromPlanIndex, appendEvent, setCoordination, applyPlanIndex, rebasePaths, GOAL_LIFECYCLE_EVENT_TYPES } from '../lib/bundle.mjs';
+import { parseGoals, validateGoals, goalsHash, validateUserApprovalReceipt } from '../lib/goals.mjs';
 import { planWorktreeCreate, parseWorktreeList, classifyWorktrees, normalizeDisposition, dispositionAfterTeardown, VALID_DISPOSITIONS as VALID_WORKTREE_DISPOSITION } from '../lib/worktree.mjs';
 import { collectDiskDirs, collectBundleRecords } from '../lib/worktree-fs.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
@@ -656,6 +657,118 @@ function main() {
         die(e.message, 1);
       }
       out({ event: record.type, ts: record.ts, path: eventsPath }); // terse confirmation
+      break;
+    }
+    case 'goals-load': {
+      // Freeze goals.md into the bundle: parse/validate via lib/goals.mjs, cache into state.goals,
+      // record the goals.md content hash, and append goals_frozen (the COMMIT point) carrying the
+      // user-approval receipt keyed to the exact goals hash. One-shot semantics: any prior goal
+      // LIFECYCLE event (goals_frozen/goal_amended/goal_check/goal_waived) — NOT the seed-time
+      // capability event — or a phase past capture (anything other than brainstorm) rejects, so a
+      // re-freeze can never launder a new goal set in. A re-run at the IDENTICAL goals hash is an
+      // idempotent roll-forward (crash-safe): re-materialize the derived artifacts/cache but NEVER
+      // double-append the commit event. Multi-file write ordering is artifacts-FIRST (goals.md
+      // temp+rename, then state.yml temp+rename via the single-writer writeState), event append LAST.
+      const p = need(flags, 'state');
+      const dir = path.dirname(p);
+      const state = loadForWrite(p);
+      let goalsMd;
+      try {
+        goalsMd = fs.readFileSync(String(need(flags, 'goals')), 'utf8');
+      } catch (e) {
+        die(`goals-load: --goals unreadable: ${e.message}`, 1);
+      }
+      const parsed = parseGoals(goalsMd);
+      const val = validateGoals(parsed);
+      if (!val.ok) die(`goals-load: invalid goals.md — ${val.error}`, 1);
+      const hash = goalsHash(goalsMd);
+      let approval;
+      try {
+        approval = JSON.parse(fs.readFileSync(String(need(flags, 'approval')), 'utf8'));
+      } catch (e) {
+        die(`goals-load: --approval unreadable or not JSON: ${e.message}`, 1);
+      }
+      const ar = validateUserApprovalReceipt(approval, { goalsHash: hash, purpose: 'goal_load' });
+      if (!ar.ok) die(`goals-load: invalid approval receipt — ${ar.error}`, 1);
+      // Read events for the one-shot check (absent file == no events yet; any non-ENOENT read error
+      // fails loud rather than masquerading as an empty log).
+      const goalsEventsPath = path.join(dir, 'events.jsonl');
+      let goalsEventsText = '';
+      try {
+        goalsEventsText = fs.readFileSync(goalsEventsPath, 'utf8');
+      } catch (e) {
+        if (e.code !== 'ENOENT') die(`goals-load: events.jsonl unreadable: ${e.message}`, 1);
+      }
+      const goalEvents = goalsEventsText
+        .split('\n')
+        .filter((l) => l.trim())
+        .map((l) => {
+          try {
+            return JSON.parse(l);
+          } catch {
+            return null;
+          }
+        })
+        .filter(Boolean);
+      // PLAN-GATE FINDING: one-shot rejection counts only goal LIFECYCLE events; the seed-time
+      // capability event (bundle_created) does NOT block the first goals-load.
+      const priorFrozen = goalEvents.filter((e) => e.type === 'goals_frozen');
+      const otherGoalEvents = goalEvents.filter(
+        (e) => GOAL_LIFECYCLE_EVENT_TYPES.includes(e.type) && e.type !== 'goals_frozen'
+      );
+      if (otherGoalEvents.length) {
+        die(
+          `goals-load: rejected — a goal lifecycle event (${[...new Set(otherGoalEvents.map((e) => e.type))].join(', ')}) already exists; goals are past initial capture (use goals-amend for sanctioned changes)`,
+          1
+        );
+      }
+      if (priorFrozen.length) {
+        const priorHash = priorFrozen[priorFrozen.length - 1]?.data?.goals_hash;
+        if (priorHash === hash) {
+          // Idempotent roll-forward: a prior freeze already committed at THIS exact hash. A crash
+          // could have died between the artifact writes and the event append, or after — either way
+          // re-materialize the derived artifacts + cache to converge, but never re-append the event.
+          const goalsMdTmp = path.join(dir, 'goals.md.tmp');
+          fs.mkdirSync(dir, { recursive: true });
+          fs.writeFileSync(goalsMdTmp, goalsMd, 'utf8');
+          fs.renameSync(goalsMdTmp, path.join(dir, 'goals.md'));
+          writeState(p, { ...state, goals: parsed.goals, goals_md_hash: hash });
+          out({ goals_load: 'idempotent', goals_hash: hash, goals: parsed.goals.length });
+          break;
+        }
+        die(
+          `goals-load: rejected — goals already frozen at a different hash (${priorHash}); a re-freeze would launder a new goal set (use goals-amend)`,
+          1
+        );
+      }
+      // One-shot phase gate: capture is the brainstorm->plan boundary; any phase other than
+      // brainstorm is past the capture window.
+      if (state.phase !== undefined && state.phase !== null && state.phase !== 'brainstorm') {
+        die(
+          `goals-load: rejected — phase is '${state.phase}', past the goal-capture window (brainstorm); goals can only be frozen before planning`,
+          1
+        );
+      }
+      // ---- multi-file write: artifacts FIRST (each temp+rename), event append LAST as commit ----
+      const goalsMdTmp = path.join(dir, 'goals.md.tmp');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(goalsMdTmp, goalsMd, 'utf8');
+      fs.renameSync(goalsMdTmp, path.join(dir, 'goals.md'));
+      writeState(p, { ...state, goals: parsed.goals, goals_md_hash: hash });
+      const goalsFrozenRecord = {
+        type: 'goals_frozen',
+        ts: flags.ts ?? new Date().toISOString(),
+        data: { goals_hash: hash, approval: ar.normalized },
+        summary: `goals frozen (${parsed.goals.length} goals) at ${hash}`,
+      };
+      appendEvent(p, goalsFrozenRecord);
+      out({
+        goals_load: 'frozen',
+        goals_hash: hash,
+        goals: parsed.goals.length,
+        event: 'goals_frozen',
+        ts: goalsFrozenRecord.ts,
+      });
       break;
     }
     case 'migrate-bundle': {

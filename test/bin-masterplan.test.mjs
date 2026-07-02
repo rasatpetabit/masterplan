@@ -1976,3 +1976,129 @@ test('gate: --force bypasses set-phase→plan and appends a spec_gate_bypassed a
   const events = fs.readFileSync(path.join(path.dirname(p), 'events.jsonl'), 'utf8');
   assert.match(events, /spec_gate_bypassed/);
 });
+
+// ---- goals-load: freeze goals.md into the bundle (one-shot capture + approval receipt) ----
+import { goalsHash as goalsHashFn } from '../lib/goals.mjs';
+function goalsBundle(over = {}) {
+  return tmpBundle(v8({ phase: 'brainstorm', goals_enabled: true, goals: [], tasks: [], ...over }));
+}
+const GOALS_MD = 'topic: ship the widget\n\n## G1: the widget compiles\nsignal: command\n\n## G2: the widget is documented\nsignal: docs\n';
+function writeGoals(dir, md = GOALS_MD) {
+  const gp = path.join(dir, 'src-goals.md');
+  fs.writeFileSync(gp, md);
+  return gp;
+}
+function writeApproval(dir, hash, over = {}) {
+  const ap = path.join(dir, 'approval.json');
+  fs.writeFileSync(ap, JSON.stringify({ attested_by: 'user', purpose: 'goal_load', goals_hash: hash, question: 'Approve these goals?', answer: 'yes', ts: '2026-07-01T00:00:00Z', ...over }));
+  return ap;
+}
+
+test('goals-load: freezes goals into state + appends goals_frozen with the approval receipt', () => {
+  const p = goalsBundle();
+  const dir = path.dirname(p);
+  const gp = writeGoals(dir);
+  const hash = goalsHashFn(GOALS_MD);
+  const ap = writeApproval(dir, hash);
+  const r = run(['goals-load', `--state=${p}`, `--goals=${gp}`, `--approval=${ap}`, '--ts=2026-07-01T00:00:00Z']);
+  assert.equal(r.status, 0, `goals-load should succeed: ${r.stderr}`);
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.goals_load, 'frozen');
+  assert.equal(out.goals_hash, hash);
+  assert.equal(out.goals, 2);
+  const st = read(p);
+  assert.equal(st.goals_md_hash, hash);
+  assert.equal(st.goals.length, 2);
+  assert.equal(st.goals[0].id, 'G1');
+  assert.equal(fs.readFileSync(path.join(dir, 'goals.md'), 'utf8'), GOALS_MD);
+  const events = fs.readFileSync(path.join(dir, 'events.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  const frozen = events.filter((e) => e.type === 'goals_frozen');
+  assert.equal(frozen.length, 1);
+  assert.equal(frozen[0].data.goals_hash, hash);
+  assert.equal(frozen[0].data.approval.attested_by, 'user');
+});
+
+test('goals-load: rejects a malformed goals.md (validation failure)', () => {
+  const p = goalsBundle();
+  const dir = path.dirname(p);
+  const bad = 'topic: x\n\n## G1: only a title\nsignal: not-a-class\n';
+  const gp = writeGoals(dir, bad);
+  const ap = writeApproval(dir, goalsHashFn(bad));
+  const r = run(['goals-load', `--state=${p}`, `--goals=${gp}`, `--approval=${ap}`]);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /invalid goals\.md/);
+});
+
+test('goals-load: rejects a missing/invalid approval receipt', () => {
+  const p = goalsBundle();
+  const dir = path.dirname(p);
+  const gp = writeGoals(dir);
+  const ap = writeApproval(dir, 'sha256:wronghash');
+  const r = run(['goals-load', `--state=${p}`, `--goals=${gp}`, `--approval=${ap}`]);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /approval receipt/);
+});
+
+test('goals-load: one-shot — a re-freeze with DIFFERENT goals is rejected (no laundering)', () => {
+  const p = goalsBundle();
+  const dir = path.dirname(p);
+  const gp = writeGoals(dir);
+  const hash = goalsHashFn(GOALS_MD);
+  const ap = writeApproval(dir, hash);
+  assert.equal(run(['goals-load', `--state=${p}`, `--goals=${gp}`, `--approval=${ap}`]).status, 0);
+  const md2 = 'topic: different\n\n## G1: a changed goal\nsignal: test\n';
+  const gp2 = writeGoals(dir, md2);
+  const ap2 = writeApproval(dir, goalsHashFn(md2));
+  const r = run(['goals-load', `--state=${p}`, `--goals=${gp2}`, `--approval=${ap2}`]);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /different hash|launder/);
+});
+
+test('goals-load: idempotent roll-forward — re-run at the SAME hash succeeds without a second event', () => {
+  const p = goalsBundle();
+  const dir = path.dirname(p);
+  const gp = writeGoals(dir);
+  const hash = goalsHashFn(GOALS_MD);
+  const ap = writeApproval(dir, hash);
+  assert.equal(run(['goals-load', `--state=${p}`, `--goals=${gp}`, `--approval=${ap}`]).status, 0);
+  const r2 = run(['goals-load', `--state=${p}`, `--goals=${gp}`, `--approval=${ap}`]);
+  assert.equal(r2.status, 0, `re-run should be idempotent: ${r2.stderr}`);
+  assert.equal(JSON.parse(r2.stdout).goals_load, 'idempotent');
+  const frozen = fs.readFileSync(path.join(dir, 'events.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((e) => e.type === 'goals_frozen');
+  assert.equal(frozen.length, 1, 'no second goals_frozen event on idempotent re-run');
+});
+
+test('goals-load: one-shot — rejected once another goal lifecycle event exists', () => {
+  const p = goalsBundle();
+  const dir = path.dirname(p);
+  const gp = writeGoals(dir);
+  const hash = goalsHashFn(GOALS_MD);
+  const ap = writeApproval(dir, hash);
+  run(['event', `--state=${p}`, '--type=goal_waived', '--data={"goals_hash":"sha256:x"}']);
+  const r = run(['goals-load', `--state=${p}`, `--goals=${gp}`, `--approval=${ap}`]);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /past initial capture|lifecycle event/);
+});
+
+test('goals-load: one-shot — rejected when phase is past capture (not brainstorm)', () => {
+  const p = goalsBundle({ phase: 'plan' });
+  const dir = path.dirname(p);
+  const gp = writeGoals(dir);
+  const hash = goalsHashFn(GOALS_MD);
+  const ap = writeApproval(dir, hash);
+  const r = run(['goals-load', `--state=${p}`, `--goals=${gp}`, `--approval=${ap}`]);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /past the goal-capture window|brainstorm/);
+});
+
+test('goals-load: the seed-time capability event does NOT block the first goals-load', () => {
+  const p = goalsBundle();
+  const dir = path.dirname(p);
+  run(['event', `--state=${p}`, '--type=bundle_created', '--data={"goals_enabled":true}']);
+  const gp = writeGoals(dir);
+  const hash = goalsHashFn(GOALS_MD);
+  const ap = writeApproval(dir, hash);
+  const r = run(['goals-load', `--state=${p}`, `--goals=${gp}`, `--approval=${ap}`]);
+  assert.equal(r.status, 0, `capability event must not block first load: ${r.stderr}`);
+  assert.equal(JSON.parse(r.stdout).goals_load, 'frozen');
+});
