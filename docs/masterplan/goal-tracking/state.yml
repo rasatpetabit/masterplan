@@ -1,7 +1,7 @@
 ---
 schema_version: 8
 slug: goal-tracking
-status: in-progress
+status: archived
 phase: execute
 topic: "enhance masterplan to distill and track the plan's original goals, not just the spec+plan implementation of those goals — ensure goals are actually achieved by the end rather than drifting/forgetting"
 complexity: high
