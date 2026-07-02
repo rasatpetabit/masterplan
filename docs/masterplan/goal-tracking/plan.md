@@ -32,7 +32,7 @@ Spec: docs/masterplan/goal-tracking/spec.md
 
 ### Task 18: Wire goal-tracking into the L1 sequencer contract in commands/masterplan.md WITHOUT re-teaching any transaction the subcommands own (prompt-structure test forbids absorbed prose). DESIGN CALL: decide exactly where each goal touchpoint threads into the existing trampoline. (1) §3 / §3a capture: at the brainstorm->plan boundary, before `mp set-phase --phase=plan`, teach the goals-capture step — dispatch/AUQ auto-distillation of goals.md, `mp goals-load` with a user-approval receipt freezing `goals_frozen`, and the fail-closed `run_goals_capture` guard (set-phase on a goals_enabled bundle exits 3 with that op until goals_frozen matches the current goals.md hash); note the §3b spec-gate hash now covers spec.md + goals.md and that `goals-amend` re-arms the spec gate. (2) §2c finish op table: add the `run_goal_check` op row (after `run_verify`, before `write_retro`) dispatching agents/mp-goal-assessor + `mp record-goal-check`, and the `goals_unmet` durable-gate row (Fix & continue / Accept waiver / Abort finish; fail-closed-on-dispatch-failure -> manual-verdict mode), including its answer flags. (3) §2d autonomy stop-set: add `goals_unmet` to the COMPLETE stop-set of gates that may end a turn with an AUQ under loose/full. (4) §2a/§7 anti-forgetting: add the one-line goals reminder to wave-completion narration and note `mp status` renders a goals block. Keep every bundle path absolute-MAIN per §2e. Ordering assumption (no hard build coupling): the `goals-load`/`goals-amend`/`record-goal-check` verbs, the finish-step `run_goal_check` op, and the set-phase `run_goals_capture` guard are authored by sibling subsystems (core/finish/state); this task documents/sequences them, it does not implement them.
 - files: commands/masterplan.md
-- verify: cd /srv/dev/ras/masterplan && node --test test/prompt-structure.test.mjs ; grep -nE "run_goal_check|goals_unmet|run_goals_capture|goals-load" commands/masterplan.md ; grep -n "goals_frozen" commands/masterplan.md
+- verify: node --test test/prompt-structure.test.mjs ; grep -nE "run_goal_check|goals_unmet|run_goals_capture|goals-load" commands/masterplan.md ; grep -n "goals_frozen" commands/masterplan.md
 - codex: no
 - spec_refs: docs/masterplan/goal-tracking/spec.md#L66-L95, docs/masterplan/goal-tracking/spec.md#L127-L160, docs/masterplan/goal-tracking/spec.md#L205-L214
 
@@ -52,7 +52,7 @@ Spec: docs/masterplan/goal-tracking/spec.md
 
 ### Task 19: Extend the structural guard in test/prompt-structure.test.mjs so the goal-tracking contract additions are enforced the same way the existing op tables are: assert commands/masterplan.md teaches the new typed ops and gate (`run_goal_check`, `goals_unmet`, `run_goals_capture`) alongside the existing §2c op-table checks, and assert the goals-capture verb (`goals-load`) and the goal-check finish flags are named so a goal gate can never dead-end. Do NOT add any of the new goal sequences to the ABSORBED forbidden-list (they are prose the sequencer legitimately teaches). Mirror the existing assert style. Depends on the wiring being present because the assertions read commands/masterplan.md at runtime.
 - files: test/prompt-structure.test.mjs
-- verify: cd /srv/dev/ras/masterplan && node --test test/prompt-structure.test.mjs
+- verify: node --test test/prompt-structure.test.mjs
 - codex: heuristic
 - spec_refs: docs/masterplan/goal-tracking/spec.md#L205-L214
 

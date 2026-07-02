@@ -301,7 +301,7 @@
         "commands/masterplan.md"
       ],
       "verify_commands": [
-        "cd /srv/dev/ras/masterplan && node --test test/prompt-structure.test.mjs",
+        "node --test test/prompt-structure.test.mjs",
         "grep -nE \"run_goal_check|goals_unmet|run_goals_capture|goals-load\" commands/masterplan.md",
         "grep -n \"goals_frozen\" commands/masterplan.md"
       ],
@@ -320,7 +320,7 @@
         "test/prompt-structure.test.mjs"
       ],
       "verify_commands": [
-        "cd /srv/dev/ras/masterplan && node --test test/prompt-structure.test.mjs"
+        "node --test test/prompt-structure.test.mjs"
       ],
       "codex": null,
       "spec_refs": [
@@ -345,6 +345,6 @@
       ]
     }
   ],
-  "plan_hash": "sha256:1046145d8536097a3bec674b44175a530f334f102175cbc19b5fe04f35cdd392",
-  "generated_at": "2026-07-02T01:16:36.220Z"
+  "plan_hash": "sha256:64a4dece7db4535672964bd15797386557641e9fa57e27972d537d1655f37edc",
+  "generated_at": "2026-07-02T01:16:57.447Z"
 }

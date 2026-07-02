@@ -360,7 +360,7 @@
           "commands/masterplan.md"
         ],
         "verify_commands": [
-          "cd /srv/dev/ras/masterplan && node --test test/prompt-structure.test.mjs",
+          "node --test test/prompt-structure.test.mjs",
           "grep -nE \"run_goal_check|goals_unmet|run_goals_capture|goals-load\" commands/masterplan.md",
           "grep -n \"goals_frozen\" commands/masterplan.md"
         ],
@@ -379,7 +379,7 @@
           "test/prompt-structure.test.mjs"
         ],
         "verify_commands": [
-          "cd /srv/dev/ras/masterplan && node --test test/prompt-structure.test.mjs"
+          "node --test test/prompt-structure.test.mjs"
         ],
         "deps": [
           "orchestration.sequencer-wiring"
