@@ -52,6 +52,12 @@ id_ed25519.*
 **/*-subagents-archive.jsonl
 **/*-subagents-cursor
 
+# /masterplan owner-fs runtime coordination (atomic link() lock + per-session
+# heartbeats). Syncthing may sync these filesystem sentinels across hosts, but
+# git history must not — they are runtime coordination state, not history.
+docs/masterplan/*/.owner.lock
+docs/masterplan/*/.owner.hb.*
+
 # Internal handoff notes (kept local; not for public consumption).
 # See SessionStart-hook convention; LLMs collaborating on this repo
 # write decisions here for the next session, not the public.
