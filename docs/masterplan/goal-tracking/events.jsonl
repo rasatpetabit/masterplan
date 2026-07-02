@@ -20,3 +20,6 @@
 {"type":"wave_recorded","ts":"2026-07-02T15:17:16.453Z","phase":"execute","note":"wave 8 record: 1 done, 0 failed/blocked, 0 qctl"}
 {"type":"note","ts":"2026-07-02T15:17:26.873Z"}
 {"type":"wave_recorded","ts":"2026-07-02T15:29:15.721Z","phase":"execute","note":"wave 9 record: 1 done, 0 failed/blocked, 0 qctl"}
+{"type":"docs_normalize","ts":"2026-07-02T15:32:35.007Z","summary":"finish docs normalization complete — 1 file(s) folded into repo docs","data":{"sha":"9ea82f81f57d811ef741ca51e5624299ead2ea9b","count":1}}
+{"type":"adversary_review_skipped","ts":"2026-07-02T18:20:00.845Z","summary":"whole-branch adversary-review skipped (degraded) — review backends unhealthy (probe degraded; skynet review lanes ok:false) and base 'main' carries the in-flight adsp-adapter WIP commit (user-directed WIP inclusion) — combined release tree verified via full post-merge test suite (CD-3) instead","data":{"sha":"9ea82f81f57d811ef741ca51e5624299ead2ea9b"}}
+{"type":"branch_finish","ts":"2026-07-02T18:20:38.061Z","note":"merge"}

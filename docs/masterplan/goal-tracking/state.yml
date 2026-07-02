@@ -18,3 +18,5 @@ active_run: null
 pending_gate: null
 review: {"adversary":true}
 worktree: /srv/dev/ras/masterplan/.worktrees/goal-tracking
+verified_sha: 9ea82f81f57d811ef741ca51e5624299ead2ea9b
+worktree_disposition: removed_after_merge
