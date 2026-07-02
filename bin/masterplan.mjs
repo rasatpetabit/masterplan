@@ -152,7 +152,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, setWorktree, setWorktreeDisposition, setVerifiedSha, setCodexConfig, setReviewConfig, loadPlanTasks, buildSeedState, buildTasksFromPlanIndex, appendEvent, setCoordination, applyPlanIndex, rebasePaths, GOAL_LIFECYCLE_EVENT_TYPES } from '../lib/bundle.mjs';
-import { parseGoals, validateGoals, goalsHash, validateUserApprovalReceipt } from '../lib/goals.mjs';
+import { parseGoals, validateGoals, goalsHash, validateUserApprovalReceipt, validateAmendment, amendmentDiff } from '../lib/goals.mjs';
 import { planWorktreeCreate, parseWorktreeList, classifyWorktrees, normalizeDisposition, dispositionAfterTeardown, VALID_DISPOSITIONS as VALID_WORKTREE_DISPOSITION } from '../lib/worktree.mjs';
 import { collectDiskDirs, collectBundleRecords } from '../lib/worktree-fs.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
@@ -768,6 +768,134 @@ function main() {
         goals: parsed.goals.length,
         event: 'goals_frozen',
         ts: goalsFrozenRecord.ts,
+      });
+      break;
+    }
+    case 'goals-amend': {
+      // The ONLY sanctioned mid-run goal change. Requires a FRESH user-approval receipt bound to BOTH
+      // the prior (old) goals hash AND the new goals hash (purpose 'goal_amend') — never autonomous.
+      // IDs stay stable (renumbering rejected via validateAmendment); a removed goal must arrive as a
+      // tombstone {reason, amended_at} (a bare deletion is rejected). Appends a goal_amended event
+      // recording old->new hash + reason plus the full old/new content (text+signal) of every changed
+      // goal (amendmentDiff). Because every goal_check receipt and goal_waived waiver is keyed to the
+      // goals hash, advancing the frozen hash structurally invalidates them all (their validators reject
+      // a receipt/waiver whose goals_hash no longer matches) — the event records how many it strands.
+      // Reuses the goals-load multi-file write ordering: artifacts (goals.md temp+rename) FIRST, state
+      // via the single-writer writeState, event append LAST as the commit point.
+      const p = need(flags, 'state');
+      const dir = path.dirname(p);
+      const state = loadForWrite(p);
+      let goalsMd;
+      try {
+        goalsMd = fs.readFileSync(String(need(flags, 'goals')), 'utf8');
+      } catch (e) {
+        die(`goals-amend: --goals unreadable: ${e.message}`, 1);
+      }
+      const reason = String(need(flags, 'reason')).trim();
+      if (!reason) die('goals-amend: --reason must be a non-empty amendment justification', 1);
+      const parsed = parseGoals(goalsMd);
+      const newHash = goalsHash(goalsMd);
+      // Read events: an amendment requires an already-committed goal set (goals_frozen), and drives the
+      // idempotent roll-forward off the latest goal_amended (absent file == no events; a non-ENOENT read
+      // error fails loud rather than masquerading as an empty log).
+      const amendEventsPath = path.join(dir, 'events.jsonl');
+      let amendEventsText = '';
+      try {
+        amendEventsText = fs.readFileSync(amendEventsPath, 'utf8');
+      } catch (e) {
+        if (e.code !== 'ENOENT') die(`goals-amend: events.jsonl unreadable: ${e.message}`, 1);
+      }
+      const amendAllEvents = amendEventsText
+        .split('\n')
+        .filter((l) => l.trim())
+        .map((l) => {
+          try {
+            return JSON.parse(l);
+          } catch {
+            return null;
+          }
+        })
+        .filter(Boolean);
+      const priorFrozenForAmend = amendAllEvents.filter((e) => e.type === 'goals_frozen');
+      if (!priorFrozenForAmend.length) {
+        die(
+          'goals-amend: rejected — no goals_frozen event exists; nothing to amend (use goals-load to freeze the initial goal set first)',
+          1
+        );
+      }
+      const amendEvents = amendAllEvents.filter((e) => e.type === 'goal_amended');
+      const lastAmend = amendEvents[amendEvents.length - 1];
+      // Idempotent roll-forward: the latest amendment already committed at THIS new hash (a crash could
+      // have died after the event append, or between the artifact writes and it). Re-materialize the
+      // derived artifacts + cache to converge, but NEVER double-append the event.
+      if (lastAmend && lastAmend.data && lastAmend.data.new_goals_hash === newHash) {
+        const goalsMdTmp = path.join(dir, 'goals.md.tmp');
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(goalsMdTmp, goalsMd, 'utf8');
+        fs.renameSync(goalsMdTmp, path.join(dir, 'goals.md'));
+        writeState(p, { ...state, goals: parsed.goals, goals_md_hash: newHash });
+        out({ goals_amend: 'idempotent', new_goals_hash: newHash, goals: parsed.goals.length });
+        break;
+      }
+      // Old (currently committed) goal set + hash: state.goals is the derived cache, keyed by goals_md_hash.
+      const oldGoals = Array.isArray(state.goals) ? state.goals : [];
+      const oldHash =
+        state.goals_md_hash ??
+        (lastAmend ? lastAmend.data.new_goals_hash : priorFrozenForAmend[priorFrozenForAmend.length - 1].data.goals_hash);
+      // Amendment structural rules: new doc valid, IDs stable (no renumbering), removals are tombstones.
+      const amv = validateAmendment(oldGoals, parsed.goals);
+      if (!amv.ok) die(`goals-amend: invalid amendment — ${amv.error}`, 1);
+      if (newHash === oldHash) {
+        die('goals-amend: rejected — new goals are identical to the current goals (nothing to amend)', 1);
+      }
+      // Fresh user-approval receipt bound to BOTH the old and new hash (never autonomous).
+      let approval;
+      try {
+        approval = JSON.parse(fs.readFileSync(String(need(flags, 'approval')), 'utf8'));
+      } catch (e) {
+        die(`goals-amend: --approval unreadable or not JSON: ${e.message}`, 1);
+      }
+      const ar = validateUserApprovalReceipt(approval, { goalsHash: newHash, oldGoalsHash: oldHash, purpose: 'goal_amend' });
+      if (!ar.ok) die(`goals-amend: invalid approval receipt — ${ar.error}`, 1);
+      const changes = amendmentDiff(oldGoals, parsed.goals);
+      // Count the receipts/waivers this amendment strands: all are hash-keyed, so advancing the goals
+      // hash invalidates every goal_check / goal_waived recorded against the OLD hash.
+      const invalidated = amendAllEvents.filter(
+        (e) =>
+          (e.type === 'goal_check' || e.type === 'goal_waived') &&
+          (e.data?.goals_hash === oldHash ||
+            e.data?.receipt?.goals_hash === oldHash ||
+            e.data?.waiver?.goals_hash === oldHash)
+      ).length;
+      // ---- multi-file write: artifacts FIRST (temp+rename), event append LAST as the commit ----
+      const goalsMdTmp = path.join(dir, 'goals.md.tmp');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(goalsMdTmp, goalsMd, 'utf8');
+      fs.renameSync(goalsMdTmp, path.join(dir, 'goals.md'));
+      writeState(p, { ...state, goals: parsed.goals, goals_md_hash: newHash });
+      const goalAmendedRecord = {
+        type: 'goal_amended',
+        ts: flags.ts ?? new Date().toISOString(),
+        data: {
+          old_goals_hash: oldHash,
+          new_goals_hash: newHash,
+          goals_hash: newHash,
+          reason,
+          changes,
+          invalidated_receipts: invalidated,
+          approval: ar.normalized,
+        },
+        summary: `goals amended (${changes.length} changed) ${oldHash} -> ${newHash}: ${reason}`,
+      };
+      appendEvent(p, goalAmendedRecord);
+      out({
+        goals_amend: 'amended',
+        old_goals_hash: oldHash,
+        new_goals_hash: newHash,
+        changes: changes.length,
+        invalidated_receipts: invalidated,
+        event: 'goal_amended',
+        ts: goalAmendedRecord.ts,
       });
       break;
     }

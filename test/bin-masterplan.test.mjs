@@ -2102,3 +2102,166 @@ test('goals-load: the seed-time capability event does NOT block the first goals-
   assert.equal(r.status, 0, `capability event must not block first load: ${r.stderr}`);
   assert.equal(JSON.parse(r.stdout).goals_load, 'frozen');
 });
+
+// ---- goals-amend: the only sanctioned mid-run goal change (fresh approval, ids stable, tombstones) ----
+// A valid amendment of GOALS_MD (ids G1/G2 preserved): G1 text modified, G2 tombstoned (kept, not
+// deleted), G3 added with a strictly-greater number.
+const AMEND_MD =
+  'topic: ship the widget\n\n## G1: the widget compiles fast\nsignal: command\n\n## G2: the widget is documented\nsignal: docs\ntombstone_reason: descoped\ntombstone_at: 2026-07-02T00:00:00Z\n\n## G3: the widget ships to prod\nsignal: test\n';
+function freezeInitialGoals(p, dir) {
+  const gp = writeGoals(dir);
+  const hash = goalsHashFn(GOALS_MD);
+  const ap = writeApproval(dir, hash);
+  const r = run(['goals-load', `--state=${p}`, `--goals=${gp}`, `--approval=${ap}`]);
+  assert.equal(r.status, 0, `goals-load setup should succeed: ${r.stderr}`);
+  return hash;
+}
+function writeAmendApproval(dir, oldHash, newHash, over = {}) {
+  const ap = path.join(dir, 'amend-approval.json');
+  fs.writeFileSync(
+    ap,
+    JSON.stringify({
+      attested_by: 'user',
+      purpose: 'goal_amend',
+      goals_hash: newHash,
+      old_goals_hash: oldHash,
+      question: 'Approve this goal amendment?',
+      answer: 'yes',
+      ts: '2026-07-02T00:00:00Z',
+      ...over,
+    })
+  );
+  return ap;
+}
+function writeAmendGoals(dir, md) {
+  const gp = path.join(dir, 'amend-goals.md');
+  fs.writeFileSync(gp, md);
+  return gp;
+}
+
+test('goals-amend: amends goals — updates state + goals.md + appends goal_amended with old->new hash, reason, and full per-goal changes', () => {
+  const p = goalsBundle();
+  const dir = path.dirname(p);
+  const oldHash = freezeInitialGoals(p, dir);
+  const newHash = goalsHashFn(AMEND_MD);
+  const gp = writeAmendGoals(dir, AMEND_MD);
+  const ap = writeAmendApproval(dir, oldHash, newHash);
+  const r = run(['goals-amend', `--state=${p}`, `--goals=${gp}`, `--approval=${ap}`, '--reason=descope docs goal', '--ts=2026-07-02T00:00:00Z']);
+  assert.equal(r.status, 0, `goals-amend should succeed: ${r.stderr}`);
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.goals_amend, 'amended');
+  assert.equal(out.old_goals_hash, oldHash);
+  assert.equal(out.new_goals_hash, newHash);
+  assert.equal(out.changes, 3);
+  const st = read(p);
+  assert.equal(st.goals_md_hash, newHash);
+  assert.equal(st.goals.length, 3);
+  assert.equal(fs.readFileSync(path.join(dir, 'goals.md'), 'utf8'), AMEND_MD);
+  const events = fs.readFileSync(path.join(dir, 'events.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  const amended = events.filter((e) => e.type === 'goal_amended');
+  assert.equal(amended.length, 1);
+  assert.equal(amended[0].data.old_goals_hash, oldHash);
+  assert.equal(amended[0].data.new_goals_hash, newHash);
+  assert.equal(amended[0].data.reason, 'descope docs goal');
+  const byId = Object.fromEntries(amended[0].data.changes.map((c) => [c.id, c]));
+  assert.equal(byId.G1.change, 'modified');
+  assert.equal(byId.G1.old.text, 'the widget compiles');
+  assert.equal(byId.G1.new.text, 'the widget compiles fast');
+  assert.equal(byId.G2.change, 'tombstoned');
+  assert.equal(byId.G3.change, 'added');
+  assert.equal(byId.G3.new.signal, 'test');
+});
+
+test('goals-amend: rejected when no goals_frozen exists yet (nothing to amend)', () => {
+  const p = goalsBundle();
+  const dir = path.dirname(p);
+  const newHash = goalsHashFn(AMEND_MD);
+  const gp = writeAmendGoals(dir, AMEND_MD);
+  const ap = writeAmendApproval(dir, 'sha256:none', newHash);
+  const r = run(['goals-amend', `--state=${p}`, `--goals=${gp}`, `--approval=${ap}`, '--reason=x']);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /nothing to amend|no goals_frozen/);
+});
+
+test('goals-amend: rejects a bare deletion — a removed goal must become a tombstone', () => {
+  const p = goalsBundle();
+  const dir = path.dirname(p);
+  const oldHash = freezeInitialGoals(p, dir);
+  const md = 'topic: ship the widget\n\n## G1: the widget compiles\nsignal: command\n';
+  const newHash = goalsHashFn(md);
+  const gp = writeAmendGoals(dir, md);
+  const ap = writeAmendApproval(dir, oldHash, newHash);
+  const r = run(['goals-amend', `--state=${p}`, `--goals=${gp}`, `--approval=${ap}`, '--reason=drop G2']);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /removed|tombstone/);
+});
+
+test('goals-amend: rejects renumbering — a new goal must not reuse a number <= the max old id', () => {
+  const p = goalsBundle();
+  const dir = path.dirname(p);
+  const oldHash = freezeInitialGoals(p, dir);
+  const md = 'topic: ship the widget\n\n## G0: sneaky early goal\nsignal: test\n\n## G1: the widget compiles\nsignal: command\n\n## G2: the widget is documented\nsignal: docs\n';
+  const newHash = goalsHashFn(md);
+  const gp = writeAmendGoals(dir, md);
+  const ap = writeAmendApproval(dir, oldHash, newHash);
+  const r = run(['goals-amend', `--state=${p}`, `--goals=${gp}`, `--approval=${ap}`, '--reason=renumber']);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /renumber/);
+});
+
+test('goals-amend: rejects an approval receipt not bound to the prior goals hash (stale/replay)', () => {
+  const p = goalsBundle();
+  const dir = path.dirname(p);
+  freezeInitialGoals(p, dir);
+  const newHash = goalsHashFn(AMEND_MD);
+  const gp = writeAmendGoals(dir, AMEND_MD);
+  const ap = writeAmendApproval(dir, 'sha256:wrongold', newHash);
+  const r = run(['goals-amend', `--state=${p}`, `--goals=${gp}`, `--approval=${ap}`, '--reason=x']);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /approval receipt/);
+});
+
+test('goals-amend: rejects an approval receipt with the wrong purpose (goal_load replayed as amend)', () => {
+  const p = goalsBundle();
+  const dir = path.dirname(p);
+  const oldHash = freezeInitialGoals(p, dir);
+  const newHash = goalsHashFn(AMEND_MD);
+  const gp = writeAmendGoals(dir, AMEND_MD);
+  const ap = writeAmendApproval(dir, oldHash, newHash, { purpose: 'goal_load' });
+  const r = run(['goals-amend', `--state=${p}`, `--goals=${gp}`, `--approval=${ap}`, '--reason=x']);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /approval receipt/);
+});
+
+test('goals-amend: idempotent roll-forward — re-running the same amendment does not append a second event', () => {
+  const p = goalsBundle();
+  const dir = path.dirname(p);
+  const oldHash = freezeInitialGoals(p, dir);
+  const newHash = goalsHashFn(AMEND_MD);
+  const gp = writeAmendGoals(dir, AMEND_MD);
+  const ap = writeAmendApproval(dir, oldHash, newHash);
+  assert.equal(run(['goals-amend', `--state=${p}`, `--goals=${gp}`, `--approval=${ap}`, '--reason=first']).status, 0);
+  const r2 = run(['goals-amend', `--state=${p}`, `--goals=${gp}`, `--approval=${ap}`, '--reason=first']);
+  assert.equal(r2.status, 0, `re-run should be idempotent: ${r2.stderr}`);
+  assert.equal(JSON.parse(r2.stdout).goals_amend, 'idempotent');
+  const amended = fs.readFileSync(path.join(dir, 'events.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((e) => e.type === 'goal_amended');
+  assert.equal(amended.length, 1, 'no second goal_amended event on idempotent re-run');
+});
+
+test('goals-amend: invalidates existing goal-check receipts and waivers keyed to the old hash', () => {
+  const p = goalsBundle();
+  const dir = path.dirname(p);
+  const oldHash = freezeInitialGoals(p, dir);
+  // Seed a goal_check and a goal_waived event keyed to the CURRENT (old) goals hash.
+  run(['event', `--state=${p}`, '--type=goal_check', `--data=${JSON.stringify({ goals_hash: oldHash })}`]);
+  run(['event', `--state=${p}`, '--type=goal_waived', `--data=${JSON.stringify({ goals_hash: oldHash })}`]);
+  const newHash = goalsHashFn(AMEND_MD);
+  const gp = writeAmendGoals(dir, AMEND_MD);
+  const ap = writeAmendApproval(dir, oldHash, newHash);
+  const r = run(['goals-amend', `--state=${p}`, `--goals=${gp}`, `--approval=${ap}`, '--reason=descope']);
+  assert.equal(r.status, 0, `goals-amend should succeed: ${r.stderr}`);
+  assert.equal(JSON.parse(r.stdout).invalidated_receipts, 2);
+  const st = read(p);
+  assert.equal(st.goals_md_hash, newHash);
+  assert.notEqual(st.goals_md_hash, oldHash);
+});
