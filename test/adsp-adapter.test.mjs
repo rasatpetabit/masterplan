@@ -22,7 +22,14 @@ import {
   dispatchTask,
   extractDigestFromOutput,
   createBrokerClient,
+  buildWorkItem,
+  buildFrozenDispatchRecord,
 } from '../lib/dispatch/adsp-adapter.mjs';
+import {
+  composeHandoffKey,
+  computeTaskSpecHash,
+  computeInputFingerprint,
+} from '../lib/adsp-idempotency.mjs';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -46,7 +53,59 @@ const baseTask = () => ({
   files:           ['lib/foo.mjs'],
   verify_commands: ['node --test'],
   cwd:             '/repo/.worktrees/my-run',
+  run_id:          'my-run',
+  inputs:          { head: 'abc123', dirtyDigest: '', policyVersion: 'pol-v1', workerVersion: 'wk-v1' },
 });
+
+/**
+ * Replicate the adapter's handoff-key composition (prepareDispatch) so tests can
+ * assert the EXACT key the work item carries. Mirrors lib/dispatch/adsp-adapter.mjs
+ * prepareDispatch: body = { task_id, description, files, verify_commands },
+ * workerConfig = { class, ...worker_config }, context = task.context, inputs normalized.
+ */
+function expectedKeyFor(task, options = {}) {
+  const taskClass = task.class ?? options.class ?? 'bounded-edit';
+  const body = {
+    task_id:         task.task_id,
+    description:     task.description ?? '',
+    files:           Array.isArray(task.files) ? task.files : [],
+    verify_commands: Array.isArray(task.verify_commands) ? task.verify_commands : [],
+  };
+  const workerConfig = { class: taskClass, ...(task.worker_config ?? {}) };
+  const taskSpecHash = computeTaskSpecHash({
+    body,
+    context: task.context ?? null,
+    workerConfig,
+  });
+  const raw = { head: '', dirtyDigest: '', policyVersion: '', workerVersion: '', ...(task.inputs ?? {}) };
+  const fp = {
+    head:          typeof raw.head === 'string' ? raw.head : '',
+    dirtyDigest:   typeof raw.dirtyDigest === 'string' ? raw.dirtyDigest : '',
+    policyVersion: typeof raw.policyVersion === 'string' ? raw.policyVersion : '',
+    workerVersion: typeof raw.workerVersion === 'string' ? raw.workerVersion : '',
+  };
+  const inputFingerprint = computeInputFingerprint(fp);
+  return composeHandoffKey(task.run_id, task.task_id, taskSpecHash, inputFingerprint);
+}
+
+/**
+ * Injectable blackboard result store stub. Records call counts and every write,
+ * and returns a canned prior result from readResult. Models the sibling
+ * subsystem the adapter consumes as the keyed result substrate.
+ */
+function makeResultStore({ priorResult = null } = {}) {
+  const writes = [];
+  const store = {
+    calls: { readResult: 0, writeResult: 0, readDispatchRecord: 0, writeDispatchRecord: 0 },
+    writes,
+    priorResult,
+    async readResult(key)           { store.calls.readResult++; return store.priorResult; },
+    async writeResult(key, record)  { store.calls.writeResult++; writes.push({ kind: 'result', key, record }); },
+    async readDispatchRecord(key)   { store.calls.readDispatchRecord++; return null; },
+    async writeDispatchRecord(key, record) { store.calls.writeDispatchRecord++; writes.push({ kind: 'dispatch', key, record }); },
+  };
+  return store;
+}
 
 // ---------------------------------------------------------------------------
 // Broker client stub factory
@@ -145,6 +204,12 @@ test('dispatchTask calls dispatch_task on the broker with the correct descriptor
   assert.deepEqual(descriptor.files, ['lib/foo.mjs']);
   assert.deepEqual(descriptor.verify, ['node --test']);
   assert.equal(descriptor.contract_version, 'adsp-v1');
+
+  // adsp-v1 seam: the work item carries the bundle's stable task_id and the
+  // composed handoff-idempotency key (spec §5.5). The key is the blackboard
+  // result-substrate key for this task.
+  assert.equal(descriptor.task_id, 7);
+  assert.equal(descriptor.handoff_key, expectedKeyFor(baseTask()));
 });
 
 test('dispatchTask returns the extracted digest in the mp-implementer shape', async () => {
@@ -465,4 +530,351 @@ test('revertCrossReview: returns ok + scope for a valid path (deferred impl)', a
   const r = await revertCrossReview('/srv/dev/.../worktree', { files: ['foo.js'] });
   assert.equal(r.ok, true);
   assert.equal(r.scope.files[0], 'foo.js');
+});
+
+// ===========================================================================
+// adsp-v1 seam contract (Task 36) — handoff-idempotency key, work-item shape,
+// digest translation, escalate/degraded mapping, blackboard result substrate
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// 36a. Work-item construction (buildWorkItem — pure, no I/O)
+// ---------------------------------------------------------------------------
+
+test('buildWorkItem: pure constructor returns the work item with the composed handoff key', () => {
+  const descriptor = buildWorkItem(baseTask());
+  assert.equal(descriptor.class, 'bounded-edit');
+  assert.equal(descriptor.repo, '/repo/.worktrees/my-run');
+  assert.equal(descriptor.brief, 'Add a null check to parseConfig');
+  assert.deepEqual(descriptor.files, ['lib/foo.mjs']);
+  assert.deepEqual(descriptor.verify, ['node --test']);
+  assert.equal(descriptor.contract_version, 'adsp-v1');
+  assert.equal(descriptor.task_id, 7);
+  assert.equal(descriptor.handoff_key, expectedKeyFor(baseTask()));
+});
+
+test('buildWorkItem: repo is the run\'s existing worktree cwd — never a second worktree', () => {
+  const descriptor = buildWorkItem({ ...baseTask(), cwd: '/srv/dev/ras/masterplan/.worktrees/wave-3' });
+  assert.equal(descriptor.repo, '/srv/dev/ras/masterplan/.worktrees/wave-3');
+  // No separate worktree-creation field is ever introduced.
+  assert.equal('worktree' in descriptor, false);
+  assert.equal('worktree_path' in descriptor, false);
+});
+
+test('buildWorkItem: honors a task class override over the default', () => {
+  const descriptor = buildWorkItem({ ...baseTask(), class: 'agentic-loop' });
+  assert.equal(descriptor.class, 'agentic-loop');
+  // The class change is part of the worker config → it changes the key.
+  assert.notEqual(descriptor.handoff_key, expectedKeyFor(baseTask()));
+});
+
+// ---------------------------------------------------------------------------
+// 36b. Handoff-idempotency key composition
+// ---------------------------------------------------------------------------
+
+test('handoff key: deterministic — same task+inputs produce the same key', () => {
+  const k1 = buildWorkItem(baseTask()).handoff_key;
+  const k2 = buildWorkItem(baseTask()).handoff_key;
+  assert.equal(k1, k2);
+});
+
+test('handoff key: a replanned task body changes the key', () => {
+  const k1 = buildWorkItem(baseTask()).handoff_key;
+  const k2 = buildWorkItem({ ...baseTask(), description: 'Different task body' }).handoff_key;
+  assert.notEqual(k1, k2);
+});
+
+test('handoff key: a changed file scope changes the key', () => {
+  const k1 = buildWorkItem(baseTask()).handoff_key;
+  const k2 = buildWorkItem({ ...baseTask(), files: ['lib/bar.mjs'] }).handoff_key;
+  assert.notEqual(k1, k2);
+});
+
+test('handoff key: a changed verify command changes the key', () => {
+  const k1 = buildWorkItem(baseTask()).handoff_key;
+  const k2 = buildWorkItem({ ...baseTask(), verify_commands: ['npm test'] }).handoff_key;
+  assert.notEqual(k1, k2);
+});
+
+test('handoff key: a changed repo state (head) changes the key', () => {
+  const k1 = buildWorkItem(baseTask()).handoff_key;
+  const k2 = buildWorkItem({ ...baseTask(), inputs: { ...baseTask().inputs, head: 'def456' } }).handoff_key;
+  assert.notEqual(k1, k2);
+});
+
+test('handoff key: a changed policy version changes the key', () => {
+  const k1 = buildWorkItem(baseTask()).handoff_key;
+  const k2 = buildWorkItem({ ...baseTask(), inputs: { ...baseTask().inputs, policyVersion: 'pol-v2' } }).handoff_key;
+  assert.notEqual(k1, k2);
+});
+
+test('handoff key: a changed worker version changes the key', () => {
+  const k1 = buildWorkItem(baseTask()).handoff_key;
+  const k2 = buildWorkItem({ ...baseTask(), inputs: { ...baseTask().inputs, workerVersion: 'wk-v2' } }).handoff_key;
+  assert.notEqual(k1, k2);
+});
+
+test('handoff key: a relocated worktree path (same state) does NOT change the key', () => {
+  const k1 = buildWorkItem(baseTask()).handoff_key;
+  const k2 = buildWorkItem({ ...baseTask(), cwd: '/elsewhere/.worktrees/my-run' }).handoff_key;
+  assert.equal(k1, k2, 'cwd is excluded from the task spec — only worktree STATE (in the fingerprint) matters');
+});
+
+test('handoff key: encodes run_id, task_id, task_spec_hash, and input_fingerprint', () => {
+  const key = buildWorkItem(baseTask()).handoff_key;
+  // adsp-idem-v1:<run>:<task>:<spec_hash>:<fingerprint>
+  assert.match(key, /^adsp-idem-v1:/);
+  const parts = key.split(':');
+  assert.equal(parts.length, 5, 'four ":"-delimited parts after the version prefix');
+  assert.equal(parts[0], 'adsp-idem-v1');
+  assert.equal(parts[1], 'my-run');
+  assert.equal(parts[2], '7');
+  assert.match(parts[3], /^[0-9a-f]{64}$/, 'task_spec_hash is sha256 hex');
+  assert.match(parts[4], /^[0-9a-f]{64}$/, 'input_fingerprint is sha256 hex');
+});
+
+test('handoff key: partial inputs are filled with empty strings (stable key)', () => {
+  const onlyHead = buildWorkItem({ ...baseTask(), inputs: { head: 'abc123' } }).handoff_key;
+  const explicit = buildWorkItem({
+    ...baseTask(),
+    inputs: { head: 'abc123', dirtyDigest: '', policyVersion: '', workerVersion: '' },
+  }).handoff_key;
+  assert.equal(onlyHead, explicit, 'missing inputs default to empty strings');
+});
+
+// ---------------------------------------------------------------------------
+// 36c. Degraded mode (no run_id → no key, no idempotency; still dispatches)
+// ---------------------------------------------------------------------------
+
+test('degraded: no run_id means handoff_key is null (no idempotency, still dispatches)', () => {
+  const noRun = baseTask();
+  delete noRun.run_id;
+  const descriptor = buildWorkItem(noRun);
+  assert.equal(descriptor.handoff_key, null);
+  assert.equal(descriptor.task_id, 7);
+  assert.equal(descriptor.contract_version, 'adsp-v1');
+});
+
+test('degraded: no _resultStore injected — no blackboard read/write, still dispatches', async () => {
+  const stub = makeBrokerStub({ decision: { decision: 'route', backend: 'pi' }, stdout: JSON.stringify(validDigest()) });
+  const result = await dispatchTask(baseTask(), { _brokerClient: stub });
+  assert.equal(stub.calls.length, 1);
+  assert.equal(result.status, 'done');
+  assert.equal(result.task_id, 7);
+});
+
+test('degraded: no run_id with a result store — no blackboard read/write (no key), still dispatches', async () => {
+  const store = makeResultStore();
+  const stub = makeBrokerStub({ decision: { decision: 'route', backend: 'pi' }, stdout: JSON.stringify(validDigest()) });
+  const noRun = baseTask();
+  delete noRun.run_id;
+  const result = await dispatchTask(noRun, { _brokerClient: stub, _resultStore: store });
+  assert.equal(store.calls.readResult, 0, 'no key → no read');
+  assert.equal(store.calls.writeDispatchRecord, 0, 'no key → no dispatch record write');
+  assert.equal(store.calls.writeResult, 0, 'no key → no result write');
+  assert.equal(stub.calls.length, 1);
+  assert.equal(result.status, 'done');
+  assert.equal(stub.calls[0].args.descriptor.handoff_key, null);
+});
+
+// ---------------------------------------------------------------------------
+// 36d. Blackboard result substrate (the keyed result store)
+// ---------------------------------------------------------------------------
+
+test('blackboard: a reusable prior done result is returned as a no-op read (broker never called)', async () => {
+  const key = expectedKeyFor(baseTask());
+  const priorDigest = validDigest();
+  const store = makeResultStore({ priorResult: { handoff_key: key, status: 'done', digest: priorDigest } });
+  const stub = makeBrokerStub({ decision: { decision: 'route', backend: 'pi' }, stdout: JSON.stringify(validDigest()) });
+  const result = await dispatchTask(baseTask(), { _brokerClient: stub, _resultStore: store });
+  assert.equal(stub.calls.length, 0, 'broker must not be called on the reuse path');
+  assert.equal(store.calls.readResult, 1);
+  assert.equal(store.calls.writeDispatchRecord, 0, 'no dispatch record written on reuse');
+  assert.equal(store.calls.writeResult, 0, 'no result rewrite on reuse');
+  assert.equal(result.status, 'done');
+  assert.equal(result.task_id, 7);
+  assert.equal(result.summary, 'added null check');
+});
+
+test('blackboard: the reused result has the exact mp-implementer shape (transparent to L1)', async () => {
+  const key = expectedKeyFor(baseTask());
+  const store = makeResultStore({ priorResult: { handoff_key: key, status: 'done', digest: validDigest() } });
+  const stub = makeBrokerStub({ decision: { decision: 'route', backend: 'pi' }, stdout: JSON.stringify(validDigest()) });
+  const result = await dispatchTask(baseTask(), { _brokerClient: stub, _resultStore: store });
+  assert.deepEqual(Object.keys(result).sort(), ['blockers', 'files_changed', 'start_sha', 'status', 'summary', 'task_id', 'verify']);
+  assert.equal(result.task_id, 7);
+});
+
+test('blackboard: a key mismatch (replanned task) is NOT reused — fresh dispatch + result written', async () => {
+  const staleKey = expectedKeyFor({ ...baseTask(), description: 'old description' });
+  const store = makeResultStore({ priorResult: { handoff_key: staleKey, status: 'done', digest: validDigest() } });
+  const stub = makeBrokerStub({ decision: { decision: 'route', backend: 'pi' }, stdout: JSON.stringify(validDigest()) });
+  const result = await dispatchTask(baseTask(), { _brokerClient: stub, _resultStore: store });
+  assert.equal(stub.calls.length, 1, 'broker IS called when the prior key does not match');
+  assert.equal(result.status, 'done');
+  assert.equal(store.calls.writeDispatchRecord, 1, 'frozen dispatch record written at dispatch time');
+  assert.equal(store.calls.writeResult, 1, 'fresh result written after dispatch');
+});
+
+test('blackboard: a prior non-done result (failed) is NOT reused — fresh dispatch', async () => {
+  const key = expectedKeyFor(baseTask());
+  const store = makeResultStore({ priorResult: { handoff_key: key, status: 'failed', digest: validDigest() } });
+  const stub = makeBrokerStub({ decision: { decision: 'route', backend: 'pi' }, stdout: JSON.stringify(validDigest()) });
+  const result = await dispatchTask(baseTask(), { _brokerClient: stub, _resultStore: store });
+  assert.equal(stub.calls.length, 1, 'a failed prior result is not reused');
+  assert.equal(result.status, 'done');
+});
+
+test('blackboard: the frozen dispatch record is written at dispatch time with all key inputs', async () => {
+  const key = expectedKeyFor(baseTask());
+  const store = makeResultStore();
+  const stub = makeBrokerStub({ decision: { decision: 'route', backend: 'pi' }, stdout: JSON.stringify(validDigest()) });
+  await dispatchTask(baseTask(), { _brokerClient: stub, _resultStore: store });
+  const dispWrites = store.writes.filter((w) => w.kind === 'dispatch');
+  assert.equal(dispWrites.length, 1);
+  const rec = dispWrites[0].record;
+  assert.equal(dispWrites[0].key, key);
+  assert.equal(rec.handoff_key, key);
+  assert.equal(rec.run_id, 'my-run');
+  assert.equal(rec.task_id, 7);
+  assert.equal(rec.task_class, 'bounded-edit');
+  assert.equal(rec.contract_version, 'adsp-v1');
+  assert.equal(rec.status, 'pending');
+  assert.match(rec.task_spec_hash, /^[0-9a-f]{64}$/);
+  assert.match(rec.input_fingerprint, /^[0-9a-f]{64}$/);
+  // The frozen key inputs (env facts captured at dispatch time — never recomputed).
+  assert.equal(rec.head, 'abc123');
+  assert.equal(rec.dirty_digest, '');
+  assert.equal(rec.policy_version, 'pol-v1');
+  assert.equal(rec.worker_version, 'wk-v1');
+  assert.ok(typeof rec.dispatched_at === 'string' && rec.dispatched_at.length > 0, 'dispatched_at is an ISO timestamp');
+});
+
+test('blackboard: the result is written after dispatch keyed by the handoff key', async () => {
+  const key = expectedKeyFor(baseTask());
+  const store = makeResultStore();
+  const stub = makeBrokerStub({ decision: { decision: 'route', backend: 'pi' }, stdout: JSON.stringify(validDigest()) });
+  const result = await dispatchTask(baseTask(), { _brokerClient: stub, _resultStore: store });
+  const resWrites = store.writes.filter((w) => w.kind === 'result');
+  assert.equal(resWrites.length, 1);
+  const rec = resWrites[0].record;
+  assert.equal(resWrites[0].key, key);
+  assert.equal(rec.handoff_key, key);
+  assert.equal(rec.status, 'done');
+  assert.equal(rec.contract_version, 'adsp-v1');
+  assert.deepEqual(rec.digest, result, 'stored digest equals the returned digest');
+  assert.ok(typeof rec.completed_at === 'string' && rec.completed_at.length > 0);
+});
+
+test('blackboard: a readResult error is non-fatal — dispatch proceeds', async () => {
+  const store = {
+    calls: { readResult: 0, writeResult: 0, writeDispatchRecord: 0 },
+    async readResult()            { store.calls.readResult++; throw new Error('blackboard read failed'); },
+    async writeResult()           { store.calls.writeResult++; },
+    async writeDispatchRecord()   { store.calls.writeDispatchRecord++; },
+  };
+  const stub = makeBrokerStub({ decision: { decision: 'route', backend: 'pi' }, stdout: JSON.stringify(validDigest()) });
+  const result = await dispatchTask(baseTask(), { _brokerClient: stub, _resultStore: store });
+  assert.equal(store.calls.readResult, 1);
+  assert.equal(result.status, 'done', 'dispatch still returns the worker digest');
+  assert.equal(store.calls.writeDispatchRecord, 1);
+  assert.equal(store.calls.writeResult, 1);
+});
+
+test('blackboard: a writeResult error is non-fatal — the digest is still returned', async () => {
+  const store = {
+    async readResult()          { return null; },
+    async writeDispatchRecord() {},
+    async writeResult()         { throw new Error('blackboard full'); },
+  };
+  const stub = makeBrokerStub({ decision: { decision: 'route', backend: 'pi' }, stdout: JSON.stringify(validDigest()) });
+  const result = await dispatchTask(baseTask(), { _brokerClient: stub, _resultStore: store });
+  assert.equal(result.status, 'done');
+  assert.equal(result.task_id, 7);
+});
+
+test('blackboard: a writeDispatchRecord error is non-fatal — dispatch still proceeds', async () => {
+  const store = {
+    calls: { writeResult: 0 },
+    async readResult()          { return null; },
+    async writeDispatchRecord() { throw new Error('disk full'); },
+    async writeResult()         { store.calls.writeResult++; },
+  };
+  const stub = makeBrokerStub({ decision: { decision: 'route', backend: 'pi' }, stdout: JSON.stringify(validDigest()) });
+  const result = await dispatchTask(baseTask(), { _brokerClient: stub, _resultStore: store });
+  assert.equal(result.status, 'done');
+  assert.equal(store.calls.writeResult, 1, 'result is still recorded even if the dispatch-record write failed');
+});
+
+// ---------------------------------------------------------------------------
+// 36e. Frozen dispatch record (pure constructor)
+// ---------------------------------------------------------------------------
+
+test('buildFrozenDispatchRecord: pure constructor returns the frozen key inputs with a pending skeleton', () => {
+  const rec = buildFrozenDispatchRecord(baseTask());
+  const key = expectedKeyFor(baseTask());
+  assert.equal(rec.handoff_key, key);
+  assert.equal(rec.run_id, 'my-run');
+  assert.equal(rec.task_id, 7);
+  assert.equal(rec.task_class, 'bounded-edit');
+  assert.match(rec.task_spec_hash, /^[0-9a-f]{64}$/);
+  assert.match(rec.input_fingerprint, /^[0-9a-f]{64}$/);
+  assert.equal(rec.contract_version, 'adsp-v1');
+  assert.equal(rec.status, 'pending');
+  assert.equal(rec.dispatched_at, null, 'pure constructor leaves the timestamp null');
+  assert.equal(rec.head, 'abc123');
+  assert.equal(rec.dirty_digest, '');
+  assert.equal(rec.policy_version, 'pol-v1');
+  assert.equal(rec.worker_version, 'wk-v1');
+});
+
+test('buildFrozenDispatchRecord: no run_id → null key and null hashes (degraded)', () => {
+  const noRun = baseTask();
+  delete noRun.run_id;
+  const rec = buildFrozenDispatchRecord(noRun);
+  assert.equal(rec.handoff_key, null);
+  assert.equal(rec.task_spec_hash, null);
+  assert.equal(rec.input_fingerprint, null);
+  assert.equal(rec.task_id, 7);
+  assert.equal(rec.status, 'pending');
+});
+
+// ---------------------------------------------------------------------------
+// 36f. Digest translation — exact mp-implementer shape (record-result untouched)
+// ---------------------------------------------------------------------------
+
+test('digest translation: returned digest has the exact mp-implementer shape (no extra fields)', async () => {
+  const workerDigest = {
+    ...validDigest(),
+    extra_worker_field: 'should be dropped',
+    task_id: 999, // the worker's task_id is never trusted
+  };
+  const stub = makeBrokerStub({ decision: { decision: 'route', backend: 'pi' }, stdout: JSON.stringify(workerDigest) });
+  const result = await dispatchTask(baseTask(), { _brokerClient: stub });
+  assert.deepEqual(Object.keys(result).sort(), ['blockers', 'files_changed', 'start_sha', 'status', 'summary', 'task_id', 'verify']);
+  assert.equal(result.task_id, 7, 'task_id stamped from the canonical input, not the worker');
+  assert.equal(result.extra_worker_field, undefined, 'extra worker fields are dropped');
+  assert.equal(result.status, 'done');
+});
+
+// ---------------------------------------------------------------------------
+// 36g. Escalate/degraded mapping — the work item carries the seam on every path
+// ---------------------------------------------------------------------------
+
+test('seam: the work item carries task_id + handoff_key on every dispatch (even execute_yourself)', async () => {
+  const stub = makeBrokerStub({ execute_yourself: true });
+  const result = await dispatchTask(baseTask(), { _brokerClient: stub });
+  const descriptor = stub.calls[0].args.descriptor;
+  assert.equal(descriptor.task_id, 7);
+  assert.equal(descriptor.handoff_key, expectedKeyFor(baseTask()));
+  assert.equal(descriptor.contract_version, 'adsp-v1');
+  assert.equal(result.status, 'blocked', 'execute_yourself maps to blocked (route inline)');
+});
+
+test('escalate mapping: a guard_deny escalation surfaces the broker reason in blockers', async () => {
+  const stub = makeBrokerStub({ decision: { decision: 'escalate', reason: 'guard_deny:restricted-repo' } });
+  const result = await dispatchTask(baseTask(), { _brokerClient: stub });
+  assert.equal(result.status, 'blocked');
+  assert.match(result.blockers, /guard_deny:restricted-repo/);
+  assert.equal(result.task_id, 7);
 });

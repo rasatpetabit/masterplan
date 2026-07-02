@@ -61,12 +61,12 @@ What is masterplan-specific lives in two docs:
   cross-vendor review of large edits, and finish-flow durability:
   [`docs/development.md`](./docs/development.md).
 
-<!-- agent-dispatch:begin routing hash=6d8307801e22f016588774ae010198516e8402aa6a7cd0724a433885e67b981b -->
+<!-- agent-dispatch:begin routing hash=6ef5ed81dc25d94aa1dd68e836eea24846cfd1ef1756242a35d11baa47541f7d -->
 ## §routing — managed by agent-dispatch (do not hand-edit)
 
-Binding rules (enforced by PreToolUse guard — violations are hard-blocked):
-- haiku: FORBIDDEN — no dispatch path exists, no override possible.
-- sonnet: OVERRIDE-ONLY — requires a live, unexpired grant (`agent-dispatch override grant sonnet …`).
+Binding rules (enforced by PreToolUse guard):
+- haiku: forbidden (no override path).
+- sonnet: override-only (live override grant required).
 - model param MUST be explicit — missing model is denied (exception: harness built-ins Explore/Plan inherit the frontier session model).
 
 For the full routing policy, fallback chains, and backend health:

@@ -201,6 +201,52 @@ test('recover_and_redispatch: dead run with work outstanding → reap probe firs
   assert.equal(marker.task_id, undefined, 'fresh phase-1 marker, not the stale promoted one');
 });
 
+test('recover_and_redispatch: mixed in-WT + external-repo scope resets each repo with its own git (no "outside the repository")', () => {
+  // A wave whose declared scope MIXES a relative in-worktree path with an ABSOLUTE path under a
+  // DIFFERENT git repo (the external-repo task pattern, e.g. /srv/dev/ras/masterplan/...). The
+  // phase-1 launching marker (no task_id) crashed before launch → recover_and_redispatch must
+  // reset each repo with its own `git -C`, not funnel the external path through the worktree's
+  // git (which rejects it as "outside the repository").
+  const fx = makeFixture({
+    slug: 't23ext',
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+  });
+  // A separate git checkout (the external repo), not under MAIN.
+  const EXT = path.join(fx.tmp, 'external');
+  fs.mkdirSync(EXT, { recursive: true });
+  git(EXT, 'init', '--initial-branch=main');
+  git(EXT, 'config', 'user.email', 'test@test');
+  git(EXT, 'config', 'user.name', 'test');
+  git(EXT, 'config', 'commit.gpgsign', 'false');
+  write(EXT, 'README.txt', 'base\n');
+  git(EXT, 'add', '.');
+  git(EXT, 'commit', '-q', '-m', 'initial');
+  const extAbs = path.join(EXT, 'ext.mjs');
+  // Rewrite the task + planIndex so files mix a relative in-WT path with the external absolute path.
+  writeState(fx.statePath, {
+    ...readState(fx.statePath),
+    slug: 't23ext',
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt', extAbs] }],
+    active_run: { wave: 1, phase: 'launching', scope: ['src/a.txt', extAbs], baseline: [] },
+  });
+  write(fx.bundleDir, 'plan.index.json', JSON.stringify({ tasks: [planEntry(1, 1, ['src/a.txt', extAbs])] }));
+  // Worktree + partial edits in BOTH repos (the dead foreground's leftover work).
+  const WT = path.join(fx.MAIN, '.worktrees', 't23ext');
+  git(fx.MAIN, 'worktree', 'add', '-q', '-b', 'masterplan/t23ext', WT);
+  writeState(fx.statePath, { ...readState(fx.statePath), worktree: WT });
+  write(WT, 'src/a.txt', 'half-finished\n'); // partial in-WT edit (untracked)
+  write(EXT, 'ext.mjs', 'half-finished-external\n'); // partial external edit (untracked)
+
+  // Phase-1 marker (no task_id) → no reap probe; straight to reset + re-dispatch.
+  const op = continueRun({ statePath: fx.statePath, self: fx.self, now: 2000, alive: false });
+  assert.equal(op.op, 'launch_workflow', 'reset + re-dispatch succeeds (no "outside the repository")');
+  assert.equal(op.args.wave, 1);
+  assert.equal(fs.existsSync(path.join(WT, 'src/a.txt')), false, 'in-WT partial cleaned by the worktree git');
+  assert.equal(fs.existsSync(extAbs), false, 'external partial cleaned by the external repo git, not the worktree git');
+  const marker = readState(fx.statePath).active_run;
+  assert.equal(marker.phase, 'launching', 'fresh phase-1 marker re-issued');
+});
+
 test('wave backfill: wave:null tasks are durably backfilled from plan.index.json; absent index → ask', () => {
   const fx = makeFixture({
     tasks: [{ id: 1, status: 'pending', wave: null, files: ['src/a.txt'] }],

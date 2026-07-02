@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { prepareWave, declaredScope, verifyScope, qctlEligible, checkWaveDisjoint } from '../lib/wave.mjs';
+import { prepareWave, declaredScope, verifyScope, qctlEligible, checkWaveDisjoint, captureInputFingerprint } from '../lib/wave.mjs';
 
 // A state bundle (v8 shape) + a matching plan.index.json. Two waves; task 4 already done.
 const state = () => ({
@@ -459,3 +459,91 @@ test('qctlEligible (b): .github/workflows/deploy.yml is excluded (infra hard-blo
     },
   );
 }
+
+// --- handoff idempotency (spec §5.5): dispatchInputs wiring + captureInputFingerprint ------
+
+// A valid launch-time capture, as captureInputFingerprint would return + the run id.
+const dispatchInputs = () => ({
+  runId: 'run-slug',
+  head: 'a'.repeat(40),
+  dirtyDigest: '',
+  policyVersion: 'pol-v1',
+  workerVersion: 'wrk-v1',
+});
+
+test('prepareWave with dispatchInputs attaches LEAN idempotency block per task + wave input_fingerprint', () => {
+  const res = prepareWave(state(), planIndex(), 0, { routing: 'auto' }, {}, undefined, dispatchInputs());
+  assert.match(res.input_fingerprint, /^[0-9a-f]{64}$/);
+  for (const t of res.tasks) {
+    assert.deepEqual(Object.keys(t.idempotency).sort(), ['handoff_key', 'input_fingerprint', 'task_spec_hash']);
+    assert.match(t.idempotency.task_spec_hash, /^[0-9a-f]{64}$/);
+    assert.equal(t.idempotency.input_fingerprint, res.input_fingerprint); // one fingerprint per wave
+    assert.ok(t.idempotency.handoff_key.startsWith('adsp-idem-v1:run-slug:'));
+    // The FULL key binds spec hash AND fingerprint (spec §5.5 — never spec-hash-only).
+    assert.ok(t.idempotency.handoff_key.endsWith(`:${t.idempotency.task_spec_hash}:${res.input_fingerprint}`));
+  }
+  // Distinct task bodies → distinct spec hashes and keys.
+  assert.notEqual(res.tasks[0].idempotency.task_spec_hash, res.tasks[1].idempotency.task_spec_hash);
+  assert.notEqual(res.tasks[0].idempotency.handoff_key, res.tasks[1].idempotency.handoff_key);
+});
+
+test('prepareWave with dispatchInputs is deterministic (same inputs → same hashes/keys)', () => {
+  const a = prepareWave(state(), planIndex(), 0, { routing: 'auto' }, {}, undefined, dispatchInputs());
+  const b = prepareWave(state(), planIndex(), 0, { routing: 'auto' }, {}, undefined, dispatchInputs());
+  assert.equal(a.input_fingerprint, b.input_fingerprint);
+  assert.deepEqual(a.tasks.map((t) => t.idempotency), b.tasks.map((t) => t.idempotency));
+  // Changed environmental facts → different fingerprint AND different handoff keys.
+  const dirty = prepareWave(state(), planIndex(), 0, { routing: 'auto' }, {}, undefined,
+    { ...dispatchInputs(), dirtyDigest: 'f'.repeat(64) });
+  assert.notEqual(dirty.input_fingerprint, a.input_fingerprint);
+  assert.notEqual(dirty.tasks[0].idempotency.handoff_key, a.tasks[0].idempotency.handoff_key);
+  // Task spec hash covers only the task body/context, not the environment.
+  assert.equal(dirty.tasks[0].idempotency.task_spec_hash, a.tasks[0].idempotency.task_spec_hash);
+});
+
+test('prepareWave WITHOUT dispatchInputs keeps the legacy shape byte-identical (no idempotency keys)', () => {
+  const res = prepareWave(state(), planIndex(), 0, {}, {});
+  assert.deepEqual(Object.keys(res).sort(), ['scope', 'tasks', 'wave']);
+  assert.deepEqual(
+    Object.keys(res.tasks[0]).sort(),
+    ['backend', 'description', 'eligible', 'files', 'id', 'reason', 'target', 'verify_commands'],
+  );
+});
+
+// captureInputFingerprint: git faked via the injectable _exec — NO real git spawns here.
+const fakeGit = (byCmd) => (cmd, args) => {
+  // args = ['-C', dir, subcmd, ...]; key on the git subcommand.
+  const key = args[2];
+  const out = byCmd[key];
+  if (out instanceof Error) throw out;
+  return out ?? '';
+};
+
+test('captureInputFingerprint: clean tree → head + empty dirtyDigest, deterministic across calls', () => {
+  const exec = fakeGit({ 'rev-parse': 'abc123\n', status: '' });
+  const a = captureInputFingerprint('/wt', { policyVersion: 'p1', workerVersion: 'w1' }, exec);
+  const b = captureInputFingerprint('/wt', { policyVersion: 'p1', workerVersion: 'w1' }, exec);
+  assert.deepEqual(a, { head: 'abc123', dirtyDigest: '', policyVersion: 'p1', workerVersion: 'w1' });
+  assert.deepEqual(a, b); // unchanged tree → identical capture
+});
+
+test('captureInputFingerprint: dirty tree → stable sha256 digest that changes when dirty state changes', () => {
+  const dirty1 = fakeGit({ 'rev-parse': 'abc123', status: ' M a.js', diff: 'diff --git a/a.js\n-x\n+y' });
+  const a = captureInputFingerprint('/wt', {}, dirty1);
+  const b = captureInputFingerprint('/wt', {}, dirty1);
+  assert.match(a.dirtyDigest, /^[0-9a-f]{64}$/);
+  assert.equal(a.dirtyDigest, b.dirtyDigest); // unchanged dirty state → same digest
+  const dirty2 = fakeGit({ 'rev-parse': 'abc123', status: ' M a.js', diff: 'diff --git a/a.js\n-x\n+z' });
+  assert.notEqual(captureInputFingerprint('/wt', {}, dirty2).dirtyDigest, a.dirtyDigest);
+  const clean = fakeGit({ 'rev-parse': 'abc123', status: '' });
+  assert.equal(captureInputFingerprint('/wt', {}, clean).dirtyDigest, '');
+});
+
+test('captureInputFingerprint: git failure → fail-loud error naming the worktree and command', () => {
+  const boom = Object.assign(new Error('spawn failed'), { stderr: 'fatal: not a git repository' });
+  const exec = fakeGit({ 'rev-parse': boom });
+  assert.throws(
+    () => captureInputFingerprint('/nope', {}, exec),
+    /captureInputFingerprint: git -C \/nope rev-parse HEAD failed: fatal: not a git repository/,
+  );
+});

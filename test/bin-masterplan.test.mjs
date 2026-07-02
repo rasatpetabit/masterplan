@@ -443,13 +443,13 @@ test('rebase-paths: rewrite the absolute path fields under a new repo root (CD-7
   // plan_index_path / worktree) get stale when the repo moves. `mp rebase-paths` is the single-writer
   // (CD-7) replacement for hand-editing state.yml after a repo move. Reports the rebased field count.
   const p = tmpBundle(v8({
-    spec_path: '/srv/dev/masterplan/docs/b/spec.md',
-    plan_path: '/srv/dev/masterplan/docs/b/plan.md',
-    plan_index_path: '/srv/dev/masterplan/docs/b/plan.index.json',
-    worktree: '/srv/dev/masterplan/.worktrees/b',
+    spec_path: '/tmp/old-masterplan/docs/b/spec.md',
+    plan_path: '/tmp/old-masterplan/docs/b/plan.md',
+    plan_index_path: '/tmp/old-masterplan/docs/b/plan.index.json',
+    worktree: '/tmp/old-masterplan/.worktrees/b',
     topic: 'unrelated',
   }));
-  const out = JSON.parse(run(['rebase-paths', `--state=${p}`, '--from=/srv/dev/masterplan', '--to=/srv/dev/ras/masterplan']).stdout);
+  const out = JSON.parse(run(['rebase-paths', `--state=${p}`, '--from=/tmp/old-masterplan', '--to=/srv/dev/ras/masterplan']).stdout);
   assert.equal(out.rebased, 4);
   const after = read(p);
   assert.equal(after.spec_path, '/srv/dev/ras/masterplan/docs/b/spec.md');
@@ -461,18 +461,18 @@ test('rebase-paths: rewrite the absolute path fields under a new repo root (CD-7
 
 test('rebase-paths: re-running with the same `from` is a no-op (idempotent re-rebase)', () => {
   const p = tmpBundle(v8({
-    spec_path: '/srv/dev/masterplan/docs/b/spec.md',
-    plan_path: '/srv/dev/masterplan/docs/b/plan.md',
-    plan_index_path: '/srv/dev/masterplan/docs/b/plan.index.json',
-    worktree: '/srv/dev/masterplan/.worktrees/b',
+    spec_path: '/tmp/old-masterplan/docs/b/spec.md',
+    plan_path: '/tmp/old-masterplan/docs/b/plan.md',
+    plan_index_path: '/tmp/old-masterplan/docs/b/plan.index.json',
+    worktree: '/tmp/old-masterplan/.worktrees/b',
   }));
-  run(['rebase-paths', `--state=${p}`, '--from=/srv/dev/masterplan', '--to=/srv/dev/ras/masterplan']);
-  const second = JSON.parse(run(['rebase-paths', `--state=${p}`, '--from=/srv/dev/masterplan', '--to=/srv/dev/ras/masterplan']).stdout);
+  run(['rebase-paths', `--state=${p}`, '--from=/tmp/old-masterplan', '--to=/srv/dev/ras/masterplan']);
+  const second = JSON.parse(run(['rebase-paths', `--state=${p}`, '--from=/tmp/old-masterplan', '--to=/srv/dev/ras/masterplan']).stdout);
   assert.equal(second.rebased, 0); // already rebased — prefix no longer matches
 });
 
 test('rebase-paths: rejects a relative root at the bin boundary (validation surface)', () => {
-  const p = tmpBundle(v8({ spec_path: '/srv/dev/masterplan/docs/b/spec.md' }));
+  const p = tmpBundle(v8({ spec_path: '/tmp/old-masterplan/docs/b/spec.md' }));
   const bad = run(['rebase-paths', `--state=${p}`, '--from=relative/from', '--to=/srv/x']);
   assert.notEqual(bad.status, 0);
   assert.match(bad.stderr, /must be absolute paths/);
