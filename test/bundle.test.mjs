@@ -27,6 +27,11 @@ import {
   appendEvent,
   setCoordination,
   clearCoordination,
+  CAPABILITY_EVENT_TYPE,
+  GOAL_LIFECYCLE_EVENT_TYPES,
+  buildCapabilityEvent,
+  inferGoalsCapability,
+  checkGoalsCapabilityAuthority,
 } from '../lib/bundle.mjs';
 
 test('round-trips scalars with correct types', () => {
@@ -243,6 +248,8 @@ test('buildSeedState: a minimal seed is a core-valid v8 brainstorm bundle with t
   // the finish-step gate reads. The vestigial state.codex.routing default is no longer written.
   assert.deepEqual(s.review, { adversary: true });
   assert.ok(!('codex' in s), 'vestigial state.codex (routing) is no longer seeded');
+  assert.equal(s.goals_enabled, true); // bundle-level capability marker (post-feature)
+  assert.deepEqual(s.goals, []); // derived cache starts empty
   assert.deepEqual(parseState(serializeState(s)), s); // survives the on-disk format
 });
 
@@ -416,4 +423,64 @@ test('A5: clearCoordination removes the coordination key entirely', () => {
   const cleared = clearCoordination(coordinated);
   assert.ok(!('coordination' in cleared));
   assert.deepEqual(cleared, { slug: 'r', phase: 'execute' }); // only coordination removed
+});
+
+test('validateCoreState: well-formed goals entries are valid', () => {
+  const core = buildSeedState({ slug: 'g', topic: 't', createdAt: 'T' });
+  const withGoals = {
+    ...core,
+    goals: [
+      { id: 'G1', text: 'ship it', signal: 'test' },
+      { id: 'G2', text: 'document it', signal: 'docs', tombstone: { reason: 'merged into G1', amended_at: '2026-07-01T00:00:00Z' } },
+    ],
+  };
+  assert.deepEqual(validateCoreState(withGoals), []);
+});
+
+test('validateCoreState: goals is optional-when-present (pre-feature bundle with no goals field is exempt)', () => {
+  const core = buildSeedState({ slug: 'g', topic: 't', createdAt: 'T' });
+  const preFeature = { ...core };
+  delete preFeature.goals;
+  delete preFeature.goals_enabled;
+  assert.deepEqual(validateCoreState(preFeature), []);
+});
+
+test('validateCoreState: flags malformed goals entries and a mutable status field', () => {
+  const core = buildSeedState({ slug: 'g', topic: 't', createdAt: 'T' });
+  assert.ok(validateCoreState({ ...core, goals: {} }).some((p) => /goals must be an array/.test(p)));
+  assert.ok(validateCoreState({ ...core, goals: [{ text: 'x', signal: 's' }] }).some((p) => /goals\[0\] must have a non-empty string id/.test(p)));
+  assert.ok(validateCoreState({ ...core, goals: [{ id: 'G1', signal: 's' }] }).some((p) => /goals\[0\] must have a non-empty string text/.test(p)));
+  assert.ok(validateCoreState({ ...core, goals: [{ id: 'G1', text: 'x' }] }).some((p) => /goals\[0\] must have a non-empty string signal/.test(p)));
+  assert.ok(validateCoreState({ ...core, goals: [{ id: 'G1', text: 'x', signal: 's', status: 'achieved' }] }).some((p) => /must not carry a mutable status field/.test(p)));
+  assert.ok(validateCoreState({ ...core, goals: [{ id: 'G1', text: 'x', signal: 's', tombstone: { reason: 'r' } }] }).some((p) => /tombstone\.amended_at must be a non-empty string/.test(p)));
+});
+
+test('buildCapabilityEvent: builds the event-backed capability record carrying goals_enabled', () => {
+  const ev = buildCapabilityEvent({ createdAt: '2026-07-01T00:00:00Z' });
+  assert.equal(ev.type, CAPABILITY_EVENT_TYPE);
+  assert.equal(ev.ts, '2026-07-01T00:00:00Z');
+  assert.deepEqual(ev.data, { goals_enabled: true });
+  assert.throws(() => buildCapabilityEvent({}), /createdAt is required/);
+});
+
+test('inferGoalsCapability: post-feature inferred from capability OR goal lifecycle events', () => {
+  assert.equal(inferGoalsCapability([]).enabled, false);
+  assert.equal(inferGoalsCapability([{ type: 'note' }]).enabled, false);
+  assert.equal(inferGoalsCapability([buildCapabilityEvent({ createdAt: 'T' })]).enabled, true);
+  for (const type of GOAL_LIFECYCLE_EVENT_TYPES) {
+    assert.equal(inferGoalsCapability([{ type }]).enabled, true, `${type} should imply post-feature`);
+  }
+});
+
+test('checkGoalsCapabilityAuthority: missing marker + present capability/goal events is a hard error', () => {
+  const core = buildSeedState({ slug: 'g', topic: 't', createdAt: 'T' });
+  // Consistent: marker present, capability event present.
+  assert.deepEqual(checkGoalsCapabilityAuthority(core, [buildCapabilityEvent({ createdAt: 'T' })]), []);
+  // Genuinely pre-feature: no marker, no events.
+  const preFeature = { ...core };
+  delete preFeature.goals_enabled;
+  assert.deepEqual(checkGoalsCapabilityAuthority(preFeature, []), []);
+  // Hard error: state.yml lost the marker but the event log proves post-feature.
+  const problems = checkGoalsCapabilityAuthority(preFeature, [{ type: 'goals_frozen' }]);
+  assert.ok(problems.some((p) => /missing the goals_enabled marker/.test(p)));
 });

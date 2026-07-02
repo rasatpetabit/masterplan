@@ -17,6 +17,7 @@ import { recordWaveResult } from '../lib/wave-commit.mjs';
 import { readState, writeState } from '../lib/bundle.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
 import { acquireOwner } from '../lib/owner-fs.mjs';
+import { goalsHash } from '../lib/goals.mjs';
 
 function git(dir, ...args) {
   return String(execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' })).trim();
@@ -369,4 +370,77 @@ test('codex-suppressed planning (Codex r6 P2): serial forced on resume_phase; pl
   const rel = continueRun({ statePath: fx3.statePath, self: fx3.self, now: 2000 });
   assert.equal(rel.op, 'launch_workflow');
   assert.equal(rel.workflow, 'plan');
+});
+
+const GOALS_MD = 'topic: Track goals\n\n## G1: Do the thing\nsignal: test\nevidence: it works\n';
+
+test('goals split-brain guard: matching goals.md hash proceeds; mismatch hard-errors; no-event and pre-feature bundles are exempt', () => {
+  const frozenHash = goalsHash(GOALS_MD);
+
+  // (a) goals_enabled + goals.md matches the last goals_frozen event → normal dispatch.
+  const fx = makeFixture({
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    planIndex: [planEntry(1, 1, ['src/a.txt'])],
+    slug: 'gsb-match',
+    extra: { goals_enabled: true },
+  });
+  fs.writeFileSync(path.join(fx.bundleDir, 'goals.md'), GOALS_MD);
+  fs.writeFileSync(path.join(fx.bundleDir, 'events.jsonl'),
+    JSON.stringify({ type: 'goals_frozen', ts: 't', goals_hash: frozenHash }) + '\n');
+  const op = continueRun({ statePath: fx.statePath, self: fx.self, now: 2000 });
+  assert.equal(op.op, 'launch_workflow', 'matching hash proceeds to dispatch');
+
+  // (b) goals.md edited after freeze → hash diverges → hard error surfaced as a thrown Error.
+  const fx2 = makeFixture({
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    planIndex: [planEntry(1, 1, ['src/a.txt'])],
+    slug: 'gsb-mismatch',
+    extra: { goals_enabled: true },
+  });
+  fs.writeFileSync(path.join(fx2.bundleDir, 'goals.md'), GOALS_MD + '\n## G2: Another\nsignal: command\n');
+  fs.writeFileSync(path.join(fx2.bundleDir, 'events.jsonl'),
+    JSON.stringify({ type: 'goals_frozen', ts: 't', goals_hash: frozenHash }) + '\n');
+  assert.throws(
+    () => continueRun({ statePath: fx2.statePath, self: fx2.self, now: 2000 }),
+    /goals split-brain/,
+    'divergent goals.md hard-errors');
+
+  // (c) goal_amended is the LAST event — its new hash is authoritative (frozen stale, amended matches).
+  const amendedMd = GOALS_MD + '\n## G2: Another\nsignal: command\n';
+  const amendedHash = goalsHash(amendedMd);
+  const fx3 = makeFixture({
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    planIndex: [planEntry(1, 1, ['src/a.txt'])],
+    slug: 'gsb-amended',
+    extra: { goals_enabled: true },
+  });
+  fs.writeFileSync(path.join(fx3.bundleDir, 'goals.md'), amendedMd);
+  fs.writeFileSync(path.join(fx3.bundleDir, 'events.jsonl'),
+    JSON.stringify({ type: 'goals_frozen', ts: 't1', goals_hash: frozenHash }) + '\n'
+    + JSON.stringify({ type: 'goal_amended', ts: 't2', new_hash: amendedHash }) + '\n');
+  const op3 = continueRun({ statePath: fx3.statePath, self: fx3.self, now: 2000 });
+  assert.equal(op3.op, 'launch_workflow', 'latest goal_amended new hash is authoritative');
+
+  // (d) goals_enabled but NO goal-lifecycle event yet → no-op (run_goals_capture owns this window).
+  const fx4 = makeFixture({
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    planIndex: [planEntry(1, 1, ['src/a.txt'])],
+    slug: 'gsb-precapture',
+    extra: { goals_enabled: true },
+  });
+  fs.writeFileSync(path.join(fx4.bundleDir, 'goals.md'), GOALS_MD + '\nedited freely\n');
+  const op4 = continueRun({ statePath: fx4.statePath, self: fx4.self, now: 2000 });
+  assert.equal(op4.op, 'launch_workflow', 'pre-capture window is a no-op');
+
+  // (e) pre-feature bundle (no goals_enabled) is exempt even with a mismatching goals.md + event.
+  const fx5 = makeFixture({
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    planIndex: [planEntry(1, 1, ['src/a.txt'])],
+    slug: 'gsb-prefeature',
+  });
+  fs.writeFileSync(path.join(fx5.bundleDir, 'goals.md'), GOALS_MD + '\ndrifted\n');
+  fs.writeFileSync(path.join(fx5.bundleDir, 'events.jsonl'),
+    JSON.stringify({ type: 'goals_frozen', ts: 't', goals_hash: frozenHash }) + '\n');
+  const op5 = continueRun({ statePath: fx5.statePath, self: fx5.self, now: 2000 });
+  assert.equal(op5.op, 'launch_workflow', 'pre-feature bundle exempt from the guard');
 });
