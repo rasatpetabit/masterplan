@@ -152,7 +152,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, setWorktree, setWorktreeDisposition, setVerifiedSha, setCodexConfig, setReviewConfig, loadPlanTasks, buildSeedState, buildTasksFromPlanIndex, appendEvent, setCoordination, applyPlanIndex, rebasePaths, GOAL_LIFECYCLE_EVENT_TYPES, inferGoalsCapability } from '../lib/bundle.mjs';
-import { parseGoals, validateGoals, goalsHash, validateUserApprovalReceipt, validateAmendment, amendmentDiff, crossCheckGoals } from '../lib/goals.mjs';
+import { parseGoals, validateGoals, goalsHash, validateUserApprovalReceipt, validateAmendment, amendmentDiff, crossCheckGoals, validateGoalCheckReceipt, validateGoalWaiver, waiverKey } from '../lib/goals.mjs';
 import { planWorktreeCreate, parseWorktreeList, classifyWorktrees, normalizeDisposition, dispositionAfterTeardown, VALID_DISPOSITIONS as VALID_WORKTREE_DISPOSITION } from '../lib/worktree.mjs';
 import { collectDiskDirs, collectBundleRecords } from '../lib/worktree-fs.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
@@ -1063,6 +1063,205 @@ function main() {
         invalidated_receipts: invalidated,
         event: 'goal_amended',
         ts: goalAmendedRecord.ts,
+      });
+      break;
+    }
+    case 'record-goal-check': {
+      // CD-7 write (events.jsonl): record an anti-fabrication goal-completeness assessment (mirrors
+      // record-gate-review). bin is fs-only — git facts (HEAD, base, base..HEAD diff hash, dirty status,
+      // the recomputed run_verify output hash) are PASSED IN by the shell. Two sub-modes:
+      //   default (check): --receipt validates via validateGoalCheckReceipt against the CURRENT goals
+      //     hash + the passed HEAD/base/diff/verify-output tuple + clean status; appends a `goal_check`
+      //     event. Provenance is EXACTLY ONE of assessor (dispatch_id/model/output_tokens) or
+      //     user-attested (attested_by:'user' + approval_receipt) — a manual receipt is explicitly
+      //     marked and can NEVER masquerade as assessor provenance (the validator owns that split).
+      //   --waive (waiver): --waiver validates via validateGoalWaiver (per-goal reasons + a user-
+      //     approval receipt binding the full tuple); appends a `goal_waived` event.
+      // REFUSES on a dirty worktree — the assessor saw uncommitted state a receipt key cannot pin.
+      // Re-entry at the UNCHANGED tuple (goals hash + HEAD + base + diff hash) is idempotent (skip, no
+      // double-append); any goals amendment or later commit moves the tuple and re-arms.
+      const p = need(flags, 'state');
+      const dir = path.dirname(p);
+      const state = loadForWrite(p);
+      // Goals from the bundle (same source the split-brain guard uses).
+      const goalsMdPath = path.join(dir, 'goals.md');
+      let goalsMd;
+      try {
+        goalsMd = fs.readFileSync(goalsMdPath, 'utf8');
+      } catch (e) {
+        die(`record-goal-check: goals.md unreadable (${e.message}) — freeze the goal set with \`mp goals-load\` first`, 1);
+      }
+      const gcParsed = parseGoals(goalsMd);
+      const gcHash = goalsHash(goalsMd);
+      // Git facts passed in by the shell (bin is fs-only).
+      const gcHead = String(need(flags, 'head-sha'));
+      const gcBase = String(need(flags, 'base'));
+      const gcDiffHash = String(need(flags, 'diff-hash'));
+      // REFUSE on a dirty worktree — a receipt key can't pin uncommitted state.
+      const gcDirty = flags.dirty === true || flags.dirty === 'true';
+      if (gcDirty) {
+        die(
+          'record-goal-check: refusing — the worktree is dirty; the assessor saw uncommitted state a receipt tuple cannot pin. Commit or stash, then re-run the goal check.',
+          3
+        );
+      }
+      // Read the event log (absent == none; a non-ENOENT read error fails loud, never masquerades as empty).
+      const gcEventsPath = path.join(dir, 'events.jsonl');
+      let gcEventsText = '';
+      try {
+        gcEventsText = fs.readFileSync(gcEventsPath, 'utf8');
+      } catch (e) {
+        if (e.code !== 'ENOENT') die(`record-goal-check: events.jsonl unreadable: ${e.message}`, 1);
+      }
+      const gcEvents = gcEventsText
+        .split('\n')
+        .filter((l) => l.trim())
+        .map((l) => {
+          try {
+            return JSON.parse(l);
+          } catch {
+            return null;
+          }
+        })
+        .filter(Boolean);
+      // Helper: read a --receipt / --waiver value that is either inline JSON (starts with '{') or a path.
+      const readReceiptArg = (raw, label) => {
+        let text;
+        if (String(raw).trimStart().startsWith('{')) {
+          text = String(raw);
+        } else {
+          try {
+            text = fs.readFileSync(String(raw), 'utf8');
+          } catch (e) {
+            die(`record-goal-check: ${label} file unreadable: ${e.message}`, 1);
+          }
+        }
+        try {
+          return JSON.parse(text);
+        } catch (e) {
+          die(`record-goal-check: ${label} is not valid JSON (${e.message})`, 1);
+        }
+      };
+
+      // ---- WAIVER mode -------------------------------------------------------------------------
+      const gcWaive = flags.waive === true || flags.waive === 'true' || flags.waiver !== undefined;
+      if (gcWaive) {
+        const waiver = readReceiptArg(need(flags, 'waiver'), '--waiver');
+        const wv = validateGoalWaiver(waiver, {
+          goalsHash: gcHash,
+          headSha: gcHead,
+          base: gcBase,
+          diffHash: gcDiffHash,
+          goals: gcParsed.goals,
+        });
+        if (!wv.ok) die(`record-goal-check: waiver rejected — ${wv.error}`, 1);
+        const waivedAlready = gcEvents.some(
+          (e) =>
+            e.type === 'goal_waived' &&
+            e.data?.goals_hash === gcHash &&
+            e.data?.head_sha === gcHead &&
+            e.data?.base === gcBase &&
+            e.data?.diff_hash === gcDiffHash
+        );
+        if (waivedAlready) {
+          out({ record_goal_check: 'idempotent', mode: 'waive', goals_hash: gcHash, key: wv.normalized.key });
+          break;
+        }
+        const waivedRecord = {
+          type: 'goal_waived',
+          ts: flags.ts ?? new Date().toISOString(),
+          data: {
+            goals_hash: gcHash,
+            head_sha: gcHead,
+            base: gcBase,
+            diff_hash: gcDiffHash,
+            reasons: wv.normalized.reasons,
+            approval: waiver.approval,
+            key: wv.normalized.key,
+          },
+          summary: `goals waived (${Object.keys(wv.normalized.reasons).length}) at ${gcHash}`,
+        };
+        try {
+          appendEvent(p, waivedRecord);
+        } catch (e) {
+          die(e.message, 1);
+        }
+        out({
+          recorded: 'goal_waived',
+          mode: 'waive',
+          goals_hash: gcHash,
+          head_sha: gcHead,
+          waived: Object.keys(wv.normalized.reasons).length,
+          ts: waivedRecord.ts,
+        });
+        break;
+      }
+
+      // ---- CHECK mode --------------------------------------------------------------------------
+      const gcVerifyHash =
+        flags['verify-output-hash'] !== undefined ? String(flags['verify-output-hash']) : undefined;
+      const receipt = readReceiptArg(need(flags, 'receipt'), '--receipt');
+      const v = validateGoalCheckReceipt(receipt, {
+        goalsHash: gcHash,
+        headSha: gcHead,
+        baseDiffHash: gcDiffHash,
+        verifyOutputHash: gcVerifyHash,
+        clean: true,
+        goals: gcParsed.goals,
+      });
+      if (!v.ok) die(`record-goal-check: receipt rejected — ${v.error}`, 1);
+      const checkedAlready = gcEvents.some(
+        (e) =>
+          e.type === 'goal_check' &&
+          e.data?.goals_hash === gcHash &&
+          e.data?.head_sha === gcHead &&
+          e.data?.base === gcBase &&
+          e.data?.diff_hash === gcDiffHash
+      );
+      if (checkedAlready) {
+        out({ record_goal_check: 'idempotent', mode: 'check', goals_hash: gcHash, head_sha: gcHead });
+        break;
+      }
+      // Provenance is recorded explicitly by kind — a manual (user-attested) receipt is NEVER stored as
+      // assessor provenance (validateGoalCheckReceipt already refused a manual receipt that lacked a
+      // valid approval_receipt, and an assessor receipt that lacked dispatch_id/model/tokens).
+      const provenance =
+        v.provenance_kind === 'user'
+          ? { attested_by: 'user', approval_receipt: receipt.approval_receipt }
+          : {
+              dispatch_id: receipt.dispatch_id,
+              model: receipt.model,
+              output_tokens: receipt.output_tokens ?? receipt.completion_tokens ?? receipt.tokens,
+            };
+      const checkRecord = {
+        type: 'goal_check',
+        ts: flags.ts ?? new Date().toISOString(),
+        data: {
+          goals_hash: gcHash,
+          head_sha: gcHead,
+          base: gcBase,
+          diff_hash: gcDiffHash,
+          base_diff_hash: gcDiffHash,
+          verify_output_hash: v.normalized.verify_output_hash,
+          clean: true,
+          provenance_kind: v.provenance_kind,
+          verdicts: v.normalized.verdicts,
+          provenance,
+        },
+        summary: `goal check recorded (${v.provenance_kind}) at ${gcHash}`,
+      };
+      try {
+        appendEvent(p, checkRecord);
+      } catch (e) {
+        die(e.message, 1);
+      }
+      out({
+        recorded: 'goal_check',
+        mode: 'check',
+        provenance_kind: v.provenance_kind,
+        goals_hash: gcHash,
+        head_sha: gcHead,
+        ts: checkRecord.ts,
       });
       break;
     }
