@@ -1,0 +1,8 @@
+schema_version: 6
+slug: hash-mismatch
+status: in-progress
+phase: building
+goals_enabled: true
+goals:
+  - id: G1
+    text: Track goals across the workflow
