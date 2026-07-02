@@ -1117,13 +1117,13 @@ test('owner-sentinel: WARN for an orphan heartbeat file with no lock', () => {
   assert.match(findings.find((f) => f.severity === 'WARN').summary, /orphan/);
 });
 
-// ---- dispatcher: all 13 modules auto-discovered ----------------------------
+// ---- dispatcher: all 14 modules auto-discovered ----------------------------
 
-test('dispatcher: discovers all 13 check modules', async () => {
+test('dispatcher: discovers all 14 check modules', async () => {
   const checks = await discoverChecks(path.join(here, '..', 'lib', 'doctor'));
   const names = checks.map((c) => c.name);
   const expected = [
-    'adversary-lane-health', 'codex-auth', 'coord-drift', 'index-staleness', 'legacy-bundle',
+    'adversary-lane-health', 'codex-auth', 'coord-drift', 'goals', 'index-staleness', 'legacy-bundle',
     'owner-sentinel', 'plan-doc-cruft', 'plan-index-schema', 'plugin-registry-drift', 'scalar-cap',
     'stale-lock', 'state-schema', 'worktree-integrity',
   ];
