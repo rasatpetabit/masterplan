@@ -999,6 +999,7 @@ test('seed-tasks: populates state.tasks from plan.index.json so a freshly-planne
   const dir = tmpDir('mp-seedtasks-');
   const p = path.join(dir, 'state.yml');
   run(['seed', `--state=${p}`, '--slug=lic-lock', '--topic=commercial license lock']);
+  freezeInitialGoals(p, dir); // seeded bundle is goals_enabled — capture the goal set before planning
   passGate(p, 'spec');
   assert.equal(JSON.parse(run(['set-phase', `--state=${p}`, '--phase=plan']).stdout).phase, 'plan');
   const planIdx = path.join(dir, 'plan.index.json');
@@ -1068,6 +1069,7 @@ test('ISSUE G: set-phase execute over 0 tasks is refused (--force advances but d
   const dir = tmpDir('mp-issueg-');
   const p = path.join(dir, 'state.yml');
   run(['seed', `--state=${p}`, '--slug=lic-lock', '--topic=commercial license lock']);
+  freezeInitialGoals(p, dir); // seeded bundle is goals_enabled — capture the goal set before planning
   passGate(p, 'spec');
   assert.equal(JSON.parse(run(['set-phase', `--state=${p}`, '--phase=plan']).stdout).phase, 'plan');
   // (1) write guard: refuse to enter execute with 0 tasks; phase stays 'plan', nothing written.
@@ -2335,4 +2337,117 @@ test('goals-status: derives from goals.md + events, not the stale state.goals ca
   assert.equal(out.goals.length, 2);
   assert.ok(!out.goals.some((g) => g.id === 'G9'));
   assert.equal(out.current_hash, hash);
+});
+
+// ---- goal-transition guards: capture gate + split-brain hash guard (task 7) --------------------
+// Fixtures reused from the goals sections above (goalsBundle, freezeInitialGoals, AMEND_MD,
+// writeAmendGoals, writeAmendApproval, goalsHashFn, passGate, planIndexFixture, v8, tmpBundle).
+
+test('capture gate: set-phase --phase=plan on a goals_enabled bundle with UNFROZEN goals exits 3 with a run_goals_capture op and does NOT advance', () => {
+  const p = goalsBundle();
+  fs.writeFileSync(path.join(path.dirname(p), 'spec.md'), '# spec\n');
+  const r = run(['set-phase', `--state=${p}`, '--phase=plan']);
+  assert.equal(r.status, 3, `expected exit 3, got ${r.status}: ${r.stderr}`);
+  const op = JSON.parse(r.stdout);
+  assert.equal(op.op, 'run_goals_capture');
+  assert.equal(op.gate, 'goals');
+  assert.equal(read(p).phase, 'brainstorm');
+});
+
+test('capture gate: once goals are frozen, set-phase --phase=plan clears capture and reaches the SPEC gate (which now covers goals.md)', () => {
+  const p = goalsBundle();
+  const dir = path.dirname(p);
+  freezeInitialGoals(p, dir);
+  fs.writeFileSync(path.join(dir, 'spec.md'), '# spec\n');
+  const r = run(['set-phase', `--state=${p}`, '--phase=plan']);
+  assert.equal(r.status, 3, `expected spec-gate exit 3, got ${r.status}: ${r.stderr}`);
+  const op = JSON.parse(r.stdout);
+  assert.equal(op.op, 'run_gate_review');
+  assert.equal(op.gate, 'spec');
+  assert.deepEqual(op.artifacts, ['spec.md', 'goals.md']);
+});
+
+test('spec gate: gate-hash on a goals_enabled bundle includes goals.md alongside spec.md', () => {
+  const p = goalsBundle();
+  const dir = path.dirname(p);
+  freezeInitialGoals(p, dir);
+  fs.writeFileSync(path.join(dir, 'spec.md'), '# spec\n');
+  const gh = JSON.parse(run(['gate-hash', `--state=${p}`, '--gate=spec']).stdout);
+  assert.deepEqual(gh.artifacts, ['spec.md', 'goals.md']);
+});
+
+test('goals happy path: frozen goals + a recorded spec review lets set-phase --phase=plan advance', () => {
+  const p = goalsBundle();
+  const dir = path.dirname(p);
+  freezeInitialGoals(p, dir);
+  fs.writeFileSync(path.join(dir, 'spec.md'), '# spec\n');
+  passGate(p, 'spec');
+  const r = run(['set-phase', `--state=${p}`, '--phase=plan']);
+  assert.equal(r.status, 0, `should advance: ${r.stderr}${r.stdout}`);
+  assert.equal(read(p).phase, 'plan');
+});
+
+test('spec gate re-arm: goals-amend rewrites goals.md and re-arms the spec gate (a stale review no longer satisfies it)', () => {
+  const p = goalsBundle();
+  const dir = path.dirname(p);
+  const oldHash = freezeInitialGoals(p, dir);
+  fs.writeFileSync(path.join(dir, 'spec.md'), '# spec\n');
+  passGate(p, 'spec');
+  const newHash = goalsHashFn(AMEND_MD);
+  const gp = writeAmendGoals(dir, AMEND_MD);
+  const ap = writeAmendApproval(dir, oldHash, newHash);
+  assert.equal(
+    run(['goals-amend', `--state=${p}`, `--goals=${gp}`, `--approval=${ap}`, '--reason=descope G2', '--ts=2026-07-02T00:00:00Z']).status,
+    0
+  );
+  const r = run(['set-phase', `--state=${p}`, '--phase=plan']);
+  assert.equal(r.status, 3, `goals-amend must re-arm the spec gate: ${r.stderr}`);
+  const op = JSON.parse(r.stdout);
+  assert.equal(op.op, 'run_gate_review');
+  assert.equal(op.gate, 'spec');
+});
+
+test('split-brain guard (set-phase): goals.md drifted out-of-band from the committed hash → reconcile error, no advance', () => {
+  const p = goalsBundle();
+  const dir = path.dirname(p);
+  freezeInitialGoals(p, dir);
+  fs.writeFileSync(path.join(dir, 'spec.md'), '# spec\n');
+  fs.writeFileSync(path.join(dir, 'goals.md'), 'topic: tampered\n\n## G1: something else\nsignal: command\n');
+  const r = run(['set-phase', `--state=${p}`, '--phase=plan']);
+  assert.equal(r.status, 1, `split brain must hard-fail: ${r.stdout}`);
+  assert.match(r.stderr, /split brain|does not match the committed/);
+  assert.equal(read(p).phase, 'brainstorm');
+});
+
+test('split-brain guard (load-plan): drifted goals.md blocks materialization with a reconcile error', () => {
+  const p = goalsBundle();
+  const dir = path.dirname(p);
+  freezeInitialGoals(p, dir);
+  const planIdx = path.join(dir, 'plan.index.json');
+  fs.writeFileSync(planIdx, JSON.stringify(planIndexFixture()));
+  fs.writeFileSync(path.join(dir, 'goals.md'), 'topic: tampered\n\n## G1: drift\nsignal: command\n');
+  const r = run(['load-plan', `--state=${p}`, `--plan-index=${planIdx}`]);
+  assert.equal(r.status, 1, `split brain must hard-fail load-plan: ${r.stdout}`);
+  assert.match(r.stderr, /split brain|does not match the committed/);
+  assert.equal(read(p).tasks.length, 0);
+});
+
+test('split-brain guard NO-OPS pre-capture: a goals_enabled bundle with no goals_frozen event reaches the plan gate (not a reconcile error) on load-plan', () => {
+  const p = goalsBundle();
+  const dir = path.dirname(p);
+  const planIdx = path.join(dir, 'plan.index.json');
+  fs.writeFileSync(planIdx, JSON.stringify(planIndexFixture()));
+  fs.writeFileSync(path.join(dir, 'spec.md'), '# spec\n'); // plan gate is fail-closed on missing artifacts
+  fs.writeFileSync(path.join(dir, 'plan.md'), '# plan\n');
+  const r = run(['load-plan', `--state=${p}`, `--plan-index=${planIdx}`]);
+  assert.equal(r.status, 3, `expected the plan gate, got ${r.status}: ${r.stderr}`);
+  assert.equal(JSON.parse(r.stdout).gate, 'plan');
+});
+
+test('pre-feature exempt: a non-goals bundle (no goals_enabled marker) skips the capture gate entirely', () => {
+  const p = tmpBundle(v8({ phase: 'brainstorm', tasks: [] }));
+  fs.writeFileSync(path.join(path.dirname(p), 'spec.md'), '# spec\n');
+  const r = run(['set-phase', `--state=${p}`, '--phase=plan']);
+  assert.equal(r.status, 3);
+  assert.equal(JSON.parse(r.stdout).op, 'run_gate_review');
 });

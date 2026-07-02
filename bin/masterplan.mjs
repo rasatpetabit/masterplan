@@ -151,7 +151,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, setWorktree, setWorktreeDisposition, setVerifiedSha, setCodexConfig, setReviewConfig, loadPlanTasks, buildSeedState, buildTasksFromPlanIndex, appendEvent, setCoordination, applyPlanIndex, rebasePaths, GOAL_LIFECYCLE_EVENT_TYPES } from '../lib/bundle.mjs';
+import { readState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, setWorktree, setWorktreeDisposition, setVerifiedSha, setCodexConfig, setReviewConfig, loadPlanTasks, buildSeedState, buildTasksFromPlanIndex, appendEvent, setCoordination, applyPlanIndex, rebasePaths, GOAL_LIFECYCLE_EVENT_TYPES, inferGoalsCapability } from '../lib/bundle.mjs';
 import { parseGoals, validateGoals, goalsHash, validateUserApprovalReceipt, validateAmendment, amendmentDiff } from '../lib/goals.mjs';
 import { planWorktreeCreate, parseWorktreeList, classifyWorktrees, normalizeDisposition, dispositionAfterTeardown, VALID_DISPOSITIONS as VALID_WORKTREE_DISPOSITION } from '../lib/worktree.mjs';
 import { collectDiskDirs, collectBundleRecords } from '../lib/worktree-fs.mjs';
@@ -216,7 +216,20 @@ function resolveGateArtifacts({ gate, statePath, state, flags, op }) {
       ? state.spec_path
       : path.join(bundleDirReal, 'spec.md');
   const spec = gateConfine(path.resolve(bundleDirReal, specRaw), bundleDirReal, 'spec.md');
-  if (gate === 'spec') return [{ role: 'spec', ...spec }];
+  if (gate === 'spec') {
+    const descriptors = [{ role: 'spec', ...spec }];
+    // Goals-tracking (plan-review finding 1 / spec §4): on a goals_enabled bundle the spec gate covers
+    // goals.md too, so the gate hash spans spec.md + goals.md — a later `mp goals-amend` (which rewrites
+    // goals.md) re-arms the spec gate exactly like a spec edit. Pre-feature bundles (no goals_enabled
+    // marker, no capability/goal events) keep the spec-only hash (back-compat). Appended AFTER spec so a
+    // non-goals bundle's hash is byte-identical to before.
+    const goalsEvents = readBundleEventsForGoals(statePath, 'gate-review');
+    if (bundleGoalsEnabled(state, goalsEvents)) {
+      const goals = gateConfine(path.resolve(bundleDirReal, 'goals.md'), bundleDirReal, 'goals.md');
+      descriptors.push({ role: 'goals', ...goals });
+    }
+    return descriptors;
+  }
   if (gate === 'plan') {
     const idxRaw = honorFlags && flags['plan-index'] ? flags['plan-index'] : path.join(bundleDirReal, 'plan.index.json');
     const planIndex = gateConfine(path.resolve(bundleDirReal, idxRaw), bundleDirReal, 'plan.index.json');
@@ -325,6 +338,111 @@ function enforceGateReview(gate, statePath, flags, state, opts = {}) {
   };
   fs.writeSync(1, JSON.stringify(opObj) + '\n');
   process.exit(3);
+}
+
+// ---- goal-transition guards (goals-tracking): capture gate + split-brain hash guard --------------
+//
+// A goals_enabled bundle must FREEZE its goals (goals-load -> goals_frozen event) before it leaves
+// brainstorm, and its on-disk goals.md must never silently diverge from the committed hash. Both guards
+// read the EVENT LOG (authority order: events > state) and are fs-only. Pre-feature bundles (no
+// goals_enabled marker AND no capability/goal events) are exempt — the guards no-op.
+function readBundleEventsForGoals(statePath, label) {
+  const eventsPath = path.join(path.dirname(statePath), 'events.jsonl');
+  let text = '';
+  try {
+    text = fs.readFileSync(eventsPath, 'utf8');
+  } catch (e) {
+    if (e.code !== 'ENOENT') die(`${label}: events.jsonl unreadable: ${e.message}`, 1);
+  }
+  return text
+    .split('\n')
+    .filter((l) => l.trim())
+    .map((l) => {
+      try {
+        return JSON.parse(l);
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean);
+}
+// The committed goals hash from the event log: the LAST goals_frozen/goal_amended event's hash (both
+// carry data.goals_hash; goal_amended's equals its new_goals_hash). null when neither event exists.
+function committedGoalsHash(events) {
+  const lineage = events.filter((e) => e.type === 'goals_frozen' || e.type === 'goal_amended');
+  if (!lineage.length) return null;
+  return lineage[lineage.length - 1]?.data?.goals_hash ?? null;
+}
+// Is this bundle goals-capable? Authority order events > state: any capability/goal event, OR the
+// state.yml goals_enabled marker (covers a freshly-seeded bundle whose events.jsonl isn't written yet).
+function bundleGoalsEnabled(state, events) {
+  if (inferGoalsCapability(events).enabled) return true;
+  return state != null && typeof state === 'object' && state.goals_enabled === true;
+}
+// Part 1 — the goals_frozen CAPTURE gate (set-phase --phase=plan). On a goals_enabled bundle, refuse to
+// leave brainstorm until the goal set is frozen: emit an actionable run_goals_capture op and exit 3
+// (mirrors the fail-closed spec-gate pattern) whenever NO goals_frozen event exists yet. Pre-feature
+// bundles are exempt. This owns the PRE-CAPTURE window; the split-brain guard owns hash consistency
+// AFTER capture (PLAN-GATE FINDING). --force appends an audit event and bypasses.
+function enforceGoalsCaptureGate(statePath, state, flags) {
+  const events = readBundleEventsForGoals(statePath, 'goals-capture');
+  if (!bundleGoalsEnabled(state, events)) return; // pre-feature: exempt
+  if (flags.force) {
+    try {
+      appendEvent(statePath, {
+        type: 'goals_capture_bypassed',
+        ts: new Date().toISOString(),
+        data: { reason: 'force' },
+        summary: 'goals capture gate bypassed via --force',
+      });
+    } catch {
+      /* audit best-effort — never block a --force recovery on an events.jsonl write */
+    }
+    return;
+  }
+  if (events.some((e) => e.type === 'goals_frozen')) return; // captured — split-brain guard owns the rest
+  const opObj = {
+    op: 'run_goals_capture',
+    gate: 'goals',
+    reason:
+      'goals are enabled but not yet frozen — capture the goal set before leaving brainstorm: ' +
+      '`mp goals-load --state=<bundle>/state.yml --goals=<goals.md> --approval=<receipt.json>`. ' +
+      '(--force bypasses; audited.)',
+  };
+  fs.writeSync(1, JSON.stringify(opObj) + '\n');
+  process.exit(3);
+}
+// Part 2 — the SPLIT-BRAIN hash guard (set-phase + load-plan). Recompute goals.md's hash via lib/goals.mjs
+// and compare it to the committed hash from the event log; a mismatch means goals.md drifted out-of-band
+// from the last goals_frozen/goal_amended commit (a hand-edit / split brain). Exit non-zero with a
+// reconcile message. NO-OP when the bundle is pre-feature OR no goals_frozen/goal_amended event exists yet
+// (that window belongs to the capture gate — PLAN-GATE FINDING). --force is deliberately NOT honored: a
+// split brain is a data-integrity error the operator must reconcile, not bypass.
+function enforceGoalsSplitBrainGuard(statePath, state, transition) {
+  const events = readBundleEventsForGoals(statePath, 'goals-split-brain');
+  if (!bundleGoalsEnabled(state, events)) return; // pre-feature: exempt
+  const committed = committedGoalsHash(events);
+  if (committed === null) return; // pre-capture: capture gate owns this window
+  const goalsMdPath = path.join(path.dirname(statePath), 'goals.md');
+  let goalsMd;
+  try {
+    goalsMd = fs.readFileSync(goalsMdPath, 'utf8');
+  } catch (e) {
+    die(
+      `${transition}: goals.md unreadable (${e.message}) but the event log records a frozen goal set at ` +
+        `${committed} — reconcile the bundle (restore goals.md, or re-freeze via \`mp goals-amend\`) before advancing.`,
+      1
+    );
+  }
+  const actual = goalsHash(goalsMd);
+  if (actual !== committed) {
+    die(
+      `${transition}: goals.md hash ${actual} does not match the committed goal set ${committed} from the ` +
+        `last goals_frozen/goal_amended event — goals.md drifted out-of-band (split brain). Reconcile before ` +
+        `advancing: record the change with \`mp goals-amend\` (sanctioned), or restore goals.md to the committed content.`,
+      1
+    );
+  }
 }
 
 // ---- tiny arg parser: positional[], flags{} (--k=v, or --k as boolean true) ----
@@ -1067,6 +1185,7 @@ function main() {
       // (hoisted above) and index validation (don't gate a malformed plan), BEFORE the plan_hash stamping
       // below (the gate hash normalizes that stamp out). Pass the already-parsed index as prereadIndex so
       // the gate hashes exactly the bytes we validated and will materialize. Exits nonzero unless --force.
+      enforceGoalsSplitBrainGuard(p, state, 'load-plan'); // goals.md must match the committed hash (no-op pre-capture)
       enforceGateReview('plan', p, flags, state, { op: 'load-plan', prereadIndex: index });
       // A3: plan_hash parity — if the loaded index lacks plan_hash, compute sha256:<hex of plan.md>
       // in the exact merge-plan-fragments form and stamp it + generated_at into the index file.
@@ -1373,8 +1492,17 @@ function main() {
       // §spec/plan gate enforcement: --phase=plan is the brainstorm→plan (SPEC) advance; --phase=execute
       // is the alt plan→execute (PLAN) path (load-plan is the normal one, gated identically below — H3
       // closes this bypass). Emits run_gate_review + exits nonzero when unsatisfied; --force bypasses.
-      if (phase === 'plan') enforceGateReview('spec', p, flags, state, { op: 'set-phase' });
-      if (phase === 'execute') enforceGateReview('plan', p, flags, state, { op: 'set-phase' });
+      // Goal-transition guards run BEFORE the spec/plan review gate so goals.md is present + consistent
+      // when the (goals-enabled) spec gate hashes it. --phase=plan is the brainstorm->plan capture seam.
+      if (phase === 'plan') {
+        enforceGoalsCaptureGate(p, state, flags); // exits 3 (run_goals_capture) if goals unfrozen
+        enforceGoalsSplitBrainGuard(p, state, 'set-phase'); // no-ops pre-capture; dies on goals.md drift
+        enforceGateReview('spec', p, flags, state, { op: 'set-phase' });
+      }
+      if (phase === 'execute') {
+        enforceGoalsSplitBrainGuard(p, state, 'set-phase');
+        enforceGateReview('plan', p, flags, state, { op: 'set-phase' });
+      }
       writeState(p, setPhase(state, phase));
       out({ phase });
       break;
