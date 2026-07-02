@@ -27,6 +27,8 @@ import { check as planIndexSchema } from '../lib/doctor/plan-index-schema.mjs';
 import { check as coordDrift } from '../lib/doctor/coord-drift.mjs';
 import { check as ownerSentinel } from '../lib/doctor/owner-sentinel.mjs';
 import { check as planDocCruft } from '../lib/doctor/plan-doc-cruft.mjs';
+import { check as goals } from '../lib/doctor/goals.mjs';
+import { goalsHash } from '../lib/goals.mjs';
 import { acquireOwner } from '../lib/owner-fs.mjs';
 import { buildOwnerIdentity, ownerLockPath, ownerHeartbeatPath } from '../lib/owner.mjs';
 
@@ -1192,6 +1194,113 @@ test('plan-doc-cruft: single-word slugs never match headings (hyphenated-only si
   fs.writeFileSync(path.join(tmp, 'docs', 'guide.md'), '# Repo cleanup guide\n\nProse about cleanup.\n');
   const findings = planDocCruft(tmp);
   assert.equal(maxSeverity(findings), 'PASS', JSON.stringify(findings));
+});
+
+// ---- goals (spec §9/§10: goal-tracking consistency, tamper + edge cases) -----
+// Fixtures under test/fixtures/doctor/goals/<prefix>-<scenario>/docs/masterplan/<slug>/
+// carry state.yml + events.jsonl (+ goals.md/plan.index.json). The dir-prefix encodes the
+// expected worst severity, same contract as the other checks. SKIP-only edge cases (no
+// bundles at all) can't be a committed fixture (empty dir), so they run in-code with a tmp dir.
+
+// The canonical goals.md the committed goals-enabled fixtures freeze — its goalsHash is what
+// their events' goals_frozen.goals_hash carries. Reused here to build tmp fixtures at runtime.
+const GOALS_MD_FIXTURE =
+  'topic: Add goal tracking to masterplan\n\n' +
+  '## G1: Track goals across the workflow\n' +
+  'signal: doctor goals check passes\n' +
+  'evidence: test\n\n' +
+  '## G2: Distinguish pre- and post-feature bundles\n' +
+  'signal: pre-feature bundles resume without false failures\n' +
+  'evidence: test\n';
+
+function writeGoalsBundle(root, slug, { state, events, goalsMd, planIndex } = {}) {
+  const d = path.join(root, 'docs', 'masterplan', slug);
+  fs.mkdirSync(d, { recursive: true });
+  if (state != null) fs.writeFileSync(path.join(d, 'state.yml'), state);
+  if (events != null) fs.writeFileSync(path.join(d, 'events.jsonl'), events);
+  if (goalsMd != null) fs.writeFileSync(path.join(d, 'goals.md'), goalsMd);
+  if (planIndex != null) fs.writeFileSync(path.join(d, 'plan.index.json'), JSON.stringify(planIndex));
+  return d;
+}
+
+test('goals: fixtures match dir-prefix severity', async (t) => {
+  for (const sc of scenarios('goals')) {
+    await t.test(sc, () => {
+      const findings = goals(path.join(FX, 'goals', sc));
+      assertFindingShape(findings);
+      assert.equal(maxSeverity(findings), expectedSeverity(sc), JSON.stringify(findings));
+    });
+  }
+});
+
+test('goals: SKIP when there are no run bundles (empty dir — not a committable fixture)', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-goals-empty-'));
+  const findings = goals(tmp);
+  assertFindingShape(findings); // guards the >=1-finding contract; maxSeverity([]) would falsely read SKIP
+  assert.equal(maxSeverity(findings), 'SKIP');
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+test('goals: a pre-feature bundle beside a post-feature one causes no false failure (doctor distinguishes the two)', () => {
+  // Pre-feature bundle (no capability/goal events, no marker) must be silently skipped, while the
+  // adjacent goals-enabled bundle is checked and passes → overall PASS, never a WARN/ERROR from the
+  // pre-feature resume. This is the spec §10 "pre-feature bundle resumes with no false failures".
+  const H = goalsHash(GOALS_MD_FIXTURE);
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-goals-mixed-'));
+  writeGoalsBundle(tmp, 'pre-feature', {
+    state: 'schema_version: 6\nslug: pre-feature\nstatus: in-progress\nphase: building\ntasks: []\n',
+    events: '{"type":"bundle_created","data":{"goals_enabled":false}}\n',
+  });
+  writeGoalsBundle(tmp, 'post-feature', {
+    state:
+      'schema_version: 6\nslug: post-feature\nstatus: in-progress\nphase: building\n' +
+      'goals_enabled: true\ngoals:\n  - id: G1\n    text: Track goals across the workflow\n' +
+      '  - id: G2\n    text: Distinguish pre- and post-feature bundles\n',
+    events:
+      '{"type":"bundle_created","data":{"goals_enabled":true}}\n' +
+      '{"type":"goals_frozen","data":{"goals_hash":"' + H + '"}}\n',
+    goalsMd: GOALS_MD_FIXTURE,
+  });
+  const findings = goals(tmp);
+  assertFindingShape(findings);
+  assert.equal(maxSeverity(findings), 'PASS', JSON.stringify(findings));
+  assert.ok(!findings.some((f) => f.severity === 'WARN' || f.severity === 'ERROR'), 'pre-feature bundle raised no false failure');
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+test('goals: archived tamper (goals_enabled removed + state.goals emptied while goals.md + events prove capability) HARD-ERRORS, never a vacuous pass', () => {
+  // Spec §10 tampering case: the event log still proves the run was goals-capable (goals_frozen),
+  // so emptying state.goals / dropping the goals_enabled marker on an ARCHIVED run cannot be laundered
+  // into a SKIP or a green PASS — the archived-without-valid-check ERROR still fires.
+  const findings = goals(path.join(FX, 'goals', 'error-tamper-goals-emptied'));
+  assertFindingShape(findings);
+  assert.equal(maxSeverity(findings), 'ERROR', JSON.stringify(findings));
+  assert.ok(!findings.some((f) => f.severity === 'SKIP' || f.severity === 'PASS'), 'tamper is never a skip or a vacuous pass');
+});
+
+test('goals: KNOWN DEFECT — a post-plan amendment leaving a goal uncovered should WARN but currently PASSes', () => {
+  // Spec §10 wants this to WARN. It does NOT today: lib/doctor/goals.mjs case (c) reads
+  // `result.ok` / `result.errors` off validatePlanIndex(), but lib/plan-merge.mjs returns a BARE
+  // ARRAY of error strings — so the guarded block never runs and the uncovered goal slips through.
+  // This test documents the live behavior (PASS) so the defect is on record (CD-7) and this test
+  // flips to the WARN assertion once the check is fixed. Fix is outside this task's file scope.
+  const H = goalsHash(GOALS_MD_FIXTURE);
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-goals-uncov-'));
+  writeGoalsBundle(tmp, 'uncovered', {
+    state:
+      'schema_version: 6\nslug: uncovered\nstatus: in-progress\nphase: building\n' +
+      'goals_enabled: true\ngoals:\n  - id: G1\n    text: covered goal\n  - id: G2\n    text: uncovered goal\n',
+    events:
+      '{"type":"bundle_created","data":{"goals_enabled":true}}\n' +
+      '{"type":"goals_frozen","data":{"goals_hash":"' + H + '"}}\n' +
+      '{"type":"goal_amended","data":{"new_goals_hash":"' + H + '"}}\n',
+    goalsMd: GOALS_MD_FIXTURE,
+    planIndex: { tasks: [{ id: 1, description: 't', wave: 0, files: ['a'], goals: ['G1'] }] },
+  });
+  const findings = goals(tmp);
+  assertFindingShape(findings);
+  assert.equal(maxSeverity(findings), 'PASS', 'documents the current (defective) behavior; flip to WARN when the check is fixed');
+  fs.rmSync(tmp, { recursive: true, force: true });
 });
 
 test('plan-doc-cruft: dot-directories and node_modules are never scanned', () => {
