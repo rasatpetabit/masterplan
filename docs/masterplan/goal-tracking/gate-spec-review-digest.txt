@@ -1,0 +1,27 @@
+Spec gate — cross-vendor adversarial review digest (goal-tracking)
+
+Lane: agent-dispatch adversary (gpt-5.5 review xhigh via skynet gateway)
+Passes: 2 (standard @ hash 8d0c3cc6…, then light @ hash 7a0a5801… after folding)
+Verdict: approve (both passes; zero blocking findings)
+
+Pass 1 (10 findings) — FOLDED into spec.md at commit 3825e30:
+1. HIGH state-tamper bypass (goals_enabled / state.goals edits) → authority order: goals.md+events > state; divergence = hard error
+2. HIGH goals-load rerun laundering → one-shot; rejects existing goal events / post-capture phase
+3. HIGH AUQ approval unenforceable → durable hash-keyed approval receipts for load/amend/manual verdicts/waivers
+4. HIGH multi-file atomicity → artifacts-first, event-append-last commit point; events authoritative in recovery
+5. MED/HIGH waiver keying too weak → waivers keyed to same tuple as checks (goals hash+HEAD+base+diff)
+6. MED spec-review ordering → goals capture BEFORE spec-gate dispatch; gate hash covers spec.md+goals.md; amend re-arms
+7. MED amendment laundering → goal_amended stores full old/new content, not just hashes
+8. MED receipt freshness vs dirty WT → record-goal-check requires clean worktree
+9. MED coverage only syntactic → scope-honesty note: guarantee is "no goal silently dropped"
+10. LOW/MED assessor read-only prompt-only → runs in disposable detached worktree of HEAD
++ its missing-tests list appended to §10.
+
+Pass 2 (6 residual advisory findings) — CARRIED into planning as constraints
+(recorded as a bundle note event 2026-07-02T00:46Z):
+1. capability marker must be event-backed (pre-first-event state.yml deletion window)
+2. goal-check receipt pins ALL assessor inputs (verify-output hash, dispatch-time clean status)
+3. centralize the goals_frozen/current-hash guard across every advancing entry point
+4. crash recovery = rollback-to-last-event or rerun-with-same-approval-receipt; never bless event-less artifacts
+5. finish/archive refuse while spec gate re-armed by post-plan goals-amend
+6. approval receipts bind full tuples (amend: old+new hash+content+reason; verdicts/waivers: goals hash+HEAD+base+diff)

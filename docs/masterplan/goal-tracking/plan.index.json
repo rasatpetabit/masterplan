@@ -1,0 +1,350 @@
+{
+  "schema_version": "6.0",
+  "tasks": [
+    {
+      "id": 1,
+      "description": "Implement the pure parse+validate half of lib/goals.mjs (no fs/process/clock, mirroring lib/gate-review.mjs purity): parseGoals(goalsMdText) -> structured {topicSeed, goals:[{id,text,signal,tombstone?}]} extracting the verbatim original topic header and one section per goal; and validateGoals covering the schema in spec 3.1/3.2/5 — non-empty well-formed goal set, stable ids never renumbered (renumbering rejected), removed goals become tombstones {reason, amended_at} not deletions, and the derived-cache cross-check helper that decides divergence between goals.md, state.goals, and goal events (any mismatch is a hard error, never a vacuous skip). Also implement the amendment-diff helper that preserves old/new goal content for goal_amended events. Author the corresponding parse/validate/tombstone/amend-diff cases in test/goals.test.mjs. Pure functions only; all fs/git reads live in the bin layer per CD-7.",
+      "wave": 0,
+      "files": [
+        "lib/goals.mjs",
+        "test/goals.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/goals.test.mjs"
+      ],
+      "codex": null,
+      "spec_refs": [
+        "docs/masterplan/goal-tracking/spec.md#L28-L55",
+        "docs/masterplan/goal-tracking/spec.md#L97-L114",
+        "docs/masterplan/goal-tracking/spec.md#L205-L214"
+      ]
+    },
+    {
+      "id": 2,
+      "description": "Add the pure hash+receipt half to lib/goals.mjs (same file as core.parse-validate, so serialized after it). Implement canonical goalsHash(goalsMdText) used to key goals_frozen / goal_amended events and to re-arm the spec gate and split-brain checks, plus validateGoalCheckReceipt — the anti-fabrication validator for record-goal-check whose rejection rules mirror validateGateReceipt in lib/gate-review.mjs: receipt must echo the exact goals hash + HEAD SHA + base..HEAD diff hash the guard recomputed, carry real assessor provenance (dispatch_id/model/tokens/ts), give a per-goal verdict over every non-tombstoned goal with a valid verdict enum (achieved/partial/missed) and non-empty evidence, and reject missing/unknown/stale/fabricated receipts. Also the waiver-key tuple helper (goals hash + HEAD + base diff hash) that invalidates a waiver on any later commit or amendment. Design the verdict enum, receipt shape, and re-arm tuple to structurally block goal drift/laundering per G-D. Author the hash/receipt/waiver-invalidation cases in test/goals.test.mjs. ADDITIONALLY (plan-review finding 3, residual finding 2): the goal-check receipt shape MUST also pin a verify_output_hash (hash of the run_verify output the assessor consumed) and the dispatch-time clean-worktree status; validateGoalCheckReceipt rejects a receipt whose verify_output_hash or clean status is missing or does not match what the recorder recomputes.",
+      "wave": 1,
+      "files": [
+        "lib/goals.mjs",
+        "test/goals.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/goals.test.mjs"
+      ],
+      "codex": null,
+      "sensitive": true,
+      "spec_refs": [
+        "docs/masterplan/goal-tracking/spec.md#L133-L160",
+        "docs/masterplan/goal-tracking/spec.md#L182-L203"
+      ]
+    },
+    {
+      "id": 3,
+      "description": "Extend the state schema in lib/bundle.mjs: buildSeedState gains the bundle-level capability marker goals_enabled: true and goals: []; validateCoreState gains optional-when-present clauses for state.goals entries ({id, text, signal, tombstone?: {reason, amended_at}}, no mutable status field) following the same presence-only pattern used for tasks. Decide the optional-when-present validation so pre-feature bundles (no goals_enabled) stay exempt from every goal guard with no schema_version bump and no migration. state.goals is a derived cache; authority stays goals.md + events. ADDITIONALLY (plan-review finding 4, residual finding 1): the goals_enabled capability marker must be EVENT-BACKED — seed appends a bundle-creation/capability event carrying goals_enabled, and the authority-order cross-check (and doctor) infer post-feature status from the event log, not the deletable state.yml field alone; a state.yml missing the marker while capability/goal events exist is a hard error, and the pre-first-event deletion window is closed because the capability event exists from seed time.",
+      "wave": 2,
+      "files": [
+        "lib/bundle.mjs",
+        "test/bundle.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/bundle.test.mjs"
+      ],
+      "codex": null,
+      "spec_refs": [
+        "spec.md#L42-L55"
+      ]
+    },
+    {
+      "id": 4,
+      "description": "Add the `mp goals-load --state=… --goals=<goals.md> --approval=<receipt.json>` bin verb: parse/validate goals.md via lib/goals.mjs, write state.goals, record the goals.md content hash, and append the goals_frozen event carrying the approval receipt (keyed to the exact goals.md hash). Enforce one-shot semantics (reject if any goal event already exists or phase is past capture — no laundering via re-freeze) and the required approval receipt. Implement the multi-file write ordering: artifacts first (goals.md, state.yml each temp+rename), event append LAST as the commit point, idempotent roll-forward on re-run. State mutation goes through the mp single-writer path, never hand-written.",
+      "wave": 3,
+      "files": [
+        "bin/masterplan.mjs",
+        "test/bin-masterplan.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/bin-masterplan.test.mjs"
+      ],
+      "codex": null,
+      "spec_refs": [
+        "spec.md#L66-L89"
+      ]
+    },
+    {
+      "id": 5,
+      "description": "Add the `mp goals-amend` bin verb — the only sanctioned mid-run goal change: requires a fresh user-approval receipt (never autonomous), keeps ids stable (renumbering rejected), turns a removed goal into a tombstone {reason, amended_at}, and appends a goal_amended event recording old→new hash + reason plus the full old/new content (text + signal) of every changed goal. Invalidate all existing goal-check receipts and waivers (they are keyed to the goals hash). Reuse the goals-load multi-file write ordering (artifacts temp+rename, event last). Shares bin/masterplan.mjs and its test with goals-load, so runs after it.",
+      "wave": 4,
+      "files": [
+        "bin/masterplan.mjs",
+        "test/bin-masterplan.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/bin-masterplan.test.mjs"
+      ],
+      "codex": null,
+      "spec_refs": [
+        "spec.md#L97-L114"
+      ]
+    },
+    {
+      "id": 6,
+      "description": "Add the `mp goals-status` bin verb and render the goals block in `mp status`: derive the current goal list from goals.md + events (not stale state), showing tombstones and the frozen/amended hash state, for anti-forgetting mid-run. Shares bin/masterplan.mjs and its test with the other capture verbs, so runs after goals-amend.",
+      "wave": 5,
+      "files": [
+        "bin/masterplan.mjs",
+        "test/bin-masterplan.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/bin-masterplan.test.mjs"
+      ],
+      "codex": null,
+      "spec_refs": [
+        "spec.md#L127-L131"
+      ]
+    },
+    {
+      "id": 7,
+      "description": "Wire the goal transition guards into bin/masterplan.mjs: (1) the goals_frozen capture gate — `mp set-phase --phase=plan` on a goals_enabled bundle exits 3 with a run_goals_capture op until goals_frozen exists at the current goals.md hash (fail-closed, mirrors the spec-gate pattern); and (2) the split-brain hash guard on the set-phase and load-plan transitions — recompute the goals.md hash via lib/goals.mjs and exit non-zero with a reconcile message on mismatch vs the last goals_frozen/goal_amended event. Pre-feature bundles (no goals_enabled) are exempt. Shares bin/masterplan.mjs and its test, so runs after goals-status. ADDITIONALLY (plan-review finding 1): extend the gateArtifacts resolver in bin/masterplan.mjs (the `gate === 'spec'` branch, ~L210-227) so that on a goals_enabled bundle the spec gate's artifact set includes goals.md alongside spec.md — the gate hash then covers both, so a later `mp goals-amend` re-arms the spec gate exactly like a spec edit (spec §4). Add matching gate-hash/re-arm cases to the tests.",
+      "wave": 6,
+      "files": [
+        "bin/masterplan.mjs",
+        "test/bin-masterplan.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/bin-masterplan.test.mjs"
+      ],
+      "codex": null,
+      "spec_refs": [
+        "spec.md#L87-L95",
+        "spec.md#L111-L114"
+      ]
+    },
+    {
+      "id": 8,
+      "description": "Add the split-brain goals-hash guard to the `continue` transition in lib/continue.mjs: on a goals_enabled bundle, recompute the goals.md hash via lib/goals.mjs and exit non-zero with the reconcile message when it diverges from the last goals_frozen/goal_amended event; pre-feature bundles are exempt. Disjoint file from the bin verbs so it can run in parallel with them.",
+      "wave": 2,
+      "files": [
+        "lib/continue.mjs",
+        "test/continue.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/continue.test.mjs"
+      ],
+      "codex": null,
+      "spec_refs": [
+        "spec.md#L111-L114"
+      ]
+    },
+    {
+      "id": 9,
+      "description": "Extend lib/plan-merge.mjs to carry per-task `goals` refs from subsystem fragments through mergePlanFragments into the final plan.index.json (preserve `goals: [\"G1\",...]` on each node, default to [] when absent), and design validatePlanIndex to take an optional goals list ({id, tombstone?}) and machine-check goal coverage: every non-tombstoned goal id must be referenced by >=1 task, and every task-cited goal id must exist in the supplied list (unknown ref => error). Keep the module pure (no fs/clock) — coverage inputs are passed in by the caller, not read from disk. Add unit tests in test/plan-merge.test.mjs covering: goals carried through merge, uncovered goal fails, unknown goal ref fails, tombstoned goal exempt, empty goals list is a no-op (pre-feature bundles).",
+      "wave": 0,
+      "files": [
+        "lib/plan-merge.mjs",
+        "test/plan-merge.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/plan-merge.test.mjs"
+      ],
+      "codex": "no",
+      "spec_refs": [
+        "spec.md#L57-L65",
+        "spec.md#L116-L125",
+        "spec.md#L182-L183"
+      ]
+    },
+    {
+      "id": 10,
+      "description": "Wire goal coverage into the bin verbs in bin/masterplan.mjs. For `validate-plan-index` and `merge-plan-fragments`: when the bundle is goals_enabled, load state.goals (parsed/cross-checked via the core subsystem's lib/goals.mjs against goals.md + events per §3.2) and pass the goal list to validatePlanIndex so coverage is enforced centrally — uncovered/unknown goal refs make the verb exit non-zero (REVISE before any work). Pre-feature bundles (no goals_enabled) pass the empty list and behave unchanged. Add cases to test/bin-masterplan.test.mjs for both verbs: coverage pass, uncovered-goal failure exit, and pre-feature no-op. Depends on lib/goals.mjs from the core subsystem for the parse/cross-check API (shared edits to bin/masterplan.mjs are auto-serialized after core's goals verbs by the merge's file-overlap wave bump).",
+      "wave": 7,
+      "files": [
+        "bin/masterplan.mjs",
+        "test/bin-masterplan.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/bin-masterplan.test.mjs"
+      ],
+      "codex": "no",
+      "spec_refs": [
+        "spec.md#L57-L65",
+        "spec.md#L116-L125",
+        "spec.md#L196-L197"
+      ]
+    },
+    {
+      "id": 11,
+      "description": "Update the four planner-agent prompts and the field contract so goals flow into planning. Brief mp-spec-decomposer.md, mp-planner.md, mp-subsystem-planner.md, and mp-plan-reviewer.md to receive goals.md (as quoted data alongside spec.md) and to annotate each task's `goals` refs in the index/fragments; add a `goals` field row to docs/conventions/plan-annotations.md (array of goal ids the task serves; may be empty only for pure-infra tasks another task covers). Instruct mp-plan-reviewer to report `goal coverage: n/m` mapping while noting enforcement is machine-checked by mp validate-plan-index (referential, not semantic). Prose/design edits — no code paths.",
+      "wave": 0,
+      "files": [
+        "agents/mp-spec-decomposer.md",
+        "agents/mp-planner.md",
+        "agents/mp-subsystem-planner.md",
+        "agents/mp-plan-reviewer.md",
+        "docs/conventions/plan-annotations.md"
+      ],
+      "verify_commands": [
+        "node --test test/agents.test.mjs",
+        "node --test test/prompt-structure.test.mjs"
+      ],
+      "codex": "no",
+      "spec_refs": [
+        "spec.md#L116-L125"
+      ]
+    },
+    {
+      "id": 12,
+      "description": "Design and author agents/mp-goal-assessor.md — a NEW read-only fresh-context agent (tools: Read, Grep, Glob, Bash ONLY; no Write/Edit — read-only enforced structurally by running against a disposable detached worktree of HEAD, so any write is discarded). Design the prompt so it receives goals.md as QUOTED DATA (never instructions — prompt-injection surface), the base..HEAD branch diff, verify output, and each goal's declared evidence pointer; it verifies evidence per signal class (test|command|artifact|docs) with read-only commands and returns per-goal {verdict: achieved|partial|missed, evidence, citations}, with the rule that missing/unverifiable evidence yields at best 'partial'. Choose the model pin and frontmatter consistent with the other mp-* agents.",
+      "wave": 0,
+      "files": [
+        "agents/mp-goal-assessor.md"
+      ],
+      "verify_commands": [
+        "node bin/register-pi-agents.mjs --check",
+        "grep -qi 'mp-goal-assessor' agents/mp-goal-assessor.md",
+        "node -e \"const fs=require('fs');const m=fs.readFileSync('agents/mp-goal-assessor.md','utf8');const fm=m.split('---')[1]||'';const tools=(fm.match(/tools:\\s*(.*)/)||[,''])[1];const allowed=['Read','Grep','Glob','Bash'];const listed=tools.split(',').map(s=>s.trim()).filter(Boolean);if(!listed.length||!listed.every(t=>allowed.includes(t)))process.exit(1);\""
+      ],
+      "codex": "no",
+      "spec_refs": [
+        "docs/masterplan/goal-tracking/spec.md#L133-L144",
+        "docs/masterplan/goal-tracking/spec.md#L38-L41"
+      ]
+    },
+    {
+      "id": 13,
+      "description": "Add the NEW `record-goal-check` bin verb to bin/masterplan.mjs, mirroring the existing `record-gate-review` verb (anti-fabrication receipt validation). It validates a receipt binding goals-hash + HEAD SHA + base SHA + diff hash + dispatch provenance (agent id/model/tokens/ts) + verdict enum + per-goal completeness (every non-tombstoned goal present, no unknown ids, non-empty evidence per goal) and appends the `goal_check` event; rejection rules mirror record-gate-review. REFUSES on a dirty worktree (the assessor saw state a receipt key can't pin). Re-entry at the unchanged tuple (goals-hash, HEAD, base+diff-hash) skips; any change re-arms. Also document the verb in docs/verbs.md. NOTE: receipt/hash validation core lives in lib/goals.mjs — dep key `core.goals-lib` is an ASSUMED sibling key for that module's producer; the merge author should rewire if the real key differs. ADDITIONALLY (plan-review finding 3): record-goal-check recomputes the verify-output hash and dispatch-time clean status and requires the receipt to pin BOTH (reject stale verify output reused under an unchanged HEAD/base tuple).",
+      "wave": 8,
+      "files": [
+        "bin/masterplan.mjs",
+        "test/goals-record-check.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/goals-record-check.test.mjs"
+      ],
+      "codex": "no",
+      "sensitive": true,
+      "spec_refs": [
+        "docs/masterplan/goal-tracking/spec.md#L145-L150",
+        "docs/masterplan/goal-tracking/spec.md#L184-L203"
+      ]
+    },
+    {
+      "id": 14,
+      "description": "Modify lib/finish-step.mjs to add the `run_goal_check` op in the re-entrant machine AFTER run_verify and BEFORE write_retro (retro embeds verdicts), gated on the bundle-level `goals_enabled` marker so pre-feature bundles skip entirely with no event spam. Design the control flow: all-achieved proceeds silently (auto-progress preserved); any partial/missed opens the durable `goals_unmet` gate AUQ (Fix & continue / Accept with waiver / Abort finish) added to the finish gate set alongside branch_finish/docs_normalize; assessor-dispatch failure is FAIL-CLOSED (open the gate in manual mode for user-attested verdicts or waiver — never a silent path from goals_enabled to archived). Fold a one-line goals summary (n achieved / n partial / n waived) into the branch_finish AUQ payload. Refuse/re-arm on the same tuple record-goal-check uses. NOTE: depends on lib/goals.mjs for goals-hash/parse (assumed sibling key `core.goals-lib`). ADDITIONALLY (plan-review finding 2, residual finding 5): finish-step must refuse to proceed (any op past run_verify) while the spec gate is re-armed for the current spec.md+goals.md hash — i.e. a post-plan goals-amend without a fresh recorded spec-gate review blocks finish/archive. Test: amend goals post-plan, attempt finish without re-running the gate → refused.",
+      "wave": 9,
+      "files": [
+        "lib/finish-step.mjs",
+        "test/finish-step-goals.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/finish-step-goals.test.mjs"
+      ],
+      "codex": "no",
+      "spec_refs": [
+        "docs/masterplan/goal-tracking/spec.md#L133-L161",
+        "docs/masterplan/goal-tracking/spec.md#L188-L190"
+      ]
+    },
+    {
+      "id": 15,
+      "description": "Create lib/retro-goals.mjs that renders the mandatory per-goal verdict table (id / statement / verdict / evidence / waiver?) for retro.md, regenerated deterministically from the LATEST goal_check / goal_waived events. Tombstoned goals are listed with their reasons. The table is absent for pre-feature (no goals_enabled) bundles. This is the render helper the write_retro op's shell step calls; keep it a pure function over the event log so it is unit-testable. NOTE: reuses goal parsing/model from lib/goals.mjs (assumed sibling key `core.goals-lib`).",
+      "wave": 2,
+      "files": [
+        "lib/retro-goals.mjs",
+        "test/retro-goals.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/retro-goals.test.mjs"
+      ],
+      "codex": null,
+      "spec_refs": [
+        "docs/masterplan/goal-tracking/spec.md#L162-L166",
+        "docs/masterplan/goal-tracking/spec.md#L191"
+      ]
+    },
+    {
+      "id": 16,
+      "description": "Implement the new auto-discovered doctor module lib/doctor/goals.mjs that inspects each run bundle's state.yml + events.jsonl and emits findings per spec §9: ERROR when an archived goals_enabled run has neither a valid goal_check receipt nor covering waivers at final HEAD; WARN when a goals_enabled bundle is past brainstorm with no goals_frozen, when the goals.md hash mismatches the events, or when a post-plan amendment leaves a goal uncovered in the plan index. Must decide the SKIP/PASS boundary (non-goals bundles and pre-feature bundles SKIP with no false failures, distinguishing pre- vs post-feature bundles) and design how receipt/coverage validity is judged against the goals-hash, base, and HEAD. Follow the existing check(repoRoot, opts) -> findings[] contract (id/severity/summary/fix) used by sibling modules and consume the goals core parser/hasher rather than reparsing goals.md by hand.",
+      "wave": 2,
+      "files": [
+        "lib/doctor/goals.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/doctor.test.mjs"
+      ],
+      "codex": "no",
+      "spec_refs": [
+        "docs/masterplan/goal-tracking/spec.md#L162-L172",
+        "docs/masterplan/goal-tracking/spec.md#L205-L213"
+      ]
+    },
+    {
+      "id": 17,
+      "description": "Add committed fixture bundles under test/fixtures/doctor/goals/<severity-prefix>-<scenario>/ (skip-/pass-/warn-/error- naming per the existing prefix contract) and register the goals check in test/doctor.test.mjs, covering the spec §10 tamper/edge cases: pre-feature bundle resumes with no false failures vs post-feature bundle without frozen goals; goals.md hash mismatch vs events; post-plan amendment leaving a goal uncovered; archived run with no check-or-waiver; goals_enabled removed or state.goals emptied while goals.md + events disagree must hard-error (never a skip or vacuous pass). Exercise SKIP-only edge cases (no bundles) in-code with tmp dirs as the harness does for git-absent cases.",
+      "wave": 3,
+      "files": [
+        "test/doctor.test.mjs",
+        "test/fixtures/doctor/goals"
+      ],
+      "verify_commands": [
+        "node --test test/doctor.test.mjs"
+      ],
+      "codex": "no",
+      "spec_refs": [
+        "docs/masterplan/goal-tracking/spec.md#L174-L203",
+        "docs/masterplan/goal-tracking/spec.md#L207-L213"
+      ]
+    },
+    {
+      "id": 18,
+      "description": "Wire goal-tracking into the L1 sequencer contract in commands/masterplan.md WITHOUT re-teaching any transaction the subcommands own (prompt-structure test forbids absorbed prose). DESIGN CALL: decide exactly where each goal touchpoint threads into the existing trampoline. (1) §3 / §3a capture: at the brainstorm->plan boundary, before `mp set-phase --phase=plan`, teach the goals-capture step — dispatch/AUQ auto-distillation of goals.md, `mp goals-load` with a user-approval receipt freezing `goals_frozen`, and the fail-closed `run_goals_capture` guard (set-phase on a goals_enabled bundle exits 3 with that op until goals_frozen matches the current goals.md hash); note the §3b spec-gate hash now covers spec.md + goals.md and that `goals-amend` re-arms the spec gate. (2) §2c finish op table: add the `run_goal_check` op row (after `run_verify`, before `write_retro`) dispatching agents/mp-goal-assessor + `mp record-goal-check`, and the `goals_unmet` durable-gate row (Fix & continue / Accept waiver / Abort finish; fail-closed-on-dispatch-failure -> manual-verdict mode), including its answer flags. (3) §2d autonomy stop-set: add `goals_unmet` to the COMPLETE stop-set of gates that may end a turn with an AUQ under loose/full. (4) §2a/§7 anti-forgetting: add the one-line goals reminder to wave-completion narration and note `mp status` renders a goals block. Keep every bundle path absolute-MAIN per §2e. Ordering assumption (no hard build coupling): the `goals-load`/`goals-amend`/`record-goal-check` verbs, the finish-step `run_goal_check` op, and the set-phase `run_goals_capture` guard are authored by sibling subsystems (core/finish/state); this task documents/sequences them, it does not implement them.",
+      "wave": 0,
+      "files": [
+        "commands/masterplan.md"
+      ],
+      "verify_commands": [
+        "cd /srv/dev/ras/masterplan && node --test test/prompt-structure.test.mjs",
+        "grep -nE \"run_goal_check|goals_unmet|run_goals_capture|goals-load\" commands/masterplan.md",
+        "grep -n \"goals_frozen\" commands/masterplan.md"
+      ],
+      "codex": "no",
+      "spec_refs": [
+        "docs/masterplan/goal-tracking/spec.md#L66-L95",
+        "docs/masterplan/goal-tracking/spec.md#L127-L160",
+        "docs/masterplan/goal-tracking/spec.md#L205-L214"
+      ]
+    },
+    {
+      "id": 19,
+      "description": "Extend the structural guard in test/prompt-structure.test.mjs so the goal-tracking contract additions are enforced the same way the existing op tables are: assert commands/masterplan.md teaches the new typed ops and gate (`run_goal_check`, `goals_unmet`, `run_goals_capture`) alongside the existing §2c op-table checks, and assert the goals-capture verb (`goals-load`) and the goal-check finish flags are named so a goal gate can never dead-end. Do NOT add any of the new goal sequences to the ABSORBED forbidden-list (they are prose the sequencer legitimately teaches). Mirror the existing assert style. Depends on the wiring being present because the assertions read commands/masterplan.md at runtime.",
+      "wave": 1,
+      "files": [
+        "test/prompt-structure.test.mjs"
+      ],
+      "verify_commands": [
+        "cd /srv/dev/ras/masterplan && node --test test/prompt-structure.test.mjs"
+      ],
+      "codex": null,
+      "spec_refs": [
+        "docs/masterplan/goal-tracking/spec.md#L205-L214"
+      ]
+    },
+    {
+      "id": 20,
+      "description": "Update the human-facing verb cheat sheet docs/verbs.md to reflect goal tracking: note in the `full` / `brainstorm` / `plan` flows that on a goals_enabled bundle the spec->plan boundary now captures + freezes goals.md (user-approved) before planning and that the plan gate additionally fails on any uncovered goal; note in the `finish` flow the new finish-time per-goal check (mp-goal-assessor) and the `goals_unmet` gate (fix-&-continue / waiver / abort) before archive; and document the new `mp` subcommands the sequencer now calls — `goals-load`, `goals-amend`, `goals-status`, `record-goal-check` — with one-line each, plus the pre-feature-bundle graceful-skip. Match the file's existing terse style; keep it consistent with the sequencer wiring. Disjoint file from the sequencer edit so it can land in parallel.",
+      "wave": 0,
+      "files": [
+        "docs/verbs.md"
+      ],
+      "verify_commands": [
+        "grep -nE \"goals-load|goals-amend|goals-status|record-goal-check\" docs/verbs.md",
+        "grep -niE \"goal\" docs/verbs.md"
+      ],
+      "codex": null,
+      "spec_refs": [
+        "docs/masterplan/goal-tracking/spec.md#L66-L95",
+        "docs/masterplan/goal-tracking/spec.md#L133-L160"
+      ]
+    }
+  ],
+  "plan_hash": "sha256:2e2aae68b28c47cfe4c0943394d71f28c9ff0f4a96f7eae2aaa160476ec661ff",
+  "generated_at": "2026-07-02T01:02:20.946Z"
+}
