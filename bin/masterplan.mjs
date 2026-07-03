@@ -162,6 +162,7 @@ import { migrate, detectSchemaVersion, MigrationError } from '../lib/migrate.mjs
 import { decideNextAction } from '../lib/resume.mjs';
 import { prepareWave, declaredScope, verifyScope } from '../lib/wave.mjs';
 import { detectHost } from '../lib/dispatch/index.mjs';
+import { closeWaveCoord } from '../lib/dispatch/adsp-coord.mjs';
 import { selectCodexReviewForHead } from '../lib/review-companion.mjs';
 import { selectGateReview, gateEventTypes, validateGateReceipt } from '../lib/gate-review.mjs';
 import { resolveConfigDir } from '../lib/paths.mjs';
@@ -2698,6 +2699,12 @@ function main() {
       // -C-qualified to loci lib/wave-commit.mjs derives itself (MAIN from the bundle's
       // --git-common-dir, WT from state/--worktree). Network git (push/gh) stays shell-side.
       const statePath = need(flags, 'state');
+      // T11: best-effort close the wave's coord job (opened in dispatchWave). Fail-open —
+      // coord never blocks record-result. coordJobId is stored in active_run by dispatchWave.
+      try {
+        const ar = readState(statePath)?.active_run;
+        if (ar?.coordJobId) closeWaveCoord({ jobId: ar.coordJobId });
+      } catch { /* fail-open */ }
       // The L2 workflow's WHOLE result object ({wave, baseline, tasks:[{task_id, digest,
       // review}]}) via --result-file (preferred — no shell-quoting hazards) or --result inline.
       // --reconcile runs the finalize_run crash-reconciliation with NO result: no marks, the
