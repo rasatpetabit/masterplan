@@ -2,7 +2,7 @@
 schema_version: 8
 slug: planf3-ideas
 status: in-progress
-phase: brainstorm
+phase: plan
 topic: "Review https://github.com/disler/planf3 to see if there are ideas we should import into Masterplan"
 complexity: high
 complexity_source: null
@@ -17,5 +17,6 @@ tasks: []
 active_run: null
 pending_gate: null
 goals_enabled: true
-goals: []
+goals: [{"id":"G1","text":"Bidirectional cross-run refs exist and cannot drift","signal":"test"},{"id":"G2","text":"Refs are surfaced to humans","signal":"command"},{"id":"G3","text":"Post-approval plan changes leave an auditable in-artifact trail","signal":"test"},{"id":"G4","text":"Assumptions persist in every new spec","signal":"docs"},{"id":"G5","text":"The plan render is narrative-rich yet still offline and self-contained","signal":"test"},{"id":"G6","text":"Narrative meta flows through both planning paths without breaking old bundles","signal":"test"},{"id":"G7","text":"Runs can find each other across repo boundaries","signal":"test"},{"id":"G8","text":"Interrupted runs surface instead of dangling","signal":"test"},{"id":"G9","text":"The whole import lands green and documented","signal":"command"}]
 review: {"adversary":true}
+goals_md_hash: sha256:ec94361fb55b8ba40733297b362785383b385d308a5abb379f8c3d11e922b928

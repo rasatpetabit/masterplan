@@ -1,0 +1,12 @@
+{
+  "gate": "spec",
+  "hash": "sha256:a8c93e4db3ff30049d604636837abe172cd8fa7a0a2dc7a189928d5ea9038ea1",
+  "artifacts": ["spec.md", "goals.md"],
+  "dispatch_id": "agent-dispatch-review/adversary/b0b4bgy1k",
+  "provider": "gpt-5.5",
+  "model": "dispatch-adversary",
+  "output_tokens": 21347,
+  "status": "done",
+  "ts": "2026-07-06T13:38:00-05:00",
+  "digest": "gate-spec-review-digest.txt"
+}

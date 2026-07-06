@@ -1,0 +1,24 @@
+Spec gate — cross-vendor adversary review digest (planf3-ideas)
+
+Verdict: approve (chunked review: 2 regions, worst-wins → approve), no blocking findings.
+Lane: agent-dispatch review --class adversary --intensity rigorous
+      → dispatch-gateway/review/xhigh/dispatch-adversary (gpt-5.5), 2 reviewers.
+Artifacts reviewed: spec.md + goals.md at empty-tree base (full content as new-file diff).
+Duration: 392s. Reviewer tails:
+  #1 model=dispatch-adversary elapsed_s=104.820 prompt_tokens=782 completion_tokens=5767
+  #2 model=dispatch-adversary elapsed_s=287.357 prompt_tokens=8333 completion_tokens=15580
+
+Review history (4 rounds, all approve):
+  R1: 11 advisory findings (5 High) → all folded into spec (commit 27cf345).
+  R2: 6 spec-side (2 P1 + 4 P2) + 5 goals-side → spec-side folded (commit 69e2e8f).
+  R3: 4 High + 6 Medium + 1 Low → all folded (commit a531ba7).
+  R4 (this one): approve; remaining advisories NOT folded — treadmill cut declared
+      by user; they are PLANNING INPUTS (raw JSON: session scratchpad
+      spec-gate-review{3,4,5,6}.json; key carryovers: amend-plan Guard D
+      ownership, version-scoping mechanism for spec-assumptions WARN,
+      render-retry after post-commit failure, seed --predecessor ordering,
+      stored-ref cleanability, .git-file/worktree discovery coverage, plus
+      goals-side test prescriptions from R2 reviewer #1).
+
+goals.md frozen at sha256:ec94361fb55b8ba40733297b362785383b385d308a5abb379f8c3d11e922b928;
+goals-side style findings deliberately not folded (receipt-bound hash).
