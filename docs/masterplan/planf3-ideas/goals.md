@@ -1,6 +1,8 @@
 topic: Import planf3's novel ideas into masterplan — bidirectional plan-graph
-refs, post-approval plan amendments, an always-on assumptions ledger, and a
-narrative-rich deterministic plan render with optional shell-side images.
+refs (incl. cross-repo), post-approval plan amendments, an always-on
+assumptions ledger, a narrative-rich deterministic plan render with optional
+shell-side images — plus multi-run discovery and dangling-run visibility so
+interrupted runs (especially in sub-repos) never silently stall.
 
 ## G1: Bidirectional cross-run refs exist and cannot drift
 signal: test
@@ -26,6 +28,14 @@ evidence: render tests prove purpose/problem/solution meta, refs, amendments, an
 signal: test
 evidence: mp-planner (serial) and merge-plan-fragments --meta (parallel) carry {purpose, problem, solution}; validate-plan-index accepts indexes with and without the fields.
 
-## G7: The whole import lands green and documented
+## G7: Runs can find each other across repo boundaries
+signal: test
+evidence: test/runs-list.test.mjs — `mp runs list` inventories bundles in MAIN and a nested sub-repo fixture (depth cap, .worktrees/node_modules exclusion), honors extra roots + .discovery.yml, and derives last_activity; cross-repo `mp refs add --repo=…` writes reciprocals across repos.
+
+## G8: Interrupted runs surface instead of dangling
+signal: test
+evidence: doctor `dangling-run` check WARNs on a stale fixture (not a fresh one) with the exact resume command; session `mp sweep` report carries the same dangling entries; `mp status` shows the other-runs block.
+
+## G9: The whole import lands green and documented
 signal: command
 evidence: npm test passes; `mp doctor` clean on this repo; docs/verbs.md, docs/internals/, CHANGELOG.md updated.

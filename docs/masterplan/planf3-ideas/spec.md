@@ -5,17 +5,29 @@
 ## Purpose
 
 Import the genuinely novel ideas from planf3 (IndyDevDan's HTML-first planning
-meta-skill) into masterplan, adapted to masterplan's architecture: deterministic
+meta-skill) into masterplan — and, prompted by that review, close the adjacent
+gaps in how multiple runs find/reference each other and how interrupted runs
+stay visible (especially across sub-repos). All adapted to masterplan's
+architecture: deterministic
 decisions in `lib/*.mjs` behind `mp`, single-writer state (CD-7), offline
 secret-free rendering, and the shell-owns-network v9 seam.
 
 ## Problem
 
-planf3's review surfaced four capabilities masterplan lacks:
+planf3's review — plus a hard look at how runs coexist — surfaced five
+capability gaps:
 
 1. **Runs are islands.** Bundles have no cross-run references; the only link is
    `--predecessor-transcript` at seed. Multi-run efforts (v8 → v9 → this run)
    are not navigable from the artifacts.
+1b. **Runs can't find each other, and interrupted runs dangle.** Discovery is a
+   glob over the CURRENT repo's `docs/masterplan/*/state.yml` — a run seeded in
+   a sub-repo (a nested git repo under MAIN) is invisible to sessions opened at
+   the parent, and vice versa. Nothing surfaces a non-archived bundle that
+   nobody has resumed in weeks (this repo's own `finish-flow-hardening` bundle,
+   mid-brainstorm since seed, is a live example). Interruption *recovery* is
+   solid (Guard D TTL, `mp sweep`, `mp continue` reconcile) but interruption
+   *visibility* is not: a plan you can't see is a plan you never resume.
 2. **Plan drift is invisible in the artifact.** Post-approval plan changes
    re-arm gates but leave no human-readable change narrative in `plan.md`.
 3. **Assumptions are transient.** Brainstorm AUQs resolve decisions, but the
@@ -33,19 +45,24 @@ validation loops (verify_commands + finish verify gate), five-workflow routing
 
 ## Solution
 
-Four file-disjoint feature areas, one run.
+Five file-disjoint feature areas, one run.
 
 ### F1 — Plan-graph refs (cross-run back/forward references)
 
 - **State model:** `state.yml` gains `refs: {back: [], forward: []}`; entry
-  shape `{slug, label}` (label optional, defaults to the target's topic).
+  shape `{slug, label, repo?}` (label optional, defaults to the target's topic;
+  `repo` optional — absent means same-repo, else a path to the target repo
+  root, stored relative to MAIN when the target is inside it, absolute
+  otherwise — `/srv/dev` paths are host-stable on this fabric).
 - **Subcommands (sole writers, CD-7):**
   - `mp refs add --state=<path> --direction=back|forward --target=<slug> [--label=…]`
   - `mp refs remove --state=<path> --direction=… --target=<slug>`
   - `mp refs list --state=<path>` (read-only JSON).
 - **Bidirectionality (the planf3 update-references workflow, made deterministic):**
-  `refs add` resolves the target bundle at `<MAIN>/docs/masterplan/<target>/state.yml`
-  and writes the reciprocal entry (back↔forward) in the same invocation; both
+  `refs add` resolves the target bundle at
+  `<target-repo-root>/docs/masterplan/<target>/state.yml` (target repo = MAIN
+  unless `--repo=<path>` names another repo root — the cross-repo/sub-repo
+  case) and writes the reciprocal entry (back↔forward) in the same invocation; both
   writes atomic per-file, ordered target-then-source so a crash leaves at worst
   a reciprocal-only entry that a re-run heals (idempotent upsert by slug —
   duplicates are impossible). `refs remove` removes both sides the same way.
@@ -113,6 +130,44 @@ Four file-disjoint feature areas, one run.
   regardless. Missing referenced assets → render omits the `<img>` (never a
   broken link).
 
+### F5 — Multi-run discovery + dangling-run resilience (incl. sub-repos)
+
+The visibility layer the user asked for: multiple masterplans must be able to
+FIND each other, and an interrupted run must not silently dangle — especially
+when it lives in a sub-repo the current session didn't open.
+
+- **`mp runs list` (read-only inventory, the shared engine):** scans a set of
+  discovery roots for `docs/masterplan/*/state.yml` and returns, per bundle:
+  `{repo, slug, status, phase, tasks_done/total, last_activity, owner:{present,
+  stale}, refs}`. `last_activity` is DERIVED, never stored: max(state.yml
+  mtime, last `events.jsonl` timestamp, newest owner-heartbeat mtime).
+- **Discovery roots (deterministic, zero-config default):** MAIN + every
+  nested git repo under MAIN (depth-limited walk, default ≤3, skipping
+  `.worktrees/`, `node_modules/`, `.git/`) — the sub-repo case works out of
+  the box. Extra roots (sibling repos) via `--roots=<a,b>` or a persistent
+  `discovery.roots` list in `state`-adjacent repo config
+  (`<MAIN>/docs/masterplan/.discovery.yml`, mp-written via
+  `mp set-discovery --add-root/--remove-root`; an ARTIFACT-class config file,
+  not run state).
+- **Dangling-run surfacing (two consumers of the same engine):**
+  1. **Doctor check `dangling-run` (new `lib/doctor/dangling-run.mjs`):** WARN
+     per non-archived bundle across ALL discovery roots whose `last_activity`
+     exceeds a threshold (default 7d, `--dangling-days=N`), or whose owner
+     lock is stale while status is in-progress. Each WARN carries the exact
+     resume command (`/masterplan execute <state-path>`).
+  2. **Session sweep report:** the first-§2-entry `mp sweep` output gains a
+     `dangling` array (same derivation, same threshold) so every session that
+     touches masterplan surfaces forgotten runs — including sub-repo ones —
+     without the user asking. Report-only in the sweep (the sweep never
+     auto-resumes; Guard D still owns mutual exclusion).
+- **Interaction, not just visibility:** `mp status` gains an `other runs`
+  block (non-archived bundles from discovery, one line each) so any session
+  sees the full picture; the §2-step-1 multi-bundle picker keeps operating on
+  MAIN-repo bundles only (operating a sub-repo bundle means opening a session
+  there — surfaced, not auto-taken-over).
+- **Explicitly derived, never stored:** no `last_activity` field, no registry
+  cache — a scan is cheap at this scale and a cache is a staleness bug farm.
+
 ## Non-goals
 
 - No LLM-authored HTML (render stays deterministic from index + state).
@@ -120,8 +175,11 @@ Four file-disjoint feature areas, one run.
   already shows live status).
 - No new external dependency in `mp` (image generation is shell-dispatched,
   optional, default-off).
-- No refs to bundles outside this repo's `docs/masterplan/` (cross-repo refs
-  are out of scope).
+- No auto-resume/auto-takeover of discovered dangling runs (visibility only;
+  Guard D semantics unchanged).
+- No registry/cache of discovered runs (always derived by scan).
+- No multi-repo *execution* (a run's worktree still targets one repo; the
+  qctl multi-repo apply spec stays flag-off and untouched).
 
 ## Assumptions & Open Decisions
 
@@ -136,7 +194,11 @@ Four file-disjoint feature areas, one run.
 | Ref entry shape? | `{slug, label}` only (no kind/type field) | YAGNI — direction is the semantic; labels cover the rest | assumed |
 | Reciprocal write ordering? | Target first, then source; upsert-by-slug idempotent | Crash leaves a heal-on-retry state, never a dup | assumed |
 | Narrative fields required? | Optional in index; validator accepts absence | Back-compat with every existing bundle | assumed |
-| Doctor check severity? | WARN, not FATAL | Old bundles must not start failing doctor | assumed |
+| Doctor check severity? | WARN, not FATAL (both spec-assumptions and dangling-run) | Old bundles must not start failing doctor | assumed |
+| Cross-repo ref target resolution? | `--repo=<path>` flag + `repo` field on the entry; relative-to-MAIN when nested, absolute otherwise | Sub-repo refs work; /srv/dev absolute paths are host-stable | user-confirmed |
+| Discovery mechanism? | Zero-config nested-repo walk (depth ≤3) + optional `.discovery.yml` extra roots; always scanned, never cached | Sub-repo runs visible out of the box; cache = staleness bugs | user-confirmed |
+| Dangling threshold? | 7 days default, flag-overridable | Long enough to skip weekend pauses, short enough to catch abandonment | assumed |
+| Dangling surfacing? | Doctor WARN + session-sweep report line, both with exact resume command; never auto-resume | Visibility fixes the failure mode; auto-action would fight Guard D | user-confirmed |
 
 ## Success criteria
 
@@ -153,6 +215,14 @@ Four file-disjoint feature areas, one run.
    `assets/*.png` when present; unit tests cover both paths.
 5. `merge-plan-fragments` / `mp-planner` / `validate-plan-index` carry the
    optional narrative meta; old indexes still validate.
-6. Full suite green: `npm test` (all `test/*.test.mjs`), `mp doctor` clean on
+6. `mp runs list` finds bundles in MAIN and in a nested sub-repo fixture;
+   `last_activity` derives correctly; unit tests cover the walk (depth cap,
+   `.worktrees`/`node_modules` exclusion), extra roots, and the
+   `.discovery.yml` round-trip.
+7. The doctor `dangling-run` check WARNs on a stale-activity fixture bundle
+   (and NOT on a fresh one), with the resume command in the message; the
+   session sweep report carries the same `dangling` entries; cross-repo refs
+   resolve (and a dangling unresolvable ref target WARNs, not crashes).
+8. Full suite green: `npm test` (all `test/*.test.mjs`), `mp doctor` clean on
    this repo, docs updated (`docs/verbs.md`, `docs/internals/`,
    `CHANGELOG.md`).
