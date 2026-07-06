@@ -64,6 +64,12 @@ Five file-disjoint feature areas, one run.
   - `mp refs add --state=<path> --direction=back|forward --target=<slug> [--repo=<path>] [--label=…]`
   - `mp refs remove --state=<path> --direction=… --target=<slug> [--repo=<path>]`
   - `mp refs list --state=<path>` (read-only JSON).
+- **Target slug validation:** `--target` must be a bare run slug
+  (`[a-z0-9][a-z0-9-]*`); anything containing `/`, `\`, `..`, or an absolute
+  path exits non-zero BEFORE any path resolution (the bundle path is built by
+  interpolation — an unvalidated slug is a traversal primitive). Slugs read
+  back from `state.refs` are re-validated before any path construction too: a
+  malicious stored slug renders as inert text but never builds a path.
 - **Bidirectionality (the planf3 update-references workflow, made deterministic):**
   `refs add` resolves the target bundle at
   `<target-repo-root>/docs/masterplan/<target>/state.yml`. The default target
@@ -71,35 +77,54 @@ Five file-disjoint feature areas, one run.
   `--state` path to its containing repo — NEVER the session's MAIN (a parent
   session operating a sub-repo bundle would otherwise resolve "same repo" into
   the parent and write the reciprocal to the wrong bundle); `--repo=<path>`
-  overrides for the cross-repo case. A supplied `--repo` is canonicalized
-  (realpath — symlink aliases collapse) and must name a real repo root, else
-  exit non-zero. The reciprocal entry (back↔forward) is written in the same
-  invocation;
+  overrides for the cross-repo case. On `add`, a supplied `--repo` is
+  canonicalized (realpath — symlink aliases collapse) and must name a real
+  repo root, else exit non-zero. On `remove`, `--repo` matches the STORED ref
+  identity as text (canonicalized only when the path still exists on disk) —
+  strict validation there would make a ref to a moved/deleted repo permanently
+  unremovable, contradicting the removal-leniency rule below. The reciprocal
+  entry (back↔forward) is written in the same invocation;
   both writes atomic per-file, ordered target-then-source so a crash leaves at
   worst a reciprocal-only entry that a re-run heals (idempotent upsert by
   `(repo, slug)` — duplicates are impossible). Missing target bundle on `add`
   → exit non-zero, nothing written.
-- **Ownership (Guard D) on BOTH bundles:** before any write, `refs add/remove`
-  preflights the owner sentinel of the SOURCE bundle and (when it resolves) the
-  TARGET bundle; a LIVE foreign owner on either → exit non-zero, nothing
-  written on either side (the error names the owning host/session). Stale or
-  absent owners → proceed. Cross-bundle writes stay inside the single-writer
-  discipline instead of racing a live session — and the source check matters
-  because `--state` can name a bundle another session currently owns.
+- **Ownership (Guard D) on BOTH bundles — acquire, don't preflight:**
+  `refs add/remove` ACQUIRES the owner lock on the source bundle and (when it
+  resolves) the target bundle — in deterministic order (sorted by canonical
+  repo path, then slug, preventing AB/BA deadlock between two concurrent
+  invocations) — holds both across the write, and releases on exit. A LIVE
+  foreign owner on either → exit non-zero, nothing written on either side
+  (the error names the owning host/session); stale or absent → acquire and
+  proceed. A check-then-write preflight would be TOCTOU — two concurrent
+  `refs` commands could both pass and last-write-wins; HOLDING the locks is
+  what makes the cross-bundle write single-writer. The source check matters
+  because `--state` can name a bundle another live session owns.
 - **Removal semantics:** `refs remove` removes both sides when the target
   resolves; an unresolvable target (bundle or repo moved/deleted) removes the
   SOURCE side anyway and WARNs — a dangling ref must always be cleanable
   (only `add` is strict about the target existing).
 - **Events:** `refs_added` / `refs_removed` appended to BOTH bundles'
-  `events.jsonl`.
+  `events.jsonl` — source-only when the target didn't resolve (there is no
+  target file to append to). An idempotent no-op (adding a ref that already
+  exists, removing one that doesn't) appends NO event: no logical change means
+  no synthetic activity — events drive `last_activity` (F5), so a no-op must
+  not refresh a run's staleness clock.
+- **Reciprocal label:** `--label` names the entry being ADDED on the named
+  side only; the reciprocal entry's label defaults to the SOURCE bundle's
+  topic — a label chosen for one direction is not silently reused for the
+  other.
 - **Seed sugar:** `mp seed --predecessor=<slug>` seeds a back ref to the named
   bundle (and its reciprocal forward ref) after writing the fresh state.
 - **Surfacing:** `mp status` prints a refs block; `render-plan` echoes refs
-  into the plan.html header metadata block with **path-aware links**: same-repo
-  refs link relative `../<slug>/plan.html`; a cross-repo ref links the computed
-  relative path to the target's `plan.html` ONLY when that file resolves on
-  disk at render time, otherwise it renders as plain `repo:slug` text — never
-  a broken link. Archived bundles are valid targets.
+  into the plan.html header metadata block with **by-presence links,
+  uniformly**: EVERY ref — same-repo included — links the computed relative
+  path to the target's `plan.html` ONLY when that file resolves on disk at
+  render time, otherwise it renders as plain `slug` / `repo:slug` text —
+  never a broken link (a valid same-repo target that was simply never
+  rendered must not 404 either). A link target must resolve inside the ref's
+  STORED canonical repo root — that root, recorded at add time, is the trust
+  boundary (it need not be a discovery root; F4's traversal rule defers to
+  this for ref links). Archived bundles are valid targets.
 - **Migration:** absent `refs` key ≡ `{back: [], forward: []}` — no state
   version bump needed if the migration layer defaults it on load.
 - **Field preservation (all writers):** every EXISTING state-mutating
@@ -112,7 +137,12 @@ Five file-disjoint feature areas, one run.
 - **Subcommand:** `mp amend-plan --state=<path> --summary="…" [--detail="…"]`
   appends to an `## Amendments` section in `plan.md` (creates the section at
   EOF on first use): `### <ISO date> — <summary>` + detail body. Append-only,
-  newest last. Refuses an empty summary.
+  newest last. **Input hygiene:** refuses an empty OR multiline summary (one
+  line, and a leading `#` is rejected — it would corrupt the heading
+  structure); detail may be multiline, but detail lines beginning with `#`
+  are escaped on write so the `## Amendments` / `###` entry parse stays
+  unambiguous. Refuses when `plan.md` is absent or the bundle is archived
+  (there is nothing to amend / the run is closed).
 - **Event:** `plan_amended` with `{summary}`.
 - **Gate interplay (intended, document it):** amendments edit `plan.md`, so a
   *re-run* of a plan-gated transition re-arms the plan gate at the new hash —
@@ -126,7 +156,11 @@ Five file-disjoint feature areas, one run.
   (cheap — the render is local and offline). `refs` mutates TWO bundles, so
   BOTH the source and (when it resolved) the target bundle's existing
   `plan.html` are re-rendered — a fresh source with a stale reciprocal is
-  still a stale artifact.
+  still a stale artifact. **Failure semantics:** mutation durability is never
+  hostage to the render — state/plan writes commit first; a render failure
+  afterwards WARNs loudly (naming each bundle whose artifact is now stale)
+  and exits non-zero so callers notice. The mutation stands; the staleness is
+  explicit, never silent.
 
 ### F3 — Questionables ledger (always-on spec section)
 
@@ -139,7 +173,12 @@ Five file-disjoint feature areas, one run.
   subcommand.
 - **Doctor check:** new WARN `spec-assumptions` — a non-archived bundle whose
   `spec.md` exists but lacks an `## Assumptions` heading (match
-  `/^##\s+Assumptions/mi`). WARN-only (older bundles keep passing FATAL-free).
+  `/^##\s+Assumptions/mi`). WARN-only, and **version-scoped**: it applies only
+  to bundles whose state schema version is ≥ the version this feature ships
+  (the migration layer stamps versions) — legacy bundles are grandfathered
+  and keep passing doctor byte-identically. "Doctor clean" throughout this
+  spec means exit 0 / zero FATALs; expected WARNs (a known dangling legacy
+  bundle, a grandfathered spec) are acceptable and enumerated, not failures.
 - This spec dogfoods the convention (see below).
 
 ### F4 — Visual/narrative plan render (deterministic-first + optional images)
@@ -170,9 +209,10 @@ Five file-disjoint feature areas, one run.
   `assets/` to un-embed); the render itself never consults the flag.
 - **Escaping & path safety:** every user-controlled string that reaches the
   render (narrative meta, ref labels, amendment summaries/details, topics,
-  slugs) is HTML-escaped; asset and ref-link paths must resolve inside the
-  bundle or a discovery root (path traversal rejected). Tests include
-  `<script>`/quote fixtures rendering inert.
+  slugs) is HTML-escaped; asset paths must resolve inside the bundle's
+  `assets/` directory, and ref-link paths inside the ref's stored canonical
+  repo root (the F1 trust boundary) — path traversal rejected in both. Tests
+  include `<script>`/quote fixtures rendering inert.
 
 ### F5 — Multi-run discovery + dangling-run resilience (incl. sub-repos)
 
@@ -206,9 +246,14 @@ when it lives in a sub-repo the current session didn't open.
   entries and symlink aliases multiply this) — the scan canonicalizes every
   discovered repo root via realpath and emits exactly ONE entry per
   `(repo root, slug)` pair.
-- **Error isolation (per-bundle WARN/skip):** one malformed `state.yml`,
-  corrupt `events.jsonl`, unreadable root/bundle, or symlink loop WARNs and
-  skips THAT bundle/root — it never aborts the scan. Every consumer
+- **Error isolation (per-bundle WARN, skip only when uninventoriable):** one
+  malformed `state.yml`, unreadable root/bundle, or symlink loop WARNs and
+  skips THAT bundle/root — it never aborts the scan. A corrupt/unparsable
+  `events.jsonl` is DIFFERENT: the bundle is WARNed but still INCLUDED, with
+  `last_activity` derived from the fallback chain (heartbeat mtime, then
+  `state.yml` mtime) — a single bad event line must not hide exactly the
+  dangling run this feature exists to surface. Only a bundle whose
+  `state.yml` cannot be read at all is uninventoriable. Every consumer
   (`runs list`, doctor, sweep report, `status`) inherits this: discovery of
   other people's possibly-broken bundles must not take down the current
   session's own tooling.
@@ -220,7 +265,10 @@ when it lives in a sub-repo the current session didn't open.
      REPO-AWARE resume command — `cd <repo> && /masterplan execute
      <state-path>` (plain `/masterplan execute <state-path>` only when the
      bundle's repo IS the current MAIN) — so a sub-repo run discovered from a
-     parent session is never resumed with the parent's MAIN semantics.
+     parent session is never resumed with the parent's MAIN semantics. Both
+     paths are shell-quoted on emission (single-quote escaping) so the
+     command is paste-safe for paths containing spaces, quotes, or shell
+     metacharacters — an emitted command is an injection surface.
   2. **Session sweep report:** the first-§2-entry `mp sweep` output gains a
      `dangling` array (same derivation, same threshold) so every session that
      touches masterplan surfaces forgotten runs — including sub-repo ones —
@@ -279,7 +327,17 @@ when it lives in a sub-repo the current session didn't open.
 | Reciprocal render freshness? | `refs` re-renders BOTH mutated bundles' existing plan.html | A fresh source with a stale target reciprocal is still a stale artifact (adversary finding) | user-confirmed |
 | Overlapping discovery roots? | De-dupe by `(realpath(repo root), slug)` — one entry per bundle | Sub-repo sessions rediscover their own repo via the parent's nested walk; symlinked/duplicate roots multiply (adversary finding) | user-confirmed |
 | Scan failure isolation? | Per-bundle/root WARN + skip; never abort the scan | One corrupt foreign bundle must not take down runs list/doctor/sweep/status (adversary finding) | user-confirmed |
-| Resume-command shape? | Repo-aware: `cd <repo> && /masterplan execute <path>` when the bundle's repo ≠ current MAIN | Resuming a sub-repo run from a parent session with parent MAIN semantics corrupts the run (adversary finding) | user-confirmed |
+| Resume-command shape? | Repo-aware: `cd <repo> && /masterplan execute <path>` when the bundle's repo ≠ current MAIN; paths shell-quoted | Resuming a sub-repo run from a parent session with parent MAIN semantics corrupts the run; unquoted emitted commands are an injection surface (adversary findings) | user-confirmed |
+| Target slug validation? | Bare-slug charset only (`[a-z0-9][a-z0-9-]*`); separators/`..`/absolute paths exit non-zero; stored slugs re-validated before path building | The bundle path is built by interpolation — an unvalidated slug is a traversal primitive (adversary finding) | user-confirmed |
+| Cross-bundle write concurrency? | Acquire BOTH owner locks (deterministic order: canonical repo path, then slug), hold across the write | Check-then-write preflight is TOCTOU — concurrent `refs` commands could both pass and last-write-wins (adversary finding) | user-confirmed |
+| `--repo` on remove? | Textual match against the stored ref identity; strict realpath validation on add only | Strict validation on remove makes refs to moved/deleted repos permanently unremovable (adversary finding) | user-confirmed |
+| Ref link policy? | By-presence for ALL refs incl. same-repo; trust boundary = the ref's stored canonical repo root | A never-rendered same-repo target would 404; F1/F4 boundary rules must not conflict (adversary findings) | user-confirmed |
+| Corrupt events.jsonl at discovery? | WARN + INCLUDE the bundle with fallback activity derivation; only unreadable state.yml skips | Skipping would hide exactly the dangling run F5 exists to surface (adversary finding) | user-confirmed |
+| Amendment input hygiene? | Single-line summary (no leading `#`); detail `#`-lines escaped; refuse absent plan.md / archived bundle | Free text can corrupt the `## Amendments` heading structure the renderer parses (adversary finding) | user-confirmed |
+| Render failure after mutation? | Mutation commits first and stands; render failure WARNs per stale bundle + exits non-zero | Durability is never hostage to rendering, but staleness must be loud (adversary finding) | user-confirmed |
+| New doctor WARNs vs legacy bundles? | Version-scoped to bundles at/after this feature's schema version; "doctor clean" = exit 0 / no FATALs | Legacy bundles must keep passing doctor byte-identically (adversary finding) | user-confirmed |
+| No-op refs events? | Idempotent no-op add/remove appends NO event | Events drive `last_activity`; synthetic activity would mask staleness (adversary finding) | user-confirmed |
+| Reciprocal label? | `--label` applies to the named side only; reciprocal defaults to the source bundle's topic | A label chosen for one direction silently reused for the other misdescribes it (adversary finding) | user-confirmed |
 
 ## Success criteria
 
@@ -290,45 +348,62 @@ when it lives in a sub-repo the current session didn't open.
    removal of an unresolvable target, default-target-repo derivation from the
    `--state` path (a sub-repo bundle driven from a parent-session cwd links
    within the sub-repo, incl. a same-slug parent/sub-repo fixture), `--repo`
-   canonicalization (symlink alias normalizes; non-repo path exits non-zero),
-   and `refs_added`/`refs_removed` appended to BOTH bundles' `events.jsonl`;
-   `mp status` and `plan.html` surface them (cross-repo links only
-   when the target resolves on disk).
+   canonicalization (symlink alias normalizes; non-repo path exits non-zero
+   on add; textual stored-identity match lets a ref to a DELETED repo be
+   removed), target-slug validation (`--target=../x`, `a/b`, absolute path
+   all exit non-zero; a malicious stored slug never builds a path),
+   concurrent add/remove against the same bundle pair serializing via the
+   held owner locks, no-op add/remove appending NO event, the reciprocal
+   label defaulting to the source topic (not the supplied `--label`),
+   and `refs_added`/`refs_removed` appended to BOTH bundles' `events.jsonl`
+   (source-only on unresolved target);
+   `mp status` and `plan.html` surface them (links by-presence only, for
+   same-repo refs too).
 2. `mp amend-plan` appends to `plan.md` + `events.jsonl`; unit tests cover
-   first-use section creation, append ordering, empty-summary refusal;
+   first-use section creation, append ordering, refusals (empty summary,
+   multiline summary, absent `plan.md`, archived bundle), and detail
+   `#`-line escaping keeping the Amendments parse unambiguous;
    amendments render in `plan.html`.
 3. `commands/masterplan.md` brainstorm step persists the assumptions section;
    doctor WARNs on a new bundle's spec lacking it (test fixture).
 4. `render-plan` renders narrative meta + refs + amendments + goals with NO
    network and no broken links when assets are absent; embeds
    `assets/*.png` when present; unit tests cover both paths, plus escaping
-   fixtures (`<script>`/quotes in meta, labels, amendments render inert) and
-   path-traversal rejection for asset/ref paths.
+   fixtures (`<script>`/quotes in meta, labels, amendments render inert),
+   path-traversal rejection for asset/ref paths, and a same-repo ref whose
+   target has no `plan.html` rendering as plain text (no broken link).
 5. `merge-plan-fragments` / `mp-planner` / `validate-plan-index` carry the
    optional narrative meta; old indexes still validate.
 6. `mp runs list` finds bundles in MAIN and in a nested sub-repo fixture, AND
    in the reverse direction (run from inside the sub-repo, parent-repo bundles
    appear via the upward walk); overlapping roots yield ONE entry per bundle
    (sub-repo scanned directly + via the parent's nested walk; a symlinked
-   duplicate root de-dupes); a corrupt `state.yml`, corrupt `events.jsonl`
-   timestamp, and an unreadable bundle each WARN + skip without aborting the
-   scan; `last_activity` derives event-dominant (an old
+   duplicate root de-dupes); a corrupt `state.yml` and an unreadable bundle
+   each WARN + skip without aborting the scan, while a corrupt
+   `events.jsonl` WARNs but still lists the bundle with fallback-derived
+   activity; non-repo/unreadable `--roots` and `.discovery.yml` entries WARN
+   + skip; `last_activity` derives event-dominant (an old
    event stream with a freshly-touched state.yml still reads stale); unit
    tests cover the walk (depth cap, `.worktrees`/`node_modules` exclusion),
    extra roots, and the `.discovery.yml` round-trip.
 7. The doctor `dangling-run` check WARNs on a stale-activity fixture bundle
    (and NOT on a fresh one), with the resume command in the message — and for
    a bundle whose repo ≠ the scanning MAIN the command is the repo-aware
-   `cd <repo> && …` form; the
+   `cd <repo> && …` form with shell-quoted paths (a fixture path containing
+   a space/quote emits a paste-safe command); the
    session sweep report carries the same `dangling` entries; cross-repo refs
    resolve (and a dangling unresolvable ref target WARNs, not crashes).
 8. New state fields survive unrelated mutations: tests drive a task update,
-   sweep, and review-config write over a bundle carrying `refs` + `render`
-   and assert both round-trip untouched; a pre-existing state WITHOUT the new
+   sweep, review-config write, `set-render-config`, archive, and a
+   continue-reconcile over a bundle carrying `refs` + `render` and assert
+   both round-trip untouched; a pre-existing state WITHOUT the new
    keys loads with the documented defaults (`refs: {back:[], forward:[]}`,
-   images off); `amend-plan` re-renders an existing `plan.html` inline, and
+   images off); `amend-plan` re-renders an existing `plan.html` inline,
    `refs add`/resolved `refs remove` re-render BOTH bundles' existing
-   `plan.html`.
-9. Full suite green: `npm test` (all `test/*.test.mjs`), `mp doctor` clean on
-   this repo, docs updated (`docs/verbs.md`, `docs/internals/`,
-   `CHANGELOG.md`).
+   `plan.html`, and a forced render failure after mutation leaves the
+   mutation durable, WARNs naming the stale bundle(s), and exits non-zero.
+9. Full suite green: `npm test` (all `test/*.test.mjs`); `mp doctor` clean on
+   this repo in the defined sense — exit 0, zero FATALs, new WARNs
+   version-scoped so legacy bundles pass byte-identically (a fixture legacy
+   bundle without the assumptions section stays WARN-free); docs updated
+   (`docs/verbs.md`, `docs/internals/`, `CHANGELOG.md`).
