@@ -1,0 +1,21 @@
+---
+schema_version: 8
+slug: planf3-ideas
+status: in-progress
+phase: brainstorm
+topic: "Review https://github.com/disler/planf3 to see if there are ideas we should import into Masterplan"
+complexity: high
+complexity_source: null
+autonomy: null
+planning_mode: auto
+created_at: 2026-07-06T18:36:47.504Z
+predecessor_transcript: null
+spec_path: /srv/dev/ras/masterplan/docs/masterplan/planf3-ideas/spec.md
+plan_path: /srv/dev/ras/masterplan/docs/masterplan/planf3-ideas/plan.md
+plan_index_path: /srv/dev/ras/masterplan/docs/masterplan/planf3-ideas/plan.index.json
+tasks: []
+active_run: null
+pending_gate: null
+goals_enabled: true
+goals: []
+review: {"adversary":true}
