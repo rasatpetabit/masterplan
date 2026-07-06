@@ -3,3 +3,4 @@
 {"type":"phase_transition","ts":"2026-07-06T20:37:55.790Z","phase":"plan"}
 {"type":"plan_adversary_review","ts":"2026-07-06T21:20:06.088Z","data":{"hash":"sha256:8cdb8a90dc176fd8fe2dc042a10104ec789956a55def06b57890b2cbb3be76d9","receipt":{"dispatch_id":"agent-dispatch-review/adversary/bzv61xa9t","provider":"gpt-5.5","model":"dispatch-adversary","output_tokens":11881,"ts":"2026-07-06T14:19:52-07:00"}},"note":"gate-plan-review-digest.txt","summary":"plan adversary review complete"}
 {"type":"phase_transition","ts":"2026-07-06T21:20:06.413Z","phase":"execute"}
+{"type":"wave_recorded","ts":"2026-07-06T22:10:28.780Z","phase":"execute","note":"wave 0 record: 7 done, 1 failed/blocked, 0 qctl"}
