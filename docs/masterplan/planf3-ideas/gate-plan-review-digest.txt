@@ -1,0 +1,36 @@
+Plan gate — cross-vendor adversary review digest (planf3-ideas)
+
+Verdict: approve (policy=unanimous+blocking-veto, 1 reviewer, 0 blocking findings).
+Lane: agent-dispatch review --class adversary --intensity rigorous
+      → dispatch-gateway/review/xhigh/dispatch-adversary (gpt-5.5), 1 reviewer.
+Artifacts reviewed: spec.md + plan.md + plan.index.json at empty-tree base
+      (full content as new-file diff). Duration: 215s. Reviewer tail:
+  #1 model=dispatch-adversary elapsed_s=215.042 prompt_tokens=8333 completion_tokens=11881
+
+Plan-review history (mp-plan-reviewer, 3 rounds before this gate):
+  R1: REVISE — 5 structural findings (orphaned `mp status` verb, verify against
+      not-yet-existing test file, no schemaVersion bump, same-wave dep violation,
+      over-split amend tasks) → all fixed at fragment level, re-merged.
+  R2: REVISE — 5 smaller (status untested, refs re-render untested, inert image
+      flag, weak field-preservation stand-in, overwrite hazard) → all fixed,
+      incl. NEW render.images-seam task.
+  R3: REVISE — 1 blocking dep (refs.cli-test before refs.status-block) → fixed;
+      reviewer declared the plan execution-ready, no further semantic review.
+Final plan: 26 tasks / 8 waves, plan_hash
+      sha256:3ff4430f59c957ecd3d42be408eca3265cc1606b9e12b0ef64c3f9b4b15bf005,
+      validate-plan-index clean.
+
+Gate round (this one): approve. 10 advisory findings NOT folded — treadmill cut
+declared by user (same cut as the spec gate); they are EXECUTION INPUTS for the
+relevant tasks (raw JSON: session scratchpad plan-gate-review1.json):
+  HIGH: amend-plan Guard D ownership discipline (amend.cli-case / amend.tests);
+        legacy/version scoping consistency for spec-assumptions WARN
+        (assumptions.doctor-check vs render.state-model migration stamping).
+  MEDIUM: invalid stored refs must remain cleanable (refs.core/refs.cli);
+        seed --predecessor partial-failure semantics (render.bin-wiring);
+        refs self-reference behavior (refs.core); upsert label-change
+        event/render semantics (refs.core); event-append failure semantics
+        (refs.core/amend.writer); archived-target reciprocal-write consistency
+        (refs.core vs amend.writer refusal).
+  LOW: amendment escaping for ≤3-space-indented `#` lines (amend.writer);
+        asset symlink escape + numeric wave-image ordering (render.html-hub).

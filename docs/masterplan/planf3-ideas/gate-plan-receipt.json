@@ -1,0 +1,12 @@
+{
+  "gate": "plan",
+  "hash": "sha256:8cdb8a90dc176fd8fe2dc042a10104ec789956a55def06b57890b2cbb3be76d9",
+  "artifacts": ["spec.md", "plan.md", "plan.index.json"],
+  "dispatch_id": "agent-dispatch-review/adversary/bzv61xa9t",
+  "provider": "gpt-5.5",
+  "model": "dispatch-adversary",
+  "output_tokens": 11881,
+  "status": "done",
+  "ts": "2026-07-06T14:19:52-07:00",
+  "digest": "gate-plan-review-digest.txt"
+}
