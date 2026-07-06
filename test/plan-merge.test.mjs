@@ -20,6 +20,9 @@ import {
   renderPlanMd,
   renderPlanHtml,
   normalizeCodex,
+  resolveAssetSrc,
+  resolveRefTarget,
+  parseAmendments,
 } from '../lib/plan-merge.mjs';
 
 // Fragment factory — one subsystem with its task list. Keeps tests terse.
@@ -323,6 +326,123 @@ test('renderPlanHtml with no taskStatus renders every task as pending', () => {
   const h = renderPlanHtml(htmlIndex, { title: 'T' });
   assert.ok(h.includes('badge status-pending'));
   assert.ok(!h.includes('badge status-done') && !h.includes('badge status-failed'));
+});
+
+// ── renderPlanHtml: F4 narrative / refs / amendments / assets (the render HUB) ──
+// bundleDir + an injectable fileExists let the trust boundary run fully offline: no disk,
+// no clock. Presence (not any render flag) decides img/link emission.
+const richIndex = {
+  schema_version: '6.0',
+  tasks: [
+    { id: 1, description: 'do a', wave: 0, files: ['a.js'], verify_commands: ['test a'], codex: null, goals: ['G1', 'G2'] },
+    { id: 2, description: 'do b', wave: 1, files: ['b.js'], verify_commands: [], codex: 'ok', goals: ['G2'] },
+  ],
+};
+
+const amendMd = [
+  '# Plan', '', '## Amendments', '',
+  '### 2026-07-06 — widen scope', 'added task 2 for the API layer',
+  '', '### 2026-07-07 — trim verify', 'dropped a redundant check',
+].join('\n');
+
+test('renderPlanHtml renders narrative, refs, amendments and goals offline', () => {
+  const metaArg = {
+    title: 'Rich plan',
+    bundleDir: '/repo/docs/masterplan/self',
+    fileExists: (p) => p === '/repo/docs/masterplan/other/plan.html',
+    narrative: { purpose: 'Do the thing', problem: 'It is broken', solution: 'Fix it deterministically' },
+    refs: { back: [{ slug: 'other', label: 'Predecessor' }], forward: [] },
+    amendmentsMd: amendMd,
+  };
+  const h = renderPlanHtml(richIndex, metaArg);
+  assert.ok(/Purpose/.test(h) && h.includes('Do the thing'), 'purpose narrative present');
+  assert.ok(/Problem/.test(h) && h.includes('It is broken'), 'problem narrative present');
+  assert.ok(/Solution/.test(h) && h.includes('Fix it deterministically'), 'solution narrative present');
+  assert.ok(h.includes('href="../other/plan.html"'), 'resolvable same-repo ref links to target plan.html');
+  assert.ok(h.includes('Predecessor'), 'ref label rendered');
+  assert.ok(/Amendments/.test(h), 'amendments section present');
+  assert.ok(h.includes('widen scope') && h.includes('trim verify'), 'both amendment summaries present');
+  assert.ok(h.includes('2026-07-06') && h.includes('2026-07-07'), 'amendment dates present');
+  assert.ok(h.includes('added task 2 for the API layer'), 'amendment detail present');
+  assert.ok(/Goals/.test(h) && h.includes('G1') && h.includes('G2'), 'goals block present');
+  assert.equal(h, renderPlanHtml(richIndex, metaArg), 'render is deterministic (offline)');
+});
+
+test('renderPlanHtml embeds no <img> when assets are absent (by-presence)', () => {
+  const h = renderPlanHtml(richIndex, {
+    title: 'T',
+    bundleDir: '/repo/docs/masterplan/self',
+    fileExists: () => false,
+  });
+  assert.ok(!h.includes('<img'), 'absent assets must produce no <img>');
+});
+
+test('renderPlanHtml embeds present assets by slot name via relative src', () => {
+  const present = new Set([
+    '/repo/docs/masterplan/self/assets/hero.png',
+    '/repo/docs/masterplan/self/assets/wave-0.png',
+  ]);
+  const h = renderPlanHtml(richIndex, {
+    title: 'T',
+    bundleDir: '/repo/docs/masterplan/self',
+    fileExists: (p) => present.has(p),
+  });
+  assert.ok(h.includes('src="assets/hero.png"'), 'hero embeds by slot name, relative src');
+  assert.ok(h.includes('src="assets/wave-0.png"'), 'wave-0 embeds by slot name, relative src');
+  assert.ok(!h.includes('src="assets/wave-1.png"'), 'absent wave-1 asset is not embedded');
+});
+
+test('renderPlanHtml renders a same-repo ref as plain text when the target has no plan.html', () => {
+  const h = renderPlanHtml(richIndex, {
+    title: 'T',
+    bundleDir: '/repo/docs/masterplan/self',
+    fileExists: () => false,
+    refs: { back: [{ slug: 'ghost' }], forward: [] },
+  });
+  assert.ok(!h.includes('href='), 'no link when the target plan.html is absent (never a broken link)');
+  assert.ok(h.includes('ghost'), 'ref still surfaces as plain text');
+});
+
+test('renderPlanHtml renders <script>/quote fixtures in meta, ref labels and amendments inert', () => {
+  const h = renderPlanHtml(richIndex, {
+    title: 'T',
+    bundleDir: '/repo/docs/masterplan/self',
+    fileExists: () => false,
+    narrative: { purpose: '<script>alert(1)</script>', problem: '"><img src=x>', solution: 'ok' },
+    refs: { back: [{ slug: 'other', label: '<script>evil</script>' }], forward: [] },
+    amendmentsMd: ['## Amendments', '', '### 2026-07-06 — <script>boom</script>', 'detail "<img src=x onerror=alert(1)>"'].join('\n'),
+  });
+  assert.ok(!h.includes('<script'), 'no raw <script from any user-controlled string');
+  assert.ok(!/<img\s+src=x/i.test(h), 'no raw <img from meta/amendment fixtures');
+  assert.ok(h.includes('&lt;script&gt;'), 'user script fixtures survive only as escaped text');
+});
+
+test('resolveAssetSrc rejects path traversal outside the bundle assets/ dir', () => {
+  const bundle = '/repo/docs/masterplan/self';
+  assert.equal(resolveAssetSrc(bundle, '../../../etc/passwd'), null);
+  assert.equal(resolveAssetSrc(bundle, '../secret'), null);
+  const ok = resolveAssetSrc(bundle, 'hero');
+  assert.equal(ok.rel, 'assets/hero.png');
+});
+
+test('resolveRefTarget re-validates the stored slug and rejects traversal outside the repo root', () => {
+  const bundle = '/repo/docs/masterplan/self';
+  assert.equal(resolveRefTarget(bundle, { slug: '../evil' }), null);
+  assert.equal(resolveRefTarget(bundle, { slug: 'a/b' }), null);
+  assert.equal(resolveRefTarget(bundle, { slug: '..' }), null);
+  const t = resolveRefTarget(bundle, { slug: 'other' });
+  assert.equal(t.rel, '../other/plan.html');
+  assert.ok(t.abs.startsWith('/repo/'));
+  const c = resolveRefTarget(bundle, { slug: 'x', repo: '/other-repo' });
+  assert.ok(c.abs.startsWith('/other-repo/'));
+});
+
+test('parseAmendments extracts ordered timeline entries from the ## Amendments block', () => {
+  const entries = parseAmendments(amendMd);
+  assert.equal(entries.length, 2);
+  assert.deepEqual(entries[0], { date: '2026-07-06', summary: 'widen scope', detail: 'added task 2 for the API layer' });
+  assert.equal(entries[1].summary, 'trim verify');
+  assert.deepEqual(parseAmendments('# Plan\n\nno section here'), []);
 });
 
 // ── goal tracking ────────────────────────────────────────────────────────────
