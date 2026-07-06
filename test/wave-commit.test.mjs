@@ -342,3 +342,80 @@ test('bin record-result honors owner_lock=off: no session id required (Codex P2 
   assert.deepEqual(res.recorded, [1]);
   assert.equal(readState(fx.statePath).tasks[0].status, 'done');
 });
+
+test('stale-epoch: a reaped worker resuming late is rejected before any state byte — reject beats the markTask pass', () => {
+  const fx = makeFixture({
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    activeRun: { wave: 1, run_id: 'r1', task_id: 'wf1', epoch: 5, scope: ['src/a.txt'], baseline: [] },
+  });
+  write(fx.WT, 'src/a.txt', 'A\n');
+  const mainHead = git(fx.MAIN, 'rev-parse', 'HEAD');
+  const wtHead = git(fx.WT, 'rev-parse', 'HEAD');
+  const stateBytes = fs.readFileSync(fx.statePath, 'utf8');
+  const res = recordWaveResult({
+    statePath: fx.statePath,
+    self: fx.self,
+    now: 2000,
+    result: { wave: 1, epoch: 3, baseline: [], tasks: [digest(1, 'done')] },
+  });
+  assert.equal(res.outcome, 'stale-epoch');
+  assert.equal(res.resultEpoch, 3);
+  assert.equal(res.currentEpoch, 5);
+  assert.equal(fs.readFileSync(fx.statePath, 'utf8'), stateBytes, 'state untouched');
+  assert.equal(readState(fx.statePath).tasks[0].status, 'pending');
+  assert.equal(git(fx.MAIN, 'rev-parse', 'HEAD'), mainHead);
+  assert.equal(git(fx.WT, 'rev-parse', 'HEAD'), wtHead);
+  assert.equal(fs.existsSync(path.join(fx.bundleDir, 'events.jsonl')), false, 'no event appended');
+});
+
+test('current-epoch: a result whose epoch matches the marker records normally', () => {
+  const fx = makeFixture({
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    activeRun: { wave: 1, run_id: 'r1', task_id: 'wf1', epoch: 5, scope: ['src/a.txt'], baseline: [] },
+  });
+  write(fx.WT, 'src/a.txt', 'A\n');
+  const res = recordWaveResult({
+    statePath: fx.statePath,
+    self: fx.self,
+    now: 2000,
+    result: { wave: 1, epoch: 5, baseline: [], tasks: [digest(1, 'done')] },
+  });
+  assert.equal(res.outcome, 'recorded');
+  assert.deepEqual(res.recorded, [1]);
+  assert.equal(res.cleared, true);
+  assert.equal(readState(fx.statePath).tasks[0].status, 'done');
+});
+
+test('stale-epoch: an epoch-fenced marker rejects a result that carries no epoch', () => {
+  const fx = makeFixture({
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    activeRun: { wave: 1, run_id: 'r1', task_id: 'wf1', epoch: 2, scope: ['src/a.txt'], baseline: [] },
+  });
+  write(fx.WT, 'src/a.txt', 'A\n');
+  const res = recordWaveResult({
+    statePath: fx.statePath,
+    self: fx.self,
+    now: 2000,
+    result: { wave: 1, baseline: [], tasks: [digest(1, 'done')] },
+  });
+  assert.equal(res.outcome, 'stale-epoch');
+  assert.equal(res.resultEpoch, null);
+  assert.equal(res.currentEpoch, 2);
+  assert.equal(readState(fx.statePath).tasks[0].status, 'pending');
+});
+
+test('no-epoch marker: backward-compatible, no fencing applied', () => {
+  const fx = makeFixture({
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    activeRun: { wave: 1, run_id: 'r1', task_id: 'wf1', scope: ['src/a.txt'], baseline: [] },
+  });
+  write(fx.WT, 'src/a.txt', 'A\n');
+  const res = recordWaveResult({
+    statePath: fx.statePath,
+    self: fx.self,
+    now: 2000,
+    result: { wave: 1, baseline: [], tasks: [digest(1, 'done')] },
+  });
+  assert.equal(res.outcome, 'recorded');
+  assert.equal(readState(fx.statePath).tasks[0].status, 'done');
+});

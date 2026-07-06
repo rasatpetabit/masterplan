@@ -490,3 +490,50 @@ test('goals split-brain guard: matching goals.md hash proceeds; mismatch hard-er
   const op5 = continueRun({ statePath: fx5.statePath, self: fx5.self, now: 2000 });
   assert.equal(op5.op, 'launch_workflow', 'pre-feature bundle exempt from the guard');
 });
+
+test('fabric strangler flag: continueRun emits a single dispatch_fabric op; record-result drives the same lifecycle', () => {
+  const fx = makeFixture({
+    tasks: [
+      { id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] },
+      { id: 2, status: 'pending', wave: 2, files: ['src/b.txt'] },
+    ],
+    planIndex: [planEntry(1, 1, ['src/a.txt']), planEntry(2, 2, ['src/b.txt'])],
+    slug: 't38fab',
+  });
+  const base = { statePath: fx.statePath, self: fx.self, now: 2000, fabricDispatch: true };
+
+  // 1. Single fabric op: routed tasks, frozen baseline, the record-result advisory.
+  const op1 = continueRun(base);
+  assert.equal(op1.op, 'dispatch_fabric');
+  assert.equal(op1.wave, 1);
+  assert.equal(op1.next, 'record-result');
+  assert.deepEqual(op1.tasks.map((t) => t.id), [1]);
+  assert.deepEqual(op1.baseline, []);
+  assert.equal(op1.review, 'off');
+  const WT = op1.cwd;
+  assert.ok(fs.existsSync(path.join(WT, '.git')), 'worktree created');
+  const marker = readState(fx.statePath).active_run;
+  assert.equal(marker.phase, 'launching');
+  assert.equal(marker.task_id, undefined, 'phase-1 marker only');
+
+  // 2. The fabric's digests feed the SAME record transaction; next wave dispatches fabric again.
+  write(WT, 'src/a.txt', 'A\n');
+  const rec1 = recordWaveResult({ statePath: fx.statePath, self: fx.self, now: 2000, result: { wave: 1, baseline: [], tasks: [digest(1, 'done')] } });
+  assert.equal(rec1.outcome, 'recorded');
+  const op2 = continueRun(base);
+  assert.equal(op2.op, 'dispatch_fabric');
+  assert.equal(op2.wave, 2);
+  assert.equal(op2.cwd, WT, 'same worktree reused');
+  write(WT, 'src/b.txt', 'B\n');
+  recordWaveResult({ statePath: fx.statePath, self: fx.self, now: 2000, result: { wave: 2, baseline: [], tasks: [digest(2, 'done')] } });
+  assert.deepEqual(continueRun(base), { op: 'run_skill', skill: 'finish' });
+
+  // Flag off on the same-shaped bundle → the legacy launch_workflow path (rollback is a flag flip).
+  const fx2 = makeFixture({
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    planIndex: [planEntry(1, 1, ['src/a.txt'])],
+    slug: 't38leg',
+  });
+  const legacy = continueRun({ statePath: fx2.statePath, self: fx2.self, now: 2000 });
+  assert.equal(legacy.op, 'launch_workflow');
+});

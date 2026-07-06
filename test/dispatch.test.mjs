@@ -89,3 +89,27 @@ test('buildWaveDispatchOp: codexSuppressed -> dispatch_foreground with record-re
     next: 'record-result',
   });
 });
+
+test('buildWaveDispatchOp: fabric flag -> single dispatch_fabric op (supersedes the launch_workflow/foreground fork)', () => {
+  assert.deepEqual(buildWaveDispatchOp({ ...waveArgs, fabric: true }), {
+    op: 'dispatch_fabric',
+    wave: 2,
+    cwd: '/repo/.worktrees/slug',
+    tasks: waveArgs.tasks,
+    baseline: ['a.js'],
+    review: 'on',
+    next: 'record-result',
+  });
+});
+
+test('buildWaveDispatchOp: fabric flag wins even under codexSuppressed (the fork collapses to one op)', () => {
+  assert.deepEqual(buildWaveDispatchOp({ ...waveArgs, fabric: true, codexSuppressed: true }), {
+    op: 'dispatch_fabric',
+    wave: 2,
+    cwd: '/repo/.worktrees/slug',
+    tasks: waveArgs.tasks,
+    baseline: ['a.js'],
+    review: 'on',
+    next: 'record-result',
+  });
+});

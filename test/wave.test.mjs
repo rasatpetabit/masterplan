@@ -62,6 +62,52 @@ test('prepareWave emits ONLY the lean payload keys (goal 3 — nothing heavy tra
   );
 });
 
+// --- prepareWave: fabric phase flag routes through core resolve/guard via the seam ---------
+
+test('prepareWave (fabric via state.dispatch.fabric) defers routing to the seam: class-only payload, NO target/backend', () => {
+  const st = state();
+  st.dispatch = { fabric: true };
+  const { tasks } = prepareWave(st, planIndex(), 0, { routing: 'auto' }, {});
+  // Model selection is deferred to core resolve/guard — masterplan no longer pre-bakes a route.
+  assert.deepEqual(
+    Object.keys(tasks[0]).sort(),
+    ['class', 'description', 'files', 'id', 'verify_commands'],
+  );
+  assert.equal(tasks[0].class, 'bounded-edit'); // worker default
+  assert.equal(tasks[0].target, undefined);
+  assert.equal(tasks[0].backend, undefined);
+  assert.equal(tasks[0].eligible, undefined);
+});
+
+test('prepareWave (fabric via config.fabric) is the SAME strangler flag as the wave dispatch op', () => {
+  const { tasks } = prepareWave(state(), planIndex(), 0, { routing: 'auto', fabric: true }, {});
+  assert.equal(tasks[0].class, 'bounded-edit');
+  assert.equal(tasks[0].target, undefined);
+});
+
+test('prepareWave (fabric) honors a plan-pinned task class', () => {
+  const pidx = planIndex();
+  pidx.tasks[0].class = 'architecture';
+  const { tasks } = prepareWave(state(), pidx, 0, { fabric: true }, {});
+  assert.equal(tasks[0].class, 'architecture');
+});
+
+test('prepareWave (fabric off) is byte-identical to the legacy routeTask/resolveTaskBackend payload', () => {
+  const { tasks } = prepareWave(state(), planIndex(), 0, { routing: 'auto' }, {});
+  assert.equal(tasks[0].target, 'codex'); // legacy routing brain still runs when the flag is off
+  assert.equal(tasks[0].class, undefined);
+});
+
+test('prepareWave (fabric) still composes handoff-idempotency keys (context uses class, not target/backend)', () => {
+  const st = state();
+  st.dispatch = { fabric: true };
+  const dispatchInputs = { runId: 'run-x', head: 'abc', dirtyDigest: '', policyVersion: 'p1', workerVersion: 'w1' };
+  const { tasks, input_fingerprint } = prepareWave(st, planIndex(), 0, {}, {}, undefined, dispatchInputs);
+  assert.ok(input_fingerprint);
+  assert.ok(tasks[0].idempotency.task_spec_hash);
+  assert.ok(tasks[0].idempotency.handoff_key);
+});
+
 test('prepareWave keys by String(id) so a "1"/1 type mismatch still merges', () => {
   const pidx = { tasks: [{ id: '1', description: 'string-id task', files: ['a.js'], verify_commands: ['node --test'], codex: null }] };
   const st = { tasks: [{ id: 1, wave: 0, status: 'pending', files: ['a.js'] }] };
