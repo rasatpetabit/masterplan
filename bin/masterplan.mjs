@@ -169,6 +169,7 @@ import { selectGateReview, gateEventTypes, validateGateReceipt } from '../lib/ga
 import { resolveConfigDir } from '../lib/paths.mjs';
 import { createHash } from 'node:crypto';
 import { mergePlanFragments, validatePlanIndex, renderPlanMd, renderPlanHtml } from '../lib/plan-merge.mjs';
+import { amendPlan } from '../lib/amend.mjs';
 import { classifyDirt, detectBase, collectVerifyCommands, isVerified, dispositionForChoice, summarizePr } from '../lib/finish.mjs';
 import { computeEnqueueKey, decideEnqueue } from '../lib/qctl-enqueue.mjs';
 import { verifyArtifact, parseQctlDigest } from '../lib/qctl-artifact.mjs';
@@ -1605,6 +1606,61 @@ function main() {
       }
       writeState(p, next);
       out({ loaded: next.tasks.length, waves: new Set(next.tasks.map((t) => t.wave)).size, phase: next.phase });
+      break;
+    }
+    case 'amend-plan': {
+      // F2: append a `## Amendments` entry to plan.md — the sanctioned mid-run plan mutation. lib/amend.mjs
+      // owns the PURE section writer (no fs/clock); this case owns the fs/clock/event/render I/O:
+      //   (a) BASE — parse --summary/--detail, inject the ISO date (purity: no clock in the writer), call
+      //       amendPlan, write plan.md (tmp+rename), append the plan_amended {summary} event LAST (commit).
+      //   (b) GUARD-D — acquire the bundle owner lock BEFORE the mutation, release on EVERY exit path; a LIVE
+      //       foreign owner exits non-zero writing nothing (another live session may own this bundle).
+      //   (c) RENDER — after the plan.md/event commit, re-render an EXISTING plan.html inline; a render
+      //       failure WARNs (naming the stale bundle) and exits non-zero while the mutation stands durable.
+      const p = need(flags, 'state');
+      const dir = path.dirname(p);
+      const state = loadForWrite(p);
+      const summary = String(need(flags, 'summary'));
+      const detail = flags.detail !== undefined ? String(flags.detail) : '';
+      const amendDate =
+        typeof flags.date === 'string' && flags.date.trim() ? flags.date.trim() : new Date().toISOString().slice(0, 10);
+      const planMdPath = flags['plan-md'] ?? path.join(dir, 'plan.md');
+      // Read the current plan.md (absent -> null so the pure writer refuses cleanly; a non-ENOENT read
+      // error fails loud rather than masquerading as an absent plan).
+      let planText = null;
+      try {
+        planText = fs.readFileSync(planMdPath, 'utf8');
+      } catch (e) {
+        if (e.code !== 'ENOENT') die(`amend-plan: ${planMdPath} unreadable: ${e.message}`, 1);
+      }
+      // Validate the mutation BEFORE taking the lock — a refusal holds no lock and writes nothing.
+      const amended = amendPlan({ planText, summary, detail, date: amendDate, archived: state.status === 'archived' });
+      if (!amended.ok) die(`amend-plan: ${amended.error}`, 1);
+      // Guard-D: hold the bundle owner lock across the mutation. A LIVE foreign owner -> die non-zero,
+      // nothing written. All dieable validation is ABOVE this point (process.exit skips the finally).
+      const { bundleDir, self, now, ttlMs } = resolveOwnerSelf(flags, p);
+      try { fs.mkdirSync(bundleDir, { recursive: true }); } catch { /* exists/unwritable — acquire surfaces it */ }
+      const acq = acquireOwner(bundleDir, self, { now, force: !!flags.force, ttlMs });
+      if (acq.outcome === 'blocked') {
+        const inc = acq.incumbent || {};
+        die(`amend-plan: bundle ${p} is owned by ${inc.host ?? '?'}/${inc.session ?? '?'} — nothing written`, 1);
+      }
+      let renderOk = true;
+      try {
+        // Commit: plan.md (tmp+rename, atomic) FIRST, then the plan_amended event append LAST as the
+        // commit point (mirrors the goals-amend artifact-then-event ordering).
+        const planMdTmp = planMdPath + '.tmp';
+        fs.writeFileSync(planMdTmp, amended.planText, 'utf8');
+        fs.renameSync(planMdTmp, planMdPath);
+        appendEvent(p, { ...amended.event, ts: flags.ts ?? new Date().toISOString() });
+        // Inline render-freshness AFTER the commit — reuses the shared plan.html re-render helper, which is
+        // a no-op when plan.html is absent and NEVER throws (WARNs + returns false on failure).
+        if (!rerenderRefsHtml(p, 'amend-plan')) renderOk = false;
+      } finally {
+        try { releaseOwner(bundleDir, self, { now, ttlMs }); } catch { /* best-effort */ }
+      }
+      out({ amend_plan: 'amended', summary: amended.event.summary });
+      if (!renderOk) process.exit(1);
       break;
     }
     case 'render-plan': {
