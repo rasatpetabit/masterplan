@@ -3045,6 +3045,26 @@ function main() {
       }
       break;
     }
+    case 'status': {
+      // Base one-bundle state summary + plan-graph refs block. READ-ONLY: no lock, no event,
+      // no CD-7 write. This is the base surface the discovery subsystem later EXTENDS with an
+      // other-runs block — keep it self-contained so that extension is additive.
+      const p = need(flags, 'state');
+      const state = readState(p);
+      const tasks = state.tasks ?? [];
+      const done = tasks.filter((t) => t.status === 'done').length;
+      // Refs are a status concern (which bundles this one links to); rendering the links is not.
+      // listRefs echoes stored entries verbatim: { slug, label?, repo? } under back/forward.
+      const refs = listRefs(state);
+      out({
+        slug: state.slug ?? null,
+        status: state.status ?? null,
+        phase: state.phase ?? null,
+        tasks: { done, total: tasks.length },
+        refs,
+      });
+      break;
+    }
     case 'refs': {
       // F1: (repo,slug)-identified bidirectional plan-graph refs. This case is the SOLE CD-7 writer of
       // state.refs on the source (--state) AND the resolved target bundle. lib/refs.mjs owns the pure
