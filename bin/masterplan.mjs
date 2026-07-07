@@ -1986,8 +1986,8 @@ function main() {
     case 'set-review-config':
     case 'set-codex-config': { // hidden back-compat alias for the pre-rename command name
       const p = need(flags, 'state');
-      // --review arms/disarms the finish-time adversary review → state.review.adversary (the key the
-      // finish-step gate reads). --routing is the LEGACY per-task dispatch default (state.codex.routing,
+      // --review arms/disarms the adversary review → state.review.adversary (the key BOTH the
+      // per-wave dispatch path and the finish-step gate read). --routing is the LEGACY per-task dispatch default (state.codex.routing,
       // still read by prepare-wave for in-flight bundles); new bundles never write it.
       const hasRouting = flags.routing !== undefined;
       const hasReview = flags.review !== undefined;

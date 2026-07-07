@@ -319,6 +319,18 @@ test('dispatch guards: missing plan.index at dispatch, and prepareWave drift, su
   assert.match(op2.error, /divergent file sets/);
 });
 
+test('review-mode derivation: nested state.review.adversary arms the wave (regression — the dispatch path once read only legacy codex.review)', () => {
+  const fx = makeFixture({
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    planIndex: [planEntry(1, 1, ['src/a.txt'])],
+    slug: 't23rev',
+    extra: { review: { adversary: true } },
+  });
+  const op = continueRun({ statePath: fx.statePath, self: fx.self, now: 2000 });
+  assert.equal(op.op, 'launch_workflow');
+  assert.equal(op.args.review, 'on', 'state.review.adversary=true must launch the wave review-armed');
+});
+
 test('codex-suppressed (Residual 3B): waves dispatch as dispatch_foreground; record-result drives the same lifecycle', () => {
   const fx = makeFixture({
     tasks: [
