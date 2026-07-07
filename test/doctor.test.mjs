@@ -27,8 +27,10 @@ import { check as planIndexSchema } from '../lib/doctor/plan-index-schema.mjs';
 import { check as coordDrift } from '../lib/doctor/coord-drift.mjs';
 import { check as ownerSentinel } from '../lib/doctor/owner-sentinel.mjs';
 import { check as planDocCruft } from '../lib/doctor/plan-doc-cruft.mjs';
+import { check as specAssumptions } from '../lib/doctor/spec-assumptions.mjs';
 import { check as goals } from '../lib/doctor/goals.mjs';
 import { goalsHash } from '../lib/goals.mjs';
+import { CURRENT_SCHEMA_VERSION } from '../lib/bundle.mjs';
 import { acquireOwner } from '../lib/owner-fs.mjs';
 import { buildOwnerIdentity, ownerLockPath, ownerHeartbeatPath } from '../lib/owner.mjs';
 
@@ -1119,15 +1121,15 @@ test('owner-sentinel: WARN for an orphan heartbeat file with no lock', () => {
   assert.match(findings.find((f) => f.severity === 'WARN').summary, /orphan/);
 });
 
-// ---- dispatcher: all 14 modules auto-discovered ----------------------------
+// ---- dispatcher: all 16 modules auto-discovered ----------------------------
 
-test('dispatcher: discovers all 14 check modules', async () => {
+test('dispatcher: discovers all 16 check modules', async () => {
   const checks = await discoverChecks(path.join(here, '..', 'lib', 'doctor'));
   const names = checks.map((c) => c.name);
   const expected = [
-    'adversary-lane-health', 'codex-auth', 'coord-drift', 'goals', 'index-staleness', 'legacy-bundle',
-    'owner-sentinel', 'plan-doc-cruft', 'plan-index-schema', 'plugin-registry-drift', 'scalar-cap',
-    'stale-lock', 'state-schema', 'worktree-integrity',
+    'adversary-lane-health', 'codex-auth', 'coord-drift', 'dangling-run', 'goals', 'index-staleness',
+    'legacy-bundle', 'owner-sentinel', 'plan-doc-cruft', 'plan-index-schema', 'plugin-registry-drift',
+    'scalar-cap', 'spec-assumptions', 'stale-lock', 'state-schema', 'worktree-integrity',
   ];
   for (const n of expected) {
     assert.ok(names.includes(n), `discovered ${n}`);
@@ -1314,4 +1316,62 @@ test('plan-doc-cruft: dot-directories and node_modules are never scanned', () =>
   }
   const findings = planDocCruft(tmp);
   assert.equal(maxSeverity(findings), 'PASS', JSON.stringify(findings));
+});
+
+// ---- spec-assumptions (v9 version-scoped, WARN) ------------------------------
+
+test('spec-assumptions: fixtures match dir-prefix severity', async (t) => {
+  for (const sc of scenarios('spec-assumptions')) {
+    await t.test(sc, () => {
+      const findings = specAssumptions(path.join(FX, 'spec-assumptions', sc));
+      assertFindingShape(findings);
+      assert.equal(maxSeverity(findings), expectedSeverity(sc), JSON.stringify(findings));
+    });
+  }
+});
+
+test('spec-assumptions: SKIP when there is no run bundles directory', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-sa-'));
+  const findings = specAssumptions(tmp);
+  assertFindingShape(findings);
+  assert.equal(maxSeverity(findings), 'SKIP');
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+test('spec-assumptions: version threshold tracks CURRENT_SCHEMA_VERSION (grandfathers pre-feature bundles)', () => {
+  // A bundle one schema-version BELOW the current floor keeps its missing-section spec WARN-free
+  // (grandfathered), while a bundle AT the floor with the same gap WARNs — proving the threshold is
+  // sourced from the shared constant, not a divergent literal.
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-sa-ver-'));
+  const write = (slug, sv, spec) => {
+    const d = path.join(tmp, 'docs', 'masterplan', slug);
+    fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(path.join(d, 'state.yml'),
+      `schema_version: ${sv}\nslug: ${slug}\nstatus: in-progress\nphase: building\n`);
+    fs.writeFileSync(path.join(d, 'spec.md'), spec);
+  };
+  write('legacy', CURRENT_SCHEMA_VERSION - 1, '# Spec\n\n## Goal\nx\n');
+  let findings = specAssumptions(tmp);
+  assertFindingShape(findings);
+  assert.ok(!findings.some((f) => f.severity === 'WARN'), `legacy bundle grandfathered: ${JSON.stringify(findings)}`);
+  write('modern', CURRENT_SCHEMA_VERSION, '# Spec\n\n## Goal\nx\n');
+  findings = specAssumptions(tmp);
+  assertFindingShape(findings);
+  assert.equal(maxSeverity(findings), 'WARN', JSON.stringify(findings));
+  assert.ok(findings.some((f) => f.severity === 'WARN' && /modern/.test(f.summary)),
+    'the at-floor bundle is the one that WARNs');
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+test('spec-assumptions: an archived at-floor bundle missing the section is exempt (no WARN)', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-sa-arch-'));
+  const d = path.join(tmp, 'docs', 'masterplan', 'frozen');
+  fs.mkdirSync(d, { recursive: true });
+  fs.writeFileSync(path.join(d, 'state.yml'),
+    `schema_version: ${CURRENT_SCHEMA_VERSION}\nslug: frozen\nstatus: archived\nphase: done\n`);
+  fs.writeFileSync(path.join(d, 'spec.md'), '# Spec\n\n## Goal\nx\n');
+  const findings = specAssumptions(tmp);
+  assertFindingShape(findings);
+  assert.ok(!findings.some((f) => f.severity === 'WARN'), `archived bundle exempt: ${JSON.stringify(findings)}`);
+  fs.rmSync(tmp, { recursive: true, force: true });
 });

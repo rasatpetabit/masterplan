@@ -157,6 +157,7 @@ import { planWorktreeCreate, parseWorktreeList, classifyWorktrees, normalizeDisp
 import { collectDiskDirs, collectBundleRecords } from '../lib/worktree-fs.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
 import { acquireOwner, heartbeatOwner, releaseOwner } from '../lib/owner-fs.mjs';
+import { planRefsAdd, applyRefsAdd, removeRef, listRefs, ensureRefs, resolveTargetBundlePath, deriveDefaultTargetRepo, canonicalizeRepoRoot, validateTargetSlug, buildEntry, reciprocalDirection, assertDirection } from '../lib/refs.mjs';
 import { issueBodyForTask, parseIssueBody, validateClaimSettle, selectClaimableUnits, reconcileIntegration, isTerminalIssueStatus, isValidIssueStatus, ISSUE_MAP_STATUSES, computeCoordDefaults } from '../lib/github-coord.mjs';
 import { migrate, detectSchemaVersion, MigrationError } from '../lib/migrate.mjs';
 import { decideNextAction } from '../lib/resume.mjs';
@@ -556,6 +557,130 @@ function resolveOwnerSelf(flags, statePath) {
   return { bundleDir, self, now, ttlMs };
 }
 
+// ---- F1 cross-bundle refs helpers (used by `refs add|remove` and `seed --predecessor`) ----
+// Acquire Guard-D owner locks on a SET of bundles in deterministic (canonical-repo, then slug) order so
+// two concurrent `refs` invocations on the same pair can never AB/BA-deadlock. A LIVE foreign owner on
+// ANY bundle -> die non-zero (naming the owner) after releasing whatever we already hold; nothing is
+// written. Returns a release() the caller MUST invoke on every exit path (success, throw, or die).
+function acquireRefsLocks(bundles, flags, subLabel) {
+  const ordered = [...bundles].sort((a, b) =>
+    a.repo < b.repo ? -1 : a.repo > b.repo ? 1 : a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0);
+  const held = [];
+  const release = () => {
+    while (held.length) {
+      const h = held.pop();
+      try { releaseOwner(h.bundleDir, h.self, { now: h.now, ttlMs: h.ttlMs }); } catch { /* best-effort */ }
+    }
+  };
+  for (const b of ordered) {
+    const { bundleDir, self, now, ttlMs } = resolveOwnerSelf(flags, b.statePath);
+    try { fs.mkdirSync(bundleDir, { recursive: true }); } catch { /* exists/unwritable — acquire surfaces it */ }
+    const res = acquireOwner(bundleDir, self, { now, force: !!flags.force, ttlMs });
+    if (res.outcome === 'blocked') {
+      release();
+      const inc = res.incumbent || {};
+      die(`refs ${subLabel}: ${b.role} bundle ${b.statePath} is owned by ${inc.host ?? '?'}/${inc.session ?? '?'} — nothing written`, 1);
+    }
+    held.push({ bundleDir, self, now, ttlMs });
+  }
+  return release;
+}
+
+// Re-render a bundle's EXISTING plan.html inline after a refs mutation (F1 render-freshness). No-op when
+// plan.html is absent (nothing to refresh). NEVER throws: on failure it WARNs (naming the stale bundle)
+// and returns false so the caller can exit non-zero while the mutation stands durable.
+function rerenderRefsHtml(statePath, subLabel) {
+  const dir = path.dirname(statePath);
+  const planHtmlPath = path.join(dir, 'plan.html');
+  if (!fs.existsSync(planHtmlPath)) return true;
+  try {
+    const index = JSON.parse(fs.readFileSync(path.join(dir, 'plan.index.json'), 'utf8'));
+    const st = readState(statePath);
+    const taskStatus = {};
+    for (const t of st.tasks ?? []) taskStatus[Number(t.id)] = t.status;
+    // refs threaded for forward-compat with the render subsystem's header (unknown opts ignored today).
+    fs.writeFileSync(planHtmlPath, renderPlanHtml(index, { title: st.slug ?? 'Plan', taskStatus, refs: ensureRefs(st) }));
+    return true;
+  } catch (e) {
+    process.stderr.write(`refs ${subLabel}: plan.html is now STALE for ${dir} — re-render failed (${e.message})\n`);
+    return false;
+  }
+}
+
+// The full `refs add` transaction — shared by the `refs add` subcommand and `seed --predecessor`.
+// Resolves the (repo,slug) target, requires the target bundle to exist (add is strict), holds Guard-D
+// locks on BOTH bundles across the write, writes reciprocal target-then-source (atomic per file),
+// appends refs_added to both events.jsonl (skipping a side that didn't change), then re-renders both
+// existing plan.html. dies non-zero on any pre-write failure; on success prints one JSON line and, if a
+// post-commit render failed, exits non-zero (the mutation still stands).
+function performRefsAdd(flags, { sourcePath, direction, targetSlug, subLabel }) {
+  let dir, tslug;
+  try {
+    dir = assertDirection(direction);
+    tslug = validateTargetSlug(targetSlug);
+  } catch (e) {
+    die(`refs ${subLabel}: ${e.message}`, 1);
+  }
+  let sourceRepoRoot;
+  try {
+    sourceRepoRoot = deriveDefaultTargetRepo(sourcePath);
+  } catch (e) {
+    die(`refs ${subLabel}: ${e.message}`, 1);
+  }
+  let sourceState;
+  try {
+    sourceState = readState(sourcePath);
+  } catch {
+    die(`refs ${subLabel}: cannot read source bundle ${sourcePath}`, 1);
+  }
+  const sourceSlug = sourceState.slug;
+  const sourceTopic = sourceState.topic ?? null;
+  // Target repo root: STRICT canonicalization when --repo is supplied (realpath + must be a repo root),
+  // else default to the SOURCE bundle's own repo root — NEVER the session MAIN.
+  let targetRepoRoot;
+  if (flags.repo !== undefined) {
+    try {
+      targetRepoRoot = canonicalizeRepoRoot(String(flags.repo));
+    } catch (e) {
+      die(`refs ${subLabel}: ${e.message}`, 1);
+    }
+  } else {
+    targetRepoRoot = sourceRepoRoot;
+  }
+  const targetBundlePath = resolveTargetBundlePath(targetRepoRoot, tslug);
+  if (!fs.existsSync(targetBundlePath)) {
+    die(`refs ${subLabel}: target bundle ${targetBundlePath} does not exist — nothing written`, 1);
+  }
+  const selfRef = (targetRepoRoot === sourceRepoRoot && tslug === sourceSlug);
+  const bundles = [{ statePath: sourcePath, repo: sourceRepoRoot, slug: sourceSlug, role: 'source' }];
+  if (!selfRef) bundles.push({ statePath: targetBundlePath, repo: targetRepoRoot, slug: tslug, role: 'target' });
+  const release = acquireRefsLocks(bundles, flags, subLabel);
+  let renderOk = true;
+  let applied;
+  try {
+    const plan = planRefsAdd({
+      direction: dir, sourceRepoRoot, sourceSlug, sourceTopic,
+      targetRepoRoot, targetSlug: tslug, label: flags.label ?? null,
+    });
+    const targetState = readState(targetBundlePath);
+    applied = applyRefsAdd(sourceState, targetState, plan);
+    // Reciprocal write, target-then-source; each writeState is atomic (tmp+rename). Skip the event on
+    // an idempotent no-op (a side that didn't change).
+    if (applied.targetChanged) writeState(targetBundlePath, applied.targetState);
+    if (applied.sourceChanged) writeState(sourcePath, applied.sourceState);
+    const ts = new Date().toISOString();
+    if (applied.targetChanged) appendEvent(targetBundlePath, { type: 'refs_added', ts, direction: plan.target.direction, slug: sourceSlug });
+    if (applied.sourceChanged) appendEvent(sourcePath, { type: 'refs_added', ts, direction: dir, target: tslug });
+    // Inline render-freshness AFTER the state/event commit — only the sides that changed.
+    if (applied.sourceChanged && !rerenderRefsHtml(sourcePath, subLabel)) renderOk = false;
+    if (applied.targetChanged && !rerenderRefsHtml(targetBundlePath, subLabel)) renderOk = false;
+  } finally {
+    release();
+  }
+  out({ refs: 'add', direction: dir, target: tslug, source_changed: applied.sourceChanged, target_changed: applied.targetChanged });
+  if (!renderOk) process.exit(1);
+}
+
 // Valid task statuses the v8 shell may WRITE via mark-task. Minimal + decide-consistent:
 // decideNextAction treats anything !== 'done' as "still needs work", so pending/in_progress map
 // correctly and a typo ('doen', 'complete') is rejected rather than silently mis-recorded. (Legacy
@@ -751,6 +876,13 @@ function main() {
         die(e.message, 1);
       }
       writeState(p, state);
+      // --predecessor=<slug>: seed a back ref to the named prior run (+ its reciprocal forward ref in
+      // that bundle) now that state.yml exists. Reuses the F1 add transaction (same-repo target derived
+      // from THIS bundle's repo root); a missing predecessor fails loud (add is strict) after the seed
+      // has already committed — the fresh bundle stands, the link did not.
+      if (flags.predecessor !== undefined) {
+        performRefsAdd(flags, { sourcePath: p, direction: 'back', targetSlug: String(flags.predecessor), subLabel: 'seed --predecessor' });
+      }
       out({ seeded: state.slug, phase: state.phase, status: state.status, path: p }); // terse: no full-state echo (anti-flood)
       break;
     }
@@ -2911,6 +3043,103 @@ function main() {
         // lock is still within TTL (a successor can only steal a STALE lock).
         out(releaseOwner(bundleDir, self, { force: !!flags.force, now, ttlMs }));
       }
+      break;
+    }
+    case 'refs': {
+      // F1: (repo,slug)-identified bidirectional plan-graph refs. This case is the SOLE CD-7 writer of
+      // state.refs on the source (--state) AND the resolved target bundle. lib/refs.mjs owns the pure
+      // transform (validation, reciprocal construction, idempotent upsert/remove, path/repo resolution);
+      // this case owns Guard-D locking on BOTH bundles, the events.jsonl append, and the inline plan.html
+      // re-render. Sub-dispatch on the first positional (add|remove|list).
+      const sub = positional[0];
+      if (sub === 'list') {
+        // Read-only JSON — no lock, no write. (Stored slugs are re-validated by the pure core before any
+        // path construction elsewhere; list builds no path, so it echoes entries verbatim.)
+        out(listRefs(readState(need(flags, 'state'))));
+        break;
+      }
+      if (sub === 'add') {
+        performRefsAdd(flags, {
+          sourcePath: need(flags, 'state'),
+          direction: need(flags, 'direction'),
+          targetSlug: need(flags, 'target'),
+          subLabel: 'add',
+        });
+        break;
+      }
+      if (sub === 'remove') {
+        const sourcePath = need(flags, 'state');
+        let direction, targetSlug;
+        try {
+          direction = assertDirection(need(flags, 'direction'));
+          targetSlug = validateTargetSlug(need(flags, 'target'));
+        } catch (e) {
+          die(`refs remove: ${e.message}`, 1);
+        }
+        let sourceRepoRoot;
+        try {
+          sourceRepoRoot = deriveDefaultTargetRepo(sourcePath);
+        } catch (e) {
+          die(`refs remove: ${e.message}`, 1);
+        }
+        let sourceState;
+        try {
+          sourceState = readState(sourcePath);
+        } catch {
+          die(`refs remove: cannot read source bundle ${sourcePath}`, 1);
+        }
+        const sourceSlug = sourceState.slug;
+        // Removal is LENIENT about --repo: match the STORED identity as TEXT, canonicalizing only when the
+        // supplied path still exists (a ref to a moved/deleted repo must stay removable — strict add-style
+        // validation would make a dangling ref permanently unremovable).
+        let targetRepoRoot;
+        if (flags.repo !== undefined) {
+          targetRepoRoot = String(flags.repo);
+          try { if (fs.existsSync(targetRepoRoot)) targetRepoRoot = fs.realpathSync(targetRepoRoot); } catch { /* keep textual */ }
+        } else {
+          targetRepoRoot = sourceRepoRoot;
+        }
+        const targetBundlePath = resolveTargetBundlePath(targetRepoRoot, targetSlug);
+        const targetResolved = fs.existsSync(targetBundlePath);
+        const recipDir = reciprocalDirection(direction);
+        const selfRef = (targetRepoRoot === sourceRepoRoot && targetSlug === sourceSlug);
+        // Lock the source always; the target only when it resolves (an unresolvable target is source-only).
+        const bundles = [{ statePath: sourcePath, repo: sourceRepoRoot, slug: sourceSlug, role: 'source' }];
+        if (targetResolved && !selfRef) bundles.push({ statePath: targetBundlePath, repo: targetRepoRoot, slug: targetSlug, role: 'target' });
+        const release = acquireRefsLocks(bundles, flags, 'remove');
+        let renderOk = true;
+        let sChanged = false;
+        let tChanged = false;
+        try {
+          // Source side: drop the entry keyed on (targetRepoRoot, targetSlug). buildEntry reproduces the
+          // exact stored (repo,slug) key (label is irrelevant to the match).
+          const srcEntry = buildEntry({ slug: targetSlug, entryRepoRoot: targetRepoRoot, holdingRepoRoot: sourceRepoRoot });
+          const s = removeRef(sourceState, direction, srcEntry, sourceRepoRoot);
+          sChanged = s.changed;
+          if (targetResolved) {
+            const targetState = readState(targetBundlePath);
+            const recipEntry = buildEntry({ slug: sourceSlug, entryRepoRoot: sourceRepoRoot, holdingRepoRoot: targetRepoRoot });
+            const t = removeRef(targetState, recipDir, recipEntry, targetRepoRoot);
+            tChanged = t.changed;
+            if (t.changed) writeState(targetBundlePath, t.state); // target-then-source (atomic per file)
+          } else {
+            process.stderr.write(`refs remove: target bundle ${targetBundlePath} did not resolve — removing the SOURCE side only and WARNing (dangling ref cleanup)\n`);
+          }
+          if (s.changed) writeState(sourcePath, s.state);
+          const ts = new Date().toISOString();
+          // Skip the event on an idempotent no-op; source-only when the target didn't resolve.
+          if (tChanged) appendEvent(targetBundlePath, { type: 'refs_removed', ts, direction: recipDir, slug: sourceSlug });
+          if (sChanged) appendEvent(sourcePath, { type: 'refs_removed', ts, direction, target: targetSlug });
+          if (sChanged && !rerenderRefsHtml(sourcePath, 'remove')) renderOk = false;
+          if (tChanged && !rerenderRefsHtml(targetBundlePath, 'remove')) renderOk = false;
+        } finally {
+          release();
+        }
+        out({ refs: 'remove', direction, target: targetSlug, source_changed: sChanged, target_changed: tChanged, target_resolved: targetResolved });
+        if (!renderOk) process.exit(1);
+        break;
+      }
+      die(`unknown refs subcommand '${sub ?? ''}' — expected: add | remove | list`, 1);
       break;
     }
     default:

@@ -243,6 +243,53 @@ test('validatePlanIndex rejects same-wave file overlap', () => {
   assert.ok(errors.some((e) => /shared\.js/.test(e) && /wave/i.test(e)));
 });
 
+// ── narrative meta round-trip + back-compat accept-and-ignore ────────────────
+test('merge threads narrative meta {purpose, problem, solution} through as index.meta', () => {
+  const meta = { purpose: 'why', problem: 'what hurts', solution: 'the fix' };
+  const index = mergePlanFragments([frag('s', [task('a')])], { meta });
+  assert.deepEqual(index.meta, { purpose: 'why', problem: 'what hurts', solution: 'the fix' });
+  // meta rides alongside the canonical fields, never replacing them.
+  assert.equal(index.schema_version, '6.0');
+  assert.equal(index.tasks.length, 1);
+  // and the merged index still validates clean with the meta present.
+  assert.deepEqual(validatePlanIndex(index), []);
+});
+
+test('merge emits no index.meta when no narrative fields are supplied (back-compat)', () => {
+  const withoutOpts = mergePlanFragments([frag('s', [task('a')])]);
+  assert.equal('meta' in withoutOpts, false);
+  const emptyMeta = mergePlanFragments([frag('s', [task('a')])], { meta: {} });
+  assert.equal('meta' in emptyMeta, false);
+  // an old-shape index with no meta stays valid.
+  assert.deepEqual(validatePlanIndex(withoutOpts), []);
+});
+
+test('merge soft-ignores malformed / partial narrative meta rather than throwing', () => {
+  // A non-object meta is ignored entirely.
+  const bogus = mergePlanFragments([frag('s', [task('a')])], { meta: 'not-an-object' });
+  assert.equal('meta' in bogus, false);
+  // Non-string and empty-string fields are dropped; only valid strings survive.
+  const partial = mergePlanFragments([frag('s', [task('a')])], {
+    meta: { purpose: 'keep me', problem: 42, solution: '   ', extra: 'nope' },
+  });
+  assert.deepEqual(partial.meta, { purpose: 'keep me' });
+  assert.equal('extra' in partial.meta, false);
+  assert.deepEqual(validatePlanIndex(partial), []);
+});
+
+test('validatePlanIndex accept-and-ignores meta: valid both with and without the field', () => {
+  const base = { schema_version: '6.0', tasks: [
+    { id: 1, description: 'x', wave: 0, files: ['a.js'], verify_commands: [], codex: null },
+  ] };
+  // Without meta (old index) → valid.
+  assert.deepEqual(validatePlanIndex(base), []);
+  // With well-formed meta → still valid.
+  assert.deepEqual(validatePlanIndex({ ...base, meta: { purpose: 'p', problem: 'q', solution: 'r' } }), []);
+  // With a malformed meta value → soft-ignored, still valid (no meta-related error).
+  assert.deepEqual(validatePlanIndex({ ...base, meta: 'garbage' }), []);
+  assert.deepEqual(validatePlanIndex({ ...base, meta: { purpose: 123 } }), []);
+});
+
 // ── renderPlanMd: plan.md is a deterministic projection of the index ─────────
 test('renderPlanMd is deterministic and contains every task', () => {
   const index = mergePlanFragments([

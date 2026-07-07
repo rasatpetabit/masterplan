@@ -121,7 +121,7 @@ test('migrate output passes validateCoreState — schema_version is the canonica
 // ---- 6.0 passthrough: already-v8 flat state round-trips unchanged ----
 test('migrate(6.0): passthrough via the flat parser (no transform)', () => {
   const v8 = { schema_version: '6.0', slug: 'demo', pending_gate: null, active_run: null,
-               refs: { back: [], forward: [] },
+               refs: { back: [], forward: [] }, render: { images: 'off' },
                tasks: [{ id: 1, status: 'done', wave: 0, files: ['a.js'] }] };
   const text = serializeState(v8);
   assert.deepEqual(migrate(text), parseState(text));
@@ -145,6 +145,22 @@ test('migrate(6.x): an existing refs value is preserved untouched', () => {
 });
 test('migrate(5.0): a legacy bundle with no refs migrates to the empty-refs default', () => {
   assert.deepEqual(migrate(SAMPLE).refs, { back: [], forward: [] });
+});
+
+// ---- render on-load default: absent render -> {images:'off'}; present render preserved ----
+test('migrate(6.x): an absent render key loads as the images-off default', () => {
+  const text = 'schema_version: 6\nslug: x\nstatus: executing\nphase: C\n';
+  assert.deepEqual(migrate(text).render, { images: 'off' });
+});
+test('migrate(6.x): an existing render value is preserved untouched', () => {
+  const v8 = { schema_version: '6.0', slug: 'demo', pending_gate: null, active_run: null,
+               refs: { back: [], forward: [] }, render: { images: 'on' },
+               tasks: [{ id: 1, status: 'done', wave: 0, files: ['a.js'] }] };
+  const text = serializeState(v8);
+  assert.deepEqual(migrate(text).render, { images: 'on' });
+});
+test('migrate(5.0): a legacy bundle with no render migrates to the images-off default', () => {
+  assert.deepEqual(migrate(SAMPLE).render, { images: 'off' });
 });
 
 // ---- refuse pre-5.0 loudly (R3: don't silently break; backup preserved by caller) ----
