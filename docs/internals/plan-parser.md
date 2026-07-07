@@ -130,28 +130,133 @@ drifting. The render groups tasks by wave, listing each task's files, verify com
 codex annotation. Because `plan.md` is a pure function of the index, any edit to task scope
 or ordering is made in the index; `plan.md` is regenerated.
 
-## plan.html as a rendered projection (`renderPlanHtml`)
+## plan.html as a rendered projection (renderPlanHtml)
 
 `plan.html` is a second, **additive** projection of the index — `plan.md` stays canonical;
 `plan.html` is the rendered, browser-openable view (planf3-inspired). Like `renderPlanMd`,
 `renderPlanHtml(index, meta)` is a **pure, deterministic** function: identical `(index, meta)`
 yields byte-identical output (including its SVG), with no clock/randomness/measured text — any
-timestamp shown comes from `index.generated_at`/`meta`, never `new Date()`. It is self-contained
-(inline CSS, no JS, no remote resources) and neutralizes every interpolated field so untrusted
-plan text can never become executable markup or a remote fetch — string fields are **HTML-escaped**,
-and the numeric `id`/`wave` fields (interpolated raw) are **`Number()`-coerced**, so a hand-edited
-index that smuggles markup through them renders as `NaN` rather than an open tag. The inline `<svg>` is a
-**wave-banded node layout, not a dependency graph** — the merged index carries no deps (the merge
-drops internal `key`/`deps`), so drawing dependency edges would be fabricated; nodes are grouped by
-wave and ordered by id.
+timestamp shown comes from `meta.generated_at`/`index.generated_at`, never `new Date()`. It is
+self-contained (inline CSS, no JS, no remote resources). The `meta` bag threads render context:
+`title`, `taskStatus` ({id → status}), `refs`, `narrative`, `bundleDir`, `generated_at`,
+`amendmentsMd`/`amendments`, and an injectable `fileExists` (for offline trust-boundary tests).
 
-Two entry points (both fs-only, no network/secrets):
+### Expanded section order
+
+The document body is assembled top-to-bottom in one fixed order (`renderPlanHtml`,
+`lib/plan-merge.mjs`); every block after the header is **conditionally emitted** and collapses
+to an empty string when its data is absent, so an old minimal index still renders cleanly:
+
+1. **Header + refs** — `<h1>` title, a one-line `summary` (`N task(s) across M wave(s).`), an
+   optional `Generated:` stamp (only when `meta`/`index.generated_at` is set), the optional
+   hero image, then the **References** block (`refsBlock`): `back:`/`forward:` cross-bundle ref
+   links from `meta.refs` (`{ back, forward }`), omitted when both are empty. Each ref renders
+   as an `<a href>` only when its target `plan.html` exists (by-presence), else inert text.
+2. **Narrative meta** (`narrativeBlock`) — `Purpose` / `Problem` / `Solution` `<h2>`+`<p>`
+   pairs, each emitted only when its narrative string is present and non-empty.
+3. **Wave SVG** (`renderWaveSvg`) — the inline wave-banded node diagram (below), wrapped in
+   `<figure class="diagram">`.
+4. **Task table** — one `<section class="wave">` per wave, each with an optional
+   `assets/wave-<n>.png` illustration then a table whose columns are
+   #, Status (badge), Task, Files, Verify, Codex, Spec refs.
+5. **Goals** (`goalsBlock`) — the distinct goal ids cited across all tasks, de-duped and
+   sorted for determinism; omitted when no task cites a goal.
+6. **Amendments timeline** (`amendmentsBlock`) — the parsed `## Amendments` history rendered
+   as an ordered `<ol class="timeline">` (below).
+
+### The inline wave SVG (a node layout, not a dependency graph)
+
+The inline `<svg>` (`renderWaveSvg`) is a **wave-banded node layout, not a dependency graph** —
+the merged index carries no deps (the merge drops internal `key`/`deps`), so drawing dependency
+edges would be fabricated. Each wave is a horizontal band; tasks (id-sorted) are `#id` nodes
+within it, colored by status. Geometry is a pure function of node counts — no measured text, no
+generated ids, no clock — so the SVG is byte-stable for a given `(index, taskStatus)`.
+
+### by-presence image embedding (`assets/{hero,wave-<n>}.png`)
+
+Images are embedded strictly **by presence on disk**, never by any render flag: the `imgTag`
+helper resolves a slot to a path via `resolveAssetSrc(bundleDir, slot)` and emits an `<img>`
+only when `bundleDir` is set **and** `fileExists(abs)` is true — otherwise it returns `''`, so
+a missing asset yields no broken image. Two slots are consulted: `hero` (rendered once in the
+header) and `wave-<n>` per wave `<section>`. The `<img src>` uses the bundle-relative path and
+is HTML-escaped like every other interpolated value.
+
+### The `## Amendments` markdown parse (`parseAmendments`)
+
+`parseAmendments(md)` turns the `## Amendments` section that the F2 amend flow appends to
+`plan.md` into an ordered timeline. It accepts either the whole `plan.md` or just the section,
+and is a pure string parse (no fs, no clock): it scans for the `## Amendments` H2, then reads
+`### <date> — <summary>` entry headings (em-dash separated; a heading with no em-dash keeps an
+empty `date` and treats the whole heading as `summary`), collecting following non-`###` lines
+as that entry's `detail` body. A subsequent `##` H2 ends the section. Each entry becomes
+`{ date, summary, detail }`. `render-plan` reads `plan.md` best-effort (`meta.amendmentsMd`);
+an absent/unreadable `plan.md` yields no timeline, never a throw.
+
+### Trust boundaries: escaping + path traversal
+
+Two independent trust boundaries keep untrusted plan text and stored slugs from becoming
+executable markup, a remote fetch, or a filesystem-traversal primitive:
+
+- **Escaping.** Every interpolated string field (descriptions, files, commands, spec_refs,
+  title, ref labels, asset `src`, amendment date/summary/detail) routes through `escapeHtml`
+  (`& < > " '`), so untrusted markup can never open a `<script>` or `src=`/`href=` fetch. The
+  numeric `id`/`wave` fields are interpolated **raw** (not via `escapeHtml`) but are
+  `Number()`-coerced up front, so a hand-edited index that smuggles markup through them renders
+  as `NaN`, not an open tag. Task status reaches a CSS class only through the
+  `PLAN_HTML_STATUSES` whitelist (`pending`/`done`/`failed`/`blocked`; anything else →
+  `pending`), so a hostile status string cannot inject a class.
+- **Path traversal.** Asset and ref paths are pure `node:path` math (no fs) with a confinement
+  check. `resolveAssetSrc` keeps an embedded `<img>` inside the bundle's `assets/` dir — a slot
+  that resolves outside `assets/` returns `null` (no tag). `resolveRefTarget` re-validates the
+  **stored** ref slug against `SLUG_RE` (`^[a-z0-9][a-z0-9-]*$`) and resolves the target under
+  the ref's stored **canonical repo root** (`ref.repo`, else the bundle's `<root>/docs/masterplan/<slug>`
+  → `<root>` ancestor); a target that escapes that root returns `null`. So a hostile
+  `state.refs` slug renders as inert text, never a traversal.
+
+### Two entry points (both fs-only, no network/secrets)
+
 - **Auto-emit** at the plan→execute seam: `mp load-plan` best-effort writes a static `plan.html`
   (all tasks `pending`) right after the index validates and before the atomic state write. A
   render/write failure is swallowed (logged) — it never fails `load-plan` or perturbs `state.yml`.
 - **`mp render-plan`** (the `render` verb): re-renders `plan.html` with **live** per-task status
   read from `state.tasks` (badge values `pending`/`done`/`failed`/`blocked`; anything else →
-  `pending`). **Read-only w.r.t. state** — it never calls `writeState`.
+  `pending`), plus refs from state, narrative from `index.meta`, and the amendments timeline from
+  `plan.md`. **Read-only w.r.t. state** — it never calls `writeState`, so F1 (refs) and F2 (amend)
+  callers can idempotently retry the render after a post-commit render failure without touching
+  `state.yml`.
+
+### `state.render` config (`mp set-render-config` / `seed --render-images`)
+
+Whether a run arms image/diagram render artifacts is a per-bundle toggle held in a nested
+`state.render` object (currently just `state.render.images`, `'on'`|`'off'`), symmetric with
+`state.review`/`state.codex`:
+
+- **Seed default.** `buildSeedState` writes `state.render = { images: <seed> }`, defaulting to
+  `'off'` unless `seed --render-images=on` is passed. The bin boundary enum-validates
+  `--render-images` to `on`|`off`; migration back-fills a missing `state.render` to
+  `{ images: 'off' }`.
+- **`mp set-render-config --images=on|off`.** The reversible setter (mirrors
+  `set-review-config`): `setRenderConfig` merge-updates only the supplied facet so other render
+  keys survive, and every `{...state}` writer round-trips `state.render` untouched. This is the
+  single non-seed writer of the key — the toggle is flipped via the verb, never a CD-7 hand-edit
+  of `state.yml`.
+
+### Narrative meta threading (`--meta` / `mp-planner` / back-compat)
+
+The optional narrative `meta` (`{ purpose, problem, solution }`, each 1–3 plain-prose sentences
+distilled from `spec.md`) is carried into `index.meta` by **both** planning paths so the
+Purpose/Problem/Solution sections render identically regardless of path:
+
+- **Parallel path.** `merge-plan-fragments --meta=<JSON>` forwards the parsed meta to
+  `mergePlanFragments(fragments, { meta })`, which distils `{purpose, problem, solution}` into
+  `index.meta`. Non-object meta, missing fields, and non-string/empty values are **soft-ignored**
+  (never a throw); when no valid narrative field is present, `index.meta` is omitted entirely so
+  an old no-meta index keeps its exact byte shape.
+- **Serial path.** `mp-planner` emits the same optional top-level `meta` object directly in
+  `plan.index.json` (same `{purpose, problem, solution}` contract), keeping the two paths in sync.
+- **`validatePlanIndex` back-compat.** The validator is **accept-and-ignore** for `index.meta`:
+  it inspects only `index.tasks`, so an old index carrying no meta stays valid, a new index with
+  meta stays valid, and a malformed meta value is a soft-ignore, never a hard error.
 
 ## plan.index.json schema reference
 

@@ -179,6 +179,7 @@ import { recordWaveResult } from '../lib/wave-commit.mjs';
 import { continueRun } from '../lib/continue.mjs';
 import { finishStep } from '../lib/finish-step.mjs';
 import { sweepWorktrees } from '../lib/sweep.mjs';
+import { discoverRuns, readDiscoveryConfig, serializeDiscoveryConfig, addDiscoveryRoot, removeDiscoveryRoot, discoveryConfigPath } from '../lib/runs.mjs';
 
 // ---- spec/plan gate-review enforcement (the two PRE-EXECUTE adversary gates) ----
 // The bin fs boundary for lib/gate-review.mjs (the pure scanner). These two functions recompute a
@@ -3144,6 +3145,58 @@ function main() {
       }
       break;
     }
+    case 'runs': {
+      // F5: read-only cross-repo run inventory via the shared lib/runs.mjs discovery engine. NEVER writes
+      // state.yml (no lock, no event, no CD-7 concern). Sub-dispatch on the first positional; only `list`
+      // exists today. Discovery roots = MAIN (--repo-root) + nested/enclosing git repos + `--roots=a,b` +
+      // the persistent <MAIN>/docs/masterplan/.discovery.yml config. Per-bundle/per-root failures are
+      // isolated to the `warnings` array and never abort the scan.
+      const sub = positional[0];
+      if (sub !== 'list') {
+        die(`unknown runs subcommand '${sub ?? ''}' — expected: list`, 1);
+      }
+      const repoRoot = need(flags, 'repo-root');
+      let result;
+      try {
+        result = discoverRuns({ repoRoot, rootsArg: flags.roots ?? null });
+      } catch (e) {
+        die(`runs list: ${e.message}`, 1);
+      }
+      // Porcelain shape mirrors the engine's per-bundle record verbatim under `runs`, plus the isolated
+      // per-bundle/per-root `warnings` the scan collected.
+      out({ runs: result.runs, warnings: result.warnings });
+      break;
+    }
+    case 'set-discovery': {
+      // F5: the WRITE side of the <MAIN>/docs/masterplan/.discovery.yml ARTIFACT-class roots config (NOT run
+      // state — no CD-7 concern, no lock, no event). Add or remove ONE persistent discovery root, round-tripping
+      // through the tolerant lib/runs.mjs parser/serializer. Exactly one of --add-root/--remove-root is required.
+      const repoRoot = need(flags, 'repo-root');
+      const addRoot = typeof flags['add-root'] === 'string' ? flags['add-root'] : undefined;
+      const removeRoot = typeof flags['remove-root'] === 'string' ? flags['remove-root'] : undefined;
+      if ((addRoot === undefined) === (removeRoot === undefined)) {
+        die('set-discovery: pass exactly one of --add-root=<path> or --remove-root=<path>', 1);
+      }
+      const rawRoot = addRoot !== undefined ? addRoot : removeRoot;
+      let root = String(rawRoot).trim();
+      if (!root) die('set-discovery: root path must be non-empty', 1);
+      // Canonicalize the root when it exists so add/remove round-trip and symlink aliases collapse; keep the
+      // raw text when it does not resolve (a moved/deleted root must stay removable).
+      try { if (fs.existsSync(root)) root = fs.realpathSync(root); } catch { /* keep textual */ }
+      const cfgPath = discoveryConfigPath(repoRoot);
+      const { roots: current } = readDiscoveryConfig(repoRoot);
+      const action = addRoot !== undefined ? 'add' : 'remove';
+      const updated = action === 'add' ? addDiscoveryRoot(current, root) : removeDiscoveryRoot(current, root);
+      const changed = updated.length !== current.length || updated.some((r, i) => r !== current[i]);
+      try {
+        fs.mkdirSync(path.dirname(cfgPath), { recursive: true });
+        fs.writeFileSync(cfgPath, serializeDiscoveryConfig(updated));
+      } catch (e) {
+        die(`set-discovery: cannot write ${cfgPath}: ${e.message}`, 1);
+      }
+      out({ config: cfgPath, action, root, roots: updated, changed });
+      break;
+    }
     case 'status': {
       // Base one-bundle state summary + plan-graph refs block. READ-ONLY: no lock, no event,
       // no CD-7 write. This is the base surface the discovery subsystem later EXTENDS with an
@@ -3155,12 +3208,43 @@ function main() {
       // Refs are a status concern (which bundles this one links to); rendering the links is not.
       // listRefs echoes stored entries verbatim: { slug, label?, repo? } under back/forward.
       const refs = listRefs(state);
+      // F5: extend the base status with an `other runs` block — non-archived bundles discovered across
+      // MAIN + nested/enclosing git repos (+ any configured .discovery.yml roots), EXCLUDING this bundle.
+      // The multi-bundle picker still operates on MAIN-repo bundles only; this is surfacing, not takeover.
+      // Fully isolated: any discovery failure degrades to an empty list so a broken foreign bundle never
+      // takes down the current session's own status. Discovery de-dupes by (realpath(repo root), slug).
+      let other_runs = [];
+      try {
+        const mainRoot = deriveDefaultTargetRepo(p);
+        let selfCanon;
+        try { selfCanon = fs.realpathSync(p); } catch { selfCanon = path.resolve(p); }
+        const { runs } = discoverRuns({ repoRoot: mainRoot });
+        other_runs = runs
+          .filter((r) => !r.archived)
+          .filter((r) => {
+            let rc;
+            try { rc = fs.realpathSync(r.statePath); } catch { rc = path.resolve(r.statePath); }
+            return rc !== selfCanon;
+          })
+          .map((r) => ({
+            repo: r.repo,
+            slug: r.slug,
+            status: r.status,
+            phase: r.phase,
+            tasks: { done: r.tasks_done, total: r.tasks_total },
+            last_activity: r.last_activity,
+            owner: r.owner,
+          }));
+      } catch {
+        other_runs = [];
+      }
       out({
         slug: state.slug ?? null,
         status: state.status ?? null,
         phase: state.phase ?? null,
         tasks: { done, total: tasks.length },
         refs,
+        other_runs,
       });
       break;
     }
