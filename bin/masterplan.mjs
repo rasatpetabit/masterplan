@@ -151,7 +151,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, setWorktree, setWorktreeDisposition, setVerifiedSha, setCodexConfig, setReviewConfig, loadPlanTasks, buildSeedState, buildTasksFromPlanIndex, appendEvent, setCoordination, applyPlanIndex, rebasePaths, GOAL_LIFECYCLE_EVENT_TYPES, inferGoalsCapability } from '../lib/bundle.mjs';
+import { readState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, setWorktree, setWorktreeDisposition, setVerifiedSha, setCodexConfig, setReviewConfig, setRenderConfig, loadPlanTasks, buildSeedState, buildTasksFromPlanIndex, appendEvent, setCoordination, applyPlanIndex, rebasePaths, GOAL_LIFECYCLE_EVENT_TYPES, inferGoalsCapability } from '../lib/bundle.mjs';
 import { parseGoals, validateGoals, goalsHash, validateUserApprovalReceipt, validateAmendment, amendmentDiff, crossCheckGoals, validateGoalCheckReceipt, validateGoalWaiver, waiverKey } from '../lib/goals.mjs';
 import { planWorktreeCreate, parseWorktreeList, classifyWorktrees, normalizeDisposition, dispositionAfterTeardown, VALID_DISPOSITIONS as VALID_WORKTREE_DISPOSITION } from '../lib/worktree.mjs';
 import { collectDiskDirs, collectBundleRecords } from '../lib/worktree-fs.mjs';
@@ -843,6 +843,11 @@ function main() {
       if (flags['owner-lock'] !== undefined && !['on', 'off'].includes(flags['owner-lock'])) {
         die(`invalid --owner-lock '${flags['owner-lock']}' — expected on or off`);
       }
+      // --render-images=on|off seeds state.render.images (buildSeedState defaults 'off'). Enum-validated
+      // here at the bin boundary; undefined leaves buildSeedState's default in force.
+      if (flags['render-images'] !== undefined && !['on', 'off'].includes(flags['render-images'])) {
+        die(`invalid --render-images '${flags['render-images']}' — expected on or off`);
+      }
       // --adversary-review: opt-out for the default-on finish-time review (--codex-review is a hidden
       // back-compat alias). Accepts on|off (the set-review-config subcommand accepts the same
       // vocabulary). Undefined → buildSeedState's default-true applies (spec §4.1).
@@ -872,6 +877,7 @@ function main() {
           planIndexPath: flags['plan-index-path'] ?? path.join(dir, 'plan.index.json'),
           ownerLock: flags['owner-lock'],
           codexReview: reviewFlag === undefined ? true : reviewFlag === 'on',
+          renderImages: flags['render-images'],
         });
       } catch (e) {
         die(e.message, 1);
@@ -1679,8 +1685,25 @@ function main() {
       }
       const taskStatus = {};
       for (const t of state.tasks ?? []) taskStatus[Number(t.id)] = t.status;
-      const planHtmlPath = flags['plan-html'] ?? path.join(path.dirname(planIndexPath), 'plan.html');
-      fs.writeFileSync(planHtmlPath, renderPlanHtml(index, { title: state.slug ?? 'Plan', taskStatus }));
+      // The bundle dir roots by-presence asset embedding (assets/{hero,wave-<n>}.png) and the amendments
+      // read below. render-plan stays READ-ONLY and idempotently re-runnable: it only (over)writes
+      // plan.html, so F1/F2 callers can retry the render after a post-commit render failure — the state
+      // mutation stands and the staleness is resolved by re-running this verb.
+      const bundleDir = path.dirname(planIndexPath);
+      const planHtmlPath = flags['plan-html'] ?? path.join(bundleDir, 'plan.html');
+      // Render-freshness context: the ## Amendments timeline is parsed from plan.md (best-effort; an
+      // absent/unreadable plan.md yields no timeline, never a throw). refs come from state (F1 header
+      // links); narrative meta comes from index.meta (Purpose/Problem/Solution sections).
+      let planMdText = '';
+      try { planMdText = fs.readFileSync(path.join(bundleDir, 'plan.md'), 'utf8'); } catch { /* no plan.md -> no amendments timeline */ }
+      fs.writeFileSync(planHtmlPath, renderPlanHtml(index, {
+        title: state.slug ?? 'Plan',
+        taskStatus,
+        refs: ensureRefs(state),
+        narrative: index.meta,
+        bundleDir,
+        amendmentsMd: planMdText,
+      }));
       out({ rendered: planHtmlPath, tasks: (state.tasks ?? []).length });
       break;
     }
@@ -1973,7 +1996,9 @@ function main() {
       let index;
       try {
         // schemaVersion left to mergePlanFragments' own SCHEMA_VERSION default (single source of truth).
-        index = mergePlanFragments(fragments, { schemaVersion: meta.schemaVersion });
+        // Forward the parsed --meta so mergePlanFragments distils narrative {purpose,problem,solution}
+        // into index.meta on the PARALLEL path (mirrors the serial renderPlanMd(index, meta) below).
+        index = mergePlanFragments(fragments, { schemaVersion: meta.schemaVersion, meta });
       } catch (e) {
         die(`merge-plan-fragments: ${e.message}`, 1);
       }
@@ -2203,6 +2228,24 @@ function main() {
       }
       writeState(p, state);
       out({ review: result });
+      break;
+    }
+    case 'set-render-config': {
+      // Per-bundle render toggle mirroring set-review-config: --images=on|off arms/disarms image/diagram
+      // render artifacts via state.render.images (the key the shell's plan->execute image step reads).
+      // Enum-validated at the bin boundary; merge-updated through setRenderConfig so other render facets
+      // survive; reversible via the SAME verb (no CD-7 hand-edit).
+      const p = need(flags, 'state');
+      if (flags.images === undefined) {
+        die('set-render-config: provide --images=on|off', 1);
+      }
+      if (!['on', 'off'].includes(String(flags.images))) {
+        die(`invalid --images '${flags.images}' — expected on or off`);
+      }
+      let state = loadForWrite(p);
+      state = setRenderConfig(state, { images: String(flags.images) });
+      writeState(p, state);
+      out({ render: { images: String(flags.images) } });
       break;
     }
     case 'finish-status': {
