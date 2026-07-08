@@ -55,6 +55,16 @@ const tasks = Array.isArray(A.tasks) ? A.tasks : [];
 const baseline = Array.isArray(A.baseline) ? A.baseline : []; // git-touched set BEFORE launch (D6)
 const repoRoot = A.repoRoot ?? '(launch cwd)';
 const reviewOn = (A.review ?? 'off') === 'on';
+// Layer 3 + 4 multi-host safety provenance. The orchestrator may pre-capture each task's diff as TEXT
+// (host-independent — the reviewer runs NO git) and/or hand its own machine-id + the repo HEAD it
+// sees, so the reviewer can PROVE it shares the orchestrator's filesystem before any local git.
+// WHY THIS EXISTS (observed live 2026-07-08): on a multi-host fleet a subagent may execute on a
+// divergent/stale peer whose /srv/dev differs from the orchestrator's; a local `git diff` there
+// silently reviews the WRONG code (an unfakeable SHA-256 divergence proved it). inlineDiff makes the
+// review host-independent; the host/head guard makes the command fallback fail-loud on divergence.
+// Both are optional — legacy L1 supplies neither → the command path runs unguarded (status quo).
+const orchestratorHost = A.orchestratorHost ?? null;
+const orchestratorHead = A.orchestratorHead ?? null;
 
 // DOGFOOD SEAM (committed 561f348 as a prod-inert testability hook; exercised by the parity-dogfood
 // wave-2 run, 2026-05-29 — general-purpose+sonnet implementer, codex:codex-rescue reviewer). The engine hardcodes the `masterplan:` agentType
@@ -144,14 +154,39 @@ function scopedDiffCmd(files) {
   return `git diff HEAD -- ${q}; git ls-files --others --exclude-standard -- ${q} | while IFS= read -r u; do printf '\\n=== untracked %s ===\\n' "$u"; git diff --no-index -- /dev/null "$u" || true; done`;
 }
 
-function reviewerPrompt(task, files) {
+function reviewerPrompt(task, files, ctx = {}) {
+  const { inlineDiff, orchestratorHost: oHost, orchestratorHead: oHead } = ctx;
+  // Layer 3 PREFERRED path — an inline diff the ORCHESTRATOR captured on its live repo. The reviewer
+  // runs NO git at all, so it is immune to the multi-host divergence that corrupts a local `git diff`
+  // (a subagent on a stale peer reviews the wrong code). Mandatory when the orchestrator cannot
+  // guarantee a shared filesystem; preferred whenever available.
+  if (typeof inlineDiff === 'string' && inlineDiff.length > 0) {
+    return [
+      `Adversarially review masterplan task ${task.id} (cross-vendor second opinion).`,
+      `Task intent: ${task.description}`,
+      ``,
+      `A pre-captured diff of this task's declared files is provided BELOW (captured by the orchestrator on the live repo). Review ONLY this diff text. Run NO \`git\`/\`git diff\`/\`git status\` — the inline diff is authoritative and host-independent:`,
+      ``,
+      '```diff',
+      inlineDiff,
+      '```',
+      ``,
+      'Run the agent-dispatch adversary review per your invocation contract (read-only) against THIS diff text. Return the CD-10 severity-first findings + a closing `verdict:` line. Never block on a wedged reviewer.',
+    ].join('\n');
+  }
+  // Fallback path — build the scoped-diff COMMAND the reviewer runs locally. Host-dependent, so the
+  // Layer 4 host-identity guard MUST clear before any git (see agents/mp-adversarial-reviewer.md).
   const diffCmd = scopedDiffCmd(files);
+  const guardLine = (oHost || oHead)
+    ? `\nBEFORE any git, run the host-identity guard from your contract: compare THIS host's \`/etc/machine-id\` and \`git rev-parse HEAD\` against the orchestrator values (machine-id ${oHost ?? '(not provided)'}, HEAD ${oHead ?? '(not provided)'}). On ANY mismatch, STOP and emit exactly the inconclusive host-divergence line from your contract — never review a possibly-stale filesystem. Clear the guard, THEN proceed.`
+    : `\nNo orchestrator host/HEAD provenance was provided — run the scoped diff directly (legacy L1 path; the host-identity guard is skipped).`;
   const scopeLine = diffCmd
     ? `Scope the review to a PRE-BUILT diff of this task's DECLARED files (it already captures NEW/untracked files — you do NOT need \`git status\` to find them). Run this command EXACTLY as given, on ONE line — do not edit, split, reorder, or "simplify" it — and review ONLY its output:\n    ${diffCmd}\nReview nothing outside that diff. Do NOT run a bare \`git diff\`/\`git status\`: the read-only tree also holds unrelated uncommitted changes (sibling same-wave tasks, user edits) that would pollute the verdict and point the reviewer at files this task never touched.`
-    : `No declared file scope for this task — review the task intent against the working tree, and open your findings with a NOTE that the review is UNSCOPED (no file list to diff).`;
+    : `No declared file scope for this task — review the task intent against the working tree (after clearing the host-identity guard), and open your findings with a NOTE that the review is UNSCOPED (no file list to diff).`;
   return [
     `Adversarially review masterplan task ${task.id} (cross-vendor second opinion).`,
     `Task intent: ${task.description}`,
+    guardLine,
     scopeLine,
     'Run the agent-dispatch adversary review per your invocation contract (read-only). Return the CD-10 severity-first findings + a closing `verdict:` line. Never block on a wedged reviewer.',
   ].join('\n');
@@ -239,7 +274,7 @@ async function review(item, task) {
   try {
     const ropts = { label: `review:task-${item.task_id}`, phase: 'Review', agentType: reviewAgentType };
     if (reviewModel) ropts.model = reviewModel; // omitted in prod → frontmatter model governs
-    const text = await agent(reviewerPrompt(task, files), ropts);
+    const text = await agent(reviewerPrompt(task, files, { inlineDiff: task.inlineDiff, orchestratorHost, orchestratorHead }), ropts);
     if (text) {
       findings = String(text);
       verdict = extractVerdict(text);
