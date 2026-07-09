@@ -1,7 +1,7 @@
 ---
 schema_version: 8
 slug: planf3-ideas
-status: in-progress
+status: archived
 phase: execute
 topic: "Review https://github.com/disler/planf3 to see if there are ideas we should import into Masterplan"
 complexity: high
