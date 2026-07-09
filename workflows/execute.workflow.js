@@ -59,7 +59,8 @@ const reviewOn = (A.review ?? 'off') === 'on';
 // (host-independent — the reviewer runs NO git) and/or hand its own machine-id + the repo HEAD it
 // sees, so the reviewer can PROVE it shares the orchestrator's filesystem before any local git.
 // WHY THIS EXISTS (observed live 2026-07-08): on a multi-host fleet a subagent may execute on a
-// divergent/stale peer whose /srv/dev differs from the orchestrator's; a local `git diff` there
+// divergent host OR (observed live 2026-07-08) dispatched on a toolless chat lane where it never
+// ran Bash at all and confabulated plausible-looking tool output. A local `git diff` there
 // silently reviews the WRONG code (an unfakeable SHA-256 divergence proved it). inlineDiff makes the
 // review host-independent; the host/head guard makes the command fallback fail-loud on divergence.
 // Both are optional — legacy L1 supplies neither → the command path runs unguarded (status quo).
@@ -158,7 +159,8 @@ function reviewerPrompt(task, files, ctx = {}) {
   const { inlineDiff, orchestratorHost: oHost, orchestratorHead: oHead } = ctx;
   // Layer 3 PREFERRED path — an inline diff the ORCHESTRATOR captured on its live repo. The reviewer
   // runs NO git at all, so it is immune to the multi-host divergence that corrupts a local `git diff`
-  // (a subagent on a stale peer reviews the wrong code). Mandatory when the orchestrator cannot
+  // (a subagent on a divergent host — or a toolless lane that invents output — reviews the wrong
+  // code). Mandatory when the orchestrator cannot
   // guarantee a shared filesystem; preferred whenever available.
   if (typeof inlineDiff === 'string' && inlineDiff.length > 0) {
     return [

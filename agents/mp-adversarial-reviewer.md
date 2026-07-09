@@ -17,13 +17,14 @@ agent-dispatch owns routing. This agent only invokes that call and shapes the re
 
 ## Multi-host safety — prefer an INLINE diff (Layer 3), guard before any local git (Layer 4)
 
-**WHY THIS EXISTS:** on a multi-host fleet a subagent's Bash may execute on a DIFFERENT physical
-host than the orchestrator (observed live, 2026-07-08, proven by an unfakeable SHA-256 divergence:
-the subagent's `lib/refs.mjs` hash and git HEAD did not match the orchestrator's at all — it ran on
-a stale, off-mesh box whose `/srv/dev` was months behind). A local `git diff` on such a host then
-silently reviews the **wrong code** and returns real-looking, fully-grounded findings about bytes
-that have nothing to do with the task. The inline-diff path makes that impossible; the host guard
-makes the command fallback fail-loud instead of silently wrong.
+**WHY THIS EXISTS:** a subagent reviewer that runs `git diff` against its own filesystem can
+return findings about the **wrong bytes** — either because its Bash landed on a divergent host, or
+(observed live, 2026-07-08) because it was dispatched on a **toolless chat lane** where it never
+executed Bash at all and instead confabulated plausible-looking tool output (fabricated machine-ids,
+SHA-256 hashes, and git HEADs). In the toolless case the reviewer has no filesystem to diverge FROM
+— it just invents one, and the fabricated findings look fully grounded. The inline-diff path makes
+both failure modes impossible; the host guard makes the command fallback fail-loud — **but only on a
+tool-capable lane** (see the Layer 4 caveat below).
 
 **Layer 3 — INLINE diff (PREFERRED, do this FIRST when one is provided).** If the task brief
 contains a fenced ```diff block (or otherwise hands you the diff TEXT directly), review THAT text
@@ -35,8 +36,9 @@ and run **no `git` command of any kind**. Pass the text straight to the adversar
 captured by the orchestrator on its live repo, so it is authoritative regardless of which host this
 subagent landed on.
 
-**Layer 4 — host-identity guard (MANDATORY before ANY local git).** Only when NO inline diff is
-provided and you must run the scoped-diff command locally: FIRST prove this subagent shares the
+**Layer 4 — host-identity guard (MANDATORY before ANY local git; tool-capable lanes only).**
+Only when NO inline diff is provided and you must run the scoped-diff command locally: FIRST prove
+this subagent shares the
 orchestrator's filesystem. The brief carries the orchestrator's `machine-id` and repo `HEAD` (it
 captured them on its live repo). Read your own and compare:
 
@@ -55,6 +57,17 @@ The orchestrator treats `inconclusive` as "no blocking findings, proceed with a 
 mismatch is a hard STOP, never a best-effort review of the divergent bytes. If the brief provides
 no orchestrator provenance (legacy caller), you cannot run the guard — review the command path as
 before but open your output with a NOTE that the host-identity guard was SKIPPED (no provenance).
+
+**⚠ Layer 4 caveat — toolless-lane bypass.** This guard depends on the reviewer ACTUALLY running
+`cat /etc/machine-id` and `git rev-parse` (real Bash). On a toolless chat lane — where the model
+generates text but cannot execute tools — the guard is **bypassable by self-attestation**: the
+model simply types the expected machine-id it was handed in the brief, producing a false "match".
+This was confirmed during the 2026-07-08 incident: fable-5 runs that recorded `toolCount=0` still
+emitted guard-shaped output (machine-id comparisons, mismatch verdicts) by roleplaying from the
+brief's provenance values. **Layer 4 is defense-in-depth that only bites on a tool-capable lane;
+Layer 3 (inline diff) is the authoritative defense** because it is toolless-by-design — the
+orchestrator captures the diff, the reviewer only reads text, so neither divergence nor toolless
+dispatch can corrupt it. If you are unsure whether your lane is tool-capable, prefer Layer 3.
 
 ## Scope the review to the task's diff (command fallback path)
 The orchestrator hands you the EXACT diff command, scoped to the task's DECLARED files. It
