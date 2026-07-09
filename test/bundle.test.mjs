@@ -23,6 +23,7 @@ import {
   validateCoreState,
   buildSeedState,
   buildTasksFromPlanIndex,
+  upsertTasks,
   rebasePaths,
   appendEvent,
   setCoordination,
@@ -351,6 +352,96 @@ test('buildTasksFromPlanIndex: a task with no id fails loud (mark-task could nev
   assert.throws(() => buildTasksFromPlanIndex([{ wave: 0, files: [] }]), /has no id/);
   assert.throws(() => buildTasksFromPlanIndex([{ id: '', wave: 0 }]), /has no id/);
   assert.throws(() => buildTasksFromPlanIndex([{ id: null, wave: 0 }]), /has no id/);
+});
+
+// ---- upsertTasks (D4): status-preserving task injection for `mp amend-tasks` ----
+test('upsertTasks: refreshes {wave,files} for existing ids while PRESERVING status + reasons', () => {
+  const state = {
+    tasks: [
+      { id: 1, status: 'done', wave: 0, files: ['old1.txt'] },
+      { id: 2, status: 'blocked', wave: 1, files: ['old2.txt'], block_reason: 'HIL down' },
+      { id: 3, status: 'waived', wave: 2, files: [], waive_reason: 'decommissioned' },
+      { id: 4, status: 'in_progress', wave: 1, files: ['old4.txt'] },
+    ],
+  };
+  const idx = { tasks: [
+    { id: 1, wave: 5, files: ['new1.txt'] },
+    { id: 2, wave: 6, files: ['new2.txt'] },
+    { id: 3, wave: 7, files: ['new3.txt'] },
+    { id: 4, wave: 8, files: ['new4.txt'] },
+  ] };
+  const r = upsertTasks(state, idx);
+  assert.deepEqual(r.refreshed, [1, 2, 3, 4]);
+  assert.deepEqual(r.appended, []);
+  assert.deepEqual(r.pruned, []);
+  const t = (id) => r.state.tasks.find((x) => x.id === id);
+  assert.equal(t(1).status, 'done');                                 // preserved
+  assert.equal(t(1).wave, 5); assert.deepEqual(t(1).files, ['new1.txt']); // refreshed
+  assert.equal(t(2).status, 'blocked'); assert.equal(t(2).block_reason, 'HIL down'); // preserved
+  assert.equal(t(2).wave, 6); assert.deepEqual(t(2).files, ['new2.txt']);
+  assert.equal(t(3).status, 'waived'); assert.equal(t(3).waive_reason, 'decommissioned'); // preserved
+  assert.equal(t(3).wave, 7); assert.deepEqual(t(3).files, ['new3.txt']);
+  assert.equal(t(4).status, 'in_progress'); assert.equal(t(4).wave, 8);  // preserved + refreshed
+});
+
+test('upsertTasks: appends new index ids as pending with wave/files (non-numeric id preserved)', () => {
+  const state = { tasks: [{ id: 1, status: 'done', wave: 0, files: ['a.txt'] }] };
+  const idx = { tasks: [
+    { id: 1, wave: 0, files: ['a.txt'] },
+    { id: 5, wave: 3, files: ['c.mjs'] },
+    { id: 'lint', wave: 4, files: ['d.mjs'] }, // non-numeric id NOT coerced away
+  ] };
+  const r = upsertTasks(state, idx);
+  assert.deepEqual(r.appended, [5, 'lint']); // index order preserved
+  assert.deepEqual(r.refreshed, [1]);
+  const app5 = r.state.tasks.find((x) => x.id === 5);
+  assert.equal(app5.status, 'pending'); assert.equal(app5.wave, 3); assert.deepEqual(app5.files, ['c.mjs']);
+  const appLint = r.state.tasks.find((x) => x.id === 'lint');
+  assert.equal(appLint.status, 'pending'); assert.equal(appLint.wave, 4);
+});
+
+test('upsertTasks: ids absent from the index are kept verbatim by default (never silently dropped)', () => {
+  const state = { tasks: [
+    { id: 1, status: 'done', wave: 0, files: [] },
+    { id: 2, status: 'pending', wave: 1, files: [] },
+  ] };
+  const idx = { tasks: [{ id: 1, wave: 0, files: [] }] }; // id 2 absent
+  const r = upsertTasks(state, idx); // no --prune
+  assert.equal(r.state.tasks.find((x) => x.id === 2).status, 'pending'); // kept verbatim
+  assert.deepEqual(r.pruned, []);
+});
+
+test('upsertTasks --prune: drops BARE pending absent ids, reports pruned', () => {
+  const state = { tasks: [
+    { id: 1, status: 'done', wave: 0, files: [] },
+    { id: 2, status: 'pending', wave: 1, files: ['x.txt'] }, // bare pending -> droppable
+  ] };
+  const idx = { tasks: [{ id: 1, wave: 0, files: [] }] }; // id 2 absent
+  const r = upsertTasks(state, idx, { prune: true });
+  assert.deepEqual(r.pruned, [2]);
+  assert.equal(r.state.tasks.find((x) => x.id === 2), undefined); // dropped
+});
+
+test('upsertTasks --prune: REFUSES accumulated-state absent ids without --prune-non-pending', () => {
+  const state = { tasks: [
+    { id: 1, status: 'done', wave: 0, files: [] },                         // accumulated
+    { id: 2, status: 'blocked', wave: 1, files: [], block_reason: 'x' },    // accumulated
+  ] };
+  const idx = { tasks: [] }; // both absent
+  assert.throws(() => upsertTasks(state, idx, { prune: true }), /refuses to drop 2 task.*--prune-non-pending/s);
+  const r = upsertTasks(state, idx, { prune: true, pruneNonPending: true });
+  assert.deepEqual(r.pruned, [1, 2]);
+  assert.equal(r.state.tasks.length, 0);
+});
+
+test('upsertTasks: rejects a duplicate index id (1 and "1" collide after String normalization)', () => {
+  const state = { tasks: [] };
+  const idx = { tasks: [
+    { id: 1, wave: 0, files: [] },
+    { id: '1', wave: 1, files: ['dup.txt'] }, // collides with 1 after String()
+    { id: 2, wave: 2, files: [] },
+  ] };
+  assert.throws(() => upsertTasks(state, idx), /duplicate task id.*1/);
 });
 
 test('appendEvent: writes one JSON line per call, accumulating, into a sibling events.jsonl', () => {

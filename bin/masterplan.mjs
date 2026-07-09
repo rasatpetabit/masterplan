@@ -34,6 +34,13 @@
 //                                                  mutually exclusive with --note; see the case body)
 //   migrate-bundle --state=PATH                 -> back up + persist a legacy bundle as v8 (no-op if v8)
 //   backfill-waves --state=PATH --plan-index=PATH -> set each task's {wave,files} from plan.index.json
+//   amend-tasks --state=PATH --plan-index=PATH [--prune] [--prune-non-pending]
+//                                               -> status-preserving upsert (D4): append NEW ids as
+//                                                  pending, refresh {wave,files} for EXISTING ids while
+//                                                  PRESERVING status/reasons, and (--prune) drop ids
+//                                                  absent from the index (bare pending only; accumulated
+//                                                  state needs --prune-non-pending). Re-renders plan.html.
+//                                                  The status-preserving sibling of load-plan/backfill-waves.
 //   load-plan --state=PATH --plan-index=PATH    -> CD-7 write: materialize state.tasks from a fresh
 //                                                  plan.index.json AND advance phase→execute, ATOMICALLY
 //                                                  (the plan→execute seam; refuses a bundle with tasks;
@@ -151,7 +158,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, setWorktree, setWorktreeDisposition, setVerifiedSha, setCodexConfig, setReviewConfig, setRenderConfig, loadPlanTasks, buildSeedState, buildTasksFromPlanIndex, appendEvent, setCoordination, applyPlanIndex, rebasePaths, GOAL_LIFECYCLE_EVENT_TYPES, inferGoalsCapability } from '../lib/bundle.mjs';
+import { readState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, setWorktree, setWorktreeDisposition, setVerifiedSha, setCodexConfig, setReviewConfig, setRenderConfig, loadPlanTasks, buildSeedState, buildTasksFromPlanIndex, appendEvent, setCoordination, applyPlanIndex, upsertTasks, rebasePaths, GOAL_LIFECYCLE_EVENT_TYPES, inferGoalsCapability } from '../lib/bundle.mjs';
 import { parseGoals, validateGoals, goalsHash, validateUserApprovalReceipt, validateAmendment, amendmentDiff, crossCheckGoals, validateGoalCheckReceipt, validateGoalWaiver, waiverKey } from '../lib/goals.mjs';
 import { planWorktreeCreate, parseWorktreeList, classifyWorktrees, normalizeDisposition, dispositionAfterTeardown, VALID_DISPOSITIONS as VALID_WORKTREE_DISPOSITION } from '../lib/worktree.mjs';
 import { collectDiskDirs, collectBundleRecords } from '../lib/worktree-fs.mjs';
@@ -1518,6 +1525,43 @@ function main() {
       }
       writeState(p, next);
       out({ updated: tasks.filter((task) => Number.isInteger(task.wave)).length, total: tasks.length });
+      break;
+    }
+    case 'amend-tasks': {
+      // D4 wave-2 task 5: status-preserving task injection — the sibling of load-plan (initial-only,
+      // refuses a populated bundle) and backfill-waves (existing-only). amend-tasks APPENDS new ids as
+      // `pending`, REFRESHES {wave,files} for existing ids while PRESERVING status/block_reason/
+      // waive_reason, and (with --prune) drops ids absent from the index. Default --prune only drops
+      // bare `pending`; dropping accumulated state needs --prune-non-pending (the seed-tasks --force
+      // hazard, gated). Mirrors backfill-waves' wave-less stuck-guard and amend-plan's render-after-
+      // mutation. lib/bundle.mjs upsertTasks is pure (no fs/clock); this case owns fs/clock/render.
+      const p = need(flags, 'state');
+      const state = loadForWrite(p);
+      const planIndex = JSON.parse(readText(need(flags, 'plan-index')));
+      const prune = flags.prune === true;
+      const pruneNonPending = flags['prune-non-pending'] === true;
+      let up;
+      try {
+        up = upsertTasks(state, planIndex, { prune, pruneNonPending });
+      } catch (e) {
+        die(`amend-tasks: ${e.message}`, 1); // duplicate-id reject / prune-non-pending refusal
+      }
+      const tasks = up.state.tasks ?? [];
+      // Wave-less stuck-guard (mirror of backfill-waves): don't report success while a non-done task
+      // remains wave-less — decide would throw on the next resume. Fail loud BEFORE writing.
+      const stuck = tasks.filter((task) => task.status !== 'done' && !Number.isInteger(task.wave));
+      if (stuck.length) {
+        die(`amend-tasks: ${stuck.length} task(s) still have no integer wave after upsert ` +
+            `(ids: ${stuck.map((t) => t.id).join(', ')}) — id mismatch, missing wave/parallel_group, ` +
+            `or a non-integer wave value in plan.index.json.`, 1);
+      }
+      writeState(p, up.state);
+      // Inline render-freshness AFTER the commit (mirror amend-plan): no-op when plan.html is absent,
+      // never throws (WARNs + returns false on failure so the mutation stands durable).
+      let renderOk = true;
+      if (!rerenderRefsHtml(p, 'amend-tasks')) renderOk = false;
+      out({ amend_tasks: 'upserted', appended: up.appended, refreshed: up.refreshed, pruned: up.pruned });
+      if (!renderOk) process.exit(1);
       break;
     }
     case 'load-plan': {

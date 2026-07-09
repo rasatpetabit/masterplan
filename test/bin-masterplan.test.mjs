@@ -542,6 +542,84 @@ test('waive-task: refuses under a live active_run without --force; --force succe
   assert.ok(events.some((l) => l.includes('task_waived')), 'task_waived event emitted');
 });
 
+// ---- amend-tasks (D4): status-preserving upsert (mp amend-tasks) ----
+function writeIdx(tasks) {
+  const d = tmpDir('mp-idx-');
+  const ip = path.join(d, 'plan.index.json');
+  fs.writeFileSync(ip, JSON.stringify({ schema_version: 1, tasks, plan_hash: 'x', generated_at: 't' }));
+  return ip;
+}
+test('amend-tasks: appends new ids as pending, refreshes existing, PRESERVES status + reasons', () => {
+  const p = tmpBundle(v8({ tasks: [
+    { id: 1, status: 'done', wave: 0, files: ['old1.txt'] },
+    { id: 2, status: 'blocked', wave: 1, files: ['old2.txt'], block_reason: 'HIL' },
+  ] }));
+  const idx = writeIdx([
+    { id: 1, wave: 9, files: ['new1.txt'] }, // existing -> refresh, keep done
+    { id: 2, wave: 8, files: ['new2.txt'] }, // existing -> refresh, keep blocked+reason
+    { id: 5, wave: 3, files: ['c.mjs'] },    // new -> append pending
+  ]);
+  const r = run(['amend-tasks', `--state=${p}`, `--plan-index=${idx}`]);
+  assert.equal(r.status, 0, r.stderr);
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.amend_tasks, 'upserted');
+  assert.deepEqual(out.appended, [5]);
+  assert.deepEqual(out.refreshed.sort(), [1, 2]);
+  assert.deepEqual(out.pruned, []);
+  const st = read(p);
+  const t1 = st.tasks.find((x) => x.id === 1);
+  assert.equal(t1.status, 'done'); assert.equal(t1.wave, 9); assert.deepEqual(t1.files, ['new1.txt']);
+  const t2 = st.tasks.find((x) => x.id === 2);
+  assert.equal(t2.status, 'blocked'); assert.equal(t2.block_reason, 'HIL'); assert.equal(t2.wave, 8);
+  const t5 = st.tasks.find((x) => x.id === 5);
+  assert.equal(t5.status, 'pending'); assert.equal(t5.wave, 3);
+});
+
+test('amend-tasks: absent ids kept verbatim by default; --prune drops bare pending only', () => {
+  const base = () => v8({ tasks: [
+    { id: 1, status: 'done', wave: 0, files: [] },
+    { id: 2, status: 'pending', wave: 1, files: ['x.txt'] }, // bare pending
+  ] });
+  const idx = writeIdx([{ id: 1, wave: 0, files: [] }]); // id 2 absent
+  const p1 = tmpBundle(base());
+  const r1 = run(['amend-tasks', `--state=${p1}`, `--plan-index=${idx}`]);
+  assert.equal(r1.status, 0, r1.stderr);
+  assert.equal(read(p1).tasks.find((t) => t.id === 2).status, 'pending'); // kept
+  assert.deepEqual(JSON.parse(r1.stdout).pruned, []);
+  const p2 = tmpBundle(base());
+  const r2 = run(['amend-tasks', `--state=${p2}`, `--plan-index=${idx}`, '--prune']);
+  assert.equal(r2.status, 0, r2.stderr);
+  assert.deepEqual(JSON.parse(r2.stdout).pruned, [2]);
+  assert.equal(read(p2).tasks.find((t) => t.id === 2), undefined); // dropped
+});
+
+test('amend-tasks --prune: refuses accumulated state w/o --prune-non-pending (exit 1, unchanged)', () => {
+  const p = tmpBundle(v8({ tasks: [
+    { id: 1, status: 'done', wave: 0, files: [] }, // accumulated
+  ] }));
+  const idx = writeIdx([]); // id 1 absent
+  const rRefuse = run(['amend-tasks', `--state=${p}`, `--plan-index=${idx}`, '--prune']);
+  assert.notEqual(rRefuse.status, 0, 'must refuse to prune accumulated state');
+  assert.match(rRefuse.stderr, /--prune-non-pending/);
+  assert.equal(read(p).tasks.find((t) => t.id === 1).status, 'done'); // unchanged
+  const rOk = run(['amend-tasks', `--state=${p}`, `--plan-index=${idx}`, '--prune', '--prune-non-pending']);
+  assert.equal(rOk.status, 0, rOk.stderr);
+  assert.deepEqual(JSON.parse(rOk.stdout).pruned, [1]);
+  assert.equal(read(p).tasks.length, 0);
+});
+
+test('amend-tasks: wave-less stuck-guard fails loud before write (exit 1)', () => {
+  const p = tmpBundle(v8({ tasks: [{ id: 1, status: 'done', wave: 0, files: [] }] }));
+  const idx = writeIdx([
+    { id: 1, wave: 0, files: [] },
+    { id: 9, wave: null, files: ['z.mjs'] }, // new pending, no integer wave -> stuck
+  ]);
+  const r = run(['amend-tasks', `--state=${p}`, `--plan-index=${idx}`]);
+  assert.notEqual(r.status, 0, 'must fail on a wave-less pending task');
+  assert.match(r.stderr, /no integer wave/);
+  assert.match(r.stderr, /9/);
+});
+
 test('set-phase / set-status: write the lifecycle fields; reject a value outside the enum', () => {
   // The CD-7 closure for the line-333 hand-edit: there is now an `mp` write for the phase/status
   // fields, so the orchestrator never hand-edits state.yml to advance a phase or archive a run.
