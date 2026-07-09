@@ -1847,6 +1847,99 @@ function main() {
       out({ id, status });
       break;
     }
+    case 'waive-task': {
+      // D5 wave-1 task 4: the ONLY writer of status:'waived'. mark-task refuses waived (it's this
+      // verb's job, which enforces blocked-only + reason + the active_run guard). Waiving is terminal
+      // for dispatch+finalize but operator-reversible via `mp mark-task --status=pending` (markTask
+      // clears waive_reason on any non-waived transition). Without --all: waive ONE task by --id; with
+      // --all: waive EVERY currently-blocked task (the common 'whole tail is HIL-gated' case).
+      const p = need(flags, 'state');
+      const reasonRaw = flags.reason;
+      if (reasonRaw === undefined || String(reasonRaw).trim() === '') {
+        die('waive-task: --reason is required (non-empty) — explicit operator consent + auditable rationale.', 1);
+      }
+      const reason = String(reasonRaw).trim();
+      const all = flags.all === true;
+      const force = flags.force === true;
+      const state = loadForWrite(p);
+      const tasks = Array.isArray(state.tasks) ? state.tasks : [];
+      const blockedTasks = tasks.filter((t) => t.status === 'blocked');
+      const isCoveredByActiveRun = (id) =>
+        state.active_run && state.active_run.task_id != null &&
+        String(state.active_run.task_id) === String(id);
+
+      let targets;
+      if (all) {
+        targets = blockedTasks.map((t) => t.id);
+      } else {
+        const id = coerceId(need(flags, 'id'));
+        const idx = tasks.findIndex((t) => String(t.id) === String(id));
+        if (idx === -1) die(`waive-task: no task with id ${id}`, 1);
+        const task = tasks[idx];
+        if (task.status !== 'blocked') {
+          die(
+            `waive-task: task ${id} has status '${task.status}' — waive-task operates ONLY on blocked tasks. ` +
+              `Use \`mp mark-task\` for other status transitions.`,
+            1
+          );
+        }
+        targets = [id];
+      }
+
+      if (targets.length === 0) {
+        out({ waived: [] });
+        break;
+      }
+
+      // D5 in-flight guard: refuse a task covered by a live active_run without --force.
+      for (const id of targets) {
+        if (isCoveredByActiveRun(id) && !force) {
+          die(
+            `waive-task: task ${id} is covered by a live active_run (task_id=${state.active_run.task_id}). ` +
+              `Reap the run first, or pass --force to proceed (emits a task_blocked_under_active_run audit event).`,
+            1
+          );
+        }
+      }
+
+      // Mutate state.tasks directly (markTask throws on waived). Delete block_reason since it's now waived.
+      const targetSet = new Set(targets.map(String));
+      const nextTasks = tasks.map((t) => {
+        if (!targetSet.has(String(t.id))) return t;
+        const next = { ...t, status: 'waived', waive_reason: reason };
+        delete next.block_reason;
+        return next;
+      });
+
+      writeState(p, { ...state, tasks: nextTasks });
+
+      for (const id of targets) {
+        if (isCoveredByActiveRun(id) && force) {
+          // Best-effort audit trail — never block the waive on an events write.
+          try {
+            appendEvent(p, {
+              type: 'task_blocked_under_active_run',
+              ts: new Date().toISOString(),
+              data: { id },
+              summary: `task ${id} waived under a live active_run (--force)`,
+            });
+          } catch { /* audit-only */ }
+        }
+        try {
+          appendEvent(p, {
+            type: 'task_waived',
+            ts: new Date().toISOString(),
+            data: { id, reason },
+            summary: `task ${id} waived: ${reason}`,
+          });
+        } catch (e) {
+          die(e.message, 1);
+        }
+      }
+
+      out({ waived: targets });
+      break;
+    }
     case 'open-gate': {
       const p = need(flags, 'state');
       const gate = { id: need(flags, 'id'), opened_at: flags['opened-at'] ?? null };

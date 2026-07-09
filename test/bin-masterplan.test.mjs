@@ -439,6 +439,109 @@ test('mark-task: --status=blocked under a live active_run requires --force (emit
   assert.ok(eventsAfter.length > eventsBefore, 'a task_blocked_under_active_run event was appended');
   assert.ok(eventsAfter.some((l) => l.includes('task_blocked_under_active_run')));
 });
+
+// ---- waive-task: the ONLY writer of status:'waived' (blocked-only, --reason required) ----
+test('waive-task: waives a blocked task, sets waive_reason, emits task_waived event', () => {
+  const p = tmpBundle(v8());
+  // First block the task
+  run(['mark-task', `--state=${p}`, '--id=1', '--status=blocked', '--reason=HIL GPU offline']);
+  assert.equal(read(p).tasks.find((t) => t.id === 1).status, 'blocked');
+  // Now waive it
+  const r = run(['waive-task', `--state=${p}`, '--id=1', '--reason=HIL permanently decommissioned']);
+  assert.equal(r.status, 0, r.stderr);
+  const out = JSON.parse(r.stdout);
+  assert.deepEqual(out.waived, [1]);
+  const st = read(p);
+  const t = st.tasks.find((x) => x.id === 1);
+  assert.equal(t.status, 'waived');
+  assert.equal(t.waive_reason, 'HIL permanently decommissioned');
+  assert.ok(!('block_reason' in t), 'block_reason deleted on waive');
+  // event emitted
+  const events = fs.readFileSync(path.join(path.dirname(p), 'events.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  const waived = events.filter((e) => e.type === 'task_waived');
+  assert.equal(waived.length, 1);
+  assert.equal(waived[0].data.id, 1);
+  assert.equal(waived[0].data.reason, 'HIL permanently decommissioned');
+  assert.match(waived[0].summary, /task 1 waived/);
+});
+
+test('waive-task --all: waives every blocked task, one event each; non-blocked tasks untouched', () => {
+  const p = tmpBundle(v8({ tasks: [
+    { id: 1, status: 'blocked', wave: 0, files: ['a.txt'], block_reason: 'HIL down' },
+    { id: 2, status: 'blocked', wave: 0, files: ['b.txt'], block_reason: 'HIL down' },
+    { id: 3, status: 'pending', wave: 1, files: ['c.txt'] },
+  ] }));
+  const r = run(['waive-task', `--state=${p}`, '--all', '--reason=HIL permanently decommissioned']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(JSON.parse(r.stdout).waived.sort((a, b) => a - b), [1, 2]);
+  const st = read(p);
+  assert.equal(st.tasks.find((t) => t.id === 1).status, 'waived');
+  assert.equal(st.tasks.find((t) => t.id === 2).status, 'waived');
+  assert.equal(st.tasks.find((t) => t.id === 3).status, 'pending', 'non-blocked task untouched');
+  assert.equal(st.tasks.find((t) => t.id === 1).waive_reason, 'HIL permanently decommissioned');
+  assert.ok(!('block_reason' in st.tasks.find((t) => t.id === 1)), 'block_reason deleted');
+  // one task_waived event per waived task
+  const events = fs.readFileSync(path.join(path.dirname(p), 'events.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  const waived = events.filter((e) => e.type === 'task_waived');
+  assert.equal(waived.length, 2);
+});
+
+test('waive-task: refuses a non-blocked task (pending/done/in_progress) with state unchanged', () => {
+  const p = tmpBundle(v8({ tasks: [
+    { id: 1, status: 'pending', wave: 0, files: ['a.txt'] },
+    { id: 2, status: 'done', wave: 0, files: ['b.txt'] },
+    { id: 3, status: 'in_progress', wave: 0, files: ['c.txt'] },
+  ] }));
+  // pending
+  const rp = run(['waive-task', `--state=${p}`, '--id=1', '--reason=test']);
+  assert.notEqual(rp.status, 0, 'pending task must be refused');
+  assert.match(rp.stderr, /status 'pending'/);
+  assert.equal(read(p).tasks.find((t) => t.id === 1).status, 'pending', 'unchanged');
+  // done
+  const rd = run(['waive-task', `--state=${p}`, '--id=2', '--reason=test']);
+  assert.notEqual(rd.status, 0, 'done task must be refused');
+  assert.match(rd.stderr, /status 'done'/);
+  assert.equal(read(p).tasks.find((t) => t.id === 2).status, 'done', 'unchanged');
+  // in_progress
+  const ri = run(['waive-task', `--state=${p}`, '--id=3', '--reason=test']);
+  assert.notEqual(ri.status, 0, 'in_progress task must be refused');
+  assert.match(ri.stderr, /status 'in_progress'/);
+  assert.equal(read(p).tasks.find((t) => t.id === 3).status, 'in_progress', 'unchanged');
+});
+
+test('waive-task: --reason is required (missing/empty -> non-zero exit)', () => {
+  const p = tmpBundle(v8({ tasks: [{ id: 1, status: 'blocked', wave: 0, files: ['a.txt'], block_reason: 'x' }] }));
+  // missing
+  const noReason = run(['waive-task', `--state=${p}`, '--id=1']);
+  assert.notEqual(noReason.status, 0, 'missing --reason must fail');
+  assert.match(noReason.stderr, /--reason is required/);
+  // empty/whitespace
+  const emptyReason = run(['waive-task', `--state=${p}`, '--id=1', '--reason=  ']);
+  assert.notEqual(emptyReason.status, 0, 'empty --reason must fail');
+  assert.match(emptyReason.stderr, /--reason is required/);
+  // state unchanged
+  assert.equal(read(p).tasks.find((t) => t.id === 1).status, 'blocked');
+});
+
+test('waive-task: refuses under a live active_run without --force; --force succeeds + emits audit event', () => {
+  const p = tmpBundle(v8({ tasks: [
+    { id: 1, status: 'blocked', wave: 0, files: ['a.txt'], block_reason: 'x' },
+  ], active_run: { run_id: 'wf_1', task_id: '1', wave: 0, phase: 'running' } }));
+  // refused without --force
+  const refused = run(['waive-task', `--state=${p}`, '--id=1', '--reason=halt']);
+  assert.notEqual(refused.status, 0, 'waiving under active_run without --force must fail');
+  assert.match(refused.stderr, /active_run|--force/);
+  assert.equal(read(p).tasks.find((t) => t.id === 1).status, 'blocked', 'state unchanged on refusal');
+  // succeeds with --force
+  const forced = run(['waive-task', `--state=${p}`, '--id=1', '--reason=halt', '--force']);
+  assert.equal(forced.status, 0, forced.stderr);
+  assert.equal(read(p).tasks.find((t) => t.id === 1).status, 'waived');
+  // audit event emitted
+  const events = fs.readFileSync(path.join(path.dirname(p), 'events.jsonl'), 'utf8').trim().split('\n');
+  assert.ok(events.some((l) => l.includes('task_blocked_under_active_run')), 'audit event emitted');
+  assert.ok(events.some((l) => l.includes('task_waived')), 'task_waived event emitted');
+});
+
 test('set-phase / set-status: write the lifecycle fields; reject a value outside the enum', () => {
   // The CD-7 closure for the line-333 hand-edit: there is now an `mp` write for the phase/status
   // fields, so the orchestrator never hand-edits state.yml to advance a phase or archive a run.
