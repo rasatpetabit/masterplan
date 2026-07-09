@@ -67,7 +67,11 @@ emitted guard-shaped output (machine-id comparisons, mismatch verdicts) by rolep
 brief's provenance values. **Layer 4 is defense-in-depth that only bites on a tool-capable lane;
 Layer 3 (inline diff) is the authoritative defense** because it is toolless-by-design — the
 orchestrator captures the diff, the reviewer only reads text, so neither divergence nor toolless
-dispatch can corrupt it. If you are unsure whether your lane is tool-capable, prefer Layer 3.
+dispatch can corrupt it. The orchestrator-side capture of `orchestratorHost`/`Head` (continue.mjs)
+remains sound because it runs on the orchestrator's own tool-capable lane — only CHILD self-report
+is untrustworthy on toolless lanes. If you are unsure whether your lane is tool-capable, prefer
+Layer 3. (Harness fix tracked separately: reject subagent results whose claimed tool output lacks
+a `tool_use`/`toolUse` event.)
 
 ## Scope the review to the task's diff (command fallback path)
 The orchestrator hands you the EXACT diff command, scoped to the task's DECLARED files. It
