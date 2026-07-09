@@ -1343,6 +1343,40 @@ test('goals: SKIP when there are no run bundles (empty dir — not a committable
   fs.rmSync(tmp, { recursive: true, force: true });
 });
 
+test('goals: archived bundle with a goal_check whose ts is at the EVENT level (as record-goal-check writes it) re-validates PASS, not ERROR', () => {
+  // Regression: validateGoalCheckReceipt requires `receipt.ts`, but record-goal-check stores ts at the
+  // event level (like every event) and evData() returns only event.data — so the doctor's re-validation
+  // dropped ts and ERRORed "receipt.ts must be non-empty" on EVERY archived goals-enabled bundle with a
+  // recorded goal_check. The fix merges the event ts back in. This test pins that a real-shaped event PASSes.
+  const H = goalsHash(GOALS_MD_FIXTURE);
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-goals-ts-eventlevel-'));
+  const state =
+    'schema_version: 6\nslug: ts-event\nstatus: archived\nphase: execute\n' +
+    'goals_enabled: true\nworktree: /tmp/x\n' +
+    'goals: [{"id":"G1","text":"Track goals across the workflow"}]\n';
+  // ts is at the EVENT level only — NOT duplicated inside data — exactly as `mp record-goal-check` writes it.
+  const goalCheckEvent = {
+    type: 'goal_check',
+    ts: '2026-07-08T00:00:00Z',
+    data: {
+      goals_hash: H, head_sha: 'abc123', base: 'def456', diff_hash: 'x', base_diff_hash: 'x',
+      verify_output_hash: 'v', clean: true, provenance_kind: 'user',
+      verdicts: { G1: { verdict: 'achieved', evidence: 'done' } },
+      provenance: { attested_by: 'user', approval_receipt: { attested_by: 'user', purpose: 'goal_check', goals_hash: H, question: 'q', answer: 'a', ts: '2026-07-08T00:00:00Z' } },
+    },
+    summary: 'goal check recorded (user)',
+  };
+  const events =
+    '{"type":"bundle_created","data":{"goals_enabled":true}}\n' +
+    '{"type":"goals_frozen","data":{"goals_hash":"' + H + '"}}\n' +
+    JSON.stringify(goalCheckEvent) + '\n';
+  writeGoalsBundle(tmp, 'ts-event', { state, events, goalsMd: GOALS_MD_FIXTURE });
+  const findings = goals(tmp);
+  assertFindingShape(findings);
+  assert.equal(maxSeverity(findings), 'PASS', 'event-level-ts goal_check must re-validate PASS, not ERROR — ' + JSON.stringify(findings));
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
 test('goals: a pre-feature bundle beside a post-feature one causes no false failure (doctor distinguishes the two)', () => {
   // Pre-feature bundle (no capability/goal events, no marker) must be silently skipped, while the
   // adjacent goals-enabled bundle is checked and passes → overall PASS, never a WARN/ERROR from the

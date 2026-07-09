@@ -1,6 +1,6 @@
 {
   "name": "masterplan",
-  "version": "9.3.0",
+  "version": "9.4.0",
   "description": "Brainstorm, plan, execute, resume, import, lint, and retrospect long-running coding-agent work with durable run bundles and strict context control.",
   "author": {
     "name": "Richard A Steenbergen",
