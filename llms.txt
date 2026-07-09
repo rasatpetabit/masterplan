@@ -1,0 +1,38 @@
+# masterplan
+
+> Claude Code and Codex CLI plugin that orchestrates a brainstorm-plan-execute-finish development lifecycle with durable disk-based state.
+
+masterplan is a Claude Code and Codex CLI plugin implementing the /masterplan command: a resumable **brainstorm → plan → execute → finish** workflow for durable multi-hour engineering work, built on top of the obra/superpowers skills suite. Current release: v9.2.0 (MIT license).
+
+## Knowledge index — start here
+
+- [.okf/index.md](.okf/index.md): in-repo knowledge catalog: what this repo is, structure, conventions, pointers.
+- [bundle/state resume engine](.okf/bundle-resume-engine.md)
+- [doctor structural-lint subsystem](.okf/doctor-structural-lint.md)
+- [wave-dispatch execution engine](.okf/wave-dispatch-engine.md)
+
+## Repo entry points
+
+- [README.md](README.md): project overview, install, usage.
+- [AGENTS.md](AGENTS.md): agent operating conventions for this repo.
+- [CLAUDE.md](CLAUDE.md): Claude/agent guidance and project rules.
+
+## Documentation
+
+- [coordination-playbook.md](docs/coordination-playbook.md)
+- [development.md](docs/development.md)
+- [install.md](docs/install.md)
+- [internals.md](docs/internals.md)
+- [spike-0.5-findings.md](docs/spike-0.5-findings.md)
+- [verbs.md](docs/verbs.md)
+- [contracts](docs/contracts)
+- [conventions](docs/conventions)
+- [design](docs/design)
+- [internals](docs/internals)
+- [masterplan](docs/masterplan)
+
+## Workspace catalog
+
+- [ras/masterplan catalog](../../okf-workspace/repos/ras/masterplan.md): curated description in the fleet /srv/dev workspace index.
+- [Workspace index](../../okf-workspace/index.md): master catalog of all repos under /srv/dev, grouped by area.
+- [Back to workspace root](../../llms.txt)

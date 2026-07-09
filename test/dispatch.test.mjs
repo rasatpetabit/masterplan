@@ -102,6 +102,24 @@ test('buildWaveDispatchOp: fabric flag -> single dispatch_fabric op (supersedes 
   });
 });
 
+test('buildWaveDispatchOp: orchestrator host/HEAD provenance threads into the L2 launch args (Layer-4 guard wiring)', () => {
+  const op = buildWaveDispatchOp({ ...waveArgs, orchestratorHost: 'mach-abc', orchestratorHead: 'deadbeef' });
+  assert.equal(op.op, 'launch_workflow');
+  assert.equal(op.args.orchestratorHost, 'mach-abc');
+  assert.equal(op.args.orchestratorHead, 'deadbeef');
+  // The pre-existing args are untouched.
+  assert.equal(op.args.wave, 2);
+  assert.equal(op.args.review, 'on');
+});
+
+test('buildWaveDispatchOp: absent/null provenance is OMITTED (legacy unguarded path, byte-identical default args)', () => {
+  const op = buildWaveDispatchOp({ ...waveArgs, orchestratorHost: null, orchestratorHead: null });
+  assert.ok(!('orchestratorHost' in op.args), 'no orchestratorHost key when null');
+  assert.ok(!('orchestratorHead' in op.args), 'no orchestratorHead key when null');
+  // Identical to the default-path contract (backward compat).
+  assert.deepEqual(op.args, { wave: 2, tasks: waveArgs.tasks, baseline: ['a.js'], repoRoot: '/repo/.worktrees/slug', review: 'on' });
+});
+
 test('buildWaveDispatchOp: fabric flag wins even under codexSuppressed (the fork collapses to one op)', () => {
   assert.deepEqual(buildWaveDispatchOp({ ...waveArgs, fabric: true, codexSuppressed: true }), {
     op: 'dispatch_fabric',
