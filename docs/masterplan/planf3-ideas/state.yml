@@ -21,3 +21,5 @@ goals: [{"id":"G1","text":"Bidirectional cross-run refs exist and cannot drift",
 review: {"adversary":true}
 goals_md_hash: sha256:ec94361fb55b8ba40733297b362785383b385d308a5abb379f8c3d11e922b928
 worktree: /srv/dev/ras/masterplan/.worktrees/planf3-ideas
+verified_sha: 6277c33f2179d411acdd2da024699dd3be186aa6
+worktree_disposition: active
