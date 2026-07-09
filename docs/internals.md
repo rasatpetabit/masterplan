@@ -54,6 +54,17 @@ populated `critical_error` object. This mapping is a shell-enforced contract
 it was deleted at the v8.2.0 cutover. The resume controller that reads the
 fields back is documented in [bundle-resume.md](internals/bundle-resume.md).
 
+**Task-status lifecycle (D1–D5).** Per-task `status`
+(`pending | in_progress | done | blocked | waived`) is distinct from the
+run-level `stop_reason` above. `blocked`/`waived` are excluded from every
+dispatch filter (`lib/resume.mjs`, `lib/wave.mjs`); `blocked` blocks finalize
+(the `awaiting_waiver` op precedes `complete` in `decideNextAction`), `waived`
+is terminal-but-reversible. `waived` is reachable only via `waive-task`
+(`markTask` throws on it), closing the waived-bypass surface. The gate-review
+content path (D6/D7) feeds artifact bytes to the cross-vendor reviewer via
+`dispatch_review`'s `content` param rather than an empty git diff over untracked
+artifacts — see `commands/masterplan.md` §3b.
+
 ## Core Mechanisms Map
 
 | Leaf | What it documents | Primary source |

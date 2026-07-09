@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [9.5.0] — 2026-07-09 — blocked/waived task statuses + waive-task / amend-tasks verbs
+
+### Added
+
+- **Blocked & waived task statuses (D1/D3).** The task-status enum grows from `pending | in_progress | done` to `pending | in_progress | done | blocked | waived`. A `blocked` task is dispatch-skippable and non-terminal (it gates its wave and blocks finalize); a `waived` task is terminal for dispatch + finalize but operator-reversible. Every "still needs to run" filter (`lib/resume.mjs` dispatch + in-flight recovery, `lib/wave.mjs` wave count) now excludes `done` AND `blocked` AND `waived`. The waived-bypass surface is closed end-to-end: `markTask` throws on `status==='waived'`, so `waived` is reachable ONLY via `waive-task`.
+  - **`awaiting_waiver` decide op (D2).** When no dispatchable task remains but blockers are present, `decideNextAction` returns `awaiting_waiver` (with blocker ids + reasons) INSTEAD of `complete` — the blocker check precedes the `complete` return (the load-bearing invariant). A run with unfinished blocked work can never silently finalize.
+  - **`mark-task --reason` (D5).** `block_reason` attaches on `blocked` (required), clears on any non-blocked transition; `waive_reason` clears when leaving `waived`. `--status=blocked` under a live `active_run` needs `--force` (blocking an in-flight task implies the run is already reaped; emits a `task_blocked_under_active_run` audit event).
+
+- **`mp waive-task` (D3) — the sole writer of `status:'waived'`.** Explicit operator consent to close a run with remaining blockers: operates ONLY on `blocked` tasks, `--reason` required, sets `waive_reason` (deletes `block_reason`), emits a `task_waived` event. `--id=N` or `--all`; `active_run` needs `--force`. Reversible via `mark-task --status=pending` (clears `waive_reason`). (G3)
+
+- **`mp amend-tasks` (D4) — status-preserving task upsert.** The sibling of `load-plan` (initial-only) and `backfill-waves` (existing-only): appends NEW ids as `pending`, refreshes `{wave,files}` for EXISTING ids while PRESERVING `status`/`block_reason`/`waive_reason`, and (`--prune`) drops ids absent from the index. Pure helper `upsertTasks` in `lib/bundle.mjs`; the bin handler owns the wave-less stuck-guard (mirror of `backfill-waves`) + the `plan.html` re-render. `--prune` drops only BARE `pending`; accumulated state needs `--prune-non-pending` (the `seed-tasks --force` hazard, gated). Duplicate index ids are rejected (mirror of `validatePlanIndex`). (G4)
+
+- **Doctor: blocked/waived integrity checks (G6).** `lib/doctor/state-schema.mjs` now flags an unknown task status (ERROR), a `blocked` task with no `block_reason` (WARN — can't diagnose why the wave is gated), and a `waived` task with no `waive_reason` (WARN — operator-consent rationale missing). `blocked`/`waived` are never counted dispatchable.
+
+- **Render: waived badges + reason tooltips (G6).** `lib/plan-merge.mjs` `renderPlanHtml` gains a distinct `waived` badge (purple; badge + SVG node) so a waived task is visibly distinct from pending/done, and surfaces `block_reason`/`waive_reason` as a badge tooltip (threaded via `meta.taskReason` from `rerenderRefsHtml` and `render-plan`). `in_progress` stays gray by design (in-flight).
+
+- **D7 file-content review path (agent-dispatch, cross-repo).** `packages/core/review.mjs` `defaultGetContent` + a `content`/`filesOnly` acquisition path so a reviewer can review new/untracked artifact bytes (spec.md/plan.md) that have no git diff yet — closing the latent hole where the spec/plan gates passed `files`/`staged` over untracked artifacts and reviewed an empty diff. Pure seam (`getContent` injectable); `diff`/`staged`/`base` calls byte-identical.
+
+### Changed
+
+- **§3b gate execution feeds bytes, not a diff (D6).** `commands/masterplan.md` §3b `run_gate_review` step 1 now specifies feeding the reviewer the actual artifact bytes via the D7 `content` param (or the diff-param bridge) — NEVER `git add` (the index-pollution hazard the content path replaces).
+- **`lib/migrate.mjs:176` comment generalized** to "dispatchable-vs-not (excludes done/blocked/waived)" so the stale `!== 'done'` predicate no longer misleads.
+
 ## [9.4.0] — 2026-07-08 — planf3-ideas import (F1-F5) + host-safe adversarial review
 
 ### Added

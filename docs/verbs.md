@@ -193,3 +193,45 @@ The read-only `runs list` / dangling-run visibility also flows into `mp status`
 (an `other runs` block of non-archived discovered bundles), the `dangling-run`
 doctor check, and the session `mp sweep` report — every consumer isolates a
 broken foreign bundle to a WARN so it never takes down the current session.
+
+## Task-status subcommands
+
+`mp` subcommands for the blocked/waived task lifecycle (D1–D5). Like the
+goal/refs subcommands above they are dispatched through `mp`
+(`node bin/masterplan.mjs …`), not the `/masterplan` reserved-verb list.
+
+**Task-status enum** (`VALID_TASK_STATUS`, `bin/masterplan.mjs`):
+`pending | in_progress | done | blocked | waived`. The dispatch axis is
+mechanical — every "still needs to run" filter excludes `done`, `blocked`, AND
+`waived`. `blocked` is non-terminal (gates its wave, blocks finalize); `waived`
+is terminal for dispatch + finalize but operator-reversible.
+
+- `mark-task` — `mp mark-task --state=<path> --id=N --status=<status>
+  [--reason="…"] [--force]`. `--reason` is REQUIRED for `blocked` (attaches
+  `block_reason`); it clears on any non-blocked transition (re-activation), and
+  `waive_reason` clears when leaving `waived`. REFUSES `--status=waived` (with a
+  `waive-task` pointer) — `waived` is reachable only via `waive-task`, closing
+  the waived-bypass surface. `--status=blocked` under a live `active_run` needs
+  `--force` (blocking an in-flight task implies the run is already reaped); on
+  `--force` it emits a `task_blocked_under_active_run` audit event.
+  `--status=pending` un-gating is always allowed.
+
+- `waive-task` — `mp waive-task --state=<path> --id=N | --all --reason="…"
+  [--force]`. The ONLY writer of `status:'waived'`. Operates exclusively on
+  `blocked` tasks; `--reason` required (explicit operator consent). Sets
+  `waive_reason`, deletes `block_reason`, emits a `task_waived` event per task.
+  `--all` waives every currently-blocked task. `active_run` needs `--force`.
+  Reversible via `mark-task --status=pending` (clears `waive_reason`). When no
+  dispatchable task remains but blockers are present, the resume controller
+  returns the `awaiting_waiver` op (naming the blockers) — this verb is how the
+  operator closes that gate.
+
+- `amend-tasks` — `mp amend-tasks --state=<path> --plan-index=<path> [--prune]
+  [--prune-non-pending]`. Status-preserving upsert for in-flight bundles:
+  appends NEW ids as `pending`, refreshes `{wave,files}` for EXISTING ids while
+  preserving `status`/`block_reason`/`waive_reason`, and (`--prune`) drops ids
+  absent from the index. `--prune` drops only BARE `pending` (no accumulated
+  state); dropping worked/blocked/waived tasks needs the additional
+  `--prune-non-pending` consent (the `seed-tasks --force` hazard, gated).
+  Rejects a duplicate index id; re-renders an existing `plan.html` inline after
+  the commit.
