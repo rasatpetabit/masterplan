@@ -1,0 +1,7 @@
+schema_version: 6
+slug: p1
+status: in-progress
+phase: building
+tasks: [{"id":1,"status":"blocked","wave":0,"files":[],"block_reason":"HIL GPU offline"},{"id":2,"status":"waived","wave":0,"files":[],"waive_reason":"permanently decommissioned"},{"id":3,"status":"done","wave":0,"files":[]}]
+active_run: null
+pending_gate: null

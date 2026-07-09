@@ -606,9 +606,14 @@ function rerenderRefsHtml(statePath, subLabel) {
     const index = JSON.parse(fs.readFileSync(path.join(dir, 'plan.index.json'), 'utf8'));
     const st = readState(statePath);
     const taskStatus = {};
-    for (const t of st.tasks ?? []) taskStatus[Number(t.id)] = t.status;
+    const taskReason = {};
+    for (const t of st.tasks ?? []) {
+      taskStatus[Number(t.id)] = t.status;
+      const reason = t.block_reason ?? t.waive_reason; // D7: badge tooltip for blocked/waived
+      if (typeof reason === 'string' && reason.trim()) taskReason[Number(t.id)] = reason;
+    }
     // refs threaded for forward-compat with the render subsystem's header (unknown opts ignored today).
-    fs.writeFileSync(planHtmlPath, renderPlanHtml(index, { title: st.slug ?? 'Plan', taskStatus, refs: ensureRefs(st) }));
+    fs.writeFileSync(planHtmlPath, renderPlanHtml(index, { title: st.slug ?? 'Plan', taskStatus, taskReason, refs: ensureRefs(st) }));
     return true;
   } catch (e) {
     process.stderr.write(`refs ${subLabel}: plan.html is now STALE for ${dir} — re-render failed (${e.message})\n`);
@@ -1729,7 +1734,12 @@ function main() {
         die(`render-plan: ${planIndexPath} is not valid JSON (${e.message})`, 1);
       }
       const taskStatus = {};
-      for (const t of state.tasks ?? []) taskStatus[Number(t.id)] = t.status;
+      const taskReason = {};
+      for (const t of state.tasks ?? []) {
+        taskStatus[Number(t.id)] = t.status;
+        const reason = t.block_reason ?? t.waive_reason; // D7: badge tooltip for blocked/waived
+        if (typeof reason === 'string' && reason.trim()) taskReason[Number(t.id)] = reason;
+      }
       // The bundle dir roots by-presence asset embedding (assets/{hero,wave-<n>}.png) and the amendments
       // read below. render-plan stays READ-ONLY and idempotently re-runnable: it only (over)writes
       // plan.html, so F1/F2 callers can retry the render after a post-commit render failure — the state
@@ -1744,6 +1754,7 @@ function main() {
       fs.writeFileSync(planHtmlPath, renderPlanHtml(index, {
         title: state.slug ?? 'Plan',
         taskStatus,
+        taskReason,
         refs: ensureRefs(state),
         narrative: index.meta,
         bundleDir,

@@ -1,0 +1,7 @@
+schema_version: 6
+slug: p1
+status: in-progress
+phase: building
+tasks: [{"id":1,"status":"waived","wave":0,"files":[]}]
+active_run: null
+pending_gate: null

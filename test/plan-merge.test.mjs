@@ -369,6 +369,25 @@ test('renderPlanHtml status badges reflect meta.taskStatus; unknown and missing 
   assert.ok(!h.includes('badge status-bogus'), 'unknown status must never become a CSS class (whitelist)');
 });
 
+test('renderPlanHtml badges distinguish blocked/waived (with reason tooltip) from pending/done [D7/G6]', () => {
+  const h = renderPlanHtml(htmlIndex, {
+    title: 'T',
+    taskStatus: { 1: 'blocked', 2: 'waived', 3: 'done' },
+    taskReason: { 1: 'HIL GPU offline', 2: 'permanently decommissioned' },
+  });
+  // distinct badge classes — waived no longer collapses to pending (the pre-T7 whitelist dropped it)
+  assert.ok(h.includes('badge status-blocked'), 'id 1 → blocked');
+  assert.ok(h.includes('badge status-waived'), 'id 2 → waived');
+  assert.ok(h.includes('badge status-done'), 'id 3 → done');
+  assert.ok(!h.includes('badge status-pending'), 'no task renders as pending here');
+  // D7: the block/waive rationale surfaces as a badge tooltip (visibly distinguish *why*)
+  assert.ok(h.includes('title="HIL GPU offline"'), 'blocked reason tooltip');
+  assert.ok(h.includes('title="permanently decommissioned"'), 'waived reason tooltip');
+  // the new waived status has distinct CSS rules (badge + SVG node)
+  assert.ok(h.includes('.status-waived'), 'waived badge CSS rule present');
+  assert.ok(h.includes('.svg-node.status-waived rect'), 'waived SVG-node CSS rule present');
+});
+
 test('renderPlanHtml with no taskStatus renders every task as pending', () => {
   const h = renderPlanHtml(htmlIndex, { title: 'T' });
   assert.ok(h.includes('badge status-pending'));
