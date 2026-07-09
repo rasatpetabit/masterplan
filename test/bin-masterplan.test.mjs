@@ -398,6 +398,47 @@ test('mark-task: write updates status; decide then advances to the next wave', (
   assert.equal(read(p).tasks.find((t) => t.id === 1).status, 'done');
   assert.equal(JSON.parse(run(['decide', `--state=${p}`]).stdout).wave, 1);
 });
+
+test('mark-task: --status=blocked requires --reason and attaches block_reason', () => {
+  const p = tmpBundle(v8());
+  // missing --reason -> refused (so a block is always diagnosable later)
+  const noReason = run(['mark-task', `--state=${p}`, '--id=1', '--status=blocked']);
+  assert.notEqual(noReason.status, 0, 'blocked without --reason must fail');
+  assert.equal(read(p).tasks.find((t) => t.id === 1).status, 'pending', 'state unchanged on refusal');
+  // with --reason -> block_reason recorded
+  const ok = run(['mark-task', `--state=${p}`, '--id=1', '--status=blocked', '--reason=HIL GPU offline']);
+  assert.equal(ok.status, 0, ok.stderr);
+  const t = read(p).tasks.find((x) => x.id === 1);
+  assert.equal(t.status, 'blocked');
+  assert.equal(t.block_reason, 'HIL GPU offline');
+});
+
+test('mark-task: --status=waived is refused (waived is waive-task-only)', () => {
+  const p = tmpBundle(v8());
+  const r = run(['mark-task', `--state=${p}`, '--id=1', '--status=waived']);
+  assert.notEqual(r.status, 0, 'mark-task --status=waived must be refused');
+  assert.match(r.stderr, /waive-task/);
+  assert.equal(read(p).tasks.find((t) => t.id === 1).status, 'pending', 'state unchanged on refusal');
+});
+
+test('mark-task: --status=blocked under a live active_run requires --force (emits audit event)', () => {
+  // task 1 is in-flight under an active_run whose task_id covers it
+  const p = tmpBundle(v8({ active_run: { run_id: 'wf_1', task_id: '1', wave: 0, phase: 'running' } }));
+  const refused = run(['mark-task', `--state=${p}`, '--id=1', '--status=blocked', '--reason=halt']);
+  assert.notEqual(refused.status, 0, 'blocking an in-flight task without --force must fail');
+  assert.match(refused.stderr, /active_run|--force/);
+  assert.equal(read(p).tasks.find((t) => t.id === 1).status, 'pending', 'state unchanged on refusal');
+  // --force proceeds AND emits the task_blocked_under_active_run audit event
+  const eventsBefore = fs.existsSync(path.join(path.dirname(p), 'events.jsonl'))
+    ? fs.readFileSync(path.join(path.dirname(p), 'events.jsonl'), 'utf8').trim().split('\n').length
+    : 0;
+  const forced = run(['mark-task', `--state=${p}`, '--id=1', '--status=blocked', '--reason=halt', '--force']);
+  assert.equal(forced.status, 0, forced.stderr);
+  assert.equal(read(p).tasks.find((t) => t.id === 1).status, 'blocked');
+  const eventsAfter = fs.readFileSync(path.join(path.dirname(p), 'events.jsonl'), 'utf8').trim().split('\n');
+  assert.ok(eventsAfter.length > eventsBefore, 'a task_blocked_under_active_run event was appended');
+  assert.ok(eventsAfter.some((l) => l.includes('task_blocked_under_active_run')));
+});
 test('set-phase / set-status: write the lifecycle fields; reject a value outside the enum', () => {
   // The CD-7 closure for the line-333 hand-edit: there is now an `mp` write for the phase/status
   // fields, so the orchestrator never hand-edits state.yml to advance a phase or archive a run.

@@ -687,7 +687,7 @@ function performRefsAdd(flags, { sourcePath, direction, targetSlug, subLabel }) 
 // decideNextAction treats anything !== 'done' as "still needs work", so pending/in_progress map
 // correctly and a typo ('doen', 'complete') is rejected rather than silently mis-recorded. (Legacy
 // v7 statuses like 'skipped'/'in-progress' live only in pre-migration bundles — migrate's concern.)
-const VALID_TASK_STATUS = ['pending', 'in_progress', 'done'];
+const VALID_TASK_STATUS = ['pending', 'in_progress', 'done', 'blocked', 'waived'];
 
 // Valid bundle phases (the brainstorm→plan→execute lifecycle) and run statuses the shell may WRITE
 // via set-phase/set-status. Enum-validated at the bin boundary (mirror of VALID_TASK_STATUS):
@@ -1798,13 +1798,52 @@ function main() {
       if (!VALID_TASK_STATUS.includes(status)) {
         die(`invalid --status '${status}' — expected one of: ${VALID_TASK_STATUS.join(', ')}`);
       }
+      // D5: block_reason is required when blocking (so an operator always knows WHY a wave is gated).
+      if (status === 'blocked' && (flags.reason === undefined || String(flags.reason).trim() === '')) {
+        die(`mark-task: --reason is required for --status=blocked (so the block is diagnosable later).`);
+      }
+      const state = loadForWrite(p);
+      // D5 in-flight guard: blocking a task that is CURRENTLY running under a live active_run would
+      // drop it from the recovery `incomplete` filter (resume.mjs:132) and clear the run marker while
+      // the dispatched process may still report back (a stale record-result). Require --force, which
+      // implies the operator has already reaped the run (or accepts the stale-report risk).
+      // Un-gating (status=pending) is always allowed — it can't desync a dead run.
+      const force = flags.force === true;
+      if (
+        status === 'blocked' &&
+        state.active_run &&
+        state.active_run.task_id != null &&
+        String(state.active_run.task_id) === String(id) &&
+        !force
+      ) {
+        die(
+          `mark-task: task ${id} is covered by a live active_run (task_id=${state.active_run.task_id}). ` +
+            `Blocking it would clear the run marker while the dispatched process may still report back. ` +
+            `Reap the run first, or pass --force to proceed (emits a task_blocked_under_active_run audit event).`
+        );
+      }
       let next;
       try {
-        next = markTask(loadForWrite(p), id, status); // throws on unknown id — refuse a phantom success
+        next = markTask(state, id, status, { reason: flags.reason }); // throws on waived / unknown id
       } catch (e) {
+        if (status === 'waived') {
+          die(`mark-task: cannot set status to 'waived' — use \`mp waive-task\` (waived is waive-task-only, ` +
+            `which enforces blocked-only + reason + the active_run guard).`);
+        }
         die(e.message);
       }
       writeState(p, next);
+      if (status === 'blocked' && force) {
+        // Best-effort audit trail — never block the mark on an events write.
+        try {
+          appendEvent(p, {
+            type: 'task_blocked_under_active_run',
+            ts: new Date().toISOString(),
+            data: { id },
+            summary: `task ${id} marked blocked under a live active_run (--force)`,
+          });
+        } catch { /* audit-only */ }
+      }
       out({ id, status });
       break;
     }

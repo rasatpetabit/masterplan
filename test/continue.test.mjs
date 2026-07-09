@@ -549,3 +549,37 @@ test('fabric strangler flag: continueRun emits a single dispatch_fabric op; reco
   const legacy = continueRun({ statePath: fx2.statePath, self: fx2.self, now: 2000 });
   assert.equal(legacy.op, 'launch_workflow');
 });
+
+test('awaiting_waiver: a blocked-only bundle surfaces the waiver gate, not decide-error / finish', async () => {
+  const blockers = [{ id: 1, block_reason: 'no upstream API' }];
+  const fx = makeFixture({
+    tasks: [{ id: 1, status: 'blocked', wave: 1, files: ['src/a.txt'], block_reason: 'no upstream API' }],
+    planIndex: [planEntry(1, 1, ['src/a.txt'])],
+    slug: 'awaiting-waiver',
+  });
+
+  // Task 1 (lib/resume.mjs, concurrent same-wave) lands decideNextAction's `awaiting_waiver` arm;
+  // it may not be on disk when this test runs. Probe the real decideNextAction: if it already emits
+  // awaiting_waiver for blocked state, exercise the real path. If not, stub decideNextAction via
+  // mock.module (Node 22.13+) against a fresh dynamic import of continue.mjs so the switch arm this
+  // change adds is still covered. Post-wave-0 (all three tasks landed) the real decideNextAction
+  // drives the assertion without any stub.
+  const { decideNextAction: realDecide } = await import('../lib/resume.mjs');
+  const realArm = realDecide(readState(fx.statePath), { alive: false });
+  let run = continueRun;
+  const { mock } = await import('node:test');
+  const stubbed = realArm?.action !== 'awaiting_waiver' && typeof mock.module === 'function';
+  if (stubbed) {
+    await mock.module(new URL('../lib/resume.mjs', import.meta.url).href, () => ({
+      decideNextAction: () => ({ action: 'awaiting_waiver', blockers }),
+    }));
+    run = (await import('../lib/continue.mjs?awaiting-waiver-stub=1')).continueRun;
+  }
+
+  const op = run({ statePath: fx.statePath, self: fx.self, now: 2000 });
+  assert.equal(op.op, 'ask');
+  assert.equal(op.ask, 'awaiting_waiver');
+  assert.ok(Array.isArray(op.blockers) && op.blockers.length >= 1, 'blockers carried from decide');
+  if (stubbed) assert.deepEqual(op.blockers, blockers);
+  if (stubbed) mock.restoreAll();
+});

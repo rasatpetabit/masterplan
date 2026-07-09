@@ -146,6 +146,29 @@ test('markTask throws on an unknown id (no silent no-op that fakes success)', ()
   assert.equal(markTask(s, 1, 'done').tasks[0].status, 'done'); // known id still works
 });
 
+test('markTask: blocked attaches block_reason; re-activation clears it', () => {
+  const s = { tasks: [{ id: 1, wave: 1, status: 'pending', files: [] }] };
+  // blocking with a reason records it so a returning operator can diagnose WHY the wave is gated
+  const blocked = markTask(s, 1, 'blocked', { reason: 'HIL GPU offline' });
+  assert.equal(blocked.tasks[0].status, 'blocked');
+  assert.equal(blocked.tasks[0].block_reason, 'HIL GPU offline');
+  // re-activating clears the reason — a stale block_reason on a runnable task would mislead
+  const reactivated = markTask(blocked, 1, 'pending');
+  assert.equal(reactivated.tasks[0].status, 'pending');
+  assert.equal(reactivated.tasks[0].block_reason, undefined);
+});
+
+test('markTask: refuses status=waived (waived is waive-task-only)', () => {
+  // waived carries semantics waive-task enforces (blocked-only + reason + waive_reason + event +
+  // the active_run guard). markTask is exported, so refusing waived here protects every caller.
+  const s = { tasks: [{ id: 1, wave: 1, status: 'blocked', files: [], block_reason: 'x' }] };
+  assert.throws(() => markTask(s, 1, 'waived'), /waived.*waive-task/);
+  // pending/in_progress/done/blocked remain accepted
+  for (const ok of ['pending', 'in_progress', 'done', 'blocked']) {
+    assert.equal(markTask(s, 1, ok).tasks[0].status, ok);
+  }
+});
+
 test('loadPlanTasks: materializes {id,status,wave,files} + sets phase=execute in one object (the atomic seam)', () => {
   const base = { slug: 'x', phase: 'plan', tasks: [] };
   const idx = { tasks: [

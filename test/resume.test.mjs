@@ -214,6 +214,32 @@ test('GUARD: all-done tasks with null waves still resume to complete (guard not 
 });
 
 // ---------------------------------------------------------------------------
+// Blocked-task dispatch exclusion (D1/D2) — blocked tasks are not dispatchable
+// ---------------------------------------------------------------------------
+
+test('G1: an entirely-blocked wave is SKIPPED — next runnable wave dispatched, never the blocked one', () => {
+  // Blocked tasks are excluded from the dispatchable set, so a wave made up entirely of
+  // blocked tasks is skipped: decideNextAction dispatches the next wave with pending work.
+  const s = base({
+    tasks: [t(1, 1, 'blocked', ['a.txt']), t(2, 2, 'pending', ['b.txt'])],
+  });
+  const d = decideNextAction(s, {});
+  assert.equal(d.action, 'dispatch_wave');
+  assert.equal(d.wave, 2);
+  assert.deepEqual(d.tasks.map((x) => x.id), [2]);
+});
+
+test('G2: only blocked tasks remain (no dispatchable work) -> awaiting_waiver, never complete', () => {
+  // Every non-done task is blocked -> pending.length===0 (blocked excluded from dispatchable),
+  // but the bundle is NOT complete: it is awaiting a waiver. The blockers-before-complete guard
+  // (D2) fires before the `complete` return.
+  const s = base({ tasks: [t(1, 1, 'done', ['a.txt']), t(2, 2, 'blocked', ['b.txt'])] });
+  const d = decideNextAction(s, {});
+  assert.equal(d.action, 'awaiting_waiver');
+  assert.deepEqual(d.blockers.map((x) => x.id), [2]);
+});
+
+// ---------------------------------------------------------------------------
 // A9 — Coordination gate: uncoordinated path byte-identical
 // ---------------------------------------------------------------------------
 

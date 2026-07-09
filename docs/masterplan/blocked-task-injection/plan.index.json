@@ -1,0 +1,206 @@
+{
+  "schema_version": "6.0",
+  "tasks": [
+    {
+      "id": 1,
+      "description": "D1+D2 decide engine — the load-bearing atomic pair. (a) Dispatch exclusion: the `pending` filter at lib/resume.mjs:151 becomes `t.status !== 'done' && t.status !== 'blocked' && t.status !== 'waived'`; the SAME exclusion applies to the wave-recovery `incomplete` filter at lib/resume.mjs:132 and the wave-count `pending` filter at lib/wave.mjs:192. (b) D2 guard: in decideNextAction, BEFORE the `complete` return (resume.mjs:153), when pending.length===0 compute `blockers = tasks.filter(t => t.status === 'blocked')` and `return {action:'awaiting_waiver', blockers}` when non-empty — this ordering is the load-bearing invariant (a run with unfinished blocked work must NEVER hit complete). (c) lib/migrate.mjs:176 comment: generalize the stale 'cares only done-vs-not (lib/resume.mjs filters status !== done)' predicate to 'cares only dispatchable-vs-not (excludes done/blocked/waived)'. (The VALID_TASK_STATUS enum change lands in task 3, which owns bin/masterplan.mjs; resume.mjs keys on the status string directly, not the enum, so the exclusion is correct without it.) Author test/resume.test.mjs cases: an entirely-blocked wave is skipped and the next runnable wave is dispatched (G1); a bundle whose only non-done tasks are blocked returns awaiting_waiver, never complete (G2). The finalize-trap is LIVE if (a) lands without (b), so they ship in this one task.",
+      "wave": 0,
+      "goals": [
+        "G1",
+        "G2"
+      ],
+      "files": [
+        "lib/resume.mjs",
+        "lib/wave.mjs",
+        "lib/migrate.mjs",
+        "test/resume.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/resume.test.mjs"
+      ],
+      "codex": null,
+      "spec_refs": [
+        "docs/masterplan/blocked-task-injection/spec.md#L79-L97",
+        "docs/masterplan/blocked-task-injection/spec.md#L98-L139",
+        "docs/masterplan/blocked-task-injection/spec.md#L258-L276"
+      ]
+    },
+    {
+      "id": 2,
+      "description": "D2 consumer side — the op must be wired end-to-end or it dead-ends at continue.mjs's explicit `decide-error` default. (a) lib/continue.mjs: add `case 'awaiting_waiver':` to the decide switch (alongside dispatch_wave/complete, ~:176-289) returning `{op:'ask', ask:'awaiting_waiver', blockers: action.blockers}`. (b) commands/masterplan.md: add the sequencer op row for ask:'awaiting_waiver' to the §2 op table — the AUQ 'N tasks blocked; waive all (Recommended) / waive selected / keep blocked' labelled with blocker ids + their block_reasons; resolution re-invokes with --choice=waive-all|--waive-id=N|keep (waive-all→mp waive-task --all; waive-id=N→mp waive-task --id=N; keep holds); free-text chats and holds. (c) test/continue.test.mjs: assert decideNextAction→continue maps a blocked-only run to the awaiting_waiver ask op (NOT decide-error, NOT complete). MUST land in the same wave as task 1 (the resume.mjs change) per the spec — otherwise runtime hits the unknown-action default.",
+      "wave": 0,
+      "goals": [
+        "G2"
+      ],
+      "files": [
+        "lib/continue.mjs",
+        "commands/masterplan.md",
+        "test/continue.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/continue.test.mjs"
+      ],
+      "codex": null,
+      "spec_refs": [
+        "docs/masterplan/blocked-task-injection/spec.md#L108-L139"
+      ]
+    },
+    {
+      "id": 3,
+      "description": "D5 markTask reason attachment + in-flight guard, AND the VALID_TASK_STATUS enum. (a) bin/masterplan.mjs:690 VALID_TASK_STATUS += 'blocked','waived' (the enum every status transition validates against). (b) lib/bundle.mjs markTask(state,id,status,{reason}): when status==='blocked' && reason, attach task.block_reason=reason; when status!=='blocked', clear block_reason (re-activation). (c) bin/masterplan.mjs mark-task handler (:1794): accept --reason, pass through to markTask; reason is REQUIRED for --status=blocked (die on empty), OPTIONAL otherwise. Extract a shared coerceId helper (mirror buildTasksFromPlanIndex's /^-?\\d+$/ rule) so amend-tasks (task 5) and mark-task agree on id matching. (d) In-flight guard: mark-task --status=blocked refuses a task covered by a non-terminal state.active_run (state.active_run.task_id === String(id) and the run is not a finalized marker) unless --force is passed; on --force, proceed and emit a task_blocked_under_active_run {id} event. mark-task --status=pending (un-gating) is always allowed. (e) plan-review finding #2 (refined in re-review): the `waived` refusal lives in the markTask API in lib/bundle.mjs (markTask throws on status==='waived'), NOT only the bin handler — markTask is exported, so the guard must protect every caller. The bin mark-task handler surfaces it as a clear error pointing at waive-task. waived is reachable ONLY via waive-task (task 4), which enforces blocked-only + --reason + waive_reason + the task_waived event + the active_run guard. (mark-task / markTask still handle waived→pending reversal, which clears waive_reason.) So markTask accepts pending/in_progress/done/blocked and rejects waived. Author test/bundle.test.mjs cases: block_reason attach on blocked, clear on re-activation; and a bin-level case (in test/bin-masterplan.test.mjs if disjoint, else here) that --status=blocked under an active_run exits non-zero without --force.",
+      "wave": 0,
+      "goals": [
+        "G2"
+      ],
+      "files": [
+        "lib/bundle.mjs",
+        "bin/masterplan.mjs",
+        "test/bundle.test.mjs",
+        "test/bin-masterplan.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/bundle.test.mjs",
+        "node --test test/bin-masterplan.test.mjs"
+      ],
+      "codex": null,
+      "spec_refs": [
+        "docs/masterplan/blocked-task-injection/spec.md#L197-L223"
+      ]
+    },
+    {
+      "id": 4,
+      "description": "D3 mp waive-task — explicit operator consent → terminal waived. (a) bin/masterplan.mjs: new `waive-task` subcommand. mp waive-task --state=<path> --id=N --reason='…' (or --all --reason='…'). Requires non-empty --reason. Operates ONLY on a task currently status:'blocked' — refuses pending/done/waived/in_progress. Sets status:'waived', attaches task.waive_reason, emits a task_waived {id, reason} event. --all waives every currently-blocked task in one call, emitting one event per waived task (--all still requires --reason). (b) In-flight guard (mirror task 3): waive-task refuses a task under a non-terminal active_run without --force; on --force emits task_blocked_under_active_run. (c) waived is terminal for dispatch + finalize (excluded by task 1's filters) but operator-reversible to pending via mark-task --status=pending, which clears waive_reason. Author test/bin-masterplan.test.mjs cases: per-id waive (blocked→waived, waive_reason set, event emitted); --all; refuses non-blocked; --reason required; --force refusal under active_run (G3). (bin/masterplan.mjs is owned by this wave alone; tasks 3 and 5 touch it in other waves — sequential, no conflict.)",
+      "wave": 1,
+      "goals": [
+        "G3"
+      ],
+      "files": [
+        "bin/masterplan.mjs",
+        "test/bin-masterplan.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/bin-masterplan.test.mjs"
+      ],
+      "codex": null,
+      "spec_refs": [
+        "docs/masterplan/blocked-task-injection/spec.md#L140-L154"
+      ]
+    },
+    {
+      "id": 5,
+      "description": "D4 mp amend-tasks — status-preserving upsert. (a) lib/bundle.mjs: new pure helper upsertTasks(state, planIndex, {prune}). Existing id present in index → keep status/block_reason/waive_reason, refresh wave/files. New id in index not in state → append pending (id coerced via the shared coerceId from task 3). id in state not in index → dropped iff --prune else kept verbatim. Duplicate-id rejection: two index entries mapping to the same String(id) (e.g. 1 and '1') rejected before write (mirror validatePlanIndex's id-uniqueness rule). plan-review re-review finding: upsertTasks NEVER creates waived/waive_reason — appended tasks are always status:'pending' (hardcoded; the plan.index.json task shape carries no status field), and refreshed tasks preserve their EXISTING status verbatim (it does not read a status from the index). So waived remains reachable only via waive-task (task 4). State this explicitly in the helper's contract + assert it in tests. Wave-less stuck-guard: fail loud on a non-integer wave before write (mirror backfill-waves). Re-render plan.html inline when it exists (mirror amend-plan). (b) bin/masterplan.mjs: new `amend-tasks` subcommand --state --plan-index [--prune] [--prune-non-pending]. --prune safety: refuses to drop a non-pending task (accumulated done/blocked/waived/in_progress state or a reason field) unless --prune-non-pending is ALSO passed — default --prune only removes bare pending tasks. Author test/bundle.test.mjs cases (lib-level upsertTasks) AND test/bin-masterplan.test.mjs cases (bin-level CLI: upsert round-trip via the amend-tasks subcommand, --prune / --prune-non-pending flag+exit-code behavior, duplicate-id rejection exit code) — bin-handler changes get bin-level coverage (plan-review finding #4). (G4).",
+      "wave": 2,
+      "goals": [
+        "G4"
+      ],
+      "files": [
+        "lib/bundle.mjs",
+        "bin/masterplan.mjs",
+        "test/bundle.test.mjs",
+        "test/bin-masterplan.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/bundle.test.mjs",
+        "node --test test/bin-masterplan.test.mjs"
+      ],
+      "codex": null,
+      "spec_refs": [
+        "docs/masterplan/blocked-task-injection/spec.md#L155-L196"
+      ]
+    },
+    {
+      "id": 6,
+      "description": "Cross-cutting doctor checks. lib/doctor/state-schema.mjs: add validations — (a) every blocked task has a non-empty block_reason; (b) every waived task has a non-empty waive_reason; (c) no task carries a status outside VALID_TASK_STATUS (catch hand-edited/corrupt state); (d) blocked/waived are not counted as dispatchable by any count the doctor reports (mirror the updated dispatch filter). Each finding surfaces as a distinct doctor diagnostic with a clear remediation. Author test/doctor.test.mjs cases that construct bundles with each defect and assert the doctor flags them, plus a clean bundle (blocked+waived tasks carrying reasons) that passes. Depends on tasks 1,3,4 (statuses + reason fields exist).",
+      "wave": 3,
+      "goals": [
+        "G6"
+      ],
+      "files": [
+        "lib/doctor/state-schema.mjs",
+        "test/doctor.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/doctor.test.mjs"
+      ],
+      "codex": null,
+      "spec_refs": [
+        "docs/masterplan/blocked-task-injection/spec.md#L258-L276"
+      ]
+    },
+    {
+      "id": 7,
+      "description": "Cross-cutting render badges. lib/plan-merge.mjs (the plan.html render path) and any status-badge rendering: visibly distinguish blocked (with block_reason) and waived (with waive_reason) from pending/done/in_progress — distinct badge color/icon + the reason text surfaced, so an operator reading plan.html sees WHY a task is gated or waived. If any render-side count uses wave.mjs's pending filter (updated in task 1), confirm it uses the updated filter or it misreports blocked work as pending. Author test/plan-merge.test.mjs cases asserting blocked/waived badges carry their reason and are distinguishable. Depends on task 1 (statuses).",
+      "wave": 3,
+      "goals": [
+        "G6"
+      ],
+      "files": [
+        "lib/plan-merge.mjs",
+        "test/plan-merge.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/plan-merge.test.mjs"
+      ],
+      "codex": null,
+      "spec_refs": [
+        "docs/masterplan/blocked-task-injection/spec.md#L258-L276"
+      ]
+    },
+    {
+      "id": 8,
+      "description": "D7 agent-dispatch content-aware review path — CROSS-REPO, repo root /srv/dev/.agent-dispatch. packages/core/review.mjs: add a content path into the reviewer so review over new/untracked content (spec/plan gates, design docs) is possible without the caller fabricating a synthetic diff. When input.content is provided (string or {path: text} map) OR input.files is given WITHOUT a diff/staged/base, read the file bytes from input.repo (fallback cwd) and include them in the reviewer payload as a content block — same shape a diff fills, so the reviewer prompt is identical whether it received a diff or file content. getDiff/getContent remain injectable seams (pure, no new network). Back-compat: existing diff/staged/base calls are byte-identical (the new path only activates on the new input shape or files-without-diff). Author agent-dispatch tests asserting: a content-only review receives the file bytes; a diff call is unchanged; files-without-diff reads content. Run agent-dispatch npm test (its own suite). Foundation that makes the spec/plan gates review real bytes.",
+      "wave": 4,
+      "goals": [],
+      "files": [
+        "/srv/dev/.agent-dispatch/packages/core/review.mjs"
+      ],
+      "verify_commands": [
+        "bash -c 'cd /srv/dev/.agent-dispatch && npm test --silent 2>&1 | tail -20'"
+      ],
+      "codex": null,
+      "spec_refs": [
+        "docs/masterplan/blocked-task-injection/spec.md#L241-L257"
+      ]
+    },
+    {
+      "id": 9,
+      "description": "D6 masterplan sequencer — the gate-execution step must feed dispatch_review the ACTUAL artifact bytes, not an empty diff. commands/masterplan.md §3b (pre-execute adversary-review gates): rewrite the run_gate_review execution prose so the shell, when executing a run_gate_review op, reads the gated artifacts (paths already come from resolveGateArtifacts — spec.md/goals.md for the spec gate, plan.md/plan.index.json for the plan gate) and passes their content to dispatch_review (via the content param from task 8, or a synthetic content block via the diff param as the interim workaround demonstrated on THIS run's spec gate). Explicitly: do NOT git add (untracked artifacts must not pollute the index); the bytes are the same bytes the gate hashes. Add a note that until D7 (task 8) lands the diff-param path is the bridge. Docs/sequencer edit only. Verify by re-reading §3b and confirming the prose instructs byte-feeding and forbids git-add.",
+      "wave": 4,
+      "goals": [],
+      "files": [
+        "commands/masterplan.md"
+      ],
+      "verify_commands": [
+        "bash -c 'rg -n \"artifact bytes|content param|diff-param|do NOT git add\" commands/masterplan.md | head'"
+      ],
+      "codex": null,
+      "spec_refs": [
+        "docs/masterplan/blocked-task-injection/spec.md#L224-L240"
+      ]
+    },
+    {
+      "id": 10,
+      "description": "Docs + green (G6) + G5 verification. CHANGELOG.md: document the new blocked/waived statuses, the awaiting_waiver decide action, mp waive-task, mp amend-tasks, and the gate-review content fix (D6/D7). docs/verbs.md: add waive-task and amend-tasks verb entries with flags + examples. docs/internals.md: document the expanded status set, the awaiting_waiver→complete ordering invariant, and the amend-tasks/load-plan/backfill-waves/seed-tasks role split. Run the FULL masterplan npm test suite (node --test) and `node bin/masterplan.mjs doctor --state=docs/masterplan/blocked-task-injection/state.yml` — assert green with zero FATALs. G5 verification: confirm state.review.adversary is armed and prepare-wave resolves review='on' from the canonical nested key (already true as of 9.4.0; this task asserts it stays true — no regression). Depends on all prior tasks; must not merge until the whole suite is green and the docs reflect the new verbs.",
+      "wave": 5,
+      "goals": [
+        "G5",
+        "G6"
+      ],
+      "files": [
+        "CHANGELOG.md",
+        "docs/verbs.md",
+        "docs/internals.md"
+      ],
+      "verify_commands": [
+        "npm test --silent 2>&1 | tail -20",
+        "node bin/masterplan.mjs doctor --state=docs/masterplan/blocked-task-injection/state.yml"
+      ],
+      "codex": null,
+      "spec_refs": [
+        "docs/masterplan/blocked-task-injection/spec.md#L303-L335"
+      ]
+    }
+  ],
+  "plan_hash": "sha256:174c09012833bbda7c1a4d522170c260e0077d1f181d8298708de19f37b87abb",
+  "generated_at": "2026-07-09T08:02:36.951Z"
+}

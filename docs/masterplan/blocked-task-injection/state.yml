@@ -1,0 +1,23 @@
+---
+schema_version: 8
+slug: blocked-task-injection
+status: in-progress
+phase: execute
+topic: "Add a 'blocked' task status so dispatch skips hardware-gated waves without lying about completion, a status-preserving 'mp amend-tasks' upsert verb for injecting tasks into in-flight bundles, and an 'mp waive-task' gate so a run with remaining blockers finalizes only under explicit operator consent."
+complexity: moderate
+complexity_source: null
+autonomy: loose
+planning_mode: serial
+created_at: 2026-07-09T05:04:57.660Z
+predecessor_transcript: null
+spec_path: /srv/dev/ras/masterplan/docs/masterplan/blocked-task-injection/spec.md
+plan_path: /srv/dev/ras/masterplan/docs/masterplan/blocked-task-injection/plan.md
+plan_index_path: /srv/dev/ras/masterplan/docs/masterplan/blocked-task-injection/plan.index.json
+tasks: [{"id":1,"status":"done","wave":0,"files":["lib/resume.mjs","lib/wave.mjs","lib/migrate.mjs","test/resume.test.mjs"]},{"id":2,"status":"done","wave":0,"files":["lib/continue.mjs","commands/masterplan.md","test/continue.test.mjs"]},{"id":3,"status":"done","wave":0,"files":["lib/bundle.mjs","bin/masterplan.mjs","test/bundle.test.mjs","test/bin-masterplan.test.mjs"]},{"id":4,"status":"pending","wave":1,"files":["bin/masterplan.mjs","test/bin-masterplan.test.mjs"]},{"id":5,"status":"pending","wave":2,"files":["lib/bundle.mjs","bin/masterplan.mjs","test/bundle.test.mjs","test/bin-masterplan.test.mjs"]},{"id":6,"status":"pending","wave":3,"files":["lib/doctor/state-schema.mjs","test/doctor.test.mjs"]},{"id":7,"status":"pending","wave":3,"files":["lib/plan-merge.mjs","test/plan-merge.test.mjs"]},{"id":8,"status":"pending","wave":4,"files":["/srv/dev/.agent-dispatch/packages/core/review.mjs"]},{"id":9,"status":"pending","wave":4,"files":["commands/masterplan.md"]},{"id":10,"status":"pending","wave":5,"files":["CHANGELOG.md","docs/verbs.md","docs/internals.md"]}]
+active_run: null
+pending_gate: null
+goals_enabled: true
+goals: [{"id":"G1","text":"Dispatch skips fully-blocked waves","signal":"test"},{"id":"G2","text":"Blocked runs do not silently finalize","signal":"test"},{"id":"G3","text":"Explicit waivers close a blocked run","signal":"test"},{"id":"G4","text":"Status-preserving task injection","signal":"test"},{"id":"G5","text":"Adversarial review runs during execution","signal":"artifact"},{"id":"G6","text":"Green and documented","signal":"test"}]
+review: {"adversary":true}
+render: {"images":"off"}
+goals_md_hash: sha256:a1ce79e3559d022080b0f8c0aa66758d89f8e423adb69b2115a9998f3e7f96e3
