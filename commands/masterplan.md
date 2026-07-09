@@ -521,8 +521,16 @@ not surface it as an error — satisfy it:
 1. **Run the lane** over `op.artifacts`, foreground, through the agent-dispatch control plane's adversary
    lane (NO model named — `class=adversary`, `intensity=rigorous` resolve to a cross-vendor reviewer
    engine-side): `mcp__agent-dispatch__dispatch_review` with the gated artifacts as the review target.
-   This is the SAME cross-vendor adversary lane the finish gate uses (§2c `run_adversary_review`), applied
-   at the spec- and plan-approval boundaries — the two points where a design error is cheapest to fix.
+   **Feed the artifact BYTES, not a git diff:** the gated artifacts (`spec.md`, `plan.md`,
+   `plan.index.json`) are UNTRACKED at gate time, so `git diff --staged` / `git diff -- <files>` over them
+   returns EMPTY — structurally reviewing nothing (the latent hole this gate had). Pass the bytes via the
+   D7 **`content`** param — a `{path: text}` map (or a bare string) read straight from the artifact files
+   — which routes into the reviewer payload as a content block; or, on a lane without `content`, the
+   **diff-param bridge**: read the artifact bytes and pass them as `dispatch_review`'s `diff` (a synthetic
+   diff, one `+++ <path>` block per artifact). **NEVER `git add`** the artifacts to manufacture a diff —
+   that pollutes the index with bundle files and is the exact hazard the content path replaces. This is
+   the SAME cross-vendor adversary lane the finish gate uses (§2c `run_adversary_review`), applied at the
+   spec- and plan-approval boundaries — the two points where a design error is cheapest to fix.
 2. **On a real review (the lane returned findings):** `Write` a brief digest (finding count + the top
    severity-ordered findings, never the raw dump) to `<bundle>/gate-<gate>-review-digest.txt`
    (absolute-MAIN, §2e¶1; the Write tool is not shell-evaluated, so arbitrary review bytes are safe —
