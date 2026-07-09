@@ -176,6 +176,74 @@ test('review ON + no DECLARED files → reviewer prompt falls back to an explici
   assert.ok(!/sneaky/.test(review.prompt), 'self-reported files_changed does not leak into an UNSCOPED review');
 });
 
+// --- LAYER 3 (host-independent inline diff) + LAYER 4 (host-identity guard) — multi-host safety. ---
+// A subagent's Bash may execute on a DIFFERENT physical host than the orchestrator (proven live
+// 2026-07-08: a subagent reviewed a stale off-mesh box's bytes — SHA-256 + HEAD diverged). A local
+// `git diff` there silently reviews the WRONG code. Layer 3: when the orchestrator pre-captures the
+// diff as TEXT (task.inlineDiff), the reviewer runs NO git — host-independent. Layer 4: when it must
+// run the command, the prompt carries the orchestrator's machine-id + HEAD so the reviewer can prove
+// a shared filesystem first, else fail loud as inconclusive.
+test('review ON + task.inlineDiff → reviewer prompt uses the inline diff text, emits NO git command (host-independent)', async () => {
+  const INLINE = 'diff --git a/src/greet.mjs b/src/greet.mjs\n+export const greet = () => "hi";';
+  const TASKS = [
+    { id: 1, description: 'greet', files: ['src/greet.mjs'], inlineDiff: INLINE, verify_commands: [], target: 'inline', reason: 'judgment' },
+  ];
+  const agentImpl = async (prompt, opts) => {
+    if (opts.phase === 'Review') return 'NOTE — mock. verdict: clean';
+    return { task_id: 1, status: 'done', files_changed: ['src/greet.mjs'], summary: 'mock' };
+  };
+  const args = { wave: 1, tasks: TASKS, baseline: [], repoRoot: '/tmp/x', review: 'on' };
+  const { result, calls } = await runEngine(args, { agentImpl });
+  assert.equal(result.summary.reviewOn, true);
+  assert.equal(result.summary.reviewed, 1);
+  const review = calls.agentPrompts.find((c) => c.opts.phase === 'Review');
+  assert.ok(review, 'reviewer dispatched for the done task with an inline diff');
+  assert.ok(review.prompt.includes(INLINE), 'inline diff text is embedded verbatim in the prompt');
+  assert.ok(/```diff/.test(review.prompt), 'inline diff is fenced');
+  assert.ok(/Run NO `git`/.test(review.prompt), 'reviewer told to run NO git');
+  assert.ok(!/git diff HEAD/.test(review.prompt), 'NO scoped-diff command emitted when an inline diff is present');
+  assert.ok(!/git ls-files/.test(review.prompt), 'NO untracked-files command emitted when an inline diff is present');
+});
+
+test('review ON + orchestratorHost/Head (no inlineDiff) → fallback prompt carries the host-identity guard', async () => {
+  const TASKS = [
+    { id: 1, description: 'greet', files: ['src/greet.mjs'], verify_commands: [], target: 'inline', reason: 'judgment' },
+  ];
+  const agentImpl = async (prompt, opts) => {
+    if (opts.phase === 'Review') return 'NOTE — mock. verdict: clean';
+    return { task_id: 1, status: 'done', files_changed: ['src/greet.mjs'], summary: 'mock' };
+  };
+  const args = {
+    wave: 1, tasks: TASKS, baseline: [], repoRoot: '/tmp/x', review: 'on',
+    orchestratorHost: 'deadbeef', orchestratorHead: 'abc1234',
+  };
+  const { calls } = await runEngine(args, { agentImpl });
+  const review = calls.agentPrompts.find((c) => c.opts.phase === 'Review');
+  assert.ok(review, 'reviewer dispatched');
+  // Layer 4 guard is present with the orchestrator's provenance values
+  assert.ok(/host-identity guard/i.test(review.prompt), 'host-identity guard instruction present');
+  assert.ok(review.prompt.includes('deadbeef'), 'orchestrator machine-id threaded into the guard');
+  assert.ok(review.prompt.includes('abc1234'), 'orchestrator HEAD threaded into the guard');
+  assert.ok(/inconclusive/i.test(review.prompt), 'guard names the inconclusive fail-loud verdict on mismatch');
+  // The scoped command is STILL emitted (fallback path), just guarded
+  assert.ok(/git diff HEAD -- 'src\/greet.mjs'/.test(review.prompt), 'scoped-diff command still present in the guarded fallback path');
+});
+
+test('review ON + no inlineDiff and no provenance → legacy unguarded command path (status quo, no guard text)', async () => {
+  const TASKS = [
+    { id: 1, description: 'greet', files: ['src/greet.mjs'], verify_commands: [], target: 'inline', reason: 'judgment' },
+  ];
+  const agentImpl = async (prompt, opts) => {
+    if (opts.phase === 'Review') return 'NOTE — mock. verdict: clean';
+    return { task_id: 1, status: 'done', files_changed: ['src/greet.mjs'], summary: 'mock' };
+  };
+  const args = { wave: 1, tasks: TASKS, baseline: [], repoRoot: '/tmp/x', review: 'on' };
+  const { calls } = await runEngine(args, { agentImpl });
+  const review = calls.agentPrompts.find((c) => c.opts.phase === 'Review');
+  assert.ok(/git diff HEAD -- 'src\/greet.mjs'/.test(review.prompt), 'legacy scoped-diff command present');
+  assert.ok(/host-identity guard is skipped/i.test(review.prompt), 'guard explicitly noted as skipped (no provenance)');
+});
+
 // --- IMPLEMENTER BACKEND (contract-first seam) ---
 // A wave task now carries a `backend` descriptor (stamped by prepareWave). implement(t) switches on
 // backend.kind: 'qctl' -> NotYetBound blocked digest, NO agent; 'agent' (and the absent-backend

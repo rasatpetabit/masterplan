@@ -32,6 +32,8 @@ import {
   buildCapabilityEvent,
   inferGoalsCapability,
   checkGoalsCapabilityAuthority,
+  setRenderConfig,
+  CURRENT_SCHEMA_VERSION,
 } from '../lib/bundle.mjs';
 
 test('round-trips scalars with correct types', () => {
@@ -233,7 +235,7 @@ test('parseState∘serializeState round-trips a fuzz of scalar / object / array 
 test('buildSeedState: a minimal seed is a core-valid v8 brainstorm bundle with the right defaults', () => {
   const s = buildSeedState({ slug: 'demo', topic: 'a topic', createdAt: '2026-05-29T00:00:00Z' });
   assert.deepEqual(validateCoreState(s), []); // valid by construction (the builder also asserts this)
-  assert.equal(s.schema_version, 8);
+  assert.equal(s.schema_version, CURRENT_SCHEMA_VERSION); // 8->9 bump owned in lib/bundle.mjs
   assert.equal(s.phase, 'brainstorm');
   assert.equal(s.status, 'in-progress');
   assert.equal(s.slug, 'demo');
@@ -483,4 +485,61 @@ test('checkGoalsCapabilityAuthority: missing marker + present capability/goal ev
   // Hard error: state.yml lost the marker but the event log proves post-feature.
   const problems = checkGoalsCapabilityAuthority(preFeature, [{ type: 'goals_frozen' }]);
   assert.ok(problems.some((p) => /missing the goals_enabled marker/.test(p)));
+});
+
+test('setRenderConfig: round-trips state.render.images through the on-disk format and is a pure merge-update', () => {
+  const base = { slug: 'r', pending_gate: null, active_run: null };
+  const frozen = JSON.stringify(base);
+
+  // Set images on
+  const on = setRenderConfig(base, { images: 'on' });
+  assert.deepEqual(on.render, { images: 'on' });
+  assert.equal(JSON.stringify(base), frozen); // base not mutated
+
+  // Round-trips through serialize/parse (the on-disk format)
+  assert.deepEqual(parseState(serializeState(on)), on);
+
+  // Merge-update: a partial set preserves other facets of state.render
+  const withExtra = { ...base, render: { images: 'off', foo: 'keep' } };
+  const flipped = setRenderConfig(withExtra, { images: 'on' });
+  assert.equal(flipped.render.images, 'on');
+  assert.equal(flipped.render.foo, 'keep'); // sibling facet preserved
+
+  // An empty patch preserves the existing render object
+  assert.deepEqual(setRenderConfig(withExtra, {}).render, { images: 'off', foo: 'keep' });
+});
+
+test('buildSeedState: state.render.images defaults off; renderImages:on opts it on; CURRENT_SCHEMA_VERSION is 9', () => {
+  assert.equal(CURRENT_SCHEMA_VERSION, 9); // the 8->9 bump lives here, once
+
+  const def = buildSeedState({ slug: 'r', topic: 't', createdAt: 'T' });
+  assert.deepEqual(def.render, { images: 'off' }); // default off unless seeded on
+  assert.equal(def.schema_version, 9);             // stamped with CURRENT_SCHEMA_VERSION
+  assert.deepEqual(parseState(serializeState(def)), def); // survives the on-disk format
+
+  const on = buildSeedState({ slug: 'r', topic: 't', createdAt: 'T', renderImages: 'on' });
+  assert.deepEqual(on.render, { images: 'on' }); // explicit opt-in
+
+  // Any non-'on' value normalizes to 'off'
+  const junk = buildSeedState({ slug: 'r', topic: 't', createdAt: 'T', renderImages: 'nonsense' });
+  assert.deepEqual(junk.render, { images: 'off' });
+});
+
+test('field-preservation: state.render survives an unrelated state mutation untouched', () => {
+  // Mirrors the refs/render preservation contract: every existing {...state} writer round-trips the
+  // new render key untouched — only setRenderConfig / the seed default ever write it.
+  const seeded = setRenderConfig(
+    { slug: 'r', phase: 'plan', status: 'planning', tasks: [{ id: 1, wave: 0, status: 'pending', files: [] }] },
+    { images: 'on' }
+  );
+  assert.deepEqual(seeded.render, { images: 'on' });
+
+  // Unrelated mutations must not disturb state.render
+  assert.deepEqual(setPhase(seeded, 'execute').render, { images: 'on' });
+  assert.deepEqual(setStatus(seeded, 'archived').render, { images: 'on' });
+  assert.deepEqual(markTask(seeded, 1, 'done').render, { images: 'on' });
+  assert.deepEqual(setActiveRun(seeded, { run_id: 'w', task_id: 'k', wave: 0 }).render, { images: 'on' });
+
+  // And it survives a full write->read round-trip alongside the mutation
+  assert.deepEqual(parseState(serializeState(markTask(seeded, 1, 'done'))).render, { images: 'on' });
 });

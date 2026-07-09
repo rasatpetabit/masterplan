@@ -128,3 +128,68 @@ Pre-feature bundles without goals gracefully skip (no-op) all goal steps. During
 `finish-step` runs `run_goal_check` after verify and before the retro; any partial/missed
 goal opens the durable `goals_unmet` gate (fix / waive / abort — fail-closed on assessor
 dispatch failure), and the `branch_finish` payload carries a one-line goals summary.
+
+## Plan-graph & cross-run subcommands
+
+New `mp` subcommands from the planf3 import (F1/F2/F4/F5). Like the goal
+subcommands above they are dispatched through `mp` (`node bin/masterplan.mjs …`),
+not through the `/masterplan` reserved-verb list.
+
+- `refs add|remove|list` (F1) — bidirectional cross-run plan-graph refs stored in
+  `state.refs.{back,forward}` as `{slug, label?, repo?}`. `mp refs add
+  --state=<path> --direction=back|forward --target=<slug> [--repo=<path>]
+  [--label=…]` writes the entry AND its reciprocal (back↔forward) into both
+  bundles in one invocation; `mp refs remove …` drops both sides (source-only
+  + WARN when the target bundle/repo has moved, so a dangling ref stays
+  cleanable); `mp refs list --state=<path>` is read-only JSON. Ref identity is
+  `(repo, slug)`, never slug alone; `--target` must be a bare slug
+  (`[a-z0-9][a-z0-9-]*`) — traversal-validated before any path is built, and
+  stored slugs are re-validated on read. Acquires the Guard-D owner lock on
+  BOTH bundles in canonical-sorted order (deadlock-free, TOCTOU-free) and
+  re-renders each existing `plan.html` inline after the commit. Seed sugar:
+  `mp seed --predecessor=<slug>` seeds a back ref plus its reciprocal forward
+  ref. Surfaced in `mp status` and, by-presence, in the `plan.html` header.
+
+- `amend-plan` (F2) — `mp amend-plan --state=<path> --summary="…" [--detail="…"]`
+  appends a `### <ISO date> — <summary>` entry under an append-only
+  `## Amendments` section in `plan.md` (created at EOF on first use), plus a
+  `plan_amended` event. Refuses an empty/multiline/leading-`#` summary, an
+  absent `plan.md`, or an archived bundle; detail lines beginning with `#` are
+  escaped so the section parse stays unambiguous. Holds the Guard-D owner lock
+  across the mutation and re-renders an existing `plan.html` inline afterward (a
+  render failure WARNs naming the stale bundle and exits non-zero, but the plan
+  mutation stands durable). A later re-run of a plan-gated transition re-arms
+  the plan gate at the amended hash, so an amended plan earns a fresh
+  cross-vendor pass.
+
+- `set-render-config` (F4) — `mp set-render-config --state=<path> --images=on|off`
+  toggles `state.render.images` (mirrors `set-review-config`; merge-updated so
+  other render facets survive, and reversible via the same verb — no CD-7
+  hand-edit). The flag gates the OPTIONAL, SHELL-side image *generation* only;
+  embedding is by-presence — the render embeds any
+  `assets/{hero,wave-<n>}.png` it finds and never consults the flag. Also
+  settable at seed time via `mp seed --render-images=on`.
+
+- `runs list` (F5) — `mp runs list --repo-root=<path> [--roots=a,b]` — read-only
+  cross-repo run inventory. Scans MAIN plus every nested and enclosing git repo
+  (depth-capped walk, skipping `.worktrees/`, `node_modules/`, `.git/`) plus any
+  persistent `.discovery.yml` roots for `docs/masterplan/*/state.yml`, emitting
+  exactly one record per `(realpath repo root, slug)`:
+  `{repo, slug, status, phase, tasks_done/total, last_activity, owner, refs}`.
+  `last_activity` is DERIVED event-dominant (max of last event ts / owner
+  heartbeat mtime, falling back to `state.yml` mtime), never stored. Per-bundle
+  and per-root failures WARN + skip and never abort the scan; a corrupt
+  `events.jsonl` still lists the bundle with fallback-derived activity (skipping
+  it would hide the very dangling run this surfaces). Never writes state.
+
+- `set-discovery` (F5) — `mp set-discovery --repo-root=<path>
+  --add-root=<p> | --remove-root=<p>` — the WRITE side of the persistent
+  `<MAIN>/docs/masterplan/.discovery.yml` roots config (an ARTIFACT-class file,
+  not run state: no lock, no event, no CD-7 concern). Adds or removes exactly
+  one extra discovery root, canonicalized via realpath when it resolves on disk
+  (kept as raw text when it does not, so a moved/deleted root stays removable).
+
+The read-only `runs list` / dangling-run visibility also flows into `mp status`
+(an `other runs` block of non-archived discovered bundles), the `dangling-run`
+doctor check, and the session `mp sweep` report — every consumer isolates a
+broken foreign bundle to a WARN so it never takes down the current session.

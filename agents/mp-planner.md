@@ -39,7 +39,14 @@ assignment, wave layering, and `codex` normalisation deterministically — see
 
 Top level:
 
-    { "schema_version": "6.0", "tasks": [ <task>, ... ] }
+    { "schema_version": "6.0", "meta": { <narrative>, ... }, "tasks": [ <task>, ... ] }
+
+`meta` is OPTIONAL — an object with optional string fields `purpose`, `problem`, and
+`solution`, each 1–3 plain-prose sentences distilled from `spec.md`. Omittable without
+breaking old bundles: `mp validate-plan-index` accept-and-ignores it, present or absent.
+The renderer escapes these strings (escapeHtml), so they MUST be plain prose — no HTML,
+no markdown markup. This is the SAME `{purpose, problem, solution}` field contract the
+parallel `merge-plan-fragments --meta` path carries; the two planning paths stay in sync.
 
 Each `<task>` — emit the **canonical** field names below. `lib/dispatch/routing.mjs`,
 `applyPlanIndex` (`bin/masterplan.mjs`), and `buildTasksFromPlanIndex`
@@ -81,6 +88,18 @@ wave as a `parallel()` barrier and each implementer asserts its own scope post-r
 two concurrent tasks touching one file is a guaranteed conflict. If two tasks need
 the same file, put them in different (sequential) waves.
 
+## Narrative meta (optional)
+Optionally distill a top-level `meta` object from `spec.md` — up to three plain-prose fields:
+- `purpose` — why this work exists / the outcome it serves (1–3 sentences).
+- `problem` — the concrete gap or pain the spec names (1–3 sentences).
+- `solution` — the approach this plan takes (1–3 sentences).
+Keep every claim traceable to `spec.md`; **omit** any field — or the whole `meta` object —
+you cannot faithfully derive rather than padding. Emit **plain prose only**: the renderer
+escapes these strings, so HTML/markdown markup would render as literal text and no caller
+HTML is trusted. The object is fully omittable — old bundles without it stay valid and
+`mp validate-plan-index` accepts indexes with and without the fields. This is the same
+`{purpose, problem, solution}` contract the parallel `merge-plan-fragments --meta` path emits.
+
 ## Routing annotations
 - `codex: "ok"` only for mechanical, well-bounded work: ≤ 3 files, concrete
   `verify_commands`, no design judgment.
@@ -92,7 +111,9 @@ the same file, put them in different (sequential) waves.
 
 ## Output shape
 1. Write `plan.md` (the human-readable plan) into the run-bundle dir.
-2. Write `plan.index.json` (the machine index above) into the same dir.
+2. Write `plan.index.json` (the machine index above) into the same dir — include the
+   optional narrative `meta` (`{purpose, problem, solution}`) distilled from `spec.md`
+   when the spec supports it, omitted otherwise.
 3. Return a **compact digest only** — never the index contents:
 
        ## Plan written

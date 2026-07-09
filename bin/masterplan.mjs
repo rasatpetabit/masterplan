@@ -151,12 +151,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, setWorktree, setWorktreeDisposition, setVerifiedSha, setCodexConfig, setReviewConfig, loadPlanTasks, buildSeedState, buildTasksFromPlanIndex, appendEvent, setCoordination, applyPlanIndex, rebasePaths, GOAL_LIFECYCLE_EVENT_TYPES, inferGoalsCapability } from '../lib/bundle.mjs';
+import { readState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, setWorktree, setWorktreeDisposition, setVerifiedSha, setCodexConfig, setReviewConfig, setRenderConfig, loadPlanTasks, buildSeedState, buildTasksFromPlanIndex, appendEvent, setCoordination, applyPlanIndex, rebasePaths, GOAL_LIFECYCLE_EVENT_TYPES, inferGoalsCapability } from '../lib/bundle.mjs';
 import { parseGoals, validateGoals, goalsHash, validateUserApprovalReceipt, validateAmendment, amendmentDiff, crossCheckGoals, validateGoalCheckReceipt, validateGoalWaiver, waiverKey } from '../lib/goals.mjs';
 import { planWorktreeCreate, parseWorktreeList, classifyWorktrees, normalizeDisposition, dispositionAfterTeardown, VALID_DISPOSITIONS as VALID_WORKTREE_DISPOSITION } from '../lib/worktree.mjs';
 import { collectDiskDirs, collectBundleRecords } from '../lib/worktree-fs.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
 import { acquireOwner, heartbeatOwner, releaseOwner } from '../lib/owner-fs.mjs';
+import { planRefsAdd, applyRefsAdd, removeRef, listRefs, ensureRefs, resolveTargetBundlePath, deriveDefaultTargetRepo, canonicalizeRepoRoot, validateTargetSlug, buildEntry, reciprocalDirection, assertDirection } from '../lib/refs.mjs';
 import { issueBodyForTask, parseIssueBody, validateClaimSettle, selectClaimableUnits, reconcileIntegration, isTerminalIssueStatus, isValidIssueStatus, ISSUE_MAP_STATUSES, computeCoordDefaults } from '../lib/github-coord.mjs';
 import { migrate, detectSchemaVersion, MigrationError } from '../lib/migrate.mjs';
 import { decideNextAction } from '../lib/resume.mjs';
@@ -168,6 +169,7 @@ import { selectGateReview, gateEventTypes, validateGateReceipt } from '../lib/ga
 import { resolveConfigDir } from '../lib/paths.mjs';
 import { createHash } from 'node:crypto';
 import { mergePlanFragments, validatePlanIndex, renderPlanMd, renderPlanHtml } from '../lib/plan-merge.mjs';
+import { amendPlan } from '../lib/amend.mjs';
 import { classifyDirt, detectBase, collectVerifyCommands, isVerified, dispositionForChoice, summarizePr } from '../lib/finish.mjs';
 import { computeEnqueueKey, decideEnqueue } from '../lib/qctl-enqueue.mjs';
 import { verifyArtifact, parseQctlDigest } from '../lib/qctl-artifact.mjs';
@@ -177,6 +179,7 @@ import { recordWaveResult } from '../lib/wave-commit.mjs';
 import { continueRun } from '../lib/continue.mjs';
 import { finishStep } from '../lib/finish-step.mjs';
 import { sweepWorktrees } from '../lib/sweep.mjs';
+import { discoverRuns, readDiscoveryConfig, serializeDiscoveryConfig, addDiscoveryRoot, removeDiscoveryRoot, discoveryConfigPath } from '../lib/runs.mjs';
 
 // ---- spec/plan gate-review enforcement (the two PRE-EXECUTE adversary gates) ----
 // The bin fs boundary for lib/gate-review.mjs (the pure scanner). These two functions recompute a
@@ -556,6 +559,130 @@ function resolveOwnerSelf(flags, statePath) {
   return { bundleDir, self, now, ttlMs };
 }
 
+// ---- F1 cross-bundle refs helpers (used by `refs add|remove` and `seed --predecessor`) ----
+// Acquire Guard-D owner locks on a SET of bundles in deterministic (canonical-repo, then slug) order so
+// two concurrent `refs` invocations on the same pair can never AB/BA-deadlock. A LIVE foreign owner on
+// ANY bundle -> die non-zero (naming the owner) after releasing whatever we already hold; nothing is
+// written. Returns a release() the caller MUST invoke on every exit path (success, throw, or die).
+function acquireRefsLocks(bundles, flags, subLabel) {
+  const ordered = [...bundles].sort((a, b) =>
+    a.repo < b.repo ? -1 : a.repo > b.repo ? 1 : a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0);
+  const held = [];
+  const release = () => {
+    while (held.length) {
+      const h = held.pop();
+      try { releaseOwner(h.bundleDir, h.self, { now: h.now, ttlMs: h.ttlMs }); } catch { /* best-effort */ }
+    }
+  };
+  for (const b of ordered) {
+    const { bundleDir, self, now, ttlMs } = resolveOwnerSelf(flags, b.statePath);
+    try { fs.mkdirSync(bundleDir, { recursive: true }); } catch { /* exists/unwritable — acquire surfaces it */ }
+    const res = acquireOwner(bundleDir, self, { now, force: !!flags.force, ttlMs });
+    if (res.outcome === 'blocked') {
+      release();
+      const inc = res.incumbent || {};
+      die(`refs ${subLabel}: ${b.role} bundle ${b.statePath} is owned by ${inc.host ?? '?'}/${inc.session ?? '?'} — nothing written`, 1);
+    }
+    held.push({ bundleDir, self, now, ttlMs });
+  }
+  return release;
+}
+
+// Re-render a bundle's EXISTING plan.html inline after a refs mutation (F1 render-freshness). No-op when
+// plan.html is absent (nothing to refresh). NEVER throws: on failure it WARNs (naming the stale bundle)
+// and returns false so the caller can exit non-zero while the mutation stands durable.
+function rerenderRefsHtml(statePath, subLabel) {
+  const dir = path.dirname(statePath);
+  const planHtmlPath = path.join(dir, 'plan.html');
+  if (!fs.existsSync(planHtmlPath)) return true;
+  try {
+    const index = JSON.parse(fs.readFileSync(path.join(dir, 'plan.index.json'), 'utf8'));
+    const st = readState(statePath);
+    const taskStatus = {};
+    for (const t of st.tasks ?? []) taskStatus[Number(t.id)] = t.status;
+    // refs threaded for forward-compat with the render subsystem's header (unknown opts ignored today).
+    fs.writeFileSync(planHtmlPath, renderPlanHtml(index, { title: st.slug ?? 'Plan', taskStatus, refs: ensureRefs(st) }));
+    return true;
+  } catch (e) {
+    process.stderr.write(`refs ${subLabel}: plan.html is now STALE for ${dir} — re-render failed (${e.message})\n`);
+    return false;
+  }
+}
+
+// The full `refs add` transaction — shared by the `refs add` subcommand and `seed --predecessor`.
+// Resolves the (repo,slug) target, requires the target bundle to exist (add is strict), holds Guard-D
+// locks on BOTH bundles across the write, writes reciprocal target-then-source (atomic per file),
+// appends refs_added to both events.jsonl (skipping a side that didn't change), then re-renders both
+// existing plan.html. dies non-zero on any pre-write failure; on success prints one JSON line and, if a
+// post-commit render failed, exits non-zero (the mutation still stands).
+function performRefsAdd(flags, { sourcePath, direction, targetSlug, subLabel }) {
+  let dir, tslug;
+  try {
+    dir = assertDirection(direction);
+    tslug = validateTargetSlug(targetSlug);
+  } catch (e) {
+    die(`refs ${subLabel}: ${e.message}`, 1);
+  }
+  let sourceRepoRoot;
+  try {
+    sourceRepoRoot = deriveDefaultTargetRepo(sourcePath);
+  } catch (e) {
+    die(`refs ${subLabel}: ${e.message}`, 1);
+  }
+  let sourceState;
+  try {
+    sourceState = readState(sourcePath);
+  } catch {
+    die(`refs ${subLabel}: cannot read source bundle ${sourcePath}`, 1);
+  }
+  const sourceSlug = sourceState.slug;
+  const sourceTopic = sourceState.topic ?? null;
+  // Target repo root: STRICT canonicalization when --repo is supplied (realpath + must be a repo root),
+  // else default to the SOURCE bundle's own repo root — NEVER the session MAIN.
+  let targetRepoRoot;
+  if (flags.repo !== undefined) {
+    try {
+      targetRepoRoot = canonicalizeRepoRoot(String(flags.repo));
+    } catch (e) {
+      die(`refs ${subLabel}: ${e.message}`, 1);
+    }
+  } else {
+    targetRepoRoot = sourceRepoRoot;
+  }
+  const targetBundlePath = resolveTargetBundlePath(targetRepoRoot, tslug);
+  if (!fs.existsSync(targetBundlePath)) {
+    die(`refs ${subLabel}: target bundle ${targetBundlePath} does not exist — nothing written`, 1);
+  }
+  const selfRef = (targetRepoRoot === sourceRepoRoot && tslug === sourceSlug);
+  const bundles = [{ statePath: sourcePath, repo: sourceRepoRoot, slug: sourceSlug, role: 'source' }];
+  if (!selfRef) bundles.push({ statePath: targetBundlePath, repo: targetRepoRoot, slug: tslug, role: 'target' });
+  const release = acquireRefsLocks(bundles, flags, subLabel);
+  let renderOk = true;
+  let applied;
+  try {
+    const plan = planRefsAdd({
+      direction: dir, sourceRepoRoot, sourceSlug, sourceTopic,
+      targetRepoRoot, targetSlug: tslug, label: flags.label ?? null,
+    });
+    const targetState = readState(targetBundlePath);
+    applied = applyRefsAdd(sourceState, targetState, plan);
+    // Reciprocal write, target-then-source; each writeState is atomic (tmp+rename). Skip the event on
+    // an idempotent no-op (a side that didn't change).
+    if (applied.targetChanged) writeState(targetBundlePath, applied.targetState);
+    if (applied.sourceChanged) writeState(sourcePath, applied.sourceState);
+    const ts = new Date().toISOString();
+    if (applied.targetChanged) appendEvent(targetBundlePath, { type: 'refs_added', ts, direction: plan.target.direction, slug: sourceSlug });
+    if (applied.sourceChanged) appendEvent(sourcePath, { type: 'refs_added', ts, direction: dir, target: tslug });
+    // Inline render-freshness AFTER the state/event commit — only the sides that changed.
+    if (applied.sourceChanged && !rerenderRefsHtml(sourcePath, subLabel)) renderOk = false;
+    if (applied.targetChanged && !rerenderRefsHtml(targetBundlePath, subLabel)) renderOk = false;
+  } finally {
+    release();
+  }
+  out({ refs: 'add', direction: dir, target: tslug, source_changed: applied.sourceChanged, target_changed: applied.targetChanged });
+  if (!renderOk) process.exit(1);
+}
+
 // Valid task statuses the v8 shell may WRITE via mark-task. Minimal + decide-consistent:
 // decideNextAction treats anything !== 'done' as "still needs work", so pending/in_progress map
 // correctly and a typo ('doen', 'complete') is rejected rather than silently mis-recorded. (Legacy
@@ -717,6 +844,11 @@ function main() {
       if (flags['owner-lock'] !== undefined && !['on', 'off'].includes(flags['owner-lock'])) {
         die(`invalid --owner-lock '${flags['owner-lock']}' — expected on or off`);
       }
+      // --render-images=on|off seeds state.render.images (buildSeedState defaults 'off'). Enum-validated
+      // here at the bin boundary; undefined leaves buildSeedState's default in force.
+      if (flags['render-images'] !== undefined && !['on', 'off'].includes(flags['render-images'])) {
+        die(`invalid --render-images '${flags['render-images']}' — expected on or off`);
+      }
       // --adversary-review: opt-out for the default-on finish-time review (--codex-review is a hidden
       // back-compat alias). Accepts on|off (the set-review-config subcommand accepts the same
       // vocabulary). Undefined → buildSeedState's default-true applies (spec §4.1).
@@ -746,11 +878,19 @@ function main() {
           planIndexPath: flags['plan-index-path'] ?? path.join(dir, 'plan.index.json'),
           ownerLock: flags['owner-lock'],
           codexReview: reviewFlag === undefined ? true : reviewFlag === 'on',
+          renderImages: flags['render-images'],
         });
       } catch (e) {
         die(e.message, 1);
       }
       writeState(p, state);
+      // --predecessor=<slug>: seed a back ref to the named prior run (+ its reciprocal forward ref in
+      // that bundle) now that state.yml exists. Reuses the F1 add transaction (same-repo target derived
+      // from THIS bundle's repo root); a missing predecessor fails loud (add is strict) after the seed
+      // has already committed — the fresh bundle stands, the link did not.
+      if (flags.predecessor !== undefined) {
+        performRefsAdd(flags, { sourcePath: p, direction: 'back', targetSlug: String(flags.predecessor), subLabel: 'seed --predecessor' });
+      }
       out({ seeded: state.slug, phase: state.phase, status: state.status, path: p }); // terse: no full-state echo (anti-flood)
       break;
     }
@@ -1475,6 +1615,61 @@ function main() {
       out({ loaded: next.tasks.length, waves: new Set(next.tasks.map((t) => t.wave)).size, phase: next.phase });
       break;
     }
+    case 'amend-plan': {
+      // F2: append a `## Amendments` entry to plan.md — the sanctioned mid-run plan mutation. lib/amend.mjs
+      // owns the PURE section writer (no fs/clock); this case owns the fs/clock/event/render I/O:
+      //   (a) BASE — parse --summary/--detail, inject the ISO date (purity: no clock in the writer), call
+      //       amendPlan, write plan.md (tmp+rename), append the plan_amended {summary} event LAST (commit).
+      //   (b) GUARD-D — acquire the bundle owner lock BEFORE the mutation, release on EVERY exit path; a LIVE
+      //       foreign owner exits non-zero writing nothing (another live session may own this bundle).
+      //   (c) RENDER — after the plan.md/event commit, re-render an EXISTING plan.html inline; a render
+      //       failure WARNs (naming the stale bundle) and exits non-zero while the mutation stands durable.
+      const p = need(flags, 'state');
+      const dir = path.dirname(p);
+      const state = loadForWrite(p);
+      const summary = String(need(flags, 'summary'));
+      const detail = flags.detail !== undefined ? String(flags.detail) : '';
+      const amendDate =
+        typeof flags.date === 'string' && flags.date.trim() ? flags.date.trim() : new Date().toISOString().slice(0, 10);
+      const planMdPath = flags['plan-md'] ?? path.join(dir, 'plan.md');
+      // Read the current plan.md (absent -> null so the pure writer refuses cleanly; a non-ENOENT read
+      // error fails loud rather than masquerading as an absent plan).
+      let planText = null;
+      try {
+        planText = fs.readFileSync(planMdPath, 'utf8');
+      } catch (e) {
+        if (e.code !== 'ENOENT') die(`amend-plan: ${planMdPath} unreadable: ${e.message}`, 1);
+      }
+      // Validate the mutation BEFORE taking the lock — a refusal holds no lock and writes nothing.
+      const amended = amendPlan({ planText, summary, detail, date: amendDate, archived: state.status === 'archived' });
+      if (!amended.ok) die(`amend-plan: ${amended.error}`, 1);
+      // Guard-D: hold the bundle owner lock across the mutation. A LIVE foreign owner -> die non-zero,
+      // nothing written. All dieable validation is ABOVE this point (process.exit skips the finally).
+      const { bundleDir, self, now, ttlMs } = resolveOwnerSelf(flags, p);
+      try { fs.mkdirSync(bundleDir, { recursive: true }); } catch { /* exists/unwritable — acquire surfaces it */ }
+      const acq = acquireOwner(bundleDir, self, { now, force: !!flags.force, ttlMs });
+      if (acq.outcome === 'blocked') {
+        const inc = acq.incumbent || {};
+        die(`amend-plan: bundle ${p} is owned by ${inc.host ?? '?'}/${inc.session ?? '?'} — nothing written`, 1);
+      }
+      let renderOk = true;
+      try {
+        // Commit: plan.md (tmp+rename, atomic) FIRST, then the plan_amended event append LAST as the
+        // commit point (mirrors the goals-amend artifact-then-event ordering).
+        const planMdTmp = planMdPath + '.tmp';
+        fs.writeFileSync(planMdTmp, amended.planText, 'utf8');
+        fs.renameSync(planMdTmp, planMdPath);
+        appendEvent(p, { ...amended.event, ts: flags.ts ?? new Date().toISOString() });
+        // Inline render-freshness AFTER the commit — reuses the shared plan.html re-render helper, which is
+        // a no-op when plan.html is absent and NEVER throws (WARNs + returns false on failure).
+        if (!rerenderRefsHtml(p, 'amend-plan')) renderOk = false;
+      } finally {
+        try { releaseOwner(bundleDir, self, { now, ttlMs }); } catch { /* best-effort */ }
+      }
+      out({ amend_plan: 'amended', summary: amended.event.summary });
+      if (!renderOk) process.exit(1);
+      break;
+    }
     case 'render-plan': {
       // The `render` verb's engine. Re-render plan.html with LIVE status from state.tasks. READ-ONLY
       // w.r.t. state — no writeState, no owner-lock mutation; state.yml bytes stay untouched. fs-only:
@@ -1491,8 +1686,25 @@ function main() {
       }
       const taskStatus = {};
       for (const t of state.tasks ?? []) taskStatus[Number(t.id)] = t.status;
-      const planHtmlPath = flags['plan-html'] ?? path.join(path.dirname(planIndexPath), 'plan.html');
-      fs.writeFileSync(planHtmlPath, renderPlanHtml(index, { title: state.slug ?? 'Plan', taskStatus }));
+      // The bundle dir roots by-presence asset embedding (assets/{hero,wave-<n>}.png) and the amendments
+      // read below. render-plan stays READ-ONLY and idempotently re-runnable: it only (over)writes
+      // plan.html, so F1/F2 callers can retry the render after a post-commit render failure — the state
+      // mutation stands and the staleness is resolved by re-running this verb.
+      const bundleDir = path.dirname(planIndexPath);
+      const planHtmlPath = flags['plan-html'] ?? path.join(bundleDir, 'plan.html');
+      // Render-freshness context: the ## Amendments timeline is parsed from plan.md (best-effort; an
+      // absent/unreadable plan.md yields no timeline, never a throw). refs come from state (F1 header
+      // links); narrative meta comes from index.meta (Purpose/Problem/Solution sections).
+      let planMdText = '';
+      try { planMdText = fs.readFileSync(path.join(bundleDir, 'plan.md'), 'utf8'); } catch { /* no plan.md -> no amendments timeline */ }
+      fs.writeFileSync(planHtmlPath, renderPlanHtml(index, {
+        title: state.slug ?? 'Plan',
+        taskStatus,
+        refs: ensureRefs(state),
+        narrative: index.meta,
+        bundleDir,
+        amendmentsMd: planMdText,
+      }));
       out({ rendered: planHtmlPath, tasks: (state.tasks ?? []).length });
       break;
     }
@@ -1785,7 +1997,9 @@ function main() {
       let index;
       try {
         // schemaVersion left to mergePlanFragments' own SCHEMA_VERSION default (single source of truth).
-        index = mergePlanFragments(fragments, { schemaVersion: meta.schemaVersion });
+        // Forward the parsed --meta so mergePlanFragments distils narrative {purpose,problem,solution}
+        // into index.meta on the PARALLEL path (mirrors the serial renderPlanMd(index, meta) below).
+        index = mergePlanFragments(fragments, { schemaVersion: meta.schemaVersion, meta });
       } catch (e) {
         die(`merge-plan-fragments: ${e.message}`, 1);
       }
@@ -2015,6 +2229,24 @@ function main() {
       }
       writeState(p, state);
       out({ review: result });
+      break;
+    }
+    case 'set-render-config': {
+      // Per-bundle render toggle mirroring set-review-config: --images=on|off arms/disarms image/diagram
+      // render artifacts via state.render.images (the key the shell's plan->execute image step reads).
+      // Enum-validated at the bin boundary; merge-updated through setRenderConfig so other render facets
+      // survive; reversible via the SAME verb (no CD-7 hand-edit).
+      const p = need(flags, 'state');
+      if (flags.images === undefined) {
+        die('set-render-config: provide --images=on|off', 1);
+      }
+      if (!['on', 'off'].includes(String(flags.images))) {
+        die(`invalid --images '${flags.images}' — expected on or off`);
+      }
+      let state = loadForWrite(p);
+      state = setRenderConfig(state, { images: String(flags.images) });
+      writeState(p, state);
+      out({ render: { images: String(flags.images) } });
       break;
     }
     case 'finish-status': {
@@ -2911,6 +3143,206 @@ function main() {
         // lock is still within TTL (a successor can only steal a STALE lock).
         out(releaseOwner(bundleDir, self, { force: !!flags.force, now, ttlMs }));
       }
+      break;
+    }
+    case 'runs': {
+      // F5: read-only cross-repo run inventory via the shared lib/runs.mjs discovery engine. NEVER writes
+      // state.yml (no lock, no event, no CD-7 concern). Sub-dispatch on the first positional; only `list`
+      // exists today. Discovery roots = MAIN (--repo-root) + nested/enclosing git repos + `--roots=a,b` +
+      // the persistent <MAIN>/docs/masterplan/.discovery.yml config. Per-bundle/per-root failures are
+      // isolated to the `warnings` array and never abort the scan.
+      const sub = positional[0];
+      if (sub !== 'list') {
+        die(`unknown runs subcommand '${sub ?? ''}' — expected: list`, 1);
+      }
+      const repoRoot = need(flags, 'repo-root');
+      let result;
+      try {
+        result = discoverRuns({ repoRoot, rootsArg: flags.roots ?? null });
+      } catch (e) {
+        die(`runs list: ${e.message}`, 1);
+      }
+      // Porcelain shape mirrors the engine's per-bundle record verbatim under `runs`, plus the isolated
+      // per-bundle/per-root `warnings` the scan collected.
+      out({ runs: result.runs, warnings: result.warnings });
+      break;
+    }
+    case 'set-discovery': {
+      // F5: the WRITE side of the <MAIN>/docs/masterplan/.discovery.yml ARTIFACT-class roots config (NOT run
+      // state — no CD-7 concern, no lock, no event). Add or remove ONE persistent discovery root, round-tripping
+      // through the tolerant lib/runs.mjs parser/serializer. Exactly one of --add-root/--remove-root is required.
+      const repoRoot = need(flags, 'repo-root');
+      const addRoot = typeof flags['add-root'] === 'string' ? flags['add-root'] : undefined;
+      const removeRoot = typeof flags['remove-root'] === 'string' ? flags['remove-root'] : undefined;
+      if ((addRoot === undefined) === (removeRoot === undefined)) {
+        die('set-discovery: pass exactly one of --add-root=<path> or --remove-root=<path>', 1);
+      }
+      const rawRoot = addRoot !== undefined ? addRoot : removeRoot;
+      let root = String(rawRoot).trim();
+      if (!root) die('set-discovery: root path must be non-empty', 1);
+      // Canonicalize the root when it exists so add/remove round-trip and symlink aliases collapse; keep the
+      // raw text when it does not resolve (a moved/deleted root must stay removable).
+      try { if (fs.existsSync(root)) root = fs.realpathSync(root); } catch { /* keep textual */ }
+      const cfgPath = discoveryConfigPath(repoRoot);
+      const { roots: current } = readDiscoveryConfig(repoRoot);
+      const action = addRoot !== undefined ? 'add' : 'remove';
+      const updated = action === 'add' ? addDiscoveryRoot(current, root) : removeDiscoveryRoot(current, root);
+      const changed = updated.length !== current.length || updated.some((r, i) => r !== current[i]);
+      try {
+        fs.mkdirSync(path.dirname(cfgPath), { recursive: true });
+        fs.writeFileSync(cfgPath, serializeDiscoveryConfig(updated));
+      } catch (e) {
+        die(`set-discovery: cannot write ${cfgPath}: ${e.message}`, 1);
+      }
+      out({ config: cfgPath, action, root, roots: updated, changed });
+      break;
+    }
+    case 'status': {
+      // Base one-bundle state summary + plan-graph refs block. READ-ONLY: no lock, no event,
+      // no CD-7 write. This is the base surface the discovery subsystem later EXTENDS with an
+      // other-runs block — keep it self-contained so that extension is additive.
+      const p = need(flags, 'state');
+      const state = readState(p);
+      const tasks = state.tasks ?? [];
+      const done = tasks.filter((t) => t.status === 'done').length;
+      // Refs are a status concern (which bundles this one links to); rendering the links is not.
+      // listRefs echoes stored entries verbatim: { slug, label?, repo? } under back/forward.
+      const refs = listRefs(state);
+      // F5: extend the base status with an `other runs` block — non-archived bundles discovered across
+      // MAIN + nested/enclosing git repos (+ any configured .discovery.yml roots), EXCLUDING this bundle.
+      // The multi-bundle picker still operates on MAIN-repo bundles only; this is surfacing, not takeover.
+      // Fully isolated: any discovery failure degrades to an empty list so a broken foreign bundle never
+      // takes down the current session's own status. Discovery de-dupes by (realpath(repo root), slug).
+      let other_runs = [];
+      try {
+        const mainRoot = deriveDefaultTargetRepo(p);
+        let selfCanon;
+        try { selfCanon = fs.realpathSync(p); } catch { selfCanon = path.resolve(p); }
+        const { runs } = discoverRuns({ repoRoot: mainRoot });
+        other_runs = runs
+          .filter((r) => !r.archived)
+          .filter((r) => {
+            let rc;
+            try { rc = fs.realpathSync(r.statePath); } catch { rc = path.resolve(r.statePath); }
+            return rc !== selfCanon;
+          })
+          .map((r) => ({
+            repo: r.repo,
+            slug: r.slug,
+            status: r.status,
+            phase: r.phase,
+            tasks: { done: r.tasks_done, total: r.tasks_total },
+            last_activity: r.last_activity,
+            owner: r.owner,
+          }));
+      } catch {
+        other_runs = [];
+      }
+      out({
+        slug: state.slug ?? null,
+        status: state.status ?? null,
+        phase: state.phase ?? null,
+        tasks: { done, total: tasks.length },
+        refs,
+        other_runs,
+      });
+      break;
+    }
+    case 'refs': {
+      // F1: (repo,slug)-identified bidirectional plan-graph refs. This case is the SOLE CD-7 writer of
+      // state.refs on the source (--state) AND the resolved target bundle. lib/refs.mjs owns the pure
+      // transform (validation, reciprocal construction, idempotent upsert/remove, path/repo resolution);
+      // this case owns Guard-D locking on BOTH bundles, the events.jsonl append, and the inline plan.html
+      // re-render. Sub-dispatch on the first positional (add|remove|list).
+      const sub = positional[0];
+      if (sub === 'list') {
+        // Read-only JSON — no lock, no write. (Stored slugs are re-validated by the pure core before any
+        // path construction elsewhere; list builds no path, so it echoes entries verbatim.)
+        out(listRefs(readState(need(flags, 'state'))));
+        break;
+      }
+      if (sub === 'add') {
+        performRefsAdd(flags, {
+          sourcePath: need(flags, 'state'),
+          direction: need(flags, 'direction'),
+          targetSlug: need(flags, 'target'),
+          subLabel: 'add',
+        });
+        break;
+      }
+      if (sub === 'remove') {
+        const sourcePath = need(flags, 'state');
+        let direction, targetSlug;
+        try {
+          direction = assertDirection(need(flags, 'direction'));
+          targetSlug = validateTargetSlug(need(flags, 'target'));
+        } catch (e) {
+          die(`refs remove: ${e.message}`, 1);
+        }
+        let sourceRepoRoot;
+        try {
+          sourceRepoRoot = deriveDefaultTargetRepo(sourcePath);
+        } catch (e) {
+          die(`refs remove: ${e.message}`, 1);
+        }
+        let sourceState;
+        try {
+          sourceState = readState(sourcePath);
+        } catch {
+          die(`refs remove: cannot read source bundle ${sourcePath}`, 1);
+        }
+        const sourceSlug = sourceState.slug;
+        // Removal is LENIENT about --repo: match the STORED identity as TEXT, canonicalizing only when the
+        // supplied path still exists (a ref to a moved/deleted repo must stay removable — strict add-style
+        // validation would make a dangling ref permanently unremovable).
+        let targetRepoRoot;
+        if (flags.repo !== undefined) {
+          targetRepoRoot = String(flags.repo);
+          try { if (fs.existsSync(targetRepoRoot)) targetRepoRoot = fs.realpathSync(targetRepoRoot); } catch { /* keep textual */ }
+        } else {
+          targetRepoRoot = sourceRepoRoot;
+        }
+        const targetBundlePath = resolveTargetBundlePath(targetRepoRoot, targetSlug);
+        const targetResolved = fs.existsSync(targetBundlePath);
+        const recipDir = reciprocalDirection(direction);
+        const selfRef = (targetRepoRoot === sourceRepoRoot && targetSlug === sourceSlug);
+        // Lock the source always; the target only when it resolves (an unresolvable target is source-only).
+        const bundles = [{ statePath: sourcePath, repo: sourceRepoRoot, slug: sourceSlug, role: 'source' }];
+        if (targetResolved && !selfRef) bundles.push({ statePath: targetBundlePath, repo: targetRepoRoot, slug: targetSlug, role: 'target' });
+        const release = acquireRefsLocks(bundles, flags, 'remove');
+        let renderOk = true;
+        let sChanged = false;
+        let tChanged = false;
+        try {
+          // Source side: drop the entry keyed on (targetRepoRoot, targetSlug). buildEntry reproduces the
+          // exact stored (repo,slug) key (label is irrelevant to the match).
+          const srcEntry = buildEntry({ slug: targetSlug, entryRepoRoot: targetRepoRoot, holdingRepoRoot: sourceRepoRoot });
+          const s = removeRef(sourceState, direction, srcEntry, sourceRepoRoot);
+          sChanged = s.changed;
+          if (targetResolved) {
+            const targetState = readState(targetBundlePath);
+            const recipEntry = buildEntry({ slug: sourceSlug, entryRepoRoot: sourceRepoRoot, holdingRepoRoot: targetRepoRoot });
+            const t = removeRef(targetState, recipDir, recipEntry, targetRepoRoot);
+            tChanged = t.changed;
+            if (t.changed) writeState(targetBundlePath, t.state); // target-then-source (atomic per file)
+          } else {
+            process.stderr.write(`refs remove: target bundle ${targetBundlePath} did not resolve — removing the SOURCE side only and WARNing (dangling ref cleanup)\n`);
+          }
+          if (s.changed) writeState(sourcePath, s.state);
+          const ts = new Date().toISOString();
+          // Skip the event on an idempotent no-op; source-only when the target didn't resolve.
+          if (tChanged) appendEvent(targetBundlePath, { type: 'refs_removed', ts, direction: recipDir, slug: sourceSlug });
+          if (sChanged) appendEvent(sourcePath, { type: 'refs_removed', ts, direction, target: targetSlug });
+          if (sChanged && !rerenderRefsHtml(sourcePath, 'remove')) renderOk = false;
+          if (tChanged && !rerenderRefsHtml(targetBundlePath, 'remove')) renderOk = false;
+        } finally {
+          release();
+        }
+        out({ refs: 'remove', direction, target: targetSlug, source_changed: sChanged, target_changed: tChanged, target_resolved: targetResolved });
+        if (!renderOk) process.exit(1);
+        break;
+      }
+      die(`unknown refs subcommand '${sub ?? ''}' — expected: add | remove | list`, 1);
       break;
     }
     default:
