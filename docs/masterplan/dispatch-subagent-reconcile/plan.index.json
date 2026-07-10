@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": "6.0",
   "tasks": [
     {
       "id": 1,
@@ -48,6 +48,6 @@
       "codex": "no"
     }
   ],
-  "plan_hash": "sha256:41199a24d876ca5ed7f1fe62e88cd6e086d00181d02ac40dac201bdb9c9b8773",
-  "generated_at": "2026-07-10T13:16:58.987Z"
+  "plan_hash": "sha256:0db100e9939059c8c7045477c2770b3e9624c47cc2821a05f208ddf1cdeed06a",
+  "generated_at": "2026-07-10T13:18:56.676Z"
 }

@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dispatch-subagent-reconcile</title>
+<style>
+:root { color-scheme: light dark; }
+body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; margin: 2rem auto; max-width: 1100px; padding: 0 1rem; line-height: 1.45; }
+h1 { margin-bottom: .25rem; }
+.summary { color: #666; margin-top: 0; }
+.stamp { color: #999; font-size: .85rem; margin-top: 0; }
+.diagram { margin: 1.25rem 0; overflow-x: auto; }
+section.wave { margin: 1.5rem 0; }
+table { border-collapse: collapse; width: 100%; font-size: .92rem; }
+th, td { border: 1px solid #ddd; padding: .4rem .55rem; text-align: left; vertical-align: top; }
+th { background: #f5f5f5; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85rem; }
+.badge { display: inline-block; padding: .1rem .5rem; border-radius: 999px; font-size: .8rem; font-weight: 600; color: #fff; }
+.status-pending { background: #9e9e9e; }
+.status-done    { background: #2e7d32; }
+.status-failed  { background: #c62828; }
+.status-blocked { background: #ef6c00; }
+.status-waived   { background: #6a1b9a; }
+.svg-wavelabel { font: 600 13px system-ui, sans-serif; fill: #555; }
+.svg-id { font: 600 13px ui-monospace, monospace; fill: #fff; }
+.svg-node.status-pending rect { fill: #9e9e9e; }
+.svg-node.status-done    rect { fill: #2e7d32; }
+.svg-node.status-failed  rect { fill: #c62828; }
+.svg-node.status-blocked rect { fill: #ef6c00; }
+.svg-node.status-waived rect { fill: #6a1b9a; }
+section.meta { margin: 1rem 0; }
+.refs ul { list-style: none; padding-left: 0; margin: .3rem 0; }
+.refs li { margin: .2rem 0; }
+.narrative h2 { margin-top: 1.25rem; }
+img.hero, img.wave-img { max-width: 100%; height: auto; display: block; margin: .75rem 0; }
+.amendments ol.timeline { padding-left: 1.1rem; }
+.amendments time { font-weight: 600; color: #555; }
+.amendments .detail { color: #666; margin: .15rem 0 .4rem; }
+.goals ul { columns: 2; }
+</style>
+</head>
+<body>
+<h1>dispatch-subagent-reconcile</h1>
+<p class="summary">3 task(s) across 2 wave(s).</p>
+<p class="stamp">Generated: 2026-07-10T13:18:56.676Z</p>
+
+
+
+<figure class="diagram"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 254 140" role="img" aria-label="Plan waves"><text x="16" y="36" class="svg-wavelabel">Wave 0</text><g class="svg-node status-pending"><rect x="106" y="16" width="54" height="30" rx="5"/><text x="133" y="36" text-anchor="middle" class="svg-id">#1</text></g><g class="svg-node status-pending"><rect x="172" y="16" width="54" height="30" rx="5"/><text x="199" y="36" text-anchor="middle" class="svg-id">#2</text></g><text x="16" y="90" class="svg-wavelabel">Wave 1</text><g class="svg-node status-pending"><rect x="106" y="70" width="54" height="30" rx="5"/><text x="133" y="90" text-anchor="middle" class="svg-id">#3</text></g></svg></figure>
+<section class="wave"><h2>Wave 0</h2>
+<table><thead><tr><th>#</th><th>Status</th><th>Task</th><th>Files</th><th>Verify</th><th>Codex</th><th>Spec refs</th></tr></thead><tbody>
+<tr><td>1</td><td><span class="badge status-pending">pending</span></td><td>Strict live-alias MODEL_MAP: set MODEL_MAP to { fable: &#39;litellm/fable-5&#39; } only; update register-pi-agents header comments; rewrite test/register-pi-agents.test.mjs to fable fixtures; assert bidirectional equality between MODEL_MAP keys and non-skipped agents/mp-*.md model: aliases; assert ALL canonical agents/mp-*.md (including SKIP_FOR_PI mp-implementer) have model: fable; keep fail-closed negative fixture for unsupported alias; RETAIN colon-alias naming + SKIP_FOR_PI membership AND assert registration check/write outputs exclude both mp-implementer and masterplan:mp-implementer; retain drift-detection tests; document complete input set (agents/mp-*.md minus SKIP_FOR_PI) in test header.</td><td class="mono">bin/register-pi-agents.mjs<br>test/register-pi-agents.test.mjs</td><td class="mono">node --test test/register-pi-agents.test.mjs</td><td>no</td><td><em>—</em></td></tr>
+<tr><td>2</td><td><span class="badge status-pending">pending</span></td><td>Explorer prose consistency: replace Runs on haiku claim in agents/mp-explorer.md with accurate thin-wrapper language (checked-in fable default, read-only recon). Verify case-insensitive absence of haiku/opus/sonnet as wrapper claims AND positive presence of fable wrapper wording (plan-gate P2).</td><td class="mono">agents/mp-explorer.md</td><td class="mono">node --input-type=module -e &quot;import{readFileSync}from&#39;fs&#39;; const raw=readFileSync(&#39;agents/mp-explorer.md&#39;,&#39;utf8&#39;); const parts=raw.split(/^---$/m); const body=parts.slice(2).join(&#39;---&#39;); if(/\b(haiku|opus|sonnet)\b/i.test(body)) {console.error(&#39;forbidden model claim in body&#39;); process.exit(1)}; if(!/fable/i.test(body)) {console.error(&#39;missing fable wrapper wording in body&#39;); process.exit(1)}; console.log(&#39;ok&#39;);&quot;</td><td>no</td><td><em>—</em></td></tr>
+</tbody></table></section>
+<section class="wave"><h2>Wave 1</h2>
+<table><thead><tr><th>#</th><th>Status</th><th>Task</th><th>Files</th><th>Verify</th><th>Codex</th><th>Spec refs</th></tr></thead><tbody>
+<tr><td>3</td><td><span class="badge status-pending">pending</span></td><td>Host resync + scope check: run node bin/register-pi-agents.mjs (write) then --check (exit 0, 0 drift); spot-check installed pi agents use model: litellm/fable-5; confirm run code diff stays inside T1-T2 paths (debt-cleanup scope G5).</td><td class="mono"><em>(none)</em></td><td class="mono">node bin/register-pi-agents.mjs --check</td><td>no</td><td><em>—</em></td></tr>
+</tbody></table></section>
+<section class="goals"><h2>Goals</h2><ul><li>G1</li><li>G2</li><li>G3</li><li>G4</li><li>G5</li></ul></section>
+
+</body>
+</html>

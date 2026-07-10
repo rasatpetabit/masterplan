@@ -2,7 +2,7 @@
 schema_version: 8
 slug: dispatch-subagent-reconcile
 status: in-progress
-phase: plan
+phase: execute
 topic: "reconcile legacy masterplan subagent profiles/models with new agent-dispatch system"
 complexity: high
 complexity_source: null
@@ -13,7 +13,7 @@ predecessor_transcript: null
 spec_path: /srv/dev/ras/masterplan/docs/masterplan/dispatch-subagent-reconcile/spec.md
 plan_path: /srv/dev/ras/masterplan/docs/masterplan/dispatch-subagent-reconcile/plan.md
 plan_index_path: /srv/dev/ras/masterplan/docs/masterplan/dispatch-subagent-reconcile/plan.index.json
-tasks: []
+tasks: [{"id":1,"status":"pending","wave":0,"files":["bin/register-pi-agents.mjs","test/register-pi-agents.test.mjs"]},{"id":2,"status":"pending","wave":0,"files":["agents/mp-explorer.md"]},{"id":3,"status":"pending","wave":1,"files":[]}]
 active_run: null
 pending_gate: null
 goals_enabled: true
