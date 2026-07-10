@@ -74,7 +74,7 @@ const orchestratorHead = A.orchestratorHead ?? null;
 // model. Production NEVER sets these args, so the defaults reproduce shipping behavior byte-for-byte:
 // `masterplan:*` agents on their own frontmatter model (sonnet for the implementer). The explicit
 // model matters because an injected `general-purpose` agent would otherwise inherit the main-loop
-// model (opus), corrupting the token-budget capture this dogfood exists to take.
+// model, corrupting the token-budget capture this dogfood exists to take.
 const implAgentType = A.implAgentType ?? 'masterplan:mp-implementer';
 const implModel = A.implModel; // undefined in prod → agent-frontmatter model (sonnet) governs
 const reviewAgentType = A.reviewAgentType ?? 'masterplan:mp-adversarial-reviewer';

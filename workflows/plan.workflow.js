@@ -40,10 +40,10 @@ const specPath = A.specPath ?? '(spec.md in the bundle)';
 const repoRoot = A.repoRoot ?? '(launch cwd)';
 
 // DOGFOOD SEAM (mirror of execute.workflow.js:66). Production NEVER sets these; the defaults reproduce
-// shipping behaviour (the `masterplan:` agent on its frontmatter model, opus for the drafter). L1 may
+// shipping behaviour (the `masterplan:` agent on its frontmatter model — a fable wrapper that routes drafting to the dispatch-gateway planning lane). L1 may
 // inject a resolvable agentType + explicit model to exercise the engine from an uninstalled worktree.
 const draftAgentType = A.draftAgentType ?? 'masterplan:mp-subsystem-planner';
-const draftModel = A.draftModel; // undefined in prod → frontmatter model (opus) governs
+const draftModel = A.draftModel; // undefined in prod → frontmatter model (fable wrapper, gateway-routed) governs
 
 // The mp-subsystem-planner FRAGMENT digest, schema-validated at the tool boundary. NOTE what is
 // ABSENT: no `id`, no `wave`. Those are global properties only the deterministic merge may assign —
@@ -98,7 +98,7 @@ function drafterPrompt(s) {
 // than rejecting the whole parallel() barrier.
 async function draft(s) {
   const opts = { label: `draft:${s.key}`, phase: 'Draft', agentType: draftAgentType, schema: FRAGMENT };
-  if (draftModel) opts.model = draftModel; // omitted in prod → frontmatter model (opus) governs
+  if (draftModel) opts.model = draftModel; // omitted in prod → frontmatter model (fable wrapper, gateway-routed) governs
   try {
     const fragment = await agent(drafterPrompt(s), opts);
     if (fragment) return fragment;
