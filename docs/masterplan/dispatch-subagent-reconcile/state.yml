@@ -17,6 +17,7 @@ tasks: []
 active_run: null
 pending_gate: null
 goals_enabled: true
-goals: []
+goals: [{"id":"G1","text":"Explorer agent body no longer claims haiku","signal":"artifact"},{"id":"G2","text":"MODEL_MAP is fable-only and live-accurate","signal":"test"},{"id":"G3","text":"Registration unit tests pass under fable-only map","signal":"test"},{"id":"G4","text":"Host pi agents have zero drift","signal":"command"},{"id":"G5","text":"Diff stays inside debt-cleanup scope","signal":"artifact"}]
 review: {"adversary":true}
 render: {"images":"off"}
+goals_md_hash: sha256:be6638a8f2ece9632b77c58b6fbab073218497aa85ee49e82e4f6bb61c0d2792
