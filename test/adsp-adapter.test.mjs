@@ -3,7 +3,7 @@
 // Tests the contract surface and wiring behavior of the adsp adapter, all using injected
 // broker clients so no real agent-dispatch daemon is required. Verified behaviors:
 //
-//   1. CONTRACT_VERSION is pinned to 'adsp-v1' (the contract seam).
+//   1. CONTRACT_VERSION is pinned to 'adsp-v1.1' (the contract seam).
 //   2. dispatchTask maps the masterplan task fields into the broker descriptor correctly.
 //   3. extractDigestFromOutput extracts valid digests from clean and multi-line broker output.
 //   4. dispatchTask propagates the worker digest back in the exact mp-implementer shape.
@@ -134,8 +134,8 @@ function makeBrokerStub(response) {
 // 1. CONTRACT_VERSION pinned
 // ---------------------------------------------------------------------------
 
-test('CONTRACT_VERSION is pinned to adsp-v1', () => {
-  assert.equal(CONTRACT_VERSION, 'adsp-v1');
+test('CONTRACT_VERSION is pinned to adsp-v1.1', () => {
+  assert.equal(CONTRACT_VERSION, 'adsp-v1.1');
 });
 
 // ---------------------------------------------------------------------------
@@ -203,7 +203,7 @@ test('dispatchTask calls dispatch_task on the broker with the correct descriptor
   assert.equal(descriptor.brief, 'Add a null check to parseConfig');
   assert.deepEqual(descriptor.files, ['lib/foo.mjs']);
   assert.deepEqual(descriptor.verify, ['node --test']);
-  assert.equal(descriptor.contract_version, 'adsp-v1');
+  assert.equal(descriptor.contract_version, 'adsp-v1.1');
 
   // adsp-v1 seam: the work item carries the bundle's stable task_id and the
   // composed handoff-idempotency key (spec §5.5). The key is the blackboard
@@ -548,7 +548,7 @@ test('buildWorkItem: pure constructor returns the work item with the composed ha
   assert.equal(descriptor.brief, 'Add a null check to parseConfig');
   assert.deepEqual(descriptor.files, ['lib/foo.mjs']);
   assert.deepEqual(descriptor.verify, ['node --test']);
-  assert.equal(descriptor.contract_version, 'adsp-v1');
+  assert.equal(descriptor.contract_version, 'adsp-v1.1');
   assert.equal(descriptor.task_id, 7);
   assert.equal(descriptor.handoff_key, expectedKeyFor(baseTask()));
 });
@@ -652,7 +652,7 @@ test('degraded: no run_id means handoff_key is null (no idempotency, still dispa
   const descriptor = buildWorkItem(noRun);
   assert.equal(descriptor.handoff_key, null);
   assert.equal(descriptor.task_id, 7);
-  assert.equal(descriptor.contract_version, 'adsp-v1');
+  assert.equal(descriptor.contract_version, 'adsp-v1.1');
 });
 
 test('degraded: no _resultStore injected — no blackboard read/write, still dispatches', async () => {
@@ -738,7 +738,7 @@ test('blackboard: the frozen dispatch record is written at dispatch time with al
   assert.equal(rec.run_id, 'my-run');
   assert.equal(rec.task_id, 7);
   assert.equal(rec.task_class, 'bounded-edit');
-  assert.equal(rec.contract_version, 'adsp-v1');
+  assert.equal(rec.contract_version, 'adsp-v1.1');
   assert.equal(rec.status, 'pending');
   assert.match(rec.task_spec_hash, /^[0-9a-f]{64}$/);
   assert.match(rec.input_fingerprint, /^[0-9a-f]{64}$/);
@@ -761,7 +761,7 @@ test('blackboard: the result is written after dispatch keyed by the handoff key'
   assert.equal(resWrites[0].key, key);
   assert.equal(rec.handoff_key, key);
   assert.equal(rec.status, 'done');
-  assert.equal(rec.contract_version, 'adsp-v1');
+  assert.equal(rec.contract_version, 'adsp-v1.1');
   assert.deepEqual(rec.digest, result, 'stored digest equals the returned digest');
   assert.ok(typeof rec.completed_at === 'string' && rec.completed_at.length > 0);
 });
@@ -819,7 +819,7 @@ test('buildFrozenDispatchRecord: pure constructor returns the frozen key inputs 
   assert.equal(rec.task_class, 'bounded-edit');
   assert.match(rec.task_spec_hash, /^[0-9a-f]{64}$/);
   assert.match(rec.input_fingerprint, /^[0-9a-f]{64}$/);
-  assert.equal(rec.contract_version, 'adsp-v1');
+  assert.equal(rec.contract_version, 'adsp-v1.1');
   assert.equal(rec.status, 'pending');
   assert.equal(rec.dispatched_at, null, 'pure constructor leaves the timestamp null');
   assert.equal(rec.head, 'abc123');
@@ -843,7 +843,7 @@ test('buildFrozenDispatchRecord: no run_id → null key and null hashes (degrade
 // 36f. Digest translation — exact mp-implementer shape (record-result untouched)
 // ---------------------------------------------------------------------------
 
-test('digest translation: returned digest has the exact mp-implementer shape (no extra fields)', async () => {
+test('digest translation: returned digest has the exact mp-implementer shape + the v1.1 dispatch field only', async () => {
   const workerDigest = {
     ...validDigest(),
     extra_worker_field: 'should be dropped',
@@ -851,10 +851,11 @@ test('digest translation: returned digest has the exact mp-implementer shape (no
   };
   const stub = makeBrokerStub({ decision: { decision: 'route', backend: 'pi' }, stdout: JSON.stringify(workerDigest) });
   const result = await dispatchTask(baseTask(), { _brokerClient: stub });
-  assert.deepEqual(Object.keys(result).sort(), ['blockers', 'files_changed', 'start_sha', 'status', 'summary', 'task_id', 'verify']);
+  assert.deepEqual(Object.keys(result).sort(), ['blockers', 'dispatch', 'files_changed', 'start_sha', 'status', 'summary', 'task_id', 'verify']);
   assert.equal(result.task_id, 7, 'task_id stamped from the canonical input, not the worker');
   assert.equal(result.extra_worker_field, undefined, 'extra worker fields are dropped');
   assert.equal(result.status, 'done');
+  assert.equal(result.dispatch.outcome, 'worker');
 });
 
 // ---------------------------------------------------------------------------
@@ -867,7 +868,7 @@ test('seam: the work item carries task_id + handoff_key on every dispatch (even 
   const descriptor = stub.calls[0].args.descriptor;
   assert.equal(descriptor.task_id, 7);
   assert.equal(descriptor.handoff_key, expectedKeyFor(baseTask()));
-  assert.equal(descriptor.contract_version, 'adsp-v1');
+  assert.equal(descriptor.contract_version, 'adsp-v1.1');
   assert.equal(result.status, 'blocked', 'execute_yourself maps to blocked (route inline)');
 });
 
@@ -877,4 +878,265 @@ test('escalate mapping: a guard_deny escalation surfaces the broker reason in bl
   assert.equal(result.status, 'blocked');
   assert.match(result.blockers, /guard_deny:restricted-repo/);
   assert.equal(result.task_id, 7);
+});
+
+// ===========================================================================
+// adsp-v1.1 — dispatch provenance field, blocked-digest persistence, validator
+// back-compat (chunk A2)
+// ===========================================================================
+import { isValidDispatchField } from '../lib/dispatch/adsp-adapter.mjs';
+
+// ---------------------------------------------------------------------------
+// A2a. dispatch.outcome per call site
+// ---------------------------------------------------------------------------
+
+test('v1.1: successful worker dispatch carries dispatch.outcome=worker', async () => {
+  const stub = makeBrokerStub({
+    decision: { decision: 'route', backend: 'pi' },
+    stdout: JSON.stringify(validDigest()),
+  });
+  const result = await dispatchTask(baseTask(), { _brokerClient: stub });
+  assert.equal(result.status, 'done');
+  assert.equal(result.dispatch.outcome, 'worker');
+  assert.match(result.dispatch.reason, /pi/);
+  assert.equal('decision_id' in result.dispatch, false, 'older broker: no decision_id passthrough');
+  assert.equal('degraded_fallback' in result.dispatch, false, 'older broker: no degraded_fallback passthrough');
+});
+
+test('v1.1: execute_yourself carries dispatch.outcome=inline_designed (designed routing, not an outage)', async () => {
+  const stub = makeBrokerStub({
+    decision: { decision: 'route', backend: 'claude' },
+    execute_yourself: true,
+  });
+  const result = await dispatchTask(baseTask(), { _brokerClient: stub });
+  assert.equal(result.status, 'blocked');
+  assert.equal(result.dispatch.outcome, 'inline_designed');
+  assert.match(result.dispatch.reason, /Claude-tier/);
+  assert.equal('degraded_fallback' in result.dispatch, false, 'clean designed inline: no degraded_fallback');
+});
+
+test('v1.1: broker escalate carries dispatch.outcome=escalate with the broker reason', async () => {
+  const stub = makeBrokerStub({
+    decision: { decision: 'escalate', reason: 'backend_unconfigured' },
+  });
+  const result = await dispatchTask(baseTask(), { _brokerClient: stub });
+  assert.equal(result.status, 'blocked');
+  assert.equal(result.dispatch.outcome, 'escalate');
+  assert.equal(result.dispatch.reason, 'backend_unconfigured');
+});
+
+test('v1.1: broker client error carries dispatch.outcome=broker_error', async () => {
+  const errorClient = {
+    async callTool() { throw new Error('connection refused'); },
+  };
+  const result = await dispatchTask(baseTask(), { _brokerClient: errorClient });
+  assert.equal(result.status, 'blocked');
+  assert.equal(result.dispatch.outcome, 'broker_error');
+  assert.match(result.dispatch.reason, /connection refused/);
+});
+
+test('v1.1: null/empty broker result carries dispatch.outcome=escalate (non-route decision)', async () => {
+  const r1 = await dispatchTask(baseTask(), { _brokerClient: makeBrokerStub(null) });
+  assert.equal(r1.dispatch.outcome, 'escalate');
+  const r2 = await dispatchTask(baseTask(), { _brokerClient: makeBrokerStub({}) });
+  assert.equal(r2.dispatch.outcome, 'escalate');
+});
+
+// ---------------------------------------------------------------------------
+// A2b. decision_id / degraded_fallback passthrough (chunk A1 broker fields)
+// ---------------------------------------------------------------------------
+
+test('v1.1: decision_id passes through on the worker path when the broker supplies it', async () => {
+  const stub = makeBrokerStub({
+    decision: { decision: 'route', backend: 'pi' },
+    decision_id: 'dec-abc-123',
+    stdout: JSON.stringify(validDigest()),
+  });
+  const result = await dispatchTask(baseTask(), { _brokerClient: stub });
+  assert.equal(result.dispatch.outcome, 'worker');
+  assert.equal(result.dispatch.decision_id, 'dec-abc-123');
+});
+
+test('v1.1: degraded_fallback passes through VERBATIM on the worker path', async () => {
+  const fallback = { skipped: [{ backend: 'qwen-local', cause: 'health_probe_failed' }] };
+  const stub = makeBrokerStub({
+    decision: { decision: 'route', backend: 'pi' },
+    decision_id: 'dec-1',
+    degraded_fallback: fallback,
+    stdout: JSON.stringify(validDigest()),
+  });
+  const result = await dispatchTask(baseTask(), { _brokerClient: stub });
+  assert.equal(result.dispatch.outcome, 'worker');
+  assert.deepEqual(result.dispatch.degraded_fallback, fallback);
+});
+
+test('v1.1: execute_yourself with degraded_fallback passes it through (degraded inline, not designed-clean)', async () => {
+  const fallback = { skipped: [{ backend: 'pi', cause: 'backend_down' }] };
+  const stub = makeBrokerStub({
+    execute_yourself: true,
+    decision_id: 'dec-2',
+    degraded_fallback: fallback,
+  });
+  const result = await dispatchTask(baseTask(), { _brokerClient: stub });
+  assert.equal(result.dispatch.outcome, 'inline_designed');
+  assert.deepEqual(result.dispatch.degraded_fallback, fallback);
+  assert.equal(result.dispatch.decision_id, 'dec-2');
+});
+
+test('v1.1: escalate with decision_id passes it through', async () => {
+  const stub = makeBrokerStub({
+    decision: { decision: 'escalate', reason: 'budget_breach:per_day_usd' },
+    decision_id: 'dec-3',
+  });
+  const result = await dispatchTask(baseTask(), { _brokerClient: stub });
+  assert.equal(result.dispatch.outcome, 'escalate');
+  assert.equal(result.dispatch.decision_id, 'dec-3');
+});
+
+test('v1.1: a non-string decision_id from the broker is NOT passed through (defensive)', async () => {
+  const stub = makeBrokerStub({
+    decision: { decision: 'route', backend: 'pi' },
+    decision_id: 12345,
+    stdout: JSON.stringify(validDigest()),
+  });
+  const result = await dispatchTask(baseTask(), { _brokerClient: stub });
+  assert.equal('decision_id' in result.dispatch, false);
+});
+
+// ---------------------------------------------------------------------------
+// A2c. Blocked-digest persistence (audit, best-effort, never reused)
+// ---------------------------------------------------------------------------
+
+test('v1.1: an escalate blocked digest is persisted to the blackboard before returning', async () => {
+  const key = expectedKeyFor(baseTask());
+  const store = makeResultStore();
+  const stub = makeBrokerStub({ decision: { decision: 'escalate', reason: 'no_route' } });
+  const result = await dispatchTask(baseTask(), { _brokerClient: stub, _resultStore: store });
+  assert.equal(result.status, 'blocked');
+  const resWrites = store.writes.filter((w) => w.kind === 'result');
+  assert.equal(resWrites.length, 1, 'blocked digest persisted (audit)');
+  assert.equal(resWrites[0].key, key);
+  assert.equal(resWrites[0].record.status, 'blocked');
+  assert.equal(resWrites[0].record.contract_version, 'adsp-v1.1');
+  assert.deepEqual(resWrites[0].record.digest, result, 'stored digest equals the returned digest');
+  assert.ok(typeof resWrites[0].record.completed_at === 'string' && resWrites[0].record.completed_at.length > 0);
+});
+
+test('v1.1: an execute_yourself blocked digest is persisted to the blackboard', async () => {
+  const store = makeResultStore();
+  const stub = makeBrokerStub({ execute_yourself: true });
+  const result = await dispatchTask(baseTask(), { _brokerClient: stub, _resultStore: store });
+  assert.equal(result.status, 'blocked');
+  const resWrites = store.writes.filter((w) => w.kind === 'result');
+  assert.equal(resWrites.length, 1);
+  assert.equal(resWrites[0].record.digest.dispatch.outcome, 'inline_designed');
+});
+
+test('v1.1: a broker-error blocked digest is persisted to the blackboard', async () => {
+  const store = makeResultStore();
+  const errorClient = { async callTool() { throw new Error('spawn ENOENT'); } };
+  const result = await dispatchTask(baseTask(), { _brokerClient: errorClient, _resultStore: store });
+  assert.equal(result.status, 'blocked');
+  const resWrites = store.writes.filter((w) => w.kind === 'result');
+  assert.equal(resWrites.length, 1);
+  assert.equal(resWrites[0].record.digest.dispatch.outcome, 'broker_error');
+});
+
+test('v1.1: blocked-digest persistence failure is swallowed — the digest is still returned', async () => {
+  const store = {
+    async readResult()          { return null; },
+    async writeDispatchRecord() {},
+    async writeResult()         { throw new Error('blackboard full'); },
+  };
+  const stub = makeBrokerStub({ decision: { decision: 'escalate', reason: 'no_route' } });
+  const result = await dispatchTask(baseTask(), { _brokerClient: stub, _resultStore: store });
+  assert.equal(result.status, 'blocked');
+  assert.equal(result.dispatch.outcome, 'escalate');
+});
+
+test('v1.1: no result store / no handoff key — blocked paths still return without persistence', async () => {
+  // No store at all.
+  const r1 = await dispatchTask(baseTask(), { _brokerClient: makeBrokerStub({ execute_yourself: true }) });
+  assert.equal(r1.status, 'blocked');
+  // Store but no run_id (no key) — writeResult must NOT be called.
+  const store = makeResultStore();
+  const noRun = baseTask();
+  delete noRun.run_id;
+  const r2 = await dispatchTask(noRun, { _brokerClient: makeBrokerStub({ execute_yourself: true }), _resultStore: store });
+  assert.equal(r2.status, 'blocked');
+  assert.equal(store.calls.writeResult, 0, 'no key → no persistence attempt');
+});
+
+test('v1.1: a persisted blocked result is NEVER reused — re-dispatch calls the broker (REUSABLE_STATUSES is done-only)', async () => {
+  const key = expectedKeyFor(baseTask());
+  const blockedPrior = {
+    handoff_key: key,
+    status: 'blocked',
+    digest: { ...validDigest(), status: 'blocked', dispatch: { outcome: 'escalate', reason: 'no_route' } },
+  };
+  const store = makeResultStore({ priorResult: blockedPrior });
+  const stub = makeBrokerStub({ decision: { decision: 'route', backend: 'pi' }, stdout: JSON.stringify(validDigest()) });
+  const result = await dispatchTask(baseTask(), { _brokerClient: stub, _resultStore: store });
+  assert.equal(stub.calls.length, 1, 'broker IS called — a blocked prior result is audit, not reuse');
+  assert.equal(result.status, 'done');
+});
+
+// ---------------------------------------------------------------------------
+// A2d. Digest validator — v1 back-compat + v1.1 shape checking
+// ---------------------------------------------------------------------------
+
+test('validator: a v1 digest (no dispatch field) is still valid', () => {
+  const d = validDigest();
+  assert.equal('dispatch' in d, false);
+  assert.deepEqual(extractDigestFromOutput(JSON.stringify(d)), d);
+});
+
+test('validator: a v1.1 digest with a well-formed dispatch field is valid', () => {
+  const d = {
+    ...validDigest(),
+    dispatch: {
+      outcome: 'worker',
+      reason: 'routed to backend pi',
+      decision_id: 'dec-9',
+      degraded_fallback: { skipped: [{ backend: 'qwen', cause: 'down' }] },
+    },
+  };
+  assert.deepEqual(extractDigestFromOutput(JSON.stringify(d)), d);
+});
+
+test('validator: dispatch=null is treated as absent (valid)', () => {
+  const d = { ...validDigest(), dispatch: null };
+  assert.deepEqual(extractDigestFromOutput(JSON.stringify(d)), d);
+});
+
+test('validator: a malformed dispatch field invalidates the digest', () => {
+  const badOutcome = { ...validDigest(), dispatch: { outcome: 'teleported', reason: 'x' } };
+  assert.equal(extractDigestFromOutput(JSON.stringify(badOutcome)), null);
+  const badReason = { ...validDigest(), dispatch: { outcome: 'worker', reason: 42 } };
+  assert.equal(extractDigestFromOutput(JSON.stringify(badReason)), null);
+  const badDecisionId = { ...validDigest(), dispatch: { outcome: 'worker', reason: 'ok', decision_id: 42 } };
+  assert.equal(extractDigestFromOutput(JSON.stringify(badDecisionId)), null);
+  const arrayDispatch = { ...validDigest(), dispatch: ['worker'] };
+  assert.equal(extractDigestFromOutput(JSON.stringify(arrayDispatch)), null);
+});
+
+test('validator: isValidDispatchField accepts each of the four outcomes and rejects garbage', () => {
+  for (const outcome of ['worker', 'inline_designed', 'escalate', 'broker_error']) {
+    assert.equal(isValidDispatchField({ outcome, reason: 'r' }), true, outcome);
+  }
+  assert.equal(isValidDispatchField(null), false);
+  assert.equal(isValidDispatchField('worker'), false);
+  assert.equal(isValidDispatchField({ outcome: 'worker' }), false, 'reason required');
+  assert.equal(isValidDispatchField({ outcome: 'other', reason: 'r' }), false);
+});
+
+test('validator: a worker digest carrying a valid dispatch field round-trips through dispatchTask', async () => {
+  // A v1.1-aware worker may itself emit a dispatch field; the adapter's own
+  // provenance (the authoritative broker-side view) replaces it.
+  const workerDigest = { ...validDigest(), dispatch: { outcome: 'worker', reason: 'self-reported' } };
+  const stub = makeBrokerStub({ decision: { decision: 'route', backend: 'pi' }, stdout: JSON.stringify(workerDigest) });
+  const result = await dispatchTask(baseTask(), { _brokerClient: stub });
+  assert.equal(result.status, 'done');
+  assert.equal(result.dispatch.outcome, 'worker');
+  assert.match(result.dispatch.reason, /pi/, 'adapter provenance wins over the worker self-report');
 });

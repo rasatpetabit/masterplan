@@ -419,3 +419,238 @@ test('no-epoch marker: backward-compatible, no fencing applied', () => {
   assert.equal(res.outcome, 'recorded');
   assert.equal(readState(fx.statePath).tasks[0].status, 'done');
 });
+
+// ===========================================================================
+// adsp-v1.1 dispatch provenance → degradation-visibility events (chunk A2)
+// ===========================================================================
+
+function readEvents(bundleDir) {
+  const p = path.join(bundleDir, 'events.jsonl');
+  if (!fs.existsSync(p)) return [];
+  return fs.readFileSync(p, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse);
+}
+
+test('dispatch_degraded: emitted for a digest with dispatch.outcome=escalate, carrying task_id/outcome/reason/decision_id', () => {
+  const fx = makeFixture({
+    tasks: [
+      { id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] },
+      { id: 2, status: 'pending', wave: 1, files: ['src/b.txt'] },
+    ],
+    activeRun: { wave: 1, run_id: 'r1', task_id: 'wf1', scope: ['src/a.txt', 'src/b.txt'], baseline: [] },
+  });
+  write(fx.WT, 'src/a.txt', 'A\n');
+
+  const res = recordWaveResult({
+    statePath: fx.statePath,
+    self: fx.self,
+    now: 2000,
+    result: {
+      wave: 1,
+      baseline: [],
+      tasks: [
+        digest(1, 'done'),
+        digest(2, 'blocked', { digest: {
+          summary: 'broker escalated: backend_unconfigured',
+          blockers: 'backend_unconfigured',
+          dispatch: { outcome: 'escalate', reason: 'backend_unconfigured', decision_id: 'dec-77' },
+        } }),
+      ],
+    },
+  });
+
+  assert.equal(res.outcome, 'recorded');
+  const events = readEvents(fx.bundleDir);
+  const degraded = events.filter((e) => e.type === 'dispatch_degraded');
+  assert.equal(degraded.length, 1);
+  assert.equal(degraded[0].task_id, 2);
+  assert.equal(degraded[0].outcome, 'escalate');
+  assert.equal(degraded[0].reason, 'backend_unconfigured');
+  assert.equal(degraded[0].decision_id, 'dec-77');
+  // The event lands BEFORE wave_recorded (same transaction, ordered).
+  const idxDegraded = events.findIndex((e) => e.type === 'dispatch_degraded');
+  const idxWave = events.findIndex((e) => e.type === 'wave_recorded');
+  assert.ok(idxDegraded < idxWave, 'dispatch_degraded precedes wave_recorded');
+  // Recording still proceeded: fail-VISIBLE, not fail-blocked.
+  assert.deepEqual(res.recorded, [1]);
+  assert.equal(res.failed[0].id, 2);
+});
+
+test('dispatch_degraded: emitted for dispatch.outcome=broker_error', () => {
+  const fx = makeFixture({
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    activeRun: { wave: 1, run_id: 'r1', task_id: 'wf1', scope: ['src/a.txt'], baseline: [] },
+  });
+
+  recordWaveResult({
+    statePath: fx.statePath,
+    self: fx.self,
+    now: 2000,
+    result: {
+      wave: 1,
+      baseline: [],
+      tasks: [
+        digest(1, 'blocked', { digest: {
+          summary: 'broker error during dispatch_task: connection refused',
+          blockers: 'connection refused',
+          dispatch: { outcome: 'broker_error', reason: 'connection refused' },
+        } }),
+      ],
+    },
+  });
+
+  const degraded = readEvents(fx.bundleDir).filter((e) => e.type === 'dispatch_degraded');
+  assert.equal(degraded.length, 1);
+  assert.equal(degraded[0].outcome, 'broker_error');
+  assert.equal(degraded[0].reason, 'connection refused');
+  assert.equal(degraded[0].decision_id, null, 'absent decision_id normalizes to null');
+});
+
+test('dispatch_degraded: emitted when degraded_fallback is present even on a successful worker outcome, fallback carried verbatim', () => {
+  const fx = makeFixture({
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    activeRun: { wave: 1, run_id: 'r1', task_id: 'wf1', scope: ['src/a.txt'], baseline: [] },
+  });
+  write(fx.WT, 'src/a.txt', 'A\n');
+  const fallback = { skipped: [{ backend: 'qwen-local', cause: 'health_probe_failed' }] };
+
+  const res = recordWaveResult({
+    statePath: fx.statePath,
+    self: fx.self,
+    now: 2000,
+    result: {
+      wave: 1,
+      baseline: [],
+      tasks: [
+        digest(1, 'done', { digest: {
+          dispatch: { outcome: 'worker', reason: "routed to backend 'pi'", decision_id: 'dec-9', degraded_fallback: fallback },
+        } }),
+      ],
+    },
+  });
+
+  assert.deepEqual(res.recorded, [1], 'done task records normally — degradation is visibility, not a block');
+  const degraded = readEvents(fx.bundleDir).filter((e) => e.type === 'dispatch_degraded');
+  assert.equal(degraded.length, 1);
+  assert.equal(degraded[0].outcome, 'worker');
+  assert.deepEqual(degraded[0].degraded_fallback, fallback);
+});
+
+test('dispatch_inline_designed: a clean inline_designed digest gets its own queryable event, NOT dispatch_degraded', () => {
+  const fx = makeFixture({
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    activeRun: { wave: 1, run_id: 'r1', task_id: 'wf1', scope: ['src/a.txt'], baseline: [] },
+  });
+
+  recordWaveResult({
+    statePath: fx.statePath,
+    self: fx.self,
+    now: 2000,
+    result: {
+      wave: 1,
+      baseline: [],
+      tasks: [
+        digest(1, 'blocked', { digest: {
+          summary: 'broker returned execute_yourself',
+          blockers: 'execute_yourself: Claude-tier route; route inline',
+          dispatch: { outcome: 'inline_designed', reason: 'execute_yourself: Claude-tier route', decision_id: 'dec-5' },
+        } }),
+      ],
+    },
+  });
+
+  const events = readEvents(fx.bundleDir);
+  assert.equal(events.filter((e) => e.type === 'dispatch_degraded').length, 0, 'designed inline is NOT degraded');
+  const inline = events.filter((e) => e.type === 'dispatch_inline_designed');
+  assert.equal(inline.length, 1);
+  assert.equal(inline[0].task_id, 1);
+  assert.equal(inline[0].outcome, 'inline_designed');
+  assert.equal(inline[0].decision_id, 'dec-5');
+});
+
+test('dispatch_degraded: an inline_designed digest WITH degraded_fallback is degraded (health-pruned chain), not designed-clean', () => {
+  const fx = makeFixture({
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    activeRun: { wave: 1, run_id: 'r1', task_id: 'wf1', scope: ['src/a.txt'], baseline: [] },
+  });
+  const fallback = { skipped: [{ backend: 'pi', cause: 'backend_down' }] };
+
+  recordWaveResult({
+    statePath: fx.statePath,
+    self: fx.self,
+    now: 2000,
+    result: {
+      wave: 1,
+      baseline: [],
+      tasks: [
+        digest(1, 'blocked', { digest: {
+          dispatch: { outcome: 'inline_designed', reason: 'execute_yourself: Claude-tier route', degraded_fallback: fallback },
+        } }),
+      ],
+    },
+  });
+
+  const events = readEvents(fx.bundleDir);
+  assert.equal(events.filter((e) => e.type === 'dispatch_inline_designed').length, 0);
+  const degraded = events.filter((e) => e.type === 'dispatch_degraded');
+  assert.equal(degraded.length, 1);
+  assert.deepEqual(degraded[0].degraded_fallback, fallback);
+});
+
+test('dispatch events: v1 digests (no dispatch field) and clean worker outcomes emit NO dispatch events', () => {
+  const fx = makeFixture({
+    tasks: [
+      { id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] },
+      { id: 2, status: 'pending', wave: 1, files: ['src/b.txt'] },
+    ],
+    activeRun: { wave: 1, run_id: 'r1', task_id: 'wf1', scope: ['src/a.txt', 'src/b.txt'], baseline: [] },
+  });
+  write(fx.WT, 'src/a.txt', 'A\n');
+  write(fx.WT, 'src/b.txt', 'B\n');
+
+  recordWaveResult({
+    statePath: fx.statePath,
+    self: fx.self,
+    now: 2000,
+    result: {
+      wave: 1,
+      baseline: [],
+      tasks: [
+        digest(1, 'done'), // v1: no dispatch field at all
+        digest(2, 'done', { digest: { dispatch: { outcome: 'worker', reason: "routed to backend 'pi'" } } }), // clean worker
+      ],
+    },
+  });
+
+  const events = readEvents(fx.bundleDir);
+  assert.equal(events.filter((e) => e.type === 'dispatch_degraded').length, 0);
+  assert.equal(events.filter((e) => e.type === 'dispatch_inline_designed').length, 0);
+  assert.equal(events.at(-1).type, 'wave_recorded', 'the transaction event still lands');
+});
+
+test('dispatch events: land in the same MAIN state commit as wave_recorded', () => {
+  const fx = makeFixture({
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    activeRun: { wave: 1, run_id: 'r1', task_id: 'wf1', scope: ['src/a.txt'], baseline: [] },
+  });
+
+  const res = recordWaveResult({
+    statePath: fx.statePath,
+    self: fx.self,
+    now: 2000,
+    result: {
+      wave: 1,
+      baseline: [],
+      tasks: [
+        digest(1, 'blocked', { digest: {
+          dispatch: { outcome: 'broker_error', reason: 'spawn ENOENT' },
+        } }),
+      ],
+    },
+  });
+
+  assert.ok(res.commits.state, 'a state commit exists');
+  const stateFiles = git(fx.MAIN, 'show', '--name-only', '--format=', 'HEAD').split('\n').filter(Boolean);
+  assert.ok(stateFiles.includes('docs/masterplan/t22/events.jsonl'), 'events.jsonl is in the state commit');
+  const degraded = readEvents(fx.bundleDir).filter((e) => e.type === 'dispatch_degraded');
+  assert.equal(degraded.length, 1);
+});
