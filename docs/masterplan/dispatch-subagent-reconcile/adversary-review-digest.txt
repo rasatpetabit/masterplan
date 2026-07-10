@@ -1,0 +1,7 @@
+finish adversary review
+verdict: approve
+findings: 0
+blocking: 0
+summary: chunked review: 4 regions, worst-wins → approve
+reviewer: - **[P1] Commit the gate artifacts referenced by the receipts** — `docs/masterplan/dispatch-subagent-reconcile/gate-plan-receipt.json:5`  
+  The new receipts reference `spec.md`, `plan.md`, and `plan.index.json`, but none are included in this new directory. A clean checkout cannot verify the recorded hashes or reproduce/load the reviewed plan. Commit those artifacts, or remove/adjust the receipts and event entries.

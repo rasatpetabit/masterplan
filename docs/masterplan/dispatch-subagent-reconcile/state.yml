@@ -1,0 +1,25 @@
+---
+schema_version: 8
+slug: dispatch-subagent-reconcile
+status: in-progress
+phase: execute
+topic: "reconcile legacy masterplan subagent profiles/models with new agent-dispatch system"
+complexity: high
+complexity_source: null
+autonomy: null
+planning_mode: auto
+created_at: 2026-07-10T05:23:00.225Z
+predecessor_transcript: null
+spec_path: /srv/dev/ras/masterplan/docs/masterplan/dispatch-subagent-reconcile/spec.md
+plan_path: /srv/dev/ras/masterplan/docs/masterplan/dispatch-subagent-reconcile/plan.md
+plan_index_path: /srv/dev/ras/masterplan/docs/masterplan/dispatch-subagent-reconcile/plan.index.json
+tasks: [{"id":1,"status":"done","wave":0,"files":["bin/register-pi-agents.mjs","test/register-pi-agents.test.mjs"]},{"id":2,"status":"done","wave":0,"files":["agents/mp-explorer.md"]},{"id":3,"status":"done","wave":1,"files":[]}]
+active_run: null
+pending_gate: {"id":"branch_finish","opened_at":"2026-07-10T15:09:20.659Z"}
+goals_enabled: true
+goals: [{"id":"G1","text":"Explorer agent body no longer claims haiku","signal":"artifact"},{"id":"G2","text":"MODEL_MAP is fable-only and live-accurate","signal":"test"},{"id":"G3","text":"Registration unit tests pass under fable-only map","signal":"test"},{"id":"G4","text":"Host pi agents have zero drift","signal":"command"},{"id":"G5","text":"Diff stays inside debt-cleanup scope","signal":"artifact"}]
+review: {"adversary":true}
+render: {"images":"off"}
+goals_md_hash: sha256:be6638a8f2ece9632b77c58b6fbab073218497aa85ee49e82e4f6bb61c0d2792
+worktree: /srv/dev/ras/masterplan/.worktrees/dispatch-subagent-reconcile
+verified_sha: 61fad539126339ce7e746986712524becea3d4ed

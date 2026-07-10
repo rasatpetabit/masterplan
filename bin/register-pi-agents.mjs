@@ -3,12 +3,12 @@
 //
 // PROBLEM (why this exists): `agents/mp-*.md` are authored for Claude Code — CC discovers
 // them via its plugin loader as the `masterplan:mp-*` namespace, and their `model:` field
-// uses CC-style bare aliases (`opus`, `fable`). pi discovers a DIFFERENT set of paths
-// (`~/.pi/agent/agents/`, `.pi/agents/`, `.agents/`) and, for three compounding reasons,
-// cannot use the CC files directly: (1) pi's default `agentScope:"user"` ignores project
-// `.pi/agents/`; (2) the bare `opus`/`fable` aliases resolve ambiguously and leak to
-// `amazon-bedrock` (no key), not the configured `litellm/opus-4.8`/`litellm/fable-5`;
-// (3) `agentOverrides` applies to builtins only. So a pi host needs adapted copies.
+// uses CC-style bare aliases (live: `fable` only, post gateway-wrapper migration). pi
+// discovers a DIFFERENT set of paths (`~/.pi/agent/agents/`, `.pi/agents/`, `.agents/`) and,
+// for three compounding reasons, cannot use the CC files directly: (1) pi's default
+// `agentScope:"user"` ignores project `.pi/agents/`; (2) bare CC aliases resolve ambiguously
+// and leak to `amazon-bedrock` (no key), not the configured `litellm/fable-5`; (3)
+// `agentOverrides` applies to builtins only. So a pi host needs adapted copies.
 //
 // WHAT THIS DOES: for every registered `agents/mp-*.md`, write TWO files under
 // `~/.pi/agent/agents/` — a bare copy (`mp-X`, the primary pi name) and a colon alias
@@ -36,11 +36,11 @@ const REPO_ROOT = dirname(SCRIPT_DIR); // bin/ is one level under the repo root
 const AGENTS_DIR = join(REPO_ROOT, 'agents');
 const PI_USER_AGENTS_DIR = join(homedir(), '.pi', 'agent', 'agents');
 
-// CC bare alias → pi-resolvable model id (both are in the host's enabledModels).
-// opus and fable are the only models the mp-* agents declare (audited 2026-06-28); both are
-// `allow` under pi-subagent policy, so this mapping is policy-compliant.
+// CC bare alias → pi-resolvable model id (must be in the host's enabledModels).
+// Live alias is fable only (post gateway-wrapper migration: all agents/mp-*.md declare
+// model: fable; judgment routes via model_group lanes). fable is `allow` under pi-subagent
+// policy. Unknown aliases fail closed in mapModelLine — do not reintroduce dead map entries.
 const MODEL_MAP = {
-  opus: 'litellm/opus-4.8',
   fable: 'litellm/fable-5',
 };
 
