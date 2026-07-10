@@ -65,6 +65,55 @@ All five conditions must pass for a task to be heuristically eligible:
 
 ---
 
+## The Fabric Path (`dispatch_fabric` → `mp dispatch-wave`)
+
+When the per-run strangler flag `state.dispatch.fabric` is `true`, `mp continue` emits a single
+`dispatch_fabric` op instead of the launch_workflow/dispatch_foreground fork, and the L1 op table's
+consumer for that op is exactly `mp dispatch-wave --state=<path>` (`lib/dispatch-wave.mjs`) —
+dispatch AND record complete inside the command:
+
+1. **Same seams, no forked routing** — the wave is re-derived through `prepareWave` (fabric
+   payloads carry only the dispatch `class`; the broker's resolve/guard is the routing brain).
+   **Routing-input parity:** the prepare inputs (routing mode, `codexHostSuppressed` — thread
+   `--codex-suppressed` on a suppressed host — `linkedWorktree`) mirror `continue`'s own call
+   and are frozen into the record as `routing_inputs` at attempt 1; retries reuse the frozen
+   inputs (plus the persisted lean `payload` for audit), so descriptors can never drift from
+   what the launch marker promised.
+2. **One broker process per wave** — a single `createBrokerClient` (`agent-dispatch serve-mcp`)
+   call to the `dispatch_fanout` MCP tool with one `buildWorkItem` descriptor per routed task
+   (`fail_mode:'isolated'`), never N per-task spawns.
+3. **Wave-dispatch idempotency** — a stable key `(run_id, wave, 'dispatch_fabric')` over a
+   per-wave record file inside the bundle (`wave-<N>.dispatch.json`), persisted **before** the
+   broker call with atomic create-or-return-existing (O_EXCL) semantics. A retry after an
+   accepted-but-unobserved dispatch finds `status:'pending'` and returns the record instead of
+   double-dispatching (`--takeover` supersedes a confirmed-dead attempt); a `'dispatched'`
+   record re-drives record-result from the stored digests without touching the broker; a
+   `'recorded'` record with pending tasks remaining permits attempt N+1 (an observed retry).
+   Attempt-N+1/takeover transitions are additionally serialized by an O_EXCL **attempt marker**
+   (`wave-<N>.dispatch.attempt-<K>`): exactly one concurrent retry claims the attempt, the
+   loser re-reads the record and returns without dispatching.
+4. **Guard D before any dispatching transition** — run ownership is acquired and
+   heartbeat-confirmed (same `owner-fs` helpers as `continue`/`record-result`; `owner_lock=off`
+   honored) before the fresh create, an attempt-N+1 retry, a takeover, or a re-drive. A
+   blocked/lost lock throws — nothing is written or dispatched under a foreign owner.
+5. **Coord paired** — `openWaveCoord` attaches per-descriptor coord context and the job is
+   closed in a `finally`, even on dispatch failure (on the fabric path `continue` does NOT
+   open coord — `dispatch-wave` owns the whole lifecycle, fixing the leaked-open-jobs bug).
+6. **Same record transaction** — per-descriptor results map through the adapter's
+   `translateBrokerResult` (digests carry the adsp-v1.1 `dispatch` provenance field;
+   `worker` on success) and feed `recordWaveResult`, so degradations surface as
+   `dispatch_degraded` events and D6/commit behavior is identical to the other vehicles.
+   The post-transaction `'recorded'` finalize of the record file deliberately lands after
+   the MAIN state commit (HEAD briefly retains `'dispatched'` until the next bundle commit
+   sweeps it) — safe because the idempotency gate re-drives, never re-dispatches; see the
+   commit-window note in `lib/dispatch-wave.mjs`.
+
+`test/op-table-parity.test.mjs` enforces producer/consumer parity: every op
+`lib/dispatch/ops.mjs` emits must have a §2 op-table row (and every row a producer) — the
+dangling-op class that let `dispatch_fabric` ship consumer-less cannot recur.
+
+---
+
 ## `target` Is Informational — Implementation Is Always Inline
 
 Every task is implemented by `mp-implementer` (sonnet) regardless of its routed `target`. There is

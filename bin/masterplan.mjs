@@ -141,6 +141,20 @@
 //                                               -> { task_status, flags, producer_status } (§6.2 mapping)
 //   base-drift --recorded-base=SHA --current-head=SHA [--scope=JSON]
 //                                               -> { action:'apply'|'requeue', requeueBase } (base-drift check)
+//   dispatch-wave --state=PATH [--wave=N] [--takeover] [--codex-suppressed] [--broker-bin=BIN]
+//                                               -> the `dispatch_fabric` op consumer (lib/dispatch-wave.mjs):
+//                                                  broker dispatch_fanout for the active wave (one adsp work
+//                                                  item per routed task, ONE serve-mcp process for the wave)
+//                                                  + the SAME record-result transaction. Idempotent on the
+//                                                  per-wave dispatch record (run_id, wave, 'dispatch_fabric')
+//                                                  persisted BEFORE the broker call — a retry after an
+//                                                  accepted-but-unobserved dispatch returns the existing
+//                                                  record (--takeover supersedes a confirmed-dead attempt);
+//                                                  attempt-N+1 retries are serialized by an O_EXCL attempt
+//                                                  marker. Guard D ownership is acquired + confirmed before
+//                                                  any dispatching transition (blocked owner → loud non-zero
+//                                                  exit, nothing dispatched; owner_lock=off skips).
+//                                                  The ONLY async subcommand (MCP over stdio).
 //   acquire-owner  --state=PATH [--session=ID] [--host=H] [--now=MS] [--ttl-ms=N] [--force]
 //   heartbeat-owner --state=PATH [--session=ID] [--host=H] [--now=MS]
 //   release-owner  --state=PATH [--session=ID] [--host=H] [--now=MS] [--ttl-ms=N] [--force]
@@ -183,6 +197,7 @@ import { verifyArtifact, parseQctlDigest } from '../lib/qctl-artifact.mjs';
 import { mapQctlStatus } from '../lib/qctl-status.mjs';
 import { decideBaseDrift } from '../lib/qctl-requeue.mjs';
 import { recordWaveResult } from '../lib/wave-commit.mjs';
+import { dispatchWaveViaFabric } from '../lib/dispatch-wave.mjs';
 import { continueRun } from '../lib/continue.mjs';
 import { finishStep } from '../lib/finish-step.mjs';
 import { sweepWorktrees } from '../lib/sweep.mjs';
@@ -3174,6 +3189,53 @@ function main() {
       // lost-to-other exits 0 with JSON — a valid outcome the shell surfaces as an AUQ
       // (with `mp acquire-owner --force` as an option), not an mp error.
       out(res);
+      break;
+    }
+
+    case 'dispatch-wave': {
+      // The `dispatch_fabric` op consumer (chunk B of the wave-dispatch outage fix): the op had
+      // a producer (lib/dispatch/ops.mjs) but no consumer, so fabric waves never reached the
+      // broker. dispatchWaveViaFabric re-derives the routed wave (prepareWave, fabric payloads),
+      // builds one adsp work item per task (buildWorkItem), drives the broker's dispatch_fanout
+      // through ONE serve-mcp process (coord opened/closed in a finally), then records digests
+      // via the SAME recordWaveResult transaction. Idempotent on the per-wave dispatch record
+      // (run_id, wave, 'dispatch_fabric') persisted BEFORE the broker call. ASYNC: the one
+      // await-ing subcommand (MCP over stdio) — main() returns while the promise settles; the
+      // event loop keeps the process alive and die() maps a rejection to a non-zero exit.
+      const statePath = need(flags, 'state');
+      loadForWrite(statePath); // strict-v8 guard: a mid-run bundle is v8; fail loud, never dispatch a legacy one
+      let lockOff = false;
+      try {
+        lockOff = readState(statePath)?.concurrency?.owner_lock === 'off';
+      } catch {
+        /* unreadable — dispatchWaveViaFabric fails loudly itself; assume lock on */
+      }
+      let self = null;
+      let now = Number.isFinite(Number(flags.now)) ? Number(flags.now) : Date.now();
+      let ttlMs = Number.isFinite(Number(flags['ttl-ms'])) ? Number(flags['ttl-ms']) : undefined;
+      if (!lockOff) {
+        ({ self, now, ttlMs } = resolveOwnerSelf(flags, statePath));
+      }
+      let waveFlag = null;
+      if (flags.wave !== undefined) {
+        waveFlag = coerceId(flags.wave);
+        if (!Number.isInteger(waveFlag)) die('dispatch-wave: --wave must be an integer');
+      }
+      dispatchWaveViaFabric({
+        statePath,
+        self,
+        now,
+        ttlMs,
+        wave: waveFlag,
+        takeover: !!flags.takeover,
+        // Routing-input parity with `mp continue`: the SAME host-suppression fact
+        // (--codex-suppressed / --no-workflow / PI_CODING_AGENT), persisted into
+        // the record's routing_inputs so retries re-prepare from identical inputs.
+        codexSuppressed: shouldSuppressWorkflow(flags, process.env),
+        brokerBin: typeof flags['broker-bin'] === 'string' ? flags['broker-bin'] : undefined,
+      })
+        .then(out)
+        .catch((e) => die(e.message));
       break;
     }
 

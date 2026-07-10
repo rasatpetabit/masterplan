@@ -24,6 +24,8 @@ import {
   createBrokerClient,
   buildWorkItem,
   buildFrozenDispatchRecord,
+  translateBrokerResult,
+  brokerErrorDigest,
 } from '../lib/dispatch/adsp-adapter.mjs';
 import {
   composeHandoffKey,
@@ -1139,4 +1141,64 @@ test('validator: a worker digest carrying a valid dispatch field round-trips thr
   assert.equal(result.status, 'done');
   assert.equal(result.dispatch.outcome, 'worker');
   assert.match(result.dispatch.reason, /pi/, 'adapter provenance wins over the worker self-report');
+});
+
+// ---------------------------------------------------------------------------
+// translateBrokerResult / brokerErrorDigest — the shared broker-result → digest
+// mapping (exported for the wave-level dispatch_fanout consumer, chunk B)
+// ---------------------------------------------------------------------------
+
+test('translateBrokerResult: worker / execute_yourself / escalate / no-digest map exactly like dispatchTask', () => {
+  // worker digest → kind 'worker', dispatch.outcome:'worker' with the backend reason.
+  const worker = translateBrokerResult(7, {
+    decision: { decision: 'route', backend: 'pi' },
+    stdout: JSON.stringify(validDigest()),
+  });
+  assert.equal(worker.kind, 'worker');
+  assert.equal(worker.digest.status, 'done');
+  assert.equal(worker.digest.task_id, 7);
+  assert.equal(worker.digest.dispatch.outcome, 'worker');
+  assert.match(worker.digest.dispatch.reason, /pi/);
+
+  // execute_yourself → blocked / inline_designed.
+  const inline = translateBrokerResult(7, { decision: { decision: 'route' }, execute_yourself: true });
+  assert.equal(inline.kind, 'broker_blocked');
+  assert.equal(inline.digest.status, 'blocked');
+  assert.equal(inline.digest.dispatch.outcome, 'inline_designed');
+
+  // Non-route decision → blocked / escalate with the broker's reason.
+  const esc = translateBrokerResult(7, { decision: { decision: 'escalate', reason: 'budget_breach' } });
+  assert.equal(esc.kind, 'broker_blocked');
+  assert.equal(esc.digest.dispatch.outcome, 'escalate');
+  assert.match(esc.digest.blockers, /budget_breach/);
+
+  // Route decision but no parseable digest → failed.
+  const none = translateBrokerResult(7, { decision: { decision: 'route', backend: 'pi' }, stdout: 'no digest here' });
+  assert.equal(none.kind, 'no_digest');
+  assert.equal(none.digest.status, 'failed');
+});
+
+test('translateBrokerResult: a fanout per-item {error} joins the escalate reason chain', () => {
+  // The broker fanout run loop reports a thrown per-descriptor dispatch as
+  // { error } (status/taskId stripped) — no decision, so it must surface the
+  // error text as the escalate reason instead of the opaque default.
+  const t = translateBrokerResult(3, { error: 'lease_unavailable' });
+  assert.equal(t.kind, 'broker_blocked');
+  assert.equal(t.digest.status, 'blocked');
+  assert.equal(t.digest.dispatch.outcome, 'escalate');
+  assert.match(t.digest.blockers, /lease_unavailable/);
+  // null result still maps to the default reason.
+  const n = translateBrokerResult(3, null);
+  assert.match(n.digest.blockers, /did not return a route decision/);
+});
+
+test('brokerErrorDigest: blocked / broker_error with the failing tool named in the summary', () => {
+  const d = brokerErrorDigest(9, 'connection refused', 'dispatch_fanout');
+  assert.equal(d.status, 'blocked');
+  assert.equal(d.task_id, 9);
+  assert.equal(d.dispatch.outcome, 'broker_error');
+  assert.match(d.summary, /dispatch_fanout/);
+  assert.match(d.blockers, /connection refused/);
+  // Default tool name preserves the dispatchTask summary text.
+  assert.match(brokerErrorDigest(9, 'x').summary, /during dispatch_task/);
 });
