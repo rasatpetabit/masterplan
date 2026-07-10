@@ -1,7 +1,7 @@
 ---
 schema_version: 8
 slug: dispatch-subagent-reconcile
-status: in-progress
+status: archived
 phase: execute
 topic: "reconcile legacy masterplan subagent profiles/models with new agent-dispatch system"
 complexity: high
