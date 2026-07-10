@@ -24,7 +24,7 @@ masterplan v8 is a 5-layer system. Each layer is thin and delegates downward:
   `mp-implementer`, `mp-planner`, `mp-adversarial-reviewer`, `mp-plan-reviewer`,
   `mp-subsystem-planner`, `mp-spec-decomposer`). Agents receive bounded briefs
   and return structured output; they do not inherit session history.
-- **L4 — Doctor:** `bin/doctor.mjs` dispatcher + 16 check modules under
+- **L4 — Doctor:** `bin/doctor.mjs` dispatcher + 17 check modules under
   `lib/doctor/*.mjs`. Auto-discovered alphabetically; each module exports a
   synchronous `check(repoRoot, opts) -> Finding[]`. See `doctor.md` below.
 
@@ -73,7 +73,7 @@ artifacts — see `commands/masterplan.md` §3b.
 | [plan-parser.md](internals/plan-parser.md) | Deterministic plan compile: fragment merge, wave assignment, `plan.index.json` schema | `lib/plan-merge.mjs` |
 | [wave-dispatch.md](internals/wave-dispatch.md) | Routing decisions and one-wave dispatch: how `lib/dispatch/` classifies tasks and `workflows/execute.workflow.js` runs a single wave | `lib/dispatch/` + `workflows/execute.workflow.js` |
 | [task-verification.md](internals/task-verification.md) | D6 scope verify and the review stage: acceptance criteria, trust-skip conditions | `lib/wave.mjs` |
-| [doctor.md](internals/doctor.md) | Doctor contract: discovery, crash isolation, Finding shape, all 16 check modules | `bin/doctor.mjs` + `lib/doctor/*.mjs` |
+| [doctor.md](internals/doctor.md) | Doctor contract: discovery, crash isolation, Finding shape, all 17 check modules | `bin/doctor.mjs` + `lib/doctor/*.mjs` |
 
 ## Cross-cutting References
 

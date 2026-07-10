@@ -277,3 +277,33 @@ test('every non-skipped agent that declares tools covers its MCP-namespaced name
     );
   }
 });
+
+test('mp-explorer body asserts fable wrapper default (not frontmatter-only; no forbidden wrapper claims)', () => {
+  // Residual plan-gate P2: a positive /fable/i on the whole file would pass on frontmatter alone.
+  // Require the BODY to name the checked-in fable default / thin-wrapper shape, and forbid
+  // haiku|opus|sonnet as wrapper claims (case-insensitive) in the body only.
+  const raw = readFileSync(join(repoRoot, 'agents', 'mp-explorer.md'), 'utf8');
+  const parts = raw.split(/^---$/m);
+  assert.ok(parts.length >= 3, 'mp-explorer.md must have YAML frontmatter delimiters');
+  const body = parts.slice(2).join('---');
+  assert.equal(
+    /\b(haiku|opus|sonnet)\b/i.test(body),
+    false,
+    'explorer body must not claim haiku/opus/sonnet as the wrapper model',
+  );
+  assert.match(
+    body,
+    /checked-in\s+`?fable`?\s+default/i,
+    'explorer body must state the checked-in fable default (not merely mention fable somewhere)',
+  );
+  assert.match(
+    body,
+    /thin wrapper|read-only/i,
+    'explorer body must describe thin-wrapper / read-only recon semantics',
+  );
+  assert.equal(
+    /model_group\s*:\s*["']?dispatch-/i.test(body),
+    false,
+    'explorer is pure recon — body must not invent a dispatch-* judgment lane',
+  );
+});

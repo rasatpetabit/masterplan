@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Doctor: `pi-agent-registration` check.** Surfaces host drift of `~/.pi/agent/agents/mp-*` vs canonical `agents/mp-*.md` by shelling out to `node bin/register-pi-agents.mjs --check` (PASS / WARN / SKIP). 17 doctor modules total.
+
+### Changed
+
+- **Strict live-alias `MODEL_MAP` (fable only).** `bin/register-pi-agents.mjs` maps only `fable → litellm/fable-5`; dead `opus` entry pruned; tests assert bidirectional equality + fail-closed unknown aliases + all-canonical frontmatter `fable` (incl. SKIP_FOR_PI). Host resync until `--check` is green.
+- **Stale model prose scrub.** `agents/mp-explorer.md` no longer claims haiku; `workflows/execute.workflow.js` comments drop sonnet implementer pins; `AGENTS.md` / `docs/development.md` / `docs/internals.md` describe the fable-only live-alias map and 17 doctor modules.
+
 ## [9.5.0] — 2026-07-09 — blocked/waived task statuses + waive-task / amend-tasks verbs
 
 ### Added

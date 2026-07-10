@@ -23,6 +23,7 @@ import { check as adversaryLaneHealth, parseResolveOutput, parseConfiguredBacken
 import { check as indexStaleness } from '../lib/doctor/index-staleness.mjs';
 import { check as staleLock } from '../lib/doctor/stale-lock.mjs';
 import { check as pluginRegistryDrift } from '../lib/doctor/plugin-registry-drift.mjs';
+import { check as piAgentRegistration } from '../lib/doctor/pi-agent-registration.mjs';
 import { check as planIndexSchema } from '../lib/doctor/plan-index-schema.mjs';
 import { check as coordDrift } from '../lib/doctor/coord-drift.mjs';
 import { check as ownerSentinel } from '../lib/doctor/owner-sentinel.mjs';
@@ -957,6 +958,54 @@ test('plugin-registry-drift: PASS when entry has no gitCommitSha (nothing to com
   assert.equal(maxSeverity(findings), 'PASS', JSON.stringify(findings));
 });
 
+// ---- pi-agent-registration (host-scoped, injected execFileSync / targetDir) ----
+
+test('pi-agent-registration: SKIP when target agents dir is absent', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-pi-reg-home-'));
+  // no .pi/agent/agents under home
+  const findings = piAgentRegistration(path.join(here, '..'), {
+    homeDir: home,
+    execFileSync: () => { throw new Error('should not run');
+    },
+  });
+  assertFindingShape(findings);
+  assert.equal(maxSeverity(findings), 'SKIP', JSON.stringify(findings));
+});
+
+test('pi-agent-registration: PASS when register --check exits 0', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-pi-reg-pass-'));
+  const target = path.join(home, '.pi', 'agent', 'agents');
+  fs.mkdirSync(target, { recursive: true });
+  const findings = piAgentRegistration(path.join(here, '..'), {
+    homeDir: home,
+    targetDir: target,
+    execFileSync: () => 'register-pi-agents: 0 drift\n',
+  });
+  assertFindingShape(findings);
+  assert.equal(maxSeverity(findings), 'PASS', JSON.stringify(findings));
+});
+
+test('pi-agent-registration: WARN when register --check exits non-zero', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-pi-reg-warn-'));
+  const target = path.join(home, '.pi', 'agent', 'agents');
+  fs.mkdirSync(target, { recursive: true });
+  const findings = piAgentRegistration(path.join(here, '..'), {
+    homeDir: home,
+    targetDir: target,
+    execFileSync: () => {
+      const err = new Error('drift');
+      err.status = 1;
+      err.stdout = 'DRIFT  mp-explorer.md (installed differs from canonical+map)\n';
+      err.stderr = 'register-pi-agents: 1 drift item(s)\n';
+      throw err;
+    },
+  });
+  assertFindingShape(findings);
+  assert.equal(maxSeverity(findings), 'WARN', JSON.stringify(findings));
+  assert.match(findings[0].summary, /DRIFT|drift/i);
+  assert.match(findings[0].fix, /register-pi-agents/);
+});
+
 // ---- plan-index-schema: the parallel-planning anomaly guard ----------------
 // Built in-code with tmp bundles (not committed fixtures): the canonical-vs-legacy schema gate
 // and the object-codex / same-wave-overlap WARNs are the load-bearing paths, and a tmp repo
@@ -1221,15 +1270,16 @@ test('dangling-run: a stale in-progress owner lock triggers WARN independent of 
   assert.match(findings.find((f) => f.severity === 'WARN').summary, /owner lock/);
 });
 
-// ---- dispatcher: all 16 modules auto-discovered ----------------------------
+// ---- dispatcher: all 17 modules auto-discovered ----------------------------
 
-test('dispatcher: discovers all 16 check modules', async () => {
+test('dispatcher: discovers all 17 check modules', async () => {
   const checks = await discoverChecks(path.join(here, '..', 'lib', 'doctor'));
   const names = checks.map((c) => c.name);
   const expected = [
     'adversary-lane-health', 'codex-auth', 'coord-drift', 'dangling-run', 'goals', 'index-staleness',
-    'legacy-bundle', 'owner-sentinel', 'plan-doc-cruft', 'plan-index-schema', 'plugin-registry-drift',
-    'scalar-cap', 'spec-assumptions', 'stale-lock', 'state-schema', 'worktree-integrity',
+    'legacy-bundle', 'owner-sentinel', 'pi-agent-registration', 'plan-doc-cruft', 'plan-index-schema',
+    'plugin-registry-drift', 'scalar-cap', 'spec-assumptions', 'stale-lock', 'state-schema',
+    'worktree-integrity',
   ];
   for (const n of expected) {
     assert.ok(names.includes(n), `discovered ${n}`);

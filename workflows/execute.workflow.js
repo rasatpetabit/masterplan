@@ -19,7 +19,8 @@
 // writer, post-barrier. That is exactly what keeps crash re-dispatch idempotent (CD-7).
 //
 // DESIGN DECISION — inline-only implementation (Fork 1, resolved 2026-05-28: keep inline; no
-// codex-implementer). The agent roster is mp-implementer (sonnet) + mp-adversarial-reviewer ONLY;
+// codex-implementer). The agent roster is mp-implementer (fable wrapper → dispatch-agentic-loop)
+// + mp-adversarial-reviewer ONLY;
 // there is intentionally no codex-IMPLEMENTER. A codex-implementer needs WRITE access, which drags
 // back the whole v7 sandbox/worktree-git/silent-exit/empty-diff/orphan hardening series that v8
 // exists to delete — and parity ranks below durable-state/token-efficiency in the v8 rubric, so it
@@ -68,15 +69,16 @@ const orchestratorHost = A.orchestratorHost ?? null;
 const orchestratorHead = A.orchestratorHead ?? null;
 
 // DOGFOOD SEAM (committed 561f348 as a prod-inert testability hook; exercised by the parity-dogfood
-// wave-2 run, 2026-05-29 — general-purpose+sonnet implementer, codex:codex-rescue reviewer). The engine hardcodes the `masterplan:` agentType
+// wave-2 run, 2026-05-29 — general-purpose implementer, codex:codex-rescue reviewer). The engine hardcodes the `masterplan:` agentType
 // prefix, which only resolves when the dev plugin is installed — so the L2 engine cannot run in an
 // uninstalled dev worktree as-is. To dogfood it, L1 may inject a resolvable agentType + an explicit
 // model. Production NEVER sets these args, so the defaults reproduce shipping behavior byte-for-byte:
-// `masterplan:*` agents on their own frontmatter model (sonnet for the implementer). The explicit
-// model matters because an injected `general-purpose` agent would otherwise inherit the main-loop
-// model, corrupting the token-budget capture this dogfood exists to take.
+// `masterplan:*` agents on their own frontmatter model (fable wrapper for the implementer; edits
+// route via model_group dispatch-agentic-loop). The explicit model matters because an injected
+// `general-purpose` agent would otherwise inherit the main-loop model, corrupting the token-budget
+// capture this dogfood exists to take.
 const implAgentType = A.implAgentType ?? 'masterplan:mp-implementer';
-const implModel = A.implModel; // undefined in prod → agent-frontmatter model (sonnet) governs
+const implModel = A.implModel; // undefined in prod → agent-frontmatter model (fable wrapper) governs
 const reviewAgentType = A.reviewAgentType ?? 'masterplan:mp-adversarial-reviewer';
 const reviewModel = A.reviewModel;
 

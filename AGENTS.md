@@ -36,7 +36,7 @@ modes are in [`docs/internals.md`](./docs/internals.md); the public overview is
 | Release history + decision rationale per version | [`CHANGELOG.md`](./CHANGELOG.md) |
 | Cross-cutting rules (CD-1…CD-10) + plan-field contract | `docs/conventions/cd-rules.md` · `docs/conventions/plan-annotations.md` |
 | Build/test/lint + contributor discipline | [`docs/development.md`](./docs/development.md) |
-| Agent registration (CC + pi) | CC: `agents/` → `masterplan:mp-*` (plugin loader). pi: `bin/register-pi-agents.mjs` writes `~/.pi/agent/agents/` — a bare `mp-*` copy (primary) AND a `masterplan:mp-*` colon alias per agent, with `model:` swapped to `litellm/opus-4.8`·`litellm/fable-5` (`--check` for drift). See [`docs/development.md`](./docs/development.md) §"Never silently inline a delegated role" |
+| Agent registration (CC + pi) | CC: `agents/` → `masterplan:mp-*` (plugin loader). pi: `bin/register-pi-agents.mjs` writes `~/.pi/agent/agents/` — a bare `mp-*` copy (primary) AND a `masterplan:mp-*` colon alias per agent, with `model:` swapped via the live-alias map (`fable → litellm/fable-5`; `--check` for drift). See [`docs/development.md`](./docs/development.md) §"Never silently inline a delegated role" |
 | Active plans (current work) | `docs/masterplan/*/state.yml` (source of truth per CD-7) |
 
 **Canonical reading order for a new session:** this file →

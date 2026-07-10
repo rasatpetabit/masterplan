@@ -106,18 +106,18 @@ host-specific:
   the `masterplan:mp-*` colon namespace. Those files are the single source of
   truth for role contracts; CC is unchanged by pi registration.
 - **pi hosts** discover a different set of paths (`~/.pi/agent/agents/`,
-  `.pi/agents/`, `.agents/`) and resolve the CC bare `model:` aliases
-  (`opus`/`fable`) to `amazon-bedrock` (no key on most hosts), not to the
-  configured `litellm/opus-4.8` / `litellm/fable-5`. So a pi host needs adapted
-  copies. Run [`bin/register-pi-agents.mjs`](../bin/register-pi-agents.mjs) to
-  generate them at `~/.pi/agent/agents/` — it writes TWO files per agent: a
-  **bare** copy (`mp-spec-decomposer`, the primary pi name) and a **colon
-  alias** copy (`masterplan:mp-spec-decomposer`) so existing `masterplan:mp-*`
-  references in CC-authored L1/L2 text resolve on pi too. Both copies swap only
-  the `model:` line; the colon copy also prefixes `name:`. Idempotent;
-  `--check` detects drift. `mp-implementer` is deliberately **skipped** (its
-  skynet-MCP edit contract is CC-only and it has no pi caller); pi uses
-  `dispatch_task` for edits instead.
+  `.pi/agents/`, `.agents/`) and resolve CC bare `model:` aliases (live: `fable`
+  only) to `amazon-bedrock` (no key on most hosts), not to the configured
+  `litellm/fable-5`. So a pi host needs adapted copies. Run
+  [`bin/register-pi-agents.mjs`](../bin/register-pi-agents.mjs) to generate them
+  at `~/.pi/agent/agents/` — it writes TWO files per agent: a **bare** copy
+  (`mp-spec-decomposer`, the primary pi name) and a **colon alias** copy
+  (`masterplan:mp-spec-decomposer`) so existing `masterplan:mp-*` references in
+  CC-authored L1/L2 text resolve on pi too. Both copies swap only the `model:`
+  line via the live-alias map (`fable → litellm/fable-5`); the colon copy also
+  prefixes `name:`. Idempotent; `--check` detects drift. `mp-implementer` is
+  deliberately **skipped** (its skynet-MCP edit contract is CC-only and it has
+  no pi caller); pi uses `dispatch_task` for edits instead.
 
 Either name now resolves on pi: `subagent({ agent: 'mp-spec-decomposer' })` or
 `subagent({ agent: 'masterplan:mp-spec-decomposer' })` — both execute

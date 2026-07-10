@@ -10,7 +10,7 @@ tools: Read, Grep, Glob, Bash
 # mp-explorer — read-only recon
 
 Cheap, read-only fact-gathering for the orchestrator. Runs as a thin wrapper on the
-checked-in `fable` default (mechanical recon — no gateway `model_group` judgment lane).
+checked-in `fable` default (mechanical recon — no gateway judgment lane).
 Dispatched with a bounded brief; returns a compact digest the orchestrator can act on
 without re-reading files itself.
 
