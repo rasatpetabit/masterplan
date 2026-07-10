@@ -1,0 +1,16 @@
+{
+  "gate": "plan",
+  "hash": "sha256:7548b0174e34b24f778bb8131ba925d6c430100016c478dc609407cd3b5bcbcb",
+  "artifacts": [
+    "spec.md",
+    "plan.md",
+    "plan.index.json"
+  ],
+  "dispatch_id": "rv-mreymkfe",
+  "provider": "dispatch-gateway",
+  "model": "dispatch-adversary",
+  "output_tokens": 256,
+  "status": "done",
+  "ts": "2026-07-10T13:18:45.776Z",
+  "digest": "plan-gate adversary review\njob_id: rv-mreymkfe\nbackend: dispatch-gateway / dispatch-adversary\nverdict: approve (0 blocking)\nResidual advisory P2s (non-blocking): body fable wording strength; G5 git status not only git diff.\nPrior findings folded into T1/T2 verify_commands.\n"
+}

@@ -1,0 +1,6 @@
+plan-gate adversary review
+job_id: rv-mreymkfe
+backend: dispatch-gateway / dispatch-adversary
+verdict: approve (0 blocking)
+Residual advisory P2s (non-blocking): body fable wording strength; G5 git status not only git diff.
+Prior findings folded into T1/T2 verify_commands.

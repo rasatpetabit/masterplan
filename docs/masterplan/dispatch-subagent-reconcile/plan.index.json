@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "tasks": [
+    {
+      "id": 1,
+      "description": "Strict live-alias MODEL_MAP: set MODEL_MAP to { fable: 'litellm/fable-5' } only; update register-pi-agents header comments; rewrite test/register-pi-agents.test.mjs to fable fixtures; assert bidirectional equality between MODEL_MAP keys and non-skipped agents/mp-*.md model: aliases; assert ALL canonical agents/mp-*.md (including SKIP_FOR_PI mp-implementer) have model: fable; keep fail-closed negative fixture for unsupported alias; RETAIN colon-alias naming + SKIP_FOR_PI membership AND assert registration check/write outputs exclude both mp-implementer and masterplan:mp-implementer; retain drift-detection tests; document complete input set (agents/mp-*.md minus SKIP_FOR_PI) in test header.",
+      "wave": 0,
+      "goals": [
+        "G2",
+        "G3"
+      ],
+      "files": [
+        "bin/register-pi-agents.mjs",
+        "test/register-pi-agents.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/register-pi-agents.test.mjs"
+      ],
+      "codex": "no"
+    },
+    {
+      "id": 2,
+      "description": "Explorer prose consistency: replace Runs on haiku claim in agents/mp-explorer.md with accurate thin-wrapper language (checked-in fable default, read-only recon). Verify case-insensitive absence of haiku/opus/sonnet as wrapper claims AND positive presence of fable wrapper wording (plan-gate P2).",
+      "wave": 0,
+      "goals": [
+        "G1"
+      ],
+      "files": [
+        "agents/mp-explorer.md"
+      ],
+      "verify_commands": [
+        "node --input-type=module -e \"import{readFileSync}from'fs'; const raw=readFileSync('agents/mp-explorer.md','utf8'); const parts=raw.split(/^---$/m); const body=parts.slice(2).join('---'); if(/\\b(haiku|opus|sonnet)\\b/i.test(body)) {console.error('forbidden model claim in body'); process.exit(1)}; if(!/fable/i.test(body)) {console.error('missing fable wrapper wording in body'); process.exit(1)}; console.log('ok');\""
+      ],
+      "codex": "no"
+    },
+    {
+      "id": 3,
+      "description": "Host resync + scope check: run node bin/register-pi-agents.mjs (write) then --check (exit 0, 0 drift); spot-check installed pi agents use model: litellm/fable-5; confirm run code diff stays inside T1-T2 paths (debt-cleanup scope G5).",
+      "wave": 1,
+      "goals": [
+        "G4",
+        "G5"
+      ],
+      "files": [],
+      "verify_commands": [
+        "node bin/register-pi-agents.mjs --check"
+      ],
+      "codex": "no"
+    }
+  ],
+  "plan_hash": "sha256:41199a24d876ca5ed7f1fe62e88cd6e086d00181d02ac40dac201bdb9c9b8773",
+  "generated_at": "2026-07-10T13:16:58.987Z"
+}

@@ -1,0 +1,15 @@
+{
+  "gate": "spec",
+  "hash": "sha256:ab2b319ab159ea1ec4a6d3caf14db22de176f9bb3d45b7ffcd24df9ef96ae943",
+  "artifacts": [
+    "spec.md",
+    "goals.md"
+  ],
+  "dispatch_id": "rv-mreyf7my",
+  "provider": "dispatch-gateway",
+  "model": "dispatch-adversary",
+  "output_tokens": 256,
+  "status": "done",
+  "ts": "2026-07-10T13:13:03.245Z",
+  "digest": "spec-gate adversary review (class=adversary, intensity=rigorous)\njob_id: rv-mreyf7my\nbackend: dispatch-gateway / dispatch-adversary\nverdict: approve (0 blocking)\nduration_ms: 43060\n\nFindings (advisory — fold into plan, not REVISE):\n1. [P1] Confirm register-pi-agents input set is only agents/mp-*.md (non-skipped) before pruning opus from MODEL_MAP.\n2. [P2] Tests must assert bidirectional equality: MODEL_MAP keys == set of model: aliases from non-skipped agents (not one-direction ⊆).\n3. [P2] Keep an explicit fail-closed negative fixture (unsupported alias throws); do not drop all negative coverage when removing live opus fixtures.\n\nNo blocking findings. Proceed to plan with the three advisory items as plan requirements."
+}
