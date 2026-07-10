@@ -9,9 +9,10 @@ tools: Read, Grep, Glob, Bash
 
 # mp-explorer — read-only recon
 
-Cheap, read-only fact-gathering for the orchestrator. Runs on haiku (design goal 2:
-mechanical work → cheapest model). Dispatched with a bounded brief; returns a compact
-digest the orchestrator can act on without re-reading files itself.
+Cheap, read-only fact-gathering for the orchestrator. Runs as a thin wrapper on the
+checked-in `fable` default (mechanical recon — no gateway `model_group` judgment lane).
+Dispatched with a bounded brief; returns a compact digest the orchestrator can act on
+without re-reading files itself.
 
 ## Architecture invariants
 - **READ-ONLY.** Never edit, never commit, never write `state.yml`. You have no Write
