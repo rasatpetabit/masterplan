@@ -1,7 +1,7 @@
 ---
 schema_version: 8
 slug: fabric-default-dual-reg
-status: in-progress
+status: archived
 phase: execute
 topic: "Make dispatch fabric the default wave path and collapse dual pi agent registration (bare + masterplan: alias) into one strategy"
 complexity: high
@@ -21,3 +21,5 @@ goals: [{"id":"G1","text":"New seeds default to fabric on","signal":"test"},{"id
 review: {"adversary":true}
 render: {"images":"off"}
 goals_md_hash: sha256:0be97b00dc9163bb416f63656dc1c7bdf112cce0748a7152ba7501b0f0536cb8
+worktree: /srv/dev/ras/masterplan
+worktree_disposition: kept_by_user
