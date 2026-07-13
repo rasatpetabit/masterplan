@@ -1074,6 +1074,31 @@ test('seed: --adversary-review rejects bogus values loud (on/off only)', () => {
   assert.notEqual(r.status, 0);
   assert.match(r.stderr, /invalid --adversary-review/);
 });
+
+test('seed: defaults state.dispatch.fabric=true at seed time (fabric default-on)', () => {
+  const p = path.join(tmpDir('mp-seed-fabric-default-'), 'state.yml');
+  const r = run(['seed', `--state=${p}`, '--slug=demo', '--topic=A topic']);
+  assert.equal(r.status, 0);
+  assert.deepEqual(read(p).dispatch, { fabric: true });
+});
+test('seed: --fabric=on arms explicitly (matches default)', () => {
+  const p = path.join(tmpDir('mp-seed-fabric-on-'), 'state.yml');
+  const r = run(['seed', `--state=${p}`, '--slug=demo', '--topic=A topic', '--fabric=on']);
+  assert.equal(r.status, 0);
+  assert.deepEqual(read(p).dispatch, { fabric: true });
+});
+test('seed: --fabric=off opts out (omits state.dispatch, A9 absent-field style)', () => {
+  const p = path.join(tmpDir('mp-seed-fabric-off-'), 'state.yml');
+  const r = run(['seed', `--state=${p}`, '--slug=demo', '--topic=A topic', '--fabric=off']);
+  assert.equal(r.status, 0);
+  assert.ok(!('dispatch' in read(p)), 'explicit fabric opt-out must leave state.dispatch absent');
+});
+test('seed: --fabric rejects bogus values loud (on/off only)', () => {
+  const p = path.join(tmpDir('mp-seed-fabric-bogus-'), 'state.yml');
+  const r = run(['seed', `--state=${p}`, '--slug=demo', '--topic=A topic', '--fabric=maybe']);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /invalid --fabric/);
+});
 test('seed: refuses an existing bundle unless --force', () => {
   const p = path.join(tmpDir('mp-seed2-'), 'state.yml');
   assert.equal(run(['seed', `--state=${p}`, '--slug=x', '--topic=t']).status, 0);

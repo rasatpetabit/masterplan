@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Fabric default-on for new seeds.** `mp seed` / `buildSeedState` emit `state.dispatch.fabric: true` by default; `--fabric=off` omits the key (legacy wave path). Mid-run/old bundles without the flag are unchanged.
+- **Pi registration is bare-only.** `bin/register-pi-agents.mjs` writes only `mp-*.md`; managed `masterplan:mp-*.md` leftovers (from `agents/mp-*.md` + SKIP_FOR_PI) are removed on write and flagged as drift by `--check`. Unmanaged colon-named files are left alone.
+
 ### Added
 
 - **Doctor: `pi-agent-registration` check.** Surfaces host drift of `~/.pi/agent/agents/mp-*` vs canonical `agents/mp-*.md` by shelling out to `node bin/register-pi-agents.mjs --check` (PASS / WARN / SKIP). 17 doctor modules total.

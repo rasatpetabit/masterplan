@@ -883,6 +883,11 @@ function main() {
       if (reviewFlag !== undefined && !['on', 'off'].includes(reviewFlag)) {
         die(`invalid --adversary-review '${reviewFlag}' — expected on or off`);
       }
+      // --fabric=on|off: default-on strangler for the dispatch_fabric wave path. Undefined →
+      // buildSeedState fabricDispatch true. off omits state.dispatch (legacy launch_workflow path).
+      if (flags.fabric !== undefined && !['on', 'off'].includes(flags.fabric)) {
+        die(`invalid --fabric '${flags.fabric}' — expected on or off`);
+      }
       const dir = path.dirname(p);
       let state;
       try {
@@ -906,6 +911,7 @@ function main() {
           ownerLock: flags['owner-lock'],
           codexReview: reviewFlag === undefined ? true : reviewFlag === 'on',
           renderImages: flags['render-images'],
+          fabricDispatch: flags.fabric === undefined ? true : flags.fabric === 'on',
         });
       } catch (e) {
         die(e.message, 1);

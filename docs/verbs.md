@@ -235,3 +235,8 @@ is terminal for dispatch + finalize but operator-reversible.
   `--prune-non-pending` consent (the `seed-tasks --force` hazard, gated).
   Rejects a duplicate index id; re-renders an existing `plan.html` inline after
   the commit.
+
+
+## seed flags (fabric)
+
+New seeds default `--fabric=on` (`state.dispatch.fabric: true`). Pass `--fabric=off` to omit fabric and keep the legacy wave path.

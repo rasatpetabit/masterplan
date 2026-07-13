@@ -132,16 +132,14 @@ test('runRegister --check is READ-ONLY: no writes, no deletes, no file creation'
   assert.ok(res.drift > 0, 'check should report drift for missing files');
 });
 
-test('runRegister write mode produces bare + colon alias with swapped model', () => {
+test('runRegister write mode produces bare-only with swapped model', () => {
   const { agentsDir, targetDir } = setupTmpAgents({ 'mp-x.md': VALID_AGENT });
   const res = runRegister({ agentsDir, targetDir, check: false });
   assert.equal(res.registered, 1);
-  assert.equal(res.written, 2, 'bare + colon alias');
+  assert.equal(res.written, 1, 'bare only');
   const bare = readFileSync(join(targetDir, 'mp-x.md'), 'utf8');
-  const colon = readFileSync(join(targetDir, 'masterplan:mp-x.md'), 'utf8');
   assert.ok(bare.includes('model: litellm/fable-5'));
-  assert.ok(colon.includes('name: masterplan:mp-x'));
-  assert.ok(colon.includes('model: litellm/fable-5'));
+  assert.equal(existsSync(join(targetDir, 'masterplan:mp-x.md')), false, 'no colon alias emitted');
 });
 
 test('runRegister never emits mp-implementer or masterplan:mp-implementer targets', () => {
@@ -154,8 +152,7 @@ test('runRegister never emits mp-implementer or masterplan:mp-implementer target
   assert.equal(existsSync(join(targetDir, 'mp-implementer.md')), false);
   assert.equal(existsSync(join(targetDir, 'masterplan:mp-implementer.md')), false);
   assert.equal(existsSync(join(targetDir, 'mp-x.md')), true);
-  assert.equal(existsSync(join(targetDir, 'masterplan:mp-x.md')), true);
-  // check mode also must not invent implementer targets
+  assert.equal(existsSync(join(targetDir, 'masterplan:mp-x.md')), false, 'bare-only: no colon for non-skipped either');
   const check = runRegister({ agentsDir, targetDir, check: true });
   assert.equal(check.drift, 0, JSON.stringify(check.report));
   assert.ok(!check.report.some((l) => /mp-implementer/.test(l) && /WROTE|OK/.test(l)));
@@ -247,16 +244,53 @@ test('mapNameLine throws when there is no name line', () => {
   );
 });
 
-test('outputsFor yields a bare copy and a colon alias copy per agent', () => {
+test('outputsFor yields a bare copy only (no colon alias)', () => {
   const swapped = '---\nname: mp-x\nmodel: litellm/fable-5\ntools: Read\n---\n\nbody\n';
   const outs = outputsFor('mp-x.md', swapped);
-  assert.equal(outs.length, 2);
+  assert.equal(outs.length, 1);
   assert.equal(outs[0].rel, 'mp-x.md');
   assert.equal(outs[0].body, swapped, 'bare copy body is the model-swapped body verbatim');
-  assert.equal(outs[1].rel, 'masterplan:mp-x.md', 'colon alias filename uses the CC namespace');
-  assert.ok(outs[1].body.includes('name: masterplan:mp-x'), 'colon alias name is namespaced');
-  assert.ok(outs[1].body.includes('model: litellm/fable-5'), 'colon alias keeps the swapped model');
-  assert.ok(!outs[1].body.match(/^name: mp-x$/m), 'colon alias does not leave the bare name');
+});
+
+
+test('runRegister write removes managed colon leftovers; check flags them as drift', () => {
+  const { agentsDir, targetDir } = setupTmpAgents({ 'mp-x.md': VALID_AGENT });
+  mkdirSync(targetDir, { recursive: true });
+  writeFileSync(join(targetDir, 'masterplan:mp-x.md'), 'retired colon alias');
+  const checkBefore = runRegister({ agentsDir, targetDir, check: true });
+  assert.ok(checkBefore.drift > 0, 'managed colon leftover is drift');
+  assert.ok(checkBefore.report.some((l) => /DRIFT.*masterplan:mp-x\.md/.test(l)));
+  assert.equal(existsSync(join(targetDir, 'masterplan:mp-x.md')), true, 'check is read-only');
+  const write = runRegister({ agentsDir, targetDir, check: false });
+  assert.equal(existsSync(join(targetDir, 'masterplan:mp-x.md')), false, 'write removes managed colon');
+  assert.ok(write.removed >= 1);
+  const checkAfter = runRegister({ agentsDir, targetDir, check: true });
+  assert.equal(checkAfter.drift, 0, JSON.stringify(checkAfter.report));
+});
+
+test('runRegister does not delete unmanaged masterplan:mp-custom.md and does not count it as drift', () => {
+  const { agentsDir, targetDir } = setupTmpAgents({ 'mp-x.md': VALID_AGENT });
+  mkdirSync(targetDir, { recursive: true });
+  writeFileSync(join(targetDir, 'masterplan:mp-custom.md'), 'operator-owned custom agent');
+  runRegister({ agentsDir, targetDir, check: false });
+  assert.equal(readFileSync(join(targetDir, 'masterplan:mp-custom.md'), 'utf8'), 'operator-owned custom agent');
+  const check = runRegister({ agentsDir, targetDir, check: true });
+  assert.equal(check.drift, 0, JSON.stringify(check.report));
+  assert.ok(!check.report.some((l) => /mp-custom/.test(l)), 'unmanaged colon must not appear in report');
+});
+
+test('runRegister cleans preseeded masterplan:mp-implementer.md (SKIP_FOR_PI managed colon)', () => {
+  const { agentsDir, targetDir } = setupTmpAgents({
+    'mp-x.md': VALID_AGENT,
+    'mp-implementer.md': IMPLEMENTER_AGENT,
+  });
+  mkdirSync(targetDir, { recursive: true });
+  writeFileSync(join(targetDir, 'masterplan:mp-implementer.md'), 'stale colon implementer');
+  const check = runRegister({ agentsDir, targetDir, check: true });
+  assert.ok(check.drift > 0);
+  assert.ok(check.report.some((l) => /masterplan:mp-implementer/.test(l)));
+  runRegister({ agentsDir, targetDir, check: false });
+  assert.equal(existsSync(join(targetDir, 'masterplan:mp-implementer.md')), false);
 });
 
 test('SKIP_FOR_PI excludes mp-implementer (CC-only skynet MCP contract)', () => {

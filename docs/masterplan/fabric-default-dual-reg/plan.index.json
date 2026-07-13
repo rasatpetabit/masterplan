@@ -1,0 +1,54 @@
+{
+  "schema_version": "6.0",
+  "slug": "fabric-default-dual-reg",
+  "tasks": [
+    {
+      "id": 1,
+      "description": "Fabric seed default in buildSeedState + mp seed --fabric CLI + bundle and bin tests",
+      "wave": 0,
+      "files": [
+        "lib/bundle.mjs",
+        "bin/masterplan.mjs",
+        "test/bundle.test.mjs",
+        "test/bin-masterplan.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/bundle.test.mjs test/bin-masterplan.test.mjs"
+      ],
+      "codex": "no"
+    },
+    {
+      "id": 2,
+      "description": "Bare-only register-pi-agents with managed colon cleanup/check + tests (unmanaged preserved; SKIP_FOR_PI colon cleaned)",
+      "wave": 1,
+      "files": [
+        "bin/register-pi-agents.mjs",
+        "test/register-pi-agents.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/register-pi-agents.test.mjs"
+      ],
+      "codex": "no"
+    },
+    {
+      "id": 3,
+      "description": "Docs/CHANGELOG for fabric seed default + bare-only pi registration; host resync --check green",
+      "wave": 2,
+      "files": [
+        "docs/verbs.md",
+        "docs/internals/wave-dispatch.md",
+        "docs/development.md",
+        "AGENTS.md",
+        "commands/masterplan.md",
+        "CHANGELOG.md"
+      ],
+      "verify_commands": [
+        "node bin/register-pi-agents.mjs",
+        "node bin/register-pi-agents.mjs --check"
+      ],
+      "codex": "no"
+    }
+  ],
+  "plan_hash": "sha256:2f39b25a410630cb31a1daa235cb7b140a61791365795f6b380104475f633eac",
+  "generated_at": "2026-07-13T20:05:19.662Z"
+}

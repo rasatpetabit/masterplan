@@ -110,14 +110,14 @@ host-specific:
   only) to `amazon-bedrock` (no key on most hosts), not to the configured
   `litellm/fable-5`. So a pi host needs adapted copies. Run
   [`bin/register-pi-agents.mjs`](../bin/register-pi-agents.mjs) to generate them
-  at `~/.pi/agent/agents/` — it writes TWO files per agent: a **bare** copy
-  (`mp-spec-decomposer`, the primary pi name) and a **colon alias** copy
-  (`masterplan:mp-spec-decomposer`) so existing `masterplan:mp-*` references in
-  CC-authored L1/L2 text resolve on pi too. Both copies swap only the `model:`
-  line via the live-alias map (`fable → litellm/fable-5`); the colon copy also
-  prefixes `name:`. Idempotent; `--check` detects drift. `mp-implementer` is
-  deliberately **skipped** (its skynet-MCP edit contract is CC-only and it has
-  no pi caller); pi uses `dispatch_task` for edits instead.
+  at `~/.pi/agent/agents/` — **bare-only** (`mp-spec-decomposer.md` etc.). The
+  live-alias map swaps `model: fable` → `litellm/fable-5`. Colon alias copies
+  (`masterplan:mp-*`) are **retired**: write mode removes managed leftovers
+  derived from `agents/mp-*.md` (+ SKIP_FOR_PI); `--check` flags those as drift.
+  Unmanaged `masterplan:mp-*.md` outside that set are left alone. Idempotent.
+  `mp-implementer` is deliberately **skipped** (skynet-MCP edit contract is
+  CC-only; no pi caller); pi uses `dispatch_task` for edits instead. CC still
+  loads `agents/` as the `masterplan:mp-*` plugin namespace independently.
 
 Either name now resolves on pi: `subagent({ agent: 'mp-spec-decomposer' })` or
 `subagent({ agent: 'masterplan:mp-spec-decomposer' })` — both execute

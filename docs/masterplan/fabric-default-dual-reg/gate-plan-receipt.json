@@ -1,0 +1,16 @@
+{
+  "gate": "plan",
+  "hash": "sha256:ba7c32a0a6aa4320e612f7ab20cf7b400bb0ddfa75cd891d711a680710d03750",
+  "artifacts": [
+    "spec.md",
+    "plan.md",
+    "plan.index.json"
+  ],
+  "dispatch_id": "rv-fabric-plan-gate",
+  "provider": "dispatch-gateway",
+  "model": "dispatch-adversary",
+  "output_tokens": 400,
+  "status": "done",
+  "ts": "2026-07-13T20:05:19.326Z",
+  "digest": "plan-gate adversary review (class=adversary, intensity=light)\nbackend: dispatch-gateway / dispatch-adversary\nverdict: approve (0 blocking)\nAdvisories folded: managed-only colon cleanup; mandatory CLI fabric tests; commands/masterplan.md; unmanaged fixture; SKIP_FOR_PI colon cleanup; task3 write then check.\nNo blocking findings."
+}

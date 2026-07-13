@@ -295,6 +295,25 @@ test('buildSeedState: codexReview explicit true is identical to default true', (
   assert.deepEqual(def.review, { adversary: true });
 });
 
+test('buildSeedState: fabricDispatch defaults on (dispatch.fabric true)', () => {
+  const s = buildSeedState({ slug: 'r', topic: 't', createdAt: 'T' });
+  assert.deepEqual(s.dispatch, { fabric: true });
+  assert.deepEqual(parseState(serializeState(s)), s);
+});
+
+test('buildSeedState: fabricDispatch false omits dispatch (A9 absent-field style)', () => {
+  const s = buildSeedState({ slug: 'r', topic: 't', createdAt: 'T', fabricDispatch: false });
+  assert.ok(!('dispatch' in s), 'opt-out must leave state.dispatch absent');
+  assert.deepEqual(parseState(serializeState(s)), s);
+});
+
+test('buildSeedState: fabricDispatch explicit true matches default', () => {
+  const def = buildSeedState({ slug: 'r', topic: 't', createdAt: 'T' });
+  const explicit = buildSeedState({ slug: 'r', topic: 't', createdAt: 'T', fabricDispatch: true });
+  assert.deepEqual(def.dispatch, explicit.dispatch);
+  assert.deepEqual(def.dispatch, { fabric: true });
+});
+
 test('buildSeedState: optional fields and overrides are carried through', () => {
   const s = buildSeedState({
     slug: 'r', topic: 't', createdAt: 'T', phase: 'plan', status: 'planning', schemaVersion: 9,

@@ -67,7 +67,7 @@ All five conditions must pass for a task to be heuristically eligible:
 
 ## The Fabric Path (`dispatch_fabric` → `mp dispatch-wave`)
 
-When the per-run strangler flag `state.dispatch.fabric` is `true`, `mp continue` emits a single
+When the per-run strangler flag `state.dispatch.fabric` is `true` (default for **new** seeds via `mp seed`; opt out with `--fabric=off`), `mp continue` emits a single
 `dispatch_fabric` op instead of the launch_workflow/dispatch_foreground fork, and the L1 op table's
 consumer for that op is exactly `mp dispatch-wave --state=<path>` (`lib/dispatch-wave.mjs`) —
 dispatch AND record complete inside the command:

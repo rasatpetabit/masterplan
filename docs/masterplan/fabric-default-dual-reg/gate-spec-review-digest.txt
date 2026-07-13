@@ -1,0 +1,11 @@
+spec-gate adversary review (class=adversary, intensity=standard)
+backend: dispatch-gateway / dispatch-adversary
+verdict: approve (0 blocking)
+duration_ms: 56428
+degraded harness note: degraded=true but final_verdict=approve
+
+Findings (advisory — fold into plan, not REVISE):
+1. [P1] Implementation not yet in this patch — expected for brainstorm→plan; plan tasks must cover buildSeedState, seed CLI, register-pi-agents, tests, docs.
+2. [P1] Colon-file cleanup: restrict delete/check to the generated set of aliases for known agents/mp-*.md (and SKIP_FOR_PI names), not every masterplan:mp-*.md under the target dir. Prefer tracked managed names over a broad regex alone.
+
+No blocking findings. Proceed to plan with the advisory items as plan requirements.
