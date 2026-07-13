@@ -70,7 +70,7 @@ masterplan v8 is a five-layer system. Each layer delegates downward and never wr
 ┌───────────────────────▼─────────────────────────────────────┐
 │  L4 — Doctor                                                 │
 │  bin/doctor.mjs  dispatcher                                  │
-│  lib/doctor/*.mjs  (14 check modules, auto-discovered)       │
+│  lib/doctor/*.mjs  (17 check modules, auto-discovered)       │
 │  ← Finding {id, severity, summary, fix}; non-zero on ERROR   │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -133,7 +133,7 @@ Codex hosts the orchestrator under `/masterplan:masterplan`. See [Codex hosting]
 
 ```
 /masterplan status               # active bundle summary
-/masterplan doctor               # structural lint (14 check modules)
+/masterplan doctor               # structural lint (17 check modules)
 ```
 
 ---
@@ -248,7 +248,7 @@ Crash before a commit is safe: `state.yml` leads git, so `decideNextAction` re-d
 
 ## Doctor
 
-`node bin/doctor.mjs` runs 14 check modules under `lib/doctor/*.mjs`, auto-discovered alphabetically. Each module exports:
+`node bin/doctor.mjs` runs 17 check modules under `lib/doctor/*.mjs`, auto-discovered alphabetically. Each module exports:
 
 ```js
 check(repoRoot, opts) -> Finding[]

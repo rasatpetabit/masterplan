@@ -119,14 +119,11 @@ host-specific:
   CC-only; no pi caller); pi uses `dispatch_task` for edits instead. CC still
   loads `agents/` as the `masterplan:mp-*` plugin namespace independently.
 
-Either name now resolves on pi: `subagent({ agent: 'mp-spec-decomposer' })` or
-`subagent({ agent: 'masterplan:mp-spec-decomposer' })` — both execute
-(verified end-to-end against `src/runs/foreground/subagent-executor.ts`, which
-hard-errors on unknown names with no silent fallback). One diagnostic caveat:
-colon-named agents do **not** appear in `subagent({ action: 'list' })` output
-(a display gap, not a functional one) — the bare `mp-*` copies are what show up
-there. A host where `subagent({ action: 'list' })` shows no `mp-*` is a
-registration gap to fix (re-run the script), not a license to inline.
+On pi, call **bare** names only: `subagent({ agent: 'mp-spec-decomposer' })`.
+Colon alias files are no longer installed; CC-authored `masterplan:mp-*` names
+still resolve on Claude Code via the plugin loader. A host where
+`subagent({ action: 'list' })` shows no `mp-*` is a registration gap to fix
+(re-run the script), not a license to inline.
 
 This complements CD-3: CD-3 ensures you *verify* completion; CD-11 ensures
 the *delegation* actually happened rather than being narrated into existence.

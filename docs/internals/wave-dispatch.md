@@ -116,7 +116,7 @@ dangling-op class that let `dispatch_fabric` ship consumer-less cannot recur.
 
 ## `target` Is Informational — Implementation Is Always Inline
 
-Every task is implemented by `mp-implementer` (sonnet) regardless of its routed `target`. There is
+Every task is implemented by `mp-implementer` (fable wrapper → `dispatch-agentic-loop`) regardless of its routed `target`. There is
 no codex-implementer in v8 by design. The `target` field is logged and recorded in digests so a
 future implementer could offload eligible tasks; it never gates which agent runs the implementation.
 

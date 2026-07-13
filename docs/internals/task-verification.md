@@ -121,7 +121,7 @@ pipeline(tasks, implement, review)
 `implement` completes, while task B may still be implementing. The workflow resolves only
 when all tasks clear both stages — that resolution is the wave barrier L1 awaits.
 
-**Implement:** `mp-implementer` (sonnet) receives a prompt naming the task, its declared file
+**Implement:** `mp-implementer` (fable wrapper → dispatch-agentic-loop) receives a prompt naming the task, its declared file
 scope, and its verify commands. It runs the verify commands and returns the IMPL_DIGEST
 (validated at the tool boundary):
 
@@ -134,7 +134,7 @@ A missing or errored digest synthesises a `failed` record — the task is never 
 
 **Review (config-gated):** if the run bundle's review is armed (`state.review.adversary`, which `mp prepare-wave`
 normalizes to the `"on"` payload the L2 workflow gates on), `mp-adversarial-reviewer`
-(sonnet) runs a synchronous adversarial second-opinion pass on each `done` task immediately
+(fable wrapper) runs a synchronous adversarial second-opinion pass on each `done` task immediately
 after its implementer finishes. Review is gated by config only — not by `target` or routing
 eligibility. Judgment-heavy, inline-routed tasks need the second opinion most; gating by
 eligibility would skip them.

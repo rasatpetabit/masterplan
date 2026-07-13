@@ -1,7 +1,7 @@
 ---
 type: reference
 title: masterplan — wave-dispatch execution engine
-timestamp: 2026-07-01T00:00:00Z
+timestamp: 2026-07-13T00:00:00Z
 privacy: private
 tags: [masterplan, wave-dispatch, workflow, execute]
 ---
@@ -24,3 +24,5 @@ sole source of truth for run progress.
 See [`docs/internals/wave-dispatch.md`](../docs/internals/wave-dispatch.md)
 for the full design.
 </content>
+
+New seeds default `state.dispatch.fabric: true`, so `mp continue` emits `dispatch_fabric` → `mp dispatch-wave` (agent-dispatch broker) unless `--fabric=off` at seed. See [`docs/internals/wave-dispatch.md`](../docs/internals/wave-dispatch.md).

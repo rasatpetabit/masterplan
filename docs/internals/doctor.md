@@ -1,7 +1,7 @@
 # Doctor Checks — Internals
 
 > **Audience:** Maintainers adding or fixing doctor checks.
-> **Source:** `bin/doctor.mjs` (dispatcher) + `lib/doctor/*.mjs` (14 check modules).
+> **Source:** `bin/doctor.mjs` (dispatcher) + `lib/doctor/*.mjs` (17 check modules).
 
 ## How the doctor works
 
@@ -57,20 +57,24 @@ unit-testable without touching the real host. The main CLI passes
   (e.g. `homeDir`). They `SKIP` gracefully when the relevant tooling is not
   installed.
 
-## The 14 check modules
+## The 17 check modules
 
 | Module | Purpose |
 |---|---|
 | `codex-auth` | Reads `~/.codex/auth.json`; warns on expired or expiring-soon JWT claims. ChatGPT auth mode (`auth_mode: chatgpt` + `refresh_token`) short-circuits to `PASS` because Codex auto-refreshes the id_token per invocation. `SKIP` when auth.json is absent. |
 | `adversary-lane-health` | Host-scoped probe of the adversary review lane: `agent-dispatch` on PATH, `agent-dispatch resolve --class adversary` exits 0 with a route, and backend health. `WARN`-only (review is advisory) — never `ERROR`. |
 | `coord-drift` | For GitHub-coordinated runs (bundles with a `coordination` object in `state.yml`): pure-filesystem drift detection between durable plan state and the published GitHub projection — done tasks whose `issue_map` entry is still open/claimed, orphan claims (claimed with no PR), `issue_map` vs `state.tasks` task-ID drift, and `published_waves` mismatches. No `gh`/network calls. `SKIP` when no bundle is coordinated. |
+| `dangling-run` | Flags non-archived bundles that look abandoned (stale activity / no progress) so operators can sweep or finish them. Advisory `WARN`; `SKIP` when nothing applies. |
+| `goals` | Goals-enabled bundles: frozen goals hash consistency, missing goals.md, and related goal-state integrity. `SKIP` when no goals-enabled bundles. |
 | `index-staleness` | For each bundle with a `plan.md`, computes a sha256 and compares it against the recorded hash in `plan.index.json` (and, for migrated-in-place bundles, `state.plan_hash`). `WARN` on mismatch; `SKIP` when no bundle has a plan. |
 | `legacy-bundle` | Warns on any bundle with `schema_version < 6` (not yet migrated to v8) and on any actual planning artifacts remaining under `docs/superpowers/`. `SKIP` only when no bundles exist and `docs/superpowers/` is absent. |
 | `owner-sentinel` | Guard D hygiene: scans `docs/masterplan/<slug>/.owner.lock` + `.owner.hb.*` heartbeats; `WARN` on a corrupt lock (unparseable), a stale lock (no heartbeat within TTL — recommends `release-owner --force` when no live session holds it), or orphan heartbeat files with no lock. Fresh locks emit nothing; `SKIP` when no bundles exist. |
+| `pi-agent-registration` | Host-scoped: shells out to `node bin/register-pi-agents.mjs --check` against `~/.pi/agent/agents/`. `PASS` when bare-only install is in sync; `WARN` on drift (stale model map, missing bare copies, leftover managed colon aliases); `SKIP` when the pi agents dir or script is absent. |
 | `plan-doc-cruft` | Repo-wide backstop for the finish flow's `docs_normalize` gate: anchored to **archived** bundles, it warns on markdown outside the runs dir that still carries plan provenance — an archived slug as a whole token in a filename, a body reference to `docs/masterplan/<slug>`, or a hyphenated slug in a heading line. Excludes the runs dir itself, `docs/superpowers/` (legacy-bundle owns that), dot-directories, node_modules, root history files (`WORKLOG`/`CHANGELOG*`/`HISTORY`), and files >1 MiB. Always `WARN`, never `ERROR`; `SKIP` when no archived bundles exist. |
 | `plan-index-schema` | Runs `lib/plan-merge.validatePlanIndex` against every `plan.index.json` with `schema_version >= 6`; catches non-string `codex` fields and same-wave file overlaps that silently mis-route. `SKIP` when no canonical index exists. |
 | `plugin-registry-drift` | Compares the installed masterplan plugin version in `installed_plugins.json` against the marketplace `plugin.json`; also compares `gitCommitSha` against marketplace HEAD to catch same-version stale caches. `SKIP` when either file is absent. |
 | `scalar-cap` | Validates that no flat `key: value` line in `state.yml` exceeds 200 characters, and that every `*overflow at <file> L<n>*` pointer resolves to a real file and line within the same bundle directory. The cap is a prose-scalar discipline: values that parse to structured data (e.g. the inline-JSON `tasks` line the v8 writer emits) are exempt — both from the WARN and from the `--fix` handler, which moves only string scalars to `state-overflow.md`. |
+| `spec-assumptions` | Specs in active/plan-phase bundles should carry an Assumptions & Open Decisions section (brainstorm contract). `WARN` when missing; `SKIP` when no applicable specs. |
 | `stale-lock` | Checks each bundle directory for a `.lock` file whose mtime is older than 1 hour; warns when found (a crashed run may have left it). |
 | `state-schema` | Validates each bundle's `state.yml` against `lib/bundle.validateCoreState` (the single source of truth for required fields). Bundles with `schema_version < 6` are deferred to `legacy-bundle`. A slug directory with no readable `state.yml` produces a `WARN` (orphan directory). A `state.yml` that parses to zero keys is an `ERROR`. |
 | `worktree-integrity` | **Bundle→git:** for each non-archived/non-retired bundle, verifies the recorded `worktree` path and `branch` exist in the git graph (`git worktree list` / `git branch`) — `ERROR` on a broken reference. **Git→bundle** (Phase 2): runs the shared pure `lib/worktree.classifyWorktrees` over the on-disk `.worktrees/*` dirs + bundle records to `WARN` on reconcilable strays — crash-leak (a retired bundle still registered + on disk → remove), repo-move (a dangling admin link → `git worktree repair`), foreign-repo leftover (→ remove), and a legacy `missing` disposition (→ normalize). A plain unowned dev worktree (e.g. `masterplan-ng`) stays untouched, and a repo-move/`missing` is reported once (as the WARN remedy), never also as a bundle→git ERROR. `SKIP` when git is unavailable or no bundles exist. **`--fix`:** records `worktree_disposition=removed_after_merge` for a bundle whose `worktree` is set, unregistered in git, **and gone from disk** — clearing the bundle→git ERROR (the path is preserved as a reversible memento). gone-from-disk is the safety line: an on-disk-but-unregistered worktree (the protected `manual`/active-unregistered case) still exists and is left for the operator; archived/already-retired bundles are skipped, so the fix set is a strict subset of the ERROR set. Idempotent. |

@@ -1,7 +1,7 @@
 ---
 type: reference
 title: masterplan — doctor structural-lint subsystem
-timestamp: 2026-07-01T00:00:00Z
+timestamp: 2026-07-13T00:00:00Z
 privacy: private
 tags: [masterplan, doctor, lint, validation]
 ---
@@ -23,3 +23,5 @@ changes as the format evolves.
 See [`docs/internals/doctor.md`](../docs/internals/doctor.md) for the full
 list of checks and severities.
 </content>
+
+Includes host-scoped `pi-agent-registration` (bare-only pi agent install drift via `register-pi-agents --check`).

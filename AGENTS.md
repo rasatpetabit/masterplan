@@ -61,11 +61,11 @@ What is masterplan-specific lives in two docs:
   cross-vendor review of large edits, and finish-flow durability:
   [`docs/development.md`](./docs/development.md).
 
-<!-- agent-dispatch:begin routing hash=6ef5ed81dc25d94aa1dd68e836eea24846cfd1ef1756242a35d11baa47541f7d -->
+<!-- agent-dispatch:begin routing hash=91201f5fd8778421b77e96a3b48cdf126230bbc35f8af4bbf99d75e3cf7eb275 -->
 ## §routing — managed by agent-dispatch (do not hand-edit)
 
 Binding rules (enforced by PreToolUse guard):
-- haiku: forbidden (no override path).
+- haiku: override-only (live override grant required).
 - sonnet: override-only (live override grant required).
 - model param MUST be explicit — missing model is denied (exception: harness built-ins Explore/Plan inherit the frontier session model).
 
@@ -75,3 +75,8 @@ For the full routing policy, fallback chains, and backend health:
 
 Source of truth: policy/dispatch-policy.jsonc in the agent-dispatch repo (run `agent-dispatch where` for its root).
 <!-- agent-dispatch:end -->
+## Knowledge
+
+Structured project knowledge is cataloged in the `.okf/` directory.
+See [`.okf/index.md`](.okf/index.md) for the repo's knowledge index.
+

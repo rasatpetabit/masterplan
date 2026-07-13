@@ -1,7 +1,8 @@
 ---
 type: index
+resource: /srv/dev/okf-workspace/repos/ras/masterplan.md
 title: masterplan — OKF knowledge catalog
-timestamp: 2026-07-01T00:00:00Z
+timestamp: 2026-07-13T00:00:00Z
 privacy: private
 tags: [masterplan, claude-code, codex, plugin, orchestration, agents]
 ---
@@ -11,7 +12,7 @@ tags: [masterplan, claude-code, codex, plugin, orchestration, agents]
 `masterplan` is a Claude Code and Codex CLI plugin implementing the
 `/masterplan` command: a resumable **brainstorm → plan → execute → finish**
 workflow for durable multi-hour engineering work, built on top of the
-`obra/superpowers` skills suite. Current release: v9.2.0 (MIT license).
+`obra/superpowers` skills suite. Current release: v9.5.0 (MIT license).
 
 The core design principle is that **state lives on disk, not in the chat
 session** — a run bundle at `docs/masterplan/<slug>/` (`state.yml`, `spec.md`,
@@ -35,7 +36,7 @@ bundle and resume exactly where it left off.
 | L1 | `commands/masterplan.md` (~800-line sequencer), `bin/masterplan.mjs` (`mp` CLI), `lib/resume.mjs` (`decideNextAction`) | Thin shell; **sole durable state writer**; owns git commit/checkout |
 | L2 | `workflows/execute.workflow.js`, `workflows/plan.workflow.js`, `lib/plan-merge.mjs`, `lib/dispatch/`, `lib/wave.mjs` | Workflow engine; one wave per launch; returns digests/fragments only, never writes disk/git |
 | L3 | `agents/mp-*.md` (explorer, implementer, planner, adversarial-reviewer, plan-reviewer, spec-decomposer, subsystem-planner) | Stateless subagents dispatched per task |
-| L4 | `bin/doctor.mjs`, `lib/doctor/*.mjs` | Structural lint across 14 auto-discovered check modules; validates run-bundle integrity |
+| L4 | `bin/doctor.mjs`, `lib/doctor/*.mjs` | Structural lint across 17 auto-discovered check modules (incl. `pi-agent-registration`); validates run-bundle integrity |
 
 ## Key components
 
@@ -72,6 +73,18 @@ is not itself a `phase` value.
 - [`docs/coordination-playbook.md`](../docs/coordination-playbook.md) — multi-agent GitHub-issue coordination (`mp:run-<slug>` publish/follow)
 - [`CHANGELOG.md`](../CHANGELOG.md) — release history and decision rationale
 - `AGENTS.md` / `CLAUDE.md` — defer cross-repo agent policy (AUQ, Serena, Hindsight, model routing) to the agent-dispatch repo
+
+
+## Recent routing / registration notes
+
+- **All `mp-*` agents** are gateway-routed thin wrappers (`model: fable` + required
+  `model_group` lanes). Live pi alias map is `fable → litellm/fable-5` only.
+- **New seeds default fabric on:** `mp seed` writes `state.dispatch.fabric: true`;
+  opt out with `--fabric=off` (legacy `launch_workflow` / `dispatch_foreground`).
+- **Pi registration is bare-only:** `bin/register-pi-agents.mjs` writes `mp-*.md`
+  under `~/.pi/agent/agents/`; managed `masterplan:mp-*` leftovers are removed;
+  doctor check `pi-agent-registration` surfaces host drift.
+- Archived runs of note: `dispatch-subagent-reconcile`, `fabric-default-dual-reg`.
 
 ## Subsystem references in this catalog
 
