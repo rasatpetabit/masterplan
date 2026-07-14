@@ -3,7 +3,7 @@ schema_version: 8
 slug: blocked-task-injection
 status: in-progress
 phase: execute
-topic: "Add a 'blocked' task status so dispatch skips hardware-gated waves without lying about completion, a status-preserving 'mp amend-tasks' upsert verb for injecting tasks into in-flight bundles, and an 'mp waive-task' gate so a run with remaining blockers finalizes only under explicit operator consent."
+topic: "*overflow at state-overflow.md L3*"
 complexity: moderate
 complexity_source: null
 autonomy: loose
