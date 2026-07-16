@@ -654,3 +654,59 @@ test('retry reuses the PERSISTED routing_inputs, not the current invocation flag
   const rec = readWaveDispatchRecord(fx.bundleDir, 1);
   assert.equal(rec.routing_inputs.codex_host_suppressed, true, 'attempt 2 re-prepared from the frozen attempt-1 inputs');
 });
+
+// ---------------------------------------------------------------------------
+// Multi-repo locus (umbrella + sibling) — the amd64-first-class fabric fix
+// ---------------------------------------------------------------------------
+
+test('multi-repo: sibling-prefixed files land on sibling worktree with create_files + stripped paths', async () => {
+  // Build an umbrella fixture, then plant a sibling git repo under MAIN.
+  const fx = makeFixture({
+    tasks: [
+      { id: 1, status: 'pending', wave: 1, files: ['docs/new-report.md'] },
+      { id: 2, status: 'pending', wave: 1, files: ['yanos-os/kas/board.yaml'] },
+    ],
+    planIndex: [
+      planEntry(1, 1, ['docs/new-report.md']),
+      planEntry(2, 1, ['yanos-os/kas/board.yaml']),
+    ],
+    slug: 'dw-mrepo',
+  });
+  // Sibling under MAIN (gitignored-style; not part of umbrella tree).
+  const SIB = path.join(fx.MAIN, 'yanos-os');
+  fs.mkdirSync(SIB, { recursive: true });
+  git(SIB, 'init', '--initial-branch=main');
+  git(SIB, 'config', 'user.email', 't@t');
+  git(SIB, 'config', 'user.name', 't');
+  git(SIB, 'config', 'commit.gpgsign', 'false');
+  write(SIB, 'kas/seed.yaml', 'seed\n');
+  git(SIB, 'add', '.');
+  git(SIB, 'commit', '-q', '-m', 'os seed');
+
+  const op = launchViaContinue(fx);
+  const WT = op.cwd;
+  const stub = brokerStub(routeResult);
+  const res = await dispatchWaveViaFabric({
+    statePath: fx.statePath, self: fx.self, now: 2000,
+    _brokerClient: stub, _openCoord: disabledCoord,
+  });
+  assert.equal(res.outcome, 'dispatched');
+  assert.equal(stub.calls.length, 1);
+  const { descriptors } = stub.calls[0].args;
+  assert.equal(descriptors.length, 2);
+
+  // Task 1: umbrella new file → WT + create_files
+  assert.equal(descriptors[0].task_id, 1);
+  assert.equal(descriptors[0].repo, WT);
+  assert.deepEqual(descriptors[0].files, ['docs/new-report.md']);
+  assert.equal(descriptors[0].create_files, true);
+
+  // Task 2: sibling path → sibling worktree + stripped files + create_files
+  const sibWt = path.join(SIB, '.worktrees', 'dw-mrepo');
+  assert.equal(descriptors[1].task_id, 2);
+  assert.equal(descriptors[1].repo, sibWt);
+  assert.deepEqual(descriptors[1].files, ['kas/board.yaml']);
+  assert.equal(descriptors[1].create_files, true);
+  assert.equal(descriptors[1].branch, 'masterplan/dw-mrepo');
+  assert.ok(fs.existsSync(sibWt), 'sibling worktree auto-created');
+});

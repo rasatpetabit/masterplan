@@ -82,6 +82,17 @@ dispatch AND record complete inside the command:
 2. **One broker process per wave** — a single `createBrokerClient` (`agent-dispatch serve-mcp`)
    call to the `dispatch_fanout` MCP tool with one `buildWorkItem` descriptor per routed task
    (`fail_mode:'isolated'`), never N per-task spawns.
+   **Multi-repo locus (umbrella workspaces):** plan files may be declared as umbrella-relative
+   paths that live in a *sibling* git checkout of MAIN (e.g. `yanos-os/kas/...` under
+   `/srv/dev/yanos-project/`, where `yanos-os/` is gitignored by the umbrella). Umbrella
+   worktrees do **not** materialize those siblings, so pinning every descriptor to
+   `repo = worktree` fails skynet_edit with "file not found". Before fanout,
+   `buildFabricLocus` (`lib/dispatch/multi-repo.mjs`) maps each task's files to a single edit
+   locus: sibling prefix → `MAIN/<sib>/.worktrees/<slug>` (create-or-reuse via the same
+   `planWorktreeCreate` path as the umbrella), strips the sibling prefix from `files`,
+   rewrites matching verify path tokens, auto-opts `create_files: true` when any target is
+   missing on disk, and stamps `branch: masterplan/<slug>`. Mixed-repo tasks throw loud —
+   one task = one locus (gateway dispatch is single-repo per descriptor).
 3. **Wave-dispatch idempotency** — a stable key `(run_id, wave, 'dispatch_fabric')` over a
    per-wave record file inside the bundle (`wave-<N>.dispatch.json`), persisted **before** the
    broker call with atomic create-or-return-existing (O_EXCL) semantics. A retry after an
