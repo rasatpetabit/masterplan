@@ -8,7 +8,10 @@
 restatement the plan gate reviews; the split-spec is authoritative for the two-run
 choreography.
 
-**Task count:** this run's executable graph is **13 tasks** (§Scope below). The five
+**Task count:** this run's executable graph is **12 tasks** (§Scope below; the former
+`cmd-docs` doc rewrite is absorbed into `l2-deletion` — plan-gate fold R4, since the
+op-table parity test and the v5 orphan grep read `commands/masterplan.md` fail-loud and
+require the doc rewrite to land atomically with the code deletion). The five
 already-landed tasks (`1, 3, 40, 46, 48` in the agent-dispatch run's numbering) are NOT in
 this graph — they are pre-existing commits on the adopted branch (base `20f5fa7`), listed
 under Constraints only as inherited history.
@@ -20,10 +23,11 @@ any task declaring files under `/srv/dev/ras/masterplan` was orphaned by constru
 Run B gives that work a run whose umbrella IS the masterplan repo, where the one-locus
 assumption holds and every task's code commits cleanly. See split-spec §1–3.
 
-## Scope — 13 tasks (migrated from the agent-dispatch run, paths rebased to this umbrella)
+## Scope — 12 tasks (migrated from the agent-dispatch run, paths rebased to this umbrella)
 
-- **Fabric consolidation (G1):** `l2-deletion`, `planning-fanout`, `marker-reconcile`,
-  `cmd-docs`, `dogfood-v1`, `codex-suppressed-smoke`, `class-default` — make `mp
+- **Fabric consolidation (G1):** `l2-deletion` (absorbing the former `cmd-docs` doc
+  rewrite), `planning-fanout`, `marker-reconcile`,
+  `dogfood-v1`, `codex-suppressed-smoke`, `class-default` — make `mp
   dispatch-wave` (fabric/broker) the sole wave-execution and planning fan-out path; delete
   the legacy L2 workflow surface; reconcile persisted legacy markers without crashing.
 - **Per-task adversary review parity (G2):** `per-task-review` — fabric runs per-task
