@@ -2,10 +2,16 @@
 
 **Umbrella:** `/srv/dev/ras/masterplan` · **Branch:** `masterplan/simplify-dedup-2`
 (adopted; 5 task commits already landed atop `f946f77`).
-**Cross-run design of record:** `/srv/dev/ai/agent-dispatch/docs/masterplan/simplify-dedup-2/split-spec.md`
+**Cross-run design of record:** `docs/masterplan/simplify-dedup-2/split-spec.md` in the
+**agent-dispatch** repo (`/srv/dev/ai/agent-dispatch`), pinned at commit **`898c2e5`**
 (v2, user-approved 2026-07-16, cross-vendor reviewed). This file is the Run-B-local
 restatement the plan gate reviews; the split-spec is authoritative for the two-run
 choreography.
+
+**Task count:** this run's executable graph is **13 tasks** (§Scope below). The five
+already-landed tasks (`1, 3, 40, 46, 48` in the agent-dispatch run's numbering) are NOT in
+this graph — they are pre-existing commits on the adopted branch (base `20f5fa7`), listed
+under Constraints only as inherited history.
 
 ## Why this run exists
 
