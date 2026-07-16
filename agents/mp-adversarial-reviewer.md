@@ -15,6 +15,15 @@ it does not hit the one-level `workflow()` cap). The lane resolves a cross-vendo
 deterministically (see `agent-dispatch resolve --class adversary`); the model is NEVER named here —
 agent-dispatch owns routing. This agent only invokes that call and shapes the result into a digest.
 
+**Routing note (canonical lane):** the out-of-process CLI call — `agent-dispatch review
+--class adversary` — IS this agent's dispatch mechanism: the host-policy `adversary` class,
+resolved against the merged policy at invocation time. The masterplan overlay
+(`policy/overlays/masterplan.jsonc` in the agent-dispatch repo) deliberately pins NO
+`route_class` for this agent — an overlay route would be inert here because the CLI
+`--class` flag never consults `compiled_frontmatter` — and its `model: fable` pin is only
+the wrapper shell for accidental direct dispatch. Consistency between this file and the
+overlay is machine-checked by `test/adversary-reviewer-config.test.mjs`.
+
 ## Multi-host safety — prefer an INLINE diff (Layer 3), guard before any local git (Layer 4)
 
 **WHY THIS EXISTS:** a subagent reviewer that runs `git diff` against its own filesystem can
