@@ -16,14 +16,24 @@ test('detectHost: agent-id signal', () => {
   assert.ok(h.reasons.includes('agent-id'));
 });
 test('detectHost: native-tools signal (apply_patch/update_plan/request_user_input)', () => {
-  assert.equal(detectHost({ codexNativeTools: true }).isCodex, true);
+  const h = detectHost({ codexNativeTools: true });
+  assert.equal(h.isCodex, true);
+  assert.ok(h.reasons.includes('native-tools'));
 });
-test('detectHost: AGENTS.md presence signal', () => {
-  assert.deepEqual(detectHost({ agentsMdPresent: true }).reasons, ['agents-md']);
+test('detectHost: AGENTS.md alone is corroborating only -> NOT codex (2026-07-15 false-positive fix)', () => {
+  const h = detectHost({ agentsMdPresent: true });
+  assert.equal(h.isCodex, false);
+  assert.deepEqual(h.reasons, ['agents-md']);
 });
 test('detectHost: multiple signals -> all reasons, ordered', () => {
   const h = detectHost({ agentIsCodex: true, codexNativeTools: true, agentsMdPresent: true });
+  assert.equal(h.isCodex, true);
   assert.deepEqual(h.reasons, ['agent-id', 'native-tools', 'agents-md']);
+});
+test('detectHost: agents-md + a strong signal -> codex, agents-md still reported', () => {
+  const h = detectHost({ codexNativeTools: true, agentsMdPresent: true });
+  assert.equal(h.isCodex, true);
+  assert.deepEqual(h.reasons, ['native-tools', 'agents-md']);
 });
 
 test('normalizeResumeHint: $masterplan next -> chat form + recovery event', () => {
