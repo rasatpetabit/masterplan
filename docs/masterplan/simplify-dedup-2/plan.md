@@ -50,8 +50,10 @@ PLAN-GATE FOLD R6 (2026-07-16, round-5b seg2): BIN COVERAGE — this task edits 
 ## Wave 2
 
 ### Task 4: Establish the qctl dormant seam reachable from the fabric path. Add a work-item `backend` discriminator to the adsp-adapter descriptor so resolveTaskBackend/qctlEligible can be exercised from the fabric dispatch path (not from the deleted L2 routing brain). Wire the fabric branch in lib/wave.mjs to call resolveTaskBackend when the discriminator is present. Create an EXECUTABLE test that enters through the fabric path and exercises qctl eligibility with a flag-on fixture, plus a negative test proving the shipped flag-off default never selects qctl. Document the seam in docs/design/qctl-multi-repo-apply.md.
+
+PLAN-GATE FOLD R7 (2026-07-16, round-6 seg2): REGRESSION SUITES AT TASK TIME — this task edits lib/dispatch/adsp-adapter.mjs (backend discriminator) and lib/dispatch/backend.mjs, so their existing suites run in THIS task's verify: test/adsp-adapter.test.mjs, and test/dispatch.test.mjs (the dispatch facade suite — it imports resolveTaskBackend and covers backend/ops shapes). The new qctl seam test covers only the added path and cannot protect existing adapter behavior.
 - files: lib/dispatch/adsp-adapter.mjs, lib/dispatch/backend.mjs, lib/wave.mjs, docs/design/qctl-multi-repo-apply.md, test/qctl-fabric-seam.test.mjs
-- verify: bash -c 'node --test test/qctl-fabric-seam.test.mjs' ; node --test test/wave.test.mjs
+- verify: bash -c 'node --test test/qctl-fabric-seam.test.mjs' ; node --test test/wave.test.mjs ; bash -c 'node --test test/adsp-adapter.test.mjs' ; bash -c 'node --test test/dispatch.test.mjs'
 - codex: no
 
 ### Task 6: Add legacy active_run marker reconciliation to mp continue. Design a reconcile path that auto-converts stale legacy markers (launch_workflow execute/plan kinds, phase:'launching' markers, probe/reap-expected markers) to the equivalent fabric op where the wave is re-derivable, else surfaces an explicit ask with recovery guidance — never a crash, never silent. Create sanitized legacy-state fixtures in the test suite shaped like the live fanout-durability and pi-intercom-usage bundles' marker shapes, and test reconciliation against them in CI.

@@ -64,7 +64,7 @@
     },
     {
       "id": 4,
-      "description": "Establish the qctl dormant seam reachable from the fabric path. Add a work-item `backend` discriminator to the adsp-adapter descriptor so resolveTaskBackend/qctlEligible can be exercised from the fabric dispatch path (not from the deleted L2 routing brain). Wire the fabric branch in lib/wave.mjs to call resolveTaskBackend when the discriminator is present. Create an EXECUTABLE test that enters through the fabric path and exercises qctl eligibility with a flag-on fixture, plus a negative test proving the shipped flag-off default never selects qctl. Document the seam in docs/design/qctl-multi-repo-apply.md.",
+      "description": "Establish the qctl dormant seam reachable from the fabric path. Add a work-item `backend` discriminator to the adsp-adapter descriptor so resolveTaskBackend/qctlEligible can be exercised from the fabric dispatch path (not from the deleted L2 routing brain). Wire the fabric branch in lib/wave.mjs to call resolveTaskBackend when the discriminator is present. Create an EXECUTABLE test that enters through the fabric path and exercises qctl eligibility with a flag-on fixture, plus a negative test proving the shipped flag-off default never selects qctl. Document the seam in docs/design/qctl-multi-repo-apply.md.\n\nPLAN-GATE FOLD R7 (2026-07-16, round-6 seg2): REGRESSION SUITES AT TASK TIME — this task edits lib/dispatch/adsp-adapter.mjs (backend discriminator) and lib/dispatch/backend.mjs, so their existing suites run in THIS task's verify: test/adsp-adapter.test.mjs, and test/dispatch.test.mjs (the dispatch facade suite — it imports resolveTaskBackend and covers backend/ops shapes). The new qctl seam test covers only the added path and cannot protect existing adapter behavior.",
       "wave": 2,
       "files": [
         "lib/dispatch/adsp-adapter.mjs",
@@ -75,7 +75,9 @@
       ],
       "verify_commands": [
         "bash -c 'node --test test/qctl-fabric-seam.test.mjs'",
-        "node --test test/wave.test.mjs"
+        "node --test test/wave.test.mjs",
+        "bash -c 'node --test test/adsp-adapter.test.mjs'",
+        "bash -c 'node --test test/dispatch.test.mjs'"
       ],
       "codex": "no",
       "goals": [
@@ -279,6 +281,6 @@
       ]
     }
   ],
-  "plan_hash": "sha256:72a083e7bff5088b89de1452a4ab91bdcf1f1b518797cd3ef6aa3236d702a1d1",
-  "generated_at": "2026-07-16T23:14:53.868Z"
+  "plan_hash": "sha256:b64af73df096189dc598851949c8559f3949d13eb8bd1b372f126191ba10937c",
+  "generated_at": "2026-07-16T23:20:34.885Z"
 }
