@@ -4,7 +4,7 @@
   "wave": 0,
   "op": "dispatch_fabric",
   "contract_version": "adsp-v1.1",
-  "status": "dispatched",
+  "status": "recorded",
   "attempt": 1,
   "dispatched_at": "2026-07-17T00:29:11.797Z",
   "routing_inputs": {
@@ -140,5 +140,34 @@
         }
       }
     ]
+  },
+  "completed_at": "2026-07-17T00:29:11.797Z",
+  "record_outcome": {
+    "recorded": [],
+    "failed": [
+      {
+        "id": 1,
+        "status": "blocked",
+        "summary": "broker escalated: skynet edit failed after 3 attempts: block 1: SEARCH text not found in file (after exact, whitespace-tolerant, and indent-flexible matching):\nimport { selectGateReview, gateEventTypes, validateGateReceipt } from '../lib/gate-review.mjs';\nimport { selectCodexReviewForHead } from '../lib/review-companion.mjs';\n\n\n--- skynet raw output ---\n\n\n/srv/dev/ras/masterplan/.worktrees/simplify-dedup-2/bin/masterplan.mjs\n<<<<<<< SEARCH\nimport { selectGateReview, gateEventTypes, validateGateReceipt } from '../lib/gate-review.mjs';\nimport { selectCodexReviewForHead } from '../lib/review-companion.mjs';\n=======\nimport { selectGateReview, gateEventTypes, validateGateReceipt, selectCodexReviewForHead } from '../lib/reentry-guard.mjs';\n>>>>>>> REPLACE\n\n/srv/dev/ras/masterplan/.worktrees/simplify-dedup-2/lib/finish-step.mjs\n<<<<<<< SEARCH\nimport { selectCodexReviewForHead } from './review-companion.mjs';\nimport { selectGateReview } from './gate-review.mjs';\n=======\nimport { selectCodexReviewForHead, selectGateReview } from './reentry-guard.mjs';\n>>>>>>> REPLACE\n\n/srv/dev/ras/masterplan/.worktrees/simplify-dedup-2/lib/gate-review.mjs\n<<<<<<< SEARCH\n// lib/gate-review.mjs — the pure re-entry guard for the two PRE-EXECUTE adversary-review gates:\n=======\n>>>>>>> REPLACE\n\n/srv/dev/ras/masterplan/.worktrees/simplify-dedup-2/lib/review-companion.mjs\n<<<<<<< SEARCH\n// lib/review-companion.mjs — the durable whole-branch adversary-review re-entry guard (pure core).\n=======\n>>>>>>> REPLACE\n\n/srv/dev/ras/masterplan/.worktrees/simplify-dedup-2/test/gate-review.test.mjs\n<<<<<<< SEARCH\n// test/gate-review.test.mjs — the pure spec/plan gate re-entry guard (`selectGateReview`). Like the\n=======\n>>>>>>> REPLACE\n\n/srv/dev/ras/masterplan/.worktrees/simplify-dedup-2/test/review-companion.test.mjs\n<<<<<<< SEARCH\n// test/review-companion.test.mjs — the durable whole-branch review re-entry guard\n=======\n>>>>>>> REPLACE",
+        "blockers": "skynet edit failed after 3 attempts: block 1: SEARCH text not found in file (after exact, whitespace-tolerant, and indent-flexible matching):\nimport { selectGateReview, gateEventTypes, validateGateReceipt } from '../lib/gate-review.mjs';\nimport { selectCodexReviewForHead } from '../lib/review-companion.mjs';\n\n\n--- skynet raw output ---\n\n\n/srv/dev/ras/masterplan/.worktrees/simplify-dedup-2/bin/masterplan.mjs\n<<<<<<< SEARCH\nimport { selectGateReview, gateEventTypes, validateGateReceipt } from '../lib/gate-review.mjs';\nimport { selectCodexReviewForHead } from '../lib/review-companion.mjs';\n=======\nimport { selectGateReview, gateEventTypes, validateGateReceipt, selectCodexReviewForHead } from '../lib/reentry-guard.mjs';\n>>>>>>> REPLACE\n\n/srv/dev/ras/masterplan/.worktrees/simplify-dedup-2/lib/finish-step.mjs\n<<<<<<< SEARCH\nimport { selectCodexReviewForHead } from './review-companion.mjs';\nimport { selectGateReview } from './gate-review.mjs';\n=======\nimport { selectCodexReviewForHead, selectGateReview } from './reentry-guard.mjs';\n>>>>>>> REPLACE\n\n/srv/dev/ras/masterplan/.worktrees/simplify-dedup-2/lib/gate-review.mjs\n<<<<<<< SEARCH\n// lib/gate-review.mjs — the pure re-entry guard for the two PRE-EXECUTE adversary-review gates:\n=======\n>>>>>>> REPLACE\n\n/srv/dev/ras/masterplan/.worktrees/simplify-dedup-2/lib/review-companion.mjs\n<<<<<<< SEARCH\n// lib/review-companion.mjs — the durable whole-branch adversary-review re-entry guard (pure core).\n=======\n>>>>>>> REPLACE\n\n/srv/dev/ras/masterplan/.worktrees/simplify-dedup-2/test/gate-review.test.mjs\n<<<<<<< SEARCH\n// test/gate-review.test.mjs — the pure spec/plan gate re-entry guard (`selectGateReview`). Like the\n=======\n>>>>>>> REPLACE\n\n/srv/dev/ras/masterplan/.worktrees/simplify-dedup-2/test/review-companion.test.mjs\n<<<<<<< SEARCH\n// test/review-companion.test.mjs — the durable whole-branch review re-entry guard\n=======\n>>>>>>> REPLACE"
+      },
+      {
+        "id": 2,
+        "status": "blocked",
+        "summary": "broker escalated: This operation was aborted",
+        "blockers": "This operation was aborted"
+      },
+      {
+        "id": 10,
+        "status": "blocked",
+        "summary": "broker escalated: /srv/dev/ras/masterplan/.worktrees/simplify-dedup-2/test/fixtures/adsp-contract.json: file not found — skynet_edit_files only edits existing files",
+        "blockers": "/srv/dev/ras/masterplan/.worktrees/simplify-dedup-2/test/fixtures/adsp-contract.json: file not found — skynet_edit_files only edits existing files"
+      }
+    ],
+    "cleared": false,
+    "commits": {
+      "code": null,
+      "state": "e189a73844568b56c0a7fd10f9958e3e32f70320"
+    }
   }
 }

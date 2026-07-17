@@ -3,7 +3,7 @@
   "tasks": [
     {
       "id": 1,
-      "description": "Rewire all consumers of the retired guard modules to call the new unified lib/reentry-guard.mjs API. Update bin/masterplan.mjs (adversary-review-status subcommand ~line 2528 calls selectCodexReviewForHead; record-gate-review subcommand ~line 2563 uses gateEventTypes + validateGateReceipt) and lib/finish-step.mjs (imports at lines ~56-57, usage at ~466/~564/~659-667) to import from reentry-guard.mjs. Retire lib/gate-review.mjs and lib/review-companion.mjs. Delete test/gate-review.test.mjs and test/review-companion.test.mjs — their behavioral coverage is already preserved in reentry-guard.test.mjs. The full masterplan test suite must pass with zero unexpected failures and zero test-count drop beyond these two intentional removals.\n\nPLAN-GATE FOLD R4+R5 (2026-07-16, supersedes the R3 floor placement): V2 TEST-COUNT FLOOR ON THE SURVIVOR — test/gate-review.test.mjs and test/review-companion.test.mjs are DELETED by this task (their behavioral coverage lives in test/reentry-guard.test.mjs), so the floor applies to the survivor: node --test test/reentry-guard.test.mjs must report at least 31 executed tests — the exact count the branch base executes today (verified: `# tests 31` / `# pass 31` at 20f5fa7); the two intentional removals are whole-file deletions, so they justify no reduction within the survivor. A drop below floor fails verify — silent coverage deletion is not a pass.",
+      "description": "Rewire all consumers of the retired guard modules to call the new unified lib/reentry-guard.mjs API. Update bin/masterplan.mjs (adversary-review-status subcommand ~line 2528 calls selectCodexReviewForHead; record-gate-review subcommand ~line 2563 uses gateEventTypes + validateGateReceipt) and lib/finish-step.mjs (imports at lines ~56-57, usage at ~466/~564/~659-667) to import from reentry-guard.mjs. Retire lib/gate-review.mjs and lib/review-companion.mjs. Delete test/gate-review.test.mjs and test/review-companion.test.mjs — their behavioral coverage is already preserved in reentry-guard.test.mjs. The full masterplan test suite must pass with zero unexpected failures and zero test-count drop beyond these two intentional removals.\n\nPLAN-GATE FOLD R4+R5 (2026-07-16, supersedes the R3 floor placement): V2 TEST-COUNT FLOOR ON THE SURVIVOR — test/gate-review.test.mjs and test/review-companion.test.mjs are DELETED by this task (their behavioral coverage lives in test/reentry-guard.test.mjs), so the floor applies to the survivor: node --test test/reentry-guard.test.mjs must report at least 31 executed tests — the exact count the branch base executes today (verified: `# tests 31` / `# pass 31` at 20f5fa7); the two intentional removals are whole-file deletions, so they justify no reduction within the survivor. A drop below floor fails verify — silent coverage deletion is not a pass.\n\nPOST-GATE AMENDMENT A1 (2026-07-16, wave-0 execution): lib/reentry-guard.mjs added to files[] — this task's text requires bin/masterplan.mjs to import validateGateReceipt from reentry-guard.mjs, and the unified module carries no receipt validator, so the retirement RELOCATES validateGateReceipt verbatim into lib/reentry-guard.mjs (G5: one guard module home). files[] originally omitted the destination file.",
       "wave": 0,
       "files": [
         "bin/masterplan.mjs",
@@ -11,7 +11,8 @@
         "lib/gate-review.mjs",
         "lib/review-companion.mjs",
         "test/gate-review.test.mjs",
-        "test/review-companion.test.mjs"
+        "test/review-companion.test.mjs",
+        "lib/reentry-guard.mjs"
       ],
       "verify_commands": [
         "bash -c 'node --test test/reentry-guard.test.mjs && node --test test/*.test.mjs'",
@@ -281,6 +282,6 @@
       ]
     }
   ],
-  "plan_hash": "sha256:b64af73df096189dc598851949c8559f3949d13eb8bd1b372f126191ba10937c",
-  "generated_at": "2026-07-16T23:20:34.885Z"
+  "plan_hash": "sha256:1674662eca3d219ce56b0fa7f8fb53b56d7c353422a7832b5882e9430317e59c",
+  "generated_at": "2026-07-17T00:56:42.168Z"
 }
