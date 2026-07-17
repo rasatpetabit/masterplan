@@ -4,7 +4,7 @@
   "wave": 2,
   "op": "dispatch_fabric",
   "contract_version": "adsp-v1.1",
-  "status": "dispatched",
+  "status": "recorded",
   "attempt": 1,
   "dispatched_at": "2026-07-17T23:21:27.470Z",
   "routing_inputs": {
@@ -99,5 +99,28 @@
         }
       }
     ]
+  },
+  "completed_at": "2026-07-17T23:21:27.470Z",
+  "record_outcome": {
+    "recorded": [],
+    "failed": [
+      {
+        "id": 4,
+        "status": "blocked",
+        "summary": "broker error during dispatch_fanout: dispatch_fanout retired: use harness-native fanout (Pi PARALLEL / CC Task). See G2/native-fanout cutover.",
+        "blockers": "dispatch_fanout retired: use harness-native fanout (Pi PARALLEL / CC Task). See G2/native-fanout cutover."
+      },
+      {
+        "id": 6,
+        "status": "blocked",
+        "summary": "broker error during dispatch_fanout: dispatch_fanout retired: use harness-native fanout (Pi PARALLEL / CC Task). See G2/native-fanout cutover.",
+        "blockers": "dispatch_fanout retired: use harness-native fanout (Pi PARALLEL / CC Task). See G2/native-fanout cutover."
+      }
+    ],
+    "cleared": false,
+    "commits": {
+      "code": null,
+      "state": "933cb90d96d0910d6f7c7026c8fd5d4a94633078"
+    }
   }
 }
