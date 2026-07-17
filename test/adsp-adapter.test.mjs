@@ -205,7 +205,10 @@ test('dispatchTask calls dispatch_task on the broker with the correct descriptor
   assert.equal(descriptor.repo, '/repo/.worktrees/my-run'); // cwd maps to repo
   assert.equal(descriptor.brief, 'Add a null check to parseConfig');
   assert.deepEqual(descriptor.files, ['lib/foo.mjs']);
-  assert.deepEqual(descriptor.verify, ['node --test']);
+  assert.equal(descriptor.verify.length, 1);
+  assert.equal(typeof descriptor.verify[0], 'object');
+  assert.equal(descriptor.verify[0].command, "bash -c 'node --test'");
+  assert.equal(descriptor.verify[0].timeout, 300);
   assert.equal(descriptor.contract_version, 'adsp-v1.1');
 
   // adsp-v1 seam: the work item carries the bundle's stable task_id and the
@@ -550,7 +553,10 @@ test('buildWorkItem: pure constructor returns the work item with the composed ha
   assert.equal(descriptor.repo, '/repo/.worktrees/my-run');
   assert.equal(descriptor.brief, 'Add a null check to parseConfig');
   assert.deepEqual(descriptor.files, ['lib/foo.mjs']);
-  assert.deepEqual(descriptor.verify, ['node --test']);
+  assert.equal(descriptor.verify.length, 1);
+  assert.equal(typeof descriptor.verify[0], 'object');
+  assert.equal(descriptor.verify[0].command, "bash -c 'node --test'");
+  assert.equal(descriptor.verify[0].timeout, 300);
   assert.equal(descriptor.contract_version, 'adsp-v1.1');
   assert.equal(descriptor.task_id, 7);
   assert.equal(descriptor.handoff_key, expectedKeyFor(baseTask()));
