@@ -1,0 +1,144 @@
+{
+  "key": "mp-wave-dispatch-v1:simplify-dedup-2:0:dispatch_fabric",
+  "run_id": "simplify-dedup-2",
+  "wave": 0,
+  "op": "dispatch_fabric",
+  "contract_version": "adsp-v1.1",
+  "status": "dispatched",
+  "attempt": 1,
+  "dispatched_at": "2026-07-17T00:29:11.797Z",
+  "routing_inputs": {
+    "routing": "auto",
+    "codex_host_suppressed": false,
+    "linked_worktree": true
+  },
+  "payload": [
+    {
+      "id": 1,
+      "description": "Rewire all consumers of the retired guard modules to call the new unified lib/reentry-guard.mjs API. Update bin/masterplan.mjs (adversary-review-status subcommand ~line 2528 calls selectCodexReviewForHead; record-gate-review subcommand ~line 2563 uses gateEventTypes + validateGateReceipt) and lib/finish-step.mjs (imports at lines ~56-57, usage at ~466/~564/~659-667) to import from reentry-guard.mjs. Retire lib/gate-review.mjs and lib/review-companion.mjs. Delete test/gate-review.test.mjs and test/review-companion.test.mjs — their behavioral coverage is already preserved in reentry-guard.test.mjs. The full masterplan test suite must pass with zero unexpected failures and zero test-count drop beyond these two intentional removals.\n\nPLAN-GATE FOLD R4+R5 (2026-07-16, supersedes the R3 floor placement): V2 TEST-COUNT FLOOR ON THE SURVIVOR — test/gate-review.test.mjs and test/review-companion.test.mjs are DELETED by this task (their behavioral coverage lives in test/reentry-guard.test.mjs), so the floor applies to the survivor: node --test test/reentry-guard.test.mjs must report at least 31 executed tests — the exact count the branch base executes today (verified: `# tests 31` / `# pass 31` at 20f5fa7); the two intentional removals are whole-file deletions, so they justify no reduction within the survivor. A drop below floor fails verify — silent coverage deletion is not a pass.",
+      "files": [
+        "bin/masterplan.mjs",
+        "lib/finish-step.mjs",
+        "lib/gate-review.mjs",
+        "lib/review-companion.mjs",
+        "test/gate-review.test.mjs",
+        "test/review-companion.test.mjs"
+      ],
+      "verify_commands": [
+        "bash -c 'node --test test/reentry-guard.test.mjs && node --test test/*.test.mjs'",
+        "bash -c 'N=$(node --test test/reentry-guard.test.mjs 2>&1 | sed -n \"s/^# tests \\([0-9]*\\)$/\\1/p\" | head -1); [ \"${N:-0}\" -ge 31 ]'"
+      ],
+      "class": "bounded-edit"
+    },
+    {
+      "id": 2,
+      "description": "Design and implement per-task adversary review in the fabric dispatch-wave path. Insert a review step around the buildWorkItem/translateBrokerResult steps in dispatchWaveViaFabric that covers each task's FULL working diff (not filtered to declared scope), writes the verdict into the task digest, and surfaces blocking verdicts via the wave-completion protocol (blocking_reviews[]). Gate the review step on state.review.adversary exactly as L2 does today. Add a review field to the work-item descriptor in adsp-adapter.mjs. Consume the unified keyed re-entry guard API from the review-hygiene subsystem for review idempotency. PLAN-REVIEW FIX (2026-07-15): REQUIRED NEGATIVE TESTS (V1 adequacy): (a) out-of-scope coverage — a task whose working diff touches a file OUTSIDE its declared scope still has its FULL diff (including the undeclared file) in the review payload; (b) disable path — with state.review.adversary=false the review step is skipped entirely (no review fields in digests, no re-entry guard writes); (c) D6 independence — a task whose review verdict is approve but whose diff includes out-of-scope writes is STILL reverted by the D6 verify-scope check (review approval must not bypass scope enforcement). PLAN-REVIEW FIX R3 (2026-07-15): (F8) The run+task+sha vocabulary consumed here must match the reentry-guard-module task's CHECKED-IN inventory evidence (the legacy-named dual-read test or its empty-proof) — not a shape invented independently.",
+      "files": [
+        "lib/dispatch-wave.mjs",
+        "lib/dispatch/adsp-adapter.mjs",
+        "lib/wave-commit.mjs",
+        "test/dispatch-wave.test.mjs",
+        "test/adsp-adapter.test.mjs"
+      ],
+      "verify_commands": [
+        "bash -c 'node --test test/dispatch-wave.test.mjs'",
+        "node --test test/wave-commit.test.mjs",
+        "node --test test/adsp-adapter.test.mjs"
+      ],
+      "class": "bounded-edit"
+    },
+    {
+      "id": 10,
+      "description": "Design and implement the skynet dependency inversion for the five masterplan wrapper agents (mp-planner, mp-subsystem-planner, mp-spec-decomposer, mp-plan-reviewer, mp-goal-assessor). Choose ONE dispatch mechanism for all five — the serve-mcp path (mcp__agent-dispatch__dispatch_task for planning wrappers, mcp__agent-dispatch__dispatch_review for review wrappers) — and rewire each agent's frontmatter tools declaration and invocation prose to route judgment through agent-dispatch dispatch lanes with class/model_group resolved by policy instead of declaring mcp__skynet__* tools. Rewrite the invocation sections: planning wrappers (planner, subsystem-planner, spec-decomposer) call dispatch_task with task class `planned-execution`; review wrappers (plan-reviewer, goal-assessor) call dispatch_review with class `critic`. (`dispatch-planned-execution` / `dispatch-critic` are the model_group ALIASES those classes resolve to — they belong in overlay/compiled-frontmatter data, never as the class argument; test/agents.test.mjs gains an assertion that every class token in the five agents' invocation prose is a real, resolvable policy class ID.) Preserve fail-closed semantics: if the agent-dispatch lane is unavailable, the wrapper must surface loudly, never silently fall back to native synthesis. Update test/agents.test.mjs frontmatter tools regex to allow hyphens in serve-mcp tool IDs (mcp__agent-dispatch__dispatch_task contains a hyphen that fails the current pattern). NOTE: the live agents/ surface cannot grep fully clean until fabric-dispatch deletes mp-implementer.md (which still declares mcp__skynet__skynet_edit_*); this task's verify asserts only the five rewired files are clean, NOT a full live-surface scan — that is deferred to rollout-verify V3 after fabric-dispatch completes. PLAN-REVIEW FIX (2026-07-15): Additionally add compiled_frontmatter entries for all five wrapper agents to /srv/dev/ai/agent-dispatch/policy/overlays/masterplan.jsonc carrying their model_group tokens (dispatch-planned-execution for the three planning wrappers, dispatch-critic for the two review wrappers), so the tokens referenced in the rewired invocation prose exist as compiled/lintable data (G6) — the engine-side compile/lint extension is review-hygiene.model-group-compile-lint, which depends on this task; the live-agent frontmatter compile lands via `agent-dispatch sync` at rollout step 4. This adds a same-file overlay edit; the merge serializes it against other overlay-touching tasks on file-collision. PLAN-REVIEW FIX R3 (2026-07-15): (F12) FAIL-CLOSED CONTRACT ASSERTION: test/agents.test.mjs gains a named test (name containing 'fail-closed' or 'lane unavailable') asserting each of the five rewired wrappers DOCUMENTS lane-unavailable behavior: the file matches a fail-closed marker (fail-closed / surface loudly) AND contains no native-fallback language (fall back to native / synthesize natively). The verify commands below anchor both the per-file markers and the named test. WAVE1-REOPEN (2026-07-15): Attempt-1 was recorded done, then REOPENED by USER DECISION (AUQ 2026-07-15) on its own adversary review's ERROR finding — the delivered mechanism cannot carry two of the five wrappers' output contracts, so the task's central claim is false against the engine. EVIDENCE (first-party, read from engine source; the cross-vendor lane itself timed out twice on a 47KB payload — see the review-auto-chunk task, which fixes that transport defect): dispatch_review returns a FIXED record (references/review-findings.schema.json:60) — final_verdict enum [approve, rework, reject, error] plus findings[].severity enum [info, minor, major, blocking]. It has NO per-goal channel. mp-goal-assessor's contract demands a PER-GOAL verdict {achieved|partial|missed} with per-goal evidence and citations; mp-plan-reviewer's demands PASS/REVISE/FAIL. Neither survives that record, and mp-goal-assessor's mechanical downgrade rule (achieved->partial) keys on a per-goal verdict that never arrives, so its 'hard floor' silently never fires. The invocation prose asserting 'the critic returns the per-goal verdicts' must not ship while false. REQUIRED: pick a mechanism per wrapper that actually carries its declared output contract — e.g. route the two REVIEW wrappers through dispatch_task (free-form structured return) rather than dispatch_review, or extend the review record with a typed per-goal channel — and make the invocation prose true against whatever is chosen. The three PLANNING wrappers (planner, subsystem-planner, spec-decomposer) already use dispatch_task and are NOT implicated; their attempt-1 work stands. Keep fail-closed semantics and the G6 overlay/compiled_frontmatter model_group tokens as delivered. ADD A VERIFY that asserts the chosen mechanism's return shape can express each wrapper's declared verdict vocabulary, so prose and engine cannot silently diverge again. Attempt-1 edits are UNCOMMITTED in /srv/dev/ras/masterplan (no feature branch exists yet — see the multi-repo landing investigation); a full snapshot is preserved at scratchpad/mp-repo-snapshot. Verify in place, correct the two review wrappers, re-run the verify chain.\n\n--- RUN B SCOPE (masterplan half only) ---\nThis is the MASTERPLAN-REPO HALF of a both-repo task, split per split-spec.md v2 §5. Implement ONLY the /srv/dev/ras/masterplan changes in this task's files[]. IGNORE any instruction above that edits agent-dispatch files (policy/overlays/masterplan.jsonc, test/effective-policy.test.mjs) or runs agent-dispatch verifies — that is the AD half, a SEPARATE Run A task, reconciled by the cross-repo consistency gate at Run A preflight. Cross-repo class/overlay tokens this code references (e.g. 'masterplan-implementation') are provided by that AD half; do not add them here.\n\nPLAN-GATE FOLD R2 (2026-07-16): MECHANISM DECISION — the opening instruction 'review wrappers (plan-reviewer, goal-assessor) call dispatch_review with class critic' is SUPERSEDED by the WAVE1-REOPEN evidence above: ALL FIVE wrappers route through mcp__agent-dispatch__dispatch_task (planning wrappers: class planned-execution; review wrappers: class critic), whose free-form structured return carries each wrapper's declared verdict vocabulary (PASS/REVISE/FAIL; per-goal achieved|partial|missed). dispatch_review is NOT used by any wrapper. The reopen's REQUIRED return-shape verify stands unchanged.\n\nPLAN-GATE FOLD R3+R4 (2026-07-16): (a) MECHANISM ANCHORS — verify now directly asserts the R2 mechanism decision: no dispatch_review reference in the two review wrappers, dispatch_task present in all five, and test/agents.test.mjs carries a named return-shape test (name matching return-shape / verdict-vocabulary). (b) CONTRACT WITHOUT CROSS-REPO REACH (R4-extended) — both the 'every class token is a real, resolvable policy class ID' assertion AND the return-shape test validate against ONE checked-in frozen fixture, test/fixtures/adsp-contract.json (in files[]), carrying the valid class IDs and the dispatch_task response-shape contract — never an absolute sibling-repo path, and never hard-coded 'free-form' assumptions that an engine schema change would silently invalidate. The fixture's agreement with live agent-dispatch policy/engine is owned by Run A's cross-repo consistency gate (split-spec §5).",
+      "files": [
+        "agents/mp-planner.md",
+        "agents/mp-subsystem-planner.md",
+        "agents/mp-spec-decomposer.md",
+        "agents/mp-plan-reviewer.md",
+        "agents/mp-goal-assessor.md",
+        "test/agents.test.mjs",
+        "test/fixtures/adsp-contract.json"
+      ],
+      "verify_commands": [
+        "bash -c '! grep -q \"mcp__skynet__\" agents/mp-planner.md agents/mp-subsystem-planner.md agents/mp-spec-decomposer.md agents/mp-plan-reviewer.md agents/mp-goal-assessor.md'",
+        "node --test test/agents.test.mjs",
+        "bash -c 'for f in agents/mp-planner.md agents/mp-subsystem-planner.md agents/mp-spec-decomposer.md agents/mp-plan-reviewer.md agents/mp-goal-assessor.md; do grep -qiE \"fail[- ]closed|surface.*loudly\" \"$f\" || exit 1; done'",
+        "bash -c 'grep -Eiq \"(test|it)\\(.*(fail.?closed|lane.unavailable)\" test/agents.test.mjs'",
+        "bash -c '! grep -q \"dispatch_review\" agents/mp-plan-reviewer.md agents/mp-goal-assessor.md'",
+        "bash -c 'for f in agents/mp-planner.md agents/mp-subsystem-planner.md agents/mp-spec-decomposer.md agents/mp-plan-reviewer.md agents/mp-goal-assessor.md; do grep -q \"dispatch_task\" \"$f\" || exit 1; done'",
+        "bash -c 'grep -Eiq \"(test|it)\\(.*(return.?shape|verdict.vocabular)\" test/agents.test.mjs'"
+      ],
+      "class": "bounded-edit"
+    }
+  ],
+  "tasks": [
+    {
+      "task_id": 1,
+      "class": "bounded-edit",
+      "handoff_key": "adsp-idem-v1:simplify-dedup-2:1:e2cb92c071c2c756c602d76ea420f01d49fff14fbef2dc6d154708b19111498b:7f7ef25658b260562e2a10fbb5e5c82ec21192cd5a729f2b095fac943a027cb7"
+    },
+    {
+      "task_id": 2,
+      "class": "bounded-edit",
+      "handoff_key": "adsp-idem-v1:simplify-dedup-2:2:d3bfadde2ed9a13478908c72a52c9b22715f221c523cfa35c0d1e6fa9efd5b27:7f7ef25658b260562e2a10fbb5e5c82ec21192cd5a729f2b095fac943a027cb7"
+    },
+    {
+      "task_id": 10,
+      "class": "bounded-edit",
+      "handoff_key": "adsp-idem-v1:simplify-dedup-2:10:3ea6bd5730b62c93404ed3616c3be77af5a67a21fe04f834d74e216ac4cbe6c5:7f7ef25658b260562e2a10fbb5e5c82ec21192cd5a729f2b095fac943a027cb7"
+    }
+  ],
+  "result": {
+    "wave": 0,
+    "tasks": [
+      {
+        "task_id": 1,
+        "digest": {
+          "task_id": 1,
+          "status": "blocked",
+          "start_sha": "",
+          "files_changed": [],
+          "verify": [],
+          "summary": "broker escalated: skynet edit failed after 3 attempts: block 1: SEARCH text not found in file (after exact, whitespace-tolerant, and indent-flexible matching):\nimport { selectGateReview, gateEventTypes, validateGateReceipt } from '../lib/gate-review.mjs';\nimport { selectCodexReviewForHead } from '../lib/review-companion.mjs';\n\n\n--- skynet raw output ---\n\n\n/srv/dev/ras/masterplan/.worktrees/simplify-dedup-2/bin/masterplan.mjs\n<<<<<<< SEARCH\nimport { selectGateReview, gateEventTypes, validateGateReceipt } from '../lib/gate-review.mjs';\nimport { selectCodexReviewForHead } from '../lib/review-companion.mjs';\n=======\nimport { selectGateReview, gateEventTypes, validateGateReceipt, selectCodexReviewForHead } from '../lib/reentry-guard.mjs';\n>>>>>>> REPLACE\n\n/srv/dev/ras/masterplan/.worktrees/simplify-dedup-2/lib/finish-step.mjs\n<<<<<<< SEARCH\nimport { selectCodexReviewForHead } from './review-companion.mjs';\nimport { selectGateReview } from './gate-review.mjs';\n=======\nimport { selectCodexReviewForHead, selectGateReview } from './reentry-guard.mjs';\n>>>>>>> REPLACE\n\n/srv/dev/ras/masterplan/.worktrees/simplify-dedup-2/lib/gate-review.mjs\n<<<<<<< SEARCH\n// lib/gate-review.mjs — the pure re-entry guard for the two PRE-EXECUTE adversary-review gates:\n=======\n>>>>>>> REPLACE\n\n/srv/dev/ras/masterplan/.worktrees/simplify-dedup-2/lib/review-companion.mjs\n<<<<<<< SEARCH\n// lib/review-companion.mjs — the durable whole-branch adversary-review re-entry guard (pure core).\n=======\n>>>>>>> REPLACE\n\n/srv/dev/ras/masterplan/.worktrees/simplify-dedup-2/test/gate-review.test.mjs\n<<<<<<< SEARCH\n// test/gate-review.test.mjs — the pure spec/plan gate re-entry guard (`selectGateReview`). Like the\n=======\n>>>>>>> REPLACE\n\n/srv/dev/ras/masterplan/.worktrees/simplify-dedup-2/test/review-companion.test.mjs\n<<<<<<< SEARCH\n// test/review-companion.test.mjs — the durable whole-branch review re-entry guard\n=======\n>>>>>>> REPLACE",
+          "blockers": "skynet edit failed after 3 attempts: block 1: SEARCH text not found in file (after exact, whitespace-tolerant, and indent-flexible matching):\nimport { selectGateReview, gateEventTypes, validateGateReceipt } from '../lib/gate-review.mjs';\nimport { selectCodexReviewForHead } from '../lib/review-companion.mjs';\n\n\n--- skynet raw output ---\n\n\n/srv/dev/ras/masterplan/.worktrees/simplify-dedup-2/bin/masterplan.mjs\n<<<<<<< SEARCH\nimport { selectGateReview, gateEventTypes, validateGateReceipt } from '../lib/gate-review.mjs';\nimport { selectCodexReviewForHead } from '../lib/review-companion.mjs';\n=======\nimport { selectGateReview, gateEventTypes, validateGateReceipt, selectCodexReviewForHead } from '../lib/reentry-guard.mjs';\n>>>>>>> REPLACE\n\n/srv/dev/ras/masterplan/.worktrees/simplify-dedup-2/lib/finish-step.mjs\n<<<<<<< SEARCH\nimport { selectCodexReviewForHead } from './review-companion.mjs';\nimport { selectGateReview } from './gate-review.mjs';\n=======\nimport { selectCodexReviewForHead, selectGateReview } from './reentry-guard.mjs';\n>>>>>>> REPLACE\n\n/srv/dev/ras/masterplan/.worktrees/simplify-dedup-2/lib/gate-review.mjs\n<<<<<<< SEARCH\n// lib/gate-review.mjs — the pure re-entry guard for the two PRE-EXECUTE adversary-review gates:\n=======\n>>>>>>> REPLACE\n\n/srv/dev/ras/masterplan/.worktrees/simplify-dedup-2/lib/review-companion.mjs\n<<<<<<< SEARCH\n// lib/review-companion.mjs — the durable whole-branch adversary-review re-entry guard (pure core).\n=======\n>>>>>>> REPLACE\n\n/srv/dev/ras/masterplan/.worktrees/simplify-dedup-2/test/gate-review.test.mjs\n<<<<<<< SEARCH\n// test/gate-review.test.mjs — the pure spec/plan gate re-entry guard (`selectGateReview`). Like the\n=======\n>>>>>>> REPLACE\n\n/srv/dev/ras/masterplan/.worktrees/simplify-dedup-2/test/review-companion.test.mjs\n<<<<<<< SEARCH\n// test/review-companion.test.mjs — the durable whole-branch review re-entry guard\n=======\n>>>>>>> REPLACE",
+          "dispatch": {
+            "outcome": "escalate",
+            "reason": "skynet edit failed after 3 attempts: block 1: SEARCH text not found in file (after exact, whitespace-tolerant, and indent-flexible matching):\nimport { selectGateReview, gateEventTypes, validateGateReceipt } from '../lib/gate-review.mjs';\nimport { selectCodexReviewForHead } from '../lib/review-companion.mjs';\n\n\n--- skynet raw output ---\n\n\n/srv/dev/ras/masterplan/.worktrees/simplify-dedup-2/bin/masterplan.mjs\n<<<<<<< SEARCH\nimport { selectGateReview, gateEventTypes, validateGateReceipt } from '../lib/gate-review.mjs';\nimport { selectCodexReviewForHead } from '../lib/review-companion.mjs';\n=======\nimport { selectGateReview, gateEventTypes, validateGateReceipt, selectCodexReviewForHead } from '../lib/reentry-guard.mjs';\n>>>>>>> REPLACE\n\n/srv/dev/ras/masterplan/.worktrees/simplify-dedup-2/lib/finish-step.mjs\n<<<<<<< SEARCH\nimport { selectCodexReviewForHead } from './review-companion.mjs';\nimport { selectGateReview } from './gate-review.mjs';\n=======\nimport { selectCodexReviewForHead, selectGateReview } from './reentry-guard.mjs';\n>>>>>>> REPLACE\n\n/srv/dev/ras/masterplan/.worktrees/simplify-dedup-2/lib/gate-review.mjs\n<<<<<<< SEARCH\n// lib/gate-review.mjs — the pure re-entry guard for the two PRE-EXECUTE adversary-review gates:\n=======\n>>>>>>> REPLACE\n\n/srv/dev/ras/masterplan/.worktrees/simplify-dedup-2/lib/review-companion.mjs\n<<<<<<< SEARCH\n// lib/review-companion.mjs — the durable whole-branch adversary-review re-entry guard (pure core).\n=======\n>>>>>>> REPLACE\n\n/srv/dev/ras/masterplan/.worktrees/simplify-dedup-2/test/gate-review.test.mjs\n<<<<<<< SEARCH\n// test/gate-review.test.mjs — the pure spec/plan gate re-entry guard (`selectGateReview`). Like the\n=======\n>>>>>>> REPLACE\n\n/srv/dev/ras/masterplan/.worktrees/simplify-dedup-2/test/review-companion.test.mjs\n<<<<<<< SEARCH\n// test/review-companion.test.mjs — the durable whole-branch review re-entry guard\n=======\n>>>>>>> REPLACE"
+          }
+        }
+      },
+      {
+        "task_id": 2,
+        "digest": {
+          "task_id": 2,
+          "status": "blocked",
+          "start_sha": "",
+          "files_changed": [],
+          "verify": [],
+          "summary": "broker escalated: This operation was aborted",
+          "blockers": "This operation was aborted",
+          "dispatch": {
+            "outcome": "escalate",
+            "reason": "This operation was aborted"
+          }
+        }
+      },
+      {
+        "task_id": 10,
+        "digest": {
+          "task_id": 10,
+          "status": "blocked",
+          "start_sha": "",
+          "files_changed": [],
+          "verify": [],
+          "summary": "broker escalated: /srv/dev/ras/masterplan/.worktrees/simplify-dedup-2/test/fixtures/adsp-contract.json: file not found — skynet_edit_files only edits existing files",
+          "blockers": "/srv/dev/ras/masterplan/.worktrees/simplify-dedup-2/test/fixtures/adsp-contract.json: file not found — skynet_edit_files only edits existing files",
+          "dispatch": {
+            "outcome": "escalate",
+            "reason": "/srv/dev/ras/masterplan/.worktrees/simplify-dedup-2/test/fixtures/adsp-contract.json: file not found — skynet_edit_files only edits existing files"
+          }
+        }
+      }
+    ]
+  }
+}
