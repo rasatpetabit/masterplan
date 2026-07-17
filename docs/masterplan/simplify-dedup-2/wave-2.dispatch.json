@@ -1,0 +1,103 @@
+{
+  "key": "mp-wave-dispatch-v1:simplify-dedup-2:2:dispatch_fabric",
+  "run_id": "simplify-dedup-2",
+  "wave": 2,
+  "op": "dispatch_fabric",
+  "contract_version": "adsp-v1.1",
+  "status": "dispatched",
+  "attempt": 1,
+  "dispatched_at": "2026-07-17T23:21:27.470Z",
+  "routing_inputs": {
+    "routing": "auto",
+    "codex_host_suppressed": true,
+    "linked_worktree": true
+  },
+  "payload": [
+    {
+      "id": 4,
+      "description": "Establish the qctl dormant seam reachable from the fabric path. Add a work-item `backend` discriminator to the adsp-adapter descriptor so resolveTaskBackend/qctlEligible can be exercised from the fabric dispatch path (not from the deleted L2 routing brain). Wire the fabric branch in lib/wave.mjs to call resolveTaskBackend when the discriminator is present. Create an EXECUTABLE test that enters through the fabric path and exercises qctl eligibility with a flag-on fixture, plus a negative test proving the shipped flag-off default never selects qctl. Document the seam in docs/design/qctl-multi-repo-apply.md.\n\nPLAN-GATE FOLD R7 (2026-07-16, round-6 seg2): REGRESSION SUITES AT TASK TIME — this task edits lib/dispatch/adsp-adapter.mjs (backend discriminator) and lib/dispatch/backend.mjs, so their existing suites run in THIS task's verify: test/adsp-adapter.test.mjs, and test/dispatch.test.mjs (the dispatch facade suite — it imports resolveTaskBackend and covers backend/ops shapes). The new qctl seam test covers only the added path and cannot protect existing adapter behavior.",
+      "files": [
+        "lib/dispatch/adsp-adapter.mjs",
+        "lib/dispatch/backend.mjs",
+        "lib/wave.mjs",
+        "docs/design/qctl-multi-repo-apply.md",
+        "test/qctl-fabric-seam.test.mjs"
+      ],
+      "verify_commands": [
+        "bash -c 'node --test test/qctl-fabric-seam.test.mjs'",
+        "node --test test/wave.test.mjs",
+        "bash -c 'node --test test/adsp-adapter.test.mjs'",
+        "bash -c 'node --test test/dispatch.test.mjs'"
+      ],
+      "class": "bounded-edit"
+    },
+    {
+      "id": 6,
+      "description": "Add legacy active_run marker reconciliation to mp continue. Design a reconcile path that auto-converts stale legacy markers (launch_workflow execute/plan kinds, phase:'launching' markers, probe/reap-expected markers) to the equivalent fabric op where the wave is re-derivable, else surfaces an explicit ask with recovery guidance — never a crash, never silent. Create sanitized legacy-state fixtures in the test suite shaped like the live fanout-durability and pi-intercom-usage bundles' marker shapes, and test reconciliation against them in CI.",
+      "files": [
+        "lib/continue.mjs",
+        "lib/resume.mjs",
+        "test/continue.test.mjs",
+        "test/resume.test.mjs",
+        "test/fixtures/legacy-markers/active-run-plan.json",
+        "test/fixtures/legacy-markers/active-run-execute-launching.json",
+        "test/fixtures/legacy-markers/active-run-fanout-durability.json",
+        "test/fixtures/legacy-markers/active-run-pi-intercom.json"
+      ],
+      "verify_commands": [
+        "bash -c 'node --test test/continue.test.mjs'",
+        "node --test test/resume.test.mjs"
+      ],
+      "class": "bounded-edit"
+    }
+  ],
+  "tasks": [
+    {
+      "task_id": 4,
+      "class": "bounded-edit",
+      "handoff_key": "adsp-idem-v1:simplify-dedup-2:4:47fe5743c7a863fa8131cbae87554531b7b6ef873cea3d18f78947783497be01:5ba756ef9ea4d2c9a7bca2aabec80281a5364ba548fed908f0b56d0f8e20d73a"
+    },
+    {
+      "task_id": 6,
+      "class": "bounded-edit",
+      "handoff_key": "adsp-idem-v1:simplify-dedup-2:6:34eec60d3242b3ad119112a9f786d861326f6523b1837d79a4dbc37ddd1ffc2d:5ba756ef9ea4d2c9a7bca2aabec80281a5364ba548fed908f0b56d0f8e20d73a"
+    }
+  ],
+  "result": {
+    "wave": 2,
+    "tasks": [
+      {
+        "task_id": 4,
+        "digest": {
+          "task_id": 4,
+          "status": "blocked",
+          "start_sha": "",
+          "files_changed": [],
+          "verify": [],
+          "summary": "broker error during dispatch_fanout: dispatch_fanout retired: use harness-native fanout (Pi PARALLEL / CC Task). See G2/native-fanout cutover.",
+          "blockers": "dispatch_fanout retired: use harness-native fanout (Pi PARALLEL / CC Task). See G2/native-fanout cutover.",
+          "dispatch": {
+            "outcome": "broker_error",
+            "reason": "dispatch_fanout retired: use harness-native fanout (Pi PARALLEL / CC Task). See G2/native-fanout cutover."
+          }
+        }
+      },
+      {
+        "task_id": 6,
+        "digest": {
+          "task_id": 6,
+          "status": "blocked",
+          "start_sha": "",
+          "files_changed": [],
+          "verify": [],
+          "summary": "broker error during dispatch_fanout: dispatch_fanout retired: use harness-native fanout (Pi PARALLEL / CC Task). See G2/native-fanout cutover.",
+          "blockers": "dispatch_fanout retired: use harness-native fanout (Pi PARALLEL / CC Task). See G2/native-fanout cutover.",
+          "dispatch": {
+            "outcome": "broker_error",
+            "reason": "dispatch_fanout retired: use harness-native fanout (Pi PARALLEL / CC Task). See G2/native-fanout cutover."
+          }
+        }
+      }
+    ]
+  }
+}
