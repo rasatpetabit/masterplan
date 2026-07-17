@@ -23,3 +23,5 @@
 {"type":"dispatch_degraded","ts":"2026-07-17T23:21:27.470Z","phase":"execute","task_id":6,"outcome":"broker_error","reason":"dispatch_fanout retired: use harness-native fanout (Pi PARALLEL / CC Task). See G2/native-fanout cutover.","decision_id":null,"note":"task 6 dispatch broker_error: dispatch_fanout retired: use harness-native fanout (Pi PARALLEL / CC Task). See G2/native-fanout cutover."}
 {"type":"wave_recorded","ts":"2026-07-17T23:21:27.470Z","phase":"execute","note":"wave 2 record: 0 done, 2 failed/blocked, 0 qctl"}
 {"type":"wave_recorded","ts":"2026-07-17T23:22:46.699Z","phase":"execute","note":"wave 2 record: 2 done, 0 failed/blocked, 0 qctl"}
+{"type":"dispatch_degraded","ts":"2026-07-17T23:22:46.911Z","summary":"dispatch_fanout retired 2026-07-17; wave 2 implemented inline (dispatch-wave still calls retired MCP tool)"}
+{"type":"wave_recorded","ts":"2026-07-17T23:30:53.485Z","phase":"execute","note":"wave 3 record: 2 done, 0 failed/blocked, 0 qctl"}
