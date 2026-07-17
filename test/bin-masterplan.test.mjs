@@ -2787,3 +2787,56 @@ test('merge-plan-fragments: pre-feature bundle (no goals_enabled) skips coverage
   assert.equal(r.status, 0, `pre-feature coverage must be a no-op: ${r.stderr}`);
   assert.equal(JSON.parse(r.stdout).tasks, 1);
 });
+
+// ---- the planning verb (task 5: planning-fanout — plan-gate fold R6 bin coverage) ----
+// `continue` on a plan-marker bundle is the planning verb: it must emit the broker
+// dispatch_fanout planning op (read-only class + enumerated roots) and retain no
+// launch_workflow(plan) arm. continue is a git-touching verb (mainRepoRoot), so unlike
+// the fs-only fixtures above this one builds a minimal real repo around the bundle.
+test('continue (planning verb): a plan marker yields the read-only dispatch_fanout planning op — no launch_workflow(plan) arm remains', () => {
+  const repo = tmpDir('mp-bin-plan-');
+  const git = (...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
+  git('init', '--initial-branch=main');
+  git('config', 'user.email', 'test@test');
+  git('config', 'user.name', 'test');
+  git('config', 'commit.gpgsign', 'false');
+  fs.writeFileSync(path.join(repo, 'seed.txt'), 'seed\n');
+  git('add', '.');
+  git('commit', '-q', '-m', 'initial');
+  const bundleDir = path.join(repo, 'docs', 'masterplan', 'demo');
+  fs.mkdirSync(bundleDir, { recursive: true });
+  const statePath = path.join(bundleDir, 'state.yml');
+  fs.writeFileSync(statePath, serializeState({
+    schema_version: '6.0', slug: 'demo', status: 'in-progress', phase: 'plan',
+    pending_gate: null, tasks: [],
+    active_run: { kind: 'plan', phase: 'launching' },
+    concurrency: { owner_lock: 'off' },
+  }));
+  // PI_CODING_AGENT stripped: the suppressed host path (serial reroute) is not under test here.
+  const r = run(['continue', `--state=${statePath}`, '--now=2000'], { env: { ...process.env, PI_CODING_AGENT: '' } });
+  assert.equal(r.status, 0, r.stderr);
+  const op = JSON.parse(r.stdout);
+  assert.equal(op.op, 'dispatch_fanout');
+  assert.equal(op.kind, 'plan');
+  assert.equal(op.read_only, true);
+  assert.equal(op.class, 'masterplan-planning');
+  assert.equal(op.next, 'stage-plan-fragments');
+  assert.ok(Array.isArray(op.roots) && op.roots.length === 2, 'enumerated roots: repo + spec');
+  assert.equal(op.roots[0], op.cwd);
+  assert.equal(op.roots[1], path.join(bundleDir, 'spec.md'));
+  assert.equal(op.spec_path, path.join(bundleDir, 'spec.md'));
+  assert.ok(!r.stdout.includes('launch_workflow'), 'the launch_workflow(plan) arm is retired');
+});
+
+test('dispatch-plan: --subsystems required and JSON-validated; a non-plan marker dies loudly (no broker touched)', () => {
+  const p = tmpBundle(v8()); // active_run: null — not a plan marker
+  const miss = run(['dispatch-plan', `--state=${p}`]);
+  assert.notEqual(miss.status, 0);
+  assert.match(miss.stderr, /--subsystems/);
+  const bad = run(['dispatch-plan', `--state=${p}`, '--subsystems={not json']);
+  assert.notEqual(bad.status, 0);
+  assert.match(bad.stderr, /valid JSON/);
+  const noMarker = run(['dispatch-plan', `--state=${p}`, '--subsystems=[{"key":"core"}]']);
+  assert.notEqual(noMarker.status, 0);
+  assert.match(noMarker.stderr, /plan marker/);
+});

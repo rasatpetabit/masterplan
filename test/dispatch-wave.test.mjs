@@ -215,7 +215,7 @@ test('full flow: one descriptor per routed task, ONE dispatch_fanout, digests re
   assert.equal(descriptors.length, 2);
   for (const [i, d] of descriptors.entries()) {
     assert.equal(d.task_id, i + 1);
-    assert.equal(d.class, 'bounded-edit', 'default fabric class');
+    assert.equal(d.class, 'masterplan-implementation', 'default fabric class');
     assert.equal(d.repo, WT, "the run's EXISTING worktree — never a second one");
     assert.equal(d.contract_version, 'adsp-v1.1');
     assert.equal(d.brief, `task ${i + 1}`);

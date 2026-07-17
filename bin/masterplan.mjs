@@ -154,7 +154,18 @@
 //                                                  marker. Guard D ownership is acquired + confirmed before
 //                                                  any dispatching transition (blocked owner → loud non-zero
 //                                                  exit, nothing dispatched; owner_lock=off skips).
-//                                                  The ONLY async subcommand (MCP over stdio).
+//                                                  ASYNC (MCP over stdio; dispatch-plan is the other).
+//   dispatch-plan --state=PATH --subsystems=JSON|--subsystems-file=PATH [--spec-path=P] [--broker-bin=BIN]
+//                                               -> the dispatch_fanout(plan) op consumer (lib/continue.mjs
+//                                                  dispatchPlanFanout): the broker planning fan-out that
+//                                                  replaced the L2 plan Workflow — one READ-ONLY work item
+//                                                  per subsystem (class masterplan-planning, enumerated
+//                                                  roots = repo + spec, no write-scope fields), ONE broker
+//                                                  process, pre/post `git status --porcelain` assertions
+//                                                  over the roots (a breach exits loudly — fragments are
+//                                                  NOT surfaced). Prints { subsystems: fragments, … } for
+//                                                  the shell to stage as .plan-fragments.json exactly as
+//                                                  before (merge/validate/review gate unchanged). ASYNC.
 //   acquire-owner  --state=PATH [--session=ID] [--host=H] [--now=MS] [--ttl-ms=N] [--force]
 //   heartbeat-owner --state=PATH [--session=ID] [--host=H] [--now=MS]
 //   release-owner  --state=PATH [--session=ID] [--host=H] [--now=MS] [--ttl-ms=N] [--force]
@@ -197,7 +208,7 @@ import { mapQctlStatus } from '../lib/qctl-status.mjs';
 import { decideBaseDrift } from '../lib/qctl-requeue.mjs';
 import { recordWaveResult } from '../lib/wave-commit.mjs';
 import { dispatchWaveViaFabric } from '../lib/dispatch-wave.mjs';
-import { continueRun } from '../lib/continue.mjs';
+import { continueRun, dispatchPlanFanout } from '../lib/continue.mjs';
 import { finishStep } from '../lib/finish-step.mjs';
 import { sweepWorktrees } from '../lib/sweep.mjs';
 import { discoverRuns, readDiscoveryConfig, serializeDiscoveryConfig, addDiscoveryRoot, removeDiscoveryRoot, discoveryConfigPath } from '../lib/runs.mjs';
@@ -3245,10 +3256,47 @@ function main() {
       break;
     }
 
+    case 'dispatch-plan': {
+      // The dispatch_fanout(plan) op consumer: the broker planning fan-out that replaced the
+      // L2 plan Workflow launch (workflows/plan.workflow.js). One READ-ONLY work item per
+      // subsystem (class masterplan-planning, enumerated roots = repo + spec path, NO
+      // write-scope fields — broker-level write denial where supported), ONE broker process
+      // for the whole fan-out, and pre/post `git status --porcelain` assertions over the
+      // enumerated roots as defense in depth (a breach throws — fragments are NOT surfaced).
+      // Prints { subsystems: fragments, specPath, repoRoot, requested, denied, missing } —
+      // the shell stages .plan-fragments.json from `subsystems` exactly as the L2 engine's
+      // result was staged; the merge/validate/review gate sequence is unchanged. ASYNC like
+      // dispatch-wave (MCP over stdio): main() returns while the promise settles; die() maps
+      // a rejection to a non-zero exit.
+      const statePath = need(flags, 'state');
+      loadForWrite(statePath); // strict-v8 guard: fail loud, never fan out over a legacy bundle
+      const rawSubs = typeof flags.subsystems === 'string'
+        ? flags.subsystems
+        : (typeof flags['subsystems-file'] === 'string' ? readText(flags['subsystems-file']) : undefined);
+      if (rawSubs === undefined) {
+        die('dispatch-plan: --subsystems=JSON or --subsystems-file=PATH is required (the §3a decomposition from mp-spec-decomposer)');
+      }
+      let subsystems;
+      try {
+        subsystems = JSON.parse(rawSubs);
+      } catch (e) {
+        die(`dispatch-plan: --subsystems must be valid JSON (${e.message})`);
+      }
+      dispatchPlanFanout({
+        statePath,
+        subsystems,
+        specPath: typeof flags['spec-path'] === 'string' ? flags['spec-path'] : null,
+        brokerBin: typeof flags['broker-bin'] === 'string' ? flags['broker-bin'] : undefined,
+      })
+        .then(out)
+        .catch((e) => die(e.message));
+      break;
+    }
+
     case 'continue': {
       // T2.3: the trampoline — migrate-on-load → Guard D acquire/confirm → wave backfill →
       // alive-probe gating → the bounded decide loop, returning ONE typed op per call
-      // ({op: launch_workflow|dispatch_foreground|run_skill|record_result|ask|probe|shell|stop|…}).
+      // ({op: launch_workflow|dispatch_foreground|dispatch_fanout|run_skill|record_result|ask|probe|shell|stop|…}).
       // The shell stops sequencing §2 by prose: it calls `mp continue`, executes the op, repeats.
       // Hosts without Claude Code Workflow handles (PI_CODING_AGENT or --no-workflow) are routed
       // to dispatch_foreground so a phase-1 launch marker is consumed instead of user-stranded.
