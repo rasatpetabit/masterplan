@@ -36,6 +36,21 @@ never blocks waiting on a wedged reviewer, and the agent never invents findings 
 review, never the whole wave's. Review is also config-gated **OFF by default** at the per-task workflow
 level, so on the common path this surface is inert.
 
+**Empty-diff / degraded-lane contract (2026-07-16 audit):**
+- An empty scoped diff ("No changes were provided to review") is a FAIL → `verdict: inconclusive`
+  with reason `empty-diff` — never `approve`.
+- When `harness.degraded:true` or the reviewer count is 1 (not a panel), the verdict is
+  `inconclusive`/`advisory`, never `clean`/`approve`.
+- Findings must land in the structured `findings[]` array. Free-text-only findings with an empty
+  structured array are a degraded/error result, not an approve. The harness worst-wins aggregation
+  MUST treat empty structured-findings + non-empty free text as `error`.
+- A review lane with ≥2 of 3 attempts erroring is a FAIL — do not accept the minority passing run.
+- For diffs >500 lines, chunk before the call or set Bash `timeout ≥ 1800000ms` (the review
+  harness's internal deadline is 30 min per region; a 10-min Bash timeout structurally causes
+  false-fails).
+- ALWAYS emit the closing `verdict: inconclusive` (or `advisory`/`blocking`/`clean`) line — never
+  end the turn without it. The orchestrator distinguishes "no verdict returned" from "inconclusive".
+
 The whole-branch finish path (`run_adversary_review`, §2c) applies the same contract: any non-success →
 `--review-skipped --review-reason=<reason>`, whose durable `adversary_review_skipped` event uses a
 hyphenated summary that deliberately does NOT match the `\b(codex|adversary)\s+review\b` audit regex, so a

@@ -54,6 +54,14 @@ consistency / verify adequacy) on the same lane and merge the findings; never tr
 3. **Verify adequacy.** Each task's `verify_commands` should genuinely prove the task's intent —
    not a tautology (`test -f` on a file the task trivially creates), not empty where a behavioural
    check is possible. Flag tasks that would pass their own verify while leaving the intent unmet.
+   **Structural verify lint (2026-07-16 audit):** every `verify_commands` entry must (a) resolve
+   against the real CLI surface (subcommand exists in `--help`), (b) be runnable from the per-run
+   worktree without MAIN-only runtime files or post-deploy host state, (c) use `python3` not bare
+   `python`, (d) use worktree-relative paths, (e) pair every negated-grep/`!` assertion with a
+   positive non-empty/exit-0 proof so it cannot pass vacuously, (f) not reference a
+   non-existent flag/verb or an absent `--self-test`. A verify command that fails any of these is
+   a plan defect → REVISE, not a task failure. Every path named in a task's `verify_commands`
+   must appear in the `files:` list of that task or a declared-dependency task.
 4. **Goal coverage.** Every goal in `goals.md` must be served by at least one task's `goals` refs;
    name any goal with no covering task.
 5. **Decomposition sanity.** Flag a task that bundles unrelated work (should split), or trivial
