@@ -1,0 +1,10 @@
+{
+  "$note": "Sanitized legacy-state fixture: an execute-wave phase-1 'launching' marker with outstanding work, shaped like a live pre-fabric bundle's marker ({wave, phase:'launching', scope:[], baseline:[...]}) — the shape written durably BEFORE the L2 launch returned handles. Identifying content (paths, run ids, task text) replaced with neutral placeholders.",
+  "$source_shape": "live execute-wave phase-1 marker: { wave, phase: 'launching', scope: [], baseline: [<path>] }",
+  "phase": "execute",
+  "tasks": [
+    { "id": 1, "status": "done", "wave": 1, "files": ["src/done-a.txt"] },
+    { "id": 2, "status": "pending", "wave": 2, "files": ["src/pending-b.txt"] }
+  ],
+  "active_run": { "wave": 2, "phase": "launching", "scope": [], "baseline": ["docs/placeholder-readme.md"] }
+}

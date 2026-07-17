@@ -738,3 +738,197 @@ test('plan fan-out executor: a non-plan marker refuses loudly (never dispatches)
     /plan marker/,
   );
 });
+
+// ---- legacy active_run marker reconciliation (task 6: marker-reconcile) ---------
+//
+// Pre-fabric bundles persisted L2 marker shapes: launch_workflow execute/plan kinds —
+// phase-1 {phase:'launching'} markers and PROMOTED probe/reap-expected {run_id, task_id}
+// markers. Under the fabric lane `mp continue` reconciles them: auto-convert to the
+// equivalent fabric op where state.tasks + plan wave data re-derive the wave, else an
+// explicit `legacy-marker-unreconcilable` ask with recovery guidance — never a crash,
+// never silent. The fixtures are SANITIZED from the live fanout-durability and
+// pi-intercom-usage bundle marker shapes (structural shape kept, content neutralized).
+
+const loadLegacyFixture = (name) =>
+  JSON.parse(fs.readFileSync(new URL(`./fixtures/legacy-markers/${name}`, import.meta.url), 'utf8'));
+
+test('legacy reconcile (fixture: plan launching): the pre-fabric plan marker converts to the dispatch_fanout planning op', () => {
+  const legacy = loadLegacyFixture('active-run-plan.json');
+  const fx = makeFixture({
+    tasks: legacy.tasks,
+    phase: legacy.phase,
+    activeRun: legacy.active_run,
+    slug: 'lm-plan',
+    extra: { planning_mode: legacy.planning_mode },
+  });
+  const op = continueRun({ statePath: fx.statePath, self: fx.self, now: 2000, fabricDispatch: true });
+  assert.equal(op.op, 'dispatch_fanout');
+  assert.equal(op.kind, 'plan');
+  const marker = readState(fx.statePath).active_run;
+  assert.equal(marker.kind, 'plan');
+  assert.equal(marker.phase, 'launching');
+});
+
+test('legacy reconcile (fixture: fanout-durability shape): a PROMOTED plan marker skips the L2 probe and re-emits the fan-out; non-fabric still probes', () => {
+  const legacy = loadLegacyFixture('active-run-fanout-durability.json');
+  const fx = makeFixture({
+    tasks: legacy.tasks,
+    phase: legacy.phase,
+    activeRun: legacy.active_run,
+    slug: 'lm-fd',
+    extra: { planning_mode: legacy.planning_mode },
+  });
+  // Non-fabric: the promoted marker still routes the L2 probe protocol (byte-identical legacy path).
+  const probe = continueRun({ statePath: fx.statePath, self: fx.self, now: 2000 });
+  assert.equal(probe.op, 'probe');
+  assert.equal(probe.kind, 'alive');
+  assert.equal(probe.task_id, 'wf-legacy-0001');
+  // Fabric: no probe machinery — the marker reconciles straight to the planning fan-out.
+  const op = continueRun({ statePath: fx.statePath, self: fx.self, now: 2000, fabricDispatch: true });
+  assert.equal(op.op, 'dispatch_fanout');
+  assert.equal(op.kind, 'plan');
+  assert.equal(op.reconciled.legacy, 'plan-promoted');
+  assert.equal(op.reconciled.conversion, 'plan-fanout');
+  assert.deepEqual(op.reconciled.marker, legacy.active_run);
+  const marker = readState(fx.statePath).active_run;
+  assert.equal(marker.kind, 'plan');
+  assert.equal(marker.phase, 'launching');
+  assert.equal(marker.task_id, undefined, 'stale L2 handles dropped from the fresh phase-1 marker');
+});
+
+test('legacy reconcile (fixture: execute launching): outstanding work auto-converts to dispatch_fabric; non-fabric keeps launch_workflow un-annotated', () => {
+  const legacy = loadLegacyFixture('active-run-execute-launching.json');
+  const planIndex = legacy.tasks.map((t) => planEntry(t.id, t.wave, t.files));
+  // Fabric: the stale launching marker recovers straight to the fabric wave op.
+  const fx = makeFixture({
+    tasks: structuredClone(legacy.tasks),
+    phase: legacy.phase,
+    activeRun: structuredClone(legacy.active_run),
+    planIndex,
+    slug: 'lm-exl',
+  });
+  const op = continueRun({ statePath: fx.statePath, self: fx.self, now: 2000, fabricDispatch: true });
+  assert.equal(op.op, 'dispatch_fabric');
+  assert.equal(op.wave, legacy.active_run.wave);
+  assert.deepEqual(op.tasks.map((t) => t.id), [2]);
+  assert.equal(op.reconciled.legacy, 'execute-launching');
+  assert.equal(op.reconciled.conversion, 'redispatch');
+  assert.deepEqual(op.reconciled.marker, legacy.active_run);
+  const marker = readState(fx.statePath).active_run;
+  assert.equal(marker.wave, legacy.active_run.wave);
+  assert.equal(marker.phase, 'launching');
+  // Non-fabric: byte-identical legacy behavior — launch_workflow, no `reconciled` annotation.
+  const fx2 = makeFixture({
+    tasks: structuredClone(legacy.tasks),
+    phase: legacy.phase,
+    activeRun: structuredClone(legacy.active_run),
+    planIndex,
+    slug: 'lm-exl2',
+  });
+  const op2 = continueRun({ statePath: fx2.statePath, self: fx2.self, now: 2000 });
+  assert.equal(op2.op, 'launch_workflow');
+  assert.equal('reconciled' in op2, false, 'legacy L2 path stays un-annotated');
+});
+
+test('legacy reconcile (fixture: pi-intercom shape): a stale finished-wave marker finalizes inline, then the next pending wave dispatches via fabric', () => {
+  const legacy = loadLegacyFixture('active-run-pi-intercom.json');
+  const fx = makeFixture({
+    tasks: legacy.tasks,
+    phase: legacy.phase,
+    activeRun: legacy.active_run,
+    planIndex: legacy.tasks.map((t) => planEntry(t.id, t.wave, t.files)),
+    slug: 'lm-pi',
+  });
+  const op = continueRun({ statePath: fx.statePath, self: fx.self, now: 2000, fabricDispatch: true });
+  assert.equal(op.op, 'dispatch_fabric');
+  assert.equal(op.wave, 1, 'stale wave-3 marker finalized; the earlier pending wave dispatches');
+  assert.deepEqual(op.tasks.map((t) => t.id), [2]);
+  assert.equal(op.reconciled.legacy, 'execute-launching');
+  assert.equal(op.reconciled.conversion, 'finalize');
+  assert.deepEqual(op.reconciled.marker, legacy.active_run);
+  const marker = readState(fx.statePath).active_run;
+  assert.equal(marker.wave, 1, 'fresh phase-1 marker for the re-derived wave');
+  assert.equal(marker.phase, 'launching');
+});
+
+test('legacy reconcile: a PROMOTED execute marker (probe/reap-expected) redispatches via fabric without any probe op; --alive=true still defers', () => {
+  const fx = makeFixture({
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    activeRun: { wave: 1, run_id: 'r-legacy', task_id: 'wf-legacy', scope: ['src/a.txt'], baseline: [] },
+    planIndex: [planEntry(1, 1, ['src/a.txt'])],
+    slug: 'lm-prom',
+  });
+  // An explicit --alive=true is respected: the reconcile never yanks a run the caller asserts is live.
+  const wait = continueRun({ statePath: fx.statePath, self: fx.self, now: 2000, fabricDispatch: true, alive: true });
+  assert.equal(wait.op, 'stop');
+  assert.equal(wait.reason, 'wait');
+  // Liveness unknown: no probe (the fabric shell has none) — straight to the fabric wave op.
+  const op = continueRun({ statePath: fx.statePath, self: fx.self, now: 2000, fabricDispatch: true });
+  assert.equal(op.op, 'dispatch_fabric');
+  assert.equal(op.wave, 1);
+  assert.equal(op.reconciled.legacy, 'execute-promoted');
+  assert.equal(op.reconciled.conversion, 'redispatch');
+  const marker = readState(fx.statePath).active_run;
+  assert.equal(marker.phase, 'launching');
+  assert.equal(marker.task_id, undefined, 'stale L2 handles dropped from the fresh phase-1 marker');
+});
+
+test('legacy reconcile: unreconcilable markers surface the explicit ask with recovery guidance — never a crash, never silent', () => {
+  // (a) A promoted marker with a non-integer wave (the corrupt promote shape).
+  const fxA = makeFixture({
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    activeRun: { wave: null, run_id: 'r-legacy', task_id: 'wf-legacy' },
+    planIndex: [planEntry(1, 1, ['src/a.txt'])],
+    slug: 'lm-badwave',
+  });
+  const a = continueRun({ statePath: fxA.statePath, self: fxA.self, now: 2000, fabricDispatch: true });
+  assert.equal(a.op, 'ask');
+  assert.equal(a.ask, 'legacy-marker-unreconcilable');
+  assert.match(a.error, /not an integer/);
+  assert.match(a.guidance, /clear-active-run/);
+  assert.deepEqual(a.marker, { wave: null, run_id: 'r-legacy', task_id: 'wf-legacy' });
+
+  // (b) A launching marker whose wave matches no task — the wave cannot be re-derived.
+  const fxB = makeFixture({
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    activeRun: { wave: 9, phase: 'launching', scope: [], baseline: [] },
+    planIndex: [planEntry(1, 1, ['src/a.txt'])],
+    slug: 'lm-nowave',
+  });
+  const b = continueRun({ statePath: fxB.statePath, self: fxB.self, now: 2000, fabricDispatch: true });
+  assert.equal(b.op, 'ask');
+  assert.equal(b.ask, 'legacy-marker-unreconcilable');
+  assert.match(b.error, /matches no task/);
+  assert.match(b.guidance, /clear-active-run/);
+
+  // (c) An unrecognized marker shape (neither plan kind nor integer wave nor task_id).
+  const fxC = makeFixture({
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    activeRun: { status: 'launching' },
+    planIndex: [planEntry(1, 1, ['src/a.txt'])],
+    slug: 'lm-shape',
+  });
+  const c = continueRun({ statePath: fxC.statePath, self: fxC.self, now: 2000, fabricDispatch: true });
+  assert.equal(c.op, 'ask');
+  assert.equal(c.ask, 'legacy-marker-unreconcilable');
+  assert.match(c.error, /unrecognized legacy shape/);
+});
+
+test('legacy reconcile: an open gate still wins — the gate surfaces and the legacy marker is left for later', () => {
+  const fx = makeFixture({
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    activeRun: { wave: 1, run_id: 'r-legacy', task_id: 'wf-legacy' },
+    planIndex: [planEntry(1, 1, ['src/a.txt'])],
+    slug: 'lm-gate',
+    extra: { pending_gate: { id: 'plan_approval', opened_at: 't' } },
+  });
+  const op = continueRun({ statePath: fx.statePath, self: fx.self, now: 2000, fabricDispatch: true, alive: false });
+  assert.equal(op.op, 'ask');
+  assert.equal(op.ask, 'gate');
+  assert.equal(op.gate.id, 'plan_approval');
+  assert.deepEqual(
+    readState(fx.statePath).active_run,
+    { wave: 1, run_id: 'r-legacy', task_id: 'wf-legacy' },
+    'marker untouched while the gate is open'
+  );
+});

@@ -1,0 +1,8 @@
+{
+  "$note": "Sanitized legacy-state fixture shaped like the fanout-durability bundle (schema 8, phase:'plan', planning_mode:'auto', tasks:[]) whose plan fan-out launched via the pre-fabric launch_workflow vehicle and was PROMOTED — active_run carries {kind:'plan', run_id, task_id}, the probe/reap-expected planning marker shape. Run ids replaced with neutral placeholders.",
+  "$source_shape": "promoted pre-fabric plan marker: { kind: 'plan', run_id, task_id }",
+  "phase": "plan",
+  "planning_mode": "auto",
+  "tasks": [],
+  "active_run": { "kind": "plan", "run_id": "run-legacy-0001", "task_id": "wf-legacy-0001" }
+}

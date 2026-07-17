@@ -3,7 +3,8 @@
 // Grounding for the contract: docs/spike-0.5-findings.md (deltas D1, D2, D5; findings F2/F3/F6).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { decideNextAction, BLACKBOARD_STATES } from '../lib/resume.mjs';
+import fs from 'node:fs';
+import { decideNextAction, BLACKBOARD_STATES, classifyLegacyMarker } from '../lib/resume.mjs';
 import { composeHandoffKey, computeTaskSpecHash, computeInputFingerprint, IDEMPOTENCY_VERSION } from '../lib/adsp-idempotency.mjs';
 
 const t = (id, wave, status, files = []) => ({ id, wave, status, files });
@@ -595,4 +596,70 @@ test('handoff key shape: the blackboard map key is the full adsp-idem-v1 compose
   assert.ok(key.startsWith(`${IDEMPOTENCY_VERSION}:run-x:t1:`), 'key carries run_id + task_id');
   // The key has 5 colon-separated segments: version, run, task, spec_hash, fingerprint.
   assert.equal(key.split(':').length, 5);
+});
+
+// ---------------------------------------------------------------------------
+// Legacy active_run marker classification (marker-reconcile) — pure shape
+// classifier for the pre-fabric L2 marker DATA the fabric continue path upgrades.
+// ---------------------------------------------------------------------------
+
+const legacyFixture = (name) =>
+  JSON.parse(fs.readFileSync(new URL(`./fixtures/legacy-markers/${name}`, import.meta.url), 'utf8'));
+
+test('classifyLegacyMarker: null/absent/non-object markers -> null (nothing to reconcile)', () => {
+  assert.equal(classifyLegacyMarker(null), null);
+  assert.equal(classifyLegacyMarker(undefined), null);
+  assert.equal(classifyLegacyMarker('launching'), null);
+  assert.equal(classifyLegacyMarker(7), null);
+  assert.equal(classifyLegacyMarker([{ wave: 1 }]), null);
+});
+
+test('classifyLegacyMarker: plan markers — phase-1 launching vs PROMOTED (probe-expected)', () => {
+  assert.deepEqual(classifyLegacyMarker({ kind: 'plan', phase: 'launching' }), { legacy: 'plan-launching' });
+  assert.deepEqual(
+    classifyLegacyMarker({ kind: 'plan', run_id: 'r1', task_id: 'wf1' }),
+    { legacy: 'plan-promoted', staleTaskId: 'wf1' }
+  );
+});
+
+test('classifyLegacyMarker: execute markers — PROMOTED (probe/reap-expected) carries wave + staleTaskId; launching carries wave', () => {
+  assert.deepEqual(
+    classifyLegacyMarker({ wave: 3, run_id: 'r1', task_id: 'wf1', scope: [], baseline: [] }),
+    { legacy: 'execute-promoted', wave: 3, staleTaskId: 'wf1' }
+  );
+  assert.deepEqual(
+    classifyLegacyMarker({ wave: 6, phase: 'launching', scope: [], baseline: ['docs/a.md'] }),
+    { legacy: 'execute-launching', wave: 6 }
+  );
+  // A promoted marker with a corrupt wave still classifies (the consumer decides reconcilability).
+  assert.deepEqual(
+    classifyLegacyMarker({ wave: null, run_id: 'r1', task_id: 'wf1' }),
+    { legacy: 'execute-promoted', wave: null, staleTaskId: 'wf1' }
+  );
+});
+
+test('classifyLegacyMarker: corrupt/unknown shapes classify as unrecognized — never throw', () => {
+  assert.deepEqual(classifyLegacyMarker({}), { legacy: 'unrecognized', wave: null });
+  assert.deepEqual(classifyLegacyMarker({ status: 'launching' }), { legacy: 'unrecognized', wave: null });
+  assert.deepEqual(classifyLegacyMarker({ wave: null, phase: 'launching' }), { legacy: 'unrecognized', wave: null });
+  assert.deepEqual(classifyLegacyMarker({ wave: 2.5 }), { legacy: 'unrecognized', wave: 2.5 });
+  assert.deepEqual(classifyLegacyMarker({ wave: '3', phase: 'launching' }), { legacy: 'unrecognized', wave: '3' });
+});
+
+test('classifyLegacyMarker: the sanitized legacy fixtures classify to their expected shapes', () => {
+  const shape = (name) => classifyLegacyMarker(legacyFixture(name).active_run);
+  assert.deepEqual(shape('active-run-plan.json'), { legacy: 'plan-launching' });
+  assert.deepEqual(
+    shape('active-run-fanout-durability.json'),
+    { legacy: 'plan-promoted', staleTaskId: 'wf-legacy-0001' }
+  );
+  assert.deepEqual(shape('active-run-execute-launching.json'), { legacy: 'execute-launching', wave: 2 });
+  assert.deepEqual(shape('active-run-pi-intercom.json'), { legacy: 'execute-launching', wave: 3 });
+});
+
+test('classifyLegacyMarker is pure: does not mutate the marker', () => {
+  const marker = { wave: 1, run_id: 'r1', task_id: 'wf1', scope: ['a.txt'], baseline: [] };
+  const snapshot = structuredClone(marker);
+  classifyLegacyMarker(marker);
+  assert.deepEqual(marker, snapshot);
 });

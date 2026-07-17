@@ -107,3 +107,39 @@ For each target repo, the shell executes this sequence in order:
 | `mp verify-scope` (D6 — authoritative gate) | **Shell** calls `bin` |
 | `mp mark-task`, `mp record-qctl-job` (state writes) | **`bin`** (fs-only, sole state writer) |
 | `git commit` (wave-end, per repo) | **Shell** |
+
+## Fabric-path dormant seam (the `backend` work-item discriminator)
+
+> Landed by simplify-dedup-2 task 4 (2026-07). The backend is still **flag-off by default** —
+> this section documents how the dormant seam stays reachable once the legacy L2 routing brain
+> is deleted (post-soak follow-up, spec §7 flag-then-soak-then-delete).
+
+Under the strangler `fabric` flag, masterplan no longer pre-resolves routing through its
+duplicated routing brain (`routeTask`/`leanPayload`) — each task carries only its dispatch
+`class`, and the broker's core resolve/guard picks the model. The qctl decision, however, is
+**masterplan-side** (the GPU producer fabric is not a broker backend), so the §6.3 eligibility
+gate must stay reachable from the fabric path:
+
+- **Arming.** `prepareWave`'s fabric branch calls `resolveTaskBackend(task, config, env,
+  reposAllowlist)` (`lib/dispatch/backend.mjs`) ONLY when
+  `config.implementer.qctl.enabled === true` — the same strictly-true gate the resolver itself
+  short-circuits on. The dispatch-wave consumer passes `state.implementer` through as
+  `config.implementer`, so this is the same `state.implementer.qctl.enabled` flag named in this
+  doc's header.
+- **Discriminator.** An eligible task's fabric payload gains
+  `backend: { kind: 'qctl', scope, verify, deliver: 'patch' }`; `buildWorkItem`
+  (`lib/dispatch/adsp-adapter.mjs`) carries it onto the adsp work-item descriptor so the fabric
+  side can see the item resolved to the qctl implementer backend.
+- **Fail-closed downgrade.** Flag-on but ineligible (`qctlEligible` rejects: empty
+  `verify_commands`, sensitive task, infra path, or files outside the allowlist scope) resolves
+  `{kind:'agent'}` and the field is **omitted entirely** — same bytes as flag-off.
+- **Hash stability by construction.** Like `review`/`task`/`branch`, `backend` is
+  descriptor-only and **excluded from the task-spec hash**: arming qctl never changes handoff
+  keys, and tasks that don't select qctl produce byte-identical payloads and descriptors
+  (absent and `{kind:'agent'}` are both omitted, never sent).
+- **Shipped default.** Flag off → `resolveTaskBackend` short-circuits before touching the
+  allowlist; no payload or descriptor ever carries the field.
+
+`test/qctl-fabric-seam.test.mjs` pins both directions: flag-on eligibility exercised through
+the fabric entrance (`prepareWave` → `buildWorkItem`), and the flag-off negative proving the
+shipped default never selects qctl.
