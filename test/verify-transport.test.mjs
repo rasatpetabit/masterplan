@@ -250,12 +250,11 @@ function mockBrokerDone() {
   return {
     skynetVerifyAllowlist: DEFAULT_SKYNET_VERIFY_ALLOWLIST,
     async initialize() { return {}; },
-    async callTool(_name, args) {
+    async callTool(name, args) {
+      const d = name === 'dispatch_task' ? (args?.descriptor ?? {}) : (args?.descriptors?.[0] ?? {});
       return {
-        results: (args?.descriptors ?? [{}]).map((d) => ({
-          decision: { decision: 'route', backend: 'pi' },
-          stdout: JSON.stringify({ ...digest, task_id: d.task_id ?? 1 }),
-        })),
+        decision: { decision: 'route', backend: 'pi' },
+        stdout: JSON.stringify({ ...digest, task_id: d.task_id ?? 1 }),
       };
     },
     close() {},

@@ -61,7 +61,8 @@ function makeDogfoodFixture({ tasks, planIndex, slug = 'dogfood-v1' }) {
 function brokerStub(resultFor) {
   return {
     async callTool(name, args) {
-      return { results: args.descriptors.map((d) => resultFor(d)) };
+      if (name === 'dispatch_task') return resultFor(args.descriptor);
+      return { results: (args.descriptors ?? []).map((d) => resultFor(d)) };
     },
   };
 }

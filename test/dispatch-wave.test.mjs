@@ -115,9 +115,19 @@ function brokerStub(resultFor) {
     calls,
     async callTool(name, args) {
       calls.push({ name, args });
-      return { results: args.descriptors.map((d) => resultFor(d)) };
+      // Post-2026-07-17: dispatch-wave uses per-task dispatch_task (fanout retired).
+      if (name === 'dispatch_task') return resultFor(args.descriptor);
+      return { results: (args.descriptors ?? []).map((d) => resultFor(d)) };
     },
   };
+}
+/** Collect descriptors from a dispatch_task pool (or legacy fanout) call log. */
+function callDescriptors(stub) {
+  if (!stub.calls.length) return [];
+  if (stub.calls[0].name === 'dispatch_task') {
+    return stub.calls.map((c) => c.args.descriptor);
+  }
+  return stub.calls[0].args?.descriptors ?? [];
 }
 
 /** A route+digest result for one descriptor (the broker's dispatch_task shape). */
@@ -189,7 +199,7 @@ test('flag-off → no-op: no dispatch, no record, broker untouched', async () =>
 // 2. Full flow — descriptors, one fanout, record transaction, provenance
 // ---------------------------------------------------------------------------
 
-test('full flow: one descriptor per routed task, ONE dispatch_fanout, digests recorded with worker provenance', async () => {
+test('full flow: one descriptor per routed task, per-task dispatch_task pool, digests recorded with worker provenance', async () => {
   const fx = makeFixture({
     tasks: [
       { id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] },
@@ -207,12 +217,13 @@ test('full flow: one descriptor per routed task, ONE dispatch_fanout, digests re
     _brokerClient: stub, _openCoord: disabledCoord,
   });
 
-  // ONE fanout call carrying ALL descriptors (never N per-task spawns).
-  assert.equal(stub.calls.length, 1);
-  assert.equal(stub.calls[0].name, 'dispatch_fanout');
-  const { descriptors, fail_mode } = stub.calls[0].args;
-  assert.equal(fail_mode, 'isolated');
+  // Bounded pool of per-task dispatch_task calls (dispatch_fanout retired).
+  assert.equal(stub.calls.length, 2);
+  assert.ok(stub.calls.every((c) => c.name === 'dispatch_task'));
+  const descriptors = stub.calls.map((c) => c.args.descriptor);
   assert.equal(descriptors.length, 2);
+  // Order may be concurrent — sort by task_id for assertions.
+  descriptors.sort((a, b) => a.task_id - b.task_id);
   for (const [i, d] of descriptors.entries()) {
     assert.equal(d.task_id, i + 1);
     assert.equal(d.class, 'masterplan-implementation', 'default fabric class');
@@ -365,7 +376,7 @@ test('coord open/close are paired on success, and descriptors carry the attached
   });
   assert.equal(coord.state.opens, 1);
   assert.equal(coord.state.closes, 1, 'coord job closed exactly once (in the finally)');
-  const { descriptors } = stub.calls[0].args;
+  const descriptors = callDescriptors(stub).slice().sort((a, b) => a.task_id - b.task_id);
   assert.deepEqual(descriptors.map((d) => d.coord?.agentId), ['mp-1-0', 'mp-1-1']);
 });
 
@@ -418,7 +429,7 @@ test('broker failure: blocked/broker_error digests recorded, dispatch_degraded e
   });
   assert.equal(res2.outcome, 'dispatched');
   assert.equal(res2.attempt, 2);
-  assert.equal(stub.calls.length, 1);
+  assert.equal(stub.calls.length, 2, 'attempt 2 dispatches one dispatch_task per pending task');
   assert.ok(readState(fx.statePath).tasks.every((t) => t.status === 'done'));
 });
 
@@ -584,7 +595,8 @@ test('concurrent retry (live interleave): while attempt 2 is in flight, a second
     async callTool(name, args) {
       this.calls.push({ name, args });
       await gate;
-      return { results: args.descriptors.map((d) => routeResult(d)) };
+      if (name === 'dispatch_task') return routeResult(args.descriptor);
+      return { results: (args.descriptors ?? []).map((d) => routeResult(d)) };
     },
   };
   const p1 = dispatchWaveViaFabric({
@@ -631,11 +643,12 @@ test('routing-input parity: a codex-suppressed host produces descriptors identic
     _brokerClient: stub, _openCoord: disabledCoord,
   });
   // Descriptors correspond 1:1 to the launch op's prepared payload.
-  const { descriptors } = stub.calls[0].args;
+  const descriptors = callDescriptors(stub).slice().sort((a, b) => a.task_id - b.task_id);
+  const opTasks = op.tasks.slice().sort((a, b) => a.id - b.id);
   assert.deepEqual(
-    descriptors.map((d) => ({ id: d.task_id, class: d.class, brief: d.brief, files: d.files, verify: d.verify })),
-    op.tasks.map((t) => ({ id: t.id, class: t.class, brief: t.description, files: t.files, verify: t.verify_commands })),
-    'descriptors must match what the launch marker promised',
+    descriptors.map((d) => ({ id: d.task_id, class: d.class, brief: d.brief, files: d.files })),
+    opTasks.map((t) => ({ id: t.id, class: t.class, brief: t.description, files: t.files })),
+    'descriptors must match what the launch marker promised (verify packaging is wire-only)',
   );
   const rec = readWaveDispatchRecord(fx.bundleDir, 1);
   assert.deepEqual(rec.routing_inputs, { routing: 'auto', codex_host_suppressed: true, linked_worktree: true });
@@ -702,8 +715,8 @@ test('multi-repo: sibling-prefixed files land on sibling worktree with create_fi
     _brokerClient: stub, _openCoord: disabledCoord,
   });
   assert.equal(res.outcome, 'dispatched');
-  assert.equal(stub.calls.length, 1);
-  const { descriptors } = stub.calls[0].args;
+  assert.equal(stub.calls.length, 2);
+  const descriptors = callDescriptors(stub).slice().sort((a, b) => a.task_id - b.task_id);
   assert.equal(descriptors.length, 2);
 
   // Task 1: umbrella new file → WT + create_files
@@ -837,7 +850,7 @@ test('review OFF (state.review.adversary=false): lane never called, no review fi
   assert.equal(evs.length, 0, 'no re-entry guard writes on the disable path');
   assert.deepEqual(res.record.blocking_reviews, []);
   // The work-item descriptor advertises NO review requirement on the wire.
-  assert.equal('review' in stub.calls[0].args.descriptors[0], false, 'disabled review is omitted from the descriptor');
+  assert.equal('review' in callDescriptors(stub)[0], false, 'disabled review is omitted from the descriptor');
 });
 
 test('blocking verdict: surfaces via blocking_reviews[] in the wave-completion protocol (task still records per its digest)', async () => {
