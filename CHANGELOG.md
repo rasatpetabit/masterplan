@@ -1,5 +1,12 @@
 # Changelog
 
+## [9.6.0]
+
+### Changed
+- **L2 surface deleted** — fabric is the only execute-wave path (`dispatch_fabric` / `mp dispatch-wave`).
+- Planning fan-out is `dispatch_plan` with concurrent `dispatch_task` (MCP fanout retired).
+- `commands/masterplan.md` op table rewritten fabric-only; V5 orphan-grep enforces no live L2 refs.
+
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
