@@ -414,7 +414,7 @@ test('broker failure: blocked/broker_error digests recorded, dispatch_degraded e
 
   const state = readState(fx.statePath);
   assert.ok(state.tasks.every((t) => t.status === 'pending'), 'blocked digests leave tasks pending for recovery');
-  assert.ok(state.active_run, 'marker survives a failed wave (recover_and_redispatch owns it)');
+  assert.ok(state.active_run, 'marker survives a failed wave (recover_wave owns it)');
   const degraded = readEvents(fx.bundleDir).filter((e) => e.type === 'dispatch_degraded');
   assert.equal(degraded.length, 2);
   assert.ok(degraded.every((e) => e.outcome === 'broker_error'));

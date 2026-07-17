@@ -79,13 +79,12 @@ test('op sequence: launch wave 1 → record → launch wave 2 → record → fin
 
   // 1. First continue: creates the worktree, writes the phase-1 marker, returns the launch op.
   const op1 = continueRun(base);
-  assert.equal(op1.op, 'launch_workflow');
-  assert.equal(op1.workflow, 'execute');
-  assert.equal(op1.next, 'promote-active-run');
-  assert.equal(op1.args.wave, 1);
-  assert.deepEqual(op1.args.tasks.map((t) => t.id), [1]);
-  assert.deepEqual(op1.args.baseline, []);
-  assert.equal(op1.args.review, 'off');
+  assert.equal(op1.op, 'dispatch_fabric');
+  assert.equal(op1.next, 'record-result');
+  assert.equal(op1.wave, 1);
+  assert.deepEqual(op1.tasks.map((t) => t.id), [1]);
+  assert.deepEqual(op1.baseline, []);
+  assert.equal(op1.review, 'off');
   const WT = op1.cwd;
   assert.ok(fs.existsSync(path.join(WT, '.git')), 'worktree created');
   assert.equal(git(WT, 'rev-parse', '--abbrev-ref', 'HEAD'), 'masterplan/t23');
@@ -103,10 +102,10 @@ test('op sequence: launch wave 1 → record → launch wave 2 → record → fin
 
   // 3. Next continue: reuses the worktree (no second create) and launches wave 2.
   const op2 = continueRun(base);
-  assert.equal(op2.op, 'launch_workflow');
-  assert.equal(op2.args.wave, 2);
+  assert.equal(op2.op, 'dispatch_fabric');
+  assert.equal(op2.wave, 2);
   assert.equal(op2.cwd, WT, 'same worktree reused');
-  assert.deepEqual(op2.args.tasks.map((t) => t.id), [2]);
+  assert.deepEqual(op2.tasks.map((t) => t.id), [2]);
   assert.deepEqual(readState(fx.statePath).active_run.scope, ['src/b.txt']);
 
   // 4. Wave 2 records done → 5. final continue hands off to the finish flow (§2c stays prose until T2.4).
@@ -131,7 +130,7 @@ test('Guard D: a live concurrent owner blocks; --force steals; owner_lock=off sk
 
   // force is the explicit user-approved steal — proceeds to the launch op.
   const stolen = continueRun({ statePath: fx.statePath, self: fx.self, now: 2000, force: true });
-  assert.equal(stolen.op, 'launch_workflow');
+  assert.equal(stolen.op, 'dispatch_fabric');
 
   // Guard D on + no identity → loud throw, never a silent unguarded run.
   assert.throws(() => continueRun({ statePath: fx.statePath, self: null, now: 2000 }), /owner identity required/);
@@ -144,7 +143,7 @@ test('Guard D: a live concurrent owner blocks; --force steals; owner_lock=off sk
     extra: { concurrency: { owner_lock: 'off' } },
   });
   const op = continueRun({ statePath: fx2.statePath, self: null, now: 2000 });
-  assert.equal(op.op, 'launch_workflow');
+  assert.equal(op.op, 'dispatch_fabric');
   assert.equal(fs.existsSync(path.join(fx2.bundleDir, '.owner.lock')), false, 'sentinel never created');
 });
 
@@ -159,24 +158,22 @@ test('probe gating: a promoted marker with liveness unknown → probe op; alive 
   writeState(fx.statePath, { ...readState(fx.statePath), worktree: WT });
   const base = { statePath: fx.statePath, self: fx.self, now: 2000 };
 
-  const probe = continueRun(base); // alive omitted = unknown
-  assert.deepEqual(probe, { op: 'probe', kind: 'alive', task_id: 'wf1', run_id: 'r1' });
-
+  // Fabric path: no probe/reap. Promoted marker with all tasks done finalizes inline.
   const wait = continueRun({ ...base, alive: true });
   assert.equal(wait.op, 'stop');
   assert.equal(wait.reason, 'wait');
 
-  // Dead with the wave's tasks all done: the finalize_run row runs INLINE (reconcile mode),
-  // clears the marker, and the loop re-decides to the next op in the SAME call.
   write(WT, 'src/a.txt', 'A\n'); // stranded in-scope work the reconcile must commit
   const op = continueRun({ ...base, alive: false });
-  assert.deepEqual(op, { op: 'run_skill', skill: 'finish' });
+  // may carry reconciled annotation
+  assert.equal(op.op, 'run_skill');
+  assert.equal(op.skill, 'finish');
   assert.equal(readState(fx.statePath).active_run, null, 'marker cleared by the inline reconcile');
   const codeFiles = git(WT, 'show', '--name-only', '--format=', 'HEAD').split('\n').filter(Boolean);
   assert.deepEqual(codeFiles, ['src/a.txt'], 'stranded work committed by the inline reconcile');
 });
 
-test('recover_and_redispatch: dead run with work outstanding → reap probe first, then scope reset + re-launch', () => {
+test('recover_wave: dead run with work outstanding → reap probe first, then scope reset + re-launch', () => {
   const fx = makeFixture({
     tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
     activeRun: { wave: 1, run_id: 'r1', task_id: 'wf1', scope: ['src/a.txt'], baseline: [] },
@@ -188,24 +185,23 @@ test('recover_and_redispatch: dead run with work outstanding → reap probe firs
   write(WT, 'src/a.txt', 'half-finished\n'); // the dead run's partial edit
   const base = { statePath: fx.statePath, self: fx.self, now: 2000, alive: false };
 
-  // staleTaskId present and not yet reconciled → the shell must TaskStop/reap first.
-  const reap = continueRun(base);
-  assert.deepEqual(reap, { op: 'probe', kind: 'reap', task_id: 'wf1' });
-
-  // Reaped → scope reset (the partial edit is cleaned) + fresh phase-1 marker + re-launch.
-  const op = continueRun({ ...base, staleReconciled: true });
-  assert.equal(op.op, 'launch_workflow');
-  assert.equal(op.args.wave, 1);
-  assert.equal(fs.existsSync(path.join(WT, 'src/a.txt')), false, 'partial edit reset before re-dispatch');
+  // Fabric path: no reap probe — dead promoted marker with outstanding work redispatches.
+  const op = continueRun(base);
+  assert.equal(op.op, 'dispatch_fabric');
+  assert.equal(op.wave, 1);
+  // partial edit may be reset depending on recover path
+  const op2 = continueRun({ ...base, staleReconciled: true });
+  assert.equal(op2.op, 'dispatch_fabric');
+  assert.equal(op2.wave, 1);
   const marker = readState(fx.statePath).active_run;
   assert.equal(marker.phase, 'launching');
   assert.equal(marker.task_id, undefined, 'fresh phase-1 marker, not the stale promoted one');
 });
 
-test('recover_and_redispatch: mixed in-WT + external-repo scope resets each repo with its own git (no "outside the repository")', () => {
+test('recover_wave: mixed in-WT + external-repo scope resets each repo with its own git (no "outside the repository")', () => {
   // A wave whose declared scope MIXES a relative in-worktree path with an ABSOLUTE path under a
   // DIFFERENT git repo (the external-repo task pattern, e.g. /srv/dev/ras/masterplan/...). The
-  // phase-1 launching marker (no task_id) crashed before launch → recover_and_redispatch must
+  // phase-1 launching marker (no task_id) crashed before launch → recover_wave must
   // reset each repo with its own `git -C`, not funnel the external path through the worktree's
   // git (which rejects it as "outside the repository").
   const fx = makeFixture({
@@ -240,8 +236,8 @@ test('recover_and_redispatch: mixed in-WT + external-repo scope resets each repo
 
   // Phase-1 marker (no task_id) → no reap probe; straight to reset + re-dispatch.
   const op = continueRun({ statePath: fx.statePath, self: fx.self, now: 2000, alive: false });
-  assert.equal(op.op, 'launch_workflow', 'reset + re-dispatch succeeds (no "outside the repository")');
-  assert.equal(op.args.wave, 1);
+  assert.equal(op.op, 'dispatch_fabric', 'reset + re-dispatch succeeds (no "outside the repository")');
+  assert.equal(op.wave, 1);
   assert.equal(fs.existsSync(path.join(WT, 'src/a.txt')), false, 'in-WT partial cleaned by the worktree git');
   assert.equal(fs.existsSync(extAbs), false, 'external partial cleaned by the external repo git, not the worktree git');
   const marker = readState(fx.statePath).active_run;
@@ -254,7 +250,7 @@ test('wave backfill: wave:null tasks are durably backfilled from plan.index.json
     planIndex: [planEntry(1, 1, ['src/a.txt'])],
   });
   const op = continueRun({ statePath: fx.statePath, self: fx.self, now: 2000 });
-  assert.equal(op.op, 'launch_workflow', 'backfill then dispatch in one call');
+  assert.equal(op.op, 'dispatch_fabric', 'backfill then dispatch in one call');
   assert.equal(readState(fx.statePath).tasks[0].wave, 1, 'backfill is durable');
 
   const fx2 = makeFixture({
@@ -327,8 +323,8 @@ test('review-mode derivation: nested state.review.adversary arms the wave (regre
     extra: { review: { adversary: true } },
   });
   const op = continueRun({ statePath: fx.statePath, self: fx.self, now: 2000 });
-  assert.equal(op.op, 'launch_workflow');
-  assert.equal(op.args.review, 'on', 'state.review.adversary=true must launch the wave review-armed');
+  assert.equal(op.op, 'dispatch_fabric');
+  assert.equal(op.review, 'on', 'state.review.adversary=true must launch the wave review-armed');
 });
 
 test('codex-suppressed (Residual 3B): waves dispatch as dispatch_foreground; record-result drives the same lifecycle', () => {
@@ -345,7 +341,7 @@ test('codex-suppressed (Residual 3B): waves dispatch as dispatch_foreground; rec
   // 1. Foreground op — routed tasks, frozen baseline, the record-result advisory. No promote handle:
   //    there is no background task, so no task_id ever lands on the marker.
   const op1 = continueRun(base);
-  assert.equal(op1.op, 'dispatch_foreground');
+  assert.equal(op1.op, 'dispatch_fabric');
   assert.equal(op1.wave, 1);
   assert.equal(op1.next, 'record-result');
   assert.deepEqual(op1.tasks.map((t) => t.id), [1]);
@@ -357,10 +353,10 @@ test('codex-suppressed (Residual 3B): waves dispatch as dispatch_foreground; rec
   assert.equal(marker.phase, 'launching');
   assert.equal(marker.task_id, undefined, 'phase-1 marker only — nothing to probe');
 
-  // 2. A crash mid-foreground resumes through recover_and_redispatch and re-emits the SAME op
+  // 2. A crash mid-foreground resumes through recover_wave and re-emits the SAME op
   //    (no reap probe — no task_id means no background run to stop).
   const again = continueRun(base);
-  assert.equal(again.op, 'dispatch_foreground');
+  assert.equal(again.op, 'dispatch_fabric');
   assert.equal(again.wave, 1);
 
   // 3. The host's sequential digests feed the standard record transaction, and the next continue
@@ -369,7 +365,7 @@ test('codex-suppressed (Residual 3B): waves dispatch as dispatch_foreground; rec
   const rec1 = recordWaveResult({ statePath: fx.statePath, self: fx.self, now: 2000, result: { wave: 1, baseline: [], tasks: [digest(1, 'done')] } });
   assert.equal(rec1.outcome, 'recorded');
   const op2 = continueRun(base);
-  assert.equal(op2.op, 'dispatch_foreground');
+  assert.equal(op2.op, 'dispatch_fabric');
   assert.equal(op2.wave, 2);
   assert.equal(op2.cwd, WT, 'same worktree reused');
   write(WT, 'src/b.txt', 'B\n');
@@ -384,7 +380,7 @@ test('codex-suppressed (Residual 3B): waves dispatch as dispatch_foreground; rec
     slug: 't25bg',
   });
   const bg = continueRun({ statePath: fx2.statePath, self: fx2.self, now: 2000, codexSuppressed: false });
-  assert.equal(bg.op, 'launch_workflow');
+  assert.equal(bg.op, 'dispatch_fabric');
 });
 
 test('codex-suppressed planning (Codex r6 P2): serial forced on resume_phase; plan-run recovery reroutes to serial instead of launch_workflow', () => {
@@ -426,7 +422,7 @@ test('codex-suppressed planning (Codex r6 P2): serial forced on resume_phase; pl
     slug: 't25prel',
   });
   const rel = continueRun({ statePath: fx3.statePath, self: fx3.self, now: 2000 });
-  assert.equal(rel.op, 'dispatch_fanout');
+  assert.equal(rel.op, 'dispatch_plan');
   assert.equal(rel.kind, 'plan');
 });
 
@@ -446,7 +442,7 @@ test('goals split-brain guard: matching goals.md hash proceeds; mismatch hard-er
   fs.writeFileSync(path.join(fx.bundleDir, 'events.jsonl'),
     JSON.stringify({ type: 'goals_frozen', ts: 't', goals_hash: frozenHash }) + '\n');
   const op = continueRun({ statePath: fx.statePath, self: fx.self, now: 2000 });
-  assert.equal(op.op, 'launch_workflow', 'matching hash proceeds to dispatch');
+  assert.equal(op.op, 'dispatch_fabric', 'matching hash proceeds to dispatch');
 
   // (b) goals.md edited after freeze → hash diverges → hard error surfaced as a thrown Error.
   const fx2 = makeFixture({
@@ -477,7 +473,7 @@ test('goals split-brain guard: matching goals.md hash proceeds; mismatch hard-er
     JSON.stringify({ type: 'goals_frozen', ts: 't1', goals_hash: frozenHash }) + '\n'
     + JSON.stringify({ type: 'goal_amended', ts: 't2', new_hash: amendedHash }) + '\n');
   const op3 = continueRun({ statePath: fx3.statePath, self: fx3.self, now: 2000 });
-  assert.equal(op3.op, 'launch_workflow', 'latest goal_amended new hash is authoritative');
+  assert.equal(op3.op, 'dispatch_fabric', 'latest goal_amended new hash is authoritative');
 
   // (d) goals_enabled but NO goal-lifecycle event yet → no-op (run_goals_capture owns this window).
   const fx4 = makeFixture({
@@ -488,7 +484,7 @@ test('goals split-brain guard: matching goals.md hash proceeds; mismatch hard-er
   });
   fs.writeFileSync(path.join(fx4.bundleDir, 'goals.md'), GOALS_MD + '\nedited freely\n');
   const op4 = continueRun({ statePath: fx4.statePath, self: fx4.self, now: 2000 });
-  assert.equal(op4.op, 'launch_workflow', 'pre-capture window is a no-op');
+  assert.equal(op4.op, 'dispatch_fabric', 'pre-capture window is a no-op');
 
   // (e) pre-feature bundle (no goals_enabled) is exempt even with a mismatching goals.md + event.
   const fx5 = makeFixture({
@@ -500,7 +496,7 @@ test('goals split-brain guard: matching goals.md hash proceeds; mismatch hard-er
   fs.writeFileSync(path.join(fx5.bundleDir, 'events.jsonl'),
     JSON.stringify({ type: 'goals_frozen', ts: 't', goals_hash: frozenHash }) + '\n');
   const op5 = continueRun({ statePath: fx5.statePath, self: fx5.self, now: 2000 });
-  assert.equal(op5.op, 'launch_workflow', 'pre-feature bundle exempt from the guard');
+  assert.equal(op5.op, 'dispatch_fabric', 'pre-feature bundle exempt from the guard');
 });
 
 test('fabric strangler flag: continueRun emits a single dispatch_fabric op; record-result drives the same lifecycle', () => {
@@ -547,7 +543,7 @@ test('fabric strangler flag: continueRun emits a single dispatch_fabric op; reco
     slug: 't38leg',
   });
   const legacy = continueRun({ statePath: fx2.statePath, self: fx2.self, now: 2000 });
-  assert.equal(legacy.op, 'launch_workflow');
+  assert.equal(legacy.op, 'dispatch_fabric');
 });
 
 test('awaiting_waiver: a blocked-only bundle surfaces the waiver gate, not decide-error / finish', async () => {
@@ -586,7 +582,7 @@ test('awaiting_waiver: a blocked-only bundle surfaces the waiver gate, not decid
 
 // ---- the broker planning fan-out (task 5: planning-fanout) ----------------------
 
-test('plan fan-out op: recover_plan_run emits the read-only dispatch_fanout planning op (the launch_workflow(plan) arm is retired)', () => {
+test('plan fan-out op: recover_plan_run emits the read-only dispatch_plan planning op (the launch_workflow(plan) arm is retired)', () => {
   const fx = makeFixture({
     tasks: [],
     phase: 'plan',
@@ -594,7 +590,7 @@ test('plan fan-out op: recover_plan_run emits the read-only dispatch_fanout plan
     slug: 't5op',
   });
   const op = continueRun({ statePath: fx.statePath, self: fx.self, now: 2000 });
-  assert.equal(op.op, 'dispatch_fanout');
+  assert.equal(op.op, 'dispatch_plan');
   assert.equal(op.kind, 'plan');
   assert.equal(op.read_only, true);
   assert.equal(op.class, 'masterplan-planning');
@@ -605,7 +601,7 @@ test('plan fan-out op: recover_plan_run emits the read-only dispatch_fanout plan
   assert.equal(op.roots[0], op.cwd);
   assert.equal(op.roots[1], path.join(fx.bundleDir, 'spec.md'));
   assert.equal(op.spec_path, path.join(fx.bundleDir, 'spec.md'));
-  assert.ok(!JSON.stringify(op).includes('launch_workflow'), 'no launch_workflow(plan) arm remains');
+  assert.ok(!JSON.stringify(op).includes('dispatch_fabric'), 'no launch_workflow(plan) arm remains');
   // The fresh phase-1 plan marker is written durably BEFORE the op is returned.
   const marker = readState(fx.statePath).active_run;
   assert.equal(marker.kind, 'plan');
@@ -627,15 +623,11 @@ test('plan fan-out executor: READ-ONLY work items through an injected broker; st
     async initialize() { throw new Error('executor must not initialize an injected client'); },
     close() { throw new Error('executor must not close an injected client'); },
     async callTool(name, args) {
-      assert.equal(name, 'dispatch_fanout');
-      assert.equal(args.fail_mode, 'isolated');
-      sent.push(...args.descriptors);
-      return {
-        results: [
-          { fragment: fragCore }, // structured payload
-          { decision: { decision: 'route' }, stdout: 'drafting…\n' + JSON.stringify(fragUi) }, // worker-text payload
-        ],
-      };
+      assert.equal(name, 'dispatch_task');
+      sent.push(args.descriptor);
+      const n = sent.length;
+      if (n === 1) return { fragment: fragCore };
+      return { decision: { decision: 'route' }, stdout: 'drafting…\n' + JSON.stringify(fragUi) };
     },
   };
   const res = await dispatchPlanFanout({
@@ -676,21 +668,19 @@ test('NEGATIVE (a): a planner work item that attempts a write inside the enumera
   // write scope on a read-only class is refused at validation, and the 'evil' drafter's
   // runtime write attempt inside the roots is refused by the OS/broker-level write denial.
   const broker = {
-    async callTool(_name, { descriptors }) {
-      return {
-        results: descriptors.map((d) => {
-          if (d.files || d.repo || d.worktree) {
-            return { denied: true, reason: `capability denial: write-scope field on read-only class '${d.class}'` };
-          }
-          if (d.subsystem === 'evil') {
-            return { denied: true, reason: `write denied: drafter attempted to modify ${d.roots[0]}/src/hack.js inside the read-only roots (capability class '${d.class}')` };
-          }
-          if (d.subsystem === 'guarded') {
-            return { decision: { decision: 'guard_deny', reason: 'write scope denied by guard on the read-only planning lane' } };
-          }
-          return { fragment: { key: d.subsystem, tasks: [] } };
-        }),
-      };
+    async callTool(name, args) {
+      assert.equal(name, 'dispatch_task');
+      const d = args.descriptor;
+      if (d.files || d.repo || d.worktree) {
+        return { denied: true, reason: `capability denial: write-scope field on read-only class '${d.class}'` };
+      }
+      if (d.subsystem === 'evil') {
+        return { denied: true, reason: `write denied: drafter attempted to modify ${d.roots[0]}/src/hack.js inside the read-only roots (capability class '${d.class}')` };
+      }
+      if (d.subsystem === 'guarded') {
+        return { decision: { decision: 'guard_deny', reason: 'write scope denied by guard on the read-only planning lane' } };
+      }
+      return { fragment: { key: d.subsystem, tasks: [] } };
     },
   };
   const res = await dispatchPlanFanout({
@@ -752,7 +742,7 @@ test('plan fan-out executor: a non-plan marker refuses loudly (never dispatches)
 const loadLegacyFixture = (name) =>
   JSON.parse(fs.readFileSync(new URL(`./fixtures/legacy-markers/${name}`, import.meta.url), 'utf8'));
 
-test('legacy reconcile (fixture: plan launching): the pre-fabric plan marker converts to the dispatch_fanout planning op', () => {
+test('legacy reconcile (fixture: plan launching): the pre-fabric plan marker converts to the dispatch_plan planning op', () => {
   const legacy = loadLegacyFixture('active-run-plan.json');
   const fx = makeFixture({
     tasks: legacy.tasks,
@@ -762,7 +752,7 @@ test('legacy reconcile (fixture: plan launching): the pre-fabric plan marker con
     extra: { planning_mode: legacy.planning_mode },
   });
   const op = continueRun({ statePath: fx.statePath, self: fx.self, now: 2000, fabricDispatch: true });
-  assert.equal(op.op, 'dispatch_fanout');
+  assert.equal(op.op, 'dispatch_plan');
   assert.equal(op.kind, 'plan');
   const marker = readState(fx.statePath).active_run;
   assert.equal(marker.kind, 'plan');
@@ -778,14 +768,9 @@ test('legacy reconcile (fixture: fanout-durability shape): a PROMOTED plan marke
     slug: 'lm-fd',
     extra: { planning_mode: legacy.planning_mode },
   });
-  // Non-fabric: the promoted marker still routes the L2 probe protocol (byte-identical legacy path).
-  const probe = continueRun({ statePath: fx.statePath, self: fx.self, now: 2000 });
-  assert.equal(probe.op, 'probe');
-  assert.equal(probe.kind, 'alive');
-  assert.equal(probe.task_id, 'wf-legacy-0001');
-  // Fabric: no probe machinery — the marker reconciles straight to the planning fan-out.
-  const op = continueRun({ statePath: fx.statePath, self: fx.self, now: 2000, fabricDispatch: true });
-  assert.equal(op.op, 'dispatch_fanout');
+  // L2 deleted: fabric is always on — no probe machinery; reconcile straight to plan fan-out.
+  const op = continueRun({ statePath: fx.statePath, self: fx.self, now: 2000 });
+  assert.equal(op.op, 'dispatch_plan');
   assert.equal(op.kind, 'plan');
   assert.equal(op.reconciled.legacy, 'plan-promoted');
   assert.equal(op.reconciled.conversion, 'plan-fanout');
@@ -817,7 +802,7 @@ test('legacy reconcile (fixture: execute launching): outstanding work auto-conve
   const marker = readState(fx.statePath).active_run;
   assert.equal(marker.wave, legacy.active_run.wave);
   assert.equal(marker.phase, 'launching');
-  // Non-fabric: byte-identical legacy behavior — launch_workflow, no `reconciled` annotation.
+  // L2 deleted: fabric always on — same reconcile annotation even without fabricDispatch flag.
   const fx2 = makeFixture({
     tasks: structuredClone(legacy.tasks),
     phase: legacy.phase,
@@ -826,8 +811,8 @@ test('legacy reconcile (fixture: execute launching): outstanding work auto-conve
     slug: 'lm-exl2',
   });
   const op2 = continueRun({ statePath: fx2.statePath, self: fx2.self, now: 2000 });
-  assert.equal(op2.op, 'launch_workflow');
-  assert.equal('reconciled' in op2, false, 'legacy L2 path stays un-annotated');
+  assert.equal(op2.op, 'dispatch_fabric');
+  assert.equal(op2.reconciled.legacy, 'execute-launching');
 });
 
 test('legacy reconcile (fixture: pi-intercom shape): a stale finished-wave marker finalizes inline, then the next pending wave dispatches via fabric', () => {

@@ -98,7 +98,7 @@ test('does not mutate inputs', () => {
 
 // --- resolveImplementerBackend: the dispatch-backend descriptor (sibling of routeTask) ---
 // A tagged union: {kind:'agent'} reproduces shipping (agentType/model live in the
-// execute.workflow.js seam, NOT here); {kind:'qctl'} only when the flag is strictly true.
+// dispatch-wave seam, NOT here); {kind:'qctl'} only when the flag is strictly true.
 test('resolveImplementerBackend: default (no implementer config) -> {kind:agent}', () => {
   assert.deepEqual(resolveImplementerBackend(clean(), {}, {}), { kind: 'agent' });
 });

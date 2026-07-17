@@ -63,7 +63,7 @@ test('active run dead with work outstanding -> recover; reset only the wave\'s i
     ],
   });
   const d = decideNextAction(s, { alive: false });
-  assert.equal(d.action, 'recover_and_redispatch');
+  assert.equal(d.action, 'recover_wave');
   assert.equal(d.wave, 2);
   assert.deepEqual(d.tasks.map((x) => x.id), [2]);
   assert.deepEqual(d.resetPaths, ['b.txt', 'c.txt']);
@@ -74,7 +74,7 @@ test('missing liveness while active run set (has task_id) -> treated as dead -> 
   const run = { run_id: 'wf_1', task_id: 'k1', wave: 1 };
   const s = base({ active_run: run, tasks: [t(1, 1, 'pending', ['a.txt'])] });
   const d = decideNextAction(s);
-  assert.equal(d.action, 'recover_and_redispatch');
+  assert.equal(d.action, 'recover_wave');
   assert.equal(d.staleTaskId, 'k1');
 });
 
@@ -84,7 +84,7 @@ test('active_run phase-1 (launching, NO task_id) -> recover, staleTaskId null (c
   // prevents a double-dispatch onto a Workflow that may or may not have actually started.
   const s = base({ active_run: { wave: 2, phase: 'launching' }, tasks: [t(1, 1, 'done'), t(2, 2, 'pending', ['b.txt'])] });
   const d = decideNextAction(s, {});
-  assert.equal(d.action, 'recover_and_redispatch');
+  assert.equal(d.action, 'recover_wave');
   assert.equal(d.wave, 2);
   assert.deepEqual(d.tasks.map((x) => x.id), [2]);
   assert.equal(d.staleTaskId, null);
@@ -373,7 +373,7 @@ test('is pure: does not mutate the input state', () => {
 });
 
 test('GUARD: a promoted active_run with a non-integer (null) wave throws — never silently finalizes', () => {
-  // The HIGH regression: promote-active-run with no phase-1 launching marker wrote {wave:null,…};
+  // The HIGH regression: promote-run with no phase-1 launching marker wrote {wave:null,…};
   // the activeRun branch then computed incomplete=[] (null matches no integer-wave task) and
   // returned finalize_run while tasks were still pending — clearing the marker, orphaning the run.
   // The guard mirrors the dispatch-branch non-integer-wave guard: fail loud, don't finalize.
@@ -547,13 +547,13 @@ test('unknown/corrupt blackboard status is treated as absent -> re-dispatch (§5
   assert.equal(d.redispatch.length, 1);
 });
 
-test('no blackboard map -> legacy recover_and_redispatch (byte-identical, A9)', () => {
+test('no blackboard map -> legacy recover_wave (byte-identical, A9)', () => {
   // No state.blackboard -> the seam falls back to the legacy path, byte-identical to pre-blackboard.
   const key = makeHandoffKey('t1');
   const task = bt('t1', 1, 'pending', ['t1.txt'], key);
   const s = base({ active_run: { run_id: 'run-x', task_id: 7, wave: 1 }, tasks: [task] });
   const d = decideNextAction(s, { alive: false });
-  assert.equal(d.action, 'recover_and_redispatch');
+  assert.equal(d.action, 'recover_wave');
   assert.deepEqual(d.tasks, [task]);
   assert.deepEqual(d.resetPaths, ['t1.txt']);
   assert.equal(d.staleTaskId, 7);

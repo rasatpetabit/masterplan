@@ -41,7 +41,7 @@ const fpArgs = () => ({
   head: 'a'.repeat(40),
   dirtyDigest: 'b'.repeat(64),
   policyVersion: 'policy-v3',
-  workerVersion: 'mp-implementer@8.1.0',
+  workerVersion: 'worker-digest@8.1.0',
 });
 
 // ---------------------------------------------------------------------------
@@ -128,7 +128,7 @@ test('computeInputFingerprint changes with each individual input', () => {
     ['head', 'c'.repeat(40)],
     ['dirtyDigest', 'd'.repeat(64)],
     ['policyVersion', 'policy-v4'],
-    ['workerVersion', 'mp-implementer@9.0.0'],
+    ['workerVersion', 'worker-digest@9.0.0'],
   ]) {
     assert.notEqual(base, computeInputFingerprint({ ...fpArgs(), [k]: v }), `changing ${k} must change the fingerprint`);
   }

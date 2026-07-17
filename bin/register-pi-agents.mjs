@@ -43,7 +43,7 @@ function resolveRepoRoot() {
 // the constant remains so managed cleanup can target leftover masterplan:mp-*.md.
 const COLON_PREFIX = 'masterplan:';
 
-// Agents that are CC-only by design and must NOT be registered for pi. mp-implementer's
+// Agents that are CC-only by design and must NOT be registered for pi. worker-digest's
 // entire contract is "route every edit to the local skynet MCP" — it has no Edit/Write
 // tool BY DESIGN. pi has no skynet MCP server; pi uses dispatch_task for edits.
 // Skip bare install; managed colon leftovers for this name are still cleaned.

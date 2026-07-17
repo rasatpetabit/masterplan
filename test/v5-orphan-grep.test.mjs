@@ -45,10 +45,10 @@ function makeCleanTree() {
   mkdirSync(path.join(dir, 'docs', 'masterplan', 'old-run'), { recursive: true });
   writeFileSync(
     path.join(dir, 'docs', 'masterplan', 'old-run', 'retro.md'),
-    'historical bundle: launch_workflow / execute.workflow / mp-implementer\n',
+    'historical bundle: launch_workflow / execute.workflow / worker-digest\n',
   );
   writeFileSync(path.join(dir, 'CHANGELOG.md'), 'v9: removed the dispatch_foreground op\n');
-  writeFileSync(path.join(dir, 'WORKLOG.md'), 'deleted agents/mp-implementer.md and plan.workflow.js\n');
+  writeFileSync(path.join(dir, 'WORKLOG.md'), 'deleted agents/worker-digest.md and plan.workflow.js\n');
   return dir;
 }
 

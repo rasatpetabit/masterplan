@@ -1,9 +1,11 @@
-// test/fabric-codex-suppressed.test.mjs — C4 pre-deletion smoke (Task 9).
+// test/fabric-codex-suppressed.test.mjs — C4 pre-deletion smoke (Task 9) + L2-deletion survivor.
 //
 // Proves codex-suppressed / no-Workflow hosts stay on the fabric path:
-// continue → dispatch_fabric (never dispatch_foreground/launch_workflow),
-// and the real CLI `bin/masterplan.mjs dispatch-wave --codex-suppressed`
-// produces a dispatch record with routing_inputs + digests.
+// continue → dispatch_fabric only, and the real CLI `bin/masterplan.mjs
+// dispatch-wave --codex-suppressed` produces a dispatch record.
+//
+// Note: this file intentionally names the deleted L2 op strings inside negative
+// regex checks (v5-orphan allowlisted) so a regression reintroducing them fails.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -24,6 +26,9 @@ import { buildWorkItem } from '../lib/dispatch/adsp-adapter.mjs';
 
 const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const binMasterplan = path.join(repoRoot, 'bin', 'masterplan.mjs');
+
+// Deleted L2 op names — kept as literals for negative checks (allowlisted by v5).
+const LEGACY_L2_OPS = 'launch_workflow|dispatch_foreground';
 
 function git(dir, ...args) {
   return String(execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' })).trim();
@@ -64,7 +69,7 @@ function makeScratch({ slug = 'c4-codex' } = {}) {
   return { tmp, MAIN, bundleDir, statePath, self, slug };
 }
 
-test('continue under codex-suppressed emits dispatch_fabric (never foreground/launch_workflow)', () => {
+test('continue under codex-suppressed emits dispatch_fabric only', () => {
   const fx = makeScratch({ slug: 'c4-continue' });
   const op = continueRun({
     statePath: fx.statePath,
@@ -74,10 +79,7 @@ test('continue under codex-suppressed emits dispatch_fabric (never foreground/la
     fabricDispatch: true,
   });
   assert.equal(op.op, 'dispatch_fabric');
-  assert.notEqual(op.op, 'dispatch_foreground');
-  assert.notEqual(op.op, 'launch_workflow');
   assert.ok(Array.isArray(op.tasks) && op.tasks.length === 1);
-  // Work items build with no Workflow-tool dependency.
   const wi = buildWorkItem({
     task_id: op.tasks[0].id,
     description: op.tasks[0].description,
@@ -133,33 +135,22 @@ test('library path: dispatch-wave with codexSuppressed records digests + routing
   assert.equal(rec.status, 'recorded');
 });
 
-test('CLI e2e: bin/masterplan.mjs dispatch-wave --codex-suppressed produces dispatch_fabric record', () => {
-  // End-to-end against the real CLI entrypoint (C4 R6 mandatory path).
-  // Broker is the live agent-dispatch; we use a one-task wave with empty
-  // verify so a gateway edit failure still leaves a durable record (pending
-  // or recorded) rather than a crash. Assertions: (a) no launch_workflow /
-  // dispatch_foreground in output, (b) op/outcome mentions fabric or
-  // dispatched/flag, (c) wave-dispatch record exists with routing_inputs.
+test('CLI e2e: bin/masterplan.mjs dispatch-wave --codex-suppressed produces fabric record', () => {
   const fx = makeScratch({ slug: 'c4-cli' });
-  // Seed the phase-1 marker the way the shell would: continue under suppression.
   const sid = 'c4-cli-session';
   const cont = spawnSync(
     process.execPath,
     [binMasterplan, 'continue', `--state=${fx.statePath}`, '--codex-suppressed', `--session=${sid}`],
     { encoding: 'utf8', cwd: repoRoot, env: { ...process.env, CLAUDE_CODE_SESSION_ID: sid } },
   );
-  // continue may need fabric flag already on state — we set dispatch.fabric:true.
-  // Owner/session may cause non-zero; still parse stdout for op shape when present.
   const contOut = `${cont.stdout}\n${cont.stderr}`;
   if (contOut.includes('"op"')) {
     assert.ok(
-      !/"op"\s*:\s*"(launch_workflow|dispatch_foreground)"/.test(contOut),
-      `continue must not emit legacy L2 ops under --codex-suppressed: ${contOut.slice(0, 400)}`,
+      !new RegExp(`"op"\\s*:\\s*"(${LEGACY_L2_OPS})"`).test(contOut),
+      `continue must not emit legacy L2 ops: ${contOut.slice(0, 400)}`,
     );
   }
 
-  // Ensure a launching marker exists even if CLI continue failed owner checks —
-  // fall back to library continue with explicit self.
   let state = readState(fx.statePath);
   if (!state.active_run) {
     continueRun({
@@ -175,13 +166,7 @@ test('CLI e2e: bin/masterplan.mjs dispatch-wave --codex-suppressed produces disp
 
   const dw = spawnSync(
     process.execPath,
-    [
-      binMasterplan,
-      'dispatch-wave',
-      `--state=${fx.statePath}`,
-      '--codex-suppressed',
-      `--session=${sid}`,
-    ],
+    [binMasterplan, 'dispatch-wave', `--state=${fx.statePath}`, '--codex-suppressed', `--session=${sid}`],
     {
       encoding: 'utf8',
       cwd: repoRoot,
@@ -190,22 +175,16 @@ test('CLI e2e: bin/masterplan.mjs dispatch-wave --codex-suppressed produces disp
     },
   );
   const out = `${dw.stdout}\n${dw.stderr}`;
-  // Must not crash with a stack trace.
+  assert.ok(!/\sat\s+\S+\.(mjs|js):\d+/.test(out), `CLI must not stack-trace: ${out.slice(0, 600)}`);
   assert.ok(
-    !/\sat\s+\S+\.(mjs|js):\d+/.test(out),
-    `CLI must not stack-trace: ${out.slice(0, 600)}`,
-  );
-  assert.ok(
-    !/"op"\s*:\s*"(launch_workflow|dispatch_foreground)"/.test(out),
+    !new RegExp(`"op"\\s*:\\s*"(${LEGACY_L2_OPS})"`).test(out),
     `CLI output must not be a legacy L2 op: ${out.slice(0, 400)}`,
   );
-  // A fabric-shaped outcome: dispatched / reused / flag-off / or ask — not silent.
   assert.ok(
     /"outcome"\s*:|"dispatched"\s*:|"op"\s*:\s*"dispatch_fabric"|flag-off|owner/.test(out),
     `CLI must emit a recognizable fabric/dispatch outcome: ${out.slice(0, 600)}`,
   );
 
-  // If a wave-dispatch record was written, it must carry routing_inputs (frozen).
   const rec = readWaveDispatchRecord(fx.bundleDir, state.active_run?.wave ?? 0);
   if (rec) {
     assert.ok(rec.routing_inputs != null || rec.op === 'dispatch_fabric' || rec.key,

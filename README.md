@@ -52,15 +52,15 @@ masterplan v8 is a five-layer system. Each layer delegates downward and never wr
                         │ launch + receive digests
 ┌───────────────────────▼─────────────────────────────────────┐
 │  L2 — Workflow engine                                        │
-│  workflows/execute.workflow.js  (one wave per launch)        │
-│  workflows/plan.workflow.js     (subsystem fan-out)          │
+│  workflows/dispatch-wave  (one wave per launch)        │
+│  workflows/dispatch-plan     (subsystem fan-out)          │
 │  lib/plan-merge.mjs  lib/dispatch/  lib/wave.mjs             │
 │  ← returns digests/fragments only; never writes disk/git     │
 └───────────────────────┬─────────────────────────────────────┘
                         │ bounded briefs / structured digests
 ┌───────────────────────▼─────────────────────────────────────┐
 │  L3 — Agents                                                 │
-│  agents/mp-explorer.md        agents/mp-implementer.md       │
+│  agents/mp-explorer.md        agents/worker-agent.md       │
 │  agents/mp-planner.md         agents/mp-adversarial-reviewer.md │
 │  agents/mp-plan-reviewer.md   agents/mp-subsystem-planner.md │
 │  agents/mp-spec-decomposer.md                                │
@@ -188,7 +188,7 @@ The bundle + artifacts are sufficient to resume any run losslessly — including
 The L2 plan path produces `plan.index.json` without the LLM ever authoring the final bytes:
 
 1. Approved `spec.md` → `mp-spec-decomposer` carves file-disjoint **subsystems**.
-2. `plan.workflow.js` fans out one `mp-subsystem-planner` per subsystem in parallel; each returns a task **fragment**.
+2. `dispatch-plan` fans out one `mp-subsystem-planner` per subsystem in parallel; each returns a task **fragment**.
 3. `lib/plan-merge.mjs` merges deterministically:
    - Assigns integer task ids.
    - Assigns wave numbers via **Kahn topological order** with a file-conflict bump (dependency-free, file-disjoint tasks share the lowest wave = maximal safe parallelism).
@@ -205,7 +205,7 @@ A simpler serial path exists: `mp-planner` writes the plan directly; L1 still va
 The L2 execute path runs **one wave per workflow launch**:
 
 - `pipeline(tasks, implement, review)` is **non-barrier**: a task's review starts the moment its implement finishes.
-- Implementation is **inline-only** via `mp-implementer` (no Codex implementer path). Each implementer runs the task's `verify_commands` and returns a digest citing real output.
+- Implementation is **inline-only** via `worker-agent` (no Codex implementer path). Each implementer runs the task's `verify_commands` and returns a digest citing real output.
 - Review is **config-gated**: `mp-adversarial-reviewer` runs only when the bundle's review is armed (`state.review.adversary`, which `mp prepare-wave` surfaces to the L2 path as the `"on"` payload it gates on).
 
 After the wave barrier, L1 runs **D6 scope verification**:

@@ -68,19 +68,9 @@ const waveArgs = {
   review: 'on',
 };
 
-test('buildWaveDispatchOp: default path -> launch_workflow execute with promote-active-run', () => {
+test('buildWaveDispatchOp: default path -> dispatch_fabric with record-result (L2 deleted)', () => {
   assert.deepEqual(buildWaveDispatchOp(waveArgs), {
-    op: 'launch_workflow',
-    workflow: 'execute',
-    cwd: '/repo/.worktrees/slug',
-    args: { wave: 2, tasks: waveArgs.tasks, baseline: ['a.js'], repoRoot: '/repo/.worktrees/slug', review: 'on' },
-    next: 'promote-active-run',
-  });
-});
-
-test('buildWaveDispatchOp: codexSuppressed -> dispatch_foreground with record-result', () => {
-  assert.deepEqual(buildWaveDispatchOp({ ...waveArgs, codexSuppressed: true }), {
-    op: 'dispatch_foreground',
+    op: 'dispatch_fabric',
     wave: 2,
     cwd: '/repo/.worktrees/slug',
     tasks: waveArgs.tasks,
@@ -90,7 +80,19 @@ test('buildWaveDispatchOp: codexSuppressed -> dispatch_foreground with record-re
   });
 });
 
-test('buildWaveDispatchOp: fabric flag -> single dispatch_fabric op (supersedes the launch_workflow/foreground fork)', () => {
+test('buildWaveDispatchOp: codexSuppressed -> dispatch_fabric with record-result', () => {
+  assert.deepEqual(buildWaveDispatchOp({ ...waveArgs, codexSuppressed: true }), {
+    op: 'dispatch_fabric',
+    wave: 2,
+    cwd: '/repo/.worktrees/slug',
+    tasks: waveArgs.tasks,
+    baseline: ['a.js'],
+    review: 'on',
+    next: 'record-result',
+  });
+});
+
+test('buildWaveDispatchOp: fabric flag -> single dispatch_fabric op (supersedes the dispatch_fabric/foreground fork)', () => {
   assert.deepEqual(buildWaveDispatchOp({ ...waveArgs, fabric: true }), {
     op: 'dispatch_fabric',
     wave: 2,
@@ -102,22 +104,25 @@ test('buildWaveDispatchOp: fabric flag -> single dispatch_fabric op (supersedes 
   });
 });
 
-test('buildWaveDispatchOp: orchestrator host/HEAD provenance threads into the L2 launch args (Layer-4 guard wiring)', () => {
+test('buildWaveDispatchOp: orchestrator host/HEAD args ignored (fabric-only; no L2 launch args)', () => {
   const op = buildWaveDispatchOp({ ...waveArgs, orchestratorHost: 'mach-abc', orchestratorHead: 'deadbeef' });
-  assert.equal(op.op, 'launch_workflow');
-  assert.equal(op.args.orchestratorHost, 'mach-abc');
-  assert.equal(op.args.orchestratorHead, 'deadbeef');
-  // The pre-existing args are untouched.
-  assert.equal(op.args.wave, 2);
-  assert.equal(op.args.review, 'on');
+  assert.equal(op.op, 'dispatch_fabric');
+  assert.equal(op.next, 'record-result');
+  assert.equal(op.wave, 2);
+  assert.ok(!('args' in op), 'no L2 args bag on fabric op');
 });
 
-test('buildWaveDispatchOp: absent/null provenance is OMITTED (legacy unguarded path, byte-identical default args)', () => {
+test('buildWaveDispatchOp: fabric shape is stable regardless of provenance flags', () => {
   const op = buildWaveDispatchOp({ ...waveArgs, orchestratorHost: null, orchestratorHead: null });
-  assert.ok(!('orchestratorHost' in op.args), 'no orchestratorHost key when null');
-  assert.ok(!('orchestratorHead' in op.args), 'no orchestratorHead key when null');
-  // Identical to the default-path contract (backward compat).
-  assert.deepEqual(op.args, { wave: 2, tasks: waveArgs.tasks, baseline: ['a.js'], repoRoot: '/repo/.worktrees/slug', review: 'on' });
+  assert.deepEqual(op, {
+    op: 'dispatch_fabric',
+    wave: 2,
+    cwd: '/repo/.worktrees/slug',
+    tasks: waveArgs.tasks,
+    baseline: ['a.js'],
+    review: 'on',
+    next: 'record-result',
+  });
 });
 
 test('buildWaveDispatchOp: fabric flag wins even under codexSuppressed (the fork collapses to one op)', () => {

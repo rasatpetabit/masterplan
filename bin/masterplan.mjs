@@ -74,7 +74,7 @@
 //                                                  [, scope, baseline, wsBaseline]}; --ws-baseline captures
 //                                                  workspace root entries at launch for post-wave drift detection
 //   set-active-run --state=PATH --kind=plan     -> CD-7 write: planning marker {kind:'plan', phase:'launching'}
-//   promote-active-run --state=PATH --run-id=X --task-id=Y -> phase-2: attach the launch handles
+//   promote-run --state=PATH --run-id=X --task-id=Y -> phase-2: attach the launch handles
 //   clear-active-run --state=PATH               -> CD-7 write: clear the run marker
 //   merge-plan-fragments --fragments=PATH --out=PATH [--plan-md=PATH] [--meta=JSON] [--generated-at=T]
 //                                               -> ARTIFACT write: deterministic plan.index.json + plan.md
@@ -820,7 +820,7 @@ export function shouldSuppressWorkflow(flags = {}, env = process.env) {
   // `codexSuppressed` is the historical internal name for the no-Workflow path:
   // the host runs wave tasks foreground-sequential and records the standard result.
   // Pi exposes subagents/tools but not Claude Code's Workflow launch/promote handle,
-  // so returning `launch_workflow` there strands a phase-1 `{wave,phase:'launching'}`
+  // so returning `dispatch_fabric` there strands a phase-1 `{wave,phase:'launching'}`
   // marker at the user-facing `/masterplan next` boundary. Treat Pi as no-Workflow by
   // default; callers can still pass the explicit flag on any host.
   return !!flags['codex-suppressed'] || !!flags['no-workflow'] || env.PI_CODING_AGENT === 'true';
@@ -894,7 +894,7 @@ function main() {
         die(`invalid --adversary-review '${reviewFlag}' — expected on or off`);
       }
       // --fabric=on|off: default-on strangler for the dispatch_fabric wave path. Undefined →
-      // buildSeedState fabricDispatch true. off omits state.dispatch (legacy launch_workflow path).
+      // buildSeedState fabricDispatch true. off omits state.dispatch (legacy dispatch_fabric path).
       if (flags.fabric !== undefined && !['on', 'off'].includes(flags.fabric)) {
         die(`invalid --fabric '${flags.fabric}' — expected on or off`);
       }
@@ -2113,7 +2113,9 @@ function main() {
       out({ active_run: run });
       break;
     }
-    case 'promote-active-run': {
+    case 'promote-run': {
+      // L2-era promote of background Workflow handles. Fabric path never promotes
+      // (dispatch_fabric uses next:record-result); kept for mid-flight recovery only.
       const p = need(flags, 'state');
       const state = loadForWrite(p);
       const prev = state.active_run ?? {};
@@ -2127,7 +2129,7 @@ function main() {
       // (set-active-run --wave=N). Promoting without it writes a wave-less active_run that
       // decideNextAction then mis-finalizes while tasks pend (orphan / double-dispatch). Fail loud.
       if (!Number.isInteger(prev.wave)) {
-        die(`promote-active-run: no phase-1 launching marker with an integer wave ` +
+        die(`promote-run: no phase-1 launching marker with an integer wave ` +
             `(active_run=${JSON.stringify(state.active_run ?? null)}) — call \`set-active-run --wave=N\` first.`);
       }
       // Carry the launch-time F-SCOPE snapshot forward: promotion replaces active_run wholesale, so
@@ -3258,7 +3260,7 @@ function main() {
 
     case 'dispatch-plan': {
       // The dispatch_fanout(plan) op consumer: the broker planning fan-out that replaced the
-      // L2 plan Workflow launch (workflows/plan.workflow.js). One READ-ONLY work item per
+      // L2 plan Workflow launch (workflows/dispatch-plan). One READ-ONLY work item per
       // subsystem (class masterplan-planning, enumerated roots = repo + spec path, NO
       // write-scope fields — broker-level write denial where supported), ONE broker process
       // for the whole fan-out, and pre/post `git status --porcelain` assertions over the
@@ -3296,10 +3298,10 @@ function main() {
     case 'continue': {
       // T2.3: the trampoline — migrate-on-load → Guard D acquire/confirm → wave backfill →
       // alive-probe gating → the bounded decide loop, returning ONE typed op per call
-      // ({op: launch_workflow|dispatch_foreground|dispatch_fanout|run_skill|record_result|ask|probe|shell|stop|…}).
+      // ({op: dispatch_fabric|dispatch_fabric|dispatch_fanout|run_skill|record_result|ask|probe|shell|stop|…}).
       // The shell stops sequencing §2 by prose: it calls `mp continue`, executes the op, repeats.
       // Hosts without Claude Code Workflow handles (PI_CODING_AGENT or --no-workflow) are routed
-      // to dispatch_foreground so a phase-1 launch marker is consumed instead of user-stranded.
+      // to dispatch_fabric so a phase-1 launch marker is consumed instead of user-stranded.
       // Same git-in-bin seam as record-result: LOCAL git only, network ops stay shell-side.
       const statePath = need(flags, 'state');
       // Guard D identity is resolved ONLY when the bundle hasn't opted out — resolveOwnerSelf

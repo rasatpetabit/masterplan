@@ -688,7 +688,7 @@ test('buildTaskReviewEvent: validates inputs and omits ts/note unless provided',
 //         spec_adversary_review_skipped ×2, plan_adversary_review_skipped ×2,
 //         plan_delta_adversary_review ×2, plan_review_revision ×4, catchup_review_planned ×1,
 //         catchup_review_disposition ×1 — none keyed per task.
-//   (3) the per-task review path (workflows/execute.workflow.js Stage 2 review()) returns
+//   (3) the per-task review path (workflows/dispatch-wave Stage 2 review()) returns
 //       review:{verdict,findings} IN-MEMORY inside the wave digest; it writes NO durable event.
 // Therefore run+task+sha is genuinely NEW vocabulary — there is no legacy per-task shape to
 // dual-read. The fixtures below are VERBATIM (sanitized) lines from live bundles proving the
