@@ -306,7 +306,7 @@ test('every non-skipped agent that declares tools covers its MCP-namespaced name
     const toolsLine = m[1];
     assert.match(
       toolsLine,
-      /^[\w]+(,\s*[\w]+)*$/,
+      /^[\w-]+(,\s*[\w-]+)*$/,
       `${f}: tool list no longer matches the (widened) agents.test.mjs regex`,
     );
   }

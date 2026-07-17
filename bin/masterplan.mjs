@@ -185,8 +185,7 @@ import { decideNextAction } from '../lib/resume.mjs';
 import { prepareWave, declaredScope, verifyScope } from '../lib/wave.mjs';
 import { detectHost } from '../lib/dispatch/index.mjs';
 import { closeWaveCoord } from '../lib/dispatch/adsp-coord.mjs';
-import { selectCodexReviewForHead } from '../lib/review-companion.mjs';
-import { selectGateReview, gateEventTypes, validateGateReceipt } from '../lib/gate-review.mjs';
+import { selectReentry, reentryEventTypes, validateGateReceipt } from '../lib/reentry-guard.mjs';
 import { resolveConfigDir } from '../lib/paths.mjs';
 import { createHash } from 'node:crypto';
 import { mergePlanFragments, validatePlanIndex, renderPlanMd, renderPlanHtml } from '../lib/plan-merge.mjs';
@@ -204,7 +203,7 @@ import { sweepWorktrees } from '../lib/sweep.mjs';
 import { discoverRuns, readDiscoveryConfig, serializeDiscoveryConfig, addDiscoveryRoot, removeDiscoveryRoot, discoveryConfigPath } from '../lib/runs.mjs';
 
 // ---- spec/plan gate-review enforcement (the two PRE-EXECUTE adversary gates) ----
-// The bin fs boundary for lib/gate-review.mjs (the pure scanner). These two functions recompute a
+// The bin fs boundary for lib/reentry-guard.mjs (the pure scanner). These two functions recompute a
 // content hash over the CURRENT bytes of a gate's reviewed artifacts so editing any input RE-ARMS the
 // gate (H1: never trust a hash stamped inside a mutable artifact). The plan gate NORMALIZES
 // plan.index.json — load-plan itself stamps plan_hash/generated_at DURING the load, so stripping those
@@ -325,7 +324,7 @@ function computeGateHash(descriptors, prereadIndex) {
 // — process.exit can truncate a buffered large write) and EXITS NONZERO (3): a dumb caller fails loudly,
 // while the masterplan shell parses the op and satisfies it.
 function enforceGateReview(gate, statePath, flags, state, opts = {}) {
-  gateEventTypes(gate); // validate the gate name up front (throws on caller bug, even under --force)
+  reentryEventTypes('artifact-hash', gate); // validate the gate name up front (throws on caller bug, even under --force)
   if (flags.force) {
     try {
       appendEvent(statePath, {
@@ -349,7 +348,7 @@ function enforceGateReview(gate, statePath, flags, state, opts = {}) {
   } catch (e) {
     if (e.code !== 'ENOENT') die(`gate-review: events.jsonl unreadable: ${e.message}`, 1);
   }
-  if (selectGateReview(text, gate, hash).present) return;
+  if (selectReentry(text, { kind: 'artifact-hash', gate, key: hash }).present) return;
   const opObj = {
     op: 'run_gate_review',
     gate,
@@ -2532,7 +2531,7 @@ function main() {
       // means the review already ran at this exact tree, so skip the network-bound re-run AND rehydrate
       // the findings digest into the re-rendered gate AUQ. The `adversary_review` event is written BEFORE
       // `open-gate`, so a death in between still skips on resume (closes the P2 durability window). bin
-      // owns the fs read; lib/review-companion.mjs scans the text purely (matching both the new and
+      // owns the fs read; lib/reentry-guard.mjs scans the text purely (matching both the new and
       // legacy event families). Absent events.jsonl == no review yet → { present:false }.
       const p = need(flags, 'state');
       const sha = String(need(flags, 'sha'));
@@ -2546,7 +2545,8 @@ function main() {
         // a swallowed read error would falsely re-run the network gate (or worse, look "skipped").
         if (e.code !== 'ENOENT') die(`adversary-review-status: events.jsonl unreadable: ${e.message}`, 1);
       }
-      out(selectCodexReviewForHead(text, sha));
+      const { present, digest, count, base } = selectReentry(text, { kind: 'head-sha', key: sha });
+      out({ present, digest, count, base });
       break;
     }
     case 'record-verification': {
@@ -2581,7 +2581,7 @@ function main() {
       const descriptors = resolveGateArtifacts({ gate, statePath: p, state, flags, op: 'record' });
       const hash = computeGateHash(descriptors);
       const artifacts = descriptors.map((d) => d.relName);
-      const { done, skipped } = gateEventTypes(gate);
+      const { done: [doneType], skipped: [skipType] } = reentryEventTypes('artifact-hash', gate);
       const data = { hash };
       // --count: findings tally — when given it must be a non-negative integer.
       if (flags.count !== undefined) {
@@ -2623,7 +2623,7 @@ function main() {
         };
         if (v.normalized.base) data.base = v.normalized.base;
         else if (flags.base !== undefined) data.base = String(flags.base);
-        note = v.normalized.digest; // selectGateReview surfaces note as the findings digest
+        note = v.normalized.digest; // selectReentry surfaces note as the findings digest
       } else {
         // skipped — degraded lane. Evidence required: non-empty reason AND a readable, non-empty digest.
         const reason = String(need(flags, 'reason'));
@@ -2645,7 +2645,7 @@ function main() {
       // --summary is the audit-scanned signal channel (the session audit counts \b(codex|adversary)\s+
       // review\b) — default to that literal phrasing for parity with the finish-gate summary.
       const record = {
-        type: status === 'done' ? done : skipped,
+        type: status === 'done' ? doneType : skipType,
         ts: flags.ts ?? new Date().toISOString(),
         data,
         note,
@@ -2684,7 +2684,7 @@ function main() {
       } catch (e) {
         if (e.code !== 'ENOENT') die(`gate-review-status: events.jsonl unreadable: ${e.message}`, 1);
       }
-      out({ gate, hash, artifacts: descriptors.map((d) => d.relName), ...selectGateReview(text, gate, hash) });
+      out({ gate, hash, artifacts: descriptors.map((d) => d.relName), ...selectReentry(text, { kind: 'artifact-hash', gate, key: hash }) });
       break;
     }
     case 'gate-hash': {

@@ -18,6 +18,11 @@
 //   7. Broker failure → blocked/broker_error digests → dispatch_degraded events, tasks stay
 //      pending, record 'recorded'; a follow-up invoke starts attempt 2 (observed retry).
 //   8. Key/record substrate unit behavior (encoding, atomic create-or-return-existing).
+//   9. Per-task adversary review (config-gated on state.review.adversary): FULL working
+//      diff in the payload (never scope-filtered), verdict in digest.review /
+//      item.review → blocking_reviews[], run+task+sha re-entry idempotency, degraded
+//      lane → skipped event + inconclusive, review-off → no lane calls and no writes,
+//      and D6 independence (approve never bypasses verify-scope).
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -25,6 +30,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 
 import {
   dispatchWaveViaFabric,
@@ -35,10 +41,15 @@ import {
   writeWaveDispatchRecord,
   claimAttemptMarker,
   WAVE_DISPATCH_KEY_VERSION,
+  captureFullWorkingDiff,
+  segmentDiffPayload,
+  mergeReviewVerdicts,
+  mapAdversaryLaneVerdict,
 } from '../lib/dispatch-wave.mjs';
 import { continueRun } from '../lib/continue.mjs';
 import { readState, writeState } from '../lib/bundle.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
+import { buildTaskReviewEvent } from '../lib/reentry-guard.mjs';
 
 function git(dir, ...args) {
   return String(execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' })).trim();
@@ -709,4 +720,708 @@ test('multi-repo: sibling-prefixed files land on sibling worktree with create_fi
   assert.equal(descriptors[1].create_files, true);
   assert.equal(descriptors[1].branch, 'masterplan/dw-mrepo');
   assert.ok(fs.existsSync(sibWt), 'sibling worktree auto-created');
+});
+
+// ---------------------------------------------------------------------------
+// 9. Per-task adversary review (config-gated; run+task+sha re-entry guard)
+// ---------------------------------------------------------------------------
+
+/** Injected review lane: records payloads; returns a canned lane record. */
+function reviewLaneStub(result) {
+  const calls = [];
+  return {
+    calls,
+    async lane(args) {
+      calls.push(args);
+      return typeof result === 'function' ? result(args) : result;
+    },
+  };
+}
+
+const approveLane = { final_verdict: 'approve', findings: [], blocking_findings: [], summary: 'looks fine' };
+
+test('review ON: FULL working diff (incl. an undeclared file) is the payload, verdict lands in the digest, and the run+task+sha event is written', async () => {
+  const fx = makeFixture({
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    planIndex: [planEntry(1, 1, ['src/a.txt'])],
+    slug: 'dw-rev',
+    extra: { review: { adversary: true } },
+  });
+  const op = launchViaContinue(fx);
+  const WT = op.cwd;
+  // Simulate the worker's edits landing in the worktree: the declared file AND
+  // an out-of-scope write the review payload must still cover (V1 negative (a)).
+  write(WT, 'src/a.txt', 'declared edit\n');
+  write(WT, 'src/oops.txt', 'undeclared write\n');
+  // The launch-time HEAD rides in the event's data.base (audit) — capture it
+  // BEFORE dispatch (recordWaveResult commits, advancing HEAD afterwards).
+  const head = git(WT, 'rev-parse', 'HEAD');
+  const rl = reviewLaneStub(approveLane);
+  const stub = brokerStub(routeResult);
+
+  const res = await dispatchWaveViaFabric({
+    statePath: fx.statePath, self: fx.self, now: 2000,
+    _brokerClient: stub, _openCoord: disabledCoord, _reviewLane: rl.lane,
+  });
+  assert.equal(res.outcome, 'dispatched');
+
+  // (a) The payload is the FULL working diff — the undeclared file is IN it.
+  assert.equal(rl.calls.length, 1);
+  assert.match(rl.calls[0].diff, /src\/a\.txt/);
+  assert.match(rl.calls[0].diff, /src\/oops\.txt/, 'FULL diff: undeclared file present in the review payload');
+  assert.match(rl.calls[0].diff, /undeclared write/);
+
+  // Verdict written into the task digest AND the result item; clean → no blockers.
+  assert.deepEqual(res.tasks, [{ task_id: 1, status: 'done', dispatch: 'worker', review: 'clean' }]);
+  const rec = readWaveDispatchRecord(fx.bundleDir, 1);
+  assert.equal(rec.result.tasks[0].digest.review.verdict, 'clean');
+  assert.equal(rec.result.tasks[0].review.verdict, 'clean');
+  assert.deepEqual(res.record.blocking_reviews, []);
+
+  // The re-entry guard write uses the checked-in run+task+sha vocabulary.
+  const evs = readEvents(fx.bundleDir).filter((e) => e.type === 'task_adversary_review');
+  assert.equal(evs.length, 1);
+  assert.equal(evs[0].data.run, 'dw-rev');
+  assert.equal(String(evs[0].data.task), '1');
+  const payloadSha = createHash('sha256').update(rl.calls[0].diff, 'utf8').digest('hex');
+  assert.equal(evs[0].data.sha, payloadSha, 'keyed to the sha256 of the reviewed payload, not the branch HEAD');
+  assert.equal(evs[0].data.base, head, 'launch HEAD recorded as data.base for audit');
+  assert.match(evs[0].note, /verdict: clean/);
+});
+
+test('D6 independence: an approve verdict does NOT bypass verify-scope — the out-of-scope write is still reverted', async () => {
+  const fx = makeFixture({
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    planIndex: [planEntry(1, 1, ['src/a.txt'])],
+    slug: 'dw-d6',
+    extra: { review: { adversary: true } },
+  });
+  const op = launchViaContinue(fx);
+  const WT = op.cwd;
+  write(WT, 'src/a.txt', 'declared edit\n');
+  write(WT, 'src/oops.txt', 'undeclared write\n');
+  const rl = reviewLaneStub(approveLane);
+  const res = await dispatchWaveViaFabric({
+    statePath: fx.statePath, self: fx.self, now: 2000,
+    _brokerClient: brokerStub(routeResult), _openCoord: disabledCoord, _reviewLane: rl.lane,
+  });
+  // Review approved (clean) — scope enforcement fires anyway (V1 negative (c)).
+  assert.equal(res.tasks[0].review, 'clean');
+  assert.ok(res.record.reverted.includes('src/oops.txt'), 'out-of-scope write reverted despite the approve verdict');
+  assert.equal(fs.existsSync(path.join(WT, 'src/oops.txt')), false, 'the undeclared file is gone from the worktree');
+  assert.equal(readState(fx.statePath).tasks[0].status, 'done', 'the in-scope work still records');
+});
+
+test('review OFF (state.review.adversary=false): lane never called, no review fields, no re-entry guard writes', async () => {
+  const fx = makeFixture({
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    planIndex: [planEntry(1, 1, ['src/a.txt'])],
+    slug: 'dw-revoff',
+    extra: { review: { adversary: false } },
+  });
+  const op = launchViaContinue(fx);
+  write(op.cwd, 'src/a.txt', 'edit\n');
+  const stub = brokerStub(routeResult);
+  const res = await dispatchWaveViaFabric({
+    statePath: fx.statePath, self: fx.self, now: 2000,
+    _brokerClient: stub, _openCoord: disabledCoord,
+    _reviewLane: async () => assert.fail('review lane must NOT be called when review is off'),
+  });
+  // (b) No review fields anywhere, no re-entry guard writes.
+  assert.equal(res.outcome, 'dispatched');
+  assert.equal('review' in res.tasks[0], false);
+  const rec = readWaveDispatchRecord(fx.bundleDir, 1);
+  assert.equal('review' in rec.result.tasks[0], false);
+  assert.equal('review' in rec.result.tasks[0].digest, false);
+  const evs = readEvents(fx.bundleDir).filter((e) => e.type === 'task_adversary_review' || e.type === 'task_adversary_review_skipped');
+  assert.equal(evs.length, 0, 'no re-entry guard writes on the disable path');
+  assert.deepEqual(res.record.blocking_reviews, []);
+  // The work-item descriptor advertises NO review requirement on the wire.
+  assert.equal('review' in stub.calls[0].args.descriptors[0], false, 'disabled review is omitted from the descriptor');
+});
+
+test('blocking verdict: surfaces via blocking_reviews[] in the wave-completion protocol (task still records per its digest)', async () => {
+  const fx = makeFixture({
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    planIndex: [planEntry(1, 1, ['src/a.txt'])],
+    slug: 'dw-block',
+    extra: { review: { adversary: true } },
+  });
+  const op = launchViaContinue(fx);
+  write(op.cwd, 'src/a.txt', 'edit\n');
+  const rl = reviewLaneStub({
+    final_verdict: 'reject',
+    findings: [{ severity: 'high', note: 'introduces a data race' }],
+    blocking_findings: [{ severity: 'high', note: 'introduces a data race' }],
+    summary: 'blocking data race',
+  });
+  const res = await dispatchWaveViaFabric({
+    statePath: fx.statePath, self: fx.self, now: 2000,
+    _brokerClient: brokerStub(routeResult), _openCoord: disabledCoord, _reviewLane: rl.lane,
+  });
+  assert.equal(res.tasks[0].review, 'blocking');
+  assert.equal(res.record.blocking_reviews.length, 1);
+  assert.equal(res.record.blocking_reviews[0].id, 1);
+  // The ACTUAL canonical finding content survives into the digest/record —
+  // never just counts (round-3 P2).
+  assert.match(String(res.record.blocking_reviews[0].findings), /BLOCKING: \[high\] introduces a data race/, 'the finding item itself is serialized');
+  assert.match(String(readWaveDispatchRecord(fx.bundleDir, 1).result.tasks[0].digest.review.findings), /introduces a data race/, 'finding text reaches digest.review.findings');
+  // The verdict is advisory metadata: the done digest still records (the
+  // orchestrator acts on blocking_reviews[], the transaction does not).
+  assert.equal(readState(fx.statePath).tasks[0].status, 'done');
+});
+
+test('review idempotency: a prior run+task+sha done event short-circuits the lane and rehydrates the stored verdict', async () => {
+  const fx = makeFixture({
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    planIndex: [planEntry(1, 1, ['src/a.txt'])],
+    slug: 'dw-reuse',
+    extra: { review: { adversary: true } },
+  });
+  const op = launchViaContinue(fx);
+  const WT = op.cwd;
+  write(WT, 'src/a.txt', 'edit\n');
+  // Pre-seed the durable event with the module's OWN builder (round-trip
+  // guarantee): same run, task, and the exact PAYLOAD HASH the dispatcher
+  // will key on (sha256 of the full working diff).
+  const payloadSha = createHash('sha256').update(captureFullWorkingDiff(WT), 'utf8').digest('hex');
+  const prior = buildTaskReviewEvent({
+    run: 'dw-reuse', task: 1, sha: payloadSha, status: 'done', count: 2,
+    digest: 'prior findings digest. verdict: advisory',
+  });
+  fs.appendFileSync(path.join(fx.bundleDir, 'events.jsonl'), JSON.stringify(prior) + '\n');
+
+  const res = await dispatchWaveViaFabric({
+    statePath: fx.statePath, self: fx.self, now: 2000,
+    _brokerClient: brokerStub(routeResult), _openCoord: disabledCoord,
+    _reviewLane: async () => assert.fail('lane must NOT be called — the re-entry guard satisfies the review'),
+  });
+  assert.equal(res.tasks[0].review, 'advisory', 'verdict rehydrated from the stored findings digest');
+  const evs = readEvents(fx.bundleDir).filter((e) => e.type === 'task_adversary_review');
+  assert.equal(evs.length, 1, 'no NEW review event — the prior one satisfied re-entry');
+});
+
+test('degraded lane: throws → skipped event (never satisfies re-entry), verdict inconclusive, wave not blocked', async () => {
+  const fx = makeFixture({
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    planIndex: [planEntry(1, 1, ['src/a.txt'])],
+    slug: 'dw-degr',
+    extra: { review: { adversary: true } },
+  });
+  const op = launchViaContinue(fx);
+  write(op.cwd, 'src/a.txt', 'edit\n');
+  const res = await dispatchWaveViaFabric({
+    statePath: fx.statePath, self: fx.self, now: 2000,
+    _brokerClient: brokerStub(routeResult), _openCoord: disabledCoord,
+    _reviewLane: async () => { throw new Error('lane wedged'); },
+  });
+  assert.equal(res.tasks[0].review, 'inconclusive');
+  assert.deepEqual(res.record.blocking_reviews, [], 'a wedged reviewer never blocks the wave');
+  assert.equal(readState(fx.statePath).tasks[0].status, 'done');
+  const evs = readEvents(fx.bundleDir);
+  assert.equal(evs.filter((e) => e.type === 'task_adversary_review_skipped').length, 1);
+  assert.equal(evs.filter((e) => e.type === 'task_adversary_review').length, 0);
+});
+
+test('re-entry key binds to the PAYLOAD: changed code at the SAME HEAD triggers a fresh lane call (stale approve never carries over)', async () => {
+  const fx = makeFixture({
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    planIndex: [planEntry(1, 1, ['src/a.txt'])],
+    slug: 'dw-rearm',
+    extra: { review: { adversary: true } },
+  });
+  const op = launchViaContinue(fx);
+  const WT = op.cwd;
+  // Version A of the uncommitted work gets an approve on record…
+  write(WT, 'src/a.txt', 'version A\n');
+  const staleSha = createHash('sha256').update(captureFullWorkingDiff(WT), 'utf8').digest('hex');
+  const stale = buildTaskReviewEvent({
+    run: 'dw-rearm', task: 1, sha: staleSha, status: 'done', count: 0,
+    digest: 'stale approve of version A. verdict: clean',
+  });
+  fs.appendFileSync(path.join(fx.bundleDir, 'events.jsonl'), JSON.stringify(stale) + '\n');
+  // …then the code CHANGES while HEAD stays identical.
+  write(WT, 'src/a.txt', 'version B\n');
+  const headBefore = git(WT, 'rev-parse', 'HEAD');
+  const rl = reviewLaneStub(approveLane);
+  await dispatchWaveViaFabric({
+    statePath: fx.statePath, self: fx.self, now: 2000,
+    _brokerClient: brokerStub(routeResult), _openCoord: disabledCoord, _reviewLane: rl.lane,
+  });
+  assert.equal(rl.calls.length, 1, 'stale-payload approval must NOT suppress review of different code');
+  const freshSha = createHash('sha256').update(rl.calls[0].diff, 'utf8').digest('hex');
+  assert.notEqual(freshSha, staleSha, 'the changed diff produces a different key');
+  const evs = readEvents(fx.bundleDir).filter((e) => e.type === 'task_adversary_review');
+  assert.equal(evs.length, 2, 'a FRESH review event lands beside the stale one');
+  assert.ok(evs.some((e) => e.data.sha === freshSha));
+  assert.equal(evs.find((e) => e.data.sha === freshSha).data.base, headBefore, 'same HEAD both times — only the payload changed');
+});
+
+test('skipped never satisfies re-entry END-TO-END: after a degraded skipped event, the next attempt over the SAME payload runs the lane again', async () => {
+  const fx = makeFixture({
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    planIndex: [planEntry(1, 1, ['src/a.txt'])],
+    slug: 'dw-skipsat',
+    extra: { review: { adversary: true } },
+  });
+  launchViaContinue(fx);
+  // NO worktree edits: the payload (empty diff) — and therefore the key
+  // {run, task, sha} — is byte-identical across both attempts; only the skip
+  // semantics can make the second lane call happen.
+  const rl1 = reviewLaneStub(() => { throw new Error('lane wedged'); });
+  const res1 = await dispatchWaveViaFabric({
+    statePath: fx.statePath, self: fx.self, now: 2000,
+    _brokerClient: brokerStub(routeResult), _openCoord: disabledCoord, _reviewLane: rl1.lane,
+  });
+  assert.equal(rl1.calls.length, 1);
+  assert.equal(res1.tasks[0].review, 'inconclusive');
+  // Rewind task + marker to simulate the next attempt (the clean worktree means
+  // recordWaveResult committed nothing — HEAD and the payload are unchanged).
+  const st = readState(fx.statePath);
+  writeState(fx.statePath, {
+    ...st,
+    tasks: st.tasks.map((t) => ({ ...t, status: 'pending' })),
+    active_run: { wave: 1, phase: 'launching', scope: ['src/a.txt'], baseline: [] },
+  });
+  const rl2 = reviewLaneStub(approveLane);
+  const res2 = await dispatchWaveViaFabric({
+    statePath: fx.statePath, self: fx.self, now: 2100,
+    _brokerClient: brokerStub(routeResult), _openCoord: disabledCoord, _reviewLane: rl2.lane,
+  });
+  assert.equal(rl2.calls.length, 1, 'the skipped event did NOT satisfy re-entry — the lane ran AGAIN on the same key');
+  assert.equal(res2.tasks[0].review, 'clean');
+  const evs = readEvents(fx.bundleDir);
+  const skipped = evs.filter((e) => e.type === 'task_adversary_review_skipped');
+  const done = evs.filter((e) => e.type === 'task_adversary_review');
+  assert.equal(skipped.length, 1);
+  assert.equal(done.length, 1);
+  assert.equal(done[0].data.sha, skipped[0].data.sha, 'same key both times — the done event supersedes the skip');
+});
+
+test('multi-task wave: one review per task — two lane calls, per-task verdicts, two task-specific re-entry events', async () => {
+  const fx = makeFixture({
+    tasks: [
+      { id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] },
+      { id: 2, status: 'pending', wave: 1, files: ['src/b.txt'] },
+    ],
+    planIndex: [planEntry(1, 1, ['src/a.txt']), planEntry(2, 1, ['src/b.txt'])],
+    slug: 'dw-multi',
+    extra: { review: { adversary: true } },
+  });
+  const op = launchViaContinue(fx);
+  write(op.cwd, 'src/a.txt', 'edit a\n');
+  write(op.cwd, 'src/b.txt', 'edit b\n');
+  // Distinct verdict per task — a copy-one-verdict-to-all implementation fails here.
+  const rl = reviewLaneStub((args) => (args.task_id === 1
+    ? approveLane
+    : { final_verdict: 'reject', findings: [{ note: 'bad' }], blocking_findings: [{ note: 'bad' }], summary: 'nope' }));
+  const res = await dispatchWaveViaFabric({
+    statePath: fx.statePath, self: fx.self, now: 2000,
+    _brokerClient: brokerStub(routeResult), _openCoord: disabledCoord, _reviewLane: rl.lane,
+  });
+  assert.equal(rl.calls.length, 2, 'one lane call PER TASK, never one per wave');
+  assert.deepEqual(rl.calls.map((c) => c.task_id), [1, 2]);
+  assert.equal(res.tasks[0].review, 'clean');
+  assert.equal(res.tasks[1].review, 'blocking');
+  assert.deepEqual(res.record.blocking_reviews.map((b) => b.id), [2], 'only task 2 blocks');
+  const evs = readEvents(fx.bundleDir).filter((e) => e.type === 'task_adversary_review');
+  assert.deepEqual(evs.map((e) => String(e.data.task)).sort(), ['1', '2'], 'two task-specific re-entry events');
+  assert.equal(evs[0].data.sha, evs[1].data.sha, 'same edit locus → same payload hash; the TASK component keys them apart');
+});
+
+// ---------------------------------------------------------------------------
+// Round-2 review fixes: segmentation (no truncation), structured verdicts,
+// verdict-shape gating in the record protocol
+// ---------------------------------------------------------------------------
+
+test('segmentDiffPayload: byte-accounted, line-boundary, LOSSLESS (multibyte-safe; oversized lines hard-split)', () => {
+  // Multibyte lines: é (2 bytes) + ★ (3 bytes) — byte length ≠ char length.
+  const line = 'é★abc\n'; // 9 bytes, 6 chars
+  const text = line.repeat(100);
+  const segs = segmentDiffPayload(text, 64);
+  assert.ok(segs.length > 1);
+  assert.equal(segs.join(''), text, 'lossless reconstruction');
+  for (const s of segs) assert.ok(Buffer.byteLength(s, 'utf8') <= 64, 'every segment within the BYTE budget');
+  for (const s of segs.slice(0, -1)) assert.ok(s.endsWith('\n'), 'segments break at line boundaries');
+  // A single line larger than the budget is hard-split without char corruption.
+  const big = 'x'.repeat(10) + '★'.repeat(50);
+  const segs2 = segmentDiffPayload(big, 32);
+  assert.ok(segs2.length > 1);
+  assert.equal(segs2.join(''), big);
+  for (const s of segs2) assert.ok(Buffer.byteLength(s, 'utf8') <= 32);
+  // Small payload → single verbatim segment (incl. the empty diff).
+  assert.deepEqual(segmentDiffPayload('tiny', 100), ['tiny']);
+  assert.deepEqual(segmentDiffPayload('', 100), ['']);
+});
+
+test('mergeReviewVerdicts: worst-wins (blocking > advisory > inconclusive > clean), findings union, counts sum', () => {
+  const mk = (v, c = 1, f = `f-${v}`) => ({ verdict: v, count: c, findings: f });
+  assert.equal(mergeReviewVerdicts(mk('clean'), mk('blocking')).verdict, 'blocking');
+  assert.equal(mergeReviewVerdicts(mk('blocking'), mk('clean')).verdict, 'blocking');
+  assert.equal(mergeReviewVerdicts(mk('clean'), mk('advisory')).verdict, 'advisory');
+  assert.equal(mergeReviewVerdicts(mk('inconclusive'), mk('clean')).verdict, 'inconclusive');
+  assert.equal(mergeReviewVerdicts(mk('advisory'), mk('inconclusive')).verdict, 'advisory');
+  const merged = mergeReviewVerdicts(mk('clean', 2, 'first-half'), mk('blocking', 3, 'second-half'));
+  assert.equal(merged.count, 5);
+  assert.match(merged.findings, /first-half/);
+  assert.match(merged.findings, /second-half/);
+  // null-tolerant fold seed
+  assert.equal(mergeReviewVerdicts(null, mk('clean')).verdict, 'clean');
+  assert.equal(mergeReviewVerdicts(mk('clean'), null).verdict, 'clean');
+});
+
+test('large multibyte diff: one lane call PER SEGMENT covering ALL bytes — no truncation marker, worst-wins across segments', async () => {
+  const fx = makeFixture({
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    planIndex: [planEntry(1, 1, ['src/a.txt'])],
+    slug: 'dw-seg',
+    extra: { review: { adversary: true } },
+  });
+  const op = launchViaContinue(fx);
+  const WT = op.cwd;
+  // >200KB of multibyte content → several ≤100KB-byte segments.
+  write(WT, 'src/a.txt', 'é★ padded content line — segment fodder ★é\n'.repeat(6000));
+  const fullDiff = captureFullWorkingDiff(WT);
+  assert.ok(Buffer.byteLength(fullDiff, 'utf8') > 200_000, 'fixture diff is large enough to force segmentation');
+  // clean on segment 1, blocking on a later segment — worst must win.
+  const rl = reviewLaneStub((args) => (args.segment === 1
+    ? approveLane
+    : { final_verdict: 'reject', findings: [{ note: 'late-segment bug' }], blocking_findings: [{ note: 'late-segment bug' }], summary: 'blocker in a later segment' }));
+  const res = await dispatchWaveViaFabric({
+    statePath: fx.statePath, self: fx.self, now: 2000,
+    _brokerClient: brokerStub(routeResult), _openCoord: disabledCoord, _reviewLane: rl.lane,
+  });
+  assert.ok(rl.calls.length > 1, 'multiple lane calls (one per segment)');
+  for (const c of rl.calls) {
+    assert.ok(Buffer.byteLength(c.diff, 'utf8') <= 100_000, 'every segment argv-safe by BYTES');
+  }
+  const joined = rl.calls.map((c) => c.diff).join('');
+  assert.equal(joined, fullDiff, 'concatenated segments reconstruct the FULL diff — nothing dropped');
+  assert.ok(!/truncated/.test(joined), 'no truncation marker anywhere in the payload');
+  assert.equal(res.tasks[0].review, 'blocking', 'worst-wins across segments');
+  assert.equal(res.record.blocking_reviews.length, 1);
+  // The guard event's sha covers the COMPLETE payload, and the structured
+  // verdict rides on the event.
+  const evs = readEvents(fx.bundleDir).filter((e) => e.type === 'task_adversary_review');
+  assert.equal(evs.length, 1);
+  assert.equal(evs[0].data.sha, createHash('sha256').update(fullDiff, 'utf8').digest('hex'));
+  assert.equal(evs[0].data.verdict, 'blocking');
+});
+
+test('re-entry rehydrates the STRUCTURED verdict for every vocabulary value (text has no marker — a text-parse would fail-closed to blocking)', async () => {
+  const fx = makeFixture({
+    tasks: [
+      { id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] },
+      { id: 2, status: 'pending', wave: 1, files: ['src/b.txt'] },
+      { id: 3, status: 'pending', wave: 1, files: ['src/c.txt'] },
+      { id: 4, status: 'pending', wave: 1, files: ['src/d.txt'] },
+    ],
+    planIndex: [
+      planEntry(1, 1, ['src/a.txt']), planEntry(2, 1, ['src/b.txt']),
+      planEntry(3, 1, ['src/c.txt']), planEntry(4, 1, ['src/d.txt']),
+    ],
+    slug: 'dw-verd',
+    extra: { review: { adversary: true } },
+  });
+  const op = launchViaContinue(fx);
+  const payloadSha = createHash('sha256').update(captureFullWorkingDiff(op.cwd), 'utf8').digest('hex');
+  const verdicts = { 1: 'blocking', 2: 'advisory', 3: 'clean', 4: 'inconclusive' };
+  for (const [task, verdict] of Object.entries(verdicts)) {
+    const ev = buildTaskReviewEvent({
+      run: 'dw-verd', task: Number(task), sha: payloadSha, status: 'done', count: 0,
+      digest: `stored findings for task ${task} with NO verdict marker`,
+    });
+    ev.data.verdict = verdict; // the ADDITIVE structured field production writes
+    fs.appendFileSync(path.join(fx.bundleDir, 'events.jsonl'), JSON.stringify(ev) + '\n');
+  }
+  const res = await dispatchWaveViaFabric({
+    statePath: fx.statePath, self: fx.self, now: 2000,
+    _brokerClient: brokerStub(routeResult), _openCoord: disabledCoord,
+    _reviewLane: async () => assert.fail('lane must NOT be called — all four reviews are satisfied'),
+  });
+  assert.deepEqual(res.tasks.map((t) => t.review), ['blocking', 'advisory', 'clean', 'inconclusive']);
+  assert.deepEqual(res.record.blocking_reviews.map((b) => b.id), [1], 'only the structured blocking verdict blocks');
+});
+
+test('misleading findings text cannot downgrade: structured verdict blocking wins over "verdict: clean" prose', async () => {
+  const fx = makeFixture({
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    planIndex: [planEntry(1, 1, ['src/a.txt'])],
+    slug: 'dw-mislead',
+    extra: { review: { adversary: true } },
+  });
+  const op = launchViaContinue(fx);
+  const payloadSha = createHash('sha256').update(captureFullWorkingDiff(op.cwd), 'utf8').digest('hex');
+  const ev = buildTaskReviewEvent({
+    run: 'dw-mislead', task: 1, sha: payloadSha, status: 'done', count: 1,
+    digest: 'summary says all good. verdict: clean', // prose LIES; the structured field is authoritative
+  });
+  ev.data.verdict = 'blocking';
+  fs.appendFileSync(path.join(fx.bundleDir, 'events.jsonl'), JSON.stringify(ev) + '\n');
+  const res = await dispatchWaveViaFabric({
+    statePath: fx.statePath, self: fx.self, now: 2000,
+    _brokerClient: brokerStub(routeResult), _openCoord: disabledCoord,
+    _reviewLane: async () => assert.fail('lane must NOT be called — re-entry satisfied'),
+  });
+  assert.equal(res.tasks[0].review, 'blocking', 'the structured verdict wins over misleading prose');
+  assert.deepEqual(res.record.blocking_reviews.map((b) => b.id), [1]);
+});
+
+test('legacy event without a structured verdict and unparseable text re-enters BLOCKING (fail-closed, never inconclusive)', async () => {
+  const fx = makeFixture({
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    planIndex: [planEntry(1, 1, ['src/a.txt'])],
+    slug: 'dw-legacy',
+    extra: { review: { adversary: true } },
+  });
+  const op = launchViaContinue(fx);
+  const payloadSha = createHash('sha256').update(captureFullWorkingDiff(op.cwd), 'utf8').digest('hex');
+  // Plain builder output: NO data.verdict, and findings text with NO verdict marker.
+  const ev = buildTaskReviewEvent({
+    run: 'dw-legacy', task: 1, sha: payloadSha, status: 'done', count: 3,
+    digest: 'legacy stored findings without any marker present',
+  });
+  fs.appendFileSync(path.join(fx.bundleDir, 'events.jsonl'), JSON.stringify(ev) + '\n');
+  const res = await dispatchWaveViaFabric({
+    statePath: fx.statePath, self: fx.self, now: 2000,
+    _brokerClient: brokerStub(routeResult), _openCoord: disabledCoord,
+    _reviewLane: async () => assert.fail('lane must NOT be called — re-entry satisfied'),
+  });
+  assert.equal(res.tasks[0].review, 'blocking', 'a lost verdict fails CLOSED to blocking');
+  assert.deepEqual(res.record.blocking_reviews.map((b) => b.id), [1], 'the fail-closed verdict surfaces for attention');
+});
+
+test('descriptor-shaped item.review cannot mask the digest verdict: blocking still surfaces through the redrive record path', async () => {
+  const fx = makeFixture({
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    planIndex: [planEntry(1, 1, ['src/a.txt'])],
+    slug: 'dw-maskrev',
+  });
+  launchViaContinue(fx);
+  // A stored result whose ITEM carries a non-verdict review object (an echoed
+  // descriptor requirement) while the DIGEST embeds the real blocking verdict.
+  writeWaveDispatchRecord(fx.bundleDir, 1, {
+    key: composeWaveDispatchKey('dw-maskrev', 1), run_id: 'dw-maskrev', wave: 1, op: 'dispatch_fabric',
+    contract_version: 'adsp-v1.1', status: 'dispatched', attempt: 1, dispatched_at: 'T0',
+    tasks: [{ task_id: 1, class: 'bounded-edit', handoff_key: 'k1' }],
+    result: {
+      wave: 1,
+      tasks: [{
+        task_id: 1,
+        review: { adversary: true }, // NOT verdict-shaped — must not mask
+        digest: { ...workerDigest(1), review: { verdict: 'blocking', findings: 'digest-embedded blocker. verdict: blocking' } },
+      }],
+    },
+  });
+  const res = await dispatchWaveViaFabric({
+    statePath: fx.statePath, self: fx.self, now: 2000,
+    _brokerClient: neverBroker(), _openCoord: () => assert.fail('coord must not open on re-drive'),
+  });
+  assert.equal(res.outcome, 'reused');
+  assert.equal(res.redrove_record, true);
+  assert.deepEqual(res.record_result.blocking_reviews.map((b) => b.id), [1],
+    'the digest-embedded blocking verdict surfaces despite the descriptor-shaped item.review');
+});
+
+test('segment failure preserves an earlier blocking verdict: worst-wins survives a degraded later segment', async () => {
+  const fx = makeFixture({
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    planIndex: [planEntry(1, 1, ['src/a.txt'])],
+    slug: 'dw-segfail',
+    extra: { review: { adversary: true } },
+  });
+  const op = launchViaContinue(fx);
+  // Big enough for ≥2 segments.
+  write(op.cwd, 'src/a.txt', 'é★ padded content line — segment fodder ★é\n'.repeat(6000));
+  // Segment 1 returns a BLOCKING record; every later segment throws.
+  const rl = reviewLaneStub((args) => {
+    if (args.segment === 1) {
+      return { final_verdict: 'reject', findings: [{ severity: 'high', note: 'early-segment blocker' }], blocking_findings: [{ severity: 'high', note: 'early-segment blocker' }], summary: 'blocker up front' };
+    }
+    throw new Error('lane wedged mid-wave');
+  });
+  const res = await dispatchWaveViaFabric({
+    statePath: fx.statePath, self: fx.self, now: 2000,
+    _brokerClient: brokerStub(routeResult), _openCoord: disabledCoord, _reviewLane: rl.lane,
+  });
+  assert.ok(rl.calls.length > 1, 'later segments were still attempted after the failure');
+  assert.equal(res.tasks[0].review, 'blocking', 'the known blocking verdict is NEVER discarded by a later segment failure');
+  assert.equal(res.record.blocking_reviews.length, 1);
+  const findings = String(res.record.blocking_reviews[0].findings);
+  assert.match(findings, /early-segment blocker/, 'blocking finding content preserved');
+  assert.match(findings, /degraded on segment/, 'the degraded segment is visible in the findings union');
+  // Round-4 P1: a PARTIALLY-reviewed payload must never satisfy re-entry —
+  // the guard event is SKIPPED (skip IGNORED on re-read), while this
+  // attempt's merged blocking verdict still surfaced above.
+  const evs = readEvents(fx.bundleDir);
+  assert.equal(evs.filter((e) => e.type === 'task_adversary_review').length, 0, 'no done event for a partial payload');
+  const skipped = evs.filter((e) => e.type === 'task_adversary_review_skipped');
+  assert.equal(skipped.length, 1);
+  assert.equal(skipped[0].data.verdict, 'blocking', 'the merged verdict rides on the skipped event for audit');
+  // A re-dispatch reviews again — the skipped event satisfies nothing.
+  const st = readState(fx.statePath);
+  writeState(fx.statePath, {
+    ...st,
+    tasks: st.tasks.map((t) => ({ ...t, status: 'pending' })),
+    active_run: { wave: 1, phase: 'launching', scope: ['src/a.txt'], baseline: [] },
+  });
+  const rl2 = reviewLaneStub(approveLane);
+  await dispatchWaveViaFabric({
+    statePath: fx.statePath, self: fx.self, now: 2100,
+    _brokerClient: brokerStub(routeResult), _openCoord: disabledCoord, _reviewLane: rl2.lane,
+  });
+  assert.ok(rl2.calls.length >= 1, 'the next attempt runs the lane again — partial coverage never sticks');
+});
+
+test('captureFullWorkingDiff: untracked paths with spaces, unicode, and embedded quotes are captured (NUL-split)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-dwdiff-'));
+  git(dir, 'init', '--initial-branch=main');
+  git(dir, 'config', 'user.email', 't@t');
+  git(dir, 'config', 'user.name', 't');
+  git(dir, 'config', 'commit.gpgsign', 'false');
+  write(dir, 'seed.txt', 'seed\n');
+  git(dir, 'add', '.');
+  git(dir, 'commit', '-q', '-m', 'seed');
+  // Space + unicode + an embedded double-quote: newline-split ls-files C-quotes
+  // this path and the quoted literal ENOENTs in `diff --no-index`.
+  write(dir, 'notes "é★" with space.txt', 'special-path content é★\n');
+  const diff = captureFullWorkingDiff(dir);
+  assert.match(diff, /special-path content é★/, 'untracked special-char file content captured in the FULL diff');
+});
+
+test('serializeFindings edge: a single oversized finding keeps an actionable truncated prefix — never a bare count', () => {
+  const longNote = 'races on the owner lock when two writers interleave; '.repeat(150); // ≫ 4000 chars
+  const mapped = mapAdversaryLaneVerdict({
+    final_verdict: 'reject',
+    findings: [{ severity: 'high', note: longNote }],
+    blocking_findings: [{ severity: 'high', note: longNote }],
+    summary: 'one huge blocker',
+  });
+  assert.equal(mapped.verdict, 'blocking');
+  assert.match(mapped.findings, /BLOCKING: \[high\] races on the owner lock/, 'a truncated PREFIX of the finding survives');
+  assert.ok(mapped.findings.length < 4600, 'bounded near the cap');
+  assert.match(mapped.findings, /verdict: blocking/, 'the trailing verdict line survives the truncation');
+});
+
+test('legacy text spoof: findings carrying both "verdict: clean" and "verdict: blocking" rehydrate as BLOCKING (worst across all matches)', async () => {
+  const fx = makeFixture({
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    planIndex: [planEntry(1, 1, ['src/a.txt'])],
+    slug: 'dw-spoof',
+    extra: { review: { adversary: true } },
+  });
+  const op = launchViaContinue(fx);
+  const payloadSha = createHash('sha256').update(captureFullWorkingDiff(op.cwd), 'utf8').digest('hex');
+  // LEGACY event (no structured data.verdict): reviewer-controlled prose tries
+  // to spoof an early 'verdict: clean' ahead of the real blocking marker.
+  const ev = buildTaskReviewEvent({
+    run: 'dw-spoof', task: 1, sha: payloadSha, status: 'done', count: 1,
+    digest: 'note claims verdict: clean early on, but the record closes verdict: blocking',
+  });
+  fs.appendFileSync(path.join(fx.bundleDir, 'events.jsonl'), JSON.stringify(ev) + '\n');
+  const res = await dispatchWaveViaFabric({
+    statePath: fx.statePath, self: fx.self, now: 2000,
+    _brokerClient: brokerStub(routeResult), _openCoord: disabledCoord,
+    _reviewLane: async () => assert.fail('lane must NOT be called — re-entry satisfied'),
+  });
+  assert.equal(res.tasks[0].review, 'blocking', 'worst recognized verdict wins over an earlier spoofed clean');
+  assert.deepEqual(res.record.blocking_reviews.map((b) => b.id), [1]);
+});
+
+test('either-source blocking wins: an echoed clean item.review cannot mask a blocking digest.review (redrive path)', async () => {
+  const fx = makeFixture({
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    planIndex: [planEntry(1, 1, ['src/a.txt'])],
+    slug: 'dw-cleanmask',
+  });
+  launchViaContinue(fx);
+  writeWaveDispatchRecord(fx.bundleDir, 1, {
+    key: composeWaveDispatchKey('dw-cleanmask', 1), run_id: 'dw-cleanmask', wave: 1, op: 'dispatch_fabric',
+    contract_version: 'adsp-v1.1', status: 'dispatched', attempt: 1, dispatched_at: 'T0',
+    tasks: [{ task_id: 1, class: 'bounded-edit', handoff_key: 'k1' }],
+    result: {
+      wave: 1,
+      tasks: [{
+        task_id: 1,
+        review: { verdict: 'clean', findings: 'echoed clean from a stale surface' }, // verdict-shaped but WRONG
+        digest: { ...workerDigest(1), review: { verdict: 'blocking', findings: 'digest-embedded blocker. verdict: blocking' } },
+      }],
+    },
+  });
+  const res = await dispatchWaveViaFabric({
+    statePath: fx.statePath, self: fx.self, now: 2000,
+    _brokerClient: neverBroker(), _openCoord: () => assert.fail('coord must not open on re-drive'),
+  });
+  assert.equal(res.outcome, 'reused');
+  assert.equal(res.redrove_record, true);
+  assert.deepEqual(res.record_result.blocking_reviews.map((b) => b.id), [1],
+    'blocking from EITHER source surfaces — a clean echo never masks it');
+  assert.match(String(res.record_result.blocking_reviews[0].findings), /digest-embedded blocker/);
+});
+
+test('merged findings are re-capped: many large-findings segments still yield a bounded digest (blocking content first)', async () => {
+  const fx = makeFixture({
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    planIndex: [planEntry(1, 1, ['src/a.txt'])],
+    slug: 'dw-cap',
+    extra: { review: { adversary: true } },
+  });
+  const op = launchViaContinue(fx);
+  // Big enough for several segments.
+  write(op.cwd, 'src/a.txt', 'é★ padded content line — segment fodder ★é\n'.repeat(6000));
+  // EVERY segment returns a blocking record with ~2000 chars of findings —
+  // uncapped concatenation would blow far past the documented 4000-char cap.
+  const rl = reviewLaneStub((args) => ({
+    final_verdict: 'reject',
+    findings: [{ severity: 'high', note: `segment ${args.segment} blocker: ` + 'x'.repeat(2000) }],
+    blocking_findings: [{ severity: 'high', note: `segment ${args.segment} blocker: ` + 'x'.repeat(2000) }],
+    summary: `segment ${args.segment}`,
+  }));
+  const res = await dispatchWaveViaFabric({
+    statePath: fx.statePath, self: fx.self, now: 2000,
+    _brokerClient: brokerStub(routeResult), _openCoord: disabledCoord, _reviewLane: rl.lane,
+  });
+  assert.ok(rl.calls.length > 1, 'multiple segments reviewed');
+  assert.equal(res.tasks[0].review, 'blocking');
+  const rec = readWaveDispatchRecord(fx.bundleDir, 1);
+  const findings = String(rec.result.tasks[0].digest.review.findings);
+  assert.ok(findings.length <= 4100, `final findings bounded by the cap (got ${findings.length})`);
+  assert.match(findings, /BLOCKING: \[high\] segment 1 blocker/, 'blocking content survives first');
+  assert.match(findings, /\(\+\d+ more\)/, 'the omission is explicit, never silent');
+  // The guard-event note carries the SAME capped text.
+  const evs = readEvents(fx.bundleDir).filter((e) => e.type === 'task_adversary_review');
+  assert.ok(String(evs[0].note).length <= 4100, 'event note capped too');
+});
+
+test('blocking_reviews[].findings is array-shaped in the mixed case: array + missing-findings sources stay an array', async () => {
+  const fx = makeFixture({
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    planIndex: [planEntry(1, 1, ['src/a.txt'])],
+    slug: 'dw-arr',
+  });
+  launchViaContinue(fx);
+  // Two DIFFERENT blocking sources: item-side carries an ARRAY of findings,
+  // digest-side is verdict-shaped but omits findings entirely.
+  writeWaveDispatchRecord(fx.bundleDir, 1, {
+    key: composeWaveDispatchKey('dw-arr', 1), run_id: 'dw-arr', wave: 1, op: 'dispatch_fabric',
+    contract_version: 'adsp-v1.1', status: 'dispatched', attempt: 1, dispatched_at: 'T0',
+    tasks: [{ task_id: 1, class: 'bounded-edit', handoff_key: 'k1' }],
+    result: {
+      wave: 1,
+      tasks: [{
+        task_id: 1,
+        review: { verdict: 'blocking', findings: ['item-side finding'] },
+        digest: { ...workerDigest(1), review: { verdict: 'blocking' } },
+      }],
+    },
+  });
+  const res = await dispatchWaveViaFabric({
+    statePath: fx.statePath, self: fx.self, now: 2000,
+    _brokerClient: neverBroker(), _openCoord: () => assert.fail('coord must not open on re-drive'),
+  });
+  assert.equal(res.redrove_record, true);
+  assert.equal(res.record_result.blocking_reviews.length, 1);
+  const { findings } = res.record_result.blocking_reviews[0];
+  assert.ok(Array.isArray(findings), 'findings stays ARRAY-shaped in the mixed union');
+  assert.deepEqual(findings, ['item-side finding']);
 });

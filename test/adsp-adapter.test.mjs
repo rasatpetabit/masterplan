@@ -13,6 +13,7 @@
 //   8. task_id is always the canonical input value (never overridden by worker).
 //   9. cwd defaults to process.cwd() when not supplied.
 //  10. Descriptor carries contract_version, files, verify fields.
+//  10b. Optional review requirement passes through descriptor-only (never changes the handoff key).
 //  11. createBrokerClient initializes and passes tool calls through the MCP wire protocol.
 
 import { test } from 'node:test';
@@ -568,6 +569,27 @@ test('buildWorkItem: honors a task class override over the default', () => {
   assert.equal(descriptor.class, 'agentic-loop');
   // The class change is part of the worker config → it changes the key.
   assert.notEqual(descriptor.handoff_key, expectedKeyFor(baseTask()));
+});
+
+test('buildWorkItem: optional adversary-review requirement passes through to the descriptor (descriptor-only)', () => {
+  const withReview = buildWorkItem({ ...baseTask(), review: { adversary: true } });
+  assert.deepEqual(withReview.review, { adversary: true });
+  // Absent unless requested — a v1 descriptor carries NO review field at all.
+  const plain = buildWorkItem(baseTask());
+  assert.equal('review' in plain, false);
+});
+
+test('buildWorkItem: a DISABLED review (null/false) is omitted from the descriptor — never sent as false', () => {
+  const withNull = buildWorkItem({ ...baseTask(), review: null });
+  assert.equal('review' in withNull, false, 'review: null → no descriptor field');
+  const withFalse = buildWorkItem({ ...baseTask(), review: false });
+  assert.equal('review' in withFalse, false, 'review: false → no descriptor field');
+});
+
+test('buildWorkItem: the review field is descriptor-only — toggling it does NOT change the handoff key', () => {
+  const k1 = buildWorkItem(baseTask()).handoff_key;
+  const k2 = buildWorkItem({ ...baseTask(), review: { adversary: true } }).handoff_key;
+  assert.equal(k1, k2, 'review is excluded from the task-spec hash (like task/branch)');
 });
 
 // ---------------------------------------------------------------------------
