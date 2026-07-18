@@ -3,6 +3,7 @@ name: mp-explorer
 description: Read-only reconnaissance for masterplan — run-bundle state reads, situation reports, and doctor-fact gathering. Returns compact digests only; never writes, never produces plan.index.json.
 model: fable
 tools: Read, Grep, Glob, Bash
+model_group: masterplan-recon
 ---
 
 > **Model provenance:** the `model:` field above is the checked-in default honored only when this agent is dispatched **by name**. It is advisory input to the resolver — not permission to pass a raw model override to `subagent()`. See agent-dispatch `docs/policy/dispatch.md#model-provenance-and-direct-subagent-dispatch`.

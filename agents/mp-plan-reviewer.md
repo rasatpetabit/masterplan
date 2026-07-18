@@ -3,6 +3,7 @@ name: mp-plan-reviewer
 description: Reviews a merged masterplan plan against its spec — spec coverage, cross-subsystem consistency, and verify-command adequacy — and returns a PASS/REVISE/FAIL verdict with findings. Thin wrapper — the review judgment runs on the agent-dispatch critic lane (dispatch_task, task class critic), never on the wrapper's own model. Read-only; runs at the planning gate after deterministic merge.
 model: fable
 tools: Read, Grep, Glob, mcp__agent-dispatch__dispatch_task
+model_group: dispatch-critic
 ---
 
 > **Model provenance:** the `model:` field above is the checked-in default honored only when this agent is dispatched **by name**. It is advisory input to the resolver — not permission to pass a raw model override to `subagent()`. See agent-dispatch `docs/policy/dispatch.md#model-provenance-and-direct-subagent-dispatch`.

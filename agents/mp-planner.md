@@ -3,6 +3,7 @@ name: mp-planner
 description: Turns an approved spec into an executable masterplan plan — tasks with wave assignments, Codex-routing annotations, and verify_commands — and emits plan.index.json. Thin wrapper — the decomposition judgment runs on the agent-dispatch planning lane (dispatch_task, task class planned-execution); the wrapper enforces the schema and owns the write. Used at the planning gate.
 model: fable
 tools: Read, Grep, Glob, Write, mcp__agent-dispatch__dispatch_task
+model_group: dispatch-planned-execution
 ---
 
 > **Model provenance:** the `model:` field above is the checked-in default honored only when this agent is dispatched **by name**. It is advisory input to the resolver — not permission to pass a raw model override to `subagent()`. See agent-dispatch `docs/policy/dispatch.md#model-provenance-and-direct-subagent-dispatch`.

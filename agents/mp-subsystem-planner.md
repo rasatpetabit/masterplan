@@ -3,6 +3,7 @@ name: mp-subsystem-planner
 description: Drafts the plan FRAGMENT for ONE subsystem of a build — a list of tasks with files, verify_commands, and dependency keys — for parallel planning. Thin wrapper — the decomposition judgment runs on the agent-dispatch planning lane (dispatch_task, task class planned-execution). Returns the fragment as a structured digest; never assigns global ids/waves and never writes the index.
 model: fable
 tools: Read, Grep, Glob, mcp__agent-dispatch__dispatch_task
+model_group: dispatch-planned-execution
 ---
 
 > **Model provenance:** the `model:` field above is the checked-in default honored only when this agent is dispatched **by name**. It is advisory input to the resolver — not permission to pass a raw model override to `subagent()`. See agent-dispatch `docs/policy/dispatch.md#model-provenance-and-direct-subagent-dispatch`.
