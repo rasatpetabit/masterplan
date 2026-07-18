@@ -90,6 +90,12 @@ if (root !== null) {
   overlayRaw = readFileSync(overlayPath, 'utf8');
   overlay = JSON.parse(stripJsoncComments(overlayRaw));
 }
+// The overlay assertions are cross-repo integration checks. Keep them active on
+// fleet hosts, but do not fail the explicitly marked standalone Masterplan CI
+// job when agent-dispatch is intentionally absent. The local agent-file contract
+// below remains hermetic, and an unexpected fleet resolution failure stays loud.
+const standaloneCi = process.env.MASTERPLAN_STANDALONE_CI === '1';
+const overlayTest = standaloneCi && root === null ? test.skip : test;
 
 test('agent md invokes the review CLI with exactly one class: adversary', () => {
   assert.ok(
@@ -99,7 +105,7 @@ test('agent md invokes the review CLI with exactly one class: adversary', () => 
   assert.deepEqual(new Set(invokedClasses), new Set(['adversary']));
 });
 
-test('overlay path resolves and parses', () => {
+overlayTest('overlay path resolves and parses', () => {
   assert.ok(
     root !== null,
     'agent-dispatch root unresolved: set AGENT_DISPATCH_ROOT or install agent-dispatch',
@@ -110,7 +116,7 @@ test('overlay path resolves and parses', () => {
   assert.ok(overlay.overrides.compiled_frontmatter !== null);
 });
 
-test('overlay entry for mp-adversarial-reviewer has no inert route_class and documents the invoked lane', () => {
+overlayTest('overlay entry for mp-adversarial-reviewer has no inert route_class and documents the invoked lane', () => {
   assert.ok(overlay !== undefined, 'overlay not loaded: root resolution must succeed first');
   const entry = overlay.overrides.compiled_frontmatter['mp-adversarial-reviewer'];
   assert.equal(typeof entry, 'object');
@@ -141,7 +147,7 @@ test('overlay entry for mp-adversarial-reviewer has no inert route_class and doc
   );
 });
 
-test('every remaining route_class pin references a class defined in the overlay', () => {
+overlayTest('every remaining route_class pin references a class defined in the overlay', () => {
   assert.ok(overlay !== undefined, 'overlay not loaded: root resolution must succeed first');
   for (const [name, cfg] of Object.entries(overlay.overrides.compiled_frontmatter)) {
     if (cfg && Object.hasOwn(cfg, 'route_class')) {
