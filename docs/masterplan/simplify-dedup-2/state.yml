@@ -23,3 +23,4 @@ render: {"images":"off"}
 dispatch: {"fabric":true}
 goals_md_hash: sha256:7452cbc36b9d79b217ad7472257dbc1602311ae5d0b415de7fb4b3bb0cd6ac74
 worktree: /srv/dev/ras/masterplan/.worktrees/simplify-dedup-2
+verified_sha: fbaadb5e87d5df0b0dfbfbc5c810035ef5d6c482
