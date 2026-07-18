@@ -279,7 +279,7 @@ test('allowlist record: default injection surfaces SKYNET_VERIFY_ALLOWLIST once 
     });
     assert.equal(res.dispatched, true);
     const rec = readWaveDispatchRecord(fx.bundleDir, 0);
-    assert.equal(rec.skynet_verify_allowlist, DEFAULT_SKYNET_VERIFY_ALLOWLIST);
+    assert.equal(rec.gateway_verify_allowlist, DEFAULT_SKYNET_VERIFY_ALLOWLIST);
   } finally {
     if (prev === undefined) delete process.env.SKYNET_VERIFY_ALLOWLIST;
     else process.env.SKYNET_VERIFY_ALLOWLIST = prev;
@@ -306,7 +306,7 @@ test('allowlist record: caller override is preserved and recorded once per wave'
       _closeCoord: () => {},
     });
     const rec = readWaveDispatchRecord(fx.bundleDir, 0);
-    assert.equal(rec.skynet_verify_allowlist, 'bash -c, node --check');
+    assert.equal(rec.gateway_verify_allowlist, 'bash -c, node --check');
   } finally {
     if (prev === undefined) delete process.env.SKYNET_VERIFY_ALLOWLIST;
     else process.env.SKYNET_VERIFY_ALLOWLIST = prev;
