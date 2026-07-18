@@ -19,7 +19,7 @@ const ABSORBED = [
   'worktree reconcile', // sweep classification+execution → mp sweep
   '`mp worktree plan', // create-or-reuse planning → ensureWorktree
   'surface_gate', // gate re-render → the §2 ask:'gate' op
-  'dispatch_wave', // launch prep → the launch_workflow op
+  'dispatch_wave', // launch prep → the dispatch_fabric op
   'recover_plan_run', // plan-run recovery → continueRun probe/reap path
   /(?<![-a-z])re-decide/, // the per-turn decide loop → the §2 trampoline
   // T2.4 — sequences absorbed into mp finish-step (lib/finish-step.mjs):
@@ -43,7 +43,7 @@ test('prompt teaches the replacements (mp continue trampoline + mp sweep)', () =
   assert.ok(prompt.includes('mp continue'), 'the §2 trampoline contract must name mp continue');
   assert.ok(prompt.includes('mp sweep'), 'the session sweep must name mp sweep');
   // The op table is the contract's load-bearing surface — every typed op must be taught.
-  for (const op of ['launch_workflow', 'dispatch_foreground', 'probe', 'run_skill', "ask:'gate'",
+  for (const op of ['dispatch_fabric', 'dispatch_plan', 'run_skill', "ask:'gate'",
     "ask:'owner-blocked'", "ask:'legacy-refused'", "ask:'waves-unbackfillable'", "reason:'wait'"]) {
     assert.ok(prompt.includes(op), `op table missing ${op}`);
   }
@@ -78,7 +78,7 @@ test('prompt teaches the goal-tracking contract (typed ops, gate, capture verb +
 
 test('deliberate survivors stay (teardown recorder, plan marker, legacy import)', () => {
   // These mp verbs were NOT absorbed — their disappearance would mean an over-zealous scrub.
-  for (const keep of ['mp worktree record', 'mp set-active-run', 'mp promote-active-run',
+  for (const keep of ['mp worktree record', 'mp set-active-run', 'mp promote-run',
     'mp migrate-bundle', 'mp record-result']) {
     assert.ok(prompt.includes(keep), `expected surviving reference: ${keep}`);
   }

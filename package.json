@@ -1,9 +1,9 @@
 {
   "name": "masterplan",
-  "version": "9.5.0",
+  "version": "9.6.0",
   "private": true,
   "type": "module",
-  "description": "masterplan clean-core rebuild (v8) — brainstorm→plan→execute→finish orchestrator on native Claude Code primitives.",
+  "description": "masterplan clean-core rebuild (v8) \u2014 brainstorm\u2192plan\u2192execute\u2192finish orchestrator on native Claude Code primitives.",
   "scripts": {
     "test": "node --test test/*.test.mjs",
     "doctor": "node bin/doctor.mjs"

@@ -151,8 +151,8 @@ When the command prompt names Claude Code tools, use the local Codex equivalents
   one concise prose question and wait.
 - Task/Todo task tracking: `update_plan`.
 - Workflow: **no Codex equivalent — and none needed.** Under host suppression
-  `mp continue` never returns `launch_workflow`: execute waves come back as
-  the `dispatch_foreground` op (Residual 3B, delivered) — run `op.tasks` one
+  `mp continue` never returns `dispatch_fabric`: execute waves come back as
+  the `dispatch_fabric` op (Residual 3B, delivered) — run `op.tasks` one
   at a time in this session from `op.cwd` (track with `update_plan`), honor
   each task's `files` scope, then assemble the standard per-task digest array
   and feed it to `mp record-result` exactly as the §2 op table describes —

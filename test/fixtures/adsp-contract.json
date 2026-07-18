@@ -1,0 +1,46 @@
+{
+  "$comment": "Frozen contract fixture for the agent-dispatch (adsp) dispatch_task seam, consumed by test/agents.test.mjs. Snapshot of the live `agent-dispatch digest` task-class IDs plus the dispatch_task response-shape contract. Tests validate the mp-* wrapper agents against THIS checked-in file, never against a live sibling-repo path. If agent-dispatch renames or removes a task class, re-freeze this fixture deliberately.",
+  "source": "agent-dispatch policy digest (policy/dispatch-policy.jsonc)",
+  "frozen_at": "2026-07-16",
+  "classes": [
+    "adversary",
+    "agentic-loop",
+    "architecture",
+    "bounded-edit",
+    "critic",
+    "cross-review",
+    "deep-investigation",
+    "diff-review",
+    "graph-execution",
+    "investigation",
+    "mechanical-text",
+    "multi-agent-orchestration",
+    "planned-execution",
+    "tester",
+    "unknown"
+  ],
+  "dispatch_task": {
+    "tool": "mcp__agent-dispatch__dispatch_task",
+    "request": {
+      "descriptor_required": ["repo"],
+      "class": "optional task-class string in the descriptor; declared class always wins over auto-classification"
+    },
+    "response": {
+      "kind": "free-form-structured",
+      "fixed_record": false,
+      "carries_arbitrary_verdict_vocabulary": true,
+      "$comment": "dispatch_task returns a schema-free structured JSON payload: whatever verdict vocabulary the dispatched brief declares comes back verbatim. This is why the masterplan review wrappers route through dispatch_task rather than a fixed-record review lane whose record could not carry their output contracts."
+    }
+  },
+  "wrapper_classes": {
+    "mp-planner.md": "planned-execution",
+    "mp-subsystem-planner.md": "planned-execution",
+    "mp-spec-decomposer.md": "planned-execution",
+    "mp-plan-reviewer.md": "critic",
+    "mp-goal-assessor.md": "critic"
+  },
+  "verdict_vocabularies": {
+    "mp-plan-reviewer.md": ["PASS", "REVISE", "FAIL"],
+    "mp-goal-assessor.md": ["achieved", "partial", "missed"]
+  }
+}

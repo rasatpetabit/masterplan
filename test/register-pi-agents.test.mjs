@@ -112,7 +112,7 @@ function setupTmpAgents(files) {
 }
 
 const VALID_AGENT = '---\nname: mp-x\ndescription: x\nmodel: fable\ntools: Read, Grep\n---\n\nbody\n';
-const IMPLEMENTER_AGENT = '---\nname: mp-implementer\ndescription: x\nmodel: fable\ntools: Read\n---\n\nbody\n';
+const IMPLEMENTER_AGENT = '---\nname: worker-digest\ndescription: x\nmodel: fable\ntools: Read\n---\n\nbody\n';
 
 function snapshot(dir) {
   if (!existsSync(dir)) return null;
@@ -142,7 +142,7 @@ test('runRegister write mode produces bare-only with swapped model', () => {
   assert.equal(existsSync(join(targetDir, 'masterplan:mp-x.md')), false, 'no colon alias emitted');
 });
 
-test('runRegister never emits mp-implementer or masterplan:mp-implementer targets', () => {
+test('runRegister never emits worker-digest or masterplan:mp-implementer targets', () => {
   const { agentsDir, targetDir } = setupTmpAgents({
     'mp-x.md': VALID_AGENT,
     'mp-implementer.md': IMPLEMENTER_AGENT,
@@ -155,7 +155,7 @@ test('runRegister never emits mp-implementer or masterplan:mp-implementer target
   assert.equal(existsSync(join(targetDir, 'masterplan:mp-x.md')), false, 'bare-only: no colon for non-skipped either');
   const check = runRegister({ agentsDir, targetDir, check: true });
   assert.equal(check.drift, 0, JSON.stringify(check.report));
-  assert.ok(!check.report.some((l) => /mp-implementer/.test(l) && /WROTE|OK/.test(l)));
+  assert.ok(!check.report.some((l) => /worker-digest/.test(l) && /WROTE|OK/.test(l)));
 });
 
 test('runRegister --check passes (drift=0) after a clean write', () => {
@@ -293,8 +293,8 @@ test('runRegister cleans preseeded masterplan:mp-implementer.md (SKIP_FOR_PI man
   assert.equal(existsSync(join(targetDir, 'masterplan:mp-implementer.md')), false);
 });
 
-test('SKIP_FOR_PI excludes mp-implementer (CC-only skynet MCP contract)', () => {
-  assert.ok(SKIP_FOR_PI.has('mp-implementer.md'), 'mp-implementer must be skipped for pi');
+test('SKIP_FOR_PI excludes worker-digest (CC-only skynet MCP contract)', () => {
+  assert.ok(SKIP_FOR_PI.has('mp-implementer.md'), 'worker-digest must be skipped for pi');
 });
 
 test('every non-skipped agent that declares tools covers its MCP-namespaced names', () => {
@@ -306,7 +306,7 @@ test('every non-skipped agent that declares tools covers its MCP-namespaced name
     const toolsLine = m[1];
     assert.match(
       toolsLine,
-      /^[\w]+(,\s*[\w]+)*$/,
+      /^[\w-]+(,\s*[\w-]+)*$/,
       `${f}: tool list no longer matches the (widened) agents.test.mjs regex`,
     );
   }

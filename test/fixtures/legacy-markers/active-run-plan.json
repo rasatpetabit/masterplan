@@ -1,0 +1,8 @@
+{
+  "$note": "Sanitized legacy-state fixture: a pre-fabric PLANNING run's phase-1 marker, the shape the launch_workflow(plan) era wrote BEFORE launch returned handles. Structural marker shape only (keys, kinds, phase values); identifying content replaced with neutral placeholders.",
+  "$source_shape": "pre-fabric plan-phase bundle marker: { kind: 'plan', phase: 'launching' }",
+  "phase": "plan",
+  "planning_mode": "auto",
+  "tasks": [],
+  "active_run": { "kind": "plan", "phase": "launching" }
+}

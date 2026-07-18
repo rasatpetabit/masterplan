@@ -6,13 +6,14 @@
 //   1. CONTRACT_VERSION is pinned to 'adsp-v1.1' (the contract seam).
 //   2. dispatchTask maps the masterplan task fields into the broker descriptor correctly.
 //   3. extractDigestFromOutput extracts valid digests from clean and multi-line broker output.
-//   4. dispatchTask propagates the worker digest back in the exact mp-implementer shape.
+//   4. dispatchTask propagates the worker digest back in the exact worker-digest shape.
 //   5. Broker escalations (escalate, execute_yourself) are returned as status:'blocked'.
 //   6. Missing digest in broker output returns status:'failed'.
 //   7. Broker error (network/spawn) returns status:'blocked'.
 //   8. task_id is always the canonical input value (never overridden by worker).
 //   9. cwd defaults to process.cwd() when not supplied.
 //  10. Descriptor carries contract_version, files, verify fields.
+//  10b. Optional review requirement passes through descriptor-only (never changes the handoff key).
 //  11. createBrokerClient initializes and passes tool calls through the MCP wire protocol.
 
 import { test } from 'node:test';
@@ -37,7 +38,7 @@ import {
 // Fixtures
 // ---------------------------------------------------------------------------
 
-/** A minimal valid mp-implementer digest. */
+/** A minimal valid worker-digest digest. */
 const validDigest = () => ({
   task_id:       7,
   status:        'done',
@@ -204,7 +205,10 @@ test('dispatchTask calls dispatch_task on the broker with the correct descriptor
   assert.equal(descriptor.repo, '/repo/.worktrees/my-run'); // cwd maps to repo
   assert.equal(descriptor.brief, 'Add a null check to parseConfig');
   assert.deepEqual(descriptor.files, ['lib/foo.mjs']);
-  assert.deepEqual(descriptor.verify, ['node --test']);
+  assert.equal(descriptor.verify.length, 1);
+  assert.equal(typeof descriptor.verify[0], 'object');
+  assert.equal(descriptor.verify[0].command, "bash -c 'node --test'");
+  assert.equal(descriptor.verify[0].timeout, 300);
   assert.equal(descriptor.contract_version, 'adsp-v1.1');
 
   // adsp-v1 seam: the work item carries the bundle's stable task_id and the
@@ -214,7 +218,7 @@ test('dispatchTask calls dispatch_task on the broker with the correct descriptor
   assert.equal(descriptor.handoff_key, expectedKeyFor(baseTask()));
 });
 
-test('dispatchTask returns the extracted digest in the mp-implementer shape', async () => {
+test('dispatchTask returns the extracted digest in the worker-digest shape', async () => {
   const d = validDigest();
   const stub = makeBrokerStub({
     decision: { decision: 'route', backend: 'pi' },
@@ -549,7 +553,10 @@ test('buildWorkItem: pure constructor returns the work item with the composed ha
   assert.equal(descriptor.repo, '/repo/.worktrees/my-run');
   assert.equal(descriptor.brief, 'Add a null check to parseConfig');
   assert.deepEqual(descriptor.files, ['lib/foo.mjs']);
-  assert.deepEqual(descriptor.verify, ['node --test']);
+  assert.equal(descriptor.verify.length, 1);
+  assert.equal(typeof descriptor.verify[0], 'object');
+  assert.equal(descriptor.verify[0].command, "bash -c 'node --test'");
+  assert.equal(descriptor.verify[0].timeout, 300);
   assert.equal(descriptor.contract_version, 'adsp-v1.1');
   assert.equal(descriptor.task_id, 7);
   assert.equal(descriptor.handoff_key, expectedKeyFor(baseTask()));
@@ -568,6 +575,27 @@ test('buildWorkItem: honors a task class override over the default', () => {
   assert.equal(descriptor.class, 'agentic-loop');
   // The class change is part of the worker config → it changes the key.
   assert.notEqual(descriptor.handoff_key, expectedKeyFor(baseTask()));
+});
+
+test('buildWorkItem: optional adversary-review requirement passes through to the descriptor (descriptor-only)', () => {
+  const withReview = buildWorkItem({ ...baseTask(), review: { adversary: true } });
+  assert.deepEqual(withReview.review, { adversary: true });
+  // Absent unless requested — a v1 descriptor carries NO review field at all.
+  const plain = buildWorkItem(baseTask());
+  assert.equal('review' in plain, false);
+});
+
+test('buildWorkItem: a DISABLED review (null/false) is omitted from the descriptor — never sent as false', () => {
+  const withNull = buildWorkItem({ ...baseTask(), review: null });
+  assert.equal('review' in withNull, false, 'review: null → no descriptor field');
+  const withFalse = buildWorkItem({ ...baseTask(), review: false });
+  assert.equal('review' in withFalse, false, 'review: false → no descriptor field');
+});
+
+test('buildWorkItem: the review field is descriptor-only — toggling it does NOT change the handoff key', () => {
+  const k1 = buildWorkItem(baseTask()).handoff_key;
+  const k2 = buildWorkItem({ ...baseTask(), review: { adversary: true } }).handoff_key;
+  assert.equal(k1, k2, 'review is excluded from the task-spec hash (like task/branch)');
 });
 
 // ---------------------------------------------------------------------------
@@ -698,7 +726,7 @@ test('blackboard: a reusable prior done result is returned as a no-op read (brok
   assert.equal(result.summary, 'added null check');
 });
 
-test('blackboard: the reused result has the exact mp-implementer shape (transparent to L1)', async () => {
+test('blackboard: the reused result has the exact worker-digest shape (transparent to L1)', async () => {
   const key = expectedKeyFor(baseTask());
   const store = makeResultStore({ priorResult: { handoff_key: key, status: 'done', digest: validDigest() } });
   const stub = makeBrokerStub({ decision: { decision: 'route', backend: 'pi' }, stdout: JSON.stringify(validDigest()) });
@@ -842,10 +870,10 @@ test('buildFrozenDispatchRecord: no run_id → null key and null hashes (degrade
 });
 
 // ---------------------------------------------------------------------------
-// 36f. Digest translation — exact mp-implementer shape (record-result untouched)
+// 36f. Digest translation — exact worker-digest shape (record-result untouched)
 // ---------------------------------------------------------------------------
 
-test('digest translation: returned digest has the exact mp-implementer shape + the v1.1 dispatch field only', async () => {
+test('digest translation: returned digest has the exact worker-digest shape + the v1.1 dispatch field only', async () => {
   const workerDigest = {
     ...validDigest(),
     extra_worker_field: 'should be dropped',
@@ -1193,11 +1221,11 @@ test('translateBrokerResult: a fanout per-item {error} joins the escalate reason
 });
 
 test('brokerErrorDigest: blocked / broker_error with the failing tool named in the summary', () => {
-  const d = brokerErrorDigest(9, 'connection refused', 'dispatch_fanout');
+  const d = brokerErrorDigest(9, 'connection refused', 'dispatch_task');
   assert.equal(d.status, 'blocked');
   assert.equal(d.task_id, 9);
   assert.equal(d.dispatch.outcome, 'broker_error');
-  assert.match(d.summary, /dispatch_fanout/);
+  assert.match(d.summary, /dispatch_task/);
   assert.match(d.blockers, /connection refused/);
   // Default tool name preserves the dispatchTask summary text.
   assert.match(brokerErrorDigest(9, 'x').summary, /during dispatch_task/);

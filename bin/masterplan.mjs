@@ -74,7 +74,7 @@
 //                                                  [, scope, baseline, wsBaseline]}; --ws-baseline captures
 //                                                  workspace root entries at launch for post-wave drift detection
 //   set-active-run --state=PATH --kind=plan     -> CD-7 write: planning marker {kind:'plan', phase:'launching'}
-//   promote-active-run --state=PATH --run-id=X --task-id=Y -> phase-2: attach the launch handles
+//   promote-run --state=PATH --run-id=X --task-id=Y -> phase-2: attach the launch handles
 //   clear-active-run --state=PATH               -> CD-7 write: clear the run marker
 //   merge-plan-fragments --fragments=PATH --out=PATH [--plan-md=PATH] [--meta=JSON] [--generated-at=T]
 //                                               -> ARTIFACT write: deterministic plan.index.json + plan.md
@@ -154,7 +154,18 @@
 //                                                  marker. Guard D ownership is acquired + confirmed before
 //                                                  any dispatching transition (blocked owner → loud non-zero
 //                                                  exit, nothing dispatched; owner_lock=off skips).
-//                                                  The ONLY async subcommand (MCP over stdio).
+//                                                  ASYNC (MCP over stdio; dispatch-plan is the other).
+//   dispatch-plan --state=PATH --subsystems=JSON|--subsystems-file=PATH [--spec-path=P] [--broker-bin=BIN]
+//                                               -> the dispatch_fanout(plan) op consumer (lib/continue.mjs
+//                                                  dispatchPlanFanout): the broker planning fan-out that
+//                                                  replaced the L2 plan Workflow — one READ-ONLY work item
+//                                                  per subsystem (class masterplan-planning, enumerated
+//                                                  roots = repo + spec, no write-scope fields), ONE broker
+//                                                  process, pre/post `git status --porcelain` assertions
+//                                                  over the roots (a breach exits loudly — fragments are
+//                                                  NOT surfaced). Prints { subsystems: fragments, … } for
+//                                                  the shell to stage as .plan-fragments.json exactly as
+//                                                  before (merge/validate/review gate unchanged). ASYNC.
 //   acquire-owner  --state=PATH [--session=ID] [--host=H] [--now=MS] [--ttl-ms=N] [--force]
 //   heartbeat-owner --state=PATH [--session=ID] [--host=H] [--now=MS]
 //   release-owner  --state=PATH [--session=ID] [--host=H] [--now=MS] [--ttl-ms=N] [--force]
@@ -185,8 +196,7 @@ import { decideNextAction } from '../lib/resume.mjs';
 import { prepareWave, declaredScope, verifyScope } from '../lib/wave.mjs';
 import { detectHost } from '../lib/dispatch/index.mjs';
 import { closeWaveCoord } from '../lib/dispatch/adsp-coord.mjs';
-import { selectCodexReviewForHead } from '../lib/review-companion.mjs';
-import { selectGateReview, gateEventTypes, validateGateReceipt } from '../lib/gate-review.mjs';
+import { selectReentry, reentryEventTypes, validateGateReceipt } from '../lib/reentry-guard.mjs';
 import { resolveConfigDir } from '../lib/paths.mjs';
 import { createHash } from 'node:crypto';
 import { mergePlanFragments, validatePlanIndex, renderPlanMd, renderPlanHtml } from '../lib/plan-merge.mjs';
@@ -198,13 +208,13 @@ import { mapQctlStatus } from '../lib/qctl-status.mjs';
 import { decideBaseDrift } from '../lib/qctl-requeue.mjs';
 import { recordWaveResult } from '../lib/wave-commit.mjs';
 import { dispatchWaveViaFabric } from '../lib/dispatch-wave.mjs';
-import { continueRun } from '../lib/continue.mjs';
+import { continueRun, dispatchPlanFanout } from '../lib/continue.mjs';
 import { finishStep } from '../lib/finish-step.mjs';
 import { sweepWorktrees } from '../lib/sweep.mjs';
 import { discoverRuns, readDiscoveryConfig, serializeDiscoveryConfig, addDiscoveryRoot, removeDiscoveryRoot, discoveryConfigPath } from '../lib/runs.mjs';
 
 // ---- spec/plan gate-review enforcement (the two PRE-EXECUTE adversary gates) ----
-// The bin fs boundary for lib/gate-review.mjs (the pure scanner). These two functions recompute a
+// The bin fs boundary for lib/reentry-guard.mjs (the pure scanner). These two functions recompute a
 // content hash over the CURRENT bytes of a gate's reviewed artifacts so editing any input RE-ARMS the
 // gate (H1: never trust a hash stamped inside a mutable artifact). The plan gate NORMALIZES
 // plan.index.json — load-plan itself stamps plan_hash/generated_at DURING the load, so stripping those
@@ -325,7 +335,7 @@ function computeGateHash(descriptors, prereadIndex) {
 // — process.exit can truncate a buffered large write) and EXITS NONZERO (3): a dumb caller fails loudly,
 // while the masterplan shell parses the op and satisfies it.
 function enforceGateReview(gate, statePath, flags, state, opts = {}) {
-  gateEventTypes(gate); // validate the gate name up front (throws on caller bug, even under --force)
+  reentryEventTypes('artifact-hash', gate); // validate the gate name up front (throws on caller bug, even under --force)
   if (flags.force) {
     try {
       appendEvent(statePath, {
@@ -349,7 +359,7 @@ function enforceGateReview(gate, statePath, flags, state, opts = {}) {
   } catch (e) {
     if (e.code !== 'ENOENT') die(`gate-review: events.jsonl unreadable: ${e.message}`, 1);
   }
-  if (selectGateReview(text, gate, hash).present) return;
+  if (selectReentry(text, { kind: 'artifact-hash', gate, key: hash }).present) return;
   const opObj = {
     op: 'run_gate_review',
     gate,
@@ -810,7 +820,7 @@ export function shouldSuppressWorkflow(flags = {}, env = process.env) {
   // `codexSuppressed` is the historical internal name for the no-Workflow path:
   // the host runs wave tasks foreground-sequential and records the standard result.
   // Pi exposes subagents/tools but not Claude Code's Workflow launch/promote handle,
-  // so returning `launch_workflow` there strands a phase-1 `{wave,phase:'launching'}`
+  // so returning `dispatch_fabric` there strands a phase-1 `{wave,phase:'launching'}`
   // marker at the user-facing `/masterplan next` boundary. Treat Pi as no-Workflow by
   // default; callers can still pass the explicit flag on any host.
   return !!flags['codex-suppressed'] || !!flags['no-workflow'] || env.PI_CODING_AGENT === 'true';
@@ -884,7 +894,7 @@ function main() {
         die(`invalid --adversary-review '${reviewFlag}' — expected on or off`);
       }
       // --fabric=on|off: default-on strangler for the dispatch_fabric wave path. Undefined →
-      // buildSeedState fabricDispatch true. off omits state.dispatch (legacy launch_workflow path).
+      // buildSeedState fabricDispatch true. off omits state.dispatch (legacy dispatch_fabric path).
       if (flags.fabric !== undefined && !['on', 'off'].includes(flags.fabric)) {
         die(`invalid --fabric '${flags.fabric}' — expected on or off`);
       }
@@ -2103,7 +2113,9 @@ function main() {
       out({ active_run: run });
       break;
     }
-    case 'promote-active-run': {
+    case 'promote-run': {
+      // L2-era promote of background Workflow handles. Fabric path never promotes
+      // (dispatch_fabric uses next:record-result); kept for mid-flight recovery only.
       const p = need(flags, 'state');
       const state = loadForWrite(p);
       const prev = state.active_run ?? {};
@@ -2117,7 +2129,7 @@ function main() {
       // (set-active-run --wave=N). Promoting without it writes a wave-less active_run that
       // decideNextAction then mis-finalizes while tasks pend (orphan / double-dispatch). Fail loud.
       if (!Number.isInteger(prev.wave)) {
-        die(`promote-active-run: no phase-1 launching marker with an integer wave ` +
+        die(`promote-run: no phase-1 launching marker with an integer wave ` +
             `(active_run=${JSON.stringify(state.active_run ?? null)}) — call \`set-active-run --wave=N\` first.`);
       }
       // Carry the launch-time F-SCOPE snapshot forward: promotion replaces active_run wholesale, so
@@ -2532,7 +2544,7 @@ function main() {
       // means the review already ran at this exact tree, so skip the network-bound re-run AND rehydrate
       // the findings digest into the re-rendered gate AUQ. The `adversary_review` event is written BEFORE
       // `open-gate`, so a death in between still skips on resume (closes the P2 durability window). bin
-      // owns the fs read; lib/review-companion.mjs scans the text purely (matching both the new and
+      // owns the fs read; lib/reentry-guard.mjs scans the text purely (matching both the new and
       // legacy event families). Absent events.jsonl == no review yet → { present:false }.
       const p = need(flags, 'state');
       const sha = String(need(flags, 'sha'));
@@ -2546,7 +2558,8 @@ function main() {
         // a swallowed read error would falsely re-run the network gate (or worse, look "skipped").
         if (e.code !== 'ENOENT') die(`adversary-review-status: events.jsonl unreadable: ${e.message}`, 1);
       }
-      out(selectCodexReviewForHead(text, sha));
+      const { present, digest, count, base } = selectReentry(text, { kind: 'head-sha', key: sha });
+      out({ present, digest, count, base });
       break;
     }
     case 'record-verification': {
@@ -2581,7 +2594,7 @@ function main() {
       const descriptors = resolveGateArtifacts({ gate, statePath: p, state, flags, op: 'record' });
       const hash = computeGateHash(descriptors);
       const artifacts = descriptors.map((d) => d.relName);
-      const { done, skipped } = gateEventTypes(gate);
+      const { done: [doneType], skipped: [skipType] } = reentryEventTypes('artifact-hash', gate);
       const data = { hash };
       // --count: findings tally — when given it must be a non-negative integer.
       if (flags.count !== undefined) {
@@ -2623,7 +2636,7 @@ function main() {
         };
         if (v.normalized.base) data.base = v.normalized.base;
         else if (flags.base !== undefined) data.base = String(flags.base);
-        note = v.normalized.digest; // selectGateReview surfaces note as the findings digest
+        note = v.normalized.digest; // selectReentry surfaces note as the findings digest
       } else {
         // skipped — degraded lane. Evidence required: non-empty reason AND a readable, non-empty digest.
         const reason = String(need(flags, 'reason'));
@@ -2645,7 +2658,7 @@ function main() {
       // --summary is the audit-scanned signal channel (the session audit counts \b(codex|adversary)\s+
       // review\b) — default to that literal phrasing for parity with the finish-gate summary.
       const record = {
-        type: status === 'done' ? done : skipped,
+        type: status === 'done' ? doneType : skipType,
         ts: flags.ts ?? new Date().toISOString(),
         data,
         note,
@@ -2684,7 +2697,7 @@ function main() {
       } catch (e) {
         if (e.code !== 'ENOENT') die(`gate-review-status: events.jsonl unreadable: ${e.message}`, 1);
       }
-      out({ gate, hash, artifacts: descriptors.map((d) => d.relName), ...selectGateReview(text, gate, hash) });
+      out({ gate, hash, artifacts: descriptors.map((d) => d.relName), ...selectReentry(text, { kind: 'artifact-hash', gate, key: hash }) });
       break;
     }
     case 'gate-hash': {
@@ -3245,13 +3258,50 @@ function main() {
       break;
     }
 
+    case 'dispatch-plan': {
+      // The dispatch_fanout(plan) op consumer: the broker planning fan-out that replaced the
+      // L2 plan Workflow launch (workflows/dispatch-plan). One READ-ONLY work item per
+      // subsystem (class masterplan-planning, enumerated roots = repo + spec path, NO
+      // write-scope fields — broker-level write denial where supported), ONE broker process
+      // for the whole fan-out, and pre/post `git status --porcelain` assertions over the
+      // enumerated roots as defense in depth (a breach throws — fragments are NOT surfaced).
+      // Prints { subsystems: fragments, specPath, repoRoot, requested, denied, missing } —
+      // the shell stages .plan-fragments.json from `subsystems` exactly as the L2 engine's
+      // result was staged; the merge/validate/review gate sequence is unchanged. ASYNC like
+      // dispatch-wave (MCP over stdio): main() returns while the promise settles; die() maps
+      // a rejection to a non-zero exit.
+      const statePath = need(flags, 'state');
+      loadForWrite(statePath); // strict-v8 guard: fail loud, never fan out over a legacy bundle
+      const rawSubs = typeof flags.subsystems === 'string'
+        ? flags.subsystems
+        : (typeof flags['subsystems-file'] === 'string' ? readText(flags['subsystems-file']) : undefined);
+      if (rawSubs === undefined) {
+        die('dispatch-plan: --subsystems=JSON or --subsystems-file=PATH is required (the §3a decomposition from mp-spec-decomposer)');
+      }
+      let subsystems;
+      try {
+        subsystems = JSON.parse(rawSubs);
+      } catch (e) {
+        die(`dispatch-plan: --subsystems must be valid JSON (${e.message})`);
+      }
+      dispatchPlanFanout({
+        statePath,
+        subsystems,
+        specPath: typeof flags['spec-path'] === 'string' ? flags['spec-path'] : null,
+        brokerBin: typeof flags['broker-bin'] === 'string' ? flags['broker-bin'] : undefined,
+      })
+        .then(out)
+        .catch((e) => die(e.message));
+      break;
+    }
+
     case 'continue': {
       // T2.3: the trampoline — migrate-on-load → Guard D acquire/confirm → wave backfill →
       // alive-probe gating → the bounded decide loop, returning ONE typed op per call
-      // ({op: launch_workflow|dispatch_foreground|run_skill|record_result|ask|probe|shell|stop|…}).
+      // ({op: dispatch_fabric|dispatch_fabric|dispatch_fanout|run_skill|record_result|ask|probe|shell|stop|…}).
       // The shell stops sequencing §2 by prose: it calls `mp continue`, executes the op, repeats.
       // Hosts without Claude Code Workflow handles (PI_CODING_AGENT or --no-workflow) are routed
-      // to dispatch_foreground so a phase-1 launch marker is consumed instead of user-stranded.
+      // to dispatch_fabric so a phase-1 launch marker is consumed instead of user-stranded.
       // Same git-in-bin seam as record-result: LOCAL git only, network ops stay shell-side.
       const statePath = need(flags, 'state');
       // Guard D identity is resolved ONLY when the bundle hasn't opted out — resolveOwnerSelf

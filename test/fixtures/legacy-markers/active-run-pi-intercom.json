@@ -1,0 +1,12 @@
+{
+  "$note": "Sanitized legacy-state fixture shaped like the pi-intercom-usage bundle: an execute-era task list ({id, status, wave, files}) with a STALE phase-1 marker {wave:N, phase:'launching', scope:[], baseline:[]} where wave N's tasks are all done on disk (marker stranded between record and clear) while an EARLIER wave still carries a pending task. Paths/ids replaced with neutral placeholders; live shape had 12 tasks across 9 waves with the marker on wave 8.",
+  "$source_shape": "stale finished-wave phase-1 marker: { wave: 3, phase: 'launching', scope: [], baseline: [] }",
+  "phase": "execute",
+  "tasks": [
+    { "id": 1, "status": "done", "wave": 1, "files": ["src/one.txt"] },
+    { "id": 2, "status": "pending", "wave": 1, "files": ["src/two.txt"] },
+    { "id": 3, "status": "done", "wave": 2, "files": ["src/three.txt"] },
+    { "id": 4, "status": "done", "wave": 3, "files": ["src/four.txt"] }
+  ],
+  "active_run": { "wave": 3, "phase": "launching", "scope": [], "baseline": [] }
+}

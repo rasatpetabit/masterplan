@@ -225,7 +225,7 @@ test('lost-to-other: aborts with ZERO writes — no marks, no commits, no events
   assert.equal(fs.existsSync(path.join(fx.WT, 'src/a.txt')), true, 'work left in place for the owner');
 });
 
-test('failed task: left pending, marker intact, partial edits stay UNCOMMITTED, next=recover_and_redispatch', () => {
+test('failed task: left pending, marker intact, partial edits stay UNCOMMITTED, next=recover_wave', () => {
   const fx = makeFixture({
     tasks: [
       { id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] },
@@ -263,7 +263,7 @@ test('failed task: left pending, marker intact, partial edits stay UNCOMMITTED, 
   const after = readState(fx.statePath);
   assert.equal(after.active_run.wave, 1);
   assert.deepEqual(after.tasks.map((t) => t.status), ['done', 'pending']);
-  assert.equal(res.next.action, 'recover_and_redispatch');
+  assert.equal(res.next.action, 'recover_wave');
   assert.deepEqual(res.next.tasks.map((t) => t.id), [2]);
   assert.deepEqual(res.next.resetPaths, ['src/b.txt']);
 });

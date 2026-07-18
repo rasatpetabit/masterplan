@@ -95,7 +95,7 @@ test('formatBanner: no version -> vUNKNOWN; empty args -> (empty)', () => {
   assert.equal(formatBanner(null, '', '/x'), "→ /masterplan vUNKNOWN args: '(empty)' cwd: /x");
 });
 
-test('shouldSuppressWorkflow: Pi/no-workflow hosts use foreground dispatch instead of launch_workflow', () => {
+test('shouldSuppressWorkflow: Pi/no-workflow hosts use foreground dispatch instead of dispatch_fabric', () => {
   assert.equal(shouldSuppressWorkflow({}, {}), false);
   assert.equal(shouldSuppressWorkflow({ 'codex-suppressed': true }, {}), true);
   assert.equal(shouldSuppressWorkflow({ 'no-workflow': true }, {}), true);
@@ -897,13 +897,13 @@ test('active_run two-phase: set (launching) -> recover w/ null staleTaskId; prom
   const p = tmpBundle(v8());
   assert.deepEqual(JSON.parse(run(['set-active-run', `--state=${p}`, '--wave=0']).stdout).active_run, { wave: 0, phase: 'launching' });
   const d1 = JSON.parse(run(['decide', `--state=${p}`]).stdout);
-  assert.equal(d1.action, 'recover_and_redispatch');
+  assert.equal(d1.action, 'recover_wave');
   assert.equal(d1.staleTaskId, null); // crashed in the launch gap — nothing to reconcile
-  assert.deepEqual(JSON.parse(run(['promote-active-run', `--state=${p}`, '--run-id=wf_9', '--task-id=k9']).stdout).active_run,
+  assert.deepEqual(JSON.parse(run(['promote-run', `--state=${p}`, '--run-id=wf_9', '--task-id=k9']).stdout).active_run,
     { wave: 0, run_id: 'wf_9', task_id: 'k9' });
   assert.equal(JSON.parse(run(['decide', `--state=${p}`, '--alive']).stdout).action, 'wait');
   const d2 = JSON.parse(run(['decide', `--state=${p}`]).stdout);
-  assert.equal(d2.action, 'recover_and_redispatch');
+  assert.equal(d2.action, 'recover_wave');
   assert.equal(d2.staleTaskId, 'k9'); // dead -> shell reconciles this handle before reset+redispatch
   run(['clear-active-run', `--state=${p}`]);
   assert.equal(read(p).active_run, null);
@@ -914,7 +914,7 @@ test('F-SCOPE snapshot: set-active-run --scope freezes the allow-set; promote pr
   const set = JSON.parse(run(['set-active-run', `--state=${p}`, '--wave=0', '--scope=["a.js"]']).stdout);
   assert.deepEqual(set.active_run, { wave: 0, phase: 'launching', scope: ['a.js'] });
   // 2) Promotion preserves the frozen scope through the phase-1 -> phase-2 transition.
-  const prom = JSON.parse(run(['promote-active-run', `--state=${p}`, '--run-id=wf_1', '--task-id=k1']).stdout);
+  const prom = JSON.parse(run(['promote-run', `--state=${p}`, '--run-id=wf_1', '--task-id=k1']).stdout);
   assert.deepEqual(prom.active_run, { wave: 0, run_id: 'wf_1', task_id: 'k1', scope: ['a.js'] });
   // 3) Simulate a ROGUE mid-wave widening of state.tasks[].files to include rogue.js — exactly the tamper
   //    the snapshot defends against. If verify-scope re-derived the allow-set from state (the pre-fix
@@ -947,7 +947,7 @@ test('D6 baseline: set-active-run --baseline persists; promote carries it; verif
   const set = JSON.parse(run(['set-active-run', `--state=${p}`, '--wave=0', '--scope=["a.js"]', '--baseline=["pre.js"]']).stdout);
   assert.deepEqual(set.active_run, { wave: 0, phase: 'launching', scope: ['a.js'], baseline: ['pre.js'] });
   // 2) Promotion carries the baseline forward (mirror of scope) so a post-completion-crash resume still has it.
-  const prom = JSON.parse(run(['promote-active-run', `--state=${p}`, '--run-id=wf_1', '--task-id=k1']).stdout);
+  const prom = JSON.parse(run(['promote-run', `--state=${p}`, '--run-id=wf_1', '--task-id=k1']).stdout);
   assert.deepEqual(prom.active_run, { wave: 0, run_id: 'wf_1', task_id: 'k1', scope: ['a.js'], baseline: ['pre.js'] });
   // 3) finalize_run RESUME path: verify-scope is called with NO --before (the workflow result is gone),
   //    so it must fall back to active_run.baseline (['pre.js']). pre.js is in `before` -> excluded from the
@@ -980,7 +980,7 @@ test('planning active_run: set --kind=plan writes launching marker without --wav
 });
 test('planning active_run: promote attaches run and task handles without a wave', () => {
   const p = tmpBundle(v8({ active_run: { kind: 'plan', phase: 'launching' } }));
-  const r = run(['promote-active-run', `--state=${p}`, '--run-id=R', '--task-id=T']);
+  const r = run(['promote-run', `--state=${p}`, '--run-id=R', '--task-id=T']);
   assert.equal(r.status, 0);
   assert.deepEqual(JSON.parse(r.stdout).active_run, { kind: 'plan', run_id: 'R', task_id: 'T' });
   assert.deepEqual(read(p).active_run, { kind: 'plan', run_id: 'R', task_id: 'T' });
@@ -1342,9 +1342,9 @@ test('ISSUE G: set-phase execute over 0 tasks is refused (--force advances but d
 });
 
 // ---- regression coverage: the three Codex-review findings (2026-05-28) ----
-test('promote-active-run without a phase-1 launching marker is refused (HIGH: no wave-less active_run)', () => {
+test('promote-run without a phase-1 launching marker is refused (HIGH: no wave-less active_run)', () => {
   const p = tmpBundle(v8()); // active_run: null — no set-active-run was called
-  const r = run(['promote-active-run', `--state=${p}`, '--run-id=wf_9', '--task-id=k9']);
+  const r = run(['promote-run', `--state=${p}`, '--run-id=wf_9', '--task-id=k9']);
   assert.equal(r.status, 2);
   assert.match(r.stderr, /set-active-run/);
   assert.equal(read(p).active_run, null); // state untouched — nothing orphaned
@@ -2786,4 +2786,57 @@ test('merge-plan-fragments: pre-feature bundle (no goals_enabled) skips coverage
   const r = run(['merge-plan-fragments', `--fragments=${fp}`, `--out=${out}`]);
   assert.equal(r.status, 0, `pre-feature coverage must be a no-op: ${r.stderr}`);
   assert.equal(JSON.parse(r.stdout).tasks, 1);
+});
+
+// ---- the planning verb (task 5: planning-fanout — plan-gate fold R6 bin coverage) ----
+// `continue` on a plan-marker bundle is the planning verb: it must emit the broker
+// dispatch_plan planning op (read-only class + enumerated roots) and retain no
+// dispatch_fabric(plan) arm. continue is a git-touching verb (mainRepoRoot), so unlike
+// the fs-only fixtures above this one builds a minimal real repo around the bundle.
+test('continue (planning verb): a plan marker yields the read-only dispatch_plan planning op — no dispatch_fabric(plan) arm remains', () => {
+  const repo = tmpDir('mp-bin-plan-');
+  const git = (...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
+  git('init', '--initial-branch=main');
+  git('config', 'user.email', 'test@test');
+  git('config', 'user.name', 'test');
+  git('config', 'commit.gpgsign', 'false');
+  fs.writeFileSync(path.join(repo, 'seed.txt'), 'seed\n');
+  git('add', '.');
+  git('commit', '-q', '-m', 'initial');
+  const bundleDir = path.join(repo, 'docs', 'masterplan', 'demo');
+  fs.mkdirSync(bundleDir, { recursive: true });
+  const statePath = path.join(bundleDir, 'state.yml');
+  fs.writeFileSync(statePath, serializeState({
+    schema_version: '6.0', slug: 'demo', status: 'in-progress', phase: 'plan',
+    pending_gate: null, tasks: [],
+    active_run: { kind: 'plan', phase: 'launching' },
+    concurrency: { owner_lock: 'off' },
+  }));
+  // PI_CODING_AGENT stripped: the suppressed host path (serial reroute) is not under test here.
+  const r = run(['continue', `--state=${statePath}`, '--now=2000'], { env: { ...process.env, PI_CODING_AGENT: '' } });
+  assert.equal(r.status, 0, r.stderr);
+  const op = JSON.parse(r.stdout);
+  assert.equal(op.op, 'dispatch_plan');
+  assert.equal(op.kind, 'plan');
+  assert.equal(op.read_only, true);
+  assert.equal(op.class, 'masterplan-planning');
+  assert.equal(op.next, 'stage-plan-fragments');
+  assert.ok(Array.isArray(op.roots) && op.roots.length === 2, 'enumerated roots: repo + spec');
+  assert.equal(op.roots[0], op.cwd);
+  assert.equal(op.roots[1], path.join(bundleDir, 'spec.md'));
+  assert.equal(op.spec_path, path.join(bundleDir, 'spec.md'));
+  assert.ok(!r.stdout.includes('dispatch_fabric'), 'the dispatch_fabric(plan) arm is retired');
+});
+
+test('dispatch-plan: --subsystems required and JSON-validated; a non-plan marker dies loudly (no broker touched)', () => {
+  const p = tmpBundle(v8()); // active_run: null — not a plan marker
+  const miss = run(['dispatch-plan', `--state=${p}`]);
+  assert.notEqual(miss.status, 0);
+  assert.match(miss.stderr, /--subsystems/);
+  const bad = run(['dispatch-plan', `--state=${p}`, '--subsystems={not json']);
+  assert.notEqual(bad.status, 0);
+  assert.match(bad.stderr, /valid JSON/);
+  const noMarker = run(['dispatch-plan', `--state=${p}`, '--subsystems=[{"key":"core"}]']);
+  assert.notEqual(noMarker.status, 0);
+  assert.match(noMarker.stderr, /plan marker/);
 });

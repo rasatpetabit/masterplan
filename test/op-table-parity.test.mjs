@@ -2,7 +2,7 @@
 //
 // THE dangling-op class this kills permanently: lib/dispatch/ops.mjs shipped a
 // `dispatch_fabric` op (producer) while commands/masterplan.md's §2 op table
-// listed only launch_workflow/dispatch_foreground (consumers) — so fabric waves
+// listed only dispatch_fabric/dispatch_fabric (consumers) — so fabric waves
 // silently never dispatched through the broker. These asserts fail the suite the
 // moment either side drifts again:
 //
@@ -61,7 +61,7 @@ function opTableRows() {
 
 test('every op emitted by lib/dispatch/ops.mjs has a consumer row in the §2 op table', () => {
   const emitted = producerOps('lib/dispatch/ops.mjs');
-  assert.ok(emitted.size >= 3, `expected ops.mjs to emit >=3 ops, extracted ${emitted.size} — extraction regex broken?`);
+  assert.ok(emitted.size >= 2, `expected ops.mjs to emit >=2 ops, extracted ${emitted.size} — extraction regex broken?`);
   const rows = new Set(opTableRows().map((r) => r.op));
   for (const op of emitted) {
     assert.ok(

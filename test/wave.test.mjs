@@ -73,7 +73,7 @@ test('prepareWave (fabric via state.dispatch.fabric) defers routing to the seam:
     Object.keys(tasks[0]).sort(),
     ['class', 'description', 'files', 'id', 'verify_commands'],
   );
-  assert.equal(tasks[0].class, 'bounded-edit'); // worker default
+  assert.equal(tasks[0].class, 'masterplan-implementation'); // worker default
   assert.equal(tasks[0].target, undefined);
   assert.equal(tasks[0].backend, undefined);
   assert.equal(tasks[0].eligible, undefined);
@@ -81,7 +81,7 @@ test('prepareWave (fabric via state.dispatch.fabric) defers routing to the seam:
 
 test('prepareWave (fabric via config.fabric) is the SAME strangler flag as the wave dispatch op', () => {
   const { tasks } = prepareWave(state(), planIndex(), 0, { routing: 'auto', fabric: true }, {});
-  assert.equal(tasks[0].class, 'bounded-edit');
+  assert.equal(tasks[0].class, 'masterplan-implementation');
   assert.equal(tasks[0].target, undefined);
 });
 
