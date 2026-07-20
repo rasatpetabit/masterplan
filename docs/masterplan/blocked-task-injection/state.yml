@@ -1,7 +1,7 @@
 ---
 schema_version: 8
 slug: blocked-task-injection
-status: in-progress
+status: archived
 phase: execute
 topic: "*overflow at state-overflow.md L3*"
 complexity: moderate
@@ -21,3 +21,4 @@ goals: [{"id":"G1","text":"Dispatch skips fully-blocked waves","signal":"test"},
 review: {"adversary":true}
 render: {"images":"off"}
 goals_md_hash: sha256:a1ce79e3559d022080b0f8c0aa66758d89f8e423adb69b2115a9998f3e7f96e3
+worktree_disposition: removed_after_merge
