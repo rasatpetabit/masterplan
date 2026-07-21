@@ -2,6 +2,7 @@
 name: mp-adversarial-reviewer
 description: Adversarial second-opinion review of a completed masterplan task. Routes the review through the agent-dispatch control plane's adversary lane (`agent-dispatch review --class adversary`) and returns a severity-first findings digest (CD-10). Runs per done task during execution when the run bundle's review is enabled — not gated by task routing-eligibility.
 model: fable
+preset: prover
 tools: Bash, Read
 ---
 

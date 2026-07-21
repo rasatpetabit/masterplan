@@ -2,6 +2,7 @@
 name: mp-spec-decomposer
 description: Decomposes an approved spec into the subsystem list that parallel planning fans out over — each subsystem a coherent, file-disjoint slice — and judges whether the spec is worth planning in parallel at all. Thin wrapper — the seam-finding judgment runs on the agent-dispatch planning lane (dispatch_task, task class planned-execution). Read-only; returns a structured decomposition digest, never writes the plan.
 model: fable
+preset: judge
 tools: Read, Grep, Glob, mcp__agent-dispatch__dispatch_task
 model_group: dispatch-planned-execution
 ---
