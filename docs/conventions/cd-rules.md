@@ -1,4 +1,4 @@
-# Critical Discipline Rules (CD-1 .. CD-10)
+# Critical Discipline Rules (CD-1 .. CD-11)
 
 This is the canonical home of the CD-rule body definitions, migrated from `parts/contracts/cd-rules.md` ahead of the v8 cutover. Live v8 code (`CLAUDE.md`, `agents/*.md`, `commands/masterplan.md`, `workflows/execute.workflow.js`) references rules by `CD-N` ID — those IDs and their bodies must match this file exactly.
 

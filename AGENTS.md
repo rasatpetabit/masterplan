@@ -47,13 +47,13 @@ run state in `docs/masterplan/*/state.yml`.
 ## Discipline & development
 
 Generic agent policy — AUQ (structured questions, never a prose question),
-verification-before-completion, durable handoff state, and model routing — is
-**global / agent-dispatch policy and is not restated here** (see the §routing
-block below and `agent-dispatch digest`).
+verification-before-completion, durable handoff state, and dispatch class
+selection — is **global / agent-dispatch policy and is not restated here**
+(see the managed block below and `agent-dispatch digest`).
 
 What is masterplan-specific lives in two docs:
 
-- **Cross-cutting CD-rule bodies (CD-1…CD-10)** — code references the IDs:
+- **Cross-cutting CD-rule bodies (CD-1…CD-11)** — code references the IDs:
   [`docs/conventions/cd-rules.md`](./docs/conventions/cd-rules.md).
 - **Build/test/lint + contributor discipline** — single-writer state (never
   hand-write `state.yml`/`events.jsonl`; mutate via `mp`), dispatch-don't-work-
