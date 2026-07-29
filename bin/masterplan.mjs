@@ -183,7 +183,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, setWorktree, setWorktreeDisposition, setVerifiedSha, setCodexConfig, setReviewConfig, setRenderConfig, loadPlanTasks, buildSeedState, buildTasksFromPlanIndex, appendEvent, setCoordination, applyPlanIndex, upsertTasks, rebasePaths, GOAL_LIFECYCLE_EVENT_TYPES, inferGoalsCapability } from '../lib/bundle.mjs';
+import { readState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, setWorktree, setWorktreeDisposition, setVerifiedSha, setCodexConfig, setReviewConfig, setRenderConfig, loadPlanTasks, buildSeedState, buildTasksFromPlanIndex, appendEvent, setCoordination, applyPlanIndex, upsertTasks, rebasePaths, GOAL_LIFECYCLE_EVENT_TYPES, inferGoalsCapability, CURRENT_SCHEMA_VERSION } from '../lib/bundle.mjs';
 import { parseGoals, validateGoals, goalsHash, validateUserApprovalReceipt, validateAmendment, amendmentDiff, crossCheckGoals, validateGoalCheckReceipt, validateGoalWaiver, waiverKey } from '../lib/goals.mjs';
 import { planWorktreeCreate, parseWorktreeList, classifyWorktrees, normalizeDisposition, dispositionAfterTeardown, VALID_DISPOSITIONS as VALID_WORKTREE_DISPOSITION } from '../lib/worktree.mjs';
 import { collectDiskDirs, collectBundleRecords } from '../lib/worktree-fs.mjs';
@@ -907,7 +907,13 @@ function main() {
           createdAt: flags['created-at'] ?? new Date().toISOString(),
           phase: flags.phase ?? 'brainstorm',
           status: flags.status ?? 'in-progress',
-          schemaVersion: flags['schema-version'] !== undefined ? Number(flags['schema-version']) : 8,
+          // Must track CURRENT_SCHEMA_VERSION, not a literal. A hardcoded 8 here
+          // silently overrode buildSeedState's CURRENT_SCHEMA_VERSION default, so
+          // every freshly-seeded bundle stamped a version BELOW the floor that
+          // version-scoped doctor checks gate on — `spec-assumptions` skipped 100%
+          // of bundles, degrading to SKIP rather than failing, which is why it went
+          // unnoticed. Keep this symbolic so the constant stays single-source.
+          schemaVersion: flags['schema-version'] !== undefined ? Number(flags['schema-version']) : CURRENT_SCHEMA_VERSION,
           complexity: flags.complexity,
           complexitySource: flags['complexity-source'],
           autonomy: flags.autonomy,

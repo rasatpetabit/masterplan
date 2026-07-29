@@ -10,7 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { formatBanner, applyPlanIndex, readPluginVersion, shouldSuppressWorkflow } from '../bin/masterplan.mjs';
-import { serializeState, parseState } from '../lib/bundle.mjs';
+import { serializeState, parseState, CURRENT_SCHEMA_VERSION } from '../lib/bundle.mjs';
 import { createHash } from 'node:crypto';
 
 const BIN = fileURLToPath(new URL('../bin/masterplan.mjs', import.meta.url));
@@ -168,6 +168,25 @@ test('migrate-bundle: backs up original + rewrites as v8; second run is a no-op'
   assert.equal(migrated.schema_version, 8); // canonical v8 schema NUMBER (was string '6.0' — the doctor false-ERROR fix)
   assert.equal(typeof migrated.schema_version, 'number'); // on-disk type the doctor's validateCoreState requires
   assert.equal(JSON.parse(run(['migrate-bundle', `--state=${p}`]).stdout).migrated, false); // idempotent
+});
+test('seed: stamps CURRENT_SCHEMA_VERSION, so a fresh bundle is never grandfathered out of its own checks', () => {
+  // Regression: bin hardcoded `schemaVersion: 8` while CURRENT_SCHEMA_VERSION was 9, so every
+  // freshly-seeded bundle landed BELOW the floor that version-scoped doctor checks gate on.
+  // `spec-assumptions` consequently skipped 100% of bundles — and because it degrades to SKIP
+  // rather than failing, the outage was silent. Assert against the CONSTANT, never a literal,
+  // so the next version bump cannot re-open this gap.
+  const dir = tmpDir('mp-seedver-');
+  const p = path.join(dir, 'state.yml');
+  run(['seed', `--state=${p}`, '--slug=freshly-seeded', '--topic=schema version regression']);
+  const seeded = read(p);
+  assert.equal(seeded.schema_version, CURRENT_SCHEMA_VERSION);
+  assert.equal(typeof seeded.schema_version, 'number');
+  assert.ok(!(seeded.schema_version < CURRENT_SCHEMA_VERSION), 'a fresh bundle must never be below the doctor feature floor');
+});
+test('seed: --schema-version still overrides, for the migration/test paths that need it', () => {
+  const p = path.join(tmpDir('mp-seedver-ovr-'), 'state.yml');
+  run(['seed', `--state=${p}`, '--slug=pinned', '--topic=pinned version', '--schema-version=8']);
+  assert.equal(read(p).schema_version, 8);
 });
 test('ISSUE H: migrate-bundle on a sub-5.0 bundle refuses + surfaces the CD-7/seed-fresh guidance over the WIRE (operator surface, not just lib)', () => {
   // The operator never calls migrate() directly — they hit `mp migrate-bundle`, whose throw->die wrapper
@@ -1001,14 +1020,16 @@ test('write ops refuse an un-migrated legacy bundle (no silent overwrite before 
 });
 
 // ---- integration: seed + event (CD-7 writers that retire the raw-Write diff-flood) ----
-test('seed: creates a core-valid v8 brainstorm bundle with sibling artifact paths; output is terse', () => {
+test('seed: creates a core-valid current-schema brainstorm bundle with sibling artifact paths; output is terse', () => {
   const dir = tmpDir('mp-seed-');
   const p = path.join(dir, 'state.yml');
   const r = run(['seed', `--state=${p}`, '--slug=demo-run', '--topic=A licensing topic', '--created-at=2026-05-29T00:00:00Z',
                  '--complexity=high', '--autonomy=loose']);
   assert.equal(r.status, 0);
   const s = read(p);
-  assert.equal(s.schema_version, 8);
+  // Was `8`, a literal that pinned fresh bundles below the doctor feature floor and
+  // silently disabled every version-scoped check. Assert the constant, not a number.
+  assert.equal(s.schema_version, CURRENT_SCHEMA_VERSION);
   assert.equal(s.phase, 'brainstorm');
   assert.equal(s.status, 'in-progress');
   assert.equal(s.slug, 'demo-run');

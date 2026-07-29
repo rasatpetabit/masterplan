@@ -30,6 +30,7 @@ import { check as ownerSentinel } from '../lib/doctor/owner-sentinel.mjs';
 import { check as danglingRun } from '../lib/doctor/dangling-run.mjs';
 import { check as planDocCruft } from '../lib/doctor/plan-doc-cruft.mjs';
 import { check as specAssumptions } from '../lib/doctor/spec-assumptions.mjs';
+import { check as stalledBundle } from '../lib/doctor/stalled-bundle.mjs';
 import { check as goals } from '../lib/doctor/goals.mjs';
 import { goalsHash } from '../lib/goals.mjs';
 import { CURRENT_SCHEMA_VERSION } from '../lib/bundle.mjs';
@@ -1272,14 +1273,14 @@ test('dangling-run: a stale in-progress owner lock triggers WARN independent of 
 
 // ---- dispatcher: all 17 modules auto-discovered ----------------------------
 
-test('dispatcher: discovers all 17 check modules', async () => {
+test('dispatcher: discovers all 18 check modules', async () => {
   const checks = await discoverChecks(path.join(here, '..', 'lib', 'doctor'));
   const names = checks.map((c) => c.name);
   const expected = [
     'adversary-lane-health', 'codex-auth', 'coord-drift', 'dangling-run', 'goals', 'index-staleness',
     'legacy-bundle', 'owner-sentinel', 'pi-agent-registration', 'plan-doc-cruft', 'plan-index-schema',
-    'plugin-registry-drift', 'scalar-cap', 'spec-assumptions', 'stale-lock', 'state-schema',
-    'worktree-integrity',
+    'plugin-registry-drift', 'scalar-cap', 'spec-assumptions', 'stale-lock', 'stalled-bundle',
+    'state-schema', 'worktree-integrity',
   ];
   for (const n of expected) {
     assert.ok(names.includes(n), `discovered ${n}`);
@@ -1513,6 +1514,62 @@ test('spec-assumptions: fixtures match dir-prefix severity', async (t) => {
       assert.equal(maxSeverity(findings), expectedSeverity(sc), JSON.stringify(findings));
     });
   }
+});
+
+test('stalled-bundle: fixtures match dir-prefix severity', async (t) => {
+  for (const sc of scenarios('stalled-bundle')) {
+    await t.test(sc, () => {
+      const findings = stalledBundle(path.join(FX, 'stalled-bundle', sc));
+      assertFindingShape(findings);
+      assert.equal(maxSeverity(findings), expectedSeverity(sc), JSON.stringify(findings));
+    });
+  }
+});
+
+test('stalled-bundle: SKIP when there is no run bundles directory', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-sb-'));
+  const findings = stalledBundle(tmp);
+  assertFindingShape(findings);
+  assert.equal(maxSeverity(findings), 'SKIP');
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+test('stalled-bundle: NOT version-scoped — a legacy bundle is still inspected', () => {
+  // spec-assumptions grandfathers anything below CURRENT_SCHEMA_VERSION and was thereby
+  // dead for every real bundle. CD-7 is a universal invariant, so this check must fire
+  // regardless of schema_version. A bundle far below the floor must still WARN.
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-sb-legacy-'));
+  const dir = path.join(tmp, 'docs', 'masterplan', 'ancient');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'state.yml'), 'schema_version: 3\nslug: ancient\nstatus: in-progress\nphase: brainstorm\n');
+  fs.writeFileSync(path.join(dir, 'spec.md'), '# Spec\n');
+  const findings = stalledBundle(tmp);
+  assertFindingShape(findings);
+  assert.equal(maxSeverity(findings), 'WARN', JSON.stringify(findings));
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+test('stalled-bundle: an empty events.jsonl counts as unrecorded', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-sb-empty-'));
+  const dir = path.join(tmp, 'docs', 'masterplan', 'hollow');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'state.yml'), `schema_version: ${CURRENT_SCHEMA_VERSION}\nslug: hollow\nstatus: in-progress\nphase: brainstorm\n`);
+  fs.writeFileSync(path.join(dir, 'spec.md'), '# Spec\n');
+  fs.writeFileSync(path.join(dir, 'events.jsonl'), '\n\n'); // touched but holds no event
+  const findings = stalledBundle(tmp);
+  assert.equal(maxSeverity(findings), 'WARN', JSON.stringify(findings));
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+test('stalled-bundle: archived bundles are exempt', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-sb-arch-'));
+  const dir = path.join(tmp, 'docs', 'masterplan', 'done');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'state.yml'), `schema_version: ${CURRENT_SCHEMA_VERSION}\nslug: done\nstatus: archived\nphase: brainstorm\n`);
+  fs.writeFileSync(path.join(dir, 'spec.md'), '# Spec\n');
+  const findings = stalledBundle(tmp);
+  assert.equal(maxSeverity(findings), 'SKIP', JSON.stringify(findings));
+  fs.rmSync(tmp, { recursive: true, force: true });
 });
 
 test('spec-assumptions: SKIP when there is no run bundles directory', () => {
