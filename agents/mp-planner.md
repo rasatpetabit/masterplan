@@ -152,3 +152,11 @@ plan that fails schema validation, or the agent-dispatch lane is unavailable or 
 and return a digest whose `warnings` names the lane failure — drafting the plan
 natively on the wrapper model is NOT a permitted fallback; a lane outage must surface
 loudly at the planning gate. A NON-EMPTY response that violates the declared plan contract (schema, field types, annotation vocabulary) IS equally a lane failure, not material to repair: after the single re-invoke, write NOTHING and surface it loudly the same way — never patch the payload into validity or supply the missing judgment yourself.
+
+
+## Yocto / yanos-builder image plans
+
+For image/bring-up plans, follow `docs/conventions/plan-annotations.md` §
+"Yocto / yanos-builder image tasks": observable verify[], preflight/lint
+wave 0, founding-ask boot/smoke hygiene. Point implementers at yanos-os
+`docs/conventions/image-bringup-agent.md`.

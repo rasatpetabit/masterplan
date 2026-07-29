@@ -83,3 +83,47 @@ a `parallel()` barrier and each implementer asserts its own scope post-run. On t
 path the merge enforces this automatically (file-conflict wave bump); on the serial path
 the planner hand-assigns waves so same-wave file sets are disjoint. `mp validate-plan-index`
 rejects any plan that violates it.
+
+
+## Yocto / yanos-builder image tasks (verify + goals)
+
+When a plan task produces a kas/yanos-builder image:
+
+### verify[] (required shape)
+
+Use **observables**, not enqueue:
+
+```text
+- rg -n "Tasks Summary:.*all succeeded" <bitbake.log>   # or yanos-builder logs <BID>
+- test -s <path-to.wic.zst-or-equivalent>
+- test -s <path-to.raucb>   # if --with-bundle / bundle target
+- # tip: log Syncing/HEAD is now at matches planned SHA
+```
+
+If U-Boot RAUC MACHINE:
+
+```text
+- python3 scripts/check-uboot-rauc-env.py --root layers/meta-yanos-bsp
+- strings <deploy>/uboot.env | rg -q bootmeths
+```
+
+If QEMU smoke is in goals:
+
+```text
+- yanos-builder qemu smoke <project> --build-id <BID> …  # cite job path + match
+```
+
+**Forbidden verify:** `build enqueued`, `commit exists`, catalog status alone.
+
+### Wave ladder (prefer)
+
+0. preflight + lint + pins (no full image)  
+1. compile-only for OOT/kernel ports  
+2. one full image  
+3. smoke + board-card / docs  
+
+### goals.md founding-ask hygiene
+
+If the founding request includes run/boot/correct-on-hardware language, goals must include bootloader/env parity and either QEMU smoke or an explicit “artifacts only; board boot unproven” waiver before execute freeze.
+
+Cross-ref: yanos-os `docs/conventions/image-bringup-agent.md`.
