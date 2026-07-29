@@ -31,6 +31,7 @@ import { check as danglingRun } from '../lib/doctor/dangling-run.mjs';
 import { check as planDocCruft } from '../lib/doctor/plan-doc-cruft.mjs';
 import { check as specAssumptions } from '../lib/doctor/spec-assumptions.mjs';
 import { check as stalledBundle } from '../lib/doctor/stalled-bundle.mjs';
+import { check as rejectedIdeaKb } from '../lib/doctor/rejected-idea-kb.mjs';
 import { check as goals } from '../lib/doctor/goals.mjs';
 import { goalsHash } from '../lib/goals.mjs';
 import { CURRENT_SCHEMA_VERSION } from '../lib/bundle.mjs';
@@ -1273,14 +1274,14 @@ test('dangling-run: a stale in-progress owner lock triggers WARN independent of 
 
 // ---- dispatcher: all 17 modules auto-discovered ----------------------------
 
-test('dispatcher: discovers all 18 check modules', async () => {
+test('dispatcher: discovers all 19 check modules', async () => {
   const checks = await discoverChecks(path.join(here, '..', 'lib', 'doctor'));
   const names = checks.map((c) => c.name);
   const expected = [
     'adversary-lane-health', 'codex-auth', 'coord-drift', 'dangling-run', 'goals', 'index-staleness',
     'legacy-bundle', 'owner-sentinel', 'pi-agent-registration', 'plan-doc-cruft', 'plan-index-schema',
-    'plugin-registry-drift', 'scalar-cap', 'spec-assumptions', 'stale-lock', 'stalled-bundle',
-    'state-schema', 'worktree-integrity',
+    'plugin-registry-drift', 'rejected-idea-kb', 'scalar-cap', 'spec-assumptions', 'stale-lock',
+    'stalled-bundle', 'state-schema', 'worktree-integrity',
   ];
   for (const n of expected) {
     assert.ok(names.includes(n), `discovered ${n}`);
@@ -1616,4 +1617,57 @@ test('spec-assumptions: an archived at-floor bundle missing the section is exemp
   assertFindingShape(findings);
   assert.ok(!findings.some((f) => f.severity === 'WARN'), `archived bundle exempt: ${JSON.stringify(findings)}`);
   fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+// ---- rejected-idea-kb (durable .out-of-scope/ concept files) -----------------
+
+test('rejected-idea-kb: SKIP when directory absent', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-oos-'));
+  try {
+    const findings = rejectedIdeaKb(tmp);
+    assertFindingShape(findings);
+    assert.equal(maxSeverity(findings), 'SKIP', JSON.stringify(findings));
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('rejected-idea-kb: PASS when required sections present', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-oos-'));
+  try {
+    const dir = path.join(tmp, '.out-of-scope');
+    fs.mkdirSync(dir);
+    fs.writeFileSync(path.join(dir, 'example-concept.md'), [
+      '# Example concept',
+      '',
+      '## Why this is out of scope',
+      '',
+      'Rejected because it fights the dispatch ownership model.',
+      '',
+      '## Prior requests',
+      '',
+      '- 2026-07-28 — test: initial reject',
+      '',
+    ].join('\n'));
+    const findings = rejectedIdeaKb(tmp);
+    assertFindingShape(findings);
+    assert.equal(maxSeverity(findings), 'PASS', JSON.stringify(findings));
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('rejected-idea-kb: WARN when a required section is missing', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-oos-'));
+  try {
+    const dir = path.join(tmp, '.out-of-scope');
+    fs.mkdirSync(dir);
+    fs.writeFileSync(path.join(dir, 'broken.md'), '# Broken\n\nNo required sections.\n');
+    const findings = rejectedIdeaKb(tmp);
+    assertFindingShape(findings);
+    assert.equal(maxSeverity(findings), 'WARN', JSON.stringify(findings));
+    assert.match(findings.find((f) => f.severity === 'WARN').summary, /Why this is out of scope/);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
 });
