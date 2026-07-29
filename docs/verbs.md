@@ -21,6 +21,8 @@ before planning, and the plan gate additionally fails on any uncovered goal.
 Brainstorm phase only. Invokes `superpowers:brainstorming`; on spec approval advances
 `phase→plan` and halts at the close-out gate. On a `goals_enabled` bundle, at the
 spec→plan boundary `goals.md` is captured + frozen (user-approved) before advancing.
+Deliberately rejected ideas are recorded per `docs/conventions/out-of-scope.md`
+(`.out-of-scope/<concept>.md` in the target repo) and checked before re-proposing.
 
 ## `plan`
 Plan phase only: decompose the approved spec into a validated `plan.index.json` + `plan.md`
