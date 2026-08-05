@@ -24,8 +24,12 @@ signal: command
     id: 'G1',
     text: 'Increase coverage',
     signal: 'test',
+    evidence: 'npm test',
   });
-  assert.equal(goals[0].evidence, undefined);
+  // 2026-08-05: this asserted evidence was `undefined` — the parser deliberately
+  // dropped it, so goalsHash could not cover it and the acceptance criteria sat
+  // outside goal identity. Now captured, and the hash covers it.
+  assert.equal(goals[0].evidence, 'npm test');
   assert.equal(goals[0].tombstone, undefined);
 
   assert.equal(goals[1].id, 'G2');
@@ -298,8 +302,14 @@ test('amendmentDiff records a tombstoning', () => {
 
 test('goalsHash is stable across incidental whitespace but changes on real edits', () => {
   const a = `topic: build\n\n## G1: Alpha\nsignal: test\n`;
-  const b = `topic: build\n\n\n## G1: Alpha\nsignal: test\nevidence: ignored\n`;
+  // 2026-08-05: this used to read `evidence: ignored` and assert the hash was
+  // UNCHANGED by it — the test pinned the defect in place, which is why the hole
+  // survived review. Whitespace must still be incidental; evidence must not be.
+  const b = `topic: build\n\n\n## G1: Alpha\nsignal: test\n`;
   assert.equal(goalsHash(a), goalsHash(b));
+
+  const evidenceAdded = `topic: build\n\n## G1: Alpha\nsignal: test\nevidence: a real bar\n`;
+  assert.notEqual(goalsHash(a), goalsHash(evidenceAdded), 'adding an acceptance criterion must change goal identity');
   assert.match(goalsHash(a), /^sha256:[0-9a-f]{64}$/);
 
   const changed = `topic: build\n\n## G1: Alpha CHANGED\nsignal: test\n`;
@@ -565,4 +575,50 @@ test('validateGoalWaiver requires per-goal reasons and a valid user approval', (
 
 test('GOAL_VERDICTS enum is exactly achieved/partial/missed', () => {
   assert.deepEqual([...GOAL_VERDICTS].sort(), ['achieved', 'missed', 'partial']);
+});
+
+// --- evidence is INSIDE goal identity (2026-08-05) ---
+//
+// evidence was parsed-and-dropped, so goalsHash could not see it. Because that
+// hash keys every goal_check receipt, every waiver and the spec-gate re-arm, an
+// acceptance criterion could be rewritten or weakened while all of them stayed
+// valid against the old bar. Reproduced live on the dispatch-consolidation
+// bundle: amending a goal from "true" to "NOT MET" returned `idempotent` with an
+// unchanged hash and no goal_amended event.
+
+const _EV_BASE = `topic: seed
+## G1: Ship the thing
+signal: test
+evidence: the strict suite passes AND a positive control proves it can fail
+`;
+
+test('parseGoals captures evidence instead of dropping it', () => {
+  const g = parseGoals(_EV_BASE).goals[0];
+  assert.equal(g.evidence, 'the strict suite passes AND a positive control proves it can fail');
+});
+
+test('goalsHash changes when ONLY the evidence changes', () => {
+  const weakened = _EV_BASE.replace(
+    'evidence: the strict suite passes AND a positive control proves it can fail',
+    'evidence: the suite passes',
+  );
+  assert.notEqual(
+    goalsHash(_EV_BASE),
+    goalsHash(weakened),
+    'weakening an acceptance criterion must advance the goals hash, or every receipt and waiver keyed to it silently survives a bar it was never issued against',
+  );
+});
+
+test('goalsHash still ignores incidental evidence whitespace', () => {
+  const respaced = _EV_BASE.replace(
+    'evidence: the strict suite',
+    'evidence:    the strict suite',
+  );
+  assert.equal(goalsHash(_EV_BASE), goalsHash(respaced));
+});
+
+test('goalsHash treats absent evidence and empty evidence alike', () => {
+  const noEvidence = `topic: seed\n## G1: Ship the thing\nsignal: test\n`;
+  const emptyEvidence = `topic: seed\n## G1: Ship the thing\nsignal: test\nevidence:\n`;
+  assert.equal(goalsHash(noEvidence), goalsHash(emptyEvidence));
 });
