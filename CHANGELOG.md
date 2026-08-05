@@ -1,5 +1,15 @@
 # Changelog
 
+## [9.7.1]
+
+### Fixed
+- **`evidence` is inside goal identity.** `goalsHash` canonicalized only `{id, text, signal, tombstone}`, and `parseGoals` dropped `evidence` outright, so the line that says what actually PROVES a goal met could not enter the hash. Because that hash keys every `goal_check` receipt, every waiver, and the spec-gate re-arm, an acceptance criterion could be rewritten or weakened while every receipt issued against the old, stricter bar stayed valid — no `goal_amended` event, no re-arm. Found by a cross-vendor adversarial review and reproduced live: amending a goal from "true" to "NOT MET" returned `idempotent` with an unchanged hash.
+- Two test assertions had pinned the hole in place (`assert.equal(goals[0].evidence, undefined)`, and a hash-stability case whose input read `evidence: ignored`). Both now assert the opposite, with a note so they are not "restored".
+
+### Breaking
+- The frozen goals hash advances for every existing bundle. `goal_check` receipts and waivers issued under the old hash no longer validate — intended, since they certified criteria that could have moved without trace. Re-earn them.
+- Doctor fixture `pass-consistent` re-frozen. `warn-hash-mismatch`, `error-tamper-goals-emptied` and `error-archived-no-check` keep their deliberately-stale hashes; they exercise failure paths.
+
 ## [9.7.0]
 
 ### Fixed
