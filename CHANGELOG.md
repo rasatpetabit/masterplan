@@ -1,5 +1,24 @@
 # Changelog
 
+## [9.7.2]
+
+### Fixed
+- **Watch-list breaches in sibling repos are now classified correctly and reverted.** `git status`
+  lists only dirty paths, so a tracked file that was clean at launch carried no snapshot entry —
+  and the delta check read that absence as "did not exist", reporting a child's MODIFICATION of a
+  clean tracked file as `file created`. Trackedness is now answered from the launch HEAD. Separately,
+  step 3 only reverted worktree-relative paths, so a breach in a watched SIBLING repo was detected
+  and then left dirty for a human to clean up; new step 3c reverts it on the same evidence that
+  found it — tracked modifications via checkout, created files via clean. It never touches a path
+  that was already dirty at launch (that content is the user's, CD-2) nor one whose launch state is
+  unknown, and never "reverts" a moved HEAD. Those are reported as `unrestored`.
+- **JSONC block comments are space-filled rather than spliced out**, so malformed input like
+  `{"n":1/*x*/2}` is rejected instead of silently becoming the valid `{"n":12}`.
+- **String-aware policy parsing** in the two production JSONC readers.
+
+### Added
+- `dispatch_fanout` frozen in the V5 orphan gate, with the stale references scrubbed.
+
 ## [9.7.1]
 
 ### Fixed
