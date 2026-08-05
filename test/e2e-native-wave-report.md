@@ -218,3 +218,56 @@ The vector was detected, though the reason misclassified a tracked modification 
 8. **Sibling breach cleanup is incomplete.** The sibling violation was detected, but absolute-scope mapping reported the tracked modification as `file created` and left `other.txt` dirty; cleanup required an explicit reset.
 
 E2E: FAIL — 4/5 assertions met
+
+---
+
+## Addendum — 2026-08-05: the three findings closed, A3 re-verified
+
+The three code defects this e2e surfaced are fixed. Re-checked against the live wave planner
+(repo `bin/masterplan.mjs`, fixture reset to `ad45a92`, wave-1 dispatch record cleared):
+
+**Finding 1 — native-spawn branch unreachable on Pi.** `selectLaunchPath` no longer vetoes on
+`codexSuppressed` alone; a host with a native parallel API falls through to the explicit flag.
+Observed: the documented `PI_CODING_AGENT=false MP_DISPATCH_NATIVE_SPAWN=1` invocation returns
+`outcome=native-spawn-plan` rather than entering the MCP pool.
+
+**Finding 2 — `cwd:null` on every native descriptor.** `buildWorkItem` names the run's existing
+worktree `repo`; `buildNativeSpawnPlan` read only `cwd`, so the path had to be supplied out of
+band at the Pi spawn boundary. It now accepts both. Observed on all three descriptors:
+
+```text
+task 1 cwd= .../toy-native-wave/.worktrees/toy-native-wave
+task 2 cwd= .../toy-native-wave/.worktrees/toy-native-wave
+task 3 cwd= .../toy-native-wave/.worktrees/toy-native-wave
+```
+
+**Finding 3 — descriptor told children to do what integrity rejects.** The prompt's closing line
+is now:
+
+```text
+Report concrete evidence. Leave your work uncommitted — the wave commits it. Never commit or push.
+```
+
+**A3 re-verified.** With children obeying that instruction (three scoped edits, verify commands
+passing, HEAD left at `ad45a92`), the record-result transaction behaves as the pre-cutover
+baseline requires:
+
+```text
+outcome=recorded  recorded=[1,2,3]  failed=[]
+scope.ok=True     watch.ok=True (checked, 0 violations)
+commits={"code":"6c272bf04133a01e2c96b1368cf9817670091531",
+         "state":"885418a89d29750867f727850ad9b13f48855ca8"}
+```
+
+`commits.code` is non-null — the exact field that was null when the contradictory descriptor made
+children commit. The A2 badge also now names the served model rather than the lane
+(`{class: masterplan-implementation, backend: gateway, model: grok-4.5, effort: high}`); the
+`(dispatch-agentic-loop · thinking high)` rendering recorded above was the lane-only badge defect,
+fixed separately in agent-dispatch.
+
+**Scope of this addendum — what it is NOT.** This re-verifies the PLANNER and the TRANSACTION. It
+is not a fresh full native-spawn e2e: A1 ("zero per-child `dispatch_task` in a real Pi native
+window") requires live Pi children in a real parent session, and the children here were driven
+directly rather than spawned through Pi's native parallel API. A1/A2/A4/A5 stand on the original
+run above. The overall E2E verdict therefore remains **not yet re-issued at 5/5** — closing it
+needs one more live Pi session against this fixture.

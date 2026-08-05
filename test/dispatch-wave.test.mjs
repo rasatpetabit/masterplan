@@ -45,6 +45,7 @@ import {
   segmentDiffPayload,
   mergeReviewVerdicts,
   mapAdversaryLaneVerdict,
+  buildNativeSpawnPlan,
 } from '../lib/dispatch-wave.mjs';
 import { continueRun } from '../lib/continue.mjs';
 import { readState, writeState } from '../lib/bundle.mjs';
@@ -1437,4 +1438,37 @@ test('blocking_reviews[].findings is array-shaped in the mixed case: array + mis
   const { findings } = res.record_result.blocking_reviews[0];
   assert.ok(Array.isArray(findings), 'findings stays ARRAY-shaped in the mixed union');
   assert.deepEqual(findings, ['item-side finding']);
+});
+
+test('native spawn descriptors carry the wave worktree as cwd (e2e finding 2)', () => {
+  // buildWorkItem names the run's existing worktree `repo`; the plan read only `cwd`, so
+  // every native descriptor came out cwd:null and the worktree path had to be supplied out
+  // of band at the Pi spawn boundary. A child spawned without it runs in the wrong locus.
+  const plan = buildNativeSpawnPlan({
+    tasks: [{ id: 1, class: 'masterplan-implementation', files: ['src/a.txt'] }],
+    descriptors: [{ repo: '/tmp/wt/toy', files: ['src/a.txt'], verify_commands: [] }],
+    token: 'tok',
+    _resolve: () => ({ lane: 'dispatch-agentic-loop', agent: 'builder', effort: 'high', capability: 'edit', backend: 'dispatch-gateway', provider: 'grok-4.5', resolved: true }),
+  });
+  assert.equal(plan.tasks[0].cwd, '/tmp/wt/toy');
+});
+
+test('an explicit cwd still wins over repo', () => {
+  const plan = buildNativeSpawnPlan({
+    tasks: [{ id: 1, class: 'masterplan-implementation', files: [] }],
+    descriptors: [{ cwd: '/explicit', repo: '/tmp/wt/toy' }],
+    token: 'tok',
+    _resolve: () => ({ lane: 'dispatch-agentic-loop', agent: 'builder', effort: 'high', capability: 'edit', backend: 'dispatch-gateway', provider: 'grok-4.5', resolved: true }),
+  });
+  assert.equal(plan.tasks[0].cwd, '/explicit');
+});
+
+test('cwd stays null when the descriptor names no locus at all', () => {
+  const plan = buildNativeSpawnPlan({
+    tasks: [{ id: 1, class: 'masterplan-implementation', files: [] }],
+    descriptors: [{}],
+    token: 'tok',
+    _resolve: () => ({ lane: 'dispatch-agentic-loop', agent: 'builder', effort: 'high', capability: 'edit', backend: 'dispatch-gateway', provider: 'grok-4.5', resolved: true }),
+  });
+  assert.equal(plan.tasks[0].cwd, null, 'absence is reported, never invented');
 });
