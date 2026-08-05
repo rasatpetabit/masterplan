@@ -1,5 +1,13 @@
 # Changelog
 
+## [9.7.0]
+
+### Fixed
+- **Native spawn is reachable on Pi.** `selectLaunchPath` treated `codexSuppressed` ("no Claude Code Workflow handle") as "no native spawn API"; Pi sets that flag, so the native branch was unreachable on the only host that can run it. Split via `hostHasNativeSpawnApi`.
+- **Wave children no longer commit.** The spawn brief said "Commit locally", contradicting the split-commit transaction and tripping the cross-locus watch. Children now leave work uncommitted; the wave commits.
+- **Guard-D heartbeat is not a watch breach.** `.owner.lock` / `.owner.hb.*` added to `MAIN_TRANSACTION_FILES` (excluded, not content-validated; the commit pathspec still refuses to ship one).
+- Adversary-reviewer overlay config asserts the absence of a per-agent model pin (models come from the routing.yaml lineup).
+
 ## [9.6.0]
 
 ### Changed
