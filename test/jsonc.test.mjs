@@ -66,6 +66,16 @@ test('a comma inside a string is not treated as a trailing comma', () => {
   assert.equal(parseJsonc('{ "s": "a, ]" }').s, 'a, ]');
 });
 
+test('a block comment between tokens does not merge them into new valid data', () => {
+  // Splicing the comment out would turn the MALFORMED {"n":1/*x*/2} into the
+  // VALID {"n":12} — silent data corruption. Space-filling makes it throw.
+  // Found by the dispatch-gateway diff-review lane, 2026-08-05.
+  assert.throws(() => parseJsonc('{"n":1/*x*/2}'));
+  assert.throws(() => parseJsonc('{"n":1/**/2}'));
+  // A block comment in a harmless position still parses.
+  assert.equal(parseJsonc('{"n": /* one */ 1}').n, 1);
+});
+
 test('unterminated block comment throws rather than silently truncating', () => {
   assert.throws(() => stripJsonc('{ "a": 1 } /* never closed'), /Unterminated block comment/);
 });
