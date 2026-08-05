@@ -15,6 +15,10 @@
 - **JSONC block comments are space-filled rather than spliced out**, so malformed input like
   `{"n":1/*x*/2}` is rejected instead of silently becoming the valid `{"n":12}`.
 - **String-aware policy parsing** in the two production JSONC readers.
+- **Native spawn descriptors carry their worktree as `cwd`.** `buildWorkItem` names the run's
+  existing worktree `repo`, but the native plan read only `cwd`, so every descriptor came out
+  `cwd:null` and the worktree path had to be supplied out of band at the harness spawn boundary —
+  a child spawned without it runs in the wrong locus.
 
 ### Added
 - `dispatch_fanout` frozen in the V5 orphan gate, with the stale references scrubbed.
