@@ -16,6 +16,7 @@ import {
   buildNativeSpawnPlan,
   normalizeWaveConcurrency,
   selectLaunchPath,
+  hostHasNativeSpawnApi,
   probeWaveToken,
 } from '../lib/dispatch-wave.mjs';
 
@@ -190,6 +191,48 @@ test('Claude Code hosts keep the MCP pool; the branch is explicit, not sniffed',
   assert.equal(selectLaunchPath({ env: { MP_DISPATCH_NATIVE_SPAWN: 'true' } }), 'native-spawn');
   assert.equal(selectLaunchPath({ codexSuppressed: true, env: { MP_DISPATCH_NATIVE_SPAWN: '1' } }), 'mcp-pool',
     'a Codex host has no native parallel API either');
+});
+
+test('REGRESSION: a Pi host can reach the native branch — codexSuppressed is not a native-API veto', () => {
+  // e2e finding 1 (test/e2e-native-wave-report.md): Pi sets PI_CODING_AGENT=true, so
+  // shouldSuppressWorkflow returns true, so codexSuppressed vetoed the env flag — on the
+  // ONE host with a native parallel spawn API. The native branch was unreachable in
+  // production and the e2e could only enter it with PI_CODING_AGENT=false.
+  const pi = { PI_CODING_AGENT: 'true' };
+  assert.equal(hostHasNativeSpawnApi(pi), true, 'Pi has subagents even though it has no Workflow handle');
+  assert.equal(hostHasNativeSpawnApi({}), false);
+
+  assert.equal(
+    selectLaunchPath({ codexSuppressed: true, env: { ...pi, MP_DISPATCH_NATIVE_SPAWN: '1' } }),
+    'native-spawn',
+    'the documented override reaches the native branch on Pi',
+  );
+  assert.equal(
+    selectLaunchPath({ codexSuppressed: true, env: pi }),
+    'mcp-pool',
+    'without the flag Pi still defaults to the MCP pool — the fix unblocks the opt-in, it does not flip the default',
+  );
+  assert.equal(
+    selectLaunchPath({ codexSuppressed: true, env: { MP_DISPATCH_NATIVE_SPAWN: '1' } }),
+    'mcp-pool',
+    'a real Codex host still vetoes: it has no native API to spawn into',
+  );
+  assert.equal(
+    selectLaunchPath({ nativeSpawn: false, env: { ...pi, MP_DISPATCH_NATIVE_SPAWN: '1' } }),
+    'mcp-pool',
+    'an explicit false still outranks everything',
+  );
+});
+
+test('REGRESSION: the child brief forbids committing — the wave owns the code-side commit', () => {
+  // e2e finding 3 / A3: the brief said "Commit locally in your locus", while the
+  // cross-locus watch fails the wave on any child HEAD move. An obedient child produced
+  // commits.code:null plus a HEAD-move violation. The two contracts must agree.
+  for (const s of planFixture().tasks) {
+    assert.ok(!/commit locally/i.test(s.prompt), 'the brief must not tell a child to commit');
+    assert.ok(/never commit or push/i.test(s.prompt), 'the prohibition is explicit, not implied');
+    assert.ok(/leave your work uncommitted/i.test(s.prompt), 'and it says who does commit it');
+  }
 });
 
 // ── recovery probe ──────────────────────────────────────────────────────────

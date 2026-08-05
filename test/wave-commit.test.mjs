@@ -11,7 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
-import { recordWaveResult } from '../lib/wave-commit.mjs';
+import { recordWaveResult, captureWatchBaseline, writeWatchBaseline } from '../lib/wave-commit.mjs';
 import { readState, writeState } from '../lib/bundle.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
 import { acquireOwner } from '../lib/owner-fs.mjs';
@@ -114,6 +114,74 @@ test('clean wave: marks done, split commit lands, marker clears, next=complete',
   assert.deepEqual(after.tasks.map((t) => t.status), ['done', 'done']);
   const events = fs.readFileSync(path.join(fx.bundleDir, 'events.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
   assert.equal(events.at(-1).type, 'wave_recorded');
+});
+
+test('REGRESSION: the controller\'s own Guard-D heartbeat is not a watch breach', () => {
+  // e2e finding 7 (test/e2e-native-wave-report.md): .owner* was excluded from the state-
+  // commit pathspec but NOT from MAIN_TRANSACTION_FILES, so every single record reported
+  // "MAIN changed outside the controller's transaction files: …owner.hb…" — a false
+  // positive on a file the controller refreshes on every §2 entry, by design.
+  const fx = makeFixture({
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    activeRun: { wave: 1, run_id: 'r1', task_id: 'wf1', scope: ['src/a.txt'], baseline: [] },
+  });
+  const baseline = captureWatchBaseline({
+    mainRoot: fx.MAIN, bundleDir: fx.bundleDir, worktree: fx.WT, slug: 't22', scopePaths: ['src/a.txt'],
+  });
+  writeWatchBaseline(fx.bundleDir, 1, baseline);
+
+  // The heartbeat moves DURING the wave — that is what a live owner does.
+  const hb = fs.readdirSync(fx.bundleDir).find((f) => f.startsWith('.owner.hb.'));
+  assert.ok(hb, 'the fixture holds the lock, so a heartbeat sentinel exists');
+  fs.writeFileSync(path.join(fx.bundleDir, hb), JSON.stringify({ beat: 2 }));
+  write(fx.WT, 'src/a.txt', 'A\n');
+
+  const res = recordWaveResult({
+    statePath: fx.statePath,
+    self: fx.self,
+    now: 2000,
+    result: { wave: 1, baseline: [], tasks: [digest(1, 'done')] },
+  });
+
+  assert.equal(res.outcome, 'recorded');
+  assert.equal(res.watch.checked, true, 'the watch ran — this is not a vacuous pass');
+  assert.equal(res.watch.ok, true, `heartbeat must not breach; got ${JSON.stringify(res.watch.violations)}`);
+  assert.equal(
+    res.watch.violations.filter((v) => String(v.path).includes('.owner')).length, 0,
+    'no violation names an owner sentinel',
+  );
+  // …and the sentinel is still never committed (the pathspec exclusion is untouched).
+  const stateFiles = git(fx.MAIN, 'show', '--name-only', '--format=', 'HEAD').split('\n').filter(Boolean);
+  assert.ok(!stateFiles.some((f) => f.includes('.owner')), 'owner sentinels stay out of the state commit');
+});
+
+test('REGRESSION: excluding the heartbeat did not blind the watch to a real MAIN write', () => {
+  // The negative control for the test above: the fix must be an exclusion of two known
+  // controller-written sentinels, not a weakening of the MAIN allowed-delta check.
+  const fx = makeFixture({
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    activeRun: { wave: 1, run_id: 'r1', task_id: 'wf1', scope: ['src/a.txt'], baseline: [] },
+  });
+  const baseline = captureWatchBaseline({
+    mainRoot: fx.MAIN, bundleDir: fx.bundleDir, worktree: fx.WT, slug: 't22', scopePaths: ['src/a.txt'],
+  });
+  writeWatchBaseline(fx.bundleDir, 1, baseline);
+
+  write(fx.MAIN, 'child-main.txt', 'MAIN-BREACH\n'); // a child writing into MAIN
+  write(fx.WT, 'src/a.txt', 'A\n');
+
+  const res = recordWaveResult({
+    statePath: fx.statePath,
+    self: fx.self,
+    now: 2000,
+    result: { wave: 1, baseline: [], tasks: [digest(1, 'done')] },
+  });
+
+  assert.equal(res.watch.ok, false, 'a real MAIN write still fails the wave loud');
+  assert.ok(
+    res.watch.violations.some((v) => String(v.path).includes('child-main.txt')),
+    `the offending path is named; got ${JSON.stringify(res.watch.violations)}`,
+  );
 });
 
 test('out-of-scope revert: tracked offender restored via checkout, untracked removed via clean; in-scope work stands', () => {
