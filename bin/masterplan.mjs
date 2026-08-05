@@ -143,8 +143,9 @@
 //                                               -> { action:'apply'|'requeue', requeueBase } (base-drift check)
 //   dispatch-wave --state=PATH [--wave=N] [--takeover] [--codex-suppressed] [--broker-bin=BIN]
 //                                               -> the `dispatch_fabric` op consumer (lib/dispatch-wave.mjs):
-//                                                  broker dispatch_fanout for the active wave (one adsp work
-//                                                  item per routed task, ONE serve-mcp process for the wave)
+//                                                  a bounded pool of broker dispatch_task calls for the active
+//                                                  wave (one adsp work item per routed task, ONE serve-mcp
+//                                                  process for the wave)
 //                                                  + the SAME record-result transaction. Idempotent on the
 //                                                  per-wave dispatch record (run_id, wave, 'dispatch_fabric')
 //                                                  persisted BEFORE the broker call — a retry after an
@@ -156,7 +157,7 @@
 //                                                  exit, nothing dispatched; owner_lock=off skips).
 //                                                  ASYNC (MCP over stdio; dispatch-plan is the other).
 //   dispatch-plan --state=PATH --subsystems=JSON|--subsystems-file=PATH [--spec-path=P] [--broker-bin=BIN]
-//                                               -> the dispatch_fanout(plan) op consumer (lib/continue.mjs
+//                                               -> the dispatch_plan op consumer (lib/continue.mjs
 //                                                  dispatchPlanFanout): the broker planning fan-out that
 //                                                  replaced the L2 plan Workflow — one READ-ONLY work item
 //                                                  per subsystem (class masterplan-planning, enumerated
@@ -3221,8 +3222,8 @@ function main() {
       // The `dispatch_fabric` op consumer (chunk B of the wave-dispatch outage fix): the op had
       // a producer (lib/dispatch/ops.mjs) but no consumer, so fabric waves never reached the
       // broker. dispatchWaveViaFabric re-derives the routed wave (prepareWave, fabric payloads),
-      // builds one adsp work item per task (buildWorkItem), drives the broker's dispatch_fanout
-      // through ONE serve-mcp process (coord opened/closed in a finally), then records digests
+      // builds one adsp work item per task (buildWorkItem), drives a bounded pool of broker
+      // dispatch_task calls through ONE serve-mcp process (coord opened/closed in a finally), then records digests
       // via the SAME recordWaveResult transaction. Idempotent on the per-wave dispatch record
       // (run_id, wave, 'dispatch_fabric') persisted BEFORE the broker call. ASYNC: the one
       // await-ing subcommand (MCP over stdio) — main() returns while the promise settles; the
@@ -3265,7 +3266,7 @@ function main() {
     }
 
     case 'dispatch-plan': {
-      // The dispatch_fanout(plan) op consumer: the broker planning fan-out that replaced the
+      // The dispatch_plan op consumer: the broker planning fan-out that replaced the
       // L2 plan Workflow launch (workflows/dispatch-plan). One READ-ONLY work item per
       // subsystem (class masterplan-planning, enumerated roots = repo + spec path, NO
       // write-scope fields — broker-level write denial where supported), ONE broker process
@@ -3304,7 +3305,7 @@ function main() {
     case 'continue': {
       // T2.3: the trampoline — migrate-on-load → Guard D acquire/confirm → wave backfill →
       // alive-probe gating → the bounded decide loop, returning ONE typed op per call
-      // ({op: dispatch_fabric|dispatch_fabric|dispatch_fanout|run_skill|record_result|ask|probe|shell|stop|…}).
+      // ({op: dispatch_fabric|dispatch_plan|run_skill|record_result|ask|probe|shell|stop|…}).
       // The shell stops sequencing §2 by prose: it calls `mp continue`, executes the op, repeats.
       // Hosts without Claude Code Workflow handles (PI_CODING_AGENT or --no-workflow) are routed
       // to dispatch_fabric so a phase-1 launch marker is consumed instead of user-stranded.

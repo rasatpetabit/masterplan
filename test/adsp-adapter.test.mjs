@@ -1173,7 +1173,7 @@ test('validator: a worker digest carrying a valid dispatch field round-trips thr
 
 // ---------------------------------------------------------------------------
 // translateBrokerResult / brokerErrorDigest — the shared broker-result → digest
-// mapping (exported for the wave-level dispatch_fanout consumer, chunk B)
+// mapping (exported for the wave-level dispatcher, chunk B)
 // ---------------------------------------------------------------------------
 
 test('translateBrokerResult: worker / execute_yourself / escalate / no-digest map exactly like dispatchTask', () => {

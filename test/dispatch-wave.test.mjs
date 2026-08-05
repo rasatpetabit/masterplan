@@ -7,8 +7,8 @@
 // the broker client / coord seams. Covered behaviors (the chunk-B review mandates):
 //
 //   1. Flag-off → no-op: state.dispatch.fabric unset → outcome 'flag-off', broker untouched.
-//   2. Full flow: one descriptor per routed task (adapter buildWorkItem shape), ONE
-//      dispatch_fanout call, worker digests recorded via recordWaveResult (task done,
+//   2. Full flow: one descriptor per routed task (adapter buildWorkItem shape), a
+//      bounded pool of dispatch_task calls, worker digests recorded via recordWaveResult (task done,
 //      marker cleared, wave_recorded event, dispatch.outcome:'worker' — no degradation events).
 //   3. Idempotent re-invoke: an existing 'pending' record (accepted-but-unobserved) is
 //      returned as-is — the broker is NOT called again (injected-client assert).
@@ -217,7 +217,7 @@ test('full flow: one descriptor per routed task, per-task dispatch_task pool, di
     _brokerClient: stub, _openCoord: disabledCoord,
   });
 
-  // Bounded pool of per-task dispatch_task calls (dispatch_fanout retired).
+  // Bounded pool of per-task dispatch_task calls (broker fan-out tool retired).
   assert.equal(stub.calls.length, 2);
   assert.ok(stub.calls.every((c) => c.name === 'dispatch_task'));
   const descriptors = stub.calls.map((c) => c.args.descriptor);
