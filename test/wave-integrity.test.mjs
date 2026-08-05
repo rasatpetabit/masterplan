@@ -345,3 +345,86 @@ test('the baseline sidecar itself is an allowed MAIN transaction file', () => {
   );
   assert.deepEqual(r.violations, []);
 });
+
+// ── vector 5 regression: clean tracked file in a watched sibling ─────────────
+// The 2026-08-04 e2e planted a child write into a watched sibling repo. It was DETECTED,
+// but for the wrong reason ("file created") and the sibling was left dirty — the breach
+// had to be cleaned up by hand. Both halves are the goal's "failing for the planted
+// reason" clause, so both are pinned here.
+
+test('a clean tracked file modified in a watched sibling reports MODIFICATION, not creation', () => {
+  const repo = tmpRepo();
+  write(repo, 'other.txt', 'committed content\n');
+  git(repo, 'add', '-A');
+  git(repo, 'commit', '-q', '-m', 'add other.txt');
+  const wl = [{ repo, prefix: null, isMain: false }];
+  const before = snapshotWatchList(wl);
+  // Precondition that makes this the real vector: the file is TRACKED and CLEAN, so it
+  // carries no porcelain entry at launch. Reading that absence as "did not exist" is the bug.
+  assert.equal(before[repo].entries['other.txt'], undefined);
+
+  write(repo, 'other.txt', 'SIBLING-BREACH\n');
+  const after = snapshotWatchList(wl);
+
+  const r = verifyWatchListDelta(before, after, ['allowed.txt']);
+  assert.equal(r.ok, false);
+  const v = r.violations.find((x) => x.rel === 'other.txt');
+  assert.ok(v, 'expected a violation for the modified sibling file');
+  assert.match(v.reason, /tracked file modified/);
+  assert.doesNotMatch(v.reason, /created/);
+  assert.equal(v.trackedAtLaunch, true);
+  assert.equal(v.restore, 'checkout', 'a tracked modification is restorable by checkout');
+});
+
+test('a genuinely NEW file in a watched sibling still reports creation', () => {
+  // The negative control for the test above: if the fix simply relabelled everything as a
+  // modification it would pass that test and fail this one.
+  const repo = tmpRepo();
+  const wl = [{ repo, prefix: null, isMain: false }];
+  const before = snapshotWatchList(wl);
+  write(repo, 'brand-new.txt', 'created by a child\n');
+  const after = snapshotWatchList(wl);
+
+  const v = verifyWatchListDelta(before, after, ['allowed.txt']).violations
+    .find((x) => x.rel === 'brand-new.txt');
+  assert.ok(v);
+  assert.match(v.reason, /file created/);
+  assert.equal(v.trackedAtLaunch, false);
+  assert.equal(v.restore, 'clean', 'a created file is restorable by clean');
+});
+
+test('a file already dirty at launch is reported but NOT marked restorable (CD-2)', () => {
+  // Reverting here would destroy the user's in-progress work, so the breach is surfaced
+  // with restore:null and the transaction leaves the content alone.
+  const repo = tmpRepo();
+  write(repo, 'wip.txt', 'user draft\n');
+  const wl = [{ repo, prefix: null, isMain: false }];
+  const before = snapshotWatchList(wl);
+  write(repo, 'wip.txt', 'CLOBBERED BY A CHILD\n');
+  const after = snapshotWatchList(wl);
+
+  const v = verifyWatchListDelta(before, after, ['allowed.txt']).violations
+    .find((x) => x.rel === 'wip.txt');
+  assert.ok(v);
+  assert.equal(v.restore, null, 'pre-existing dirt is the user\'s — never auto-reverted');
+  assert.match(v.reason, /dirty at launch/);
+});
+
+test('trackedness is answered from the LAUNCH head, not the current one', () => {
+  // A file added and committed DURING the wave did not exist at launch, so it must not be
+  // mistaken for a pre-existing tracked file just because HEAD now knows it.
+  const repo = tmpRepo();
+  const wl = [{ repo, prefix: null, isMain: false }];
+  const before = snapshotWatchList(wl);
+  write(repo, 'late.txt', 'added mid-wave\n');
+  git(repo, 'add', '-A');
+  git(repo, 'commit', '-q', '-m', 'child committed');
+  const after = snapshotWatchList(wl);
+
+  const r = verifyWatchListDelta(before, after, ['allowed.txt']);
+  assert.equal(r.ok, false);
+  // The moved HEAD is its own violation and is never "restored".
+  const headV = r.violations.find((x) => x.path === '(HEAD)');
+  assert.ok(headV, 'a child commit in a watched repo is a violation');
+  assert.equal(headV.restore, undefined);
+});

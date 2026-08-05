@@ -11,7 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
-import { recordWaveResult, captureWatchBaseline, writeWatchBaseline } from '../lib/wave-commit.mjs';
+import { recordWaveResult, captureWatchBaseline, writeWatchBaseline, snapshotRepoState } from '../lib/wave-commit.mjs';
 import { readState, writeState } from '../lib/bundle.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
 import { acquireOwner } from '../lib/owner-fs.mjs';
@@ -721,4 +721,112 @@ test('dispatch events: land in the same MAIN state commit as wave_recorded', () 
   assert.ok(stateFiles.includes('docs/masterplan/t22/events.jsonl'), 'events.jsonl is in the state commit');
   const degraded = readEvents(fx.bundleDir).filter((e) => e.type === 'dispatch_degraded');
   assert.equal(degraded.length, 1);
+});
+
+test('watch-list breach in a SIBLING repo is reverted, not merely reported (vector-5 regression)', () => {
+  // The 2026-08-04 e2e detected a child write into a watched sibling repo and then left the
+  // file dirty — cleanup was manual. Step 3 only reverts what verifyScope sees, which is
+  // worktree-relative; the sibling half had no reverter at all.
+  const fx = makeFixture({
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    activeRun: { wave: 1, run_id: 'r1', task_id: 'wf1', scope: ['src/a.txt'], baseline: [] },
+  });
+
+  // A watched sibling repo carrying one committed, CLEAN file and one the wave will create.
+  const sibling = path.join(fx.tmp, 'sibling');
+  fs.mkdirSync(sibling, { recursive: true });
+  git(sibling, 'init', '--initial-branch=main');
+  git(sibling, 'config', 'user.email', 'test@test');
+  git(sibling, 'config', 'user.name', 'test');
+  git(sibling, 'config', 'commit.gpgsign', 'false');
+  write(sibling, 'other.txt', 'committed content\n');
+  git(sibling, 'add', '.');
+  git(sibling, 'commit', '-q', '-m', 'seed');
+
+  const baseline = captureWatchBaseline({
+    mainRoot: fx.MAIN, bundleDir: fx.bundleDir, worktree: fx.WT, slug: 't22', scopePaths: ['src/a.txt'],
+  });
+  // Watch the sibling explicitly (the e2e reached it via an absolute task scope).
+  baseline.snapshots[sibling] = {
+    ...snapshotRepoState(sibling), prefix: null, isMain: false,
+  };
+  writeWatchBaseline(fx.bundleDir, 1, baseline);
+
+  write(fx.WT, 'src/a.txt', 'A\n');                    // legitimate in-scope work
+  write(sibling, 'other.txt', 'SIBLING-BREACH\n');     // tracked+clean at launch → modified
+  write(sibling, 'litter.txt', 'created by a child\n'); // absent at launch → created
+
+  const res = recordWaveResult({
+    statePath: fx.statePath,
+    self: fx.self,
+    now: 2000,
+    result: { wave: 1, baseline: [], tasks: [digest(1, 'done')] },
+  });
+
+  assert.equal(res.watch.ok, false, 'the sibling breach still fails the wave loud');
+  const modified = res.watch.violations.find((v) => v.rel === 'other.txt');
+  assert.ok(modified, `sibling modification named; got ${JSON.stringify(res.watch.violations)}`);
+  assert.match(modified.reason, /tracked file modified/, 'classified as a modification, not a creation');
+
+  // The point of the regression: the sibling repo is CLEAN again afterwards.
+  assert.equal(
+    fs.readFileSync(path.join(sibling, 'other.txt'), 'utf8'), 'committed content\n',
+    'the tracked sibling file is restored to its launch content',
+  );
+  assert.equal(
+    fs.existsSync(path.join(sibling, 'litter.txt')), false,
+    'the file the child created in the sibling is removed',
+  );
+  assert.equal(
+    git(sibling, 'status', '--porcelain').trim(), '',
+    'the watched sibling repo is left clean, so no hand cleanup is needed',
+  );
+  assert.equal(res.watch.reverted.length, 2, 'both sibling paths are reported as reverted');
+
+  // In-scope work is untouched by the sibling revert.
+  assert.equal(fs.readFileSync(path.join(fx.WT, 'src/a.txt'), 'utf8'), 'A\n');
+});
+
+test('a sibling file that was ALREADY dirty at launch is reported but never reverted (CD-2)', () => {
+  // The negative control for the test above: a blanket "revert every watch violation" would
+  // pass that test and destroy the user's in-progress work here.
+  const fx = makeFixture({
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    activeRun: { wave: 1, run_id: 'r1', task_id: 'wf1', scope: ['src/a.txt'], baseline: [] },
+  });
+  const sibling = path.join(fx.tmp, 'sibling-wip');
+  fs.mkdirSync(sibling, { recursive: true });
+  git(sibling, 'init', '--initial-branch=main');
+  git(sibling, 'config', 'user.email', 'test@test');
+  git(sibling, 'config', 'user.name', 'test');
+  git(sibling, 'config', 'commit.gpgsign', 'false');
+  write(sibling, 'seed.txt', 'seed\n');
+  git(sibling, 'add', '.');
+  git(sibling, 'commit', '-q', '-m', 'seed');
+  write(sibling, 'wip.txt', 'USER DRAFT\n'); // dirty BEFORE the wave — the user's work
+
+  const baseline = captureWatchBaseline({
+    mainRoot: fx.MAIN, bundleDir: fx.bundleDir, worktree: fx.WT, slug: 't22', scopePaths: ['src/a.txt'],
+  });
+  baseline.snapshots[sibling] = { ...snapshotRepoState(sibling), prefix: null, isMain: false };
+  writeWatchBaseline(fx.bundleDir, 1, baseline);
+
+  write(fx.WT, 'src/a.txt', 'A\n');
+  write(sibling, 'wip.txt', 'CLOBBERED BY A CHILD\n');
+
+  const res = recordWaveResult({
+    statePath: fx.statePath, self: fx.self, now: 2000,
+    result: { wave: 1, baseline: [], tasks: [digest(1, 'done')] },
+  });
+
+  assert.equal(res.watch.ok, false, 'the breach is still surfaced');
+  assert.equal(res.watch.reverted.length, 0, 'nothing was reverted');
+  assert.ok(
+    res.watch.unrestored.some((u) => String(u.path).includes('wip.txt')),
+    `the un-restored breach is reported explicitly; got ${JSON.stringify(res.watch.unrestored)}`,
+  );
+  assert.equal(
+    fs.readFileSync(path.join(sibling, 'wip.txt'), 'utf8'), 'CLOBBERED BY A CHILD\n',
+    'the file is left exactly as found — the wave does not git-checkout over user WIP',
+  );
 });
