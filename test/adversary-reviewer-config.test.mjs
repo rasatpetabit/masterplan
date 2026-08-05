@@ -121,8 +121,14 @@ overlayTest('overlay entry for mp-adversarial-reviewer has no inert route_class 
   const entry = overlay.overrides.compiled_frontmatter['mp-adversarial-reviewer'];
   assert.equal(typeof entry, 'object');
   assert.ok(entry !== null);
-  assert.equal(typeof entry.model, 'string');
-  assert.ok(entry.model.length > 0);
+  // No per-agent model pin: agent-dispatch cb81062 single-sourced the subagent
+  // lineup in policy/routing.yaml and removed the entry's hand-pinned model —
+  // the wrapper shell takes the lineup default. A model string here would be a
+  // hand-baked copy of routing data, which is the drift this config exists to end.
+  assert.ok(
+    !Object.hasOwn(entry, 'model'),
+    'model comes from the routing.yaml lineup default, never a per-agent pin here',
+  );
   assert.ok(
     !Object.hasOwn(entry, 'route_class'),
     'CLI --class flag bypasses overlay routes so a pin here would be inert and misleading',
