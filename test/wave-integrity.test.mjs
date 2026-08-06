@@ -428,3 +428,63 @@ test('trackedness is answered from the LAUNCH head, not the current one', () => 
   assert.ok(headV, 'a child commit in a watched repo is a violation');
   assert.equal(headV.restore, undefined);
 });
+
+// ── vector 2: a staged-only change ──────────────────────────────────────────
+// Goal G4's planted-vector list names "staged-only change" as its own vector, and the
+// assessor found it had no discrete planted test — only the porcelain-v2 parser unit
+// above, which proves the parser can READ a staged record, not that a wave DETECTS one.
+// The vector matters because a child that runs `git add` without committing leaves HEAD
+// unmoved and the worktree content identical to the index: a check that compares only
+// HEAD and worktree-vs-HEAD content can miss it entirely.
+
+test('a staged-only change out of scope is a violation (nothing committed, HEAD unmoved)', () => {
+  const repo = tmpRepo();
+  write(repo, 'lib/tracked.mjs', 'export const t = 1;\n');
+  git(repo, 'add', '-A');
+  git(repo, 'commit', '-q', '-m', 'seed');
+  const headBefore = git(repo, 'rev-parse', 'HEAD');
+
+  const wl = [{ repo, prefix: null, isMain: false }];
+  const before = snapshotWatchList(wl);
+
+  // The planted vector: a child stages an out-of-scope edit and never commits.
+  write(repo, 'lib/tracked.mjs', 'export const t = 2;\n');
+  git(repo, 'add', 'lib/tracked.mjs');
+
+  assert.equal(git(repo, 'rev-parse', 'HEAD'), headBefore, 'precondition: HEAD must NOT have moved');
+
+  const after = snapshotWatchList(wl);
+  const r = verifyWatchListDelta(before, after, ['lib/in-scope.mjs']);
+
+  assert.equal(r.ok, false, 'a staged-only out-of-scope change must not pass');
+  const v = r.violations.find((x) => x.path === 'lib/tracked.mjs');
+  assert.ok(v, `expected a violation for the staged path; got ${JSON.stringify(r.violations)}`);
+  // Fails for the PLANTED reason (an out-of-scope modification), not incidentally
+  // via the HEAD-moved arm — that is the clause the goal's evidence letter demands.
+  assert.doesNotMatch(v.reason ?? "", /HEAD moved/, "must not be detected via the HEAD arm");
+  assert.equal(
+    r.violations.some((x) => x.path === '(HEAD)'),
+    false,
+    'no HEAD violation should be reported — nothing was committed',
+  );
+});
+
+test('negative control: the same staged change IN scope passes', () => {
+  const repo = tmpRepo();
+  write(repo, 'lib/tracked.mjs', 'export const t = 1;\n');
+  git(repo, 'add', '-A');
+  git(repo, 'commit', '-q', '-m', 'seed');
+
+  const wl = [{ repo, prefix: null, isMain: false }];
+  const before = snapshotWatchList(wl);
+
+  write(repo, 'lib/tracked.mjs', 'export const t = 2;\n');
+  git(repo, 'add', 'lib/tracked.mjs');
+
+  const after = snapshotWatchList(wl);
+  assert.deepEqual(
+    verifyWatchListDelta(before, after, ['lib/tracked.mjs']),
+    { ok: true, violations: [] },
+    'an in-scope staged change is ordinary wave work, not a breach',
+  );
+});
