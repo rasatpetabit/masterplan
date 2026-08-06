@@ -217,7 +217,8 @@ The vector was detected, though the reason misclassified a tracked modification 
 7. **Owner heartbeat is reported as a watch breach.** Every post-launch `record-result` included the controller's own `.owner.hb...` path as `MAIN changed outside the controller's transaction files`, independently of the planted vector.
 8. **Sibling breach cleanup is incomplete.** The sibling violation was detected, but absolute-scope mapping reported the tracked modification as `file created` and left `other.txt` dirty; cleanup required an explicit reset.
 
-E2E: FAIL — 4/5 assertions met
+E2E (run 1, 2026-08-04): FAIL — 4/5 assertions met.
+Scoped to that run only; superseded by run 3 (2026-08-05) at the end of this file.
 
 ---
 
@@ -271,3 +272,57 @@ window") requires live Pi children in a real parent session, and the children he
 directly rather than spawned through Pi's native parallel API. A1/A2/A4/A5 stand on the original
 run above. The overall E2E verdict therefore remains **not yet re-issued at 5/5** — closing it
 needs one more live Pi session against this fixture.
+
+---
+
+## Run 3 — 2026-08-05, clean baseline, no workaround
+
+The 2026-08-05 goal assessment left G1 **partial** on two specific grounds: this
+file's own verdict line read `FAIL — 4/5` with `commits.code:null`, and installed
+plugin versions still carrying the MCP pool. This run addresses the first.
+
+**What was wrong with run 2.** Run 2 reset the fixture's MAIN checkout to `ad45a92`
+but left the wave worktree on branch `masterplan/toy-native-wave`, which still
+pointed at `6c272bf` — *its own previous output*. The three target files therefore
+already read `*-DONE` before any child ran, so no edit could be attributed and A3
+proved nothing even if it had passed. It also died at the first child: the
+`dispatch-agentic-loop` lane was serving 401 because a missing install file had
+broken grok OAuth token delivery fleet-wide.
+
+**Baseline for run 3, verified before spawning.** Worktree and branch deleted and
+recreated from `ad45a92`; stale `active_run:{phase:launching}` marker cleared via
+`mp clear-active-run`; `wave-1.dispatch.json` idempotency record removed. Files
+confirmed to read `placeholder for alpha` / `beta` / `gamma`, worktree clean.
+`PI_CODING_AGENT` left at its host value (`true`) — reaching the native branch
+without a workaround is the point, and finding 1's fix is what makes it possible.
+
+### Assertions as observed
+
+| # | verdict | evidence |
+|---|---------|----------|
+| A1 | **PASS** | 0 `dispatch_task` calls and 0 `dispatch_*` broker calls, counted in the parent Pi JSONL between `dispatch-wave` (22:27:09.987Z) and `record-result` (22:30:33.719Z); exactly 1 native parallel `subagent` fan-out carrying 3 tasks |
+| A2 | **PASS (render path)** | not observable in `pi -p`: headless output prints `=== Task 1: builder ===` and never renders the TUI widget, so no badge can appear there regardless of session age. Verified where it IS observable — `test/unit/render-badges.test.ts`, 23/23, incl. the live string `skynet/dispatch-agentic-loop:high` → `agentic-loop · skynet/grok-4.5 · xhigh`, mutation-verified |
+| A3 | **PASS** | `commits.code: 79e8c1ece6eba2a53fd56414139540b984c4fe4b` (non-null — the exact field that was null in run 1), `scope.ok: true`, `watch.ok: true`, `recorded:[1,2,3]`, `failed:[]` |
+| A4 | **PASS** | plan and native call both concurrency 2; observed from child intervals: 1 and 2 overlapped, 3 started 7ms after 2 ended — max observed concurrency **2**, never 3 |
+| A5 | **PASS** | HEAD `ad45a92…` immediately pre-spawn and unchanged immediately pre-`record-result`; children left work unstaged; HEAD moved only when `record-result` created the code commit |
+
+### Direct evidence that real work happened
+
+```text
+before: src/alpha.txt='placeholder for alpha'   after: 'ALPHA-DONE'
+        src/beta.txt ='placeholder for beta'           'BETA-DONE'
+        src/gamma.txt='placeholder for gamma'          'GAMMA-DONE'
+
+commit 79e8c1ece6eba2a53fd56414139540b984c4fe4b
+    masterplan(toy-native-wave): wave 1 code
+ src/alpha.txt | 2 +-
+ src/beta.txt  | 2 +-
+ src/gamma.txt | 2 +-
+ 3 files changed, 3 insertions(+), 3 deletions(-)
+```
+
+Zero child failures, zero authentication errors, zero out-of-scope edits, zero
+fallback models, zero per-child `dispatch_task`.
+
+E2E (run 3, 2026-08-05): **PASS — 5/5 assertions met**, with A2 evidenced on the
+render path rather than the headless surface, for the reason stated above.
