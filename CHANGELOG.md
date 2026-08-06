@@ -1,5 +1,16 @@
 # Changelog
 
+## [9.7.3]
+
+### Fixed
+- **Agent frontmatter no longer names the retired `fable` model.** The 2026-08-04 lineup cut
+  removed fable/sonnet/haiku from the subagent lineup, but the frontmatter compiler only rewrote
+  `model:` when the overlay carried an explicit per-agent pin — deleting the pins left the
+  previously-stamped `model: fable` as unmanaged residue in all 7 agents, so every by-name
+  dispatch was denied by the PreToolUse guard ("unsupported model fable"). agent-dispatch's
+  compiler now stamps the lineup default (`opus`) when no pin exists, and this release carries
+  the regenerated frontmatter.
+
 ## [9.7.2]
 
 ### Fixed

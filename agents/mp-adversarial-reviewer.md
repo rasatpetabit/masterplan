@@ -1,7 +1,7 @@
 ---
 name: mp-adversarial-reviewer
 description: Adversarial second-opinion review of a completed masterplan task. Routes the review through the agent-dispatch control plane's adversary lane (`agent-dispatch review --class adversary`) and returns a severity-first findings digest (CD-10). Runs per done task during execution when the run bundle's review is enabled — not gated by task routing-eligibility.
-model: fable
+model: opus
 preset: prover
 tools: Bash, Read
 ---
@@ -21,8 +21,8 @@ agent-dispatch owns routing. This agent only invokes that call and shapes the re
 resolved against the merged policy at invocation time. The masterplan overlay
 (`policy/overlays/masterplan.jsonc` in the agent-dispatch repo) deliberately pins NO
 `route_class` for this agent — an overlay route would be inert here because the CLI
-`--class` flag never consults `compiled_frontmatter` — and its `model: fable` pin is only
-the wrapper shell for accidental direct dispatch. Consistency between this file and the
+`--class` flag never consults `compiled_frontmatter` — and its compiler-stamped `model:`
+line is only the wrapper shell for accidental direct dispatch. Consistency between this file and the
 overlay is machine-checked by `test/adversary-reviewer-config.test.mjs`.
 
 ## Multi-host safety — prefer an INLINE diff (Layer 3), guard before any local git (Layer 4)

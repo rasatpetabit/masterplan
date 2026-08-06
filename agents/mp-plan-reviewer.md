@@ -1,7 +1,7 @@
 ---
 name: mp-plan-reviewer
 description: Reviews a merged masterplan plan against its spec — spec coverage, cross-subsystem consistency, and verify-command adequacy — and returns a PASS/REVISE/FAIL verdict with findings. Thin wrapper — the review judgment runs on the agent-dispatch critic lane (dispatch_task, task class critic), never on the wrapper's own model. Read-only; runs at the planning gate after deterministic merge.
-model: fable
+model: opus
 preset: breaker
 tools: Read, Grep, Glob, mcp__agent-dispatch__dispatch_task
 model_group: dispatch-critic

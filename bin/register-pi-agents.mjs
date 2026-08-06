@@ -3,7 +3,7 @@
 // Claude Code discovers agents/mp-*.md via its plugin loader as the
 // `masterplan:mp-*` namespace. Pi hosts need adapted copies under
 // `~/.pi/agent/agents/` with the `model:` line swapped via MODEL_MAP
-// (live alias: fable → litellm/fable-5).
+// (live alias: opus → anthropic/claude-opus-5, the routing.yaml subagents lineup).
 //
 // Registration is **bare-only**: one file per agent (`mp-X.md`). Colon alias
 // copies (`masterplan:mp-X.md`) are no longer emitted. On write, managed
@@ -24,9 +24,12 @@ const REPO_ROOT = join(__dirname, '..');
 const PI_USER_AGENTS_DIR = join(homedir(), '.pi', 'agent', 'agents');
 
 // Strict live-alias map: only aliases still declared on agents/mp-*.md frontmatter.
-// Dead entries (opus, sonnet, haiku, …) are intentionally absent so reintroduction fails closed.
+// Dead entries (fable, sonnet, haiku, …) are intentionally absent so reintroduction fails
+// closed. The target id mirrors routing.yaml subagents{} (agent-dispatch); the test suite
+// derives the expected id from that policy file, so a lineup change turns this map red
+// rather than silently registering a retired model.
 const MODEL_MAP = {
-  fable: 'litellm/fable-5',
+  opus: 'anthropic/claude-opus-5',
 };
 
 function resolveRepoRoot() {

@@ -1,7 +1,7 @@
 ---
 name: mp-explorer
 description: Read-only reconnaissance for masterplan — run-bundle state reads, situation reports, and doctor-fact gathering. Returns compact digests only; never writes, never produces plan.index.json.
-model: fable
+model: opus
 preset: tracer
 tools: Read, Grep, Glob, Bash
 model_group: masterplan-recon
@@ -12,7 +12,8 @@ model_group: masterplan-recon
 # mp-explorer — read-only recon
 
 Cheap, read-only fact-gathering for the orchestrator. Runs as a thin wrapper on the
-checked-in `fable` default (mechanical recon — no gateway judgment lane).
+checked-in lineup default (mechanical recon — no gateway judgment lane; the `model:`
+line above is compiler-stamped from the routing.yaml subagents lineup).
 Dispatched with a bounded brief; returns a compact digest the orchestrator can act on
 without re-reading files itself.
 

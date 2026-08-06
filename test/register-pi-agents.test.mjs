@@ -8,10 +8,12 @@
 // Complete input set of the script: only agents/mp-*.md under agents/, minus
 // SKIP_FOR_PI (currently mp-implementer.md). No other profiles/config feeds.
 //
-// Live alias contract (post gateway-wrapper migration): every canonical agent
-// declares model: fable; MODEL_MAP is exactly { fable → litellm/fable-5 }.
-// Bidirectional equality (map keys == declared non-skipped aliases) is enforced
-// below; unknown aliases fail closed.
+// Live alias contract: every canonical agent declares the routing.yaml subagents
+// lineup alias (currently opus); MODEL_MAP maps it to the lineup's provider-qualified
+// id. The expected id is DERIVED from agent-dispatch's policy/routing.yaml below —
+// never hardcoded here — so a lineup change turns this suite red instead of silently
+// registering a retired model. Bidirectional equality (map keys == declared
+// non-skipped aliases) is enforced below; unknown aliases fail closed.
 //
 // The script's filesystem side-effects against the real host (~/.pi/...) are
 // NOT tested here; main() is import-guarded so this import is pure. Temp-dir
@@ -43,11 +45,35 @@ function agentModelAliases({ includeSkipped = true } = {}) {
   return { aliases, perFile };
 }
 
-test('every canonical agents/mp-*.md frontmatter model: is fable (incl. SKIP_FOR_PI)', () => {
+// Derive the lineup (alias → provider-qualified id) from agent-dispatch's routing.yaml —
+// the single declared source of the subagent lineup. Fails loud if the policy file or the
+// subagents block is unreadable; a silent fallback would let this suite rot into a pin.
+function lineupFromRoutingPolicy() {
+  const routingPath = '/srv/dev/ai/agent-dispatch/policy/routing.yaml';
+  const text = readFileSync(routingPath, 'utf8');
+  const block = text.match(/^subagents:\n((?:[ ]{2}\S[^\n]*\n)+)/m);
+  assert.ok(block, `${routingPath}: no subagents block found`);
+  const lineup = {};
+  for (const line of block[1].trimEnd().split('\n')) {
+    const m = line.match(/^[ ]{2}([\w-]+):\s*\{([^}]*)\}/);
+    assert.ok(m, `${routingPath}: unparseable subagents line: ${line}`);
+    const id = m[2].match(/\bid:\s*([^\s,}]+)/);
+    assert.ok(id, `${routingPath}: subagents.${m[1]} has no id`);
+    lineup[m[1]] = id[1];
+  }
+  assert.ok(Object.keys(lineup).length > 0, `${routingPath}: empty subagents lineup`);
+  return lineup;
+}
+
+test('every canonical agents/mp-*.md frontmatter model: is a lineup alias (incl. SKIP_FOR_PI)', () => {
   const { perFile } = agentModelAliases({ includeSkipped: true });
   assert.ok(perFile.length > 0, 'expected at least one mp-*.md agent');
+  const lineup = lineupFromRoutingPolicy();
   for (const { file, alias } of perFile) {
-    assert.equal(alias, 'fable', `${file}: expected model: fable, got ${alias}`);
+    assert.ok(
+      alias in lineup,
+      `${file}: model: ${alias} is not in the routing.yaml subagents lineup (${Object.keys(lineup).join(', ')})`,
+    );
   }
 });
 
@@ -59,26 +85,32 @@ test('MODEL_MAP keys == model: aliases of non-skipped agents (bidirectional)', (
     [...aliases].sort(),
     `MODEL_MAP keys ${JSON.stringify([...mapKeys])} must equal non-skipped agent aliases ${JSON.stringify([...aliases])}`,
   );
-  // No sonnet — OVERRIDE-ONLY on this host (AGENTS.md §routing).
-  assert.equal(MODEL_MAP.sonnet, undefined, 'sonnet must not be in MODEL_MAP (routing policy)');
-  // No dormant opus entry (strict live-alias map).
-  assert.equal(MODEL_MAP.opus, undefined, 'opus must not be in MODEL_MAP (dead alias pruned)');
+  // Removed from the lineup 2026-08-04 — reintroduction must fail closed, not map.
+  for (const dead of ['fable', 'sonnet', 'haiku']) {
+    assert.equal(MODEL_MAP[dead], undefined, `${dead} must not be in MODEL_MAP (not in the lineup)`);
+  }
 });
 
-test('MODEL_MAP targets resolve to the litellm provider ids in enabledModels', () => {
-  assert.equal(MODEL_MAP.fable, 'litellm/fable-5');
+test('MODEL_MAP targets match the provider-qualified ids routing.yaml declares', () => {
+  const lineup = lineupFromRoutingPolicy();
+  assert.deepEqual(
+    MODEL_MAP,
+    lineup,
+    'MODEL_MAP must mirror the routing.yaml subagents lineup (alias → id) exactly',
+  );
 });
 
 test('mapModelLine swaps only the model line, leaving the body byte-identical', () => {
-  const src = '---\nname: mp-x\ndescription: x\nmodel: fable\ntools: Read, Grep\n---\n\nbody line 1\nbody line 2\n';
+  const [liveAlias] = Object.keys(MODEL_MAP);
+  const src = `---\nname: mp-x\ndescription: x\nmodel: ${liveAlias}\ntools: Read, Grep\n---\n\nbody line 1\nbody line 2\n`;
   const { alias, mapped, body } = mapModelLine(src, 'mp-x.md');
-  assert.equal(alias, 'fable');
-  assert.equal(mapped, 'litellm/fable-5');
+  assert.equal(alias, liveAlias);
+  assert.equal(mapped, MODEL_MAP[liveAlias]);
   const outLines = body.split('\n');
   const srcLines = src.split('\n');
   assert.equal(outLines.length, srcLines.length);
   const diffs = outLines.filter((l, i) => l !== srcLines[i]);
-  assert.deepEqual(diffs, ['model: litellm/fable-5']);
+  assert.deepEqual(diffs, [`model: ${MODEL_MAP[liveAlias]}`]);
   assert.ok(body.includes('tools: Read, Grep'), 'tools line must be untouched');
   assert.ok(body.includes('body line 1\nbody line 2'), 'body must be untouched');
 });
@@ -88,9 +120,9 @@ test('mapModelLine throws on an unmapped alias (fail-closed; not a live alias fi
     () => mapModelLine('---\nmodel: gemini\n---\n', 'mp-x.md'),
     /has no pi mapping/,
   );
-  // opus is no longer mapped — reintroduction fails closed rather than silently shipping.
+  // fable left the lineup 2026-08-04 — reintroduction fails closed rather than silently shipping.
   assert.throws(
-    () => mapModelLine('---\nmodel: opus\n---\n', 'mp-x.md'),
+    () => mapModelLine('---\nmodel: fable\n---\n', 'mp-x.md'),
     /has no pi mapping/,
   );
 });
@@ -111,8 +143,10 @@ function setupTmpAgents(files) {
   return { agentsDir, targetDir };
 }
 
-const VALID_AGENT = '---\nname: mp-x\ndescription: x\nmodel: fable\ntools: Read, Grep\n---\n\nbody\n';
-const IMPLEMENTER_AGENT = '---\nname: worker-digest\ndescription: x\nmodel: fable\ntools: Read\n---\n\nbody\n';
+const LIVE_ALIAS = Object.keys(MODEL_MAP)[0];
+const LIVE_TARGET = MODEL_MAP[LIVE_ALIAS];
+const VALID_AGENT = `---\nname: mp-x\ndescription: x\nmodel: ${LIVE_ALIAS}\ntools: Read, Grep\n---\n\nbody\n`;
+const IMPLEMENTER_AGENT = `---\nname: worker-digest\ndescription: x\nmodel: ${LIVE_ALIAS}\ntools: Read\n---\n\nbody\n`;
 
 function snapshot(dir) {
   if (!existsSync(dir)) return null;
@@ -138,7 +172,7 @@ test('runRegister write mode produces bare-only with swapped model', () => {
   assert.equal(res.registered, 1);
   assert.equal(res.written, 1, 'bare only');
   const bare = readFileSync(join(targetDir, 'mp-x.md'), 'utf8');
-  assert.ok(bare.includes('model: litellm/fable-5'));
+  assert.ok(bare.includes(`model: ${LIVE_TARGET}`));
   assert.equal(existsSync(join(targetDir, 'masterplan:mp-x.md')), false, 'no colon alias emitted');
 });
 
@@ -200,7 +234,7 @@ test('runRegister write mode REMOVES stale copies of a skipped agent (idempotenc
 test('runRegister --check flags orphaned generated files (removed/renamed source)', () => {
   const { agentsDir, targetDir } = setupTmpAgents({ 'mp-x.md': VALID_AGENT });
   runRegister({ agentsDir, targetDir, check: false });
-  writeFileSync(join(targetDir, 'mp-y.md'), '---\nname: mp-y\nmodel: litellm/fable-5\n---\n');
+  writeFileSync(join(targetDir, 'mp-y.md'), `---\nname: mp-y\nmodel: ${LIVE_TARGET}\n---\n`);
   const res = runRegister({ agentsDir, targetDir, check: true });
   assert.ok(res.drift > 0, 'orphan mp-y.md should be flagged as drift');
   assert.ok(res.report.some((l) => /UNEXPECTED mp-y\.md/.test(l)));
@@ -224,7 +258,7 @@ test('COLON_PREFIX is the CC plugin namespace delimiter', () => {
 });
 
 test('mapNameLine prefixes name: with the CC namespace, leaving everything else untouched', () => {
-  const src = '---\nname: mp-x\ndescription: x\nmodel: fable\ntools: Read, Grep\n---\n\nbody\n';
+  const src = `---\nname: mp-x\ndescription: x\nmodel: ${LIVE_ALIAS}\ntools: Read, Grep\n---\n\nbody\n`;
   const out = mapNameLine(src, 'mp-x.md');
   const diffs = out.split('\n').filter((l, i) => l !== src.split('\n')[i]);
   assert.deepEqual(diffs, ['name: masterplan:mp-x']);
@@ -239,13 +273,13 @@ test('mapNameLine is idempotent (already-namespaced name is not double-prefixed)
 
 test('mapNameLine throws when there is no name line', () => {
   assert.throws(
-    () => mapNameLine('---\nmodel: fable\n---\n', 'mp-x.md'),
+    () => mapNameLine(`---\nmodel: ${LIVE_ALIAS}\n---\n`, 'mp-x.md'),
     /no `name:` frontmatter line/,
   );
 });
 
 test('outputsFor yields a bare copy only (no colon alias)', () => {
-  const swapped = '---\nname: mp-x\nmodel: litellm/fable-5\ntools: Read\n---\n\nbody\n';
+  const swapped = `---\nname: mp-x\nmodel: ${LIVE_TARGET}\ntools: Read\n---\n\nbody\n`;
   const outs = outputsFor('mp-x.md', swapped);
   assert.equal(outs.length, 1);
   assert.equal(outs[0].rel, 'mp-x.md');
@@ -312,23 +346,23 @@ test('every non-skipped agent that declares tools covers its MCP-namespaced name
   }
 });
 
-test('mp-explorer body asserts fable wrapper default (not frontmatter-only; no forbidden wrapper claims)', () => {
-  // Residual plan-gate P2: a positive /fable/i on the whole file would pass on frontmatter alone.
-  // Require the BODY to name the checked-in fable default / thin-wrapper shape, and forbid
-  // haiku|opus|sonnet as wrapper claims (case-insensitive) in the body only.
+test('mp-explorer body describes the lineup wrapper default without naming any model (rot-proof)', () => {
+  // Residual plan-gate P2, hardened: prose that names a concrete wrapper model rots the
+  // moment the lineup changes (that is exactly how `fable` survived the 2026-08-04 cut).
+  // The body must describe the compiler-stamped lineup default and name NO model at all.
   const raw = readFileSync(join(repoRoot, 'agents', 'mp-explorer.md'), 'utf8');
   const parts = raw.split(/^---$/m);
   assert.ok(parts.length >= 3, 'mp-explorer.md must have YAML frontmatter delimiters');
   const body = parts.slice(2).join('---');
   assert.equal(
-    /\b(haiku|opus|sonnet)\b/i.test(body),
+    /\b(haiku|opus|sonnet|fable)\b/i.test(body),
     false,
-    'explorer body must not claim haiku/opus/sonnet as the wrapper model',
+    'explorer body must not name any concrete wrapper model — lineup prose only',
   );
   assert.match(
     body,
-    /checked-in\s+`?fable`?\s+default/i,
-    'explorer body must state the checked-in fable default (not merely mention fable somewhere)',
+    /checked-in\s+lineup\s+default/i,
+    'explorer body must state the checked-in lineup default',
   );
   assert.match(
     body,
