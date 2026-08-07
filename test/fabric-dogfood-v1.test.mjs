@@ -58,10 +58,11 @@ function makeDogfoodFixture({ tasks, planIndex, slug = 'dogfood-v1' }) {
   return { tmp, MAIN, bundleDir, statePath, self };
 }
 
-function brokerStub(resultFor) {
+function brokerStub(resultFor, reviewResult) {
   return {
     async callTool(name, args) {
       if (name === 'dispatch_task') return resultFor(args.descriptor);
+      if (name === 'dispatch_review') return reviewResult;
       return { results: (args.descriptors ?? []).map((d) => resultFor(d)) };
     },
   };
@@ -114,37 +115,35 @@ test('V1 dogfood: fabric wave records per-task adversary review (verdict + findi
   write(op.cwd, 'src/a.txt', 'a1\n');
   write(op.cwd, 'src/b.txt', 'b1\n');
 
-  const rl = reviewLaneStub({
+  const approveRecord = {
     final_verdict: 'approve',
     findings: [],
     blocking_findings: [],
     summary: 'clean',
-  });
+    harness: { degraded: false, timed_out: false, stalled: false, deadline_exceeded: false, regions_unreviewed: 0, extraction_degraded: false },
+  };
 
   const res = await dispatchWaveViaFabric({
     statePath: fx.statePath,
     self: fx.self,
     now: 3000,
-    _brokerClient: brokerStub(routeResult),
+    _brokerClient: brokerStub(routeResult, approveRecord),
     _openCoord: disabledCoord,
-    _reviewLane: rl.lane,
+    _callReview: (args) => Promise.resolve(approveRecord),
     _localVerifyExec: () => 'ok',
   });
 
   assert.equal(res.dispatched, true);
-  assert.ok(rl.calls.length >= 1, 'adversary lane must run');
-  // Summary row carries review verdict string for done tasks.
+  // Summary row carries canonical review verdict string for done tasks.
   for (const t of res.tasks) {
-    assert.equal(t.review, 'clean', `task ${t.task_id} review verdict`);
+    assert.equal(t.review, 'approve', `task ${t.task_id} review verdict`);
   }
   const rec = readWaveDispatchRecord(fx.bundleDir, 0);
   assert.ok(rec?.result?.tasks?.length === 2);
   for (const item of rec.result.tasks) {
     assert.ok(item.digest?.review, `task ${item.task_id} missing digest.review`);
-    assert.equal(item.digest.review.verdict, 'clean');
-    assert.ok(typeof item.digest.review.findings === 'string');
-    // count is present (may be 0)
-    assert.ok('count' in item.digest.review || item.digest.review.count == null || Number.isFinite(item.digest.review.count));
+    assert.equal(item.digest.review.verdict, 'approve');
+    assert.ok(Array.isArray(item.digest.review.findings));
   }
   assert.deepEqual(res.record.blocking_reviews, []);
 });
@@ -158,31 +157,32 @@ test('V1 dogfood: blocking adversary verdict surfaces via blocking_reviews[]', a
   const op = launch(fx);
   write(op.cwd, 'src/a.txt', 'a-race\n');
 
-  const rl = reviewLaneStub({
+  const rejectRecord = {
     final_verdict: 'reject',
-    findings: [{ severity: 'high', note: 'introduces a data race' }],
-    blocking_findings: [{ severity: 'high', note: 'introduces a data race' }],
+    findings: [{ file: 'src/a.txt', line: 1, summary: 'introduces a data race', severity: 'major' }],
+    blocking_findings: [{ summary: 'introduces a data race' }],
     summary: 'blocking data race',
-  });
+    harness: { degraded: false, timed_out: false, stalled: false, deadline_exceeded: false, regions_unreviewed: 0, extraction_degraded: false },
+  };
 
   const res = await dispatchWaveViaFabric({
     statePath: fx.statePath,
     self: fx.self,
     now: 3000,
-    _brokerClient: brokerStub(routeResult),
+    _brokerClient: brokerStub(routeResult, rejectRecord),
     _openCoord: disabledCoord,
-    _reviewLane: rl.lane,
+    _callReview: (args) => Promise.resolve(rejectRecord),
     _localVerifyExec: () => 'ok',
   });
 
   assert.equal(res.dispatched, true);
-  assert.equal(res.tasks[0].review, 'blocking');
+  assert.equal(res.tasks[0].review, 'reject');
   assert.equal(res.record.blocking_reviews.length, 1);
   assert.equal(res.record.blocking_reviews[0].id, 1);
-  assert.match(String(res.record.blocking_reviews[0].findings), /data race/);
+  assert.match(JSON.stringify(res.record.blocking_reviews[0].findings), /data race/);
   const dig = readWaveDispatchRecord(fx.bundleDir, 0).result.tasks[0].digest;
-  assert.equal(dig.review.verdict, 'blocking');
-  assert.ok(dig.review.findings);
+  assert.equal(dig.review.verdict, 'reject');
+  assert.ok(Array.isArray(dig.review.findings));
   // Task still records done; orchestrator acts on blocking_reviews[].
   assert.equal(readState(fx.statePath).tasks[0].status, 'done');
 });
