@@ -94,7 +94,9 @@ test('clean wave: marks done, split commit lands, marker clears, next=complete',
   assert.equal(res.scope.ok, true);
   assert.deepEqual(res.reverted, []);
   // blocking review on a DONE task still surfaces (review gate is independent of status).
-  assert.deepEqual(res.blocking_reviews, [{ id: 2, findings: ['F1'] }]);
+  // Legacy 'blocking' normalizes to 'reject'; findings arrays are preserved and also
+  // projected into blocking_findings, so the wave-completion surface concatenates both.
+  assert.deepEqual(res.blocking_reviews, [{ id: 2, verdict: 'reject', findings: ['F1', 'F1'] }]);
   assert.equal(res.cleared, true);
   assert.equal(res.next.action, 'complete');
 
@@ -114,6 +116,84 @@ test('clean wave: marks done, split commit lands, marker clears, next=complete',
   assert.deepEqual(after.tasks.map((t) => t.status), ['done', 'done']);
   const events = fs.readFileSync(path.join(fx.bundleDir, 'events.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
   assert.equal(events.at(-1).type, 'wave_recorded');
+});
+
+const healthyHarness = {
+  degraded: false, timed_out: false, stalled: false,
+  deadline_exceeded: false, regions_unreviewed: 0,
+  extraction_degraded: false,
+};
+
+const canonicalReview = (verdict, extra = {}) => ({
+  verdict,
+  findings: [{ file: 'src/a.txt', line: 1, summary: `${verdict} finding`, severity: 'major' }],
+  blocking_findings: verdict === 'approve' ? [] : [{ summary: `${verdict} blocker` }],
+  summary: `${verdict} summary`,
+  harness: { ...healthyHarness },
+  ...extra,
+});
+
+for (const verdict of ['rework', 'reject', 'error']) {
+  test(`record-result surfaces canonical ${verdict} in blocking_reviews`, () => {
+    const fx = makeFixture({
+      tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+      activeRun: { wave: 1, run_id: 'r1', task_id: 'wf1', scope: ['src/a.txt'], baseline: [] },
+    });
+    write(fx.WT, 'src/a.txt', 'A\n');
+    const review = canonicalReview(verdict);
+    const res = recordWaveResult({
+      statePath: fx.statePath, self: fx.self, now: 2000,
+      result: { wave: 1, baseline: [], tasks: [{
+        task_id: 1,
+        review,
+        digest: { ...digest(1, 'done').digest, review },
+      }] },
+    });
+    assert.equal(res.blocking_reviews.length, 1);
+    assert.equal(res.blocking_reviews[0].id, 1);
+    assert.equal(res.blocking_reviews[0].verdict, verdict);
+    assert.ok(Array.isArray(res.blocking_reviews[0].findings));
+  });
+}
+
+test('record-result blocks a degraded approve', () => {
+  const fx = makeFixture({ tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }], activeRun: { wave: 1, run_id: 'r1', task_id: 'wf1', scope: ['src/a.txt'], baseline: [] } });
+  write(fx.WT, 'src/a.txt', 'A\n');
+  const review = canonicalReview('approve', { harness: { ...healthyHarness, degraded: true } });
+  const res = recordWaveResult({
+    statePath: fx.statePath, self: fx.self, now: 2000,
+    result: { wave: 1, baseline: [], tasks: [{
+      task_id: 1, review, digest: { ...digest(1, 'done').digest, review },
+    }] },
+  });
+  assert.equal(res.blocking_reviews[0].verdict, 'error');
+});
+
+test('record-result accepts a healthy canonical approve', () => {
+  const fx = makeFixture({ tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }], activeRun: { wave: 1, run_id: 'r1', task_id: 'wf1', scope: ['src/a.txt'], baseline: [] } });
+  write(fx.WT, 'src/a.txt', 'A\n');
+  const review = canonicalReview('approve');
+  const res = recordWaveResult({
+    statePath: fx.statePath, self: fx.self, now: 2000,
+    result: { wave: 1, baseline: [], tasks: [{
+      task_id: 1, review, digest: { ...digest(1, 'done').digest, review },
+    }] },
+  });
+  assert.deepEqual(res.blocking_reviews, []);
+});
+
+test('record-result preserves legacy blocking review on redrive', () => {
+  const fx = makeFixture({ tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }], activeRun: { wave: 1, run_id: 'r1', task_id: 'wf1', scope: ['src/a.txt'], baseline: [] } });
+  write(fx.WT, 'src/a.txt', 'A\n');
+  const review = { verdict: 'blocking', findings: 'legacy blocker' };
+  const res = recordWaveResult({
+    statePath: fx.statePath, self: fx.self, now: 2000,
+    result: { wave: 1, baseline: [], tasks: [{
+      task_id: 1, review, digest: { ...digest(1, 'done').digest, review },
+    }] },
+  });
+  assert.ok(Array.isArray(res.blocking_reviews[0].findings));
+  assert.match(JSON.stringify(res.blocking_reviews[0].findings), /legacy blocker/);
 });
 
 test('REGRESSION: the controller\'s own Guard-D heartbeat is not a watch breach', () => {
