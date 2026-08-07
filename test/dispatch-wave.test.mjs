@@ -43,6 +43,9 @@ import {
   WAVE_DISPATCH_KEY_VERSION,
   captureFullWorkingDiff,
   buildNativeSpawnPlan,
+  gateAndValidate,
+  resolveWaveContext,
+  buildDescriptors,
 } from '../lib/dispatch-wave.mjs';
 import { continueRun } from '../lib/continue.mjs';
 import { readState, writeState } from '../lib/bundle.mjs';
@@ -1233,4 +1236,61 @@ test('cwd stays null when the descriptor names no locus at all', () => {
     _resolve: () => ({ lane: 'dispatch-agentic-loop', agent: 'builder', effort: 'high', capability: 'edit', backend: 'dispatch-gateway', provider: 'grok-4.5', resolved: true }),
   });
   assert.equal(plan.tasks[0].cwd, null, 'absence is reported, never invented');
+});
+
+// ---------------------------------------------------------------------------
+// Prepare-stage unit tests (gateAndValidate / resolveWaveContext / buildDescriptors)
+// ---------------------------------------------------------------------------
+
+test('gateAndValidate: flag-off returns early when fabric is not true', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-gate-'));
+  const statePath = path.join(dir, 'state.yml');
+  writeState(statePath, { schema_version: 9, slug: 's', dispatch: { fabric: false } });
+  const result = gateAndValidate({ statePath });
+  assert.equal(result.outcome, 'flag-off');
+  assert.equal(result.dispatched, false);
+});
+
+test('gateAndValidate: returns validated context for a fabric-flagged bundle with a wave marker', () => {
+  const fx = makeFixture({
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    planIndex: [planEntry(1, 1, ['src/a.txt'])],
+    slug: 'dw-gate-ok',
+  });
+  launchViaContinue(fx);
+  const result = gateAndValidate({ statePath: fx.statePath, self: fx.self, now: 2000 });
+  assert.equal(result.outcome, undefined);
+  assert.equal(result.wave, 1);
+  assert.equal(result.runId, 'dw-gate-ok');
+  assert.equal(result.key, composeWaveDispatchKey('dw-gate-ok', 1));
+  assert.equal(result.absState, path.resolve(fx.statePath));
+  assert.equal(result.bundleDir, fx.bundleDir);
+  assert.ok(result.state);
+  assert.ok(result.run);
+  assert.equal(result.run.wave, 1);
+  // Fresh launch: no wave-dispatch record yet.
+  assert.equal(result.existing, null);
+});
+
+test('gateAndValidate: reused/pending when an existing record has status pending and no takeover', () => {
+  const fx = makeFixture({
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    planIndex: [planEntry(1, 1, ['src/a.txt'])],
+    slug: 'dw-gate-pending',
+  });
+  launchViaContinue(fx);
+  const key = composeWaveDispatchKey('dw-gate-pending', 1);
+  writeWaveDispatchRecord(fx.bundleDir, 1, {
+    key, run_id: 'dw-gate-pending', wave: 1, op: 'dispatch_fabric',
+    contract_version: 'adsp-v1.1', status: 'pending', attempt: 1, dispatched_at: 'T0',
+    tasks: [{ task_id: 1, class: 'bounded-edit', handoff_key: 'k1' }],
+  });
+  const result = gateAndValidate({ statePath: fx.statePath, self: fx.self, now: 2000, takeover: false });
+  assert.equal(result.outcome, 'reused');
+  assert.equal(result.status, 'pending');
+  assert.equal(result.reused, true);
+  assert.equal(result.dispatched, false);
+  assert.equal(result.wave, 1);
+  assert.equal(result.key, key);
+  assert.equal(result.record.status, 'pending');
 });
