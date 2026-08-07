@@ -46,6 +46,7 @@ import {
   gateAndValidate,
   resolveWaveContext,
   buildDescriptors,
+  acquireAndWatch,
 } from '../lib/dispatch-wave.mjs';
 import { continueRun } from '../lib/continue.mjs';
 import { readState, writeState } from '../lib/bundle.mjs';
@@ -1293,4 +1294,101 @@ test('gateAndValidate: reused/pending when an existing record has status pending
   assert.equal(result.wave, 1);
   assert.equal(result.key, key);
   assert.equal(result.record.status, 'pending');
+});
+
+// ---------------------------------------------------------------------------
+// Execute-stage unit tests (acquireAndWatch / buildNativePlan / broker / finalize)
+// ---------------------------------------------------------------------------
+
+/** Drive prepare stages and return the args acquireAndWatch needs. */
+function prepareAcquireArgs(fx, { reviewOn = false, now = 2000 } = {}) {
+  const gate = gateAndValidate({ statePath: fx.statePath, self: fx.self, now });
+  assert.equal(gate.outcome, undefined, `gate unexpected: ${JSON.stringify(gate)}`);
+  const ctx = resolveWaveContext({
+    absState: gate.absState,
+    state: gate.state,
+    run: gate.run,
+    wave: gate.wave,
+    runId: gate.runId,
+    key: gate.key,
+    existing: gate.existing,
+    markerWave: gate.markerWave,
+  });
+  assert.equal(ctx.outcome, undefined, `ctx unexpected: ${JSON.stringify(ctx)}`);
+  const { descriptors } = buildDescriptors({
+    tasks: ctx.tasks,
+    WT: ctx.WT,
+    MAIN: ctx.MAIN,
+    runId: gate.runId,
+    inputs: ctx.inputs,
+    reviewOn,
+    verifyTimeoutS: 60,
+    effectiveAllowlist: 'bash -c',
+  });
+  return {
+    absState: gate.absState,
+    bundleDir: gate.bundleDir,
+    state: gate.state,
+    run: gate.run,
+    self: fx.self,
+    now,
+    wave: gate.wave,
+    runId: gate.runId,
+    key: gate.key,
+    existing: gate.existing,
+    tasks: ctx.tasks,
+    descriptors,
+    WT: ctx.WT,
+    MAIN: ctx.MAIN,
+    inputs: ctx.inputs,
+    routingInputs: ctx.routingInputs,
+    reviewOn,
+    effectiveAllowlist: 'bash -c',
+  };
+}
+
+test('acquireAndWatch: precheck-failed when a task-scoped file is already dirty', () => {
+  const fx = makeFixture({
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    planIndex: [planEntry(1, 1, ['src/a.txt'])],
+    slug: 'dw-acq-dirty',
+  });
+  launchViaContinue(fx);
+  // Precheck only refuses dirt that was already present at the run's frozen
+  // baseline (user WIP). Dirt absent from baseline is treated as prior-attempt
+  // residue and is allowed (recover_wave). Force the path into baseline so the
+  // dirty worktree file is classified as user work.
+  const st = readState(fx.statePath);
+  write(st.worktree, 'src/a.txt', 'USER WIP — must block launch\n');
+  const args = prepareAcquireArgs(fx);
+  args.run = { ...args.run, baseline: ['src/a.txt'] };
+  const result = acquireAndWatch(args);
+  assert.equal(result.outcome, 'precheck-failed');
+  assert.equal(result.dispatched, false);
+  assert.equal(result.wave, 1);
+  assert.ok(Array.isArray(result.violations) && result.violations.length > 0);
+  assert.match(result.reason, /watch-list precheck failed/);
+  // No pending wave-dispatch record should have been written on the failed path.
+  assert.equal(readWaveDispatchRecord(fx.bundleDir, 1), null);
+});
+
+test('acquireAndWatch: returns attempt and waveToken when precheck passes', () => {
+  const fx = makeFixture({
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    planIndex: [planEntry(1, 1, ['src/a.txt'])],
+    slug: 'dw-acq-ok',
+  });
+  launchViaContinue(fx);
+  const args = prepareAcquireArgs(fx, { reviewOn: true });
+  const result = acquireAndWatch(args);
+  assert.equal(result.outcome, undefined);
+  assert.equal(result.attempt, 1);
+  assert.ok(typeof result.waveToken === 'string' && result.waveToken.length > 0);
+  assert.ok(result.record);
+  assert.equal(result.record.status, 'pending');
+  assert.equal(result.record.wave_token, result.waveToken);
+  assert.equal(result.record.attempt, 1);
+  assert.ok(result.watchBaseline);
+  assert.equal(result.record.review_context?.enabled, true);
+  assert.equal(readWaveDispatchRecord(fx.bundleDir, 1)?.status, 'pending');
 });
