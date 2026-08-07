@@ -1,6 +1,6 @@
 {
   "name": "masterplan",
-  "version": "9.7.3",
+  "version": "9.8.0",
   "private": true,
   "type": "module",
   "description": "masterplan clean-core rebuild (v8) \u2014 brainstorm\u2192plan\u2192execute\u2192finish orchestrator on native Claude Code primitives.",

@@ -1,5 +1,52 @@
 # Changelog
 
+## [9.8.0] — 2026-08-07
+
+### Changed — wave-dispatch architecture deepened (5 rounds)
+
+Five rounds of architecture review and deepening on the wave-dispatch hot spot.
+All changes are behavior-preserving (1673/1675 tests pass; 2 pre-existing baseline
+frontmatter failures only). No user-facing API changes.
+
+- **Centralized wave review in agent-dispatch.** Deleted the ~300-line parallel review
+  engine from `lib/dispatch-wave.mjs`; masterplan now calls `dispatch_review` via the
+  agent-dispatch broker client. Per-task review records are projected through
+  `lib/task-review.mjs` and persisted as structured events. Review is fail-closed:
+  `rework`/`reject`/`error`/degraded-harness block via `blocking_reviews[]`.
+
+- **Decomposed the orchestrator into pipeline stages.** `dispatchWaveViaFabric` went
+  from 611 → 73 lines. Seven named stage helpers now compose the pipeline:
+  `gateAndValidate`, `resolveWaveContext`, `buildDescriptors`, `acquireAndWatch`,
+  `buildNativePlan`, `runBrokerDispatch`, `finalizeRecord`.
+
+- **Concentrated wave launch context.** Plan-index reading, config/env construction,
+  `prepareWave` invocation, and MAIN resolution are now a single
+  `buildWaveLaunchContext` in `lib/wave.mjs`, consumed by both PREPARE
+  (`continue.mjs`) and EXECUTE (`dispatch-wave.mjs`). Routing-input parity is now a
+  construction guarantee, not a comment-only contract. The retry-frozen-inputs
+  guarantee is preserved.
+
+- **Separated watch-integrity into its own module.** The 448-line watch substrate
+  (git porcelain parsing, status snapshots, content hashing, baseline management,
+  delta verification, restoration evidence) moved from `lib/wave-commit.mjs` into
+  `lib/watch-integrity.mjs`. Both LAUNCH and COMPLETION now import from it, fixing a
+  cross-module dependency smell where `dispatch-wave.mjs` imported watch functions
+  from the commit module.
+
+- **Consolidated git helpers.** `runGit` and `gitLines` are now concentrated in
+  `lib/watch-integrity.mjs`. The `runGit` re-export chain through `wave-commit.mjs`
+  is removed; `continue`, `sweep`, and `finish-step` import directly from
+  `watch-integrity`.
+
+### Internal module sizes
+
+| Module | Before | After |
+|---|---|---|
+| `lib/dispatch-wave.mjs` `dispatchWaveViaFabric` | 611 lines | 73 lines |
+| `lib/wave-commit.mjs` | 941 lines | 488 lines |
+| `lib/watch-integrity.mjs` | — | 480 lines (new) |
+| `lib/wave.mjs` | 308 lines | 359 lines |
+
 ## [9.7.3]
 
 ### Fixed

@@ -125,6 +125,32 @@ dangling-op class that let `dispatch_fabric` ship consumer-less cannot recur.
 
 ---
 
+## Module Structure (post-9.8.0 deepening)
+
+The wave-dispatch hot spot was deepened across five architecture rounds. The current
+module layout:
+
+| Module | Role | Key exports |
+|---|---|---|
+| `lib/dispatch-wave.mjs` | Orchestrator pipeline | `gateAndValidate`, `resolveWaveContext`, `buildDescriptors`, `acquireAndWatch`, `buildNativePlan`, `runBrokerDispatch`, `finalizeRecord` |
+| `lib/wave.mjs` | Launch context + scope | `prepareWave`, `buildWaveLaunchContext`, `verifyScope`, `declaredScope` |
+| `lib/watch-integrity.mjs` | Watch substrate + git helpers | `runGit`, `gitLines`, `captureWatchBaseline`, `verifyWatchListDelta`, `precheckWatchList` |
+| `lib/wave-commit.mjs` | Wave-completion transaction | `recordWaveResult`, `captureWtFiles`, `normalizeStoredReview` |
+| `lib/task-review.mjs` | Review projection | `projectReviewRecord`, `taskReviewBlocksWave`, `reviewCompletedTasks` |
+
+`dispatchWaveViaFabric` is a 73-line pipeline that calls the stage helpers in order.
+Each stage returns an outcome object; the orchestrator short-circuits on early exits.
+
+`buildWaveLaunchContext` is the single implementation of plan-index reading,
+config/env construction, `prepareWave` invocation, and MAIN resolution — consumed by
+both PREPARE (`continue.mjs`) and EXECUTE (`dispatch-wave.mjs`) with routing inputs
+injected per-phase (retry-frozen on the EXECUTE side).
+
+Review is a thin caller of agent-dispatch's canonical `dispatch_review` engine;
+masterplan no longer maintains a parallel implementation.
+
+---
+
 ## `target` Is Informational — Implementation Is Always Inline
 
 Every task is implemented by `mp-implementer` (fable wrapper → `dispatch-agentic-loop`) regardless of its routed `target`. There is
