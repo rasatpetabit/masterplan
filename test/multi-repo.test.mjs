@@ -89,6 +89,18 @@ test('resolveFileLocus: umbrella docs path stays on worktree', () => {
   assert.equal(loc.siblingName, null);
 });
 
+test('resolveFileLocus: absolute MAIN path remaps to worktree', () => {
+  const { MAIN, WT, slug } = makeUmbrellaFixture();
+  const rel = 'docs/masterplan/x/new-report.md';
+  const loc = resolveFileLocus(path.join(MAIN, rel), {
+    worktree: WT, mainRoot: MAIN, slug,
+  });
+  assert.equal(loc.repo, WT);
+  assert.equal(loc.rel, rel);
+  assert.equal(loc.abs, path.join(WT, rel));
+  assert.equal(loc.siblingName, null);
+});
+
 test('resolveFileLocus: yanos-os/ prefix → sibling (worktree when present)', () => {
   const { MAIN, WT, SIB, slug, branch } = makeUmbrellaFixture({ withSiblingWt: true });
   const loc = resolveFileLocus('yanos-os/kas/yanos-z9264f.yaml', {
@@ -170,6 +182,56 @@ test('rewriteVerifyForSibling: strips sibling prefix tokens', () => {
   );
   // Non-sibling paths untouched
   assert.equal(out[1], 'test -f docs/masterplan/x/gaps-report.md');
+});
+
+test('rewriteVerifyForSibling: absolute MAIN paths target worktree', () => {
+  const { MAIN, WT } = makeUmbrellaFixture();
+  const cmds = [
+    `test -f ${MAIN}/docs/software/report.md`,
+    `cd ${MAIN} && node --test test/report.test.mjs`,
+  ];
+  const out = rewriteVerifyForSibling(cmds, null, {
+    mainRoot: MAIN,
+    repo: WT,
+  });
+  assert.deepEqual(out, [
+    `test -f ${WT}/docs/software/report.md`,
+    `cd ${WT} && node --test test/report.test.mjs`,
+  ]);
+});
+
+test('rewriteVerifyForSibling: existing worktree paths remain unchanged', () => {
+  const { MAIN, WT } = makeUmbrellaFixture();
+  const cmds = [
+    `test -f ${WT}/docs/software/report.md`,
+    `cd ${WT} && node --test test/report.test.mjs`,
+  ];
+  assert.deepEqual(rewriteVerifyForSibling(cmds, null, {
+    mainRoot: MAIN,
+    repo: WT,
+  }), cmds);
+});
+
+test('rewriteVerifyForSibling: absolute sibling paths retain target repo name', () => {
+  const { MAIN, SIB, slug } = makeUmbrellaFixture({ withSiblingWt: true });
+  const siblingWt = worktreePathFor(SIB, slug);
+  const out = rewriteVerifyForSibling([
+    `test -f ${SIB}/kas/board.yaml`,
+  ], 'yanos-os', {
+    mainRoot: MAIN,
+    repo: siblingWt,
+  });
+  assert.deepEqual(out, [
+    `test -f ${siblingWt}/kas/board.yaml`,
+  ]);
+});
+
+test('rewriteVerifyForSibling: dot-relative sibling paths remain relative', () => {
+  assert.deepEqual(rewriteVerifyForSibling([
+    'test -f ./yanos-os/kas/board.yaml',
+  ], 'yanos-os'), [
+    'test -f ./kas/board.yaml',
+  ]);
 });
 
 test('groupFilesByRepo: partitions correctly', () => {
