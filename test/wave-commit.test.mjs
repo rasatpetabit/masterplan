@@ -11,7 +11,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
-import { recordWaveResult, captureWatchBaseline, writeWatchBaseline, snapshotRepoState } from '../lib/wave-commit.mjs';
+import { recordWaveResult } from '../lib/wave-commit.mjs';
+import { captureWatchBaseline, writeWatchBaseline, snapshotRepoState } from '../lib/watch-integrity.mjs';
 import { readState, writeState } from '../lib/bundle.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
 import { acquireOwner } from '../lib/owner-fs.mjs';

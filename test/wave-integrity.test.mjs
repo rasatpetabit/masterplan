@@ -24,7 +24,7 @@ import {
   writeWatchBaseline,
   readWatchBaseline,
   watchBaselinePath,
-} from '../lib/wave-commit.mjs';
+} from '../lib/watch-integrity.mjs';
 
 const git = (dir, ...args) =>
   String(execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' })).trim();
