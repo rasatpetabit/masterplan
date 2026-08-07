@@ -90,7 +90,7 @@ dispatch, every `AskUserQuestion`, and ALL network ops (`git push`, `gh`, agent-
 
    | op | do |
    |---|---|
-   | `dispatch_fabric` | The ONLY execute-wave path (L2 Workflow / foreground fork deleted). `cd "<op.cwd>"` FIRST (§2e¶3). Run `mp dispatch-wave --state=<path>` (ONE deterministic command — dispatch AND record complete inside it; pass `--codex-suppressed` when §0 host-detect reported a Codex host — prepare inputs frozen into the record's `routing_inputs`; Guard-D ownership acquired inside the command). It re-derives routed tasks via `prepareWave`, builds one adsp work item per task (`buildWorkItem`), drives a bounded concurrent pool of `dispatch_task` calls through one `agent-dispatch serve-mcp` process (coord job opened/closed in a `finally`), then runs the SAME `record-result` transaction — digests carry adsp-v1.1 `dispatch` provenance. Idempotent on the wave-dispatch record `(run_id, wave, 'dispatch_fabric')` persisted BEFORE the broker call. Act on the embedded record outcome per §2a step 2. NO promote — there is no background Workflow; a crash re-emits this op on the next `continue`. |
+   | `dispatch_fabric` | The ONLY execute-wave path (L2 Workflow / foreground fork deleted). `cd "<op.cwd>"` FIRST (§2e¶3). Run `mp dispatch-wave --state=<path>` (ONE deterministic command — dispatch AND record complete inside it; pass `--codex-suppressed` when §0 host-detect reported a Codex host — prepare inputs frozen into the record's `routing_inputs`; Guard-D ownership acquired inside the command). It re-derives routed tasks via `prepareWave`, builds one adsp work item per task (`buildWorkItem`), drives a bounded concurrent pool of `dispatch_task` calls through one `agent-dispatch serve-mcp` process (coord job opened/closed in a `finally`). When `state.review.adversary` is on, after implement + local verify it captures each done task's full edit-locus diff and calls `dispatch_review` once on that same broker session (masterplan is caller/recorder only — no local review engine); the native path freezes `review_context` and runs the same centralized review via `reviewNativeResult` at result ingestion. Then the SAME `record-result` transaction — digests carry adsp-v1.1 `dispatch` provenance and canonical review projections. Idempotent on the wave-dispatch record `(run_id, wave, 'dispatch_fabric')` persisted BEFORE the broker call. Act on the embedded record outcome per §2a step 2. NO promote — there is no background Workflow; a crash re-emits this op on the next `continue`. |
    | `dispatch_plan` | Planning fan-out (READ-ONLY). Run `mp dispatch-plan` (or the continue-emitted planning op) to send subsystem-planner work items through the masterplan-planning capability class with enumerated accessible roots; stage fragments then merge/validate/review as today. |
    | `stop` `reason:'wait'` | A live fabric wave owns the work. Report it and close — completion re-invokes the controller. |
       | `ask` `ask:'gate'` | Re-render the durable gate's `AskUserQuestion` (CD-9). **Finalization gates** (`verification_failed` / `no_verification_command` / `docs_normalize` / `branch_finish`): re-render via `mp finish-step --state=<path>` — its `ask:'gate'` op carries the full payload (incl. the rehydrated codex digest for `branch_finish`) — and act per the **§2c** answer flags (the clear-gate + bundle commit run inside the subcommand). Other gates: named option → act, `mp clear-gate`, `git -C "<MAIN>"` commit the bundle, re-enter the loop. Free-text / no clear answer → keep the gate, respond, close. NEVER auto-proceed regardless of autonomy (the durable marker outranks a native AUQ that can't survive compaction). |
@@ -132,16 +132,21 @@ via `mp continue`'s inline `finalize_run` reconcile — the same transaction, `-
 
 1. **Record.** Write the engine's whole `<result>` JSON to a scratch file OUTSIDE the bundle dir
    (e.g. `/tmp/mp-result-<slug>.json` — a bundle-dir scratch would be swept into the state commit),
-   then `mp record-result --state=<path> --result-file=<that file>`.
+   then `mp record-result --state=<path> --result-file=<that file>`. On the native path,
+   `record-result` first runs `reviewNativeResult` (centralized `dispatch_review` ingestion using
+   the wave record's frozen `review_context`) so native and MCP-pool produce the same canonical
+   review projection before the commit transaction.
 2. **Act on the returned JSON.**
    - `outcome:'lost-to-other'` → NOTHING was written; a second session took this bundle over while
      our wave ran. **STOP** — surface the takeover via `AskUserQuestion` (reclaim via
      `mp acquire-owner --force`, or abandon this session's recording) (Guard D, §2e¶8).
    - `failed[]` / `qctl[]` / `blocking_reviews[]` non-empty → surface via `AskUserQuestion` (§4) —
-     never silently loop. Failed/blocked tasks stay `pending` with the marker intact; `next` is
+     never silently loop. `blocking_reviews[]` is the fail-closed execution-review gate: `rework`,
+     `reject`, `error`, and incomplete harness coverage from centralized `dispatch_review` all land
+     here. Failed/blocked tasks stay `pending` with the marker intact; `next` is
      `recover_wave` for ONLY those. `qctl` tasks hand to §6.
    - `scope.ok:false` → the offenders were already reverted in WT (`reverted[]`); surface the
-     breach. In-scope work stands.
+     breach. In-scope work stands. D6 is independent of review outcome.
    - Otherwise **narrate tersely** — at most a 1–2 line wave summary (what completed / what's
      next), NEVER the `state.yml` or `WORKLOG.md` diff (anti-flood) — and **re-enter the §2 loop**
      (step 4): `mp continue` derives the next op itself (the next wave's `dispatch_fabric`, or

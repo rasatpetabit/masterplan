@@ -68,6 +68,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Centralized wave review ownership.** Per-task execution review no longer implements a local engine in masterplan. Masterplan captures the full edit-locus diff, hashes it, calls agent-dispatch `dispatch_review` once, and persists a canonical structured projection (`approve|rework|reject|error` + findings + harness). Duplicate review chunking/mapping helpers were deleted; MCP-pool and native (`reviewNativeResult`) paths share the same helper and fail closed into `blocking_reviews[]`.
 - **Fabric default-on for new seeds.** `mp seed` / `buildSeedState` emit `state.dispatch.fabric: true` by default; `--fabric=off` omits the key (legacy wave path). Mid-run/old bundles without the flag are unchanged.
 - **Pi registration is bare-only.** `bin/register-pi-agents.mjs` writes only `mp-*.md`; managed `masterplan:mp-*.md` leftovers (from `agents/mp-*.md` + SKIP_FOR_PI) are removed on write and flagged as drift by `--check`. Unmanaged colon-named files are left alone.
 

@@ -131,12 +131,39 @@ Every task is implemented by `mp-implementer` (fable wrapper → `dispatch-agent
 no codex-implementer in v8 by design. The `target` field is logged and recorded in digests so a
 future implementer could offload eligible tasks; it never gates which agent runs the implementation.
 
-Review is gated by **config only** (`review: 'on'|'off'`, default `'off'`), not by `target` or
-eligibility. Judgment-heavy tasks (which route `inline`) need a second opinion as much as
-annotation-approved tasks; gating review by eligibility would skip exactly the riskiest work.
+---
 
-When review is on, `mp-adversarial-reviewer` runs per-task — not per-wave — immediately after
-that task's implement finishes, failure-isolated from other tasks.
+## Centralized Per-Task Review (caller + recorder only)
+
+Review is gated by **config only** (`state.review.adversary` / `review: 'on'|'off'`, default `'off'`),
+not by `target` or eligibility. Judgment-heavy tasks (which route `inline`) need a second opinion as
+much as annotation-approved tasks; gating review by eligibility would skip exactly the riskiest work.
+
+Masterplan does **not** own the review engine. When review is on, for every `done` task it:
+
+1. Captures the **full edit-locus working diff** (tracked + untracked; never scope-filtered).
+2. Hashes the exact payload (`payload_sha = sha256(diff bytes)`).
+3. Reuses a completed `run+task+sha` review event when one exists; otherwise makes **one** explicit
+   `dispatch_review` call (`class: adversary`) on the same broker client that served the wave's
+   writer pool.
+4. Projects the agent-dispatch structured record into a compact canonical shape
+   (`approve | rework | reject | error` + findings + harness metadata) and persists it before
+   `recordWaveResult`.
+
+All chunking, retries, reconciliation, findings extraction, and verdict semantics live in
+agent-dispatch (`docs/policy/dispatch.md`, `references/review-findings.schema.json`). Masterplan
+only orchestrates lifecycle, payload binding, invocation, and durable recording
+(`lib/task-review.mjs`).
+
+**MCP-pool path.** `dispatchWaveViaFabric` reuses the open `createBrokerClient` session for both
+`dispatch_task` and `dispatch_review` — one broker process per wave. Review runs after implement +
+local verify, still failure-isolated per task.
+
+**Native path.** Native Pi spawn freezes `review_context` into the wave-dispatch record before
+spawn. When host results arrive, `reviewNativeResult` runs the **same** `reviewCompletedTasks`
+helper (same `dispatch_review` tool, same projection + event persistence) before
+`recordWaveResult`. Both paths produce identical review projections and `blocking_reviews[]`
+behavior.
 
 ---
 

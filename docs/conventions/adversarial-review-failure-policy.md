@@ -1,67 +1,76 @@
 # Adversarial Review Failure Policy
 
-**Applies to:** the optional adversary **review** path — per-task (`agents/mp-adversarial-reviewer.md`,
-dispatched by `workflows/execute.workflow.js` when the run bundle's `state.review.adversary` is enabled)
-and whole-branch at finish (`run_adversary_review`, §2c). Both route the review through the
-agent-dispatch control plane's adversary lane (`agent-dispatch review --class adversary`) — NO model is
-named; agent-dispatch resolves a cross-vendor reviewer.
-**Scope:** review-lane failures where the transport succeeds but the reviewer doesn't usefully execute —
-the slice NOT covered by `docs/conventions/api-retry-policy.md` (transport-level 429 / 5xx / TCP timeout).
+**Applies to:** adversary review paths that masterplan invokes through the agent-dispatch control
+plane — per-task execution review (`dispatch_review` from `mp dispatch-wave` / `reviewNativeResult`
+when `state.review.adversary` is enabled) and whole-branch finish review (`run_adversary_review`,
+§2c). No model is named; agent-dispatch resolves the adversary lane.
+**Scope:** review-lane outcomes after masterplan has handed the exact review payload to
+agent-dispatch. Transport-level 429 / 5xx / TCP timeout retries remain in
+`docs/conventions/api-retry-policy.md`.
 
 ---
 
-## The review is read-only and advisory
+## Ownership split
 
-The review never implements a task and never commits; implementation is **always inline** (there is no
-review-implementer). A review that can't run is simply **`inconclusive`** — it never wedges a run and
-never invents findings. Because the review is a synchronous `agent-dispatch review` CLI call (not a
-persistent daemon or a detached background launch), there is no process-model failure class to handle:
-no control-socket collision, no orphaned background job, no sandbox-commit failure. A wedge surfaces as
-a non-zero exit or empty output, handled below.
+| Concern | Owner |
+|---|---|
+| Chunk sizes, retries, reconciliation, findings extraction, verdict semantics, harness metadata | **agent-dispatch** — see `/srv/dev/ai/agent-dispatch/docs/policy/dispatch.md` and `references/review-findings.schema.json` |
+| Capture full edit-locus diff, hash it, call `dispatch_review` once, project + persist, populate `blocking_reviews[]` | **masterplan** (`lib/task-review.mjs`, `lib/dispatch-wave.mjs`, `lib/wave-commit.mjs`) |
+| D6 undeclared-write revert | **masterplan** — independent of review outcome |
+
+Do **not** restate agent-dispatch engine rules here. Masterplan is a caller and durable recorder.
 
 ---
 
-## Live failure handling
+## Canonical execution-review contract (masterplan side)
 
-### 1. Review unavailable / empty / non-zero → `inconclusive` (never hang, never fabricate)
+Per-task execution review is **mandatory when armed** (`state.review.adversary` / review on). For
+every `done` task:
 
-The review agent runs the adversary lane as a **blocking, foreground** call. On any of: `agent-dispatch`
-missing from PATH, empty output, or a non-zero exit, it returns exactly one line:
+1. Capture the full edit-locus working diff (tracked + untracked; never scope-filtered).
+2. Bind identity as `run + task + sha256(exact payload)`.
+3. Call `dispatch_review` once (or reuse a completed structured event for the same key).
+4. Project agent-dispatch's structured record into the compact canonical shape:
+   `verdict ∈ { approve, rework, reject, error }` plus findings and harness metadata.
+5. Persist before `recordWaveResult`.
 
-    NOTE — adversary review inconclusive (<agent-dispatch unavailable | no output | non-zero exit>). verdict: inconclusive
+Wave-completion mapping (`recordWaveResult`):
 
-`inconclusive` means **"no blocking findings, proceed with a logged caveat" — NOT a clean pass.** The run
-never blocks waiting on a wedged reviewer, and the agent never invents findings to fill the gap. Review is
-**failure-isolated per task** (`workflows/execute.workflow.js`): one wedged reviewer degrades one task's
-review, never the whole wave's. Review is also config-gated **OFF by default** at the per-task workflow
-level, so on the common path this surface is inert.
+- `approve` with healthy, complete harness coverage → no `blocking_reviews[]` entry.
+- `rework` / `reject` → task + structured findings in `blocking_reviews[]`.
+- `error` → task + failure reason in `blocking_reviews[]`.
+- Incomplete harness coverage (degraded, timed out, stalled, deadline exceeded, unreviewed
+  regions, extraction degradation) → block even if a contradictory `approve` appears.
 
-**Empty-diff / degraded-lane contract (2026-07-16 audit):**
-- An empty scoped diff ("No changes were provided to review") is a FAIL → `verdict: inconclusive`
-  with reason `empty-diff` — never `approve`.
-- When `harness.degraded:true` or the reviewer count is 1 (not a panel), the verdict is
-  `inconclusive`/`advisory`, never `clean`/`approve`.
-- Findings must land in the structured `findings[]` array. Free-text-only findings with an empty
-  structured array are a degraded/error result, not an approve. The harness worst-wins aggregation
-  MUST treat empty structured-findings + non-empty free text as `error`.
-- A review lane with ≥2 of 3 attempts erroring is a FAIL — do not accept the minority passing run.
-- For diffs >500 lines, chunk before the call or set Bash `timeout ≥ 1800000ms` (the review
-  harness's internal deadline is 30 min per region; a 10-min Bash timeout structurally causes
-  false-fails).
-- ALWAYS emit the closing `verdict: inconclusive` (or `advisory`/`blocking`/`clean`) line — never
-  end the turn without it. The orchestrator distinguishes "no verdict returned" from "inconclusive".
+**A mandatory execution-review failure blocks the wave gate.** The orchestrator already routes a
+non-empty `blocking_reviews[]` through `AskUserQuestion` and must not silently continue. Failed
+reviews never satisfy re-entry; the next attempt re-invokes centralized review.
 
-The whole-branch finish path (`run_adversary_review`, §2c) applies the same contract: any non-success →
-`--review-skipped --review-reason=<reason>`, whose durable `adversary_review_skipped` event uses a
-hyphenated summary that deliberately does NOT match the `\b(codex|adversary)\s+review\b` audit regex, so a
-degraded finish still trips `adversary_review_configured_but_zero_invocations`.
+Review remains read-only: it never implements a task and never commits. Implementation stays
+inline. D6 still reverts undeclared writes after review, independent of review approval.
 
-### 2. Adversary lane health → WARN (deterministic, via `doctor`)
+MCP-pool and native ingestion paths share the same orchestration helper so projections and
+blockers match.
 
-The `lib/doctor/adversary-lane-health.mjs` check probes the lane on the host: `agent-dispatch` on PATH,
-`agent-dispatch resolve --class adversary` exiting 0 with a route, and backend health. Every finding is
-**WARN-only** — review is advisory, so an unusable lane degrades reviews to inconclusive but never breaks
-a run or turns the doctor RED.
+---
+
+## Finish-path review (whole-branch)
+
+The whole-branch finish path (`run_adversary_review`, §2c) is separate from per-task execution
+review. Any non-success there still maps to `--review-skipped --review-reason=<reason>`, whose
+durable `adversary_review_skipped` event uses a hyphenated summary that deliberately does NOT
+match the `\b(codex|adversary)\s+review\b` audit regex, so a degraded finish still trips
+`adversary_review_configured_but_zero_invocations`.
+
+---
+
+## Adversary lane health → WARN (deterministic, via `doctor`)
+
+The `lib/doctor/adversary-lane-health.mjs` check probes the lane on the host: `agent-dispatch` on
+PATH, `agent-dispatch resolve --class adversary` exiting 0 with a route, and backend health.
+Findings are **WARN-level** diagnostics for operators. They do not weaken the wave gate: when
+execution review is armed and the call fails or returns incomplete coverage, masterplan still
+records a canonical `error` / incomplete projection and populates `blocking_reviews[]`.
 
 ---
 
@@ -71,5 +80,6 @@ a run or turns the doctor RED.
 |---|---|
 | 429 rate-limit, 5xx server error, TCP timeout | `api-retry-policy.md` |
 | Empty response (transport-level) | `api-retry-policy.md` |
-| Review unavailable / non-zero / empty → `inconclusive` | This doc |
-| Adversary lane unhealthy (not on PATH / no route / backend down) | This doc (enforced by the `adversary-lane-health` doctor check) |
+| Execution-review RPC / process failure / empty or incomplete structured result | This doc → block via `blocking_reviews[]` |
+| Adversary lane unhealthy (not on PATH / no route / backend down) | Doctor WARN + fail-closed wave gate when review is armed |
+| Engine-internal chunking, retries, findings schema | agent-dispatch policy (do not duplicate) |

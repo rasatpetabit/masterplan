@@ -109,17 +109,12 @@ The Workflow tool JSON-stringifies object args at the L1↔L2 seam. Both `execut
 and `plan.workflow.js` normalise with `JSON.parse` at the top of the script to handle both
 the tool path (string) and the in-script test path (object).
 
-## Review stage (`execute.workflow.js`)
+## Centralized review stage (config-gated)
 
-`execute.workflow.js` runs each wave via:
-
-```
-pipeline(tasks, implement, review)
-```
-
-`pipeline` is not a barrier between stages: task A's `review` starts the moment A's
-`implement` completes, while task B may still be implementing. The workflow resolves only
-when all tasks clear both stages — that resolution is the wave barrier L1 awaits.
+The fabric wave path (`mp dispatch-wave`) implements each task, then — when
+`state.review.adversary` is enabled — reviews every `done` digest through agent-dispatch.
+Masterplan is the **caller and durable recorder only**; it does not implement review
+chunking, retries, reconciliation, findings extraction, or verdict semantics.
 
 **Implement:** `mp-implementer` (fable wrapper → dispatch-agentic-loop) receives a prompt naming the task, its declared file
 scope, and its verify commands. It runs the verify commands and returns the IMPL_DIGEST
@@ -132,35 +127,62 @@ scope, and its verify commands. It runs the verify commands and returns the IMPL
 
 A missing or errored digest synthesises a `failed` record — the task is never silently dropped.
 
-**Review (config-gated):** if the run bundle's review is armed (`state.review.adversary`, which `mp prepare-wave`
-normalizes to the `"on"` payload the L2 workflow gates on), `mp-adversarial-reviewer`
-(fable wrapper) runs a synchronous adversarial second-opinion pass on each `done` task immediately
-after its implementer finishes. Review is gated by config only — not by `target` or routing
-eligibility. Judgment-heavy, inline-routed tasks need the second opinion most; gating by
-eligibility would skip them.
+**Review (config-gated):** for each `done` task, masterplan captures the full edit-locus working
+diff, binds it with `payload_sha = sha256(diff)`, and either reuses a completed `run+task+sha`
+event or calls `dispatch_review` once (`class: adversary`). Agent-dispatch returns a structured
+record; `lib/task-review.mjs` projects it into the **canonical** shape:
 
-The reviewer returns prose closing with `verdict: blocking|advisory|clean|inconclusive`.
-`extractVerdict` parses that line and defaults to `"inconclusive"` on parse failure (a
-malformed review never reads as clean). A `blocking` verdict is collected and surfaced to the
-user via `AskUserQuestion` even when the task's `status` is `done`.
+```json
+{
+  "verdict": "approve | rework | reject | error",
+  "findings": [ { "file", "line", "summary", "severity" } ],
+  "blocking_findings": [ { "summary", "proof?" } ],
+  "summary": "...",
+  "harness": {
+    "degraded": false, "timed_out": false, "stalled": false,
+    "deadline_exceeded": false, "regions_unreviewed": 0,
+    "extraction_degraded": false
+  }
+}
+```
 
-Review is off by default; a zero-review run executes `implement` only and proceeds directly
-to D6 scope verify.
+`recordWaveResult` consumes that projection only (never prose). Wave-gate mapping:
+
+| Projection | `blocking_reviews[]` |
+|---|---|
+| `approve` with healthy harness | no entry |
+| `rework` / `reject` | task + structured findings |
+| `error` | task + failure reason |
+| incomplete harness coverage (degraded, timed out, stalled, deadline exceeded, unreviewed regions, extraction degraded) | treated as blocking even if a contradictory `approve` appears |
+
+A non-empty `blocking_reviews[]` is the same-turn fail-closed wave gate: the orchestrator surfaces
+it via `AskUserQuestion` and does not silently continue. A mandatory review failure never
+satisfies re-entry.
+
+Legacy events without `data.review` still re-drive conservatively (pre-centralization verdict
+prose is mapped only at the reader seam). New events are never interpreted from prose.
+
+Review is gated by config only — not by `target` or routing eligibility. It is off by default; a
+zero-review run proceeds from implement straight to D6 scope verify.
+
+### D6 independence
+
+Review outcome and D6 scope verification are independent:
+
+- a `done` implementation digest may still be durably recorded even when review blocks the wave;
+- D6 still reverts undeclared writes **after** review, regardless of review approval;
+- review never substitutes for scope enforcement, and scope never invents review findings.
 
 ## Summary of data flow for one wave
 
 ```
-L1: prepareWave()            → lean routed task payloads
-L1: git capture before       → baseline path set
-L1: launch execute.workflow  ──────────────────────────────────┐
-L2: parallel pipeline()                                         │
-    implement (mp-implementer) ─► review (mp-adversarial-reviewer) │
-    (per-task: implement done → review starts immediately)      │
-L2: return { wave, baseline, tasks:[digests], summary }  ◄──────┘
-L1: mark done tasks (mp mark-task)
-L1: git capture after        → after path set
-L1: mp verify-scope          → { ok, touched, outOfScope }
-L1: if !ok → git revert outOfScope → leave pending for recovery
-L1: commit state.yml + in-scope edits
+L1: prepareWave()                 → lean routed task payloads
+L1: git capture before            → baseline path set
+L1: mp dispatch-wave (fabric)     ──────────────────────────────┐
+    implement (mp-implementer) per task                         │
+    review (dispatch_review via shared broker / native ingest)  │
+      → project + persist canonical review                      │
+    recordWaveResult (mark digests → D6 → commit)               │
+L1: act on blocking_reviews[] / failed[] / scope  ◄─────────────┘
 L1: re-decide
 ```
