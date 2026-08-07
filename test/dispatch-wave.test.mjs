@@ -684,6 +684,55 @@ test('retry reuses the PERSISTED routing_inputs, not the current invocation flag
 // Multi-repo locus (umbrella + sibling) — the amd64-first-class fabric fix
 // ---------------------------------------------------------------------------
 
+test('absolute MAIN scope and verify paths canonicalize to the run worktree', async () => {
+  const fx = makeFixture({
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/generated.txt'] }],
+    planIndex: [planEntry(1, 1, ['src/generated.txt'])],
+    slug: 'dw-absolute-main',
+  });
+  const absoluteMainFile = path.join(fx.MAIN, 'src/generated.txt');
+  const state = readState(fx.statePath);
+  state.tasks[0].files = [absoluteMainFile];
+  writeState(fx.statePath, state);
+  write(fx.bundleDir, 'plan.index.json', JSON.stringify({
+    tasks: [{
+      ...planEntry(1, 1, [absoluteMainFile]),
+      verify_commands: [`test -f ${absoluteMainFile}`],
+    }],
+  }));
+
+  const op = launchViaContinue(fx);
+  const WT = op.cwd;
+  const stub = brokerStub((descriptor) => {
+    write(descriptor.repo, descriptor.files[0], 'generated\n');
+    return routeResult(descriptor);
+  });
+  const localVerifyCalls = [];
+  const res = await dispatchWaveViaFabric({
+    statePath: fx.statePath, self: fx.self, now: 2000,
+    _brokerClient: stub, _openCoord: disabledCoord,
+    _localVerifyExec: (command, options) => {
+      localVerifyCalls.push({ command, cwd: options.cwd });
+      return '';
+    },
+  });
+
+  const [descriptor] = callDescriptors(stub);
+  assert.equal(descriptor.repo, WT);
+  assert.deepEqual(descriptor.files, ['src/generated.txt']);
+  assert.deepEqual(localVerifyCalls, [{
+    command: `test -f ${path.join(WT, 'src/generated.txt')}`,
+    cwd: WT,
+  }]);
+  assert.equal(res.record.scope.ok, true);
+  assert.deepEqual(res.record.scope.outOfScope, []);
+  assert.equal(res.record.watch.ok, true);
+  assert.deepEqual(res.record.watch.violations, []);
+  assert.deepEqual(res.record.watch.reverted, []);
+  assert.equal(readState(fx.statePath).tasks[0].status, 'done');
+  assert.equal(fs.readFileSync(path.join(WT, 'src/generated.txt'), 'utf8'), 'generated\n');
+});
+
 test('multi-repo: sibling-prefixed files land on sibling worktree with create_files + stripped paths', async () => {
   // Build an umbrella fixture, then plant a sibling git repo under MAIN.
   const fx = makeFixture({
