@@ -642,15 +642,22 @@ test('plan fan-out executor: READ-ONLY work items through an injected broker; st
   assert.deepEqual(res.missing, []);
   assert.deepEqual(res.roots, [res.repoRoot, path.join(fx.bundleDir, 'spec.md')]);
   // READ-ONLY enforcement proven at the descriptor layer: the read-only class,
-  // read_only:true, the enumerated roots — and NO write-scope fields at all
-  // (files/repo/worktree are rejected by the broker validator on read-only lanes).
+  // read_only:true, the enumerated roots — and no write-scope fields (files/worktree).
+  //
+  // `repo` is NOT a write-scope field and must be PRESENT: agent-dispatch's
+  // normalizeDescriptor() rejects any dispatch_task descriptor without a non-empty
+  // repo, read-only or not. This suite asserted its absence until 2026-08-07, pinning
+  // the retired dispatch_fanout contract — so it stayed green while every live planner
+  // dispatch failed with "Task descriptor requires a non-empty repo".
   assert.equal(sent.length, 2);
   for (const d of sent) {
     assert.equal(d.class, 'masterplan-planning');
     assert.equal(d.read_only, true);
     assert.deepEqual(d.roots, res.roots);
+    assert.equal(typeof d.repo, 'string');
+    assert.ok(d.repo.length > 0, 'broker-required locus: repo');
+    assert.equal(d.repo, res.repoRoot);
     assert.equal('files' in d, false, 'no write-scope field: files');
-    assert.equal('repo' in d, false, 'no write-scope field: repo');
     assert.equal('worktree' in d, false, 'no write-scope field: worktree');
   }
   // The executor writes NO state (L1 stays the single durable writer): marker intact.
@@ -671,8 +678,16 @@ test('NEGATIVE (a): a planner work item that attempts a write inside the enumera
     async callTool(name, args) {
       assert.equal(name, 'dispatch_task');
       const d = args.descriptor;
-      if (d.files || d.repo || d.worktree) {
+      // Write scope is files/worktree. `repo` is a REQUIRED locus on every
+      // dispatch_task descriptor (agent-dispatch normalizeDescriptor), not a write
+      // grant — this mock denied it until 2026-08-07 and so modelled the retired
+      // dispatch_fanout validator rather than the live one, keeping the suite green
+      // while every real planner dispatch was rejected.
+      if (d.files || d.worktree) {
         return { denied: true, reason: `capability denial: write-scope field on read-only class '${d.class}'` };
+      }
+      if (typeof d.repo !== 'string' || d.repo.length === 0) {
+        return { denied: true, reason: 'Task descriptor requires a non-empty repo' };
       }
       if (d.subsystem === 'evil') {
         return { denied: true, reason: `write denied: drafter attempted to modify ${d.roots[0]}/src/hack.js inside the read-only roots (capability class '${d.class}')` };
