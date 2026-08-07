@@ -32,7 +32,7 @@
 verify-transport (self-contained — no internal deps)
     ↑
 broker-client (depends on verify-transport: assertAllowlistAcceptsBashC)
-    
+
 dispatch-digest (depends on verify-transport: prepareDispatch → packageGatewayVerify)
   └─ dispatchTask is the hub: depends on createBrokerClient, prepareDispatch,
      stampDigest, brokerErrorDigest, translateBrokerResult, persistBlockedResult

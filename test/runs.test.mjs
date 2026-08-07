@@ -258,7 +258,7 @@ function mockFsForActivity({ eventsText = null, heartbeatMtime = null, stateMtim
   return {
     existsSync(p) {
       if (p.endsWith('events.jsonl')) return eventsText != null;
-      if (p.endsWith('.heartbeat') || p.includes('.owner')) return heartbeatMtime != null;
+      if (p.includes('.owner.hb.')) return heartbeatMtime != null;
       return true;
     },
     readFileSync(p) {
@@ -269,6 +269,10 @@ function mockFsForActivity({ eventsText = null, heartbeatMtime = null, stateMtim
       throw new Error('unexpected read: ' + p);
     },
     readdirSync(p) {
+      // newestHeartbeatMtime scans bundleDir for '.owner.hb.*' files
+      if (heartbeatMtime != null && !p.endsWith('events.jsonl')) {
+        return ['.owner.hb.session-1'];
+      }
       return [];
     },
     statSync(p) {
@@ -277,16 +281,45 @@ function mockFsForActivity({ eventsText = null, heartbeatMtime = null, stateMtim
         if (stateMtime == null) throw new Error('ENOENT');
         return { mtimeMs: stateMtime, isDirectory: () => false };
       }
+      // Heartbeat files: return the configured mtime
+      if (p.includes('.owner.hb.')) {
+        if (heartbeatMtime == null) throw new Error('ENOENT');
+        return { mtimeMs: heartbeatMtime, isDirectory: () => false };
+      }
       return { mtimeMs: 0, isDirectory: () => false };
     },
   };
 }
 
 test('deriveLastActivity: events ts wins over heartbeat when newer', () => {
-  const fs = mockFsForActivity({ eventsText: '{"ts":"2026-01-15T10:00:00Z"}\n' });
+  const eventTs = Date.parse('2026-01-15T10:00:00Z');
+  const fs = mockFsForActivity({
+    eventsText: '{"ts":"2026-01-15T10:00:00Z"}\n',
+    heartbeatMtime: eventTs - 1000, // heartbeat is older
+  });
   const result = deriveLastActivity('/bundle', '/bundle/state.yml', fs);
   assert.equal(result.source, 'events');
-  assert.ok(result.last_activity > 0);
+  assert.equal(result.last_activity, eventTs);
+});
+
+test('deriveLastActivity: heartbeat wins over events when newer', () => {
+  const eventTs = Date.parse('2026-01-15T10:00:00Z');
+  const heartbeatMtime = eventTs + 60000; // heartbeat is newer (1 min ahead)
+  const fs = mockFsForActivity({
+    eventsText: '{"ts":"2026-01-15T10:00:00Z"}\n',
+    heartbeatMtime,
+  });
+  const result = deriveLastActivity('/bundle', '/bundle/state.yml', fs);
+  assert.equal(result.source, 'heartbeat');
+  assert.equal(result.last_activity, heartbeatMtime);
+});
+
+test('deriveLastActivity: heartbeat-only (no events)', () => {
+  const heartbeatMtime = 99999;
+  const fs = mockFsForActivity({ heartbeatMtime });
+  const result = deriveLastActivity('/bundle', '/bundle/state.yml', fs);
+  assert.equal(result.source, 'heartbeat');
+  assert.equal(result.last_activity, heartbeatMtime);
 });
 
 test('deriveLastActivity: falls back to state-mtime when no events or heartbeat', () => {
