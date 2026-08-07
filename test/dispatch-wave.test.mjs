@@ -48,6 +48,7 @@ import {
   buildDescriptors,
   acquireAndWatch,
 } from '../lib/dispatch-wave.mjs';
+import { buildWaveLaunchContext } from '../lib/wave.mjs';
 import { continueRun } from '../lib/continue.mjs';
 import { readState, writeState } from '../lib/bundle.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
@@ -1391,4 +1392,112 @@ test('acquireAndWatch: returns attempt and waveToken when precheck passes', () =
   assert.ok(result.watchBaseline);
   assert.equal(result.record.review_context?.enabled, true);
   assert.equal(readWaveDispatchRecord(fx.bundleDir, 1)?.status, 'pending');
+});
+
+// ---------------------------------------------------------------------------
+// buildWaveLaunchContext — shared PREPARE/EXECUTE launch-context seam
+// ---------------------------------------------------------------------------
+
+test('buildWaveLaunchContext: throws on missing plan.index.json', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-wctx-'));
+  assert.throws(
+    () => buildWaveLaunchContext({
+      state: { slug: 's' },
+      planIndexPath: path.join(dir, 'nope.json'),
+      wave: 1,
+      routingInputs: { routing: 'auto', codex_host_suppressed: false, linked_worktree: true },
+    }),
+    /plan\.index\.json not found/,
+  );
+});
+
+test('buildWaveLaunchContext: returns prepared tasks + MAIN from injected routing inputs', () => {
+  // Real git repo so MAIN resolves via git-common-dir on the bundleDir.
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-wctx-'));
+  const MAIN = path.join(tmp, 'main');
+  fs.mkdirSync(MAIN, { recursive: true });
+  git(MAIN, 'init', '--initial-branch=main');
+  git(MAIN, 'config', 'user.email', 'test@test');
+  git(MAIN, 'config', 'user.name', 'test');
+  git(MAIN, 'config', 'commit.gpgsign', 'false');
+  write(MAIN, 'src/a.txt', 'seed\n');
+  git(MAIN, 'add', '.');
+  git(MAIN, 'commit', '-q', '-m', 'initial');
+  const bundleDir = path.join(MAIN, 'docs', 'masterplan', 'wctx');
+  fs.mkdirSync(bundleDir, { recursive: true });
+  const planIndexPath = path.join(bundleDir, 'plan.index.json');
+  fs.writeFileSync(planIndexPath, JSON.stringify({
+    tasks: [{
+      id: 1,
+      description: 'Wire the route',
+      files: ['src/a.txt'],
+      verify_commands: [],
+      codex: 'ok',
+    }],
+  }));
+  // state.codex.routing is deliberately NOT what we inject — proves routingInputs win.
+  const state = {
+    slug: 'wctx',
+    worktree: path.join(MAIN, '.worktrees', 'wctx'),
+    tasks: [{ id: 1, wave: 1, status: 'pending', files: ['src/a.txt'] }],
+    codex: { routing: 'force-inline' },
+    implementer: {},
+  };
+  const result = buildWaveLaunchContext({
+    state,
+    planIndexPath,
+    wave: 1,
+    routingInputs: { routing: 'auto', codex_host_suppressed: true, linked_worktree: true },
+  });
+  assert.ok(result.prepared);
+  assert.ok(result.planIndex);
+  assert.equal(result.MAIN, MAIN);
+  assert.equal(result.prepared.tasks.length, 1);
+  assert.equal(result.prepared.tasks[0].id, 1);
+  // Injected codex_host_suppressed:true forces host-suppressed even though the plan
+  // annotation is codex:'ok' — this is the env fact derived from routingInputs, not state.codex.
+  assert.equal(result.prepared.tasks[0].target, 'inline');
+  assert.equal(result.prepared.tasks[0].reason, 'host-suppressed');
+});
+
+test('buildWaveLaunchContext: reposAllowlist is optional (omitted on fabric path)', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-wctx-'));
+  const MAIN = path.join(tmp, 'main');
+  fs.mkdirSync(MAIN, { recursive: true });
+  git(MAIN, 'init', '--initial-branch=main');
+  git(MAIN, 'config', 'user.email', 'test@test');
+  git(MAIN, 'config', 'user.name', 'test');
+  git(MAIN, 'config', 'commit.gpgsign', 'false');
+  write(MAIN, 'src/a.txt', 'seed\n');
+  git(MAIN, 'add', '.');
+  git(MAIN, 'commit', '-q', '-m', 'initial');
+  const bundleDir = path.join(MAIN, 'docs', 'masterplan', 'wctx-fab');
+  fs.mkdirSync(bundleDir, { recursive: true });
+  const planIndexPath = path.join(bundleDir, 'plan.index.json');
+  fs.writeFileSync(planIndexPath, JSON.stringify({
+    tasks: [{
+      id: 1,
+      description: 'Fabric task',
+      files: ['src/a.txt'],
+      verify_commands: [],
+    }],
+  }));
+  const state = {
+    slug: 'wctx-fab',
+    worktree: path.join(MAIN, '.worktrees', 'wctx-fab'),
+    tasks: [{ id: 1, wave: 1, status: 'pending', files: ['src/a.txt'] }],
+    dispatch: { fabric: true },
+    implementer: {},
+  };
+  // No reposAllowlist — fabric path defers routing to the broker.
+  const result = buildWaveLaunchContext({
+    state,
+    planIndexPath,
+    wave: 1,
+    routingInputs: { routing: 'auto', codex_host_suppressed: false, linked_worktree: true },
+  });
+  assert.equal(result.prepared.tasks.length, 1);
+  assert.equal(result.prepared.tasks[0].class, 'masterplan-implementation');
+  assert.equal(result.prepared.tasks[0].target, undefined);
+  assert.equal(result.MAIN, MAIN);
 });
