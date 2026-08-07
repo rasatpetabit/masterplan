@@ -94,9 +94,9 @@ test('clean wave: marks done, split commit lands, marker clears, next=complete',
   assert.equal(res.scope.ok, true);
   assert.deepEqual(res.reverted, []);
   // blocking review on a DONE task still surfaces (review gate is independent of status).
-  // Legacy 'blocking' normalizes to 'reject'; findings arrays are preserved and also
-  // projected into blocking_findings, so the wave-completion surface concatenates both.
-  assert.deepEqual(res.blocking_reviews, [{ id: 2, verdict: 'reject', findings: ['F1', 'F1'] }]);
+  // Legacy 'blocking' normalizes to 'reject'; findings land once in blocking_findings
+  // (not duplicated into findings).
+  assert.deepEqual(res.blocking_reviews, [{ id: 2, verdict: 'reject', findings: ['F1'] }]);
   assert.equal(res.cleared, true);
   assert.equal(res.next.action, 'complete');
 
