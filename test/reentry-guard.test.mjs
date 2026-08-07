@@ -10,7 +10,7 @@ import { selectReentry, reentryEventTypes, buildTaskReviewEvent, KINDS, TASK_REV
 
 const HASH = 'sha256:deadbeef';
 const HEAD = 'aaaa111';
-const ABSENT = { present: false, status: null, digest: null, count: null, base: null };
+const ABSENT = { present: false, status: null, digest: null, count: null, base: null, review: null };
 const lines = (...recs) => recs.map((r) => JSON.stringify(r)).join('\n') + '\n';
 
 // ── artifact-hash kind (contracts from gate-review) ──
@@ -33,6 +33,7 @@ test('artifact-hash: present (done) at hash → {present, status:done, digest, c
       digest: 'P2: dataflow gap; P3: naming',
       count: 2,
       base: null,
+      review: null,
     },
   );
 });
@@ -51,6 +52,7 @@ test('artifact-hash: a *_skipped (degraded) record SATISFIES the gate (fail-soft
       digest: 'skipped: gateway down',
       count: null,
       base: null,
+      review: null,
     },
   );
 });
@@ -81,6 +83,7 @@ test('artifact-hash: a clean zero-findings review is present (count:0, not absen
       digest: 'no findings',
       count: 0,
       base: null,
+      review: null,
     },
   );
 });
@@ -122,6 +125,7 @@ test('artifact-hash: last matching line at the hash wins (a re-review supersedes
       digest: 'second pass (skip)',
       count: null,
       base: null,
+      review: null,
     },
   );
 });
@@ -144,6 +148,7 @@ test('artifact-hash: blank + malformed lines are skipped, not fatal', () => {
       digest: 'ok',
       count: 3,
       base: 'main',
+      review: null,
     },
   );
 });
@@ -185,6 +190,7 @@ test('artifact-hash: record missing note/count/base normalizes to null (not unde
       digest: null,
       count: null,
       base: null,
+      review: null,
     },
   );
 });
@@ -219,6 +225,7 @@ test('head-sha: present (adversary_review) at HEAD → {present, status:done, di
       digest: 'P2: stale lock; P3: naming',
       count: 2,
       base: 'main',
+      review: null,
     },
   );
 });
@@ -237,6 +244,7 @@ test('head-sha: a LEGACY codex_review record still satisfies the guard (dual-fam
       digest: 'legacy digest',
       count: 2,
       base: 'main',
+      review: null,
     },
   );
 });
@@ -267,6 +275,7 @@ test('head-sha: a clean zero-findings review is still present (count:0, not abse
       digest: 'no findings',
       count: 0,
       base: null,
+      review: null,
     },
   );
 });
@@ -320,6 +329,7 @@ test('head-sha: last matching line at the sha wins (a re-review supersedes)', ()
       digest: 'second pass',
       count: 1,
       base: null,
+      review: null,
     },
   );
 });
@@ -342,6 +352,7 @@ test('head-sha: blank + malformed lines are skipped, not fatal', () => {
       digest: 'ok',
       count: 3,
       base: 'main',
+      review: null,
     },
   );
 });
@@ -405,6 +416,7 @@ test('run+task+sha: buildTaskReviewEvent → selectReentry round-trip (durable w
       digest: 'P2: off-by-one',
       count: 2,
       base: 'main',
+      review: null,
     },
   );
 });
@@ -510,6 +522,7 @@ test('run+task+sha: task_adversary_review_skipped is IGNORED (a durable skip nev
       digest: 'real',
       count: 1,
       base: null,
+      review: null,
     },
   );
   assert.deepEqual(
@@ -523,6 +536,7 @@ test('run+task+sha: task_adversary_review_skipped is IGNORED (a durable skip nev
       digest: 'real',
       count: 1,
       base: null,
+      review: null,
     },
   );
 });
@@ -546,6 +560,7 @@ test('run+task+sha: a clean zero-findings per-task review is present (count:0, n
       digest: 'no findings',
       count: 0,
       base: null,
+      review: null,
     },
   );
 });
@@ -576,6 +591,7 @@ test('run+task+sha: last matching line wins (a per-task re-review supersedes)', 
       digest: 'second',
       count: 0,
       base: null,
+      review: null,
     },
   );
 });
@@ -632,6 +648,7 @@ test('run+task+sha: blank + malformed lines are skipped, not fatal', () => {
       digest: 'ok',
       count: 1,
       base: null,
+      review: null,
     },
   );
 });
@@ -738,6 +755,7 @@ test('legacy per-task inventory (2026-07-15) is EMPTY — old-bundle vocabulary 
       digest: null,
       count: 0,
       base: null,
+      review: null,
     },
   );
   assert.deepEqual(
@@ -760,6 +778,7 @@ test('legacy per-task inventory (2026-07-15) is EMPTY — old-bundle vocabulary 
       digest: '<sanitized digest>',
       count: 23,
       base: '',
+      review: null,
     },
   );
 
@@ -790,6 +809,7 @@ test('legacy per-task inventory (2026-07-15) is EMPTY — old-bundle vocabulary 
       digest: 'no findings',
       count: 0,
       base: null,
+      review: null,
     },
   );
 });
@@ -826,4 +846,28 @@ test('reentryEventTypes: exact type families and skip polarity per kind', () => 
     skipped: ['task_adversary_review_skipped'],
     skipSatisfies: false,
   });
+});
+
+test('round-trips a structured canonical task review', () => {
+  const review = {
+    verdict: 'reject',
+    findings: [],
+    blocking_findings: [{ summary: 'unsafe write' }],
+    summary: 'reject summary',
+    harness: {
+      degraded: false, timed_out: false, stalled: false,
+      deadline_exceeded: false, regions_unreviewed: 0,
+      extraction_degraded: false,
+    },
+  };
+  const ev = buildTaskReviewEvent({
+    run: 'run-1', task: 3, sha: 'abc', status: 'done',
+    count: 1, base: 'base-sha', review,
+  });
+  assert.deepEqual(ev.data.review, review);
+  const hit = selectReentry(`${JSON.stringify(ev)}\n`, {
+    kind: 'run+task+sha', key: { run: 'run-1', task: 3, sha: 'abc' },
+  });
+  assert.equal(hit.present, true);
+  assert.deepEqual(hit.review, review);
 });
