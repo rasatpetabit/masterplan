@@ -1,5 +1,9 @@
 # Masterplan subagent contract registry
 
+> **Historical (v7).** The contract validation framework described below was part of
+> the v7 architecture. The v8 dispatch surface (`dispatchWaveViaFabric` + `dispatchTask` +
+> broker pool) replaced it. This document is retained for historical context only.
+
 > Relocated from `commands/masterplan-contracts.md` at the v8.2.0 cutover
 > (deferred-followups DF-1): living in `commands/` auto-registered it as an
 > accidental `/masterplan-contracts` slash command. It is a registry doc, not

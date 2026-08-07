@@ -2,7 +2,7 @@
 
 > A Claude Code & Codex CLI plugin for durable multi-hour engineering work — brainstorm → plan → execute → finish on top of `obra/superpowers` skills.
 
-Current release: **v9.7.3** · **License:** MIT · **Works with:** Claude Code, Codex CLI · See [CHANGELOG.md](./CHANGELOG.md)
+Current release: **v9.9.0** · **License:** MIT · **Works with:** Claude Code, Codex CLI · See [CHANGELOG.md](./CHANGELOG.md)
 
 ---
 
@@ -24,7 +24,7 @@ brainstorm  →  plan  →  execute  →  finish
 |---|---|
 | **brainstorm** | Codebase discovery; `spec.md` authored and reviewed |
 | **plan** | `spec.md` → task decomposition → `plan.index.json` + `plan.md` |
-| **execute** | Wave-by-wave task dispatch; each wave is one workflow launch |
+| **execute** | Wave-by-wave task dispatch; each wave is one `mp dispatch-wave` launch |
 | **finish** | Verification → `retro.md` → branch-finish gate → archive |
 
 The `state.yml` `phase` field holds the enum `brainstorm|plan|execute`. **finish** is a terminal finalization flow that fires automatically when the last execute wave completes — it is not a phase value.
@@ -44,23 +44,24 @@ masterplan v8 is a five-layer system. Each layer delegates downward and never wr
                         │ read / atomic write (CD-7)
 ┌───────────────────────▼─────────────────────────────────────┐
 │  L1 — Thin shell                                             │
-│  commands/masterplan.md  (~800-line verb sequencer)          │
+│  commands/masterplan.md  (~600-line verb sequencer)          │
 │  bin/masterplan.mjs  (mp — filesystem-only subcommands)      │
 │  lib/resume.mjs  (pure decideNextAction)                     │
 │  ← SOLE durable state writer; git commit/checkout live here  │
 └───────────────────────┬─────────────────────────────────────┘
                         │ launch + receive digests
 ┌───────────────────────▼─────────────────────────────────────┐
-│  L2 — Workflow engine                                        │
-│  workflows/dispatch-wave  (one wave per launch)        │
-│  workflows/dispatch-plan     (subsystem fan-out)          │
+│  L2 — Fabric dispatch path (`mp dispatch-wave` →             │
+│  `dispatchWaveViaFabric` in `lib/dispatch-wave.mjs`; the     │
+│  deleted Workflow engine's replacement — broker              │
+│  `dispatch_task` per descriptor)                             │
 │  lib/plan-merge.mjs  lib/dispatch/  lib/wave.mjs             │
 │  ← returns digests/fragments only; never writes disk/git     │
 └───────────────────────┬─────────────────────────────────────┘
                         │ bounded briefs / structured digests
 ┌───────────────────────▼─────────────────────────────────────┐
 │  L3 — Agents                                                 │
-│  agents/mp-explorer.md        agents/worker-agent.md       │
+│  agents/mp-explorer.md        agents/mp-goal-assessor.md     │
 │  agents/mp-planner.md         agents/mp-adversarial-reviewer.md │
 │  agents/mp-plan-reviewer.md   agents/mp-subsystem-planner.md │
 │  agents/mp-spec-decomposer.md                                │
@@ -70,7 +71,7 @@ masterplan v8 is a five-layer system. Each layer delegates downward and never wr
 ┌───────────────────────▼─────────────────────────────────────┐
 │  L4 — Doctor                                                 │
 │  bin/doctor.mjs  dispatcher                                  │
-│  lib/doctor/*.mjs  (17 check modules, auto-discovered)       │
+│  lib/doctor/*.mjs  (19 check modules, auto-discovered)       │
 │  ← Finding {id, severity, summary, fix}; non-zero on ERROR   │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -79,7 +80,7 @@ masterplan v8 is a five-layer system. Each layer delegates downward and never wr
 
 - L1 (`commands/masterplan.md` + `mp`) is the **only** durable state writer (CD-7). All state mutations go through `mp` subcommands; L2 and below never commit to git or write `state.yml`.
 - `bin/masterplan.mjs` is **filesystem-only** — git (`commit`, `checkout`, `clean`) is the shell's job.
-- L2 workflows communicate via `args` on launch and return digests in the completion notification.
+- L2 fabric dispatch communicates via descriptors on launch and return digests in the completion notification.
 
 ---
 
@@ -133,7 +134,7 @@ Codex hosts the orchestrator under `/masterplan:masterplan`. See [Codex hosting]
 
 ```
 /masterplan status               # active bundle summary
-/masterplan doctor               # structural lint (17 check modules)
+/masterplan doctor               # structural lint (19 check modules)
 ```
 
 ---
@@ -202,10 +203,10 @@ A simpler serial path exists: `mp-planner` writes the plan directly; L1 still va
 
 ## Wave Execution & Scope Verification
 
-The L2 execute path runs **one wave per workflow launch**:
+The L2 execute path runs **one wave per `mp dispatch-wave` launch**:
 
 - `pipeline(tasks, implement, review)` is **non-barrier**: a task's review starts the moment its implement finishes.
-- Implementation is **inline-only** via `worker-agent` (no Codex implementer path). Each implementer runs the task's `verify_commands` and returns a digest citing real output.
+- Implementation is **inline-only** via fabric `dispatch_task` (no separate implementer agent path). Each implementer runs the task's `verify_commands` and returns a digest citing real output.
 - Review is **config-gated**: `mp-adversarial-reviewer` runs only when the bundle's review is armed (`state.review.adversary`, which `mp prepare-wave` surfaces to the L2 path as the `"on"` payload it gates on).
 
 After the wave barrier, L1 runs **D6 scope verification**:
@@ -248,7 +249,7 @@ Crash before a commit is safe: `state.yml` leads git, so `decideNextAction` re-d
 
 ## Doctor
 
-`node bin/doctor.mjs` runs 17 check modules under `lib/doctor/*.mjs`, auto-discovered alphabetically. Each module exports:
+`node bin/doctor.mjs` runs 19 check modules under `lib/doctor/*.mjs`, auto-discovered alphabetically. Each module exports:
 
 ```js
 check(repoRoot, opts) -> Finding[]
@@ -325,7 +326,7 @@ node bin/doctor.mjs
 grep -n '<pattern>' commands/masterplan.md
 ```
 
-There is no conventional build step. The "source" is `commands/masterplan.md` (the L1 sequencer) plus the Node modules under `bin/`, `lib/`, `workflows/`, and `agents/`.
+There is no conventional build step. The "source" is `commands/masterplan.md` (the L1 sequencer) plus the Node modules under `bin/`, `lib/`, and `agents/`.
 
 ---
 
@@ -340,4 +341,4 @@ There is no conventional build step. The "source" is `commands/masterplan.md` (t
 | [docs/internals/task-verification.md](./docs/internals/task-verification.md) | D6 scope verification and the review stage |
 | [docs/internals/doctor.md](./docs/internals/doctor.md) | Doctor contract: check modules, Finding shape, crash isolation |
 | [commands/masterplan.md](./commands/masterplan.md) | The L1 sequencer (the primary source for orchestrator behavior) |
-| [docs/conventions/cd-rules.md](./docs/conventions/cd-rules.md) | CD-1…CD-10 canonical rule bodies |
+| [docs/conventions/cd-rules.md](./docs/conventions/cd-rules.md) | CD-1…CD-11 canonical rule bodies |

@@ -16,15 +16,21 @@ masterplan v8 is a 5-layer system. Each layer is thin and delegates downward:
   `bin/masterplan.mjs` (filesystem-only subcommands, invoked as `mp`; git stays
   in the shell) + `lib/resume.mjs` (pure `decideNextAction`). L1 is the
   **only** durable writer of run-bundle state (CD-7).
-- **L2 — Workflow engine:** `workflows/execute.workflow.js` (one wave per
-  launch via `pipeline(tasks, implement, review)`) and
-  `workflows/plan.workflow.js` (subsystem fan-out via `parallel()`). Workflows
-  return digests and fragments only — never write to disk directly.
+- **L2 — Fabric dispatch path:** `lib/dispatch-wave.mjs` (`dispatchWaveViaFabric`,
+  a 73-line orchestrator running 7 named stages: gateAndValidate →
+  resolveWaveContext → buildDescriptors → acquireAndWatch → buildNativePlan →
+  runBrokerDispatch → finalizeRecord). Invoked via `mp dispatch-wave --state=<path>`.
+  The deleted Workflow engine (`workflows/execute.workflow.js`,
+  `workflows/plan.workflow.js`) was replaced by this broker dispatch path
+  (`dispatch_task` with `fail_mode:'isolated'` per descriptor).
 - **L3 — Agents:** seven markdown agent briefs under `agents/` (`mp-explorer`,
-  `mp-implementer`, `mp-planner`, `mp-adversarial-reviewer`, `mp-plan-reviewer`,
+  `mp-goal-assessor`, `mp-planner`, `mp-adversarial-reviewer`, `mp-plan-reviewer`,
   `mp-subsystem-planner`, `mp-spec-decomposer`). Agents receive bounded briefs
   and return structured output; they do not inherit session history.
-- **L4 — Doctor:** `bin/doctor.mjs` dispatcher + 17 check modules under
+  Implementation dispatch routes through `dispatch_task` to the
+  `masterplan-implementation` policy class (replacement for the deleted
+  `mp-implementer` agent).
+- **L4 — Doctor:** `bin/doctor.mjs` dispatcher + 19 check modules under
   `lib/doctor/*.mjs`. Auto-discovered alphabetically; each module exports a
   synchronous `check(repoRoot, opts) -> Finding[]`. See `doctor.md` below.
 
@@ -71,9 +77,9 @@ artifacts — see `commands/masterplan.md` §3b.
 |---|---|---|
 | [bundle-resume.md](internals/bundle-resume.md) | Resume controller: how `lib/resume.mjs` reads `state.yml` and decides the next action | `lib/resume.mjs` |
 | [plan-parser.md](internals/plan-parser.md) | Deterministic plan compile: fragment merge, wave assignment, `plan.index.json` schema | `lib/plan-merge.mjs` |
-| [wave-dispatch.md](internals/wave-dispatch.md) | Routing decisions and one-wave dispatch: how `lib/dispatch/` classifies tasks and `workflows/execute.workflow.js` runs a single wave | `lib/dispatch/` + `workflows/execute.workflow.js` |
+| [wave-dispatch.md](internals/wave-dispatch.md) | Routing decisions and one-wave dispatch: how `lib/dispatch/` classifies tasks and `lib/dispatch-wave.mjs` runs a single wave | `lib/dispatch/` + `lib/dispatch-wave.mjs` |
 | [task-verification.md](internals/task-verification.md) | D6 scope verify and the review stage: acceptance criteria, trust-skip conditions | `lib/wave.mjs` |
-| [doctor.md](internals/doctor.md) | Doctor contract: discovery, crash isolation, Finding shape, all 17 check modules | `bin/doctor.mjs` + `lib/doctor/*.mjs` |
+| [doctor.md](internals/doctor.md) | Doctor contract: discovery, crash isolation, Finding shape, all 19 check modules | `bin/doctor.mjs` + `lib/doctor/*.mjs` |
 
 ## Cross-cutting References
 

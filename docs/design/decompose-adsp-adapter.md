@@ -1,6 +1,8 @@
 # Decompose adsp-adapter into focused modules
 
-**Status:** Proposed
+**Status:** Implemented
+
+**Implemented:** 2026-08-07 (see commits and corresponding `docs/superpowers/plans/` plan doc)
 
 ## Purpose
 
@@ -81,9 +83,11 @@ export { createBrokerClient } from './broker-client.mjs';
 export {
   isValidDispatchField, extractDigestFromOutput, buildWorkItem, buildFrozenDispatchRecord,
   brokerErrorDigest, translateBrokerResult, dispatchTask, escalateCrossReview, revertCrossReview,
+} from './dispatch-digest.mjs';
+export {
   posixSingleQuote, wrapVerifyCommandForGateway, assertAllowlistAcceptsBashC,
   packageGatewayVerify, runLocalVerifyCommands,
-} from './dispatch-digest.mjs';
+} from './verify-transport.mjs';
 ```
 
 ### Importers (unchanged)

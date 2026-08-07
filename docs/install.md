@@ -1,6 +1,6 @@
 # Install — manual, desktop, and advanced paths
 
-The default path is the three-line slash-command incantation in [`README.md`](../README.md#install). This file covers the cases where that doesn't fit: Claude Desktop, manual filesystem install, the Codex CLI chat-mode invocation surface, and the optional telemetry Stop hook.
+The default path is the three-line slash-command incantation in [`README.md`](../README.md#installation). This file covers the cases where that doesn't fit: Claude Desktop, manual filesystem install, and the Codex CLI chat-mode invocation surface.
 
 ## Claude Desktop (Code tab)
 
@@ -23,9 +23,11 @@ If the marketplace path is unavailable (offline host, locked-down account, custo
 mkdir -p ~/.claude/commands ~/.claude/skills
 printf '%s\n' \
   '---' \
-  'description: "Delegate to the installed masterplan plugin."' \
+  'description: "Brainstorm, plan, execute, resume, doctor, and retrospect long-running work. Use /masterplan:<verb> for dedicated per-verb commands."' \
+  'argument-hint: "[verb] [topic-or-path]"' \
   '---' \
-  '<!-- masterplan-shim: v3 -->' \
+  '<!-- masterplan-shim: v4 -->' \
+  '' \
   '/masterplan:masterplan $ARGUMENTS' \
   > ~/.claude/commands/masterplan.md
 cp -r skills/masterplan-detect ~/.claude/skills/
@@ -33,7 +35,7 @@ cp -r skills/masterplan-detect ~/.claude/skills/
 
 The shim makes `/masterplan` resolve to the namespaced plugin command once the plugin itself is available; the `masterplan-detect` skill auto-suggests `/masterplan import` when legacy planning artifacts are found.
 
-The `masterplan-shim` marker versions the **shim body** (the delegation contract above), not the plugin: it bumps only when the shim's own content changes. `v3` is current — the one-line `/masterplan:masterplan $ARGUMENTS` delegation is unchanged under v8 packaging.
+The `masterplan-shim` marker versions the **shim body** (the delegation contract above), not the plugin: it bumps only when the shim's own content changes. `v4` is current — the one-line `/masterplan:masterplan $ARGUMENTS` delegation is unchanged under v8 packaging.
 
 ## Codex CLI invocation
 

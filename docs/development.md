@@ -4,7 +4,7 @@ Repo-specific working rules for `masterplan`. Generic agent policy (AUQ,
 verification-before-completion, durable handoff, model routing) lives in the
 global / agent-dispatch settings and is **not** restated here — run
 `agent-dispatch digest` / `agent-dispatch where`. The canonical CD-rule bodies
-(CD-1…CD-10, referenced by live code via their IDs) live in
+(CD-1…CD-11, referenced by live code via their IDs) live in
 [`docs/conventions/cd-rules.md`](./conventions/cd-rules.md). This file collects
 the masterplan-specific discipline that used to crowd `AGENTS.md`.
 

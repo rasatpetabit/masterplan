@@ -1,6 +1,8 @@
 # Deepen finishStep — extract state-machine phases
 
-**Status:** Proposed
+**Status:** Implemented
+
+**Implemented:** 2026-08-07 (see commits and corresponding `docs/superpowers/plans/` plan doc)
 
 ## Purpose
 

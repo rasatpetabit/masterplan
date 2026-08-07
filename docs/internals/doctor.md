@@ -1,7 +1,7 @@
 # Doctor Checks — Internals
 
 > **Audience:** Maintainers adding or fixing doctor checks.
-> **Source:** `bin/doctor.mjs` (dispatcher) + `lib/doctor/*.mjs` (17 check modules).
+> **Source:** `bin/doctor.mjs` (dispatcher) + `lib/doctor/*.mjs` (19 check modules).
 
 ## How the doctor works
 
@@ -57,7 +57,7 @@ unit-testable without touching the real host. The main CLI passes
   (e.g. `homeDir`). They `SKIP` gracefully when the relevant tooling is not
   installed.
 
-## The 17 check modules
+## The 19 check modules
 
 | Module | Purpose |
 |---|---|
@@ -73,9 +73,11 @@ unit-testable without touching the real host. The main CLI passes
 | `plan-doc-cruft` | Repo-wide backstop for the finish flow's `docs_normalize` gate: anchored to **archived** bundles, it warns on markdown outside the runs dir that still carries plan provenance — an archived slug as a whole token in a filename, a body reference to `docs/masterplan/<slug>`, or a hyphenated slug in a heading line. Excludes the runs dir itself, `docs/superpowers/` (legacy-bundle owns that), dot-directories, node_modules, root history files (`WORKLOG`/`CHANGELOG*`/`HISTORY`), and files >1 MiB. Always `WARN`, never `ERROR`; `SKIP` when no archived bundles exist. |
 | `plan-index-schema` | Runs `lib/plan-merge.validatePlanIndex` against every `plan.index.json` with `schema_version >= 6`; catches non-string `codex` fields and same-wave file overlaps that silently mis-route. `SKIP` when no canonical index exists. |
 | `plugin-registry-drift` | Compares the installed masterplan plugin version in `installed_plugins.json` against the marketplace `plugin.json`; also compares `gitCommitSha` against marketplace HEAD to catch same-version stale caches. `SKIP` when either file is absent. |
+| `rejected-idea-kb` | Validates durable rejected-idea KB files under `.out-of-scope/<concept>.md` (required sections `## Why this is out of scope` and `## Prior requests`). `SKIP` when the directory is absent or has no concept `.md` files; `WARN` per incomplete/unreadable file; aggregate `PASS` when all concept files carry both sections. |
 | `scalar-cap` | Validates that no flat `key: value` line in `state.yml` exceeds 200 characters, and that every `*overflow at <file> L<n>*` pointer resolves to a real file and line within the same bundle directory. The cap is a prose-scalar discipline: values that parse to structured data (e.g. the inline-JSON `tasks` line the v8 writer emits) are exempt — both from the WARN and from the `--fix` handler, which moves only string scalars to `state-overflow.md`. |
 | `spec-assumptions` | Specs in active/plan-phase bundles should carry an Assumptions & Open Decisions section (brainstorm contract). `WARN` when missing; `SKIP` when no applicable specs. |
 | `stale-lock` | Checks each bundle directory for a `.lock` file whose mtime is older than 1 hour; warns when found (a crashed run may have left it). |
+| `stalled-bundle` | Pre-execute CD-7 durability: flags brainstorm/plan bundles that have a `spec.md` but no recorded events in `events.jsonl` (session work left only in conversation). Distinct from `dangling-run` (stranded `active_run`). `WARN` per stalled bundle; `SKIP` when no applicable pre-execute bundles exist. |
 | `state-schema` | Validates each bundle's `state.yml` against `lib/bundle.validateCoreState` (the single source of truth for required fields). Bundles with `schema_version < 6` are deferred to `legacy-bundle`. A slug directory with no readable `state.yml` produces a `WARN` (orphan directory). A `state.yml` that parses to zero keys is an `ERROR`. |
 | `worktree-integrity` | **Bundle→git:** for each non-archived/non-retired bundle, verifies the recorded `worktree` path and `branch` exist in the git graph (`git worktree list` / `git branch`) — `ERROR` on a broken reference. **Git→bundle** (Phase 2): runs the shared pure `lib/worktree.classifyWorktrees` over the on-disk `.worktrees/*` dirs + bundle records to `WARN` on reconcilable strays — crash-leak (a retired bundle still registered + on disk → remove), repo-move (a dangling admin link → `git worktree repair`), foreign-repo leftover (→ remove), and a legacy `missing` disposition (→ normalize). A plain unowned dev worktree (e.g. `masterplan-ng`) stays untouched, and a repo-move/`missing` is reported once (as the WARN remedy), never also as a bundle→git ERROR. `SKIP` when git is unavailable or no bundles exist. **`--fix`:** records `worktree_disposition=removed_after_merge` for a bundle whose `worktree` is set, unregistered in git, **and gone from disk** — clearing the bundle→git ERROR (the path is preserved as a reversible memento). gone-from-disk is the safety line: an on-disk-but-unregistered worktree (the protected `manual`/active-unregistered case) still exists and is left for the operator; archived/already-retired bundles are skipped, so the fix set is a strict subset of the ERROR set. Idempotent. |
 
@@ -86,8 +88,9 @@ markdown file encoding 53 prose checks interpreted by a Sonnet coordinator at ru
 problems: the coordinator had to re-parse and re-interpret the prose on every
 run, and the checks were untestable in isolation.
 
-v8 replaces this with 11 Node.js modules (`lib/doctor/*.mjs`), each owning a
-narrow, deterministic scope. The ~38 **self-instrumentation checks** (which
+v8 replaces this with Node.js modules (11 at the v8.2.0 cutover, now 19)
+(`lib/doctor/*.mjs`), each owning a narrow, deterministic scope. The ~38
+**self-instrumentation checks** (which
 verified the plugin's own source files and were only meaningful inside the
 development repo) were **deleted** — end users don't have the repo and should
 never see repo-structure errors as doctor findings. Release-hygiene has moved

@@ -1,5 +1,47 @@
 # Changelog
 
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [9.9.0] — 2026-08-07
+
+### Changed — wave-dispatch architecture deepened (rounds 6–8) + comprehensive documentation refactor
+
+Continuation of the 9.8.0 architecture-deepening program. All code changes are
+behavior-preserving (no user-facing API changes).
+
+- **Decomposed the adsp-adapter into focused modules.** `lib/dispatch/adsp-adapter.mjs`
+  went from a 1222-line monolith to a 42-line barrel re-exporting from three sibling
+  modules: `verify-transport.mjs`, `broker-client.mjs`, and `dispatch-digest.mjs`.
+  All importers continue to use the `./adsp-adapter.mjs` path; the public surface
+  is unchanged.
+
+- **Decomposed finishStep into named state-machine phases.** `lib/finish-step.mjs`
+  `finishStep` went from a 484-line monolith to a 66-line orchestrator calling two
+  private helpers: `applyShellAnswers` (Phase A+B) and `evaluateFinishMachine`
+  (Phase C). The op contract is unchanged.
+
+- **Comprehensive documentation refactor.** Corrected pervasive drift across all
+  documentation after the v8 cutover and 8 refactoring rounds: removed all references
+  to the deleted L2 Workflow engine (`workflows/*.js`) and `mp-implementer` agent
+  throughout internals docs; updated the layer model (L2 is now the fabric dispatch
+  path); fixed doctor module count (17→19); updated agent roster; corrected version
+  sync across all manifests; marked 6 design docs as Implemented; fixed stale code
+  comments in wave.mjs, verify-transport.mjs, and finish-step.mjs.
+
+### Fixed
+
+- **MAIN is now sourced from `buildWaveLaunchContext`** instead of being recomputed
+  via a redundant `git rev-parse` IIFE in `continue.mjs`.
+
+### Added
+
+- **Focused unit tests for `lib/runs.mjs`** — 33 tests covering pure functions.
+- **Focused unit tests for `lib/watch-integrity.mjs`** — 29 tests covering utility
+  functions, complementing the 23 existing integration tests.
+
 ## [9.8.0] — 2026-08-07
 
 ### Changed — wave-dispatch architecture deepened (5 rounds)
@@ -47,7 +89,7 @@ frontmatter failures only). No user-facing API changes.
 | `lib/watch-integrity.mjs` | — | 480 lines (new) |
 | `lib/wave.mjs` | 308 lines | 359 lines |
 
-## [9.7.3]
+## [9.7.3] — 2026-08-05
 
 ### Fixed
 - **Agent frontmatter no longer names the retired `fable` model.** The 2026-08-04 lineup cut
@@ -58,7 +100,7 @@ frontmatter failures only). No user-facing API changes.
   compiler now stamps the lineup default (`opus`) when no pin exists, and this release carries
   the regenerated frontmatter.
 
-## [9.7.2]
+## [9.7.2] — 2026-08-05
 
 ### Fixed
 - **Watch-list breaches in sibling repos are now classified correctly and reverted.** `git status`
@@ -81,7 +123,7 @@ frontmatter failures only). No user-facing API changes.
 ### Added
 - `dispatch_fanout` frozen in the V5 orphan gate, with the stale references scrubbed.
 
-## [9.7.1]
+## [9.7.1] — 2026-08-05
 
 ### Fixed
 - **`evidence` is inside goal identity.** `goalsHash` canonicalized only `{id, text, signal, tombstone}`, and `parseGoals` dropped `evidence` outright, so the line that says what actually PROVES a goal met could not enter the hash. Because that hash keys every `goal_check` receipt, every waiver, and the spec-gate re-arm, an acceptance criterion could be rewritten or weakened while every receipt issued against the old, stricter bar stayed valid — no `goal_amended` event, no re-arm. Found by a cross-vendor adversarial review and reproduced live: amending a goal from "true" to "NOT MET" returned `idempotent` with an unchanged hash.
@@ -91,7 +133,7 @@ frontmatter failures only). No user-facing API changes.
 - The frozen goals hash advances for every existing bundle. `goal_check` receipts and waivers issued under the old hash no longer validate — intended, since they certified criteria that could have moved without trace. Re-earn them.
 - Doctor fixture `pass-consistent` re-frozen. `warn-hash-mismatch`, `error-tamper-goals-emptied` and `error-archived-no-check` keep their deliberately-stale hashes; they exercise failure paths.
 
-## [9.7.0]
+## [9.7.0] — 2026-08-04
 
 ### Fixed
 - **Native spawn is reachable on Pi.** `selectLaunchPath` treated `codexSuppressed` ("no Claude Code Workflow handle") as "no native spawn API"; Pi sets that flag, so the native branch was unreachable on the only host that can run it. Split via `hostHasNativeSpawnApi`.
@@ -99,34 +141,12 @@ frontmatter failures only). No user-facing API changes.
 - **Guard-D heartbeat is not a watch breach.** `.owner.lock` / `.owner.hb.*` added to `MAIN_TRANSACTION_FILES` (excluded, not content-validated; the commit pathspec still refuses to ship one).
 - Adversary-reviewer overlay config asserts the absence of a per-agent model pin (models come from the routing.yaml lineup).
 
-## [9.6.0]
+## [9.6.0] — 2026-07-17
 
 ### Changed
 - **L2 surface deleted** — fabric is the only execute-wave path (`dispatch_fabric` / `mp dispatch-wave`).
 - Planning fan-out is `dispatch_plan` with concurrent `dispatch_task` (MCP fanout retired).
 - `commands/masterplan.md` op table rewritten fabric-only; V5 orphan-grep enforces no live L2 refs.
-
-All notable changes to this project will be documented in this file.
-
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
-## [Unreleased]
-
-### Changed
-
-- **Centralized wave review ownership.** Per-task execution review no longer implements a local engine in masterplan. Masterplan captures the full edit-locus diff, hashes it, calls agent-dispatch `dispatch_review` once, and persists a canonical structured projection (`approve|rework|reject|error` + findings + harness). Duplicate review chunking/mapping helpers were deleted; MCP-pool and native (`reviewNativeResult`) paths share the same helper and fail closed into `blocking_reviews[]`.
-- **Fabric default-on for new seeds.** `mp seed` / `buildSeedState` emit `state.dispatch.fabric: true` by default; `--fabric=off` omits the key (legacy wave path). Mid-run/old bundles without the flag are unchanged.
-- **Pi registration is bare-only.** `bin/register-pi-agents.mjs` writes only `mp-*.md`; managed `masterplan:mp-*.md` leftovers (from `agents/mp-*.md` + SKIP_FOR_PI) are removed on write and flagged as drift by `--check`. Unmanaged colon-named files are left alone.
-
-### Added
-
-- **Doctor: `pi-agent-registration` check.** Surfaces host drift of `~/.pi/agent/agents/mp-*` vs canonical `agents/mp-*.md` by shelling out to `node bin/register-pi-agents.mjs --check` (PASS / WARN / SKIP). 17 doctor modules total.
-
-### Changed
-
-- **Strict live-alias `MODEL_MAP` (fable only).** `bin/register-pi-agents.mjs` maps only `fable → litellm/fable-5`; dead `opus` entry pruned; tests assert bidirectional equality + fail-closed unknown aliases + all-canonical frontmatter `fable` (incl. SKIP_FOR_PI). Host resync until `--check` is green.
-- **Stale model prose scrub.** `agents/mp-explorer.md` no longer claims haiku; `workflows/execute.workflow.js` comments drop sonnet implementer pins; `AGENTS.md` / `docs/development.md` / `docs/internals.md` describe the fable-only live-alias map and 17 doctor modules.
 
 ## [9.5.0] — 2026-07-09 — blocked/waived task statuses + waive-task / amend-tasks verbs
 

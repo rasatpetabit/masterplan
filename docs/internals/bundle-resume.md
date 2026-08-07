@@ -54,15 +54,15 @@ here.
 ## Crash-Safe Launch: The Two-Phase `active_run` Handshake
 
 The durability hazard is not write-vs-commit; it is the window between the shell writing its launch
-intent and the Workflow runtime returning run handles. `active_run` uses a two-phase marker to close
-that window.
+intent and the fabric dispatch path returning run handles. `active_run` uses a two-phase marker to
+close that window.
 
 **Execute-wave markers** carry a `wave` field in both phases:
 
 | Phase | Shape | Meaning |
 |---|---|---|
-| Phase 1 (pre-launch) | `{ wave, phase: 'launching' }` | Written to `state.yml` *before* the workflow is launched; no `task_id` yet. |
-| Phase 2 (post-launch) | `{ wave, run_id, task_id }` | Promoted *after* the Workflow runtime returns run handles. |
+| Phase 1 (pre-launch) | `{ wave, phase: 'launching' }` | Written to `state.yml` *before* the wave is launched; no `task_id` yet. |
+| Phase 2 (post-launch) | `{ wave, run_id, task_id }` | Promoted *after* the fabric dispatch path returns run handles. |
 
 **Planning-run markers** carry a `kind: 'plan'` field instead of `wave`:
 

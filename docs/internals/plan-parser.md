@@ -1,7 +1,7 @@
 # Plan Compile — Internals
 
-> **Source:** `lib/plan-merge.mjs` (deterministic merge engine), `workflows/plan.workflow.js`
-> (L2 parallel-planning fan-out), `agents/mp-spec-decomposer.md`, `agents/mp-planner.md`.
+> **Source:** `lib/plan-merge.mjs` (deterministic merge engine),
+> `agents/mp-spec-decomposer.md`, `agents/mp-planner.md`.
 > **Schema version:** `"6.0"` (constant at `lib/plan-merge.mjs:23`).
 
 ## Design principle
@@ -35,10 +35,10 @@ subsystems — each a file-disjoint, coherent responsibility slice — and emits
 form `{ subsystems: [...], recommend_parallel: bool, reason: string }`. It does not plan
 tasks. Its subsystem list is the seam map the fan-out drives.
 
-**Step 2 — Fan-out.** `workflows/plan.workflow.js` (L2) launches one `mp-subsystem-planner`
-(opus) per subsystem in a `parallel()` barrier. Each drafter returns a **fragment** — a
-subsystem-scoped task list without global ids or waves. The fragment schema (enforced at the
-Workflow tool boundary) is:
+**Step 2 — Fan-out.** Planning fan-out goes through the broker dispatch path — one
+`dispatch_task` per subsystem (each running `mp-subsystem-planner`). Each drafter returns a
+**fragment** — a subsystem-scoped task list without global ids or waves. The fragment schema
+(enforced at the dispatch boundary) is:
 
 ```json
 {
@@ -60,8 +60,8 @@ Critically, the fragment schema pins `codex` to `string|null` with `enum: ["ok",
 an object or boolean shape cannot be returned at the tool boundary, making the layer-1 defence
 against anomaly 1.
 
-The workflow returns `{ subsystems: [<fragment>, ...], specPath, repoRoot }` and never writes
-artifacts or commits.
+The planning fan-out returns `{ subsystems: [<fragment>, ...], specPath, repoRoot }` and never
+writes artifacts or commits.
 
 **Step 3 — Deterministic merge (`lib/plan-merge.mjs`).** `mergePlanFragments` runs:
 

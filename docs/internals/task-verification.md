@@ -1,6 +1,6 @@
 # Task Verification — Internals
 
-> **Source:** `lib/wave.mjs` (scope helpers), `workflows/execute.workflow.js` (L2 engine),
+> **Source:** `lib/wave.mjs` (scope helpers), `lib/dispatch-wave.mjs` (fabric dispatch orchestrator),
 > `commands/masterplan.md §2a` (shell-side revert + commit sequence).
 
 ## Two distinct verification concepts
@@ -8,8 +8,9 @@
 ### 1. Per-task verify commands (implementer-run, in-task)
 
 Every task in `plan.index.json` carries a `verify_commands` array — shell commands the
-implementer must run to prove the task. `mp-implementer` (the L2 agent that implements each
-task) runs these commands during the implementation and reports results in its digest:
+implementer must run to prove the task. Implementation routes through `dispatch_task` to the
+`masterplan-implementation` policy class via the broker; that worker runs these commands during
+implementation and reports results in its digest:
 
 ```json
 {
@@ -87,8 +88,9 @@ The full L1 post-barrier sequence:
 
 ## Wave preparation (`prepareWave`, `lib/wave.mjs`)
 
-Before L1 launches `execute.workflow.js`, it calls `prepareWave` to build the routed task
-payload the workflow receives via `args`:
+Before dispatch, `buildWaveLaunchContext` in `lib/wave.mjs` constructs the launch context (plan
+index, config, MAIN, prepared wave). That path calls `prepareWave` to build the routed task
+payload the fabric orchestrator consumes:
 
 ```js
 prepareWave(state, planIndex, wave, config, env)
@@ -101,13 +103,10 @@ conversational) and calls `routeTask` (`lib/dispatch/routing.mjs`). The result i
 spec excerpts, no raw file contents — because it transits the orchestrator context.
 
 `routeTask` returns `{ target: 'codex'|'inline'|'ask', eligible, reason }`. In v8 `target`
-is informational and logged only; every task is implemented inline by `mp-implementer`
-regardless of its routing result (there is no Codex implementer). `target` records which
-tasks a future implementer tier *could* offload; it does not cap or gate anything.
-
-The Workflow tool JSON-stringifies object args at the L1↔L2 seam. Both `execute.workflow.js`
-and `plan.workflow.js` normalise with `JSON.parse` at the top of the script to handle both
-the tool path (string) and the in-script test path (object).
+is informational and logged only; every task is implemented via `dispatch_task` to the
+`masterplan-implementation` policy class via the broker, regardless of its routing result.
+`target` records which tasks a future implementer tier *could* offload; it does not cap or gate
+anything.
 
 ## Centralized review stage (config-gated)
 
@@ -116,9 +115,9 @@ The fabric wave path (`mp dispatch-wave`) implements each task, then — when
 Masterplan is the **caller and durable recorder only**; it does not implement review
 chunking, retries, reconciliation, findings extraction, or verdict semantics.
 
-**Implement:** `mp-implementer` (fable wrapper → dispatch-agentic-loop) receives a prompt naming the task, its declared file
-scope, and its verify commands. It runs the verify commands and returns the IMPL_DIGEST
-(validated at the tool boundary):
+**Implement:** broker `dispatch_task` to the `masterplan-implementation` policy class receives a
+prompt naming the task, its declared file scope, and its verify commands. It runs the verify
+commands and returns the IMPL_DIGEST (validated at the dispatch boundary):
 
 ```json
 { "task_id": 3, "status": "done"|"failed"|"blocked",
@@ -179,7 +178,7 @@ Review outcome and D6 scope verification are independent:
 L1: prepareWave()                 → lean routed task payloads
 L1: git capture before            → baseline path set
 L1: mp dispatch-wave (fabric)     ──────────────────────────────┐
-    implement (mp-implementer) per task                         │
+    implement (dispatch_task → masterplan-implementation)       │
     review (dispatch_review via shared broker / native ingest)  │
       → project + persist canonical review                      │
     recordWaveResult (mark digests → D6 → commit)               │

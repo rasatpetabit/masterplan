@@ -2,26 +2,27 @@
 
 > **Audience:** Maintainers working on dispatch decisions (`lib/dispatch/` — routing, backend
 > selection, host detection, op construction), wave preparation (`lib/wave.mjs`), or the
-> execution engine (`workflows/execute.workflow.js`).
-> **Source files:** `lib/dispatch/`, `lib/wave.mjs`, `workflows/execute.workflow.js`.
+> fabric dispatch orchestrator (`lib/dispatch-wave.mjs`).
+> **Source files:** `lib/dispatch/`, `lib/wave.mjs`, `lib/dispatch-wave.mjs`.
 
 ---
 
 ## One Wave Per Launch
 
-`workflows/execute.workflow.js` runs exactly one wave per Workflow-tool launch. L1 (the shell) owns
-the wave loop: `decide → dispatch_wave → launch → record digests → commit → decide → next wave`.
-Limiting one wave per launch keeps `active_run` unambiguous: a crash can only strand a single wave,
-and recovery resets only that wave's declared scope before re-dispatching.
+`dispatchWaveViaFabric` in `lib/dispatch-wave.mjs` runs exactly one wave per launch via broker
+`dispatch_task` (invoked as `mp dispatch-wave --state=<path>`). L1 (the shell) owns the wave
+loop: `decide → dispatch_fabric → mp dispatch-wave → record → decide → next wave`. Limiting one
+wave per launch keeps `active_run` unambiguous: a crash can only strand a single wave, and
+recovery resets only that wave's declared scope before re-dispatching.
 
 ### Pipeline, Not a Barrier
 
-Within a wave, tasks run via `pipeline(tasks, implement, review)`. This is NOT a two-stage barrier
-where all implements complete before any reviews start. `pipeline` starts task A's review the instant
-task A's implement finishes — while task B may still be implementing. The only wave barrier is the
-workflow's completion notification, which L1 awaits before committing and re-deciding.
-
-The workflow resolves only after every task has cleared both stages.
+Within a wave, tasks run via broker `dispatch_task` calls with `fail_mode:'isolated'` — each
+descriptor is independent. The orchestrator dispatches all tasks in a bounded concurrent pool,
+then collects results. This is not a two-stage barrier where all implements complete before any
+reviews start; review (when enabled) runs after implement + local verify per task, still
+failure-isolated. The only wave barrier is the orchestrator's completion of the broker pool,
+which L1 awaits before acting on digests / blocking reviews and re-deciding.
 
 ---
 
@@ -30,9 +31,9 @@ The workflow resolves only after every task has cleared both stages.
 L1 pre-resolves routing before launch. `lib/wave.mjs:prepareWave` merges each pending task's
 state fields (`id`, `wave`, `status`, `files`) with its `plan.index.json` fields
 (`description`, `verify_commands`, `codex`, `sensitive`, `conversational`), runs
-`routeTask(merged, config, env)`, and emits a lean routed payload that is passed to the workflow
-via `args`. The workflow has no module or filesystem access; it cannot import `lib/dispatch/`
-directly.
+`routeTask(merged, config, env)`, and emits a lean routed payload that is consumed by
+`dispatchWaveViaFabric` / descriptor construction. Broker descriptors carry only the dispatch
+class and task payload — the broker's resolve/guard is the routing brain.
 
 All dispatch *decision* logic — `routeTask`, the qctl backend gate, host detection, and the
 wave-dispatch op shapes — lives in the pure `lib/dispatch/` package (import via
@@ -135,7 +136,7 @@ module layout:
 | `lib/dispatch-wave.mjs` | Orchestrator pipeline | `gateAndValidate`, `resolveWaveContext`, `buildDescriptors`, `acquireAndWatch`, `buildNativePlan`, `runBrokerDispatch`, `finalizeRecord` |
 | `lib/wave.mjs` | Launch context + scope | `prepareWave`, `buildWaveLaunchContext`, `verifyScope`, `declaredScope` |
 | `lib/watch-integrity.mjs` | Watch substrate + git helpers | `runGit`, `gitLines`, `captureWatchBaseline`, `verifyWatchListDelta`, `precheckWatchList` |
-| `lib/wave-commit.mjs` | Wave-completion transaction | `recordWaveResult`, `captureWtFiles`, `normalizeStoredReview` |
+| `lib/wave-commit.mjs` | Wave-completion transaction | `recordWaveResult`, `captureWtFiles`, `captureWorkspaceRoot` |
 | `lib/task-review.mjs` | Review projection | `projectReviewRecord`, `taskReviewBlocksWave`, `reviewCompletedTasks` |
 
 `dispatchWaveViaFabric` is a 73-line pipeline that calls the stage helpers in order.
@@ -151,11 +152,12 @@ masterplan no longer maintains a parallel implementation.
 
 ---
 
-## `target` Is Informational — Implementation Is Always Inline
+## `target` Is Informational — Implementation Routes Through the Broker
 
-Every task is implemented by `mp-implementer` (fable wrapper → `dispatch-agentic-loop`) regardless of its routed `target`. There is
-no codex-implementer in v8 by design. The `target` field is logged and recorded in digests so a
-future implementer could offload eligible tasks; it never gates which agent runs the implementation.
+Every task is implemented via broker `dispatch_task` to the `masterplan-implementation` policy
+class, regardless of its routed `target`. There is no separate implementer agent in the roster
+(`mp-implementer` was deleted). The `target` field is logged and recorded in digests so a future
+path could offload eligible tasks; it never gates which implementation lane runs.
 
 ---
 
@@ -195,26 +197,29 @@ behavior.
 
 ## Digests Only — L1 Is the Sole Writer (CD-7)
 
-The workflow never writes `state.yml`, never commits, and never writes any file except through the
-implementer agents' edits to declared scope. It returns a digests payload:
+`dispatchWaveViaFabric` calls `finalizeRecord` to persist the wave result. The wave dispatch path
+is idempotent on the record `(run_id, wave, 'dispatch_fabric')`. Implementation workers edit only
+declared scope; durable run-bundle state is written through the wave-commit / mark-task path, not
+ad-hoc agent writes to `state.yml`.
+
+The orchestrator returns a digests payload shaped like:
 
 ```
 { wave, baseline, tasks: [{ task_id, target, digest, review }], summary }
 ```
 
-L1 consumes this: `mp mark-task` records each `done` task, `mp verify-scope` runs the D6 scope
-check (comparing the git-touched set before launch — `baseline` — against the set after), the shell
-commits, then `decide` is re-called. This is the single-writer guarantee that makes crash
-re-dispatch idempotent.
+L1 / `recordWaveResult` consumes this: done tasks are marked, D6 scope checks run (comparing the
+git-touched set before launch — `baseline` — against the set after), the shell commits, then
+`decide` is re-called. This is the single-writer guarantee that makes crash re-dispatch idempotent.
 
 ---
 
 ## Scope Verification (D6)
 
-The post-barrier scope check lives in `lib/wave.mjs:verifyScope`. The workflow echoes back the
-`baseline` (git-touched paths captured by L1 before launch); L1 captures a fresh `after` set, and
-`verifyScope` computes `(after − before) ⊆ declared`. Out-of-scope paths are reverted by the shell
-before the wave commit.
+The post-barrier scope check lives in `lib/wave.mjs:verifyScope`. The watch baseline is captured by
+`captureWatchBaseline` in `lib/watch-integrity.mjs` before launch, and verified by
+`verifyWatchListDelta` after completion. `verifyScope` computes `(after − before) ⊆ declared`.
+Out-of-scope paths are reverted by the shell before the wave commit.
 
 ---
 
