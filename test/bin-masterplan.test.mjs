@@ -2861,3 +2861,101 @@ test('dispatch-plan: --subsystems required and JSON-validated; a non-plan marker
   assert.notEqual(noMarker.status, 0);
   assert.match(noMarker.stderr, /plan marker/);
 });
+
+
+// ---- native wave review parity (record-result awaits reviewNativeResult) ----
+test('record-result awaits native review before the state transaction (CLI ordering)', async () => {
+  const repo = tmpDir('mp-bin-native-review-');
+  const git = (...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
+  git('init', '--initial-branch=main');
+  git('config', 'user.email', 'test@test');
+  git('config', 'user.name', 'test');
+  git('config', 'commit.gpgsign', 'false');
+  fs.writeFileSync(path.join(repo, 'src-seed.txt'), 'seed\n');
+  fs.mkdirSync(path.join(repo, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(repo, 'src', 'seed.txt'), 'seed\n');
+  git('add', '.');
+  git('commit', '-q', '-m', 'initial');
+
+  const slug = 'cli-native-review';
+  const bundleDir = path.join(repo, 'docs', 'masterplan', slug);
+  fs.mkdirSync(bundleDir, { recursive: true });
+  const statePath = path.join(bundleDir, 'state.yml');
+  const WT = path.join(repo, '.worktrees', slug);
+  fs.mkdirSync(path.dirname(WT), { recursive: true });
+  git('worktree', 'add', '-b', `masterplan/${slug}`, WT, 'HEAD');
+  // Task edit lands in the worktree (what reviewNativeResult will capture).
+  fs.mkdirSync(path.join(WT, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(WT, 'src', 'a.txt'), 'native edit\n');
+
+  const head = git('rev-parse', 'HEAD').trim();
+  fs.writeFileSync(statePath, serializeState({
+    schema_version: 8,
+    slug,
+    status: 'in-progress',
+    phase: 'execute',
+    worktree: WT,
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    active_run: {
+      wave: 1, kind: 'execute', phase: 'launching',
+      baseline: [], scope: ['src/a.txt'], started_at: 'T0',
+    },
+    dispatch: { fabric: true },
+    review: { adversary: true },
+    concurrency: { owner_lock: 'off' },
+  }));
+  fs.writeFileSync(path.join(bundleDir, 'plan.index.json'), JSON.stringify({
+    tasks: [{ id: 1, wave: 1, files: ['src/a.txt'], description: 'task 1', verify_commands: [] }],
+  }));
+  // Persist the same review_context shape dispatch-wave freezes for native plans.
+  fs.writeFileSync(path.join(bundleDir, 'wave-1.dispatch.json'), JSON.stringify({
+    key: `mp-wave-dispatch-v1|${slug}|1|dispatch_fabric`,
+    run_id: slug,
+    wave: 1,
+    op: 'dispatch_fabric',
+    contract_version: 'adsp-v1.1',
+    status: 'pending',
+    attempt: 1,
+    wave_token: `mp-wave-${slug}-w1-a1`,
+    handles: [],
+    dispatched_at: 'T0',
+    tasks: [{ task_id: 1, class: 'masterplan-implementation', handoff_key: 'k1' }],
+    review_context: {
+      enabled: true,
+      base_sha: head,
+      tasks: [{
+        task_id: 1,
+        description: 'task 1',
+        class: 'masterplan-implementation',
+        repo: WT,
+      }],
+    },
+  }, null, 2));
+
+  const resultPath = path.join(bundleDir, 'native-result.json');
+  fs.writeFileSync(resultPath, JSON.stringify({
+    wave: 1,
+    tasks: [{
+      task_id: 1,
+      digest: {
+        task_id: 1, status: 'done', start_sha: head, files_changed: ['src/a.txt'],
+        verify: [], summary: 'task 1 done', blockers: null,
+      },
+    }],
+  }));
+  const broker = fileURLToPath(new URL('./fixtures/fake-serve-mcp-reject.mjs', import.meta.url));
+  const r = run([
+    'record-result',
+    `--state=${statePath}`,
+    `--result-file=${resultPath}`,
+    `--worktree=${WT}`,
+    `--broker-bin=${broker}`,
+    '--now=3000',
+  ], { timeout: 30_000 });
+  assert.equal(r.status, 0, `record-result must succeed: ${r.stderr}\n${r.stdout}`);
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.outcome, 'recorded');
+  assert.equal(out.blocking_reviews[0].verdict, 'reject',
+    'CLI must await native review before recordWaveResult so blocking_reviews is populated');
+  assert.equal(read(statePath).tasks[0].status, 'done');
+});

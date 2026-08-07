@@ -8,6 +8,10 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 
 import {
   composeWaveToken,
@@ -18,7 +22,14 @@ import {
   selectLaunchPath,
   hostHasNativeSpawnApi,
   probeWaveToken,
+  dispatchWaveViaFabric,
+  readWaveDispatchRecord,
+  reviewNativeResult,
 } from '../lib/dispatch-wave.mjs';
+import { continueRun } from '../lib/continue.mjs';
+import { readState, writeState } from '../lib/bundle.mjs';
+import { buildOwnerIdentity } from '../lib/owner.mjs';
+import { recordWaveResult } from '../lib/wave-commit.mjs';
 
 // A stand-in for `agent-dispatch resolve`, shaped exactly like the real CLI's stdout.
 const fakeResolve = (byClass, calls = []) => (bin, args) => {
@@ -264,4 +275,157 @@ test('the probe matches on prompt as well as label (labels can be rewritten)', (
   const token = 'mp-wave-demo-w1-a1';
   const r = probeWaveToken(token, [{ id: 'j9', label: 'renamed-by-harness', prompt: `[${token}] task 3`, status: 'running' }]);
   assert.equal(r.state, 'live');
+});
+
+// ---------------------------------------------------------------------------
+// Native result-ingestion parity (centralized review)
+// ---------------------------------------------------------------------------
+
+function git(dir, ...args) {
+  return String(execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' })).trim();
+}
+function write(root, rel, content) {
+  const p = path.join(root, rel);
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  fs.writeFileSync(p, content);
+}
+const planEntry = (id, wave, files) => ({
+  id, wave, files, description: `task ${id}`, verify_commands: [],
+});
+const workerDigest = (id, status = 'done', files = []) => ({
+  task_id: id, status, start_sha: 'abc123', files_changed: files,
+  verify: [], summary: `task ${id} ${status}`, blockers: null,
+});
+const healthyHarness = () => ({
+  degraded: false, timed_out: false, stalled: false,
+  deadline_exceeded: false, regions_unreviewed: 0, extraction_degraded: false,
+});
+const rejectRecord = {
+  final_verdict: 'reject',
+  findings: [{ severity: 'high', summary: 'introduces a data race' }],
+  blocking_findings: [{ summary: 'introduces a data race', proof: 'data race' }],
+  summary: 'blocking data race',
+  harness: healthyHarness(),
+};
+
+function makeNativeFixture({ slug = 'native-review', review = { adversary: true }, extra = {} } = {}) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-native-'));
+  const MAIN = path.join(tmp, 'main');
+  fs.mkdirSync(MAIN, { recursive: true });
+  git(MAIN, 'init', '--initial-branch=main');
+  git(MAIN, 'config', 'user.email', 'test@test');
+  git(MAIN, 'config', 'user.name', 'test');
+  git(MAIN, 'config', 'commit.gpgsign', 'false');
+  write(MAIN, 'src/seed.txt', 'seed\n');
+  git(MAIN, 'add', '.');
+  git(MAIN, 'commit', '-q', '-m', 'initial');
+  const bundleDir = path.join(MAIN, 'docs', 'masterplan', slug);
+  const statePath = path.join(bundleDir, 'state.yml');
+  writeState(statePath, {
+    schema_version: 8,
+    slug,
+    status: 'in-progress',
+    phase: 'execute',
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    active_run: null,
+    dispatch: { fabric: true },
+    review,
+    ...extra,
+  });
+  write(bundleDir, 'plan.index.json', JSON.stringify({
+    tasks: [planEntry(1, 1, ['src/a.txt'])],
+  }));
+  const self = buildOwnerIdentity({ host: 'h1', session: 'sess-native', slug, now: 1000 });
+  return { tmp, MAIN, bundleDir, statePath, self, WT: null };
+}
+
+function launchNative(fx) {
+  const op = continueRun({ statePath: fx.statePath, self: fx.self, now: 2000 });
+  assert.equal(op.op, 'dispatch_fabric', `expected dispatch_fabric, got ${JSON.stringify(op)}`);
+  fx.WT = op.cwd;
+  return op;
+}
+
+function brokerStub({ reviewResult = rejectRecord } = {}) {
+  const calls = [];
+  return {
+    calls,
+    async initialize() {},
+    async callTool(tool, args) {
+      calls.push({ tool, args });
+      if (tool === 'dispatch_review') {
+        if (reviewResult instanceof Error) throw reviewResult;
+        return typeof reviewResult === 'function' ? reviewResult(args) : reviewResult;
+      }
+      throw new Error(`unexpected tool ${tool}`);
+    },
+    close() {},
+  };
+}
+
+test('native spawn record persists task review context for result ingestion', async () => {
+  const fx = makeNativeFixture({ slug: 'native-ctx', review: { adversary: true } });
+  launchNative(fx);
+  const res = await dispatchWaveViaFabric({
+    statePath: fx.statePath, self: fx.self, now: 2000,
+    nativeSpawn: true,
+  });
+  assert.equal(res.outcome, 'native-spawn-plan');
+  const record = readWaveDispatchRecord(fx.bundleDir, 1);
+  assert.equal(record.review_context.enabled, true);
+  assert.equal(record.review_context.base_sha, git(res.plan.tasks[0].cwd, 'rev-parse', 'HEAD'));
+  assert.deepEqual(record.review_context.tasks[0], {
+    task_id: 1,
+    description: 'task 1',
+    class: 'masterplan-implementation',
+    repo: res.plan.tasks[0].cwd,
+  });
+});
+
+test('native result uses the same centralized task review projection as MCP pool', async () => {
+  const fx = makeNativeFixture({ slug: 'native-parity', review: { adversary: true } });
+  launchNative(fx);
+  const planRes = await dispatchWaveViaFabric({
+    statePath: fx.statePath, self: fx.self, now: 2000, nativeSpawn: true,
+  });
+  assert.equal(planRes.outcome, 'native-spawn-plan');
+  write(fx.WT, 'src/a.txt', 'native edit\n');
+  const nativeResult = {
+    wave: 1,
+    tasks: [{ task_id: 1, digest: workerDigest(1, 'done') }],
+  };
+  const stub = brokerStub({ reviewResult: rejectRecord });
+  const reviewed = await reviewNativeResult({
+    statePath: fx.statePath,
+    result: nativeResult,
+    _brokerClient: stub,
+    now: 3000,
+  });
+  assert.equal(reviewed.tasks[0].digest.review.verdict, 'reject');
+  assert.equal(reviewed.tasks[0].review.verdict, 'reject');
+  assert.ok(stub.calls.some((c) => c.tool === 'dispatch_review'));
+  const recorded = recordWaveResult({
+    statePath: fx.statePath, result: reviewed,
+    self: fx.self, now: 3000, worktree: fx.WT,
+  });
+  assert.equal(recorded.blocking_reviews[0].verdict, 'reject');
+  assert.equal(readState(fx.statePath).tasks[0].status, 'done');
+});
+
+test('native review is a no-op when review_context is absent or disabled', async () => {
+  const fx = makeNativeFixture({ slug: 'native-off', review: { adversary: false } });
+  launchNative(fx);
+  await dispatchWaveViaFabric({
+    statePath: fx.statePath, self: fx.self, now: 2000, nativeSpawn: true,
+  });
+  const nativeResult = {
+    wave: 1,
+    tasks: [{ task_id: 1, digest: workerDigest(1, 'done') }],
+  };
+  const stub = brokerStub({ reviewResult: () => assert.fail('review must not run when disabled') });
+  const reviewed = await reviewNativeResult({
+    statePath: fx.statePath, result: nativeResult, _brokerClient: stub, now: 3000,
+  });
+  assert.equal(reviewed, nativeResult);
+  assert.equal(stub.calls.length, 0);
 });

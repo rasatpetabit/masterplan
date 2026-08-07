@@ -208,7 +208,7 @@ import { verifyArtifact, parseQctlDigest } from '../lib/qctl-artifact.mjs';
 import { mapQctlStatus } from '../lib/qctl-status.mjs';
 import { decideBaseDrift } from '../lib/qctl-requeue.mjs';
 import { recordWaveResult } from '../lib/wave-commit.mjs';
-import { dispatchWaveViaFabric } from '../lib/dispatch-wave.mjs';
+import { dispatchWaveViaFabric, reviewNativeResult } from '../lib/dispatch-wave.mjs';
 import { continueRun, dispatchPlanFanout } from '../lib/continue.mjs';
 import { finishStep } from '../lib/finish-step.mjs';
 import { sweepWorktrees } from '../lib/sweep.mjs';
@@ -3200,21 +3200,40 @@ function main() {
       if (!lockOff) {
         ({ self, now } = resolveOwnerSelf(flags, statePath));
       }
-      let res;
-      try {
-        res = recordWaveResult({
+      // --reconcile (result === null) keeps the synchronous crash-reconcile path:
+      // no digests, no review. A real result is reviewed FIRST (native parity with
+      // the MCP-pool path) via promise chaining — same pattern as dispatch-wave.
+      if (result == null) {
+        let res;
+        try {
+          res = recordWaveResult({
+            statePath,
+            result,
+            self,
+            now,
+            worktree: typeof flags.worktree === 'string' ? flags.worktree : undefined,
+          });
+        } catch (e) {
+          die(e.message);
+        }
+        out(res);
+        break;
+      }
+      reviewNativeResult({
+        statePath,
+        result,
+        brokerBin: typeof flags['broker-bin'] === 'string' ? flags['broker-bin'] : undefined,
+        now,
+      })
+        .then((reviewedResult) => recordWaveResult({
           statePath,
-          result,
+          result: reviewedResult,
           self,
           now,
           worktree: typeof flags.worktree === 'string' ? flags.worktree : undefined,
-        });
-      } catch (e) {
-        die(e.message);
-      }
-      // lost-to-other exits 0 with JSON — a valid outcome the shell surfaces as an AUQ
-      // (with `mp acquire-owner --force` as an option), not an mp error.
-      out(res);
+        }))
+        .then(out)
+        .catch((e) => die(e.message));
       break;
     }
 
