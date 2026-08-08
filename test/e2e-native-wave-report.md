@@ -227,10 +227,18 @@ Scoped to that run only; superseded by run 3 (2026-08-05) at the end of this fil
 The three code defects this e2e surfaced are fixed. Re-checked against the live wave planner
 (repo `bin/masterplan.mjs`, fixture reset to `ad45a92`, wave-1 dispatch record cleared):
 
-**Finding 1 — native-spawn branch unreachable on Pi.** `selectLaunchPath` no longer vetoes on
-`codexSuppressed` alone; a host with a native parallel API falls through to the explicit flag.
-Observed: the documented `PI_CODING_AGENT=false MP_DISPATCH_NATIVE_SPAWN=1` invocation returns
-`outcome=native-spawn-plan` rather than entering the MCP pool.
+**Finding 1 — native-spawn branch unreachable on Pi (RESOLVED 2026-08-08).**
+`selectLaunchPath` previously required `MP_DISPATCH_NATIVE_SPAWN=1` even on Pi,
+where `hostHasNativeSpawnApi()` already returns `true` via `PI_CODING_AGENT`.
+The fix (commit `ab688cc`) adds `if (hostHasNativeSpawnApi(env)) return 'native-spawn'`
+after the Codex safety veto, so Pi auto-selects native-spawn with **no env flag**.
+`MP_DISPATCH_NATIVE_SPAWN=0` remains as an explicit opt-out. The original finding
+(text below) is preserved for historical context:
+
+> `selectLaunchPath` no longer vetoes on `codexSuppressed` alone; a host with a native
+> parallel API falls through to the explicit flag. Observed: the documented
+> `PI_CODING_AGENT=false MP_DISPATCH_NATIVE_SPAWN=1` invocation returns
+> `outcome=native-spawn-plan` rather than entering the MCP pool.
 
 **Finding 2 — `cwd:null` on every native descriptor.** `buildWorkItem` names the run's existing
 worktree `repo`; `buildNativeSpawnPlan` read only `cwd`, so the path had to be supplied out of
