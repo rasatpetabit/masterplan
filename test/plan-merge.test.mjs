@@ -24,6 +24,7 @@ import {
   resolveRefTarget,
   parseAmendments,
 } from '../lib/plan-merge.mjs';
+import { parseGoals } from '../lib/goals.mjs';
 
 // Fragment factory — one subsystem with its task list. Keeps tests terse.
 const frag = (key, tasks) => ({ key, tasks });
@@ -536,13 +537,26 @@ test('validatePlanIndex flags a task citing an unknown goal', () => {
   assert.ok(errors.some((e) => e.includes('GX') && e.includes('unknown')), 'GX must be flagged as unknown');
 });
 
-test('validatePlanIndex exempts a tombstoned goal from coverage', () => {
+// The tombstone shape here comes from parseGoals, NOT from a literal. An earlier version
+// of this test hand-wrote `{ tombstone: true }` — a shape the parser never emits — so it
+// passed while validatePlanIndex's `g.tombstone !== true` check rejected every real
+// tombstoned bundle. Going through the parser is what makes the two sides unable to
+// diverge again.
+test('validatePlanIndex exempts a tombstoned goal from coverage (real parseGoals shape)', () => {
+  const { goals } = parseGoals(
+    'topic: t\n\n## G1: first\nsignal: test\n\n' +
+      '## G2: descoped\nsignal: test\ntombstone_reason: moved to stage 2\ntombstone_at: 2026-08-08T00:00:00Z\n',
+  );
+  assert.equal(typeof goals.find((g) => g.id === 'G2').tombstone, 'object',
+    'parseGoals must emit an object tombstone — if this changes, plan-merge must change with it');
+
   const index = mergePlanFragments([frag('s', [task('a', { goals: ['G1'] })])]);
-  const errors = validatePlanIndex(index, [{ id: 'G1' }, { id: 'G2', tombstone: true }]);
+  const errors = validatePlanIndex(index, goals);
   assert.ok(!errors.some((e) => e.includes('G2')), 'tombstoned G2 must not be flagged as uncovered');
+  assert.ok(!errors.some((e) => e.includes('G1')), 'covered G1 must not be flagged');
 
   const index2 = mergePlanFragments([frag('s', [task('a', { goals: ['G1', 'G2'] })])]);
-  const errors2 = validatePlanIndex(index2, [{ id: 'G1' }, { id: 'G2', tombstone: true }]);
+  const errors2 = validatePlanIndex(index2, goals);
   assert.ok(!errors2.some((e) => e.includes('unknown')), 'citing a tombstoned goal must not be an unknown-ref error');
 });
 
