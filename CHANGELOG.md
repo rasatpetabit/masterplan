@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [9.9.1] — 2026-08-08
+
+### Fixed — tombstoned goals could never satisfy plan coverage
+
+`validatePlanIndex` tested `g.tombstone !== true`, but `parseGoals` sets `tombstone`
+to an **object** (`{reason, amended_at}`) and `bundle.mjs` rejects any non-object
+value. Every real tombstone therefore satisfied `!== true`, so each tombstoned goal
+was reported `not covered by any task` — meaning **no bundle whose goals had been
+amended with tombstones could load its plan**. Every other consumer (`goals.mjs`,
+`finish-step.mjs`, `retro-goals.mjs`) already tested truthiness; `plan-merge.mjs` was
+the lone outlier.
+
+The existing coverage test passed only because it hand-wrote `{tombstone: true}`, a
+shape the parser never emits. It now builds its fixture through `parseGoals` and
+asserts the tombstone is an object, so the two sides cannot diverge again silently.
+
+### Fixed — lineup derivation pointed at a path that no longer exists
+
+`register-pi-agents` derived the subagent lineup from
+`agent-dispatch/policy/routing.yaml`; the hand-written source is
+`policy/src/routing.yaml`, with `policy/` holding compiler output only. Both tests
+had been failing ENOENT. The suite was built to fail loud rather than fall back
+silently, so it behaved as designed — the path had simply drifted.
+
 ## [9.9.0] — 2026-08-07
 
 ### Changed — wave-dispatch architecture deepened (rounds 6–8) + comprehensive documentation refactor
