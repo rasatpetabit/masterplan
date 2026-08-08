@@ -220,8 +220,13 @@ test('REGRESSION: a Pi host can reach the native branch — codexSuppressed is n
   );
   assert.equal(
     selectLaunchPath({ codexSuppressed: true, env: pi }),
+    'native-spawn',
+    'Pi defaults to native-spawn because hostHasNativeSpawnApi is true — no env flag needed',
+  );
+  assert.equal(
+    selectLaunchPath({ codexSuppressed: true, env: { ...pi, MP_DISPATCH_NATIVE_SPAWN: '0' } }),
     'mcp-pool',
-    'without the flag Pi still defaults to the MCP pool — the fix unblocks the opt-in, it does not flip the default',
+    'Pi can opt out of native-spawn with MP_DISPATCH_NATIVE_SPAWN=0',
   );
   assert.equal(
     selectLaunchPath({ codexSuppressed: true, env: { MP_DISPATCH_NATIVE_SPAWN: '1' } }),
