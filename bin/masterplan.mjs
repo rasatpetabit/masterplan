@@ -369,8 +369,10 @@ function enforceGateReview(gate, statePath, flags, state, opts = {}) {
     message:
       `${gate} gate: no cross-vendor adversarial review is recorded for the CURRENT ${gate} artifacts. ` +
       `Run the adversary lane (agent-dispatch review --class adversary) over them, then record it: ` +
-      `\`mp record-gate-review --state=${statePath} --gate=${gate} --status=done --receipt=<receipt.json>\` ` +
-      `(or --status=skipped --reason=<why> --digest-file=<notes> if the lane is degraded), then retry this ` +
+      `\`mp record-gate-review --state=${statePath} --gate=${gate} --status=done --review-json=<review.json> --digest-file=<notes>\` ` +
+      `(which pulls provider/model/dispatch_id/output_tokens out of the review's reviewers[] for you; ` +
+      `--receipt=<receipt.json> still accepts a hand-built receipt, and --status=skipped --reason=<why> ` +
+      `--digest-file=<notes> records a degraded lane), then retry this ` +
       `transition. (--force bypasses for recovery/scripting and is audited.)`,
   };
   fs.writeSync(1, JSON.stringify(opObj) + '\n');
@@ -2613,6 +2615,94 @@ function main() {
       }
       let note;
       if (status === 'done') {
+        // --review-json: assemble the receipt directly from an `agent-dispatch review` result file so
+        // the caller does not hand-transcribe lane provenance. The fields live per-reviewer inside
+        // reviewers[] — NOT at the top level — which is exactly the shape that has been mis-inspected
+        // into a false "this lane emits no provenance" conclusion and an unnecessary --status=skipped.
+        // The digest still comes from the operator (--digest-file): the receipt records that a human
+        // adjudicated the findings, which no amount of reviewer output can attest to on its own.
+        if (flags.receipt === undefined && flags['review-json'] !== undefined) {
+          const reviewPath = String(flags['review-json']);
+          let reviewText;
+          try {
+            reviewText = fs.readFileSync(reviewPath, 'utf8');
+          } catch (e) {
+            die(`record-gate-review: --review-json file unreadable: ${e.message}`, 1);
+          }
+          // Review output may carry a non-JSON preamble line; start at the first brace.
+          const brace = reviewText.indexOf('{');
+          let review;
+          try {
+            review = JSON.parse(brace >= 0 ? reviewText.slice(brace) : reviewText);
+          } catch (e) {
+            die(`record-gate-review: --review-json is not valid JSON (${e.message})`, 1);
+          }
+          const reviewers = Array.isArray(review.reviewers) ? review.reviewers : [];
+          const r = reviewers.find((x) => x && x.dispatch_id && x.provider && x.model);
+          if (!r) {
+            die(
+              'record-gate-review: --review-json carries no reviewer with dispatch_id + provider + model. ' +
+                `Looked in reviewers[] (${reviewers.length} element(s)). A degraded or errored review has no ` +
+                'provenance to bind — record --status=skipped with a --reason and --digest-file instead.',
+              1,
+            );
+          }
+          // Staleness guard. The review result records WHICH files it read but not what they hashed to,
+          // so nothing in it proves the review saw the content we are about to bind it to. Without this
+          // check --review-json would cheerfully certify a review of the PREVIOUS artifacts against the
+          // CURRENT hash — defeating the hash binding it is supposed to satisfy. mtime is not a content
+          // hash, but it fails closed on the failure mode that actually occurs: artifacts amended in
+          // response to the review's own findings, after the review ran.
+          // agent-dispatch review output carries no timestamp field of its own (top level or per-reviewer),
+          // so the result file's own mtime — written when the review completed — is the review time. Fail
+          // closed if even that is unavailable rather than skipping the check: a guard that silently
+          // no-ops when it cannot evaluate is worse than no guard, because it reads as having passed.
+          let reviewTs = Date.parse(r.ts ?? review.ts ?? '');
+          if (!Number.isFinite(reviewTs)) {
+            try {
+              reviewTs = fs.statSync(reviewPath).mtimeMs;
+            } catch (e) {
+              die(`record-gate-review: cannot determine when --review-json was produced (${e.message})`, 1);
+            }
+          }
+          for (const d of descriptors) {
+            let st;
+            try {
+              st = fs.statSync(d.absPath);
+            } catch (e) {
+              die(`record-gate-review: cannot stat gate artifact ${d.relName} (${e.message})`, 1);
+            }
+            if (st.mtimeMs > reviewTs) {
+              die(
+                `record-gate-review: --review-json is stale — ${d.relName} was modified after the review ran ` +
+                  `(artifact mtime ${new Date(st.mtimeMs).toISOString()} > review ${new Date(reviewTs).toISOString()}). ` +
+                  'The review did not see the content this receipt would bind. Re-run the adversary lane over ' +
+                  'the current artifacts, or record --status=skipped with a --reason explaining the override.',
+                1,
+              );
+            }
+          }
+          const digestPath = String(need(flags, 'digest-file'));
+          let digestText;
+          try {
+            digestText = fs.readFileSync(digestPath, 'utf8');
+          } catch (e) {
+            die(`record-gate-review: --digest-file unreadable: ${e.message}`, 1);
+          }
+          if (!digestText.trim()) die('record-gate-review: --digest-file must be non-empty', 1);
+          flags.receipt = JSON.stringify({
+            status: 'done',
+            gate,
+            hash,
+            artifacts,
+            dispatch_id: r.dispatch_id,
+            provider: r.provider,
+            model: r.model,
+            output_tokens: r.output_tokens ?? r.completion_tokens,
+            ts: r.ts ?? review.ts ?? new Date().toISOString(),
+            digest: digestText.trim(),
+          });
+        }
         // Structured receipt binding. --receipt is inline JSON (value starts with '{') or a path to a
         // JSON file (shell-safe, like --digest-file). It must validate against the hash + artifacts above.
         const receiptRaw = String(need(flags, 'receipt'));

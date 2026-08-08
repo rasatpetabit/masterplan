@@ -2200,6 +2200,60 @@ test('gate: a fabricated done is rejected — receipt must echo the recomputed h
   assert.equal(run(['load-plan', `--state=${p}`, `--plan-index=${planIdx}`]).status, 0);
 });
 
+test('gate: --review-json builds the receipt from reviewers[] provenance', () => {
+  const { p, planIdx } = planBundleWithArtifacts();
+  const dir = path.dirname(p);
+  // Shape emitted by `agent-dispatch review`: provenance is per-reviewer inside reviewers[],
+  // NOT at the top level. Mis-inspecting this is what produced a false "no provenance" skip.
+  const reviewFile = path.join(dir, 'review.json');
+  fs.writeFileSync(reviewFile, JSON.stringify({
+    final_verdict: 'rework',
+    findings: [],
+    reviewers: [{ reviewer: 'adversary', verdict: 'rework', provider: 'dispatch-adversary', model: 'gpt-5.6-sol', dispatch_id: 'chatcmpl-1', output_tokens: 7104 }],
+  }));
+  const notes = path.join(dir, 'digest.md');
+  fs.writeFileSync(notes, 'operator adjudication of the findings\n');
+  // Artifacts must predate the review for it to be current.
+  const past = new Date(Date.now() - 60_000);
+  fs.utimesSync(reviewFile, past, past);
+  const older = new Date(Date.now() - 120_000);
+  for (const rel of JSON.parse(run(['gate-hash', `--state=${p}`, '--gate=plan']).stdout).artifacts) {
+    fs.utimesSync(path.join(dir, rel), older, older);
+  }
+  const ok = run(['record-gate-review', `--state=${p}`, '--gate=plan', '--status=done', `--review-json=${reviewFile}`, `--digest-file=${notes}`]);
+  assert.equal(ok.status, 0, ok.stderr);
+  assert.equal(run(['load-plan', `--state=${p}`, `--plan-index=${planIdx}`]).status, 0);
+});
+
+test('gate: --review-json refuses a review that predates the artifacts it would certify', () => {
+  const { p } = planBundleWithArtifacts();
+  const dir = path.dirname(p);
+  const reviewFile = path.join(dir, 'review.json');
+  fs.writeFileSync(reviewFile, JSON.stringify({
+    reviewers: [{ provider: 'dispatch-adversary', model: 'gpt-5.6-sol', dispatch_id: 'chatcmpl-1', output_tokens: 10 }],
+  }));
+  const notes = path.join(dir, 'digest.md');
+  fs.writeFileSync(notes, 'notes\n');
+  // The real failure mode: artifacts amended in response to the review's own findings, after it ran.
+  const past = new Date(Date.now() - 60_000);
+  fs.utimesSync(reviewFile, past, past);
+  const r = run(['record-gate-review', `--state=${p}`, '--gate=plan', '--status=done', `--review-json=${reviewFile}`, `--digest-file=${notes}`]);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /stale/);
+});
+
+test('gate: --review-json refuses a degraded review with no reviewer provenance', () => {
+  const { p } = planBundleWithArtifacts();
+  const dir = path.dirname(p);
+  const reviewFile = path.join(dir, 'review.json');
+  fs.writeFileSync(reviewFile, JSON.stringify({ final_verdict: 'error', degraded: true, reviewers: [] }));
+  const notes = path.join(dir, 'digest.md');
+  fs.writeFileSync(notes, 'notes\n');
+  const r = run(['record-gate-review', `--state=${p}`, '--gate=plan', '--status=done', `--review-json=${reviewFile}`, `--digest-file=${notes}`]);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /no reviewer with dispatch_id/);
+});
+
 test('gate: fail-closed on a missing required artifact — exit 1, not a silent empty-hash pass', () => {
   const p = tmpBundle(v8()); // no spec.md on disk
   const r = run(['set-phase', `--state=${p}`, '--phase=plan']);
