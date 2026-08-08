@@ -49,7 +49,10 @@ function agentModelAliases({ includeSkipped = true } = {}) {
 // the single declared source of the subagent lineup. Fails loud if the policy file or the
 // subagents block is unreadable; a silent fallback would let this suite rot into a pin.
 function lineupFromRoutingPolicy() {
-  const routingPath = '/srv/dev/ai/agent-dispatch/policy/routing.yaml';
+  // policy/src/routing.yaml, not policy/routing.yaml: the hand-written source lives under
+  // src/ and policy/ holds only compiler output. The old path had drifted to ENOENT, which
+  // failed this suite loud (as designed) rather than rotting it into a pin.
+  const routingPath = '/srv/dev/ai/agent-dispatch/policy/src/routing.yaml';
   const text = readFileSync(routingPath, 'utf8');
   const block = text.match(/^subagents:\n((?:[ ]{2}\S[^\n]*\n)+)/m);
   assert.ok(block, `${routingPath}: no subagents block found`);
