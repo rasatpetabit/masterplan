@@ -1,5 +1,79 @@
 # WORKLOG
 
+## 2026-08-12 — end-of-planning alignment audit (§3c)
+
+Added the anti-drift look-back: after the plan gate, before `mp load-plan`, measure the plan
+against the **original request** rather than against the spec.
+
+**Why.** Every planning check was relative — plan-vs-spec, mechanical goal coverage, and a
+goals-vs-reality check that does not run until finish. Drift accumulated across the repeated
+adversary review→fix rounds therefore reached execution unexamined.
+
+**Decisions.**
+- *Anchor = `goals.md`'s `topic:` seed, not a new `request.md`.* `goalsHash` already canonicalizes
+  the seed, so it inherits the freeze for free. Block form `topic: |` is opt-in on an exact `|`
+  so the bare form stays byte-identical — verified across every committed bundle, 0 hashes moved,
+  so no in-flight `goal_check`/`goal_waived` receipt is voided.
+- *Advisory, not a gate — deliberately, for now.* Prerequisites for real enforcement (the gate
+  framework is a closed `spec|plan` binary; a receipt proves an audit RAN, not that it PASSED)
+  are recorded in `docs/design/planning-alignment-check.md` §6.
+- *The user confirms the clause list.* Blocking only on high-confidence `dropped`/`contradicted`
+  was tried and rejected: it made the gate structurally unable to fire on **cumulative narrowing**,
+  which is the actual failure mode. Trust rests on one human check over a short confirmed clause
+  list instead of on model-set severity.
+
+**Backward-compat trap (found by the governed review, not by me).** `topic: |` was *already* valid
+input — the old parser read `|` as ordinary seed text, so a bundle spelled that way has a stored
+hash the new parser cannot reproduce. Committed bundles were checked (none use it) but in-flight
+ones cannot be enumerated. `legacyGoalsHash()` reproduces the pre-block reading and `goals-load`
+refuses when a bundle's stored hash matches the legacy reading but not the new one — a loud stop
+with a migration path, never a silent re-hash of someone's frozen goals.
+
+**Retracted:** an adversarial round claimed `seed-tasks` → `set-phase --phase=execute` was an
+ungated second execute path. It is not. `set-phase --phase=execute` calls
+`enforceGateReview('plan', …)` exactly as `load-plan` does; verified behaviorally (after
+`seed-tasks` succeeds, the phase advance enters gate review and refuses fail-closed). The branch's
+own comment records it as already closed. Do not "fix" it.
+
+**Reviewer-lane outage — root-caused and worked around mid-run.** `dispatch_review` returned
+`final_verdict: error` twice ("a region had no healthy reviewers"), forcing a Codex break-glass
+review. All four `gpt-5.6*` models 401'd with `refresh_token_invalidated`, taking out five lanes:
+`dispatch-adversary`, `dispatch-cross-review`, `dispatch-critic`, `dispatch-architecture`,
+`dispatch-planned-execution`.
+
+Mechanism: **`~/.local/bin/codex-proxy.py` is itself a writer.** It reads `~/.pi/agent/auth.json`
+and, on expiry, refreshes and writes back a *new* refresh token. Every host runs its own copy, and
+`~/.pi/` is not Syncthing-replicated, so three independent writers rotate one shared OAuth identity
+— whichever refreshes first silently invalidates the others. Worked around by copying the valid
+OAuth block onto epyc1 (backup `~/.pi/agent/auth.json.bak-20260812-161603`, `xai-auth` preserved)
+and restarting its `codex-proxy.service`; `dispatch_review` then returned two real reviewers. That
+resets the race but does **not** end it.
+
+The real fix already exists and is orphaned: `/srv/litellm/scripts/chatgpt/` implements a
+single-writer design (epyc2 refreshes; an access-only projection with no `refresh_token` is fanned
+out to epyc1/epyc2/skynet3), and `litellm-chatgpt-oauth-refresh.timer` was installed Aug 4 — but
+its `.service` unit was never written, so it has never once fired, and its `Documentation=` spec
+no longer exists. **Trap: activating that timer alone makes things worse** — the epyc2 writer would
+refresh every 20 min while each codex-proxy keeps refreshing independently, so they would revoke
+each other faster than today. The timer is only safe once codex-proxy is a pure reader.
+
+**Do NOT "fix" this by adding a fallback for `gpt-5.6*`.** Standing instruction: the API key is
+installed for future use only and must carry zero traffic — OAuth/subscription only. Auditing
+`models.catalog.yaml` by `auth_mode`, 21 entries split into exactly three groups:
+
+| auth_mode | entries | billing |
+|---|---|---|
+| `none` (`api_key: noauth`) | `gpt-5.6`, `-sol`, `-terra`, `-luna` → `127.0.0.1:8790` | ChatGPT **subscription** |
+| `oauth` | `grok-4.5` → `cli-chat-proxy.grok.com` | Grok **subscription** |
+| `api_key` | the other 16 (anthropic, gemini, qwen, deepseek, glm, meta, ollama) | **metered API** |
+
+So the only fallback target that would *not* start metered spend is `grok-4.5`. Do not add it
+regardless without an explicit instruction — the lanes failing closed on a dead credential was
+correct behaviour, and the credential is what needed fixing.
+
+Corrections to earlier notes in this session: LiteLLM runs on **epyc2** (`192.168.109.72`), not
+epyc1; and the outage was not a "frozen file" but the multi-writer rotation above.
+
 ## 2026-07-13 — fabric-default-dual-reg + residual scrub (archived)
 
 - **Residual scrub (1236518):** strict live-alias MODEL_MAP (fable-only), explorer body wording, workflow/doc sonnet/opus prose scrub, doctor `pi-agent-registration` (17 modules).

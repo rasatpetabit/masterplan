@@ -2533,6 +2533,22 @@ test('goals-amend: rejects renumbering — a new goal must not reuse a number <=
   assert.match(r.stderr, /renumber/);
 });
 
+test('goals-amend: rejects a restated topic seed — the anchor is immutable', () => {
+  // The seed is the run's ANCHOR: the original request §3c measures the plan against. An
+  // amendment may add or tombstone goals, but restating the ask would let the review→fix loop
+  // edit the very thing it is judged against.
+  const p = goalsBundle();
+  const dir = path.dirname(p);
+  const oldHash = freezeInitialGoals(p, dir);
+  const md = 'topic: ship a subtly different widget\n\n## G1: the widget compiles\nsignal: command\n\n## G2: the widget is documented\nsignal: docs\n';
+  const newHash = goalsHashFn(md);
+  const gp = writeAmendGoals(dir, md);
+  const ap = writeAmendApproval(dir, oldHash, newHash);
+  const r = run(['goals-amend', `--state=${p}`, `--goals=${gp}`, `--approval=${ap}`, '--reason=restate the ask']);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /topic seed/i);
+});
+
 test('goals-amend: rejects an approval receipt not bound to the prior goals hash (stale/replay)', () => {
   const p = goalsBundle();
   const dir = path.dirname(p);

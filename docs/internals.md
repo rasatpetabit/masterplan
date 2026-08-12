@@ -23,9 +23,9 @@ masterplan v8 is a 5-layer system. Each layer is thin and delegates downward:
   The deleted Workflow engine (`workflows/execute.workflow.js`,
   `workflows/plan.workflow.js`) was replaced by this broker dispatch path
   (`dispatch_task` with `fail_mode:'isolated'` per descriptor).
-- **L3 — Agents:** seven markdown agent briefs under `agents/` (`mp-explorer`,
+- **L3 — Agents:** eight markdown agent briefs under `agents/` (`mp-explorer`,
   `mp-goal-assessor`, `mp-planner`, `mp-adversarial-reviewer`, `mp-plan-reviewer`,
-  `mp-subsystem-planner`, `mp-spec-decomposer`). Agents receive bounded briefs
+  `mp-subsystem-planner`, `mp-spec-decomposer`, `mp-alignment-auditor`). Agents receive bounded briefs
   and return structured output; they do not inherit session history.
   Implementation dispatch routes through `dispatch_task` to the
   `masterplan-implementation` policy class (replacement for the deleted

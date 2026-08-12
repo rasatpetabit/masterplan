@@ -185,7 +185,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, setWorktree, setWorktreeDisposition, setVerifiedSha, setCodexConfig, setReviewConfig, setRenderConfig, loadPlanTasks, buildSeedState, buildTasksFromPlanIndex, appendEvent, setCoordination, applyPlanIndex, upsertTasks, rebasePaths, GOAL_LIFECYCLE_EVENT_TYPES, inferGoalsCapability, CURRENT_SCHEMA_VERSION } from '../lib/bundle.mjs';
-import { parseGoals, validateGoals, goalsHash, validateUserApprovalReceipt, validateAmendment, amendmentDiff, crossCheckGoals, validateGoalCheckReceipt, validateGoalWaiver, waiverKey } from '../lib/goals.mjs';
+import { parseGoals, validateGoals, goalsHash, legacyGoalsHash, validateUserApprovalReceipt, validateAmendment, amendmentDiff, crossCheckGoals, validateGoalCheckReceipt, validateGoalWaiver, waiverKey } from '../lib/goals.mjs';
 import { planWorktreeCreate, parseWorktreeList, classifyWorktrees, normalizeDisposition, dispositionAfterTeardown, VALID_DISPOSITIONS as VALID_WORKTREE_DISPOSITION } from '../lib/worktree.mjs';
 import { collectDiskDirs, collectBundleRecords } from '../lib/worktree-fs.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
@@ -1109,6 +1109,17 @@ function main() {
           1
         );
       }
+      // `topic: |` was already valid input before the block form existed (the old parser read `|`
+      // as ordinary seed text). A bundle frozen under that spelling would re-hash silently here,
+      // voiding every goal_check/goal_waived receipt keyed to the old hash. Detect and refuse.
+      const legacyHash = legacyGoalsHash(goalsMd);
+      if (legacyHash && state.goals_md_hash && state.goals_md_hash === legacyHash && legacyHash !== hash) {
+        die(`goals-load: refusing to re-hash — this bundle's goals.md uses \`topic: |\`, which an `
+          + `earlier masterplan parsed as the literal seed "|" (stored hash ${legacyHash}); the block `
+          + `form now reads it as a verbatim anchor (${hash}). Re-freezing would invalidate every `
+          + `receipt bound to the stored hash. Rewrite the topic in the bare \`topic: <text>\` form to `
+          + `keep the old hash, or re-approve the goals deliberately to adopt the new anchor.`, 1);
+      }
       // ---- multi-file write: artifacts FIRST (each temp+rename), event append LAST as commit ----
       const goalsMdTmp = path.join(dir, 'goals.md.tmp');
       fs.mkdirSync(dir, { recursive: true });
@@ -1202,8 +1213,26 @@ function main() {
       const oldHash =
         state.goals_md_hash ??
         (lastAmend ? lastAmend.data.new_goals_hash : priorFrozenForAmend[priorFrozenForAmend.length - 1].data.goals_hash);
+      // The ANCHOR: the topic seed of the currently-frozen goals.md — the original request this run
+      // is measured against (§3c). Read from disk because state.goals is the derived goal cache and
+      // carries no seed. The on-disk file is still the PRE-amendment one here (the idempotent branch
+      // above writes and breaks). Amendments may add or tombstone goals, never restate the ask; since
+      // every amendment from now on is checked against the current file, the seed cannot drift a step
+      // at a time. Pass the parsed DOCUMENTS so validateAmendment can see both seeds.
+      // FAIL CLOSED: a missing or unreadable goals.md means the anchor cannot be established, and
+      // `oldGoals` is a bare array carrying no seed to fall back on — so proceeding would skip the
+      // immutability check entirely and let an amendment recreate goals.md with a different ask.
+      // Silence there is exactly the hole this rule exists to close, so refuse instead.
+      let anchorSeed;
+      try {
+        anchorSeed = parseGoals(fs.readFileSync(path.join(dir, 'goals.md'), 'utf8')).topicSeed;
+      } catch (e) {
+        die(`goals-amend: cannot read the frozen goals.md to establish the anchor (${e.message}). `
+          + 'The anchor is the original request this run is measured against; amending without it '
+          + 'would let the ask be silently restated. Restore goals.md and retry.', 1);
+      }
       // Amendment structural rules: new doc valid, IDs stable (no renumbering), removals are tombstones.
-      const amv = validateAmendment(oldGoals, parsed.goals);
+      const amv = validateAmendment(oldGoals, parsed, { anchorSeed });
       if (!amv.ok) die(`goals-amend: invalid amendment — ${amv.error}`, 1);
       if (newHash === oldHash) {
         die('goals-amend: rejected — new goals are identical to the current goals (nothing to amend)', 1);

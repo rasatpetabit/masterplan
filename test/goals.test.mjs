@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseGoals, validateGoals, validateAmendment, crossCheckGoals, amendmentDiff, goalsHash, GOAL_VERDICTS, waiverKey, validateUserApprovalReceipt, validateGoalCheckReceipt, validateGoalWaiver } from '../lib/goals.mjs';
+import { parseGoals, validateGoals, validateAmendment, crossCheckGoals, amendmentDiff, goalsHash, legacyGoalsHash, GOAL_VERDICTS, waiverKey, validateUserApprovalReceipt, validateGoalCheckReceipt, validateGoalWaiver } from '../lib/goals.mjs';
 
 // --- PARSE TESTS ---
 
@@ -621,4 +621,173 @@ test('goalsHash treats absent evidence and empty evidence alike', () => {
   const noEvidence = `topic: seed\n## G1: Ship the thing\nsignal: test\n`;
   const emptyEvidence = `topic: seed\n## G1: Ship the thing\nsignal: test\nevidence:\n`;
   assert.equal(goalsHash(noEvidence), goalsHash(emptyEvidence));
+});
+
+// --- ANCHOR TESTS (topic: | block form) ---
+//
+// The `topic:` seed is the run's ANCHOR: the user's original request, captured before the
+// adversary review→fix rounds and covered by goalsHash. The bare form truncates at the first
+// blank line and trim()s every line, which silently loses most of a multi-paragraph ask — so
+// the block form exists. It is opt-in on an exact `|` precisely so the bare form stays
+// byte-identical and no in-flight bundle's hash (and therefore no goal_check/goal_waived
+// receipt keyed to it) moves.
+
+test('topic: | keeps interior blank lines and relative indentation', () => {
+  const md = [
+    'topic: |',
+    '  Add an alignment check at the end of planning.',
+    '',
+    '  Specifically:',
+    '    - do not drift during review/fix turns',
+    '    - stay aligned with the actual ask',
+    '',
+    '## G1: Ship the auditor',
+    'signal: test',
+    'evidence: npm test',
+    '',
+  ].join('\n');
+
+  const { topicSeed, goals } = parseGoals(md);
+
+  assert.equal(
+    topicSeed,
+    'Add an alignment check at the end of planning.\n'
+      + '\n'
+      + 'Specifically:\n'
+      + '  - do not drift during review/fix turns\n'
+      + '  - stay aligned with the actual ask',
+  );
+  // The block must not swallow the goals that follow it.
+  assert.equal(goals.length, 1);
+  assert.deepEqual(goals[0], { id: 'G1', text: 'Ship the auditor', signal: 'test', evidence: 'npm test' });
+});
+
+test('topic: | runs to the first goal heading, not to the first blank line', () => {
+  const md = 'topic: |\n  first para\n\n  second para\n\n## G1: X\nsignal: test\n';
+  // The bare form would stop at "first para"; losing everything after it is the defect.
+  assert.equal(parseGoals(md).topicSeed, 'first para\n\nsecond para');
+});
+
+test('topic: | with no goals still captures the whole block', () => {
+  const md = 'topic: |\n  just an ask\n\n  with two paragraphs\n';
+  const { topicSeed, goals } = parseGoals(md);
+  assert.equal(topicSeed, 'just an ask\n\nwith two paragraphs');
+  assert.equal(goals.length, 0);
+});
+
+test('topic: | dedents by the common indent, so nesting in goals.md does not leak into the hash', () => {
+  const shallow = 'topic: |\n  a\n    b\n\n## G1: X\nsignal: test\n';
+  const deep = 'topic: |\n      a\n        b\n\n## G1: X\nsignal: test\n';
+  assert.equal(parseGoals(shallow).topicSeed, 'a\n  b');
+  // Same text, indented further in the file — same anchor, same hash.
+  assert.equal(parseGoals(deep).topicSeed, 'a\n  b');
+  assert.equal(goalsHash(shallow), goalsHash(deep));
+});
+
+test('bare topic: is byte-identical to before — still truncates at the blank line', () => {
+  const md = 'topic: short seed\n\nstray prose that must stay dropped\n\n## G1: X\nsignal: test\n';
+  assert.equal(parseGoals(md).topicSeed, 'short seed');
+});
+
+test('a `|` inside a bare topic: value does not trigger block mode', () => {
+  // Only an exact `|` opts in; `a | b` is an ordinary seed.
+  assert.equal(parseGoals('topic: a | b\n\n## G1: X\nsignal: test\n').topicSeed, 'a | b');
+});
+
+test('block and bare forms of the same seed hash identically', () => {
+  const bare = 'topic: one line ask\n\n## G1: X\nsignal: test\n';
+  const block = 'topic: |\n  one line ask\n\n## G1: X\nsignal: test\n';
+  assert.equal(goalsHash(bare), goalsHash(block));
+});
+
+// --- ANCHOR IMMUTABILITY ---
+
+const _A_OLD = { topicSeed: 'the original ask', goals: [{ id: 'G1', text: 'X', signal: 'test' }] };
+
+test('validateAmendment rejects a changed topic seed', () => {
+  const next = { topicSeed: 'a subtly restated ask', goals: _A_OLD.goals };
+  const res = validateAmendment(_A_OLD, next);
+  assert.equal(res.ok, false);
+  assert.match(res.error, /topic seed/i);
+});
+
+test('validateAmendment allows goal changes while the seed holds', () => {
+  const next = {
+    topicSeed: 'the original ask',
+    goals: [..._A_OLD.goals, { id: 'G2', text: 'Y', signal: 'test' }],
+  };
+  assert.equal(validateAmendment(_A_OLD, next).ok, true);
+});
+
+test('anchorSeed pins the amendment to the event-backed original, not the previous doc', () => {
+  // The walk-it-one-amendment-at-a-time path: the previous doc already drifted, so comparing
+  // against it would pass. Comparing against the anchor_captured seed catches it.
+  const drifted = { topicSeed: 'drifted ask', goals: _A_OLD.goals };
+  const next = { topicSeed: 'drifted ask', goals: _A_OLD.goals };
+  assert.equal(validateAmendment(drifted, next).ok, true);
+  const res = validateAmendment(drifted, next, { anchorSeed: 'the original ask' });
+  assert.equal(res.ok, false);
+  assert.match(res.error, /topic seed/i);
+});
+
+test('validateAmendment still accepts bare goal arrays (no seed to compare)', () => {
+  const oldArr = [{ id: 'G1', text: 'X', signal: 'test' }];
+  const newArr = [...oldArr, { id: 'G2', text: 'Y', signal: 'test' }];
+  assert.equal(validateAmendment(oldArr, newArr).ok, true);
+});
+
+test('topic: | is line-ending agnostic — CRLF and LF produce the same anchor and hash', () => {
+  // The bare form gets this free via trim(); the block form keeps raw lines, so without an
+  // explicit strip the same ask would hash differently on a CRLF-authored goals.md.
+  const lf = 'topic: |\n  a\n\n  b\n\n## G1: X\nsignal: test\n';
+  const crlf = lf.replace(/\n/g, '\r\n');
+  assert.equal(parseGoals(crlf).topicSeed, 'a\n\nb');
+  assert.equal(parseGoals(lf).topicSeed, parseGoals(crlf).topicSeed);
+  assert.equal(goalsHash(lf), goalsHash(crlf));
+});
+
+test('topic:| and `topic: | ` (no space / trailing space) still opt into block mode', () => {
+  const seed = (md) => parseGoals(md).topicSeed;
+  assert.equal(seed('topic:|\n  a\n\n  b\n\n## G1: X\nsignal: test\n'), 'a\n\nb');
+  assert.equal(seed('topic: | \n  a\n\n  b\n\n## G1: X\nsignal: test\n'), 'a\n\nb');
+});
+
+test('topic: | is NOT terminated by an indented goal-heading lookalike inside the ask', () => {
+  // A real `## G1:` is a markdown H2 at column 0. An indented one is quoted prose inside the
+  // request — terminating on it would truncate the anchor AND leak a phantom goal.
+  const md = [
+    'topic: |',
+    '  Rework how goals are written, e.g.',
+    '',
+    '    ## G1: an example heading the user quoted',
+    '',
+    '  and keep the numbering stable.',
+    '',
+    '## G1: Ship it',
+    'signal: test',
+    '',
+  ].join('\n');
+  const { topicSeed, goals } = parseGoals(md);
+  assert.match(topicSeed, /an example heading the user quoted/);
+  assert.match(topicSeed, /keep the numbering stable/);
+  // Exactly one real goal — the quoted heading must not become a second one.
+  assert.deepEqual(goals.map((g) => g.id), ['G1']);
+  assert.equal(goals[0].text, 'Ship it');
+});
+
+test('legacyGoalsHash detects a bundle frozen under the pre-block reading of `topic: |`', () => {
+  // `topic: |` was valid before the block form: the old parser read `|` as literal seed text.
+  // Re-hashing such a bundle would void every receipt keyed to the stored hash, so it must be
+  // detectable rather than silent.
+  const md = 'topic: |\n  the ask\n\n## G1: X\nsignal: test\n';
+  const legacy = legacyGoalsHash(md);
+  assert.notEqual(legacy, null);
+  assert.notEqual(legacy, goalsHash(md), 'legacy and block readings must differ, else nothing to guard');
+  // The legacy reading keeps the bare-form semantics: seed is "|", truncated at the blank line.
+  assert.equal(parseGoals(md, { legacy: true }).topicSeed, '|\nthe ask');
+});
+
+test('legacyGoalsHash returns null when the block form is not used', () => {
+  assert.equal(legacyGoalsHash('topic: plain seed\n\n## G1: X\nsignal: test\n'), null);
+  assert.equal(legacyGoalsHash('topic: a | b\n\n## G1: X\nsignal: test\n'), null);
 });

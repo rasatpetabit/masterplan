@@ -64,7 +64,7 @@ masterplan v8 is a five-layer system. Each layer delegates downward and never wr
 │  agents/mp-explorer.md        agents/mp-goal-assessor.md     │
 │  agents/mp-planner.md         agents/mp-adversarial-reviewer.md │
 │  agents/mp-plan-reviewer.md   agents/mp-subsystem-planner.md │
-│  agents/mp-spec-decomposer.md                                │
+│  agents/mp-spec-decomposer.md agents/mp-alignment-auditor.md │
 │  ← no session history; return structured output only         │
 └───────────────────────┬─────────────────────────────────────┘
                         │ node bin/doctor.mjs

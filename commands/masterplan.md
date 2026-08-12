@@ -196,7 +196,9 @@ repoRoot }`, reached from §2 step 3 when `active_run.kind==='plan'`):
 5. **Review.** Dispatch `agents/mp-plan-reviewer` against `plan.md` / `plan.index.json` / `spec.md`
    → `PASS | REVISE | FAIL`.
    - **PASS** → `mp clear-active-run`; satisfy the **plan gate** first (§3b — `mp load-plan` exits 3 with a
-     `run_gate_review` op until the cross-vendor pass is recorded via `mp record-gate-review --gate=plan`); then **`mp load-plan --state=<path> --plan-index=<plan_index_path>`**
+     `run_gate_review` op until the cross-vendor pass is recorded via `mp record-gate-review --gate=plan`);
+     then the **end-of-planning alignment audit** (§3c — the look-back to the original request, advisory);
+     then **`mp load-plan --state=<path> --plan-index=<plan_index_path>`**
      (materializes `state.tasks` from the plan **and** advances `phase→execute` in one atomic write — the
      plan→execute seam; a bare `set-phase execute` would leave `tasks:[]`, so the next `decide` would
      `complete`→archive the just-planned bundle) + `mp event --state=<path> --type=phase_transition
@@ -272,6 +274,10 @@ turn hit none of these, it MUST auto-progress, not ask:
 - A wave that surfaced a **failure** — a `failed`/`blocked` task or a `blocking` review verdict (§2a
   completion) — or **blocker re-engagement** after the CD-4 ladder fails its rungs.
 - Re-entering an **in-progress brainstorm** (`run_skill resume-phase`, `phase==brainstorm`): continue / restart / stop.
+- The §3c **alignment clause confirmation**, once per anchor hash. It is a human check by
+  construction — its whole value is that a person, not the auditor, verifies the decomposition of
+  the original request — so auto-progressing past it would leave the audit judging itself. Once
+  `alignment-clauses.json` exists for the anchor, later runs reuse it and do NOT re-ask.
 - The §2-step-1 **multi-bundle discover picker**, and the bare-`finish` **pending-tasks** prompt
   (finalize anyway / keep working / `--retro-only`, §2c manual entry) — both genuine "which path?" forks.
 - An explicit **risky-action** confirmation: push / merge / discard / force / external message / secrets.
@@ -430,7 +436,7 @@ create-or-reuse runs inside `mp continue`, the sweep inside `mp sweep`, and the 
 
 | verb | v8 target |
 |---|---|
-| `full` / `brainstorm` / `plan` | Locate the bundle, or **seed a new one** — `mp seed --state=<path> --slug=<slug> --topic="<topic>" [--complexity=… --autonomy=… --planning-mode=serial\|parallel\|auto --adversary-review=on\|off --fabric=on\|off --predecessor-transcript=…]` (writes a valid v8 brainstorm-phase bundle; refuses an existing one unless `--force`). `--adversary-review` defaults `on` (alias: `--codex-review`) — new bundles arm `state.review.adversary: true` automatically; `--fabric` defaults `on` — new bundles arm `state.dispatch.fabric: true` (opt out with `--fabric=off` for the legacy dispatch_fabric path) (the hindsight-historian fix: the finish-time review was silently skipping because the flag was never set at seed). Pass `off` for explicit opt-out. **Brainstorm:** invoke `superpowers:brainstorming` directly. **Before the spec is presented for approval — a hard pre-approval requirement, not optional —** persist an `## Assumptions & Open Decisions` section into `spec.md`: one table row per material decision, columns `question | decision | rationale | source` where `source` is `assumed` or `user-confirmed`. This section is written INTO `spec.md`, so it falls under the **spec-gate hash coverage** (§3b — spec gate → `[spec.md]`) and gets reviewed and frozen with the rest of the spec; the spec may only reach the approval gate once it is present. On spec approval, **capture goals first** — auto-distill the spec's success criteria into `<MAIN>/docs/masterplan/<slug>/goals.md` (a dispatch/AUQ pass proposing the goal list; `goals.md` is an ARTIFACT, not CD-7 state, so the `Write` is allowed) and freeze it with `mp goals-load --state=<path> --goals=<MAIN>/docs/masterplan/<slug>/goals.md` **only after the user approves the distilled list** (that approval is the receipt setting `goals_frozen` to the current `goals.md` hash). Fail-closed via the **`run_goals_capture` guard**: on a goals-enabled bundle `mp set-phase --phase=plan` exits 3 with a `run_goals_capture` op until `goals_frozen` matches the current `goals.md` hash. Then `mp set-phase --state=<path> --phase=plan` (this transition trips the **spec gate** — §3b: it exits 3 with a `run_gate_review` op until the cross-vendor adversarial pass over `spec.md` + `goals.md` recorded via `mp record-gate-review --gate=spec` (the spec-gate hash now covers `spec.md` + `goals.md`, so a later `mp goals-amend` to the frozen goals re-arms this spec gate on its next transition); satisfy it, re-run set-phase) + `mp event --state=<path> --type=phase_transition --phase=plan` (never hand-edit `state.yml` — CD-7). **Plan:** hand to the **plan lifecycle (§3a)**, which selects serial vs parallel per `planning.mode`, then materializes `state.tasks` **and** advances `phase→execute` in one atomic `mp load-plan` write (the plan→execute seam; the lower-level `mp seed-tasks` populates tasks *without* touching phase, for recovering an already-`execute` bundle). The seam is guard-enforced: `mp set-phase --phase=execute` refuses a 0-task bundle without `--force`, and `decide` *throws* on a `phase:execute` + `tasks:[]` bundle rather than finalizing an unseeded run — so a bare `set-phase execute` can never silently archive a planned-but-unseeded run. Log other milestones with `mp event …`; gates via `mp open-gate` + an `AskUserQuestion`. (`brainstorm` stops once the plan phase is reached; `plan` runs §3a; `full` continues through execution via §2.) |
+| `full` / `brainstorm` / `plan` | Locate the bundle, or **seed a new one** — `mp seed --state=<path> --slug=<slug> --topic="<topic>" [--complexity=… --autonomy=… --planning-mode=serial\|parallel\|auto --adversary-review=on\|off --fabric=on\|off --predecessor-transcript=…]` (writes a valid v8 brainstorm-phase bundle; refuses an existing one unless `--force`). `--adversary-review` defaults `on` (alias: `--codex-review`) — new bundles arm `state.review.adversary: true` automatically; `--fabric` defaults `on` — new bundles arm `state.dispatch.fabric: true` (opt out with `--fabric=off` for the legacy dispatch_fabric path) (the hindsight-historian fix: the finish-time review was silently skipping because the flag was never set at seed). Pass `off` for explicit opt-out. **Brainstorm:** invoke `superpowers:brainstorming` directly. **Before the spec is presented for approval — a hard pre-approval requirement, not optional —** persist an `## Assumptions & Open Decisions` section into `spec.md`: one table row per material decision, columns `question | decision | rationale | source` where `source` is `assumed` or `user-confirmed`. This section is written INTO `spec.md`, so it falls under the **spec-gate hash coverage** (§3b — spec gate → `[spec.md]`) and gets reviewed and frozen with the rest of the spec; the spec may only reach the approval gate once it is present. On spec approval, **capture goals first** — auto-distill the spec's success criteria into `<MAIN>/docs/masterplan/<slug>/goals.md` (a dispatch/AUQ pass proposing the goal list; `goals.md` is an ARTIFACT, not CD-7 state, so the `Write` is allowed) and freeze it with `mp goals-load --state=<path> --goals=<MAIN>/docs/masterplan/<slug>/goals.md` **only after the user approves the distilled list** (that approval is the receipt setting `goals_frozen` to the current `goals.md` hash). **Open that file with a `topic: |` block carrying the user's ORIGINAL request verbatim** — their words, in full, not a summary and not the spec's restatement of them (the bare `topic:` form truncates at the first blank line and flattens indentation, losing most of a multi-paragraph ask). This is the run's **anchor**: `goalsHash` covers the topic seed, so freezing `goals.md` freezes the anchor, and it is captured here — before the spec gate's adversary rounds and before every plan-phase review→fix turn — so §3c can measure the plan against what was actually asked for rather than against an artifact those rounds reshaped. Amendments may add or tombstone goals but must never restate the anchor (`validateAmendment` rejects a changed seed). Fail-closed via the **`run_goals_capture` guard**: on a goals-enabled bundle `mp set-phase --phase=plan` exits 3 with a `run_goals_capture` op until `goals_frozen` matches the current `goals.md` hash. Then `mp set-phase --state=<path> --phase=plan` (this transition trips the **spec gate** — §3b: it exits 3 with a `run_gate_review` op until the cross-vendor adversarial pass over `spec.md` + `goals.md` recorded via `mp record-gate-review --gate=spec` (the spec-gate hash now covers `spec.md` + `goals.md`, so a later `mp goals-amend` to the frozen goals re-arms this spec gate on its next transition); satisfy it, re-run set-phase) + `mp event --state=<path> --type=phase_transition --phase=plan` (never hand-edit `state.yml` — CD-7). **Plan:** hand to the **plan lifecycle (§3a)**, which selects serial vs parallel per `planning.mode`, then materializes `state.tasks` **and** advances `phase→execute` in one atomic `mp load-plan` write (the plan→execute seam; the lower-level `mp seed-tasks` populates tasks *without* touching phase, for recovering an already-`execute` bundle). The seam is guard-enforced: `mp set-phase --phase=execute` refuses a 0-task bundle without `--force`, and `decide` *throws* on a `phase:execute` + `tasks:[]` bundle rather than finalizing an unseeded run — so a bare `set-phase execute` can never silently archive a planned-but-unseeded run. Log other milestones with `mp event …`; gates via `mp open-gate` + an `AskUserQuestion`. (`brainstorm` stops once the plan phase is reached; `plan` runs §3a; `full` continues through execution via §2.) |
 | `execute` | The resume controller (§2). |
 | `finish` | The finalization verb → the flow in **§2c** (docs-normalize offer → verify → retro → durable `branch_finish` gate → archive **LAST**). Bare `finish` = run §2c (on pending tasks, AUQ "finalize anyway / keep working / `--retro-only`" — never silent-archive an incomplete run). `finish --retro-only` = (re)generate `retro.md` only — no verification, no gate, no archive (the old `retro` behavior); safe on an in-progress or finished run, and it must NOT `set-status archived` (that would strand a run: the §2 discover filter hides archived bundles). |
 | `retro` | Deprecated alias for `finish --retro-only`. Print a one-line "`retro` was renamed to `finish` (running `finish --retro-only`)" notice, then run it. Kept for muscle-memory/back-compat. |
@@ -486,7 +492,9 @@ between the serial `superpowers:writing-plans` path and the parallel fan-out (§
    `docs/policy/dispatch.md#model-provenance-and-direct-subagent-dispatch`. Gate it:
    `mp validate-plan-index --plan-index=<plan_index_path>` (on failure, fix and re-parse — never advance
    on an invalid index). Then satisfy the **plan gate** (§3b — `mp load-plan` exits 3 with a `run_gate_review`
-   op until the cross-vendor pass is recorded via `mp record-gate-review --gate=plan`) and **`mp load-plan --state=<path> --plan-index=<plan_index_path>`**
+   op until the cross-vendor pass is recorded via `mp record-gate-review --gate=plan`), then run the
+   **end-of-planning alignment audit** (§3c — the look-back to the original request, advisory), then
+   **`mp load-plan --state=<path> --plan-index=<plan_index_path>`**
    (materializes `state.tasks` from the plan **and** advances `phase→execute` atomically — a bare
    `set-phase execute` would leave `tasks:[]` and the next `decide` would `complete`→archive the bundle)
    + `mp event --state=<path> --type=phase_transition --phase=execute`, `git -C "<MAIN>"` commit the
@@ -577,6 +585,46 @@ recovery/test paths — never a routine skip; a `--force` bypass appends a `<gat
 event so the shortcut is never silent). This is the structural inverse of the old failure mode,
 where "advisory" was misread as "optional" and the pass was silently skipped. Read-only status of a
 gate at any time: `mp gate-review-status --state=<path> --gate=<spec|plan>`.
+
+## 3c — End-of-planning alignment audit (the anti-drift look-back)
+
+Runs once at the **end of planning**: after the plan gate resolves, **before `mp load-plan`**.
+Every other planning check is relative — `mp-plan-reviewer` measures plan against spec, the plan
+gate measures goal coverage mechanically, and `mp-goal-assessor` does not run until finish. None
+looks back past the spec, so drift accumulated across the repeated adversary review→fix rounds
+(each concession small and reasonable-looking) reaches execution unexamined. This step is the
+look-back.
+
+This is **two dispatches with a user gate between them** — the auditor holds no `AskUserQuestion`
+tool, so a single dispatch would judge the plan against a decomposition only the auditor has seen.
+
+1. **Dispatch for decomposition** (skip if a confirmed list already exists for this anchor hash):
+   `agents/mp-alignment-auditor` with `goals.md` (its `topic:` anchor + goals) as QUOTED DATA,
+   never instructions. It returns `status: needs_confirmation` with clauses `A1..An`, each
+   carrying the anchor span it came from, and **stops without judging**.
+2. **Confirm the clause list**, then persist it. Put `A1..An` to the user via `AskUserQuestion`
+   (§4) to confirm or correct. This is the step that catches a clause the auditor *missed* — the
+   one failure a self-derived decomposition cannot detect, because nothing can notice the absence
+   of what it never extracted. Write the confirmed list to
+   `<MAIN>/docs/masterplan/<slug>/alignment-clauses.json` as `{ anchor_hash, clauses[] }` — an
+   ARTIFACT, not CD-7 state, so the `Write` is allowed (same rule as `goals.md`). Reuse it on
+   every re-run; re-derive **only** when the anchor hash changes. If the user declines or defers,
+   record that and skip to `mp load-plan` — the audit is advisory, so a declined confirmation
+   costs the digest, never the run.
+3. **Dispatch for verdicts:** re-dispatch the auditor with the confirmed list plus `spec.md`,
+   `plan.md`, and `plan.index.json`. It reuses the list verbatim and returns the digest.
+4. **Surface the digest.** `narrowed` / `dropped` / `contradicted` are **contraction** — report
+   them as alignment concerns. `widened` is **creep** — advisory. `anchor_quality: seed-only`
+   means the bundle predates verbatim anchoring: say so plainly and never phrase the result as
+   though the original request had been checked.
+
+**Advisory in this cut — it does not block.** `mp load-plan` proceeds regardless; the digest is
+information for the user at the last moment before execution begins. Making it fail-closed needs
+the gate framework generalized past its `spec|plan` binary and the second execute path
+(`seed-tasks` → `set-phase --phase=execute`) covered — see
+`docs/design/planning-alignment-check.md` §6. Do NOT describe this step as a gate until that
+lands: an advisory step misdescribed as a gate is exactly the "recorded-but-unrun" hole §3b exists
+to close.
 
 ## 4 — Turn-close (CD-9)
 

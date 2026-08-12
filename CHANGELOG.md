@@ -5,6 +5,56 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added — end-of-planning alignment audit (the anti-drift look-back)
+
+Every planning-phase check was *relative*, and none looked back past the spec:
+`mp-plan-reviewer` measures the plan against `spec.md`, the plan gate measures goal
+coverage mechanically ("≥1 task cites G*n*"), and `mp-goal-assessor` does not run
+until **finish**. So drift accumulated across the repeated adversary review→fix
+rounds — each concession small and reasonable-looking — reached execution
+unexamined, and surfaced only after all the work was done.
+
+New `agents/mp-alignment-auditor` (§3c of the sequencer) runs at the end of planning,
+after the plan gate and before `mp load-plan`, as **two dispatches with a user gate
+between them**: it decomposes the run's anchor into stable clauses `A1..An` and stops,
+the orchestrator has the user **confirm** them (persisted to `alignment-clauses.json`,
+a stop in the §2d autonomy contract), then it judges the plan against the confirmed
+list on the agent-dispatch critic lane. The auditor holds no `AskUserQuestion` tool, so
+a single dispatch would have judged against a decomposition only it had seen —
+producing a digest indistinguishable from a confirmed one.
+
+Confirmation is what makes a verdict arguable, and it is the only thing that catches a
+clause the auditor itself missed. `narrowed`/`dropped`/`contradicted` are contraction;
+`widened` is creep. Advisory in this cut: it reports, it does not block.
+
+### Added — `topic: |` block form anchors a run to the verbatim request
+
+`goalsHash` already canonicalizes the topic seed, so the seed inherits the goals
+freeze — but `parseGoals` terminated `topic:` collection at the first blank line and
+`trim()`ed every retained line, silently truncating a multi-paragraph request to its
+first paragraph and flattening its structure. `topic: |` now collects verbatim to the
+first goal heading, preserving interior blank lines and relative indentation.
+
+Opt-in on an exact `|`, so the bare form keeps byte-identical semantics: verified
+across every committed bundle, **no existing `goalsHash` moves** and no in-flight
+`goal_check`/`goal_waived` receipt is voided.
+
+### Added — the anchor is immutable across amendments
+
+`validateAmendment` ignored `topicSeed` entirely, so an amendment could restate the
+ask — letting the review→fix loop edit the very thing it is judged against. It now
+rejects a changed seed, checked in `goals-amend` against the currently-frozen
+`goals.md`, and accepts an `anchorSeed` for pinning to an event-backed original.
+
+Enforcement (making §3c fail-closed) is deferred and specified in
+`docs/design/planning-alignment-check.md` §6: the gate framework is a closed
+`spec|plan` binary rather than a registry, so an `alignment` gate needs it
+generalized and hooked at both `enforceGateReview` call sites — `load-plan` and
+`set-phase --phase=execute`, which are the two plan→execute paths and are both
+already gated today.
+
 ## [9.9.1] — 2026-08-08
 
 ### Fixed — tombstoned goals could never satisfy plan coverage
