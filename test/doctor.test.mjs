@@ -1358,6 +1358,7 @@ test('plan-doc-cruft: single-word slugs never match headings (hyphenated-only si
 
 // The canonical goals.md the committed goals-enabled fixtures freeze — its goalsHash is what
 // their events' goals_frozen.goals_hash carries. Reused here to build tmp fixtures at runtime.
+const sha256hex = (s) => createHash('sha256').update(String(s)).digest('hex');
 const GOALS_MD_FIXTURE =
   'topic: Add goal tracking to masterplan\n\n' +
   '## G1: Track goals across the workflow\n' +
@@ -1555,6 +1556,97 @@ test('goals: archived completed run (phase done, active goals) without receipt s
     assert.ok(
       findings.some((f) => f.severity === 'ERROR' && /archived goals-enabled/.test(f.summary)),
       `a completed run without a receipt must stay ERROR: ${JSON.stringify(findings)}`
+    );
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+// ---- receipt selection: newest STRUCTURALLY VALID receipt wins ---------------
+
+function userGoalCheckEvent(goalsHashVal, headSha, overrides = {}) {
+  return {
+    type: 'goal_check',
+    ts: overrides.ts || '2026-07-08T00:00:00Z',
+    data: {
+      goals_hash: goalsHashVal, head_sha: headSha, base: 'def456', diff_hash: 'x',
+      base_diff_hash: 'x', verify_output_hash: 'v', clean: true,
+      provenance_kind: overrides.provenanceKind || 'user',
+      verdicts: { G1: { verdict: 'achieved', evidence: 'done' }, G2: { verdict: 'achieved', evidence: 'done' } },
+      provenance: overrides.provenance || {
+        attested_by: 'user',
+        approval_receipt: {
+          attested_by: 'user', purpose: 'goal_check', goals_hash: goalsHashVal,
+          question: 'q', answer: 'a', ts: overrides.ts || '2026-07-08T00:00:00Z',
+        },
+      },
+    },
+    summary: 'goal check recorded (user)',
+  };
+}
+
+function stateDoneWithGoals() {
+  return (
+    `schema_version: 6\nslug: rc\nstatus: archived\nphase: execute\ngoals_enabled: true\n` +
+    'goals:\n  - id: G1\n    text: a\n  - id: G2\n    text: b\ntasks: []\ngoing-goals-hash-placeholder'
+  );
+}
+
+test('goals: valid receipt followed by an invalid trailing stub still passes', () => {
+  const H = goalsHash(GOALS_MD_FIXTURE);
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-goals-valid-then-stub-'));
+  try {
+    // Note state.goals is null here so the doctor falls back to goals.md (authoritative).
+    const state =
+      `schema_version: 6\nslug: rc\nstatus: archived\nphase: execute\ngoals_enabled: true\ngoals:\n` +
+      `  - id: G1\n    text: a\n  - id: G2\n    text: b\ntasks: []\n`;
+    const valid = userGoalCheckEvent(H, 'abc123');
+    const stub = {
+      type: 'goal_check',
+      ts: '2026-08-08T00:00:00Z',
+      data: {
+        goals_hash: sha256hex('wrong'), head_sha: 'def456', base_diff_hash: 'zzz',
+        provenance_kind: 'assessor',
+        provenance: { dispatch_id: 'cleanup', model: 'cleanup', output_tokens: 1 },
+      },
+      summary: 'cleanup stub',
+    };
+    writeGoalsBundle(tmp, 'rc', { state, goalsMd: GOALS_MD_FIXTURE,
+      events:
+        '{"type":"bundle_created","data":{"goals_enabled":true}}\n' +
+        `{"type":"goals_frozen","data":{"goals_hash":${JSON.stringify(H)}}}\n` +
+        JSON.stringify(valid) + '\n' + JSON.stringify(stub) + '\n',
+    });
+    const findings = goals(tmp);
+    assertFindingShape(findings);
+    assert.ok(
+      !findings.some((f) => f.severity === 'ERROR'),
+      `valid receipt must not be shadowed by an invalid trailing stub: ${JSON.stringify(findings)}`
+    );
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('goals: two invalid receipts still ERROR (no valid receipt to select)', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-goals-two-invalid-'));
+  try {
+    const state =
+      `schema_version: 6\nslug: rc2\nstatus: archived\nphase: execute\ngoals_enabled: true\ngoals:\n` +
+      `  - id: G1\n    text: a\ntasks: []\ngoals.md-unused`;
+    const bad1 = { type: 'goal_check', ts: '2026-07-01T00:00:00Z', data: { goals_hash: sha256hex('x'), head_sha: 'a1', provenance_kind: 'assessor', provenance: { dispatch_id: 'cleanup2', model: 'cleanup2' } } };
+    const bad2 = { type: 'goal_check', ts: '2026-08-01T00:00:00Z', data: { goals_hash: sha256hex('y'), head_sha: 'a2', provenance_kind: 'assessor', provenance: { dispatch_id: 'cleanup3', model: 'cleanup3' } } };
+    writeGoalsBundle(tmp, 'rc2', {
+      state,
+      events:
+        '{"type":"bundle_created","data":{"goals_enabled":true}}\n' +
+        JSON.stringify(bad1) + '\n' + JSON.stringify(bad2) + '\n',
+    });
+    const findings = goals(tmp);
+    assertFindingShape(findings);
+    assert.ok(
+      findings.some((f) => f.severity === 'ERROR'),
+      `two invalid receipts must still ERROR as having no valid receipt`
     );
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
