@@ -1492,6 +1492,75 @@ test('goals: KNOWN DEFECT — a post-plan amendment leaving a goal uncovered sho
   fs.rmSync(tmp, { recursive: true, force: true });
 });
 
+// ---- abandoned-shell exemption (archived brainstorm shell, zero work) --------
+
+function makeArchivedShellState(phase, taskCount) {
+  const goals = phase === 'brainstorm'
+    ? 'goals_enabled: true\ngoals: []\n'
+    : 'goals_enabled: true\ngoals:\n  - id: G1\n    text: a goal\n';
+  const tasks = taskCount > 0
+    ? 'tasks: [{"id":1,"status":"done"}]\n'
+    : 'tasks: []\n';
+  return `schema_version: 6\nslug: shell\nstatus: archived\nphase: ${phase}\n${goals}${tasks}`;
+}
+
+test('goals: abandoned archived brainstorm shell (zero tasks/goals/events) is exempt', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-goals-shell-'));
+  try {
+    writeGoalsBundle(tmp, 'shell', {
+      state: makeArchivedShellState('brainstorm', 0),
+      events: '', // no goals_frozen / execution events
+    });
+    const findings = goals(tmp);
+    assertFindingShape(findings);
+    assert.equal(maxSeverity(findings), 'SKIP', JSON.stringify(findings));
+    assert.ok(
+      !findings.some((f) => f.severity === 'ERROR' && /archived goals-enabled/.test(f.summary)),
+      `abandoned shell must not require a receipt: ${JSON.stringify(findings)}`
+    );
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('goals: archived brainstorm shell WITH a task still requires a receipt', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-goals-shell-task-'));
+  try {
+    writeGoalsBundle(tmp, 'shell-task', {
+      state: makeArchivedShellState('brainstorm', 1),
+      events: '',
+    });
+    const findings = goals(tmp);
+    assertFindingShape(findings);
+    assert.ok(
+      findings.some((f) => f.severity === 'ERROR' && /archived goals-enabled/.test(f.summary)),
+      `a shell with a task is real work and must be assessed: ${JSON.stringify(findings)}`
+    );
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('goals: archived completed run (phase done, active goals) without receipt still ERRORS', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-goals-done-'));
+  try {
+    writeGoalsBundle(tmp, 'done', {
+      state: makeArchivedShellState('done', 1),
+      events:
+        '{"type":"bundle_created","data":{"goals_enabled":true}}\n' +
+        '{"type":"goals_frozen","data":{"goals_hash":"sha256:' + goalsHash(GOALS_MD_FIXTURE) + '"}}\n',
+    });
+    const findings = goals(tmp);
+    assertFindingShape(findings);
+    assert.ok(
+      findings.some((f) => f.severity === 'ERROR' && /archived goals-enabled/.test(f.summary)),
+      `a completed run without a receipt must stay ERROR: ${JSON.stringify(findings)}`
+    );
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
 test('plan-doc-cruft: dot-directories and node_modules are never scanned', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-pdc-dot-'));
   fs.mkdirSync(path.join(tmp, 'docs', 'masterplan', 't9-cleanup'), { recursive: true });
