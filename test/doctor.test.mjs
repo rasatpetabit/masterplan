@@ -571,6 +571,33 @@ test('state-schema: WARN (not silent skip) for a slug dir missing state.yml (Cod
   assert.match(findings[0].summary, /state\.yml is missing or unreadable/);
 });
 
+test('state-schema: hidden dirs (.graveyard) are not treated as bundle slugs', () => {
+  // The `.graveyard/` retirement archive is a sibling of real bundle dirs and intentionally has no
+  // state.yml of its own (its children are the archived bundles). It must not produce an orphan
+  // WARN. Regression for the false positive on every repo using the archive convention.
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-ss-grave-'));
+  fs.mkdirSync(path.join(tmp, 'docs', 'masterplan', '.graveyard', 'retired-bundle'), { recursive: true });
+  fs.writeFileSync(path.join(tmp, 'docs', 'masterplan', '.graveyard', 'retired-bundle', 'plan.md'), '# retired\n');
+  // Also seed one real bundle so the check runs (not SKIP) and must PASS.
+  fs.mkdirSync(path.join(tmp, 'docs', 'masterplan', 'real-bundle'), { recursive: true });
+  fs.writeFileSync(
+    path.join(tmp, 'docs', 'masterplan', 'real-bundle', 'state.yml'),
+    [
+      'schema_version: 6',
+      'slug: real-bundle',
+      'status: in-progress',
+      'phase: building',
+      'tasks: []',
+      'active_run: null',
+      'pending_gate: null',
+      '',
+    ].join('\n')
+  );
+  const findings = stateSchema(tmp);
+  assertFindingShape(findings);
+  assert.equal(maxSeverity(findings), 'PASS', JSON.stringify(findings));
+});
+
 // ---- legacy-bundle (#1, WARN) ------------------------------------------------
 
 test('legacy-bundle: fixtures match dir-prefix severity', async (t) => {
