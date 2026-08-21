@@ -26,8 +26,8 @@ function resolveAgentDispatchRoot() {
   } catch {
     // fall through
   }
-  if (existsSync('/srv/dev/ai/agent-dispatch')) {
-    return '/srv/dev/ai/agent-dispatch';
+  if (existsSync('/srv/workflows/agent-dispatch/runtime/current')) {
+    return '/srv/workflows/agent-dispatch/runtime/current';
   }
   return null;
 }
@@ -86,7 +86,7 @@ const root = resolveAgentDispatchRoot();
 let overlayRaw;
 let overlay;
 if (root !== null) {
-  const overlayPath = join(root, 'policy', 'overlays', 'masterplan.jsonc');
+  const overlayPath = join(root, 'policy', 'generated', 'overlays', 'masterplan.jsonc');
   overlayRaw = readFileSync(overlayPath, 'utf8');
   overlay = JSON.parse(stripJsoncComments(overlayRaw));
 }

@@ -14,7 +14,7 @@ agent-dispatch. Transport-level 429 / 5xx / TCP timeout retries remain in
 
 | Concern | Owner |
 |---|---|
-| Chunk sizes, retries, reconciliation, findings extraction, verdict semantics, harness metadata | **agent-dispatch** — see `/srv/dev/ai/agent-dispatch/docs/policy/dispatch.md` and `references/review-findings.schema.json` |
+| Chunk sizes, retries, reconciliation, findings extraction, verdict semantics, harness metadata | **agent-dispatch** — see `/srv/workflows/policy/dispatch.md` and `references/review-findings.schema.json` |
 | Capture full edit-locus diff, hash it, call `dispatch_review` once, project + persist, populate `blocking_reviews[]` | **masterplan** (`lib/task-review.mjs`, `lib/dispatch-wave.mjs`, `lib/wave-commit.mjs`) |
 | D6 undeclared-write revert | **masterplan** — independent of review outcome |
 
