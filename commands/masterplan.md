@@ -61,7 +61,7 @@ worktree create-or-reuse (§2e¶4), the crash-recovery scope reset, the phase-1 
 (frozen F-SCOPE `scope` + D6 `baseline`), per-task routing (`routeTask`), and the inline
 `finalize_run` reconcile (the same `mp record-result --reconcile` transaction). It runs the LOCAL git
 those steps need itself (`-C`-qualified to loci it derives); the shell keeps Workflow/Agent/skill
-dispatch, every `AskUserQuestion`, and ALL network ops (`git push`, `gh`, agent-dispatch review).
+dispatch, every `AskUserQuestion`, and ALL network ops (`git push`, `gh`, the native adversary review).
 
 1. **Derive MAIN, then locate the bundle.** **MAIN must be derived FIRST** (§2e¶1:
    `MAIN="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"` — the sole
@@ -90,7 +90,7 @@ dispatch, every `AskUserQuestion`, and ALL network ops (`git push`, `gh`, agent-
 
    | op | do |
    |---|---|
-   | `dispatch_fabric` | The ONLY execute-wave path (L2 Workflow / foreground fork deleted). `cd "<op.cwd>"` FIRST (§2e¶3). Run `mp dispatch-wave --state=<path>` (ONE deterministic command — dispatch AND record complete inside it; pass `--codex-suppressed` when §0 host-detect reported a Codex host — prepare inputs frozen into the record's `routing_inputs`; Guard-D ownership acquired inside the command). It re-derives routed tasks via `prepareWave`, builds one adsp work item per task (`buildWorkItem`), drives a bounded concurrent pool of `dispatch_task` calls through one `agent-dispatch serve-mcp` process (coord job opened/closed in a `finally`). When `state.review.adversary` is on, after implement + local verify it captures each done task's full edit-locus diff and calls `dispatch_review` once on that same broker session (masterplan is caller/recorder only — no local review engine); the native path freezes `review_context` and runs the same centralized review via `reviewNativeResult` at result ingestion. Then the SAME `record-result` transaction — digests carry adsp-v1.1 `dispatch` provenance and canonical review projections. Idempotent on the wave-dispatch record `(run_id, wave, 'dispatch_fabric')` persisted BEFORE the broker call. Act on the embedded record outcome per §2a step 2. NO promote — there is no background Workflow; a crash re-emits this op on the next `continue`. |
+   | `dispatch_fabric` | The ONLY execute-wave path (L2 Workflow / foreground fork deleted). `cd "<op.cwd>"` FIRST (§2e¶3). Run `mp dispatch-wave --state=<path>` (ONE deterministic command — dispatch AND record complete inside it; pass `--codex-suppressed` when §0 host-detect reported a Codex host — prepare inputs frozen into the record's `routing_inputs`; Guard-D ownership acquired inside the command). It re-derives routed tasks via `prepareWave`, resolves each task class from the checked-in routing policy (`policy/workflow-map.json`), and returns a NATIVE SPAWN PLAN — per-task governed descriptors (class/lane/litellm model refs) the orchestrating harness executes with its parallel subagent API. The wave-dispatch record persists status `pending` BEFORE launch (two-phase launch marker: wave token on every child label+prompt; `probeWaveToken` recovery matches the harness job list before any re-dispatch). When `state.review.adversary` is on, after implement + local verify it captures each done task's full edit-locus diff and freezes `review_context` into the record; `mp record-result` then runs the two-phase native review seam (`run_native_reviews`) — masterplan is caller/recorder only, no local review engine. Then the SAME `record-result` transaction — digests carry the native dispatch provenance and canonical review projections. Idempotent on the wave-dispatch record `(run_id, wave, 'dispatch_fabric')` persisted BEFORE launch. Act on the embedded record outcome per §2a step 2. NO promote — there is no background Workflow; a crash re-emits this op on the next `continue`. |
    | `dispatch_plan` | Planning fan-out (READ-ONLY). Run `mp dispatch-plan` (or the continue-emitted planning op) to send subsystem-planner work items through the masterplan-planning capability class with enumerated accessible roots; stage fragments then merge/validate/review as today. |
    | `stop` `reason:'wait'` | A live fabric wave owns the work. Report it and close — completion re-invokes the controller. |
       | `ask` `ask:'gate'` | Re-render the durable gate's `AskUserQuestion` (CD-9). **Finalization gates** (`verification_failed` / `no_verification_command` / `docs_normalize` / `branch_finish`): re-render via `mp finish-step --state=<path>` — its `ask:'gate'` op carries the full payload (incl. the rehydrated codex digest for `branch_finish`) — and act per the **§2c** answer flags (the clear-gate + bundle commit run inside the subcommand). Other gates: named option → act, `mp clear-gate`, `git -C "<MAIN>"` commit the bundle, re-enter the loop. Free-text / no clear answer → keep the gate, respond, close. NEVER auto-proceed regardless of autonomy (the durable marker outranks a native AUQ that can't survive compaction). |
@@ -133,8 +133,7 @@ via `mp continue`'s inline `finalize_run` reconcile — the same transaction, `-
 1. **Record.** Write the engine's whole `<result>` JSON to a scratch file OUTSIDE the bundle dir
    (e.g. `/tmp/mp-result-<slug>.json` — a bundle-dir scratch would be swept into the state commit),
    then `mp record-result --state=<path> --result-file=<that file>`. On the native path,
-   `record-result` first runs `reviewNativeResult` (centralized `dispatch_review` ingestion using
-   the wave record's frozen `review_context`) so native and MCP-pool produce the same canonical
+   `record-result` first runs `reviewNativeResult` (the two-phase native review seam: phase A emits `run_native_reviews` adversary descriptors for the harness to run — nothing recorded yet; phase B ingests the returned review records via `--reviews-file` through the same centralized projection) so every path produces the same canonical
    review projection before the commit transaction.
 2. **Act on the returned JSON.**
    - `outcome:'lost-to-other'` → NOTHING was written; a second session took this bundle over while
@@ -142,7 +141,7 @@ via `mp continue`'s inline `finalize_run` reconcile — the same transaction, `-
      `mp acquire-owner --force`, or abandon this session's recording) (Guard D, §2e¶8).
    - `failed[]` / `qctl[]` / `blocking_reviews[]` non-empty → surface via `AskUserQuestion` (§4) —
      never silently loop. `blocking_reviews[]` is the fail-closed execution-review gate: `rework`,
-     `reject`, `error`, and incomplete harness coverage from centralized `dispatch_review` all land
+     `reject`, `error`, and incomplete harness coverage from the native review seam all land
      here. Failed/blocked tasks stay `pending` with the marker intact; `next` is
      `recover_wave` for ONLY those. `qctl` tasks hand to §6.
    - `scope.ok:false` → the offenders were already reverted in WT (`reverted[]`); surface the
@@ -219,7 +218,7 @@ pattern: the shell calls it, executes the ONE op returned, and re-calls with the
 as flags. Every durable transaction — verified-SHA record, gate open/clear, the codex events, merge +
 worktree teardown + disposition, archive + owner release, and the bundle commits bracketing them —
 runs INSIDE the subcommand; the shell keeps only the genuinely-LLM/network work: running verification
-(skill), writing the retro, running the agent-dispatch adversary review, the PR check, the push, and the AUQs.
+(skill), writing the retro, running the native adversary review, the PR check, the push, and the AUQs.
 **Archive is LAST** and reachable only through a retired disposition — archiving earlier strands the
 run (the §2-step-1 discover filter hides archived bundles, so the gate could never re-surface; the
 one thing v7's flow got wrong).
@@ -241,7 +240,7 @@ answer flags and the same op (or the open gate) comes back.
 | `run_verify` `{commands, head, wt}` | `superpowers:verification-before-completion`: RUN fresh, **cite real output + exit code** (CD-3; "should pass" is not evidence). Command source: `op.commands` (the union of the plan tasks' `verify_commands`); if empty, the skill's own IDENTIFY; if STILL none under `--autonomy=full`, `mp open-gate --id=no_verification_command` + AUQ (specify one / proceed without) — never silently skip. PASS → re-invoke with `--verify-passed` (records the SHA durably; a re-entry at unchanged HEAD skips the re-run). FAIL → `--verify-failed` (opens the durable `verification_failed` gate; the returned `ask` is the turn-close). |
 | `run_goal_check` `{goals_path, base, head, wt}` | Fires only on a goals-enabled bundle, AFTER verify passes and BEFORE the retro. Dispatch `agents/mp-goal-assessor` against `op.goals_path` + the branch diff (`op.base..op.head`) → a per-goal met/unmet verdict with evidence. Then record the verdict durably: `mp record-goal-check --state=<MAIN>/docs/masterplan/<slug>/state.yml --assessment-file=<scratch outside the bundle dir>`. All goals met → re-invoke `mp finish-step` with `--goals-met` (records the SHA-keyed pass; a re-entry at unchanged HEAD skips the re-assessment). Any goal unmet → `--goals-unmet` (opens the durable `goals_unmet` gate; the returned `ask` is the turn-close). **Fail-closed on dispatch failure:** if the assessor dispatch itself errors / the lane is unreachable, do NOT silently pass — re-invoke with `--goals-unmet --manual-verdict` and drive the gate in **manual-verdict mode** (the operator supplies the met/unmet call at the gate AUQ rather than the assessor). |
 | `write_retro` `{path, retro_only?}` | Generate `retro.md` at `op.path` (write-if-absent — finish-step re-checks the fs, so a re-entry skips it). Then re-invoke with no new flags. Subsumes the old `retro` verb. |
-| `run_adversary_review` `{base, head, wt, digest_path}` | The whole-branch cross-vendor adversary review — network, stays shell-side. Route it through the agent-dispatch control plane's adversary lane (NO model is named — `--class adversary` resolves to a cross-vendor reviewer engine-side), run foreground from WT: `( cd "<op.wt>" && agent-dispatch review --class adversary --base <op.base> )`. **Fail-soft, never wedge finish:** ANY non-success — non-zero exit, `agent-dispatch` missing from PATH, empty output — → `--review-skipped --review-reason="<tight reason>"`; finish-step writes the sha-keyed skip event whose hyphenated "adversary-review … skipped" summary deliberately does NOT match the audit's `\b(codex\|adversary)\s+review\b`, so a degraded finish still trips `adversary_review_configured_but_zero_invocations` — correct. On **exit 0**: `Write` a brief digest (count + top findings, not the raw dump) to `op.digest_path` (absolute-MAIN, §2e¶1; the Write tool is not shell-evaluated, so arbitrary review bytes are safe — never interpolate the digest into a shell word), then `--review-done --review-count=<n> --review-base=<op.base> --review-digest-file=<op.digest_path>` — finish-step emits the durable `adversary_review` event (its `summary` is the audit signal that DOES match `\b(codex\|adversary)\s+review\b`; `data.sha/base/count` are the quote-safe machine scalars the re-entry guard keys on; `note` carries the digest verbatim for gate rehydration). Residual window: a death between the reviewer's exit 0 and the re-invoke leaves no record at HEAD, so resume re-runs the review — harmless and idempotent at an unchanged tree. |
+| `run_adversary_review` `{base, head, wt, digest_path}` | The whole-branch cross-vendor adversary review — network, stays shell-side. Run it harness-native over the branch diff: the **adversary class** (`breaker` role, frontier lane; adversarial panel for cross-vendor coverage — resolved from the checked-in `policy/workflow-map.json`), foreground from WT, no local review engine. **Fail-soft, never wedge finish:** ANY non-success — a non-zero exit, the review unavailable/empty, a failed harness spawn — → `--review-skipped --review-reason="<tight reason>"`; finish-step writes the sha-keyed skip event whose hyphenated "adversary-review … skipped" summary deliberately does NOT match the audit's `\b(codex\|adversary)\s+review\b`, so a degraded finish still trips `adversary_review_configured_but_zero_invocations` — correct. On **a real review**: `Write` a brief digest (count + top findings, not the raw dump) to `op.digest_path` (absolute-MAIN, §2e¶1; the Write tool is not shell-evaluated, so arbitrary review bytes are safe — never interpolate the digest into a shell word), then `--review-done --review-count=<n> --review-base=<op.base> --review-digest-file=<op.digest_path>` — finish-step emits the durable `adversary_review` event (its `summary` is the audit signal that DOES match `\b(codex\|adversary)\s+review\b`; `data.sha/base/count` are the quote-safe machine scalars the re-entry guard keys on; `note` carries the digest verbatim for gate rehydration). Residual window: a death between the reviewer's completion and the re-invoke leaves no record at HEAD, so resume re-runs the review — harmless and idempotent at an unchanged tree. |
 | `ask` `ask:'gate'` `gate:'branch_finish'` `{head, branch, base, dispositions, review}` | First **check for an open PR** (the §3 PR check: `gh pr list --head "<op.branch>" … \| mp pr-summary`). AUQ labelled with `op.base`: `Merge to <base> locally (Recommended)` · `Push and open a PR` · `Keep branch + worktree as-is` · `Discard everything` (typed "discard" required). If the check found a PR (`hasPr`), relabel the second option → `View / merge open PR #<n> (mergeable: <yes\|no\|unknown>)` — same `pr` choice; its resolution is a no-op push surfacing the existing PR's URL, never a second one. Fold `op.review` (`{present, digest, count, base}`, rehydrated from the durable event — the live in-context digest does not survive compaction, the event does) into the AUQ when present. This AUQ is the turn-close. Resolution = re-invoke with `--choice=<merge\|pr\|keep\|discard>` (add `--removal-force` only for an intended-dirty teardown): finish-step runs the disposition transaction (§2e¶7) and archives — except `pr`, which first returns the `shell push_pr` op (two-phase: archive happens only after `--choice=pr --pushed`). A free-text / "not ready" answer holds the gate and chats (§2 `ask:'gate'` rule) — the "not done yet" escape, nothing archives. |
 | `ask` `ask:'gate'` `gate:'docs_normalize'` `{candidates, base, head, wt}` | The finish-time docs-normalization offer — fires once per run, only when `op.candidates` (the `*.md` the run's branch created/modified vs `op.base`, run-bundle dir excluded) is non-empty; a bare re-entry recomputes the list. AUQ: `Normalize docs into the repo's structure (Recommended)` · `Keep as-is`. **Normalize** → in `<op.wt>`: fold each candidate into the repo's existing category-organized docs (match the surrounding structure and conventions); strip plan provenance — slugs, wave/task numbers, "implemented by plan X" phrasing, date-stamped design filenames; delete plan-specific files that empty out; `git -C "<op.wt>" add` exactly the touched files + commit, then re-invoke with `--docs-normalized --docs-count=<n>`. Two-phase like `push_pr`: NOTHING durable changes until the flag arrives — a death mid-edit re-renders the gate, never silently skips — and the commit moves HEAD **before** verification, so the suite runs once over the FINAL tree (the adversary review covers the normalized docs too). **Keep as-is** → `--docs-skipped --docs-reason="<tight reason>"` — the durable skip event; the offer never re-fires this run (leftovers stay visible repo-wide via the doctor's `plan-doc-cruft` WARN). A free-text answer holds the gate (§2 `ask:'gate'` rule). `state.docs.normalize: off` suppresses the offer entirely. |
 | `ask` `ask:'gate'` `gate:'verification_failed'` (and `no_verification_command`, shell-opened above) | AUQ: *Fix first & re-run* → `mp clear-gate`, close (fix code + commit, then resume → verification re-runs fresh and re-opens the gate if still red). *Proceed anyway (reviewed)* → `--verify-passed` — the reviewed override records the SHA AND clears the gate, so a re-entry doesn't re-loop the same failure. *Abort finish* → `mp clear-gate`, close (the run stays resumable; nothing archived). For `no_verification_command`: *Specify a command* → RUN it fresh, **cite output** (CD-3) → PASS = `--verify-passed`, FAIL = `--verify-failed`; *Proceed without* = `--verify-passed` (the reviewed "no verification available" override). Never silently skip verification or archive. |
@@ -489,7 +488,7 @@ between the serial `superpowers:writing-plans` path and the parallel fan-out (§
    access. If a dispatch class is used for the judgment instead (e.g. `architecture` for opus-tier design), it is
    **chat-only** — apply **orchestrator-as-writer**: the dispatch returns the plan content, the **parent writes**
    `plan.md`/`plan.index.json`; never bypass to a raw-frontier `subagent()` for the writes. See
-   `docs/policy/dispatch.md#model-provenance-and-direct-subagent-dispatch`. Gate it:
+   `/srv/workflows/policy/dispatch.md` (model provenance and direct subagent dispatch). Gate it:
    `mp validate-plan-index --plan-index=<plan_index_path>` (on failure, fix and re-parse — never advance
    on an invalid index). Then satisfy the **plan gate** (§3b — `mp load-plan` exits 3 with a `run_gate_review`
    op until the cross-vendor pass is recorded via `mp record-gate-review --gate=plan`), then run the
@@ -530,54 +529,48 @@ stderr" still holds for every OTHER non-zero exit; **exit 3 carrying a `run_gate
 distinct, EXPECTED signal that the mandatory cross-vendor pass has not run yet for these artifacts. Do
 not surface it as an error — satisfy it:
 
-1. **Run the lane** over `op.artifacts`, foreground, through the agent-dispatch control plane's adversary
-   lane (NO model named — `class=adversary`, `intensity=rigorous` resolve to a cross-vendor reviewer
-   engine-side): `mcp__agent-dispatch__dispatch_review` with the gated artifacts as the review target.
-   **Feed the artifact BYTES, not a git diff:** the gated artifacts (`spec.md`, `plan.md`,
+1. **Run the review** over `op.artifacts`, foreground, harness-native — the **adversary class** (`breaker` role, frontier lane; adversarial panel for cross-vendor coverage — resolved from the checked-in `policy/workflow-map.json`), no local review engine and no transport lane. **Feed the artifact BYTES, not a git diff:** the gated artifacts (`spec.md`, `plan.md`,
    `plan.index.json`) are UNTRACKED at gate time, so `git diff --staged` / `git diff -- <files>` over them
-   returns EMPTY — structurally reviewing nothing (the latent hole this gate had). Pass the bytes via the
-   D7 **`content`** param — a `{path: text}` map (or a bare string) read straight from the artifact files
-   — which routes into the reviewer payload as a content block; or, on a lane without `content`, the
-   **diff-param bridge**: read the artifact bytes and pass them as `dispatch_review`'s `diff` (a synthetic
-   diff, one `+++ <path>` block per artifact). **NEVER `git add`** the artifacts to manufacture a diff —
+   returns EMPTY — structurally reviewing nothing (the latent hole this gate had). Pass the bytes into the
+   review (a `{path: text}` content map — or a bare string — read straight from the artifact files, carried
+   into the review task's context), so the reviewer sees the actual artifacts. **NEVER `git add`** the artifacts to manufacture a diff —
    that pollutes the index with bundle files and is the exact hazard the content path replaces. This is
-   the SAME cross-vendor adversary lane the finish gate uses (§2c `run_adversary_review`), applied at the
+   the SAME cross-vendor adversary class/panel the finish gate uses (§2c `run_adversary_review`), applied at the
    spec- and plan-approval boundaries — the two points where a design error is cheapest to fix.
-2. **On a real review (the lane returned findings):** `Write` a brief digest (finding count + the top
+2. **On a real review (the reviewer returned findings):** `Write` a brief digest (finding count + the top
    severity-ordered findings, never the raw dump) to `<bundle>/gate-<gate>-review-digest.txt`
    (absolute-MAIN, §2e¶1; the Write tool is not shell-evaluated, so arbitrary review bytes are safe —
    never interpolate them into a shell word). **Surface the findings to the user** — the whole point is
    that a blocking finding at the spec/plan boundary should CHANGE the artifact, not just get logged: if
    the pass found blocking issues, treat it as REVISE — fix the spec/plan (which re-arms the gate at the
-   new hash) and re-run the lane. Otherwise record it satisfied with a **structured receipt** that binds
-   the recorded `done` to the actual lane call (a bare `--status=done` is no longer accepted):
+   new hash) and re-run the review. Otherwise record it satisfied with a **structured receipt** that binds
+   the recorded `done` to the actual review (a bare `--status=done` is no longer accepted):
    1. `mp gate-hash --state=<path> --gate=<op.gate>` → `{ hash, artifacts }`. For the **plan** gate via
       `load-plan`, pass the SAME `--plan-index`/`--plan-md` the load uses; the **spec** gate and BOTH
       `set-phase` paths take NO path flags — their artifacts are always the canonical in-bundle
       `spec.md`/`plan.md`/`plan.index.json` (realpath-confined to the bundle; a flag can't redirect them).
-   2. `Write` a receipt JSON to `<bundle>/gate-<gate>-receipt.json` with EXACTLY these fields:
-      `{ "gate":"<op.gate>", "hash":"<from gate-hash>", "artifacts":<from gate-hash>,
-      "dispatch_id":"<lane dispatch id>", "provider":"<lane provider>", "model":"<lane model>",
-      "output_tokens":<lane completion tokens>, "status":"done", "ts":"<iso>", "digest":"<findings text>" }`.
-      The `dispatch_id`/`provider`/`model`/`output_tokens` come straight from the `dispatch_review` result —
-      so a fabricated `done` cannot pass without an actual lane call having produced tokens.
-   3. `mp record-gate-review --state=<path> --gate=<op.gate> --status=done --receipt=<that receipt.json>
-      --count=<n> [--base=<base|''>]` (passing the SAME `--plan-index`/`--plan-md` for the
-      plan-via-`load-plan` gate). The recorder recomputes the hash + artifact set and REJECTS (exit 1) a
-      receipt that doesn't echo them, or that lacks provenance/positive tokens.
+   2. **Record the native review result** — save the reviewer's JSON to `<bundle>/gate-<gate>-review.json`
+      and write a notes digest to `<bundle>/gate-<gate>-notes.txt`, then:
+      `mp record-gate-review --state=<path> --gate=<op.gate> --status=done --review-json=<that review.json> --digest-file=<that notes file>`
+      — the recorder pulls `dispatch_id`/`provider`/`model`/`output_tokens` out of the review's `reviewers[]`,
+      recomputes the hash + artifact set, and REJECTS (exit 1) a review that doesn't echo them or lacks
+      provenance/positive tokens — so a fabricated `done` cannot pass without an actual review having run.
+      (Legacy path: a hand-built `--receipt=<gate-<gate>-receipt.json>` with the exact fields
+      `{ "gate", "hash", "artifacts", "dispatch_id", "provider", "model", "output_tokens",
+      "status":"done", "ts", "digest" }` is still accepted; prefer `--review-json` for new reviews.)
    Then **re-run the original transition** — it now passes.
-3. **Skip ONLY on a genuine, evidenced lane failure** — a non-zero lane exit, the lane/gateway
-   unreachable, `agent-dispatch` missing, empty output. Capture the REAL error to a file and record it:
+3. **Skip ONLY on a genuine, evidenced review failure** — a non-zero review exit, the review
+   unavailable/empty, a failed harness spawn. Capture the REAL error to a file and record it:
    `mp record-gate-review --state=<path> --gate=<op.gate> --status=skipped --reason="<the actual error,
    verbatim-tight>" --digest-file=<captured stderr>` — **both `--reason` (non-empty) AND `--digest-file`
    (readable, non-empty) are REQUIRED**: a skip must carry evidence the operator looked, not a bare bypass.
-   Then re-run the transition (a recorded skip satisfies the gate — this lane is fail-soft by policy,
-   docs/policy/dispatch.md). **A skip is an evidenced lane outage, never a convenience.** Do NOT record
+   Then re-run the transition (a recorded skip satisfies the gate — this review is fail-soft by policy,
+   `/srv/workflows/policy/dispatch.md`). **A skip is an evidenced review outage, never a convenience.** Do NOT record
    `skipped` because the review is inconvenient, slow, or "probably fine", and NEVER as an unconditional
-   "lane errored → skip → proceed" reflex — a casual skip rebuilds the exact hole these gates exist to
+   "review errored → skip → proceed" reflex — a casual skip rebuilds the exact hole these gates exist to
    close (a recorded-but-unrun review is, after the fact, indistinguishable from the silent skip that
-   motivated this whole mechanism). If the lane is merely slow or you are unsure it truly failed, RETRY the
-   lane; do not skip.
+   motivated this whole mechanism). If the review is merely slow or you are unsure it truly failed, RETRY the
+   review; do not skip.
 
 The gates are advisory in RESULT (a clean pass and an evidenced skip both advance) but mandatory in
 STEP (the run-and-record cannot be bypassed except by `--force`, reserved for the documented

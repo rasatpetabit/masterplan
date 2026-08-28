@@ -54,14 +54,14 @@ Slash-style text (`/masterplan` or `/masterplan:masterplan`) is accepted when th
 
 If your Codex build registers the marketplace but a fresh prompt does not list `masterplan`, enable `masterplan@rasatpetabit-masterplan` in Codex's plugin UI/config, or install a user-level bridge at `~/.codex/skills/masterplan/SKILL.md` from this repo's `skills/masterplan/` directory.
 
-When running inside Codex, masterplan runs waves on the foreground-sequential path (the Codex host lacks Claude Code's Workflow tool); persisted review config (`state.review.adversary`, or legacy `state.codex.{routing,review}`) remains unchanged for future Claude Code runs. Whole-branch adversary review routes to agent-dispatch's cross-vendor lane on either host (the reviewer is resolved by agent-dispatch — see `agent-dispatch digest`).
+When running inside Codex, masterplan runs waves on the foreground-sequential path (the Codex host lacks Claude Code's Workflow tool); persisted review config (`state.review.adversary`, or legacy `state.codex.{routing,review}`) remains unchanged for future Claude Code runs. Whole-branch adversary review is harness-native on either host — the adversary class (`breaker` role, frontier lane; adversarial panel for cross-vendor coverage) resolved from the checked-in `policy/workflow-map.json`.
 
 Full Codex-host behavior differences and suppression rules live in the Codex entrypoint skill ([`skills/masterplan/SKILL.md`](../skills/masterplan/SKILL.md)) and the orchestrator's §0 host-detect + Codex tool-adaptation rules in [`commands/masterplan.md`](../commands/masterplan.md).
 
 ## Dependencies
 
 - **Required:** [`superpowers`](https://github.com/obra/superpowers) — auto-resolved when installed via the marketplace catalog.
-- **Optional:** `agent-dispatch` control plane for whole-branch adversary review (`agent-dispatch review --class adversary`, cross-vendor via the skynet gateway).
+- **Optional:** harness-native adversary review for whole-branch review — the adversary class (`breaker` role, frontier lane; adversarial panel for cross-vendor coverage), resolved from the checked-in `policy/workflow-map.json`.
 - **Optional:** `context7` MCP for library-doc lookups during CD-4 recovery ladders.
 - **Optional:** `gh` CLI for GitHub issue/PR import (`/masterplan import --pr=...`) and retro PR lookup.
 

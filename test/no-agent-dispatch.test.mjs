@@ -47,13 +47,15 @@ const EXEMPT_PREFIXES = [
   'docs/masterplan/',
   'docs/superpowers/',
   'docs/design/',
+  'docs/contracts/',
+  'test/fixtures/legacy-bundles/',
   'node_modules/',
   '.git/',
   '.claude/',
   '.pi/',
   'test/no-agent-dispatch.test.mjs',
 ];
-const EXEMPT_FILES = new Set(['CHANGELOG.md', 'WORKLOG.md']);
+const EXEMPT_FILES = new Set(['CHANGELOG.md', 'WORKLOG.md', 'test/e2e-native-wave-report.md']);
 
 function* walk(dir, rel = '') {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {

@@ -1,4 +1,4 @@
-// test/dispatch.test.mjs — the consolidated agent-dispatch module (lib/dispatch/).
+// test/dispatch.test.mjs — the consolidated dispatch-decision module (lib/dispatch/).
 // routing/host/backend behavior keeps its full truth tables in routing.test.mjs,
 // codex-host.test.mjs, and wave.test.mjs (qctlEligible); THIS file pins what is new at the
 // consolidation: the index facade's export surface, the resolveTaskBackend gate composition,

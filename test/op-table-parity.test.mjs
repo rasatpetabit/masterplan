@@ -3,7 +3,7 @@
 // THE dangling-op class this kills permanently: lib/dispatch/ops.mjs shipped a
 // `dispatch_fabric` op (producer) while commands/masterplan.md's §2 op table
 // listed only dispatch_fabric/dispatch_fabric (consumers) — so fabric waves
-// silently never dispatched through the broker. These asserts fail the suite the
+// silently never dispatched. These asserts fail the suite the
 // moment either side drifts again:
 //
 //   1. Every op emitted by lib/dispatch/ops.mjs (the wave dispatch-vehicle

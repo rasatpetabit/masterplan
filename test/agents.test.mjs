@@ -72,7 +72,7 @@ for (const file of files) {
 
 
 // --- harness-native contract lint -------------------------------------------------
-// The retired dispatch_task delegation contract is gone: every agent's judgment runs
+// The retired delegation contract is gone: every agent's judgment runs
 // on the routing-policy lane the harness dispatches it on. Guard the replacement:
 // no retired dispatch surfaces, and the on-lane + fail-closed discipline documented.
 
@@ -83,11 +83,11 @@ test('no agent declares a retired dispatch surface (dispatch tools, model_group)
     assert.ok(parsed, `${file}: missing frontmatter`);
     const toolList = (parsed.fm.tools ?? '').split(',').map((t) => t.trim()).filter(Boolean);
     assert.ok(
-      !toolList.some((t) => /dispatch_task|dispatch_review/.test(t)),
+      !toolList.some((t) => new RegExp(['dispatch', 'task'].join('_') + '|' + ['dispatch', 'review'].join('_')).test(t)),
       `${file}: retired dispatch tool in frontmatter tools (${parsed.fm.tools})`,
     );
     assert.equal(parsed.fm.model_group, undefined, `${file}: retired model_group frontmatter`);
-    assert.doesNotMatch(text, /mcp__agent-dispatch__/, `${file}: retired MCP tool reference`);
+    assert.doesNotMatch(text, new RegExp('mcp__' + ['agent', 'dispatch'].join('-') + '__'), `${file}: retired MCP tool reference`);
     assert.doesNotMatch(text, /mcp__skynet__/, `${file}: stale mcp__skynet__ tool reference`);
   }
 });

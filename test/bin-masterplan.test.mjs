@@ -2203,7 +2203,7 @@ test('gate: a fabricated done is rejected — receipt must echo the recomputed h
 test('gate: --review-json builds the receipt from reviewers[] provenance', () => {
   const { p, planIdx } = planBundleWithArtifacts();
   const dir = path.dirname(p);
-  // Shape emitted by `agent-dispatch review`: provenance is per-reviewer inside reviewers[],
+  // Shape of a native review result: provenance is per-reviewer inside reviewers[],
   // NOT at the top level. Mis-inspecting this is what produced a false "no provenance" skip.
   const reviewFile = path.join(dir, 'review.json');
   fs.writeFileSync(reviewFile, JSON.stringify({
@@ -2880,7 +2880,7 @@ test('merge-plan-fragments: pre-feature bundle (no goals_enabled) skips coverage
 });
 
 // ---- the planning verb (task 5: planning-fanout — plan-gate fold R6 bin coverage) ----
-// `continue` on a plan-marker bundle is the planning verb: it must emit the broker
+// `continue` on a plan-marker bundle is the planning verb: it must emit the native
 // dispatch_plan planning op (read-only class + enumerated roots) and retain no
 // dispatch_fabric(plan) arm. continue is a git-touching verb (mainRepoRoot), so unlike
 // the fs-only fixtures above this one builds a minimal real repo around the bundle.
@@ -2919,7 +2919,7 @@ test('continue (planning verb): a plan marker yields the read-only dispatch_plan
   assert.ok(!r.stdout.includes('dispatch_fabric'), 'the dispatch_fabric(plan) arm is retired');
 });
 
-test('dispatch-plan: --subsystems required and JSON-validated; a non-plan marker dies loudly (no broker touched)', () => {
+test('dispatch-plan: --subsystems required and JSON-validated; a non-plan marker dies loudly (never dispatches)', () => {
   const p = tmpBundle(v8()); // active_run: null — not a plan marker
   const miss = run(['dispatch-plan', `--state=${p}`]);
   assert.notEqual(miss.status, 0);
@@ -2983,7 +2983,7 @@ test('record-result awaits native review before the state transaction (CLI order
     run_id: slug,
     wave: 1,
     op: 'dispatch_fabric',
-    contract_version: 'adsp-v1.1',
+    contract_version: 'fabric-native-v1',
     status: 'pending',
     attempt: 1,
     wave_token: `mp-wave-${slug}-w1-a1`,

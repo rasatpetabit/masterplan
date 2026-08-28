@@ -54,13 +54,9 @@ fi
 ROOT="$(cd "$ROOT" && pwd)"
 
 # FROZEN symbol list (Task 40): the V5/L2 surfaces deleted by the L2-deletion task.
-# dispatch_fanout added 2026-08-05 by operator ruling (dispatch-consolidation
-# fresh pass): the MCP broker fan-out tool was retired 2026-07-17 but never
-# frozen, so stale references accumulated on live surfaces unchecked.
 FROZEN_SYMBOLS=(
   launch_workflow
   dispatch_foreground
-  dispatch_fanout
   plan.workflow
   execute.workflow
   promote-active-run

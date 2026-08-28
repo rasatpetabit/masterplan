@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { decideNextAction, BLACKBOARD_STATES, classifyLegacyMarker } from '../lib/resume.mjs';
-import { composeHandoffKey, computeTaskSpecHash, computeInputFingerprint, IDEMPOTENCY_VERSION } from '../lib/adsp-idempotency.mjs';
+import { composeHandoffKey, computeTaskSpecHash, computeInputFingerprint, IDEMPOTENCY_VERSION } from '../lib/fabric-idempotency.mjs';
 
 const t = (id, wave, status, files = []) => ({ id, wave, status, files });
 const base = (over = {}) => ({ pending_gate: null, active_run: null, tasks: [], ...over });
@@ -394,7 +394,7 @@ test('GUARD: a promoted active_run with a non-integer (null) wave throws — nev
 // the two completion surfaces: every incomplete task is `pending` in state.yml (the L1
 // record-result commit never ran) while the blackboard item status discriminates the recovery.
 
-// Build a real adsp-idem-v1 handoff key so tests mirror the actual blackboard key shape: the
+// Build a real fabric-idem-v1 handoff key so tests mirror the actual blackboard key shape: the
 // record's map key IS the full composed handoff key (per the §5.5 REVIEW FIX).
 function makeHandoffKey(taskId = 't1') {
   const specHash = computeTaskSpecHash({ body: { id: taskId, description: 'do thing', files: [`${taskId}.txt`] } });
@@ -591,7 +591,7 @@ test('resolveWithRecords is pure: does not mutate state, tasks, or the blackboar
   assert.deepEqual(s, snapshot);
 });
 
-test('handoff key shape: the blackboard map key is the full adsp-idem-v1 composed key', () => {
+test('handoff key shape: the blackboard map key is the full fabric-idem-v1 composed key', () => {
   const key = makeHandoffKey('t1');
   assert.ok(key.startsWith(`${IDEMPOTENCY_VERSION}:run-x:t1:`), 'key carries run_id + task_id');
   // The key has 5 colon-separated segments: version, run, task, spec_hash, fingerprint.

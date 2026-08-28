@@ -53,8 +53,8 @@ masterplan v8 is a five-layer system. Each layer delegates downward and never wr
 ┌───────────────────────▼─────────────────────────────────────┐
 │  L2 — Fabric dispatch path (`mp dispatch-wave` →             │
 │  `dispatchWaveViaFabric` in `lib/dispatch-wave.mjs`; the     │
-│  deleted Workflow engine's replacement — broker              │
-│  `dispatch_task` per descriptor)                             │
+│  deleted Workflow engine's replacement — native spawn plans  │
+│  (descriptors for the harness subagent API))                 │
 │  lib/plan-merge.mjs  lib/dispatch/  lib/wave.mjs             │
 │  ← returns digests/fragments only; never writes disk/git     │
 └───────────────────────┬─────────────────────────────────────┘
@@ -206,7 +206,7 @@ A simpler serial path exists: `mp-planner` writes the plan directly; L1 still va
 The L2 execute path runs **one wave per `mp dispatch-wave` launch**:
 
 - `pipeline(tasks, implement, review)` is **non-barrier**: a task's review starts the moment its implement finishes.
-- Implementation is **inline-only** via fabric `dispatch_task` (no separate implementer agent path). Each implementer runs the task's `verify_commands` and returns a digest citing real output.
+- Implementation is **inline-only** via native spawn descriptors (no separate implementer agent path). Each implementer runs the task's `verify_commands` and returns a digest citing real output.
 - Review is **config-gated**: `mp-adversarial-reviewer` runs only when the bundle's review is armed (`state.review.adversary`, which `mp prepare-wave` surfaces to the L2 path as the `"on"` payload it gates on).
 
 After the wave barrier, L1 runs **D6 scope verification**:
@@ -274,7 +274,7 @@ There is no `.masterplan.yaml` config-file hierarchy in v8. Configuration lives 
 | `--autonomy` | `gated \| loose \| full` | unset | `gated`/unset halts at every gate; `loose` auto-advances through successful gates; `full` runs maximally non-interactive (even the finish-flow verification auto-fires). The branch-finish gate always halts regardless. |
 | `--complexity` | `low \| medium \| high` | auto-detected | Influences planning depth; `--complexity-source` records how it was set |
 | `--planning-mode` | `serial \| parallel \| auto` | `auto` | `serial` = one `mp-planner`; `parallel` = `mp-subsystem-planner` fan-out merged by `lib/plan-merge.mjs` |
-| `--adversary-review` | `on \| off` | `on` | Default-on finish-time adversary review (routed through the agent-dispatch adversary lane). New bundles arm `state.review.adversary: true` automatically; pass `off` to opt out. Alias: `--codex-review`. Legacy bundles (no `state.review.adversary` and no legacy `state.codex.review`) are defensively armed at the finish gate with an `adversary_review_defensively_armed` audit event. |
+| `--adversary-review` | `on \| off` | `on` | Default-on finish-time adversary review (harness-native adversary class; panel for cross-vendor coverage). New bundles arm `state.review.adversary: true` automatically; pass `off` to opt out. Alias: `--codex-review`. Legacy bundles (no `state.review.adversary` and no legacy `state.codex.review`) are defensively armed at the finish gate with an `adversary_review_defensively_armed` audit event. |
 
 **Review config** (`mp set-review-config`, a CD-7 write on an existing bundle — *not* a seed flag; alias: `mp set-codex-config`):
 
@@ -301,7 +301,7 @@ Codex can host the command via `/masterplan:masterplan` through `skills/masterpl
 
 - The orchestrator runs `mp detect-host --agent-is-codex` at boot.
 - A Codex host (`isCodex`) lacks Claude Code's Workflow tool, so waves run on the foreground-sequential path (`mp continue --codex-suppressed`) instead of a background workflow launch.
-- Persisted review config (`state.review.adversary`, or legacy `state.codex.{routing,review}`) in `state.yml` continues to apply to Claude Code runs unaffected. Whole-branch adversary review runs the same on either host — it routes to agent-dispatch's cross-vendor lane (the reviewer is resolved by agent-dispatch — see `agent-dispatch digest`), not Codex, so there is no recursion to suppress.
+- Persisted review config (`state.review.adversary`, or legacy `state.codex.{routing,review}`) in `state.yml` continues to apply to Claude Code runs unaffected. Whole-branch adversary review runs the same on either host — it runs the harness-native adversary class/panel (resolved from the routing policy `policy/workflow-map.json`), not Codex, so there is no recursion to suppress.
 
 ---
 

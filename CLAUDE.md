@@ -7,9 +7,9 @@ add vendor-neutral policy here — put it in AGENTS.md.
 @AGENTS.md
 
 Central cross-repo policy (AUQ, Serena, Hindsight, context-mode, model
-routing) lives in the agent-dispatch repo: run `agent-dispatch digest` for the
-live routing policy, `agent-dispatch where` for the repo root. Never copy that
-policy here.
+routing) resolves from the repo-local `policy/workflow-map.json` (a checked-in
+copy of the fleet workflow routing map) and the fleet dispatch policy at
+`/srv/workflows/policy/dispatch.md`. Never copy that policy here.
 
 ## Claude Code specifics
 

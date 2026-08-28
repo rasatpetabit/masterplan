@@ -698,7 +698,7 @@ test('buildTaskReviewEvent: validates inputs and omits ts/note unless provided',
 //         goals_capture_bypassed, goals_frozen, goal_waived, plan_amended, refs_added,
 //         refs_removed, task_blocked_under_active_run, task_waived, text, wave_recorded
 //         — NO per-task review event type is written anywhere in the repo.
-//   (2) scan of all 10 live bundles under /srv/dev/ai/agent-dispatch/docs/masterplan/*/events.jsonl:
+//   (2) scan of all 10 live bundles under the fleet workspace:
 //       events whose type contains 'review' AND whose data carries any of {run, task, task_id, run_id}
 //       → 0 matches. Review-family types actually present: spec_adversary_review ×8,
 //         plan_adversary_review ×8, adversary_review ×4, adversary_review_skipped ×3,

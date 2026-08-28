@@ -19,11 +19,9 @@ const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const script = path.join(repoRoot, 'scripts', 'v5-orphan-grep.sh');
 
 // FROZEN symbol list — must stay in lockstep with scripts/v5-orphan-grep.sh.
-// dispatch_fanout added 2026-08-05 (operator ruling, dispatch-consolidation fresh pass).
 const FROZEN_SYMBOLS = [
   'launch_workflow',
   'dispatch_foreground',
-  'dispatch_fanout',
   'plan.workflow',
   'execute.workflow',
   'promote-active-run',

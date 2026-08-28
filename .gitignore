@@ -87,3 +87,6 @@ test/fixtures/**/*.p12
 test/fixtures/**/*.pfx
 test/fixtures/**/id_rsa
 test/fixtures/**/id_ed25519
+
+# Local Pi session state
+.pi/

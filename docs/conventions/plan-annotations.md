@@ -59,7 +59,7 @@ on a fragment; the serial `mp-planner` path emits them directly):**
 - `codex: null` (or omit) — defer to `lib/dispatch/routing.mjs`'s heuristic.
 - Routing's `target` is **informational** in v8: implementation is inline-only (there
   is no Codex implementer). `codex` records what a future implementer tier *could*
-  offload — the adsp-v1 broker adapter (`lib/dispatch/adsp-adapter.mjs`) is the live
+  offload — the native spawn-descriptor path (`lib/dispatch/dispatch-digest.mjs` `buildWorkItem`, with class resolution via `lib/dispatch/routing-policy.mjs` `resolveWorkClass`) is the live
   production dispatch seam, imported and actively used by `lib/dispatch-wave.mjs` — but in v8 it gates **no** runtime behaviour — the optional review stage is
   gated solely by the bundle's `state.review.adversary` config, independent of any task's
   `codex`/`target`.

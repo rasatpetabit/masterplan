@@ -5,8 +5,9 @@
 
 Cross-repo AskUserQuestion/ask_user_question (AUQ), Serena, Hindsight,
 context-mode, and subagent/model-dispatch policy is centralized in the
-agent-dispatch repo. Read it via `agent-dispatch where` (repo root) or
-`agent-dispatch digest` (live routing policy). Do not duplicate or override
+fleet policy. Routing resolves from the repo-local `policy/workflow-map.json`
+(a checked-in copy of the fleet workflow routing map) and the fleet dispatch
+policy at `/srv/workflows/policy/dispatch.md`. Do not duplicate or override
 that policy here.
 
 ## What this repo is
@@ -48,8 +49,8 @@ run state in `docs/masterplan/*/state.yml`.
 
 Generic agent policy — AUQ (structured questions, never a prose question),
 verification-before-completion, durable handoff state, and dispatch class
-selection — is **global / agent-dispatch policy and is not restated here**
-(see the managed block below and `agent-dispatch digest`).
+selection — is **global fleet policy (`/srv/workflows/policy/`) and is not
+restated here** (see the `§routing` section below).
 
 What is masterplan-specific lives in two docs:
 
@@ -61,20 +62,13 @@ What is masterplan-specific lives in two docs:
   cross-vendor review of large edits, and finish-flow durability:
   [`docs/development.md`](./docs/development.md).
 
-<!-- agent-dispatch:begin routing hash=ab9bc373a67846a9f7ca9d9e4cff415f061bf461e385ef3020963d0799821040 -->
-## §routing — managed by agent-dispatch (do not hand-edit)
+## §routing — resolved from the checked-in policy
 
-Binding rules (enforced by PreToolUse guard):
-- Some models are gated and require a live override grant; run `agent-dispatch digest` for current dispositions.
-- model param MUST be explicit — missing model is denied, EXCEPT the built-in read-only types below (Explore/Plan), which inherit the session model.
-- Route work to the roster role its class names (routing.yaml classes[].agent); the role pins the lane. Explore/Plan are exempt built-ins that BYPASS lane routing: dispatch them WITHOUT a model param (they inherit the session model; an explicit model outside the lineup is denied). Prefer the role.
+Model/lane routing resolves from `policy/workflow-map.json` (the repo-local
+copy of the fleet workflow routing map: lanes `sweep`/`bulk`/`code`/`agentic`/`reason`/`longform`/`frontier`/`broad`/`mid`/`local` with `litellm/*` refs, and classes such as `bounded-edit`/`agentic-loop`/`planned-execution`/`adversary`/`critic`/`deep-investigation`). Waves launch as native spawn plans executed by the harness's parallel subagent API; adversarial review is harness-native (adversary class: breaker role, frontier lane; adversarial panel for cross-vendor coverage), with records supplied via `mp record-result --reviews-file`. Agent frontmatter `model:` fields are routing-policy lane names.
 
-For the full routing policy, fallback chains, and backend health:
-  agent-dispatch digest          # live, from the canonical policy file
-  agent-dispatch resolve <class> # deterministic tier for a task class
+Refresh the repo copy with `node /srv/workflows/config/generate.mjs` on a fleet host. Fleet dispatch policy lives at `/srv/workflows/policy/dispatch.md`.
 
-Source of truth: policy/dispatch-policy.jsonc in the agent-dispatch repo (run `agent-dispatch where` for its root).
-<!-- agent-dispatch:end -->
 ## Knowledge
 
 Structured project knowledge is cataloged in the `.okf/` directory.

@@ -1,4 +1,4 @@
-// test/adsp-idempotency.test.mjs — handoff-idempotency key module (lib/adsp-idempotency.mjs).
+// test/fabric-idempotency.test.mjs — handoff-idempotency key module (lib/fabric-idempotency.mjs).
 //
 // Verified behaviors:
 //   1. canonicalJson is stable under object key reordering (at every depth).
@@ -18,7 +18,7 @@ import {
   computeInputFingerprint,
   composeHandoffKey,
   decideReuse,
-} from '../lib/adsp-idempotency.mjs';
+} from '../lib/fabric-idempotency.mjs';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -27,8 +27,8 @@ import {
 const body = () => ({
   task_id: 35,
   description: 'Design and implement the pure handoff-idempotency key module',
-  files: ['lib/adsp-idempotency.mjs'],
-  verify_commands: ['node --test test/adsp-idempotency.test.mjs'],
+  files: ['lib/fabric-idempotency.mjs'],
+  verify_commands: ['node --test test/fabric-idempotency.test.mjs'],
 });
 
 const specArgs = () => ({
@@ -83,8 +83,8 @@ test('computeTaskSpecHash is stable under key reordering of body/context/config'
     workerConfig: { tier: 'qwen36-27b', class: 'bounded-edit' },
     context: { run: 'agentic-platform-unification', wave: 2 },
     body: {
-      verify_commands: ['node --test test/adsp-idempotency.test.mjs'],
-      files: ['lib/adsp-idempotency.mjs'],
+      verify_commands: ['node --test test/fabric-idempotency.test.mjs'],
+      files: ['lib/fabric-idempotency.mjs'],
       description: 'Design and implement the pure handoff-idempotency key module',
       task_id: 35,
     },

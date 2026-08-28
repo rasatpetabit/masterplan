@@ -1,8 +1,8 @@
-// test/fabric-dogfood-v1.test.mjs — V1 dogfood proof (Task 7 / G1 gate for L2 deletion).
+// test/fabric-dogfood-v1.test.mjs — V1 dogfood proof on the native seam.
 //
-// Executes a scratch bundle through ONE fabric wave with adversary review armed,
-// asserts per-task review fields on digests, and exercises a blocking verdict
-// path through dispatch-wave → blocking_reviews[].
+// Executes a scratch bundle through ONE native wave with adversary review armed:
+// spawn plan out, orchestrator-provided review records in, per-task review
+// fields on digests, and a blocking verdict path through blocking_reviews[].
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -13,11 +13,12 @@ import { execFileSync } from 'node:child_process';
 
 import {
   dispatchWaveViaFabric,
-  readWaveDispatchRecord,
+  reviewNativeResult,
 } from '../lib/dispatch-wave.mjs';
 import { continueRun } from '../lib/continue.mjs';
 import { writeState, readState } from '../lib/bundle.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
+import { recordWaveResult } from '../lib/wave-commit.mjs';
 
 function git(dir, ...args) {
   return String(execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' })).trim();
@@ -58,49 +59,37 @@ function makeDogfoodFixture({ tasks, planIndex, slug = 'dogfood-v1' }) {
   return { tmp, MAIN, bundleDir, statePath, self };
 }
 
-function brokerStub(resultFor, reviewResult) {
-  return {
-    async callTool(name, args) {
-      if (name === 'dispatch_task') return resultFor(args.descriptor);
-      if (name === 'dispatch_review') return reviewResult;
-      return { results: (args.descriptors ?? []).map((d) => resultFor(d)) };
-    },
-  };
-}
-
-const routeResult = (d) => ({
-  decision: { decision: 'route', backend: 'pi' },
-  stdout: JSON.stringify({
-    task_id: d.task_id,
-    status: 'done',
-    start_sha: 'abc',
-    files_changed: Array.isArray(d.files) ? d.files : [],
-    verify: [],
-    summary: `task ${d.task_id} done`,
-    blockers: null,
-  }),
-});
-
-const disabledCoord = () => ({ enabled: false, attachToTask: (t) => t, close: () => {} });
-
 function launch(fx) {
   const op = continueRun({ statePath: fx.statePath, self: fx.self, now: 2000, fabricDispatch: true });
   assert.equal(op.op, 'dispatch_fabric', `expected dispatch_fabric, got ${JSON.stringify(op)}`);
   return op;
 }
 
-function reviewLaneStub(payload) {
-  const calls = [];
-  return {
-    calls,
-    lane: (args) => {
-      calls.push(args);
-      return payload;
-    },
+const workerDigest = (id, files = []) => ({
+  task_id: id, status: 'done', start_sha: 'abc', files_changed: files,
+  verify: [], summary: `task ${id} done`, blockers: null,
+});
+
+// Run the native two-phase seam end to end: plan → harness edits + digests →
+// provided review records → record transaction.
+async function runNativeWave(fx, providedReviews) {
+  const res = await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 3000 });
+  assert.equal(res.outcome, 'native-spawn-plan');
+  const result = {
+    wave: res.wave,
+    tasks: res.plan.tasks.map((t) => ({ task_id: t.task_id, digest: workerDigest(t.task_id, t.files) })),
   };
+  const reviewed = await reviewNativeResult({
+    statePath: fx.statePath, result, providedReviews, now: 3100,
+  });
+  const recorded = recordWaveResult({
+    statePath: fx.statePath, result: reviewed, self: fx.self, now: 3200,
+    worktree: res.plan.tasks[0].cwd,
+  });
+  return { res, reviewed, recorded };
 }
 
-test('V1 dogfood: fabric wave records per-task adversary review (verdict + findings) on digests', async () => {
+test('V1 dogfood: native wave records per-task adversary review (verdict + findings) on digests', async () => {
   const fx = makeDogfoodFixture({
     tasks: [
       { id: 1, status: 'pending', wave: 0, files: ['src/a.txt'] },
@@ -123,29 +112,14 @@ test('V1 dogfood: fabric wave records per-task adversary review (verdict + findi
     harness: { degraded: false, timed_out: false, stalled: false, deadline_exceeded: false, regions_unreviewed: 0, extraction_degraded: false },
   };
 
-  const res = await dispatchWaveViaFabric({
-    statePath: fx.statePath,
-    self: fx.self,
-    now: 3000,
-    _brokerClient: brokerStub(routeResult, approveRecord),
-    _openCoord: disabledCoord,
-    _callReview: (args) => Promise.resolve(approveRecord),
-    _localVerifyExec: () => 'ok',
-  });
+  const { reviewed, recorded } = await runNativeWave(fx, { 1: approveRecord, 2: approveRecord });
 
-  assert.equal(res.dispatched, true);
-  // Summary row carries canonical review verdict string for done tasks.
-  for (const t of res.tasks) {
-    assert.equal(t.review, 'approve', `task ${t.task_id} review verdict`);
+  // Every done task carries the review projection on its digest.
+  for (const t of reviewed.tasks) {
+    assert.equal(t.review.verdict, 'approve', `task ${t.task_id} review verdict`);
+    assert.ok(Array.isArray(t.digest.review.findings));
   }
-  const rec = readWaveDispatchRecord(fx.bundleDir, 0);
-  assert.ok(rec?.result?.tasks?.length === 2);
-  for (const item of rec.result.tasks) {
-    assert.ok(item.digest?.review, `task ${item.task_id} missing digest.review`);
-    assert.equal(item.digest.review.verdict, 'approve');
-    assert.ok(Array.isArray(item.digest.review.findings));
-  }
-  assert.deepEqual(res.record.blocking_reviews, []);
+  assert.deepEqual(recorded.blocking_reviews, []);
 });
 
 test('V1 dogfood: blocking adversary verdict surfaces via blocking_reviews[]', async () => {
@@ -165,24 +139,14 @@ test('V1 dogfood: blocking adversary verdict surfaces via blocking_reviews[]', a
     harness: { degraded: false, timed_out: false, stalled: false, deadline_exceeded: false, regions_unreviewed: 0, extraction_degraded: false },
   };
 
-  const res = await dispatchWaveViaFabric({
-    statePath: fx.statePath,
-    self: fx.self,
-    now: 3000,
-    _brokerClient: brokerStub(routeResult, rejectRecord),
-    _openCoord: disabledCoord,
-    _callReview: (args) => Promise.resolve(rejectRecord),
-    _localVerifyExec: () => 'ok',
-  });
+  const { reviewed, recorded } = await runNativeWave(fx, { 1: rejectRecord });
 
-  assert.equal(res.dispatched, true);
-  assert.equal(res.tasks[0].review, 'reject');
-  assert.equal(res.record.blocking_reviews.length, 1);
-  assert.equal(res.record.blocking_reviews[0].id, 1);
-  assert.match(JSON.stringify(res.record.blocking_reviews[0].findings), /data race/);
-  const dig = readWaveDispatchRecord(fx.bundleDir, 0).result.tasks[0].digest;
-  assert.equal(dig.review.verdict, 'reject');
-  assert.ok(Array.isArray(dig.review.findings));
+  assert.equal(reviewed.tasks[0].review.verdict, 'reject');
+  assert.equal(recorded.blocking_reviews.length, 1);
+  assert.equal(recorded.blocking_reviews[0].id, 1);
+  assert.match(JSON.stringify(recorded.blocking_reviews[0].findings), /data race/);
+  assert.equal(reviewed.tasks[0].digest.review.verdict, 'reject');
+  assert.ok(Array.isArray(reviewed.tasks[0].digest.review.findings));
   // Task still records done; orchestrator acts on blocking_reviews[].
   assert.equal(readState(fx.statePath).tasks[0].status, 'done');
 });

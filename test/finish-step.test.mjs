@@ -230,11 +230,11 @@ test('adversary review skip: durable skip event at SHA prevents a re-ask loop; s
   fx.step({ verify: 'pass' });
   fs.writeFileSync(path.join(fx.bundleDir, 'retro.md'), '# retro\n');
   assert.equal(fx.step().op, 'run_adversary_review');
-  const op = fx.step({ review: 'skipped', reviewReason: 'agent-dispatch unavailable' });
+  const op = fx.step({ review: 'skipped', reviewReason: 'review runner unavailable' });
   assert.equal(op.gate, 'branch_finish');
   assert.equal(op.review, null);
   const ev = readEvents(fx.bundleDir).find((e) => e.type === 'adversary_review_skipped');
-  assert.match(ev.summary, /adversary-review skipped \(degraded\) — agent-dispatch unavailable/);
+  assert.match(ev.summary, /adversary-review skipped \(degraded\) — review runner unavailable/);
   // re-walk: the sha-keyed skip event suppresses another run_adversary_review
   writeState(fx.statePath, { ...readState(fx.statePath), pending_gate: null });
   assert.equal(fx.step().gate, 'branch_finish');
@@ -309,7 +309,7 @@ test('branch_finish AUQ: notice field surfaces the skip reason (spec §4.2-D)', 
 
 test('Codex host no longer suppresses adversary review (cross-vendor lane, no recursion)', () => {
   // The legacy --codex-suppressed flag is inert at finish-step: whole-branch review now
-  // routes to agent-dispatch's cross-vendor adversary lane (gpt-5.5), not Codex, so there is
+  // runs harness-native on the cross-vendor adversary class/panel, not Codex, so there is
   // no Codex-calling-Codex recursion to avoid — review runs regardless of host.
   const fx = makeFixture({ state: { review: { adversary: 'on' } } });
   fx.step({ verify: 'pass' });
@@ -322,7 +322,7 @@ test('branch_finish AUQ: notice field surfaces defensive-arm note for legacy bun
   const fx = makeFixture({ explicitCodex: false });
   fx.step({ verify: 'pass' });
   fs.writeFileSync(path.join(fx.bundleDir, 'retro.md'), '# retro\n');
-  const op = fx.step({ review: 'skipped', reviewReason: 'agent-dispatch unavailable' });
+  const op = fx.step({ review: 'skipped', reviewReason: 'review runner unavailable' });
   // After the shell answers with review='skipped', re-enter: branch_finish rehydrates from the
   // defensive-arm event (which IS still in events.jsonl) so the notice shows defensive.
   assert.equal(op.gate, 'branch_finish');

@@ -9,19 +9,18 @@
 
 ## One Wave Per Launch
 
-`dispatchWaveViaFabric` in `lib/dispatch-wave.mjs` runs exactly one wave per launch via broker
-`dispatch_task` (invoked as `mp dispatch-wave --state=<path>`). L1 (the shell) owns the wave
+`dispatchWaveViaFabric` in `lib/dispatch-wave.mjs` runs exactly one wave per launch and returns a **native spawn plan** (invoked as `mp dispatch-wave --state=<path>`) — per-task governed descriptors the orchestrating harness executes with its parallel subagent API. L1 (the shell) owns the wave
 loop: `decide → dispatch_fabric → mp dispatch-wave → record → decide → next wave`. Limiting one
 wave per launch keeps `active_run` unambiguous: a crash can only strand a single wave, and
 recovery resets only that wave's declared scope before re-dispatching.
 
 ### Pipeline, Not a Barrier
 
-Within a wave, tasks run via broker `dispatch_task` calls with `fail_mode:'isolated'` — each
+Within a wave, tasks run via native spawn descriptors with `fail_mode:'isolated'` — each
 descriptor is independent. The orchestrator dispatches all tasks in a bounded concurrent pool,
 then collects results. This is not a two-stage barrier where all implements complete before any
 reviews start; review (when enabled) runs after implement + local verify per task, still
-failure-isolated. The only wave barrier is the orchestrator's completion of the broker pool,
+failure-isolated. The only wave barrier is the orchestrator's completion of the native spawn pool,
 which L1 awaits before acting on digests / blocking reviews and re-deciding.
 
 ---
@@ -32,8 +31,8 @@ L1 pre-resolves routing before launch. `lib/wave.mjs:prepareWave` merges each pe
 state fields (`id`, `wave`, `status`, `files`) with its `plan.index.json` fields
 (`description`, `verify_commands`, `codex`, `sensitive`, `conversational`), runs
 `routeTask(merged, config, env)`, and emits a lean routed payload that is consumed by
-`dispatchWaveViaFabric` / descriptor construction. Broker descriptors carry only the dispatch
-class and task payload — the broker's resolve/guard is the routing brain.
+`dispatchWaveViaFabric` / descriptor construction. Native spawn descriptors carry only the task
+class and payload — routing is resolved from the checked-in policy `policy/workflow-map.json`.
 
 All dispatch *decision* logic — `routeTask`, the qctl backend gate, host detection, and the
 wave-dispatch op shapes — lives in the pure `lib/dispatch/` package (import via
@@ -73,16 +72,18 @@ When the per-run strangler flag `state.dispatch.fabric` is `true` (default for *
 consumer for that op is exactly `mp dispatch-wave --state=<path>` (`lib/dispatch-wave.mjs`) —
 dispatch AND record complete inside the command:
 
-1. **Same seams, no forked routing** — the wave is re-derived through `prepareWave` (fabric
-   payloads carry only the dispatch `class`; the broker's resolve/guard is the routing brain).
+1. **Same seams, no forked routing** — the wave is re-derived through `prepareWave` (native
+   spawn payloads carry only the task `class`; the routing policy `policy/workflow-map.json`
+   resolves it to agent/lane/model).
    **Routing-input parity:** the prepare inputs (routing mode, `codexHostSuppressed` — thread
    `--codex-suppressed` on a suppressed host — `linkedWorktree`) mirror `continue`'s own call
    and are frozen into the record as `routing_inputs` at attempt 1; retries reuse the frozen
    inputs (plus the persisted lean `payload` for audit), so descriptors can never drift from
    what the launch marker promised.
-2. **One broker process per wave** — a single `createBrokerClient` (`agent-dispatch serve-mcp`)
-   call to the `dispatch_fanout` MCP tool with one `buildWorkItem` descriptor per routed task
-   (`fail_mode:'isolated'`), never N per-task spawns.
+2. **One native spawn plan per wave** — `dispatchWaveViaFabric` builds one governed descriptor
+   per routed task via `buildDescriptors`/`buildWorkItem`
+   (`fail_mode:'isolated'`), never N ad-hoc per-task spawns; the orchestrating harness executes
+the returned plan with its parallel subagent API.
    **Multi-repo locus (umbrella workspaces):** plan files may be declared as umbrella-relative
    paths that live in a *sibling* git checkout of MAIN (e.g. `yanos-os/kas/...` under
    `/srv/dev/yanos-project/`, where `yanos-os/` is gitignored by the umbrella). Umbrella
@@ -96,10 +97,10 @@ dispatch AND record complete inside the command:
    one task = one locus (gateway dispatch is single-repo per descriptor).
 3. **Wave-dispatch idempotency** — a stable key `(run_id, wave, 'dispatch_fabric')` over a
    per-wave record file inside the bundle (`wave-<N>.dispatch.json`), persisted **before** the
-   broker call with atomic create-or-return-existing (O_EXCL) semantics. A retry after an
+   launch with atomic create-or-return-existing (O_EXCL) semantics. A retry after an
    accepted-but-unobserved dispatch finds `status:'pending'` and returns the record instead of
    double-dispatching (`--takeover` supersedes a confirmed-dead attempt); a `'dispatched'`
-   record re-drives record-result from the stored digests without touching the broker; a
+   record re-drives record-result from the stored digests without re-launching; a
    `'recorded'` record with pending tasks remaining permits attempt N+1 (an observed retry).
    Attempt-N+1/takeover transitions are additionally serialized by an O_EXCL **attempt marker**
    (`wave-<N>.dispatch.attempt-<K>`): exactly one concurrent retry claims the attempt, the
@@ -111,9 +112,9 @@ dispatch AND record complete inside the command:
 5. **Coord paired** — `openWaveCoord` attaches per-descriptor coord context and the job is
    closed in a `finally`, even on dispatch failure (on the fabric path `continue` does NOT
    open coord — `dispatch-wave` owns the whole lifecycle, fixing the leaked-open-jobs bug).
-6. **Same record transaction** — per-descriptor results map through the adapter's
-   `translateBrokerResult` (digests carry the adsp-v1.1 `dispatch` provenance field;
-   `worker` on success) and feed `recordWaveResult`, so degradations surface as
+6. **Same record transaction** — per-descriptor results map through the digest projection
+   (`lib/dispatch/dispatch-digest.mjs` — worker digests carry the optional `dispatch` provenance
+   field; `worker` on success) and feed `recordWaveResult`, so degradations surface as
    `dispatch_degraded` events and D6/commit behavior is identical to the other vehicles.
    The post-transaction `'recorded'` finalize of the record file deliberately lands after
    the MAIN state commit (HEAD briefly retains `'dispatched'` until the next bundle commit
@@ -133,7 +134,7 @@ module layout:
 
 | Module | Role | Key exports |
 |---|---|---|
-| `lib/dispatch-wave.mjs` | Orchestrator pipeline | `gateAndValidate`, `resolveWaveContext`, `buildDescriptors`, `acquireAndWatch`, `buildNativePlan`, `runBrokerDispatch`, `finalizeRecord` |
+| `lib/dispatch-wave.mjs` | Orchestrator pipeline | `gateAndValidate`, `resolveWaveContext`, `buildDescriptors`, `acquireAndWatch`, `buildNativePlan`, `finalizeRecord` |
 | `lib/wave.mjs` | Launch context + scope | `prepareWave`, `buildWaveLaunchContext`, `verifyScope`, `declaredScope` |
 | `lib/watch-integrity.mjs` | Watch substrate + git helpers | `runGit`, `gitLines`, `captureWatchBaseline`, `verifyWatchListDelta`, `precheckWatchList` |
 | `lib/wave-commit.mjs` | Wave-completion transaction | `recordWaveResult`, `captureWtFiles`, `captureWorkspaceRoot` |
@@ -147,21 +148,22 @@ config/env construction, `prepareWave` invocation, and MAIN resolution — consu
 both PREPARE (`continue.mjs`) and EXECUTE (`dispatch-wave.mjs`) with routing inputs
 injected per-phase (retry-frozen on the EXECUTE side).
 
-Review is a thin caller of agent-dispatch's canonical `dispatch_review` engine;
-masterplan no longer maintains a parallel implementation.
+Review is a thin caller of the harness-native adversary review (adversary class — breaker role,
+frontier lane; adversarial panel for cross-vendor coverage); masterplan no longer maintains a
+parallel implementation.
 
 ---
 
-## `target` Is Informational — Implementation Routes Through the Broker
+## `target` Is Informational — Implementation Routes Through the Routing Policy
 
-Every task is implemented via broker `dispatch_task` to the `masterplan-implementation` policy
-class, regardless of its routed `target`. There is no separate implementer agent in the roster
+Every task is implemented via a native spawn descriptor whose task `class` routes to the
+`masterplan-implementation` policy class, regardless of its routed `target`. There is no separate implementer agent in the roster
 (`mp-implementer` was deleted). The `target` field is logged and recorded in digests so a future
 path could offload eligible tasks; it never gates which implementation lane runs.
 
 ---
 
-## Centralized Per-Task Review (caller + recorder only)
+## Harness-Native Per-Task Review (caller + recorder only)
 
 Review is gated by **config only** (`state.review.adversary` / `review: 'on'|'off'`, default `'off'`),
 not by `target` or eligibility. Judgment-heavy tasks (which route `inline`) need a second opinion as
@@ -171,26 +173,26 @@ Masterplan does **not** own the review engine. When review is on, for every `don
 
 1. Captures the **full edit-locus working diff** (tracked + untracked; never scope-filtered).
 2. Hashes the exact payload (`payload_sha = sha256(diff bytes)`).
-3. Reuses a completed `run+task+sha` review event when one exists; otherwise makes **one** explicit
-   `dispatch_review` call (`class: adversary`) on the same broker client that served the wave's
-   writer pool.
-4. Projects the agent-dispatch structured record into a compact canonical shape
+3. Reuses a completed `run+task+sha` review event when one exists; otherwise runs the **native
+   review seam** — `mp record-result` phase A returns `{op:'run_native_reviews', pending_reviews:[...]}`
+   (adversary-class descriptors, breaker role on the frontier lane), the orchestrator runs them
+   with its harness-native subagent API, and phase B re-calls `mp record-result` with
+   `--reviews-file=<task_id → review record JSON>`.
+4. Projects the harness review record into a compact canonical shape
    (`approve | rework | reject | error` + findings + harness metadata) and persists it before
    `recordWaveResult`.
 
-All chunking, retries, reconciliation, findings extraction, and verdict semantics live in
-agent-dispatch (`docs/policy/dispatch.md`, `references/review-findings.schema.json`). Masterplan
+All chunking, retries, reconciliation, findings extraction, and verdict semantics live in the
+harness-native review engine (`/srv/workflows/policy/dispatch.md`; the routing policy
+`policy/workflow-map.json`). Masterplan
 only orchestrates lifecycle, payload binding, invocation, and durable recording
 (`lib/task-review.mjs`).
 
-**MCP-pool path.** `dispatchWaveViaFabric` reuses the open `createBrokerClient` session for both
-`dispatch_task` and `dispatch_review` — one broker process per wave. Review runs after implement +
-local verify, still failure-isolated per task.
-
-**Native path.** Native Pi spawn freezes `review_context` into the wave-dispatch record before
+**Native path.** The wave's review requirement rides on the descriptors (`review: {adversary: true}`)
+and `review_context` is frozen into the wave-dispatch record before
 spawn. When host results arrive, `reviewNativeResult` runs the **same** `reviewCompletedTasks`
-helper (same `dispatch_review` tool, same projection + event persistence) before
-`recordWaveResult`. Both paths produce identical review projections and `blocking_reviews[]`
+helper (same projection + event persistence) before
+`recordWaveResult`. Every path produces identical review projections and `blocking_reviews[]`
 behavior.
 
 ---

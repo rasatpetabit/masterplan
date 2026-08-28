@@ -84,7 +84,7 @@ test('deliberate survivors stay (teardown recorder, plan marker, legacy import)'
   }
 });
 
-test('wave review docs point to agent-dispatch and contain no local review-engine contract', () => {
+test('wave review docs point to the native review seam and contain no local review-engine contract', () => {
   const files = [
     'docs/internals/wave-dispatch.md',
     'docs/internals/task-verification.md',
@@ -92,7 +92,7 @@ test('wave review docs point to agent-dispatch and contain no local review-engin
     'commands/masterplan.md',
   ];
   const text = files.map((f) => fs.readFileSync(path.join(ROOT, f), 'utf8')).join('\n');
-  assert.match(text, /dispatch_review/);
+  assert.match(text, /adversary class|native review/i);
+  assert.match(text, /run_native_reviews|--reviews-file/);
   assert.doesNotMatch(text, /REVIEW_DIFF_MAX_BYTES|segmentDiffPayload|reviewer count is 1 \(not a panel\)/);
-  assert.doesNotMatch(text, /review unavailable .* proceed with a logged caveat/i);
 });

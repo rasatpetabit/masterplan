@@ -52,7 +52,7 @@ A `changes: 0` on a real amendment reads as a no-op to anyone scanning
 `events.jsonl` later, which is the opposite of what the field is for. Counting
 goals whose *body* hash changed would be more faithful.
 
-## 3. `agent-dispatch review` output carries no timestamp
+## 3. Harness-native review output carries no timestamp
 
 **Hit during:** building a gate receipt from a review result, 2026-08-08.
 
@@ -64,5 +64,7 @@ artifacts it would certify (see the staleness guard in `bin/masterplan.mjs`).
 That works, but it is a proxy: copying the file forward, or restoring it from a
 backup, resets the mtime and would let a stale review certify current artifacts.
 A `completed_at` field in the review output — or better, the artifact hashes the
-review actually read — would make the check exact. The fix belongs in
-agent-dispatch, not here.
+review actually read — would make the check exact. **Resolved by the native
+cutover:** masterplan no longer calls a review control plane; it records reviews
+via `mp record-result --reviews-file` (per-task) and `mp record-gate-review`
+(gates), both of which stamp the record with the review time at ingestion.

@@ -8,8 +8,8 @@
 ### 1. Per-task verify commands (implementer-run, in-task)
 
 Every task in `plan.index.json` carries a `verify_commands` array — shell commands the
-implementer must run to prove the task. Implementation routes through `dispatch_task` to the
-`masterplan-implementation` policy class via the broker; that worker runs these commands during
+implementer must run to prove the task. Implementation routes through a native spawn descriptor to the
+`masterplan-implementation` policy class; that worker runs these commands during
 implementation and reports results in its digest:
 
 ```json
@@ -103,19 +103,20 @@ conversational) and calls `routeTask` (`lib/dispatch/routing.mjs`). The result i
 spec excerpts, no raw file contents — because it transits the orchestrator context.
 
 `routeTask` returns `{ target: 'codex'|'inline'|'ask', eligible, reason }`. In v8 `target`
-is informational and logged only; every task is implemented via `dispatch_task` to the
-`masterplan-implementation` policy class via the broker, regardless of its routing result.
+is informational and logged only; every task is implemented via a native spawn descriptor to the
+`masterplan-implementation` policy class, regardless of its routing result.
 `target` records which tasks a future implementer tier *could* offload; it does not cap or gate
 anything.
 
 ## Centralized review stage (config-gated)
 
 The fabric wave path (`mp dispatch-wave`) implements each task, then — when
-`state.review.adversary` is enabled — reviews every `done` digest through agent-dispatch.
+`state.review.adversary` is enabled — reviews every `done` digest through the harness-native
+adversary review seam.
 Masterplan is the **caller and durable recorder only**; it does not implement review
 chunking, retries, reconciliation, findings extraction, or verdict semantics.
 
-**Implement:** broker `dispatch_task` to the `masterplan-implementation` policy class receives a
+**Implement:** a native spawn descriptor to the `masterplan-implementation` policy class receives a
 prompt naming the task, its declared file scope, and its verify commands. It runs the verify
 commands and returns the IMPL_DIGEST (validated at the dispatch boundary):
 
@@ -128,8 +129,9 @@ A missing or errored digest synthesises a `failed` record — the task is never 
 
 **Review (config-gated):** for each `done` task, masterplan captures the full edit-locus working
 diff, binds it with `payload_sha = sha256(diff)`, and either reuses a completed `run+task+sha`
-event or calls `dispatch_review` once (`class: adversary`). Agent-dispatch returns a structured
-record; `lib/task-review.mjs` projects it into the **canonical** shape:
+event or runs the native review seam (`run_native_reviews` — adversary-class descriptors the
+orchestrator executes harness-natively, ingested via `--reviews-file`). The harness review record
+is projected by `lib/task-review.mjs` into the **canonical** shape:
 
 ```json
 {
@@ -178,8 +180,8 @@ Review outcome and D6 scope verification are independent:
 L1: prepareWave()                 → lean routed task payloads
 L1: git capture before            → baseline path set
 L1: mp dispatch-wave (fabric)     ──────────────────────────────┐
-    implement (dispatch_task → masterplan-implementation)       │
-    review (dispatch_review via shared broker / native ingest)  │
+    implement (native spawn descriptor)                        │
+    review (run_native_reviews / --reviews-file ingest)         │
       → project + persist canonical review                      │
     recordWaveResult (mark digests → D6 → commit)               │
 L1: act on blocking_reviews[] / failed[] / scope  ◄─────────────┘

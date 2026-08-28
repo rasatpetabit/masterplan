@@ -17,18 +17,19 @@ masterplan v8 is a 5-layer system. Each layer is thin and delegates downward:
   in the shell) + `lib/resume.mjs` (pure `decideNextAction`). L1 is the
   **only** durable writer of run-bundle state (CD-7).
 - **L2 — Fabric dispatch path:** `lib/dispatch-wave.mjs` (`dispatchWaveViaFabric`,
-  a 73-line orchestrator running 7 named stages: gateAndValidate →
+  a thin orchestrator running 6 named stages: gateAndValidate →
   resolveWaveContext → buildDescriptors → acquireAndWatch → buildNativePlan →
-  runBrokerDispatch → finalizeRecord). Invoked via `mp dispatch-wave --state=<path>`.
+  finalizeRecord). Invoked via `mp dispatch-wave --state=<path>`.
   The deleted Workflow engine (`workflows/execute.workflow.js`,
-  `workflows/plan.workflow.js`) was replaced by this broker dispatch path
-  (`dispatch_task` with `fail_mode:'isolated'` per descriptor).
+  `workflows/plan.workflow.js`) was replaced by the native spawn-plan path
+  (one descriptor per task, executed by the harness's parallel subagent API).
 - **L3 — Agents:** eight markdown agent briefs under `agents/` (`mp-explorer`,
   `mp-goal-assessor`, `mp-planner`, `mp-adversarial-reviewer`, `mp-plan-reviewer`,
   `mp-subsystem-planner`, `mp-spec-decomposer`, `mp-alignment-auditor`). Agents receive bounded briefs
   and return structured output; they do not inherit session history.
-  Implementation dispatch routes through `dispatch_task` to the
-  `masterplan-implementation` policy class (replacement for the deleted
+  Implementation dispatch routes through the routing policy — each task's
+  class resolves to a governed lane (`policy/workflow-map.json`) and the
+  harness spawns the child (replacement for the deleted
   `mp-implementer` agent).
 - **L4 — Doctor:** `bin/doctor.mjs` dispatcher + 19 check modules under
   `lib/doctor/*.mjs`. Auto-discovered alphabetically; each module exports a
@@ -68,7 +69,7 @@ dispatch filter (`lib/resume.mjs`, `lib/wave.mjs`); `blocked` blocks finalize
 is terminal-but-reversible. `waived` is reachable only via `waive-task`
 (`markTask` throws on it), closing the waived-bypass surface. The gate-review
 content path (D6/D7) feeds artifact bytes to the cross-vendor reviewer via
-`dispatch_review`'s `content` param rather than an empty git diff over untracked
+the native review's `content` param rather than an empty git diff over untracked
 artifacts — see `commands/masterplan.md` §3b.
 
 ## Core Mechanisms Map

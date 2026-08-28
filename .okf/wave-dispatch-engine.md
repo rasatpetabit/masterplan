@@ -25,4 +25,4 @@ See [`docs/internals/wave-dispatch.md`](../docs/internals/wave-dispatch.md)
 for the full design.
 </content>
 
-New seeds default `state.dispatch.fabric: true`, so `mp continue` emits `dispatch_fabric` → `mp dispatch-wave` (agent-dispatch broker) unless `--fabric=off` at seed. See [`docs/internals/wave-dispatch.md`](../docs/internals/wave-dispatch.md).
+New seeds default `state.dispatch.fabric: true`, so `mp continue` emits `dispatch_fabric` → `mp dispatch-wave` (native spawn-plan flow: per-task descriptors executed by the harness's parallel subagent API, lanes resolved from the routing policy) unless `--fabric=off` at seed. See [`docs/internals/wave-dispatch.md`](../docs/internals/wave-dispatch.md).

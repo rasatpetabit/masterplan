@@ -580,7 +580,7 @@ test('awaiting_waiver: a blocked-only bundle surfaces the waiver gate, not decid
   if (stubbed) mock.restoreAll();
 });
 
-// ---- the broker planning fan-out (task 5: planning-fanout) ----------------------
+// ---- the native planning fan-out (task 5: planning-fanout) ----------------------
 
 test('plan fan-out op: recover_plan_run emits the read-only dispatch_plan planning op (the launch_workflow(plan) arm is retired)', () => {
   const fx = makeFixture({

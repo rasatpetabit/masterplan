@@ -2,15 +2,13 @@
  * test/plan-work-item.test.mjs — a planning fan-out work item must be routable.
  *
  * Discovered 2026-08-07 during the hindsight-fix run: every subsystem planner was
- * rejected by the broker with `Task descriptor requires a non-empty repo`, so
- * parallel planning could not dispatch at all (8/8 work items failed).
+ * rejected with `Task descriptor requires a non-empty repo`, so parallel planning
+ * could not dispatch at all (8/8 work items failed).
  *
- * buildPlanWorkItem was written against `dispatch_fanout`, where omitting every
- * repo/files field was the read-only capability declaration. `dispatch_fanout` was
- * retired (agent-dispatch mcp.mjs -32601, G2/native-fanout cutover) and the surviving
- * route is `dispatch_task`, whose normalizeDescriptor() requires a non-empty `repo` on
- * EVERY descriptor — read-only or not. `repo` there is a locus field; write scope is
- * gated on `read_only`.
+ * buildPlanWorkItem is written against the NATIVE SPAWN DESCRIPTOR contract, where
+ * `repo` remains REQUIRED on every descriptor as the locus/identity field — the
+ * write grant is NOT what it declares; read-only enforcement is `read_only` plus
+ * the routing policy's writes:false role.
  *
  * These tests pin both halves: the descriptor is routable, AND it still declares
  * itself read-only with no write-scope fields.
@@ -36,7 +34,7 @@ const OPTS = {
 };
 
 describe('buildPlanWorkItem', () => {
-  it('carries a non-empty repo — the broker rejects the descriptor without it', () => {
+  it('carries a non-empty repo — the descriptor is rejected without it', () => {
     const item = buildPlanWorkItem(SUBSYSTEM, OPTS);
     assert.equal(typeof item.repo, 'string');
     assert.ok(item.repo.length > 0, 'repo must be non-empty (normalizeDescriptor)');
@@ -59,11 +57,11 @@ describe('buildPlanWorkItem', () => {
   it('carries the brief under both the brief and task aliases', () => {
     const item = buildPlanWorkItem(SUBSYSTEM, OPTS);
     assert.ok(item.brief.includes('server'), 'brief must name the subsystem');
-    assert.equal(item.task, item.brief, 'broker-required brief alias');
+    assert.equal(item.task, item.brief, 'descriptor-required brief alias');
   });
 
-  it('passes the broker normalizeDescriptor contract for dispatch_task', () => {
-    // Mirrors agent-dispatch packages/core/mcp.mjs normalizeDescriptor(). Reproduced
+  it('passes the normalizeDescriptor contract for native spawn descriptors', () => {
+    // Mirrors the native spawn descriptor normalize step. Reproduced
     // rather than imported so this suite does not depend on a sibling repo checkout.
     const normalizeDescriptor = (d) => {
       if (d == null || typeof d !== 'object' || Array.isArray(d)) {

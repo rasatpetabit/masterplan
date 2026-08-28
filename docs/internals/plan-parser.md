@@ -35,8 +35,9 @@ subsystems — each a file-disjoint, coherent responsibility slice — and emits
 form `{ subsystems: [...], recommend_parallel: bool, reason: string }`. It does not plan
 tasks. Its subsystem list is the seam map the fan-out drives.
 
-**Step 2 — Fan-out.** Planning fan-out goes through the broker dispatch path — one
-`dispatch_task` per subsystem (each running `mp-subsystem-planner`). Each drafter returns a
+**Step 2 — Fan-out.** Planning fan-out is the native spawn-plan path — one
+`mp-subsystem-planner` descriptor per subsystem (class `planned-execution`, a
+writes:false role), executed by the harness's parallel subagent API. Each drafter returns a
 **fragment** — a subsystem-scoped task list without global ids or waves. The fragment schema
 (enforced at the dispatch boundary) is:
 

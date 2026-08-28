@@ -570,7 +570,7 @@ test('no-epoch marker: backward-compatible, no fencing applied', () => {
 });
 
 // ===========================================================================
-// adsp-v1.1 dispatch provenance → degradation-visibility events (chunk A2)
+// dispatch provenance → degradation-visibility events (chunk A2)
 // ===========================================================================
 
 function readEvents(bundleDir) {
@@ -599,7 +599,7 @@ test('dispatch_degraded: emitted for a digest with dispatch.outcome=escalate, ca
       tasks: [
         digest(1, 'done'),
         digest(2, 'blocked', { digest: {
-          summary: 'broker escalated: backend_unconfigured',
+          summary: 'execution escalated: backend_unconfigured',
           blockers: 'backend_unconfigured',
           dispatch: { outcome: 'escalate', reason: 'backend_unconfigured', decision_id: 'dec-77' },
         } }),
@@ -624,7 +624,7 @@ test('dispatch_degraded: emitted for a digest with dispatch.outcome=escalate, ca
   assert.equal(res.failed[0].id, 2);
 });
 
-test('dispatch_degraded: emitted for dispatch.outcome=broker_error', () => {
+test('dispatch_degraded: emitted for dispatch.outcome=error', () => {
   const fx = makeFixture({
     tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
     activeRun: { wave: 1, run_id: 'r1', task_id: 'wf1', scope: ['src/a.txt'], baseline: [] },
@@ -639,9 +639,9 @@ test('dispatch_degraded: emitted for dispatch.outcome=broker_error', () => {
       baseline: [],
       tasks: [
         digest(1, 'blocked', { digest: {
-          summary: 'broker error during dispatch_task: connection refused',
+          summary: 'execution error during native spawn: connection refused',
           blockers: 'connection refused',
-          dispatch: { outcome: 'broker_error', reason: 'connection refused' },
+          dispatch: { outcome: 'error', reason: 'connection refused' },
         } }),
       ],
     },
@@ -649,7 +649,7 @@ test('dispatch_degraded: emitted for dispatch.outcome=broker_error', () => {
 
   const degraded = readEvents(fx.bundleDir).filter((e) => e.type === 'dispatch_degraded');
   assert.equal(degraded.length, 1);
-  assert.equal(degraded[0].outcome, 'broker_error');
+  assert.equal(degraded[0].outcome, 'error');
   assert.equal(degraded[0].reason, 'connection refused');
   assert.equal(degraded[0].decision_id, null, 'absent decision_id normalizes to null');
 });
@@ -699,7 +699,7 @@ test('dispatch_inline_designed: a clean inline_designed digest gets its own quer
       baseline: [],
       tasks: [
         digest(1, 'blocked', { digest: {
-          summary: 'broker returned execute_yourself',
+          summary: 'execution returned execute_yourself',
           blockers: 'execute_yourself: Claude-tier route; route inline',
           dispatch: { outcome: 'inline_designed', reason: 'execute_yourself: Claude-tier route', decision_id: 'dec-5' },
         } }),
@@ -791,7 +791,7 @@ test('dispatch events: land in the same MAIN state commit as wave_recorded', () 
       baseline: [],
       tasks: [
         digest(1, 'blocked', { digest: {
-          dispatch: { outcome: 'broker_error', reason: 'spawn ENOENT' },
+          dispatch: { outcome: 'error', reason: 'spawn ENOENT' },
         } }),
       ],
     },

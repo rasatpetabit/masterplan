@@ -8,12 +8,12 @@
 // Complete input set of the script: only agents/mp-*.md under agents/, minus
 // SKIP_FOR_PI (currently mp-implementer.md). No other profiles/config feeds.
 //
-// Live alias contract: every canonical agent declares the routing.yaml subagents
-// lineup alias (currently opus); MODEL_MAP maps it to the lineup's provider-qualified
-// id. The expected id is DERIVED from agent-dispatch's policy/routing.yaml below —
-// never hardcoded here — so a lineup change turns this suite red instead of silently
-// registering a retired model. Bidirectional equality (map keys == declared
-// non-skipped aliases) is enforced below; unknown aliases fail closed.
+// Live alias contract: every canonical agent declares a routing-policy LANE name
+// (frontier/longform/…); MODEL_MAP maps every lane to its lane model ref. The map
+// is DERIVED from the checked-in policy/workflow-map.json below — never hardcoded
+// here — so a fleet model change turns this suite red instead of silently registering
+// a retired model. Declared aliases must be a subset of the map keys; unknown
+// aliases fail closed.
 //
 // The script's filesystem side-effects against the real host (~/.pi/...) are
 // NOT tested here; main() is import-guarded so this import is pure. Temp-dir
@@ -45,61 +45,52 @@ function agentModelAliases({ includeSkipped = true } = {}) {
   return { aliases, perFile };
 }
 
-// Derive the lineup (alias → provider-qualified id) from agent-dispatch's routing.yaml —
-// the single declared source of the subagent lineup. Fails loud if the policy file or the
-// subagents block is unreadable; a silent fallback would let this suite rot into a pin.
+// Derive the lineup (lane alias → lane model ref) from the checked-in routing policy —
+// the single declared source of model ids. Fails loud if the policy is unreadable; a
+// silent fallback would let this suite rot into a pin.
 function lineupFromRoutingPolicy() {
-  // policy/src/routing.yaml, not policy/routing.yaml: the hand-written source lives under
-  // src/ and policy/ holds only compiler output. The old path had drifted to ENOENT, which
-  // failed this suite loud (as designed) rather than rotting it into a pin.
-  const routingPath = '/srv/workflows/config/routing.yaml';
-  const text = readFileSync(routingPath, 'utf8');
-  const block = text.match(/^subagents:\n((?:[ ]{2}\S[^\n]*\n)+)/m);
-  assert.ok(block, `${routingPath}: no subagents block found`);
+  const policyPath = join(repoRoot, 'policy', 'workflow-map.json');
+  const policy = JSON.parse(readFileSync(policyPath, 'utf8'));
+  assert.ok(policy.lanes && typeof policy.lanes === 'object', `${policyPath}: no lanes section`);
   const lineup = {};
-  for (const line of block[1].trimEnd().split('\n')) {
-    const m = line.match(/^[ ]{2}([\w-]+):\s*\{([^}]*)\}/);
-    assert.ok(m, `${routingPath}: unparseable subagents line: ${line}`);
-    const id = m[2].match(/\bid:\s*([^\s,}]+)/);
-    assert.ok(id, `${routingPath}: subagents.${m[1]} has no id`);
-    lineup[m[1]] = id[1];
+  for (const [lane, entry] of Object.entries(policy.lanes)) {
+    assert.ok(entry && entry.model, `${policyPath}: lane "${lane}" has no model ref`);
+    lineup[lane] = entry.model;
   }
-  assert.ok(Object.keys(lineup).length > 0, `${routingPath}: empty subagents lineup`);
+  assert.ok(Object.keys(lineup).length > 0, `${policyPath}: empty lane lineup`);
   return lineup;
 }
 
-test('every canonical agents/mp-*.md frontmatter model: is a lineup alias (incl. SKIP_FOR_PI)', () => {
+test('every canonical agents/mp-*.md frontmatter model: is a routing-policy lane alias (incl. SKIP_FOR_PI)', () => {
   const { perFile } = agentModelAliases({ includeSkipped: true });
   assert.ok(perFile.length > 0, 'expected at least one mp-*.md agent');
   const lineup = lineupFromRoutingPolicy();
   for (const { file, alias } of perFile) {
     assert.ok(
       alias in lineup,
-      `${file}: model: ${alias} is not in the routing.yaml subagents lineup (${Object.keys(lineup).join(', ')})`,
+      `${file}: model: ${alias} is not a routing-policy lane alias (${Object.keys(lineup).join(', ')})`,
     );
   }
 });
 
-test('MODEL_MAP keys == model: aliases of non-skipped agents (bidirectional)', () => {
+test('declared aliases are a subset of MODEL_MAP keys; retired aliases fail closed', () => {
   const { aliases } = agentModelAliases({ includeSkipped: false });
   const mapKeys = new Set(Object.keys(MODEL_MAP));
-  assert.deepEqual(
-    [...mapKeys].sort(),
-    [...aliases].sort(),
-    `MODEL_MAP keys ${JSON.stringify([...mapKeys])} must equal non-skipped agent aliases ${JSON.stringify([...aliases])}`,
-  );
-  // Removed from the lineup 2026-08-04 — reintroduction must fail closed, not map.
-  for (const dead of ['fable', 'sonnet', 'haiku']) {
-    assert.equal(MODEL_MAP[dead], undefined, `${dead} must not be in MODEL_MAP (not in the lineup)`);
+  for (const alias of aliases) {
+    assert.ok(mapKeys.has(alias), `declared alias "${alias}" missing from MODEL_MAP`);
+  }
+  // Retired aliases — reintroduction must fail closed, not map.
+  for (const dead of ['fable', 'sonnet', 'haiku', 'opus']) {
+    assert.equal(MODEL_MAP[dead], undefined, `${dead} must not be in MODEL_MAP (retired)`);
   }
 });
 
-test('MODEL_MAP targets match the provider-qualified ids routing.yaml declares', () => {
+test('MODEL_MAP targets match the lane model refs the checked-in policy declares', () => {
   const lineup = lineupFromRoutingPolicy();
   assert.deepEqual(
     MODEL_MAP,
     lineup,
-    'MODEL_MAP must mirror the routing.yaml subagents lineup (alias → id) exactly',
+    'MODEL_MAP must mirror the routing-policy lane lineup (alias → model ref) exactly',
   );
 });
 
@@ -349,28 +340,32 @@ test('every non-skipped agent that declares tools covers its MCP-namespaced name
   }
 });
 
-test('mp-explorer body describes the lineup wrapper default without naming any model (rot-proof)', () => {
-  // Residual plan-gate P2, hardened: prose that names a concrete wrapper model rots the
-  // moment the lineup changes (that is exactly how `fable` survived the 2026-08-04 cut).
-  // The body must describe the compiler-stamped lineup default and name NO model at all.
+test('mp-explorer body names no concrete model id and describes policy-lane recon (rot-proof)', () => {
+  // Prose that names a concrete model rots the moment the fleet changes (that is
+  // exactly how `fable` survived the 2026-08-04 cut). Lane aliases are fine — they
+  // are policy names; concrete model ids and retired aliases are not.
   const raw = readFileSync(join(repoRoot, 'agents', 'mp-explorer.md'), 'utf8');
   const parts = raw.split(/^---$/m);
   assert.ok(parts.length >= 3, 'mp-explorer.md must have YAML frontmatter delimiters');
   const body = parts.slice(2).join('---');
-  assert.equal(
-    /\b(haiku|opus|sonnet|fable)\b/i.test(body),
-    false,
-    'explorer body must not name any concrete wrapper model — lineup prose only',
+  const lineup = lineupFromRoutingPolicy();
+  const concreteIds = Object.values(lineup).map((m) => m.replace(/^litellm\//, ''));
+  for (const id of [...concreteIds, 'haiku', 'opus', 'sonnet', 'fable']) {
+    assert.equal(
+      new RegExp(`\\b${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(body),
+      false,
+      `explorer body must not name the concrete model "${id}" — lane prose only`,
+    );
+  }
+  assert.match(
+    body,
+    /routing policy/i,
+    'explorer body must state the routing-policy lane it runs on',
   );
   assert.match(
     body,
-    /checked-in\s+lineup\s+default/i,
-    'explorer body must state the checked-in lineup default',
-  );
-  assert.match(
-    body,
-    /thin wrapper|read-only/i,
-    'explorer body must describe thin-wrapper / read-only recon semantics',
+    /read-only|recon/i,
+    'explorer body must describe read-only recon semantics',
   );
   assert.equal(
     /model_group\s*:\s*["']?dispatch-/i.test(body),

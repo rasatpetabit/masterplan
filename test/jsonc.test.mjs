@@ -69,7 +69,7 @@ test('a comma inside a string is not treated as a trailing comma', () => {
 test('a block comment between tokens does not merge them into new valid data', () => {
   // Splicing the comment out would turn the MALFORMED {"n":1/*x*/2} into the
   // VALID {"n":12} — silent data corruption. Space-filling makes it throw.
-  // Found by the dispatch-gateway diff-review lane, 2026-08-05.
+  // Found by a diff-review pass.
   assert.throws(() => parseJsonc('{"n":1/*x*/2}'));
   assert.throws(() => parseJsonc('{"n":1/**/2}'));
   // A block comment in a harmless position still parses.
@@ -83,23 +83,4 @@ test('unterminated block comment throws rather than silently truncating', () => 
 test('non-string input is a TypeError', () => {
   assert.throws(() => parseJsonc(null), TypeError);
   assert.throws(() => parseJsonc({}), TypeError);
-});
-
-test('the real dispatch-policy.jsonc parses and carries a route map', async () => {
-  const { execFileSync } = await import('node:child_process');
-  const fs = await import('node:fs');
-  const path = await import('node:path');
-  let root;
-  try {
-    root = String(execFileSync('agent-dispatch', ['where'], { encoding: 'utf8' })).trim();
-  } catch {
-    return; // agent-dispatch CLI unavailable — the unit cases above still cover the parser
-  }
-  const p = path.join(root, 'policy', 'dispatch-policy.jsonc');
-  if (!fs.existsSync(p)) return;
-  const policy = parseJsonc(fs.readFileSync(p, 'utf8'));
-  assert.ok(
-    Object.keys(policy.agent_mapping ?? {}).length > 0,
-    'the live policy yields a non-empty agent_mapping — the value dispatch-wave depends on',
-  );
 });

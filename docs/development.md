@@ -1,9 +1,9 @@
 # Development & contributor discipline
 
 Repo-specific working rules for `masterplan`. Generic agent policy (AUQ,
-verification-before-completion, durable handoff, model routing) lives in the
-global / agent-dispatch settings and is **not** restated here — run
-`agent-dispatch digest` / `agent-dispatch where`. The canonical CD-rule bodies
+verification-before-completion, durable handoff, model routing) is global
+fleet policy (`/srv/workflows/policy/`) and is **not** restated here. The
+canonical CD-rule bodies
 (CD-1…CD-11, referenced by live code via their IDs) live in
 [`docs/conventions/cd-rules.md`](./conventions/cd-rules.md). This file collects
 the masterplan-specific discipline that used to crowd `AGENTS.md`.
@@ -41,7 +41,7 @@ subcommands, or `superpowers` skills. The orchestrator context holds sequencing
 state only — never raw file contents or verification dumps. Subagents take a
 bounded brief (Goal / Inputs / Scope / Constraints / Return shape), don't
 inherit session history, and return compact digests. Model selection for
-dispatches follows the central routing policy (`agent-dispatch resolve`); never
+dispatches follows the central routing policy (`policy/workflow-map.json`); never
 hardcode model tiers.
 
 ## Keep sync'd surfaces in lockstep
@@ -64,8 +64,9 @@ Drift breaks autocomplete, the hygiene test, or silently skips checks.
 Don't trust your own confirmation bias on large markdown/code edits. After a
 multi-edit pass, dispatch a fresh-eyes reader subagent over the changed files
 end-to-end for contradictions or dangling references. For a reviewable diff,
-prefer a cross-vendor pass — `agent-dispatch review --class adversary` (resolves
-to a cross-vendor reviewer relative to Claude — see `agent-dispatch digest`) — over a same-vendor
+prefer a cross-vendor pass — the harness-native adversary class (`breaker` role,
+frontier lane; adversarial panel for cross-vendor coverage — resolved from the
+checked-in `policy/workflow-map.json`) — over a same-vendor
 self-check (central policy: diff-review routes cross-vendor). Scope it
 correctly: hand it a path-filtered `git diff -- <paths>` rather than a
 whole-tree scan; in a dirty bundle (active `state.yml`, `WORKLOG.md`,
@@ -91,8 +92,8 @@ Hindsight rule). The escape ladder is strict:
 
 1. **Retry once** — a transient resolve error is not a verdict on availability.
 2. **Probe the real state** — `subagent({ action: 'list' })` for agent
-   resolution, `dispatch_health_status` / `agent-dispatch digest` for the
-   dispatch gateway. Never assert "degraded" without one of these; an
+   resolution and `mp doctor` (`routing-policy-health`) for the
+   routing policy. Never assert "degraded" without one of these; an
    unverified excuse is the anti-pattern.
 3. **Escalate** — open an AUQ (`ask_user_question`) with concrete options, or
    surface via `contact_supervisor`. Do not proceed on an unverified
@@ -116,7 +117,7 @@ host-specific:
   derived from `agents/mp-*.md` (+ SKIP_FOR_PI); `--check` flags those as drift.
   Unmanaged `masterplan:mp-*.md` outside that set are left alone. Idempotent.
   `mp-implementer` is deliberately **skipped** (skynet-MCP edit contract is
-  CC-only; no pi caller); pi uses `dispatch_task` for edits instead. CC still
+  CC-only; no pi caller); pi implements tasks natively instead. CC still
   loads `agents/` as the `masterplan:mp-*` plugin namespace independently.
 
 On pi, call **bare** names only: `subagent({ agent: 'mp-spec-decomposer' })`.

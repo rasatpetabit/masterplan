@@ -72,7 +72,7 @@ is not itself a `phase` value.
 - [`docs/development.md`](../docs/development.md) — build/test/lint, contributor discipline
 - [`docs/coordination-playbook.md`](../docs/coordination-playbook.md) — multi-agent GitHub-issue coordination (`mp:run-<slug>` publish/follow)
 - [`CHANGELOG.md`](../CHANGELOG.md) — release history and decision rationale
-- `AGENTS.md` / `CLAUDE.md` — defer cross-repo agent policy (AUQ, Serena, Hindsight, model routing) to the agent-dispatch repo
+- `AGENTS.md` / `CLAUDE.md` — defer cross-repo agent policy (AUQ, Serena, Hindsight, model routing) to `policy/workflow-map.json` and the fleet dispatch policy at `/srv/workflows/policy/dispatch.md`
 
 
 ## Recent routing / registration notes

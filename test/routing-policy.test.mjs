@@ -1,6 +1,6 @@
 // test/routing-policy.test.mjs — repo-local routing policy resolver.
 //
-// The fleet's agent-dispatch control plane is retired; masterplan resolves work
+// The fleet's retired dispatch control plane no longer resolves routing; masterplan resolves work
 // classes against policy/workflow-map.json (checked-in canonical copy of the
 // fleet workflow routing map). These tests are hermetic: repo copy + injected
 // fixtures, never a host path.

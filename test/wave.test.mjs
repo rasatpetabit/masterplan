@@ -524,7 +524,7 @@ test('prepareWave with dispatchInputs attaches LEAN idempotency block per task +
     assert.deepEqual(Object.keys(t.idempotency).sort(), ['handoff_key', 'input_fingerprint', 'task_spec_hash']);
     assert.match(t.idempotency.task_spec_hash, /^[0-9a-f]{64}$/);
     assert.equal(t.idempotency.input_fingerprint, res.input_fingerprint); // one fingerprint per wave
-    assert.ok(t.idempotency.handoff_key.startsWith('adsp-idem-v1:run-slug:'));
+    assert.ok(t.idempotency.handoff_key.startsWith('fabric-idem-v1:run-slug:'));
     // The FULL key binds spec hash AND fingerprint (spec §5.5 — never spec-hash-only).
     assert.ok(t.idempotency.handoff_key.endsWith(`:${t.idempotency.task_spec_hash}:${res.input_fingerprint}`));
   }

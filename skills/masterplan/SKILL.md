@@ -5,7 +5,7 @@ description: "Generic/Codex entrypoint for masterplan: bare /masterplan, /master
 
 ## Central agent policy
 
-AUQ, Serena, Hindsight, context-mode, and agent policy is centralized in `AGENTS.md` in the agent-dispatch repo (`agent-dispatch where`). This skill must not duplicate or override dispatch rules. User-facing choices must use `ask_user_question` / `AskUserQuestion`, never prose questions.
+AUQ, Serena, Hindsight, context-mode, and agent policy is centralized in `AGENTS.md` (routing resolves from `policy/workflow-map.json`; fleet policy at `/srv/workflows/policy/dispatch.md`). This skill must not duplicate or override dispatch rules. User-facing choices must use `ask_user_question` / `AskUserQuestion`, never prose questions.
 
 
 # Codex entrypoint for Superpowers Masterplan

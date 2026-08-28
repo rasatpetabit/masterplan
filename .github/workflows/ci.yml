@@ -26,7 +26,7 @@ jobs:
 
       - name: Unit suite
         env:
-          # Cross-repo overlay tests skip only when agent-dispatch is absent in
+          # Cross-repo overlay tests skip only when the fleet policy is absent in
           # this explicitly standalone checkout; fleet resolution failures stay loud.
           MASTERPLAN_STANDALONE_CI: '1'
         run: node --test test/*.test.mjs

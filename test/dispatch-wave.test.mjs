@@ -1,27 +1,30 @@
 // test/dispatch-wave.test.mjs — the dispatch_fabric op consumer (lib/dispatch-wave.mjs).
 //
 // REAL git in temp repos (the continue.test.mjs pattern): the module's value is the exact
-// interleaving of the idempotency record, the broker fanout seam, coord pairing, and the
+// interleaving of the idempotency record, the native spawn-plan seam, and the
 // record-result transaction, so the tests drive genuine MAIN+worktree bundles through
 // `mp continue` (which writes the phase-1 marker dispatch-wave consumes) and inject only
-// the broker client / coord seams. Covered behaviors (the chunk-B review mandates):
+// the routing-resolution / review seams. Covered behaviors:
 //
-//   1. Flag-off → no-op: state.dispatch.fabric unset → outcome 'flag-off', broker untouched.
-//   2. Full flow: one descriptor per routed task (adapter buildWorkItem shape), a
-//      bounded pool of dispatch_task calls, worker digests recorded via recordWaveResult (task done,
-//      marker cleared, wave_recorded event, dispatch.outcome:'worker' — no degradation events).
+//   1. Flag-off → no-op: state.dispatch.fabric unset → outcome 'flag-off', nothing re-launched.
+//   2. Native spawn plan: one descriptor per routed task (buildWorkItem shape) resolved
+//      from the repo-local routing policy; worker digests recorded via recordWaveResult
+//      (task done, marker cleared, wave_recorded event, dispatch.outcome:'worker').
 //   3. Idempotent re-invoke: an existing 'pending' record (accepted-but-unobserved) is
-//      returned as-is — the broker is NOT called again (injected-client assert).
+//      returned as-is — nothing is re-launched.
 //   4. --takeover supersedes a stuck pending attempt (attempt N+1, history archived).
-//   5. A 'dispatched' record re-drives record-result from the stored digests — broker untouched.
-//   6. Coord open/close are PAIRED — including when the dispatch fails (the leaked-open-jobs fix).
-//   7. Broker failure → blocked/broker_error digests → dispatch_degraded events, tasks stay
-//      pending, record 'recorded'; a follow-up invoke starts attempt 2 (observed retry).
-//   8. Key/record substrate unit behavior (encoding, atomic create-or-return-existing).
-//   9. Per-task adversary review (config-gated on state.review.adversary): FULL working
+//   5. A 'dispatched' record re-drives record-result from the stored digests — nothing re-launched.
+//   6. Ownership: a live foreign owner blocks launch and re-drive; a pre-claimed attempt
+//      marker makes the second writer lose the O_EXCL claim (no double dispatch).
+//   7. Routing inputs are frozen in the record at attempt 1 and reused on retries; a
+//      codex-suppressed host produces descriptors identical to the launch op payload.
+//   8. Multi-repo locus: absolute MAIN scope canonicalizes to the run worktree; sibling
+//      prefixed files land on a sibling worktree with create_files + stripped paths.
+//   9. Key/record substrate unit behavior (encoding, atomic create-or-return-existing).
+//  10. Per-task adversary review (config-gated on state.review.adversary): FULL working
 //      diff in the payload (never scope-filtered), verdict in digest.review /
-//      item.review → blocking_reviews[], run+task+sha re-entry idempotency, degraded
-//      lane → skipped event + inconclusive, review-off → no lane calls and no writes,
+//      item.review → blocking_reviews[], run+task+sha re-entry idempotency, owed-but-absent
+//      review → skipped event + verdict 'error', review-off → no lane calls and no writes,
 //      and D6 independence (approve never bypasses verify-scope).
 
 import { test } from 'node:test';
@@ -107,7 +110,7 @@ function launchViaContinue(fx) {
   return op;
 }
 
-/** A worker digest the broker's stdout carries back. */
+/** A worker digest the child's report carries back. */
 const workerDigest = (id, status = 'done', files = []) => ({
   task_id: id, status, start_sha: 'abc123', files_changed: files,
   verify: [], summary: `task ${id} ${status}`, blockers: null,
@@ -131,7 +134,6 @@ const rejectRecord = {
   harness: healthyHarness(),
 };
 
-/** Injected broker client: records calls; supports dispatch_task + dispatch_review. */
 function readEvents(bundleDir) {
   try {
     return fs.readFileSync(path.join(bundleDir, 'events.jsonl'), 'utf8')
@@ -145,7 +147,7 @@ function readEvents(bundleDir) {
 // 1. Flag gate
 // ---------------------------------------------------------------------------
 
-test('flag-off → no-op: no dispatch, no record, broker untouched', async () => {
+test('flag-off → no-op: no dispatch, no record, nothing re-launched', async () => {
   const fx = makeFixture({
     tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
     planIndex: [planEntry(1, 1, ['src/a.txt'])],
@@ -196,7 +198,7 @@ async function recordNativeWave(fx, res, { edits = {}, providedReviews = null, s
 // 3. Idempotency — the accepted-but-unobserved window
 // ---------------------------------------------------------------------------
 
-test('idempotent re-invoke: an existing pending record is returned — the broker is NOT called again', async () => {
+test('idempotent re-invoke: an existing pending record is returned — nothing is re-launched', async () => {
   const fx = makeFixture({
     tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
     planIndex: [planEntry(1, 1, ['src/a.txt'])],
@@ -204,7 +206,7 @@ test('idempotent re-invoke: an existing pending record is returned — the broke
   });
   launchViaContinue(fx);
   // Simulate a prior invocation that persisted the record and died after the
-  // broker may have accepted (the crash window the key exists for).
+  // spawn may have been accepted (the crash window the key exists for).
   const key = composeWaveDispatchKey('dw-idem', 1);
   const { created } = createWaveDispatchRecord(fx.bundleDir, {
     key, run_id: 'dw-idem', wave: 1, op: 'dispatch_fabric',
@@ -250,7 +252,7 @@ test('--takeover supersedes a stuck pending attempt: attempt 2 dispatches, histo
   assert.equal(rec.history[0].status, 'superseded');
 });
 
-test("a 'dispatched' record re-drives record-result from the stored digests — broker untouched", async () => {
+test("a 'dispatched' record re-drives record-result from the stored digests — nothing re-launched", async () => {
   const fx = makeFixture({
     tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
     planIndex: [planEntry(1, 1, ['src/a.txt'])],
@@ -328,7 +330,7 @@ test('createWaveDispatchRecord: atomic create-or-return-existing (the O_EXCL gat
 // Review findings 1+2: Guard-D ownership, atomic attempt claim, routing parity
 // ---------------------------------------------------------------------------
 
-test('ownership-denied: a live foreign owner → loud throw, nothing written, broker untouched', async () => {
+test('ownership-denied: a live foreign owner → loud throw, nothing written, nothing re-launched', async () => {
   const fx = makeFixture({
     tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
     planIndex: [planEntry(1, 1, ['src/a.txt'])],
@@ -548,7 +550,7 @@ test('multi-repo: sibling-prefixed files land on sibling worktree with create_fi
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// Per-task adversary review — caller-owned behaviors via dispatch_review
+// Per-task adversary review — caller-owned behaviors via the native review seam
 // ---------------------------------------------------------------------------
 
 test('D6 independence: an approve verdict does NOT bypass verify-scope — the out-of-scope write is still reverted', async () => {
@@ -705,7 +707,7 @@ test('skipped never satisfies re-entry END-TO-END: after a failed review, the ne
   assert.notEqual(done[0].data.sha, skipped[0].data.sha, 'the retry payload changed (attempt-1 committed its edit) — re-entry keys are payload-bound');
 });
 
-test('multi-task wave: one dispatch_review per task with per-task verdicts and events', async () => {
+test('multi-task wave: one native review record per task with per-task verdicts and events', async () => {
   const fx = makeFixture({
     tasks: [
       { id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] },
@@ -826,7 +828,7 @@ test('native spawn descriptors carry the wave worktree as cwd (e2e finding 2)', 
     tasks: [{ id: 1, class: 'masterplan-implementation', files: ['src/a.txt'] }],
     descriptors: [{ repo: '/tmp/wt/toy', files: ['src/a.txt'], verify_commands: [] }],
     token: 'tok',
-    _resolve: () => ({ lane: 'dispatch-agentic-loop', agent: 'builder', effort: 'high', capability: 'edit', backend: 'dispatch-gateway', provider: 'grok-4.5', resolved: true }),
+    _resolve: () => ({ lane: 'agentic', model: 'litellm/grok-4.6', agent: 'builder', effort: 'high', capability: 'edit', writes: true, panel: null, resolved: true, reason: null }),
   });
   assert.equal(plan.tasks[0].cwd, '/tmp/wt/toy');
 });
@@ -836,7 +838,7 @@ test('an explicit cwd still wins over repo', () => {
     tasks: [{ id: 1, class: 'masterplan-implementation', files: [] }],
     descriptors: [{ cwd: '/explicit', repo: '/tmp/wt/toy' }],
     token: 'tok',
-    _resolve: () => ({ lane: 'dispatch-agentic-loop', agent: 'builder', effort: 'high', capability: 'edit', backend: 'dispatch-gateway', provider: 'grok-4.5', resolved: true }),
+    _resolve: () => ({ lane: 'agentic', model: 'litellm/grok-4.6', agent: 'builder', effort: 'high', capability: 'edit', writes: true, panel: null, resolved: true, reason: null }),
   });
   assert.equal(plan.tasks[0].cwd, '/explicit');
 });
@@ -846,7 +848,7 @@ test('cwd stays null when the descriptor names no locus at all', () => {
     tasks: [{ id: 1, class: 'masterplan-implementation', files: [] }],
     descriptors: [{}],
     token: 'tok',
-    _resolve: () => ({ lane: 'dispatch-agentic-loop', agent: 'builder', effort: 'high', capability: 'edit', backend: 'dispatch-gateway', provider: 'grok-4.5', resolved: true }),
+    _resolve: () => ({ lane: 'agentic', model: 'litellm/grok-4.6', agent: 'builder', effort: 'high', capability: 'edit', writes: true, panel: null, resolved: true, reason: null }),
   });
   assert.equal(plan.tasks[0].cwd, null, 'absence is reported, never invented');
 });
@@ -909,7 +911,7 @@ test('gateAndValidate: reused/pending when an existing record has status pending
 });
 
 // ---------------------------------------------------------------------------
-// Execute-stage unit tests (acquireAndWatch / buildNativePlan / broker / finalize)
+// Execute-stage unit tests (acquireAndWatch / buildNativePlan)
 // ---------------------------------------------------------------------------
 
 /** Drive prepare stages and return the args acquireAndWatch needs. */
@@ -1100,7 +1102,7 @@ test('buildWaveLaunchContext: reposAllowlist is optional (omitted on fabric path
     dispatch: { fabric: true },
     implementer: {},
   };
-  // No reposAllowlist — fabric path defers routing to the broker.
+  // No reposAllowlist — fabric path defers routing to the routing policy.
   const result = buildWaveLaunchContext({
     state,
     planIndexPath,
