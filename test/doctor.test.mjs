@@ -19,7 +19,7 @@ import { check as worktreeIntegrity, fix as worktreeIntegrityFix } from '../lib/
 import { check as codexAuth } from '../lib/doctor/codex-auth.mjs';
 import { check as stateSchema } from '../lib/doctor/state-schema.mjs';
 import { check as legacyBundle } from '../lib/doctor/legacy-bundle.mjs';
-import { check as adversaryLaneHealth, parseResolveOutput, parseConfiguredBackends } from '../lib/doctor/adversary-lane-health.mjs';
+import { check as routingPolicyHealth } from '../lib/doctor/routing-policy-health.mjs';
 import { check as indexStaleness } from '../lib/doctor/index-staleness.mjs';
 import { check as staleLock } from '../lib/doctor/stale-lock.mjs';
 import { check as pluginRegistryDrift } from '../lib/doctor/plugin-registry-drift.mjs';
@@ -635,162 +635,108 @@ test('legacy-bundle: no WARN when docs/superpowers is empty container (no bundle
     'empty docs/superpowers container must not produce WARN or ERROR');
 });
 
-// ---- adversary-lane-health (host-scoped; injectable agent-dispatch probe) ----
+// ---- routing-policy-health (host-scoped; repo-local policy + drift WARN) ----
 
-test('adversary-lane-health: healthy lane → PASS (route surfaced)', () => {
-  const probe = () => ({ onPath: true, resolves: true, route: 'skynet-local/dispatch-adversary', healthy: true, detail: null });
-  const findings = adversaryLaneHealth('/unused', { probe });
+const RPH_FIXTURE = {
+  lanes: {
+    frontier: { model: 'litellm/model-a', ctx: 100000, cost: 'high' },
+    broad: { model: 'litellm/model-b', ctx: 100000, cost: 'medium' },
+    longform: { model: 'litellm/model-c', ctx: 100000, cost: 'medium' },
+    code: { model: 'litellm/model-d', ctx: 100000, cost: 'low' },
+    reason: { model: 'litellm/model-e', ctx: 100000, cost: 'medium' },
+  },
+  agents: {
+    breaker: { tier: 'big', writes: false },
+    judge: { tier: 'big', writes: false },
+    builder: { tier: 'medium', writes: true },
+    tracer: { tier: 'medium', writes: false },
+  },
+  classes: {
+    adversary: { agent: 'breaker', lane: 'frontier', cap: 'review', effort: 'xhigh', panel: 'adversarial' },
+    critic: { agent: 'breaker', lane: 'frontier', cap: 'review', effort: 'high' },
+    'planned-execution': { agent: 'judge', lane: 'frontier', cap: 'chat', effort: 'xhigh' },
+    'bounded-edit': { agent: 'builder', lane: 'code', cap: 'edit', effort: 'high' },
+    'agentic-loop': { agent: 'builder', lane: 'code', cap: 'edit', effort: 'high' },
+    'deep-investigation': { agent: 'tracer', lane: 'reason', cap: 'investigate', effort: 'high' },
+    unknown: { agent: 'builder', lane: 'code', cap: 'chat', effort: 'high' },
+  },
+  tiers: { small: { lane: 'code' }, medium: { lane: 'code' }, big: { lane: 'frontier' } },
+  panels: {
+    adversarial: {
+      members: [
+        { lane: 'frontier', model: 'litellm/model-a' },
+        { lane: 'broad', model: 'litellm/model-b' },
+        { lane: 'longform', model: 'litellm/model-c' },
+      ],
+      quorum: 2,
+    },
+  },
+  workflow: { defaultClass: 'unknown' },
+};
+
+function rphFixturePath(extra = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-rph-'));
+  const policyPath = path.join(dir, 'policy.json');
+  fs.writeFileSync(policyPath, JSON.stringify({ ...RPH_FIXTURE, ...extra }));
+  return { dir, policyPath, liveMissing: path.join(dir, 'no-such-live.json') };
+}
+
+test('routing-policy-health: healthy repo policy -> PASS (advisory check)', () => {
+  const { policyPath, liveMissing } = rphFixturePath();
+  const findings = routingPolicyHealth('/unused', { policyPath, livePath: liveMissing });
   assertFindingShape(findings);
   assert.equal(maxSeverity(findings), 'PASS', JSON.stringify(findings));
-  assert.match(findings[0].summary, /skynet-local\/dispatch-adversary/);
+  assert.match(findings[0].summary, /routing policy healthy/);
 });
 
-test('adversary-lane-health: agent-dispatch off PATH → WARN, never ERROR (review is advisory)', () => {
-  const probe = () => ({ onPath: false, resolves: false, route: null, healthy: null, detail: null });
-  const findings = adversaryLaneHealth('/unused', { probe });
+test('routing-policy-health: the CHECKED-IN repo policy is healthy (live surface)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-rph-repo-'));
+  const findings = routingPolicyHealth('/unused', { livePath: path.join(dir, 'no-live.json') });
+  assertFindingShape(findings);
+  assert.equal(maxSeverity(findings), 'PASS', JSON.stringify(findings));
+});
+
+test('routing-policy-health: unreadable policy -> WARN, never ERROR (review is advisory)', () => {
+  const findings = routingPolicyHealth('/unused', { policyPath: '/nonexistent/policy.json', livePath: '/nonexistent/live.json' });
   assertFindingShape(findings);
   assert.equal(maxSeverity(findings), 'WARN', JSON.stringify(findings));
-  assert.match(findings[0].summary, /not on PATH/);
+  assert.ok(!findings.some((f) => f.severity === 'ERROR'), 'an advisory check must never surface ERROR');
 });
 
-test('adversary-lane-health: resolve fails → WARN (no adversary route)', () => {
-  const probe = () => ({ onPath: true, resolves: false, route: null, healthy: null, detail: 'no route for class adversary' });
-  const findings = adversaryLaneHealth('/unused', { probe });
+test('routing-policy-health: a required class missing -> WARN naming it', () => {
+  const classes = { ...RPH_FIXTURE.classes };
+  delete classes.adversary;
+  classes.unknown = RPH_FIXTURE.classes.unknown; // defaultClass still resolves
+  const { policyPath, liveMissing } = rphFixturePath({ classes });
+  const findings = routingPolicyHealth('/unused', { policyPath, livePath: liveMissing });
   assertFindingShape(findings);
   assert.equal(maxSeverity(findings), 'WARN', JSON.stringify(findings));
-  assert.match(findings[0].summary, /resolve --class adversary` failed/);
+  assert.ok(findings.some((f) => /adversary/.test(f.summary)), JSON.stringify(findings));
 });
 
-test('adversary-lane-health: resolves but backend unhealthy → WARN (advisory, not FAIL)', () => {
-  const probe = () => ({ onPath: true, resolves: true, route: 'skynet-local/dispatch-adversary', healthy: false, detail: 'backend unavailable' });
-  const findings = adversaryLaneHealth('/unused', { probe });
+test('routing-policy-health: adversarial panel with one distinct model -> WARN (not cross-vendor)', () => {
+  const panels = { adversarial: { members: [{ lane: 'frontier', model: 'litellm/model-a' }, { lane: 'frontier', model: 'litellm/model-a' }], quorum: 2 } };
+  const { policyPath, liveMissing } = rphFixturePath({ panels });
+  const findings = routingPolicyHealth('/unused', { policyPath, livePath: liveMissing });
   assertFindingShape(findings);
   assert.equal(maxSeverity(findings), 'WARN', JSON.stringify(findings));
-  assert.match(findings[0].summary, /unhealthy/);
-  // advisory invariant: never ERROR
-  assert.ok(!findings.some((f) => f.severity === 'ERROR'), 'an advisory lane must never surface ERROR');
+  assert.ok(findings.some((f) => /cross-vendor/.test(f.summary)), JSON.stringify(findings));
 });
 
-// Real-world shape: `resolve --class adversary` THROWS (non-zero exit, e.g. chain_exhausted) when
-// the gateway backend is down, so the route+backend never materialize. The fallback probes the
-// CONFIGURED backends (via dispatch-policy.jsonc) so the WARN can name the sick backend — this is
-// the live state the audit's original fix failed to reach (its JSON-parse/backend-probe path was
-// unreachable because resolve itself threw before that code ran).
-test('adversary-lane-health: resolve throws but configured backend unhealthy → specific WARN naming the backend', () => {
-  const probe = () => ({
-    onPath: true,
-    resolves: false,
-    route: null,
-    healthy: null,
-    detail: null,
-    unhealthyBackends: ['dispatch-gateway'],
-  });
-  const findings = adversaryLaneHealth('/unused', { probe });
-  assertFindingShape(findings);
+test('routing-policy-health: live artifact drift -> WARN naming the path; identical live -> no drift WARN', () => {
+  const { dir, policyPath } = rphFixturePath();
+  const driftedLive = path.join(dir, 'live.json');
+  fs.writeFileSync(driftedLive, JSON.stringify({ ...RPH_FIXTURE, lanes: { ...RPH_FIXTURE.lanes, extra: { model: 'litellm/x' } } }));
+  let findings = routingPolicyHealth('/unused', { policyPath, livePath: driftedLive });
   assert.equal(maxSeverity(findings), 'WARN', JSON.stringify(findings));
-  assert.match(findings[0].summary, /dispatch-gateway reports unhealthy/);
-  assert.match(findings[0].summary, /resolve --class adversary` exhausted/);
-  // advisory invariant: never ERROR
-  assert.ok(!findings.some((f) => f.severity === 'ERROR'), 'an advisory lane must never surface ERROR');
+  assert.ok(findings.some((f) => /drift/.test(f.summary) && f.summary.includes(driftedLive)), JSON.stringify(findings));
+
+  const sameLive = path.join(dir, 'same.json');
+  fs.writeFileSync(sameLive, JSON.stringify(RPH_FIXTURE));
+  findings = routingPolicyHealth('/unused', { policyPath, livePath: sameLive });
+  assert.equal(maxSeverity(findings), 'PASS', JSON.stringify(findings));
 });
 
-test('adversary-lane-health: resolve throws and no backend identifiable → generic resolve-failed WARN', () => {
-  const probe = () => ({
-    onPath: true,
-    resolves: false,
-    route: null,
-    healthy: null,
-    detail: 'no policy / no configured backends',
-    unhealthyBackends: null,
-  });
-  const findings = adversaryLaneHealth('/unused', { probe });
-  assertFindingShape(findings);
-  assert.equal(maxSeverity(findings), 'WARN', JSON.stringify(findings));
-  assert.match(findings[0].summary, /resolve --class adversary` failed/);
-});
-
-// ---- parseResolveOutput: pure parser for the flaky `resolve` stdout ----
-
-test('parseResolveOutput: valid JSON with backend → ok, route+backend extracted', () => {
-  const r = parseResolveOutput(JSON.stringify({ decision: 'dispatch', backend: 'dispatch-gateway', route: 'dispatch-adversary', provider: 'skynet' }));
-  assert.equal(r.ok, true);
-  assert.equal(r.backend, 'dispatch-gateway');
-  assert.equal(r.route, 'dispatch-adversary');
-  assert.equal(r.reason, null);
-});
-
-test('parseResolveOutput: empty output → unresolved (reason=empty)', () => {
-  const r = parseResolveOutput('   ');
-  assert.equal(r.ok, false);
-  assert.equal(r.reason, 'empty');
-});
-
-test('parseResolveOutput: bare `chain_exhausted` token on stdout → unresolved', () => {
-  // The flaky gateway-down shape: `resolve` exits 0 but prints a bare failure token. The OLD
-  // code treated any non-JSON output as a route label (PASS) — this was the silent no-op.
-  const r = parseResolveOutput('chain_exhausted');
-  assert.equal(r.ok, false);
-  assert.equal(r.reason, 'chain_exhausted');
-  assert.equal(r.backend, null);
-});
-
-test('parseResolveOutput: JSON with decision=escalate → unresolved', () => {
-  const r = parseResolveOutput(JSON.stringify({ decision: 'escalate', reason: 'confidence-below-threshold' }));
-  assert.equal(r.ok, false);
-  assert.equal(r.reason, 'escalate');
-  assert.equal(r.backend, null);
-});
-
-test('parseResolveOutput: JSON with no backend → unresolved (reason=no_backend)', () => {
-  const r = parseResolveOutput(JSON.stringify({ decision: 'dispatch', route: 'dispatch-adversary' }));
-  assert.equal(r.ok, false);
-  assert.equal(r.reason, 'no_backend');
-  assert.equal(r.backend, null);
-});
-
-test('parseResolveOutput: non-JSON non-failure string → unresolved (reason=non_json, route label kept)', () => {
-  // Legacy bare-string CLI output that isn't a known failure token: keep the label but treat as
-  // unresolved (no backend) so the fallback path can fire.
-  const r = parseResolveOutput('skynet-local/dispatch-adversary');
-  assert.equal(r.ok, false);
-  assert.equal(r.reason, 'non_json');
-  assert.equal(r.route, 'skynet-local/dispatch-adversary');
-  assert.equal(r.backend, null);
-});
-
-// ---- parseConfiguredBackends: pure JSONC parser for dispatch-policy.jsonc ----
-
-test('parseConfiguredBackends: extracts the adversary class backend chain (JSONC tolerant)', () => {
-  const policy = `{
-    // line comment
-    /* block comment */
-    "classes": {
-      "adversary": {
-        "chain": [
-          { "backend": "dispatch-gateway", "capability": "review", },
-        ],
-      },
-      "critic": { "chain": [ { "backend": "other" } ] },
-    },
-  }`;
-  const backends = parseConfiguredBackends(policy);
-  assert.deepEqual(backends, ['dispatch-gateway']);
-});
-
-test('parseConfiguredBackends: empty/missing adversary → []', () => {
-  assert.deepEqual(parseConfiguredBackends('{}'), []);
-  assert.deepEqual(parseConfiguredBackends('{"classes":{}}'), []);
-  assert.deepEqual(parseConfiguredBackends(''), []);
-});
-
-test('parseConfiguredBackends: dedupes repeated backends preserving order', () => {
-  const policy = JSON.stringify({ classes: { adversary: { chain: [
-    { backend: 'dispatch-gateway' },
-    { backend: 'pi-subagent' },
-    { backend: 'dispatch-gateway' },
-  ] } } });
-  assert.deepEqual(parseConfiguredBackends(policy), ['dispatch-gateway', 'pi-subagent']);
-});
 
 // ---- index-staleness (plan-scoped, node:crypto) ------------------------------
 
@@ -1305,9 +1251,9 @@ test('dispatcher: discovers all 19 check modules', async () => {
   const checks = await discoverChecks(path.join(here, '..', 'lib', 'doctor'));
   const names = checks.map((c) => c.name);
   const expected = [
-    'adversary-lane-health', 'codex-auth', 'coord-drift', 'dangling-run', 'goals', 'index-staleness',
+    'codex-auth', 'coord-drift', 'dangling-run', 'goals', 'index-staleness',
     'legacy-bundle', 'owner-sentinel', 'pi-agent-registration', 'plan-doc-cruft', 'plan-index-schema',
-    'plugin-registry-drift', 'rejected-idea-kb', 'scalar-cap', 'spec-assumptions', 'stale-lock',
+    'plugin-registry-drift', 'rejected-idea-kb', 'routing-policy-health', 'scalar-cap', 'spec-assumptions', 'stale-lock',
     'stalled-bundle', 'state-schema', 'worktree-integrity',
   ];
   for (const n of expected) {

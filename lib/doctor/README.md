@@ -41,7 +41,7 @@ checks get fresh v8-flat fixtures.
 | `codex-auth` | #39 | WARN/SKIP | ✅ slice |
 | `state-schema` | #9 (+#10 folded) | ERROR | ✅ batch |
 | `legacy-bundle` | #1 | WARN | ✅ batch |
-| `adversary-lane-health` | — | PASS/WARN | ✅ batch |
+| `routing-policy-health` | — | PASS/WARN | ✅ batch |
 | `index-staleness` | #34 | WARN | ✅ batch |
 | `stale-lock` | #42 | WARN | ✅ batch |
 | `plugin-registry-drift` | #50 | WARN | ✅ batch |
