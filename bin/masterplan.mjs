@@ -207,7 +207,7 @@ import { verifyArtifact, parseQctlDigest } from '../lib/qctl-artifact.mjs';
 import { mapQctlStatus } from '../lib/qctl-status.mjs';
 import { decideBaseDrift } from '../lib/qctl-requeue.mjs';
 import { recordWaveResult } from '../lib/wave-commit.mjs';
-import { dispatchWaveViaFabric, reviewNativeResult } from '../lib/dispatch-wave.mjs';
+import { dispatchWaveViaFabric, reviewNativeResult, readWaveDispatchRecord, writeWaveDispatchRecord } from '../lib/dispatch-wave.mjs';
 import { continueRun, dispatchPlanFanout } from '../lib/continue.mjs';
 import { finishStep } from '../lib/finish-step.mjs';
 import { sweepWorktrees } from '../lib/sweep.mjs';
@@ -3362,13 +3362,37 @@ function main() {
             });
             return;
           }
-          out(recordWaveResult({
+          const recRes = recordWaveResult({
             statePath,
             result: reviewedResult,
             self,
             now,
             worktree: typeof flags.worktree === 'string' ? flags.worktree : undefined,
-          }));
+          });
+          // Finalize the wave-dispatch record: the native launch persisted it as
+          // 'pending' BEFORE spawn; a successful record-result closes that window so
+          // the next attempt (or crash reconcile) sees 'recorded', not an
+          // in-flight dispatch. Guard-D already serializes this writer.
+          try {
+            const waveNo = Number.isInteger(reviewedResult?.wave)
+              ? reviewedResult.wave
+              : readState(statePath)?.active_run?.wave ?? null;
+            const bundleDir = path.dirname(path.resolve(statePath));
+            const existing = Number.isInteger(waveNo) ? readWaveDispatchRecord(bundleDir, waveNo) : null;
+            if (existing && existing.status === 'pending') {
+              writeWaveDispatchRecord(bundleDir, waveNo, {
+                ...existing,
+                status: 'recorded',
+                completed_at: new Date(now).toISOString(),
+                record_outcome: {
+                  recorded: recRes.recorded,
+                  failed: recRes.failed,
+                  cleared: recRes.cleared,
+                },
+              });
+            }
+          } catch { /* record finalization is audit state — never mask the record result */ }
+          out(recRes);
         })
         .catch((e) => die(e.message));
       break;

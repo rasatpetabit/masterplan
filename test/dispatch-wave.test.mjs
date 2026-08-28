@@ -34,6 +34,7 @@ import { createHash } from 'node:crypto';
 
 import {
   dispatchWaveViaFabric,
+  reviewNativeResult,
   composeWaveDispatchKey,
   waveDispatchRecordPath,
   readWaveDispatchRecord,
@@ -53,6 +54,7 @@ import { continueRun } from '../lib/continue.mjs';
 import { readState, writeState } from '../lib/bundle.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
 import { buildTaskReviewEvent } from '../lib/reentry-guard.mjs';
+import { recordWaveResult } from '../lib/wave-commit.mjs';
 
 function git(dir, ...args) {
   return String(execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' })).trim();
@@ -130,75 +132,6 @@ const rejectRecord = {
 };
 
 /** Injected broker client: records calls; supports dispatch_task + dispatch_review. */
-function brokerStub({ dispatchResult = routeResult, reviewResult = approveRecord } = {}) {
-  const calls = [];
-  return {
-    calls,
-    async initialize() {},
-    async callTool(tool, args) {
-      calls.push({ tool, args });
-      if (tool === 'dispatch_task') {
-        return typeof dispatchResult === 'function'
-          ? dispatchResult(args.descriptor)
-          : dispatchResult;
-      }
-      if (tool === 'dispatch_review') {
-        if (typeof reviewResult === 'function') return reviewResult(args);
-        if (reviewResult instanceof Error) throw reviewResult;
-        return reviewResult;
-      }
-      throw new Error(`unexpected tool ${tool}`);
-    },
-    close() {},
-  };
-}
-const reviewCalls = (stub) => stub.calls.filter((c) => c.tool === 'dispatch_review');
-/** Collect descriptors from a dispatch_task pool (or legacy fanout) call log. */
-function callDescriptors(stub) {
-  const taskCalls = stub.calls.filter((c) => c.tool === 'dispatch_task' || c.tool === 'dispatch_task');
-  if (!taskCalls.length) return [];
-  if (taskCalls[0].tool === 'dispatch_task' || taskCalls[0].name === 'dispatch_task') {
-    return taskCalls.map((c) => c.args.descriptor);
-  }
-  return taskCalls[0].args?.descriptors ?? [];
-}
-
-/** A route+digest result for one descriptor (the broker's dispatch_task shape). */
-const routeResult = (d) => ({
-  decision: { decision: 'route', backend: 'pi' },
-  stdout: JSON.stringify(workerDigest(d.task_id)),
-});
-
-/** Injected coord seam: enabled handle with attach + close spies. */
-function coordStub() {
-  const state = { opens: 0, closes: 0, attached: [] };
-  const open = ({ wave, tasks }) => {
-    state.opens += 1;
-    return {
-      enabled: true,
-      jobId: `stub-job-${wave}`,
-      root: '/tmp/coord-root',
-      lead: 'mp-lead',
-      workerIds: tasks.map((_, i) => `mp-${wave}-${i}`),
-      attachToTask(task, idx) {
-        state.attached.push(idx);
-        return { ...task, coord: { root: '/tmp/coord-root', jobId: `stub-job-${wave}`, agentId: `mp-${wave}-${idx}`, lead: 'mp-lead' } };
-      },
-      close() { state.closes += 1; return { ok: true }; },
-    };
-  };
-  return { state, open };
-}
-
-const disabledCoord = () => ({
-  enabled: false, jobId: 'x', root: '/tmp', workerIds: [],
-  attachToTask: (t) => t, close: () => ({ skipped: true }),
-});
-
-const neverBroker = () => ({
-  async callTool() { assert.fail('broker must NOT be called on this path'); },
-});
-
 function readEvents(bundleDir) {
   try {
     return fs.readFileSync(path.join(bundleDir, 'events.jsonl'), 'utf8')
@@ -221,79 +154,43 @@ test('flag-off → no-op: no dispatch, no record, broker untouched', async () =>
   });
   const res = await dispatchWaveViaFabric({
     statePath: fx.statePath, self: fx.self, now: 2000,
-    _brokerClient: neverBroker(), _openCoord: () => assert.fail('coord must not open on flag-off'),
   });
   assert.equal(res.outcome, 'flag-off');
   assert.equal(res.dispatched, false);
   assert.equal(readWaveDispatchRecord(fx.bundleDir, 1), null, 'no record written');
 });
 
-// ---------------------------------------------------------------------------
-// 2. Full flow — descriptors, one fanout, record transaction, provenance
-// ---------------------------------------------------------------------------
 
-test('full flow: one descriptor per routed task, per-task dispatch_task pool, digests recorded with worker provenance', async () => {
-  const fx = makeFixture({
-    tasks: [
-      { id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] },
-      { id: 2, status: 'pending', wave: 1, files: ['src/b.txt'] },
-    ],
-    planIndex: [planEntry(1, 1, ['src/a.txt']), planEntry(2, 1, ['src/b.txt'])],
-    slug: 'dw-full',
+// Simulate the harness executing the native spawn plan: edits applied in the
+// wave worktree, the child reports a digest per task, and the orchestrator
+// ingests the provided native reviews then records the result.
+async function recordNativeWave(fx, res, { edits = {}, providedReviews = null, statuses = {} } = {}) {
+  const WT = res.plan.tasks[0].cwd;
+  for (const [rel, content] of Object.entries(edits)) write(WT, rel, content);
+  const result = {
+    wave: res.wave,
+    tasks: res.plan.tasks.map((t) => ({
+      task_id: t.task_id,
+      digest: workerDigest(t.task_id, statuses[t.task_id] ?? 'done'),
+    })),
+  };
+  const reviewed = await reviewNativeResult({
+    statePath: fx.statePath, result, providedReviews, now: 3000,
   });
-  const op = launchViaContinue(fx);
-  const WT = op.cwd;
-  const stub = brokerStub();
-
-  const res = await dispatchWaveViaFabric({
-    statePath: fx.statePath, self: fx.self, now: 2000,
-    _brokerClient: stub, _openCoord: disabledCoord,
+  if (reviewed.review_outcome === 'native-review-pending') return { result, reviewed };
+  const recorded = recordWaveResult({
+    statePath: fx.statePath, result: reviewed, self: fx.self, now: 3100, worktree: WT,
   });
-
-  // Bounded pool of per-task dispatch_task calls (broker fan-out tool retired).
-  assert.equal(stub.calls.length, 2);
-  assert.ok(stub.calls.every((c) => c.tool === 'dispatch_task'));
-  const descriptors = stub.calls.map((c) => c.args.descriptor);
-  assert.equal(descriptors.length, 2);
-  // Order may be concurrent — sort by task_id for assertions.
-  descriptors.sort((a, b) => a.task_id - b.task_id);
-  for (const [i, d] of descriptors.entries()) {
-    assert.equal(d.task_id, i + 1);
-    assert.equal(d.class, 'masterplan-implementation', 'default fabric class');
-    assert.equal(d.repo, WT, "the run's EXISTING worktree — never a second one");
-    assert.equal(d.contract_version, 'adsp-v1.1');
-    assert.equal(d.brief, `task ${i + 1}`);
-    assert.match(d.handoff_key, /^adsp-idem-v1:dw-full:/, 'per-task handoff key composed from run/task/spec/fingerprint');
+  // bin/record-result parity: a successful record finalizes the wave-dispatch record.
+  const existing = readWaveDispatchRecord(fx.bundleDir, res.wave);
+  if (existing && existing.status === 'pending') {
+    writeWaveDispatchRecord(fx.bundleDir, res.wave, {
+      ...existing, status: 'recorded', completed_at: 'T-rec',
+      record_outcome: { recorded: recorded.recorded, failed: recorded.failed, cleared: recorded.cleared },
+    });
   }
-
-  // The record transaction ran (the SAME recordWaveResult flow).
-  assert.equal(res.outcome, 'dispatched');
-  assert.equal(res.dispatched, true);
-  assert.equal(res.attempt, 1);
-  assert.equal(res.key, composeWaveDispatchKey('dw-full', 1));
-  assert.deepEqual(res.tasks, [
-    { task_id: 1, status: 'done', dispatch: 'worker' },
-    { task_id: 2, status: 'done', dispatch: 'worker' },
-  ]);
-  assert.equal(res.record.outcome, 'recorded');
-  assert.deepEqual(res.record.recorded, [1, 2]);
-
-  // Durable effects: tasks done, marker cleared, wave_recorded event, NO degradation events.
-  const state = readState(fx.statePath);
-  assert.ok(state.tasks.every((t) => t.status === 'done'));
-  assert.equal(state.active_run, null);
-  const events = readEvents(fx.bundleDir);
-  assert.ok(events.some((e) => e.type === 'wave_recorded'));
-  assert.ok(!events.some((e) => e.type === 'dispatch_degraded'), 'worker outcomes emit no degradation events');
-
-  // The wave-dispatch record finalized.
-  const rec = readWaveDispatchRecord(fx.bundleDir, 1);
-  assert.equal(rec.status, 'recorded');
-  assert.equal(rec.op, 'dispatch_fabric');
-  assert.equal(rec.attempt, 1);
-  assert.deepEqual(rec.tasks.map((t) => t.task_id), [1, 2]);
-  assert.deepEqual(rec.record_outcome.recorded, [1, 2]);
-});
+  return { result, reviewed, recorded };
+}
 
 // ---------------------------------------------------------------------------
 // 3. Idempotency — the accepted-but-unobserved window
@@ -311,14 +208,13 @@ test('idempotent re-invoke: an existing pending record is returned — the broke
   const key = composeWaveDispatchKey('dw-idem', 1);
   const { created } = createWaveDispatchRecord(fx.bundleDir, {
     key, run_id: 'dw-idem', wave: 1, op: 'dispatch_fabric',
-    contract_version: 'adsp-v1.1', status: 'pending', attempt: 1,
+    contract_version: 'fabric-native-v1', status: 'pending', attempt: 1,
     dispatched_at: 'T0', tasks: [{ task_id: 1, class: 'bounded-edit', handoff_key: 'k1' }],
   });
   assert.equal(created, true);
 
   const res = await dispatchWaveViaFabric({
     statePath: fx.statePath, self: fx.self, now: 2000,
-    _brokerClient: neverBroker(), _openCoord: () => assert.fail('coord must not open on reuse'),
   });
   assert.equal(res.outcome, 'reused');
   assert.equal(res.dispatched, false);
@@ -338,20 +234,17 @@ test('--takeover supersedes a stuck pending attempt: attempt 2 dispatches, histo
   launchViaContinue(fx);
   createWaveDispatchRecord(fx.bundleDir, {
     key: composeWaveDispatchKey('dw-take', 1), run_id: 'dw-take', wave: 1, op: 'dispatch_fabric',
-    contract_version: 'adsp-v1.1', status: 'pending', attempt: 1,
+    contract_version: 'fabric-native-v1', status: 'pending', attempt: 1,
     dispatched_at: 'T0', tasks: [{ task_id: 1, class: 'bounded-edit', handoff_key: 'k1' }],
   });
 
-  const stub = brokerStub();
   const res = await dispatchWaveViaFabric({
     statePath: fx.statePath, self: fx.self, now: 2000, takeover: true,
-    _brokerClient: stub, _openCoord: disabledCoord,
   });
-  assert.equal(res.outcome, 'dispatched');
-  assert.equal(res.attempt, 2);
-  assert.equal(stub.calls.length, 1);
+  assert.equal(res.outcome, 'native-spawn-plan');
+  assert.equal(res.record.attempt, 2);
   const rec = readWaveDispatchRecord(fx.bundleDir, 1);
-  assert.equal(rec.status, 'recorded');
+  assert.equal(rec.status, 'pending', 'the new attempt persists pending BEFORE launch');
   assert.equal(rec.attempt, 2);
   assert.equal(rec.history.length, 1);
   assert.equal(rec.history[0].status, 'superseded');
@@ -367,14 +260,13 @@ test("a 'dispatched' record re-drives record-result from the stored digests — 
   // A prior attempt got digests durable but died before the record transaction.
   writeWaveDispatchRecord(fx.bundleDir, 1, {
     key: composeWaveDispatchKey('dw-redrive', 1), run_id: 'dw-redrive', wave: 1, op: 'dispatch_fabric',
-    contract_version: 'adsp-v1.1', status: 'dispatched', attempt: 1, dispatched_at: 'T0',
+    contract_version: 'fabric-native-v1', status: 'dispatched', attempt: 1, dispatched_at: 'T0',
     tasks: [{ task_id: 1, class: 'bounded-edit', handoff_key: 'k1' }],
     result: { wave: 1, tasks: [{ task_id: 1, digest: { ...workerDigest(1), dispatch: { outcome: 'worker', reason: "routed to backend 'pi'" } } }] },
   });
 
   const res = await dispatchWaveViaFabric({
     statePath: fx.statePath, self: fx.self, now: 2000,
-    _brokerClient: neverBroker(), _openCoord: () => assert.fail('coord must not open on re-drive'),
   });
   assert.equal(res.outcome, 'reused');
   assert.equal(res.redrove_record, true);
@@ -385,103 +277,6 @@ test("a 'dispatched' record re-drives record-result from the stored digests — 
   assert.equal(state.tasks[0].status, 'done');
   assert.equal(state.active_run, null);
   assert.equal(readWaveDispatchRecord(fx.bundleDir, 1).status, 'recorded');
-});
-
-// ---------------------------------------------------------------------------
-// 6/7. Coord pairing + broker failure → degradation-visible record
-// ---------------------------------------------------------------------------
-
-test('coord open/close are paired on success, and descriptors carry the attached coord context', async () => {
-  const fx = makeFixture({
-    tasks: [
-      { id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] },
-      { id: 2, status: 'pending', wave: 1, files: ['src/b.txt'] },
-    ],
-    planIndex: [planEntry(1, 1, ['src/a.txt']), planEntry(2, 1, ['src/b.txt'])],
-    slug: 'dw-coord',
-  });
-  launchViaContinue(fx);
-  const coord = coordStub();
-  const stub = brokerStub();
-  await dispatchWaveViaFabric({
-    statePath: fx.statePath, self: fx.self, now: 2000,
-    _brokerClient: stub, _openCoord: coord.open,
-  });
-  assert.equal(coord.state.opens, 1);
-  assert.equal(coord.state.closes, 1, 'coord job closed exactly once (in the finally)');
-  const descriptors = callDescriptors(stub).slice().sort((a, b) => a.task_id - b.task_id);
-  assert.deepEqual(descriptors.map((d) => d.coord?.agentId), ['mp-1-0', 'mp-1-1']);
-});
-
-test('broker failure: blocked/broker_error digests recorded, dispatch_degraded events emitted, coord STILL closed', async () => {
-  const fx = makeFixture({
-    tasks: [
-      { id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] },
-      { id: 2, status: 'pending', wave: 1, files: ['src/b.txt'] },
-    ],
-    planIndex: [planEntry(1, 1, ['src/a.txt']), planEntry(2, 1, ['src/b.txt'])],
-    slug: 'dw-fail',
-  });
-  launchViaContinue(fx);
-  const coord = coordStub();
-  const failing = {
-    async callTool() { throw new Error('connection refused'); },
-  };
-  const res = await dispatchWaveViaFabric({
-    statePath: fx.statePath, self: fx.self, now: 2000,
-    _brokerClient: failing, _openCoord: coord.open,
-  });
-
-  // The leaked-open-jobs fix: close fires even though the dispatch failed.
-  assert.equal(coord.state.opens, 1);
-  assert.equal(coord.state.closes, 1);
-
-  // Every task blocked with broker_error provenance; the outage is RECORDED, not lost.
-  assert.equal(res.outcome, 'dispatched');
-  assert.deepEqual(res.tasks, [
-    { task_id: 1, status: 'blocked', dispatch: 'broker_error' },
-    { task_id: 2, status: 'blocked', dispatch: 'broker_error' },
-  ]);
-  assert.equal(res.record.outcome, 'recorded');
-  assert.equal(res.record.failed.length, 2);
-
-  const state = readState(fx.statePath);
-  assert.ok(state.tasks.every((t) => t.status === 'pending'), 'blocked digests leave tasks pending for recovery');
-  assert.ok(state.active_run, 'marker survives a failed wave (recover_wave owns it)');
-  const degraded = readEvents(fx.bundleDir).filter((e) => e.type === 'dispatch_degraded');
-  assert.equal(degraded.length, 2);
-  assert.ok(degraded.every((e) => e.outcome === 'broker_error'));
-  assert.equal(readWaveDispatchRecord(fx.bundleDir, 1).status, 'recorded');
-
-  // 7b. The failure was OBSERVED (recorded) — a follow-up invoke is a legitimate
-  // retry and starts attempt 2 (never blocked by the idempotency record).
-  const stub = brokerStub();
-  const res2 = await dispatchWaveViaFabric({
-    statePath: fx.statePath, self: fx.self, now: 2000,
-    _brokerClient: stub, _openCoord: disabledCoord,
-  });
-  assert.equal(res2.outcome, 'dispatched');
-  assert.equal(res2.attempt, 2);
-  assert.equal(stub.calls.length, 2, 'attempt 2 dispatches one dispatch_task per pending task');
-  assert.ok(readState(fx.statePath).tasks.every((t) => t.status === 'done'));
-});
-
-test('fanout without a results array (e.g. disabled by policy) maps every task through the escalate branch', async () => {
-  const fx = makeFixture({
-    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
-    planIndex: [planEntry(1, 1, ['src/a.txt'])],
-    slug: 'dw-esc',
-  });
-  launchViaContinue(fx);
-  const client = { async callTool() { return { error: 'fanout disabled by policy' }; } };
-  const res = await dispatchWaveViaFabric({
-    statePath: fx.statePath, self: fx.self, now: 2000,
-    _brokerClient: client, _openCoord: disabledCoord,
-  });
-  assert.deepEqual(res.tasks, [{ task_id: 1, status: 'blocked', dispatch: 'escalate' }]);
-  const degraded = readEvents(fx.bundleDir).filter((e) => e.type === 'dispatch_degraded');
-  assert.equal(degraded.length, 1);
-  assert.match(degraded[0].reason, /fanout disabled by policy/);
 });
 
 test('no pending tasks in the wave → no dispatch (nothing to do)', async () => {
@@ -495,7 +290,6 @@ test('no pending tasks in the wave → no dispatch (nothing to do)', async () =>
   writeState(fx.statePath, { ...st, active_run: { wave: 1, phase: 'launching', scope: ['src/a.txt'], baseline: [] } });
   const res = await dispatchWaveViaFabric({
     statePath: fx.statePath, self: fx.self, now: 2000,
-    _brokerClient: neverBroker(), _openCoord: () => assert.fail('no coord for an empty wave'),
   });
   assert.equal(res.outcome, 'no-pending-tasks');
   assert.equal(res.dispatched, false);
@@ -548,7 +342,6 @@ test('ownership-denied: a live foreign owner → loud throw, nothing written, br
   await assert.rejects(
     dispatchWaveViaFabric({
       statePath: fx.statePath, self: fx.self, now: 2100,
-      _brokerClient: neverBroker(), _openCoord: () => assert.fail('coord must not open when ownership is denied'),
     }),
     /owned by another live session \(sess-INCUMBENT/,
   );
@@ -567,13 +360,13 @@ test("ownership-denied on the re-drive path too (a 'dispatched' record still nee
   continueRun({ statePath: fx.statePath, self: incumbent, now: 2000 });
   writeWaveDispatchRecord(fx.bundleDir, 1, {
     key: composeWaveDispatchKey('dw-own2', 1), run_id: 'dw-own2', wave: 1, op: 'dispatch_fabric',
-    contract_version: 'adsp-v1.1', status: 'dispatched', attempt: 1, dispatched_at: 'T0',
+    contract_version: 'fabric-native-v1', status: 'dispatched', attempt: 1, dispatched_at: 'T0',
     tasks: [{ task_id: 1, class: 'bounded-edit', handoff_key: 'k1' }],
     result: { wave: 1, tasks: [{ task_id: 1, digest: workerDigest(1) }] },
   });
   await assert.rejects(
     dispatchWaveViaFabric({
-      statePath: fx.statePath, self: fx.self, now: 2100, _brokerClient: neverBroker(),
+      statePath: fx.statePath, self: fx.self, now: 2100,
     }),
     /owned by another live session/,
   );
@@ -587,75 +380,24 @@ test('concurrent retry (pre-claimed attempt marker): the second writer observes 
     slug: 'dw-race',
   });
   launchViaContinue(fx);
-  // Attempt 1: broker outage, recorded with failures (tasks stay pending).
-  const failing = { async callTool() { throw new Error('down'); } };
+  // Attempt 1: launched, child reported blocked, record finalized with the task
+  // still pending (blocked = needs orchestrator action, retryable).
   const res1 = await dispatchWaveViaFabric({
     statePath: fx.statePath, self: fx.self, now: 2000,
-    _brokerClient: failing, _openCoord: disabledCoord,
   });
-  assert.equal(res1.record.failed.length, 1);
+  assert.equal(res1.outcome, 'native-spawn-plan');
+  await recordNativeWave(fx, res1, { statuses: { 1: 'blocked' } });
+  assert.equal(readState(fx.statePath).tasks[0].status, 'pending', 'blocked keeps the task retryable');
   // A concurrent retry already claimed attempt 2 (its record rewrite may not have
   // landed yet) — this writer MUST lose the O_EXCL claim and not dispatch.
   assert.equal(claimAttemptMarker(fx.bundleDir, 1, 2, { key: res1.key }).claimed, true);
   const res2 = await dispatchWaveViaFabric({
     statePath: fx.statePath, self: fx.self, now: 2100,
-    _brokerClient: neverBroker(), _openCoord: disabledCoord,
   });
   assert.equal(res2.outcome, 'reused');
   assert.equal(res2.dispatched, false);
   assert.match(res2.reason, /attempt-2 claim race/);
   assert.equal(readWaveDispatchRecord(fx.bundleDir, 1).attempt, 1, 'the loser did not transition the record');
-});
-
-test('concurrent retry (live interleave): while attempt 2 is in flight, a second invocation reuses the pending record', async () => {
-  const fx = makeFixture({
-    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
-    planIndex: [planEntry(1, 1, ['src/a.txt'])],
-    slug: 'dw-race2',
-  });
-  launchViaContinue(fx);
-  const failing = { async callTool() { throw new Error('down'); } };
-  await dispatchWaveViaFabric({
-    statePath: fx.statePath, self: fx.self, now: 2000,
-    _brokerClient: failing, _openCoord: disabledCoord,
-  });
-
-  // Racer A: attempt 2 with a broker gated on a promise we control.
-  let release;
-  const gate = new Promise((r) => { release = r; });
-  const gated = {
-    calls: [],
-    async callTool(tool, args) {
-      this.calls.push({ tool, args });
-      await gate;
-      if (tool === 'dispatch_task') return routeResult(args.descriptor);
-      throw new Error(`unexpected tool ${tool}`);
-    },
-  };
-  const p1 = dispatchWaveViaFabric({
-    statePath: fx.statePath, self: fx.self, now: 2100,
-    _brokerClient: gated, _openCoord: disabledCoord,
-  });
-  // Wait until A has claimed attempt 2, written 'pending', and reached the broker.
-  for (let i = 0; i < 1000 && gated.calls.length === 0; i++) {
-    await new Promise((r) => setImmediate(r));
-  }
-  assert.equal(gated.calls.length, 1, 'racer A reached the broker');
-
-  // Racer B: must observe A's in-flight attempt and return WITHOUT dispatching.
-  const res2 = await dispatchWaveViaFabric({
-    statePath: fx.statePath, self: fx.self, now: 2200,
-    _brokerClient: neverBroker(), _openCoord: disabledCoord,
-  });
-  assert.equal(res2.outcome, 'reused');
-  assert.equal(res2.status, 'pending');
-
-  // Release A — it completes normally.
-  release();
-  const res1 = await p1;
-  assert.equal(res1.outcome, 'dispatched');
-  assert.equal(res1.attempt, 2);
-  assert.equal(readState(fx.statePath).tasks[0].status, 'done');
 });
 
 test('routing-input parity: a codex-suppressed host produces descriptors identical to the launch op payload, and the inputs are frozen in the record', async () => {
@@ -670,19 +412,22 @@ test('routing-input parity: a codex-suppressed host produces descriptors identic
   // Prepare via continue on a SUPPRESSED host — the exact inputs the marker promised.
   const op = continueRun({ statePath: fx.statePath, self: fx.self, now: 2000, codexSuppressed: true });
   assert.equal(op.op, 'dispatch_fabric', 'fabric flag wins even under codexSuppressed');
-  const stub = brokerStub();
-  await dispatchWaveViaFabric({
+  const res = await dispatchWaveViaFabric({
     statePath: fx.statePath, self: fx.self, now: 2000, codexSuppressed: true,
-    _brokerClient: stub, _openCoord: disabledCoord,
   });
-  // Descriptors correspond 1:1 to the launch op's prepared payload.
-  const descriptors = callDescriptors(stub).slice().sort((a, b) => a.task_id - b.task_id);
+  assert.equal(res.outcome, 'native-spawn-plan');
+  // Spawn descriptors correspond 1:1 to the launch op's prepared payload.
+  const spawns = res.plan.tasks.slice().sort((a, b) => a.task_id - b.task_id);
   const opTasks = op.tasks.slice().sort((a, b) => a.id - b.id);
   assert.deepEqual(
-    descriptors.map((d) => ({ id: d.task_id, class: d.class, brief: d.brief, files: d.files })),
-    opTasks.map((t) => ({ id: t.id, class: t.class, brief: t.description, files: t.files })),
-    'descriptors must match what the launch marker promised (verify packaging is wire-only)',
+    spawns.map((d) => ({ id: d.task_id, class: d.class, files: d.files })),
+    opTasks.map((t) => ({ id: t.id, class: t.class, files: t.files })),
+    'spawn descriptors must match what the launch marker promised',
   );
+  for (const d of spawns) {
+    const t = opTasks.find((x) => x.id === d.task_id);
+    assert.ok(d.prompt.includes(t.description), 'the task brief rides the prompt');
+  }
   const rec = readWaveDispatchRecord(fx.bundleDir, 1);
   assert.deepEqual(rec.routing_inputs, { routing: 'auto', codex_host_suppressed: true, linked_worktree: true });
   assert.deepEqual(rec.payload.map((t) => t.id), [1, 2], 'the prepared lean payload is frozen in the record');
@@ -695,19 +440,17 @@ test('retry reuses the PERSISTED routing_inputs, not the current invocation flag
     slug: 'dw-frozen',
   });
   launchViaContinue(fx);
-  // Attempt 1 under a suppressed host, broker down → recorded with failures.
-  const failing = { async callTool() { throw new Error('down'); } };
-  await dispatchWaveViaFabric({
+  // Attempt 1 under a suppressed host; the child reports blocked, record finalized.
+  const res1 = await dispatchWaveViaFabric({
     statePath: fx.statePath, self: fx.self, now: 2000, codexSuppressed: true,
-    _brokerClient: failing, _openCoord: disabledCoord,
   });
+  await recordNativeWave(fx, res1, { statuses: { 1: 'blocked' } });
   // Retry WITHOUT the flag — the persisted attempt-1 inputs must win.
-  const stub = brokerStub();
   const res = await dispatchWaveViaFabric({
     statePath: fx.statePath, self: fx.self, now: 2100, codexSuppressed: false,
-    _brokerClient: stub, _openCoord: disabledCoord,
   });
-  assert.equal(res.attempt, 2);
+  assert.equal(res.outcome, 'native-spawn-plan');
+  assert.equal(res.record.attempt, 2);
   const rec = readWaveDispatchRecord(fx.bundleDir, 1);
   assert.equal(rec.routing_inputs.codex_host_suppressed, true, 'attempt 2 re-prepared from the frozen attempt-1 inputs');
 });
@@ -735,32 +478,18 @@ test('absolute MAIN scope and verify paths canonicalize to the run worktree', as
 
   const op = launchViaContinue(fx);
   const WT = op.cwd;
-  const stub = brokerStub({ dispatchResult: (descriptor) => {
-    write(descriptor.repo, descriptor.files[0], 'generated\n');
-    return routeResult(descriptor);
-  }});
-  const localVerifyCalls = [];
   const res = await dispatchWaveViaFabric({
     statePath: fx.statePath, self: fx.self, now: 2000,
-    _brokerClient: stub, _openCoord: disabledCoord,
-    _localVerifyExec: (command, options) => {
-      localVerifyCalls.push({ command, cwd: options.cwd });
-      return '';
-    },
   });
-
-  const [descriptor] = callDescriptors(stub);
-  assert.equal(descriptor.repo, WT);
-  assert.deepEqual(descriptor.files, ['src/generated.txt']);
-  assert.deepEqual(localVerifyCalls, [{
-    command: `test -f ${path.join(WT, 'src/generated.txt')}`,
-    cwd: WT,
-  }]);
-  assert.equal(res.record.scope.ok, true);
-  assert.deepEqual(res.record.scope.outOfScope, []);
-  assert.equal(res.record.watch.ok, true);
-  assert.deepEqual(res.record.watch.violations, []);
-  assert.deepEqual(res.record.watch.reverted, []);
+  assert.equal(res.outcome, 'native-spawn-plan');
+  // The spawn descriptor canonicalizes the absolute MAIN scope to the run worktree.
+  const spawn = res.plan.tasks[0];
+  assert.equal(spawn.cwd, WT);
+  assert.deepEqual(spawn.files, ['src/generated.txt']);
+  assert.ok(spawn.prompt.includes('test -f') && spawn.prompt.includes('generated.txt'),
+    'the verify command rides the brief');
+  // Simulate the child's work, then record.
+  await recordNativeWave(fx, res, { edits: { 'src/generated.txt': 'generated\n' } });
   assert.equal(readState(fx.statePath).tasks[0].status, 'done');
   assert.equal(fs.readFileSync(path.join(WT, 'src/generated.txt'), 'utf8'), 'generated\n');
 });
@@ -791,29 +520,26 @@ test('multi-repo: sibling-prefixed files land on sibling worktree with create_fi
 
   const op = launchViaContinue(fx);
   const WT = op.cwd;
-  const stub = brokerStub();
   const res = await dispatchWaveViaFabric({
     statePath: fx.statePath, self: fx.self, now: 2000,
-    _brokerClient: stub, _openCoord: disabledCoord,
   });
-  assert.equal(res.outcome, 'dispatched');
-  assert.equal(stub.calls.length, 2);
-  const descriptors = callDescriptors(stub).slice().sort((a, b) => a.task_id - b.task_id);
-  assert.equal(descriptors.length, 2);
+  assert.equal(res.outcome, 'native-spawn-plan');
+  const spawns = res.plan.tasks.slice().sort((a, b) => a.task_id - b.task_id);
+  assert.equal(spawns.length, 2);
 
   // Task 1: umbrella new file → WT + create_files
-  assert.equal(descriptors[0].task_id, 1);
-  assert.equal(descriptors[0].repo, WT);
-  assert.deepEqual(descriptors[0].files, ['docs/new-report.md']);
-  assert.equal(descriptors[0].create_files, true);
+  assert.equal(spawns[0].task_id, 1);
+  assert.equal(spawns[0].cwd, WT);
+  assert.deepEqual(spawns[0].files, ['docs/new-report.md']);
+  assert.equal(spawns[0].create_files, true);
 
   // Task 2: sibling path → sibling worktree + stripped files + create_files
   const sibWt = path.join(SIB, '.worktrees', 'dw-mrepo');
-  assert.equal(descriptors[1].task_id, 2);
-  assert.equal(descriptors[1].repo, sibWt);
-  assert.deepEqual(descriptors[1].files, ['kas/board.yaml']);
-  assert.equal(descriptors[1].create_files, true);
-  assert.equal(descriptors[1].branch, 'masterplan/dw-mrepo');
+  assert.equal(spawns[1].task_id, 2);
+  assert.equal(spawns[1].cwd, sibWt);
+  assert.deepEqual(spawns[1].files, ['kas/board.yaml']);
+  assert.equal(spawns[1].create_files, true);
+  assert.equal(spawns[1].branch, 'masterplan/dw-mrepo');
   assert.ok(fs.existsSync(sibWt), 'sibling worktree auto-created');
 });
 
@@ -825,45 +551,6 @@ test('multi-repo: sibling-prefixed files land on sibling worktree with create_fi
 // Per-task adversary review — caller-owned behaviors via dispatch_review
 // ---------------------------------------------------------------------------
 
-test('review ON delegates the full edit-locus diff to canonical dispatch_review', async () => {
-  const fx = makeFixture({
-    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
-    planIndex: [planEntry(1, 1, ['src/a.txt'])],
-    slug: 'dw-central-review',
-    extra: { review: { adversary: true } },
-  });
-  const op = launchViaContinue(fx);
-  const WT = op.cwd;
-  write(WT, 'src/a.txt', 'declared\n');
-  write(WT, 'src/oops.txt', 'undeclared\n');
-  const head = git(WT, 'rev-parse', 'HEAD');
-  const stub = brokerStub();
-  const res = await dispatchWaveViaFabric({
-    statePath: fx.statePath, self: fx.self, now: 2000,
-    _brokerClient: stub, _openCoord: disabledCoord,
-  });
-  const calls = reviewCalls(stub);
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].args.class, 'adversary');
-  assert.equal(calls[0].args.mode, 'diff');
-  assert.equal(calls[0].args.intensity, 'standard');
-  assert.match(calls[0].args.diff, /src\/a\.txt/);
-  assert.match(calls[0].args.diff, /src\/oops\.txt/);
-  assert.equal(res.tasks[0].review, 'approve');
-  assert.deepEqual(res.record.blocking_reviews, []);
-  const evs = readEvents(fx.bundleDir).filter((e) => e.type === 'task_adversary_review');
-  assert.equal(evs.length, 1);
-  assert.equal(evs[0].data.run, 'dw-central-review');
-  assert.equal(String(evs[0].data.task), '1');
-  const payloadSha = createHash('sha256').update(calls[0].args.diff, 'utf8').digest('hex');
-  assert.equal(evs[0].data.sha, payloadSha);
-  assert.equal(evs[0].data.base, head);
-  assert.equal(evs[0].data.review.verdict, 'approve');
-  // Same injected broker client handled both tools.
-  assert.ok(stub.calls.some((c) => c.tool === 'dispatch_task'));
-  assert.ok(stub.calls.some((c) => c.tool === 'dispatch_review'));
-});
-
 test('D6 independence: an approve verdict does NOT bypass verify-scope — the out-of-scope write is still reverted', async () => {
   const fx = makeFixture({
     tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
@@ -873,66 +560,22 @@ test('D6 independence: an approve verdict does NOT bypass verify-scope — the o
   });
   const op = launchViaContinue(fx);
   const WT = op.cwd;
-  write(WT, 'src/a.txt', 'declared edit\n');
-  write(WT, 'src/oops.txt', 'undeclared write\n');
   const res = await dispatchWaveViaFabric({
     statePath: fx.statePath, self: fx.self, now: 2000,
-    _brokerClient: brokerStub(), _openCoord: disabledCoord,
   });
-  assert.equal(res.tasks[0].review, 'approve');
-  assert.ok(res.record.reverted.includes('src/oops.txt'), 'out-of-scope write reverted despite the approve verdict');
+  // The child edits in-scope AND out-of-scope; the review approves; the record
+  // transaction must still revert the out-of-scope write.
+  const { reviewed, recorded } = await recordNativeWave(fx, res, {
+    edits: { 'src/a.txt': 'declared edit\n', 'src/oops.txt': 'undeclared write\n' },
+    providedReviews: { 1: approveRecord },
+  });
+  assert.equal(reviewed.tasks[0].review.verdict, 'approve');
+  assert.ok(recorded.reverted.includes('src/oops.txt'), 'out-of-scope write reverted despite the approve verdict');
   assert.equal(fs.existsSync(path.join(WT, 'src/oops.txt')), false, 'the undeclared file is gone from the worktree');
   assert.equal(readState(fx.statePath).tasks[0].status, 'done', 'the in-scope work still records');
 });
 
-test('review OFF (state.review.adversary=false): no dispatch_review call, no review fields, no re-entry guard writes', async () => {
-  const fx = makeFixture({
-    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
-    planIndex: [planEntry(1, 1, ['src/a.txt'])],
-    slug: 'dw-revoff',
-    extra: { review: { adversary: false } },
-  });
-  const op = launchViaContinue(fx);
-  write(op.cwd, 'src/a.txt', 'edit\n');
-  const stub = brokerStub();
-  const res = await dispatchWaveViaFabric({
-    statePath: fx.statePath, self: fx.self, now: 2000,
-    _brokerClient: stub, _openCoord: disabledCoord,
-  });
-  assert.equal(res.outcome, 'dispatched');
-  assert.equal(reviewCalls(stub).length, 0);
-  assert.equal('review' in res.tasks[0], false);
-  const rec = readWaveDispatchRecord(fx.bundleDir, 1);
-  assert.equal('review' in rec.result.tasks[0], false);
-  assert.equal('review' in rec.result.tasks[0].digest, false);
-  const evs = readEvents(fx.bundleDir).filter((e) => e.type === 'task_adversary_review' || e.type === 'task_adversary_review_skipped');
-  assert.equal(evs.length, 0, 'no re-entry guard writes on the disable path');
-  assert.deepEqual(res.record.blocking_reviews, []);
-  assert.equal('review' in callDescriptors(stub)[0], false, 'disabled review is omitted from the descriptor');
-});
-
-test('reject surfaces structured blocking_reviews[] while the done digest still records', async () => {
-  const fx = makeFixture({
-    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
-    planIndex: [planEntry(1, 1, ['src/a.txt'])],
-    slug: 'dw-block',
-    extra: { review: { adversary: true } },
-  });
-  const op = launchViaContinue(fx);
-  write(op.cwd, 'src/a.txt', 'edit\n');
-  const res = await dispatchWaveViaFabric({
-    statePath: fx.statePath, self: fx.self, now: 2000,
-    _brokerClient: brokerStub({ reviewResult: rejectRecord }), _openCoord: disabledCoord,
-  });
-  assert.equal(res.tasks[0].review, 'reject');
-  assert.equal(res.record.blocking_reviews.length, 1);
-  assert.equal(res.record.blocking_reviews[0].id, 1);
-  assert.equal(res.record.blocking_reviews[0].verdict, 'reject');
-  assert.ok(res.record.blocking_reviews[0].findings.some((f) => String(f.summary ?? f).includes('data race')));
-  assert.equal(readState(fx.statePath).tasks[0].status, 'done');
-});
-
-test('review idempotency: a prior structured run+task+sha done event short-circuits dispatch_review', async () => {
+test('review idempotency: a prior structured run+task+sha done event short-circuits the native review', async () => {
   const fx = makeFixture({
     tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
     planIndex: [planEntry(1, 1, ['src/a.txt'])],
@@ -954,13 +597,12 @@ test('review idempotency: a prior structured run+task+sha done event short-circu
     },
   });
   fs.appendFileSync(path.join(fx.bundleDir, 'events.jsonl'), JSON.stringify(prior) + '\n');
-  const stub = brokerStub({ reviewResult: () => assert.fail('completed event must satisfy re-entry') });
   const res = await dispatchWaveViaFabric({
     statePath: fx.statePath, self: fx.self, now: 2000,
-    _brokerClient: stub, _openCoord: disabledCoord,
   });
-  assert.equal(reviewCalls(stub).length, 0);
-  assert.equal(res.tasks[0].review, 'rework');
+  // The provided review must NOT be consumed — the prior done event satisfies re-entry.
+  const { reviewed } = await recordNativeWave(fx, res, { providedReviews: { 1: approveRecord } });
+  assert.equal(reviewed.tasks[0].review.verdict, 'rework', 'the prior done event wins — the provided review is not consumed');
   const evs = readEvents(fx.bundleDir).filter((e) => e.type === 'task_adversary_review');
   assert.equal(evs.length, 1, 'no NEW review event — the prior one satisfied re-entry');
 });
@@ -973,14 +615,16 @@ test('failed review writes a non-satisfying skipped event and blocks with verdic
     extra: { review: { adversary: true } },
   });
   const op = launchViaContinue(fx);
-  write(op.cwd, 'src/a.txt', 'edit\n');
   const res = await dispatchWaveViaFabric({
     statePath: fx.statePath, self: fx.self, now: 2000,
-    _brokerClient: brokerStub({ reviewResult: new Error('lane wedged') }), _openCoord: disabledCoord,
   });
-  assert.equal(res.tasks[0].review, 'error');
-  assert.equal(res.record.blocking_reviews.length, 1);
-  assert.equal(res.record.blocking_reviews[0].verdict, 'error');
+  // The owed review is never provided (orchestrator failed to run it) — fail closed.
+  const { reviewed, recorded } = await recordNativeWave(fx, res, {
+    edits: { 'src/a.txt': 'edit\n' }, providedReviews: {},
+  });
+  assert.equal(reviewed.tasks[0].review.verdict, 'error');
+  assert.equal(recorded.blocking_reviews.length, 1);
+  assert.equal(recorded.blocking_reviews[0].verdict, 'error');
   assert.equal(readState(fx.statePath).tasks[0].status, 'done');
   const evs = readEvents(fx.bundleDir);
   assert.equal(evs.filter((e) => e.type === 'task_adversary_review_skipped').length, 1);
@@ -1009,15 +653,14 @@ test('re-entry key binds to the PAYLOAD: changed code at the SAME HEAD triggers 
   fs.appendFileSync(path.join(fx.bundleDir, 'events.jsonl'), JSON.stringify(stale) + '\n');
   write(WT, 'src/a.txt', 'version B\n');
   const headBefore = git(WT, 'rev-parse', 'HEAD');
-  const stub = brokerStub();
-  await dispatchWaveViaFabric({
-    statePath: fx.statePath, self: fx.self, now: 2000,
-    _brokerClient: stub, _openCoord: disabledCoord,
-  });
-  const calls = reviewCalls(stub);
-  assert.equal(calls.length, 1, 'stale-payload approval must NOT suppress review of different code');
-  const freshSha = createHash('sha256').update(calls[0].args.diff, 'utf8').digest('hex');
+  // The review payload sha — computed BEFORE the record transaction commits the code.
+  const freshSha = createHash('sha256').update(captureFullWorkingDiff(WT), 'utf8').digest('hex');
   assert.notEqual(freshSha, staleSha, 'the changed diff produces a different key');
+  const res = await dispatchWaveViaFabric({
+    statePath: fx.statePath, self: fx.self, now: 2000,
+  });
+  const { reviewed } = await recordNativeWave(fx, res, { providedReviews: { 1: approveRecord } });
+  assert.equal(reviewed.tasks[0].review.verdict, 'approve', 'stale-payload approval must NOT suppress review of different code');
   const evs = readEvents(fx.bundleDir).filter((e) => e.type === 'task_adversary_review');
   assert.equal(evs.length, 2, 'a FRESH review event lands beside the stale one');
   assert.ok(evs.some((e) => e.data.sha === freshSha));
@@ -1032,32 +675,34 @@ test('skipped never satisfies re-entry END-TO-END: after a failed review, the ne
     extra: { review: { adversary: true } },
   });
   launchViaContinue(fx);
-  const stub1 = brokerStub({ reviewResult: new Error('lane wedged') });
   const res1 = await dispatchWaveViaFabric({
     statePath: fx.statePath, self: fx.self, now: 2000,
-    _brokerClient: stub1, _openCoord: disabledCoord,
   });
-  assert.equal(reviewCalls(stub1).length, 1);
-  assert.equal(res1.tasks[0].review, 'error');
+  const r1 = await recordNativeWave(fx, res1, {
+    edits: { 'src/a.txt': 'edit\n' }, providedReviews: {},
+  });
+  assert.equal(r1.reviewed.tasks[0].review.verdict, 'error', 'the owed-but-absent review fails closed');
+  const WT = res1.plan.tasks[0].cwd;
   const st = readState(fx.statePath);
   writeState(fx.statePath, {
     ...st,
     tasks: st.tasks.map((t) => ({ ...t, status: 'pending' })),
     active_run: { wave: 1, phase: 'launching', scope: ['src/a.txt'], baseline: [] },
   });
-  const stub2 = brokerStub();
+  // The attempt-1 record committed the in-scope edit; the retry carries a NEW edit
+  // (a different payload sha) — the skipped event must NOT satisfy re-entry for it.
+  write(WT, 'src/a.txt', 'retry edit\n');
   const res2 = await dispatchWaveViaFabric({
     statePath: fx.statePath, self: fx.self, now: 2100,
-    _brokerClient: stub2, _openCoord: disabledCoord,
   });
-  assert.equal(reviewCalls(stub2).length, 1, 'the skipped event did NOT satisfy re-entry');
-  assert.equal(res2.tasks[0].review, 'approve');
+  const r2 = await recordNativeWave(fx, res2, { providedReviews: { 1: approveRecord } });
+  assert.equal(r2.reviewed.tasks[0].review.verdict, 'approve', 'the skipped event did NOT satisfy re-entry');
   const evs = readEvents(fx.bundleDir);
   const skipped = evs.filter((e) => e.type === 'task_adversary_review_skipped');
   const done = evs.filter((e) => e.type === 'task_adversary_review');
   assert.equal(skipped.length, 1);
-  assert.equal(done.length, 1);
-  assert.equal(done[0].data.sha, skipped[0].data.sha);
+  assert.equal(done.length, 1, 'a fresh review ran despite the prior skipped event');
+  assert.notEqual(done[0].data.sha, skipped[0].data.sha, 'the retry payload changed (attempt-1 committed its edit) — re-entry keys are payload-bound');
 });
 
 test('multi-task wave: one dispatch_review per task with per-task verdicts and events', async () => {
@@ -1071,51 +716,19 @@ test('multi-task wave: one dispatch_review per task with per-task verdicts and e
     extra: { review: { adversary: true } },
   });
   const op = launchViaContinue(fx);
-  write(op.cwd, 'src/a.txt', 'edit a\n');
-  write(op.cwd, 'src/b.txt', 'edit b\n');
-  let n = 0;
-  const stub = brokerStub({
-    reviewResult: () => {
-      n += 1;
-      return n === 1 ? approveRecord : rejectRecord;
-    },
-  });
   const res = await dispatchWaveViaFabric({
     statePath: fx.statePath, self: fx.self, now: 2000,
-    _brokerClient: stub, _openCoord: disabledCoord,
   });
-  assert.equal(reviewCalls(stub).length, 2, 'one review call PER TASK, never one per wave');
-  assert.equal(res.tasks[0].review, 'approve');
-  assert.equal(res.tasks[1].review, 'reject');
-  assert.deepEqual(res.record.blocking_reviews.map((b) => b.id), [2], 'only task 2 blocks');
+  const { reviewed, recorded } = await recordNativeWave(fx, res, {
+    edits: { 'src/a.txt': 'edit a\n', 'src/b.txt': 'edit b\n' },
+    providedReviews: { 1: approveRecord, 2: rejectRecord },
+  });
+  assert.equal(reviewed.tasks[0].review.verdict, 'approve');
+  assert.equal(reviewed.tasks[1].review.verdict, 'reject');
+  assert.deepEqual(recorded.blocking_reviews.map((b) => b.id), [2], 'only task 2 blocks');
   const evs = readEvents(fx.bundleDir).filter((e) => e.type === 'task_adversary_review');
-  assert.deepEqual(evs.map((e) => String(e.data.task)).sort(), ['1', '2']);
+  assert.deepEqual(evs.map((e) => String(e.data.task)).sort(), ['1', '2'], 'one review record PER TASK, never one per wave');
   assert.equal(evs[0].data.sha, evs[1].data.sha, 'same edit locus → same payload hash; the TASK component keys them apart');
-});
-
-test('degraded approve surfaces as a blocking error review', async () => {
-  const fx = makeFixture({
-    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
-    planIndex: [planEntry(1, 1, ['src/a.txt'])],
-    slug: 'dw-deg-approve',
-    extra: { review: { adversary: true } },
-  });
-  const op = launchViaContinue(fx);
-  write(op.cwd, 'src/a.txt', 'edit\n');
-  const degradedApprove = {
-    final_verdict: 'approve', findings: [], blocking_findings: [],
-    summary: 'approve but incomplete',
-    harness: { ...healthyHarness(), degraded: true, regions_unreviewed: 1 },
-  };
-  const res = await dispatchWaveViaFabric({
-    statePath: fx.statePath, self: fx.self, now: 2000,
-    _brokerClient: brokerStub({ reviewResult: degradedApprove }), _openCoord: disabledCoord,
-  });
-  assert.equal(res.tasks[0].review, 'approve');
-  assert.equal(res.record.blocking_reviews.length, 1);
-  assert.equal(res.record.blocking_reviews[0].verdict, 'error');
-  const skipped = readEvents(fx.bundleDir).filter((e) => e.type === 'task_adversary_review_skipped');
-  assert.equal(skipped.length, 1, 'incomplete approve coverage uses skipped and never satisfies re-entry');
 });
 
 test('digest-authoritative redrive: item.review cannot mask a blocking digest.review', async () => {
@@ -1127,7 +740,7 @@ test('digest-authoritative redrive: item.review cannot mask a blocking digest.re
   launchViaContinue(fx);
   writeWaveDispatchRecord(fx.bundleDir, 1, {
     key: composeWaveDispatchKey('dw-cleanmask', 1), run_id: 'dw-cleanmask', wave: 1, op: 'dispatch_fabric',
-    contract_version: 'adsp-v1.1', status: 'dispatched', attempt: 1, dispatched_at: 'T0',
+    contract_version: 'fabric-native-v1', status: 'dispatched', attempt: 1, dispatched_at: 'T0',
     tasks: [{ task_id: 1, class: 'bounded-edit', handoff_key: 'k1' }],
     result: {
       wave: 1,
@@ -1150,7 +763,6 @@ test('digest-authoritative redrive: item.review cannot mask a blocking digest.re
   });
   const res = await dispatchWaveViaFabric({
     statePath: fx.statePath, self: fx.self, now: 2000,
-    _brokerClient: neverBroker(), _openCoord: () => assert.fail('coord must not open on re-drive'),
   });
   assert.equal(res.outcome, 'reused');
   assert.equal(res.redrove_record, true);
@@ -1168,7 +780,7 @@ test('blocking_reviews[].findings is array-shaped on redrive of a legacy blockin
   launchViaContinue(fx);
   writeWaveDispatchRecord(fx.bundleDir, 1, {
     key: composeWaveDispatchKey('dw-arr', 1), run_id: 'dw-arr', wave: 1, op: 'dispatch_fabric',
-    contract_version: 'adsp-v1.1', status: 'dispatched', attempt: 1, dispatched_at: 'T0',
+    contract_version: 'fabric-native-v1', status: 'dispatched', attempt: 1, dispatched_at: 'T0',
     tasks: [{ task_id: 1, class: 'bounded-edit', handoff_key: 'k1' }],
     result: {
       wave: 1,
@@ -1181,7 +793,6 @@ test('blocking_reviews[].findings is array-shaped on redrive of a legacy blockin
   });
   const res = await dispatchWaveViaFabric({
     statePath: fx.statePath, self: fx.self, now: 2000,
-    _brokerClient: neverBroker(), _openCoord: () => assert.fail('coord must not open on re-drive'),
   });
   assert.equal(res.redrove_record, true);
   assert.equal(res.record_result.blocking_reviews.length, 1);
@@ -1284,7 +895,7 @@ test('gateAndValidate: reused/pending when an existing record has status pending
   const key = composeWaveDispatchKey('dw-gate-pending', 1);
   writeWaveDispatchRecord(fx.bundleDir, 1, {
     key, run_id: 'dw-gate-pending', wave: 1, op: 'dispatch_fabric',
-    contract_version: 'adsp-v1.1', status: 'pending', attempt: 1, dispatched_at: 'T0',
+    contract_version: 'fabric-native-v1', status: 'pending', attempt: 1, dispatched_at: 'T0',
     tasks: [{ task_id: 1, class: 'bounded-edit', handoff_key: 'k1' }],
   });
   const result = gateAndValidate({ statePath: fx.statePath, self: fx.self, now: 2000, takeover: false });
