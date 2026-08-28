@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [9.9.3] — 2026-08-28
+
+### Fixed — seeded bundles with relative path fields can now reach their gates
+
+`resolveGateArtifacts` joins `spec_path` against the bundle directory, so a bundle
+seeded with REPO-RELATIVE path fields double-paths them and dies unreadable at the
+first gate transition — its spec gate could never run (measured on
+`litellm-improvement-eval`). `mp seed` now absolutizes explicit `--spec-path` /
+`--plan-path` / `--plan-index-path` flags against cwd, and `rebasePaths` gains an
+optional `--base` that prefixes each RELATIVE path field with an operator-supplied
+absolute base (the CD-7-compliant repair seam; absolute fields stay with the
+from/to relocation semantics). `dispatch-plan --spec-path` is absolutized for the
+same reason. Red-first tests at both layers; suite 1648 pass, 0 fail.
+
+
 ## [9.9.2] — 2026-08-28
 
 ### Removed — the retired agent-dispatch transport, gone
