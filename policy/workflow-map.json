@@ -1,0 +1,527 @@
+{
+  "_generated": "from /srv/workflows/config/routing.yaml by generate.mjs — do not hand-edit",
+  "version": 1,
+  "lanes": {
+    "sweep": {
+      "model": "litellm/gemini-3.7-flash",
+      "ctx": 1048576,
+      "cost": "lowest",
+      "fallback": "bulk",
+      "chain": [
+        "litellm/gemini-3.7-flash",
+        "litellm/skynet3/deepseek-v4-flash"
+      ],
+      "strengths": "Very fast, very cheap, million-token window. Ideal for reading a lot and deciding a little — scanning, filtering, classifying, extracting. Do not give it design judgment."
+    },
+    "bulk": {
+      "model": "litellm/skynet3/deepseek-v4-flash",
+      "ctx": 1000000,
+      "cost": "low",
+      "fallback": "sweep",
+      "chain": [
+        "litellm/skynet3/deepseek-v4-flash",
+        "litellm/gemini-3.7-flash"
+      ],
+      "strengths": "Cheap and quick with better instruction-following than sweep. Mechanical multi-file edits, renames, formatting, boilerplate."
+    },
+    "code": {
+      "model": "litellm/glm-5.2",
+      "ctx": 1000000,
+      "cost": "low",
+      "fallback": "bulk",
+      "chain": [
+        "litellm/glm-5.2",
+        "litellm/skynet3/deepseek-v4-flash",
+        "litellm/gemini-3.7-flash"
+      ],
+      "strengths": "Strong practical coding at low cost with a huge window. The default for writing and modifying code against a clear specification."
+    },
+    "agentic": {
+      "model": "litellm/grok-4.6",
+      "ctx": 500000,
+      "cost": "medium",
+      "fallback": "code",
+      "chain": [
+        "litellm/grok-4.6",
+        "litellm/glm-5.2",
+        "litellm/skynet3/deepseek-v4-flash",
+        "litellm/gemini-3.7-flash"
+      ],
+      "strengths": "Holds a long tool-use loop together without drifting — best for iterate-until-green work where the model drives its own steps."
+    },
+    "reason": {
+      "model": "litellm/deepseek-v4-pro",
+      "ctx": 1000000,
+      "cost": "medium",
+      "fallback": "longform",
+      "chain": [
+        "litellm/deepseek-v4-pro",
+        "litellm/gemini-3.1-pro-preview"
+      ],
+      "strengths": "Deep step-by-step reasoning at a moderate price with a million token window. Root-cause tracing and multi-hop investigation."
+    },
+    "longform": {
+      "model": "litellm/gemini-3.1-pro-preview",
+      "ctx": 1048576,
+      "cost": "medium",
+      "fallback": "reason",
+      "chain": [
+        "litellm/gemini-3.1-pro-preview",
+        "litellm/deepseek-v4-pro"
+      ],
+      "strengths": "Best sustained reasoning over a very large corpus. Use when the evidence does not fit anywhere else — repo-wide synthesis, long traces."
+    },
+    "frontier": {
+      "model": "litellm/gpt-5.6-sol",
+      "ctx": 372000,
+      "cost": "high",
+      "fallback": "longform",
+      "chain": [
+        "litellm/gpt-5.6-sol",
+        "litellm/gemini-3.1-pro-preview",
+        "litellm/deepseek-v4-pro"
+      ],
+      "strengths": "Strongest judgment available here. Architecture calls, adversarial review, and anything where being wrong is expensive. Smallest window of the group, so feed it curated evidence rather than raw dumps."
+    },
+    "broad": {
+      "model": "litellm/qwen3.8-max",
+      "ctx": 983616,
+      "cost": "medium",
+      "fallback": "mid",
+      "chain": [
+        "litellm/qwen3.8-max",
+        "litellm/qwen3.7-plus",
+        "litellm/glm-5.2",
+        "litellm/skynet3/deepseek-v4-flash",
+        "litellm/gemini-3.7-flash"
+      ],
+      "strengths": "Strong generalist from a different family than the lanes above. Its value is being a genuinely different model — use it for second opinions where vendor diversity matters more than raw peak ability."
+    },
+    "mid": {
+      "model": "litellm/qwen3.7-plus",
+      "ctx": 983616,
+      "cost": "low",
+      "fallback": "code",
+      "chain": [
+        "litellm/qwen3.7-plus",
+        "litellm/glm-5.2",
+        "litellm/skynet3/deepseek-v4-flash",
+        "litellm/gemini-3.7-flash"
+      ],
+      "strengths": "Competent mid-weight generalist. Overflow capacity when a cheaper lane is too weak and a frontier lane is not worth the spend."
+    },
+    "local": {
+      "model": "litellm/qwen38-27b-awq",
+      "ctx": 131072,
+      "cost": "lowest",
+      "fallback": "bulk",
+      "chain": [
+        "litellm/qwen38-27b-awq",
+        "litellm/skynet3/deepseek-v4-flash",
+        "litellm/gemini-3.7-flash"
+      ],
+      "strengths": "Free own-hardware generalist (skynet1 dual-TP4). Strong instruction-following with native tools and clean strict JSON at zero per-token cost. Small context window (131k) and 17-19s tool-turn latency (thinking before emit) — use for mechanical code/text volume, not frontier judgment or huge-context reads."
+    }
+  },
+  "tiers": {
+    "small": {
+      "lane": "bulk",
+      "model": "litellm/skynet3/deepseek-v4-flash",
+      "intent": "Cheap, high-volume work with no judgment — scan, extract, reformat."
+    },
+    "medium": {
+      "lane": "code",
+      "model": "litellm/glm-5.2",
+      "intent": "Default working tier — read, reason, and write code to a spec."
+    },
+    "big": {
+      "lane": "frontier",
+      "model": "litellm/gpt-5.6-sol",
+      "intent": "Hardest calls — design, adversarial review, final synthesis."
+    }
+  },
+  "agents": {
+    "sweeper": {
+      "tier": "small",
+      "writes": true,
+      "lane": "bulk",
+      "model": "litellm/skynet3/deepseek-v4-flash",
+      "intent": "Mechanical edits across many files, no design judgment.",
+      "classes": [
+        "mechanical-text"
+      ]
+    },
+    "finder": {
+      "tier": "small",
+      "writes": false,
+      "lane": "sweep",
+      "model": "litellm/gemini-3.7-flash",
+      "intent": "Locate code and map call sites across a large tree.",
+      "classes": [
+        "scan",
+        "investigation"
+      ]
+    },
+    "tracer": {
+      "tier": "medium",
+      "writes": false,
+      "lane": "reason",
+      "model": "litellm/deepseek-v4-pro",
+      "intent": "Follow one thread to a root cause across subsystems.",
+      "classes": [
+        "deep-investigation"
+      ]
+    },
+    "builder": {
+      "tier": "medium",
+      "writes": true,
+      "lane": "code",
+      "model": "litellm/glm-5.2",
+      "intent": "Implement a bounded, specified change and verify it.",
+      "classes": [
+        "bounded-edit",
+        "agentic-loop",
+        "graph-execution",
+        "unknown"
+      ]
+    },
+    "prover": {
+      "tier": "medium",
+      "writes": true,
+      "lane": "code",
+      "model": "litellm/glm-5.2",
+      "intent": "Write and run tests; judge whether evidence supports a claim.",
+      "classes": [
+        "tester"
+      ]
+    },
+    "judge": {
+      "tier": "big",
+      "writes": false,
+      "lane": "frontier",
+      "model": "litellm/gpt-5.6-sol",
+      "intent": "Design judgment, trade-off calls, synthesis across findings.",
+      "classes": [
+        "planned-execution",
+        "architecture",
+        "multi-agent-orchestration"
+      ]
+    },
+    "breaker": {
+      "tier": "big",
+      "writes": false,
+      "lane": "frontier",
+      "model": "litellm/gpt-5.6-sol",
+      "intent": "Adversarial review — try to refute the work, not confirm it.",
+      "classes": [
+        "diff-review",
+        "critic",
+        "cross-review",
+        "adversary"
+      ]
+    }
+  },
+  "classes": {
+    "scan": {
+      "agent": "finder",
+      "lane": "sweep",
+      "model": "litellm/gemini-3.7-flash",
+      "chain": [
+        "litellm/gemini-3.7-flash",
+        "litellm/skynet3/deepseek-v4-flash"
+      ],
+      "cap": "investigate",
+      "effort": "low",
+      "writes": false,
+      "tier": "small",
+      "intent": "Read widely, return a short list. Breadth over depth."
+    },
+    "mechanical-text": {
+      "agent": "sweeper",
+      "lane": "bulk",
+      "model": "litellm/skynet3/deepseek-v4-flash",
+      "chain": [
+        "litellm/skynet3/deepseek-v4-flash",
+        "litellm/gemini-3.7-flash"
+      ],
+      "cap": "edit",
+      "effort": "low",
+      "writes": true,
+      "tier": "small",
+      "intent": "Apply a specified transformation across many files."
+    },
+    "investigation": {
+      "agent": "finder",
+      "lane": "reason",
+      "model": "litellm/deepseek-v4-pro",
+      "chain": [
+        "litellm/deepseek-v4-pro",
+        "litellm/gemini-3.1-pro-preview"
+      ],
+      "cap": "investigate",
+      "effort": "high",
+      "writes": false,
+      "tier": "small",
+      "intent": "Answer a specific question about how the code behaves."
+    },
+    "deep-investigation": {
+      "agent": "tracer",
+      "lane": "longform",
+      "model": "litellm/gemini-3.1-pro-preview",
+      "chain": [
+        "litellm/gemini-3.1-pro-preview",
+        "litellm/deepseek-v4-pro"
+      ],
+      "cap": "investigate",
+      "effort": "high",
+      "writes": false,
+      "tier": "medium",
+      "fallback": "investigation",
+      "intent": "Multi-hop root cause across subsystems, large evidence set."
+    },
+    "bounded-edit": {
+      "agent": "builder",
+      "lane": "code",
+      "model": "litellm/glm-5.2",
+      "chain": [
+        "litellm/glm-5.2",
+        "litellm/skynet3/deepseek-v4-flash",
+        "litellm/gemini-3.7-flash"
+      ],
+      "cap": "edit",
+      "effort": "high",
+      "writes": true,
+      "tier": "medium",
+      "intent": "One well-specified change with a known verification command."
+    },
+    "agentic-loop": {
+      "agent": "builder",
+      "lane": "agentic",
+      "model": "litellm/grok-4.6",
+      "chain": [
+        "litellm/grok-4.6",
+        "litellm/glm-5.2",
+        "litellm/skynet3/deepseek-v4-flash",
+        "litellm/gemini-3.7-flash"
+      ],
+      "cap": "edit",
+      "effort": "high",
+      "writes": true,
+      "tier": "medium",
+      "fallback": "bounded-edit",
+      "intent": "Iterate until green when the steps are not known up front."
+    },
+    "graph-execution": {
+      "agent": "builder",
+      "lane": "code",
+      "model": "litellm/glm-5.2",
+      "chain": [
+        "litellm/glm-5.2",
+        "litellm/skynet3/deepseek-v4-flash",
+        "litellm/gemini-3.7-flash"
+      ],
+      "cap": "chat",
+      "effort": "high",
+      "writes": true,
+      "tier": "medium",
+      "intent": "Execute a dependency-ordered set of prepared steps."
+    },
+    "planned-execution": {
+      "agent": "judge",
+      "lane": "frontier",
+      "model": "litellm/gpt-5.6-sol",
+      "chain": [
+        "litellm/gpt-5.6-sol",
+        "litellm/gemini-3.1-pro-preview",
+        "litellm/deepseek-v4-pro"
+      ],
+      "cap": "chat",
+      "effort": "xhigh",
+      "writes": false,
+      "tier": "big",
+      "fallback": "graph-execution",
+      "intent": "Decompose an approved spec into an ordered, verifiable plan."
+    },
+    "tester": {
+      "agent": "prover",
+      "lane": "code",
+      "model": "litellm/glm-5.2",
+      "chain": [
+        "litellm/glm-5.2",
+        "litellm/skynet3/deepseek-v4-flash",
+        "litellm/gemini-3.7-flash"
+      ],
+      "cap": "review",
+      "effort": "high",
+      "writes": true,
+      "tier": "medium",
+      "intent": "Write tests that would fail without the change, then run them."
+    },
+    "architecture": {
+      "agent": "judge",
+      "lane": "frontier",
+      "model": "litellm/gpt-5.6-sol",
+      "chain": [
+        "litellm/gpt-5.6-sol",
+        "litellm/gemini-3.1-pro-preview",
+        "litellm/deepseek-v4-pro"
+      ],
+      "cap": "chat",
+      "effort": "xhigh",
+      "writes": false,
+      "tier": "big",
+      "intent": "Interface and seam design; trade-offs with long-lived consequences."
+    },
+    "multi-agent-orchestration": {
+      "agent": "judge",
+      "lane": "longform",
+      "model": "litellm/gemini-3.1-pro-preview",
+      "chain": [
+        "litellm/gemini-3.1-pro-preview",
+        "litellm/deepseek-v4-pro"
+      ],
+      "cap": "chat",
+      "effort": "high",
+      "writes": false,
+      "tier": "big",
+      "intent": "Reconcile many subagent reports into one coherent result."
+    },
+    "diff-review": {
+      "agent": "breaker",
+      "lane": "frontier",
+      "model": "litellm/gpt-5.6-sol",
+      "chain": [
+        "litellm/gpt-5.6-sol",
+        "litellm/gemini-3.1-pro-preview",
+        "litellm/deepseek-v4-pro"
+      ],
+      "cap": "review",
+      "effort": "high",
+      "writes": false,
+      "tier": "big",
+      "intent": "Review a concrete diff for defects and convention drift."
+    },
+    "critic": {
+      "agent": "breaker",
+      "lane": "frontier",
+      "model": "litellm/gpt-5.6-sol",
+      "chain": [
+        "litellm/gpt-5.6-sol",
+        "litellm/gemini-3.1-pro-preview",
+        "litellm/deepseek-v4-pro"
+      ],
+      "cap": "review",
+      "effort": "high",
+      "writes": false,
+      "tier": "big",
+      "intent": "Judge whether a claim is supported by the evidence given."
+    },
+    "cross-review": {
+      "agent": "breaker",
+      "lane": "broad",
+      "model": "litellm/qwen3.8-max",
+      "chain": [
+        "litellm/qwen3.8-max",
+        "litellm/qwen3.7-plus",
+        "litellm/glm-5.2",
+        "litellm/skynet3/deepseek-v4-flash",
+        "litellm/gemini-3.7-flash"
+      ],
+      "cap": "review",
+      "effort": "high",
+      "writes": false,
+      "tier": "big",
+      "intent": "Second opinion from a different model family than the author."
+    },
+    "adversary": {
+      "agent": "breaker",
+      "lane": "frontier",
+      "model": "litellm/gpt-5.6-sol",
+      "chain": [
+        "litellm/gpt-5.6-sol",
+        "litellm/gemini-3.1-pro-preview",
+        "litellm/deepseek-v4-pro"
+      ],
+      "cap": "review",
+      "effort": "xhigh",
+      "writes": false,
+      "tier": "big",
+      "panel": "adversarial",
+      "intent": "Try to refute the work. Default to refuted when uncertain."
+    },
+    "unknown": {
+      "agent": "builder",
+      "lane": "code",
+      "model": "litellm/glm-5.2",
+      "chain": [
+        "litellm/glm-5.2",
+        "litellm/skynet3/deepseek-v4-flash",
+        "litellm/gemini-3.7-flash"
+      ],
+      "cap": "chat",
+      "effort": "high",
+      "writes": true,
+      "tier": "medium",
+      "intent": "Unclassified work. Middle of the cost curve, no surprises."
+    }
+  },
+  "panels": {
+    "adversarial": {
+      "members": [
+        {
+          "lane": "frontier",
+          "model": "litellm/gpt-5.6-sol"
+        },
+        {
+          "lane": "broad",
+          "model": "litellm/qwen3.8-max"
+        },
+        {
+          "lane": "longform",
+          "model": "litellm/gemini-3.1-pro-preview"
+        }
+      ],
+      "quorum": 2,
+      "intent": "Refutation panel. A finding survives only if it survives all lenses."
+    },
+    "design": {
+      "members": [
+        {
+          "lane": "frontier",
+          "model": "litellm/gpt-5.6-sol"
+        },
+        {
+          "lane": "longform",
+          "model": "litellm/gemini-3.1-pro-preview"
+        }
+      ],
+      "quorum": 2,
+      "intent": "Structural second opinion before a design is accepted."
+    }
+  },
+  "phases": {
+    "scan": "scan",
+    "explore": "investigation",
+    "investigate": "deep-investigation",
+    "design": "architecture",
+    "plan": "planned-execution",
+    "implement": "bounded-edit",
+    "build": "agentic-loop",
+    "fix": "agentic-loop",
+    "refactor": "mechanical-text",
+    "test": "tester",
+    "verify": "tester",
+    "review": "diff-review",
+    "challenge": "adversary",
+    "synthesize": "multi-agent-orchestration"
+  },
+  "workflow": {
+    "defaultClass": "unknown",
+    "excludeSubagentTools": [
+      "subagent",
+      "intercom",
+      "contact_supervisor"
+    ],
+    "enforceWriteGate": true
+  }
+}
