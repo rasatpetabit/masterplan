@@ -2910,7 +2910,7 @@ test('continue (planning verb): a plan marker yields the read-only dispatch_plan
   assert.equal(op.op, 'dispatch_plan');
   assert.equal(op.kind, 'plan');
   assert.equal(op.read_only, true);
-  assert.equal(op.class, 'masterplan-planning');
+  assert.equal(op.class, 'planned-execution');
   assert.equal(op.next, 'stage-plan-fragments');
   assert.ok(Array.isArray(op.roots) && op.roots.length === 2, 'enumerated roots: repo + spec');
   assert.equal(op.roots[0], op.cwd);
@@ -3013,13 +3013,43 @@ test('record-result awaits native review before the state transaction (CLI order
       },
     }],
   }));
-  const broker = fileURLToPath(new URL('./fixtures/fake-serve-mcp-reject.mjs', import.meta.url));
-  const r = run([
+  // Phase A: no reviews provided yet — the CLI owes native review descriptors and
+  // records NOTHING.
+  const rA = run([
     'record-result',
     `--state=${statePath}`,
     `--result-file=${resultPath}`,
     `--worktree=${WT}`,
-    `--broker-bin=${broker}`,
+    '--now=3000',
+  ], { timeout: 30_000 });
+  assert.equal(rA.status, 0, `record-result phase A must succeed: ${rA.stderr}\n${rA.stdout}`);
+  const outA = JSON.parse(rA.stdout);
+  assert.equal(outA.op, 'run_native_reviews', 'owed reviews surface as native review descriptors');
+  assert.ok(Array.isArray(outA.pending_reviews) && outA.pending_reviews.length === 1);
+  assert.equal(outA.pending_reviews[0].class, 'adversary');
+  assert.equal(read(statePath).tasks[0].status, 'pending', 'nothing is recorded before reviews land');
+
+  // Phase B: the orchestrator supplies the native review records; the CLI ingests
+  // them BEFORE the state transaction so blocking_reviews is populated.
+  const reviewsPath = path.join(bundleDir, 'native-reviews.json');
+  fs.writeFileSync(reviewsPath, JSON.stringify({
+    1: {
+      final_verdict: 'reject',
+      findings: [{ severity: 'high', summary: 'breaks the contract' }],
+      blocking_findings: [{ summary: 'breaks the contract', proof: 'diff shows it' }],
+      summary: 'blocking contract break',
+      harness: {
+        degraded: false, timed_out: false, stalled: false,
+        deadline_exceeded: false, regions_unreviewed: 0, extraction_degraded: false,
+      },
+    },
+  }));
+  const r = run([
+    'record-result',
+    `--state=${statePath}`,
+    `--result-file=${resultPath}`,
+    `--reviews-file=${reviewsPath}`,
+    `--worktree=${WT}`,
     '--now=3000',
   ], { timeout: 30_000 });
   assert.equal(r.status, 0, `record-result must succeed: ${r.stderr}\n${r.stdout}`);

@@ -12,7 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
-import { continueRun, dispatchPlanFanout } from '../lib/continue.mjs';
+import { continueRun, dispatchPlanFanout, snapshotRootsPorcelain, diffRootsPorcelain } from '../lib/continue.mjs';
 import { recordWaveResult } from '../lib/wave-commit.mjs';
 import { readState, writeState } from '../lib/bundle.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
@@ -593,7 +593,7 @@ test('plan fan-out op: recover_plan_run emits the read-only dispatch_plan planni
   assert.equal(op.op, 'dispatch_plan');
   assert.equal(op.kind, 'plan');
   assert.equal(op.read_only, true);
-  assert.equal(op.class, 'masterplan-planning');
+  assert.equal(op.class, 'planned-execution');
   assert.equal(op.next, 'stage-plan-fragments');
   // Explicitly enumerated accessible roots: the repo + the spec path (conventional
   // spec.md beside state.yml when state carries no spec_path).
@@ -608,7 +608,7 @@ test('plan fan-out op: recover_plan_run emits the read-only dispatch_plan planni
   assert.equal(marker.phase, 'launching');
 });
 
-test('plan fan-out executor: READ-ONLY work items through an injected broker; structured fragments returned for the shell to stage; no state written', async () => {
+test('plan fan-out: READ-ONLY spawn descriptors + durable pre-snapshot; no state written', () => {
   const fx = makeFixture({
     tasks: [],
     phase: 'plan',
@@ -616,130 +616,81 @@ test('plan fan-out executor: READ-ONLY work items through an injected broker; st
     slug: 't5exec',
   });
   write(fx.bundleDir, 'spec.md', '# spec\n');
-  const fragCore = { key: 'core', tasks: [{ key: 'core.one', description: 'd', files: ['a.js'], verify_commands: [] }] };
-  const fragUi = { key: 'ui', tasks: [] };
-  const sent = [];
-  const broker = {
-    async initialize() { throw new Error('executor must not initialize an injected client'); },
-    close() { throw new Error('executor must not close an injected client'); },
-    async callTool(name, args) {
-      assert.equal(name, 'dispatch_task');
-      sent.push(args.descriptor);
-      const n = sent.length;
-      if (n === 1) return { fragment: fragCore };
-      return { decision: { decision: 'route' }, stdout: 'drafting…\n' + JSON.stringify(fragUi) };
-    },
-  };
-  const res = await dispatchPlanFanout({
+  const res = dispatchPlanFanout({
     statePath: fx.statePath,
     subsystems: [{ key: 'core', title: 'Core' }, { key: 'ui', description: 'the UI' }],
-    _brokerClient: broker,
   });
-  assert.equal(res.outcome, 'complete');
-  assert.deepEqual(res.subsystems, [fragCore, fragUi], 'fragments come back as structured payloads (the shell stages .plan-fragments.json)');
+  assert.equal(res.outcome, 'native-spawn-plan');
   assert.deepEqual(res.requested, ['core', 'ui']);
-  assert.deepEqual(res.denied, []);
-  assert.deepEqual(res.missing, []);
   assert.deepEqual(res.roots, [res.repoRoot, path.join(fx.bundleDir, 'spec.md')]);
-  // READ-ONLY enforcement proven at the descriptor layer: the read-only class,
-  // read_only:true, the enumerated roots — and no write-scope fields (files/worktree).
-  //
-  // `repo` is NOT a write-scope field and must be PRESENT: agent-dispatch's
-  // normalizeDescriptor() rejects any dispatch_task descriptor without a non-empty
-  // repo, read-only or not. This suite asserted its absence until 2026-08-07, pinning
-  // the retired dispatch_fanout contract — so it stayed green while every live planner
-  // dispatch failed with "Task descriptor requires a non-empty repo".
-  assert.equal(sent.length, 2);
-  for (const d of sent) {
-    assert.equal(d.class, 'masterplan-planning');
+  assert.equal(res.plan.descriptors.length, 2, 'one drafter descriptor per subsystem');
+  assert.ok(res.plan.concurrency >= 1);
+  // READ-ONLY enforcement is structural: the read-only class resolved to a writes:false
+  // role, read_only:true, the enumerated roots — and no write-scope fields.
+  // `repo` is the locus/identity field and MUST be present.
+  for (const d of res.plan.descriptors) {
+    assert.equal(d.class, 'planned-execution');
     assert.equal(d.read_only, true);
     assert.deepEqual(d.roots, res.roots);
     assert.equal(typeof d.repo, 'string');
-    assert.ok(d.repo.length > 0, 'broker-required locus: repo');
+    assert.ok(d.repo.length > 0, 'descriptor locus: repo');
     assert.equal(d.repo, res.repoRoot);
     assert.equal('files' in d, false, 'no write-scope field: files');
     assert.equal('worktree' in d, false, 'no write-scope field: worktree');
+    assert.equal(d.agent, 'judge', 'planned-execution resolves to a writes:false role');
+    assert.match(d.model, /^litellm\//, 'the lane model ref rides the descriptor');
   }
+  // The pre-fan-out porcelain snapshot rides the plan (the orchestrator re-snapshots
+  // after the fan-out and refuses staging on drift).
+  assert.ok(res.porcelain_pre instanceof Map);
   // The executor writes NO state (L1 stays the single durable writer): marker intact.
   assert.deepEqual(readState(fx.statePath).active_run, { kind: 'plan', phase: 'launching' });
 });
 
-test('NEGATIVE (a): a planner work item that attempts a write inside the enumerated roots is denied at the broker capability level — surfaced, never faked', async () => {
+test('NEGATIVE (a): drafters are structurally read-only — no descriptor carries write scope', () => {
   const fx = makeFixture({
     tasks: [],
     phase: 'plan',
     activeRun: { kind: 'plan', phase: 'launching' },
     slug: 't5deny',
   });
-  // The injected client MODELS the broker capability layer (never a live broker call):
-  // write scope on a read-only class is refused at validation, and the 'evil' drafter's
-  // runtime write attempt inside the roots is refused by the OS/broker-level write denial.
-  const broker = {
-    async callTool(name, args) {
-      assert.equal(name, 'dispatch_task');
-      const d = args.descriptor;
-      // Write scope is files/worktree. `repo` is a REQUIRED locus on every
-      // dispatch_task descriptor (agent-dispatch normalizeDescriptor), not a write
-      // grant — this mock denied it until 2026-08-07 and so modelled the retired
-      // dispatch_fanout validator rather than the live one, keeping the suite green
-      // while every real planner dispatch was rejected.
-      if (d.files || d.worktree) {
-        return { denied: true, reason: `capability denial: write-scope field on read-only class '${d.class}'` };
-      }
-      if (typeof d.repo !== 'string' || d.repo.length === 0) {
-        return { denied: true, reason: 'Task descriptor requires a non-empty repo' };
-      }
-      if (d.subsystem === 'evil') {
-        return { denied: true, reason: `write denied: drafter attempted to modify ${d.roots[0]}/src/hack.js inside the read-only roots (capability class '${d.class}')` };
-      }
-      if (d.subsystem === 'guarded') {
-        return { decision: { decision: 'guard_deny', reason: 'write scope denied by guard on the read-only planning lane' } };
-      }
-      return { fragment: { key: d.subsystem, tasks: [] } };
-    },
-  };
-  const res = await dispatchPlanFanout({
+  const res = dispatchPlanFanout({
     statePath: fx.statePath,
     subsystems: [{ key: 'good' }, { key: 'evil' }, { key: 'guarded' }],
-    _brokerClient: broker,
   });
-  assert.equal(res.outcome, 'incomplete');
-  assert.deepEqual(res.subsystems.map((f) => f.key), ['good'], 'a denied drafter never yields a faked fragment');
-  assert.deepEqual(res.denied.map((d) => d.key), ['evil', 'guarded']);
-  assert.match(res.denied[0].reason, /write denied/);
-  assert.match(res.denied[1].reason, /denied by guard/);
+  assert.equal(res.plan.descriptors.length, 3);
+  for (const d of res.plan.descriptors) {
+    assert.equal(d.read_only, true, 'every drafter descriptor is read-only');
+    assert.equal(d.class, 'planned-execution');
+    assert.equal(d.agent, 'judge', 'the resolved role is writes:false by policy');
+    assert.equal('files' in d, false);
+    assert.equal('worktree' in d, false);
+  }
 });
 
-test('NEGATIVE (b): the pre/post git status --porcelain assertion trips loudly when a drafter dirties an enumerated root mid-fan-out — breach surfaced, fragments NOT returned for staging', async () => {
+test('NEGATIVE (b): a drafter dirtying an enumerated root is caught by the pre/post porcelain check — breach surfaced, staging refused', () => {
   const fx = makeFixture({
     tasks: [],
     phase: 'plan',
     activeRun: { kind: 'plan', phase: 'launching' },
     slug: 't5breach',
   });
-  const broker = {
-    async callTool() {
-      // The fixture "drafter" writes INSIDE the enumerated repo root mid-fan-out …
-      write(fx.MAIN, 'src/PWNED.txt', 'not read-only\n');
-      // … and still returns a perfectly valid fragment, which must NOT surface.
-      return { results: [{ fragment: { key: 'core', tasks: [] } }] };
-    },
-  };
-  await assert.rejects(
-    dispatchPlanFanout({ statePath: fx.statePath, subsystems: [{ key: 'core' }], _brokerClient: broker }),
-    /READ-ONLY BREACH/,
-    'the wave surfaces the breach instead of staging fragments',
-  );
+  const res = dispatchPlanFanout({
+    statePath: fx.statePath,
+    subsystems: [{ key: 'core' }],
+  });
+  // The fixture "drafter" writes INSIDE the enumerated repo root mid-fan-out.
+  write(fx.MAIN, 'src/PWNED.txt', 'not read-only\n');
+  // The orchestrator's post-fan-out assertion trips loudly on the drift.
+  const breaches = diffRootsPorcelain(res.porcelain_pre, snapshotRootsPorcelain(res.roots));
+  assert.ok(breaches.length > 0, 'the drift is surfaced');
+  assert.match(breaches.join('\n'), /PWNED\.txt/, 'the breach names the dirtied path');
 });
 
-test('plan fan-out executor: a non-plan marker refuses loudly (never dispatches)', async () => {
+test('plan fan-out executor: a non-plan marker refuses loudly (never dispatches)', () => {
   const fx = makeFixture({ tasks: [], phase: 'plan', slug: 't5nomarker' }); // active_run: null
-  await assert.rejects(
-    dispatchPlanFanout({
-      statePath: fx.statePath,
-      subsystems: [{ key: 'core' }],
-      _brokerClient: { async callTool() { throw new Error('broker must not be called'); } },
-    }),
+  assert.throws(
+    () => dispatchPlanFanout({ statePath: fx.statePath, subsystems: [{ key: 'core' }] }),
     /plan marker/,
   );
 });
