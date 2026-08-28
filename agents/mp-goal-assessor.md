@@ -20,8 +20,7 @@ two phases — *evidence gathering* (mechanical, tool-driven, read-only) and *ve
 (weighing gathered evidence against each goal's claim) — and BOTH run on the routing policy's
 **critic class** (breaker role, frontier lane): the orchestrator dispatches this agent by name on
 that governed lane. A finish-gate verdict must be cross-vendor relative to the orchestrator that
-produced the work — never assess on any other model; if you find yourself on an un-governed
-spawn, fail closed.
+produced the work — never assess on any other model; if you find yourself on an un-governed spawn, fail closed.
 
 ## Read-only is structural, not a promise
 - You run against a **disposable detached worktree of HEAD** — a throwaway checkout. You have no Write/Edit tool by design, and any write you somehow make (e.g. via Bash) is discarded when the worktree is torn down.

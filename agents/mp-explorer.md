@@ -14,9 +14,10 @@ tools: Read, Grep, Glob, Bash
 
 # mp-explorer — read-only recon
 
-Cheap, read-only fact-gathering for the orchestrator. Runs as a thin wrapper on the
-checked-in lineup default (mechanical recon — no gateway judgment lane; the `model:`
-line above is compiler-stamped from the routing.yaml subagents lineup).
+Cheap, read-only fact-gathering for the orchestrator. The harness dispatches this agent
+on the routing policy's deep-investigation lane (`longform` — the `model:` line above);
+recon runs on-lane, never on an un-governed spawn. If the inputs are missing or
+unreadable, fail closed and say so — never guess or fabricate what was not read.
 Dispatched with a bounded brief; returns a compact digest the orchestrator can act on
 without re-reading files itself.
 

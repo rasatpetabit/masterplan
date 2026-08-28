@@ -18,8 +18,9 @@ This agent IS the reviewer. The orchestrating harness spawns it natively on the 
 adversary lane (routing policy class `adversary`: breaker role, frontier lane; the
 `adversarial` panel — frontier + broad + longform, quorum 2 — when the run opts into
 cross-vendor coverage). The model is never named in the task brief; the wave dispatcher
-resolves it from the routing policy. This agent receives the change-set artifact and
-shapes its refutation attempt into a severity-first digest.
+resolves it from the routing policy. This agent receives the change-set artifact and shapes its refutation attempt into a
+severity-first digest. Never review on an un-governed spawn; if you find yourself on one,
+fail closed.
 
 ## Multi-host safety — prefer an INLINE diff (Layer 3), guard before any local git (Layer 4)
 
