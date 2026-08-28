@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [9.9.2] — 2026-08-28
+
+### Removed — the retired agent-dispatch transport, gone
+
+The fleet retired the agent-dispatch control plane; masterplan still spoke its
+language. This release deletes the transport wholesale: `lib/dispatch/broker-client.mjs`,
+`adsp-adapter.mjs`, `adsp-coord.mjs` and their tests are gone; `adsp-idempotency`
+renames to `fabric-idempotency` with `fabric-idem-v1` handoff keys; the `--broker-bin`
+flag, coord open/close wiring, `runBrokerDispatch`, and the `mcp-pool` launch path are
+removed from `bin/masterplan.mjs` and `lib/dispatch-wave.mjs`. Contract version is
+`fabric-native-v1`. No live surface names the retired system anymore — enforced, not
+merely documented (see the scan below).
+
+### Changed — routing resolves from a checked-in policy; waves are native spawn plans
+
+Work-class routing no longer shells out to a fleet CLI. It resolves against
+`policy/workflow-map.json`, the repo-local canonical copy of the fleet workflow routing
+map (lanes sweep/bulk/code/agentic/reason/longform/frontier/broad/mid/local with
+litellm/* model refs; classes bounded-edit/agentic-loop/planned-execution/adversary/
+critic/deep-investigation/...) via `lib/dispatch/routing-policy.mjs` — fail-closed on
+unreadable policy or unresolvable class. A host override (`MP_ROUTING_POLICY`) is
+optional; host drift is a doctor WARN, never a test failure, so fleet edits cannot
+break the suite. `mp dispatch-wave` returns a native spawn plan — governed descriptors
+for the harness's parallel subagent API — with the wave record persisted `pending`
+BEFORE launch (wave-token two-phase marker + `probeWaveToken` recovery), and
+`mp record-result` finalizes it to `recorded`. Adversarial review is a two-phase native
+seam: phase A emits `run_native_reviews` descriptors and records nothing; phase B
+ingests orchestrator-provided records via `--reviews-file`, failing closed (verdict
+`error`) when an owed review is absent. The doctor check `adversary-lane-health`
+becomes `routing-policy-health`.
+
+### Added — a standing fail-closed scan for retired identifiers
+
+`test/no-agent-dispatch.test.mjs` fails the build on any live-surface reference to the
+retired system (agent-dispatch, dispatch_task/dispatch_review/dispatch_fanout MCP
+tools, serve-mcp broker, adsp-* modules, dispatch-<class> lanes) with word-boundary
+precision; history surfaces (docs/contracts, docs/superpowers, docs/masterplan, legacy
+fixtures, CHANGELOG/WORKLOG) stay exempt as record. The suite is green: 1645 pass,
+0 fail.
+
+
 ### Added — end-of-planning alignment audit (the anti-drift look-back)
 
 Every planning-phase check was *relative*, and none looked back past the spec:
