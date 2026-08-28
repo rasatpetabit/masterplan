@@ -923,10 +923,12 @@ function main() {
           planningMode: flags['planning-mode'],
           predecessorTranscript: flags['predecessor-transcript'],
           // Path fields default to siblings of the BUNDLE DIR (its authoritative location), so a
-          // non-canonical seed path stays self-consistent; explicit flags override.
-          specPath: flags['spec-path'] ?? path.join(dir, 'spec.md'),
-          planPath: flags['plan-path'] ?? path.join(dir, 'plan.md'),
-          planIndexPath: flags['plan-index-path'] ?? path.join(dir, 'plan.index.json'),
+          // non-canonical seed path stays self-consistent; explicit flags override. RELATIVE flags
+          // are absolutized against cwd here: gate resolution joins spec_path against the bundle
+          // dir, so a stored repo-relative value double-paths and dies unreadable at set-phase.
+          specPath: path.resolve(flags['spec-path'] ?? path.join(dir, 'spec.md')),
+          planPath: path.resolve(flags['plan-path'] ?? path.join(dir, 'plan.md')),
+          planIndexPath: path.resolve(flags['plan-index-path'] ?? path.join(dir, 'plan.index.json')),
           ownerLock: flags['owner-lock'],
           codexReview: reviewFlag === undefined ? true : reviewFlag === 'on',
           renderImages: flags['render-images'],
@@ -2317,16 +2319,20 @@ function main() {
       // the per-field count so the operator can confirm the rebased fields. Re-runnable: a second
       // rebase against the already-rebased state is a no-op (the `from` prefix no longer matches).
       const p = need(flags, 'state');
-      const fromRoot = need(flags, 'from');
-      const toRoot = need(flags, 'to');
+      const fromRoot = flags.from ?? null;
+      const toRoot = flags.to ?? null;
+      const base = flags.base ?? null;
+      if (!base && (fromRoot == null || toRoot == null)) {
+        die('rebase-paths: pass --from=<root> --to=<root> (repo relocation) or --base=<root> (absolutize relative path fields)');
+      }
       let st;
       try {
-        st = rebasePaths(loadForWrite(p), fromRoot, toRoot);
+        st = rebasePaths(loadForWrite(p), fromRoot, toRoot, { base });
       } catch (e) {
         die(e.message, 1);
       }
       writeState(p, st);
-      out({ rebased: st._rebased ?? 0, from: fromRoot, to: toRoot });
+      out({ rebased: st._rebased ?? 0, from: fromRoot, to: toRoot, base });
       break;
     }
     case 'worktree': {
@@ -3467,7 +3473,7 @@ function main() {
         plan = dispatchPlanFanout({
           statePath,
           subsystems,
-          specPath: typeof flags['spec-path'] === 'string' ? flags['spec-path'] : null,
+          specPath: typeof flags['spec-path'] === 'string' ? path.resolve(flags['spec-path']) : null,
         });
       } catch (e) {
         die(e.message);

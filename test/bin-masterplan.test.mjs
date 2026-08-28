@@ -1064,6 +1064,38 @@ test('seed: accepts and validates --planning-mode', () => {
   assert.notEqual(rejected.status, 0);
   assert.match(rejected.stderr, /invalid --planning-mode/);
 });
+test('seed: relative path flags are absolutized against cwd (gate-resolution footgun)', () => {
+  // Gate resolution joins spec_path against the BUNDLE DIR — a stored repo-relative value
+  // double-paths (bundleDir/docs/...) and dies unreadable at set-phase. Seed must absolutize.
+  const p = path.join(tmpDir('mp-seed-relpath-'), 'state.yml');
+  const r = run(['seed', `--state=${p}`, '--slug=demo', '--topic=A topic',
+    '--spec-path=docs/demo/spec.md', '--plan-path=docs/demo/plan.md',
+    '--plan-index-path=docs/demo/plan.index.json']);
+  assert.equal(r.status, 0);
+  const st = read(p);
+  assert.equal(st.spec_path, path.resolve('docs/demo/spec.md'));
+  assert.equal(st.plan_path, path.resolve('docs/demo/plan.md'));
+  assert.equal(st.plan_index_path, path.resolve('docs/demo/plan.index.json'));
+});
+test('rebase-paths: --base absolutizes relative path fields (repair seam for legacy relative seeds)', () => {
+  const p = tmpBundle({
+    schema_version: CURRENT_SCHEMA_VERSION, slug: 'rel-fields', status: 'in-progress', phase: 'brainstorm',
+    topic: 't', created_at: '2026-08-28T00:00:00Z',
+    spec_path: 'docs/rel-fields/spec.md', plan_path: 'docs/rel-fields/plan.md',
+    plan_index_path: 'docs/rel-fields/plan.index.json', tasks: [],
+  });
+  const r = run(['rebase-paths', `--state=${p}`, '--base=/srv/dev/x']);
+  assert.equal(r.status, 0);
+  assert.match(r.stdout, /"rebased":3/);
+  const st = read(p);
+  assert.equal(st.spec_path, '/srv/dev/x/docs/rel-fields/spec.md');
+  assert.equal(st.plan_path, '/srv/dev/x/docs/rel-fields/plan.md');
+  assert.equal(st.plan_index_path, '/srv/dev/x/docs/rel-fields/plan.index.json');
+  // a relative --base is rejected loud; absolute fields are never re-based
+  const bad = run(['rebase-paths', `--state=${p}`, '--base=relative/root']);
+  assert.notEqual(bad.status, 0);
+  assert.match(bad.stderr, /absolute/);
+});
 test('seed: defaults state.review.adversary=true at seed time (spec §4.1 default-on)', () => {
   const p = path.join(tmpDir('mp-seed-review-default-'), 'state.yml');
   const r = run(['seed', `--state=${p}`, '--slug=demo', '--topic=A topic']);

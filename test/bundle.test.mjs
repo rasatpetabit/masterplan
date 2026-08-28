@@ -138,6 +138,35 @@ test('state transforms are pure and correct', () => {
   assert.equal(JSON.stringify(base), frozen); // never mutated
 });
 
+test('rebasePaths base normalization absolutizes relative path fields (CD-7 repair seam)', () => {
+  // A seeded bundle whose path fields were written RELATIVE (a footgun the seed absolutize-fix
+  // closes for new seeds) breaks every gate resolver, which joins them against the bundle dir.
+  // rebase-paths --base=<root> is the CD-7-compliant repair: prefix each RELATIVE field with the
+  // operator-supplied absolute base; absolute fields stay untouched (they belong to the from/to
+  // relocation semantics). Deterministic — no existence guessing; the gate realpath-checks later.
+  const rel = {
+    slug: 'b', spec_path: 'docs/b/spec.md', plan_path: 'docs/b/plan.md',
+    plan_index_path: 'docs/b/plan.index.json', worktree: '.worktrees/b', topic: 'x',
+  };
+  const fixed = rebasePaths(rel, null, null, { base: '/srv/dev/x' });
+  assert.equal(fixed.spec_path, '/srv/dev/x/docs/b/spec.md');
+  assert.equal(fixed.plan_path, '/srv/dev/x/docs/b/plan.md');
+  assert.equal(fixed.plan_index_path, '/srv/dev/x/docs/b/plan.index.json');
+  assert.equal(fixed.worktree, '/srv/dev/x/.worktrees/b');
+  assert.equal(fixed._rebased, 4);
+  assert.equal(fixed.topic, 'x');
+  // absolute fields are NOT re-based (base only repairs relative fields)
+  const mixed = rebasePaths({ ...rel, spec_path: '/abs/spec.md' }, null, null, { base: '/srv/dev/x' });
+  assert.equal(mixed.spec_path, '/abs/spec.md');
+  assert.equal(mixed._rebased, 3);
+  // idempotent: a second --base pass is a no-op (fields are absolute now)
+  const again = rebasePaths(fixed, null, null, { base: '/srv/dev/x' });
+  assert.equal(again._rebased, 0);
+  // base must be absolute; a bare call without from/to/base keeps the old loud error
+  assert.throws(() => rebasePaths(rel, null, null, { base: 'relative/base' }), /absolute/);
+  assert.throws(() => rebasePaths(rel, null, null, {}), /must be strings/);
+});
+
 test('markTask throws on an unknown id (no silent no-op that fakes success)', () => {
   // MEDIUM regression: markTask used to return state UNCHANGED for an unknown id, so the bin
   // reported success and the shell believed a result was recorded — recovery would then re-dispatch
