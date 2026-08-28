@@ -4,14 +4,14 @@
 // §6.3 qctl eligibility gate (resolveTaskBackend/qctlEligible, lib/dispatch/backend.mjs) must
 // stay reachable from the fabric dispatch path. prepareWave's fabric branch arms the seam ONLY
 // when config.implementer.qctl.enabled === true; an eligible task's payload gains the
-// `backend` work-item discriminator, which buildWorkItem carries onto the adsp descriptor
+// `backend` work-item discriminator, which buildWorkItem carries onto the spawn descriptor
 // (descriptor-only — like `review`, EXCLUDED from the task-spec hash). The shipped flag-off
 // default NEVER selects qctl: no field, no allowlist consultation, byte-identical payloads,
 // descriptors, and handoff keys by construction.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { prepareWave } from '../lib/wave.mjs';
-import { buildWorkItem } from '../lib/dispatch/adsp-adapter.mjs';
+import { buildWorkItem } from '../lib/dispatch/dispatch-digest.mjs';
 
 // --- fixtures (fabric flag on via state.dispatch.fabric — the strangler phase flag) --------
 
@@ -97,7 +97,7 @@ test('NEGATIVE — a truthy STRING flag does not arm the seam (strictly-true gat
   assert.equal('backend' in tasks[0], false);
 });
 
-// --- hash stability by construction (the adsp-idempotency contract) ------------------------
+// --- hash stability by construction (the fabric-idempotency contract) ------------------------
 
 test('arming qctl does NOT change handoff keys (backend is never hashed)', () => {
   const off = prepareWave(state(), planIndex(), 0, {}, {}, allowlist, dispatchInputs);
@@ -108,9 +108,9 @@ test('arming qctl does NOT change handoff keys (backend is never hashed)', () =>
   assert.equal(on.tasks[0].idempotency.handoff_key, off.tasks[0].idempotency.handoff_key);
 });
 
-// --- the work-item discriminator (fabric payload → adsp descriptor) ------------------------
+// --- the work-item discriminator (fabric payload → spawn descriptor) ------------------------
 
-test('buildWorkItem: the fabric payload backend rides the adsp descriptor', () => {
+test('buildWorkItem: the fabric payload backend rides the spawn descriptor', () => {
   const { tasks } = prepareWave(state(), planIndex(), 0, qctlOn, {}, allowlist);
   const descriptor = buildWorkItem(workTaskFor(tasks[0]));
   assert.deepEqual(descriptor.backend, QCTL_BACKEND);

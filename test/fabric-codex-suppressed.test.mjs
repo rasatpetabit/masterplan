@@ -22,7 +22,7 @@ import {
 } from '../lib/dispatch-wave.mjs';
 import { writeState, readState } from '../lib/bundle.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
-import { buildWorkItem } from '../lib/dispatch/adsp-adapter.mjs';
+import { buildWorkItem } from '../lib/dispatch/dispatch-digest.mjs';
 
 const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const binMasterplan = path.join(repoRoot, 'bin', 'masterplan.mjs');
@@ -93,7 +93,7 @@ test('continue under codex-suppressed emits dispatch_fabric only', () => {
   assert.equal('workflow' in wi, false);
 });
 
-test('library path: dispatch-wave with codexSuppressed records digests + routing_inputs', async () => {
+test('library path: dispatch-wave with codexSuppressed persists the record + routing_inputs (native plan)', async () => {
   const fx = makeScratch({ slug: 'c4-lib' });
   continueRun({
     statePath: fx.statePath,
@@ -107,32 +107,12 @@ test('library path: dispatch-wave with codexSuppressed records digests + routing
     self: fx.self,
     now: 3000,
     codexSuppressed: true,
-    _brokerClient: {
-      async callTool(name, args) {
-        assert.equal(name, 'dispatch_task');
-        const d = args.descriptor;
-        return {
-          decision: { decision: 'route', backend: 'pi' },
-          stdout: JSON.stringify({
-            task_id: d.task_id,
-            status: 'done',
-            start_sha: 'x',
-            files_changed: [],
-            verify: [],
-            summary: 'ok',
-            blockers: null,
-          }),
-        };
-      },
-    },
-    _openCoord: () => ({ enabled: false, attachToTask: (t) => t, close: () => {} }),
-    _localVerifyExec: () => 'ok',
   });
-  assert.equal(res.dispatched, true);
-  assert.equal(res.tasks[0].status, 'done');
+  // Native spawn plan: descriptors for the harness, record persisted BEFORE launch.
+  assert.ok(['native-spawn-plan', 'routing-unresolved'].includes(res.outcome), res.outcome);
   const rec = readWaveDispatchRecord(fx.bundleDir, 0);
   assert.ok(rec.routing_inputs, 'routing_inputs frozen on the record');
-  assert.equal(rec.status, 'recorded');
+  assert.equal(rec.status, 'pending', 'the record stays pending until record-result ingests the native results');
 });
 
 test('CLI e2e: bin/masterplan.mjs dispatch-wave --codex-suppressed produces fabric record', () => {

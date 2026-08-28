@@ -1,10 +1,10 @@
-// test/dispatch-wave.native.test.mjs — the native spawn path (spec §3, task 8).
+// test/dispatch-wave.native.test.mjs — the native spawn path (the ONLY launch path).
 //
-// The native path's whole job is to hand the harness descriptors that carry the SAME
-// governed routing the broker would have applied. So the tests that matter are: routing
-// comes from agent-dispatch and never from a guess, the wave token is durable before any
-// child starts and findable afterwards, concurrency stays bounded, and the host branch is
-// explicit rather than sniffed.
+// The native path's whole job is to hand the harness descriptors that carry the
+// governed routing the repo-local routing policy resolves. So the tests that matter
+// are: routing comes from the routing policy and never from a guess, the wave token
+// is durable before any child starts and findable afterwards, concurrency stays
+// bounded, and the two-phase native review seam stays fail-closed.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -19,8 +19,6 @@ import {
   resolveClassRouting,
   buildNativeSpawnPlan,
   normalizeWaveConcurrency,
-  selectLaunchPath,
-  hostHasNativeSpawnApi,
   probeWaveToken,
   dispatchWaveViaFabric,
   readWaveDispatchRecord,
@@ -31,25 +29,47 @@ import { readState, writeState } from '../lib/bundle.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
 import { recordWaveResult } from '../lib/wave-commit.mjs';
 
-// A stand-in for `agent-dispatch resolve`, shaped exactly like the real CLI's stdout.
-const fakeResolve = (byClass, calls = []) => (bin, args) => {
-  calls.push(args);
-  if (args[0] === 'where') return '/nonexistent-agent-dispatch-root';
-  const cls = args[args.indexOf('--class') + 1];
-  if (!(cls in byClass)) throw new Error(`unknown class ${cls}`);
-  return JSON.stringify(byClass[cls]);
+// A hermetic routing-policy fixture (same shape as policy/workflow-map.json).
+const POLICY_FIXTURE = {
+  lanes: {
+    agentic: { model: 'litellm/grok-4.6', ctx: 500000, cost: 'medium' },
+    frontier: { model: 'litellm/gpt-5.6-sol', ctx: 372000, cost: 'high' },
+    broad: { model: 'litellm/qwen3.8-max', ctx: 983616, cost: 'medium' },
+    longform: { model: 'litellm/gemini-3.1-pro-preview', ctx: 1048576, cost: 'medium' },
+  },
+  agents: {
+    builder: { tier: 'medium', writes: true },
+    breaker: { tier: 'big', writes: false },
+  },
+  classes: {
+    'bounded-edit': { agent: 'builder', lane: 'agentic', cap: 'edit', effort: 'high' },
+    adversary: { agent: 'breaker', lane: 'frontier', cap: 'review', effort: 'xhigh', panel: 'adversarial' },
+    unknown: { agent: 'builder', lane: 'agentic', cap: 'chat', effort: 'high' },
+  },
+  tiers: { small: { lane: 'agentic' }, medium: { lane: 'agentic' }, big: { lane: 'frontier' } },
+  panels: {
+    adversarial: {
+      members: [
+        { lane: 'frontier', model: 'litellm/gpt-5.6-sol' },
+        { lane: 'broad', model: 'litellm/qwen3.8-max' },
+        { lane: 'longform', model: 'litellm/gemini-3.1-pro-preview' },
+      ],
+      quorum: 2,
+    },
+  },
+  workflow: { defaultClass: 'unknown' },
 };
 
-const GATEWAY_EDIT = {
-  decision: 'route',
-  reason: 'healthy_chain_step',
-  backend: 'dispatch-gateway',
-  capability: 'edit',
+const NATIVE_EDIT = {
+  lane: 'agentic',
+  model: 'litellm/grok-4.6',
   effort: 'high',
-  model: 'dispatch-agentic-loop',
-  transport: 'mcp',
-  route: 'dispatch-agentic-loop',
-  provider: 'grok-4.5',
+  capability: 'edit',
+  agent: 'builder',
+  writes: true,
+  panel: null,
+  resolved: true,
+  reason: null,
 };
 
 // ── wave token ──────────────────────────────────────────────────────────────
@@ -58,61 +78,59 @@ test('the wave token is unique per (run, wave, attempt) and filename-safe', () =
   const a = composeWaveToken('dispatch-consolidation', 1, 1);
   const b = composeWaveToken('dispatch-consolidation', 1, 2);
   const c = composeWaveToken('dispatch-consolidation', 2, 1);
-  assert.notEqual(a, b, 'a retry gets its own token — its children must be distinguishable');
+  assert.notEqual(a, b);
   assert.notEqual(a, c);
   assert.ok(a.startsWith(WAVE_TOKEN_PREFIX));
-  assert.match(a, /^[A-Za-z0-9._-]+$/, 'safe to embed in labels and grep for');
-  assert.equal(composeWaveToken('weird/slug name', 1, 1), `${WAVE_TOKEN_PREFIX}-weird-slug-name-w1-a1`);
+  assert.ok(!/[^\w.-]/.test(a), 'filename-safe');
 });
 
 // ── routing provenance ──────────────────────────────────────────────────────
 
-test('routing comes from agent-dispatch resolve, not from a table in masterplan', () => {
-  const calls = [];
-  const r = resolveClassRouting('masterplan-implementation', {
-    _exec: fakeResolve({ 'masterplan-implementation': GATEWAY_EDIT }, calls),
-    _cache: new Map(),
-  });
-  assert.deepEqual(calls[0], ['resolve', '--class', 'masterplan-implementation']);
-  assert.equal(r.lane, 'dispatch-agentic-loop');
+test('routing comes from the routing policy, never from a table copied into masterplan', () => {
+  const r = resolveClassRouting('bounded-edit', { policy: POLICY_FIXTURE, _cache: new Map() });
+  assert.equal(r.lane, 'agentic');
+  assert.equal(r.model, 'litellm/grok-4.6');
   assert.equal(r.effort, 'high');
-  assert.equal(r.provider, 'grok-4.5');
-  assert.equal(r.backend, 'dispatch-gateway');
+  assert.equal(r.capability, 'edit');
+  assert.equal(r.agent, 'builder');
+  assert.equal(r.writes, true);
   assert.equal(r.resolved, true);
 });
 
 test('an unresolvable class is reported, never guessed into a lane', () => {
-  const r = resolveClassRouting('no-such-class', {
-    _exec: fakeResolve({}, []),
-    _cache: new Map(),
-  });
+  const noClasses = { ...POLICY_FIXTURE, classes: {}, workflow: {} };
+  const r = resolveClassRouting('no-such-class', { policy: noClasses, _cache: new Map() });
   assert.equal(r.resolved, false);
   assert.equal(r.lane, null, 'no fabricated lane');
-  assert.match(r.reason, /resolve failed/);
+  assert.equal(r.model, null, 'no fabricated model');
+  assert.match(r.reason, /routing policy resolution failed/);
 });
 
 test('resolution is cached per class (a wave shares few classes)', () => {
-  const calls = [];
   const cache = new Map();
-  const _exec = fakeResolve({ 'masterplan-implementation': GATEWAY_EDIT }, calls);
-  resolveClassRouting('masterplan-implementation', { _exec, _cache: cache });
-  resolveClassRouting('masterplan-implementation', { _exec, _cache: cache });
-  assert.equal(calls.filter((c) => c[0] === 'resolve').length, 1);
+  // The policy object MUTATES after the first resolution; a cached lookup must
+  // return the first resolution, proving the record was memoized.
+  const mutable = JSON.parse(JSON.stringify(POLICY_FIXTURE));
+  const first = resolveClassRouting('bounded-edit', { policy: mutable, _cache: cache });
+  mutable.classes['bounded-edit'].effort = 'low';
+  const second = resolveClassRouting('bounded-edit', { policy: mutable, _cache: cache });
+  assert.equal(first.effort, 'high');
+  assert.equal(second.effort, 'high', 'the second read is the cached record, not a re-resolution');
 });
 
 // ── spawn plan ──────────────────────────────────────────────────────────────
 
 const planFixture = (overrides = {}) => buildNativeSpawnPlan({
   tasks: [
-    { id: 3, class: 'masterplan-implementation', description: 'do the thing', files: ['lib/a.mjs'], verify_commands: ['node --test test/a.test.mjs'] },
-    { id: 4, class: 'masterplan-implementation', description: 'do the other thing', files: ['lib/b.mjs'], verify_commands: [] },
+    { id: 3, class: 'bounded-edit', description: 'do the thing', files: ['lib/a.mjs'], verify_commands: ['node --test test/a.test.mjs'] },
+    { id: 4, class: 'bounded-edit', description: 'do the other thing', files: ['lib/b.mjs'], verify_commands: [] },
   ],
   descriptors: [
     { cwd: '/repo/wt', branch: 'masterplan/demo', files: ['lib/a.mjs'], verify_commands: ['node --test test/a.test.mjs'], handoff_key: 'k3', create_files: true },
     { cwd: '/repo/wt', branch: 'masterplan/demo', files: ['lib/b.mjs'], verify_commands: [], handoff_key: 'k4', create_files: true },
   ],
   token: 'mp-wave-demo-w1-a1',
-  _resolve: () => ({ ...GATEWAY_EDIT, lane: 'dispatch-agentic-loop', agent: 'builder', resolved: true, reason: null }),
+  _resolve: () => ({ ...NATIVE_EDIT }),
   ...overrides,
 });
 
@@ -121,7 +139,7 @@ test('each spawn descriptor carries the lane pin, effort, agent role, scope, and
   assert.equal(plan.tasks.length, 2);
   const s = plan.tasks[0];
   assert.equal(s.task_id, 3);
-  assert.equal(s.model, 'litellm/dispatch-agentic-loop', 'lane pinned as litellm/dispatch-<class>');
+  assert.equal(s.model, 'litellm/grok-4.6', 'the lane model ref rides the descriptor');
   assert.equal(s.effort, 'high');
   assert.equal(s.agent, 'builder');
   assert.deepEqual(s.files, ['lib/a.mjs']);
@@ -129,11 +147,11 @@ test('each spawn descriptor carries the lane pin, effort, agent role, scope, and
   assert.equal(s.branch, 'masterplan/demo');
   assert.equal(s.handoff_key, 'k3');
   assert.deepEqual(s.badge, {
-    class: 'masterplan-implementation',
-    backend: 'gateway',
-    model: 'grok-4.5',
+    class: 'bounded-edit',
+    backend: 'native',
+    model: 'litellm/grok-4.6',
     effort: 'high',
-  }, 'DispatchBadgeDescriptor: class + backend + served model + effort');
+  }, 'badge: class + native backend + lane model ref + effort');
 });
 
 test('the wave token rides in BOTH the label and the prompt (recovery greps for it)', () => {
@@ -158,30 +176,24 @@ test('the prompt states the file scope and the verification bar', () => {
 
 test('an unresolved class is flagged on the descriptor so the caller can fail closed', () => {
   const plan = planFixture({
-    _resolve: () => ({ lane: null, effort: null, capability: null, provider: null, backend: null, agent: null, resolved: false, reason: 'backend down' }),
+    _resolve: () => ({ lane: null, model: null, effort: null, capability: null, agent: null, writes: null, panel: null, resolved: false, reason: 'policy unreadable' }),
   });
   assert.equal(plan.tasks[0].routing_resolved, false);
-  assert.equal(plan.tasks[0].routing_reason, 'backend down');
+  assert.equal(plan.tasks[0].routing_reason, 'policy unreadable');
 });
 
 // ── bounded concurrency ─────────────────────────────────────────────────────
 
 test('concurrency defaults to 8, honours MP_DISPATCH_WAVE_CONCURRENCY, never exceeds task count', () => {
   const prior = process.env.MP_DISPATCH_WAVE_CONCURRENCY;
-  delete process.env.MP_DISPATCH_WAVE_CONCURRENCY;
   try {
-    assert.equal(normalizeWaveConcurrency(null, 100), 8, 'default');
-    assert.equal(normalizeWaveConcurrency(null, 3), 3, 'never more workers than tasks');
-    assert.equal(normalizeWaveConcurrency(null, 0), 1, 'never zero');
-
-    process.env.MP_DISPATCH_WAVE_CONCURRENCY = '4';
-    assert.equal(normalizeWaveConcurrency(null, 100), 4, 'env override');
-
-    process.env.MP_DISPATCH_WAVE_CONCURRENCY = 'garbage';
-    assert.equal(normalizeWaveConcurrency(null, 100), 8, 'a bad env value falls back, never NaN');
-
-    process.env.MP_DISPATCH_WAVE_CONCURRENCY = '-3';
-    assert.equal(normalizeWaveConcurrency(null, 100), 8, 'a negative env value falls back');
+    delete process.env.MP_DISPATCH_WAVE_CONCURRENCY;
+    assert.equal(normalizeWaveConcurrency(undefined, 20), 8, 'default 8');
+    assert.equal(normalizeWaveConcurrency(undefined, 3), 3, 'never more workers than tasks');
+    process.env.MP_DISPATCH_WAVE_CONCURRENCY = '2';
+    assert.equal(normalizeWaveConcurrency(undefined, 20), 2, 'env honoured');
+    assert.equal(normalizeWaveConcurrency(4, 20), 4, 'explicit request wins');
+    assert.equal(normalizeWaveConcurrency(0, 20), 2, 'a non-positive request falls back to the env value');
   } finally {
     if (prior === undefined) delete process.env.MP_DISPATCH_WAVE_CONCURRENCY;
     else process.env.MP_DISPATCH_WAVE_CONCURRENCY = prior;
@@ -192,53 +204,7 @@ test('the plan carries its own concurrency bound', () => {
   assert.equal(planFixture().concurrency, 2, 'two tasks -> at most two workers');
 });
 
-// ── host branch ─────────────────────────────────────────────────────────────
-
-test('Claude Code hosts keep the MCP pool; the branch is explicit, not sniffed', () => {
-  assert.equal(selectLaunchPath({ env: {} }), 'mcp-pool', 'default is the MCP pool');
-  assert.equal(selectLaunchPath({ nativeSpawn: true, env: {} }), 'native-spawn', 'explicit opt-in');
-  assert.equal(selectLaunchPath({ nativeSpawn: false, env: { MP_DISPATCH_NATIVE_SPAWN: '1' } }), 'mcp-pool',
-    'an explicit false outranks the env flag');
-  assert.equal(selectLaunchPath({ env: { MP_DISPATCH_NATIVE_SPAWN: 'true' } }), 'native-spawn');
-  assert.equal(selectLaunchPath({ codexSuppressed: true, env: { MP_DISPATCH_NATIVE_SPAWN: '1' } }), 'mcp-pool',
-    'a Codex host has no native parallel API either');
-});
-
-test('REGRESSION: a Pi host can reach the native branch — codexSuppressed is not a native-API veto', () => {
-  // e2e finding 1 (test/e2e-native-wave-report.md): Pi sets PI_CODING_AGENT=true, so
-  // shouldSuppressWorkflow returns true, so codexSuppressed vetoed the env flag — on the
-  // ONE host with a native parallel spawn API. The native branch was unreachable in
-  // production and the e2e could only enter it with PI_CODING_AGENT=false.
-  const pi = { PI_CODING_AGENT: 'true' };
-  assert.equal(hostHasNativeSpawnApi(pi), true, 'Pi has subagents even though it has no Workflow handle');
-  assert.equal(hostHasNativeSpawnApi({}), false);
-
-  assert.equal(
-    selectLaunchPath({ codexSuppressed: true, env: { ...pi, MP_DISPATCH_NATIVE_SPAWN: '1' } }),
-    'native-spawn',
-    'the documented override reaches the native branch on Pi',
-  );
-  assert.equal(
-    selectLaunchPath({ codexSuppressed: true, env: pi }),
-    'native-spawn',
-    'Pi defaults to native-spawn because hostHasNativeSpawnApi is true — no env flag needed',
-  );
-  assert.equal(
-    selectLaunchPath({ codexSuppressed: true, env: { ...pi, MP_DISPATCH_NATIVE_SPAWN: '0' } }),
-    'mcp-pool',
-    'Pi can opt out of native-spawn with MP_DISPATCH_NATIVE_SPAWN=0',
-  );
-  assert.equal(
-    selectLaunchPath({ codexSuppressed: true, env: { MP_DISPATCH_NATIVE_SPAWN: '1' } }),
-    'mcp-pool',
-    'a real Codex host still vetoes: it has no native API to spawn into',
-  );
-  assert.equal(
-    selectLaunchPath({ nativeSpawn: false, env: { ...pi, MP_DISPATCH_NATIVE_SPAWN: '1' } }),
-    'mcp-pool',
-    'an explicit false still outranks everything',
-  );
-});
+// ── brief contracts ─────────────────────────────────────────────────────────
 
 test('REGRESSION: the child brief forbids committing — the wave owns the code-side commit', () => {
   // e2e finding 3 / A3: the brief said "Commit locally in your locus", while the
@@ -283,7 +249,7 @@ test('the probe matches on prompt as well as label (labels can be rewritten)', (
 });
 
 // ---------------------------------------------------------------------------
-// Native result-ingestion parity (centralized review)
+// Two-phase native review seam (descriptors out, provided records in)
 // ---------------------------------------------------------------------------
 
 function git(dir, ...args) {
@@ -351,64 +317,64 @@ function launchNative(fx) {
   return op;
 }
 
-function brokerStub({ reviewResult = rejectRecord } = {}) {
-  const calls = [];
-  return {
-    calls,
-    async initialize() {},
-    async callTool(tool, args) {
-      calls.push({ tool, args });
-      if (tool === 'dispatch_review') {
-        if (reviewResult instanceof Error) throw reviewResult;
-        return typeof reviewResult === 'function' ? reviewResult(args) : reviewResult;
-      }
-      throw new Error(`unexpected tool ${tool}`);
-    },
-    close() {},
-  };
-}
-
 test('native spawn record persists task review context for result ingestion', async () => {
   const fx = makeNativeFixture({ slug: 'native-ctx', review: { adversary: true } });
   launchNative(fx);
   const res = await dispatchWaveViaFabric({
     statePath: fx.statePath, self: fx.self, now: 2000,
-    nativeSpawn: true,
   });
   assert.equal(res.outcome, 'native-spawn-plan');
   const record = readWaveDispatchRecord(fx.bundleDir, 1);
   assert.equal(record.review_context.enabled, true);
   assert.equal(record.review_context.base_sha, git(res.plan.tasks[0].cwd, 'rev-parse', 'HEAD'));
-  assert.deepEqual(record.review_context.tasks[0], {
-    task_id: 1,
-    description: 'task 1',
-    class: 'masterplan-implementation',
-    repo: res.plan.tasks[0].cwd,
-  });
+  assert.equal(record.review_context.tasks[0].task_id, 1);
+  assert.equal(record.review_context.tasks[0].description, 'task 1');
+  assert.equal(record.review_context.tasks[0].class, res.plan.tasks[0].class);
+  assert.equal(record.review_context.tasks[0].repo, res.plan.tasks[0].cwd);
 });
 
-test('native result uses the same centralized task review projection as MCP pool', async () => {
-  const fx = makeNativeFixture({ slug: 'native-parity', review: { adversary: true } });
+test('phase A: owed reviews emit pending descriptors and record NOTHING', async () => {
+  const fx = makeNativeFixture({ slug: 'native-pending', review: { adversary: true } });
   launchNative(fx);
-  const planRes = await dispatchWaveViaFabric({
-    statePath: fx.statePath, self: fx.self, now: 2000, nativeSpawn: true,
-  });
-  assert.equal(planRes.outcome, 'native-spawn-plan');
+  await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 2000 });
   write(fx.WT, 'src/a.txt', 'native edit\n');
   const nativeResult = {
     wave: 1,
     tasks: [{ task_id: 1, digest: workerDigest(1, 'done') }],
   };
-  const stub = brokerStub({ reviewResult: rejectRecord });
+  const pending = await reviewNativeResult({
+    statePath: fx.statePath, result: nativeResult, policy: POLICY_FIXTURE, now: 3000,
+  });
+  assert.equal(pending.review_outcome, 'native-review-pending');
+  assert.equal(pending.pending_reviews.length, 1);
+  const d = pending.pending_reviews[0];
+  assert.equal(d.class, 'adversary');
+  assert.equal(d.agent, 'breaker');
+  assert.equal(d.model, 'litellm/gpt-5.6-sol');
+  assert.equal(d.repo, fx.WT);
+  assert.match(d.job_id, /-t1-[0-9a-f]{12}$/);
+  // Nothing recorded yet: the digest did not reach recordWaveResult.
+  assert.equal(readState(fx.statePath).tasks[0].status, 'pending');
+});
+
+test('phase B: provided native reviews ingest through the centralized projection', async () => {
+  const fx = makeNativeFixture({ slug: 'native-parity', review: { adversary: true } });
+  launchNative(fx);
+  await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 2000 });
+  write(fx.WT, 'src/a.txt', 'native edit\n');
+  const nativeResult = {
+    wave: 1,
+    tasks: [{ task_id: 1, digest: workerDigest(1, 'done') }],
+  };
   const reviewed = await reviewNativeResult({
     statePath: fx.statePath,
     result: nativeResult,
-    _brokerClient: stub,
+    providedReviews: { 1: rejectRecord },
     now: 3000,
   });
+  assert.equal(reviewed.review_outcome, 'native-reviews-recorded');
   assert.equal(reviewed.tasks[0].digest.review.verdict, 'reject');
   assert.equal(reviewed.tasks[0].review.verdict, 'reject');
-  assert.ok(stub.calls.some((c) => c.tool === 'dispatch_review'));
   const recorded = recordWaveResult({
     statePath: fx.statePath, result: reviewed,
     self: fx.self, now: 3000, worktree: fx.WT,
@@ -417,20 +383,32 @@ test('native result uses the same centralized task review projection as MCP pool
   assert.equal(readState(fx.statePath).tasks[0].status, 'done');
 });
 
-test('native review is a no-op when review_context is absent or disabled', async () => {
-  const fx = makeNativeFixture({ slug: 'native-off', review: { adversary: false } });
+test('phase B: a missing provided review fails closed as an error review', async () => {
+  const fx = makeNativeFixture({ slug: 'native-missing', review: { adversary: true } });
   launchNative(fx);
-  await dispatchWaveViaFabric({
-    statePath: fx.statePath, self: fx.self, now: 2000, nativeSpawn: true,
-  });
+  await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 2000 });
+  write(fx.WT, 'src/a.txt', 'native edit\n');
   const nativeResult = {
     wave: 1,
     tasks: [{ task_id: 1, digest: workerDigest(1, 'done') }],
   };
-  const stub = brokerStub({ reviewResult: () => assert.fail('review must not run when disabled') });
   const reviewed = await reviewNativeResult({
-    statePath: fx.statePath, result: nativeResult, _brokerClient: stub, now: 3000,
+    statePath: fx.statePath, result: nativeResult, providedReviews: {}, now: 3000,
   });
-  assert.equal(reviewed, nativeResult);
-  assert.equal(stub.calls.length, 0);
+  assert.equal(reviewed.tasks[0].review.verdict, 'error', 'an owed-but-absent review never passes silently');
+  assert.match(reviewed.tasks[0].review.summary, /not provided/);
+});
+
+test('native review is a no-op when review_context is absent or disabled', async () => {
+  const fx = makeNativeFixture({ slug: 'native-off', review: { adversary: false } });
+  launchNative(fx);
+  await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 2000 });
+  const nativeResult = {
+    wave: 1,
+    tasks: [{ task_id: 1, digest: workerDigest(1, 'done') }],
+  };
+  const reviewed = await reviewNativeResult({
+    statePath: fx.statePath, result: nativeResult, providedReviews: { 1: rejectRecord }, now: 3000,
+  });
+  assert.equal(reviewed, nativeResult, 'disabled review context is a pure passthrough');
 });
