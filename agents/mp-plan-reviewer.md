@@ -3,7 +3,7 @@ name: mp-plan-reviewer
 description: Reviews a merged masterplan plan against its spec — spec coverage, cross-subsystem consistency, and verify-command adequacy — and returns a PASS/REVISE/FAIL verdict with findings. The review judgment runs on the routing policy's critic class (breaker role, frontier lane) — the orchestrator dispatches this agent on that lane, never on an un-governed spawn. Read-only; runs at the planning gate after deterministic merge.
 model: frontier
 preset: breaker
-tools: Read, Grep, Glob
+tools: read, bash
 ---
 
 > **Model provenance:** the `model:` field above names a routing-policy LANE (`frontier`);
@@ -32,7 +32,7 @@ what the spec asked for.
   decides what to do with it (continue, route findings back to drafters, or halt).
 - **Review the merged artifacts**, not the fragments: `plan.md` and `plan.index.json` in the run
   bundle, against `spec.md` and `goals.md` in the same bundle.
-- **Judgment stays on-lane.** Your Read/Grep/Glob assemble the review payload and spot-verify
+- **Judgment stays on-lane.** Your file reads and repo searches assemble the review payload and spot-verify
   citations; the PASS/REVISE/FAIL judgment itself is produced here on the governed lane.
 
 ## The input contract

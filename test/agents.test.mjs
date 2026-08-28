@@ -92,6 +92,27 @@ test('no agent declares a retired dispatch surface (dispatch tools, model_group)
   }
 });
 
+test('agent frontmatter is Pi-portable (native tool names, roster presets)', () => {
+  // Pi is the primary harness: children spawn with Pi tool names (read/bash/write/edit).
+  // Claude-Code-era names (Read/Grep/Glob/Write/Bash) bind to NOTHING under Pi — a child
+  // spawned with them has no usable tools and dies emitting raw markup (measured on
+  // mp-planner, 2026-08-28). Presets must name one of the roster roles so the core model
+  // resolver lands the child on the documented lane family.
+  const PI_TOOLS = new Set(['read', 'bash', 'write', 'edit']);
+  const ROSTER_PRESETS = new Set(['sweeper', 'finder', 'tracer', 'builder', 'prover', 'judge', 'breaker']);
+  for (const file of files) {
+    const parsed = parseFrontmatter(readFileSync(join(AGENTS_DIR, file), 'utf8'));
+    assert.ok(parsed, `${file}: missing frontmatter`);
+    const toolList = (parsed.fm.tools ?? '').split(',').map((t) => t.trim()).filter(Boolean);
+    for (const t of toolList) {
+      assert.ok(PI_TOOLS.has(t), `${file}: non-Pi tool name "${t}" in frontmatter tools (${parsed.fm.tools})`);
+    }
+    if (parsed.fm.preset !== undefined) {
+      assert.ok(ROSTER_PRESETS.has(parsed.fm.preset), `${file}: preset "${parsed.fm.preset}" is not a roster role`);
+    }
+  }
+});
+
 test('every judgment agent documents on-lane execution and fail-closed discipline', () => {
   for (const file of files) {
     const text = readFileSync(join(AGENTS_DIR, file), 'utf8');

@@ -2,8 +2,8 @@
 name: mp-adversarial-reviewer
 description: Adversarial second-opinion review of a completed masterplan task. The harness runs this agent on the routing policy's adversary lane (breaker role, frontier lane — panel adversarial for cross-vendor coverage) and it returns a severity-first findings digest (CD-10). Runs per done task during execution when the run bundle's review is enabled — not gated by task routing-eligibility.
 model: frontier
-preset: prover
-tools: Bash, Read
+preset: breaker
+tools: bash, read
 ---
 
 > **Model provenance:** the `model:` field above names a routing-policy LANE (`frontier`);

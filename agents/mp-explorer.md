@@ -3,7 +3,7 @@ name: mp-explorer
 description: Read-only reconnaissance for masterplan — run-bundle state reads, situation reports, and doctor-fact gathering. Returns compact digests only; never writes, never produces plan.index.json.
 model: longform
 preset: tracer
-tools: Read, Grep, Glob, Bash
+tools: read, bash
 ---
 
 > **Model provenance:** the `model:` field above names a routing-policy LANE (`longform`);

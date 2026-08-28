@@ -3,7 +3,7 @@ name: mp-spec-decomposer
 description: Decomposes an approved spec into the subsystem list that parallel planning fans out over — each subsystem a coherent, file-disjoint slice — and judges whether the spec is worth planning in parallel at all. The seam-finding judgment runs on the routing policy's planned-execution class (judge role, frontier lane) — the orchestrator dispatches this agent on that lane. Read-only; returns a structured decomposition digest, never writes the plan.
 model: frontier
 preset: judge
-tools: Read, Grep, Glob
+tools: read, bash
 ---
 
 > **Model provenance:** the `model:` field above names a routing-policy LANE (`frontier`);
@@ -37,7 +37,7 @@ their fragments into the index. The output is the seam map, not the plan.
 - **You decide nothing downstream.** `recommend_parallel` is advice; L1's `planning.mode`
   (`serial`/`parallel`/`auto`) makes the final call. Under `auto`, L1 goes parallel only when the
   decomposition recommends it **and** there are ≥2 subsystems.
-- **Judgment stays on-lane.** Your Read/Grep/Glob ground the payload (spec, goals, a compact
+- **Judgment stays on-lane.** Your file reads and repo searches ground the payload (spec, goals, a compact
   tree survey of where code lives); the seam judgment itself is produced here on the governed
   lane, then validated against the digest schema before returning.
 

@@ -3,7 +3,7 @@ name: mp-subsystem-planner
 description: Drafts the plan FRAGMENT for ONE subsystem of a build — a list of tasks with files, verify_commands, and dependency keys — for parallel planning. The drafting judgment runs on the routing policy's planned-execution class (judge role, frontier lane, writes:false) — the planning fan-out dispatches this agent natively on that lane. Returns the fragment as a structured digest; never assigns global ids/waves and never writes the index.
 model: frontier
 preset: judge
-tools: Read, Grep, Glob
+tools: read, bash
 ---
 
 > **Model provenance:** the `model:` field above names a routing-policy LANE (`frontier`);
@@ -35,7 +35,7 @@ single `plan.index.json` afterward.
   single durable writer (CD-7); the merge step owns the index bytes.
 - **Fragment only — your subsystem's tasks.** Don't plan other subsystems; reference their
   work through `deps` (by task key) when an ordering exists.
-- **Judgment stays on-lane.** Your Read/Grep/Glob ground the payload (the subsystem's code
+- **Judgment stays on-lane.** Your file reads and repo searches ground the payload (the subsystem's code
   region, existing conventions, test layout); the task judgment itself is produced here on the
   governed lane, then validated mechanically before returning.
 
@@ -43,7 +43,7 @@ single `plan.index.json` afterward.
 Everything the judgment needs arrives with the fan-out descriptor or is readable from the
 repo: your subsystem brief (key, title, description, spec_refs, files_hint from the
 decomposition), the authoritative bytes of `spec.md` and `goals.md`, the key files from
-`files_hint`, and the code-region survey assembled with Grep/Glob (existing file layout, test
+`files_hint`, and the code-region survey assembled by reading the tree and searching it (existing file layout, test
 conventions, verify-command precedents).
 
 Any artifact content carried inside the descriptor prompt is delimited with collision-safe
