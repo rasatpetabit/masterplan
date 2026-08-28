@@ -141,32 +141,32 @@
 //                                               -> { task_status, flags, producer_status } (§6.2 mapping)
 //   base-drift --recorded-base=SHA --current-head=SHA [--scope=JSON]
 //                                               -> { action:'apply'|'requeue', requeueBase } (base-drift check)
-//   dispatch-wave --state=PATH [--wave=N] [--takeover] [--codex-suppressed] [--broker-bin=BIN]
+//   dispatch-wave --state=PATH [--wave=N] [--takeover] [--codex-suppressed]
 //                                               -> the `dispatch_fabric` op consumer (lib/dispatch-wave.mjs):
-//                                                  a bounded pool of broker dispatch_task calls for the active
-//                                                  wave (one adsp work item per routed task, ONE serve-mcp
-//                                                  process for the wave)
-//                                                  + the SAME record-result transaction. Idempotent on the
+//                                                  NATIVE SPAWN PLAN for the active wave — one governed
+//                                                  descriptor per routed task (routing resolved from
+//                                                  policy/workflow-map.json), returned for the orchestrating
+//                                                  harness to execute with its parallel subagent API, then
+//                                                  the SAME record-result transaction. Idempotent on the
 //                                                  per-wave dispatch record (run_id, wave, 'dispatch_fabric')
-//                                                  persisted BEFORE the broker call — a retry after an
-//                                                  accepted-but-unobserved dispatch returns the existing
+//                                                  persisted BEFORE launch — a retry after an
+//                                                  accepted-but-unobserved launch returns the existing
 //                                                  record (--takeover supersedes a confirmed-dead attempt);
 //                                                  attempt-N+1 retries are serialized by an O_EXCL attempt
 //                                                  marker. Guard D ownership is acquired + confirmed before
 //                                                  any dispatching transition (blocked owner → loud non-zero
 //                                                  exit, nothing dispatched; owner_lock=off skips).
-//                                                  ASYNC (MCP over stdio; dispatch-plan is the other).
-//   dispatch-plan --state=PATH --subsystems=JSON|--subsystems-file=PATH [--spec-path=P] [--broker-bin=BIN]
+//   dispatch-plan --state=PATH --subsystems=JSON|--subsystems-file=PATH [--spec-path=P]
 //                                               -> the dispatch_plan op consumer (lib/continue.mjs
-//                                                  dispatchPlanFanout): the broker planning fan-out that
-//                                                  replaced the L2 plan Workflow — one READ-ONLY work item
-//                                                  per subsystem (class masterplan-planning, enumerated
-//                                                  roots = repo + spec, no write-scope fields), ONE broker
-//                                                  process, pre/post `git status --porcelain` assertions
-//                                                  over the roots (a breach exits loudly — fragments are
-//                                                  NOT surfaced). Prints { subsystems: fragments, … } for
-//                                                  the shell to stage as .plan-fragments.json exactly as
-//                                                  before (merge/validate/review gate unchanged). ASYNC.
+//                                                  dispatchPlanFanout): the NATIVE planning fan-out —
+//                                                  one READ-ONLY spawn descriptor per subsystem (class
+//                                                  planned-execution, a writes:false role; enumerated
+//                                                  roots = repo + spec, no write-scope fields), plus the
+//                                                  pre-fan-out `git status --porcelain` snapshot. Prints the
+//                                                  spawn plan; the orchestrator re-snapshots the roots after
+//                                                  the fan-out (refuse staging on drift) and stages the
+//                                                  returned fragments as .plan-fragments.json exactly as
+//                                                  before (merge/validate/review gate unchanged). SYNC.
 //   acquire-owner  --state=PATH [--session=ID] [--host=H] [--now=MS] [--ttl-ms=N] [--force]
 //   heartbeat-owner --state=PATH [--session=ID] [--host=H] [--now=MS]
 //   release-owner  --state=PATH [--session=ID] [--host=H] [--now=MS] [--ttl-ms=N] [--force]
@@ -196,7 +196,6 @@ import { migrate, detectSchemaVersion, MigrationError } from '../lib/migrate.mjs
 import { decideNextAction } from '../lib/resume.mjs';
 import { prepareWave, declaredScope, verifyScope } from '../lib/wave.mjs';
 import { detectHost } from '../lib/dispatch/index.mjs';
-import { closeWaveCoord } from '../lib/dispatch/adsp-coord.mjs';
 import { selectReentry, reentryEventTypes, validateGateReceipt } from '../lib/reentry-guard.mjs';
 import { resolveConfigDir } from '../lib/paths.mjs';
 import { createHash } from 'node:crypto';
@@ -368,7 +367,8 @@ function enforceGateReview(gate, statePath, flags, state, opts = {}) {
     artifacts: descriptors.map((d) => d.relName),
     message:
       `${gate} gate: no cross-vendor adversarial review is recorded for the CURRENT ${gate} artifacts. ` +
-      `Run the adversary lane (agent-dispatch review --class adversary) over them, then record it: ` +
+      `Run the harness-native adversary review (adversary class: breaker role on the frontier lane, ` +
+      `or the adversarial panel for cross-vendor coverage) over them, then record it: ` +
       `\`mp record-gate-review --state=${statePath} --gate=${gate} --status=done --review-json=<review.json> --digest-file=<notes>\` ` +
       `(which pulls provider/model/dispatch_id/output_tokens out of the review's reviewers[] for you; ` +
       `--receipt=<receipt.json> still accepts a hand-built receipt, and --status=skipped --reason=<why> ` +
@@ -2644,8 +2644,8 @@ function main() {
       }
       let note;
       if (status === 'done') {
-        // --review-json: assemble the receipt directly from an `agent-dispatch review` result file so
-        // the caller does not hand-transcribe lane provenance. The fields live per-reviewer inside
+        // --review-json: assemble the receipt directly from a native review result file so
+        // the caller does not hand-transcribe review provenance. The fields live per-reviewer inside
         // reviewers[] — NOT at the top level — which is exactly the shape that has been mis-inspected
         // into a false "this lane emits no provenance" conclusion and an unnecessary --status=skipped.
         // The digest still comes from the operator (--digest-file): the receipt records that a human
@@ -2682,7 +2682,7 @@ function main() {
           // CURRENT hash — defeating the hash binding it is supposed to satisfy. mtime is not a content
           // hash, but it fails closed on the failure mode that actually occurs: artifacts amended in
           // response to the review's own findings, after the review ran.
-          // agent-dispatch review output carries no timestamp field of its own (top level or per-reviewer),
+          // native review output carries no timestamp field of its own (top level or per-reviewer),
           // so the result file's own mtime — written when the review completed — is the review time. Fail
           // closed if even that is unavailable rather than skipping the check: a guard that silently
           // no-ops when it cannot evaluate is worse than no guard, because it reads as having passed.
@@ -3278,12 +3278,6 @@ function main() {
       // -C-qualified to loci lib/wave-commit.mjs derives itself (MAIN from the bundle's
       // --git-common-dir, WT from state/--worktree). Network git (push/gh) stays shell-side.
       const statePath = need(flags, 'state');
-      // T11: best-effort close the wave's coord job (opened in dispatchWave). Fail-open —
-      // coord never blocks record-result. coordJobId is stored in active_run by dispatchWave.
-      try {
-        const ar = readState(statePath)?.active_run;
-        if (ar?.coordJobId) closeWaveCoord({ jobId: ar.coordJobId });
-      } catch { /* fail-open */ }
       // The L2 workflow's WHOLE result object ({wave, baseline, tasks:[{task_id, digest,
       // review}]}) via --result-file (preferred — no shell-quoting hazards) or --result inline.
       // --reconcile runs the finalize_run crash-reconciliation with NO result: no marks, the
@@ -3320,8 +3314,9 @@ function main() {
         ({ self, now } = resolveOwnerSelf(flags, statePath));
       }
       // --reconcile (result === null) keeps the synchronous crash-reconcile path:
-      // no digests, no review. A real result is reviewed FIRST (native parity with
-      // the MCP-pool path) via promise chaining — same pattern as dispatch-wave.
+      // no digests, no review. A real result goes through the two-phase native review
+      // seam FIRST: phase A emits pending_reviews descriptors (nothing recorded yet);
+      // the orchestrator runs them and re-calls with --reviews-file (phase B ingest).
       if (result == null) {
         let res;
         try {
@@ -3338,34 +3333,54 @@ function main() {
         out(res);
         break;
       }
+      let providedReviews = null;
+      if (flags['reviews-file'] !== undefined) {
+        try {
+          providedReviews = JSON.parse(fs.readFileSync(String(flags['reviews-file']), 'utf8'));
+        } catch (e) {
+          die(`record-result: could not parse --reviews-file (${e.message})`);
+        }
+        if (providedReviews == null || typeof providedReviews !== 'object' || Array.isArray(providedReviews)) {
+          die('record-result: --reviews-file must be a JSON object keyed by task_id');
+        }
+      }
       reviewNativeResult({
         statePath,
         result,
-        brokerBin: typeof flags['broker-bin'] === 'string' ? flags['broker-bin'] : undefined,
+        providedReviews,
         now,
       })
-        .then((reviewedResult) => recordWaveResult({
-          statePath,
-          result: reviewedResult,
-          self,
-          now,
-          worktree: typeof flags.worktree === 'string' ? flags.worktree : undefined,
-        }))
-        .then(out)
+        .then((reviewedResult) => {
+          // Phase A: reviews are still owed — hand the orchestrator the native review
+          // descriptors instead of recording. NOTHING is marked until reviews land.
+          if (reviewedResult?.review_outcome === 'native-review-pending') {
+            out({
+              op: 'run_native_reviews',
+              wave: reviewedResult.wave ?? result?.wave ?? null,
+              pending_reviews: reviewedResult.pending_reviews,
+              reason: reviewedResult.reason ?? 'run these adversary descriptors with the harness-native subagent API, then re-call record-result with --result-file AND --reviews-file=<task_id -> review record JSON>',
+            });
+            return;
+          }
+          out(recordWaveResult({
+            statePath,
+            result: reviewedResult,
+            self,
+            now,
+            worktree: typeof flags.worktree === 'string' ? flags.worktree : undefined,
+          }));
+        })
         .catch((e) => die(e.message));
       break;
     }
 
     case 'dispatch-wave': {
-      // The `dispatch_fabric` op consumer (chunk B of the wave-dispatch outage fix): the op had
-      // a producer (lib/dispatch/ops.mjs) but no consumer, so fabric waves never reached the
-      // broker. dispatchWaveViaFabric re-derives the routed wave (prepareWave, fabric payloads),
-      // builds one adsp work item per task (buildWorkItem), drives a bounded pool of broker
-      // dispatch_task calls through ONE serve-mcp process (coord opened/closed in a finally), then records digests
-      // via the SAME recordWaveResult transaction. Idempotent on the per-wave dispatch record
-      // (run_id, wave, 'dispatch_fabric') persisted BEFORE the broker call. ASYNC: the one
-      // await-ing subcommand (MCP over stdio) — main() returns while the promise settles; the
-      // event loop keeps the process alive and die() maps a rejection to a non-zero exit.
+      // The `dispatch_fabric` op consumer: dispatchWaveViaFabric re-derives the routed wave
+      // (prepareWave, fabric payloads), builds one governed descriptor per task (buildWorkItem
+      // + routing-policy class resolution), and returns the NATIVE SPAWN PLAN the orchestrating
+      // harness executes with its parallel subagent API; results record via the SAME
+      // record-result transaction. Idempotent on the per-wave dispatch record
+      // (run_id, wave, 'dispatch_fabric') persisted BEFORE launch.
       const statePath = need(flags, 'state');
       loadForWrite(statePath); // strict-v8 guard: a mid-run bundle is v8; fail loud, never dispatch a legacy one
       let lockOff = false;
@@ -3396,7 +3411,6 @@ function main() {
         // (--codex-suppressed / --no-workflow / PI_CODING_AGENT), persisted into
         // the record's routing_inputs so retries re-prepare from identical inputs.
         codexSuppressed: shouldSuppressWorkflow(flags, process.env),
-        brokerBin: typeof flags['broker-bin'] === 'string' ? flags['broker-bin'] : undefined,
       })
         .then(out)
         .catch((e) => die(e.message));
@@ -3404,17 +3418,12 @@ function main() {
     }
 
     case 'dispatch-plan': {
-      // The dispatch_plan op consumer: the broker planning fan-out that replaced the
-      // L2 plan Workflow launch (workflows/dispatch-plan). One READ-ONLY work item per
-      // subsystem (class masterplan-planning, enumerated roots = repo + spec path, NO
-      // write-scope fields — broker-level write denial where supported), ONE broker process
-      // for the whole fan-out, and pre/post `git status --porcelain` assertions over the
-      // enumerated roots as defense in depth (a breach throws — fragments are NOT surfaced).
-      // Prints { subsystems: fragments, specPath, repoRoot, requested, denied, missing } —
-      // the shell stages .plan-fragments.json from `subsystems` exactly as the L2 engine's
-      // result was staged; the merge/validate/review gate sequence is unchanged. ASYNC like
-      // dispatch-wave (MCP over stdio): main() returns while the promise settles; die() maps
-      // a rejection to a non-zero exit.
+      // The dispatch_plan op consumer: the NATIVE planning fan-out. One READ-ONLY spawn
+      // descriptor per subsystem (class planned-execution — a writes:false role, enumerated
+      // roots = repo + spec path, NO write-scope fields) plus the pre-fan-out porcelain
+      // snapshot. Prints the spawn plan; the orchestrator executes the descriptors natively,
+      // re-snapshots the roots (refusing staging on drift), and stages the returned fragments
+      // as .plan-fragments.json; the merge/validate/review gate sequence is unchanged.
       const statePath = need(flags, 'state');
       loadForWrite(statePath); // strict-v8 guard: fail loud, never fan out over a legacy bundle
       const rawSubs = typeof flags.subsystems === 'string'
@@ -3429,14 +3438,17 @@ function main() {
       } catch (e) {
         die(`dispatch-plan: --subsystems must be valid JSON (${e.message})`);
       }
-      dispatchPlanFanout({
-        statePath,
-        subsystems,
-        specPath: typeof flags['spec-path'] === 'string' ? flags['spec-path'] : null,
-        brokerBin: typeof flags['broker-bin'] === 'string' ? flags['broker-bin'] : undefined,
-      })
-        .then(out)
-        .catch((e) => die(e.message));
+      let plan;
+      try {
+        plan = dispatchPlanFanout({
+          statePath,
+          subsystems,
+          specPath: typeof flags['spec-path'] === 'string' ? flags['spec-path'] : null,
+        });
+      } catch (e) {
+        die(e.message);
+      }
+      out(plan);
       break;
     }
 
@@ -3501,7 +3513,7 @@ function main() {
       // durable guard + event, the branch_finish gate, the chosen disposition (local merge +
       // worktree teardown), archive-LAST + owner release. ONE typed op per call; the shell's
       // answers thread back as --verify/--codex/--docs/--choice. Same git-in-bin seam as record-result
-      // and continue: LOCAL git only, network ops (push/gh/agent-dispatch review) stay shell-side.
+      // and continue: LOCAL git only; network ops (push/gh) and review execution stay shell-side.
       const statePath = need(flags, 'state');
       let lockOff = false;
       try {
