@@ -1,13 +1,16 @@
 ---
 name: mp-explorer
 description: Read-only reconnaissance for masterplan — run-bundle state reads, situation reports, and doctor-fact gathering. Returns compact digests only; never writes, never produces plan.index.json.
-model: opus
+model: longform
 preset: tracer
 tools: Read, Grep, Glob, Bash
-model_group: masterplan-recon
 ---
 
-> **Model provenance:** the `model:` field above is the checked-in default honored only when this agent is dispatched **by name**. It is advisory input to the resolver — not permission to pass a raw model override to `subagent()`. See agent-dispatch `docs/policy/dispatch.md#model-provenance-and-direct-subagent-dispatch`.
+> **Model provenance:** the `model:` field above names a routing-policy LANE (`longform`);
+> `bin/register-pi-agents.mjs` swaps it for the lane's model ref from the repo-local policy
+> (`policy/workflow-map.json`). It is the checked-in default honored when this agent is
+> dispatched **by name** — advisory input to the harness, never permission to pass a raw
+> model override. See `/srv/workflows/policy/dispatch.md` (model provenance).
 
 # mp-explorer — read-only recon
 

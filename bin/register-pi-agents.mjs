@@ -3,7 +3,7 @@
 // Claude Code discovers agents/mp-*.md via its plugin loader as the
 // `masterplan:mp-*` namespace. Pi hosts need adapted copies under
 // `~/.pi/agent/agents/` with the `model:` line swapped via MODEL_MAP
-// (live alias: opus → anthropic/claude-opus-5, the routing.yaml subagents lineup).
+// (aliases are the routing-policy lane names, mapped to their lane model refs).
 //
 // Registration is **bare-only**: one file per agent (`mp-X.md`). Colon alias
 // copies (`masterplan:mp-X.md`) are no longer emitted. On write, managed
@@ -18,19 +18,20 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { execSync } from 'node:child_process';
 import { homedir } from 'node:os';
+import { laneAliasMap } from '../lib/dispatch/routing-policy.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, '..');
 const PI_USER_AGENTS_DIR = join(homedir(), '.pi', 'agent', 'agents');
 
-// Strict live-alias map: only aliases still declared on agents/mp-*.md frontmatter.
-// Dead entries (fable, sonnet, haiku, …) are intentionally absent so reintroduction fails
-// closed. The target id mirrors routing.yaml subagents{} (agent-dispatch); the test suite
-// derives the expected id from that policy file, so a lineup change turns this map red
-// rather than silently registering a retired model.
-const MODEL_MAP = {
-  opus: 'anthropic/claude-opus-5',
-};
+// Live-alias map, DERIVED from the repo-local routing policy
+// (policy/workflow-map.json): every lane name is an alias for its lane model ref
+// (litellm/...). Agent frontmatter declares a LANE (`model: frontier`), and
+// registration swaps it for the lane's model ref. The policy file is the only
+// place model ids appear, so a fleet model change turns this map over
+// automatically; the test suite re-derives the same map from the policy, so any
+// drift between a declared alias and the policy fails closed.
+const MODEL_MAP = laneAliasMap();
 
 function resolveRepoRoot() {
   try {
@@ -48,7 +49,7 @@ const COLON_PREFIX = 'masterplan:';
 
 // Agents that are CC-only by design and must NOT be registered for pi. worker-digest's
 // entire contract is "route every edit to the local skynet MCP" — it has no Edit/Write
-// tool BY DESIGN. pi has no skynet MCP server; pi uses dispatch_task for edits.
+// tool BY DESIGN; pi has no skynet MCP server.
 // Skip bare install; managed colon leftovers for this name are still cleaned.
 const SKIP_FOR_PI = new Set(['mp-implementer.md']);
 
@@ -108,7 +109,7 @@ export function runRegister({ agentsDir, targetDir, check }) {
     managedColon.add(managedColonRel(file));
 
     if (SKIP_FOR_PI.has(file)) {
-      const why = 'CC-only (skynet MCP edit contract; no pi caller — pi uses dispatch_task for edits)';
+      const why = 'CC-only (skynet MCP edit contract; no pi caller)';
       // Stale bare + managed colon for skipped agents: check → drift; write → remove.
       for (const rel of [`${file}`, managedColonRel(file)]) {
         expectedBare.add(rel); // suppress UNEXPECTED for these managed paths
