@@ -136,3 +136,38 @@ An audit pass landed a real defect fix in `lib/doctor/adversary-lane-health.mjs`
 - What: remapped every live-surface reference onto the native contract — `mp dispatch-wave` returns a native spawn plan (descriptors for the harness parallel subagent API; classes resolved from policy/workflow-map.json); wave-dispatch record persists `pending` BEFORE launch with a wave-token two-phase marker + probeWaveToken recovery; `mp record-result` runs the two-phase native review seam (`run_native_reviews` phase A descriptors → `--reviews-file` phase B ingest); gate/finish reviews run harness-native adversary class (breaker role, frontier lane; adversarial panel for cross-vendor) and record via `mp record-gate-review --review-json` (provenance from reviewers[]) or `--status=skipped`; doctor check renamed `routing-policy-health` (was `adversary-lane-health`).
 - Decisions: dropped the stale `translateBrokerResult` function name (doesn't exist in lib/) in favor of `lib/dispatch/dispatch-digest.mjs` projection; rewrote §3b receipt step to prefer `--review-json` over the hand-built `--receipt`; consolidated the retired "MCP-pool path" narrative into the single native flow; `docs/policy/dispatch.md#model-provenance-and-direct-subagent-dispatch` → `/srv/workflows/policy/dispatch.md` (the `agent-dispatch` substring in `subagent-dispatch` was a false positive from the word-boundary-less grep, but reworded to match how agents/*.md reference the fleet policy).
 - Verified: task-spec grep + the repo's stricter word-boundary regex both clean on all 5 files. test/no-agent-dispatch.test.mjs still fails repo-wide on 77 PRE-EXISTING findings in other live surfaces (docs/development.md, docs/internals/*, docs/install.md, test/*) — none of my 5 files appear; the pre-existing WIP changes in lib/ and test/ were left untouched.
+
+## 2026-08-29 — fresh-eyes legacy audit + remediation bundle seeded
+
+User asked for a full fresh-eyes re-evaluation: old/incorrect/no-longer-needed elements.
+Ran 4 parallel deepseek-v4-flash audit workflows (runtime / concurrency / surfaces /
+artifacts — 42 lenses + 42 independent cross-verifiers), then manually re-verified every
+high-severity finding and deletion candidate with git grep + call-site analysis.
+
+**Deliverables:**
+- Verified inventory: docs/masterplan/fresh-eyes-remediation/audit-findings.md (grouped
+  A behavioral defects / B live-state & release drift / C dead material / D stale compat /
+  E misleading docs / F clutter, plus explicit non-findings).
+- Remediation bundle seeded: docs/masterplan/fresh-eyes-remediation (brainstorm phase).
+
+**Top verified facts (do not re-litigate without fresh evidence):**
+- Goal-gate finish flags (--goals-met/-unmet/--manual-verdict/--goals-waived) have ZERO
+  matches in bin/finish-step; run_goal_check op fires but nothing consumes the answers.
+- FABRIC_DEFAULT_CLASS 'masterplan-implementation' absent from policy/workflow-map.json →
+  every unpinned task routes via defaultClass 'unknown'; 5 tests pin the dead name.
+- --fabric=off seeds runs the deleted L2 path can never execute.
+- register-pi-agents mutates ~/.pi on ANY unknown flag (--help included).
+- mp parseArgs silently ignores unknown flags on mutating verbs.
+- CI Doctor step red: blocked-task-injection archived without goal_check receipt.
+- Blackboard crash-recovery seam (resume.mjs) emits an action continue.mjs cannot execute.
+- Dead removable: lib/jsonc.mjs, dispatch-digest's 10 exports, finalizeRecord, probe
+  machinery in continueRun, runLocalVerifyCommands, routeTask legacy brain, mp-explorer.md.
+- CORRECTION vs earlier session notes: doctor exits 1 on errors (fail-closed); a prior
+  "exit 0" observation was a `| tail` pipeline artifact.
+
+**Also this session (separate commit in /srv/workflows, d2e6c30):** pi-dynamic-workflows
+compact task panel now shows per-run models + progressPanelMaxRuns cap (default 10,
+/workflows-progress runs <N>) — user's detailed-mode display was unusable with parallel
+runs. Settings flipped detailed→compact; compiled artifact rebuilt (last-good bcd9e364…).
+
+**Next:** /masterplan resumes fresh-eyes-remediation → brainstorm from audit-findings.md.
