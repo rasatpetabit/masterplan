@@ -1,0 +1,23 @@
+---
+schema_version: 9
+slug: fresh-eyes-remediation
+status: in-progress
+phase: brainstorm
+topic: "Remediate the confirmed legacy/dead/incorrect elements found by the 2026-08-29 fresh-eyes audit (4 parallel workflow runs + manual verification). Input inventory: audit-findings.md in this bundle."
+complexity: null
+complexity_source: null
+autonomy: null
+planning_mode: auto
+created_at: 2026-08-29T19:53:30.597Z
+predecessor_transcript: null
+spec_path: /srv/dev/ras/masterplan/docs/masterplan/fresh-eyes-remediation/spec.md
+plan_path: /srv/dev/ras/masterplan/docs/masterplan/fresh-eyes-remediation/plan.md
+plan_index_path: /srv/dev/ras/masterplan/docs/masterplan/fresh-eyes-remediation/plan.index.json
+tasks: []
+active_run: null
+pending_gate: null
+goals_enabled: true
+goals: []
+review: {"adversary":true}
+render: {"images":"off"}
+dispatch: {"fabric":true}
