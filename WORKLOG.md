@@ -171,3 +171,40 @@ compact task panel now shows per-run models + progressPanelMaxRuns cap (default 
 runs. Settings flipped detailed→compact; compiled artifact rebuilt (last-good bcd9e364…).
 
 **Next:** /masterplan resumes fresh-eyes-remediation → brainstorm from audit-findings.md.
+
+---
+
+### 2026-08-30 — fresh-eyes-remediation run: planned + executing (waves 0–3 landed)
+
+The seeded bundle was brainstormed, gated, planned, and is now mid-execution.
+
+**Planning trail** (bundle: docs/masterplan/fresh-eyes-remediation):
+- Brainstorm → spec.md (five waves, gate-hash sha256:4dfd74b6…) with Assumptions &
+  Open Decisions table. Spec gate passed via 2 cross-vendor adversarial rounds
+  (litellm/glm-5.2:high + skynet/deepseek-v4-flash:max): 7 defects found→fixed→re-verified.
+- goals.md frozen (8 goals, hash sha256:82ec8e64…). G5 amended to add a positive
+  implementation cross-check (closing a negative-only cheat-hole).
+- §3c alignment audit: 15 covered / 1 narrowed (A6 path:line) → task 32 enforces.
+- mp-planner (serial, judge lane) wrote plan.md + plan.index.json (32 tasks / 6 waves).
+  Plan gate passed via 3 cross-vendor rounds (A6 citation requirement added).
+
+**Execution (worktree .worktrees/fresh-eyes-remediation):**
+- Wave 0 (task 1): A7 compat preflight scan — 141 documented invocations classified.
+- Wave 1 (tasks 2–7): behavioral repairs A1–A9 landed; suite 1660/1660.
+- Wave 2 (tasks 8–11): goals re-freeze ×5 + covering waivers ×5 (user-attested) cleared
+  all doctor goal ERRORs/WARNs; doctor reached 0 error / 0 warn. B3 plans archived to
+  docs/masterplan/.implemented-plan-archive/. RELEASING.md tag+push sequence added.
+- Wave 3 (tasks 12–23): deletions C1–C10 + config scrub D1–D4; suite 1618/1618.
+- D6 scope-guard reverts on justified out-of-scope files were surfaced and re-applied as
+  acknowledged scope expansions (logged via mp event scope_expansion_approved), per user
+  precedent. The frozen launch-scope guard works as designed.
+
+**Next:** wave 4 (docs/skills E1–E12, tasks 24–31) in flight → wave 5 (release & ops,
+task 32, terminal) → finish flow (§2c): verify → goal-check → retro → adversary review →
+branch_finish gate → archive.
+
+Also this session (separate repo /srv/workflows): fixed the pi-dynamic-workflows
+adversarial-review builtin — its Refute phase carried a non-literal model expression that
+the static meta validator rejects, so the builtin was unloadable; made it a literal +
+moved the args.refuteModel override to the per-agent call (regression-tested). Also fixed
+the bottom status bar to a bounded detailed view (user's real ask), not compact.
