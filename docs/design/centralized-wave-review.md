@@ -2,7 +2,7 @@
 
 **Status:** Implemented
 
-**Implemented:** 2026-08-07 (see commits and corresponding `docs/superpowers/plans/` plan doc)
+**Implemented:** 2026-08-07 (see commits and corresponding [plan doc](docs/masterplan/.implemented-plan-archive/2026-08-07-centralized-wave-review.md))
 
 ## Purpose
 

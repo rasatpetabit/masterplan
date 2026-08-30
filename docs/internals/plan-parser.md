@@ -18,7 +18,7 @@ maximally-parallel groups.
 
 ### Serial path
 
-`mp-planner` (opus) reads the approved spec and writes both `plan.index.json` and `plan.md`
+`mp-planner` (routing-policy lane `frontier`) reads the approved spec and writes both `plan.index.json` and `plan.md`
 directly into the run-bundle directory. It is the sole producer in this path — it emits the
 tasks array with `id`, `wave`, and `codex` already set. `validatePlanIndex` is still run by
 L1 after the planner returns to catch any silent-fallthrough trap violations before the plan
@@ -27,7 +27,7 @@ artifacts.
 
 ### Parallel path
 
-Used when `mp-spec-decomposer` (opus) returns `recommend_parallel: true` and the config
+Used when `mp-spec-decomposer` (routing-policy lane `frontier`) returns `recommend_parallel: true` and the config
 `planning.mode` is `auto` or `parallel`, with ≥ 2 subsystems in the decomposition.
 
 **Step 1 — Decompose.** `mp-spec-decomposer` reads the spec and carves it into a list of

@@ -5,7 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [9.10.0] — 2026-08-30
+
+Fresh-eyes remediation of `/srv/dev/ras/masterplan` — a verified audit (42 lenses + 42
+cross-verifiers, then manual re-verification; run slug `fresh-eyes-remediation`) surfaced
+legacy/dead/incorrect elements; this release repairs them. Provenance: the run bundle at
+`docs/masterplan/fresh-eyes-remediation/`.
+
+### Fixed
+
+- **Goal-gate completion flags now exist.** The finish flow documented `--goals-met/--goals-unmet/--manual-verdict/--goals-waived/--waiver-reason` but implemented none of them; the engine's `run_goal_check` op was therefore unreachable and goals-enabled runs degraded silently at finish. `bin/masterplan.mjs` now wires `--goal-check`/`--goals-choice` through the finish-step ctx, and the prompt teaches the implemented vocabulary.
+- **`mp` fails closed on unknown flags.** `parseArgs` previously collected any `--flag` without recognition, silently dropping typo'd flags on mutating verbs. It now rejects unrecognized flags with exit 2 (doctor-style), and a new positive cross-check test asserts every documented flag is recognized.
+- **`register-pi-agents` no longer mutates on `--help`.** Any non-`--check` arg previously ran a full write of all agent files. Parsing is now fail-closed; `--help` is read-only.
+- **`record-result` finalizes truthfully.** It wrote `recorded` even when the transaction recorded nothing; it now only marks `recorded` when the record was actually made.
+- **`mp status` dies cleanly on a missing state file** (ENOENT → `die()`) instead of stack-tracing.
+- **Workspace-root drift detection now works off-fleet.** It was gated on a hardcoded `/^\/srv\/dev$/` + wrong-depth derivation; capture and consumption now share one git-toplevel derivation.
+- **Docs/skills claims corrected to match code** — deleted-engine references, retired alias claims, and the nonexistent run-level contract were scrubbed across the prompt, `.okf/`, `llms.txt`, internals docs, and both skills.
+
+### Removed
+
+- Dead goal-gate flags, `lib/jsonc.mjs`, `finalizeRecord`, the unreachable probe (alive/reap) machinery, the blackboard crash-recovery path, the legacy `routeTask`/`resolveTaskBackend` routing brain, zero-consumer dispatch-digest exports, `runLocalVerifyCommands`, `mp-explorer`, and the tracked-but-unrun `test/owner-stress.sh`.
+- Retired `--fabric=off` (the legacy L2 path it selected was deleted; it now fails closed instead of seeding unexecutable runs).
+
+### Changed
+
+- **Default implementer class is resolvable again.** `FABRIC_DEFAULT_CLASS` pointed at a class absent from the routing policy, so unpinned tasks fell through to the catch-all. It now resolves to the existing `bounded-edit` class.
+- **Goal-hash and receipt integrity.** Five archived bundles had goals-hash drift and/or a missing goal-check receipt; they were re-frozen to their current content and given user-attested covering waivers, so `mp doctor` reports no goals findings.
+- **Retired-vocabulary enforcement tightened** to catch bare `adsp` and `MCP pool`; live survivors removed.
+- **RELEASING.md** now documents the tag+push sequence the release flow was missing.
 
 ## [9.9.3] — 2026-08-28
 

@@ -2,7 +2,7 @@
 
 > A Claude Code & Codex CLI plugin for durable multi-hour engineering work — brainstorm → plan → execute → finish on top of `obra/superpowers` skills.
 
-Current release: **v9.9.3** · **License:** MIT · **Works with:** Claude Code, Codex CLI · See [CHANGELOG.md](./CHANGELOG.md)
+Current release: **v9.10.0** · **License:** MIT · **Works with:** Claude Code, Codex CLI · See [CHANGELOG.md](./CHANGELOG.md)
 
 ---
 
@@ -61,8 +61,8 @@ masterplan v8 is a five-layer system. Each layer delegates downward and never wr
                         │ bounded briefs / structured digests
 ┌───────────────────────▼─────────────────────────────────────┐
 │  L3 — Agents                                                 │
-│  agents/mp-explorer.md        agents/mp-goal-assessor.md     │
-│  agents/mp-planner.md         agents/mp-adversarial-reviewer.md │
+│  agents/mp-goal-assessor.md   agents/mp-adversarial-reviewer.md │
+│  agents/mp-planner.md         agents/mp-plan-reviewer.md       │
 │  agents/mp-plan-reviewer.md   agents/mp-subsystem-planner.md │
 │  agents/mp-spec-decomposer.md agents/mp-alignment-auditor.md │
 │  ← no session history; return structured output only         │
@@ -207,7 +207,7 @@ The L2 execute path runs **one wave per `mp dispatch-wave` launch**:
 
 - `pipeline(tasks, implement, review)` is **non-barrier**: a task's review starts the moment its implement finishes.
 - Implementation is **inline-only** via native spawn descriptors (no separate implementer agent path). Each implementer runs the task's `verify_commands` and returns a digest citing real output.
-- Review is **config-gated**: `mp-adversarial-reviewer` runs only when the bundle's review is armed (`state.review.adversary`, which `mp prepare-wave` surfaces to the L2 path as the `"on"` payload it gates on).
+- Review is **config-gated and class-resolved**: it runs only when the bundle's review is armed (`state.review.adversary`, which `mp prepare-wave` surfaces to the L2 path as the `"on"` payload it gates on), and the wave dispatcher resolves the `adversary` class from the routing policy (breaker role, frontier lane; adversarial panel for cross-vendor coverage) — `agents/mp-adversarial-reviewer.md` is the contract document for that review, not a runtime-named file.
 
 After the wave barrier, L1 runs **D6 scope verification**:
 

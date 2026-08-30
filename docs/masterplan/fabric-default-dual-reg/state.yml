@@ -17,9 +17,9 @@ tasks: [{"id":1,"status":"done","wave":0,"files":["lib/bundle.mjs","bin/masterpl
 active_run: null
 pending_gate: null
 goals_enabled: true
-goals: [{"id":"G1","text":"New seeds default to fabric on","signal":"test"},{"id":"G2","text":"Pi registration is bare-only","signal":"test"},{"id":"G3","text":"Docs and host check match","signal":"docs"}]
+goals: [{"id":"G1","text":"New seeds default to fabric on","signal":"test","evidence":"buildSeedState default emits dispatch.fabric true; fabricDispatch false omits dispatch; mp seed --fabric=off opt-out covered"},{"id":"G2","text":"Pi registration is bare-only","signal":"test","evidence":"register-pi-agents write emits only bare mp-*.md; deletes leftover masterplan:mp-*.md; --check treats leftover colon files as drift; SKIP_FOR_PI unchanged"},{"id":"G3","text":"Docs and host check match","signal":"docs","evidence":"verbs/internals/development/AGENTS/CHANGELOG describe seed fabric default and bare-only pi registration; node bin/register-pi-agents.mjs --check exits 0 after resync"}]
 review: {"adversary":true}
 render: {"images":"off"}
-goals_md_hash: sha256:0be97b00dc9163bb416f63656dc1c7bdf112cce0748a7152ba7501b0f0536cb8
+goals_md_hash: sha256:919f67653131e62300dcfd97ad6bdb8630327869a28c5e5ee79a9fb48e1abb63
 worktree: /srv/dev/ras/masterplan
 worktree_disposition: kept_by_user

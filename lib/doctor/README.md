@@ -22,8 +22,13 @@ where a `Finding` is `{ id, severity: 'PASS' | 'WARN' | 'ERROR' | 'SKIP', summar
   `opts.now` (ms clock for expiry math). Defaults hit the real host; tests inject everything.
 - **`SKIP` is a first-class outcome**, not a failure: codex-not-installed, no `auth.json`,
   not-a-git-repo, no run bundles. The doctor must run anywhere.
-- The dispatcher (`bin/doctor.mjs`) **crash-isolates** each module (a throw → one synthesized
-  `ERROR` finding) and exits non-zero **iff any finding is `ERROR`** (`WARN`/`SKIP` → exit 0).
+- The dispatcher (`bin/doctor.mjs`) **auto-discovers** every `lib/doctor/*.mjs` that exports a
+  `check()` (there is NO registry to edit — add a module by dropping a file). It
+  **crash-isolates** each module (a throw → one synthesized `ERROR` finding) and exits non-zero
+  **iff any finding is `ERROR`** (`WARN`/`SKIP` → exit 0).
+- A module may additionally export an optional synchronous
+  `fix(repoRoot, findings, opts) -> Repair[]`; the dispatcher calls fix handlers only when the
+  CLI is invoked with `--fix`.
 
 **Fixtures** live under `test/fixtures/doctor/<check>/<scenario>/`; the scenario dir-name
 prefix (`pass-`/`warn-`/`error-`/`skip-`) encodes the expected worst-severity. This is a
@@ -32,19 +37,34 @@ block-YAML (`schema_version: 3`) and tested the v7 doctor — both deleted at th
 fixtures (e.g. check-32, check-39 data) are copied into this single v8 root; schema-coupled
 checks get fresh v8-flat fixtures.
 
-## Survivors (~10 external-boundary checks)
+## Module inventory (auto-discovered — keep in sync with the filesystem)
 
-| Module | v7 IDs | Severity | Built? |
+The dispatcher globs `lib/doctor/*.mjs`; there is no registry. **Every module is listed here.**
+`test/doctor-readme.test.mjs` asserts this table's ids exactly match the filesystem modules, so
+a new module that ships without a README row (or a deleted module that leaves a stale row) fails
+CI rather than silently drifting. `v7 ID` is the ported v7 check id, where applicable.
+
+| Module | v7 ID | Severity | Purpose |
 |---|---|---|---|
-| `scalar-cap` | #32 | WARN | ✅ slice |
-| `worktree-integrity` | #3/#4/#29(a) | ERROR/SKIP | ✅ slice |
-| `codex-auth` | #39 | WARN/SKIP | ✅ slice |
-| `state-schema` | #9 (+#10 folded) | ERROR | ✅ batch |
-| `legacy-bundle` | #1 | WARN | ✅ batch |
-| `routing-policy-health` | — | PASS/WARN | ✅ batch |
-| `index-staleness` | #34 | WARN | ✅ batch |
-| `stale-lock` | #42 | WARN | ✅ batch |
-| `plugin-registry-drift` | #50 | WARN | ✅ batch |
+| `scalar-cap` | #32 | WARN | Flat `key: value` scalars in bundle `state.yml` must be ≤ 200 chars; `*overflow at <file> L<n>*` pointers must resolve in-bundle (has a `--fix` handler). |
+| `worktree-integrity` | #3/#4/#29(a) | ERROR/SKIP | Each bundle's `worktree`/`branch` references must still resolve in git, unless archived or intentionally retired. |
+| `codex-auth` | #39 | WARN/SKIP | User-scoped Codex `auth.json` health (exp / expiring-soon / stale-refresh; auth-mode-aware). Informational only. |
+| `state-schema` | #9 (+#10 folded) | ERROR | Validates each bundle's `state.yml` against the canonical v8 core schema (single source of truth in `lib/bundle.mjs`); unparseable folds in. |
+| `legacy-bundle` | #1 | WARN | Any bundle with `schema_version < 6`, or `docs/superpowers/` containing actual legacy planning artifacts. |
+| `routing-policy-health` | — | PASS/WARN | Repo-local routing policy (classes/agents/lanes) resolves — adversarial panel and required classes usable. |
+| `index-staleness` | #34 | WARN | `plan.index.json`'s `plan_hash` matches the current `plan.md` content. |
+| `stale-lock` | #42 | WARN | Bundle `.lock` files older than the 1-hour threshold (a crashed run may have left one). |
+| `plugin-registry-drift` | #50 | WARN | User-scoped: installed masterplan plugin version vs marketplace-cached version mismatch. Detection only. |
+| `coord-drift` | — | WARN | Coordination-state drift for GitHub-coordinated run bundles. |
+| `dangling-run` | — | WARN | Non-archived dangling run bundles: past the staleness threshold, or a stale in-progress bundle still holding an owner-lock. |
+| `goals` | — | ERROR | Goals-enabled bundles have consistent goal state: a frozen hash matching the current `goals.md`, and (archived) a valid `goal_check` receipt or covering waivers. |
+| `owner-sentinel` | — | WARN | Stale/corrupt owner locks (`.owner.lock`, orphan `.owner.hb.*`) left by a crashed session. |
+| `pi-agent-registration` | — | WARN | Host drift of pi-installed `mp-*` agents (stale pins, missing copies, body mismatch). |
+| `plan-doc-cruft` | — | WARN | Repo-wide markdown outside run bundles that still carries provenance of an archived run. |
+| `plan-index-schema` | — | WARN | `plan.index.json` files must validate against the same strict validator the merge path uses (non-string `codex`, same-wave file overlap, etc.). |
+| `rejected-idea-kb` | — | WARN | Durable rejected-idea KB files under `.out-of-scope/` carry the required sections. |
+| `spec-assumptions` | — | WARN | Version-scoped: post-feature bundles whose `spec.md` omits the required `## Assumptions` section. |
+| `stalled-bundle` | — | WARN | A bundle seeded and driven through brainstorm/plan that never recorded any of it (the CD-7 durability contract). |
 
 **`#9` stays minimal** — v8 bundles are well-formed by construction (`serializeState`), so #9
 guards only the migrate/hand-edit boundary: validate what the control loop dereferences

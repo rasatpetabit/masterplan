@@ -1,7 +1,9 @@
-// test/verify-transport.test.mjs — local edit-verify transport seam.
+// test/verify-transport.test.mjs — handoff contract + verify allowlist record.
 //
-// Covers the local full-list runner (pass/fail/timeout, fail-closed) and the
-// per-wave verify-allowlist record evidence surfaced by the native spawn flow.
+// Covers the pinned contract version and the per-wave verify-allowlist record
+// evidence surfaced by the native spawn flow. The local full-list runner was
+// removed with the retired dispatch-era transport; wave children verify
+// through the harness and report worker digests.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -10,7 +12,6 @@ import os from 'node:os';
 import path from 'node:path';
 
 import {
-  runLocalVerifyCommands,
   DEFAULT_SKYNET_VERIFY_ALLOWLIST,
   CONTRACT_VERSION,
 } from '../lib/dispatch/verify-transport.mjs';
@@ -22,50 +23,6 @@ import { buildOwnerIdentity } from '../lib/owner.mjs';
 test('CONTRACT_VERSION is the native fabric seam version', () => {
   assert.equal(CONTRACT_VERSION, 'fabric-native-v1');
 });
-
-// ---------------------------------------------------------------------------
-// D2 — local full-list runner
-// ---------------------------------------------------------------------------
-
-test('runLocalVerifyCommands: pass path records passed:true', () => {
-  const r = runLocalVerifyCommands(['true', 'echo hi'], { cwd: process.cwd() });
-  assert.equal(r.length, 2);
-  assert.equal(r[0].passed, true);
-  assert.equal(r[1].passed, true);
-  assert.match(r[1].output, /hi/);
-});
-
-test('runLocalVerifyCommands: fail path records passed:false', () => {
-  const r = runLocalVerifyCommands(['false', 'true'], { cwd: process.cwd() });
-  assert.equal(r[0].passed, false);
-  assert.equal(r[1].passed, true);
-});
-
-test('runLocalVerifyCommands: timeout path marks failed with timeout marker', () => {
-  const r = runLocalVerifyCommands(['sleep 5'], { cwd: process.cwd(), timeoutS: 0.2 });
-  assert.equal(r.length, 1);
-  assert.equal(r[0].passed, false);
-  assert.match(r[0].output, /timeout|ETIMEDOUT|killed/i);
-});
-
-test('runLocalVerifyCommands: injectable _exec used for hermetic tests', () => {
-  const calls = [];
-  const r = runLocalVerifyCommands(['a', 'b'], {
-    cwd: '/x',
-    timeoutS: 3,
-    _exec: (cmd, opts) => {
-      calls.push({ cmd, opts });
-      if (cmd === 'b') throw new Error('boom');
-      return 'ok';
-    },
-  });
-  assert.equal(calls.length, 2);
-  assert.equal(r[0].passed, true);
-  assert.equal(r[1].passed, false);
-  assert.match(r[1].output, /boom/);
-});
-
-
 
 // ---------------------------------------------------------------------------
 // Allowlist record evidence (surfaced once per wave by the native spawn flow)

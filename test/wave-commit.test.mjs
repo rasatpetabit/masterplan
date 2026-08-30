@@ -12,7 +12,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 import { recordWaveResult } from '../lib/wave-commit.mjs';
-import { captureWatchBaseline, writeWatchBaseline, snapshotRepoState } from '../lib/watch-integrity.mjs';
+import { captureWatchBaseline, writeWatchBaseline, snapshotRepoState, workspaceRootFor } from '../lib/watch-integrity.mjs';
 import { readState, writeState } from '../lib/bundle.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
 import { acquireOwner } from '../lib/owner-fs.mjs';
@@ -910,4 +910,86 @@ test('a sibling file that was ALREADY dirty at launch is reported but never reve
     fs.readFileSync(path.join(sibling, 'wip.txt'), 'utf8'), 'CLOBBERED BY A CHILD\n',
     'the file is left exactly as found — the wave does not git-checkout over user WIP',
   );
+});
+
+// ── A8: workspace-root derivation + drift check ─────────────────────────────
+// The workspace-root derivation (workspaceRootFor) must be depth-independent (git
+// toplevel, not relative hops) and host-independent (no /srv/dev gate) so post-wave
+// loose-file drift detection works off-fleet and for any worktree nesting.
+
+test('A8 workspaceRootFor derives the repo-root parent, off-fleet and non-null', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-wsroot-'));
+  // Off-fleet (under os.tmpdir, not /srv/dev) and a plain repo at the container root.
+  const wsRoot = tmp;
+  const repo = path.join(wsRoot, 'repo');
+  fs.mkdirSync(repo, { recursive: true });
+  git(repo, 'init', '--initial-branch=main');
+  git(repo, 'config', 'user.email', 'test@test');
+  git(repo, 'config', 'user.name', 'test');
+  git(repo, 'config', 'commit.gpgsign', 'false');
+  write(repo, 'seed.txt', 'seed\n');
+  git(repo, 'add', '.');
+  git(repo, 'commit', '-q', '-m', 'seed');
+
+  assert.equal(workspaceRootFor(repo), wsRoot, 'workspace root is the repo toplevel parent');
+});
+
+test('A8 workspaceRootFor is stable across a linked worktree nesting', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-wsroot-wt-'));
+  const wsRoot = path.join(tmp, 'ws');
+  const repo = path.join(wsRoot, 'repo');
+  fs.mkdirSync(repo, { recursive: true });
+  git(repo, 'init', '--initial-branch=main');
+  git(repo, 'config', 'user.email', 'test@test');
+  git(repo, 'config', 'user.name', 'test');
+  git(repo, 'config', 'commit.gpgsign', 'false');
+  write(repo, 'seed.txt', 'seed\n');
+  git(repo, 'add', '.');
+  git(repo, 'commit', '-q', '-m', 'seed');
+  const WT = path.join(repo, '.worktrees', 'nested', 'deeper', 'slug');
+  fs.mkdirSync(path.dirname(WT), { recursive: true });
+  git(repo, 'worktree', 'add', '-q', '-b', 'masterplan/slug', WT);
+
+  // Whether called from the main checkout or the deep worktree, git toplevel resolves
+  // to the repo root, so the workspace root is the same container — never a mid-depth dir.
+  assert.equal(workspaceRootFor(repo), wsRoot);
+  assert.equal(workspaceRootFor(WT), wsRoot, 'worktree call still resolves to the same container');
+});
+
+test('A8 record-result drift check reverts a new loose workspace-root file using the shared root', () => {
+  const fx = makeFixture({
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    activeRun: { wave: 1, run_id: 'r1', task_id: 'wf1', scope: ['src/a.txt'], baseline: [] },
+  });
+  // The workspace root is the parent of MAIN (the fixture tmp dir). Baseline it with one
+  // known entry, then simulate a child dropping a loose file at that root.
+  const wsRoot = path.dirname(fx.MAIN);
+  const baseline = [path.basename(fx.MAIN), 'known-entry'];
+  write(wsRoot, 'known-entry', 'k\n');
+  // Record the wave with a wsBaseline the launch capture would have written.
+  write(fx.WT, 'src/a.txt', 'A\n');
+  const state = readState(fx.statePath);
+  state.active_run.wsBaseline = baseline;
+  writeState(fx.statePath, state);
+
+  // A child dropped a loose file at the workspace root.
+  write(wsRoot, 'AUDIT-123.md', 'loose\n');
+
+  const res = recordWaveResult({
+    statePath: fx.statePath, self: fx.self, now: 2000,
+    result: { wave: 1, baseline: [], tasks: [digest(1, 'done')] },
+  });
+
+  assert.equal(res.outcome, 'recorded');
+  assert.ok(Array.isArray(res.wsLoose));
+  assert.ok(
+    res.wsLoose.includes('AUDIT-123.md'),
+    `the new loose file is reported as reverted; got ${JSON.stringify(res.wsLoose)}`,
+  );
+  assert.equal(
+    fs.existsSync(path.join(wsRoot, 'AUDIT-123.md')), false,
+    'the loose workspace-root file is removed at completion',
+  );
+  // Baseline entries are untouched.
+  assert.equal(fs.existsSync(path.join(wsRoot, 'known-entry')), true);
 });

@@ -184,7 +184,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, setWorktree, setWorktreeDisposition, setVerifiedSha, setCodexConfig, setReviewConfig, setRenderConfig, loadPlanTasks, buildSeedState, buildTasksFromPlanIndex, appendEvent, setCoordination, applyPlanIndex, upsertTasks, rebasePaths, GOAL_LIFECYCLE_EVENT_TYPES, inferGoalsCapability, CURRENT_SCHEMA_VERSION } from '../lib/bundle.mjs';
+import { readState, parseState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, setWorktree, setWorktreeDisposition, setVerifiedSha, setCodexConfig, setReviewConfig, setRenderConfig, loadPlanTasks, buildSeedState, buildTasksFromPlanIndex, appendEvent, setCoordination, applyPlanIndex, upsertTasks, rebasePaths, GOAL_LIFECYCLE_EVENT_TYPES, inferGoalsCapability, CURRENT_SCHEMA_VERSION } from '../lib/bundle.mjs';
 import { parseGoals, validateGoals, goalsHash, legacyGoalsHash, validateUserApprovalReceipt, validateAmendment, amendmentDiff, crossCheckGoals, validateGoalCheckReceipt, validateGoalWaiver, waiverKey } from '../lib/goals.mjs';
 import { planWorktreeCreate, parseWorktreeList, classifyWorktrees, normalizeDisposition, dispositionAfterTeardown, VALID_DISPOSITIONS as VALID_WORKTREE_DISPOSITION } from '../lib/worktree.mjs';
 import { collectDiskDirs, collectBundleRecords } from '../lib/worktree-fs.mjs';
@@ -549,6 +549,52 @@ function parseArgs(argv) {
   return { positional, flags };
 }
 
+// A7 (2026-08-30): fail-closed flag parsing — the doctor convention. Every `--flag` the
+// parsed CLI passes must be one bin actually reads (the union across all verbs below, from
+// `flags['x']` / `flags.x` / `need(flags, 'x')` sites in this file). An unknown flag was
+// silently ignored before A7 (a typo'd mutating flag — set-phase, mark-task,
+// record-result, finish-step — could be dropped without any signal); now it exits 2 like
+// doctor does. This is a global allowlist: no documented invocation breaks, because every
+// flag some verb reads is in the set. A flag typo that collides with another verb's valid
+// name is the one residual gap (mitigated by the positive cli-surface cross-check test).
+const KNOWN_FLAGS = new Set(
+  ('actor add-root adversary-review after agent-is-codex agents-md alive all apply apply-ok ' +
+    'approval args autonomy base base-sha baseline before bootstrap branch branch-exists branches ' +
+    'bytes-file choice codex-base codex-count codex-digest-file codex-done codex-reason codex-review ' +
+    'codex-skipped codex-suppressed complexity complexity-source contract-ref count created-at ' +
+    'current-head cwd d6-ok data date dead declared-sha256 detail diff-hash digest-file direction ' +
+    'dirty disposition docs-count docs-normalized docs-reason docs-skipped docs-suppressed existing ' +
+    'fabric fail-if-unconfigured fail-if-unpublishable force fragments from gate generated-at gh-json ' +
+    'goal-check goals goals-choice head head-sha host id images integration-branch issue issues job-id ' +
+    'key kind label linked-worktree local-run-branch mark-published merge-sha merged meta mode ' +
+    'native-tools no-workflow note note-file now opened-at out owner-lock phase plan-deps plan-hash ' +
+    'plan-html plan-index plan-index-path plan-md plan-path planning-mode porcelain pr predecessor ' +
+    'predecessor-transcript producer-status prs prune prune-non-pending pushed reason receipt reconcile ' +
+    'recorded-base removal-confirmed removal-force remove-root render-images repo repo-git-dir repo-root ' +
+    'repos-allowlist result result-file retro-only review review-base review-count review-digest-file ' +
+    'review-done review-json review-reason review-skipped reviews-file roots routing run-id run-slug ' +
+    'schema-version scope session sha slug spec-path state status subsystems ' +
+    'subsystems-file summary takeover target task task-id to topic ts ttl-ms type verify-failed ' +
+    'verify-output-hash verify-passed waive waiver wave worktree worktree-list worktree-registered ' +
+    'ws-baseline').split(' ')
+);
+
+function rejectUnknownFlags(flags) {
+  for (const name of Object.keys(flags)) {
+    if (!KNOWN_FLAGS.has(name)) {
+      die(`unknown flag --${name} (exit 2, doctor-style — a typo'd flag is a hard error, never silently dropped)`);
+    }
+  }
+}
+
+// Exported for the A7 positive cross-check test: every documented --flag must be a
+// recognized flag name, and the complete recognized set is this set.
+export function isKnownFlag(name) {
+  return KNOWN_FLAGS.has(name);
+}
+export { KNOWN_FLAGS };
+
+
 function out(obj) {
   process.stdout.write(typeof obj === 'string' ? obj + '\n' : JSON.stringify(obj) + '\n');
 }
@@ -837,6 +883,9 @@ export { applyPlanIndex };
 function main() {
   const [cmd, ...rest] = process.argv.slice(2);
   const { positional, flags } = parseArgs(rest);
+  // A7 (2026-08-30): fail closed on unknown flags before dispatch — a typo'd/misspelled
+  // flag is a hard exit 2, never a silent drop.
+  rejectUnknownFlags(flags);
 
   switch (cmd) {
     case 'version': {
@@ -1379,13 +1428,18 @@ function main() {
           goals: gcParsed.goals,
         });
         if (!wv.ok) die(`record-goal-check: waiver rejected — ${wv.error}`, 1);
+        // IDEMPOTENCY IS EVIDENCE-BOUND: a repeat waiver for the same tuple with the SAME
+        // reasons is a no-op, but a waiver carrying DIFFERENT reasons is a distinct
+        // attestation and must be recorded, not silently dropped (adversarial review,
+        // fresh-eyes-remediation finish flow).
         const waivedAlready = gcEvents.some(
           (e) =>
             e.type === 'goal_waived' &&
             e.data?.goals_hash === gcHash &&
             e.data?.head_sha === gcHead &&
             e.data?.base === gcBase &&
-            e.data?.diff_hash === gcDiffHash
+            e.data?.diff_hash === gcDiffHash &&
+            JSON.stringify(e.data?.reasons ?? null) === JSON.stringify(wv.normalized.reasons ?? null)
         );
         if (waivedAlready) {
           out({ record_goal_check: 'idempotent', mode: 'waive', goals_hash: gcHash, key: wv.normalized.key });
@@ -3379,6 +3433,10 @@ function main() {
           // 'pending' BEFORE spawn; a successful record-result closes that window so
           // the next attempt (or crash reconcile) sees 'recorded', not an
           // in-flight dispatch. Guard-D already serializes this writer.
+          // A5 (2026-08-30): only finalize to 'recorded' when the transaction actually
+          // marked task(s) done — recRes.recorded is the array of ids that landed. A
+          // lost-to-other / stale-epoch / recorded-nothing outcome must NOT stamp
+          // 'recorded' (it would let the next attempt skip re-driving the record).
           try {
             const waveNo = Number.isInteger(reviewedResult?.wave)
               ? reviewedResult.wave
@@ -3386,16 +3444,31 @@ function main() {
             const bundleDir = path.dirname(path.resolve(statePath));
             const existing = Number.isInteger(waveNo) ? readWaveDispatchRecord(bundleDir, waveNo) : null;
             if (existing && existing.status === 'pending') {
-              writeWaveDispatchRecord(bundleDir, waveNo, {
-                ...existing,
-                status: 'recorded',
-                completed_at: new Date(now).toISOString(),
-                record_outcome: {
-                  recorded: recRes.recorded,
-                  failed: recRes.failed,
-                  cleared: recRes.cleared,
-                },
-              });
+              const recordedAny = Array.isArray(recRes.recorded) && recRes.recorded.length > 0;
+              if (recordedAny) {
+                writeWaveDispatchRecord(bundleDir, waveNo, {
+                  ...existing,
+                  status: 'recorded',
+                  completed_at: new Date(now).toISOString(),
+                  record_outcome: {
+                    recorded: recRes.recorded,
+                    failed: recRes.failed,
+                    cleared: recRes.cleared,
+                  },
+                });
+              } else {
+                // Recorded nothing: leave the record 'pending' (a retry re-drives the
+                // record transaction rather than believing it completed) and surface the
+                // failure on the record itself.
+                writeWaveDispatchRecord(bundleDir, waveNo, {
+                  ...existing,
+                  record_error: {
+                    outcome: recRes.outcome ?? null,
+                    reason: recRes.reason ?? 'record-result recorded no tasks',
+                    recorded: Array.isArray(recRes.recorded) ? recRes.recorded : [],
+                  },
+                });
+              }
             }
           } catch { /* record finalization is audit state — never mask the record result */ }
           out(recRes);
@@ -3484,8 +3557,8 @@ function main() {
 
     case 'continue': {
       // T2.3: the trampoline — migrate-on-load → Guard D acquire/confirm → wave backfill →
-      // alive-probe gating → the bounded decide loop, returning ONE typed op per call
-      // ({op: dispatch_fabric|dispatch_plan|run_skill|record_result|ask|probe|shell|stop|…}).
+      // the bounded decide loop, returning ONE typed op per call
+      // ({op: dispatch_fabric|dispatch_plan|run_skill|record_result|ask|shell|stop|…}).
       // The shell stops sequencing §2 by prose: it calls `mp continue`, executes the op, repeats.
       // Hosts without Claude Code Workflow handles (PI_CODING_AGENT or --no-workflow) are routed
       // to dispatch_fabric so a phase-1 launch marker is consumed instead of user-stranded.
@@ -3505,7 +3578,7 @@ function main() {
       if (!lockOff) {
         ({ self, now, ttlMs } = resolveOwnerSelf(flags, statePath));
       }
-      // --alive/--dead: the shell's answer to a prior {op:'probe'}; absent = not yet probed.
+      // --alive/--dead: the shell's answer to a legacy liveness handshake; absent = unknown.
       const alive = flags.alive ? true : flags.dead ? false : null;
       let reposAllowlist;
       if (flags['repos-allowlist'] !== undefined) {
@@ -3523,7 +3596,6 @@ function main() {
           now,
           ttlMs,
           alive,
-          staleReconciled: !!flags['stale-reconciled'],
           force: !!flags.force,
           codexSuppressed: shouldSuppressWorkflow(flags, process.env),
           routing: typeof flags.routing === 'string' ? flags.routing : undefined,
@@ -3567,6 +3639,12 @@ function main() {
       const reviewBaseFlag = flags['review-base'] ?? flags['codex-base'];
       const reviewDigestFlag = flags['review-digest-file'] ?? flags['codex-digest-file'];
       const reviewReasonFlag = flags['review-reason'] ?? flags['codex-reason'];
+      // A1 (2026-08-30): the goal-gate answer flags — the finish-step engine's documented vocabulary.
+      // --goal-check=<failed> signals assessor dispatch failed (fail-closed → manual goals_unmet gate);
+      // --goals-choice=<fix|waiver|abort> answers the goals_unmet gate AUQ. Both thread into finishStep's
+      // ctx (goalCheck / goalsChoice); the engine validates goalsChoice against GOALS_CHOICES.
+      const goalCheckFlag = typeof flags['goal-check'] === 'string' ? flags['goal-check'] : null;
+      const goalsChoiceFlag = typeof flags['goals-choice'] === 'string' ? flags['goals-choice'] : null;
       let op;
       try {
         op = finishStep({
@@ -3589,6 +3667,8 @@ function main() {
           pushed: !!flags.pushed,
           removalForce: !!flags['removal-force'],
           retroOnly: !!flags['retro-only'],
+          goalCheck: goalCheckFlag,
+          goalsChoice: goalsChoiceFlag,
         });
       } catch (e) {
         die(e.message);
@@ -3694,7 +3774,9 @@ function main() {
       // no CD-7 write. This is the base surface the discovery subsystem later EXTENDS with an
       // other-runs block — keep it self-contained so that extension is additive.
       const p = need(flags, 'state');
-      const state = readState(p);
+      // A9 (2026-08-30): read via the die-convention readText so a missing state file exits 2 with
+      // 'cannot read state file: <p>' instead of an uncaught ENOENT stack trace.
+      const state = parseState(readText(p));
       const tasks = state.tasks ?? [];
       const done = tasks.filter((t) => t.status === 'done').length;
       // Refs are a status concern (which bundles this one links to); rendering the links is not.

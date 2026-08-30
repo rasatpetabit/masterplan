@@ -1,0 +1,8 @@
+schema_version: 6
+slug: malformed-plan-index
+status: in-progress
+phase: planning
+goals_enabled: true
+goals:
+  - id: G1
+    text: Track goals across the workflow

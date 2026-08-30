@@ -22,13 +22,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, mkdirSync, writeFileSync, mkdtempSync, existsSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
-const { MODEL_MAP, COLON_PREFIX, SKIP_FOR_PI, mapModelLine, mapNameLine, outputsFor, runRegister } = await import(join(repoRoot, 'bin/register-pi-agents.mjs'));
+const { MODEL_MAP, COLON_PREFIX, SKIP_FOR_PI, mapModelLine, mapNameLine, outputsFor, runRegister, parseCliArgs } = await import(join(repoRoot, 'bin/register-pi-agents.mjs'));
 
 function agentModelAliases({ includeSkipped = true } = {}) {
   const agentsDir = join(repoRoot, 'agents');
@@ -340,36 +341,77 @@ test('every non-skipped agent that declares tools covers its MCP-namespaced name
   }
 });
 
-test('mp-explorer body names no concrete model id and describes policy-lane recon (rot-proof)', () => {
-  // Prose that names a concrete model rots the moment the fleet changes (that is
-  // exactly how `fable` survived the 2026-08-04 cut). Lane aliases are fine — they
-  // are policy names; concrete model ids and retired aliases are not.
-  const raw = readFileSync(join(repoRoot, 'agents', 'mp-explorer.md'), 'utf8');
-  const parts = raw.split(/^---$/m);
-  assert.ok(parts.length >= 3, 'mp-explorer.md must have YAML frontmatter delimiters');
-  const body = parts.slice(2).join('---');
-  const lineup = lineupFromRoutingPolicy();
-  const concreteIds = Object.values(lineup).map((m) => m.replace(/^litellm\//, ''));
-  for (const id of [...concreteIds, 'haiku', 'opus', 'sonnet', 'fable']) {
-    assert.equal(
-      new RegExp(`\\b${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(body),
-      false,
-      `explorer body must not name the concrete model "${id}" — lane prose only`,
-    );
+
+// ---- A6: fail-closed CLI + subprocess mutation guards ----
+//
+// These run the REAL bin via spawnSync against a temp HOME (never ~/.pi). A
+// pre-seeded target file acts as a canary: --help and typo paths must leave it
+// untouched (the old behavior ran a full write on ANY flag and could rewrite or
+// delete it). A fresh HOME also proves --help creates nothing.
+const BIN = join(repoRoot, 'bin', 'register-pi-agents.mjs');
+
+function runCli(args, { withCanary = false } = {}) {
+  const home = mkdtempSync(join(tmpdir(), 'mp-reg-home-'));
+  if (withCanary) {
+    const piAgents = join(home, '.pi', 'agent', 'agents');
+    mkdirSync(piAgents, { recursive: true });
+    writeFileSync(join(piAgents, 'mp-canary.md'), 'CANARY-ORIGINAL');
   }
-  assert.match(
-    body,
-    /routing policy/i,
-    'explorer body must state the routing-policy lane it runs on',
-  );
-  assert.match(
-    body,
-    /read-only|recon/i,
-    'explorer body must describe read-only recon semantics',
-  );
-  assert.equal(
-    /model_group\s*:\s*["']?dispatch-/i.test(body),
-    false,
-    'explorer is pure recon — body must not invent a dispatch-* judgment lane',
-  );
+  const res = spawnSync(process.execPath, [BIN, ...args], {
+    encoding: 'utf8', env: { ...process.env, HOME: home },
+  });
+  return { res, home };
+}
+
+function homeTree(home) {
+  const out = {};
+  for (const f of readdirSync(join(home, '.pi', 'agent', 'agents'), { recursive: true })) {
+    const p = join(home, '.pi', 'agent', 'agents', String(f));
+    out[String(f)] = existsSync(p) ? (readFileSync(p, 'utf8') === 'CANARY-ORIGINAL' ? 'CANARY-ORIGINAL' : readFileSync(p, 'utf8')) : null;
+  }
+  return out;
+}
+
+test('parseCliArgs accepts only --check/--help; unknown flags and positionals throw', () => {
+  assert.deepEqual(parseCliArgs([]), { check: false, help: false });
+  assert.deepEqual(parseCliArgs(['--check']), { check: true, help: false });
+  assert.deepEqual(parseCliArgs(['--help']), { check: false, help: true });
+  assert.deepEqual(parseCliArgs(['--check', '--help']), { check: true, help: true });
+  for (const bad of ['--chek', '-c', '--write', '--force', 'typo', 'mp-x.md']) {
+    assert.throws(() => parseCliArgs([bad]), /unknown option|unexpected argument/, `${bad} must be rejected`);
+  }
+});
+
+test('A6: --help exits 0, prints usage, and writes nothing (fresh temp HOME)', () => {
+  const { res, home } = runCli(['--help']);
+  assert.equal(res.status, 0, `--help should exit 0: ${res.stderr}`);
+  assert.match(res.stdout, /Usage: node bin\/register-pi-agents\.mjs/, 'help should print usage');
+  assert.match(res.stdout, /--check/, 'help should document --check');
+  assert.equal(existsSync(join(home, '.pi', 'agent', 'agents')), false, '--help must not create the target dir');
+});
+
+test('A6: --help leaves a pre-seeded canary untouched (read-only)', () => {
+  const { res, home } = runCli(['--help'], { withCanary: true });
+  assert.equal(res.status, 0, `--help should exit 0: ${res.stderr}`);
+  assert.deepEqual(homeTree(home), { 'mp-canary.md': 'CANARY-ORIGINAL' }, '--help must not rewrite or delete canary');
+});
+
+test('A6: typo flag exits 2 and leaves a pre-seeded canary untouched', () => {
+  const { res, home } = runCli(['--chek'], { withCanary: true });
+  assert.equal(res.status, 2, `unknown flag must exit 2: ${res.stderr}`);
+  assert.match(res.stderr, /unknown option: --chek/, 'stderr should name the offending flag');
+  assert.deepEqual(homeTree(home), { 'mp-canary.md': 'CANARY-ORIGINAL' }, 'typo must not rewrite or delete canary');
+});
+
+test('A6: positional arg exits 2 and writes nothing (fresh temp HOME)', () => {
+  const { res, home } = runCli(['mp-x.md']);
+  assert.equal(res.status, 2, `positional must exit 2: ${res.stderr}`);
+  assert.equal(existsSync(join(home, '.pi', 'agent', 'agents')), false, 'rejected arg must not create the target dir');
+});
+
+test('A6: bare invocation (write mode) still works and is the only mutating path', () => {
+  // Regression guard: the fix must not break the legitimate write-mode call.
+  const { res } = runCli([]);
+  assert.equal(res.status, 0, `bare write should exit 0: ${res.stderr}`);
+  assert.match(res.stderr, /wrote/, 'write mode should report what it wrote');
 });

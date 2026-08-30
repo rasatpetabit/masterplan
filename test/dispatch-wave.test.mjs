@@ -6,7 +6,9 @@
 // `mp continue` (which writes the phase-1 marker dispatch-wave consumes) and inject only
 // the routing-resolution / review seams. Covered behaviors:
 //
-//   1. Flag-off → no-op: state.dispatch.fabric unset → outcome 'flag-off', nothing re-launched.
+//   1. Flag-off → fail-closed (A3): state.dispatch.fabric unset → outcome 'flag-off',
+//      nothing re-launched, reason names fabric as the only wave path and the bundle
+//      as unexecutable (the legacy L2 ops it used to cite are deleted).
 //   2. Native spawn plan: one descriptor per routed task (buildWorkItem shape) resolved
 //      from the repo-local routing policy; worker digests recorded via recordWaveResult
 //      (task done, marker cleared, wave_recorded event, dispatch.outcome:'worker').
@@ -147,7 +149,7 @@ function readEvents(bundleDir) {
 // 1. Flag gate
 // ---------------------------------------------------------------------------
 
-test('flag-off → no-op: no dispatch, no record, nothing re-launched', async () => {
+test('flag-off → fail-closed: fabric is the only wave path since L2 deletion (A3)', async () => {
   const fx = makeFixture({
     tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
     planIndex: [planEntry(1, 1, ['src/a.txt'])],
@@ -159,6 +161,11 @@ test('flag-off → no-op: no dispatch, no record, nothing re-launched', async ()
   });
   assert.equal(res.outcome, 'flag-off');
   assert.equal(res.dispatched, false);
+  // A3: the reason must no longer cite deleted legacy ops — it must state that
+  // fabric is the ONLY wave path and the bundle is unexecutable.
+  assert.match(res.reason, /ONLY wave path/);
+  assert.match(res.reason, /unexecutable/);
+  assert.doesNotMatch(res.reason, /legacy dispatch_fabric\/dispatch_fabric ops apply/);
   assert.equal(readWaveDispatchRecord(fx.bundleDir, 1), null, 'no record written');
 });
 
@@ -857,13 +864,17 @@ test('cwd stays null when the descriptor names no locus at all', () => {
 // Prepare-stage unit tests (gateAndValidate / resolveWaveContext / buildDescriptors)
 // ---------------------------------------------------------------------------
 
-test('gateAndValidate: flag-off returns early when fabric is not true', () => {
+test('gateAndValidate: flag-off fails closed when fabric is not true (A3)', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-gate-'));
   const statePath = path.join(dir, 'state.yml');
   writeState(statePath, { schema_version: 9, slug: 's', dispatch: { fabric: false } });
   const result = gateAndValidate({ statePath });
   assert.equal(result.outcome, 'flag-off');
   assert.equal(result.dispatched, false);
+  // A3: reason names fabric as the only path and the bundle as unexecutable.
+  assert.match(result.reason, /ONLY wave path/);
+  assert.match(result.reason, /unexecutable/);
+  assert.doesNotMatch(result.reason, /legacy dispatch_fabric\/dispatch_fabric ops apply/);
 });
 
 test('gateAndValidate: returns validated context for a fabric-flagged bundle with a wave marker', () => {
@@ -1067,10 +1078,12 @@ test('buildWaveLaunchContext: returns prepared tasks + MAIN from injected routin
   assert.equal(result.MAIN, MAIN);
   assert.equal(result.prepared.tasks.length, 1);
   assert.equal(result.prepared.tasks[0].id, 1);
-  // Injected codex_host_suppressed:true forces host-suppressed even though the plan
-  // annotation is codex:'ok' — this is the env fact derived from routingInputs, not state.codex.
-  assert.equal(result.prepared.tasks[0].target, 'inline');
-  assert.equal(result.prepared.tasks[0].reason, 'host-suppressed');
+  // Governed-path payload (C6): the legacy routeTask codex/inline brain is deleted —
+  // routing is deferred to the governed class resolver, so the payload carries only the
+  // class (the worker default for an unpinned task), with no pre-baked target/reason.
+  assert.equal(result.prepared.tasks[0].class, 'bounded-edit');
+  assert.equal(result.prepared.tasks[0].target, undefined);
+  assert.equal(result.prepared.tasks[0].reason, undefined);
 });
 
 test('buildWaveLaunchContext: reposAllowlist is optional (omitted on fabric path)', () => {
@@ -1110,7 +1123,7 @@ test('buildWaveLaunchContext: reposAllowlist is optional (omitted on fabric path
     routingInputs: { routing: 'auto', codex_host_suppressed: false, linked_worktree: true },
   });
   assert.equal(result.prepared.tasks.length, 1);
-  assert.equal(result.prepared.tasks[0].class, 'masterplan-implementation');
+  assert.equal(result.prepared.tasks[0].class, 'bounded-edit'); // worker default (A2 repoint)
   assert.equal(result.prepared.tasks[0].target, undefined);
   assert.equal(result.MAIN, MAIN);
 });

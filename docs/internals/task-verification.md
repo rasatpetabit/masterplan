@@ -75,7 +75,7 @@ git clean -fd -- <outOfScope paths>
 
 The `-fd` flag handles out-of-scope new directories. In-scope edits (the correctly-scoped
 portion of the wave) are preserved. The scope-reverted tasks are left `pending` and
-re-dispatched by the next `recover_and_redispatch` decision, idempotently.
+re-dispatched by the next `recover_wave` decision, idempotently.
 
 The full L1 post-barrier sequence:
 
@@ -163,8 +163,8 @@ satisfies re-entry.
 Legacy events without `data.review` still re-drive conservatively (pre-centralization verdict
 prose is mapped only at the reader seam). New events are never interpreted from prose.
 
-Review is gated by config only — not by `target` or routing eligibility. It is off by default; a
-zero-review run proceeds from implement straight to D6 scope verify.
+Review is gated by config only — not by `target` or routing eligibility. It is on by default; a
+run only skips review when `state.review.adversary` is explicitly off.
 
 ### D6 independence
 

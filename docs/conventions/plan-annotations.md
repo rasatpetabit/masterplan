@@ -10,11 +10,11 @@ this file is the field-level convention the planner agents are briefed against.
 
 ## Who produces what
 
-- **Serial path — `agents/mp-planner.md` (opus).** Reads the approved spec and writes
+- **Serial path — `agents/mp-planner.md` (routing-policy lane `frontier`).** Reads the approved spec and writes
   both `plan.md` and `plan.index.json` directly into the run-bundle dir, emitting the
   canonical task fields below with `id`/`wave`/`codex` already set. `mp
   validate-plan-index` re-checks the result before L1 accepts it.
-- **Parallel path — `agents/mp-subsystem-planner.md` (opus), one per subsystem.** Each
+- **Parallel path — `agents/mp-subsystem-planner.md` (routing-policy lane `frontier`), one per subsystem.** Each
   returns a **fragment** — a subsystem-scoped task list **without** global `id`s or
   `wave`s. `mp merge-plan-fragments` flattens fragments, assigns ids, and derives waves.
   Drafters never see each other's tasks.

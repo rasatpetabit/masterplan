@@ -27,75 +27,73 @@ const planIndex = () => ({
   ],
 });
 
-// --- prepareWave: the pending set + the merge + routing -----------------------------------
+// --- prepareWave: the pending set + the merge + the class-only fabric payload ----------------
 
 test('prepareWave routes only the wave\'s NOT-done tasks (mirrors dispatch_wave)', () => {
-  const { wave, tasks } = prepareWave(state(), planIndex(), 0, { routing: 'auto' }, {});
+  const { wave, tasks } = prepareWave(state(), planIndex(), 0, {}, {});
   assert.equal(wave, 0);
   assert.deepEqual(tasks.map((t) => t.id), [1, 2]); // task 3 is done → excluded
 });
 
-test('prepareWave merges plan.index fields and runs the heuristic per task', () => {
-  const { tasks } = prepareWave(state(), planIndex(), 0, { routing: 'auto' }, {});
+test('prepareWave merges plan.index fields and carries the dispatch class per task', () => {
+  const { tasks } = prepareWave(state(), planIndex(), 0, {}, {});
   const [t1, t2] = tasks;
   assert.equal(t1.description, 'Add a null check to parseConfig');
   assert.deepEqual(t1.verify_commands, ['node --test']);
-  assert.equal(t1.target, 'codex'); // clean → heuristic eligible
-  assert.equal(t2.target, 'inline'); // "Design …" is a judgment verb → ineligible
-  assert.equal(t2.reason, 'heuristic-rejected');
+  // C6: routing is deferred to the policy resolver — every task carries its class, never a
+  // pre-baked target/eligible/reason.
+  assert.equal(t1.class, 'bounded-edit');
+  assert.equal(t2.class, 'bounded-edit');
+  assert.equal(t1.target, undefined);
+  assert.equal(t2.target, undefined);
 });
 
-test('prepareWave honors annotation + env overrides via routeTask', () => {
-  const okAnno = prepareWave(state(), planIndex(), 1, { routing: 'auto' }, {});
-  assert.equal(okAnno.tasks[0].target, 'codex'); // task 4 codex:'ok'
-  assert.equal(okAnno.tasks[0].reason, 'annotation-ok');
-  const suppressed = prepareWave(state(), planIndex(), 1, { routing: 'auto' }, { codexHostSuppressed: true });
-  assert.equal(suppressed.tasks[0].target, 'inline');
-  assert.equal(suppressed.tasks[0].reason, 'host-suppressed');
+test('prepareWave honors a plan-pinned task class', () => {
+  const pidx = planIndex();
+  pidx.tasks[0].class = 'architecture';
+  const { tasks } = prepareWave(state(), pidx, 0, {}, {});
+  assert.equal(tasks[0].class, 'architecture');
+  assert.equal(tasks[1].class, 'bounded-edit'); // unpinned → default
 });
 
 test('prepareWave emits ONLY the lean payload keys (goal 3 — nothing heavy transits context)', () => {
   const { tasks } = prepareWave(state(), planIndex(), 0, {}, {});
   assert.deepEqual(
     Object.keys(tasks[0]).sort(),
-    ['backend', 'description', 'eligible', 'files', 'id', 'reason', 'target', 'verify_commands'],
+    ['class', 'description', 'files', 'id', 'verify_commands'],
   );
 });
 
-// --- prepareWave: fabric phase flag routes through core resolve/guard via the seam ---------
+// --- prepareWave: the strangler phase flag (fabric) is the ONLY path -----------------------
 
-test('prepareWave (fabric via state.dispatch.fabric) defers routing to the seam: class-only payload, NO target/backend', () => {
+test('prepareWave (state.dispatch.fabric) defers routing to the seam: class-only payload, NO target/backend', () => {
   const st = state();
   st.dispatch = { fabric: true };
-  const { tasks } = prepareWave(st, planIndex(), 0, { routing: 'auto' }, {});
+  const { tasks } = prepareWave(st, planIndex(), 0, {}, {});
   // Model selection is deferred to core resolve/guard — masterplan no longer pre-bakes a route.
   assert.deepEqual(
     Object.keys(tasks[0]).sort(),
     ['class', 'description', 'files', 'id', 'verify_commands'],
   );
-  assert.equal(tasks[0].class, 'masterplan-implementation'); // worker default
+  assert.equal(tasks[0].class, 'bounded-edit'); // worker default (A2 repoint)
   assert.equal(tasks[0].target, undefined);
   assert.equal(tasks[0].backend, undefined);
   assert.equal(tasks[0].eligible, undefined);
 });
 
-test('prepareWave (fabric via config.fabric) is the SAME strangler flag as the wave dispatch op', () => {
+test('prepareWave (config.fabric) is the SAME strangler flag as the wave dispatch op', () => {
   const { tasks } = prepareWave(state(), planIndex(), 0, { routing: 'auto', fabric: true }, {});
-  assert.equal(tasks[0].class, 'masterplan-implementation');
+  assert.equal(tasks[0].class, 'bounded-edit');
   assert.equal(tasks[0].target, undefined);
 });
 
-test('prepareWave (fabric) honors a plan-pinned task class', () => {
-  const pidx = planIndex();
-  pidx.tasks[0].class = 'architecture';
-  const { tasks } = prepareWave(state(), pidx, 0, { fabric: true }, {});
-  assert.equal(tasks[0].class, 'architecture');
-});
-
-test('prepareWave (fabric off) is byte-identical to the legacy routeTask/resolveTaskBackend payload', () => {
-  const { tasks } = prepareWave(state(), planIndex(), 0, { routing: 'auto' }, {});
-  assert.equal(tasks[0].target, 'codex'); // legacy routing brain still runs when the flag is off
-  assert.equal(tasks[0].class, undefined);
+test('prepareWave (flag absent) still emits the class-only payload — fabric is unconditional', () => {
+  // C6: there is no longer a non-fabric payload; dispatch-wave fails closed on a non-fabric
+  // bundle. Every prepareWave payload is the class-only fabric shape.
+  const { tasks } = prepareWave(state(), planIndex(), 0, {}, {});
+  assert.equal(tasks[0].class, 'bounded-edit');
+  assert.equal(tasks[0].target, undefined);
+  assert.equal(tasks[0].backend, undefined);
 });
 
 test('prepareWave (fabric) still composes handoff-idempotency keys (context uses class, not target/backend)', () => {
@@ -310,10 +308,13 @@ test('verifyScope: empty everything → vacuously ok', () => {
 });
 
 // --- prepareWave: the implementer-backend descriptor (resolveImplementerBackend) ---
-test('prepareWave attaches a {kind:agent} backend to every task by default (flag off)', () => {
-  const { tasks } = prepareWave(state(), planIndex(), 0, { routing: 'auto' }, {});
+// C6: the qctl seam attaches `backend` ONLY when config.implementer.qctl.enabled === true AND the
+// task is qctl-eligible; {kind:'agent'} (the default) is OMITTED entirely — payloads and handoff
+// keys stay byte-identical for tasks that don't select qctl.
+test('prepareWave omits backend by default — {kind:agent} is never sent on the wire', () => {
+  const { tasks } = prepareWave(state(), planIndex(), 0, {}, {});
   assert.ok(tasks.length >= 1);
-  for (const t of tasks) assert.deepEqual(t.backend, { kind: 'agent' });
+  for (const t of tasks) assert.equal('backend' in t, false, 'default payload must not carry a backend key');
 });
 
 // Fixture allowlist that covers task 1 (files: ['a.js']) and task 4 (files: ['d.js']).
@@ -339,8 +340,8 @@ test('prepareWave attaches a {kind:qctl} backend when implementer.qctl.enabled (
 
 // --- qctlEligible: eligibility predicate tests -----------------------------------------------
 
-// (a) Flag-off routes byte-identically to {kind:'agent'} — no allowlist needed, never consulted.
-test('qctlEligible (a): flag-off backend is byte-identical {kind:agent} with NO allowlist passed', () => {
+// (a) Flag-off omits backend entirely — no allowlist needed, never consulted.
+test('qctlEligible (a): flag-off backend is omitted — no allowlist passed, nothing consulted', () => {
   // Flag-off: no allowlist at all. Must NOT throw or deref allowlist.
   const { tasks } = prepareWave(
     state(), planIndex(), 0,
@@ -348,15 +349,15 @@ test('qctlEligible (a): flag-off backend is byte-identical {kind:agent} with NO 
     // deliberately omit reposAllowlist — it must never be touched
   );
   for (const t of tasks) {
-    assert.deepEqual(t.backend, { kind: 'agent' },
-      `flag-off: task ${t.id} should be {kind:'agent'} but got ${JSON.stringify(t.backend)}`);
+    assert.equal('backend' in t, false,
+      `flag-off: task ${t.id} should carry no backend key but got ${JSON.stringify(t.backend)}`);
   }
 });
 
-test('qctlEligible (a): flag completely absent backend is byte-identical {kind:agent}', () => {
+test('qctlEligible (a): flag completely absent — backend omitted (byte-identical payload)', () => {
   const { tasks } = prepareWave(state(), planIndex(), 0, {}, {});
   for (const t of tasks) {
-    assert.deepEqual(t.backend, { kind: 'agent' });
+    assert.equal('backend' in t, false);
   }
 });
 
@@ -391,7 +392,7 @@ test('qctlEligible (b): task not in allowlist is not eligible (flag on)', () => 
     'file outside any allowlist scope must be ineligible');
 });
 
-test('qctlEligible (b): prepareWave with flag-on + fixture allowlist — infra task downgrades to {kind:agent}', () => {
+test('qctlEligible (b): prepareWave with flag-on + fixture allowlist — infra task omits backend (ineligible → field OMITTED)', () => {
   const infraState = {
     tasks: [
       { id: 1, wave: 0, status: 'pending', files: ['etc/systemd/system/foo.service'] },
@@ -413,8 +414,9 @@ test('qctlEligible (b): prepareWave with flag-on + fixture allowlist — infra t
     { routing: 'auto', implementer: { qctl: { enabled: true } } }, {},
     fixtureAllowlist,
   );
-  assert.equal(tasks[0].backend.kind, 'agent',
-    'infra/systemd task with flag-on must downgrade to {kind:agent}');
+  // C6: an ineligible task's `backend` key is OMITTED entirely (never {kind:'agent'} on the wire).
+  assert.equal('backend' in tasks[0], false,
+    'infra/systemd task with flag-on must omit the backend key');
 });
 
 test('qctlEligible (b): sensitive task is excluded even with flag on and allowlisted files', () => {
@@ -547,12 +549,12 @@ test('prepareWave with dispatchInputs is deterministic (same inputs → same has
   assert.equal(dirty.tasks[0].idempotency.task_spec_hash, a.tasks[0].idempotency.task_spec_hash);
 });
 
-test('prepareWave WITHOUT dispatchInputs keeps the legacy shape byte-identical (no idempotency keys)', () => {
+test('prepareWave WITHOUT dispatchInputs keeps the class-only payload shape (no idempotency keys)', () => {
   const res = prepareWave(state(), planIndex(), 0, {}, {});
   assert.deepEqual(Object.keys(res).sort(), ['scope', 'tasks', 'wave']);
   assert.deepEqual(
     Object.keys(res.tasks[0]).sort(),
-    ['backend', 'description', 'eligible', 'files', 'id', 'reason', 'target', 'verify_commands'],
+    ['class', 'description', 'files', 'id', 'verify_commands'],
   );
 });
 

@@ -260,13 +260,16 @@ test('load-plan: materializes tasks + advances phase→execute atomically; decid
   assert.equal(d.action, 'dispatch_wave');
   assert.equal(d.wave, 0);
 
-  // …and the codex:"ok" task (wave 1) routes by ANNOTATION, not the heuristic — empirical proof the
-  // {id,status,wave,files} field set is correct (prepare-wave sources codex from the index by id).
+  // …and even the codex:"ok" task (wave 1) now routes by the governed CLASS, not the deleted
+  // annotation heuristic — C6 removed the pre-resolved codex/inline/ask brain, so an unpinned task
+  // carries the default implementer class and NO target/eligible/reason. This is the empirical proof
+  // the {id,status,wave,files} field set is correct (prepare-wave sources the class from the index by id).
   const pw = JSON.parse(run(['prepare-wave', `--state=${p}`, `--plan-index=${planIdx}`, '--wave=1']).stdout);
   const t3 = pw.tasks.find((t) => t.id === 3);
-  assert.equal(t3.target, 'codex');
-  assert.equal(t3.eligible, true);
-  assert.equal(t3.reason, 'annotation-ok');
+  assert.equal(t3.class, 'bounded-edit');
+  assert.equal(t3.target, undefined, 'no pre-resolved target (C6)');
+  assert.equal(t3.eligible, undefined, 'no pre-resolved eligibility (C6)');
+  assert.equal(t3.reason, undefined, 'no routing reason (C6)');
 });
 
 // ---- integration: plan.html render artifact (auto-emit at load-plan + the render-plan verb) ----
@@ -1850,15 +1853,20 @@ test('coord-status: is read-only (does not write to state)', () => {
   assert.equal(before, after, 'coord-status must not modify the bundle');
 });
 
-// --- prepare-wave: state.implementer threads to a per-task backend descriptor (the bin wire) ---
-// wave.test passes config directly; THIS proves the state.implementer -> config -> backend wire
-// through the real CLI. buildSeedState never emits `implementer`, so the default is byte-identical.
+// --- prepare-wave: the governed-class fabric payload (C6), with the dormant qctl seam ---
+// C6 deleted the legacy pre-resolved target/eligible/reason routing brain: prepareWave now emits the
+// lean class-only fabric payload {id, description, files, verify_commands, class} unconditionally,
+// with routing deferred to core resolve/guard via the seam (resolveTaskClass -> FABRIC_DEFAULT_CLASS
+// for an unpinned task). backend/target/reason are absent by construction. The ONE exception is the
+// dormant qctl discriminator, attached only when config.implementer.qctl.enabled === true AND the
+// task is qctlEligible (allowlist covers the files); the {kind:'agent'} downgrade is OMITTED entirely.
 //
-// loadPlanTasks seeds state.tasks[].files FROM plan.index (lib/bundle.mjs), so a REAL bundle's state
-// and plan file sets are identical by construction. The generic v8() uses a.txt/b.txt while
-// planIndexFixture() uses src/*.mjs — independently authored, a shape that never co-occurs live — so
-// these align the state files to the plan fixture, the in-sync shape prepareWave's dispatch-time
-// plan/state divergence gate (lib/wave.mjs) expects. (Waves stay v8's: task 1 wave 0, task 2 wave 1.)
+// buildSeedState never emits `implementer`, so the default is byte-identical. loadPlanTasks seeds
+// state.tasks[].files FROM plan.index (lib/bundle.mjs), so a REAL bundle's state and plan file sets
+// are identical by construction. The generic v8() uses a.txt/b.txt while planIndexFixture() uses
+// src/*.mjs — independently authored, a shape that never co-occurs live — so these align the state
+// files to the plan fixture, the in-sync shape prepareWave's dispatch-time plan/state divergence gate
+// (lib/wave.mjs) expects. (Waves stay v8's: task 1 wave 0, task 2 wave 1.)
 const v8AlignedToPlanFixture = (over = {}) => v8({
   tasks: [
     { id: 1, status: 'pending', wave: 0, files: ['src/greet.mjs'] },
@@ -1866,7 +1874,7 @@ const v8AlignedToPlanFixture = (over = {}) => v8({
   ],
   ...over,
 });
-test('prepare-wave: default (no implementer in state) -> every payload task carries backend {kind:agent}', () => {
+test('prepare-wave: default (no implementer in state) -> lean governed-class payload, no backend/target/reason', () => {
   const dir = tmpDir('mp-backend-default-');
   const p = path.join(dir, 'state.yml');
   fs.writeFileSync(p, serializeState(v8AlignedToPlanFixture()));  // task 1 wave 0 (files match plan)
@@ -1874,16 +1882,22 @@ test('prepare-wave: default (no implementer in state) -> every payload task carr
   fs.writeFileSync(planIdx, JSON.stringify(planIndexFixture()));
   const pw = JSON.parse(run(['prepare-wave', `--state=${p}`, `--plan-index=${planIdx}`, '--wave=0']).stdout);
   assert.ok(pw.tasks.length >= 1);
-  for (const t of pw.tasks) assert.deepEqual(t.backend, { kind: 'agent' });
+  for (const t of pw.tasks) {
+    assert.equal(t.class, 'bounded-edit', 'unpinned task carries the governed default class');
+    assert.equal(t.backend, undefined, 'no pre-baked backend on the lean fabric payload');
+    assert.equal(t.target, undefined, 'no pre-resolved target (C6)');
+    assert.equal(t.reason, undefined, 'no routing reason (C6)');
+  }
 });
 
-test('prepare-wave: qctl.enabled=true with no --repos-allowlist wired -> backend {kind:agent} (predicate dormant until flip-time loader)', () => {
+test('prepare-wave: qctl.enabled=true with no --repos-allowlist wired -> no backend discriminator (predicate dormant until flip-time loader)', () => {
   // bin/masterplan.mjs calls prepareWave with 5 args (no reposAllowlist) — the production
   // allowlist loader is a deliberate flip-time precondition (see plan.index task C.flag-flip),
   // NOT implemented in this build. With the flag on but no allowlist threaded through, the
-  // qctlEligible gate (lib/wave.mjs) fail-closes and downgrades {kind:qctl} -> {kind:agent}.
-  // The qctl-positive descriptor (scope==task.files, deliver=patch) is proven at the lib level
-  // in test/wave.test.mjs with a fixture allowlist passed directly to prepareWave.
+  // qctlEligible gate (lib/wave.mjs) fail-closes and the {kind:'agent'} downgrade is OMITTED —
+  // the payload stays byte-identical to the unarmed shape. The qctl-positive descriptor
+  // (scope==task.files, deliver=patch) is proven at the lib level in test/wave.test.mjs with a
+  // fixture allowlist passed directly to prepareWave.
   const dir = tmpDir('mp-backend-qctl-');
   const p = path.join(dir, 'state.yml');
   fs.writeFileSync(p, serializeState(v8AlignedToPlanFixture({ implementer: { qctl: { enabled: true } } })));
@@ -1891,7 +1905,8 @@ test('prepare-wave: qctl.enabled=true with no --repos-allowlist wired -> backend
   fs.writeFileSync(planIdx, JSON.stringify(planIndexFixture()));
   const pw = JSON.parse(run(['prepare-wave', `--state=${p}`, `--plan-index=${planIdx}`, '--wave=0']).stdout);
   const t1 = pw.tasks.find((t) => t.id === 1);
-  assert.deepEqual(t1.backend, { kind: 'agent' });
+  assert.equal(t1.class, 'bounded-edit');
+  assert.equal(t1.backend, undefined, 'dormant qctl seam leaves the payload unadorned');
 });
 
 // flag-flip precondition #5: the production --repos-allowlist loader. prepare-wave now parses an
@@ -1917,12 +1932,15 @@ test('prepare-wave: qctl.enabled=true WITH --repos-allowlist covering the task f
   assert.equal(t1.backend.deliver, 'patch');
 
   // Negative control: the gate is genuinely consulted (not flag-only). An allowlist that does NOT
-  // cover the files fail-closes back to {kind:agent} even with the flag on AND parsed.
+  // cover the files fail-closes — and under C6 the {kind:'agent'} downgrade is OMITTED entirely, so
+  // the payload reverts to the lean class-only shape (no backend field at all).
   const noCover = JSON.stringify({ 'test-repo': { scope: ['other/**'] } });
   const pw2 = JSON.parse(run([
     'prepare-wave', `--state=${p}`, `--plan-index=${planIdx}`, '--wave=0', `--repos-allowlist=${noCover}`,
   ]).stdout);
-  assert.deepEqual(pw2.tasks.find((t) => t.id === 1).backend, { kind: 'agent' });
+  const t2 = pw2.tasks.find((t) => t.id === 1);
+  assert.equal(t2.class, 'bounded-edit');
+  assert.equal(t2.backend, undefined, 'ineligible task: no backend discriminator (C6 omits the agent downgrade)');
 });
 
 test('prepare-wave: a malformed --repos-allowlist (not JSON) exits non-zero with a hint', () => {
@@ -3090,4 +3108,65 @@ test('record-result awaits native review before the state transaction (CLI order
   assert.equal(out.blocking_reviews[0].verdict, 'reject',
     'CLI must await native review before recordWaveResult so blocking_reviews is populated');
   assert.equal(read(statePath).tasks[0].status, 'done');
+});
+
+test('A5: record-result does NOT finalize the wave-dispatch record to \'recorded\' when nothing was recorded', async () => {
+  // Audit A5: record-result previously stamped status 'recorded' on any 'pending'
+  // wave-dispatch record regardless of whether recRes.recorded landed any task — a
+  // lost-to-other / recorded-nothing outcome would let the next attempt believe the
+  // wave completed. Now only a recorded-non-empty transaction finalizes; a nothing
+  // outcome leaves the record 'pending' with a record_error and keeps it re-drivable.
+  const repo = tmpDir('mp-bin-a5-');
+  const git = (...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
+  git('init', '--initial-branch=main');
+  git('config', 'user.email', 'test@test');
+  git('config', 'user.name', 'test');
+  git('config', 'commit.gpgsign', 'false');
+  fs.writeFileSync(path.join(repo, 'seed.txt'), 'seed\n');
+  git('add', '.');
+  git('commit', '-q', '-m', 'initial');
+
+  const slug = 'a5-record-nothing';
+  const bundleDir = path.join(repo, 'docs', 'masterplan', slug);
+  fs.mkdirSync(bundleDir, { recursive: true });
+  const statePath = path.join(bundleDir, 'state.yml');
+  const WT = path.join(repo, '.worktrees', slug);
+  fs.mkdirSync(path.dirname(WT), { recursive: true });
+  git('worktree', 'add', '-b', `masterplan/${slug}`, WT, 'HEAD');
+  const head = git('rev-parse', 'HEAD').trim();
+  fs.writeFileSync(statePath, serializeState({
+    schema_version: 8,
+    slug,
+    status: 'in-progress',
+    phase: 'execute',
+    worktree: WT,
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    active_run: { wave: 1, kind: 'execute', phase: 'launching', baseline: [], scope: [], started_at: 'T0' },
+    dispatch: { fabric: true },
+    review: { adversary: false },
+    concurrency: { owner_lock: 'off' },
+  }));
+  // A 'pending' wave-dispatch record (the native launch persisted this pre-spawn).
+  fs.writeFileSync(path.join(bundleDir, 'wave-1.dispatch.json'), JSON.stringify({
+    key: `mp-wave-dispatch-v1|${slug}|1|dispatch_fabric`,
+    run_id: slug, wave: 1, op: 'dispatch_fabric',
+    contract_version: 'fabric-native-v1', status: 'pending', attempt: 1,
+    wave_token: `mp-wave-${slug}-w1-a1`, handles: [], dispatched_at: 'T0',
+    tasks: [{ task_id: 1, class: 'bounded-edit', handoff_key: 'k1' }],
+  }, null, 2));
+
+  // The result records NOTHING: task 1 stays pending (e.g. a lost/errored worker).
+  const resultPath = path.join(bundleDir, 'native-result.json');
+  fs.writeFileSync(resultPath, JSON.stringify({
+    wave: 1,
+    tasks: [{ task_id: 1, digest: { task_id: 1, status: 'failed', start_sha: head, files_changed: [], verify: [], summary: 'worker lost' } }],
+  }));
+  const r = run(['record-result', `--state=${statePath}`, `--result-file=${resultPath}`, `--worktree=${WT}`, '--now=3000'], { timeout: 30_000 });
+  assert.equal(r.status, 0, `record-result must succeed: ${r.stderr}\n${r.stdout}`);
+  const rec = JSON.parse(fs.readFileSync(path.join(bundleDir, 'wave-1.dispatch.json'), 'utf8'));
+  assert.notEqual(rec.status, 'recorded', 'A5: nothing recorded — must NOT be finalized to recorded');
+  assert.equal(rec.status, 'pending', 'A5: nothing recorded — the record stays pending (re-drivable)');
+  assert.ok(rec.record_error, 'A5: the nothing-recorded outcome must surface on the record as record_error');
+  assert.ok(rec.record_error.reason, 'A5: record_error must carry a reason');
+  assert.equal(read(statePath).tasks[0].status, 'pending', 'no task was marked done');
 });

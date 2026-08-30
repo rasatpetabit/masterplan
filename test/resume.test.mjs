@@ -4,8 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { decideNextAction, BLACKBOARD_STATES, classifyLegacyMarker } from '../lib/resume.mjs';
-import { composeHandoffKey, computeTaskSpecHash, computeInputFingerprint, IDEMPOTENCY_VERSION } from '../lib/fabric-idempotency.mjs';
+import { decideNextAction, classifyLegacyMarker } from '../lib/resume.mjs';
 
 const t = (id, wave, status, files = []) => ({ id, wave, status, files });
 const base = (over = {}) => ({ pending_gate: null, active_run: null, tasks: [], ...over });
@@ -385,217 +384,80 @@ test('GUARD: a promoted active_run with a non-integer (null) wave throws — nev
 });
 
 // ---------------------------------------------------------------------------
-// Blackboard-backed crash recovery (spec §5.5 handoff idempotency — Task 39)
+// Dead-run recovery — only executable recovery actions
 // ---------------------------------------------------------------------------
 //
-// The dead-run-with-work-outstanding path consults `state.blackboard` (a map of the dead run's
-// dispatch records keyed by the FULL handoff key) and resolves each incomplete task against its
-// recorded result instead of blindly re-dispatching. The crash window is the MISMATCH between
-// the two completion surfaces: every incomplete task is `pending` in state.yml (the L1
-// record-result commit never ran) while the blackboard item status discriminates the recovery.
+// Recovery is derived from disk state alone. There is no blackboard-backed
+// replay path (the old record-replay action had no handler in the continue
+// loop and could only surface as a decide-error). A dead run with work
+// outstanding ALWAYS resumes via `recover_wave` — reset the incomplete
+// wave's declared file scope and re-dispatch. A dead run whose wave is
+// complete finalizes; a live run waits. These are the only three outcomes.
 
-// Build a real fabric-idem-v1 handoff key so tests mirror the actual blackboard key shape: the
-// record's map key IS the full composed handoff key (per the §5.5 REVIEW FIX).
-function makeHandoffKey(taskId = 't1') {
-  const specHash = computeTaskSpecHash({ body: { id: taskId, description: 'do thing', files: [`${taskId}.txt`] } });
-  const fp = computeInputFingerprint({
-    head: '0'.repeat(40),
-    dirtyDigest: '',
-    policyVersion: 'pv1',
-    workerVersion: 'wv1',
+test('dead run with work outstanding -> recover_wave: resets only the wave\'s incomplete file scope', () => {
+  const run = { run_id: 'run-x', task_id: 7, wave: 1 };
+  const s = base({
+    active_run: run,
+    tasks: [
+      t(1, 1, 'done', ['a.txt']),
+      t(2, 1, 'pending', ['b.txt', 'c.txt']),
+    ],
   });
-  return composeHandoffKey('run-x', taskId, specHash, fp);
-}
-
-// A task with a handoff_key for the blackboard-backed path.
-function bt(id, wave, status, files, handoff_key) {
-  return { ...t(id, wave, status, files), handoff_key };
-}
-
-// Blackboard map keyed by each record's handoff_key.
-function bb(records) {
-  const map = {};
-  for (const r of records) map[r.handoff_key] = r;
-  return map;
-}
-
-test("'result exists, commit missing' (blackboard done) -> REPLAY, no re-run: resetPaths empty, not in redispatch", () => {
-  const key = makeHandoffKey('t1');
-  const record = { handoff_key: key, status: 'done', result: { commit: 'abc123', patch: 'patch-digest' } };
-  const task = bt('t1', 1, 'pending', ['t1.txt'], key);
-  const s = base({ active_run: { run_id: 'run-x', task_id: 7, wave: 1 }, tasks: [task], blackboard: bb([record]) });
-  const d = decideNextAction(s, { alive: false });
-  assert.equal(d.action, 'recover_from_blackboard');
-  assert.equal(d.replay.length, 1);
-  assert.equal(d.replay[0].task, task);
-  assert.equal(d.replay[0].record, record);
-  assert.deepEqual(d.redispatch, []);
-  assert.deepEqual(d.refused, []);
-  // Replayed task completed -> its file scope must NOT be reset (no re-run).
-  assert.deepEqual(d.resetPaths, []);
-  assert.equal(d.staleTaskId, 7);
-  assert.equal(d.wave, 1);
-});
-
-test("'genuine re-dispatch needed' (pending/claimed/failed) -> REDISPATCH, not replay", () => {
-  for (const status of ['pending', 'claimed', 'failed']) {
-    const key = makeHandoffKey('t1');
-    const record = { handoff_key: key, status };
-    const task = bt('t1', 1, 'pending', ['t1.txt'], key);
-    const s = base({ active_run: { run_id: 'run-x', task_id: 7, wave: 1 }, tasks: [task], blackboard: bb([record]) });
-    const d = decideNextAction(s, { alive: false });
-    assert.equal(d.action, 'recover_from_blackboard', `status=${status}`);
-    assert.deepEqual(d.replay, [], `status=${status} must not replay`);
-    assert.equal(d.redispatch.length, 1, `status=${status} must redispatch`);
-    assert.deepEqual(d.refused, [], `status=${status} must not refuse`);
-    // Genuine re-dispatch resets the declared file scope.
-    assert.deepEqual(d.resetPaths, ['t1.txt'], `status=${status} resets scope`);
-  }
-});
-
-test("no blackboard record for a task -> genuine re-dispatch (redispatch, empty reset of scope still applies)", () => {
-  const key = makeHandoffKey('t1');
-  const task = bt('t1', 1, 'pending', ['t1.txt'], key);
-  // Blackboard map present but empty -> no record for this key.
-  const s = base({ active_run: { run_id: 'run-x', task_id: 7, wave: 1 }, tasks: [task], blackboard: bb([]) });
-  const d = decideNextAction(s, { alive: false });
-  assert.equal(d.action, 'recover_from_blackboard');
-  assert.deepEqual(d.replay, []);
-  assert.deepEqual(d.refused, []);
-  assert.equal(d.redispatch.length, 1);
-  assert.deepEqual(d.resetPaths, ['t1.txt']);
-});
-
-test('cancelled blackboard item -> claim REFUSED: not replayed, not re-dispatched, not reset', () => {
-  const key = makeHandoffKey('t1');
-  const record = { handoff_key: key, status: 'cancelled' };
-  const task = bt('t1', 1, 'pending', ['t1.txt'], key);
-  const s = base({ active_run: { run_id: 'run-x', task_id: 7, wave: 1 }, tasks: [task], blackboard: bb([record]) });
-  const d = decideNextAction(s, { alive: false });
-  assert.equal(d.action, 'recover_from_blackboard');
-  assert.equal(d.refused.length, 1);
-  assert.equal(d.refused[0].task, task);
-  assert.equal(d.refused[0].record, record);
-  assert.deepEqual(d.replay, []);
-  assert.deepEqual(d.redispatch, []);
-  // A cancelled item is refused a claim -> not re-dispatched -> its scope is not reset.
-  assert.deepEqual(d.resetPaths, []);
-});
-
-test('explicit blackboard state transitions are modelled: BLACKBOARD_STATES is exactly the spec set', () => {
-  assert.deepEqual(BLACKBOARD_STATES, ['pending', 'claimed', 'done', 'failed', 'cancelled']);
-});
-
-test('mixed wave: replay + redispatch + refused partition independently; resetPaths only from redispatch', () => {
-  const k1 = makeHandoffKey('t1');
-  const k2 = makeHandoffKey('t2');
-  const k3 = makeHandoffKey('t3');
-  const k4 = makeHandoffKey('t4');
-  const records = [
-    { handoff_key: k1, status: 'done', result: { commit: 'c1' } },
-    { handoff_key: k2, status: 'pending' },
-    { handoff_key: k3, status: 'cancelled' },
-    { handoff_key: k4, status: 'failed' },
-  ];
-  const tasks = [
-    bt('t1', 1, 'pending', ['f1.txt'], k1), // done -> replay
-    bt('t2', 1, 'pending', ['f2.txt'], k2), // pending -> redispatch
-    bt('t3', 1, 'pending', ['f3.txt'], k3), // cancelled -> refused
-    bt('t4', 1, 'pending', ['f4.txt'], k4), // failed -> redispatch (retry)
-  ];
-  const s = base({ active_run: { run_id: 'run-x', task_id: 7, wave: 1 }, tasks, blackboard: bb(records) });
-  const d = decideNextAction(s, { alive: false });
-  assert.equal(d.action, 'recover_from_blackboard');
-  assert.equal(d.replay.length, 1);
-  assert.equal(d.replay[0].task.id, 't1');
-  assert.equal(d.redispatch.length, 2);
-  assert.deepEqual(d.redispatch.map((x) => x.id).sort(), ['t2', 't4']);
-  assert.equal(d.refused.length, 1);
-  assert.equal(d.refused[0].task.id, 't3');
-  // resetPaths only from the genuinely re-dispatched tasks (t2, t4) — NOT replayed (t1) or refused (t3).
-  assert.deepEqual(d.resetPaths.sort(), ['f2.txt', 'f4.txt']);
-});
-
-test('frozen dispatch record: a done record whose key no longer matches the task is NOT replayed (re-dispatch)', () => {
-  // The task stored one key at dispatch time, but the blackboard record carries a different key
-  // (corruption / a stale result for a changed spec/input). decideReuse rejects the mismatch and
-  // the resume path re-dispatches rather than replaying a result that may belong to different work.
-  const taskKey = makeHandoffKey('t1');
-  const differentKey = makeHandoffKey('t1-different');
-  const record = { handoff_key: differentKey, status: 'done', result: { commit: 'c1' } };
-  const task = bt('t1', 1, 'pending', ['t1.txt'], taskKey);
-  // The blackboard map is keyed by the record's own (mismatched) key; the task references taskKey,
-  // so the lookup `blackboard[taskKey]` would miss — but to exercise the key-mismatch guard inside
-  // decideReuse we instead key the map by taskKey and point it at the mismatched record.
-  const map = { [taskKey]: record };
-  const s = base({ active_run: { run_id: 'run-x', task_id: 7, wave: 1 }, tasks: [task], blackboard: map });
-  const d = decideNextAction(s, { alive: false });
-  assert.equal(d.action, 'recover_from_blackboard');
-  assert.deepEqual(d.replay, []);
-  assert.equal(d.redispatch.length, 1);
-});
-
-test('unknown/corrupt blackboard status is treated as absent -> re-dispatch (§5.4 durability protocol)', () => {
-  const key = makeHandoffKey('t1');
-  const record = { handoff_key: key, status: 'corrupt-garbage' };
-  const task = bt('t1', 1, 'pending', ['t1.txt'], key);
-  const s = base({ active_run: { run_id: 'run-x', task_id: 7, wave: 1 }, tasks: [task], blackboard: bb([record]) });
-  const d = decideNextAction(s, { alive: false });
-  assert.equal(d.action, 'recover_from_blackboard');
-  assert.deepEqual(d.replay, []);
-  assert.deepEqual(d.refused, []);
-  assert.equal(d.redispatch.length, 1);
-});
-
-test('no blackboard map -> legacy recover_wave (byte-identical, A9)', () => {
-  // No state.blackboard -> the seam falls back to the legacy path, byte-identical to pre-blackboard.
-  const key = makeHandoffKey('t1');
-  const task = bt('t1', 1, 'pending', ['t1.txt'], key);
-  const s = base({ active_run: { run_id: 'run-x', task_id: 7, wave: 1 }, tasks: [task] });
   const d = decideNextAction(s, { alive: false });
   assert.equal(d.action, 'recover_wave');
-  assert.deepEqual(d.tasks, [task]);
-  assert.deepEqual(d.resetPaths, ['t1.txt']);
+  assert.equal(d.wave, 1);
+  assert.deepEqual(d.tasks, [t(2, 1, 'pending', ['b.txt', 'c.txt'])]);
+  assert.deepEqual(d.resetPaths.sort(), ['b.txt', 'c.txt']);
   assert.equal(d.staleTaskId, 7);
 });
 
-test('task without a stored handoff_key -> genuine re-dispatch (no record to replay against)', () => {
-  // A task with no handoff_key cannot be matched to a blackboard record -> re-dispatch.
-  const task = t('t1', 1, 'pending', ['t1.txt']); // no handoff_key
-  const s = base({ active_run: { run_id: 'run-x', task_id: 7, wave: 1 }, tasks: [task], blackboard: bb([]) });
+test('dead run, all wave tasks done -> finalize_run (never re-dispatch completed work)', () => {
+  const run = { run_id: 'run-x', task_id: 7, wave: 1 };
+  const s = base({ active_run: run, tasks: [t(1, 1, 'done', ['a.txt']), t(2, 1, 'done', ['b.txt'])] });
   const d = decideNextAction(s, { alive: false });
-  assert.equal(d.action, 'recover_from_blackboard');
-  assert.deepEqual(d.replay, []);
-  assert.equal(d.redispatch.length, 1);
+  assert.equal(d.action, 'finalize_run');
+  assert.deepEqual(d.run, run);
 });
 
-test('phase-1 active_run (no task_id) with blackboard -> resolveWithRecords path with staleTaskId null', () => {
-  // Crashed at launch. With blackboard records present, phase-1 also resolves per-record.
-  const key = makeHandoffKey('t1');
-  const record = { handoff_key: key, status: 'done', result: { commit: 'c1' } };
-  const task = bt('t1', 1, 'pending', ['t1.txt'], key);
-  const s = base({ active_run: { run_id: 'run-x', wave: 1, phase: 'launching' }, tasks: [task], blackboard: bb([record]) });
+test('live run -> wait (never second-guess a promoted run)', () => {
+  const run = { run_id: 'run-x', task_id: 7, wave: 1 };
+  const s = base({ active_run: run, tasks: [t(1, 1, 'pending', ['a.txt'])] });
+  const d = decideNextAction(s, { alive: true });
+  assert.equal(d.action, 'wait');
+  assert.deepEqual(d.run, run);
+});
+
+test('phase-1 active_run (crashed at launch, no task_id) -> recover_wave with null staleTaskId', () => {
+  const s = base({ active_run: { run_id: 'run-x', wave: 1, phase: 'launching' }, tasks: [t(1, 1, 'pending', ['a.txt'])] });
   const d = decideNextAction(s, {});
-  assert.equal(d.action, 'recover_from_blackboard');
-  assert.equal(d.replay.length, 1);
+  assert.equal(d.action, 'recover_wave');
+  assert.equal(d.wave, 1);
+  assert.deepEqual(d.resetPaths, ['a.txt']);
   assert.equal(d.staleTaskId, null);
 });
 
-test('resolveWithRecords is pure: does not mutate state, tasks, or the blackboard map', () => {
-  const key = makeHandoffKey('t1');
-  const record = { handoff_key: key, status: 'done', result: { commit: 'c1' } };
-  const task = bt('t1', 1, 'pending', ['t1.txt'], key);
-  const s = base({ active_run: { run_id: 'run-x', task_id: 7, wave: 1 }, tasks: [task], blackboard: bb([record]) });
+test('recover_wave respects blocked/waived tasks: they are not re-dispatched, not reset', () => {
+  const run = { run_id: 'run-x', task_id: 7, wave: 1 };
+  const s = base({
+    active_run: run,
+    tasks: [
+      t(1, 1, 'pending', ['a.txt']),
+      t(2, 1, 'blocked', ['b.txt']),
+      t(3, 1, 'waived', ['c.txt']),
+    ],
+  });
+  const d = decideNextAction(s, { alive: false });
+  assert.equal(d.action, 'recover_wave');
+  assert.deepEqual(d.tasks.map((x) => x.id), [1]);
+  assert.deepEqual(d.resetPaths, ['a.txt']);
+});
+
+test('recover is pure: decideNextAction does not mutate the input state', () => {
+  const run = { run_id: 'run-x', task_id: 7, wave: 1 };
+  const s = base({ active_run: run, tasks: [t(1, 1, 'pending', ['a.txt'])] });
   const snapshot = structuredClone(s);
   decideNextAction(s, { alive: false });
   assert.deepEqual(s, snapshot);
-});
-
-test('handoff key shape: the blackboard map key is the full fabric-idem-v1 composed key', () => {
-  const key = makeHandoffKey('t1');
-  assert.ok(key.startsWith(`${IDEMPOTENCY_VERSION}:run-x:t1:`), 'key carries run_id + task_id');
-  // The key has 5 colon-separated segments: version, run, task, spec_hash, fingerprint.
-  assert.equal(key.split(':').length, 5);
 });
 
 // ---------------------------------------------------------------------------

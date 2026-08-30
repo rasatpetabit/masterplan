@@ -4,22 +4,18 @@
 //   A2: issueBodyForTask / parseIssueBody round-trip (happy + edge)
 //   A3: validateClaimSettle — already-claimed rejection + same-assignee re-claim
 //   A4: selectClaimableUnits — disjoint-file & wave-order selection (dep satisfaction)
-//   A5: nextWaveToPublish — wave ordering + null-on-incomplete
+//   A5/A7: (removed — dead exports with no production callers)
 //   A6: reconcileIntegration — idempotence as a pure-state property
-//   All others: dedupKey, findDuplicates, canTransition, mergeBatchPlan
+//   A8: refSafePlanHash / computeCoordDefaults — publish bootstrap
+//   A1/A2: (removed — dead exports with no production callers)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   issueBodyForTask,
   parseIssueBody,
-  dedupKey,
-  findDuplicates,
-  canTransition,
   validateClaimSettle,
   selectClaimableUnits,
-  nextWaveToPublish,
   reconcileIntegration,
-  mergeBatchPlan,
   isTerminalIssueStatus,
   isValidIssueStatus,
   ISSUE_MAP_STATUSES,
@@ -117,77 +113,6 @@ test('A2: issueBodyForTask does not mutate its inputs', () => {
   const origFiles = [...task.files];
   issueBodyForTask(task, opts);
   assert.deepEqual(task.files, origFiles, 'task.files must not be mutated');
-});
-
-// ============================================================================
-// A1 — dedupKey + findDuplicates
-// ============================================================================
-
-test('dedupKey returns "<run_slug>#<task_id>" for a parsed object', () => {
-  assert.equal(dedupKey({ run_slug: 'my-run', task_id: '7' }), 'my-run#7');
-});
-
-test('dedupKey handles null/missing fields gracefully', () => {
-  assert.equal(dedupKey({}), '#');
-  assert.equal(dedupKey(null), '#');
-});
-
-test('findDuplicates returns empty array when no duplicates', () => {
-  const body1 = issueBodyForTask({ id: 1 }, { runSlug: 'r' });
-  const body2 = issueBodyForTask({ id: 2 }, { runSlug: 'r' });
-  const result = findDuplicates([{ body: body1 }, { body: body2 }]);
-  assert.deepEqual(result, []);
-});
-
-test('findDuplicates returns conflicting groups (same run_slug + task_id)', () => {
-  const bodyA = issueBodyForTask({ id: 3 }, { runSlug: 'r' });
-  const bodyB = issueBodyForTask({ id: 3 }, { runSlug: 'r' }); // duplicate
-  const bodyC = issueBodyForTask({ id: 4 }, { runSlug: 'r' });
-  const dupes = findDuplicates([{ body: bodyA, number: 10 }, { body: bodyB, number: 11 }, { body: bodyC, number: 12 }]);
-  assert.equal(dupes.length, 1, 'one duplicate group');
-  assert.equal(dupes[0].length, 2, 'group has two issues');
-});
-
-test('findDuplicates skips issues with non-masterplan bodies (no sentinel)', () => {
-  const bodyOk = issueBodyForTask({ id: 1 }, { runSlug: 'r' });
-  const result = findDuplicates([{ body: bodyOk }, { body: 'regular GitHub issue' }]);
-  assert.deepEqual(result, []);
-});
-
-test('findDuplicates returns empty array on non-array input', () => {
-  assert.deepEqual(findDuplicates(null), []);
-  assert.deepEqual(findDuplicates({}), []);
-});
-
-// ============================================================================
-// A2 — canTransition (label state machine)
-// ============================================================================
-
-test('canTransition: valid edges return true', () => {
-  assert.ok(canTransition('open', 'claimed'), 'open → claimed');
-  assert.ok(canTransition('claimed', 'open'), 'claimed → open (release)');
-  assert.ok(canTransition('claimed', 'pr-open'), 'claimed → pr-open');
-  assert.ok(canTransition('pr-open', 'closed'), 'pr-open → closed');
-});
-
-test('canTransition: invalid edges return false', () => {
-  assert.equal(canTransition('open', 'closed'), false, 'open → closed not allowed');
-  assert.equal(canTransition('open', 'pr-open'), false, 'open → pr-open not allowed');
-  assert.equal(canTransition('pr-open', 'open'), false, 'pr-open → open not allowed');
-  assert.equal(canTransition('pr-open', 'claimed'), false, 'pr-open → claimed not allowed');
-  assert.equal(canTransition('closed', 'open'), false, 'closed is terminal');
-  assert.equal(canTransition('closed', 'claimed'), false, 'closed is terminal');
-  assert.equal(canTransition('claimed', 'closed'), false, 'claimed → closed not allowed directly');
-});
-
-test('canTransition: self-loops return false', () => {
-  assert.equal(canTransition('open', 'open'), false);
-  assert.equal(canTransition('claimed', 'claimed'), false);
-});
-
-test('canTransition: unknown states return false', () => {
-  assert.equal(canTransition('unknown', 'open'), false);
-  assert.equal(canTransition('open', 'unknown'), false);
 });
 
 // ============================================================================
@@ -362,51 +287,6 @@ test('A4: returns [] on non-array input', () => {
 });
 
 // ============================================================================
-// A5 — nextWaveToPublish
-// ============================================================================
-
-test('A5: returns 0 when no waves published yet', () => {
-  assert.equal(nextWaveToPublish({}), 0);
-});
-
-test('A5: returns next wave when all published waves are fully merged', () => {
-  const waves = {
-    0: { issues: [], allMerged: true },
-    1: { issues: [], allMerged: true },
-  };
-  assert.equal(nextWaveToPublish(waves), 2);
-});
-
-test('A5: returns null when current wave is not fully merged', () => {
-  const waves = {
-    0: { issues: [], allMerged: true },
-    1: { issues: [], allMerged: false }, // incomplete
-  };
-  assert.equal(nextWaveToPublish(waves), null);
-});
-
-test('A5: returns null when wave 0 is not merged (nothing unblocked yet)', () => {
-  const waves = {
-    0: { issues: [], allMerged: false },
-  };
-  assert.equal(nextWaveToPublish(waves), null);
-});
-
-test('A5: handles non-sequential wave numbers (gaps)', () => {
-  // Wave 0 merged, wave 2 merged — the "next" is wave 3 (max+1)
-  const waves = {
-    0: { allMerged: true },
-    2: { allMerged: true },
-  };
-  assert.equal(nextWaveToPublish(waves), 3);
-});
-
-test('A5: returns null on null/invalid input', () => {
-  assert.equal(nextWaveToPublish(null), null);
-  assert.equal(nextWaveToPublish('string'), null);
-});
-
-// ============================================================================
 // A6 — reconcileIntegration (idempotence as a pure-state property)
 // ============================================================================
 
@@ -515,46 +395,6 @@ test('A6: reconcileIntegration does not mutate inputs', () => {
 test('A6: returns [] on bad inputs', () => {
   assert.deepEqual(reconcileIntegration(null, []), []);
   assert.deepEqual(reconcileIntegration({}, null), []);
-});
-
-// ============================================================================
-// A7 — mergeBatchPlan
-// ============================================================================
-
-test('mergeBatchPlan: returns [] for empty input', () => {
-  assert.deepEqual(mergeBatchPlan([]), []);
-  assert.deepEqual(mergeBatchPlan(null), []);
-});
-
-test('mergeBatchPlan: single PR has recheckBefore=false', () => {
-  const plan = mergeBatchPlan([{ task_id: '3', number: 42 }]);
-  assert.equal(plan.length, 1);
-  assert.equal(plan[0].recheckBefore, false);
-  assert.equal(plan[0].pr.number, 42);
-});
-
-test('mergeBatchPlan: first PR no re-check, subsequent PRs get re-check', () => {
-  const prs = [
-    { task_id: '2', number: 20 },
-    { task_id: '5', number: 50 },
-    { task_id: '1', number: 10 },
-  ];
-  const plan = mergeBatchPlan(prs);
-  assert.equal(plan.length, 3);
-  // Sorted by task_id: 1, 2, 5
-  assert.equal(plan[0].pr.task_id, '1');
-  assert.equal(plan[0].recheckBefore, false);
-  assert.equal(plan[1].pr.task_id, '2');
-  assert.equal(plan[1].recheckBefore, true);
-  assert.equal(plan[2].pr.task_id, '5');
-  assert.equal(plan[2].recheckBefore, true);
-});
-
-test('mergeBatchPlan: does not mutate input array', () => {
-  const prs = [{ task_id: '2', number: 20 }, { task_id: '1', number: 10 }];
-  const origFirst = prs[0].task_id;
-  mergeBatchPlan(prs);
-  assert.equal(prs[0].task_id, origFirst, 'input array must not be mutated');
 });
 
 // ============================================================================
