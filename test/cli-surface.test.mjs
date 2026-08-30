@@ -86,10 +86,10 @@ function extractDocSurface() {
 }
 
 const binCases = new Set(
-  fs
-    .readFileSync(path.join(ROOT, 'bin/masterplan.mjs'), 'utf8')
-    .matchAll(/^    case '([a-z0-9-]+)':/gm)
-    .map((x) => x[1]),
+  Array.from(
+    fs.readFileSync(path.join(ROOT, 'bin/masterplan.mjs'), 'utf8').matchAll(/^    case '([a-z0-9-]+)':/gm),
+    (x) => x[1],
+  ),
 );
 
 test('every documented mp flag is a recognized KNOWN_FLAGS member (positive cross-check)', () => {

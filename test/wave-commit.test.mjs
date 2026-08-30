@@ -924,6 +924,9 @@ test('A8 workspaceRootFor derives the repo-root parent, off-fleet and non-null',
   const repo = path.join(wsRoot, 'repo');
   fs.mkdirSync(repo, { recursive: true });
   git(repo, 'init', '--initial-branch=main');
+  git(repo, 'config', 'user.email', 'test@test');
+  git(repo, 'config', 'user.name', 'test');
+  git(repo, 'config', 'commit.gpgsign', 'false');
   write(repo, 'seed.txt', 'seed\n');
   git(repo, 'add', '.');
   git(repo, 'commit', '-q', '-m', 'seed');
