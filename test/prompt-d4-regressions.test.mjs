@@ -20,12 +20,13 @@ test('D4: bare mp-planner name present where the planner is dispatched', () => {
   assert.ok(/`?mp-planner`?/.test(prompt), 'prompt should dispatch the bare mp-planner name');
 });
 
-test('D4/C5: no deleted probe/liveness vocabulary remains', () => {
+test('D4/C5: deleted probe/liveness vocabulary gone; continue handshake survives', () => {
   // The probe (alive/reap) machinery was removed (C5); the prompt named a nonexistent
-  // 'liveness-check' op and taught --alive/--dead probe flags.
+  // 'liveness-check' op. But `--alive`/`--dead` are the LEGITIMATE owner-liveness
+  // handshake of `mp continue` — the C5 removal must not over-delete them.
   assert.ok(!/liveness-check/.test(prompt), 'prompt must not name the nonexistent liveness-check op');
-  assert.ok(!/--alive\b/.test(prompt), 'prompt must not teach the deleted --alive probe flag');
-  assert.ok(!/--dead\b/.test(prompt), 'prompt must not teach the deleted --dead probe flag');
+  assert.ok(/--alive/.test(prompt), 'the continue --alive handshake flag must survive the probe removal');
+  assert.ok(/--dead/.test(prompt), 'the continue --dead handshake flag must survive the probe removal');
 });
 
 test('D4: probe op itself is not re-taught as a dispatch step', () => {
