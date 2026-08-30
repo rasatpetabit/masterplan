@@ -237,8 +237,9 @@ return_shape: |
 purpose: Step C step 3a serial implementer dispatch (v2.4.0+ pre-dispatch visibility, contractified v5.8.0)
 algorithm: |
   Orchestrator dispatches the resolved implementer for the named serial
-  (non-wave) task — a `masterplan:mp-implementer` Agent under Claude Code,
-  or inline implementation under a Codex host. `routeTask`'s `target` is
+  (non-wave) task — a `builder`-role agent on the task's governed routing
+  lane (the plan `class`, e.g. `bounded-edit`/`agentic-loop`), or inline
+  implementation under a Codex host. `routeTask`'s `target` is
   log-only; the dispatched backend is `resolveImplementerBackend`
   ({kind:'agent'} | {kind:'qctl'}).
 

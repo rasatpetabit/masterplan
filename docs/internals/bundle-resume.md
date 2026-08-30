@@ -29,7 +29,7 @@ No other external state enters the function.
 | `surface_gate` | A `pending_gate` entry exists in `state.yml`. |
 | `wait` | An in-flight run is confirmed live (`alive === true`). |
 | `finalize_run` | The active run's wave is fully `done` on disk, run is dead. |
-| `recover_and_redispatch` | An execute-wave run is dead (or crashed before launch) with tasks still pending. |
+| `recover_wave` | An execute-wave run is dead (or crashed before launch) with tasks still pending. |
 | `recover_plan_run` | A planning run is dead or crashed; re-run the planner fan-out. |
 | `dispatch_wave` | No active run, no gate; dispatches the lowest-numbered pending wave. |
 | `resume_phase` | Bundle is in `brainstorm` or `plan` phase with no tasks seeded yet (mid-design state). |
@@ -76,14 +76,14 @@ close that window.
 On resume, `decideNextAction` inspects `active_run`:
 
 - **Phase-1 marker (no `task_id`)** — the process crashed between writing the marker and receiving
-  run handles. There is nothing to probe. For an execute wave → `recover_and_redispatch`; for a
+  run handles. There is nothing to probe. For an execute wave → `recover_wave`; for a
   planning run → `recover_plan_run`. `staleTaskId` is `null` in both cases (nothing to reconcile).
 
 - **Phase-2 marker, `alive === true`** → `wait` (the run is still live; do not interfere).
 
 - **Phase-2 marker, `alive === false`** (dead run):
   - All tasks in the wave are `done` on disk → `finalize_run` (clear the marker, advance).
-  - Any task still pending → `recover_and_redispatch` (reset declared scope, re-dispatch; the
+  - Any task still pending → `recover_wave` (reset declared scope, re-dispatch; the
     `staleTaskId` is threaded out so the shell can reconcile a possibly-surviving orphan process
     before re-launching).
 

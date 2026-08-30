@@ -157,15 +157,15 @@ parallel implementation.
 ## `target` Is Informational — Implementation Routes Through the Routing Policy
 
 Every task is implemented via a native spawn descriptor whose task `class` routes to the
-`masterplan-implementation` policy class, regardless of its routed `target`. There is no separate implementer agent in the roster
-(`mp-implementer` was deleted). The `target` field is logged and recorded in digests so a future
+`masterplan-implementation` policy class, regardless of its routed `target`. The `target` field is logged and recorded in digests so a future
 path could offload eligible tasks; it never gates which implementation lane runs.
 
 ---
 
 ## Harness-Native Per-Task Review (caller + recorder only)
 
-Review is gated by **config only** (`state.review.adversary` / `review: 'on'|'off'`, default `'off'`),
+Review is gated by **config only** (`state.review.adversary` / `review: 'on'|'off'`). It is seeded
+**on** at `mp seed` (explicitly disabled with `--adversary-review=off`),
 not by `target` or eligibility. Judgment-heavy tasks (which route `inline`) need a second opinion as
 much as annotation-approved tasks; gating review by eligibility would skip exactly the riskiest work.
 

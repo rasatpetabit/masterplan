@@ -35,7 +35,7 @@ frozen goal must be covered by >=1 task).
 ## `execute`
 Resume or begin execution — the resume controller (§2). No path → the active-bundle picker;
 `/masterplan execute docs/masterplan/<slug>/state.yml` resumes a specific bundle. Drives one
-wave per `execute.workflow.js` launch until all tasks are `done`, then auto-enters the finish
+wave per `mp dispatch-wave` (the fabric wave dispatcher) until all tasks are `done`, then auto-enters the finish
 flow. `--resume=<path>` is an alias for `execute <path>`.
 
 ## `finish`
@@ -106,10 +106,12 @@ coordination config is **auto-provisioned on first publish** (no manual `mp set-
 prerequisite). Publishes wave N+1 only after wave N is fully merged.
 
 ## `follow`
-Follower session: claim one unassigned task from a coordinated run, build it using the standard
-`mp-implementer` path against an ephemeral local bundle, and open a PR against `mp-int/<slug>`.
+Follower session: claim one unassigned task from a coordinated run, build it using the governed
+implementer backend (the lead-stamped descriptor, or the default `{kind:'agent'}` path that dispatches
+through the routing policy's implementer class — see the coordination playbook §7.1) against an ephemeral
+local bundle, and open a PR against `mp-int/<slug>`.
 Steps: preflight → optimistic claim (settle guard) → build (fetch contract ref, dispatch
-`mp-implementer` + D6 `verify-scope` + `verify_commands`) → deliver PR (on pass) or release
+implementer + D6 `verify-scope` + `verify_commands`) → deliver PR (on pass) or release
 claim with a failure comment (on fail). Spec §7.1.
 
 ## Goal subcommands

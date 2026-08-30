@@ -117,9 +117,11 @@ host-specific:
   (`masterplan:mp-*`) are **retired**: write mode removes managed leftovers
   derived from `agents/mp-*.md` (+ SKIP_FOR_PI); `--check` flags those as drift.
   Unmanaged `masterplan:mp-*.md` outside that set are left alone. Idempotent.
-  `mp-implementer` is deliberately **skipped** (skynet-MCP edit contract is
-  CC-only; no pi caller); pi implements tasks natively instead. CC still
-  loads `agents/` as the `masterplan:mp-*` plugin namespace independently.
+  The former skynet-MCP implementer agent is gone: implementer tasks now route
+  through the governed routing-policy lane — the plan task's `class` (e.g.
+  `bounded-edit`/`agentic-loop`) resolves to the `builder` role, dispatched by
+  its bare name (Pi) or the plugin namespace (CC). CC still loads `agents/` as
+  the `masterplan:mp-*` plugin namespace independently.
 
 On pi, call **bare** names only: `subagent({ agent: 'mp-spec-decomposer' })`.
 Colon alias files are no longer installed; CC-authored `masterplan:mp-*` names

@@ -29,8 +29,7 @@ masterplan v8 is a 5-layer system. Each layer is thin and delegates downward:
   and return structured output; they do not inherit session history.
   Implementation dispatch routes through the routing policy — each task's
   class resolves to a governed lane (`policy/workflow-map.json`) and the
-  harness spawns the child (replacement for the deleted
-  `mp-implementer` agent).
+  harness spawns the child.
 - **L4 — Doctor:** `bin/doctor.mjs` dispatcher + 19 check modules under
   `lib/doctor/*.mjs`. Auto-discovered alphabetically; each module exports a
   synchronous `check(repoRoot, opts) -> Finding[]`. See `doctor.md` below.
@@ -41,29 +40,14 @@ assignment. Dispatch decisions (task routing, qctl backend gating, host
 detection, wave-dispatch op shapes) live in the pure `lib/dispatch/`
 package. Scope verification (D6) runs in `lib/wave.mjs`.
 
-## Run-bundle State Shape & Stop Contract
+## Run-bundle State Shape & Task-status Lifecycle
 
-`state.yml` is the CD-7 single source of truth. Beyond `phase`, the loop-first
-stop/resume contract turns on two fields:
-
-```yaml
-stop_reason: null | question | critical_error | complete | scheduled_yield
-critical_error: null
-```
-
-**Blocked means critical error only.** Routine blockers, quota exhaustion, weak
-gate evidence, host-budget yields, and background polling all stay
-`status: in-progress` with `stop_reason: question` or `scheduled_yield`. Set
-`status: blocked` only together with `stop_reason: critical_error` and a
-populated `critical_error` object. This mapping is a shell-enforced contract
-(the orchestrator's autonomy rules, `commands/masterplan.md` §2d) — the v7
-`stop_kind` classifier in `lib/masterplan_session_audit.py` that machine-checked
-it was deleted at the v8.2.0 cutover. The resume controller that reads the
-fields back is documented in [bundle-resume.md](internals/bundle-resume.md).
+`state.yml` is the CD-7 single source of truth. The resume controller that
+reads the fields back is documented in [bundle-resume.md](internals/bundle-resume.md).
 
 **Task-status lifecycle (D1–D5).** Per-task `status`
 (`pending | in_progress | done | blocked | waived`) is distinct from the
-run-level `stop_reason` above. `blocked`/`waived` are excluded from every
+run-level stop/resume behavior. `blocked`/`waived` are excluded from every
 dispatch filter (`lib/resume.mjs`, `lib/wave.mjs`); `blocked` blocks finalize
 (the `awaiting_waiver` op precedes `complete` in `decideNextAction`), `waived`
 is terminal-but-reversible. `waived` is reachable only via `waive-task`

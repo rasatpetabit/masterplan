@@ -2,14 +2,15 @@
 
 > Claude Code and Codex CLI plugin that orchestrates a brainstorm-plan-execute-finish development lifecycle with durable disk-based state.
 
-masterplan is a Claude Code and Codex CLI plugin implementing the /masterplan command: a resumable **brainstorm → plan → execute → finish** workflow for durable multi-hour engineering work, built on top of the obra/superpowers skills suite. Current release: v9.2.0 (MIT license).
+masterplan is a Claude Code and Codex CLI plugin implementing the /masterplan command: a resumable **brainstorm → plan → execute → finish** workflow for durable multi-hour engineering work, built on top of the obra/superpowers skills suite. Current release: v9.9.3 (MIT license).
 
 ## Knowledge index — start here
 
 - [.okf/index.md](.okf/index.md): in-repo knowledge catalog: what this repo is, structure, conventions, pointers.
 - [bundle/state resume engine](.okf/bundle-resume-engine.md)
 - [doctor structural-lint subsystem](.okf/doctor-structural-lint.md)
-- [wave-dispatch execution engine](.okf/wave-dispatch-engine.md)
+- [native wave-dispatch internals](docs/internals/wave-dispatch.md)
+- [routing/dispatch policy](policy/workflow-map.json)
 
 ## Repo entry points
 

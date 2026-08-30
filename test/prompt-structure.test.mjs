@@ -81,7 +81,10 @@ test('prompt teaches the goal-tracking contract (typed ops, gate, capture verb +
 
 test('deliberate survivors stay (teardown recorder, plan marker, legacy import)', () => {
   // These mp verbs were NOT absorbed — their disappearance would mean an over-zealous scrub.
-  for (const keep of ['mp worktree record', 'mp set-active-run', 'mp promote-run',
+  // mp promote-run was deliberately retired from the prompt in E1 (2026-08-30): it remains
+  // implemented in bin for mid-flight L2 recovery only (see bin-masterplan.test.mjs), but is no
+  // longer taught as a live launch step — the fabric path never promotes.
+  for (const keep of ['mp worktree record', 'mp set-active-run',
     'mp migrate-bundle', 'mp record-result']) {
     assert.ok(prompt.includes(keep), `expected surviving reference: ${keep}`);
   }

@@ -12,7 +12,7 @@ tags: [masterplan, claude-code, codex, plugin, orchestration, agents]
 `masterplan` is a Claude Code and Codex CLI plugin implementing the
 `/masterplan` command: a resumable **brainstorm → plan → execute → finish**
 workflow for durable multi-hour engineering work, built on top of the
-`obra/superpowers` skills suite. Current release: v9.5.0 (MIT license).
+`obra/superpowers` skills suite. Current release: v9.9.3 (MIT license).
 
 The core design principle is that **state lives on disk, not in the chat
 session** — a run bundle at `docs/masterplan/<slug>/` (`state.yml`, `spec.md`,
@@ -34,16 +34,16 @@ bundle and resume exactly where it left off.
 |---|---|---|
 | L0 | `docs/masterplan/<slug>/` run bundle | Durable disk state: `state.yml`, `spec.md`, `plan.md`, `plan.index.json`, `events.jsonl`, `retro.md`, `handoff.md` |
 | L1 | `commands/masterplan.md` (~800-line sequencer), `bin/masterplan.mjs` (`mp` CLI), `lib/resume.mjs` (`decideNextAction`) | Thin shell; **sole durable state writer**; owns git commit/checkout |
-| L2 | `workflows/execute.workflow.js`, `workflows/plan.workflow.js`, `lib/plan-merge.mjs`, `lib/dispatch/`, `lib/wave.mjs` | Workflow engine; one wave per launch; returns digests/fragments only, never writes disk/git |
-| L3 | `agents/mp-*.md` (explorer, implementer, planner, adversarial-reviewer, plan-reviewer, spec-decomposer, subsystem-planner) | Stateless subagents dispatched per task |
-| L4 | `bin/doctor.mjs`, `lib/doctor/*.mjs` | Structural lint across 17 auto-discovered check modules (incl. `pi-agent-registration`); validates run-bundle integrity |
+| L2 | `lib/dispatch-wave.mjs`, `lib/dispatch/`, `lib/wave.mjs`, `lib/plan-merge.mjs` | Native wave dispatcher (fabric path): one wave per launch; returns digests/fragments only, never writes disk/git |
+| L3 | `agents/mp-*.md` (`mp-adversarial-reviewer`, `mp-alignment-auditor`, `mp-goal-assessor`, `mp-plan-reviewer`, `mp-planner`, `mp-spec-decomposer`, `mp-subsystem-planner`) | Stateless subagents dispatched per task |
+| L4 | `bin/doctor.mjs`, `lib/doctor/*.mjs` | Structural lint across 19 auto-discovered check modules (incl. `pi-agent-registration`); validates run-bundle integrity |
 
 ## Key components
 
 - `commands/masterplan.md` — L1 orchestrator/sequencer prompt
 - `bin/masterplan.mjs` (`mp`) — filesystem-only deterministic CLI, unit-tested
 - `lib/*.mjs` — deterministic decision logic (`resume.mjs`, `bundle.mjs`, `wave.mjs`, `plan-merge.mjs`, `dispatch/`, `doctor/`, `worktree.mjs`, `github-coord.mjs`, ...)
-- `workflows/execute.workflow.js`, `workflows/plan.workflow.js` — L2 workflow engine
+- `lib/dispatch-wave.mjs` + `lib/dispatch/` + `lib/wave.mjs` — L2 native wave dispatcher (fabric path)
 - `agents/mp-*.md` — L3 stateless subagents
 - `bin/doctor.mjs` + `lib/doctor/*.mjs` — L4 structural lint
 - `skills/masterplan`, `skills/masterplan-detect` — Claude Code skill definitions

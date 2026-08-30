@@ -73,7 +73,7 @@ run bundle and read back from `docs/masterplan/<slug>/state.yml`:
 
 Read the run's config from `state.yml`; do not look for or merge any config file.
 
-When Codex hosts the run, host suppression only forces the effective review behavior
+When Codex hosts the run, host review-suppression only forces the effective review behavior
 off for the current invocation to avoid recursive Codex-on-Codex dispatch; it does not
 rewrite the persisted `state.yml` values (`state.review.adversary`, or legacy
 `state.codex.{routing,review}`), which still apply to future Claude Code runs.
@@ -150,14 +150,14 @@ When the command prompt names Claude Code tools, use the local Codex equivalents
 - AskUserQuestion/Question: `request_user_input` when available; otherwise ask
   one concise prose question and wait.
 - Task/Todo task tracking: `update_plan`.
-- Workflow: **no Codex equivalent — and none needed.** Under host suppression
-  `mp continue` never returns `dispatch_fabric`: execute waves come back as
-  the `dispatch_fabric` op (Residual 3B, delivered) — run `op.tasks` one
+- Workflow: **no Codex equivalent — and none needed.** Execute waves come back as
+  the `dispatch_fabric` op on every host (suppressed or not) — run `op.tasks` one
   at a time in this session from `op.cwd` (track with `update_plan`), honor
   each task's `files` scope, then assemble the standard per-task digest array
-  and feed it to `mp record-result` exactly as the §2 op table describes —
-  and planning is forced onto §3a's SERIAL path (`planning_mode: serial` in
-  the `resume-phase` op; the parallel plan fan-out is CC-only). Never run
+  and feed it to `mp record-result` exactly as the §2 op table describes. Host
+  suppression does NOT suppress `dispatch_fabric` — it only forces PLANNING
+  onto §3a's SERIAL path (`planning_mode: serial` in the `resume-phase` op;
+  the parallel plan fan-out is CC-only). Never run
   either workflow inline — the foreground-sequential op IS the Codex
   execution path.
 - Skill: open the referenced `SKILL.md` and follow it.
@@ -165,7 +165,7 @@ When the command prompt names Claude Code tools, use the local Codex equivalents
   subagents or parallel agent work; otherwise run sequentially in this Codex
   session and use `multi_tool_use.parallel` only for independent tool calls.
 
-Follow the command prompt's Codex-host suppression rules: do not recursively
+Follow the command prompt's Codex-hosted suppression rules: do not recursively
 dispatch to Codex from inside a Codex-hosted masterplan run.
 
 `Use masterplan ...` is the primary Codex chat/skill trigger for user-facing
@@ -175,7 +175,7 @@ chat; Codex TUI shell-command mode sends it to Bash. Never pass
 Bash will either expand `$masterplan` as an environment variable or look for a
 nonexistent executable.
 
-Codex host suppression is only about recursive dispatch and review. When a
+Codex host review-suppression is only about recursive dispatch and review. When a
 Codex `request_user_input` gate returns an answer label, treat that as explicit
 interactive selection evidence even when it is the first/recommended option and
 no free-form note is present. Follow the command prompt's
