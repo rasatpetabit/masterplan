@@ -15,7 +15,8 @@
 //
 // Scope: live surfaces only. History (legacy/, docs/masterplan/ bundles, docs/superpowers/,
 // docs/design/ retired-architecture records, CHANGELOG.md, WORKLOG.md) records the past and is
-// exempt. The detector itself is exempt because it names the retired identifiers.
+// exempt; .worktrees/ (linked git worktrees) are separate working trees and are exempt.
+// The detector itself is exempt because it names the retired identifiers.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -43,8 +44,12 @@ const RETIRED_PATTERNS = [
 ];
 
 // History + detector exemption. Anything else under version control is live surface.
+// .worktrees/ holds linked git worktrees — separate working trees whose own test runs
+// own their scan; walking them from this tree double-counts surfaces and picks up
+// per-tree artifacts (post-merge, the scan root gains a full nested checkout).
 const EXEMPT_PREFIXES = [
   'legacy/',
+  '.worktrees/',
   'docs/masterplan/',
   'docs/superpowers/',
   'docs/design/',
@@ -104,6 +109,6 @@ test('no retired agent-dispatch identifiers on any live surface', () => {
     `agent-dispatch is retired fleet-wide; ${findings.length} live reference(s) found:\n${findings.slice(0, 800).join('\n')}\n` +
       'Remove the reference (remap onto policy/workflow-map.json lanes + harness-native dispatch). ' +
       'History surfaces (legacy/, docs/masterplan/, docs/superpowers/, docs/design/, CHANGELOG.md, ' +
-      'WORKLOG.md) are exempt.',
+      'WORKLOG.md) and linked worktrees (.worktrees/) are exempt.',
   );
 });
