@@ -3091,3 +3091,64 @@ test('record-result awaits native review before the state transaction (CLI order
     'CLI must await native review before recordWaveResult so blocking_reviews is populated');
   assert.equal(read(statePath).tasks[0].status, 'done');
 });
+
+test('A5: record-result does NOT finalize the wave-dispatch record to \'recorded\' when nothing was recorded', async () => {
+  // Audit A5: record-result previously stamped status 'recorded' on any 'pending'
+  // wave-dispatch record regardless of whether recRes.recorded landed any task — a
+  // lost-to-other / recorded-nothing outcome would let the next attempt believe the
+  // wave completed. Now only a recorded-non-empty transaction finalizes; a nothing
+  // outcome leaves the record 'pending' with a record_error and keeps it re-drivable.
+  const repo = tmpDir('mp-bin-a5-');
+  const git = (...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
+  git('init', '--initial-branch=main');
+  git('config', 'user.email', 'test@test');
+  git('config', 'user.name', 'test');
+  git('config', 'commit.gpgsign', 'false');
+  fs.writeFileSync(path.join(repo, 'seed.txt'), 'seed\n');
+  git('add', '.');
+  git('commit', '-q', '-m', 'initial');
+
+  const slug = 'a5-record-nothing';
+  const bundleDir = path.join(repo, 'docs', 'masterplan', slug);
+  fs.mkdirSync(bundleDir, { recursive: true });
+  const statePath = path.join(bundleDir, 'state.yml');
+  const WT = path.join(repo, '.worktrees', slug);
+  fs.mkdirSync(path.dirname(WT), { recursive: true });
+  git('worktree', 'add', '-b', `masterplan/${slug}`, WT, 'HEAD');
+  const head = git('rev-parse', 'HEAD').trim();
+  fs.writeFileSync(statePath, serializeState({
+    schema_version: 8,
+    slug,
+    status: 'in-progress',
+    phase: 'execute',
+    worktree: WT,
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    active_run: { wave: 1, kind: 'execute', phase: 'launching', baseline: [], scope: [], started_at: 'T0' },
+    dispatch: { fabric: true },
+    review: { adversary: false },
+    concurrency: { owner_lock: 'off' },
+  }));
+  // A 'pending' wave-dispatch record (the native launch persisted this pre-spawn).
+  fs.writeFileSync(path.join(bundleDir, 'wave-1.dispatch.json'), JSON.stringify({
+    key: `mp-wave-dispatch-v1|${slug}|1|dispatch_fabric`,
+    run_id: slug, wave: 1, op: 'dispatch_fabric',
+    contract_version: 'fabric-native-v1', status: 'pending', attempt: 1,
+    wave_token: `mp-wave-${slug}-w1-a1`, handles: [], dispatched_at: 'T0',
+    tasks: [{ task_id: 1, class: 'bounded-edit', handoff_key: 'k1' }],
+  }, null, 2));
+
+  // The result records NOTHING: task 1 stays pending (e.g. a lost/errored worker).
+  const resultPath = path.join(bundleDir, 'native-result.json');
+  fs.writeFileSync(resultPath, JSON.stringify({
+    wave: 1,
+    tasks: [{ task_id: 1, digest: { task_id: 1, status: 'failed', start_sha: head, files_changed: [], verify: [], summary: 'worker lost' } }],
+  }));
+  const r = run(['record-result', `--state=${statePath}`, `--result-file=${resultPath}`, `--worktree=${WT}`, '--now=3000'], { timeout: 30_000 });
+  assert.equal(r.status, 0, `record-result must succeed: ${r.stderr}\n${r.stdout}`);
+  const rec = JSON.parse(fs.readFileSync(path.join(bundleDir, 'wave-1.dispatch.json'), 'utf8'));
+  assert.notEqual(rec.status, 'recorded', 'A5: nothing recorded — must NOT be finalized to recorded');
+  assert.equal(rec.status, 'pending', 'A5: nothing recorded — the record stays pending (re-drivable)');
+  assert.ok(rec.record_error, 'A5: the nothing-recorded outcome must surface on the record as record_error');
+  assert.ok(rec.record_error.reason, 'A5: record_error must carry a reason');
+  assert.equal(read(statePath).tasks[0].status, 'pending', 'no task was marked done');
+});

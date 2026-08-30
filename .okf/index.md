@@ -79,8 +79,7 @@ is not itself a `phase` value.
 
 - **All `mp-*` agents** are gateway-routed thin wrappers (`model: fable` + required
   `model_group` lanes). Live pi alias map is `fable → litellm/fable-5` only.
-- **New seeds default fabric on:** `mp seed` writes `state.dispatch.fabric: true`;
-  opt out with `--fabric=off` (legacy `launch_workflow` / `dispatch_foreground`).
+- **New seeds default fabric on:** `mp seed` writes `state.dispatch.fabric: true`; fabric is the only wave path since the L2 legacy `launch_workflow` / `dispatch_foreground` path was deleted (A3) — the flag's `off` value is gone.
 - **Pi registration is bare-only:** `bin/register-pi-agents.mjs` writes `mp-*.md`
   under `~/.pi/agent/agents/`; managed `masterplan:mp-*` leftovers are removed;
   doctor check `pi-agent-registration` surfaces host drift.

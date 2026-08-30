@@ -13,6 +13,11 @@
 // only if they match owned bare patterns that this run did not produce).
 //
 // CD-1 (project-local tooling): invoked as `node bin/register-pi-agents.mjs`. No deps.
+// Fail-closed CLI: only `--check` and `--help` are recognized; any other option or
+// unexpected argument is rejected with exit 2 BEFORE any filesystem access. This
+// script MUTATES ~/.pi/agent/agents/ in write mode, so an unknown flag must never
+// fall through to a write (the A6 repair — previously `--help`/any typo ran a full
+// write and exited 0).
 import { readdirSync, readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -185,8 +190,56 @@ export function runRegister({ agentsDir, targetDir, check }) {
 // that touches the real host filesystem; runRegister takes explicit dirs.
 export { MODEL_MAP, COLON_PREFIX, SKIP_FOR_PI, mapModelLine, mapNameLine, outputsFor, managedColonRel };
 
+const USAGE = `Usage: node bin/register-pi-agents.mjs [--check] [--help]
+
+Registers the masterplan agents for a pi host: writes bare mp-*.md copies
+under ~/.pi/agent/agents/ with the model: line swapped via the routing-policy
+lane map (see docs/development.md). Colon alias copies are retired and cleaned.
+
+Options:
+  --check   Read-only drift check: compare installed files against canonical
+            agents/mp-*.md + model map. Reports drift; exits 1 on drift, 0 when
+            in sync. Never writes, deletes, or creates anything.
+  --help    Print this help and exit. Read-only — performs no writes.
+
+Any unrecognized option or unexpected argument is rejected with exit 2.
+This script MUTATES ~/.pi/agent/agents/ in write mode, so an unknown flag
+must never fall through to a write. (--help and typo paths are safe: they
+change nothing on disk.)
+`;
+
+/**
+ * Strict, fail-closed CLI parser. Recognized options only: --check, --help.
+ * Anything else — unknown flags OR positional args — throws; main() maps the
+ * throw to stderr + exit 2 before any filesystem access. `--help` short-circuits
+ * in main() and returns before runRegister is ever called.
+ */
+export function parseCliArgs(argv) {
+  const opts = { check: false, help: false };
+  for (const arg of argv) {
+    if (arg === '--check') { opts.check = true; continue; }
+    if (arg === '--help') { opts.help = true; continue; }
+    if (arg.startsWith('-')) {
+      throw new Error(`unknown option: ${arg}\n\n${USAGE}`);
+    }
+    throw new Error(`unexpected argument: ${arg}\n\n${USAGE}`);
+  }
+  return opts;
+}
+
 function main() {
-  const check = process.argv.slice(2).includes('--check');
+  let opts;
+  try {
+    opts = parseCliArgs(process.argv.slice(2));
+  } catch (e) {
+    console.error(`register-pi-agents: ${e.message}`);
+    process.exit(2);
+  }
+  if (opts.help) {
+    process.stdout.write(USAGE);
+    return;
+  }
+  const check = opts.check;
   const agentsDir = join(resolveRepoRoot(), 'agents');
   const targetDir = PI_USER_AGENTS_DIR;
   const { report, drift, written, skipped, removed, registered } = runRegister({ agentsDir, targetDir, check });

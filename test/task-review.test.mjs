@@ -75,7 +75,7 @@ describe('taskReviewBlocksWave', () => {
 
 const reviewInput = (sha = 'a'.repeat(64)) => ({
   repo: '/tmp/repo', diff: 'diff --git a/a b/a\n+change', sha,
-  description: 'change a', class: 'masterplan-implementation',
+  description: 'change a', class: 'bounded-edit',
 });
 
 describe('reviewCompletedTasks', () => {

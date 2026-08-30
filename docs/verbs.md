@@ -242,4 +242,4 @@ is terminal for dispatch + finalize but operator-reversible.
 
 ## seed flags (fabric)
 
-New seeds default `--fabric=on` (`state.dispatch.fabric: true`). Pass `--fabric=off` to omit fabric and keep the legacy wave path.
+New seeds default `--fabric=on` (`state.dispatch.fabric: true`) and fabric is the only wave path since the L2 legacy dispatch path was deleted (A3) — the flag's `off` value is gone; a bundle without `state.dispatch.fabric: true` is unexecutable.

@@ -51,7 +51,7 @@ test('fabric + qctl flag-on + eligible → payload carries the {kind:qctl} backe
   const { tasks } = prepareWave(state(), planIndex(), 0, qctlOn, {}, allowlist);
   assert.deepEqual(tasks[0].backend, QCTL_BACKEND);
   // Class-only fabric routing is otherwise unchanged — the routing policy resolves the model.
-  assert.equal(tasks[0].class, 'masterplan-implementation');
+  assert.equal(tasks[0].class, 'bounded-edit');
 });
 
 test('fabric + flag-on + sensitive task → qctlEligible rejects: downgrade to agent, field OMITTED', () => {
