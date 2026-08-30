@@ -71,7 +71,10 @@ test('prompt teaches the goal-tracking contract (typed ops, gate, capture verb +
   // The goals-capture verb freezes the run's goals — without it a goals-enabled bundle can't be armed.
   assert.ok(prompt.includes('mp goals-load'), 'the goals-capture contract must name mp goals-load');
   // The goal-check answer flags ARE the resolution surface — each must be taught or the goal gate dead-ends.
-  for (const flag of ['--goals-met', '--goals-unmet', '--goals-waived', '--waiver-reason', '--manual-verdict']) {
+  // A1 (2026-08-30): the engine vocabulary (GOALS_CHOICES = fix|waiver|abort in lib/finish-step.mjs) — the
+  // former --goals-met/--goals-unmet/--goals-waived/--waiver-reason/--manual-verdict were never read by
+  // bin (a silently-dead gate); bin now threads --goal-check / --goals-choice into finishStep's ctx.
+  for (const flag of ['--goal-check=failed', '--goals-choice=fix', '--goals-choice=waiver', '--goals-choice=abort', 'mp record-goal-check']) {
     assert.ok(prompt.includes(flag), `goal-check answer flag missing ${flag}`);
   }
 });
