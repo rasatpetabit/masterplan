@@ -72,7 +72,7 @@ unit-testable without touching the real host. The main CLI passes
 | `pi-agent-registration` | Host-scoped: shells out to `node bin/register-pi-agents.mjs --check` against `~/.pi/agent/agents/`. `PASS` when bare-only install is in sync; `WARN` on drift (stale model map, missing bare copies, leftover managed colon aliases); `SKIP` when the pi agents dir or script is absent. |
 | `plan-doc-cruft` | Repo-wide backstop for the finish flow's `docs_normalize` gate: anchored to **archived** bundles, it warns on markdown outside the runs dir that still carries plan provenance — an archived slug as a whole token in a filename, a body reference to `docs/masterplan/<slug>`, or a hyphenated slug in a heading line. Excludes the runs dir itself, `docs/superpowers/` (legacy-bundle owns that), dot-directories, node_modules, root history files (`WORKLOG`/`CHANGELOG*`/`HISTORY`), and files >1 MiB. Always `WARN`, never `ERROR`; `SKIP` when no archived bundles exist. |
 | `plan-index-schema` | Runs `lib/plan-merge.validatePlanIndex` against every `plan.index.json` with `schema_version >= 6`; catches non-string `codex` fields and same-wave file overlaps that silently mis-route. `SKIP` when no canonical index exists. |
-| `plugin-registry-drift` | Compares the installed masterplan plugin version in `installed_plugins.json` against the marketplace `plugin.json`; also compares `gitCommitSha` against marketplace HEAD to catch same-version stale caches. `SKIP` when either file is absent. |
+| `plugin-registry-drift` | Compares the installed masterplan plugin version in `installed_plugins.json` against the marketplace `plugin.json`; also compares `gitCommitSha` against marketplace HEAD to catch same-version stale caches. `WARN` on a version gap or a same-version stale cache; `SKIP` when either file is absent. This check **confirms** drift — it does **not** repair it: the mechanical fix is a marketplace re-sync (pull the marketplace clone to the tagged HEAD) followed by `/plugin update` (reinstall the plugin from the re-synced marketplace), which live plugin workflows perform as their terminal release step (see “Plugin drift: confirm vs. clear” below). |
 | `rejected-idea-kb` | Validates durable rejected-idea KB files under `.out-of-scope/<concept>.md` (required sections `## Why this is out of scope` and `## Prior requests`). `SKIP` when the directory is absent or has no concept `.md` files; `WARN` per incomplete/unreadable file; aggregate `PASS` when all concept files carry both sections. |
 | `scalar-cap` | Validates that no flat `key: value` line in `state.yml` exceeds 200 characters, and that every `*overflow at <file> L<n>*` pointer resolves to a real file and line within the same bundle directory. The cap is a prose-scalar discipline: values that parse to structured data (e.g. the inline-JSON `tasks` line the v8 writer emits) are exempt — both from the WARN and from the `--fix` handler, which moves only string scalars to `state-overflow.md`. |
 | `spec-assumptions` | Specs in active/plan-phase bundles should carry an Assumptions & Open Decisions section (brainstorm contract). `WARN` when missing; `SKIP` when no applicable specs. |
@@ -80,6 +80,30 @@ unit-testable without touching the real host. The main CLI passes
 | `stalled-bundle` | Pre-execute CD-7 durability: flags brainstorm/plan bundles that have a `spec.md` but no recorded events in `events.jsonl` (session work left only in conversation). Distinct from `dangling-run` (stranded `active_run`). `WARN` per stalled bundle; `SKIP` when no applicable pre-execute bundles exist. |
 | `state-schema` | Validates each bundle's `state.yml` against `lib/bundle.validateCoreState` (the single source of truth for required fields). Bundles with `schema_version < 6` are deferred to `legacy-bundle`. A slug directory with no readable `state.yml` produces a `WARN` (orphan directory). A `state.yml` that parses to zero keys is an `ERROR`. |
 | `worktree-integrity` | **Bundle→git:** for each non-archived/non-retired bundle, verifies the recorded `worktree` path and `branch` exist in the git graph (`git worktree list` / `git branch`) — `ERROR` on a broken reference. **Git→bundle** (Phase 2): runs the shared pure `lib/worktree.classifyWorktrees` over the on-disk `.worktrees/*` dirs + bundle records to `WARN` on reconcilable strays — crash-leak (a retired bundle still registered + on disk → remove), repo-move (a dangling admin link → `git worktree repair`), foreign-repo leftover (→ remove), and a legacy `missing` disposition (→ normalize). A plain unowned dev worktree (e.g. `masterplan-ng`) stays untouched, and a repo-move/`missing` is reported once (as the WARN remedy), never also as a bundle→git ERROR. `SKIP` when git is unavailable or no bundles exist. **`--fix`:** records `worktree_disposition=removed_after_merge` for a bundle whose `worktree` is set, unregistered in git, **and gone from disk** — clearing the bundle→git ERROR (the path is preserved as a reversible memento). gone-from-disk is the safety line: an on-disk-but-unregistered worktree (the protected `manual`/active-unregistered case) still exists and is left for the operator; archived/already-retired bundles are skipped, so the fix set is a strict subset of the ERROR set. Idempotent. |
+
+## Plugin drift: confirm vs. clear
+
+`plugin-registry-drift` is a **detection-only** check. It reads the host's
+`~/.claude/plugins/installed_plugins.json` and the marketplace clone
+(`~/.claude/plugins/marketplaces/<owner>-<repo>`), compares versions and the
+installed `gitCommitSha` against marketplace HEAD, and reports drift. Nothing in
+the doctor repairs plugin state — there is no `--fix` for this check, by design:
+the remedy touches the user's plugin registry and marketplace clone, which a
+check module must never mutate.
+
+The drift is mechanically cleared only by a release/ops step, in this order:
+
+1. **Re-sync the marketplace clone** to the newly tagged release HEAD
+   (`git -C <marketplace> fetch origin` + reset/checkout the tag), so the
+   marketplace `plugin.json` and agents reflect the shipped version.
+2. **`/plugin update`** (and re-`/reload` plugins) to install the plugin from the
+   re-synced marketplace, updating `installed_plugins.json` to match.
+
+Until both happen, the doctor keeps reporting the drift — a same-version stale
+cache (the marketplace was bumped but the host cache was not, or vice versa) is
+as much a finding as a version gap. In a masterplan remediation run, this pair
+is the terminal release wave's step, not a wave-2 concern: wave 2 only verifies
+the check reports accurately, the mechanical clear lands at release.
 
 ## What changed from v7
 
