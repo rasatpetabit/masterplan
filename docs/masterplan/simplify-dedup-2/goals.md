@@ -1,4 +1,4 @@
-topic: Masterplan-repo half of simplify-dedup-2 (Run B) — deliver the 13 masterplan tasks split out of the agent-dispatch run (split-spec.md v2), on branch masterplan/simplify-dedup-2, atop the 5 already-landed task commits (1/3/40/46/48).
+topic: Masterplan-repo half of simplify-dedup-2 (Run B): deliver the 13 masterplan tasks split from the agent-dispatch run (split-spec.md v2) atop the 5 already-landed commits.
 
 ## G1: Fabric is the single dispatch path — legacy L2 surface deleted, legacy markers reconcile
 signal: command
