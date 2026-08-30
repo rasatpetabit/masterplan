@@ -32,7 +32,7 @@ Item IDs reference `audit-findings.md`. Dispositions: remove | repair | document
 | Item | Action |
 |---|---|
 | A1 goal-gate flags dead | **Repair.** Wire `bin/masterplan.mjs` to the engine's existing vocabulary: `--goal-check=<failed>` / `--goals-choice=<fix\|waiver\|abort>` (per `lib/finish-step.mjs`, `GOALS_CHOICES`). The wiring explicitly includes threading the parsed flags into the finish-step ctx object — the ctx currently omits `goalCheck`/`goalsChoice` entirely on its way to `finishStep()`, so parseArgs recognition alone would leave the gate silently no-op. Rewrite `commands/masterplan.md` §finish to teach these flags (replacing the unimplemented `--goals-met/--goals-unmet/--manual-verdict/--goals-waived/--waiver-reason`). The stray uncommitted marketplace patch adding these two flags becomes obsolete — the repo is the source of truth. |
-| A2 default class unresolvable | **Repair.** Repoint `FABRIC_DEFAULT_CLASS` (`lib/wave.mjs`) from absent `masterplan-implementation` to the existing class `bounded-edit` (agent `builder`, `writes: true`, cap `edit`, intent "one well-specified change with a known verification command" — the implementer semantic; rejected `planned-execution` after gate review: it is a non-writing `judge` planner class). The repoint is behaviorally neutral: `bounded-edit` carries the same agent/model chain as today's effective `unknown` fallback, so no in-flight bundle changes lane. Fix the 5 test files pinning the dead name. Registering a dedicated class in the fleet-owned workflow-map source is a fleet-side follow-up, out of scope. |
+| A2 default class unresolvable | **Repair.** Repoint `FABRIC_DEFAULT_CLASS` (`lib/wave.mjs`) from absent `masterplan-implementation` to the existing class `bounded-edit` (agent `builder`, `writes: true`, cap `edit`, intent "one well-specified change with a known verification command" — the implementer semantic; rejected `planned-execution` after gate review: it is a non-writing `judge` planner class). The repoint is behaviorally neutral for routing: `bounded-edit` carries the same agent/model chain as today's effective `unknown` fallback, so no in-flight bundle changes lane (the spawn-record `capability` field does change chat→edit, but it is recorded only — no gating consumer reads it). Fix the 5 test files pinning the dead name. Registering a dedicated class in the fleet-owned workflow-map source is a fleet-side follow-up, out of scope. |
 | A3 `--fabric=off` seeds unexecutable runs | **Repair.** Remove the flag from `mp seed` and all docs (`commands/masterplan.md`, `docs/verbs.md`, `.okf/index.md`); if passed, fail closed with an explanation (fabric is the only path since L2 deletion). `dispatch-wave`'s flag-off "legacy dispatch_fabric ops apply" branch becomes an error too. |
 | A4 dead blackboard recovery | **Remove.** Delete `state.blackboard`/`task.handoff_key` read paths and the `recover_from_blackboard` action (`lib/resume.mjs`, `lib/continue.mjs`). |
 | A5 record-result false 'recorded' | **Repair.** Write `recorded` only when `recRes.recorded` is truthy; otherwise a distinct no-op status. |
@@ -85,11 +85,11 @@ silently drop out of the ERROR audit.
 
 ### Wave 5 — Release & ops
 
-1. Delete empty `tests/` (untracked) and `legacy/` (gitignored; tracked until
+1. Delete empty `tests/` (F1; untracked) and `legacy/` (F2; gitignored; tracked until
    `549b5e1`, so git history preserves it) from the working tree.
 2. CHANGELOG `[Unreleased]` → release version; tag per the fixed RELEASING flow;
    push.
-3. Marketplace re-sync past the new tag; `/plugin update`; verify the installed
+3. Marketplace re-sync past the new tag (F3 — the stale plugin-registry host cache); `/plugin update`; verify the installed
    plugin resolves the tagged version and its agents carry the Pi-portable
    frontmatter (the `5b2bee0` fix that motivated the audit).
 4. Final gate: `mp doctor` exit 0, `npm test` green, CI green on the merge.
