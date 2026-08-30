@@ -52,11 +52,11 @@ function resolveRepoRoot() {
 // the constant remains so managed cleanup can target leftover masterplan:mp-*.md.
 const COLON_PREFIX = 'masterplan:';
 
-// Agents that are CC-only by design and must NOT be registered for pi. worker-digest's
-// entire contract is "route every edit to the local skynet MCP" — it has no Edit/Write
-// tool BY DESIGN; pi has no skynet MCP server.
-// Skip bare install; managed colon leftovers for this name are still cleaned.
-const SKIP_FOR_PI = new Set(['mp-implementer.md']);
+// Agents that are CC-only by design and must NOT be registered for pi. Empty since
+// fresh-eyes-remediation C7 (2026-08-30) deleted mp-implementer.md — the mechanism stays:
+// any future CC-only agent is added here (and gets a test via runRegister's skipSet seam).
+// Skip bare install; managed colon leftovers for listed names are still cleaned.
+const SKIP_FOR_PI = new Set();
 
 function mapModelLine(body, file) {
   // NOTE: the regex anchors on the first `^model:` line. The canonical agents/*.md keep
@@ -93,7 +93,7 @@ function managedColonRel(file) {
 // Pure, filesystem-driven core. main() wraps this with real dirs + argv; tests call it
 // with temp dirs. `check` mode is strictly read-only (no writes, no deletes, no mkdir);
 // it reports drift (mismatch, missing, stale, or unexpected files) and returns a count.
-export function runRegister({ agentsDir, targetDir, check }) {
+export function runRegister({ agentsDir, targetDir, check, skipSet = SKIP_FOR_PI }) {
   const files = readdirSync(agentsDir).filter((f) => /^mp-.*\.md$/.test(f)).sort();
   if (files.length === 0) throw new Error(`no mp-*.md found under ${agentsDir}`);
 
@@ -113,8 +113,8 @@ export function runRegister({ agentsDir, targetDir, check }) {
   for (const file of files) {
     managedColon.add(managedColonRel(file));
 
-    if (SKIP_FOR_PI.has(file)) {
-      const why = 'CC-only (skynet MCP edit contract; no pi caller)';
+    if (skipSet.has(file)) {
+      const why = 'CC-only by design (SKIP_FOR_PI)';
       // Stale bare + managed colon for skipped agents: check → drift; write → remove.
       for (const rel of [`${file}`, managedColonRel(file)]) {
         expectedBare.add(rel); // suppress UNEXPECTED for these managed paths

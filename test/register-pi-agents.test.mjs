@@ -6,7 +6,8 @@
 // throws (no mapping) or runs on the wrong tier.
 //
 // Complete input set of the script: only agents/mp-*.md under agents/, minus
-// SKIP_FOR_PI (currently mp-implementer.md). No other profiles/config feeds.
+// SKIP_FOR_PI (empty since C7 deleted mp-implementer; tests inject a sentinel via
+// runRegister's skipSet seam). No other profiles/config feeds.
 //
 // Live alias contract: every canonical agent declares a routing-policy LANE name
 // (frontier/longform/…); MODEL_MAP maps every lane to its lane model ref. The map
@@ -176,13 +177,14 @@ test('runRegister never emits worker-digest or masterplan:mp-implementer targets
     'mp-x.md': VALID_AGENT,
     'mp-implementer.md': IMPLEMENTER_AGENT,
   });
-  const res = runRegister({ agentsDir, targetDir, check: false });
+  const skipSet = new Set(['mp-implementer.md']);
+  const res = runRegister({ agentsDir, targetDir, check: false, skipSet });
   assert.equal(res.registered, 1, 'only non-skipped agents register');
   assert.equal(existsSync(join(targetDir, 'mp-implementer.md')), false);
   assert.equal(existsSync(join(targetDir, 'masterplan:mp-implementer.md')), false);
   assert.equal(existsSync(join(targetDir, 'mp-x.md')), true);
   assert.equal(existsSync(join(targetDir, 'masterplan:mp-x.md')), false, 'bare-only: no colon for non-skipped either');
-  const check = runRegister({ agentsDir, targetDir, check: true });
+  const check = runRegister({ agentsDir, targetDir, check: true, skipSet });
   assert.equal(check.drift, 0, JSON.stringify(check.report));
   assert.ok(!check.report.some((l) => /worker-digest/.test(l) && /WROTE|OK/.test(l)));
 });
@@ -210,7 +212,7 @@ test('runRegister --check reports (does NOT delete) stale copies of a skipped ag
   writeFileSync(join(targetDir, 'mp-implementer.md'), 'stale');
   writeFileSync(join(targetDir, 'masterplan:mp-implementer.md'), 'stale');
   const before = snapshot(targetDir);
-  const res = runRegister({ agentsDir, targetDir, check: true });
+  const res = runRegister({ agentsDir, targetDir, check: true, skipSet: new Set(['mp-implementer.md']) });
   assert.deepEqual(snapshot(targetDir), before, 'check must not delete stale skipped copies');
   assert.ok(res.drift >= 2, 'both stale copies should count as drift');
 });
@@ -220,7 +222,7 @@ test('runRegister write mode REMOVES stale copies of a skipped agent (idempotenc
   mkdirSync(targetDir, { recursive: true });
   writeFileSync(join(targetDir, 'mp-implementer.md'), 'stale');
   writeFileSync(join(targetDir, 'masterplan:mp-implementer.md'), 'stale');
-  const res = runRegister({ agentsDir, targetDir, check: false });
+  const res = runRegister({ agentsDir, targetDir, check: false, skipSet: new Set(['mp-implementer.md']) });
   assert.equal(res.removed, 2);
   assert.equal(existsSync(join(targetDir, 'mp-implementer.md')), false);
   assert.equal(existsSync(join(targetDir, 'masterplan:mp-implementer.md')), false);
@@ -322,8 +324,12 @@ test('runRegister cleans preseeded masterplan:mp-implementer.md (SKIP_FOR_PI man
   assert.equal(existsSync(join(targetDir, 'masterplan:mp-implementer.md')), false);
 });
 
-test('SKIP_FOR_PI excludes worker-digest (CC-only skynet MCP contract)', () => {
-  assert.ok(SKIP_FOR_PI.has('mp-implementer.md'), 'worker-digest must be skipped for pi');
+test('SKIP_FOR_PI is empty post-C7: no canonical agent is CC-only today', () => {
+  // mp-implementer.md (the sole historical member) was deleted by fresh-eyes-remediation C7.
+  // The skip MECHANISM stays covered via runRegister's skipSet seam (tests above inject a
+  // sentinel). If a future agent is CC-only by design, add it to SKIP_FOR_PI and extend
+  // this assertion to name it.
+  assert.equal(SKIP_FOR_PI.size, 0, 'expected no CC-only agents in the current canonical set');
 });
 
 test('every non-skipped agent that declares tools covers its MCP-namespaced names', () => {
