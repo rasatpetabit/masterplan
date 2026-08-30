@@ -45,6 +45,12 @@
 //                                                  plan.index.json AND advance phase→execute, ATOMICALLY
 //                                                  (the plan→execute seam; refuses a bundle with tasks;
 //                                                  also best-effort auto-emits the rendered plan.html artifact)
+//   reindex-plan --plan-index=PATH [--plan=PATH] -> restamp plan.index.json plan_hash from the
+//                                                  current plan.md sha256 (the one derived field
+//                                                  doctor's index-staleness check compares; load-plan
+//                                                  stamps it once at load time). Surgical: only the
+//                                                  hash line changes; idempotent; appends a
+//                                                  plan_reindexed event when a sibling state.yml exists.
 //   render-plan --state=PATH [--plan-index=PATH] [--plan-html=PATH]
 //                                               -> re-render plan.html with LIVE status from state.tasks
 //                                                  (READ-ONLY: no state write); backs the `render` verb
@@ -567,7 +573,7 @@ const KNOWN_FLAGS = new Set(
     'fabric fail-if-unconfigured fail-if-unpublishable force fragments from gate generated-at gh-json ' +
     'goal-check goals goals-choice head head-sha host id images integration-branch issue issues job-id ' +
     'key kind label linked-worktree local-run-branch mark-published merge-sha merged meta mode ' +
-    'native-tools no-workflow note note-file now opened-at out owner-lock phase plan-deps plan-hash ' +
+    'native-tools no-workflow note note-file now opened-at out owner-lock phase plan plan-deps plan-hash ' +
     'plan-html plan-index plan-index-path plan-md plan-path planning-mode porcelain pr predecessor ' +
     'predecessor-transcript producer-status prs prune prune-non-pending pushed reason receipt reconcile ' +
     'recorded-base removal-confirmed removal-force remove-root render-images repo repo-git-dir repo-root ' +
@@ -2353,6 +2359,65 @@ function main() {
         die(`validate-plan-index: ${errors.length} error(s) in ${p}`, 1);
       }
       out({ valid: true, tasks: Array.isArray(index.tasks) ? index.tasks.length : 0, path: p });
+      break;
+    }
+    case 'reindex-plan': {
+      // Restamp plan.index.json plan_hash from the current plan.md sha256 — the one
+      // derived field the doctor's index-staleness check compares. mp load-plan stamps
+      // it once at load time; a plan.md amended afterwards (e.g. planning-time task
+      // amendments) leaves it stale. Surgical: the hash line is replaced in the raw
+      // bytes so the rest of the file keeps its original formatting; nothing else in
+      // the index is touched. Bundles with a sibling state.yml also get a
+      // plan_reindexed audit event (old -> new hash).
+      const idxPath = need(flags, 'plan-index');
+      let raw;
+      try {
+        raw = readText(idxPath);
+      } catch (e) {
+        die(`reindex-plan: cannot read ${idxPath} (${e.message})`, 1);
+      }
+      let index;
+      try {
+        index = JSON.parse(raw);
+      } catch (e) {
+        die(`reindex-plan: ${idxPath} is not valid JSON (${e.message})`, 1);
+      }
+      if (typeof index.plan_hash !== 'string' || !index.plan_hash) {
+        die(`reindex-plan: ${idxPath} carries no plan_hash field — this verb restamps an existing stamp, it does not create one (re-run mp load-plan to build a fresh index)`, 1);
+      }
+      const planPath = flags.plan ?? path.join(path.dirname(idxPath), 'plan.md');
+      let planBytes;
+      try {
+        planBytes = fs.readFileSync(planPath);
+      } catch (e) {
+        die(`reindex-plan: cannot read plan ${planPath} (${e.message})`, 1);
+      }
+      const newHash = 'sha256:' + createHash('sha256').update(planBytes).digest('hex');
+      const oldHash = index.plan_hash;
+      if (oldHash === newHash) {
+        out({ reindex_plan: 'idempotent', plan_hash: newHash, path: idxPath });
+        break;
+      }
+      if (!/"plan_hash"\s*:\s*"sha256:[0-9a-f]+"/.test(raw)) {
+        die(`reindex-plan: ${idxPath} plan_hash line not found in raw text — refusing a blind rewrite`, 1);
+      }
+      const updated = raw.replace(/("plan_hash"\s*:\s*")sha256:[0-9a-f]+(")/, `$1${newHash}$2`);
+      try {
+        JSON.parse(updated); // structural sanity before the write
+      } catch (e) {
+        die(`reindex-plan: restamp produced invalid JSON (${e.message})`, 1);
+      }
+      fs.writeFileSync(idxPath, updated);
+      const statePath = path.join(path.dirname(idxPath), 'state.yml');
+      if (fs.existsSync(statePath)) {
+        appendEvent(statePath, {
+          type: 'plan_reindexed',
+          ts: flags.ts ?? new Date().toISOString(),
+          data: { old_plan_hash: oldHash, new_plan_hash: newHash, plan: path.basename(planPath) },
+          summary: `plan.index.json plan_hash restamped from ${path.basename(planPath)}`,
+        });
+      }
+      out({ reindex_plan: 'restamped', old_plan_hash: oldHash, new_plan_hash: newHash, path: idxPath });
       break;
     }
     case 'set-worktree-disposition': {
