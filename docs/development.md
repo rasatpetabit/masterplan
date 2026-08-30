@@ -107,12 +107,13 @@ host-specific:
   the `masterplan:mp-*` colon namespace. Those files are the single source of
   truth for role contracts; CC is unchanged by pi registration.
 - **pi hosts** discover a different set of paths (`~/.pi/agent/agents/`,
-  `.pi/agents/`, `.agents/`) and resolve CC bare `model:` aliases (live: `fable`
-  only) to `amazon-bedrock` (no key on most hosts), not to the configured
-  `litellm/fable-5`. So a pi host needs adapted copies. Run
+  `.pi/agents/`, `.agents/`) and resolve CC bare `model:` lane names (a lane
+  such as `frontier` maps to its model ref from `policy/workflow-map.json`, e.g.
+  `litellm/gpt-5.6-sol`) — but not to a host-native fallback. So a pi host
+  needs adapted copies. Run
   [`bin/register-pi-agents.mjs`](../bin/register-pi-agents.mjs) to generate them
   at `~/.pi/agent/agents/` — **bare-only** (`mp-spec-decomposer.md` etc.). The
-  live-alias map swaps `model: fable` → `litellm/fable-5`. Colon alias copies
+  lane map swaps `model: frontier` → `litellm/gpt-5.6-sol`. Colon alias copies
   (`masterplan:mp-*`) are **retired**: write mode removes managed leftovers
   derived from `agents/mp-*.md` (+ SKIP_FOR_PI); `--check` flags those as drift.
   Unmanaged `masterplan:mp-*.md` outside that set are left alone. Idempotent.

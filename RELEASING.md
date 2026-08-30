@@ -2,6 +2,8 @@
 
 Run this checklist for every version bump. The publish-hygiene live test validates version-bearing files agree.
 
+**Publish-time gate:** `lib/hygiene.mjs` is the publish-time gate (C10, retain-intentionally). Its three detector families — (1) fixture-identifier leak scan, (2) cross-manifest version sync, (3) namespace collision — are driven ONLY by `test/publish-hygiene.test.mjs`, which runs under `npm test`. No runtime code imports it; the test is its sole consumer and its release-safety bar. If this module ever looks dead, it is not: it is the guard this checklist's step 7 runs.
+
 1. **`.claude-plugin/plugin.json`** — bump `version` (canonical source)
 2. **`.claude-plugin/marketplace.json`** — bump root `version` AND `plugins[0].version`
 3. **`.codex-plugin/plugin.json`** — bump `version`

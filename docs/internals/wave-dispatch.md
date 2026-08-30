@@ -134,7 +134,7 @@ module layout:
 
 | Module | Role | Key exports |
 |---|---|---|
-| `lib/dispatch-wave.mjs` | Orchestrator pipeline | `gateAndValidate`, `resolveWaveContext`, `buildDescriptors`, `acquireAndWatch`, `buildNativePlan`, `finalizeRecord` |
+| `lib/dispatch-wave.mjs` | Orchestrator pipeline | `gateAndValidate`, `resolveWaveContext`, `buildDescriptors`, `acquireAndWatch`, `buildNativePlan` |
 | `lib/wave.mjs` | Launch context + scope | `prepareWave`, `buildWaveLaunchContext`, `verifyScope`, `declaredScope` |
 | `lib/watch-integrity.mjs` | Watch substrate + git helpers | `runGit`, `gitLines`, `captureWatchBaseline`, `verifyWatchListDelta`, `precheckWatchList` |
 | `lib/wave-commit.mjs` | Wave-completion transaction | `recordWaveResult`, `captureWtFiles`, `captureWorkspaceRoot` |
@@ -199,7 +199,10 @@ behavior.
 
 ## Digests Only — L1 Is the Sole Writer (CD-7)
 
-`dispatchWaveViaFabric` calls `finalizeRecord` to persist the wave result. The wave dispatch path
+`dispatchWaveViaFabric` persists the wave-dispatch record via `writeWaveDispatchRecord`
+(created in `acquireAndWatch` before launch; finalized to `'recorded'` after the
+`recordWaveResult` transaction completes, with the `'dispatched'` state re-driven by
+`redriveRecordTransaction` on recovery — see the module header status lifecycle). The wave dispatch path
 is idempotent on the record `(run_id, wave, 'dispatch_fabric')`. Implementation workers edit only
 declared scope; durable run-bundle state is written through the wave-commit / mark-task path, not
 ad-hoc agent writes to `state.yml`.

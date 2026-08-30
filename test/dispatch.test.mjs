@@ -11,7 +11,7 @@ import { resolveTaskBackend, normalizeReviewMode, buildWaveDispatchOp } from '..
 
 test('index facade: the unified dispatch surface is complete', () => {
   for (const name of [
-    'routeTask', 'resolveImplementerBackend',         // routing.mjs
+    'resolveImplementerBackend',                    // routing.mjs
     'qctlEligible', 'resolveTaskBackend',             // backend.mjs
     'detectHost', 'normalizeResumeHint',              // host.mjs
     'normalizeReviewMode', 'buildWaveDispatchOp',     // ops.mjs

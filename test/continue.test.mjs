@@ -153,7 +153,7 @@ test('Guard D: a live concurrent owner blocks; --force steals; owner_lock=off sk
   assert.equal(fs.existsSync(path.join(fx2.bundleDir, '.owner.lock')), false, 'sentinel never created');
 });
 
-test('probe gating: a promoted marker with liveness unknown → probe op; alive → stop/wait; dead+done → inline finalize → finish', () => {
+test('probe gating: a promoted marker with liveness unknown resolves via decide (no probe op); alive → stop/wait; dead+done → inline finalize → finish', () => {
   const fx = makeFixture({
     tasks: [{ id: 1, status: 'done', wave: 1, files: ['src/a.txt'] }],
     activeRun: { wave: 1, run_id: 'r1', task_id: 'wf1', scope: ['src/a.txt'], baseline: [] },
@@ -179,7 +179,7 @@ test('probe gating: a promoted marker with liveness unknown → probe op; alive 
   assert.deepEqual(codeFiles, ['src/a.txt'], 'stranded work committed by the inline reconcile');
 });
 
-test('recover_wave: dead run with work outstanding → reap probe first, then scope reset + re-launch', () => {
+test('recover_wave: dead promoted marker with work outstanding redispatches directly (no reap probe — fabric has no L2 registry)', () => {
   const fx = makeFixture({
     tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
     activeRun: { wave: 1, run_id: 'r1', task_id: 'wf1', scope: ['src/a.txt'], baseline: [] },
@@ -195,10 +195,6 @@ test('recover_wave: dead run with work outstanding → reap probe first, then sc
   const op = continueRun(base);
   assert.equal(op.op, 'dispatch_fabric');
   assert.equal(op.wave, 1);
-  // partial edit may be reset depending on recover path
-  const op2 = continueRun({ ...base, staleReconciled: true });
-  assert.equal(op2.op, 'dispatch_fabric');
-  assert.equal(op2.wave, 1);
   const marker = readState(fx.statePath).active_run;
   assert.equal(marker.phase, 'launching');
   assert.equal(marker.task_id, undefined, 'fresh phase-1 marker, not the stale promoted one');

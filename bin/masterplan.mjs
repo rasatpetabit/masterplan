@@ -573,7 +573,7 @@ const KNOWN_FLAGS = new Set(
     'recorded-base removal-confirmed removal-force remove-root render-images repo repo-git-dir repo-root ' +
     'repos-allowlist result result-file retro-only review review-base review-count review-digest-file ' +
     'review-done review-json review-reason review-skipped reviews-file roots routing run-id run-slug ' +
-    'schema-version scope session sha slug spec-path stale-reconciled state status subsystems ' +
+    'schema-version scope session sha slug spec-path state status subsystems ' +
     'subsystems-file summary takeover target task task-id to topic ts ttl-ms type verify-failed ' +
     'verify-output-hash verify-passed waive waiver wave worktree worktree-list worktree-registered ' +
     'ws-baseline').split(' ')
@@ -3552,8 +3552,8 @@ function main() {
 
     case 'continue': {
       // T2.3: the trampoline — migrate-on-load → Guard D acquire/confirm → wave backfill →
-      // alive-probe gating → the bounded decide loop, returning ONE typed op per call
-      // ({op: dispatch_fabric|dispatch_plan|run_skill|record_result|ask|probe|shell|stop|…}).
+      // the bounded decide loop, returning ONE typed op per call
+      // ({op: dispatch_fabric|dispatch_plan|run_skill|record_result|ask|shell|stop|…}).
       // The shell stops sequencing §2 by prose: it calls `mp continue`, executes the op, repeats.
       // Hosts without Claude Code Workflow handles (PI_CODING_AGENT or --no-workflow) are routed
       // to dispatch_fabric so a phase-1 launch marker is consumed instead of user-stranded.
@@ -3573,7 +3573,7 @@ function main() {
       if (!lockOff) {
         ({ self, now, ttlMs } = resolveOwnerSelf(flags, statePath));
       }
-      // --alive/--dead: the shell's answer to a prior {op:'probe'}; absent = not yet probed.
+      // --alive/--dead: the shell's answer to a legacy liveness handshake; absent = unknown.
       const alive = flags.alive ? true : flags.dead ? false : null;
       let reposAllowlist;
       if (flags['repos-allowlist'] !== undefined) {
@@ -3591,7 +3591,6 @@ function main() {
           now,
           ttlMs,
           alive,
-          staleReconciled: !!flags['stale-reconciled'],
           force: !!flags.force,
           codexSuppressed: shouldSuppressWorkflow(flags, process.env),
           routing: typeof flags.routing === 'string' ? flags.routing : undefined,

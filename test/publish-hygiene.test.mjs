@@ -1,6 +1,7 @@
 // test/publish-hygiene.test.mjs — release-hygiene + publish-safety guards (build step 6).
 //
-// Drives the pure detectors in lib/hygiene.mjs. This is the LIVE CI gate for the three concerns
+// Drives the pure detectors in lib/hygiene.mjs — THE PUBLISH-TIME GATE (C10, retain-intentionally).
+// This test is the module's sole consumer and its live CI gate on the release path. It is the LIVE CI gate for the three concerns
 // lib/doctor/README.md:63-66 routes to "CI / pre-commit, since end users don't have the repo":
 //   (1) fixture-identifier leak  — the headline CUTOVER guard: keep test/fixtures/ sanitized.
 //   (2) cross-manifest version sync — every tracked manifest agrees with README's Current release.

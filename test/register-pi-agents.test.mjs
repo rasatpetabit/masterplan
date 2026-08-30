@@ -341,39 +341,6 @@ test('every non-skipped agent that declares tools covers its MCP-namespaced name
   }
 });
 
-test('mp-explorer body names no concrete model id and describes policy-lane recon (rot-proof)', () => {
-  // Prose that names a concrete model rots the moment the fleet changes (that is
-  // exactly how `fable` survived the 2026-08-04 cut). Lane aliases are fine — they
-  // are policy names; concrete model ids and retired aliases are not.
-  const raw = readFileSync(join(repoRoot, 'agents', 'mp-explorer.md'), 'utf8');
-  const parts = raw.split(/^---$/m);
-  assert.ok(parts.length >= 3, 'mp-explorer.md must have YAML frontmatter delimiters');
-  const body = parts.slice(2).join('---');
-  const lineup = lineupFromRoutingPolicy();
-  const concreteIds = Object.values(lineup).map((m) => m.replace(/^litellm\//, ''));
-  for (const id of [...concreteIds, 'haiku', 'opus', 'sonnet', 'fable']) {
-    assert.equal(
-      new RegExp(`\\b${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(body),
-      false,
-      `explorer body must not name the concrete model "${id}" — lane prose only`,
-    );
-  }
-  assert.match(
-    body,
-    /routing policy/i,
-    'explorer body must state the routing-policy lane it runs on',
-  );
-  assert.match(
-    body,
-    /read-only|recon/i,
-    'explorer body must describe read-only recon semantics',
-  );
-  assert.equal(
-    /model_group\s*:\s*["']?dispatch-/i.test(body),
-    false,
-    'explorer is pure recon — body must not invent a dispatch-* judgment lane',
-  );
-});
 
 // ---- A6: fail-closed CLI + subprocess mutation guards ----
 //

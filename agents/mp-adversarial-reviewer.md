@@ -11,6 +11,14 @@ tools: bash, read
 > (`policy/workflow-map.json`). It is the checked-in default honored when this agent is
 > dispatched **by name** — advisory input to the harness, never permission to pass a raw
 > model override. See `/srv/workflows/policy/dispatch.md` (model provenance).
+>
+> **Registration consumers (retained, C7):** runtime review execution never reads this file —
+> the wave dispatcher resolves the `adversary` class from `policy/workflow-map.json`
+> (`lib/dispatch-wave.mjs` `resolveWorkClass('adversary', …)`). This agent file is retained
+> as the **contract document** for the review return shape, named by: `README.md` (L3
+> inventory + review mechanism), `docs/conventions/adversarial-review-dimensions.md:3,9`
+> (return-contract reference), `docs/internals.md:27`, `docs/development.md:74` (agent
+> inventory). Remove this file only together with those references.
 
 # mp-adversarial-reviewer — adversarial second opinion
 

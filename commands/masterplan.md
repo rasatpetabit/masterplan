@@ -34,7 +34,7 @@ worktree locus model in §2e (bare `git` is forbidden in this shell).**
    `update_plan` are exposed, `--agents-md` if an `AGENTS.md` is present). If the result's
    `isCodex` is true, the host lacks Claude Code's native Workflow tool (unused; fabric path only): this is the
    **`codex_host_suppressed`** condition the downstream paths check — it gates the Claude-Code-only
-   native task tools in the §2 `liveness-check` ops (liveness/cleanup recovery) and supplies
+   native task tools in the §2 owner-liveness handshake (heartbeat TTL) and supplies
    `mp continue --codex-suppressed` (the foreground-sequential wave path). Persisted
    `codex.routing`/`codex.review` are unaffected.
 
@@ -82,8 +82,8 @@ dispatch, every `AskUserQuestion`, and ALL network ops (`git push`, `gh`, the na
    tasks are still `pending` on disk looks like a crash (→ a re-dispatch of a wave you already hold
    results for). Then fall through to step 4.
 4. **The loop.** `mp continue --state=<MAIN>/docs/masterplan/<slug>/state.yml [--alive|--dead]
-   [--stale-reconciled] [--force] [--codex-suppressed]` → ONE op JSON. Execute it per the table;
-   `liveness-check` ops re-invoke `continue` with the answer, everything else ends the loop. Pass
+   [--force] [--codex-suppressed]` → ONE op JSON. Execute it per the table;
+   `--alive`/`--dead` re-invoke `continue` with the answer (the owner-liveness handshake), everything else ends the loop. Pass
    `--codex-suppressed` when §0 host-detect reported a Codex host (`isCodex`). A non-zero exit is a loud
    invariant — read stderr (e.g. `phase is 'execute' but tasks is empty` → the plan was never
    loaded: `mp seed-tasks --state=<path> --plan-index=<path>`, then re-enter).
@@ -96,7 +96,7 @@ dispatch, every `AskUserQuestion`, and ALL network ops (`git push`, `gh`, the na
       | `ask` `ask:'gate'` | Re-render the durable gate's `AskUserQuestion` (CD-9). **Finalization gates** (`verification_failed` / `no_verification_command` / `docs_normalize` / `branch_finish`): re-render via `mp finish-step --state=<path>` — its `ask:'gate'` op carries the full payload (incl. the rehydrated codex digest for `branch_finish`) — and act per the **§2c** answer flags (the clear-gate + bundle commit run inside the subcommand). Other gates: named option → act, `mp clear-gate`, `git -C "<MAIN>"` commit the bundle, re-enter the loop. Free-text / no clear answer → keep the gate, respond, close. NEVER auto-proceed regardless of autonomy (the durable marker outranks a native AUQ that can't survive compaction). |
    | `ask` `ask:'owner-blocked'` \| `'owner-lost'` | Guard D (§2e¶8): another live session owns — or mid-turn took over — this bundle; NOTHING was written. AUQ with the incumbent's `host`/`session`: **Take over (force)** → re-invoke `continue --force` · **Abort** → close without touching the bundle · **Read-only** → answer/inspect, NO mutations or dispatches. NEVER auto-force regardless of autonomy. |
    | `ask` `ask:'legacy-refused'` | Pre-5.0 / unparseable legacy (the deliberate R3 refusal; `op.backup` holds the untouched original). Do NOT raw-rewrite `state.yml` (CD-7) — `mp seed` a FRESH bundle (re-deriving tasks via §3), finish the run under masterplan v7, or stop and ask. |
-   | `ask` `ask:'waves-unbackfillable'` | Tasks carry `wave:null` and `plan.index.json` is missing/insufficient. Re-derive the index (re-parse `plan.md` via the `masterplan:mp-planner` agent), then re-enter the loop — `continue` backfills durably itself. |
+   | `ask` `ask:'waves-unbackfillable'` | Tasks carry `wave:null` and `plan.index.json` is missing/insufficient. Re-derive the index (re-parse `plan.md` via the `mp-planner` agent), then re-enter the loop — `continue` backfills durably itself. |
    | `ask` `ask:'dispatch-error'` \| `'decide-error'` | A loud invariant fired (plan/state file-set drift, missing plan.index entry, decide-loop exhaustion). Surface `op.error` via AUQ — never paper over a thrown invariant. |
    | `ask` `ask:'awaiting_waiver'` | The only remaining work is blocked tasks (`op.blockers`: ids + `block_reason`s). AUQ: `Waive all (Recommended)` · `Waive selected (one id)` · `Keep blocked`. **Waive all** → `mp waive-task --state=<path> --all`, then re-enter the loop. **Waive selected** → `mp waive-task --state=<path> --id=<N>` (one task id), then re-enter the loop. **Keep blocked** → close holding the blockers (work resumes when a block clears). Free-text / no clear answer → respond and hold (§2 `ask:'gate'` rule). Never auto-waive regardless of autonomy. |
    | `run_skill` `skill:'resume-phase'` | Mid-`{brainstorm\|plan}` with no plan built (`tasks:[]`). **Do NOT finalize/archive.** `phase==plan` → the plan lifecycle (**§3a**) with `op.planning_mode`. `phase==brainstorm` → re-entering a live brainstorm stays deferred: AUQ continue / restart / stop. |
@@ -297,7 +297,7 @@ emit them under loose/full):
 - "Ready for Wave N" / "awaiting completion" / "status this turn:" ceremonial closers.
 
 **Carve-out marker.** On an **auto-progress turn** — work done, the §2 loop returned a non-gate op
-(`dispatch_fabric` / `liveness-check` / `stop wait` / a committed + reconciled wave) and you are closing
+(`dispatch_fabric` / `--alive`/`--dead`-handshake / `stop wait` / a committed + reconciled wave) and you are closing
 **without** an AUQ — end the turn's text with the literal token
 **`<mp-autoprogress>`**. The global Stop guard
 (`~/.claude/hooks/auq-guard.sh`) stands down when it sees this marker, so it won't force a ceremonial
@@ -481,7 +481,7 @@ between the serial `superpowers:writing-plans` path and the parallel fan-out (§
    - `auto` → parallel **iff** `recommend_parallel && subsystems.length ≥ 2`; otherwise serial (step 3).
      Carry the decomposer's `reason` into your narration.
    - `serial` → skip the decomposer → step 3.
-3. **Serial path.** Dispatch the `masterplan:mp-planner` agent against the approved `spec.md` → it writes
+3. **Serial path.** Dispatch the `mp-planner` agent against the approved `spec.md` → it writes
    both `plan.md` and `plan.index.json` directly (sole producer). **Model provenance (non-negotiable):** the
    planner runs on its checked-in frontmatter default *because it is dispatched by name* — that is the governed
    path. Do **not** substitute a raw model override (`subagent({ model: "litellm/opus-4.8" })`) to get Write

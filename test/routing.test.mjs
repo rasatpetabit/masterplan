@@ -1,12 +1,13 @@
-// test/routing.test.mjs — Codex eligibility/routing truth table (pure; kills fragility #2).
-// Ports v7's eligibility checklist + precedence (v7 parts/step-c-dispatch.md, deleted at the cutover; see tag v8.1.0-pre-cruft-removal) into deterministic
-// code: same task -> same route, every run, fully testable. The v7 eligibility_cache dies;
-// eligibility is computed here over the plan.index.json task at dispatch time.
+// test/routing.test.mjs — implementer-backend resolution truth table (pure).
+// C6 (fresh-eyes remediation 2026-08-30): the pre-resolved codex/inline/ask eligibility
+// brain was deleted — routing now resolves through the governed routing-policy resolver
+// (lib/dispatch/routing-policy.mjs) from the task's dispatch `class`. This file keeps the
+// surviving pure decision: resolveImplementerBackend, the {kind:'agent'|'qctl'} tagged union.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { routeTask, resolveImplementerBackend } from '../lib/dispatch/index.mjs';
+import { resolveImplementerBackend } from '../lib/dispatch/index.mjs';
 
-// A task the heuristic should accept: <=3 files, unambiguous, has verify, not sensitive.
+// A task the resolver reads files/verify_commands from.
 const clean = (over = {}) => ({
   files: ['a.js'],
   description: 'Add a null check to parseConfig',
@@ -14,89 +15,7 @@ const clean = (over = {}) => ({
   ...over,
 });
 
-test('clean eligible task -> codex (auto)', () => {
-  const d = routeTask(clean(), { routing: 'auto' }, {});
-  assert.equal(d.target, 'codex');
-  assert.equal(d.eligible, true);
-  assert.equal(d.reason, 'heuristic');
-});
-
-// --- environmental hard-blocks override even an explicit `codex: ok` annotation ---
-test('host suppression -> inline (overrides annotation ok)', () => {
-  const d = routeTask(clean({ codex: 'ok' }), { routing: 'auto' }, { codexHostSuppressed: true });
-  assert.equal(d.target, 'inline');
-  assert.equal(d.reason, 'host-suppressed');
-});
-test('routing off -> inline (overrides annotation ok)', () => {
-  const d = routeTask(clean({ codex: 'ok' }), { routing: 'off' }, {});
-  assert.equal(d.target, 'inline');
-  assert.equal(d.reason, 'routing-off');
-});
-test('linked worktree -> inline (overrides annotation ok; codex sandbox cannot commit there)', () => {
-  const d = routeTask(clean({ codex: 'ok' }), { routing: 'auto' }, { linkedWorktree: true });
-  assert.equal(d.target, 'inline');
-  assert.equal(d.reason, 'linked-worktree');
-});
-
-// --- annotation overrides the heuristic ---
-test('annotation no -> inline (even if the heuristic would pass)', () => {
-  const d = routeTask(clean({ codex: 'no' }), { routing: 'auto' }, {});
-  assert.equal(d.target, 'inline');
-  assert.equal(d.eligible, false);
-  assert.equal(d.reason, 'annotation-no');
-});
-test('annotation ok -> codex (even with >3 files)', () => {
-  const d = routeTask(clean({ codex: 'ok', files: ['a', 'b', 'c', 'd', 'e'] }), { routing: 'auto' }, {});
-  assert.equal(d.target, 'codex');
-  assert.equal(d.reason, 'annotation-ok');
-});
-
-// --- heuristic rejections ---
-test('heuristic: >3 files -> inline', () => {
-  assert.equal(routeTask(clean({ files: ['a', 'b', 'c', 'd'] }), { routing: 'auto' }, {}).target, 'inline');
-});
-test('heuristic: design-judgment verbs -> inline', () => {
-  assert.equal(routeTask(clean({ description: 'Choose between Redis and Memcached' }), { routing: 'auto' }, {}).target, 'inline');
-  assert.equal(routeTask(clean({ description: 'Design the caching layer' }), { routing: 'auto' }, {}).target, 'inline');
-  assert.equal(routeTask(clean({ description: 'Explore options for retries' }), { routing: 'auto' }, {}).target, 'inline');
-});
-test('heuristic: word "design" inside "designated" does NOT trip (word-boundary)', () => {
-  assert.equal(routeTask(clean({ description: 'Update the designated owner field' }), { routing: 'auto' }, {}).target, 'codex');
-});
-test('heuristic: no verify commands -> inline', () => {
-  assert.equal(routeTask(clean({ verify_commands: [] }), { routing: 'auto' }, {}).target, 'inline');
-});
-test('heuristic: sensitive flag or markers -> inline', () => {
-  assert.equal(routeTask(clean({ sensitive: true }), { routing: 'auto' }, {}).target, 'inline');
-  assert.equal(routeTask(clean({ description: 'Rotate the API secret' }), { routing: 'auto' }, {}).target, 'inline');
-  assert.equal(routeTask(clean({ description: 'Run the schema migration' }), { routing: 'auto' }, {}).target, 'inline');
-});
-test('heuristic: conversational flag -> inline', () => {
-  assert.equal(routeTask(clean({ conversational: true }), { routing: 'auto' }, {}).target, 'inline');
-});
-
-// --- manual mode defers to the shell, carrying the recommendation ---
-test('manual mode -> ask, carrying the eligibility recommendation', () => {
-  const yes = routeTask(clean(), { routing: 'manual' }, {});
-  assert.equal(yes.target, 'ask');
-  assert.equal(yes.eligible, true);
-  const no = routeTask(clean({ files: ['a', 'b', 'c', 'd'] }), { routing: 'manual' }, {});
-  assert.equal(no.target, 'ask');
-  assert.equal(no.eligible, false);
-});
-
-test('default config routing is auto', () => {
-  assert.equal(routeTask(clean(), {}, {}).target, 'codex');
-});
-
-test('does not mutate inputs', () => {
-  const task = clean({ codex: 'ok' });
-  const frozen = JSON.stringify(task);
-  routeTask(task, { routing: 'auto' }, {});
-  assert.equal(JSON.stringify(task), frozen);
-});
-
-// --- resolveImplementerBackend: the dispatch-backend descriptor (sibling of routeTask) ---
+// --- resolveImplementerBackend: the dispatch-backend descriptor ---
 // A tagged union: {kind:'agent'} reproduces shipping (agentType/model live in the
 // dispatch-wave seam, NOT here); {kind:'qctl'} only when the flag is strictly true.
 test('resolveImplementerBackend: default (no implementer config) -> {kind:agent}', () => {

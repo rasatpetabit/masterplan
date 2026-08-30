@@ -37,7 +37,7 @@ modes are in [`docs/internals.md`](./docs/internals.md); the public overview is
 | Release history + decision rationale per version | [`CHANGELOG.md`](./CHANGELOG.md) |
 | Cross-cutting rules (CD-1…CD-10) + plan-field contract | `docs/conventions/cd-rules.md` · `docs/conventions/plan-annotations.md` |
 | Build/test/lint + contributor discipline | [`docs/development.md`](./docs/development.md) |
-| Agent registration (CC + pi) | CC: `agents/` → `masterplan:mp-*` (plugin loader). pi: `bin/register-pi-agents.mjs` writes `~/.pi/agent/agents/` — **bare** `mp-*.md` only (`model:` via live-alias map `fable → litellm/fable-5`; managed colon leftovers removed; `--check` for drift). See [`docs/development.md`](./docs/development.md) §"Never silently inline a delegated role" |
+| Agent registration (CC + pi) | CC: `agents/` → `masterplan:mp-*` (plugin loader). pi: `bin/register-pi-agents.mjs` writes `~/.pi/agent/agents/` — **bare** `mp-*.md` only (`model:` is a routing-policy lane name, e.g. `frontier`, resolved to its lane model ref from `policy/workflow-map.json`; managed colon leftovers removed; `--check` for drift). See [`docs/development.md`](./docs/development.md) §"Never silently inline a delegated role" |
 | Active plans (current work) | `docs/masterplan/*/state.yml` (source of truth per CD-7) |
 
 **Canonical reading order for a new session:** this file →

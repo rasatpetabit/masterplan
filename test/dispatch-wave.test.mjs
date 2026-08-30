@@ -1078,10 +1078,12 @@ test('buildWaveLaunchContext: returns prepared tasks + MAIN from injected routin
   assert.equal(result.MAIN, MAIN);
   assert.equal(result.prepared.tasks.length, 1);
   assert.equal(result.prepared.tasks[0].id, 1);
-  // Injected codex_host_suppressed:true forces host-suppressed even though the plan
-  // annotation is codex:'ok' — this is the env fact derived from routingInputs, not state.codex.
-  assert.equal(result.prepared.tasks[0].target, 'inline');
-  assert.equal(result.prepared.tasks[0].reason, 'host-suppressed');
+  // Governed-path payload (C6): the legacy routeTask codex/inline brain is deleted —
+  // routing is deferred to the governed class resolver, so the payload carries only the
+  // class (the worker default for an unpinned task), with no pre-baked target/reason.
+  assert.equal(result.prepared.tasks[0].class, 'bounded-edit');
+  assert.equal(result.prepared.tasks[0].target, undefined);
+  assert.equal(result.prepared.tasks[0].reason, undefined);
 });
 
 test('buildWaveLaunchContext: reposAllowlist is optional (omitted on fabric path)', () => {

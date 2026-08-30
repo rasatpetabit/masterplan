@@ -35,7 +35,8 @@ const RETIRED_PATTERNS = [
   /\bdispatch_fanout\b/g,
   /\bserve-mcp\b/g,
   /mcp__[a-z]+__dispatch_(task|review|fanout)\b/g,
-  /\badsp[-_]/g,
+  /\badsp(?=[_-]|\b)/g, // D1: 'adsp' at a word boundary OR before -/_ (the old /\badsp[-_]/g missed bare 'adsp'; \b alone would miss 'adsp_' since _ is a word char)
+  /\bMCP pool\b/g, // D1: broker-era 'MCP pool' phrase had no pattern at all
   /\bbroker[-_a-z]*\b/g,
   /\bdispatch-(gateway|agentic-loop|planned-execution|deep-investigation|graph-execution|multi-agent-orchestration|bounded-edit|unknown)\b/g,
   /^subagents:\s*$/gm,
@@ -54,6 +55,7 @@ const EXEMPT_PREFIXES = [
   '.claude/',
   '.pi/',
   'test/no-agent-dispatch.test.mjs',
+  'test/no-agent-dispatch-fixtures.test.mjs',
 ];
 const EXEMPT_FILES = new Set(['CHANGELOG.md', 'WORKLOG.md', 'test/e2e-native-wave-report.md']);
 

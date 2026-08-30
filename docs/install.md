@@ -23,7 +23,7 @@ If the marketplace path is unavailable (offline host, locked-down account, custo
 mkdir -p ~/.claude/commands ~/.claude/skills
 printf '%s\n' \
   '---' \
-  'description: "Brainstorm, plan, execute, resume, doctor, and retrospect long-running work. Use /masterplan:<verb> for dedicated per-verb commands."' \
+  'description: "Resumable orchestrator for /masterplan: brainstorm→plan→execute on durable run bundles. Verbs: full, brainstorm, plan, execute, finish, retro, import, doctor, status, validate, stats, clean, next, verbs, render, publish, follow."' \
   'argument-hint: "[verb] [topic-or-path]"' \
   '---' \
   '<!-- masterplan-shim: v4 -->' \
