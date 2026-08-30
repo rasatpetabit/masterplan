@@ -2,7 +2,7 @@
 schema_version: 9
 slug: fresh-eyes-remediation
 status: in-progress
-phase: brainstorm
+phase: plan
 topic: "Remediate the confirmed legacy/dead/incorrect elements found by the 2026-08-29 fresh-eyes audit (4 parallel workflow runs + manual verification). Input inventory: audit-findings.md in this bundle."
 complexity: null
 complexity_source: null
