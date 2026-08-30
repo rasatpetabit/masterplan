@@ -25,7 +25,6 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { KNOWN_FLAGS, isKnownFlag } from '../bin/masterplan.mjs';
@@ -55,14 +54,15 @@ function run(args, opts = {}) {
 }
 
 function docSources() {
-  const skills = [
-    path.join(os.homedir(), '.pi/agent/skills/masterplan/SKILL.md'),
-    path.join(os.homedir(), '.pi/agent/skills/masterplan-detect/SKILL.md'),
-  ];
+  // Canonical repo sources, NOT installed copies: the installed skill under
+  // ~/.pi/agent/skills/ is a consumer artifact (symlink today, copied release
+  // snapshot after install-pi) and must never drive the documented-surface
+  // contract — tests would silently follow a stale install.
   return [
     path.join(ROOT, 'commands/masterplan.md'),
     path.join(ROOT, 'docs/verbs.md'),
-    ...skills.filter((p) => fs.existsSync(p)),
+    path.join(ROOT, 'skills/masterplan/SKILL.md'),
+    path.join(ROOT, 'skills/masterplan-detect/SKILL.md'),
   ];
 }
 

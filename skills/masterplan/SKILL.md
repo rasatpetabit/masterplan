@@ -11,9 +11,22 @@ AUQ, Serena, Hindsight, context-mode, and agent policy is centralized in `AGENTS
 # Generic entrypoint for Superpowers Masterplan (Pi primary, Codex-compatible)
 
 This skill is the entrypoint for Superpowers Masterplan on hosts without the
-Claude Code plugin manager — Pi is the primary consumer (installed via symlink
-into ~/.pi/agent/skills/), Codex remains compatible. Its job is to load the
-canonical command prompt and adapt it to the current host runtime.
+Claude Code plugin manager. Its job is to load the canonical command prompt
+and adapt it to the current host runtime.
+
+## Host model
+
+- **Pi is the primary host.** It has the full fleet tool suite (file reads,
+  edits, bash, `ask_user_question`, parallel `subagent` fan-out) and runs
+  masterplan end-to-end — seeding, gates, waves, release. Pi skills are
+  installed by `bin/install-pi.mjs` (a copied release snapshot under
+  `~/.local/share/masterplan/`, symlinked into `~/.pi/agent/skills/` — never
+  a symlink into a dev tree).
+- **Codex is compatible** with a restricted tool set; its adaptation rules
+  are below. The full-lifecycle Codex commitment stands: Codex hosts whole
+  runs foreground-sequentially.
+- **Claude Code does not use this skill** — it loads masterplan as a plugin
+  (`/masterplan`).
 
 ## Source of truth (v8 clean-core layout)
 
@@ -28,12 +41,14 @@ do not look for per-phase files.
 Resolve `commands/masterplan.md` in this order (its siblings `bin/` and `lib/`
 sit beside it at the plugin root):
 
-1. `../../commands/masterplan.md` relative to this `SKILL.md` file.
+1. `../../commands/masterplan.md` relative to this `SKILL.md` file (covers the
+   Pi install root and any symlinked skill dir).
 2. `$PWD/commands/masterplan.md` when running inside the plugin repo.
 3. `/path/to/masterplan/commands/masterplan.md`.
-4. `$HOME/.codex/.tmp/marketplaces/rasatpetabit-masterplan/commands/masterplan.md`.
-5. `$HOME/.claude/plugins/marketplaces/rasatpetabit-masterplan/commands/masterplan.md`.
-6. `$HOME/.claude/commands/masterplan.md`.
+4. `$HOME/.local/share/masterplan/current/commands/masterplan.md` (Pi install root).
+5. `$HOME/.codex/.tmp/marketplaces/rasatpetabit-masterplan/commands/masterplan.md`.
+6. `$HOME/.claude/plugins/marketplaces/rasatpetabit-masterplan/commands/masterplan.md`.
+7. `$HOME/.claude/commands/masterplan.md`.
 
 If none exists, say the local masterplan command file is missing and stop before
 inventing behavior.
@@ -41,7 +56,7 @@ inventing behavior.
 Run the deterministic core with the Node entrypoints that sit beside the command
 file. The prompt writes them as `node "${CLAUDE_PLUGIN_ROOT}/bin/masterplan.mjs"`
 and `node "${CLAUDE_PLUGIN_ROOT}/bin/doctor.mjs"`; `${CLAUDE_PLUGIN_ROOT}` is a
-Claude Code variable that may be unset under Codex, so resolve `bin/` as the
+Claude Code variable that may be unset on other hosts, so resolve `bin/` as the
 sibling of the located `commands/masterplan.md`:
 
 - `mp <subcommand>` → `node <plugin-root>/bin/masterplan.mjs <subcommand> …` —
@@ -50,10 +65,9 @@ sibling of the located `commands/masterplan.md`:
   bin is fs-only.
 - `doctor` → `node <plugin-root>/bin/doctor.mjs`.
 
-In Codex, prefer summary-first inventory (`rg --files docs/masterplan` plus
-targeted `state.yml` reads) before opening plan/spec artifacts. Avoid
-exploratory full-file dumps of large prompt, plan, transcript, or event-log
-files.
+Prefer summary-first inventory (`rg --files docs/masterplan` plus targeted
+`state.yml` reads) before opening plan/spec artifacts. Avoid exploratory
+full-file dumps of large prompt, plan, transcript, or event-log files.
 
 ## Configuration (seed flags + `set-review-config` → state.yml)
 
@@ -75,20 +89,21 @@ run bundle and read back from `docs/masterplan/<slug>/state.yml`:
 
 Read the run's config from `state.yml`; do not look for or merge any config file.
 
-When Codex hosts the run, host review-suppression only forces the effective review behavior
-off for the current invocation to avoid recursive Codex-on-Codex dispatch; it does not
-rewrite the persisted `state.yml` values (`state.review.adversary`, or legacy
-`state.codex.{routing,review}`), which still apply to future Claude Code runs.
+Host review-suppression (see the host adaptation sections) only forces the
+effective review behavior off for the current invocation to avoid recursive
+host-on-host dispatch; it does not rewrite the persisted `state.yml` values
+(`state.review.adversary`, or legacy `state.codex.{routing,review}`), which
+still apply to future runs on other hosts.
 
 ## Invocation mapping
 
 Treat these user inputs as this skill:
 
-- `Use masterplan <args>` as a normal Codex chat message
+- `Use masterplan <args>` as a normal chat message (any host)
 - `masterplan <args>` when it appears as natural-language chat, not shell input
 - `$masterplan`
-- `$masterplan <args>` when it appears as normal chat; do not recommend this
-  form because Codex TUI shell-command mode sends it to Bash
+- `$masterplan <args>` when it appears as normal chat (Codex caveat below —
+  its TUI shell-command mode sends this to Bash)
 - `/masterplan`
 - `/masterplan <args>`
 - `/masterplan:masterplan`
@@ -111,38 +126,61 @@ that way: only `masterplan` + `masterplan-detect` are allowed under `skills/`.
 The arguments are the text after the command name. If there are no arguments,
 follow the command's bare invocation flow: resume active `state.yml` first,
 re-render pending gates, poll background continuations, and treat `status:
-blocked` as critical-error recovery rather than an ordinary pause. When Codex
+blocked` as critical-error recovery rather than an ordinary pause. When a host
 renders a manual resume hint or close-out instruction, use an explicit normal
-chat instruction, e.g.
-`send a normal Codex chat message: Use masterplan execute docs/masterplan/<slug>/state.yml`;
-do not surface Claude-only `/masterplan ...` or shell-looking `$masterplan ...`
-as the primary Codex resume command.
+chat instruction suited to that host (see its adaptation section); never surface
+a shell-looking form as the primary resume command.
 
-## Codex native goal bridge
+## Recognizing existing runs
 
-Codex native goal support is a pursuit wrapper for Masterplan plans, not a
-Masterplan verb. After a plan exists, follow the command prompt's Codex native
-goal pursuit contract: use `get_goal` to inspect the active thread goal, create
-one with `create_goal` when an in-progress `state.yml` has no matching goal, and
-call `update_goal(status="complete")` only after Masterplan's own completion
-finalizer proves the plan is complete. Do not run `/goal`, `$goal`, or `goal` in
-shell-command mode; those are host UI inputs, not executables. `state.yml`
-remains authoritative for task position and recovery.
-
-## Existing Claude-created projects
-
-Codex must recognize plans created by Claude Code. Before starting a new plan,
-inspect the current repo/worktree for:
+Every host must recognize runs created by any other host. Before starting a new
+plan, inspect the current repo/worktree for:
 
 - `docs/masterplan/*/state.yml`
 - `docs/masterplan/*/{spec.md,plan.md,retro.md,events.jsonl}`
 - legacy `docs/superpowers/plans/*-status.md`
 - legacy `docs/superpowers/{plans,specs,retros,archived-plans,archived-specs}/*.md`
 
-Do not assume there is no active work because Codex did not create the run
+Do not assume there is no active work because this host did not create the run
 bundle. `state.yml` is the durable source of truth.
 
-## Codex tool adaptation
+## Pi adaptation (primary host)
+
+- **Tools:** use the native fleet tools directly — `read`/`bash`/`edit`/`write`
+  for file work (no translation layer), `ask_user_question` for every
+  user-facing choice (never prose questions), `todo` for task tracking.
+- **Planning suppression:** Pi has no Claude Code Workflow handles. Runs with
+  `PI_CODING_AGENT=true` are forced onto the serial planning path
+  (`planning_mode: serial` in the `resume-phase` op) — this is automatic; the
+  parallel plan fan-out is CC-only.
+- **Wave execution:** `dispatch_fabric` ops come back on Pi like every host.
+  Launch `op.tasks` from `op.cwd` with Pi's parallel subagent API — one
+  bounded, self-contained brief per task (its `files` scope, its verifies, its
+  digest contract), fan out the independent ones concurrently, honor each
+  task's `files` scope as its write boundary, then assemble the standard
+  per-task digest array and feed it to `mp record-result` exactly as the §2 op
+  table describes. Sequential single-task execution is fine for one-task waves
+  or when tasks share mutable state.
+- **Resume hints:** tell the user to ask in normal chat, e.g.
+  `Use masterplan execute docs/masterplan/<slug>/state.yml` — there is no
+  slash-command form on Pi.
+- **Agents:** the mp-* agent briefs are registered into `~/.pi/agent/agents/`
+  (bare-only) by `bin/register-pi-agents.mjs` during install; subagent
+  dispatches reference them by bare name.
+
+## Codex adaptation (compatible host)
+
+### Invocation caveats
+
+`Use masterplan ...` is the primary Codex chat/skill trigger for user-facing
+resume hints. `$masterplan ...` can work only when the host records it as normal
+chat; Codex TUI shell-command mode sends it to Bash. Never pass
+`$masterplan ...`, `masterplan ...`, or `/masterplan ...` to `exec_command`;
+Bash will either expand `$masterplan` as an environment variable or look for a
+nonexistent executable. Resume hints use an explicit normal chat instruction,
+e.g. `send a normal Codex chat message: Use masterplan execute docs/masterplan/<slug>/state.yml`.
+
+### Tool adaptation
 
 When the command prompt names Claude Code tools, use the local Codex equivalents:
 
@@ -158,7 +196,7 @@ When the command prompt names Claude Code tools, use the local Codex equivalents
   each task's `files` scope, then assemble the standard per-task digest array
   and feed it to `mp record-result` exactly as the §2 op table describes. Host
   suppression does NOT suppress `dispatch_fabric` — it only forces PLANNING
-  onto §3a's SERIAL path (`planning_mode: serial` in the `resume-phase` op;
+  onto the SERIAL path (`planning_mode: serial` in the `resume-phase` op;
   the parallel plan fan-out is CC-only). Never run
   either workflow inline — the foreground-sequential op IS the Codex
   execution path.
@@ -167,20 +205,25 @@ When the command prompt names Claude Code tools, use the local Codex equivalents
   subagents or parallel agent work; otherwise run sequentially in this Codex
   session and use `multi_tool_use.parallel` only for independent tool calls.
 
+### Suppression and gates
+
 Follow the command prompt's Codex-hosted suppression rules: do not recursively
-dispatch to Codex from inside a Codex-hosted masterplan run.
-
-`Use masterplan ...` is the primary Codex chat/skill trigger for user-facing
-resume hints. `$masterplan ...` can work only when the host records it as normal
-chat; Codex TUI shell-command mode sends it to Bash. Never pass
-`$masterplan ...`, `masterplan ...`, or `/masterplan ...` to `exec_command`;
-Bash will either expand `$masterplan` as an environment variable or look for a
-nonexistent executable.
-
-Codex host review-suppression is only about recursive dispatch and review. When a
-Codex `request_user_input` gate returns an answer label, treat that as explicit
+dispatch to Codex from inside a Codex-hosted masterplan run. Codex host
+review-suppression is only about recursive dispatch and review. When a Codex
+`request_user_input` gate returns an answer label, treat that as explicit
 interactive selection evidence even when it is the first/recommended option and
 no free-form note is present. Follow the command prompt's
 `codex_host_gate_continuation` rule for continuation answers and keep moving for
 `full` / `execute` flows until a true halt gate, sensitive live-auth blocker, or
 actual Codex host budget stop fires.
+
+### Codex native goal bridge
+
+Codex native goal support is a pursuit wrapper for Masterplan plans, not a
+Masterplan verb. After a plan exists, follow the command prompt's Codex native
+goal pursuit contract: use `get_goal` to inspect the active thread goal, create
+one with `create_goal` when an in-progress `state.yml` has no matching goal, and
+call `update_goal(status="complete")` only after Masterplan's own completion
+finalizer proves the plan is complete. Do not run `/goal`, `$goal`, or `goal` in
+shell-command mode; those are host UI inputs, not executables. `state.yml`
+remains authoritative for task position and recovery.
