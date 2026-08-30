@@ -1,0 +1,376 @@
+# Fresh-eyes remediation implementation plan
+
+Spec: spec.md
+
+32 tasks across 6 execution waves. Wave 0 is the required A7 compatibility precondition; waves 1–5 mirror the approved remediation waves.
+
+Tasks in a wave have disjoint declared write scopes. B1/B2 have no A-wave code prerequisite and can be prepared immediately, while retaining their approved section-B wave annotation. The terminal release sequence is one agentic-loop task because tag, push, CI, marketplace update, and final verification are causally ordered and must not run as same-wave siblings.
+
+Routing uses each task’s machine-readable `class` annotation. `bounded-edit` is deterministic bounded work; `agentic-loop` is iterate-until-green or operational work; `planned-execution` is reserved for the approved caller/consumer judgment points.
+
+## Wave 0 — A7 compatibility preflight
+
+### Task 1: A7 precondition: compatibility-scan every documented mp invocation and vocabulary in commands/masterplan.md, docs/verbs.md, both skills, and repository scripts before strict parseArgs lands; record any incompatible caller and its owning task in the bundle sweep so no existing invocation is broken silently.
+- routing class: `planned-execution`
+- codex: no
+- goals: G1, G5
+- files: `docs/masterplan/fresh-eyes-remediation/a7-compat-scan.md`, `docs/masterplan/fresh-eyes-remediation/a7-compat-scan.txt`
+- verify:
+  - `test -s docs/masterplan/fresh-eyes-remediation/a7-compat-scan.txt`
+  - `test -s docs/masterplan/fresh-eyes-remediation/a7-compat-scan.md`
+  - `grep -Eq 'commands/masterplan.md|docs/verbs.md|skills/' docs/masterplan/fresh-eyes-remediation/a7-compat-scan.md`
+- spec refs: spec.md Wave 1 — A7; spec.md Cross-wave rules — Compatibility scan before A7
+
+## Wave 1 — Behavioral repairs
+
+### Task 2: Land the shared CLI repair set after the A7 scan: repair A1 goal-gate flag parsing and finishStep ctx threading; repair A5 no-op record-result status; make A7 parseArgs reject unknown flags with exit 2 and add the positive documented-surface cross-check; repair A9 status ENOENT handling; own test/bin-masterplan.mjs including its A2 and A3 compatibility assertions.
+- routing class: `agentic-loop`
+- codex: no
+- goals: G1, G2, G5
+- files: `bin/masterplan.mjs`, `commands/masterplan.md`, `test/bin-masterplan.test.mjs`, `test/cli-surface.test.mjs`, `test/prompt-structure.test.mjs`
+- verify:
+  - `node --test test/bin-masterplan.test.mjs test/cli-surface.test.mjs`
+  - `node --test test/finish-step.test.mjs`
+  - `node --test test/prompt-structure.test.mjs`
+  - `! grep -Eq -- '--goals-(met|unmet|waived)|--manual-verdict|--goals-waived|--waiver-reason' commands/masterplan.md`
+  - `npm test`
+- spec refs: spec.md Wave 1 — A1; spec.md Wave 1 — A5; spec.md Wave 1 — A7; spec.md Wave 1 — A9
+
+### Task 3: Repair A2 by repointing FABRIC_DEFAULT_CLASS to bounded-edit and updating wave, qctl-fabric-seam, and task-review assertions; the shared CLI task owns test/bin-masterplan.mjs and the dispatch-wave task owns test/dispatch-wave.test.mjs, completing all five reviewed test files. Preserve the note that routing is neutral while the recorded capability changes from chat to edit.
+- routing class: `bounded-edit`
+- codex: no
+- goals: G1, G2
+- files: `lib/wave.mjs`, `test/wave.test.mjs`, `test/qctl-fabric-seam.test.mjs`, `test/task-review.test.mjs`
+- verify:
+  - `node --test test/wave.test.mjs test/qctl-fabric-seam.test.mjs test/task-review.test.mjs`
+  - `npm test`
+- spec refs: spec.md Wave 1 — A2
+
+### Task 4: Repair A4 by deleting state.blackboard, task.handoff_key, and recover_from_blackboard resume paths, updating resume tests to prove interrupted runs choose only executable recovery actions.
+- routing class: `bounded-edit`
+- codex: heuristic
+- goals: G1, G2
+- files: `lib/resume.mjs`, `test/resume.test.mjs`
+- verify:
+  - `node --test test/resume.test.mjs`
+  - `! grep -RIn -E 'recover_from_blackboard|state\.blackboard|task\.handoff_key' lib/resume.mjs test/resume.test.mjs`
+  - `npm test`
+- spec refs: spec.md Wave 1 — A4
+
+### Task 5: Repair A6 by making register-pi-agents reject every unknown option and implement read-only --help; add subprocess regressions proving --help and typo paths do not create, rewrite, or delete target agent files.
+- routing class: `bounded-edit`
+- codex: heuristic
+- goals: G1, G2, G5
+- files: `bin/register-pi-agents.mjs`, `test/register-pi-agents.test.mjs`
+- verify:
+  - `node --test test/register-pi-agents.test.mjs`
+  - `node bin/register-pi-agents.mjs --help`
+  - `npm test`
+- spec refs: spec.md Wave 1 — A6
+
+### Task 6: Repair A8 at both sites by introducing one git-toplevel workspace-root derivation used by continue-time capture and wave-commit consumption; add off-fleet and nested-worktree regressions proving drift detection no longer depends on /srv/dev or directory depth.
+- routing class: `agentic-loop`
+- codex: no
+- goals: G1, G2
+- files: `lib/continue.mjs`, `lib/wave-commit.mjs`, `test/wave-commit.test.mjs`, `test/continue.test.mjs`, `lib/watch-integrity.mjs`
+- verify:
+  - `node --test test/continue.test.mjs test/wave-commit.test.mjs`
+  - `! grep -nE "/srv/dev|path\.resolve\(wt\.WT,'\.\./\.\.'\)|path\.dirname\(MAIN\)" lib/continue.mjs lib/wave-commit.mjs`
+  - `npm test`
+- spec refs: spec.md Wave 1 — A8
+
+### Task 7: Complete A3 outside the shared bin/prompt owner by rejecting fabric-off in dispatch-wave, removing it from docs/verbs.md and .okf/index.md, and adding dispatch regressions; also update test/dispatch-wave.test.mjs for A2’s bounded-edit default while the shared CLI task owns the seed/bin and commands/masterplan.md changes.
+- routing class: `agentic-loop`
+- codex: no
+- goals: G1, G2, G5
+- files: `lib/dispatch-wave.mjs`, `docs/verbs.md`, `.okf/index.md`, `test/dispatch-wave.test.mjs`
+- verify:
+  - `node --test test/dispatch-wave.test.mjs test/bin-masterplan.test.mjs`
+  - `! grep -RIn --exclude-dir=.git --exclude-dir=docs/masterplan -- '--fabric=off' commands/masterplan.md docs/verbs.md .okf/index.md bin lib`
+  - `npm test`
+- spec refs: spec.md Wave 1 — A3
+
+## Wave 2 — Live state and CI
+
+### Task 8: Repair B1 and the overlapping B2 hash drifts in one CD-7 operational owner: create a tuple-bound goal-check receipt for archived blocked-task-injection, use mp record-goal-check, and use mp goals-amend with fresh approvals for blocked-task-injection, dispatch-subagent-reconcile, fabric-default-dual-reg, and planf3-ideas. Prove the missing-receipt ERROR and all four hash warnings clear without hand-editing state.yml or events.jsonl. This operational repair has no A1 or other A-wave implementation precondition and may begin as soon as its receipts are available.
+- routing class: `agentic-loop`
+- codex: no
+- goals: G1, G3, G4
+- files: `docs/masterplan/blocked-task-injection/goals.md`, `docs/masterplan/blocked-task-injection/state.yml`, `docs/masterplan/blocked-task-injection/events.jsonl`, `docs/masterplan/dispatch-subagent-reconcile/goals.md`, `docs/masterplan/dispatch-subagent-reconcile/state.yml`, `docs/masterplan/dispatch-subagent-reconcile/events.jsonl`, `docs/masterplan/fabric-default-dual-reg/goals.md`, `docs/masterplan/fabric-default-dual-reg/state.yml`, `docs/masterplan/fabric-default-dual-reg/events.jsonl`, `docs/masterplan/planf3-ideas/goals.md`, `docs/masterplan/planf3-ideas/state.yml`, `docs/masterplan/planf3-ideas/events.jsonl`
+- verify:
+  - `node bin/masterplan.mjs goals-status --state=docs/masterplan/blocked-task-injection/state.yml`
+  - `node bin/masterplan.mjs goals-status --state=docs/masterplan/dispatch-subagent-reconcile/state.yml`
+  - `node bin/masterplan.mjs goals-status --state=docs/masterplan/fabric-default-dual-reg/state.yml`
+  - `node bin/masterplan.mjs goals-status --state=docs/masterplan/planf3-ideas/state.yml`
+  - `node bin/doctor.mjs`
+  - `grep -q '"type":"goal_check"' docs/masterplan/blocked-task-injection/events.jsonl`
+- spec refs: spec.md Wave 2 — B1; spec.md Wave 2 — B2
+
+### Task 9: Repair B2 for simplify-dedup-2 through mp goals-amend with a fresh approval receipt, shortening the 245-character topic below the scalar cap without changing the founding ask; prove both the hash mismatch and scalar-cap warnings clear.
+- routing class: `agentic-loop`
+- codex: no
+- goals: G1, G3, G4
+- files: `docs/masterplan/simplify-dedup-2/goals.md`, `docs/masterplan/simplify-dedup-2/state.yml`, `docs/masterplan/simplify-dedup-2/events.jsonl`
+- verify:
+  - `node bin/masterplan.mjs goals-status --state=docs/masterplan/simplify-dedup-2/state.yml`
+  - `node bin/doctor.mjs`
+- spec refs: spec.md Wave 2 — B2
+
+### Task 10: Repair B3 by relocating the six implemented design plans from docs/superpowers/plans into an archive under docs/masterplan and updating their six design-document backlinks; prove docs/superpowers no longer contains planning artifacts and the legacy-bundle warning disappears.
+- routing class: `bounded-edit`
+- codex: heuristic
+- goals: G1, G3, G8
+- files: `docs/superpowers/plans/2026-08-07-centralized-wave-review.md`, `docs/superpowers/plans/2026-08-07-concentrate-wave-launch-context.md`, `docs/superpowers/plans/2026-08-07-decompose-adsp-adapter.md`, `docs/superpowers/plans/2026-08-07-decompose-dispatch-orchestrator.md`, `docs/superpowers/plans/2026-08-07-decompose-finish-step.md`, `docs/superpowers/plans/2026-08-07-separate-watch-integrity.md`, `docs/masterplan/.implemented-plan-archive/2026-08-07-centralized-wave-review.md`, `docs/masterplan/.implemented-plan-archive/2026-08-07-concentrate-wave-launch-context.md`, `docs/masterplan/.implemented-plan-archive/2026-08-07-decompose-adsp-adapter.md`, `docs/masterplan/.implemented-plan-archive/2026-08-07-decompose-dispatch-orchestrator.md`, `docs/masterplan/.implemented-plan-archive/2026-08-07-decompose-finish-step.md`, `docs/masterplan/.implemented-plan-archive/2026-08-07-separate-watch-integrity.md`, `docs/design/centralized-wave-review.md`, `docs/design/concentrate-wave-launch-context.md`, `docs/design/decompose-adsp-adapter.md`, `docs/design/decompose-dispatch-orchestrator.md`, `docs/design/decompose-finish-step.md`, `docs/design/separate-watch-integrity.md`
+- verify:
+  - `test -z "$(find docs/superpowers -type f 2>/dev/null -print -quit)"`
+  - `test "$(find docs/masterplan/implemented-plan-archive -maxdepth 1 -type f -name "*.md" | wc -l)" -eq 6`
+  - `node --test test/doctor.test.mjs`
+  - `node bin/doctor.mjs`
+- spec refs: spec.md Wave 2 — B3
+
+### Task 11: Address B4 and B5 documentation in wave 2 by adding the missing tag and push sequence to RELEASING.md, preserving no-retroactive-tag policy, and documenting that marketplace/runtime drift is confirmed by doctor now and mechanically cleared only in terminal wave 5.
+- routing class: `bounded-edit`
+- codex: heuristic
+- goals: G1, G6, G8
+- files: `RELEASING.md`, `docs/internals/doctor.md`
+- verify:
+  - `node --test test/publish-hygiene.test.mjs`
+  - `grep -Eq 'git tag|tag.*v' RELEASING.md`
+  - `grep -Eq 'git push.*tag|push.*tags' RELEASING.md`
+  - `grep -q 'plugin-registry-drift' docs/internals/doctor.md`
+- spec refs: spec.md Wave 2 — B4; spec.md Wave 2 — B5
+
+## Wave 3 — Deletions and config scrub
+
+### Task 12: Remove C1 jsonc.mjs with its sole test and remove C8 owner-stress.sh; verify no tracked runtime or runner references survive and the suite remains green.
+- routing class: `bounded-edit`
+- codex: heuristic
+- goals: G1, G2
+- files: `lib/jsonc.mjs`, `test/jsonc.test.mjs`, `test/owner-stress.sh`
+- verify:
+  - `test ! -e lib/jsonc.mjs && test ! -e test/jsonc.test.mjs && test ! -e test/owner-stress.sh`
+  - `! grep -RIn --exclude-dir=.git -E 'lib/jsonc\.mjs|owner-stress\.sh' bin lib test package.json .github`
+  - `npm test`
+- spec refs: spec.md Wave 3 — C1; spec.md Wave 3 — C8
+
+### Task 13: Remove C2 zero-consumer digest exports and C3 runLocalVerifyCommands while retaining CONTRACT_VERSION and DEFAULT_SKYNET_VERIFY_ALLOWLIST; update dispatch/transport tests and comments to prove the live work-item surface still functions.
+- routing class: `agentic-loop`
+- codex: no
+- goals: G1, G2
+- files: `lib/dispatch/dispatch-digest.mjs`, `lib/dispatch/verify-transport.mjs`, `test/verify-transport.test.mjs`
+- verify:
+  - `node --test test/verify-transport.test.mjs test/dispatch-wave.native.test.mjs test/qctl-fabric-seam.test.mjs test/fabric-codex-suppressed.test.mjs`
+  - `! grep -RIn -E 'runLocalVerifyCommands|isValidDispatchField|extractDigestFromOutput|buildFrozenDispatchRecord|buildDispatchField|stampDigest|blockedDigest|failedDigest|DIGEST_REQUIRED_FIELDS|VALID_STATUSES|VALID_DISPATCH_OUTCOMES' lib/dispatch test/verify-transport.test.mjs`
+- spec refs: spec.md Wave 3 — C2; spec.md Wave 3 — C3
+
+### Task 14: Remove C4 finalizeRecord and correct docs/internals/wave-dispatch.md so only the live native stages are described; add or update dispatch-wave tests to prove record creation and result ingestion remain covered. Remove the D1 MCP-pool survivor in this owned module.
+- routing class: `bounded-edit`
+- codex: heuristic
+- goals: G1, G2, G8
+- files: `lib/dispatch-wave.mjs`, `docs/internals/wave-dispatch.md`, `test/dispatch-wave.test.mjs`
+- verify:
+  - `node --test test/dispatch-wave.test.mjs`
+  - `! grep -RIn 'finalizeRecord' lib/dispatch-wave.mjs docs/internals/wave-dispatch.md test/dispatch-wave.test.mjs`
+- spec refs: spec.md Wave 3 — C4
+
+### Task 15: Remove C5 unreachable probe machinery from continueRun and bin, update continue/bin tests for the reduced operation table, and leave the shared commands/masterplan.md correction to the D4 CLI-contract owner.
+- routing class: `bounded-edit`
+- codex: heuristic
+- goals: G1, G2, G5
+- files: `lib/continue.mjs`, `bin/masterplan.mjs`, `test/continue.test.mjs`, `test/bin-masterplan.test.mjs`
+- verify:
+  - `node --test test/continue.test.mjs test/bin-masterplan.test.mjs`
+  - `! grep -RIn -E 'op.?[:=].?probe|case .probe' lib/continue.mjs bin/masterplan.mjs`
+  - `npm test`
+- spec refs: spec.md Wave 3 — C5
+
+### Task 16: Remove C6 legacy routeTask and the non-fabric fallback while retaining the qctl descriptor seam needed by the live fabric branch; prune dead dispatch facade exports and rewrite routing/dispatch/wave tests around the governed class path. Remove the D1 bare-adsp survivors in the owned wave/backend modules.
+- routing class: `agentic-loop`
+- codex: no
+- goals: G1, G2
+- files: `lib/wave.mjs`, `lib/dispatch/routing.mjs`, `lib/dispatch/backend.mjs`, `lib/dispatch/index.mjs`, `test/routing.test.mjs`, `test/dispatch.test.mjs`, `test/wave.test.mjs`
+- verify:
+  - `node --test test/routing.test.mjs test/dispatch.test.mjs test/wave.test.mjs test/qctl-fabric-seam.test.mjs`
+  - `! grep -RIn -E 'routeTask|legacy route|fabric off' lib/dispatch lib/wave.mjs test/routing.test.mjs test/dispatch.test.mjs test/wave.test.mjs`
+- spec refs: spec.md Wave 3 — C6
+
+### Task 17: Resolve C7 from actual consumers: remove unused mp-explorer and its registration/readme tests; remove mp-adversarial-reviewer if review is class-resolved only, otherwise retain it with an explicit registration-consumer citation. Update agent inventories and prove Pi registration drift is zero.
+- routing class: `planned-execution`
+- codex: no
+- goals: G1, G2, G8
+- files: `agents/mp-explorer.md`, `agents/mp-adversarial-reviewer.md`, `README.md`, `test/register-pi-agents.test.mjs`
+- verify:
+  - `node --test test/register-pi-agents.test.mjs test/agents.test.mjs`
+  - `node bin/register-pi-agents.mjs --check`
+  - `! grep -RIn --exclude-dir=.git 'mp-explorer' agents README.md bin lib test/register-pi-agents.test.mjs`
+- spec refs: spec.md Wave 3 — C7
+
+### Task 18: Audit all C9 github-coord exports against production imports, remove only dedupKey, findDuplicates, canTransition, nextWaveToPublish, and mergeBatchPlan when the audit confirms zero callers, and prune their unit tests without disturbing live coordination helpers.
+- routing class: `planned-execution`
+- codex: no
+- goals: G1, G2
+- files: `lib/github-coord.mjs`, `test/github-coord.test.mjs`
+- verify:
+  - `node --test test/github-coord.test.mjs test/bin-masterplan.test.mjs`
+  - `! grep -RIn -E 'dedupKey|findDuplicates|canTransition|nextWaveToPublish|mergeBatchPlan' lib/github-coord.mjs bin/masterplan.mjs test/github-coord.test.mjs`
+- spec refs: spec.md Wave 3 — C9
+
+### Task 19: Retain C10 intentionally by making lib/hygiene.mjs and RELEASING.md identify the module as the publish-time gate, then prove its three detector families still run through publish-hygiene tests.
+- routing class: `bounded-edit`
+- codex: heuristic
+- goals: G1, G8
+- files: `lib/hygiene.mjs`, `RELEASING.md`, `test/publish-hygiene.test.mjs`
+- verify:
+  - `node --test test/publish-hygiene.test.mjs`
+  - `grep -q 'publish-time gate' lib/hygiene.mjs`
+  - `grep -q 'publish-hygiene' RELEASING.md`
+- spec refs: spec.md Wave 3 — C10
+
+### Task 20: Complete D1 after the C4/C6 owners remove the live backend, wave, and dispatch-wave survivors: extend retired-vocabulary enforcement to bare adsp and MCP pool, and add positive fixtures that fail if either term returns.
+- routing class: `bounded-edit`
+- codex: heuristic
+- goals: G1, G2, G8
+- files: `test/no-agent-dispatch.test.mjs`, `test/no-agent-dispatch-fixtures.test.mjs`
+- verify:
+  - `node --test test/no-agent-dispatch.test.mjs test/no-agent-dispatch-fixtures.test.mjs`
+  - `! grep -RIn --exclude-dir=.git -E '\badsp\b|MCP pool' lib agents bin commands README.md docs --exclude-dir=masterplan`
+- spec refs: spec.md Wave 3 — D1
+
+### Task 21: Repair D2 by replacing the stale Codex SessionStart per-verb shim description in hooks/hooks.json and docs/install.md, with the hooks contract test proving both copies stay synchronized.
+- routing class: `bounded-edit`
+- codex: heuristic
+- goals: G1, G2, G8
+- files: `hooks/hooks.json`, `docs/install.md`, `test/hooks.test.mjs`
+- verify:
+  - `node --test test/hooks.test.mjs`
+  - `! grep -nE 'per-verb|retired verb' hooks/hooks.json docs/install.md`
+- spec refs: spec.md Wave 3 — D2
+
+### Task 22: Repair D3 by purging retired fable and opus lane-alias claims from AGENTS.md and the named live docs, replacing them with policy-lane language derived from workflow-map.json.
+- routing class: `bounded-edit`
+- codex: heuristic
+- goals: G1, G8
+- files: `AGENTS.md`, `docs/development.md`, `docs/conventions/plan-annotations.md`, `docs/internals/plan-parser.md`, `.okf/index.md`
+- verify:
+  - `! grep -nEi '\b(fable|opus)\b' AGENTS.md docs/development.md docs/conventions/plan-annotations.md docs/internals/plan-parser.md .okf/index.md`
+  - `node --test test/register-pi-agents.test.mjs`
+- spec refs: spec.md Wave 3 — D3
+
+### Task 23: Repair D4 by changing commands/masterplan.md planner dispatches from masterplan:mp-planner to the bare Pi name, remove C5’s nonexistent liveness-check/probe prompt instructions, and strengthen prompt tests against both regressions.
+- routing class: `bounded-edit`
+- codex: heuristic
+- goals: G1, G2, G5, G8
+- files: `commands/masterplan.md`, `test/prompt-structure.test.mjs`
+- verify:
+  - `node --test test/prompt-structure.test.mjs test/register-pi-agents.test.mjs`
+  - `! grep -nE 'masterplan:mp-planner|liveness-check|op.?probe' commands/masterplan.md`
+  - `npm test`
+- spec refs: spec.md Wave 3 — D4
+
+## Wave 4 — Docs and skills corrections
+
+### Task 24: Correct E1, E2, E8, and E11 (verbs.md part) in the CLI contract surfaces: remove retired mp promote-run, describe the real goals status behavior, include required --approval on goals-load, replace docs/verbs.md deleted-engine references, and remove the mp-implementer ghost from docs/verbs.md; keep every documented invocation valid under A7 strict parsing.
+- routing class: `bounded-edit`
+- codex: heuristic
+- goals: G1, G2, G5, G8
+- files: `commands/masterplan.md`, `docs/verbs.md`, `test/prompt-structure.test.mjs`
+- verify:
+  - `node --test test/prompt-structure.test.mjs test/cli-surface.test.mjs`
+  - `! grep -nE 'mp promote-run|execute\.workflow\.js' commands/masterplan.md docs/verbs.md`
+  - `! grep -n 'mp-implementer' docs/verbs.md`
+  - `grep -n -- '--approval' commands/masterplan.md`
+- spec refs: spec.md Wave 4 — E1; spec.md Wave 4 — E2; spec.md Wave 4 — E8; spec.md Wave 4 — E11
+
+### Task 25: Correct E3 by updating llms.txt to the release baseline and replacing routes to deleted-engine documentation with the live native dispatch and policy references.
+- routing class: `bounded-edit`
+- codex: heuristic
+- goals: G1, G8
+- files: `llms.txt`
+- verify:
+  - `grep -q '9.9.3' llms.txt`
+  - `! grep -nE 'execute\.workflow|Workflow engine|deleted' llms.txt`
+- spec refs: spec.md Wave 4 — E3
+
+### Task 26: Correct E4 in .okf/index.md and .okf/wave-dispatch-engine.md: remove deleted workflow/L2 citations, list the live agent roles including mp-goal-assessor and mp-alignment-auditor, and describe native wave dispatch accurately.
+- routing class: `bounded-edit`
+- codex: heuristic
+- goals: G1, G8
+- files: `.okf/index.md`, `.okf/wave-dispatch-engine.md`
+- verify:
+  - `! grep -nE 'execute\.workflow\.js|mp-implementer|model_group|\bfable\b' .okf/index.md .okf/wave-dispatch-engine.md`
+  - `grep -q 'mp-goal-assessor' .okf/index.md`
+  - `grep -q 'mp-alignment-auditor' .okf/index.md`
+- spec refs: spec.md Wave 4 — E4
+
+### Task 27: Correct E5, E6, and E7 in the shared internals owner: delete the nonexistent run-level run-status contract, rename recover_and_redispatch to recover_wave, change review-default claims to the actual seeded default-on behavior, and remove the E11 mp-implementer ghost from docs/internals.md.
+- routing class: `bounded-edit`
+- codex: heuristic
+- goals: G1, G2, G8
+- files: `docs/internals.md`, `docs/internals/bundle-resume.md`, `docs/internals/task-verification.md`, `docs/internals/wave-dispatch.md`, `test/docs-contract.test.mjs`
+- verify:
+  - `node --test test/docs-contract.test.mjs test/bundle.test.mjs`
+  - `! grep -nE 'stop_reason|critical_error|scheduled_yield|recover_and_redispatch|mp-implementer|review.*off by default|default.*review.*off' docs/internals.md docs/internals/bundle-resume.md docs/internals/task-verification.md docs/internals/wave-dispatch.md`
+  - `grep -q 'recover_wave' docs/internals/bundle-resume.md`
+- spec refs: spec.md Wave 4 — E5; spec.md Wave 4 — E6; spec.md Wave 4 — E7; spec.md Wave 4 — E11
+
+### Task 28: Correct E9 by expanding lib/doctor/README.md to inventory all 19 auto-discovered doctor modules and add a test that compares the table ids to the filesystem so future modules cannot silently disappear from documentation.
+- routing class: `bounded-edit`
+- codex: heuristic
+- goals: G1, G2, G8
+- files: `lib/doctor/README.md`, `test/doctor-readme.test.mjs`
+- verify:
+  - `node --test test/doctor-readme.test.mjs`
+  - `test "$(find lib/doctor -maxdepth 1 -type f -name "*.mjs" | wc -l)" -eq 19`
+- spec refs: spec.md Wave 4 — E9
+
+### Task 29: Correct E10 in both skills: narrow masterplan-detect import claims to artifacts the importer accepts, remove masterplan host-suppression and Residual 3B claims, and verify the skills expose only implemented CLI vocabulary.
+- routing class: `bounded-edit`
+- codex: heuristic
+- goals: G1, G5, G8
+- files: `skills/masterplan-detect/SKILL.md`, `skills/masterplan/SKILL.md`
+- verify:
+  - `node --test test/cli-surface.test.mjs`
+  - `! grep -nE 'Residual 3B|host suppression|never returns dispatch_fabric' skills/masterplan/SKILL.md`
+  - `! grep -nE 'import.*any|any.*artifact' skills/masterplan-detect/SKILL.md`
+- spec refs: spec.md Wave 4 — E10
+
+### Task 30: Complete E11 outside the shared CLI/internals owners by removing ghost mp-implementer references from coordination-playbook, development, and masterplan-contracts; the E8 and E5–E7 tasks own docs/verbs.md and docs/internals.md.
+- routing class: `bounded-edit`
+- codex: heuristic
+- goals: G1, G8
+- files: `docs/coordination-playbook.md`, `docs/development.md`, `docs/contracts/masterplan-contracts.md`
+- verify:
+  - `! grep -n 'mp-implementer' docs/coordination-playbook.md docs/development.md docs/contracts/masterplan-contracts.md`
+- spec refs: spec.md Wave 4 — E11
+
+### Task 31: Repair E12 by narrowing doctor goals error handling so each goals-enabled bundle either contributes a finding or is explicitly diagnosed; add malformed state, events, goals.md, and plan-index fixtures proving no bundle vanishes behind a broad catch.
+- routing class: `agentic-loop`
+- codex: no
+- goals: G1, G2, G3, G8
+- files: `lib/doctor/goals.mjs`, `test/doctor-goals-errors.test.mjs`, `test/fixtures/doctor/goals/`
+- verify:
+  - `node --test test/doctor-goals-errors.test.mjs test/doctor.test.mjs`
+- spec refs: spec.md Wave 4 — E12
+
+## Wave 5 — Release and operations
+
+### Task 32: Execute terminal wave 5 sequentially after every content wave: remove F1 tests/ and F2 legacy/; prepare CHANGELOG and synchronized version manifests; commit, create and push the one new annotated tag; wait for green CI including Doctor and release-publish; re-sync the marketplace, run /plugin update masterplan and /reload-plugins for F3/B5; then record the final A–F inventory — every inventory entry must carry a validated path:line citation (A6 alignment) — and prove clean-checkout tests, doctor, CI, installed version/SHA, Pi-portable agent frontmatter, and local-clutter removal. Do not create retroactive tags.
+- routing class: `agentic-loop`
+- codex: no
+- goals: G1, G2, G3, G4, G5, G6, G7, G8
+- files: `tests/`, `legacy/`, `CHANGELOG.md`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.codex-plugin/plugin.json`, `package.json`, `README.md`, `docs/masterplan/fresh-eyes-remediation/final-inventory.md`, `docs/masterplan/fresh-eyes-remediation/final-gate.md`
+- verify:
+  - `node --test test/publish-hygiene.test.mjs`
+  - `npm test`
+  - `node bin/doctor.mjs`
+  - `test ! -e tests && test ! -e legacy`
+  - `git tag --points-at HEAD | grep -Eq "^v[0-9]+\.[0-9]+\.[0-9]+$"`
+  - `git ls-remote --tags origin "refs/tags/$(git tag --points-at HEAD)" | grep -q .`
+  - `gh run list --commit "$(git rev-parse HEAD)" --limit 10 --json conclusion,name | jq -e 'all(.[]; .conclusion == "success")'`
+  - `node --input-type=module -e "import fs from'node:fs';import os from'node:os';import path from'node:path';import{execFileSync}from'node:child_process';const h=os.homedir(),i=JSON.parse(fs.readFileSync(path.join(h,'.claude/plugins/installed_plugins.json'))).plugins['masterplan@rasatpetabit-masterplan'][0],m=path.join(h,'.claude/plugins/marketplaces/rasatpetabit-masterplan'),v=JSON.parse(fs.readFileSync(path.join(m,'.claude-plugin/plugin.json'))).version,s=execFileSync('git',['-C',m,'rev-parse','HEAD'],{encoding:'utf8'}).trim();if(i.version!==v||!(s.startsWith(i.gitCommitSha)||i.gitCommitSha.startsWith(s)))process.exit(1)"`
+  - `node --input-type=module -e "import fs from'node:fs';for(const f of fs.readdirSync('agents').filter(x=>/^mp-.*\.md$/.test(x))){const s=fs.readFileSync('agents/'+f,'utf8');if(!/^model: (frontier|broad|longform|reason|agentic|code|bulk|sweep|mid|local)$/m.test(s))throw Error(f+' lacks policy-lane frontmatter')}"`
+  - `for prefix_max in 'A 9' 'B 5' 'C 10' 'D 4' 'E 12' 'F 3'; do set -- $prefix_max; for n in $(seq 1 $2); do grep -q "$1$n" docs/masterplan/fresh-eyes-remediation/final-inventory.md || exit 1; done; done`
+  - `! grep -E '[A-F][0-9]+' docs/masterplan/fresh-eyes-remediation/final-inventory.md | grep -Ev '[A-Za-z0-9_./-]+:[0-9]+'`
+  - `[ -z "$(git status --porcelain=v1)" ]`
+- spec refs: spec.md Wave 5 — F1; spec.md Wave 5 — F2; spec.md Wave 5 — F3; spec.md Wave 5 — release version; spec.md Wave 5 — Final gate; spec.md Wave 2 — B4; spec.md Wave 2 — B5
+
