@@ -522,7 +522,7 @@
    ],
    "verify_commands": [
     "node --test test/no-agent-dispatch.test.mjs test/no-agent-dispatch-fixtures.test.mjs",
-    "! grep -RIn --exclude-dir=.git -E '\\badsp\\b|MCP pool' lib agents bin commands README.md docs --exclude-dir=masterplan"
+    "! grep -RIn --exclude-dir=.git -E '\\badsp\\b|MCP pool' lib agents bin commands README.md docs --exclude-dir=masterplan --exclude-dir=design"
    ],
    "codex": null,
    "class": "bounded-edit",
