@@ -85,7 +85,7 @@ function outputsFor(file, modelSwappedBody) {
   return [{ rel: `${base}.md`, body: modelSwappedBody }];
 }
 
-/** Managed colon alias path for a source basename (e.g. mp-explorer.md → masterplan:mp-explorer.md). */
+/** Managed colon alias path for a source basename (e.g. mp-planner.md → masterplan:mp-planner.md). */
 function managedColonRel(file) {
   return `${COLON_PREFIX}${file}`;
 }
