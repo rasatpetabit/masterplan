@@ -12,7 +12,7 @@ tags: [masterplan, claude-code, codex, plugin, orchestration, agents]
 `masterplan` is a Claude Code and Codex CLI plugin implementing the
 `/masterplan` command: a resumable **brainstorm → plan → execute → finish**
 workflow for durable multi-hour engineering work, built on top of the
-`obra/superpowers` skills suite. Current release: v9.9.3 (MIT license).
+`obra/superpowers` skills suite. Current release: v9.10.0 (MIT license).
 
 The core design principle is that **state lives on disk, not in the chat
 session** — a run bundle at `docs/masterplan/<slug>/` (`state.yml`, `spec.md`,
