@@ -93,6 +93,31 @@ function managedColonRel(file) {
 // Pure, filesystem-driven core. main() wraps this with real dirs + argv; tests call it
 // with temp dirs. `check` mode is strictly read-only (no writes, no deletes, no mkdir);
 // it reports drift (mismatch, missing, stale, or unexpected files) and returns a count.
+// Owned-files manifest: the tool's memory of which target files it manages.
+// Write mode removes previously-managed files whose source agent is gone;
+// files that never appear in a manifest are NEVER touched (they may be
+// user-authored) — they surface as UNEXPECTED for manual review instead.
+const MANAGED_MANIFEST = '.masterplan-managed.json';
+
+function loadManagedManifest(targetDir) {
+  try {
+    const m = JSON.parse(readFileSync(join(targetDir, MANAGED_MANIFEST), 'utf8'));
+    if (m && m.schema === 1 && Array.isArray(m.files)) return new Set(m.files.map(String));
+  } catch {
+    /* missing or corrupt manifest -> pre-manifest adoption semantics: adopt only
+       the current canonical outputs, never delete anything unknown */
+  }
+  return new Set();
+}
+
+function writeManagedManifest(targetDir, files) {
+  writeFileSync(
+    join(targetDir, MANAGED_MANIFEST),
+    JSON.stringify({ schema: 1, files: [...files].sort() }, null, 2) + '\n',
+    'utf8',
+  );
+}
+
 export function runRegister({ agentsDir, targetDir, check, skipSet = SKIP_FOR_PI }) {
   const files = readdirSync(agentsDir).filter((f) => /^mp-.*\.md$/.test(f)).sort();
   if (files.length === 0) throw new Error(`no mp-*.md found under ${agentsDir}`);
@@ -105,6 +130,11 @@ export function runRegister({ agentsDir, targetDir, check, skipSet = SKIP_FOR_PI
   let skipped = 0;
   let removed = 0;
   const report = [];
+  const prevManaged = loadManagedManifest(targetDir);
+  // Bare rels actually produced from canonical agents this run (the manifest's
+  // ownership list). expectedBare is broader: it also covers skip-agent paths
+  // purely to suppress UNEXPECTED noise.
+  const producedBare = new Set();
   // Dest filenames this run owns for orphan detection (bare only) + managed colon names
   // we deliberately clean (expected so they are not UNEXPECTED, but handled separately).
   const expectedBare = new Set();
@@ -139,6 +169,7 @@ export function runRegister({ agentsDir, targetDir, check, skipSet = SKIP_FOR_PI
     const { alias, mapped, body } = mapModelLine(srcBody, file);
     for (const out of outputsFor(file, body)) {
       expectedBare.add(out.rel);
+      producedBare.add(out.rel);
       const dstPath = join(targetDir, out.rel);
       if (check) {
         const installed = existsSync(dstPath) ? readFileSync(dstPath, 'utf8') : null;
@@ -173,15 +204,34 @@ export function runRegister({ agentsDir, targetDir, check, skipSet = SKIP_FOR_PI
 
   // Orphan detection for bare mp-*.md not produced this run.
   // Unmanaged masterplan:mp-*.md outside managedColon are IGNORED (not drift, not deleted).
+  // prevManaged entries are handled by the manifest sweep below, not here.
   if (existsSync(targetDir)) {
     for (const name of readdirSync(targetDir)) {
       if (!/^mp-.*\.md$/.test(name)) continue; // bare only for unexpected
-      if (expectedBare.has(name)) continue;
+      if (expectedBare.has(name) || prevManaged.has(name)) continue;
       const note = `UNEXPECTED ${name} (not produced from current agents/*.md — manual review)`;
       if (check) { drift++; report.push(`DRIFT  ${note}`); }
       else { report.push(note); }
     }
   }
+
+  // Managed-manifest sweep: files this tool owned on the previous run but no
+  // longer produces (source agent deleted or renamed) are removed in write
+  // mode and previewed as drift in check mode. This is the safe cleanup for
+  // agent deletions — only tool-owned files are ever touched.
+  for (const rel of [...prevManaged].filter((r) => !producedBare.has(r)).sort()) {
+    const stalePath = join(targetDir, rel);
+    if (!existsSync(stalePath)) continue;
+    if (check) {
+      drift++;
+      report.push(`DRIFT  ${rel} (managed previously; no longer produced — re-run without --check to remove)`);
+    } else {
+      unlinkSync(stalePath);
+      removed++;
+      report.push(`REMOVED ${rel}  (managed previously; no longer produced)`);
+    }
+  }
+  if (!check) writeManagedManifest(targetDir, producedBare);
 
   return { report, drift, written, skipped, removed, registered: files.length - skipped, managedColon: [...managedColon] };
 }
@@ -195,6 +245,10 @@ const USAGE = `Usage: node bin/register-pi-agents.mjs [--check] [--help]
 Registers the masterplan agents for a pi host: writes bare mp-*.md copies
 under ~/.pi/agent/agents/ with the model: line swapped via the routing-policy
 lane map (see docs/development.md). Colon alias copies are retired and cleaned.
+Owns a manifest (.masterplan-managed.json) listing which files it manages; in
+write mode it removes previously-managed files whose source agent is gone.
+Files it never managed are left untouched and reported as UNEXPECTED for
+manual review.
 
 Options:
   --check   Read-only drift check: compare installed files against canonical

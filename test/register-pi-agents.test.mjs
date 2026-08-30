@@ -22,7 +22,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync, mkdirSync, writeFileSync, mkdtempSync, existsSync } from 'node:fs';
+import { readFileSync, readdirSync, mkdirSync, writeFileSync, mkdtempSync, existsSync, unlinkSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -407,6 +407,79 @@ test('A6: typo flag exits 2 and leaves a pre-seeded canary untouched', () => {
   assert.equal(res.status, 2, `unknown flag must exit 2: ${res.stderr}`);
   assert.match(res.stderr, /unknown option: --chek/, 'stderr should name the offending flag');
   assert.deepEqual(homeTree(home), { 'mp-canary.md': 'CANARY-ORIGINAL' }, 'typo must not rewrite or delete canary');
+});
+
+// --- Managed-manifest sweep (safe cleanup for agent deletions) -----------------------
+
+test('manifest: write mode records the produced files in .masterplan-managed.json', () => {
+  const { agentsDir, targetDir } = setupTmpAgents({ 'mp-x.md': VALID_AGENT });
+  runRegister({ agentsDir, targetDir, check: false });
+  const manifest = JSON.parse(readFileSync(join(targetDir, '.masterplan-managed.json'), 'utf8'));
+  assert.equal(manifest.schema, 1);
+  assert.deepEqual(manifest.files, ['mp-x.md']);
+});
+
+test('manifest: previously-managed file whose source is gone is REMOVED in write mode', () => {
+  const { agentsDir, targetDir } = setupTmpAgents({
+    'mp-x.md': VALID_AGENT,
+    'mp-gone.md': VALID_AGENT.replace(/mp-x/g, 'mp-gone'),
+  });
+  runRegister({ agentsDir, targetDir, check: false });
+  assert.ok(existsSync(join(targetDir, 'mp-gone.md')));
+  unlinkSync(join(agentsDir, 'mp-gone.md')); // source agent deleted
+  const res = runRegister({ agentsDir, targetDir, check: false });
+  assert.ok(res.report.some((l) => /REMOVED mp-gone\.md/.test(l)), JSON.stringify(res.report));
+  assert.ok(!existsSync(join(targetDir, 'mp-gone.md')));
+  const manifest = JSON.parse(readFileSync(join(targetDir, '.masterplan-managed.json'), 'utf8'));
+  assert.deepEqual(manifest.files, ['mp-x.md']);
+});
+
+test('manifest: colon entries from a prior manifest are pruned too', () => {
+  const { agentsDir, targetDir } = setupTmpAgents({ 'mp-x.md': VALID_AGENT });
+  mkdirSync(targetDir, { recursive: true });
+  writeFileSync(join(targetDir, 'masterplan:mp-retired.md'), 'legacy colon');
+  writeFileSync(
+    join(targetDir, '.masterplan-managed.json'),
+    JSON.stringify({ schema: 1, files: ['masterplan:mp-retired.md'] }) + '\n',
+  );
+  const res = runRegister({ agentsDir, targetDir, check: false });
+  assert.ok(res.report.some((l) => /REMOVED masterplan:mp-retired\.md/.test(l)), JSON.stringify(res.report));
+  assert.ok(!existsSync(join(targetDir, 'masterplan:mp-retired.md')));
+});
+
+test('manifest: unmanaged files are never deleted (pre-manifest adoption + user-authored)', () => {
+  const { agentsDir, targetDir } = setupTmpAgents({ 'mp-x.md': VALID_AGENT });
+  writeFileSync(join(targetDir, 'mp-mine.md'), 'user-authored agent');
+  const res = runRegister({ agentsDir, targetDir, check: false });
+  assert.ok(existsSync(join(targetDir, 'mp-mine.md')), 'unknown file must survive the first write');
+  assert.ok(res.report.some((l) => /UNEXPECTED mp-mine\.md/.test(l)));
+  const res2 = runRegister({ agentsDir, targetDir, check: false });
+  assert.ok(existsSync(join(targetDir, 'mp-mine.md')), 'unknown file must survive later writes');
+  assert.ok(res2.report.some((l) => /UNEXPECTED mp-mine\.md/.test(l)));
+});
+
+test('manifest: --check previews stale-managed drift but never mutates', () => {
+  const { agentsDir, targetDir } = setupTmpAgents({
+    'mp-x.md': VALID_AGENT,
+    'mp-gone.md': VALID_AGENT.replace(/mp-x/g, 'mp-gone'),
+  });
+  runRegister({ agentsDir, targetDir, check: false });
+  const before = snapshot(targetDir);
+  unlinkSync(join(agentsDir, 'mp-gone.md'));
+  const res = runRegister({ agentsDir, targetDir, check: true });
+  assert.ok(res.drift >= 1);
+  assert.ok(res.report.some((l) => /DRIFT\s+mp-gone\.md \(managed previously/.test(l)), JSON.stringify(res.report));
+  assert.ok(existsSync(join(targetDir, 'mp-gone.md')), 'check mode must not delete');
+  assert.deepEqual(snapshot(targetDir), before, 'check mode must not mutate anything (manifest included)');
+});
+
+test('manifest: corrupt manifest degrades to adoption semantics (nothing deleted)', () => {
+  const { agentsDir, targetDir } = setupTmpAgents({ 'mp-x.md': VALID_AGENT });
+  writeFileSync(join(targetDir, 'mp-old.md'), 'stale');
+  writeFileSync(join(targetDir, '.masterplan-managed.json'), 'not-json{');
+  const res = runRegister({ agentsDir, targetDir, check: false });
+  assert.ok(existsSync(join(targetDir, 'mp-old.md')), 'corrupt manifest must never license a deletion');
+  assert.ok(res.report.some((l) => /UNEXPECTED mp-old\.md/.test(l)));
 });
 
 test('A6: positional arg exits 2 and writes nothing (fresh temp HOME)', () => {
