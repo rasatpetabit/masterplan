@@ -27,7 +27,7 @@ Routing uses each task’s machine-readable `class` annotation. `bounded-edit` i
 - routing class: `agentic-loop`
 - codex: no
 - goals: G1, G2, G5
-- files: `bin/masterplan.mjs`, `commands/masterplan.md`, `test/bin-masterplan.test.mjs`, `test/cli-surface.test.mjs`
+- files: `bin/masterplan.mjs`, `commands/masterplan.md`, `test/bin-masterplan.test.mjs`, `test/cli-surface.test.mjs`, `test/prompt-structure.test.mjs`
 - verify:
   - `node --test test/bin-masterplan.test.mjs test/cli-surface.test.mjs`
   - `node --test test/finish-step.test.mjs`
@@ -72,7 +72,7 @@ Routing uses each task’s machine-readable `class` annotation. `bounded-edit` i
 - routing class: `agentic-loop`
 - codex: no
 - goals: G1, G2
-- files: `lib/continue.mjs`, `lib/wave-commit.mjs`, `test/wave-commit.test.mjs`, `test/continue.test.mjs`
+- files: `lib/continue.mjs`, `lib/wave-commit.mjs`, `test/wave-commit.test.mjs`, `test/continue.test.mjs`, `lib/watch-integrity.mjs`
 - verify:
   - `node --test test/continue.test.mjs test/wave-commit.test.mjs`
   - `! grep -nE "/srv/dev|path\.resolve\(wt\.WT,'\.\./\.\.'\)|path\.dirname\(MAIN\)" lib/continue.mjs lib/wave-commit.mjs`
