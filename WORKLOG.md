@@ -208,3 +208,28 @@ adversarial-review builtin — its Refute phase carried a non-literal model expr
 the static meta validator rejects, so the builtin was unloadable; made it a literal +
 moved the args.refuteModel override to the per-agent call (regression-tested). Also fixed
 the bottom status bar to a bounded detailed view (user's real ask), not compact.
+
+## 2026-08-30 — fresh-eyes-remediation: finish flow → merged, released v9.10.0, archived
+
+- Waves 4–5 landed: docs/skills E1–E12 (8 builders + completion pass for the interrupted
+  task 31), then terminal wave 32 — clutter removed, v9.10.0 manifests + CHANGELOG, final
+  inventory (43 finding ids, strict A6 path:line idiom), release commit + annotated tag.
+- CI caught two wave-1 portability bugs on the first tag cut (Node-22-only iterator helper
+  on a Node-20 runner; temp-repo commit without git identity); tag re-cut at the green
+  commit c4ba19c — release was unpublished at first cut, so no retroactive-tag violation.
+- Marketplace re-synced to the tag; `claude plugin update masterplan` 9.9.3 → 9.10.0;
+  host pi agents re-synced (stale installed mp-explorer removed after review). User owes
+  /reload-plugins to apply in their live CC session.
+- Goal-assessor pass found 3 real residual doc staleness spots (internals.md stages list
+  + deleted mp-explorer, verbs.md recover_and_redispatch) — fixed at finish. Its "stale
+  state" claims were an artifact of reading the worktree's seed snapshot, not the live
+  record in the main working tree.
+- Adversarial branch review (12 breaker leaves): waiver idempotency was silently dropping
+  repeat waivers with different reasons — repaired evidence-bound + regression test;
+  parseArgs fail-closed, E12 doctor catch, goal_check binding all verified clean.
+- branch_finish: merged to main (merge commit 8a8513a), post-merge repairs (worktree-aware
+  retired-surface scan exemption, honest index fix-text, plan_hash restamp), worktree
+  retired (removed_after_merge), branch deleted, CI green on main (run 33317489002 @ 15e6750).
+- User-attested goal_check receipt: all 8 goals achieved (bound to goals hash 82ec8e64…,
+  head 15e6750). Bundle archived per the B3 precedent (plan → .implemented-plan-archive/
+  2026-08-30-fresh-eyes-remediation.md; bundle directory removed, history keeps everything).

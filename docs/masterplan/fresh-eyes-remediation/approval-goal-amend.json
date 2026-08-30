@@ -1,9 +1,0 @@
-{
-  "attested_by": "user",
-  "purpose": "goal_amend",
-  "goals_hash": "sha256:82ec8e64d5ac533b63ed17cdad7d4b1411f6ac345fa2427ad9aa67503232bdde",
-  "old_goals_hash": "sha256:edba4e51808003aa9f2573c5e272c2ac487b98f72b817d675521d1762f01552c",
-  "question": "Approve the revision package incl. the G5 goals amendment?",
-  "answer": "Approve package (Recommended)",
-  "ts": "2026-08-29T23:25:16.867Z"
-}
