@@ -1428,13 +1428,18 @@ function main() {
           goals: gcParsed.goals,
         });
         if (!wv.ok) die(`record-goal-check: waiver rejected — ${wv.error}`, 1);
+        // IDEMPOTENCY IS EVIDENCE-BOUND: a repeat waiver for the same tuple with the SAME
+        // reasons is a no-op, but a waiver carrying DIFFERENT reasons is a distinct
+        // attestation and must be recorded, not silently dropped (adversarial review,
+        // fresh-eyes-remediation finish flow).
         const waivedAlready = gcEvents.some(
           (e) =>
             e.type === 'goal_waived' &&
             e.data?.goals_hash === gcHash &&
             e.data?.head_sha === gcHead &&
             e.data?.base === gcBase &&
-            e.data?.diff_hash === gcDiffHash
+            e.data?.diff_hash === gcDiffHash &&
+            JSON.stringify(e.data?.reasons ?? null) === JSON.stringify(wv.normalized.reasons ?? null)
         );
         if (waivedAlready) {
           out({ record_goal_check: 'idempotent', mode: 'waive', goals_hash: gcHash, key: wv.normalized.key });

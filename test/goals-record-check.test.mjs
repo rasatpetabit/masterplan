@@ -223,6 +223,29 @@ test('waiver persists a goal_waived event; re-entry at unchanged tuple is idempo
   assert.equal(countEvents(b.eventsPath, 'goal_waived'), 1);
 });
 
+test('a waiver with DIFFERENT reasons at an unchanged tuple is a distinct attestation (adversarial-review repair)', () => {
+  const b = makeBundle();
+  const w1 = {
+    goals_hash: G_HASH,
+    head_sha: HEAD,
+    base: BASE,
+    diff_hash: DIFF,
+    reasons: { G2: 'deferred to a follow-up run' },
+    approval: userApproval('goal_waive'),
+  };
+  const r1 = run(['record-goal-check', '--waive', ...baseFlags(b.statePath), `--waiver=${JSON.stringify(w1)}`]);
+  assert.equal(r1.status, 0, r1.stderr);
+  assert.equal(countEvents(b.eventsPath, 'goal_waived'), 1);
+
+  // Same goals/head/base/diff tuple, but the operator's reasons changed: this is a NEW
+  // attestation and must be recorded — the old idempotency comparison silently dropped it.
+  const w2 = { ...w1, reasons: { G2: 'superseded: waived after upstream fix landed' } };
+  const r2 = run(['record-goal-check', '--waive', ...baseFlags(b.statePath), `--waiver=${JSON.stringify(w2)}`]);
+  assert.equal(r2.status, 0, r2.stderr);
+  assert.equal(JSON.parse(r2.stdout).recorded, 'goal_waived');
+  assert.equal(countEvents(b.eventsPath, 'goal_waived'), 2);
+});
+
 test('a waiver invalidates on tuple change (HEAD change → rejected)', () => {
   const b = makeBundle();
   const NEWHEAD = 'c'.repeat(40);
