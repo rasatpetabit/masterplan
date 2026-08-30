@@ -7,3 +7,4 @@
 {"type":"phase_transition","ts":"2026-08-30T05:26:32.059Z","phase":"execute"}
 {"type":"wave_recorded","ts":"2026-08-30T05:33:22.298Z","phase":"execute","note":"wave 0 record: 1 done, 0 failed/blocked, 0 qctl"}
 {"type":"wave_recorded","ts":"2026-08-30T06:09:06.752Z","phase":"execute","note":"wave 1 record: 6 done, 0 failed/blocked, 0 qctl; reverted 2 out-of-scope"}
+{"type":"scope_expansion_approved","ts":"2026-08-30T06:20:14.808Z","note":"Wave 1 D6 breach adjudicated by user: re-applied lib/watch-integrity.mjs (task 6, spec A8 shared derivation) + test/prompt-structure.test.mjs (task 2, required by its own verify_commands); plan scopes amended; WT commit re-applies both; final state 1660/1660 green."}
