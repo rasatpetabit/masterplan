@@ -247,3 +247,27 @@ the bottom status bar to a bounded detailed view (user's real ask), not compact.
   tmpdir ENOENT log line is the EXPECTED graceful-degradation output of a deliberate
   fixture (plan.html present, plan.index.json absent -> STALE marker). 5 consecutive full
   suite runs green on main (1647/1647).
+
+## 2026-08-30 — Pi support residuals closed (all three)
+
+- SKILL.md restructured host-generic: host model (Pi primary / Codex compatible /
+  CC uses the plugin), new Pi adaptation section (native tools + ask_user_question,
+  PI_CODING_AGENT serial planning, dispatch_fabric waves via parallel subagent
+  fan-out), Codex adaptation retains ALL prior behavior; 'Recognizing existing
+  runs' is now host-neutral. test/cli-surface docSources scans the canonical repo
+  skills/, never the installed copies (they are consumer artifacts now).
+- register-pi-agents owns .masterplan-managed.json: write mode removes
+  previously-managed files whose source agent is gone (bare or colon), --check
+  previews without mutating, files never in a manifest are never touched
+  (user-authored agents safe), corrupt manifest degrades to adoption. 6 tests.
+- bin/install-pi.mjs: copy-based Pi install. git archive of an exact committed ref
+  (dirty bytes never enter), validates the required surface, registers agents from
+  the staged release BEFORE switching anything live, atomic current-swap onto
+  ~/.local/share/masterplan/releases/<sha>/, repoints both skill links into the
+  install root, .pi-install.json metadata, --check/--force/--source/--ref/
+  --install-root/--pi-root. RELEASING step 10 runs the installer (--ref=vX.Y.Z
+  then --check). 6 tests.
+- LIVE MIGRATION: installed 5e39574 (v9.10.0); both skill links resolve under the
+  install root (no /srv/dev anywhere); the old ~/.agents/skills/masterplan{,-detect}
+  dev-tree symlinks removed; install-pi --check = check_ok; register-pi-agents
+  --check = 7 in sync; suite 1659/1659; doctor 0/0.
