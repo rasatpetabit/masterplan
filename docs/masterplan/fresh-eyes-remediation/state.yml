@@ -23,3 +23,4 @@ render: {"images":"off"}
 dispatch: {"fabric":true}
 goals_md_hash: sha256:82ec8e64d5ac533b63ed17cdad7d4b1411f6ac345fa2427ad9aa67503232bdde
 worktree: /srv/dev/ras/masterplan/.worktrees/fresh-eyes-remediation
+worktree_disposition: removed_after_merge
