@@ -233,3 +233,17 @@ the bottom status bar to a bounded detailed view (user's real ask), not compact.
 - User-attested goal_check receipt: all 8 goals achieved (bound to goals hash 82ec8e64…,
   head 15e6750). Bundle archived per the B3 precedent (plan → .implemented-plan-archive/
   2026-08-30-fresh-eyes-remediation.md; bundle directory removed, history keeps everything).
+
+## 2026-08-30 — post-release follow-ups (v9.10.0 era)
+
+- register-pi-agents: SKIP_FOR_PI emptied (mp-implementer gone since C7); skip mechanism
+  kept via an injectable runRegister skipSet seam, tests inject a sentinel; set pinned
+  empty until a CC-only agent returns (31/31).
+- `mp reindex-plan` added: first-class surgical restamp of plan.index.json plan_hash from
+  the current plan.md (the gap behind the fresh-eyes bundle's index-staleness WARN);
+  idempotent, fail-closed, plan_reindexed audit event; doctor fix-text names it (9 tests).
+- Flake diagnosis closed: the intermittent single-suite failures were the no-agent-dispatch
+  scan scope bug (fixed in the post-merge repairs), NOT the refs/amend-plan tests — their
+  tmpdir ENOENT log line is the EXPECTED graceful-degradation output of a deliberate
+  fixture (plan.html present, plan.index.json absent -> STALE marker). 5 consecutive full
+  suite runs green on main (1647/1647).
