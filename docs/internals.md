@@ -17,14 +17,15 @@ masterplan v8 is a 5-layer system. Each layer is thin and delegates downward:
   in the shell) + `lib/resume.mjs` (pure `decideNextAction`). L1 is the
   **only** durable writer of run-bundle state (CD-7).
 - **L2 — Fabric dispatch path:** `lib/dispatch-wave.mjs` (`dispatchWaveViaFabric`,
-  a thin orchestrator running 6 named stages: gateAndValidate →
-  resolveWaveContext → buildDescriptors → acquireAndWatch → buildNativePlan →
-  finalizeRecord). Invoked via `mp dispatch-wave --state=<path>`.
+  a thin orchestrator running 5 named stages: gateAndValidate →
+  resolveWaveContext → buildDescriptors → acquireAndWatch → buildNativePlan;
+  wave RECORDING is owned by `mp record-result`, not the dispatch path).
+  Invoked via `mp dispatch-wave --state=<path>`.
   The deleted Workflow engine (`workflows/execute.workflow.js`,
   `workflows/plan.workflow.js`) was replaced by the native spawn-plan path
   (one descriptor per task, executed by the harness's parallel subagent API).
-- **L3 — Agents:** eight markdown agent briefs under `agents/` (`mp-explorer`,
-  `mp-goal-assessor`, `mp-planner`, `mp-adversarial-reviewer`, `mp-plan-reviewer`,
+- **L3 — Agents:** seven markdown agent briefs under `agents/` (`mp-goal-assessor`,
+  `mp-planner`, `mp-adversarial-reviewer`, `mp-plan-reviewer`,
   `mp-subsystem-planner`, `mp-spec-decomposer`, `mp-alignment-auditor`). Agents receive bounded briefs
   and return structured output; they do not inherit session history.
   Implementation dispatch routes through the routing policy — each task's
