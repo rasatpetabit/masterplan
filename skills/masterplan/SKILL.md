@@ -1,6 +1,6 @@
 ---
 name: masterplan
-description: "Generic/Codex entrypoint for masterplan: bare /masterplan, /masterplan:masterplan, $masterplan, or any verb. All verbs (full, brainstorm, plan, execute, finish, retro, import, doctor, status, validate, stats, clean, next, verbs, render, publish, follow) route through this single command — v8 ships NO per-verb /masterplan:<verb> skills (they shadowed Claude Code built-ins like /plan, /status, /doctor and added nothing over bare-command routing)."
+description: "Generic entrypoint for masterplan on non-CC hosts (Pi primary, Codex-compatible): bare /masterplan, /masterplan:masterplan, $masterplan, or any verb. All verbs (full, brainstorm, plan, execute, finish, retro, import, doctor, status, validate, stats, clean, next, verbs, render, publish, follow) route through this single command — v8 ships NO per-verb /masterplan:<verb> skills (they shadowed Claude Code built-ins like /plan, /status, /doctor and added nothing over bare-command routing)."
 ---
 
 ## Central agent policy
@@ -8,10 +8,12 @@ description: "Generic/Codex entrypoint for masterplan: bare /masterplan, /master
 AUQ, Serena, Hindsight, context-mode, and agent policy is centralized in `AGENTS.md` (routing resolves from `policy/workflow-map.json`; fleet policy at `/srv/workflows/policy/dispatch.md`). This skill must not duplicate or override dispatch rules. User-facing choices must use `ask_user_question` / `AskUserQuestion`, never prose questions.
 
 
-# Codex entrypoint for Superpowers Masterplan
+# Generic entrypoint for Superpowers Masterplan (Pi primary, Codex-compatible)
 
-This skill is the Codex-visible entrypoint for Superpowers Masterplan. Its job is
-to load the canonical command prompt and adapt it to the current Codex runtime.
+This skill is the entrypoint for Superpowers Masterplan on hosts without the
+Claude Code plugin manager — Pi is the primary consumer (installed via symlink
+into ~/.pi/agent/skills/), Codex remains compatible. Its job is to load the
+canonical command prompt and adapt it to the current host runtime.
 
 ## Source of truth (v8 clean-core layout)
 

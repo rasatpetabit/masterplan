@@ -17,6 +17,14 @@ Run this checklist for every version bump. The publish-hygiene live test validat
    `git push` of the branch does **not** carry tags). CI's `release-publish` job
    (`ci.yml`) only runs when a tag matching `v*` is pushed — **without step 8+9 the
    GitHub Release is never created**, even though the code landed on `main`.
+10. **Pi host registration** — Pi has no plugin manager; its equivalent of
+    `/plugin update` is the repo's own registration tool, run from the release tree:
+    `node bin/register-pi-agents.mjs` (writes the mp-* agents bare-only to
+    `~/.pi/agent/agents/`, mapping policy-lane frontmatter to live model refs), then
+    verify with `node bin/register-pi-agents.mjs --check` (drift must be 0). If this
+    release DELETED an agent, the tool reports the installed copy as UNEXPECTED drift
+    but never deletes it — remove that file from `~/.pi/agent/agents/` by hand after
+    review.
 
 After steps 1–7 pass, commit with message `release: vX.Y.Z — <one-line summary>`, then run steps 8 and 9.
 
