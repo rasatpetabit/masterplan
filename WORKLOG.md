@@ -31,8 +31,23 @@ cannot set the focus; auto-compaction fires at `autoCompactWindow`; `SessionStar
 compact)` output is injected post-compaction — hence `mp context-status` (exact usage from the
 transcript's last usage record) + `mp resume-brief`, not an "auto /compact".
 
-**Open at handoff.** Spec-gate adversary review in flight; approval AUQ next; then goals-load,
-set-phase plan, §3a planning (parallel by subsystem).
+**Spec gate: 10 adversary rounds to PASS (rev 10).** Rounds 1–9 all FAILed on real defects, each
+tabulated in spec.md §13 — the recurring theme was the installed v9.10.0 finish flow constraining
+how this run can prove its own rollout. Final mechanism (§10): bootstrap wave BEFORE `mp finish`
+— release commit + tag on the branch tip, push, install-pi, push local `main` (state-only commits
+only, per-commit audited), PR merge on GitHub (local `main` NOT pulled, so the v9 goal check and
+review still see the real `main..tip` diff), operator's `/plugin marketplace update` +
+`/plugin update`; then finish under a pinned v9 binary; at the `branch_finish` gate, rebase
+local `main`'s state-only commits onto `origin/main` and let finish's merge be a no-op. A
+rehearsal script on fixtures must pass before the real steps. Operator decisions at approval:
+D1 interview ledger verbs; D2 both surfaces before archive; G6 amended (approved) to match.
+`full` autonomy retired to a warned alias of `loose`.
+
+**Pre-existing red test on clean main:** `test/cli-surface.test.mjs:138` (A1 finish-step
+goal-gate flags; exit 2 "recognized flag rejected as unknown"). Not touched; must be a plan task.
+
+**Phase now: plan.** Next: §3a planning (parallel by subsystem per `planning_mode: auto`), plan
+gate, alignment audit, load-plan, execute.
 
 ## 2026-08-12 — end-of-planning alignment audit (§3c)
 
