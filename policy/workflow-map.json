@@ -87,28 +87,14 @@
       "model": "litellm/qwen3.8-max",
       "ctx": 983616,
       "cost": "medium",
-      "fallback": "mid",
+      "fallback": "code",
       "chain": [
         "litellm/qwen3.8-max",
-        "litellm/qwen3.7-plus",
         "litellm/glm-5.3",
         "litellm/skynet3/deepseek-v4-flash",
         "litellm/gemini-3.7-flash"
       ],
       "strengths": "Strong generalist from a different family than the lanes above. Its value is being a genuinely different model — use it for second opinions where vendor diversity matters more than raw peak ability."
-    },
-    "mid": {
-      "model": "litellm/qwen3.7-plus",
-      "ctx": 983616,
-      "cost": "low",
-      "fallback": "code",
-      "chain": [
-        "litellm/qwen3.7-plus",
-        "litellm/glm-5.3",
-        "litellm/skynet3/deepseek-v4-flash",
-        "litellm/gemini-3.7-flash"
-      ],
-      "strengths": "Competent mid-weight generalist. Overflow capacity when a cheaper lane is too weak and a frontier lane is not worth the spend."
     },
     "local": {
       "model": "litellm/qwen38-27b-awq",
@@ -422,7 +408,6 @@
       "model": "litellm/qwen3.8-max",
       "chain": [
         "litellm/qwen3.8-max",
-        "litellm/qwen3.7-plus",
         "litellm/glm-5.3",
         "litellm/skynet3/deepseek-v4-flash",
         "litellm/gemini-3.7-flash"
