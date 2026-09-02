@@ -1,7 +1,7 @@
 # Spec — Intent to completion
 
 **Run:** `intent-to-completion` · **Target release:** v10.0.0 · **Shape:** prompt-first, minimal code (user decision, A8)
-**Review status:** rev 8 — after seven spec-gate adversary rounds (round 1: 18 findings; round 2: 12 new + 10 residual; round 3: 7; round 4: 5 + 1; round 5: 4 + 2; round 6: 2 + 3; round 7: 1 + 2; all FAIL); dispositions in §13. Approved by the operator 2026-09-02 at rev 4 with D1 (ledger verbs) and D2 (both surfaces inside this run) confirmed; revs 5–6 change only the D2 mechanism and the review fixes.
+**Review status:** rev 9 — after eight spec-gate adversary rounds (round 1: 18 findings; round 2: 12 new + 10 residual; round 3: 7; round 4: 5 + 1; round 5: 4 + 2; round 6: 2 + 3; round 7: 1 + 2; round 8: 2 + 1; all FAIL); dispositions in §13. Approved by the operator 2026-09-02 at rev 4 with D1 (ledger verbs) and D2 (both surfaces inside this run) confirmed; revs 5–6 change only the D2 mechanism and the review fixes.
 
 ## 1. Problem
 
@@ -20,11 +20,13 @@ can see this; a "does a different value produce different behavior" test can.
 
 ## 2. Outcome (what is true when this ships)
 
-1. A run at `complexity: high` leaves the interview only when the questions asked were about intent
-   (why, outcome, anti-goals, what "live" means), a fresh-context critic finds no design-changing
+1. A run at `complexity: high` converges only when the questions asked were about intent (why,
+   outcome, anti-goals, what "live" means), a fresh-context critic finds no design-changing
    unknown, and the operator has picked at least one concrete design option without correction —
-   inside a bounded budget recorded on disk, not in the model's head. Every bounded exit
-   (converged, exhausted at the cap, critic configured off) is a named durable state.
+   inside a bounded budget recorded on disk, not in the model's head. The other bounded exits —
+   `exhausted` (cap reached, or critic unavailable, remaining unknowns written as assumptions) and
+   `critic_off` (low complexity) — are named durable states with weaker guarantees, and the
+   assessor reads them as such (§5.4).
 2. `goals.md` records intent (why / outcome / anti-goals / done-means) above 3–5 outcome goals.
    Plan coverage, the mid-run reminder, the assessor, and the final gate all read the intent.
 3. A run archives as **complete** only after the repo's declared definition of done executed on the
@@ -231,6 +233,12 @@ single writer:
   addressed); it never satisfies convergence by itself.
 - `mp interview end --state --reason=converged|exhausted|critic_off` — writes the terminal state
   after validating it against the ledger (§5.4).
+- **Terminal states are absorbing.** After `interview_end` or `interview_waived`, every mutating
+  interview verb (`ask`, `answer`, `withdraw`, `draft`, `critic`, `end`) refuses. The only way
+  back is `mp interview reopen --state --reason=…`, allowed only while `phase` is `brainstorm` and
+  before `goals_frozen`; it writes `interview_reopened`, after which the previous terminal event
+  no longer counts and a new terminal state must be reached. Once goals are frozen, intent changes
+  go through `mp goals-amend`, never through the interview.
 - `mp interview status` — read-only.
 
 Verbatim question and answer text is stored so a compaction mid-interview resumes from disk; the
@@ -506,12 +514,15 @@ The two are decoupled by merging on GitHub first and fast-forwarding local `main
       `installed_plugins.json` and a cache tree at v10 written by the script in place of the
       operator's slash commands; the user-only handback is simulated by feeding that fixture's
       evidence. It must show: the goal check and the review each ran over a **non-empty**
-      `main..tip` diff (a sentinel goal fails if the assessor is handed an empty diff); local
-      `main` is unchanged through both; the recorded PR-merge sha is an ancestor of the remote
-      `main` and a descendant of the branch tip, before and after the fast-forward; the
-      fast-forward succeeds; `--choice=merge` performs an actual no-op merge and still retires
-      the branch and archives; the fixture doctor reports v10 installed. Its output digest is the
-      receipt; the real steps run only after it passes.
+      `main..tip` diff (a sentinel goal fails if the assessor is handed an empty diff); every
+      commit local `main` gains between `main_pre_bootstrap` and the gate touches only the bundle
+      directory; the recorded PR-merge sha is an ancestor of the remote `main` and a descendant of
+      the branch tip, before and after the gate rebase; the rebase succeeds without conflict;
+      `--choice=merge` performs an actual no-op merge and still retires the branch and archives;
+      the post-archive push is a fast-forward on the remote; the fixture doctor reports v10
+      installed; an unexpected non-bundle commit on `main`, an unexpected remote tip, and a
+      missing PR merge each stop the walk. Its output digest is the receipt; the real steps run
+      only after it passes.
    2. *Docs normalization* (the finish-time offer's work, done here so the release commit is the
       last commit on the branch); the finish's later `docs_normalize` offer is answered
       *keep as-is* with reason `normalized in bootstrap wave` (durable skip event).
@@ -525,9 +536,13 @@ The two are decoupled by merging on GitHub first and fast-forwarding local `main
       `install-pi --check` (Pi surface live).
    5. *Push local `main`* — bundle writes land on MAIN's base branch (§2e), so local `main`
       already carries this bundle's own state commits and GitHub `main` is behind by exactly
-      those; the push moves no local ref, and local `main`'s sha is recorded as
-      `main_pre_bootstrap` and must be unchanged until the gate. Then open and merge the pull
-      request `masterplan/<slug> → main` on GitHub (`gh pr create`,
+      those; the push moves no local ref. Local `main`'s sha is recorded as `main_pre_bootstrap`.
+      From here until the gate, local `main` may gain **state-only commits** (every later
+      `bootstrap_step` event and every finish-step bundle commit lands there); the invariant is
+      not "unchanged" but "every commit in `main_pre_bootstrap..main` touches only
+      `docs/masterplan/<slug>/`", which the rehearsal and the gate step both assert with
+      `git diff --name-only main_pre_bootstrap..main`. Then open and merge the pull request
+      `masterplan/<slug> → main` on GitHub (`gh pr create`,
       `gh pr merge --merge`). Record the PR merge sha (`gh pr view --json mergeCommit`) in the
       `bootstrap_step` event and verify `branch_tip` is its ancestor. GitHub `main` now contains
       the tip; **local `main` is not fetched or pulled** — its tip stays where it was, so
@@ -550,14 +565,17 @@ The two are decoupled by merging on GitHub first and fast-forwarding local `main
 2. **Then `mp finish` under v9.10.0:** verify at the tip → goal check over the real `main..tip`
    diff (G1–G5 from the branch, G6 from the live commands above; a `partial` here is a real gap,
    never waived) → retro → the finish-time adversary review over the same real diff →
-   `branch_finish` gate opens. At the gate, before answering: `git -C MAIN fetch origin main`,
+   `branch_finish` gate opens. At the gate, before answering: `git -C MAIN fetch origin main`;
    verify the recorded PR-merge sha is an ancestor of `origin/main` and a descendant of
-   `branch_tip`, then `git -C MAIN pull --ff-only origin main` (local `main` is an ancestor of
-   GitHub `main`, so this is a pure fast-forward; if it is not, or the ancestry check fails, stop
-   — something else moved `main`), re-verify the same ancestry against the new local tip, and
-   record all of it as a `bootstrap_step`. Then `--choice=merge` through the pinned v9 binary:
-   finish-step's own merge is a no-op ("already up to date"), the branch retires, the run archives
-   with both surfaces already on v10 and one merge commit in history (GitHub's). D2's outcome
+   `branch_tip`; assert `git diff --name-only main_pre_bootstrap..main` lists only paths under
+   `docs/masterplan/<slug>/` (the state-only invariant — anything else means something other than
+   this run moved `main`: stop); then **`git -C MAIN rebase origin/main`** — local `main`'s
+   unpushed state-only commits replay on top of GitHub `main`, which cannot conflict because the
+   merged code never touches the bundle directory; re-verify the ancestry against the new local
+   tip; record all of it as a `bootstrap_step`. Then `--choice=merge` through the pinned v9
+   binary: finish-step's own merge is a no-op ("already up to date"), the branch retires, the run
+   archives, and the archive commit plus the replayed state commits are pushed to `origin main`.
+   History carries one merge commit (GitHub's) followed by linear state commits. D2's outcome
    (both surfaces before archive) is unchanged.
 3. **Successor run (`v10-validation`).** Seeded with `--predecessor=intent-to-completion` on the
    installed v10: the first v2 `goals.md`, a small real change, and a finish that exercises the
@@ -633,7 +651,10 @@ Named suites, each required by §4.4's inventory or by a finding in §13:
   pick → `converged`; clean payload → design withdraw → still `converged`; a design answer that
   records a new draft → stale receipt → fresh critic required; medium reaches `exhausted` only at
   the cap or on `critic_unavailable`; each of `converged`/`exhausted`/`critic_off` refused with no
-  draft, refused with an intent answer after the latest draft, accepted after re-drafting.
+  draft, refused with an intent answer after the latest draft, accepted after re-drafting; every
+  mutating verb refused after each terminal state and after waiver (including on replay);
+  `reopen` accepted only in `brainstorm` before `goals_frozen`, refused otherwise; `goals-load`
+  after a reopen requires a new terminal state.
 
 ## 12. Touch surface
 
@@ -726,7 +747,15 @@ Round 7 (1 blocking, 2 advisory) → rev 8:
 |---|---|
 | terminal states could lack or trail the intent draft | draft must be the latest intent-content event for every non-waived exit; tests (§5.4, §11) |
 | overlap "first event" wording | §11 states the exact array prefix; G1's frozen phrasing is defined as "first after capability" |
-| local-main push rationale | clarified: bundle commits already live on local `main` (§2e); `main_pre_bootstrap` recorded and held (§10.1.5) |
+| local-main push rationale | clarified: bundle commits already live on local `main` (§2e); `main_pre_bootstrap` recorded (§10.1.5) |
+
+Round 8 (2 blocking, 1 advisory) → rev 9:
+
+| finding | disposition in rev 9 |
+|---|---|
+| local `main` cannot stay frozen (finish-step commits state to it); `pull --ff-only` impossible after the PR merge | invariant becomes state-only commits in `main_pre_bootstrap..main`; the gate rebases them onto `origin/main`; rehearsal asserts the range and the conflict-free rebase (§10.1.5, §10.2) |
+| terminal interview states not absorbing | every mutating verb refuses after `end`/`waived`; `reopen` only in brainstorm before freeze (§5.3, §11) |
+| outcome 1 vs `exhausted` | outcome 1 rewritten to name the weaker exits (§2) |
 
 ## Assumptions & Open Decisions
 
