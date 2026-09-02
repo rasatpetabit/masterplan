@@ -1,5 +1,39 @@
 # WORKLOG
 
+## 2026-09-02 — intent-to-completion: brainstorm + spec (run seeded, not yet planned)
+
+Bundle `docs/masterplan/intent-to-completion/`. Scope grew mid-interview from three asks
+(interview depth, intent-level goals, deploy-to-done) to seven: the operator asked for a full
+parameter audit, a seed-time overlap check, and context-window watching at gates.
+
+**Audit finding that drives the design.** `--complexity`, `--autonomy`, `--complexity-source`,
+`--predecessor-transcript` are accepted, stored, documented, and read by no code (autonomy is
+prompt-only and seeded `null`, so the operator's `~/.masterplan.yaml` `loose` never engaged;
+v8 dropped the yaml loader entirely). `--et`/`--new` sit in the flag whitelist unread. Three
+`MP_*`/`SKYNET_*` env vars are read but undocumented. A dead-symbol audit cannot see this class
+(every symbol is referenced); the spec adds `test/knob-liveness.test.mjs` so it cannot recur.
+Scratch script: the knob audit lived in the session scratchpad, not the repo.
+
+**Decisions (operator's).** Prompt-first, minimal code — overrode the recommended config-plane
+shape with the inert-prose risk shown. Replace the G-list with an Intent block + 3–5 outcome
+goals. Deploy driven by masterplan, gated by autonomy, definition of done as a `done:` block in
+`.masterplan.yaml`. Interview budget bounded 12–20 at high with a cross-vendor critic per round.
+v10.0.0. Two code seams accepted beyond prompt-first: durable `deploy`/`intent_confirm` finish
+gates (archive stays last; replay guard via a `finish_confirmed` event) and the interview budget
+as `interview_question` events.
+
+**Interview lesson, recorded as memory.** A restatement essay + "is this right?" was rejected
+outright: it moves parsing onto the operator. Understanding is shown through small pick-one
+questions and concrete proposals. This is now a non-goal in the spec.
+
+**Harness facts verified (Claude Code docs).** No tool or hook can trigger compaction; PreCompact
+cannot set the focus; auto-compaction fires at `autoCompactWindow`; `SessionStart(source:
+compact)` output is injected post-compaction — hence `mp context-status` (exact usage from the
+transcript's last usage record) + `mp resume-brief`, not an "auto /compact".
+
+**Open at handoff.** Spec-gate adversary review in flight; approval AUQ next; then goals-load,
+set-phase plan, §3a planning (parallel by subsystem).
+
 ## 2026-08-12 — end-of-planning alignment audit (§3c)
 
 Added the anti-drift look-back: after the plan gate, before `mp load-plan`, measure the plan

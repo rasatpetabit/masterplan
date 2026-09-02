@@ -1,0 +1,23 @@
+---
+schema_version: 9
+slug: intent-to-completion
+status: in-progress
+phase: brainstorm
+topic: "Enhance masterplan so it does a better job of interviewing the operator to understand the true intent of the requested feature. The goal isn't to have the operator tell the model exactly what to it, it's to help the model understand the operators' intentions, so it can design its own solution. We currently don't do a good job of this, and our --complexity=high mode isn't nearly high enough in terms of getting the system to ask probing questions until it has a true understanding. We're also poor at recording those \"goals\", our current goals implementation gathers a large list of specific items which may or may not be helpful, but it doesn't make much effort to try and capture the true \"intent\". And lastly, we're particularly bad about the end of the project, driving the task to completion, and making sure it is ACTUALLY deployed and completed at the end of the work."
+complexity: high
+complexity_source: null
+autonomy: null
+planning_mode: auto
+created_at: 2026-09-02T21:41:09.790Z
+predecessor_transcript: null
+spec_path: /srv/dev/ras/masterplan/docs/masterplan/intent-to-completion/spec.md
+plan_path: /srv/dev/ras/masterplan/docs/masterplan/intent-to-completion/plan.md
+plan_index_path: /srv/dev/ras/masterplan/docs/masterplan/intent-to-completion/plan.index.json
+tasks: []
+active_run: null
+pending_gate: null
+goals_enabled: true
+goals: []
+review: {"adversary":true}
+render: {"images":"off"}
+dispatch: {"fabric":true}
