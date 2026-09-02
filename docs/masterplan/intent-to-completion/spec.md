@@ -1,7 +1,7 @@
 # Spec — Intent to completion
 
 **Run:** `intent-to-completion` · **Target release:** v10.0.0 · **Shape:** prompt-first, minimal code (user decision, A8)
-**Review status:** rev 4 — after three spec-gate adversary rounds (round 1: 18 findings, FAIL; round 2: 12 new + 10 residual, FAIL; round 3: 7, FAIL); dispositions in §13. Open for the operator: D1 (ledger verbs, resolved by assumption), D2 (Claude surface inside this run).
+**Review status:** rev 4 — after three spec-gate adversary rounds (round 1: 18 findings, FAIL; round 2: 12 new + 10 residual, FAIL; round 3: 7, FAIL); dispositions in §13. Approved by the operator 2026-09-02 with D1 (ledger verbs) and D2 (both surfaces inside this run) confirmed.
 
 ## 1. Problem
 
@@ -624,6 +624,6 @@ Round 3 (7 findings) → rev 4:
 | A20 | keep/discard outcome? | archive as `incomplete:<reason>`, never complete | Outcome 3 | assumed |
 | A21 | Dogfood evidence? | Pi install + tag before the goal check; Claude cache at the held `branch_finish` gate; automated flow proven by the successor | the 9.10.0 finish archives with the merge, but its documented "not ready" escape holds the gate | assumed |
 | A24 | Intent rejected after merge? | archive incomplete; remediation is a successor run | the worktree is gone after disposition; no `execute` to return to | assumed |
-| **D2** | **Claude cache inside this run via the held gate, or Pi-only scope for this run?** | **held gate (both surfaces) — operator confirms at approval** | the topic's central failure is archiving with a stale running surface | pending |
-| A22 | D1 — interview ledger verbs or generic events? | verbs (§5.3) | the operator accepted code seams wherever prose cannot enforce; two adversary rounds rated generic events a blocking gap | assumed — operator may veto at approval |
+| D2 | Claude cache inside this run via the held gate, or Pi-only scope? | held gate: both surfaces on v10 before archive (§10.2) | the topic's central failure is archiving with a stale running surface | user-confirmed |
+| A22 | D1 — interview ledger verbs or generic events? | verbs (§5.3) | two adversary rounds rated generic events a blocking gap; operator kept the verbs at approval | user-confirmed |
 | A23 | Receipt provenance strength? | honesty-bound (ids, positive tokens, digests), not cryptographic | matches `record-gate-review`; stronger would need a signing dispatcher | assumed |
