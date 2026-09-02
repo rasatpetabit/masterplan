@@ -1,7 +1,7 @@
 # Spec — Intent to completion
 
 **Run:** `intent-to-completion` · **Target release:** v10.0.0 · **Shape:** prompt-first, minimal code (user decision, A8)
-**Review status:** rev 7 — after six spec-gate adversary rounds (round 1: 18 findings; round 2: 12 new + 10 residual; round 3: 7; round 4: 5 + 1; round 5: 4 + 2; round 6: 2 + 3; all FAIL); dispositions in §13. Approved by the operator 2026-09-02 at rev 4 with D1 (ledger verbs) and D2 (both surfaces inside this run) confirmed; revs 5–6 change only the D2 mechanism and the review fixes.
+**Review status:** rev 8 — after seven spec-gate adversary rounds (round 1: 18 findings; round 2: 12 new + 10 residual; round 3: 7; round 4: 5 + 1; round 5: 4 + 2; round 6: 2 + 3; round 7: 1 + 2; all FAIL); dispositions in §13. Approved by the operator 2026-09-02 at rev 4 with D1 (ledger verbs) and D2 (both surfaces inside this run) confirmed; revs 5–6 change only the D2 mechanism and the review fixes.
 
 ## 1. Problem
 
@@ -35,7 +35,7 @@ can see this; a "does a different value produce different behavior" test can.
    defaults, are validated, are never `null`, and drive documented behavior. A knob inventory plus
    per-knob behavioral contract tests fail the suite on any future inert knob.
 5. Seeding a run first surfaces existing runs that overlap it — by topic, goals, and planned paths —
-   and records what was reviewed as the new bundle's first event.
+   and records what was reviewed as the new bundle's first event after its seed record.
 6. Every gate reports measured context usage where the harness exposes it, an explicit unknown
    state where it does not, and recommends compaction at the boundary where it is cheapest; a
    post-compaction brief keeps run state in context.
@@ -238,11 +238,14 @@ latest critic payload is re-read from its artifact.
 
 ### 5.4 Terminal states and `goals-load`
 
-Every terminal state requires **zero unanswered questions** (answer or withdraw first).
+Every terminal state other than `waived` requires **zero unanswered questions** (answer or
+withdraw first) **and an `interview_draft` as the latest intent-content event** — the draft is
+the synthesis §5.1 step 6 writes into `goals.md`, so an intent answer recorded after the latest
+draft blocks every exit until a new draft is recorded (and, where a critic is required, reviewed).
 
 | state | valid when (in addition to the rule above) | `goals-load` |
 |---|---|---|
-| `converged` | floor met; ≥ 1 active uncorrected design pick; the latest critic receipt is valid, its `content_head` equals the current content head (no intent-content event after it) and its `intent_sha256` equals the latest `interview_draft`; and its payload is **clean**: zero `unknowns`, zero `contradictions`, zero `misclassified`. An unclean payload is resolved by further intent content (which moves the head) and a fresh critic run whose payload is clean | accepts |
+| `converged` | floor met; ≥ 1 active uncorrected design pick; the latest critic receipt is valid, its `content_head` equals the current content head (which, per the rule above, is the latest draft) and its `intent_sha256` equals that draft; and its payload is **clean**: zero `unknowns`, zero `contradictions`, zero `misclassified`. An unclean payload is resolved by further intent content, a new draft, and a fresh critic run whose payload is clean | accepts |
 | `exhausted` | asked == cap (any complexity), or critic mode is `unavailable` with floor met; the unknowns of the latest payload (if any) are listed in the event | accepts; the spec must carry the `assumed` rows |
 | `critic_off` | `complexity: low`; floor met | accepts |
 | `waived` | `goals-load --interview-waived --reason=…` on an open interview; durable `interview_waived` event | accepts, recorded as waived |
@@ -520,8 +523,11 @@ The two are decoupled by merging on GitHub first and fast-forwarding local `main
    4. *Push* the branch and the tag; verify the remote tag equals the local one
       (`git ls-remote --tags origin refs/tags/v10.0.0` sha = local); `install-pi --ref=v10.0.0`;
       `install-pi --check` (Pi surface live).
-   5. *Push local `main`* (fast-forward: GitHub `main` is behind by this bundle's own commits),
-      then open and merge the pull request `masterplan/<slug> → main` on GitHub (`gh pr create`,
+   5. *Push local `main`* — bundle writes land on MAIN's base branch (§2e), so local `main`
+      already carries this bundle's own state commits and GitHub `main` is behind by exactly
+      those; the push moves no local ref, and local `main`'s sha is recorded as
+      `main_pre_bootstrap` and must be unchanged until the gate. Then open and merge the pull
+      request `masterplan/<slug> → main` on GitHub (`gh pr create`,
       `gh pr merge --merge`). Record the PR merge sha (`gh pr view --json mergeCommit`) in the
       `bootstrap_step` event and verify `branch_tip` is its ancestor. GitHub `main` now contains
       the tip; **local `main` is not fetched or pulled** — its tip stays where it was, so
@@ -605,7 +611,9 @@ Named suites, each required by §4.4's inventory or by a finding in §13:
   successor's recorders.
 - `overlap-sequencer`: in-progress conflict, plan-path conflict with a different topic, archived
   overlap, no overlap, predecessor link, resume (event on the resumed bundle), abort (nothing
-  created); `overlap_review` is the first event after seed; `runs list` carries the new fields.
+  created); a freshly seeded bundle's event array begins `[capability, overlap_review]` (G1's
+  "first event" phrasing means first after the seed's own capability record); `runs list`
+  carries the new fields.
 - `context-status-session-lineage`: fixture transcripts for a fresh session, a resumed session, a
   subagent transcript alongside (ignored), trailing tool/user records after the last usage
   (`appended_est`), post-compaction with no usage, malformed usage, 200k and 1M windows, and a
@@ -624,7 +632,8 @@ Named suites, each required by §4.4's inventory or by a finding in §13:
 - `interview-ledger-resume` additions: dirty payload → intent answer → clean payload → design
   pick → `converged`; clean payload → design withdraw → still `converged`; a design answer that
   records a new draft → stale receipt → fresh critic required; medium reaches `exhausted` only at
-  the cap or on `critic_unavailable`.
+  the cap or on `critic_unavailable`; each of `converged`/`exhausted`/`critic_off` refused with no
+  draft, refused with an intent answer after the latest draft, accepted after re-drafting.
 
 ## 12. Touch surface
 
@@ -710,6 +719,14 @@ Round 6 (2 blocking, 3 advisory) → rev 7:
 | finish could run the v10 binary | pinned 9.10.0 copy for every finish invocation, asserted (§10.1.1, §10.2) |
 | PR merge sha unbound at the gate | recorded at step 5, ancestry verified before and after the fast-forward (§10.1.5, §10.2) |
 | rev-6 invariants lacked named tests | added to `finish-replay`, `v9-to-v10-bootstrap`, `interview-ledger-resume` (§11) |
+
+Round 7 (1 blocking, 2 advisory) → rev 8:
+
+| finding | disposition in rev 8 |
+|---|---|
+| terminal states could lack or trail the intent draft | draft must be the latest intent-content event for every non-waived exit; tests (§5.4, §11) |
+| overlap "first event" wording | §11 states the exact array prefix; G1's frozen phrasing is defined as "first after capability" |
+| local-main push rationale | clarified: bundle commits already live on local `main` (§2e); `main_pre_bootstrap` recorded and held (§10.1.5) |
 
 ## Assumptions & Open Decisions
 
