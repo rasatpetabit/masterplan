@@ -1,7 +1,7 @@
 # Spec — Intent to completion
 
 **Run:** `intent-to-completion` · **Target release:** v10.0.0 · **Shape:** prompt-first, minimal code (user decision, A8)
-**Review status:** rev 9 — after eight spec-gate adversary rounds (round 1: 18 findings; round 2: 12 new + 10 residual; round 3: 7; round 4: 5 + 1; round 5: 4 + 2; round 6: 2 + 3; round 7: 1 + 2; round 8: 2 + 1; all FAIL); dispositions in §13. Approved by the operator 2026-09-02 at rev 4 with D1 (ledger verbs) and D2 (both surfaces inside this run) confirmed; revs 5–6 change only the D2 mechanism and the review fixes.
+**Review status:** rev 10 — after nine spec-gate adversary rounds (round 1: 18 findings; round 2: 12 new + 10 residual; round 3: 7; round 4: 5 + 1; round 5: 4 + 2; round 6: 2 + 3; round 7: 1 + 2; round 8: 2 + 1; round 9: 1 + 1; all FAIL); dispositions in §13. Approved by the operator 2026-09-02 at rev 4 with D1 (ledger verbs) and D2 (both surfaces inside this run) confirmed; revs 5–6 change only the D2 mechanism and the review fixes.
 
 ## 1. Problem
 
@@ -539,9 +539,12 @@ The two are decoupled by merging on GitHub first and fast-forwarding local `main
       those; the push moves no local ref. Local `main`'s sha is recorded as `main_pre_bootstrap`.
       From here until the gate, local `main` may gain **state-only commits** (every later
       `bootstrap_step` event and every finish-step bundle commit lands there); the invariant is
-      not "unchanged" but "every commit in `main_pre_bootstrap..main` touches only
-      `docs/masterplan/<slug>/`", which the rehearsal and the gate step both assert with
-      `git diff --name-only main_pre_bootstrap..main`. Then open and merge the pull request
+      not "unchanged" but "every commit in `main_pre_bootstrap..main` is a non-merge commit
+      touching only `docs/masterplan/<slug>/`", which the rehearsal and the gate step both assert
+      per commit: for each sha in `git rev-list main_pre_bootstrap..main`, `git diff-tree
+      --no-commit-id --name-only -r <sha>` lists only bundle paths and the commit has one parent
+      (an endpoint diff would miss a change followed by its revert). Then open and merge the pull
+      request
       `masterplan/<slug> → main` on GitHub (`gh pr create`,
       `gh pr merge --merge`). Record the PR merge sha (`gh pr view --json mergeCommit`) in the
       `bootstrap_step` event and verify `branch_tip` is its ancestor. GitHub `main` now contains
@@ -567,9 +570,9 @@ The two are decoupled by merging on GitHub first and fast-forwarding local `main
    never waived) → retro → the finish-time adversary review over the same real diff →
    `branch_finish` gate opens. At the gate, before answering: `git -C MAIN fetch origin main`;
    verify the recorded PR-merge sha is an ancestor of `origin/main` and a descendant of
-   `branch_tip`; assert `git diff --name-only main_pre_bootstrap..main` lists only paths under
-   `docs/masterplan/<slug>/` (the state-only invariant — anything else means something other than
-   this run moved `main`: stop); then **`git -C MAIN rebase origin/main`** — local `main`'s
+   `branch_tip`; run the per-commit state-only audit of §10.1.5 over `main_pre_bootstrap..main`
+   (anything else means something other than this run moved `main`: stop); then
+   **`git -C MAIN rebase origin/main`** — local `main`'s
    unpushed state-only commits replay on top of GitHub `main`, which cannot conflict because the
    merged code never touches the bundle directory; re-verify the ancestry against the new local
    tip; record all of it as a `bootstrap_step`. Then `--choice=merge` through the pinned v9
@@ -644,9 +647,13 @@ Named suites, each required by §4.4's inventory or by a finding in §13:
   defines (bare remote, second-clone PR merge, fixture install roots, fixture `CLAUDE_CONFIG_DIR`),
   proving: the release script, tag, push, and `install-pi` commands exist on the branch and produce
   the `bootstrap_step` receipts G6 expects; annotated-tag object equality and peeled-commit
-  equality against the tip; local `main` unchanged through both v9 assessments; the gate
-  fast-forward followed by an actual no-op merge; an unexpected remote tip and a missing PR merge
-  each stop the walk. The live execution is the plan's bootstrap wave, not this test.
+  equality against the tip; every commit in `main_pre_bootstrap..main` before the gate is a
+  non-merge commit touching only the bundle directory (per-commit `git diff-tree` audit, with a
+  fixture containing a non-bundle commit plus its revert that must be rejected); the gate rebase
+  onto the recorded PR merge succeeds with event state preserved; an actual no-op merge; branch
+  retirement; the archive commit; a fast-forward post-archive push; an unexpected remote tip, a
+  missing PR merge, and an unexpected merge commit on `main` each stop the walk. The live
+  execution is the plan's bootstrap wave, not this test.
 - `interview-ledger-resume` additions: dirty payload → intent answer → clean payload → design
   pick → `converged`; clean payload → design withdraw → still `converged`; a design answer that
   records a new draft → stale receipt → fresh critic required; medium reaches `exhausted` only at
@@ -756,6 +763,13 @@ Round 8 (2 blocking, 1 advisory) → rev 9:
 | local `main` cannot stay frozen (finish-step commits state to it); `pull --ff-only` impossible after the PR merge | invariant becomes state-only commits in `main_pre_bootstrap..main`; the gate rebases them onto `origin/main`; rehearsal asserts the range and the conflict-free rebase (§10.1.5, §10.2) |
 | terminal interview states not absorbing | every mutating verb refuses after `end`/`waived`; `reopen` only in brainstorm before freeze (§5.3, §11) |
 | outcome 1 vs `exhausted` | outcome 1 rewritten to name the weaker exits (§2) |
+
+Round 9 (1 blocking, 1 advisory) → rev 10:
+
+| finding | disposition in rev 10 |
+|---|---|
+| §11 still described the frozen-`main` fast-forward path | `v9-to-v10-bootstrap` rewritten for the state-only range, rebase, no-op merge, retire, archive, push (§11) |
+| endpoint diff cannot prove per-commit invariant | per-commit `git diff-tree` audit with single-parent check; revert fixture (§10.1.5, §10.2, §11) |
 
 ## Assumptions & Open Decisions
 
