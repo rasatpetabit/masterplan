@@ -25,12 +25,12 @@
       "strengths": "Cheap and quick with better instruction-following than sweep. Mechanical multi-file edits, renames, formatting, boilerplate."
     },
     "code": {
-      "model": "litellm/glm-5.2",
+      "model": "litellm/glm-5.3",
       "ctx": 1000000,
       "cost": "low",
       "fallback": "bulk",
       "chain": [
-        "litellm/glm-5.2",
+        "litellm/glm-5.3",
         "litellm/skynet3/deepseek-v4-flash",
         "litellm/gemini-3.7-flash"
       ],
@@ -43,7 +43,7 @@
       "fallback": "code",
       "chain": [
         "litellm/grok-4.6",
-        "litellm/glm-5.2",
+        "litellm/glm-5.3",
         "litellm/skynet3/deepseek-v4-flash",
         "litellm/gemini-3.7-flash"
       ],
@@ -91,7 +91,7 @@
       "chain": [
         "litellm/qwen3.8-max",
         "litellm/qwen3.7-plus",
-        "litellm/glm-5.2",
+        "litellm/glm-5.3",
         "litellm/skynet3/deepseek-v4-flash",
         "litellm/gemini-3.7-flash"
       ],
@@ -104,7 +104,7 @@
       "fallback": "code",
       "chain": [
         "litellm/qwen3.7-plus",
-        "litellm/glm-5.2",
+        "litellm/glm-5.3",
         "litellm/skynet3/deepseek-v4-flash",
         "litellm/gemini-3.7-flash"
       ],
@@ -131,7 +131,7 @@
     },
     "medium": {
       "lane": "code",
-      "model": "litellm/glm-5.2",
+      "model": "litellm/glm-5.3",
       "intent": "Default working tier — read, reason, and write code to a spec."
     },
     "big": {
@@ -176,7 +176,7 @@
       "tier": "medium",
       "writes": true,
       "lane": "code",
-      "model": "litellm/glm-5.2",
+      "model": "litellm/glm-5.3",
       "intent": "Implement a bounded, specified change and verify it.",
       "classes": [
         "bounded-edit",
@@ -189,7 +189,7 @@
       "tier": "medium",
       "writes": true,
       "lane": "code",
-      "model": "litellm/glm-5.2",
+      "model": "litellm/glm-5.3",
       "intent": "Write and run tests; judge whether evidence supports a claim.",
       "classes": [
         "tester"
@@ -282,9 +282,9 @@
     "bounded-edit": {
       "agent": "builder",
       "lane": "code",
-      "model": "litellm/glm-5.2",
+      "model": "litellm/glm-5.3",
       "chain": [
-        "litellm/glm-5.2",
+        "litellm/glm-5.3",
         "litellm/skynet3/deepseek-v4-flash",
         "litellm/gemini-3.7-flash"
       ],
@@ -300,7 +300,7 @@
       "model": "litellm/grok-4.6",
       "chain": [
         "litellm/grok-4.6",
-        "litellm/glm-5.2",
+        "litellm/glm-5.3",
         "litellm/skynet3/deepseek-v4-flash",
         "litellm/gemini-3.7-flash"
       ],
@@ -314,9 +314,9 @@
     "graph-execution": {
       "agent": "builder",
       "lane": "code",
-      "model": "litellm/glm-5.2",
+      "model": "litellm/glm-5.3",
       "chain": [
-        "litellm/glm-5.2",
+        "litellm/glm-5.3",
         "litellm/skynet3/deepseek-v4-flash",
         "litellm/gemini-3.7-flash"
       ],
@@ -345,9 +345,9 @@
     "tester": {
       "agent": "prover",
       "lane": "code",
-      "model": "litellm/glm-5.2",
+      "model": "litellm/glm-5.3",
       "chain": [
-        "litellm/glm-5.2",
+        "litellm/glm-5.3",
         "litellm/skynet3/deepseek-v4-flash",
         "litellm/gemini-3.7-flash"
       ],
@@ -423,7 +423,7 @@
       "chain": [
         "litellm/qwen3.8-max",
         "litellm/qwen3.7-plus",
-        "litellm/glm-5.2",
+        "litellm/glm-5.3",
         "litellm/skynet3/deepseek-v4-flash",
         "litellm/gemini-3.7-flash"
       ],
@@ -452,9 +452,9 @@
     "unknown": {
       "agent": "builder",
       "lane": "code",
-      "model": "litellm/glm-5.2",
+      "model": "litellm/glm-5.3",
       "chain": [
-        "litellm/glm-5.2",
+        "litellm/glm-5.3",
         "litellm/skynet3/deepseek-v4-flash",
         "litellm/gemini-3.7-flash"
       ],
