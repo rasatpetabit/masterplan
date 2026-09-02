@@ -1,7 +1,7 @@
 # Spec — Intent to completion
 
 **Run:** `intent-to-completion` · **Target release:** v10.0.0 · **Shape:** prompt-first, minimal code (user decision, A8)
-**Review status:** rev 3 — after two spec-gate adversary rounds (round 1: 18 findings, FAIL; round 2: 12 new + 10 residual, FAIL); dispositions in §13.
+**Review status:** rev 4 — after three spec-gate adversary rounds (round 1: 18 findings, FAIL; round 2: 12 new + 10 residual, FAIL; round 3: 7, FAIL); dispositions in §13. Open for the operator: D1 (ledger verbs, resolved by assumption), D2 (Claude surface inside this run).
 
 ## 1. Problem
 
@@ -39,9 +39,10 @@ can see this; a "does a different value produce different behavior" test can.
 6. Every gate reports measured context usage where the harness exposes it, an explicit unknown
    state where it does not, and recommends compaction at the boundary where it is cheapest; a
    post-compaction brief keeps run state in context.
-7. v10.0.0 is released, tagged, pushed, and installed into the Pi install root **inside this run**
-   (frozen goal G6, assessed by this run's own finish), and installed into the Claude plugin cache
-   as the first recorded step of the successor run that exercises the full deploy-to-confirm flow.
+7. v10.0.0 is released, tagged, pushed, and installed into **both** running surfaces — the Pi
+   install root before this run's goal check, the Claude plugin cache at this run's held
+   `branch_finish` gate — before this run archives (frozen goal G6, §10). A successor run on the
+   installed v10 then exercises the automated deploy-to-confirm flow.
 
 ## 3. Non-goals
 
@@ -199,12 +200,17 @@ single writer:
   id out of sequence, an ask while a question is unanswered, or an ask past the cap.
 - `mp interview answer --state --id --text=… [--corrected] [--supersedes=Q<m>]` — `--supersedes`
   retires an earlier design pick; the active pick count is derived by replay (latest per fork).
+- `mp interview withdraw --state --id` — retires an asked-but-unanswered question (it still counts
+  against the cap); the only way an unanswered question leaves the ledger.
 - `mp interview critic --state --receipt=<json> --payload-file=<path>` — the payload is copied to
   `<bundle>/interview-critic-<n>.json` (artifact, schema-validated: `unknowns[]`, `misclassified[]`,
   `contradictions[]`, `intent_draft`), and the event carries `{dispatch_id, model, output_tokens,
-  payload_sha256, unknown_count}`. The recorder refuses a receipt without dispatch id, model, and
-  positive output tokens, and a payload whose digest does not match — the same honesty bound as
-  `record-gate-review`; it is not tamper-proof and is documented as such.
+  payload_sha256, ledger_head, intent_sha256, unknown_count}`. `ledger_head` is the index of the
+  last interview event the critic was shown and `intent_sha256` the digest of the intent draft it
+  reviewed; the recorder computes both from the ledger and refuses a receipt that names different
+  values, a receipt without dispatch id, model, and positive output tokens, or a payload whose
+  digest does not match — the same honesty bound as `record-gate-review`; it is not tamper-proof
+  and is documented as such.
 - `mp interview end --state --reason=converged|exhausted|critic_off` — writes the terminal state
   after validating it against the ledger (§5.4).
 - `mp interview status` — read-only.
@@ -214,12 +220,15 @@ latest critic payload is re-read from its artifact.
 
 ### 5.4 Terminal states and `goals-load`
 
-| state | valid when | `goals-load` |
+Every terminal state requires **zero unanswered questions** (answer or withdraw first).
+
+| state | valid when (in addition to the rule above) | `goals-load` |
 |---|---|---|
-| `converged` | floor met; no unanswered question; ≥ 1 active uncorrected design pick; latest critic payload has zero unknowns and its receipt is valid | accepts |
-| `exhausted` | asked == cap (any complexity), or critic mode is `unavailable` with floor met; unknowns from the latest payload (if any) listed in the event | accepts; the spec must carry the `assumed` rows |
-| `critic_off` | `complexity: low`; floor met; no unanswered question | accepts |
-| (none) | interview still open | refuses unless `--interview-waived --reason=…` (durable `interview_waived`) |
+| `converged` | floor met; ≥ 1 active uncorrected design pick; the latest critic receipt is valid, its `ledger_head` equals the current ledger head (no question or answer after it) and its `intent_sha256` equals the current intent draft; its payload has zero `unknowns`, and every `contradictions` and `misclassified` entry has a later answer or withdraw event referencing it | accepts |
+| `exhausted` | asked == cap (any complexity), or critic mode is `unavailable` with floor met; the unknowns of the latest payload (if any) are listed in the event | accepts; the spec must carry the `assumed` rows |
+| `critic_off` | `complexity: low`; floor met | accepts |
+| `waived` | `goals-load --interview-waived --reason=…` on an open interview; durable `interview_waived` event | accepts, recorded as waived |
+| (none) | interview still open | refuses |
 
 Critic mode is `off` (configured, low), `on`, or `unavailable` (a dispatch failed: durable
 `critic_unavailable` event with the error). `unavailable` never counts as `converged`.
@@ -323,9 +332,11 @@ re-enters at the first step lacking a `deploy_step` event at the current `deploy
 `deploy_base {sha, branch_tip}` event, and finish-step verifies before recording it that the run
 branch's tip (`branch_tip`, captured at `branch_finish`) is an ancestor of that sha
 (`git -C MAIN merge-base --is-ancestor <branch_tip> <sha>`). Every deploy receipt and the final
-assessment bind to `deploy_base_sha`; if MAIN's tip moves between steps, the next
-`run_deploy_step` refuses with `dispatch-error: base moved` until the operator re-enters (a new
-`deploy_base` event at the new tip; completed steps whose `check` passes are not re-run).
+assessment bind to `deploy_base_sha`. **Every** later boundary — the next `run_deploy_step`,
+`run_final_check`, opening `intent_confirm`, and the archive itself — first checks that MAIN's
+base tip still equals `deploy_base_sha`; a mismatch is `dispatch-error: base moved`, and re-entry
+writes a new `deploy_base` at the new tip, re-runs every step's `check` (steps whose check exits 0
+are not re-run), and discards any final receipt bound to the old sha.
 
 - **`merge`** enters the deploy stage after the merge transaction; the ancestor check holds by
   construction.
@@ -359,11 +370,15 @@ adversary-review steps already use.
 
 ### 7.5 Intent rejected
 
-`--intent-rejected --class=implementation` records `intent_rejected` and stops finish; the run
-stays in `execute` and follow-up tasks are added with `mp amend-plan`. `--class=intent` means the
-captured intent itself was wrong: finish stops, the operator amends `goals.md` via `mp goals-amend`
-(new hash → spec gate re-armed, prior assessor receipts no longer match), and the run re-plans the
-affected tasks before a later finish. Neither class can reuse a stale `goal_check` receipt.
+By the time `intent_confirm` opens, the branch is merged and the run worktree is gone, so there is
+no `execute` phase to return to. `--intent-rejected --class=implementation|intent --reason=…`
+therefore writes `incomplete_authorized {reason: intent_rejected:<class>, disposition_sha}` and
+archives this run as `incomplete:intent_rejected:<class>`; the retro names the remediation as a
+required successor run. The successor is seeded with `--predecessor=<slug>`; for `--class=intent`
+the operator's correction text is stored in the event and the successor's interview opens with it
+as context, and the successor's `goals.md` is a fresh document (the rejected intent is never
+amended in place, because this run's receipts are bound to it). No receipt from the rejected run is
+reusable by the successor.
 
 ### 7.6 Stalls
 
@@ -381,9 +396,10 @@ worktree/file conflict; an archived run whose topic or goals overlap the new top
 `--predecessor` candidate; any run whose `planned_paths` intersect the surface the new topic
 names is a plan-level conflict even when topics differ.
 
-The decision is recorded as the **first event of the new bundle**: `mp seed --overlap-review=<json
-file>` appends `overlap_review {candidates: [{slug, axis, status}], action}` immediately after the
-seed's capability event. *Resume that run* seeds nothing and appends the same event to the resumed
+The decision is recorded as the **first event after the seed's capability event**: `mp seed
+--overlap-review=<json file>` appends `overlap_review {candidates: [{slug, axis, status}],
+action}` as the second record of the new bundle's `events.jsonl` (the capability event the seed
+already writes stays first). Tests assert the complete event array. *Resume that run* seeds nothing and appends the same event to the resumed
 bundle; *abort* creates nothing durable (nothing was created), and the sequencer says so.
 
 AUQ rule: under `gated`, the AUQ lists in-progress conflicts, plan-level conflicts, and archived
@@ -408,7 +424,8 @@ uses; subagent transcripts live under the tasks directory and are never read) an
   (a compaction boundary is the last model-side record; `pct: null`; the line prints
   `context: unknown (just compacted)`) · `malformed` (usage present but not numeric; `pct: null`;
   `context: unknown (malformed usage)`) · `unsupported` (no such transcript exists, e.g. Pi; the
-  line is omitted). A number is never fabricated.
+  line prints `context: unknown (unsupported)` so an absent line always means a broken
+  turn-close, never a quiet skip). A number is never fabricated.
 - Window: `--window` > `MP_CONTEXT_WINDOW` > a `[1m]`-suffixed model in the harness settings →
   1,000,000 > 200,000 default; `window_source` reports which.
 
@@ -439,25 +456,41 @@ This run executes under the installed v9.10.0, whose sequencer and `finish-step`
 §7 and which cannot hold a run open past its disposition. The rollout is therefore split into what
 this run can prove and what only a run on v10 can prove, and both halves are frozen:
 
-1. **Inside this run (G6).** The plan's final wave is a bootstrap wave executed by the shell with
-   the operator (risky-action AUQs), *before* `mp finish`: run `scripts/release.mjs` on the branch
-   tip (version files, CHANGELOG, `release: v10.0.0` commit, annotated tag), push the branch and
-   the tag, `install-pi --ref=v10.0.0`, `install-pi --check`. Each step is recorded on this bundle
-   as a `bootstrap_step` event carrying the command, exit, and output digest. Because the release
-   commit moves the branch HEAD, this run's own v9.10.0 goal check runs fresh over it and assesses
-   G6 from those receipts. The release tag points at the branch tip; after the finish merge, main
-   contains it (main also carries this bundle's own commits, so main's tip may be a merge commit
-   whose tree differs from the tag only by `docs/masterplan/`).
-2. **Immediately after this run's finish merge (successor run, first wave).** `v10-validation` is
-   seeded on the installed Pi v10 with `--predecessor=intent-to-completion`, and its first wave is
-   the Claude-side install: push main, `/plugin update masterplan` + `/reload-plugins`
-   (user-only, evidence: `mp version` from the cache prints v10.0.0), `doctor
-   --only=plugin-registry-drift` clean. That run is the first v2 `goals.md`, makes a small real
-   change, and its finish exercises the deploy stage, `run_final_check`, and `intent_confirm`
-   end-to-end; its archive with `completion: complete` is the evidence for Outcome 7's second
-   half. It is named here, linked by predecessor, listed in this run's retro as the open step, and
-   must be the next run seeded in this repo — the seed-time overlap check (§8) will surface this
-   bundle and its retro's open step to whoever seeds next.
+1. **Before `mp finish` — the bootstrap wave (Pi surface, G6 part 1).** The plan's final wave is
+   executed by the shell with the operator (risky-action AUQs): run `scripts/release.mjs` on the
+   branch tip (version files, CHANGELOG, `release: v10.0.0` commit, annotated tag), push the
+   branch and the tag, `install-pi --ref=v10.0.0`, `install-pi --check`. Each step is recorded on
+   this bundle as a `bootstrap_step` event (command, exit, output digest). G6 is `signal: command`
+   because the installed v9.10.0 assessor's documented contract is to verify command-class
+   evidence by running read-only commands itself: `node bin/install-pi.mjs --check` (reads the
+   live install root), `git rev-parse -q --verify refs/tags/v10.0.0`, and `git ls-remote
+   --exit-code --tags origin refs/tags/v10.0.0` are all runnable from the detached assessment
+   worktree, so no new consumer of `bootstrap_step` events is needed for the verdict; the events
+   are the human-readable receipt. Invariant: the release commit is the branch tip at finish —
+   bundle writes go to MAIN's base branch, never the run branch — so the tag and the finish-time
+   branch tip are the same commit.
+2. **At the `branch_finish` gate — the Claude surface (G6 part 2, decision D2).** The Claude
+   plugin cache updates only from the marketplace's tracked branch (`main`), which this run's
+   branch reaches only through the finish merge, and the installed v9.10.0 finish archives in the
+   same transaction as that merge. The documented "not ready" escape closes the gap: at
+   `branch_finish` the shell answers free-text, which holds the gate with nothing archived; then,
+   gated by risky-action AUQs, it merges the run branch into `main` in MAIN (`git -C MAIN merge
+   --no-edit masterplan/<slug>`), pushes `main`, and hands back the user-only step (`/plugin update
+   masterplan`, `/reload-plugins`; evidence: `mp version` from the cache prints v10.0.0, and
+   `node bin/doctor.mjs --only=plugin-registry-drift` is clean), recording each as a
+   `bootstrap_step` event. Only then does the shell resume with `--choice=merge`: finish-step's
+   own merge is a no-op ("already up to date"), the branch retires normally, and the run archives
+   with both surfaces on v10. The finish-time adversary review already ran over the real
+   `base..head` diff before the gate, so the early merge does not blank it. The operator confirms
+   the Claude evidence at the held gate; the v9.10.0 goal check (which ran earlier) assesses the
+   Pi half.
+3. **Successor run (`v10-validation`).** Seeded with `--predecessor=intent-to-completion` on the
+   installed v10: the first v2 `goals.md`, a small real change, and a finish that exercises the
+   deploy stage, `run_final_check`, and `intent_confirm` end-to-end. Its archive with
+   `completion: complete` is the evidence for the *automated* flow (Outcome 3's mechanism); the
+   *rollout* of v10 itself is complete inside this run per steps 1–2. It is listed in this run's
+   retro as the next required run, and the seed-time overlap check (§8) surfaces this bundle and
+   that open step to whoever seeds next.
 
 ## 11. Test plan
 
@@ -551,6 +584,18 @@ Round 1 (18 findings) and round 2 (12 new, 10 residual). Each row is the round-2
 | 28 | P2 | `--supersedes` and replay-derived active picks (§5.3) |
 | 29 | P2 | overlap on topic, goals, and `planned_paths`; full topic text (§8) |
 
+Round 3 (7 findings) → rev 4:
+
+| finding | severity | disposition in rev 4 |
+|---|---|---|
+| intent rejection has no replay path after disposition | P1 | rejection archives incomplete with a required successor; no return to `execute` (§7.5) |
+| commit identity unchecked at final boundaries | P1 | base-tip equality checked before final check, intent_confirm, and archive (§7.3) |
+| terminal guard accepts invalid state | P1 | zero-unanswered rule, `withdraw`, receipt bound to `ledger_head` + `intent_sha256`, contradictions/misclassified must be resolved, `waived` named (§5.3, §5.4) |
+| v9 assessor consumption of bootstrap receipts asserted | P1 | G6 evidence is command-class the v9 assessor runs itself; tag/branch-tip invariant stated (§10.1) |
+| Claude surface deferred | P1 | both surfaces inside this run via the held `branch_finish` gate (§10.2, D2 for the operator) |
+| overlap "first event" contradiction | P2 | "first event after capability", full-array test (§8) |
+| unsupported context line omitted | P2 | `context: unknown (unsupported)` printed (§9) |
+
 ## Assumptions & Open Decisions
 
 | # | question | decision | rationale | source |
@@ -575,6 +620,8 @@ Round 1 (18 findings) and round 2 (12 new, 10 residual). Each row is the round-2
 | A18 | Who wires the post-compaction hook? | this repo ships verb + docs + doctor check; registration is a `user_only` done step | hooks declared only in policy.toml | assumed |
 | A19 | `done` from user-global or CLI? | ignored with warning | executable steps must come from the reviewed repo file | assumed |
 | A20 | keep/discard outcome? | archive as `incomplete:<reason>`, never complete | Outcome 3 | assumed |
-| A21 | Dogfood evidence? | Pi install + tag inside this run (G6, bootstrap wave before finish); Claude cache + full flow in the successor's first wave | installed 9.10.0 cannot hold a run open past disposition | assumed |
+| A21 | Dogfood evidence? | Pi install + tag before the goal check; Claude cache at the held `branch_finish` gate; automated flow proven by the successor | the 9.10.0 finish archives with the merge, but its documented "not ready" escape holds the gate | assumed |
+| A24 | Intent rejected after merge? | archive incomplete; remediation is a successor run | the worktree is gone after disposition; no `execute` to return to | assumed |
+| **D2** | **Claude cache inside this run via the held gate, or Pi-only scope for this run?** | **held gate (both surfaces) — operator confirms at approval** | the topic's central failure is archiving with a stale running surface | pending |
 | A22 | D1 — interview ledger verbs or generic events? | verbs (§5.3) | the operator accepted code seams wherever prose cannot enforce; two adversary rounds rated generic events a blocking gap | assumed — operator may veto at approval |
 | A23 | Receipt provenance strength? | honesty-bound (ids, positive tokens, digests), not cryptographic | matches `record-gate-review`; stronger would need a signing dispatcher | assumed |

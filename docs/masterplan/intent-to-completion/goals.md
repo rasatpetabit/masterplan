@@ -23,6 +23,6 @@ evidence: Will exist on the branch: test/config.test.mjs (CLI > repo > user > de
 signal: command
 evidence: Will exist on the branch: `mp context-status` returning tokens_at_last_request, appended_est, window, and one of the current / post-compaction / malformed / unsupported states (test/context-status-session-lineage); the turn-close context line with the /compact recommendation above threshold; `mp resume-brief --repo-root` resolving zero, one, or several active bundles; the resume-brief-hook doctor check.
 
-## G6: v10.0.0 is released, tagged, pushed, and installed into the Pi install root by this run before it finishes
+## G6: v10.0.0 is released, tagged, pushed, and installed into both running surfaces before this run archives
 signal: command
-evidence: Will exist on this bundle before finish: bootstrap_step events (recorded via mp event) for scripts/release.mjs on the branch tip, the pushed branch and v10.0.0 tag, `node bin/install-pi.mjs --ref=v10.0.0`, and `node bin/install-pi.mjs --check` reporting check_ok at v10.0.0; the release commit is the branch HEAD the finish verifies.
+evidence: Before the goal check (Pi surface): `node bin/install-pi.mjs --check` prints check_ok with version 10.0.0; `git rev-parse -q --verify refs/tags/v10.0.0` exits 0 at the branch tip; `git ls-remote --exit-code --tags origin refs/tags/v10.0.0` exits 0; bootstrap_step events on this bundle record each command. Before archive (Claude surface, at the held branch_finish gate): bootstrap_step events record the merge to main, the push, and the operator's /plugin update with `mp version` from the plugin cache printing v10.0.0 and `node bin/doctor.mjs --only=plugin-registry-drift` clean.
