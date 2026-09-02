@@ -1,0 +1,20 @@
+Spec gate — cross-vendor adversary review digest (intent-to-completion)
+Artifacts: spec.md (rev 10) + goals.md (frozen, G6 amended with operator approval)
+Reviewer: skynet_review_diff on model_group dispatch-adversary (adversary class, frontier lane: litellm/gpt-5.6-sol), reasoning_effort high, artifact bytes read server-side.
+
+Rounds (all over the then-current bytes):
+  1  FAIL  18 findings (8 P1)  — replay shortcut archived before deploy; non-idempotent deploy replay; goal assessment before deploy evidence; --pushed != merged; waivable deployment; dogfood circularity under installed v9.10.0; prose-only interview ledger; lexical liveness test
+  2  FAIL  12 new + 10 residual — conflated complete/incomplete authorizations; output-based probes; merge-sha not proving branch landed; cap exhaustion dead end; rollout outside frozen goals
+  3  FAIL  7 — rejection after disposition; base-tip at final boundaries; terminal guard; v9 assessor consumption; Claude surface deferred
+  4  FAIL  5 blocking + 1 advisory — content_head semantics; check bypass on success; A15 contradiction; G6 vs pre-finish check; held gate untested
+  5  FAIL  4 + 2 — local pre-finish merge emptied the v9 diff; medium critic freshness; authorization before started; group order
+  6  FAIL  2 + 3 — medium retry; rehearsal fixtures
+  7  FAIL  1 + 2 — draft as latest intent-content event
+  8  FAIL  2 + 1 — local main gains state commits (rebase, not ff); absorbing terminal states
+  9  FAIL  1 + 1 — stale §11 fast-forward text; per-commit audit
+ 10  PASS  0 blocking, 1 advisory
+
+Recorded verdict (round 10): PASS.
+Open advisory carried into planning: before the gate rebase, require origin/main == the recorded PR-merge sha (not merely ancestry); the unexpected-remote-tip rehearsal case asserts that exact condition.
+
+Every finding and its disposition is tabulated in spec.md §13; operator decisions in the Assumptions table (D1 ledger verbs, D2 both surfaces before archive; mechanism refined from held gate → pre-finish GitHub merge with local-main state-only invariant and gate rebase).
