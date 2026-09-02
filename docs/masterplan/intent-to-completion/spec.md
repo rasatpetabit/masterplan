@@ -1,7 +1,7 @@
 # Spec — Intent to completion
 
 **Run:** `intent-to-completion` · **Target release:** v10.0.0 · **Shape:** prompt-first, minimal code (user decision, A8)
-**Review status:** rev 4 — after three spec-gate adversary rounds (round 1: 18 findings, FAIL; round 2: 12 new + 10 residual, FAIL; round 3: 7, FAIL); dispositions in §13. Approved by the operator 2026-09-02 with D1 (ledger verbs) and D2 (both surfaces inside this run) confirmed.
+**Review status:** rev 5 — after four spec-gate adversary rounds (round 1: 18 findings; round 2: 12 new + 10 residual; round 3: 7; round 4: 5 blocking + 1 advisory; all FAIL); dispositions in §13. Approved by the operator 2026-09-02 at rev 4 with D1 (ledger verbs) and D2 (both surfaces inside this run) confirmed; rev 5 changes only the D2 mechanism and the round-4 fixes.
 
 ## 1. Problem
 
@@ -40,8 +40,8 @@ can see this; a "does a different value produce different behavior" test can.
    state where it does not, and recommends compaction at the boundary where it is cheapest; a
    post-compaction brief keeps run state in context.
 7. v10.0.0 is released, tagged, pushed, and installed into **both** running surfaces — the Pi
-   install root before this run's goal check, the Claude plugin cache at this run's held
-   `branch_finish` gate — before this run archives (frozen goal G6, §10). A successor run on the
+   install root and the Claude plugin cache — by the plan's bootstrap wave before this run's
+   finish begins, so the goal check assesses it live (frozen goal G6, §10). A successor run on the
    installed v10 then exercises the automated deploy-to-confirm flow.
 
 ## 3. Non-goals
@@ -202,15 +202,25 @@ single writer:
   retires an earlier design pick; the active pick count is derived by replay (latest per fork).
 - `mp interview withdraw --state --id` — retires an asked-but-unanswered question (it still counts
   against the cap); the only way an unanswered question leaves the ledger.
+- `mp interview draft --state --file=<json>` — persists the current intent draft
+  (`{why, outcome, anti_goals, done_means}`) as `<bundle>/interview-intent-draft.json` and records
+  `interview_draft {intent_sha256}`; the draft is what the critic reviews and what §5.1 step 6
+  writes into `goals.md`.
 - `mp interview critic --state --receipt=<json> --payload-file=<path>` — the payload is copied to
-  `<bundle>/interview-critic-<n>.json` (artifact, schema-validated: `unknowns[]`, `misclassified[]`,
-  `contradictions[]`, `intent_draft`), and the event carries `{dispatch_id, model, output_tokens,
-  payload_sha256, ledger_head, intent_sha256, unknown_count}`. `ledger_head` is the index of the
-  last interview event the critic was shown and `intent_sha256` the digest of the intent draft it
-  reviewed; the recorder computes both from the ledger and refuses a receipt that names different
+  `<bundle>/interview-critic-<n>.json` (artifact, schema-validated: `unknowns[]`,
+  `misclassified[]` (question ids), `contradictions[]` (each with an id `C<n>` and the question ids
+  involved), `intent_draft`), and the event carries `{dispatch_id, model, output_tokens,
+  payload_sha256, content_head, intent_sha256, unknown_count}`. **`content_head`** is the index of
+  the last *content* event — `interview_question`, `interview_answer`, `interview_withdraw`,
+  `interview_draft` — that the critic was shown; critic and terminal events are not content events,
+  so recording the receipt does not move the head. `intent_sha256` is the digest of the draft it
+  reviewed. The recorder computes both from the ledger and refuses a receipt that names different
   values, a receipt without dispatch id, model, and positive output tokens, or a payload whose
   digest does not match — the same honesty bound as `record-gate-review`; it is not tamper-proof
   and is documented as such.
+- `mp interview critic --state --unavailable --error=<text>` — records `critic_unavailable` (§5.4).
+- `mp interview answer … --resolves=C<n>|Q<m>` — an answer (or `withdraw`) may name the
+  contradiction id or misclassified question id it resolves; resolution is derived by replay.
 - `mp interview end --state --reason=converged|exhausted|critic_off` — writes the terminal state
   after validating it against the ledger (§5.4).
 - `mp interview status` — read-only.
@@ -224,7 +234,7 @@ Every terminal state requires **zero unanswered questions** (answer or withdraw 
 
 | state | valid when (in addition to the rule above) | `goals-load` |
 |---|---|---|
-| `converged` | floor met; ≥ 1 active uncorrected design pick; the latest critic receipt is valid, its `ledger_head` equals the current ledger head (no question or answer after it) and its `intent_sha256` equals the current intent draft; its payload has zero `unknowns`, and every `contradictions` and `misclassified` entry has a later answer or withdraw event referencing it | accepts |
+| `converged` | floor met; ≥ 1 active uncorrected design pick; the latest critic receipt is valid, its `content_head` equals the current content head (no content event after it) and its `intent_sha256` equals the latest `interview_draft`; its payload has zero `unknowns`, and every `contradictions` and `misclassified` entry is named by a later `--resolves` | accepts |
 | `exhausted` | asked == cap (any complexity), or critic mode is `unavailable` with floor met; the unknowns of the latest payload (if any) are listed in the event | accepts; the spec must carry the `assumed` rows |
 | `critic_off` | `complexity: low`; floor met | accepts |
 | `waived` | `goals-load --interview-waived --reason=…` on an open interview; durable `interview_waived` event | accepts, recorded as waived |
@@ -316,7 +326,7 @@ run_adversary_review → branch_finish → deploy stage → run_final_check → 
 | op | shell does | then |
 |---|---|---|
 | `ask gate:'no_definition_of_done'` | opens at deploy-stage entry when the repo has no `done:` block. AUQ: supply run-specific commands now (release/install/live_check as `{run, check?}`) / archive incomplete | `--done-adhoc-file=<json>` (durable `done_adhoc` event; the stage proceeds with those steps) · `--deploy-abort-incomplete --reason=no-done-config` |
-| `run_deploy_step {group, index, run, check, cwd: MAIN, ask}` | finish-step has already written `deploy_step_started {group, index, sha}`. Under `gated` (or `ask: true`) AUQ first; run from MAIN on the base; capture exit + output digest | `--deploy-step-done --group --index --exit=N --digest-file=…` → `deploy_step {group, index, sha, exit, digest, source}` |
+| `run_deploy_step {group, index, run, check, cwd: MAIN, ask}` | finish-step has already written `deploy_step_started {group, index, sha}`. Under `gated` (or `ask: true`) AUQ first; run from MAIN on the base; capture exit + output digest | `--deploy-step-done --group --index --exit=N --digest-file=…`. **finish-step then runs `check` itself when present, on every path, not only recovery:** `run` exit 0 and `check` exit 0 → `deploy_step {…, exit, check_exit: 0, digest, source}`; `run` exit 0 but `check` exit 1 (effect absent) → `deploy_failed`; `check` any other exit → `deploy_indeterminate`; `run` non-zero → `deploy_failed` without running `check`. A step without `check` is recorded on `run` exit 0 alone |
 | `ask gate:'deploy_indeterminate' {group, index}` | a `deploy_step_started` exists at this sha with no `deploy_step`. If the step has `check`, finish-step runs it first: exit 0 → recorded done silently; exit 1 → re-run silently; other → this gate. Without `check`, this gate. AUQ: mark done with evidence / re-run / abort | `--deploy-step-done` with the evidence digest · `--deploy-rerun` · `--deploy-abort` |
 | `ask gate:'deploy_failed' {group, index, error}` | AUQ: retry / abort finish; for `release` and `install` a third option, *skip with reason*, archives incomplete (§7.4). `live_check` offers no skip | `--deploy-retry` · `--deploy-skip --reason=…` · `--deploy-abort` |
 | `handback {group: 'user_only', text, evidence}` | present, wait; the operator answers with evidence | `--deploy-step-done` with the evidence digest |
@@ -359,8 +369,10 @@ Two distinct durable authorizations replace the old "retired disposition → arc
 - `completion_confirmed {deploy_base_sha}` — written only by `--intent-confirmed`; archive
   **complete** requires it and requires its sha to equal the latest `deploy_base` event.
 - `incomplete_authorized {reason, disposition_sha}` — written by `keep`/`discard` (in the
-  disposition transaction), by `--deploy-skip` (mandatory group skipped), and by
-  `--deploy-abort-incomplete`; archive **incomplete** requires it.
+  disposition transaction; `disposition_sha` = branch tip), by `--deploy-skip` (mandatory group
+  skipped; `disposition_sha` = `deploy_base_sha`), by `--deploy-abort-incomplete` (same), and by
+  `--intent-rejected` (§7.5; `disposition_sha` = `deploy_base_sha`); archive **incomplete**
+  requires it.
 
 Replay rule: a retired disposition with neither event re-enters the deploy stage (for `merge` /
 `pr`-merged) at the first step lacking a `deploy_step` at the current `deploy_base_sha`; because
@@ -399,8 +411,10 @@ names is a plan-level conflict even when topics differ.
 The decision is recorded as the **first event after the seed's capability event**: `mp seed
 --overlap-review=<json file>` appends `overlap_review {candidates: [{slug, axis, status}],
 action}` as the second record of the new bundle's `events.jsonl` (the capability event the seed
-already writes stays first). Tests assert the complete event array. *Resume that run* seeds nothing and appends the same event to the resumed
-bundle; *abort* creates nothing durable (nothing was created), and the sequencer says so.
+already writes stays first). Tests assert the complete event array. *Resume that run* seeds
+nothing and records the same review on the resumed bundle via `mp record-overlap-review
+--state=<resumed> --review-file=<json>` (same schema, appended at the current tail); *abort*
+creates nothing durable (nothing was created), and the sequencer says so.
 
 AUQ rule: under `gated`, the AUQ lists in-progress conflicts, plan-level conflicts, and archived
 candidates and offers continue · link as predecessor · resume that run · abort. Under `loose`, the
@@ -456,36 +470,52 @@ This run executes under the installed v9.10.0, whose sequencer and `finish-step`
 §7 and which cannot hold a run open past its disposition. The rollout is therefore split into what
 this run can prove and what only a run on v10 can prove, and both halves are frozen:
 
-1. **Before `mp finish` — the bootstrap wave (Pi surface, G6 part 1).** The plan's final wave is
-   executed by the shell with the operator (risky-action AUQs): run `scripts/release.mjs` on the
-   branch tip (version files, CHANGELOG, `release: v10.0.0` commit, annotated tag), push the
-   branch and the tag, `install-pi --ref=v10.0.0`, `install-pi --check`. Each step is recorded on
-   this bundle as a `bootstrap_step` event (command, exit, output digest). G6 is `signal: command`
-   because the installed v9.10.0 assessor's documented contract is to verify command-class
-   evidence by running read-only commands itself: `node bin/install-pi.mjs --check` (reads the
-   live install root), `git rev-parse -q --verify refs/tags/v10.0.0`, and `git ls-remote
-   --exit-code --tags origin refs/tags/v10.0.0` are all runnable from the detached assessment
-   worktree, so no new consumer of `bootstrap_step` events is needed for the verdict; the events
-   are the human-readable receipt. Invariant: the release commit is the branch tip at finish —
-   bundle writes go to MAIN's base branch, never the run branch — so the tag and the finish-time
-   branch tip are the same commit.
-2. **At the `branch_finish` gate — the Claude surface (G6 part 2, decision D2).** The Claude
-   plugin cache updates only from the marketplace's tracked branch (`main`), which this run's
-   branch reaches only through the finish merge, and the installed v9.10.0 finish archives in the
-   same transaction as that merge. The documented "not ready" escape closes the gap: at
-   `branch_finish` the shell answers free-text, which holds the gate with nothing archived; then,
-   gated by risky-action AUQs, it merges the run branch into `main` in MAIN (`git -C MAIN merge
-   --no-edit masterplan/<slug>`), pushes `main`, and hands back the user-only step (`/plugin
-   marketplace update rasatpetabit-masterplan` — the marketplace clone is a GitHub clone tracking
-   `main`, verified 2026-09-02 — then `/plugin update masterplan`, `/reload-plugins`; evidence:
-   `mp version` from the cache prints v10.0.0, and
-   `node bin/doctor.mjs --only=plugin-registry-drift` is clean), recording each as a
-   `bootstrap_step` event. Only then does the shell resume with `--choice=merge`: finish-step's
-   own merge is a no-op ("already up to date"), the branch retires normally, and the run archives
-   with both surfaces on v10. The finish-time adversary review already ran over the real
-   `base..head` diff before the gate, so the early merge does not blank it. The operator confirms
-   the Claude evidence at the held gate; the v9.10.0 goal check (which ran earlier) assesses the
-   Pi half.
+1. **The bootstrap wave — the plan's final wave, executed by the shell with the operator
+   (risky-action AUQs) and entirely BEFORE `mp finish`**, so that the installed v9.10.0 goal
+   check can assess G6 over live evidence for both surfaces. Ordered steps, each recorded on this
+   bundle with the exact command
+   `mp event --state=<path> --type=bootstrap_step --data='{"step":"<name>","cmd":"<cmd>","exit":N}' --note-file=<output digest>`:
+   1. *Rehearsal.* `scripts/rehearse-v9-finish.sh` runs the whole maneuver below on a scratch
+      clone with a throwaway bundle, driven by the installed 9.10.0 `mp`
+      (`node <cache>/bin/masterplan.mjs`): pre-finish merge into the scratch `main`, then
+      `finish-step` through verify, goal check, retro, the review-present-by-sha skip,
+      `--choice=merge` (must report "already up to date" and still retire the branch and archive).
+      Its output digest is the receipt; the real steps run only after it passes.
+   2. *Docs normalization* (the finish-time offer's work, done here so the release commit is the
+      last commit on the branch); the finish's later `docs_normalize` offer is answered
+      *keep as-is* with reason `normalized in bootstrap wave` (durable skip event).
+   3. *Release commit and tag* on the branch tip: `scripts/release.mjs --version=10.0.0` (version
+      files, CHANGELOG, `release: v10.0.0` commit, annotated tag). From here the branch tip does
+      not move: bundle writes go to MAIN's base branch, never the run branch, so the tag and the
+      finish-time branch tip are the same commit.
+   4. *Whole-branch adversary review* at that tip, harness-native on the adversary class, over
+      `main..<tip>` while `main` does not yet contain the tip; digest written to the bundle and
+      recorded with the durable event the finish re-entry guard keys on
+      (`adversary_review {sha: <tip>, base, count}` via `mp event --data … --note-file`), so the
+      later finish sees a review present at HEAD and does not re-review an empty diff.
+   5. *Push* the branch and the tag; `install-pi --ref=v10.0.0`; `install-pi --check` (Pi surface).
+   6. *Merge to `main`* in MAIN (`git -C MAIN merge --no-edit masterplan/<slug>`; MAIN has `main`
+      checked out) and push `main`.
+   7. *Claude surface* (user-only, handed back with the exact text): `/plugin marketplace update
+      rasatpetabit-masterplan` (the marketplace clone is a GitHub clone tracking `main`, verified
+      2026-09-02), `/plugin update masterplan`, `/reload-plugins`. Evidence the operator pastes
+      back and the shell verifies before recording: `node bin/doctor.mjs
+      --only=plugin-registry-drift` exit 0 reporting v10.0.0, and `node
+      ~/.claude/plugins/cache/rasatpetabit-masterplan/masterplan/10.0.0/bin/masterplan.mjs
+      version` printing v10.0.0.
+   G6 is `signal: command` because the installed v9.10.0 assessor's documented contract is to
+   verify command-class evidence by running read-only commands itself: `node bin/install-pi.mjs
+   --check`, `git rev-parse -q --verify refs/tags/v10.0.0`, `git ls-remote --exit-code --tags
+   origin refs/tags/v10.0.0`, and `node bin/doctor.mjs --only=plugin-registry-drift` are all
+   runnable from the detached assessment worktree (they read the live install roots and the
+   remote), so no new consumer of `bootstrap_step` events is needed for the verdict; the events
+   are the human-readable receipt.
+2. **Then `mp finish` under v9.10.0:** verify at the tip → goal check (G1–G5 from the branch,
+   G6 from the live commands above; a `partial` here is a real gap, never waived) → retro →
+   adversary review skipped-by-presence (step 1.4) → `branch_finish`: `merge` is a no-op ("already
+   up to date"), the branch retires, the run archives with both surfaces already on v10. D2's
+   outcome (both surfaces before archive) is unchanged; the held-gate mechanism from rev 4 is
+   dropped because it was untested and unnecessary.
 3. **Successor run (`v10-validation`).** Seeded with `--predecessor=intent-to-completion` on the
    installed v10: the first v2 `goals.md`, a small real change, and a finish that exercises the
    deploy stage, `run_final_check`, and `intent_confirm` end-to-end. Its archive with
@@ -528,7 +558,10 @@ Named suites, each required by §4.4's inventory or by a finding in §13:
 - `final-check`: goals needing live evidence cannot pass from the implementation assessment; final
   receipt binds `deploy_base_sha`, `deploy_chain_hash`, `live_check_digest`; `intent_confirm`
   opens only after a final receipt.
-- `intent-rejected`: both classes; stale `goal_check` receipts unusable after `goals-amend`.
+- `intent-rejected`: both classes archive `incomplete:intent_rejected:<class>` with
+  `incomplete_authorized` at `deploy_base_sha`; the correction text is stored for `intent`; a
+  successor seeded with `--predecessor` sees it; no receipt of the rejected run is accepted by the
+  successor's recorders.
 - `overlap-sequencer`: in-progress conflict, plan-path conflict with a different topic, archived
   overlap, no overlap, predecessor link, resume (event on the resumed bundle), abort (nothing
   created); `overlap_review` is the first event after seed; `runs list` carries the new fields.
@@ -598,6 +631,17 @@ Round 3 (7 findings) → rev 4:
 | overlap "first event" contradiction | P2 | "first event after capability", full-array test (§8) |
 | unsupported context line omitted | P2 | `context: unknown (unsupported)` printed (§9) |
 
+Round 4 (5 blocking, 1 advisory) → rev 5:
+
+| finding | disposition in rev 5 |
+|---|---|
+| `converged` not deterministic (ledger head moves; no draft verb; no unavailable/resolution ops) | `content_head` excludes receipt events; `interview draft`, `critic --unavailable`, `--resolves` (§5.3, §5.4) |
+| intent rejection had two normative paths | A15 replaced; `incomplete_authorized` producer list includes rejection; test rewritten (§7.4, §7.5, §11) |
+| a successful `run` could bypass its `check` | `check` runs after every successful `run`; exit map defined (§7.2) |
+| G6 could not be established by the pre-finish v9 goal check | both surfaces installed in the bootstrap wave before finish; evidence is command-class the v9 assessor runs (§10) |
+| held-gate maneuver untested | replaced by a rehearsed pre-finish merge (`scripts/rehearse-v9-finish.sh`) and exact receipt command (§10) |
+| resume-overlap had no named operation | `mp record-overlap-review` (§8) |
+
 ## Assumptions & Open Decisions
 
 | # | question | decision | rationale | source |
@@ -616,14 +660,14 @@ Round 3 (7 findings) → rev 4:
 | A12 | Can the model trigger compaction? | no; usage line, recommendation, post-compaction brief | verified against Claude Code docs 2026-09-02 | user-confirmed (harness fact) |
 | A13 | Legacy `.masterplan.yaml` keys? | warn and ignore; malformed YAML fails | operator's fleet repos still carry v7 files | assumed |
 | A14 | `full` vs `loose`? | `full` is a warned alias of `loose` | no v8 behavior ever distinguished them | assumed |
-| A15 | Intent rejected? | two classes: implementation → execute; intent → goals-amend + re-plan | review finding 15 | assumed |
+| A15 | Intent rejected? | two classes, both archive this run incomplete and name a required successor; `intent` additionally stores the correction for the successor's interview (§7.5) | review findings 15 and round-3/4: no `execute` exists after disposition | assumed |
 | A16 | No `done:` block? | `no_definition_of_done` gate: ad-hoc steps or incomplete archive; doctor WARN | review findings 5 and 21 | assumed |
 | A17 | This run's goals.md schema? | v1; intent in §2; first v2 bundle is the successor run | installed 9.10.0 validates it | assumed |
 | A18 | Who wires the post-compaction hook? | this repo ships verb + docs + doctor check; registration is a `user_only` done step | hooks declared only in policy.toml | assumed |
 | A19 | `done` from user-global or CLI? | ignored with warning | executable steps must come from the reviewed repo file | assumed |
 | A20 | keep/discard outcome? | archive as `incomplete:<reason>`, never complete | Outcome 3 | assumed |
-| A21 | Dogfood evidence? | Pi install + tag before the goal check; Claude cache at the held `branch_finish` gate; automated flow proven by the successor | the 9.10.0 finish archives with the merge, but its documented "not ready" escape holds the gate | assumed |
+| A21 | Dogfood evidence? | both surfaces installed by the bootstrap wave before `mp finish`, after a rehearsed pre-finish merge; automated flow proven by the successor | the 9.10.0 finish archives with the merge, so the merge must precede finish; finish's own merge is a no-op | assumed |
 | A24 | Intent rejected after merge? | archive incomplete; remediation is a successor run | the worktree is gone after disposition; no `execute` to return to | assumed |
-| D2 | Claude cache inside this run via the held gate, or Pi-only scope? | held gate: both surfaces on v10 before archive (§10.2) | the topic's central failure is archiving with a stale running surface | user-confirmed |
+| D2 | Claude cache inside this run, or Pi-only scope? | both surfaces on v10 before archive (outcome, user-confirmed); mechanism refined in rev 5 from a held gate to a rehearsed pre-finish merge (§10) | the topic's central failure is archiving with a stale running surface; the held gate was untested | user-confirmed (outcome) / assumed (mechanism) |
 | A22 | D1 — interview ledger verbs or generic events? | verbs (§5.3) | two adversary rounds rated generic events a blocking gap; operator kept the verbs at approval | user-confirmed |
 | A23 | Receipt provenance strength? | honesty-bound (ids, positive tokens, digests), not cryptographic | matches `record-gate-review`; stronger would need a signing dispatcher | assumed |
