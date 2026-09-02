@@ -1,7 +1,7 @@
 # Spec — Intent to completion
 
 **Run:** `intent-to-completion` · **Target release:** v10.0.0 · **Shape:** prompt-first, minimal code (user decision, A8)
-**Review status:** rev 6 — after five spec-gate adversary rounds (round 1: 18 findings; round 2: 12 new + 10 residual; round 3: 7; round 4: 5 + 1; round 5: 4 + 2; all FAIL); dispositions in §13. Approved by the operator 2026-09-02 at rev 4 with D1 (ledger verbs) and D2 (both surfaces inside this run) confirmed; revs 5–6 change only the D2 mechanism and the review fixes.
+**Review status:** rev 7 — after six spec-gate adversary rounds (round 1: 18 findings; round 2: 12 new + 10 residual; round 3: 7; round 4: 5 + 1; round 5: 4 + 2; round 6: 2 + 3; all FAIL); dispositions in §13. Approved by the operator 2026-09-02 at rev 4 with D1 (ledger verbs) and D2 (both surfaces inside this run) confirmed; revs 5–6 change only the D2 mechanism and the review fixes.
 
 ## 1. Problem
 
@@ -105,8 +105,8 @@ read-only and prints `{values, sources, warnings, harness: {autoCompactWindow}}`
 | complexity | interview floor | interview cap | critic | planning default |
 |---|---|---|---|---|
 | `low` | 0 | 4 | off (configured) | serial |
-| `medium` | 4 | 10 | once, after the last intent round and before the design options | auto |
-| `high` | 8 | 20 | after every intent round | auto |
+| `medium` | 4 | 10 | after the last intent round, before the design options; re-run after any unclean payload until clean, cap, or unavailable | auto |
+| `high` | 8 | 20 | after every intent round; same retry rule | auto |
 
 A **round** is one `AskUserQuestion` call (1–4 questions) and its answers; an *intent round*
 contains at least one `intent`-kind question, a *design round* only `design`-kind proposals.
@@ -214,11 +214,13 @@ single writer:
   involved), `intent_draft`), and the event carries `{dispatch_id, model, output_tokens,
   payload_sha256, content_head, intent_sha256, unknown_count}`. **`content_head`** is the index of
   the last *intent-content* event — an `interview_question` or `interview_answer` of kind
-  `intent`, an `interview_withdraw`, or an `interview_draft` — that the critic was shown. Critic
-  events, terminal events, and **`design`-kind questions and answers are not content events**:
-  recording a receipt or a design pick does not move the head, so a critic run after the intent
-  questions stays fresh through the design-options round (this is what lets `medium` converge on
-  its single pre-design critic). `intent_sha256` is the digest of the draft it reviewed. The recorder computes both from the ledger and refuses a receipt that names different
+  `intent`, an `interview_withdraw` **of an intent-kind question**, or an `interview_draft` — that
+  the critic was shown. Critic events, terminal events, and **`design`-kind questions, answers,
+  and withdraws are not content events**: recording a receipt or a design pick does not move the
+  head, so a critic run after the intent questions stays fresh through the design-options round
+  (this is what lets `medium` converge on its pre-design critic). If a design answer changes what
+  the operator wants (not just how), the prompt must record a new `interview_draft`, which moves
+  the head and requires a fresh critic. `intent_sha256` is the digest of the draft it reviewed. The recorder computes both from the ledger and refuses a receipt that names different
   values, a receipt without dispatch id, model, and positive output tokens, or a payload whose
   digest does not match — the same honesty bound as `record-gate-review`; it is not tamper-proof
   and is documented as such.
@@ -490,12 +492,23 @@ The two are decoupled by merging on GitHub first and fast-forwarding local `main
    the exact command
    `mp event --state=<path> --type=bootstrap_step --data='{"step":"<name>","cmd":"<cmd>","exit":N}' --note-file=<output digest>`:
    1. *Rehearsal.* `scripts/rehearse-v9-finish.sh` runs steps 2–7 and the finish of step 2 below
-      on a scratch clone with a throwaway bundle and a scratch bare remote, driven by the
-      installed 9.10.0 `mp` (`node <cache>/bin/masterplan.mjs`). It must show: the goal check and
-      the review each ran over a **non-empty** `main..tip` diff (a sentinel goal fails if the
-      assessor is handed an empty diff); the fast-forward at the gate succeeds; `--choice=merge`
-      reports "already up to date" and still retires the branch and archives. Its output digest
-      is the receipt; the real steps run only after it passes.
+      on a scratch clone with a throwaway bundle, driven by a **pinned** copy of the installed
+      9.10.0 tree (copied to a scratch path before anything else and asserted to print
+      `9.10.0`; every `mp finish`/`finish-step` invocation in steps 1–2, real or rehearsed, uses
+      that pinned path, never a repo-relative binary — the cache and the repo both move to v10
+      during the wave). Fixture substitutions are normative: a scratch bare remote stands in for
+      GitHub; the server-side PR merge is emulated by a second clone that merges the branch into
+      `main` and pushes; `install-pi` runs with `--install-root`/`--pi-root` fixtures; the Claude
+      cache is a fixture config dir (`CLAUDE_CONFIG_DIR`, which `lib/paths.mjs` honors) holding an
+      `installed_plugins.json` and a cache tree at v10 written by the script in place of the
+      operator's slash commands; the user-only handback is simulated by feeding that fixture's
+      evidence. It must show: the goal check and the review each ran over a **non-empty**
+      `main..tip` diff (a sentinel goal fails if the assessor is handed an empty diff); local
+      `main` is unchanged through both; the recorded PR-merge sha is an ancestor of the remote
+      `main` and a descendant of the branch tip, before and after the fast-forward; the
+      fast-forward succeeds; `--choice=merge` performs an actual no-op merge and still retires
+      the branch and archives; the fixture doctor reports v10 installed. Its output digest is the
+      receipt; the real steps run only after it passes.
    2. *Docs normalization* (the finish-time offer's work, done here so the release commit is the
       last commit on the branch); the finish's later `docs_normalize` offer is answered
       *keep as-is* with reason `normalized in bootstrap wave` (durable skip event).
@@ -509,8 +522,10 @@ The two are decoupled by merging on GitHub first and fast-forwarding local `main
       `install-pi --check` (Pi surface live).
    5. *Push local `main`* (fast-forward: GitHub `main` is behind by this bundle's own commits),
       then open and merge the pull request `masterplan/<slug> → main` on GitHub (`gh pr create`,
-      `gh pr merge --merge`). GitHub `main` now contains the tip; **local `main` is not fetched
-      or pulled** — its tip stays where it was, so `main..<tip>` is still the full branch.
+      `gh pr merge --merge`). Record the PR merge sha (`gh pr view --json mergeCommit`) in the
+      `bootstrap_step` event and verify `branch_tip` is its ancestor. GitHub `main` now contains
+      the tip; **local `main` is not fetched or pulled** — its tip stays where it was, so
+      `main..<tip>` is still the full branch.
    6. *Claude surface* (user-only, handed back with the exact text): `/plugin marketplace update
       rasatpetabit-masterplan` (the marketplace clone is a GitHub clone tracking `main`, verified
       2026-09-02), `/plugin update masterplan`, `/reload-plugins`. Evidence the operator pastes
@@ -529,9 +544,12 @@ The two are decoupled by merging on GitHub first and fast-forwarding local `main
 2. **Then `mp finish` under v9.10.0:** verify at the tip → goal check over the real `main..tip`
    diff (G1–G5 from the branch, G6 from the live commands above; a `partial` here is a real gap,
    never waived) → retro → the finish-time adversary review over the same real diff →
-   `branch_finish` gate opens. At the gate, before answering: `git -C MAIN pull --ff-only origin
-   main` (local `main` is an ancestor of GitHub `main`, so this is a pure fast-forward; if it is
-   not, stop — something else moved `main`), recorded as a `bootstrap_step`. Then `--choice=merge`:
+   `branch_finish` gate opens. At the gate, before answering: `git -C MAIN fetch origin main`,
+   verify the recorded PR-merge sha is an ancestor of `origin/main` and a descendant of
+   `branch_tip`, then `git -C MAIN pull --ff-only origin main` (local `main` is an ancestor of
+   GitHub `main`, so this is a pure fast-forward; if it is not, or the ancestry check fails, stop
+   — something else moved `main`), re-verify the same ancestry against the new local tip, and
+   record all of it as a `bootstrap_step`. Then `--choice=merge` through the pinned v9 binary:
    finish-step's own merge is a no-op ("already up to date"), the branch retires, the run archives
    with both surfaces already on v10 and one merge commit in history (GitHub's). D2's outcome
    (both surfaces before archive) is unchanged.
@@ -568,7 +586,11 @@ Named suites, each required by §4.4's inventory or by a finding in §13:
 - `finish-replay`: restart before disposition retirement, after retirement before the first
   `deploy_step_started`, after `started` before `deploy_step` (check exit 0 / 1 / other / absent),
   after every gate; archive never reachable without `completion_confirmed` (complete) or
-  `incomplete_authorized` (incomplete); `keep`/`discard` cannot reach the deploy stage on replay.
+  `incomplete_authorized` (incomplete); `keep`/`discard` cannot reach the deploy stage on replay;
+  event order `authorized → started → deploy_step` asserted under gated and loose; authorized
+  without started re-emits without re-asking; started without authorized is an invariant error;
+  group execution order is `release → install → user_only → live_check` regardless of declaration
+  order, with a live check that fails until user-only evidence is recorded.
 - `deploy-commit-identity`: `pr` without `--merged` deploys nothing; merge-sha not an ancestor of
   base, or branch tip not an ancestor of merge-sha → `dispatch-error`; base moved between steps →
   refused; `deploy_base` re-entry; mandatory group skipped → `incomplete:<reason>`; `live_check`
@@ -592,10 +614,17 @@ Named suites, each required by §4.4's inventory or by a finding in §13:
   with the rule, without it, with a rule lacking `--repo-root`, and with no policy file; doctor
   `no-definition-of-done`, `incomplete-archive`.
 - `register-pi-agents`: picks up `mp-intent-critic`; `publish-hygiene`: 10.0.0 everywhere.
-- `v9-to-v10-bootstrap`: a scripted walk of §10 step 1 against a fixture install root and a fixture
-  remote, proving the release script, tag, push, and `install-pi` commands exist on the branch and
-  produce the `bootstrap_step` receipts G6 expects. The live execution is the plan's bootstrap
-  wave, not this test.
+- `v9-to-v10-bootstrap`: a scripted walk of §10 step 1 against the fixture substitutions §10.1.1
+  defines (bare remote, second-clone PR merge, fixture install roots, fixture `CLAUDE_CONFIG_DIR`),
+  proving: the release script, tag, push, and `install-pi` commands exist on the branch and produce
+  the `bootstrap_step` receipts G6 expects; annotated-tag object equality and peeled-commit
+  equality against the tip; local `main` unchanged through both v9 assessments; the gate
+  fast-forward followed by an actual no-op merge; an unexpected remote tip and a missing PR merge
+  each stop the walk. The live execution is the plan's bootstrap wave, not this test.
+- `interview-ledger-resume` additions: dirty payload → intent answer → clean payload → design
+  pick → `converged`; clean payload → design withdraw → still `converged`; a design answer that
+  records a new draft → stale receipt → fresh critic required; medium reaches `exhausted` only at
+  the cap or on `critic_unavailable`.
 
 ## 12. Touch surface
 
@@ -671,6 +700,16 @@ Round 5 (4 blocking, 2 advisory) → rev 6:
 | group order unspecified; `live_check` before `user_only` deadlocks | fixed order `release → install → user_only → live_check` (§7.1) |
 | rehearsal did not assert the review guard | moot: no pre-recorded review; rehearsal asserts non-empty review diff (§10) |
 | tag identity not proven | tag-commit = tip and remote = local checks (§10.1 steps 3–4) |
+
+Round 6 (2 blocking, 3 advisory) → rev 7:
+
+| finding | disposition in rev 7 |
+|---|---|
+| medium critic "once" strands after an unclean payload; design withdraw moved the head | retry rule in the levels table; design-kind withdraws excluded; draft update on intent-changing design answers (§4.2, §5.3) |
+| rehearsal could not run `gh pr` / slash commands against a bare remote | normative fixture substitutions (§10.1.1) |
+| finish could run the v10 binary | pinned 9.10.0 copy for every finish invocation, asserted (§10.1.1, §10.2) |
+| PR merge sha unbound at the gate | recorded at step 5, ancestry verified before and after the fast-forward (§10.1.5, §10.2) |
+| rev-6 invariants lacked named tests | added to `finish-replay`, `v9-to-v10-bootstrap`, `interview-ledger-resume` (§11) |
 
 ## Assumptions & Open Decisions
 
