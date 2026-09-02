@@ -293,7 +293,7 @@ done:
     - run: node bin/install-pi.mjs --check
     - run: node bin/doctor.mjs --only=plugin-registry-drift
   user_only:
-    - text: "/plugin update masterplan, then /reload-plugins"
+    - text: "/plugin marketplace update rasatpetabit-masterplan, then /plugin update masterplan, then /reload-plugins"
       evidence: "mp version from the plugin cache prints v${version}"
     - text: "register the SessionStart(source: compact) resume-brief rule in /srv/workflows/hooks/policy.toml"
       evidence: "node bin/doctor.mjs --only=resume-brief-hook reports OK"
@@ -475,8 +475,10 @@ this run can prove and what only a run on v10 can prove, and both halves are fro
    same transaction as that merge. The documented "not ready" escape closes the gap: at
    `branch_finish` the shell answers free-text, which holds the gate with nothing archived; then,
    gated by risky-action AUQs, it merges the run branch into `main` in MAIN (`git -C MAIN merge
-   --no-edit masterplan/<slug>`), pushes `main`, and hands back the user-only step (`/plugin update
-   masterplan`, `/reload-plugins`; evidence: `mp version` from the cache prints v10.0.0, and
+   --no-edit masterplan/<slug>`), pushes `main`, and hands back the user-only step (`/plugin
+   marketplace update rasatpetabit-masterplan` — the marketplace clone is a GitHub clone tracking
+   `main`, verified 2026-09-02 — then `/plugin update masterplan`, `/reload-plugins`; evidence:
+   `mp version` from the cache prints v10.0.0, and
    `node bin/doctor.mjs --only=plugin-registry-drift` is clean), recording each as a
    `bootstrap_step` event. Only then does the shell resume with `--choice=merge`: finish-step's
    own merge is a no-op ("already up to date"), the branch retires normally, and the run archives
