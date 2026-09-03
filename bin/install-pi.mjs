@@ -19,18 +19,19 @@
 // the install without touching the live link.
 //
 // Usage:
-//   node bin/install-pi.mjs [--ref=<ref>] [--source=<repo>]
+//   node bin/install-pi.mjs [--ref=<ref>] [--source=<repo>] [--expect=<version>]
 //                           [--install-root=<dir>] [--pi-root=<dir>] [--force]
-//   node bin/install-pi.mjs --check [--install-root=<dir>] [--pi-root=<dir>]
+//   node bin/install-pi.mjs --check [--install-root=<dir>] [--pi-root=<dir>] [--expect=<version>]
 //
 // --check is read-only: verifies current resolves, metadata agrees, skill
 // links resolve under current, and agent registration is drift-free.
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { runRegister } from './register-pi-agents.mjs';
+import { readEnv } from '../lib/config.mjs';
 
 const INSTALL_META = '.pi-install.json';
 const RELEASES_DIR = 'releases';
@@ -62,10 +63,11 @@ function parseArgs(argv) {
   for (const arg of argv) {
     if (arg === '--check') { opts.check = true; continue; }
     if (arg === '--force') { opts.force = true; continue; }
-    const m = arg.match(/^--(ref|source|install-root|pi-root)=(.+)$/);
+    const m = arg.match(/^--(ref|source|install-root|pi-root|expect)=(.+)$/);
     if (m) {
-      const key = { ref: 'ref', source: 'source', 'install-root': 'installRoot', 'pi-root': 'piRoot' }[m[1]];
+      const key = { ref: 'ref', source: 'source', 'install-root': 'installRoot', 'pi-root': 'piRoot', expect: 'expect' }[m[1]];
       opts[key] = m[2];
+      if (key === 'expect') opts.expect = opts.expect.replace(/^v/, '');
       continue;
     }
     die(`unknown option: ${arg}`, 2);
@@ -130,8 +132,8 @@ function ensureSkillLink(piRoot, installRoot, name, force) {
 function install(opts) {
   const source = opts.source ?? defaultSource();
   const sha = resolveSha(source, opts.ref);
-  const installRoot = opts.installRoot ?? path.join(process.env.HOME ?? '/root', '.local', 'share', 'masterplan');
-  const piRoot = opts.piRoot ?? path.join(process.env.HOME ?? '/root', '.pi');
+  const installRoot = opts.installRoot ?? path.join(readEnv('HOME') ?? '/root', '.local', 'share', 'masterplan');
+  const piRoot = opts.piRoot ?? path.join(readEnv('HOME') ?? '/root', '.pi');
   const releaseDir = path.join(installRoot, RELEASES_DIR, sha);
   const currentPath = path.join(installRoot, CURRENT_LINK);
 
@@ -203,8 +205,8 @@ function install(opts) {
 }
 
 function check(opts) {
-  const installRoot = opts.installRoot ?? path.join(process.env.HOME ?? '/root', '.local', 'share', 'masterplan');
-  const piRoot = opts.piRoot ?? path.join(process.env.HOME ?? '/root', '.pi');
+  const installRoot = opts.installRoot ?? path.join(readEnv('HOME') ?? '/root', '.local', 'share', 'masterplan');
+  const piRoot = opts.piRoot ?? path.join(readEnv('HOME') ?? '/root', '.pi');
   const problems = [];
   if (!fs.existsSync(installRoot)) {
     process.stdout.write(JSON.stringify({ install_pi: 'check_failed', problems: [`install root missing: ${installRoot}`] }) + '\n');
@@ -249,7 +251,36 @@ function check(opts) {
     process.stdout.write(JSON.stringify({ install_pi: 'check_failed', problems }) + '\n');
     process.exit(1);
   }
-  process.stdout.write(JSON.stringify({ install_pi: 'check_ok', version: meta?.version, sha: meta?.sha, release: releaseDir }) + '\n');
+
+  if (opts.expect) {
+    let currentDir = null;
+    try {
+      currentDir = fs.realpathSync(currentPath);
+    } catch {
+      problems.push('current release missing');
+    }
+    if (currentDir) {
+      try {
+        const out = execFileSync(process.execPath, [path.join(currentDir, 'bin', 'masterplan.mjs'), 'version'], { cwd: currentDir, encoding: 'utf8', timeout: 30000 });
+        const m = out.match(/v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)/);
+        if (!m) problems.push(`installed binary reports no version: ${out.trim()}`);
+        else if (m[1] !== opts.expect) problems.push(`expected v${opts.expect}, installed binary reports ${out.trim()}`);
+      } catch (e) {
+        if (e.code === 'ETIMEDOUT' || /ETIMEDOUT/.test(e.message)) {
+          problems.push('installed binary timed out after 30s');
+        } else {
+          problems.push(`installed binary not executable: ${e.message}`);
+        }
+      }
+    }
+    if (problems.length) {
+      process.stdout.write(JSON.stringify({ install_pi: 'check_failed', problems }) + '\n');
+      process.exit(1);
+    }
+  }
+
+  const version = opts.expect || meta?.version;
+  process.stdout.write(JSON.stringify({ install_pi: 'check_ok', version, sha: meta?.sha, release: releaseDir }) + '\n');
 }
 
 const opts = parseArgs(process.argv.slice(2));

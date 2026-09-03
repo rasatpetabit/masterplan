@@ -34,6 +34,15 @@ import {
   classifyDangling,
 } from '../lib/runs.mjs';
 
+import fs from 'node:fs';
+import os from 'node:os';
+import {
+  discoverRuns,
+  serializeInventory,
+  inventorySha256,
+  assertOverlapReviewFresh,
+} from '../lib/runs.mjs';
+
 // ── discoveryConfigPath ─────────────────────────────────────────────────────
 
 test('discoveryConfigPath: joins runs dir + .discovery.yml', () => {
@@ -334,4 +343,94 @@ test('deriveLastActivity: returns source none + ts 0 when nothing exists', () =>
   const result = deriveLastActivity('/bundle', '/bundle/state.yml', fs);
   assert.equal(result.source, 'none');
   assert.equal(result.last_activity, 0);
+});
+
+// ── discoverRuns record enrichment (topic/phase/goals/planned_paths) ───────
+
+function makeBundle({ slug, state, goalsText, planIndex }) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-test-'));
+  const runsDir = path.join(dir, 'docs', 'masterplan');
+  const bundleDir = path.join(runsDir, slug);
+  fs.mkdirSync(bundleDir, { recursive: true });
+  if (state) fs.writeFileSync(path.join(bundleDir, 'state.yml'), state);
+  if (goalsText) fs.writeFileSync(path.join(bundleDir, 'goals.md'), goalsText);
+  if (planIndex) fs.writeFileSync(path.join(bundleDir, 'plan.index.json'), JSON.stringify(planIndex));
+  return { dir, bundleDir };
+}
+
+test('discoverRuns: multi-line topic and phase preserved', () => {
+  const { dir } = makeBundle({
+    slug: 'run1',
+    state: 'slug: run1\nstatus: done\nphase: review\ntopic: "line1\\nline2"\n',
+  });
+  const { runs } = discoverRuns({ repoRoot: dir, readConfig: false });
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0].topic, 'line1\nline2');
+  assert.equal(runs[0].phase, 'review');
+});
+
+test('discoverRuns: goals from goals.md', () => {
+  const { dir } = makeBundle({
+    slug: 'run2',
+    state: 'slug: run2\nstatus: done\n',
+    goalsText: 'topic: |\n  t\n\n## G1: first\nsignal: test\n\n## G2: second\n',
+  });
+  const { runs } = discoverRuns({ repoRoot: dir, readConfig: false });
+  assert.equal(runs.length, 1);
+  assert.deepEqual(runs[0].goals, [
+    { id: 'G1', text: 'first' },
+    { id: 'G2', text: 'second' },
+  ]);
+});
+
+test('discoverRuns: no goals.md yields empty goals', () => {
+  const { dir } = makeBundle({
+    slug: 'run3',
+    state: 'slug: run3\nstatus: done\n',
+  });
+  const { runs } = discoverRuns({ repoRoot: dir, readConfig: false });
+  assert.deepEqual(runs[0].goals, []);
+});
+
+test('discoverRuns: planned_paths sorted union of plan.index.json files', () => {
+  const { dir } = makeBundle({
+    slug: 'run4',
+    state: 'slug: run4\nstatus: done\n',
+    planIndex: { tasks: [{ files: ['b.js', 'a.js'] }, { files: ['a.js', 'c.js'] }] },
+  });
+  const { runs } = discoverRuns({ repoRoot: dir, readConfig: false });
+  assert.deepEqual(runs[0].planned_paths, ['a.js', 'b.js', 'c.js']);
+});
+
+test('discoverRuns: absent plan.index.json yields empty planned_paths and null worktree', () => {
+  const { dir } = makeBundle({
+    slug: 'run5',
+    state: 'slug: run5\nstatus: done\n',
+  });
+  const { runs } = discoverRuns({ repoRoot: dir, readConfig: false });
+  assert.deepEqual(runs[0].planned_paths, []);
+  assert.equal(runs[0].worktree, null);
+});
+
+// ── inventorySha256 / assertOverlapReviewFresh ─────────────────────────────
+
+test('inventorySha256: stable regardless of input order, changes on topic change', () => {
+  const recA = { slug: 'a', topic: 't1', phase: 'p', status: 'done', goals: [], planned_paths: [] };
+  const recB = { slug: 'b', topic: 't2', phase: 'p', status: 'done', goals: [], planned_paths: [] };
+  const sha1 = inventorySha256([recA, recB]);
+  const sha2 = inventorySha256([recB, recA]);
+  assert.equal(sha1, sha2);
+  const recA2 = { ...recA, topic: 'changed' };
+  const sha3 = inventorySha256([recA2, recB]);
+  assert.notEqual(sha1, sha3);
+});
+
+test('assertOverlapReviewFresh: matches returns true, mismatch throws', () => {
+  const records = [{ slug: 'a', topic: 't', phase: 'p', status: 'done', goals: [], planned_paths: [] }];
+  const sha = inventorySha256(records);
+  assert.equal(assertOverlapReviewFresh({ inventory_sha256: sha }, records), true);
+  assert.throws(
+    () => assertOverlapReviewFresh({ inventory_sha256: 'wrong' }, records),
+    /overlap_review_stale/,
+  );
 });

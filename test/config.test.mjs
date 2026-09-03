@@ -16,6 +16,7 @@ import {
   childEnv,
   CONFIG_SCHEMA,
 } from '../lib/config.mjs';
+import { migrate, effectiveAutonomy } from '../lib/migrate.mjs';
 
 function tmpdir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'mp-'));
@@ -277,4 +278,37 @@ test('parseMasterplanYaml applies the YAML comment rule to bare and quoted scala
   assert.equal(parseMasterplanYaml('done:\n  release:\n    - run: "echo # x"\n').done.release[0].run, 'echo # x');
   assert.deepEqual(parseMasterplanYaml("list:\n  - 'a # b'\n  - c # comment\n").list, ['a # b', 'c']);
   assert.equal(parseMasterplanYaml('a: "x" # trailing\n').a, 'x');
+});
+
+test('migrate passes through schema-9 state preserving legacy fields', () => {
+  const yaml = `schema_version: 9
+complexity_source: null
+predecessor_transcript: null
+autonomy: full
+complexity: high
+planning_mode: null
+slug: s
+status: in-progress
+phase: brainstorm
+tasks: []
+`;
+  const state = migrate(yaml);
+  assert.equal(state.schema_version, 9);
+  assert.equal(state.complexity_source, null);
+  assert.equal(state.predecessor_transcript, null);
+  assert.equal(state.autonomy, 'full');
+  assert.equal(state.complexity, 'high');
+  assert.equal(state.planning_mode, null);
+  assert.equal(state.slug, 's');
+  assert.equal(state.status, 'in-progress');
+  assert.equal(state.phase, 'brainstorm');
+  assert.deepEqual(state.tasks, []);
+});
+
+test('effectiveAutonomy maps autonomy values', () => {
+  assert.equal(effectiveAutonomy({ autonomy: 'full' }), 'loose');
+  assert.equal(effectiveAutonomy({ autonomy: 'loose' }), 'loose');
+  assert.equal(effectiveAutonomy({ autonomy: 'gated' }), 'gated');
+  assert.equal(effectiveAutonomy({ autonomy: null }), 'gated');
+  assert.equal(effectiveAutonomy({}), 'gated');
 });

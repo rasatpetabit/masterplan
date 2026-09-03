@@ -53,9 +53,9 @@ function makeSourceRepo() {
   return { src, sha: git(src, 'rev-parse', 'HEAD') };
 }
 
-function run(opts) {
+function run(opts, env) {
   const args = [INSTALLER, ...opts];
-  const r = spawnSync(process.execPath, args, { encoding: 'utf8' });
+  const r = spawnSync(process.execPath, args, { encoding: 'utf8', env: env ? { ...process.env, ...env } : process.env });
   return { status: r.status, stdout: r.stdout, stderr: r.stderr, json: () => JSON.parse(r.stdout.trim().split('\n').pop()) };
 }
 
@@ -163,4 +163,101 @@ test('install-pi: a renamed agent in a new release prunes the stale installed co
   assert.ok(fs.existsSync(path.join(env.piRoot, 'agent', 'agents', 'mp-y.md')), 'new agent must be registered');
   const manifest = JSON.parse(fs.readFileSync(path.join(env.piRoot, 'agent', 'agents', '.masterplan-managed.json'), 'utf8'));
   assert.deepEqual(manifest.files, ['mp-y.md']);
+});
+
+test('install-pi: --check --expect succeeds when the installed binary reports the expected version', () => {
+  const { src } = makeSourceRepo();
+  const env = layout();
+  assert.equal(run([`--source=${src}`, ...env.args]).status, 0);
+  // Write a fake version binary into the current release.
+  const current = fs.realpathSync(path.join(env.installRoot, 'current'));
+  const binDir = path.join(current, 'bin');
+  fs.mkdirSync(binDir, { recursive: true });
+  fs.writeFileSync(path.join(binDir, 'masterplan.mjs'), "console.log('v9.9.9');\n");
+  const r = run(['--check', '--expect=v9.9.9', ...env.args]);
+  assert.equal(r.status, 0, r.stderr);
+  const out = r.json();
+  assert.equal(out.install_pi, 'check_ok');
+  assert.equal(out.version, '9.9.9');
+});
+
+test('install-pi: --check --expect fails when the installed binary reports a different version', () => {
+  const { src } = makeSourceRepo();
+  const env = layout();
+  assert.equal(run([`--source=${src}`, ...env.args]).status, 0);
+  const current = fs.realpathSync(path.join(env.installRoot, 'current'));
+  const binDir = path.join(current, 'bin');
+  fs.mkdirSync(binDir, { recursive: true });
+  fs.writeFileSync(path.join(binDir, 'masterplan.mjs'), "console.log('v1.0.0');\n");
+  const r = run(['--check', '--expect=v9.9.9', ...env.args]);
+  assert.equal(r.status, 1);
+  const out = r.json();
+  assert.equal(out.install_pi, 'check_failed');
+  assert.ok(out.problems.some((p) => /expected v9\.9\.9, installed binary reports v1\.0\.0/.test(p)));
+});
+
+test('install-pi: --check --expect fails when the installed binary cannot run', () => {
+  const { src } = makeSourceRepo();
+  const env = layout();
+  assert.equal(run([`--source=${src}`, ...env.args]).status, 0);
+  // Break the installed binary under current (the snapshot check requires the file to exist,
+  // so 'missing' is modelled as present-but-unexecutable).
+  const current = fs.realpathSync(path.join(env.installRoot, 'current'));
+  const binPath = path.join(current, 'bin', 'masterplan.mjs');
+  fs.writeFileSync(binPath, 'this is not javascript (');
+  const r = run(['--check', '--expect=v9.9.9', ...env.args]);
+  assert.equal(r.status, 1, `stdout=${r.stdout} stderr=${r.stderr}`);
+  assert.ok(r.stdout.trim(), `no stdout; stderr=${r.stderr}`);
+  const out = r.json();
+  assert.equal(out.install_pi, 'check_failed');
+  assert.ok(out.problems.some((p) => /installed binary not executable|current release missing/.test(p)));
+});
+
+test('install-pi: --check --expect composes with the fixture install root and pi root', () => {
+  const { src } = makeSourceRepo();
+  const env = layout();
+  assert.equal(run([`--source=${src}`, ...env.args]).status, 0);
+  const current = fs.realpathSync(path.join(env.installRoot, 'current'));
+  const binDir = path.join(current, 'bin');
+  fs.mkdirSync(binDir, { recursive: true });
+  fs.writeFileSync(path.join(binDir, 'masterplan.mjs'), "console.log('v9.9.9');\n");
+  const r = run(['--check', '--expect=v9.9.9', ...env.args]);
+  assert.equal(r.status, 0, r.stderr);
+  const out = r.json();
+  assert.equal(out.install_pi, 'check_ok');
+  assert.equal(out.version, '9.9.9');
+});
+
+test('install-pi: --check --expect requires an exact version match', () => {
+  const { src } = makeSourceRepo();
+  const env = layout();
+  assert.equal(run([`--source=${src}`, ...env.args]).status, 0);
+  const current = fs.realpathSync(path.join(env.installRoot, 'current'));
+  const binDir = path.join(current, 'bin');
+  fs.mkdirSync(binDir, { recursive: true });
+  fs.writeFileSync(path.join(binDir, 'masterplan.mjs'), "console.log('v9.9.9-rc.1');\n");
+  const r = run(['--check', '--expect=v9.9.9', ...env.args]);
+  assert.equal(r.status, 1);
+  const out = r.json();
+  assert.equal(out.install_pi, 'check_failed');
+  assert.ok(out.problems.some((p) => /expected v9\.9\.9, installed binary reports v9\.9\.9-rc\.1/.test(p)));
+});
+
+test('install-pi: --check without roots resolves the install root from HOME', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-install-home-'));
+  const r = run(['--check'], { HOME: home });
+  assert.equal(r.status, 1);
+  const out = r.json();
+  assert.ok(out.problems.some((p) => /install root missing/.test(p)));
+});
+
+test('install-pi: --check --expect accepts SemVer build metadata exactly', () => {
+  const { src } = makeSourceRepo();
+  const env = layout();
+  assert.equal(run([`--source=${src}`, ...env.args]).status, 0);
+  const current = fs.realpathSync(path.join(env.installRoot, 'current'));
+  fs.mkdirSync(path.join(current, 'bin'), { recursive: true });
+  fs.writeFileSync(path.join(current, 'bin', 'masterplan.mjs'), "console.log('v1.2.3+build.7');\n");
+  assert.equal(run(['--check', '--expect=v1.2.3+build.7', ...env.args]).status, 0);
+  assert.equal(run(['--check', '--expect=v1.2.3', ...env.args]).status, 1);
 });

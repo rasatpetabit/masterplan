@@ -47,6 +47,10 @@ function makeFixture({ slug = 't24', state: over = {}, ownerLockOff = false, ver
   git(MAIN, 'add', '.');
   git(MAIN, 'commit', '-q', '-m', 'initial');
   const WT = path.join(MAIN, '.worktrees', slug);
+  // v10 deploy stage: a repo without a done definition is gated; these v9-flow fixtures declare done: none.
+  write(MAIN, '.masterplan.yaml', 'done: none\n');
+  git(MAIN, 'add', '.masterplan.yaml');
+  git(MAIN, 'commit', '-q', '-m', 'done: none');
   git(MAIN, 'worktree', 'add', '-q', '-b', `masterplan/${slug}`, WT);
   write(WT, 'src/a.txt', 'A\n');
   git(WT, 'add', '.');
@@ -659,4 +663,424 @@ test('full-teardown crash replay (Codex r6 P2): branch already deleted — merge
   assert.equal(st.worktree_disposition, 'removed_after_merge');
   assert.equal(st.status, 'archived');
   assert.ok(git(fx.MAIN, 'log', '--oneline').includes('task 1'), 'the prior merge is intact');
+});
+
+// ---- deploy stage (T2.4 §2c) ------------------------------------------------
+
+test('deploy: done:none → merge archives with a single deploy_base and no deploy_step', () => {
+  const fx = makeFixture();
+  walkToGate(fx);
+  const op = fx.step({ choice: 'merge' });
+  assert.equal(op.reason, 'archived');
+  const events = readEvents(fx.bundleDir);
+  const bases = events.filter((e) => e.type === 'deploy_base');
+  assert.equal(bases.length, 1);
+  assert.ok(bases[0].done_sha256, 'done_sha256 recorded');
+  assert.ok(!events.some((e) => e.type === 'deploy_step'), 'no deploy_step for done:none');
+});
+
+test('deploy: no definition → no_definition_of_done gate; abort-incomplete archives', () => {
+  const fx = makeFixture();
+  walkToGate(fx);
+  // remove the done definition from MAIN
+  git(fx.MAIN, 'rm', '-q', '.masterplan.yaml');
+  git(fx.MAIN, 'commit', '-q', '-m', 'remove done definition');
+  let op = fx.step({ choice: 'merge' });
+  assert.equal(op.op, 'ask');
+  assert.equal(op.gate, 'no_definition_of_done');
+  assert.deepEqual(op.choices, ['adhoc', 'abort-incomplete']);
+  op = fx.step({ deployAbortIncomplete: true });
+  assert.equal(op.op, 'stop', JSON.stringify(op));
+  assert.equal(op.reason, 'archived');
+  const ev = readEvents(fx.bundleDir).find((e) => e.type === 'incomplete_authorized');
+  assert.equal(ev.reason, 'no_definition_of_done');
+  assert.equal(readState(fx.statePath).status, 'archived');
+  // replay: a re-entered finish on the archived bundle never re-asks the gate
+  const again = fx.step({});
+  assert.notEqual(again.gate, 'no_definition_of_done');
+});
+
+test('deploy: gated flow — authorize → start → done → next group', () => {
+  const fx = makeFixture({
+    state: { autonomy: 'gated' },
+  });
+  // commit a real done definition (release creates rel.ok, install echoes)
+  write(fx.MAIN, '.masterplan.yaml', 'done:\n  release:\n    - run: touch rel.ok\n      check: test -f rel.ok\n  install:\n    - run: echo inst\n');
+  git(fx.MAIN, 'add', '.masterplan.yaml');
+  git(fx.MAIN, 'commit', '-q', '-m', 'done definition');
+  walkToGate(fx);
+  let op = fx.step({ choice: 'merge' });
+  assert.equal(op.op, 'run_deploy_step', JSON.stringify(op));
+  assert.equal(op.group, 'release');
+  assert.equal(op.index, 0);
+  assert.equal(op.ask, true);
+  assert.ok(!readEvents(fx.bundleDir).some((e) => e.type === 'deploy_step_authorized'), 'no authorize yet');
+  // authorize
+  op = fx.step({ deployAuthorize: { group: 'release', index: 0 } });
+  assert.equal(op.op, 'run_deploy_step', JSON.stringify(op));
+  assert.equal(op.group, 'release');
+  assert.equal(op.index, 0);
+  assert.equal(op.ask, false);
+  const events = readEvents(fx.bundleDir);
+  assert.ok(events.some((e) => e.type === 'deploy_step_authorized' && e.group === 'release' && e.index === 0), 'authorized recorded');
+  assert.ok(events.some((e) => e.type === 'deploy_step_started' && e.group === 'release' && e.index === 0), 'started recorded');
+  // the shell ran `touch rel.ok` from MAIN; simulate its effect before reporting the exit
+  write(fx.MAIN, 'rel.ok', '');
+  // report done
+  op = fx.step({ deployStepDone: { group: 'release', index: 0, exit: 0, digest: 'd' } });
+  assert.equal(op.op, 'run_deploy_step');
+  assert.equal(op.group, 'install');
+  assert.equal(op.index, 0);
+  const doneEv = readEvents(fx.bundleDir).find((e) => e.type === 'deploy_step' && e.group === 'release' && e.index === 0);
+  assert.equal(doneEv.status, 'done');
+  assert.equal(doneEv.digest, 'd');
+});
+
+test('deploy: loose autonomy — authorize+start recorded before the first run_deploy_step', () => {
+  const fx = makeFixture({
+    state: { autonomy: 'loose' },
+  });
+  write(fx.MAIN, '.masterplan.yaml', 'done:\n  release:\n    - run: touch rel.ok\n      check: test -f rel.ok\n');
+  git(fx.MAIN, 'add', '.masterplan.yaml');
+  git(fx.MAIN, 'commit', '-q', '-m', 'done definition');
+  walkToGate(fx);
+  const op = fx.step({ choice: 'merge' });
+  assert.equal(op.op, 'run_deploy_step');
+  assert.equal(op.ask, false);
+  const events = readEvents(fx.bundleDir);
+  assert.ok(events.some((e) => e.type === 'deploy_step_authorized' && e.group === 'release' && e.index === 0), 'authorized auto-recorded');
+  assert.ok(events.some((e) => e.type === 'deploy_step_started' && e.group === 'release' && e.index === 0), 'started auto-recorded');
+});
+
+test('deploy: failure and indeterminate outcomes', () => {
+  // failure: exit 1 → deploy_failed gate
+  const fx = makeFixture({ state: { autonomy: 'loose' } });
+  write(fx.MAIN, '.masterplan.yaml', 'done:\n  release:\n    - run: touch rel.ok\n      check: test -f rel.ok\n');
+  git(fx.MAIN, 'add', '.masterplan.yaml');
+  git(fx.MAIN, 'commit', '-q', '-m', 'done definition');
+  walkToGate(fx);
+  fx.step({ choice: 'merge' }); // returns run_deploy_step ask:false
+  let op = fx.step({ deployStepDone: { group: 'release', index: 0, exit: 1 } });
+  assert.equal(op.op, 'ask');
+  assert.equal(op.gate, 'deploy_failed');
+  assert.ok(op.choices.includes('retry'));
+  const failEv = readEvents(fx.bundleDir).find((e) => e.type === 'deploy_failed');
+  assert.equal(failEv.exit, 1);
+
+  // indeterminate: run exit 0, check exit 2
+  const fx2 = makeFixture({ state: { autonomy: 'loose' } });
+  write(fx2.MAIN, '.masterplan.yaml', 'done:\n  release:\n    - run: /bin/true\n      check: exit 2\n');
+  git(fx2.MAIN, 'add', '.masterplan.yaml');
+  git(fx2.MAIN, 'commit', '-q', '-m', 'done definition');
+  walkToGate(fx2);
+  fx2.step({ choice: 'merge' });
+  op = fx2.step({ deployStepDone: { group: 'release', index: 0, exit: 0 } });
+  assert.equal(op.op, 'ask');
+  assert.equal(op.gate, 'deploy_indeterminate');
+  const indetEv = readEvents(fx2.bundleDir).find((e) => e.type === 'deploy_indeterminate');
+  assert.equal(indetEv.check_exit, 2);
+});
+
+test('deploy: a recorded failure halts on re-entry until retried', () => {
+  const fx = makeFixture({ state: { autonomy: 'loose' } });
+  write(fx.MAIN, '.masterplan.yaml', 'done:\n  release:\n    - run: /bin/false\n');
+  git(fx.MAIN, 'add', '.masterplan.yaml');
+  git(fx.MAIN, 'commit', '-q', '-m', 'done definition');
+  walkToGate(fx);
+  fx.step({ choice: 'merge' }); // run_deploy_step ask:false
+  let op = fx.step({ deployStepDone: { group: 'release', index: 0, exit: 1 } });
+  assert.equal(op.op, 'ask');
+  assert.equal(op.gate, 'deploy_failed');
+  // re-entry: the gate re-renders, no new start
+  op = fx.step({});
+  assert.equal(op.op, 'ask');
+  assert.equal(op.gate, 'deploy_failed');
+  const starts = readEvents(fx.bundleDir).filter((e) => e.type === 'deploy_step_started' && e.group === 'release' && e.index === 0);
+  assert.equal(starts.length, 1, 'exactly one start before retry');
+  // retry: fresh authorization + re-run
+  op = fx.step({ deployRetry: { group: 'release', index: 0 } });
+  assert.equal(op.op, 'run_deploy_step');
+  const auths = readEvents(fx.bundleDir).filter((e) => e.type === 'deploy_step_authorized' && e.group === 'release' && e.index === 0);
+  assert.equal(auths.length, 2, 'retry re-authorizes');
+  const startsAfter = readEvents(fx.bundleDir).filter((e) => e.type === 'deploy_step_started' && e.group === 'release' && e.index === 0);
+  assert.equal(startsAfter.length, 2, 'the retried attempt records its own started transition');
+});
+
+test('deploy: skip archives incomplete', () => {
+  const fx = makeFixture({ state: { autonomy: 'loose' } });
+  write(fx.MAIN, '.masterplan.yaml', 'done:\n  release:\n    - run: /bin/false\n');
+  git(fx.MAIN, 'add', '.masterplan.yaml');
+  git(fx.MAIN, 'commit', '-q', '-m', 'done definition');
+  walkToGate(fx);
+  fx.step({ choice: 'merge' });
+  fx.step({ deployStepDone: { group: 'release', index: 0, exit: 1 } }); // deploy_failed
+  const op = fx.step({ deploySkip: { group: 'release', index: 0 } });
+  assert.equal(op.op, 'stop');
+  assert.equal(op.reason, 'archived');
+  const ev = readEvents(fx.bundleDir).find((e) => e.type === 'incomplete_authorized');
+  assert.equal(ev.reason, 'deploy_skip:release[0]');
+});
+
+test('deploy: attest only for a check-less indeterminate step', () => {
+  // with a check → throws /has a check/
+  const fx = makeFixture({ state: { autonomy: 'loose' } });
+  write(fx.MAIN, '.masterplan.yaml', 'done:\n  release:\n    - run: /bin/true\n      check: exit 2\n');
+  git(fx.MAIN, 'add', '.masterplan.yaml');
+  git(fx.MAIN, 'commit', '-q', '-m', 'done definition');
+  walkToGate(fx);
+  fx.step({ choice: 'merge' });
+  fx.step({ deployStepDone: { group: 'release', index: 0, exit: 0 } }); // indeterminate
+  assert.throws(() => fx.step({ deployAttest: { group: 'release', index: 0 } }), /has a check/);
+
+  // without a check, but not indeterminate → throws /not indeterminate/
+  const fx2 = makeFixture({ state: { autonomy: 'loose' } });
+  write(fx2.MAIN, '.masterplan.yaml', 'done:\n  release:\n    - run: /bin/true\n');
+  git(fx2.MAIN, 'add', '.masterplan.yaml');
+  git(fx2.MAIN, 'commit', '-q', '-m', 'done definition');
+  walkToGate(fx2);
+  fx2.step({ choice: 'merge' });
+  fx2.step({ deployStepDone: { group: 'release', index: 0, exit: 0 } }); // done
+  assert.throws(() => fx2.step({ deployAttest: { group: 'release', index: 0 } }), /not indeterminate/);
+});
+
+test('deploy: abort archives incomplete', () => {
+  const fx = makeFixture({ state: { autonomy: 'loose' } });
+  write(fx.MAIN, '.masterplan.yaml', 'done:\n  release:\n    - run: /bin/false\n');
+  git(fx.MAIN, 'add', '.masterplan.yaml');
+  git(fx.MAIN, 'commit', '-q', '-m', 'done definition');
+  walkToGate(fx);
+  fx.step({ choice: 'merge' });
+  fx.step({ deployStepDone: { group: 'release', index: 0, exit: 1 } }); // deploy_failed
+  const op = fx.step({ deployAbort: true });
+  assert.equal(op.op, 'stop');
+  assert.equal(op.reason, 'archived');
+  const ev = readEvents(fx.bundleDir).find((e) => e.type === 'incomplete_authorized');
+  assert.equal(ev.reason, 'deploy_abort');
+});
+
+test('deploy: deployStepDone requires authorization and start', () => {
+  const fx = makeFixture({ state: { autonomy: 'gated' } });
+  write(fx.MAIN, '.masterplan.yaml', 'done:\n  release:\n    - run: /bin/true\n');
+  git(fx.MAIN, 'add', '.masterplan.yaml');
+  git(fx.MAIN, 'commit', '-q', '-m', 'done definition');
+  walkToGate(fx);
+  const op = fx.step({ choice: 'merge' });
+  assert.equal(op.op, 'run_deploy_step');
+  assert.equal(op.ask, true);
+  assert.throws(() => fx.step({ deployStepDone: { group: 'release', index: 0, exit: 0 } }), /without authorization\/start/);
+});
+
+test('deploy: mergeSha must be a commit', () => {
+  const fx = makeFixture({ state: { autonomy: 'loose' } });
+  write(fx.MAIN, '.masterplan.yaml', 'done:\n  release:\n    - run: /bin/true\n');
+  git(fx.MAIN, 'add', '.masterplan.yaml');
+  git(fx.MAIN, 'commit', '-q', '-m', 'done definition');
+  walkToGate(fx);
+  assert.throws(() => fx.step({ choice: 'merge', mergeSha: 'deadbeef' }), /not a commit/);
+});
+
+test('deploy: a merged PR (kept_by_user + --merged --merge-sha) enters the deploy stage at the merge sha', () => {
+  const fx = makeFixture({ state: { autonomy: 'loose', worktree_disposition: 'kept_by_user' } });
+  write(fx.MAIN, '.masterplan.yaml', 'done:\n  release:\n    - run: /bin/true\n');
+  git(fx.MAIN, 'add', '.masterplan.yaml');
+  git(fx.MAIN, 'commit', '-q', '-m', 'done definition');
+  // The PR disposition is already retired (branch kept, PR open); verify/retro ran before it.
+  const mergeSha = git(fx.MAIN, 'rev-parse', 'HEAD');
+  assert.throws(() => fx.step({ merged: true }), /requires --merge-sha/);
+  const op = fx.step({ merged: true, mergeSha });
+  assert.equal(op.op, 'run_deploy_step', JSON.stringify(op));
+  const base = readEvents(fx.bundleDir).find((e) => e.type === 'deploy_base');
+  assert.equal(base.sha, mergeSha);
+});
+
+test('deploy: skip is only accepted for a halted failed step', () => {
+  const fx = makeFixture({ state: { autonomy: 'gated' } });
+  write(fx.MAIN, '.masterplan.yaml', 'done:\n  release:\n    - run: /bin/true\n');
+  git(fx.MAIN, 'add', '.masterplan.yaml');
+  git(fx.MAIN, 'commit', '-q', '-m', 'done definition');
+  walkToGate(fx);
+  const op = fx.step({ choice: 'merge' });
+  assert.equal(op.op, 'run_deploy_step');
+  assert.throws(() => fx.step({ deploySkip: { group: 'release', index: 0 } }), /not a failed step/);
+  assert.ok(!readEvents(fx.bundleDir).some((e) => e.type === 'incomplete_authorized'));
+});
+
+test('deploy: a plain authorization cannot clear a halted failure', () => {
+  const fx = makeFixture({ state: { autonomy: 'gated' } });
+  write(fx.MAIN, '.masterplan.yaml', 'done:\n  release:\n    - run: /bin/false\n');
+  git(fx.MAIN, 'add', '.masterplan.yaml');
+  git(fx.MAIN, 'commit', '-q', '-m', 'done definition');
+  walkToGate(fx);
+  fx.step({ choice: 'merge' });
+  fx.step({ deployAuthorize: { group: 'release', index: 0 } });
+  const gate = fx.step({ deployStepDone: { group: 'release', index: 0, exit: 1 } });
+  assert.equal(gate.gate, 'deploy_failed');
+  assert.throws(() => fx.step({ deployAuthorize: { group: 'release', index: 0 } }), /is halted/);
+  const again = fx.step({});
+  assert.equal(again.gate, 'deploy_failed');
+});
+
+test('deploy: an interrupted started step is probed on re-entry, never rerun blindly', () => {
+  // check passes on probe → recovered as done
+  const fx = makeFixture({ state: { autonomy: 'loose' } });
+  write(fx.MAIN, '.masterplan.yaml', 'done:\n  release:\n    - run: touch rel.ok\n      check: test -f rel.ok\n');
+  git(fx.MAIN, 'add', '.masterplan.yaml');
+  git(fx.MAIN, 'commit', '-q', '-m', 'done definition');
+  walkToGate(fx);
+  fx.step({ choice: 'merge' }); // authorized + started, run_deploy_step
+  write(fx.MAIN, 'rel.ok', ''); // the command ran, then the driver crashed before reporting
+  const op = fx.step({});
+  assert.equal(op.op, 'stop', JSON.stringify(op));
+  const rec = readEvents(fx.bundleDir).find((e) => e.type === 'deploy_step' && e.group === 'release');
+  assert.equal(rec.source, 'recovery-probe');
+
+  // check-less step → indeterminate gate, no rerun
+  const fx2 = makeFixture({ state: { autonomy: 'loose' } });
+  write(fx2.MAIN, '.masterplan.yaml', 'done:\n  release:\n    - run: /bin/true\n');
+  git(fx2.MAIN, 'add', '.masterplan.yaml');
+  git(fx2.MAIN, 'commit', '-q', '-m', 'done definition');
+  walkToGate(fx2);
+  fx2.step({ choice: 'merge' });
+  const op2 = fx2.step({});
+  assert.equal(op2.op, 'ask');
+  assert.equal(op2.gate, 'deploy_indeterminate');
+  assert.equal(readEvents(fx2.bundleDir).filter((e) => e.type === 'deploy_step_started').length, 1);
+  // attest is allowed here (check-less, indeterminate)
+  const op3 = fx2.step({ deployAttest: { group: 'release', index: 0 } });
+  assert.equal(op3.reason, 'archived');
+  assert.equal(readEvents(fx2.bundleDir).find((e) => e.type === 'deploy_step').status, 'attested');
+});
+
+test('deploy: a completion report cannot overwrite a halted failure without a retry', () => {
+  const fx = makeFixture({ state: { autonomy: 'loose' } });
+  write(fx.MAIN, '.masterplan.yaml', 'done:\n  release:\n    - run: /bin/false\n');
+  git(fx.MAIN, 'add', '.masterplan.yaml');
+  git(fx.MAIN, 'commit', '-q', '-m', 'done definition');
+  walkToGate(fx);
+  fx.step({ choice: 'merge' });
+  const gate = fx.step({ deployStepDone: { group: 'release', index: 0, exit: 1 } });
+  assert.equal(gate.gate, 'deploy_failed');
+  assert.throws(() => fx.step({ deployStepDone: { group: 'release', index: 0, exit: 0 } }), /is halted/);
+  assert.ok(!readEvents(fx.bundleDir).some((e) => e.type === 'deploy_step'));
+  fx.step({ deployRetry: { group: 'release', index: 0 } });
+  const op = fx.step({ deployStepDone: { group: 'release', index: 0, exit: 0 } });
+  assert.equal(op.reason, 'archived');
+});
+
+test('deploy: a merged PR keeps progressing on re-entry without repeating --merged/--merge-sha', () => {
+  const fx = makeFixture({ state: { autonomy: 'loose', worktree_disposition: 'kept_by_user' } });
+  write(fx.MAIN, '.masterplan.yaml', 'done:\n  release:\n    - run: /bin/true\n  install:\n    - run: /bin/true\n');
+  git(fx.MAIN, 'add', '.masterplan.yaml');
+  git(fx.MAIN, 'commit', '-q', '-m', 'done definition');
+  const mergeSha = git(fx.MAIN, 'rev-parse', 'HEAD');
+  let op = fx.step({ merged: true, mergeSha });
+  assert.equal(op.op, 'run_deploy_step');
+  assert.equal(op.group, 'release');
+  op = fx.step({ deployStepDone: { group: 'release', index: 0, exit: 0 } });
+  assert.equal(op.op, 'run_deploy_step', JSON.stringify(op));
+  assert.equal(op.group, 'install');
+  op = fx.step({ deployStepDone: { group: 'install', index: 0, exit: 0 } });
+  assert.notEqual(op.op, 'run_deploy_step');
+  const steps = readEvents(fx.bundleDir).filter((e) => e.type === 'deploy_step').map((e) => e.group);
+  assert.deepEqual(steps, ['release', 'install']);
+});
+
+test('deploy: an ad-hoc definition edited after deploy_base is refused on replay', () => {
+  const fx = makeFixture({ state: { autonomy: 'loose' } });
+  git(fx.MAIN, 'rm', '-q', '.masterplan.yaml');
+  git(fx.MAIN, 'commit', '-q', '-m', 'no done definition');
+  walkToGate(fx);
+  let op = fx.step({ choice: 'merge' });
+  assert.equal(op.gate, 'no_definition_of_done');
+  const adhoc = path.join(fx.tmp, 'adhoc.json');
+  fs.writeFileSync(adhoc, JSON.stringify({ release: [{ run: '/bin/true' }] }));
+  op = fx.step({ doneAdhocFile: adhoc });
+  assert.equal(op.op, 'run_deploy_step');
+  fs.writeFileSync(path.join(fx.bundleDir, 'done-adhoc.json'), JSON.stringify({ release: [{ run: '/bin/false' }] }));
+  assert.throws(() => fx.step({ deployStepDone: { group: 'release', index: 0, exit: 0 } }), /done_sha256/);
+  assert.throws(() => fx.step(), /done_sha256/);
+  assert.ok(!readEvents(fx.bundleDir).some((e) => e.type === 'deploy_step'));
+});
+
+test('deploy: retry answers only a failure, rerun only an indeterminate result; checked steps never offer attest', () => {
+  const fx = makeFixture({ state: { autonomy: 'loose' } });
+  write(fx.MAIN, 'chk2.sh', '#!/bin/sh\nexit 2\n');
+  fs.chmodSync(path.join(fx.MAIN, 'chk2.sh'), 0o755);
+  write(fx.MAIN, '.masterplan.yaml', 'done:\n  release:\n    - run: /bin/false\n    - run: /bin/true\n      check: ./chk2.sh\n');
+  git(fx.MAIN, 'add', '.masterplan.yaml', 'chk2.sh');
+  git(fx.MAIN, 'commit', '-q', '-m', 'done definition');
+  walkToGate(fx);
+  fx.step({ choice: 'merge' });
+  let op = fx.step({ deployStepDone: { group: 'release', index: 0, exit: 1 } });
+  assert.equal(op.gate, 'deploy_failed');
+  assert.throws(() => fx.step({ deployRerun: { group: 'release', index: 0 } }), /answered by --deploy-retry, not --deploy-rerun/);
+  op = fx.step({ deployRetry: { group: 'release', index: 0 } });
+  assert.equal(op.op, 'run_deploy_step');
+  op = fx.step({ deployStepDone: { group: 'release', index: 0, exit: 0 } });
+  assert.equal(op.op, 'run_deploy_step');
+  assert.equal(op.index, 1);
+  op = fx.step({ deployStepDone: { group: 'release', index: 1, exit: 0 } });
+  assert.equal(op.gate, 'deploy_indeterminate');
+  assert.deepEqual(op.choices, ['rerun', 'abort']);
+  assert.throws(() => fx.step({ deployRetry: { group: 'release', index: 1 } }), /answered by --deploy-rerun, not --deploy-retry/);
+  assert.throws(() => fx.step({ deployAttest: { group: 'release', index: 1 } }), /has a check/);
+  op = fx.step({ deployRerun: { group: 'release', index: 1 } });
+  assert.equal(op.op, 'run_deploy_step');
+  assert.equal(op.index, 1);
+});
+
+test('deploy: a user_only report is refused until the ordered chain exposes that step', () => {
+  const fx = makeFixture({ state: { autonomy: 'loose' } });
+  write(fx.MAIN, '.masterplan.yaml', 'done:\n  release:\n    - run: /bin/true\n  user_only:\n    - text: flip the switch\n      check: /bin/true\n');
+  git(fx.MAIN, 'add', '.masterplan.yaml');
+  git(fx.MAIN, 'commit', '-q', '-m', 'done definition');
+  walkToGate(fx);
+  let op = fx.step({ choice: 'merge' });
+  assert.equal(op.op, 'run_deploy_step');
+  assert.throws(() => fx.step({ deployStepDone: { group: 'user_only', index: 0, exit: 0 } }), /out of order/);
+  assert.ok(!readEvents(fx.bundleDir).some((e) => e.type === 'deploy_step'));
+  op = fx.step({ deployStepDone: { group: 'release', index: 0, exit: 0 } });
+  assert.equal(op.ask, 'handback');
+  op = fx.step({ deployStepDone: { group: 'user_only', index: 0, exit: 0 } });
+  const steps = readEvents(fx.bundleDir).filter((e) => e.type === 'deploy_step').map((e) => e.group);
+  assert.deepEqual(steps, ['release', 'user_only']);
+});
+
+test('deploy: gated authorization binds to the exposed step — no pre-authorizing a later one', () => {
+  const fx = makeFixture({ state: { autonomy: 'gated' } });
+  write(fx.MAIN, '.masterplan.yaml', 'done:\n  release:\n    - run: /bin/true\n  install:\n    - run: /bin/true\n');
+  git(fx.MAIN, 'add', '.masterplan.yaml');
+  git(fx.MAIN, 'commit', '-q', '-m', 'done definition');
+  walkToGate(fx);
+  assert.throws(() => fx.step({ choice: 'merge', deployAuthorize: { group: 'release', index: 0 } }), /before deploy_base/);
+  let op = fx.step({ choice: 'merge' });
+  assert.equal(op.op, 'run_deploy_step');
+  assert.equal(op.ask, true);
+  assert.throws(() => fx.step({ deployAuthorize: { group: 'install', index: 0 } }), /out of order/);
+  assert.throws(() => fx.step({ deployAuthorize: { group: 'release', index: 5 } }), /unknown step/);
+  assert.ok(!readEvents(fx.bundleDir).some((e) => e.type === 'deploy_step_authorized'));
+  op = fx.step({ deployAuthorize: { group: 'release', index: 0 } });
+  assert.equal(op.op, 'run_deploy_step');
+  assert.equal(op.ask, false);
+  op = fx.step({ deployStepDone: { group: 'release', index: 0, exit: 0 } });
+  assert.equal(op.op, 'run_deploy_step');
+  assert.equal(op.group, 'install');
+  assert.equal(op.ask, true, 'the next gated step still asks');
+});
+
+test('deploy: abort is refused unless the current step is halted in an abort-capable gate', () => {
+  const fx = makeFixture({ state: { autonomy: 'loose' } });
+  write(fx.MAIN, '.masterplan.yaml', 'done:\n  release:\n    - run: /bin/false\n');
+  git(fx.MAIN, 'add', '.masterplan.yaml');
+  git(fx.MAIN, 'commit', '-q', '-m', 'done definition');
+  walkToGate(fx);
+  assert.throws(() => fx.step({ choice: 'merge', deployAbort: true }), /before deploy_base/);
+  assert.ok(!readEvents(fx.bundleDir).some((e) => e.type === 'incomplete_authorized'));
+  let op = fx.step({ choice: 'merge' });
+  assert.equal(op.op, 'run_deploy_step');
+  assert.throws(() => fx.step({ deployAbort: true }), /is not halted/);
+  op = fx.step({ deployStepDone: { group: 'release', index: 0, exit: 1 } });
+  assert.equal(op.gate, 'deploy_failed');
+  op = fx.step({ deployAbort: true });
+  assert.equal(op.reason, 'archived');
 });
