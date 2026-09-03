@@ -415,3 +415,21 @@ the bottom status bar to a bounded detailed view (user's real ask), not compact.
 - Plan gate (§3b): cross-vendor adversarial review over the artifact bytes (spec.md + plan.md + plan.index.json) via the `adversarial-review` workflow wrapper; record via `mp record-gate-review --gate=plan`. Then §3c alignment audit (clauses A1–A12 from the auditor's Mode A, anchor_quality verbatim), `mp load-plan`, phase → execute.
 - 2026-09-03 (cont.): plan gate recorded `done` at hash 5fd620be after three adversarial panels (standard: 1 blocker + 8 should-fix + 3 nits, folded; light: 2 should-fix + 4 nits, folded; light: 1 should-fix → applied post-load as a task amendment via `mp amend-tasks` + `mp amend-plan`, plan_hash restamped) — records in `gate-plan-panel-{1,2}.json`, `gate-plan-review.json`, `gate-plan-notes.txt`; §3c alignment audit 18/18 covered (`alignment-audit.txt`). `mp load-plan` seeded 48 tasks / 11 waves; phase → execute. The pre-finish stage rule is the v2 `pre_finish_stage_required` event: bootstrap through `surfaces_live` before `mp finish` (+ `required_successor {slug: v10-validation}` recorded), the `gate` step inside `branch_finish` before `--choice=merge`.
 - 2026-09-03 wave 0 (11 tasks) recorded — code 96cc8e4 (WT), state 2e1e086. Execution mechanism on the Claude harness: the native spawn plan's builder descriptors (lane glm / class bounded-edit) cannot be spawned as Anthropic-only `Agent` subagents and `dispatch_task` is hook-denied, so the orchestrator drove each task through the governed gateway edit tools (`skynet_edit_files` on `dispatch-agentic-loop` = the fleet's masterplan-implementation class; `dispatch-bounded-edit` as fallback) with the task prompt + a read-only context file (spec excerpts, module exports) passed as extra paths, stub files for new targets, and verify commands run in the worktree by `build-wave-result.mjs`. Lesson: the gateway lanes exhaust `max_tokens` on hidden reasoning for large one-shot edits — use `reasoning_effort: low`, split per function, and keep instructions surgical; small precisely-specified fixes were applied deterministically (python patches with regression tests). Adversary seam: 11 per-task `skynet_review_diff` reviews on `dispatch-adversary` over the full wave diff (round 1: 1 approve / 10 rework; every finding folded with tests; config parser needed 8 rounds, seed lock 9). Records: `w0-reviews.json` (scratchpad) → `mp record-result --reviews-file`. The `.owner.lock` vanished mid-wave (a one-shot `mp amend-plan` releases the lock it acquires) — reclaimed with `mp acquire-owner`; the watch-list integrity WARN ("HEAD moved during the wave") was the orchestrator's own plan-amendment commits on MAIN, not a child.
+
+## 2026-09-03 — intent-to-completion: wave 1 recorded (10/10)
+
+Scope: interview ledger (lib/interview.mjs), migrate autonomy, finish-step deploy stage, sweep seed-lock,
+runs/context-status enrichment, four doctor checks, install-pi --expect. Adversary lane (gpt-5.6-sol) ran
+up to 13 rounds on the interview ledger and 10 on the deploy stage; every finding was folded via
+deterministic python patches with a regression test each. Decisions worth keeping:
+- Critic receipts are evidence only while their digest-bound artifact is present, intact and well-formed
+  (`receipt.valid`); invalid receipts satisfy no gate and change no availability state.
+- Critic unavailability is head-bound and needs a dispatchable draft; its acknowledgement is durable in
+  the ledger so `exhausted` is replay-derived (crash between ack and end resumes).
+- Every interview verb validates its payload before append (no undefined text / absent intent / round 0).
+- Deploy stage: `deploy_base.done_sha256` is re-checked on every replay (ad-hoc edits refuse);
+  the stage is active whenever `deploy_base` exists (no repeating --merged/--merge-sha);
+  reports/authorizations bind to the ordered chain's current step; retry answers failed only,
+  rerun answers indeterminate only; attest is offered only for check-less steps; abort only from a gate.
+Gateway note: review calls now routinely exceed the 120s MCP foreground window and one 502'd
+("shim upstream error: timed out") — retry is the fix, TaskOutput(block) collects the rest.
