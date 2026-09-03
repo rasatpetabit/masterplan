@@ -44,6 +44,7 @@ function makeFixture({ slug = 't24', state: over = {}, ownerLockOff = false, ver
   git(MAIN, 'config', 'user.name', 'test');
   git(MAIN, 'config', 'commit.gpgsign', 'false');
   write(MAIN, 'src/seed.txt', 'seed\n');
+  write(MAIN, '.gitignore', '.worktrees/\n'); // as in the real repo: linked worktrees live under an ignored dir
   git(MAIN, 'add', '.');
   git(MAIN, 'commit', '-q', '-m', 'initial');
   const WT = path.join(MAIN, '.worktrees', slug);
@@ -370,11 +371,18 @@ test('pr: two-phase handshake — push_pr leaves the gate open; --pushed retires
   op = fx.step({ choice: 'pr' });
   assert.equal(op.kind, 'push_pr');
 
-  // Phase 2: the shell confirms the push → retire, clear the gate, archive.
+  // Phase 2: the shell confirms the push → retire, clear the gate; the run waits for the merge
+  // (the deploy base is the landing, §7.1 — done: none records deploy_base there and runs no group).
   op = fx.step({ choice: 'pr', pushed: true });
-  assert.equal(op.reason, 'archived');
+  assert.equal(op.reason, 'await_merge');
   st = readState(fx.statePath);
   assert.equal(st.worktree_disposition, 'kept_by_user');
+  assert.notEqual(st.status, 'archived');
+  const tipRetired = readEvents(fx.bundleDir).find((e) => e.type === 'branch_finish').branch_tip;
+  git(fx.MAIN, 'merge', '-q', '--no-ff', '--no-edit', tipRetired);
+  op = fx.step({ merged: true, mergeSha: git(fx.MAIN, 'rev-parse', 'HEAD') });
+  assert.equal(op.reason, 'archived');
+  st = readState(fx.statePath);
   assert.equal(st.pending_gate, null);
   assert.equal(st.status, 'archived');
 });
@@ -876,7 +884,8 @@ test('deploy: mergeSha must be a commit', () => {
   git(fx.MAIN, 'add', '.masterplan.yaml');
   git(fx.MAIN, 'commit', '-q', '-m', 'done definition');
   walkToGate(fx);
-  assert.throws(() => fx.step({ choice: 'merge', mergeSha: 'deadbeef' }), /not a commit/);
+  assert.throws(() => fx.step({ choice: 'merge', mergeSha: 'deadbeef' }), /full 40-hex commit id/);
+  assert.throws(() => fx.step({ choice: 'merge', mergeSha: 'deadbeef'.repeat(5) }), /not a commit/);
 });
 
 test('deploy: a merged PR (kept_by_user + --merged --merge-sha) enters the deploy stage at the merge sha', () => {
@@ -885,6 +894,8 @@ test('deploy: a merged PR (kept_by_user + --merged --merge-sha) enters the deplo
   git(fx.MAIN, 'add', '.masterplan.yaml');
   git(fx.MAIN, 'commit', '-q', '-m', 'done definition');
   // The PR disposition is already retired (branch kept, PR open); verify/retro ran before it.
+  // Emulate the remote merge: MAIN gains a real merge commit of the branch (identity is checked, §7.3).
+  git(fx.MAIN, 'merge', '-q', '--no-ff', '--no-edit', 'masterplan/t24');
   const mergeSha = git(fx.MAIN, 'rev-parse', 'HEAD');
   assert.throws(() => fx.step({ merged: true }), /requires --merge-sha/);
   const op = fx.step({ merged: true, mergeSha });
@@ -923,12 +934,13 @@ test('deploy: a plain authorization cannot clear a halted failure', () => {
 test('deploy: an interrupted started step is probed on re-entry, never rerun blindly', () => {
   // check passes on probe → recovered as done
   const fx = makeFixture({ state: { autonomy: 'loose' } });
-  write(fx.MAIN, '.masterplan.yaml', 'done:\n  release:\n    - run: touch rel.ok\n      check: test -f rel.ok\n');
+  // The step's evidence file lives in the bundle: untracked output outside docs/masterplan is dirt (§7.3).
+  write(fx.MAIN, '.masterplan.yaml', 'done:\n  release:\n    - run: touch docs/masterplan/t24/rel.ok\n      check: test -f docs/masterplan/t24/rel.ok\n');
   git(fx.MAIN, 'add', '.masterplan.yaml');
   git(fx.MAIN, 'commit', '-q', '-m', 'done definition');
   walkToGate(fx);
   fx.step({ choice: 'merge' }); // authorized + started, run_deploy_step
-  write(fx.MAIN, 'rel.ok', ''); // the command ran, then the driver crashed before reporting
+  write(fx.MAIN, 'docs/masterplan/t24/rel.ok', ''); // the command ran, then the driver crashed before reporting
   const op = fx.step({});
   assert.equal(op.op, 'stop', JSON.stringify(op));
   const rec = readEvents(fx.bundleDir).find((e) => e.type === 'deploy_step' && e.group === 'release');
@@ -972,6 +984,7 @@ test('deploy: a merged PR keeps progressing on re-entry without repeating --merg
   write(fx.MAIN, '.masterplan.yaml', 'done:\n  release:\n    - run: /bin/true\n  install:\n    - run: /bin/true\n');
   git(fx.MAIN, 'add', '.masterplan.yaml');
   git(fx.MAIN, 'commit', '-q', '-m', 'done definition');
+  git(fx.MAIN, 'merge', '-q', '--no-ff', '--no-edit', 'masterplan/t24');
   const mergeSha = git(fx.MAIN, 'rev-parse', 'HEAD');
   let op = fx.step({ merged: true, mergeSha });
   assert.equal(op.op, 'run_deploy_step');
