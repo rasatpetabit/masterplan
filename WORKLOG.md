@@ -510,3 +510,5 @@ driven as arm/record turns, because the driver enforces step order and those ste
 be re-entered in a failing state once recorded. Closing it needs fixture bundles poised at
 `push` and at `pr_merge` — a second harness. Recorded as a blocking review, not waved
 through. The task is plan-scale work in one wave slot.
+
+Handoff for this state: [`docs/handoffs/2026-09-03-intent-to-completion-wave3.md`](docs/handoffs/2026-09-03-intent-to-completion-wave3.md) — verified state, restore paths, and the two operator-approved next steps (repo-wide /tmp fixture-leak sweep; fold task 45's open requirement into task 46).
