@@ -1,0 +1,188 @@
+{
+  "tool": "Workflow adversarial-review.mjs",
+  "run_id": "wf_614619d7-a41",
+  "intensity": "standard",
+  "reviewed_sha256": "0b0ae505d9caac6d0337c0244c3a1f7596924701b291a7ea428b67e8f0ace558",
+  "reviewed_chars": 68232,
+  "spec_rev": 10,
+  "lanes": [
+    {
+      "label": "cross:openai/gpt-5.6-sol",
+      "verdict": "revise",
+      "tokens": 111916
+    },
+    {
+      "label": "cross:zhipu/glm-5.2",
+      "verdict": "reject",
+      "tokens": 117966
+    },
+    {
+      "label": "lens:approach",
+      "verdict": "revise",
+      "tokens": 131394
+    },
+    {
+      "label": "lens:failure-case",
+      "verdict": "revise",
+      "tokens": 148958
+    },
+    {
+      "label": "lens:blast-radius",
+      "verdict": "revise",
+      "tokens": 135645
+    },
+    {
+      "label": "synthesize",
+      "verdict": "revise",
+      "tokens": 129110
+    }
+  ],
+  "final_verdict": "revise",
+  "summary": "No reviewer blocker survives verification as a blocker, but eleven should-fix defects do, so the spec is not approvable at rev 10. Two of the four headline blockers were checked directly against the tree and git: reviewer 5's \"the gate rebase replays unaudited non-bundle commits\" is wrong because §10.1.5 step 5 pushes local main to origin BEFORE recording main_pre_bootstrap, so at the gate origin/main..main equals the audited range (the 16-commit / 4-non-bundle drift is real, but the push carries it as ordinary main history); reviewer 4's \"guaranteed\" rebase failure is mechanically real (reproduced: git rebase refuses a dirty tracked file, exit 1) and lib/finish-step.mjs commits only at branch_finish resolution (:375) and archive (:404), but prior-run history (2fcbeab \"state before merge\") shows the shell committing before answering the gate, so it is reachable-not-guaranteed and loud, i.e. should-fix. The remaining reviewer blockers (publish-before-gates with no rollback; §7.3 strict tip equality vs state commits; this run's archive lacking a completion class) are genuine design gaps confirmed from the spec text but overstated in consequence: the \"livelock\" needs a commit on re-entry that the code never makes, the ordering is forced by G6 being a frozen goal so the defect is the missing failure disposition, and the missing completion class is undefined doctor behavior rather than data loss. Also confirmed in-tree: install-pi --check and plugin-registry-drift never execute the installed binary; ci.yml's release-publish job is gated on tests and G6 ignores it; main is unprotected with merge commits allowed (which drops reviewer 2's branch-protection scenario). Verdict: revise.",
+  "reviewers": [
+    "openai/gpt-5.6-sol: revise",
+    "zhipu/glm-5.2: reject",
+    "approach-lens adversarial (in-tree verification): revise",
+    "failure-case adversarial pass (in-tree verification): revise",
+    "blast-radius-adversary: revise"
+  ],
+  "disagreements": [
+    "Reviewer 5 (blocker: the gate rebase replays a strict superset of the audited range) vs reviewers 3 and 4 (§10 git mechanics sound): the evidence favours 3/4. §10.1.5 step 5 pushes local main to origin BEFORE recording main_pre_bootstrap, so after the GitHub merge merge-base(main, origin/main) == main_pre_bootstrap and `git rebase origin/main` replays exactly the audited commits. The drift reviewer 5 measured (16 ahead, 4 non-bundle) is real and is pushed in step 5 as ordinary main history, not replayed unaudited; retained only as a nit about the false 'behind by exactly those' sentence.",
+    "Reviewers 1 and 2 (blocker, 'livelock' on §7.3 strict tip equality) vs the tree: lib/finish-step.mjs commits the bundle only at branch_finish resolution (:375) and archive (:404); re-entry's deploy_base write is an uncommitted event, so the loop does not self-perpetuate. The inconsistency with §10.1.5 is real and the spurious re-entry / same-version re-certification is a should-fix, but 'can never reach run_final_check' is unsupported.",
+    "Reviewer 4 (blocker: rebase failure is 'guaranteed') vs in-tree history: the mechanism is confirmed (reproduced exit 1) and no commit site precedes the gate in finish-step, but the prior run's commits 2fcbeab ('finish adversary digest + state before merge') and 2bc21eb (branch_finish commit carrying only the branch_finish event) show the shell committing before answering the gate. Reachable-not-guaranteed, loud, recoverable → should-fix.",
+    "Reviewers 1 and 2 (blocker: publish before gates) vs reviewer 3 (should-fix; the 'merge normally, install later' alternative fails because G6 is a frozen goal of this run and the v9 goal check precedes branch_finish): reviewer 3's framing is right — the ordering is forced by the frozen goals, so the defect is the absent failure disposition after the first irreversible step, not the ordering itself.",
+    "Reviewer 2 (branch protection / squash-only could break `gh pr merge --merge`) vs reviewer 3 (verified unprotected): reviewer 3 is right — `gh api .../branches/main/protection` returns 404 and the repo allows merge commits — but reviewer 3's residual (the real gh pr create/merge cycle is never rehearsed and a transient failure has no disposition) stands and is merged into the first finding.",
+    "Reviewer 1 (blocker) vs reviewer 2 (nit) on this run's own archive lacking a completion class: should-fix — the doctor/runs-list behavior on the first bundle they inspect is genuinely unspecified, but nothing is lost and a one-paragraph bootstrap exception closes it."
+  ],
+  "dropped": [
+    "Reviewer 5's blocker as stated (`git rebase origin/main` replays unaudited non-bundle commits): §10.1.5 step 5 pushes local main before recording main_pre_bootstrap, so at the gate origin/main..main == main_pre_bootstrap..main; the 4 non-bundle commits (abc3b0a, 5aa3c27, 0b6159d, af52fe8) are pushed as ordinary main history in step 5, not replayed by the rebase. The residual doc inaccuracy is kept as a nit.",
+    "Reviewer 2's should-fix on GitHub branch protection / required checks / squash-only breaking `gh pr merge --merge`: verified via `gh api` — main is unprotected (404) and allow_merge_commit is true.",
+    "Reviewer 2's blocker 'a failed final assessment has no terminal path': goals_unmet offers fix / waiver / abort (lib/finish-step.mjs:286-299, :518) and §7.2/§11 open intent_confirm after any final receipt, so waiver → intent_confirm → --intent-rejected → incomplete_authorized is reachable; downgraded to a nit about the dead 'fix' option and the unnamed route.",
+    "Reviewer 2's 'livelock' characterization of §7.3: requires a bundle commit on re-entry that the tree never makes; the underlying inconsistency is retained as a should-fix.",
+    "Reviewer 4's 'guaranteed dirty' qualifier: prior-run commit 2fcbeab shows the shell committing bundle state before the gate answer; the rebase-refusal mechanism itself is retained as a should-fix.",
+    "Reviewer 3's self-discarded 'merge normally and install as a follow-up' alternative: the reviewer withdrew it and the reason (G6 is a frozen goal checked before branch_finish) is correct.",
+    "Reviewer 1's separate 'same-version base-move re-certification' finding: valid but the same defect as the §7.3 state-only/code distinction and folded into that finding rather than counted twice."
+  ],
+  "findings": [
+    {
+      "severity": "should-fix",
+      "claim": "§10 places every irreversible rollout step (release tag, tag push, install-pi, GitHub PR merge, Claude plugin update) before mp finish's verify / goal-check / adversary-review gates, and defines no disposition for a failure at any point after the first irreversible step — neither mid-wave (a failed or partial gh pr merge at step 5 after the tag push and Pi install at step 4, the one first-time live action the rehearsal cannot exercise) nor post-publish (a partial goal verdict or blocking review after both surfaces are live), while §10.1.3 freezes the branch tip so any fix commit breaks tag identity.",
+      "failure": "Step 4 pushes v10.0.0 and moves the Pi install root to v10; step 5's gh pr merge fails transiently (or step 2's goal check returns partial on G3) → v10 is live and tagged, the run cannot add a commit without violating 'tag == tip', goals_unmet offers only fix (foreclosed) / waiver / abort, and the spec names no corrective-release, downgrade, or incomplete-archive path; the run stalls with rejected code on both daily-driver surfaces.",
+      "fix_direction": "Keep the ordering (G6 forces it) but add a named failure disposition for each irreversible step: a corrective v10.0.x release path for post-publish gate failures, install-pi --ref=v9.10.0 rollback for the Pi surface, an explicit recovery state for a failed/partial PR merge, and either a throwaway-repo rehearsal of the real gh pr create/merge cycle or a documented residual-risk statement.",
+      "location": "docs/masterplan/intent-to-completion/spec.md §10 steps 1.3–1.6 (lines 531–560) vs step 2 (lines 566–585); §10.1.3 'From here the branch tip does not move'"
+    },
+    {
+      "severity": "should-fix",
+      "claim": "§10.2's gate-time `git -C MAIN rebase origin/main` runs while MAIN's tracked bundle files (state.yml, events.jsonl) carry uncommitted writes from run_verify / goal check / retro / review / gate-open, and git rebase refuses a dirty tracked file; the spec's gate procedure lists no commit or --autostash before the rebase.",
+      "failure": "Reproduced: an unrelated uncommitted edit to a tracked file → `git rebase other` exits 1 with 'cannot rebase: You have unstaged changes' (merge fast-forwards fine, --autostash rebases fine). In-tree, lib/finish-step.mjs calls commitBundle only at branch_finish resolution (:375) and archive (:404); every earlier finish op writes via writeState/appendEvent (:232, :253, :271, :282, :370) without committing, and `mp event` (bin/masterplan.mjs:1037) appends only. Unless the shell commits first — which the spec does not require, though 2bc21eb/2fcbeab show it happened in a prior run — the gate step stops the walk with v10 already live.",
+      "fix_direction": "Make it normative in §10.2 that pending bundle state is committed (commitBundle-equivalent, bundle pathspec only) immediately before the audit and rebase, or use `git rebase --autostash origin/main`; require the rehearsal to drive the real op sequence through the pinned binary so the gate is reached with the same dirty state.",
+      "location": "docs/masterplan/intent-to-completion/spec.md:572-576 (§10.2 gate procedure); lib/finish-step.mjs:215-221, :375, :404"
+    },
+    {
+      "severity": "should-fix",
+      "claim": "§7.3 requires MAIN's base tip to equal deploy_base_sha exactly at every later boundary, but §10.1.5 and the sequencer (commands/masterplan.md:96, :111) establish that bundle-state commits land on MAIN's base branch during finish (gate resolutions commit the bundle); the spec never says whether deploy-stage gates (deploy_failed, deploy_indeterminate, intent_confirm) commit, so any state-only commit between deploy_base and a later boundary trips 'base moved', discards the final receipt, and re-runs every check — and the check-only re-entry then re-certifies a same-version code commit without redeploying.",
+      "failure": "deploy_base recorded at A; step 1's deploy_failed gate is resolved 'retry' and the shell commits the bundle per the 'other gates → commit the bundle' convention → tip is S ≠ A → next run_deploy_step is 'dispatch-error: base moved'; re-entry records deploy_base at S and only re-runs `check`s, so if S (or any later main commit) were a same-version code change, tag-exists / install --check --expect=v10.0.0 still exit 0 and completion_confirmed binds to S while the live install is A's code. Not a livelock (re-entry's write is not a commit), but a spurious-re-entry defect on one side and a false re-certification on the other.",
+      "fix_direction": "Port §10.1.5's per-commit audit to §7.3: commits in deploy_base_sha..tip that touch only docs/masterplan/<slug>/ do not count as a base move; a commit touching anything else forces a full re-run of every step, not check-only. Add a finish-replay test with a real git repo and the real event writer.",
+      "location": "docs/masterplan/intent-to-completion/spec.md §7.3 (Dispositions and commit identity) vs §10.1.5 lines 540-546; commands/masterplan.md:96"
+    },
+    {
+      "severity": "should-fix",
+      "claim": "This run archives under v9.10.0, which writes no state.completion, completion_confirmed, or incomplete_authorized, so under the v10 invariant of §7.4 its own archive has no completion class; §6.1 grants a bootstrap exception for goals.md but nothing grants one for completion, and the successor v10-validation run that alone proves the automated flow is left as a retro follow-up that §3 explicitly allows to remain open.",
+      "failure": "v10 ships; `runs list`, `mp status`, and the doctor's incomplete-archive check inspect the intent-to-completion bundle first and find an archived run with neither authorization event and no completion field — behavior unspecified (false INFO, crash, or silently 'complete'). G1–G6 read as met while Outcome 7's second sentence (successor exercises deploy-to-confirm) is never required to happen.",
+      "fix_direction": "Add a normative bootstrap exception parallel to §6.1: archives lacking the completion field classify as `legacy` (never complete) and the doctor reports them as such; and either make the v10-validation run a required (not deferrable) follow-up or make Outcome 7 explicitly conditional on its completion:complete archive.",
+      "location": "docs/masterplan/intent-to-completion/spec.md §7.4 (Completion class) vs §6.1 bootstrap exception and §3 'Deferred follow-ups in retros may remain open'"
+    },
+    {
+      "severity": "should-fix",
+      "claim": "The interview floor is defined over answered questions but the `exhausted` exit at the cap requires only asked == cap and zero unanswered; withdrawn questions count against the cap and satisfy 'zero unanswered', so an interview can reach exhausted with zero operator answers.",
+      "failure": "complexity: high (floor 8, cap 20): ask 20 intent questions, withdraw all 20, record a draft built from the model's own assumptions → `mp interview end --reason=exhausted` validates (asked == cap, no unanswered, draft is latest content event) and goals-load accepts; Outcome 1's core defense never engages.",
+      "fix_direction": "Require floor met (answered ≥ floor) for every non-waived terminal state including exhausted-at-cap, or cap the number of withdrawn questions that may count toward the cap.",
+      "location": "docs/masterplan/intent-to-completion/spec.md §4.2 (floor definition) and §5.4 `exhausted` row; §5.3 `withdraw`"
+    },
+    {
+      "severity": "should-fix",
+      "claim": "The `exhausted` exit and §5.1 step 5 carry forward only the `unknowns` of the latest critic payload; `contradictions` and `misclassified` from a prior successful payload are neither required to be resolved nor recorded, and a `critic_unavailable` after that payload makes exhausted immediately valid.",
+      "failure": "Critic round 1 returns unknowns: [] but contradictions: [C1]; the next dispatch times out → `critic --unavailable`; floor is met → exhausted validates with nothing to list; C1 is never written to the Assumptions table, never seen by the design phase or the final assessor, and is baked into frozen goals via a trigger the spec treats as ordinary.",
+      "fix_direction": "Define exhausted's recording obligation over the latest available payload's unknowns, contradictions, and misclassified entries, and require the assumed rows to cover all three; add the clean-unknowns/dirty-contradictions → unavailable → exhausted case to interview-ledger-resume.",
+      "location": "docs/masterplan/intent-to-completion/spec.md §5.4 `exhausted` row; §5.1 step 5"
+    },
+    {
+      "severity": "should-fix",
+      "claim": "`done:` is resolved once at `mp seed` and written into state.yml (§4.1), with no stated re-resolution at deploy-stage entry, so a branch that adds or changes the repo's `done:` block after seed has finish execute the stale seed-time definition — and this very run adds `.masterplan.yaml` on its branch (§12 lists it as New).",
+      "failure": "Seed records done: absent (or version_from/steps X); the branch commits a `.masterplan.yaml` declaring the real definition; after merge, finish reads state.yml and opens no_definition_of_done (or runs X) while the merged repo's actual declaration never executes; checks pass and the run archives complete.",
+      "fix_direction": "Re-resolve `done:` from `<MAIN>/.masterplan.yaml` at deploy_base_sha on deploy-stage entry (seed-time validation stays as an early check); add config tests that change/add/remove done: on the branch after seed and assert which definition runs.",
+      "location": "docs/masterplan/intent-to-completion/spec.md §4.1 ('done ... repo-local only', 'mp seed ... writes the resolved values into state.yml') vs §7.2 no_definition_of_done row; §12 New: `.masterplan.yaml`"
+    },
+    {
+      "severity": "should-fix",
+      "claim": "§4.4's knob-contract guard accepts 'a seeded state field' as the observable difference between two knob values, which is writer-only proof and would pass exactly the inert --complexity/--autonomy defect class this change exists to close.",
+      "failure": "Add --region, store it in state.yml, read it nowhere; register a contract test seeding --region=us vs --region=eu and asserting the two state fields differ → knob-inventory and knob-contract both pass on a completely inert knob.",
+      "fix_direction": "Drop 'a seeded state field' from the accepted observables; require an mp op, gate, event, or rendered protocol line to differ, and make the synthetic read-but-ignored fixture include the seeded-field-only case as a guard-must-fail example.",
+      "location": "docs/masterplan/intent-to-completion/spec.md §4.4 item 2"
+    },
+    {
+      "severity": "should-fix",
+      "claim": "The mandatory live_check group and G6's evidence set verify only structural install state; neither real implementation they call ever executes the installed masterplan binary, so a structurally valid but functionally broken install satisfies every check.",
+      "failure": "bin/install-pi.mjs:205-248 check() verifies the `current` symlink, .pi-install.json sha, validateSnapshot (REQUIRED_PATHS existence only, :90-93), skill-link targets, and agent-registration text drift; lib/doctor/plugin-registry-drift.mjs:57-80 diffs installed_plugins.json version/sha against the marketplace plugin.json. A packaging bug visible only under releases/<sha>/ (e.g. a file git-archive drops) yields check_ok on Pi and version-match on Claude, G6 reads met, live_check passes, the run archives complete, and the next /masterplan on the Pi surface crashes. (Mitigation already present: §10.1.6 does run the Claude-cache binary's `version` as shell-verified evidence, but G6's frozen evidence list and the Pi surface have no execution probe.)",
+      "fix_direction": "Add one behavior-exercising step to live_check and to G6's evidence: invoke the installed binary on each surface (`node <install-root>/current/bin/masterplan.mjs version` / doctor through the installed copy) with an exit-code check.",
+      "location": "docs/masterplan/intent-to-completion/spec.md:314-328 (done block), :339 (mandatory groups), :561 (G6 evidence); goals.md G6 evidence; bin/install-pi.mjs:205-248; lib/doctor/plugin-registry-drift.mjs:57-80"
+    },
+    {
+      "severity": "should-fix",
+      "claim": "Pushing the v10.0.0 tag (§10 step 4) triggers .github/workflows/ci.yml's `test` job and, `needs: test`, the `release-publish` job that creates the GitHub Release; G6's evidence (tag exists locally and remotely, install-pi --check, plugin-registry-drift) never queries that run, so a red CI on the tagged commit leaves G6 reading met.",
+      "failure": "Tag push fires ci.yml; the unit suite or doctor fails on the tagged commit (or the CHANGELOG-section extraction fails, which the workflow treats as a hard error); the tag still exists on origin, no Release is created, and every G6 command still exits 0.",
+      "fix_direction": "Add a G6 / release-group check that queries the tag's workflow run (`gh run list --branch v10.0.0` or the Actions API) and treats a failed or still-pending release-publish as deploy_failed / deploy_indeterminate.",
+      "location": "docs/masterplan/intent-to-completion/spec.md:533-535, :561; goals.md G6; .github/workflows/ci.yml (release-publish, needs: test)"
+    },
+    {
+      "severity": "should-fix",
+      "claim": "By the time the pinned v9.10.0 finish dispatches the goal assessor and adversary review, both agent surfaces are already on v10 (plugin cache reloaded at step 6, Pi agents re-registered by install-pi at step 4), so the v2 mp-goal-assessor / adversary prompts are invoked in a v9 single-dispatch shape against a v1 goals.md, and no compatibility is asserted or rehearsed.",
+      "failure": "The v2 assessor prompt expects an Intent block and an intent_verdict field in its final mode; handed a v1 goals.md by the v9 dispatch it may emit a malformed or wrong verdict that v9's record-goal-check accepts; the rehearsal only asserts a non-empty diff reached the assessor.",
+      "fix_direction": "State the compatibility contract (v2 prompts must accept a v1 goals.md and the v9 dispatch shape) and add a test or rehearsal assertion for it, or pin the agent prompt version used by this run's finish independently of the installed surface.",
+      "location": "docs/masterplan/intent-to-completion/spec.md §10.1 steps 4/6 vs §10.2; §6.2 assessor v2"
+    },
+    {
+      "severity": "nit",
+      "claim": "The sample done: block's install-group check `git ls-remote --exit-code --tags origin refs/tags/v${version}` exits 2 (not 1) when the tag is absent, so §7.2's exit-status mapping classifies a deterministic 'absent' as deploy_indeterminate.",
+      "failure": "Reproduced against an empty bare remote: missing tag → exit 2; present tag → exit 0. Under the spec's mapping (0 present / 1 absent / other indeterminate) the absent case opens deploy_indeterminate offering 'mark done with evidence' instead of deploy_failed.",
+      "fix_direction": "Wrap the sample as `... || exit 1` (or treat documented not-found codes as absent), and test the literal sample against a tagless remote.",
+      "location": "docs/masterplan/intent-to-completion/spec.md §7.1 sample check line and §7.2 exit-status contract"
+    },
+    {
+      "severity": "nit",
+      "claim": "§10.1.5 asserts GitHub main is behind local main 'by exactly' this bundle's state commits; in-tree local main is 16 commits ahead of origin/main and 4 of them (abc3b0a, 5aa3c27 policy/workflow-map.json; 0b6159d, af52fe8 WORKLOG.md) are non-bundle, and the rehearsal's scratch clone starts in sync so this never gets modeled.",
+      "failure": "Step 5's `git push origin main` carries unrelated commits to GitHub — harmless to the gate (the push precedes main_pre_bootstrap, so the rebase and audit ranges coincide), but the sentence is false and a WORKLOG.md overlap between those commits and the PR branch would surface as a PR-merge conflict the spec does not anticipate.",
+      "fix_direction": "Correct the sentence to 'local main may be ahead by unrelated commits; the push carries them and main_pre_bootstrap is recorded after it', and start the rehearsal fixture from a clone already ahead of its remote.",
+      "location": "docs/masterplan/intent-to-completion/spec.md:537-539"
+    },
+    {
+      "severity": "nit",
+      "claim": "After the final assessment, the goals_unmet gate's `fix` option is dead (worktree gone), and the spec does not name the route to an incomplete archive from a missed final verdict, though one exists (waiver → intent_confirm → --intent-rejected).",
+      "failure": "Operator picks 'fix' on a post-live goals_unmet; finish stops with reason goals_unmet_fix (lib/finish-step.mjs:299) and there is nothing to fix in; the operator has to discover the waiver → reject route unaided.",
+      "fix_direction": "State in §6.2/§7.2 that the final goals_unmet offers waiver / abort / reject-intent only, with reject writing incomplete_authorized directly.",
+      "location": "docs/masterplan/intent-to-completion/spec.md §6.2 goals_unmet consumer; lib/finish-step.mjs:286-299, :518"
+    },
+    {
+      "severity": "nit",
+      "claim": "High complexity's 'critic after every intent round' (§4.2) is not enforceable: the ledger has no round-boundary event, and §5.4 converged validates only the latest receipt.",
+      "failure": "Eight intent questions across several rounds with no critic between them, one draft, one clean critic, one design pick → converged passes every §5.4 condition; after compaction the ledger cannot show rounds were skipped.",
+      "fix_direction": "Either record a round-boundary event (per AskUserQuestion call) and validate a critic receipt after each at high, or document the per-round rule as advisory.",
+      "location": "docs/masterplan/intent-to-completion/spec.md §4.2 critic column (high row) vs §5.3/§5.4"
+    },
+    {
+      "severity": "nit",
+      "claim": "run_deploy_step executes from MAIN's live working tree (`cwd: MAIN`) while receipts bind only to the branch-ref sha; an uncommitted local edit to a tracked script (release.mjs, install-pi.mjs, .masterplan.yaml) runs unrecorded.",
+      "failure": "Tip == deploy_base_sha; scripts/release.mjs has a local uncommitted modification; the step runs the modified file, its check passes, and the receipt attributes the effect to the committed sha.",
+      "fix_direction": "Run deploy steps from a clean detached checkout of deploy_base_sha, or fail closed when `git status --porcelain` shows non-bundle changes.",
+      "location": "docs/masterplan/intent-to-completion/spec.md §7.2 run_deploy_step row (`cwd: MAIN`)"
+    },
+    {
+      "severity": "nit",
+      "claim": "The seed-time overlap check is a TOCTOU between `mp runs list` and `mp seed`, and the overlap_review event proves only that a JSON file was appended, not which inventory snapshot it considered.",
+      "failure": "Two concurrent seeds each see no conflicting run and both record empty candidate lists; a stale review file likewise passes.",
+      "fix_direction": "Bind overlap_review to a digest of the runs-list snapshot it was computed from; add a concurrent-seed test.",
+      "location": "docs/masterplan/intent-to-completion/spec.md §8"
+    }
+  ],
+  "total_tokens": 774989
+}

@@ -18,3 +18,10 @@ Recorded verdict (round 10): PASS.
 Open advisory carried into planning: before the gate rebase, require origin/main == the recorded PR-merge sha (not merely ancestry); the unexpected-remote-tip rehearsal case asserts that exact condition.
 
 Every finding and its disposition is tabulated in spec.md §13; operator decisions in the Assumptions table (D1 ledger verbs, D2 both surfaces before archive; mechanism refined from held gate → pre-finish GitHub merge with local-main state-only invariant and gate rebase).
+
+Cross-vendor panel over rev 10 (operator-requested after the round-10 PASS; native Workflow adversarial-review.mjs, run wf_614619d7-a41, standard intensity, bytes embedded verbatim sha256 0b0ae505…):
+  lanes: openai/gpt-5.6-sol revise · zhipu/glm-5.2 reject · in-repo lenses approach/failure-case/blast-radius revise · synthesis REVISE
+  0 blockers survive verification; 11 should-fix + 6 nits; full record in gate-spec-panel.json
+  should-fix: (1) no failure disposition after the first irreversible §10 step; (2) gate rebase on a dirty bundle tree (reproduced exit 1); (3) §7.3 strict tip equality vs state-only commits; (4) this run's archive has no completion class; (5) exhausted-at-cap reachable with zero answers via withdraw; (6) contradictions/misclassified dropped on critic_unavailable → exhausted; (7) done: resolved at seed, stale at deploy; (8) "seeded state field" counts as a knob observable; (9) live_check/G6 never execute the installed binary; (10) tag-push CI run never queried; (11) v2 assessor prompt dispatched by v9 against v1 goals.md
+  dropped after in-tree verification: rebase replays unaudited commits (push precedes main_pre_bootstrap); GitHub branch protection (main unprotected, merge commits allowed); "no terminal path after failed final assessment" (waiver → intent_confirm → --intent-rejected exists); §7.3 "livelock" (re-entry never commits)
+Spec gate hash unchanged (rev 10 bytes); disposition of the panel findings is pending the operator's choice.
