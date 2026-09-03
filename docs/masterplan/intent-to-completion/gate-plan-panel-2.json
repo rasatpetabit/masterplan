@@ -1,0 +1,98 @@
+{
+  "tool": "adversarial-review workflow (skynet_review_diff lanes + in-repo lenses + synthesis)",
+  "gate": "plan",
+  "verdict": "revise",
+  "findings_count": 6,
+  "ts": "2026-09-03T05:36:43.459Z",
+  "reviewers": [
+    {
+      "dispatch_id": "wf_d96d8b7e-9fc/agent-afa5c88ead2e793b6/skynet_review_diff",
+      "provider": "litellm/gpt-5.6-sol",
+      "model": "dispatch-adversary",
+      "output_tokens": 292,
+      "verdict": "revise"
+    },
+    {
+      "dispatch_id": "wf_d96d8b7e-9fc/agent-afa5c88ead2e793b6/skynet_review_diff",
+      "provider": "litellm/gpt-5.6-sol",
+      "model": "dispatch-adversary",
+      "output_tokens": 12232,
+      "verdict": "revise"
+    }
+  ],
+  "lanes_failed": [],
+  "digest": "Plan gate — cross-vendor adversarial review digest (intent-to-completion)\nArtifacts: spec.md (rev 14) + plan.md + plan.index.json (48 tasks / 11 waves) — bytes embedded verbatim, sha256 f19811e80a746b7aa46704336dda5a07d266db202a6708439dd0dc3e8bd2147c, 264512 chars\nWorkflow: adversarial-review (wf_d96d8b7e-9fc), intensity standard; cross-vendor lanes: openai/gpt-5.6-sol; degraded: none\nProvenance: dispatch-adversary → litellm/gpt-5.6-sol, 292 output tokens; dispatch-adversary → litellm/gpt-5.6-sol, 12232 output tokens\nVerdict: revise; findings 6 (2 should-fix, 4 nit); disagreements 4; dropped 3\n\nSummary: The plan is a faithful decomposition of spec rev 14: waves are files-disjoint, the bootstrap stage correctly stays off the task graph per A33, and every G1-G6 is covered. No blocker survives in-tree verification. Two defects need fixing before execution: (1) the normative pre-finish rule — recorded in plan.index.json meta.solution and in the durable pre_finish_stage_required event (events.jsonl:7) — says \"mp finish is invoked only after bootstrap-v10.mjs status reports the pass complete\", but the spec's step enum ends in `gate`, which §10.2 records inside mp finish's branch_finish handling, so the rule is literally unsatisfiable and must be split into \"through surfaces_live before finish\" and \"gate inside branch_finish\"; (2) Task 28 must emit `required_successor {slug, reason}` on intent rejection and Task 40's doctor matches on exact slug + predecessor link, yet the only rejection interface Task 3 wires (`--intent-rejected --class --reason`, plan.md:204) carries no slug and no naming rule exists, so the event cannot be authored deterministically. Reviewer 1's other two \"blockers\" (no task verifies the live surfaces; the successor run has no task) are spec-inherited, operator-accepted design choices (A33, A35, §10 step 3) — the first is retained as a nit, the second dropped. Reviewer 2's decomposition-risk findings are real but bounded by existing co-ownership fix paths and the files-disjoint rule, so they rank as nits.\n\nFindings (severity-first):\n 1. [should-fix] The pre-finish sequencing rule (\"mp finish is invoked only after bootstrap-v10.mjs status reports the pass complete\") is unsatisfiable because the fixed step enum's terminal step `gate` is recorded inside mp finish's branch_finish handling.\n 2. [should-fix] Task 28 requires emitting `required_successor {slug, reason}` on intent rejection, but no CLI flag or naming rule supplies the successor slug, and Task 40's doctor matches obligations by exact slug plus predecessor link.\n 3. [nit] The plan carries the spec's soft enforcement of the bootstrap stage: no task's verify command exercises the live Pi root, Claude cache, tag CI, or GitHub main, and the pinned v9.10.0 finish mechanically offers a waiver at goals_unmet.\n 4. [nit] Task 29's pushed_base producer does not say whether it also runs on the check-only recovery path Task 25 implements, so a push that succeeded before a crash could be recorded 'recovered' without pushed_base.\n 5. [nit] The interview CLI surface is specified only as a verb list in Task 11's integration note and Task 3, whereas the deploy flags are enumerated verbatim in both Task 23 and Task 3.\n 6. [nit] Tasks 3 and 44 are single-sitting chokepoints (all CLI wiring into a 4005-line bin/masterplan.mjs; all 15 bootstrap steps' pre/postconditions in one script) verified only by smoke cases, with exhaustive coverage deferred two or more waves.\n",
+  "result": {
+    "reviewed_sha256": "f19811e80a746b7aa46704336dda5a07d266db202a6708439dd0dc3e8bd2147c",
+    "reviewed_chars": 264512,
+    "reviewed_files": [
+      "spec.md",
+      "plan.md",
+      "plan.index.json"
+    ],
+    "final_verdict": "revise",
+    "summary": "The plan is a faithful decomposition of spec rev 14: waves are files-disjoint, the bootstrap stage correctly stays off the task graph per A33, and every G1-G6 is covered. No blocker survives in-tree verification. Two defects need fixing before execution: (1) the normative pre-finish rule — recorded in plan.index.json meta.solution and in the durable pre_finish_stage_required event (events.jsonl:7) — says \"mp finish is invoked only after bootstrap-v10.mjs status reports the pass complete\", but the spec's step enum ends in `gate`, which §10.2 records inside mp finish's branch_finish handling, so the rule is literally unsatisfiable and must be split into \"through surfaces_live before finish\" and \"gate inside branch_finish\"; (2) Task 28 must emit `required_successor {slug, reason}` on intent rejection and Task 40's doctor matches on exact slug + predecessor link, yet the only rejection interface Task 3 wires (`--intent-rejected --class --reason`, plan.md:204) carries no slug and no naming rule exists, so the event cannot be authored deterministically. Reviewer 1's other two \"blockers\" (no task verifies the live surfaces; the successor run has no task) are spec-inherited, operator-accepted design choices (A33, A35, §10 step 3) — the first is retained as a nit, the second dropped. Reviewer 2's decomposition-risk findings are real but bounded by existing co-ownership fix paths and the files-disjoint rule, so they rank as nits.",
+    "findings": [
+      {
+        "severity": "should-fix",
+        "claim": "The pre-finish sequencing rule (\"mp finish is invoked only after bootstrap-v10.mjs status reports the pass complete\") is unsatisfiable because the fixed step enum's terminal step `gate` is recorded inside mp finish's branch_finish handling.",
+        "failure": "Confirmed in-tree: spec §10.1 step enum ends `surfaces_live · gate`; §10.2 records `gate` at the branch_finish AUQ after mp finish has already run verify/goal check/retro/review. The rule appears verbatim in plan.index.json meta.solution and in the durable pre_finish_stage_required event (docs/masterplan/intent-to-completion/events.jsonl:7). A compacted session reading the durable rule literally (the exact failure mode §9 names) either never invokes mp finish (status never reports complete) or reads 'complete' loosely as 'through surfaces_live', in which case nothing in the plan states that the gate step's arm/record cycle must precede `--choice=merge`. Note: plan.md itself currently renders no post-wave marker (Task 4 adds meta rendering later), so the only live copies of the rule are the index meta and the event.",
+        "fix_direction": "Split the rule into two explicit preconditions in plan.index.json meta.solution and append a superseding event (via the pinned v9 `mp event`): (a) `bootstrap status` reports pass N complete through `surfaces_live` before mp finish starts; (b) `arm --step=gate` / `record --step=gate` execute inside branch_finish before `--choice=merge`. Make Task 7's sequencer rows encode both, and add an assertion in test/prompt-structure.test.mjs or the bootstrap suite that the gate step is the only step permitted after finish begins.",
+        "location": "docs/masterplan/intent-to-completion/plan.index.json meta.solution; docs/masterplan/intent-to-completion/events.jsonl:7; plan.md Task 7 (line 285) sequencer rows"
+      },
+      {
+        "severity": "should-fix",
+        "claim": "Task 28 requires emitting `required_successor {slug, reason}` on intent rejection, but no CLI flag or naming rule supplies the successor slug, and Task 40's doctor matches obligations by exact slug plus predecessor link.",
+        "failure": "Confirmed in-tree: plan.md:204 (Task 3) enumerates `--intent-rejected, --class, --reason` with no successor-slug flag; plan.md:263 (Task 28) says 'Emit required_successor {slug, reason} for both intent-rejection classes'; plan.md:130 (Task 40) matches 'only a bundle whose slug equals the required slug and whose seed record names the obligation source via predecessor'. Spec §7.5 also names no slug source. At rejection time finish-step must either omit the event (violating Task 28), invent a placeholder no real successor will match (obligation never discharged, doctor stays WARN forever), or the Task 1 append-time schema rejects a null slug.",
+        "fix_direction": "Choose one and state it in Tasks 3, 28, and 40: add `--successor=<slug>` to the rejection interface (Task 3 wires it, Task 28 requires it), or define a deterministic naming rule (e.g. `<slug>-remediation`) that both the emitter and Task 33's seed-command renderer compute, or relax Task 40's matcher to key on the predecessor link alone when the event's slug is null. The first option is the smallest change consistent with §7.4's slug-keyed obligation.",
+        "location": "docs/masterplan/intent-to-completion/plan.md:204 (Task 3 flag list), :263 (Task 28), :130 (Task 40)"
+      },
+      {
+        "severity": "nit",
+        "claim": "The plan carries the spec's soft enforcement of the bootstrap stage: no task's verify command exercises the live Pi root, Claude cache, tag CI, or GitHub main, and the pinned v9.10.0 finish mechanically offers a waiver at goals_unmet.",
+        "failure": "Confirmed: lib/finish-step.mjs:101 `GOALS_CHOICES = new Set(['fix','waiver','abort'])` and :460/:554 offer waiver at the goals_unmet gate; the sequencer only forbids auto-waiving (commands/masterplan.md:246). All 48 verify commands can pass with both surfaces at 9.10.0; the only backstops are the operator answering the G6 gate honestly and the pre_finish_stage_required event. This is by design per spec §10.1 ('not a plan wave'), A33 ('no permanent mp verb, no plan task'), and A35, all accepted through four spec panels, so the plan cannot add a task without contradicting the spec.",
+        "fix_direction": "No plan change required. If a stronger backstop is wanted, it is a spec question for the operator: e.g. a doctor check (allowed by A33, which forbids only a plan task or mp verb) that WARNs when every wave is complete and no bootstrap_step {step: surfaces_live} exists on the bundle.",
+        "location": "docs/masterplan/intent-to-completion/plan.index.json meta.solution; spec.md §10.1, A33, A35; lib/finish-step.mjs:101,460"
+      },
+      {
+        "severity": "nit",
+        "claim": "Task 29's pushed_base producer does not say whether it also runs on the check-only recovery path Task 25 implements, so a push that succeeded before a crash could be recorded 'recovered' without pushed_base.",
+        "failure": "Partially confirmed. Task 29 (plan.md, Wave 7) defines the producer as 'after each install-group step it fetches origin/<base> and records pushed_base on the receipt when the remote tip moved to that receipt's base_after' — the comparison is remote tip == base_after, so reviewer 1's premise that a pre-step remote-tip snapshot is needed is wrong. What remains ambiguous is whether the recovery record written by Task 25's probe (check exit 0 → 'recorded done silently', spec §7.2) goes through the same producer; if not, push_archive is never emitted and the archive stays local-only.",
+        "fix_direction": "One sentence in Task 29: the producer runs on every install-group deploy_step receipt write, including the check-only recovery record, and test/finish-replay.test.mjs gets a row for 'push succeeded, crash before --deploy-step-done, recovery records pushed_base'.",
+        "location": "docs/masterplan/intent-to-completion/plan.md Wave 7 Task 29; Wave 3 Task 25"
+      },
+      {
+        "severity": "nit",
+        "claim": "The interview CLI surface is specified only as a verb list in Task 11's integration note and Task 3, whereas the deploy flags are enumerated verbatim in both Task 23 and Task 3.",
+        "failure": "Confirmed: plan.md:81 lists only `mp interview ask|answer|withdraw|draft|critic|end|reopen|status|replay`; plan.md:204 says 'expose interview and goals-load options'. The spec §5.3 flag shapes (--round, --kind, --id, --supersedes, --resolves, --unavailable, --error, --critic-unavailable-ack, --corrected) are the contract, and Task 3 cites §5.3 in spec_refs, so an implementer has the source; a divergence would be caught by Task 6's matrix in wave 6 (co-owns bin/masterplan.mjs) rather than waves 8-9 as reviewer 2 states.",
+        "fix_direction": "Copy the §5.3 flag list verbatim into Task 11's integration note and Task 3's description, matching the rigor already applied to the deploy flags.",
+        "location": "docs/masterplan/intent-to-completion/plan.md:81 (Task 11 note), :204 (Task 3)"
+      },
+      {
+        "severity": "nit",
+        "claim": "Tasks 3 and 44 are single-sitting chokepoints (all CLI wiring into a 4005-line bin/masterplan.mjs; all 15 bootstrap steps' pre/postconditions in one script) verified only by smoke cases, with exhaustive coverage deferred two or more waves.",
+        "failure": "Confirmed: bin/masterplan.mjs is 4005 lines with none of the new lib modules present yet (lib/interview.mjs, lib/config.mjs, scripts/bootstrap-v10.mjs absent). Task 3's verify is 'one accepted invocation per new verb and flag'; Task 44's is fixture-bundle smoke cases. A mis-threaded flag or a step data model that does not generalize ships as 'done' until Task 6 (wave 6) / Tasks 46-48 (waves 4-6). Mitigation already in the plan: Tasks 6, 9, 45, 46, 47, 48 explicitly co-own the chokepoint file so a defect has a same-task fix path, and the files-disjoint wave rule prevents the same-wave split reviewer 2 proposes.",
+        "fix_direction": "Optional: pull a slice of Task 6's behavioural matrix into Task 3's own suite (semantics of --deploy-retry vs --deploy-rerun, one gate-routing case per finish flag), and require Task 44's smoke suite to include one precondition and one postcondition from each of the three step shapes (git-only, gh-network, filesystem-install) so the abstraction is proven before Tasks 45-48 build on it.",
+        "location": "docs/masterplan/intent-to-completion/plan.md:204 (Task 3), :174 (Task 44)"
+      }
+    ],
+    "dropped": [
+      "Reviewer 1 blocker: 'the required successor v10-validation has no task to seed, execute, or verify it, and the doctor check is WARN-only' — dropped as spec-inherited and structurally impossible to fix in this plan: spec §10 step 3 defines v10-validation as a separate run seeded on the installed v10 with --predecessor after this run archives, so no task of this run can execute it; §7.4 and A35 deliberately make required-successor soft (WARN while absent) because the only CI that could add teeth cannot distinguish 'not yet' from 'never'; the plan already carries the visibility mechanism the spec prescribes (Task 33 resume-brief obligation projection, Task 3(e) runs list/status, Task 40 doctor, Task 7 recording the event before finish). This exact objection was adjudicated at spec panel 4 (S7).",
+      "Reviewer 1 should-fix premise 'no durable pre-step remote-tip is recorded for Task 29 to diff against' — dropped: Task 29's producer compares the fetched origin/<base> against the receipt's base_after, which needs no pre-step snapshot. The residual ambiguity (whether the recovery record path invokes the producer) is retained as a nit.",
+      "Reviewer 1's location claim 'plan.md Wave 4 Task 44 / Wave 5 Task 47 / post-wave bootstrap marker text' — corrected: Task 44 is Wave 2 and Task 47 is Wave 5 in the tree, and plan.md currently renders no post-wave marker (Task 4 adds meta rendering later); the rule text lives only in plan.index.json meta.solution and events.jsonl:7. The underlying deadlock finding is retained."
+    ],
+    "disagreements": [
+      "Bootstrap-stage enforcement: reviewer 1 rates the absence of a task-owned live-surface verification a blocker; reviewer 2 rates the same gap a spec-inherited nit. Reviewer 2 is right. Spec §10.1 states the stage is 'not a plan wave ... plan.md lists the stage as a marker after its last wave, never as a task', A33 forbids a plan task or mp verb, and A8 (prompt-first, user-confirmed) plus four spec panels accepted this shape. A plan-gate review judges the plan against the spec; the plan cannot add such a task without contradicting it. The waiver hazard reviewer 1 cites is mechanically true (lib/finish-step.mjs:101 offers waiver at goals_unmet) but is exactly the operator-gated backstop the spec chose.",
+      "Required successor: reviewer 1 rates it a blocker; reviewer 2 did not raise it. Evidence favours dropping it (see dropped list): spec §7.4/A35 make it soft by design and §10 step 3 makes the successor a separate run that cannot be a task of this plan.",
+      "push_archive recovery: reviewer 1 claims a pre-step remote-tip snapshot is required; the plan's own producer definition (compare fetched origin/<base> to base_after) makes that unnecessary. Only the narrower 'does the recovery path call the producer' ambiguity stands, as a nit.",
+      "Task 3 / Task 44 chokepoints: reviewer 2 rates them should-fix; reviewer 1 did not raise them. Downgraded to a single nit because the plan already provides co-ownership fix paths (Tasks 6, 9, 45-48) and the files-disjoint wave rule rules out reviewer 2's same-wave split."
+    ],
+    "reviewers": [
+      "openai/gpt-5.6-sol: revise",
+      "approach-adversary (in-tree, cross-checked against spec.md rev14 + repo state): revise"
+    ],
+    "cross_vendor_lanes": [
+      "openai/gpt-5.6-sol"
+    ]
+  }
+}
