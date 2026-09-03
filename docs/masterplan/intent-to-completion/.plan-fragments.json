@@ -208,7 +208,8 @@
         "verify_commands": [
           "node --test test/op-table-parity.test.mjs",
           "node --test test/prompt-structure.test.mjs",
-          "grep -nE 'overlap.review|mp interview status|mp-intent-critic|run_deploy_step|deploy_indeterminate|run_final_check|intent_confirm|push_archive|bootstrap-v10\\.mjs.*arm|mp context-status|<!-- knob:' commands/masterplan.md"
+          "for t in 'overlap.review' 'mp interview status' 'mp interview replay' 'mp-intent-critic' 'run_deploy_step' 'deploy_indeterminate' 'run_final_check' 'intent_confirm' 'push_archive' 'bootstrap-v10.mjs' 'mp context-status' '<!-- knob:'; do grep -qF \"$t\" commands/masterplan.md || { echo \"missing $t in commands/masterplan.md\"; exit 1; }; done",
+          "grep -Eq 'bootstrap-v10\\.mjs.*arm' commands/masterplan.md"
         ],
         "deps": [
           "orchestration-integration.cli",
