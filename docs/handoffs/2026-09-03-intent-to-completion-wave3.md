@@ -47,6 +47,13 @@ All rows from commands run while writing this file (2026-09-03, end of session).
 | Pending by wave | 4:4, 5:4, 6:3, 7:1, 8:2, 9:3, 10:1 (18 total) | parse of `state.yml` |
 | Full suite | **2117 / 2120** | `npm test` in `<WT>` |
 | `/tmp` free | 6.2 G of 64 G (91% used) | `df -h /tmp` |
+| `active_run` | `{wave: 4, phase: "launching"}` — **no wave is actually in flight** | `git diff` on `state.yml` after the verification `mp continue` |
+
+**About that `active_run` marker:** the `mp continue` run while writing this handoff wrote
+the wave-4 phase-1 launch marker (frozen scope + baseline) and I did **not** dispatch. That
+is exactly the documented crash-in-the-launch-gap state: the next `mp continue` re-emits
+`dispatch_fabric` for wave 4 idempotently. **Do not treat it as a running wave**, and do not
+hand-clear it — no `state.yml` edits outside `mp` (CD-7).
 
 Paths: `MAIN=/srv/dev/ras/masterplan` · `WT=$MAIN/.worktrees/intent-to-completion` ·
 `B=$MAIN/docs/masterplan/intent-to-completion` ·
