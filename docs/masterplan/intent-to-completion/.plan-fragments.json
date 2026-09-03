@@ -1185,7 +1185,6 @@
           "node --test test/publish-hygiene.test.mjs",
           "node --check scripts/release.mjs",
           "grep -q 'never bumps' RELEASING.md && grep -Eq 'corrective.*10\\.0\\.x|10\\.0\\.x.*corrective' RELEASING.md",
-          "tmp=\"$(mktemp -d)\"; trap 'rm -rf \"$tmp\"' EXIT; git clone -q . \"$tmp/repo\"; cp scripts/release.mjs \"$tmp/repo/scripts/release.mjs\"; cp package.json \"$tmp/repo/package.json\"; cp .claude-plugin/plugin.json \"$tmp/repo/.claude-plugin/plugin.json\"; cp CHANGELOG.md \"$tmp/repo/CHANGELOG.md\"; (cd \"$tmp/repo\" && git config user.name masterplan-test && git config user.email masterplan@example.invalid && git add scripts/release.mjs package.json .claude-plugin/plugin.json CHANGELOG.md && (git diff --cached --quiet || git commit -qm fixture) && node scripts/release.mjs --version=10.0.0 && test \"$(git cat-file -t refs/tags/v10.0.0)\" = tag && before=\"$(git rev-parse refs/tags/v10.0.0^{commit})\" && node scripts/release.mjs --version=10.0.0 && test \"$before\" = \"$(git rev-parse refs/tags/v10.0.0^{commit})\")",
           "node --test test/release-script.test.mjs"
         ],
         "deps": [],
