@@ -1,0 +1,264 @@
+{
+  "key": "mp-wave-dispatch-v1:intent-to-completion:1:dispatch_fabric",
+  "run_id": "intent-to-completion",
+  "wave": 1,
+  "op": "dispatch_fabric",
+  "contract_version": "fabric-native-v1",
+  "status": "pending",
+  "attempt": 1,
+  "wave_token": "mp-wave-intent-to-completion-w1-a1",
+  "handles": [],
+  "dispatched_at": "2026-09-03T08:20:53.973Z",
+  "routing_inputs": {
+    "routing": "auto",
+    "codex_host_suppressed": false,
+    "linked_worktree": true
+  },
+  "payload": [
+    {
+      "id": 11,
+      "description": "Implement the replayable interview ledger and its initial focused suite. Derive question, answer, round, active-design-pick, critic, budget, and terminal status from events; append mutations through the bundle writer; enforce question sequencing, unanswered-question and cap guards; record verbatim answers, withdrawals, supersession and resolution links; persist intent drafts and numbered critic payload artifacts with computed digests and honesty-bound receipt fields; support unavailable critic attempts, waiver, end, reopen, read-only status (the budget/state summary), and a verbatim ledger replay — every question, answer, withdrawal, draft, and critic receipt in order — as a distinct library operation, without relying on in-memory counters.\nintegration note: orchestration-integration CLI should expose these library operations as mp interview ask|answer|withdraw|draft|critic|end|reopen|status|replay and route goals-load --interview-waived through the waiver operation; this task does not edit bin/masterplan.mjs. Flag surface for the CLI wiring, verbatim from spec §5.3: --id --round --kind --text --corrected --supersedes --resolves --file --receipt --payload-file --unavailable --error --reason --critic-unavailable-ack.",
+      "files": [
+        "lib/interview.mjs",
+        "test/interview-ledger-resume.test.mjs"
+      ],
+      "verify_commands": [
+        "node --check lib/interview.mjs",
+        "node --test test/interview-ledger-resume.test.mjs"
+      ],
+      "class": "bounded-edit"
+    },
+    {
+      "id": 17,
+      "description": "Update migration parsing so pre-v10 bundles containing `complexity_source`, `predecessor_transcript`, nullable historical values, or `autonomy: full` remain readable without a schema-version bump or destructive rewriting, while newly resolved configuration still uses validated non-null values and `loose`. Add migration compatibility cases to the config suite. Integration note: orchestration-integration.schema must retain validation tolerance for these legacy state fields and `autonomy: full` while treating the new source fields as derived data.",
+      "files": [
+        "lib/migrate.mjs",
+        "test/config.test.mjs",
+        "lib/config.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/config.test.mjs"
+      ],
+      "class": "bounded-edit"
+    },
+    {
+      "id": 23,
+      "description": "Extend the one-op finish driver from branch disposition into the deploy pipeline: re-resolve the repo-local done definition from .masterplan.yaml at deploy_base_sha through the config contract, record deploy_base with branch_tip and done_sha256, handle no_definition_of_done with ad-hoc or incomplete paths, treat done: none as an empty deploy chain, execute groups in release → install → user_only → live_check order, and emit durable authorized → started → deploy_step transitions. Consume autonomy as a behavioral input: gated asks before each runnable step, loose auto-authorizes successful progression, failures and indeterminate results halt, and user_only always hands back for a checked result. Preserve the existing pre-disposition finish order. integration note: orchestration-integration.cli must expose --deploy-authorize, --deploy-step-done, --deploy-rerun, --deploy-attest, --deploy-retry, --deploy-skip, --deploy-abort, --deploy-abort-incomplete, --done-adhoc-file, --merged, --merge-sha, --version-fix, --goals-choice, --intent-confirmed, --intent-rejected, --class, --reason, --archive-pushed, and --sha and pass them to finishStep.",
+      "files": [
+        "lib/finish-step.mjs",
+        "test/finish-step.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/finish-step.test.mjs"
+      ],
+      "class": "bounded-edit"
+    },
+    {
+      "id": 32,
+      "description": "Extend sweepWorktrees so dry runs report a seed lock owned by a dead recorded PID and apply mode removes it through the shared lock primitive, while preserving live-owner locks and existing worktree cleanup behavior. Route lib/sweep.mjs's environment access through lib/config.mjs's readEnv.",
+      "files": [
+        "lib/sweep.mjs",
+        "test/sweep.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/sweep.test.mjs"
+      ],
+      "class": "bounded-edit"
+    },
+    {
+      "id": 34,
+      "description": "Implement the integration-facing run-awareness libraries. Enrich discoverRuns records with the full topic, phase, worktree path or null, parsed goals [{id,text}], and the sorted deduplicated union of plan.index.json task files; export canonical inventory serialization, inventory_sha256 computation over exactly the returned records, and a stale overlap-review assertion. Add transcript lineage resolution and context measurement in lib/context-status.mjs: encode the MAIN project path, prefer its session transcript, fall back only to direct sibling project transcripts, ignore subagent task transcripts, derive the last assistant usage total and trailing four-characters-per-token estimate, and return current, post-compaction, malformed, unsupported, or not-found without fabricating usage. Implement explicit-window, injected MP_CONTEXT_WINDOW, [1m] harness-model, and 200k window precedence with window_source, plus threshold/focus recommendations using the active-run projection for the generated default. Tests cover resumed and fresh transcripts, trailing records, compaction, malformed usage, missing sessions, subdirectory lineage, 200k/1M windows, and configured versus generated focus.\nintegration note: orchestration-integration must wire runs list and both overlap-review recorders to these digest helpers; acquire the seed lock before recomputing the digest; wire context-status and pass MP_CONTEXT_WINDOW through config-knobs' readEnv helper rather than reading process.env here; and complete the black-box seed/resume event-order coverage in test/overlap-sequencer.test.mjs. Route lib/runs.mjs's environment access through readEnv as well.",
+      "files": [
+        "lib/runs.mjs",
+        "lib/context-status.mjs",
+        "test/runs.test.mjs",
+        "test/context-status-session-lineage.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/runs.test.mjs",
+        "node --test test/context-status-session-lineage.test.mjs",
+        "node --test test/resume-brief.test.mjs"
+      ],
+      "class": "bounded-edit"
+    },
+    {
+      "id": 37,
+      "description": "Add the auto-discovered no-definition-of-done doctor check using the repo-config parser from lib/config.mjs rather than a second YAML parser. WARN only when the repository has a .masterplan.yaml with no done key; emit no warning when the file is absent, when done is the literal none sentinel, or when a done object is declared. Assert that WARN and non-applicable states keep the doctor exit code at zero.",
+      "files": [
+        "lib/doctor/no-definition-of-done.mjs",
+        "test/no-definition-of-done.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/no-definition-of-done.test.mjs"
+      ],
+      "class": "bounded-edit"
+    },
+    {
+      "id": 38,
+      "description": "Add incomplete-archive as a separate auto-discovered check instead of extending dangling-run, preserving file-disjoint implementation. Emit a PASS informational finding for each archived bundle classified as incomplete:<reason> or merged, include its slug and completion class, and do not report complete, legacy, or active bundles. Cover incomplete reasons and the done:none merged class. Scope: fixture bundles only at this wave (the real writers land later); the bootstrap recovery suite re-runs this check against writer-produced bundles.",
+      "files": [
+        "lib/doctor/incomplete-archive.mjs",
+        "test/incomplete-archive.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/incomplete-archive.test.mjs"
+      ],
+      "class": "bounded-edit"
+    },
+    {
+      "id": 39,
+      "description": "Add legacy-archive as a separate auto-discovered check that emits a PASS informational finding for archived bundles lacking the completion field, without treating pre-v10 state as a schema crash or as complete. Exclude active bundles and archived bundles carrying complete, merged, or incomplete:* classes, and cover the v9-finished bootstrap run shape. Scope: fixture bundles only at this wave (the real writers land later); the bootstrap recovery suite re-runs this check against writer-produced bundles.",
+      "files": [
+        "lib/doctor/legacy-archive.mjs",
+        "test/legacy-archive.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/legacy-archive.test.mjs"
+      ],
+      "class": "bounded-edit"
+    },
+    {
+      "id": 40,
+      "description": "Add the auto-discovered required-successor check. For every required_successor event, match only a bundle whose slug equals the required slug and whose seed record names the obligation source via predecessor. Report an absent linked successor as WARN with an actionable seed command, a linked non-archived successor as an informational PASS, and an archived complete successor as PASS; report an archived incomplete:*, merged, or legacy successor as ERROR. Assert doctor exit codes for all lifecycle states and prove that a same-slug bundle without the predecessor link leaves the obligation absent and WARN-only. Scope: fixture bundles only at this wave (the real writers land later); the bootstrap recovery suite re-runs this check against writer-produced bundles. The slug in the event comes from the emitter (the finish --successor flag, or the operator's `mp event` for the bootstrap obligation); the matcher stays slug plus predecessor link.",
+      "files": [
+        "lib/doctor/required-successor.mjs",
+        "test/required-successor.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/required-successor.test.mjs"
+      ],
+      "class": "bounded-edit"
+    },
+    {
+      "id": 41,
+      "description": "Extend install-pi checking with --expect=vV so it resolves the current release, executes <install-root>/current/bin/masterplan.mjs version, and fails unless the executable reports the expected version while preserving the existing structural, fixture-root, and rollback behavior. Add success, mismatch, missing/non-executable binary, and fixture-root coverage. Route bin/install-pi.mjs's HOME lookup through lib/config.mjs's readEnv.",
+      "files": [
+        "bin/install-pi.mjs",
+        "test/install-pi.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/install-pi.test.mjs"
+      ],
+      "class": "bounded-edit"
+    }
+  ],
+  "tasks": [
+    {
+      "task_id": 11,
+      "class": "bounded-edit",
+      "handoff_key": "fabric-idem-v1:intent-to-completion:11:7298f601d9e60d7e065c3446cc4f8669d01a74be7bcada93214e00c26fc8e83a:59205a47e234cbd02e3c87eed21f3d2acf008205f05eb50a675fa636463a5150"
+    },
+    {
+      "task_id": 17,
+      "class": "bounded-edit",
+      "handoff_key": "fabric-idem-v1:intent-to-completion:17:190b5d01f36652427b6b4118529d5669a5a1811fe92b79edca28cf90026a8028:59205a47e234cbd02e3c87eed21f3d2acf008205f05eb50a675fa636463a5150"
+    },
+    {
+      "task_id": 23,
+      "class": "bounded-edit",
+      "handoff_key": "fabric-idem-v1:intent-to-completion:23:c6fc0b33f8661ece548a8328aec26a967083e6eb76f1fcf3e79a9b9948101f5e:59205a47e234cbd02e3c87eed21f3d2acf008205f05eb50a675fa636463a5150"
+    },
+    {
+      "task_id": 32,
+      "class": "bounded-edit",
+      "handoff_key": "fabric-idem-v1:intent-to-completion:32:6cb4b02c8958552bcee08d3e500e1c8bf31e3e23ce725111a0394fe7ed05f245:59205a47e234cbd02e3c87eed21f3d2acf008205f05eb50a675fa636463a5150"
+    },
+    {
+      "task_id": 34,
+      "class": "bounded-edit",
+      "handoff_key": "fabric-idem-v1:intent-to-completion:34:2a48ad415825a7f6b77e68fa6ad7c4ad6078ac53c816d9d96843cc86a139cce6:59205a47e234cbd02e3c87eed21f3d2acf008205f05eb50a675fa636463a5150"
+    },
+    {
+      "task_id": 37,
+      "class": "bounded-edit",
+      "handoff_key": "fabric-idem-v1:intent-to-completion:37:22e767b628d2046c361ab57816942dca2e91317e6b1e14526e33ead46262c8b7:59205a47e234cbd02e3c87eed21f3d2acf008205f05eb50a675fa636463a5150"
+    },
+    {
+      "task_id": 38,
+      "class": "bounded-edit",
+      "handoff_key": "fabric-idem-v1:intent-to-completion:38:f318f50887431f2948bc61bef01164abce4dd513805c0b724ffe11522a2217b0:59205a47e234cbd02e3c87eed21f3d2acf008205f05eb50a675fa636463a5150"
+    },
+    {
+      "task_id": 39,
+      "class": "bounded-edit",
+      "handoff_key": "fabric-idem-v1:intent-to-completion:39:00ebd635bf89032589425112caffa29de9acf97df4a9d2b650a71002ce32436f:59205a47e234cbd02e3c87eed21f3d2acf008205f05eb50a675fa636463a5150"
+    },
+    {
+      "task_id": 40,
+      "class": "bounded-edit",
+      "handoff_key": "fabric-idem-v1:intent-to-completion:40:825f1ea0d649dc72dde3b6003a6bb4bf223d38ba6d4982db521225beb4e1bae0:59205a47e234cbd02e3c87eed21f3d2acf008205f05eb50a675fa636463a5150"
+    },
+    {
+      "task_id": 41,
+      "class": "bounded-edit",
+      "handoff_key": "fabric-idem-v1:intent-to-completion:41:4a70adb999b7404476c95c3c1db52a8364bb65f6bee0d1a82c04b9cb8e6989fa:59205a47e234cbd02e3c87eed21f3d2acf008205f05eb50a675fa636463a5150"
+    }
+  ],
+  "gateway_verify_allowlist": "bash -c",
+  "review_context": {
+    "enabled": true,
+    "base_sha": "96cc8e444231b4e79dee799b2cf83dc6cfd01bda",
+    "tasks": [
+      {
+        "task_id": 11,
+        "description": "Implement the replayable interview ledger and its initial focused suite. Derive question, answer, round, active-design-pick, critic, budget, and terminal status from events; append mutations through the bundle writer; enforce question sequencing, unanswered-question and cap guards; record verbatim answers, withdrawals, supersession and resolution links; persist intent drafts and numbered critic payload artifacts with computed digests and honesty-bound receipt fields; support unavailable critic attempts, waiver, end, reopen, read-only status (the budget/state summary), and a verbatim ledger replay — every question, answer, withdrawal, draft, and critic receipt in order — as a distinct library operation, without relying on in-memory counters.\nintegration note: orchestration-integration CLI should expose these library operations as mp interview ask|answer|withdraw|draft|critic|end|reopen|status|replay and route goals-load --interview-waived through the waiver operation; this task does not edit bin/masterplan.mjs. Flag surface for the CLI wiring, verbatim from spec §5.3: --id --round --kind --text --corrected --supersedes --resolves --file --receipt --payload-file --unavailable --error --reason --critic-unavailable-ack.",
+        "class": "bounded-edit",
+        "repo": "/srv/dev/ras/masterplan/.worktrees/intent-to-completion"
+      },
+      {
+        "task_id": 17,
+        "description": "Update migration parsing so pre-v10 bundles containing `complexity_source`, `predecessor_transcript`, nullable historical values, or `autonomy: full` remain readable without a schema-version bump or destructive rewriting, while newly resolved configuration still uses validated non-null values and `loose`. Add migration compatibility cases to the config suite. Integration note: orchestration-integration.schema must retain validation tolerance for these legacy state fields and `autonomy: full` while treating the new source fields as derived data.",
+        "class": "bounded-edit",
+        "repo": "/srv/dev/ras/masterplan/.worktrees/intent-to-completion"
+      },
+      {
+        "task_id": 23,
+        "description": "Extend the one-op finish driver from branch disposition into the deploy pipeline: re-resolve the repo-local done definition from .masterplan.yaml at deploy_base_sha through the config contract, record deploy_base with branch_tip and done_sha256, handle no_definition_of_done with ad-hoc or incomplete paths, treat done: none as an empty deploy chain, execute groups in release → install → user_only → live_check order, and emit durable authorized → started → deploy_step transitions. Consume autonomy as a behavioral input: gated asks before each runnable step, loose auto-authorizes successful progression, failures and indeterminate results halt, and user_only always hands back for a checked result. Preserve the existing pre-disposition finish order. integration note: orchestration-integration.cli must expose --deploy-authorize, --deploy-step-done, --deploy-rerun, --deploy-attest, --deploy-retry, --deploy-skip, --deploy-abort, --deploy-abort-incomplete, --done-adhoc-file, --merged, --merge-sha, --version-fix, --goals-choice, --intent-confirmed, --intent-rejected, --class, --reason, --archive-pushed, and --sha and pass them to finishStep.",
+        "class": "bounded-edit",
+        "repo": "/srv/dev/ras/masterplan/.worktrees/intent-to-completion"
+      },
+      {
+        "task_id": 32,
+        "description": "Extend sweepWorktrees so dry runs report a seed lock owned by a dead recorded PID and apply mode removes it through the shared lock primitive, while preserving live-owner locks and existing worktree cleanup behavior. Route lib/sweep.mjs's environment access through lib/config.mjs's readEnv.",
+        "class": "bounded-edit",
+        "repo": "/srv/dev/ras/masterplan/.worktrees/intent-to-completion"
+      },
+      {
+        "task_id": 34,
+        "description": "Implement the integration-facing run-awareness libraries. Enrich discoverRuns records with the full topic, phase, worktree path or null, parsed goals [{id,text}], and the sorted deduplicated union of plan.index.json task files; export canonical inventory serialization, inventory_sha256 computation over exactly the returned records, and a stale overlap-review assertion. Add transcript lineage resolution and context measurement in lib/context-status.mjs: encode the MAIN project path, prefer its session transcript, fall back only to direct sibling project transcripts, ignore subagent task transcripts, derive the last assistant usage total and trailing four-characters-per-token estimate, and return current, post-compaction, malformed, unsupported, or not-found without fabricating usage. Implement explicit-window, injected MP_CONTEXT_WINDOW, [1m] harness-model, and 200k window precedence with window_source, plus threshold/focus recommendations using the active-run projection for the generated default. Tests cover resumed and fresh transcripts, trailing records, compaction, malformed usage, missing sessions, subdirectory lineage, 200k/1M windows, and configured versus generated focus.\nintegration note: orchestration-integration must wire runs list and both overlap-review recorders to these digest helpers; acquire the seed lock before recomputing the digest; wire context-status and pass MP_CONTEXT_WINDOW through config-knobs' readEnv helper rather than reading process.env here; and complete the black-box seed/resume event-order coverage in test/overlap-sequencer.test.mjs. Route lib/runs.mjs's environment access through readEnv as well.",
+        "class": "bounded-edit",
+        "repo": "/srv/dev/ras/masterplan/.worktrees/intent-to-completion"
+      },
+      {
+        "task_id": 37,
+        "description": "Add the auto-discovered no-definition-of-done doctor check using the repo-config parser from lib/config.mjs rather than a second YAML parser. WARN only when the repository has a .masterplan.yaml with no done key; emit no warning when the file is absent, when done is the literal none sentinel, or when a done object is declared. Assert that WARN and non-applicable states keep the doctor exit code at zero.",
+        "class": "bounded-edit",
+        "repo": "/srv/dev/ras/masterplan/.worktrees/intent-to-completion"
+      },
+      {
+        "task_id": 38,
+        "description": "Add incomplete-archive as a separate auto-discovered check instead of extending dangling-run, preserving file-disjoint implementation. Emit a PASS informational finding for each archived bundle classified as incomplete:<reason> or merged, include its slug and completion class, and do not report complete, legacy, or active bundles. Cover incomplete reasons and the done:none merged class. Scope: fixture bundles only at this wave (the real writers land later); the bootstrap recovery suite re-runs this check against writer-produced bundles.",
+        "class": "bounded-edit",
+        "repo": "/srv/dev/ras/masterplan/.worktrees/intent-to-completion"
+      },
+      {
+        "task_id": 39,
+        "description": "Add legacy-archive as a separate auto-discovered check that emits a PASS informational finding for archived bundles lacking the completion field, without treating pre-v10 state as a schema crash or as complete. Exclude active bundles and archived bundles carrying complete, merged, or incomplete:* classes, and cover the v9-finished bootstrap run shape. Scope: fixture bundles only at this wave (the real writers land later); the bootstrap recovery suite re-runs this check against writer-produced bundles.",
+        "class": "bounded-edit",
+        "repo": "/srv/dev/ras/masterplan/.worktrees/intent-to-completion"
+      },
+      {
+        "task_id": 40,
+        "description": "Add the auto-discovered required-successor check. For every required_successor event, match only a bundle whose slug equals the required slug and whose seed record names the obligation source via predecessor. Report an absent linked successor as WARN with an actionable seed command, a linked non-archived successor as an informational PASS, and an archived complete successor as PASS; report an archived incomplete:*, merged, or legacy successor as ERROR. Assert doctor exit codes for all lifecycle states and prove that a same-slug bundle without the predecessor link leaves the obligation absent and WARN-only. Scope: fixture bundles only at this wave (the real writers land later); the bootstrap recovery suite re-runs this check against writer-produced bundles. The slug in the event comes from the emitter (the finish --successor flag, or the operator's `mp event` for the bootstrap obligation); the matcher stays slug plus predecessor link.",
+        "class": "bounded-edit",
+        "repo": "/srv/dev/ras/masterplan/.worktrees/intent-to-completion"
+      },
+      {
+        "task_id": 41,
+        "description": "Extend install-pi checking with --expect=vV so it resolves the current release, executes <install-root>/current/bin/masterplan.mjs version, and fails unless the executable reports the expected version while preserving the existing structural, fixture-root, and rollback behavior. Add success, mismatch, missing/non-executable binary, and fixture-root coverage. Route bin/install-pi.mjs's HOME lookup through lib/config.mjs's readEnv.",
+        "class": "bounded-edit",
+        "repo": "/srv/dev/ras/masterplan/.worktrees/intent-to-completion"
+      }
+    ]
+  }
+}

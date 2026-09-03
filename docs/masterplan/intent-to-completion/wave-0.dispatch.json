@@ -4,7 +4,7 @@
   "wave": 0,
   "op": "dispatch_fabric",
   "contract_version": "fabric-native-v1",
-  "status": "pending",
+  "status": "recorded",
   "attempt": 1,
   "wave_token": "mp-wave-intent-to-completion-w0-a1",
   "handles": [],
@@ -296,5 +296,23 @@
     "outcome": "lost-to-other",
     "reason": "lock vanished (no .owner.lock)",
     "recorded": []
+  },
+  "completed_at": "2026-09-03T08:20:01.409Z",
+  "record_outcome": {
+    "recorded": [
+      1,
+      2,
+      10,
+      13,
+      16,
+      22,
+      31,
+      33,
+      36,
+      42,
+      43
+    ],
+    "failed": [],
+    "cleared": true
   }
 }
