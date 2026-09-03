@@ -3,7 +3,7 @@
   "tasks": [
     {
       "id": 1,
-      "description": "Extend the schema-v9 bundle contract without a version bump: validate new-seed autonomy and derived source fields while tolerating legacy fields and autonomy full, support complete/incomplete/merged completion with an absent field remaining legacy, and add append-time schemas for interview, overlap/config, deploy/final-goal-check, completion/archive, required-successor, and bootstrap armed/step events. Export the bootstrap event validation and fixed step enum needed by the one-off driver while preserving existing generic event compatibility. Own focused tests in test/bundle-events.test.mjs covering a valid and an invalid instance of every new event type, the append-time rejection path, the exported bootstrap validation and step enum, legacy-field tolerance (complexity_source, predecessor_transcript, autonomy full), the absent-completion legacy reading, and the post-archive restriction (only archive_pushed is accepted after archived).",
+      "description": "Extend the schema-v9 bundle contract without a version bump: validate new-seed autonomy and derived source fields while tolerating legacy fields and autonomy full, support complete/incomplete/merged completion with an absent field remaining legacy, and add append-time schemas for interview, overlap/config, deploy/final-goal-check, completion/archive, required-successor, and bootstrap armed/step events. Export the bootstrap event validation and fixed step enum needed by the one-off driver while preserving existing generic event compatibility. Own focused tests in test/bundle-events.test.mjs covering a valid and an invalid instance of every new event type, the append-time rejection path, the exported bootstrap validation and step enum, legacy-field tolerance (complexity_source, predecessor_transcript, autonomy full), the absent-completion legacy reading, and the post-archive restriction (only archive_pushed is accepted after archived). Generic event types already present in existing bundles (for example the pre_finish_stage_required note recorded on this run) stay readable and replayable: append-time validation binds only the new typed events.",
       "wave": 0,
       "files": [
         "lib/bundle.mjs",
@@ -13,7 +13,7 @@
       "verify_commands": [
         "node --test test/bundle-events.test.mjs",
         "node --test test/bundle.test.mjs",
-        "grep -nE 'interview_question|overlap_review|deploy_step_started|completion_confirmed|required_successor|archive_pushed|bootstrap_armed|bootstrap_step' lib/bundle.mjs"
+        "for t in interview_question overlap_review deploy_step_started completion_confirmed required_successor archive_pushed bootstrap_armed bootstrap_step; do grep -q \"$t\" lib/bundle.mjs || { echo \"missing $t in lib/bundle.mjs\"; exit 1; }; done"
       ],
       "codex": null,
       "goals": [
@@ -37,7 +37,7 @@
     },
     {
       "id": 2,
-      "description": "Repair the pre-existing CLI A1 failure by admitting and forwarding the existing finish-step goal-gate option family, including --goals-choice, through the known-flag guard while retaining exit 2 for genuinely unknown flags.",
+      "description": "Repair the pre-existing RED test A1 in test/cli-surface.test.mjs. The actual defect: --goals-choice is already in KNOWN_FLAGS and threaded to finishStep, but die() exits 2 for every uncaught error, so the ENOENT for the test's nonexistent state file collides with the unknown-flag exit code the test rules out. Give uncaught and I/O errors a distinct exit code (keep 2 for the unknown-flag contract) so a recognized flag is provably not rejected as unknown, and keep every other CLI exit-code assertion green.",
       "wave": 0,
       "files": [
         "bin/masterplan.mjs",
@@ -59,7 +59,7 @@
     },
     {
       "id": 3,
-      "description": "Wire bin/masterplan.mjs to the sibling subsystem APIs: resolve seed and config-show values and sources, persist warnings after the required second-position overlap_review event, enforce the overlap review and seed-lock sequence, expose interview and goals-load options, register overlap recording, enriched runs/status, context-status, resume-brief, and sweep behavior, forward all deploy/final-check/completion/archive finish flags, accept final goal-check receipts, and default plan commands from stored plan_path. Keep KNOWN_FLAGS and isKnownFlag authoritative, reject retired flags and any bootstrap verb, preserve the generic event verb, and route this file's environment reads through readEnv. Exact contracts: (a) `mp goals-load --interview-waived --reason` routes through the interview waiver operation, and goals-load receives the bundle replay and the spec path so the `assumed_row_missing` error code is raised exactly as the library emits it; (b) `mp config show` prints `harness.autoCompactWindow`, and the module exports the final `KNOWN_FLAGS` and `isKnownFlag`; (c) `mp seed --predecessor` projects the predecessor bundle's intent-rejection event (class and correction text) into the new bundle's seed record so the interview can open with it; (d) this task owns implementation-facing smoke cases in test/cli-surface.test.mjs and test/bin-masterplan.test.mjs: one accepted invocation per new verb and per new finish-step flag, one waiver-forwarding case, one final-receipt binding case, one config-show output case, and the stored plan-path default; the exhaustive behavioural matrix belongs to orchestration-integration.cli-contract. (e) `mp runs list` and `mp status` print the completion class (complete, incomplete:<reason>, merged, or legacy when the field is absent) and `pushed: no` until archive_pushed, and both call lib/resume-brief.mjs's obligation projection to print open required_successor obligations with the exact successor seed command; (f) `mp config show` reports `harness.autoCompactWindow` when the harness settings are readable, recommends a value no lower than the run's `context_watch.threshold`, and never writes harness settings.",
+      "description": "Wire bin/masterplan.mjs to the sibling subsystem APIs: resolve seed and config-show values and sources, persist warnings after the required second-position overlap_review event, enforce the overlap review and seed-lock sequence, expose interview and goals-load options, register overlap recording, enriched runs/status, context-status, resume-brief, and sweep behavior, forward all deploy/final-check/completion/archive finish flags, accept final goal-check receipts, and default plan commands from stored plan_path. Keep KNOWN_FLAGS and isKnownFlag authoritative, reject retired flags and any bootstrap verb, preserve the generic event verb, and route this file's environment reads through readEnv. Exact contracts: (a) `mp goals-load --interview-waived --reason` routes through the interview waiver operation, and goals-load receives the bundle replay and the spec path so the `assumed_row_missing` error code is raised exactly as the library emits it; (b) `mp config show` prints `harness.autoCompactWindow`, and the module exports the final `KNOWN_FLAGS` and `isKnownFlag`; (c) `mp seed --predecessor` projects the predecessor bundle's intent-rejection event (class and correction text) into the new bundle's seed record so the interview can open with it; (d) this task owns implementation-facing smoke cases in test/cli-surface.test.mjs and test/bin-masterplan.test.mjs: one accepted invocation per new verb and per new finish-step flag, one waiver-forwarding case, one final-receipt binding case, one config-show output case, and the stored plan-path default; the exhaustive behavioural matrix belongs to orchestration-integration.cli-contract. (e) `mp runs list` and `mp status` print the completion class (complete, incomplete:<reason>, merged, or legacy when the field is absent) and `pushed: no` until archive_pushed, and both call lib/resume-brief.mjs's obligation projection to print open required_successor obligations with the exact successor seed command; (f) `mp config show` reports `harness.autoCompactWindow` when the harness settings are readable, recommends a value no lower than the run's `context_watch.threshold`, and never writes harness settings. Also expose `mp interview replay` (the verbatim ledger from lib/interview.mjs).",
       "wave": 4,
       "files": [
         "bin/masterplan.mjs",
@@ -148,10 +148,11 @@
     },
     {
       "id": 6,
-      "description": "Expand the CLI surface regression suite to cover all newly registered verbs and finish-step flags, required overlap-review seed behavior, interview and final-receipt forwarding, config/context/resume commands, stored plan-path defaults, removal of retired flags, and the intentional absence of an mp bootstrap verb. Assert the config-show `harness.autoCompactWindow` field, the exported KNOWN_FLAGS/isKnownFlag surface, and the black-box successor case: a bundle seeded with --predecessor naming a predecessor whose finish recorded an intent-class rejection carries that correction text in its seed record. Also assert: an archived bundle with no completion field prints `legacy` in both runs list and status; both commands print an open required_successor obligation with the exact seed command; config show's recommendation is no lower than the configured threshold and the harness settings file is byte-identical after the call.",
+      "description": "Expand the CLI surface regression suite to cover all newly registered verbs and finish-step flags, required overlap-review seed behavior, interview and final-receipt forwarding, config/context/resume commands, stored plan-path defaults, removal of retired flags, and the intentional absence of an mp bootstrap verb. Assert the config-show `harness.autoCompactWindow` field, the exported KNOWN_FLAGS/isKnownFlag surface, and the black-box successor case: a bundle seeded with --predecessor naming a predecessor whose finish recorded an intent-class rejection carries that correction text in its seed record. Also assert: an archived bundle with no completion field prints `legacy` in both runs list and status; both commands print an open required_successor obligation with the exact seed command; config show's recommendation is no lower than the configured threshold and the harness settings file is byte-identical after the call. Assert that runs list and status print `pushed: no` for an archived bundle until archive_pushed lands. This task co-owns bin/masterplan.mjs so a wiring defect its matrix exposes can be fixed in the same task.",
       "wave": 6,
       "files": [
-        "test/cli-surface.test.mjs"
+        "test/cli-surface.test.mjs",
+        "bin/masterplan.mjs"
       ],
       "verify_commands": [
         "node --test test/cli-surface.test.mjs"
@@ -179,7 +180,7 @@
     },
     {
       "id": 7,
-      "description": "Replace the sequencer contract with the complete intent-to-completion flow: perform runs-list overlap review before every seed, drive bounded ledger-backed intent rounds and fresh-context critic dispatches using quoted bundle data, enforce named terminal states, consume intent during planning and assessment, and render the full deploy/final-assessment/intent-confirm/archive-push operation table and autonomy stop set. Add the post-wave bootstrap arm-command-record stage without making it a plan task or mp verb, emit measured or explicit-unknown context status at every gate with compact advice, and declare every prompt-only control with a knob marker. Exact dispatch contracts: mp-intent-critic receives exactly three quoted-data blocks (the verbatim goals.md topic anchor, the interview ledger replay from `mp interview status`, and the current intent draft) and its receipt is recorded through `mp interview critic`; mp-goal-assessor is invoked in `implementation` mode before disposition with the base..tip diff and verify output, and in `final` mode after the live check with the binding tuple {deploy_base_sha, deploy_chain_hash, live_check_digest}, recorded via `mp record-goal-check --final`; at interview start on a bundle seeded with --predecessor the predecessor's stored intent-correction text is presented as quoted context; the bootstrap-stage rows record `required_successor {slug: v10-validation, reason}` through the pinned v9 `mp event` before `mp finish` on this run. Cover the dispatch payloads, mode names, and binding fields in test/prompt-structure.test.mjs and every new op row in test/op-table-parity.test.mjs.",
+      "description": "Replace the sequencer contract with the complete intent-to-completion flow: perform runs-list overlap review before every seed, drive bounded ledger-backed intent rounds and fresh-context critic dispatches using quoted bundle data, enforce named terminal states, consume intent during planning and assessment, and render the full deploy/final-assessment/intent-confirm/archive-push operation table and autonomy stop set. Add the post-wave bootstrap arm-command-record stage without making it a plan task or mp verb, emit measured or explicit-unknown context status at every gate with compact advice, and declare every prompt-only control with a knob marker. Exact dispatch contracts: mp-intent-critic receives exactly three quoted-data blocks (the verbatim goals.md topic anchor, the verbatim interview ledger (every question, answer, withdrawal, draft, and critic receipt in order) from `mp interview replay`, and the current intent draft) and its receipt is recorded through `mp interview critic`; mp-goal-assessor is invoked in `implementation` mode before disposition with the base..tip diff and verify output, and in `final` mode after the live check with the binding tuple {deploy_base_sha, deploy_chain_hash, live_check_digest}, recorded via `mp record-goal-check --final`; at interview start on a bundle seeded with --predecessor the predecessor's stored intent-correction text is presented as quoted context; the bootstrap-stage rows record `required_successor {slug: v10-validation, reason}` through the pinned v9 `mp event` before `mp finish` on this run. Cover the dispatch payloads, mode names, and binding fields in test/prompt-structure.test.mjs and every new op row in test/op-table-parity.test.mjs. test/prompt-structure.test.mjs asserts that the critic dispatch block carries question and answer text, not only the budget summary.",
       "wave": 8,
       "files": [
         "commands/masterplan.md",
@@ -217,7 +218,7 @@
     },
     {
       "id": 8,
-      "description": "Publish the integrated public contract across README, the masterplan skill, and the verb reference: document CLI > repo > user > default resolution, exact complexity/autonomy levels and aliases, overlap and interview verbs, done configuration and fixed deploy order, final intent confirmation, completion and push classes, context-status and resume-brief wiring, required successors, and the one-off v10 bootstrap boundary. Add an Environment section naming every readEnv-backed control, including MP_DISPATCH_WAVE_CONCURRENCY, MP_ROUTING_POLICY, SKYNET_VERIFY_ALLOWLIST, and MP_CONTEXT_WINDOW.",
+      "description": "Publish the integrated public contract across README, the masterplan skill, and the verb reference: document CLI > repo > user > default resolution, exact complexity/autonomy levels and aliases, overlap and interview verbs, done configuration and fixed deploy order, final intent confirmation, completion and push classes, context-status and resume-brief wiring, required successors, and the one-off v10 bootstrap boundary. Add an Environment section naming every readEnv-backed control, including MP_DISPATCH_WAVE_CONCURRENCY, MP_ROUTING_POLICY, SKYNET_VERIFY_ALLOWLIST, and MP_CONTEXT_WINDOW. The Environment section also names CLAUDE_CODE_SESSION_ID (Guard D session identity, with its --session/--host flag companions).",
       "wave": 9,
       "files": [
         "README.md",
@@ -226,9 +227,9 @@
         "test/docs-contract.test.mjs"
       ],
       "verify_commands": [
-        "grep -nE 'CLI.*repo.*user.*default|complexity|autonomy|planning_mode|context_watch|done:' README.md skills/masterplan/SKILL.md",
-        "grep -nE 'complete|incomplete|merged|legacy|context-status|resume-brief|overlap|required successor' README.md skills/masterplan/SKILL.md docs/verbs.md",
-        "grep -nE 'Environment|MP_DISPATCH_WAVE_CONCURRENCY|MP_ROUTING_POLICY|SKYNET_VERIFY_ALLOWLIST|MP_CONTEXT_WINDOW' docs/verbs.md",
+        "for t in complexity autonomy planning_mode context_watch done:; do grep -q \"$t\" README.md || { echo \"missing $t in README.md\"; exit 1; }; done",
+        "for t in complexity autonomy context-status resume-brief overlap; do grep -q \"$t\" skills/masterplan/SKILL.md || { echo \"missing $t in skills/masterplan/SKILL.md\"; exit 1; }; done",
+        "for t in Environment MP_DISPATCH_WAVE_CONCURRENCY MP_ROUTING_POLICY SKYNET_VERIFY_ALLOWLIST MP_CONTEXT_WINDOW CLAUDE_CODE_SESSION_ID incomplete merged legacy required; do grep -q \"$t\" docs/verbs.md || { echo \"missing $t in docs/verbs.md\"; exit 1; }; done",
         "node --test test/docs-contract.test.mjs"
       ],
       "codex": null,
@@ -257,10 +258,13 @@
     },
     {
       "id": 9,
-      "description": "Own test/overlap-sequencer.test.mjs, the black-box integration suite named by G1: seed refuses without --overlap-review; the overlap_review event is written second, after bundle_created; a review whose inventory_sha256 no longer matches the runs inventory is refused as overlap_review_stale; a refused seed leaves no bundle directory; the seed lock is held across validate-then-create so a concurrent seed observes it, and sweep breaks a dead-pid lock; resume after simulated compaction reconstructs the overlap outcome from events; and runs list exposes topic, goals, planned_paths, and worktree for the conflict view. Cover the full §8 matrix with durable-event assertions: an in-progress worktree/file conflict, a plan-level planned_paths intersection, an archived topic/goals candidate offered as --predecessor, no overlap (seed proceeds with the review recorded), the predecessor link recorded on the seed, the resume path recording the same review on the resumed bundle via mp record-overlap-review, abort (nothing seeded, nothing on disk), and gated versus loose behaviour (loose fires the ask only for in-progress or plan-level conflicts and records archived candidates silently).",
+      "description": "Own test/overlap-sequencer.test.mjs, the black-box integration suite named by G1: seed refuses without --overlap-review; the overlap_review event is written second, after bundle_created; a review whose inventory_sha256 no longer matches the runs inventory is refused as overlap_review_stale; a refused seed leaves no bundle directory; the seed lock is held across validate-then-create so a concurrent seed observes it, and sweep breaks a dead-pid lock; resume after simulated compaction reconstructs the overlap outcome from events; and runs list exposes topic, goals, planned_paths, and worktree for the conflict view. Cover the full §8 matrix with durable-event assertions: an in-progress worktree/file conflict, a plan-level planned_paths intersection, an archived topic/goals candidate offered as --predecessor, no overlap (seed proceeds with the review recorded), the predecessor link recorded on the seed, the resume path recording the same review on the resumed bundle via mp record-overlap-review, abort (nothing seeded, nothing on disk), and gated versus loose behaviour (loose fires the ask only for in-progress or plan-level conflicts and records archived candidates silently). Co-owns bin/masterplan.mjs, lib/seed-lock.mjs, and lib/runs.mjs so a defect the suite exposes has a fix path in the same task.",
       "wave": 9,
       "files": [
-        "test/overlap-sequencer.test.mjs"
+        "test/overlap-sequencer.test.mjs",
+        "bin/masterplan.mjs",
+        "lib/seed-lock.mjs",
+        "lib/runs.mjs"
       ],
       "verify_commands": [
         "node --test test/overlap-sequencer.test.mjs"
@@ -303,7 +307,7 @@
     },
     {
       "id": 11,
-      "description": "Implement the replayable interview ledger and its initial focused suite. Derive question, answer, round, active-design-pick, critic, budget, and terminal status from events; append mutations through the bundle writer; enforce question sequencing, unanswered-question and cap guards; record verbatim answers, withdrawals, supersession and resolution links; persist intent drafts and numbered critic payload artifacts with computed digests and honesty-bound receipt fields; support unavailable critic attempts, waiver, end, reopen, and read-only status without relying on in-memory counters.\nintegration note: orchestration-integration CLI should expose these library operations as mp interview ask|answer|withdraw|draft|critic|end|reopen|status and route goals-load --interview-waived through the waiver operation; this task does not edit bin/masterplan.mjs.",
+      "description": "Implement the replayable interview ledger and its initial focused suite. Derive question, answer, round, active-design-pick, critic, budget, and terminal status from events; append mutations through the bundle writer; enforce question sequencing, unanswered-question and cap guards; record verbatim answers, withdrawals, supersession and resolution links; persist intent drafts and numbered critic payload artifacts with computed digests and honesty-bound receipt fields; support unavailable critic attempts, waiver, end, reopen, read-only status (the budget/state summary), and a verbatim ledger replay — every question, answer, withdrawal, draft, and critic receipt in order — as a distinct library operation, without relying on in-memory counters.\nintegration note: orchestration-integration CLI should expose these library operations as mp interview ask|answer|withdraw|draft|critic|end|reopen|status|replay and route goals-load --interview-waived through the waiver operation; this task does not edit bin/masterplan.mjs.",
       "wave": 1,
       "files": [
         "lib/interview.mjs",
@@ -451,7 +455,8 @@
       "wave": 1,
       "files": [
         "lib/migrate.mjs",
-        "test/config.test.mjs"
+        "test/config.test.mjs",
+        "lib/config.mjs"
       ],
       "verify_commands": [
         "node --test test/config.test.mjs"
@@ -495,7 +500,7 @@
     },
     {
       "id": 19,
-      "description": "Implement the knob contract registry and its single-variable fixture harness. Build both fixtures from one shared base, prove exactly one input differs, and require a consumer-side observable rather than seeded state. Register or add two-value behavioral contracts for every current non-metadata flag, config path, emitted state control, environment control, and prompt-only marker, including complexity caps, autonomy deploy asks, planning-mode phase selection, both `context_watch` outputs, and the documented environment controls. Permit rendered protocol lines only for prompt-only controls. Assert the guard rejects a read-but-ignored synthetic knob, a seeded-state-only synthetic knob, and a fixture pair that changes two inputs. Integration note: these tests consume the final CLI, interview, finish, context-status, resume-phase, and sequencer surfaces but do not edit their owning files.",
+      "description": "Implement the knob contract registry and its single-variable fixture harness. Build both fixtures from one shared base, prove exactly one input differs, and require a consumer-side observable rather than seeded state. Register or add two-value behavioral contracts for every current non-metadata flag, config path, emitted state control, environment control, and prompt-only marker, including complexity caps, autonomy deploy asks, planning-mode phase selection, both `context_watch` outputs, and the documented environment controls. Permit rendered protocol lines only for prompt-only controls. Assert the guard rejects a read-but-ignored synthetic knob, a seeded-state-only synthetic knob, and a fixture pair that changes two inputs. Integration note: these tests consume the final CLI, interview, finish, context-status, resume-phase, and sequencer surfaces but do not edit their owning files. Register CLAUDE_CODE_SESSION_ID (and its --session/--host flag companions) with the owner-lock acquire/heartbeat observable rather than an exemption.",
       "wave": 9,
       "files": [
         "test/knob-contract.test.mjs",
@@ -544,7 +549,7 @@
     {
       "id": 21,
       "description": "Route every remaining direct process.env read outside lib/config.mjs through its exported accessors, preserving behaviour and the injected-env test seams: CLAUDE_CONFIG_DIR and HOME in lib/paths.mjs; MP_ROUTING_POLICY in lib/dispatch/routing-policy.mjs and lib/doctor/routing-policy-health.mjs; MP_DISPATCH_WAVE_CONCURRENCY, MP_ROUTING_POLICY, and SKYNET_VERIFY_ALLOWLIST in lib/dispatch-wave.mjs; HOME in bin/doctor.mjs, lib/doctor/codex-auth.mjs, and lib/doctor/pi-agent-registration.mjs (its spawn uses the config-owned passthrough). The existing suites for these modules stay green; the repo-wide zero-process.env assertion belongs to config-knobs.inventory, this task asserts only its own files. lib/continue.mjs, lib/sweep.mjs, lib/runs.mjs, and bin/install-pi.mjs are converted by their owning tasks.",
-      "wave": 1,
+      "wave": 2,
       "files": [
         "lib/paths.mjs",
         "lib/dispatch/routing-policy.mjs",
@@ -556,7 +561,8 @@
         "test/paths.test.mjs",
         "test/routing-policy.test.mjs",
         "test/dispatch-wave.test.mjs",
-        "test/doctor.test.mjs"
+        "test/doctor.test.mjs",
+        "lib/config.mjs"
       ],
       "verify_commands": [
         "node --test test/paths.test.mjs",
@@ -741,7 +747,7 @@
     },
     {
       "id": 29,
-      "description": "Add the post-archive push_archive state. Emit it only when an install-group receipt proves that it pushed the base and identifies pushed_base; always halt for operator approval under gated and loose autonomy; list exactly pushed_base..HEAD; and accept archive_pushed as the sole post-archive event. Re-entry without that event must re-emit the gate, while no done block, done: none, or an install chain that did not push must stop without a push gate. Exercise exact fast-forward publication and the non-fast-forward recovery path of fetch, per-commit audit, rebase, one retry, then stop, while reporting pushed: no until archive_pushed lands.",
+      "description": "Add the post-archive push_archive state. Emit it only when an install-group receipt proves that it pushed the base and identifies pushed_base; always halt for operator approval under gated and loose autonomy; list exactly pushed_base..HEAD; and accept archive_pushed as the sole post-archive event. Re-entry without that event must re-emit the gate, while no done block, done: none, or an install chain that did not push must stop without a push gate. Exercise exact fast-forward publication and the non-fast-forward recovery path of fetch, per-commit audit, rebase, one retry, then stop, while reporting pushed: no until archive_pushed lands. The producer of the trigger is finish-step itself: after each install-group step it fetches origin/<base> and records pushed_base on the receipt when the remote tip moved to that receipt's base_after; an install chain that never moved the remote records no pushed_base and never reaches push_archive. Test rows cover both.",
       "wave": 7,
       "files": [
         "lib/finish-step.mjs",
@@ -768,10 +774,12 @@
       "wave": 8,
       "files": [
         "lib/retro-goals.mjs",
-        "test/finish-step-goals.test.mjs"
+        "test/finish-step-goals.test.mjs",
+        "test/retro-goals.test.mjs"
       ],
       "verify_commands": [
-        "node --test test/finish-step-goals.test.mjs"
+        "node --test test/finish-step-goals.test.mjs",
+        "node --test test/retro-goals.test.mjs"
       ],
       "codex": null,
       "goals": [
@@ -937,7 +945,7 @@
     },
     {
       "id": 38,
-      "description": "Add incomplete-archive as a separate auto-discovered check instead of extending dangling-run, preserving file-disjoint implementation. Emit a PASS informational finding for each archived bundle classified as incomplete:<reason> or merged, include its slug and completion class, and do not report complete, legacy, or active bundles. Cover incomplete reasons and the done:none merged class.",
+      "description": "Add incomplete-archive as a separate auto-discovered check instead of extending dangling-run, preserving file-disjoint implementation. Emit a PASS informational finding for each archived bundle classified as incomplete:<reason> or merged, include its slug and completion class, and do not report complete, legacy, or active bundles. Cover incomplete reasons and the done:none merged class. Scope: fixture bundles only at this wave (the real writers land later); the bootstrap recovery suite re-runs this check against writer-produced bundles.",
       "wave": 1,
       "files": [
         "lib/doctor/incomplete-archive.mjs",
@@ -958,7 +966,7 @@
     },
     {
       "id": 39,
-      "description": "Add legacy-archive as a separate auto-discovered check that emits a PASS informational finding for archived bundles lacking the completion field, without treating pre-v10 state as a schema crash or as complete. Exclude active bundles and archived bundles carrying complete, merged, or incomplete:* classes, and cover the v9-finished bootstrap run shape.",
+      "description": "Add legacy-archive as a separate auto-discovered check that emits a PASS informational finding for archived bundles lacking the completion field, without treating pre-v10 state as a schema crash or as complete. Exclude active bundles and archived bundles carrying complete, merged, or incomplete:* classes, and cover the v9-finished bootstrap run shape. Scope: fixture bundles only at this wave (the real writers land later); the bootstrap recovery suite re-runs this check against writer-produced bundles.",
       "wave": 1,
       "files": [
         "lib/doctor/legacy-archive.mjs",
@@ -981,7 +989,7 @@
     },
     {
       "id": 40,
-      "description": "Add the auto-discovered required-successor check. For every required_successor event, match only a bundle whose slug equals the required slug and whose seed record names the obligation source via predecessor. Report an absent linked successor as WARN with an actionable seed command, a linked non-archived successor as an informational PASS, and an archived complete successor as PASS; report an archived incomplete:*, merged, or legacy successor as ERROR. Assert doctor exit codes for all lifecycle states and prove that a same-slug bundle without the predecessor link leaves the obligation absent and WARN-only.",
+      "description": "Add the auto-discovered required-successor check. For every required_successor event, match only a bundle whose slug equals the required slug and whose seed record names the obligation source via predecessor. Report an absent linked successor as WARN with an actionable seed command, a linked non-archived successor as an informational PASS, and an archived complete successor as PASS; report an archived incomplete:*, merged, or legacy successor as ERROR. Assert doctor exit codes for all lifecycle states and prove that a same-slug bundle without the predecessor link leaves the obligation absent and WARN-only. Scope: fixture bundles only at this wave (the real writers land later); the bootstrap recovery suite re-runs this check against writer-produced bundles.",
       "wave": 1,
       "files": [
         "lib/doctor/required-successor.mjs",
@@ -1102,11 +1110,12 @@
     },
     {
       "id": 45,
-      "description": "Implement the v9-to-v10 rehearsal shell walk using the same bootstrap arm/record loop and fixture targets used by the live stage: copy and pin the installed 9.10.0 tree before any installation, route every rehearsed finish invocation through that copy, construct the bare remote and second-clone merge fixtures, exercise fixture Pi and Claude installations, preserve and audit bundle-only base commits, prove the non-empty v9 assessment/review diff and no-op finish merge, and clean up a real private throwaway GitHub repository after a gh pr create/merge cycle. The credentialed GitHub cycle is intentionally executed during the live rehearsal rather than routine CI, and its output digest becomes the rehearsal receipt. Own test/rehearse-v9-finish.test.mjs: with a gh shim on PATH and --targets fixture overrides, the walk pins the 9.10.0 copy before any install, routes every rehearsed finish through it, builds the bare remote and second clone, drives arm and record through the fixture driver, asserts the non-empty v9 diff and the no-op finish merge, audits the bundle-only base commits, and cleans up; the gh shim is stateful — it records every invocation and simulates repo create, pr create, pr merge, and repo delete — so the test asserts the full create/PR/merge/delete command sequence, the private-repository flag, cleanup after success, and cleanup after a simulated mid-cycle failure; real network execution is reserved for the live stage.",
+      "description": "Implement the v9-to-v10 rehearsal shell walk using the same bootstrap arm/record loop and fixture targets used by the live stage: copy and pin the installed 9.10.0 tree before any installation, route every rehearsed finish invocation through that copy, construct the bare remote and second-clone merge fixtures, exercise fixture Pi and Claude installations, preserve and audit bundle-only base commits, prove the non-empty v9 assessment/review diff and no-op finish merge, and clean up a real private throwaway GitHub repository after a gh pr create/merge cycle. The credentialed GitHub cycle is intentionally executed during the live rehearsal rather than routine CI, and its output digest becomes the rehearsal receipt. Own test/rehearse-v9-finish.test.mjs: with a gh shim on PATH and --targets fixture overrides, the walk pins the 9.10.0 copy before any install, routes every rehearsed finish through it, builds the bare remote and second clone, drives arm and record through the fixture driver, asserts the non-empty v9 diff and the no-op finish merge, audits the bundle-only base commits, and cleans up; the gh shim is stateful — it records every invocation and simulates repo create, pr create, pr merge, and repo delete — so the test asserts the full create/PR/merge/delete command sequence, the private-repository flag, cleanup after success, and cleanup after a simulated mid-cycle failure; real network execution is reserved for the live stage. The script also drives every §10.3 failure row (partial or mismatched push, red tag CI, install failure with the 9.10.0 rollback, PR reconciliation for MERGED/OPEN/other, rejected main push, unexpected or missing remote merge, dirty non-bundle state, sibling remote movement) through the same arm/record loop against fixture targets, and test/rehearse-v9-finish.test.mjs asserts each row's disposition. Co-owns scripts/bootstrap-v10.mjs so a driver defect the rehearsal exposes has a fix path.",
       "wave": 3,
       "files": [
         "scripts/rehearse-v9-finish.sh",
-        "test/rehearse-v9-finish.test.mjs"
+        "test/rehearse-v9-finish.test.mjs",
+        "scripts/bootstrap-v10.mjs"
       ],
       "verify_commands": [
         "bash -n scripts/rehearse-v9-finish.sh",
@@ -1131,7 +1140,8 @@
       "description": "Create the v9-to-v10 bootstrap suite foundation with isolated git, remote, installation, Claude-config, workspace-root, and gh-shim fixtures. Prove the exact step order, arm-before-record and same-base-SHA requirements, refusal of repeated or out-of-order steps, no event on failed arm preconditions, postcondition refusal, failed-record rules, recovered records, next-step blocking after failure, pass-2 startup at verify with the omitted steps enforced, target validation, and status reconstruction after simulated compaction.",
       "wave": 4,
       "files": [
-        "test/v9-to-v10-bootstrap.test.mjs"
+        "test/v9-to-v10-bootstrap.test.mjs",
+        "scripts/bootstrap-v10.mjs"
       ],
       "verify_commands": [
         "node --test test/v9-to-v10-bootstrap.test.mjs"
@@ -1151,7 +1161,8 @@
       "description": "Extend the bootstrap suite with the complete fixture-backed successful rollout: pre-publish verify/review/assessment receipts, release refusal before a version bump, CHANGELOG-only release commit and annotated-tag identity, idempotent release replay, branch/tag push and CI receipts, executable Pi check, workspace_roots discovery across multiple depths, carried non-bundle main commits, publish acknowledgement, PR merge ancestry, Claude-cache evidence, both-surface checks, per-commit state-only auditing, dirty-bundle commit before gate rebase, remote-tip equality, conflict-free rebase, no-op v9 merge, branch retirement, legacy archive, and fast-forward archive push.",
       "wave": 5,
       "files": [
-        "test/v9-to-v10-bootstrap.test.mjs"
+        "test/v9-to-v10-bootstrap.test.mjs",
+        "scripts/bootstrap-v10.mjs"
       ],
       "verify_commands": [
         "node --test test/v9-to-v10-bootstrap.test.mjs"
@@ -1168,10 +1179,11 @@
     },
     {
       "id": 48,
-      "description": "Complete the bootstrap suite with every recovery and refusal path from the bootstrap failure table: partial or mismatched push, red tag CI, Pi install failure and v9.10.0 rollback, PR reconciliation for MERGED/OPEN/other states, rejected main push, unexpected or missing remote merge, dirty non-bundle state, merge commits and change-then-revert audit failures, review rejection before tagging, release farther than one CHANGELOG-only commit from its reviewed SHA, branch changes under docs/masterplan at the gate, sibling remote movement with stop/acknowledged retarget/rebase behavior, foreign overlap refusal, and a corrective 10.0.x pass that re-runs verify/review/assessment before release, uses a second PR without a second local-main push, assesses G6 at the latest version, and records the operator-declined keep/legacy path.",
+      "description": "Complete the bootstrap suite with every recovery and refusal path from the bootstrap failure table: partial or mismatched push, red tag CI, Pi install failure and v9.10.0 rollback, PR reconciliation for MERGED/OPEN/other states, rejected main push, unexpected or missing remote merge, dirty non-bundle state, merge commits and change-then-revert audit failures, review rejection before tagging, release farther than one CHANGELOG-only commit from its reviewed SHA, branch changes under docs/masterplan at the gate, sibling remote movement with stop/acknowledged retarget/rebase behavior, foreign overlap refusal, and a corrective 10.0.x pass that re-runs verify/review/assessment before release, uses a second PR without a second local-main push, assesses G6 at the latest version, and records the operator-declined keep/legacy path. Also run the required-successor, incomplete-archive, and legacy-archive doctor checks against the bundles the rollout and recovery fixtures actually produce, so the doctor tasks' fixture-only coverage is confirmed against real writer output. Co-owns scripts/bootstrap-v10.mjs (as do the protocol and rollout suites) so a driver defect found here is fixable in the same task.",
       "wave": 6,
       "files": [
-        "test/v9-to-v10-bootstrap.test.mjs"
+        "test/v9-to-v10-bootstrap.test.mjs",
+        "scripts/bootstrap-v10.mjs"
       ],
       "verify_commands": [
         "node --test test/v9-to-v10-bootstrap.test.mjs"
@@ -1190,8 +1202,8 @@
   "meta": {
     "purpose": "Make masterplan understand operator intent before designing (interview + fresh-context critic), record intent-first goals (goals v2), and drive every run to a live, confirmed, archived completion (deploy stage, completion classes), with the config plane, inert-knob guard, seed-time overlap check, and context watch that the spec requires.",
     "problem": "Rev 14 of the spec passed four cross-vendor panels; its acceptance list is spec.md section 11. The plan below is seven parallel-drafted subsystems merged deterministically; the integration subsystem owns the shared CLI, schema, sequencer, and docs files.",
-    "solution": "Every wave implements the spec; the post-wave stage below is NOT a plan task (spec A33 and section 10.1) and cannot be rendered by the installed 9.10.0 plan renderer, so it is stated here and in WORKLOG.md. After the LAST wave completes and BEFORE `mp finish` on this run, the orchestrator executes the live v9-to-v10 bootstrap stage from the branch with `node scripts/bootstrap-v10.mjs` (status, arm, run the printed command from MAIN, record) through pre-publish verify/review/assessment, release, push, CI, install of both surfaces, publish acknowledgement, the GitHub PR merge, and the gate rebase, then records `required_successor {slug: v10-validation}` via the pinned v9 `mp event`. Rule for this run: `mp finish` is invoked only after `node scripts/bootstrap-v10.mjs status` reports the pass complete; under the installed 9.10.0 sequencer the durable enforcement is the finish-time goal check, where G6 is assessed live and a skipped stage lands at goals_unmet rather than archiving."
+    "solution": "Every wave implements the spec; the post-wave stage below is NOT a plan task (spec A33 and section 10.1) and cannot be rendered by the installed 9.10.0 plan renderer, so it is stated here, in WORKLOG.md, and as a durable `pre_finish_stage_required` event on this bundle's events.jsonl (recorded 2026-09-03 via the pinned v9 `mp event`), which the handoff rule checks before `mp finish`. After the LAST wave completes and BEFORE `mp finish` on this run, the orchestrator executes the live v9-to-v10 bootstrap stage from the branch with `node scripts/bootstrap-v10.mjs` (status, arm, run the printed command from MAIN, record) through pre-publish verify/review/assessment, release, push, CI, install of both surfaces, publish acknowledgement, the GitHub PR merge, and the gate rebase, then records `required_successor {slug: v10-validation}` via the pinned v9 `mp event`. Rule for this run: `mp finish` is invoked only after `node scripts/bootstrap-v10.mjs status` reports the pass complete; under the installed 9.10.0 sequencer the durable enforcement is the finish-time goal check, where G6 is assessed live and a skipped stage lands at goals_unmet rather than archiving."
   },
-  "plan_hash": "sha256:3d019b7476b6786772729052d5d77024b6e838ec5fb8eda28908b43bac109b2c",
-  "generated_at": "2026-09-03T04:53:30.163Z"
+  "plan_hash": "sha256:9818b4e086818157c7d3092726c3d549c1eecac272ca4ca0e56cd0fd43dbb0e3",
+  "generated_at": "2026-09-03T05:18:16.238Z"
 }

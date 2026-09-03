@@ -60,3 +60,17 @@ Findings 2–9 folded as fragment edits (overlap matrix; legacy + obligation out
 - Finding 2: no change — deps 5→13 (intent-goals.goals-v2), 20→19 (config-knobs.contracts), 34→33 (run-awareness.resume-brief) ARE declared in .plan-fragments.json; the merged index drops dep edges, so the reviewer could not see them (a reviewer-input gap, noted for the v10 planning-consumers task as a candidate: carry deps into the index).
 - Finding 3: task 45's test uses a stateful gh shim asserting the full create/PR/merge/delete sequence, private flag, and cleanup on success and simulated failure.
 - Finding 4: task 3 narrowed to implementation-facing smoke cases; task 6 keeps the exhaustive matrix.
+
+# Plan gate (§3b) — cross-vendor adversarial panel 1 (adversarial-review workflow wf_eca58e83-c62, intensity standard, 2026-09-03)
+- Artifacts: spec.md rev 14 + plan.md + plan.index.json at gate hash sha256:8d8e8b3d… (plan_hash 3d019b74…), 256705 chars embedded verbatim (sha256 78e84566…).
+- Lanes: openai/gpt-5.6-sol → revise; zhipu/glm-5.2 → reject; three in-repo lenses (approach, failure-case, blast-radius) → revise; synthesis (in-tree verified) → revise. 1,276,626 tokens.
+- Verdict: revise — 1 blocker, 8 should-fix, 3 nits; 7 reviewer claims dropped by synthesis (re-litigating spec decisions or misreading the plan). Full record: gate-plan-panel-1.json; digest: gate-plan-panel-1-notes.txt.
+- Dispositions (apply-review-r4.mjs → plan_hash 9818b4e0…):
+  B1 driver ownership: scripts/bootstrap-v10.mjs co-owned by the rehearsal and all three bootstrap suites; lib/config.mjs co-owned by legacy-migration and env-reads (serialised); bin/masterplan.mjs co-owned by cli-contract and overlap-contract (plus lib/seed-lock.mjs, lib/runs.mjs); test/retro-goals.test.mjs owned and run by retro-reporting.
+  S2 task 2 rewritten to the real defect (die() exit 2 collides with the unknown-flag contract; distinct exit code for uncaught errors).
+  S3 bootstrap marker: durable `pre_finish_stage_required` event recorded on this bundle (v9 `mp event`), named in the plan narrative and in task 1's generic-event tolerance; renderer change stays in the planning-consumers task.
+  S4 push_archive producer: finish-step detects the push (origin/<base> moved to the receipt's base_after) — assigned to the archive-push task with both test rows.
+  S5 critic ledger: `mp interview replay` (verbatim ledger) added to the interview library, CLI, and sequencer contracts; prompt-structure test asserts Q/A text.
+  S6 rehearsal drives every §10.3 failure row against fixtures. S7 retro-goals test owned. S8 CLAUDE_CODE_SESSION_ID registered (owner-lock observable) and documented. S9 `pushed: no` asserted in the CLI regression task.
+  N2 grep alternations replaced by per-term loops (tasks 1, 8). N3 doctor tasks scoped fixture-only; recovery suite re-runs the checks against writer-produced bundles. N1 (label vs task id) not applied: fragment keys are the stable references; ids are assigned at merge.
+- Panel 2 (confirmation pass over the revised bytes) runs at light intensity: one cross-vendor lane + one in-repo lens.

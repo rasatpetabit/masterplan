@@ -1,0 +1,182 @@
+{
+  "tool": "adversarial-review workflow (skynet_review_diff lanes + in-repo lenses + synthesis)",
+  "gate": "plan",
+  "verdict": "revise",
+  "findings_count": 12,
+  "ts": "2026-09-03T05:17:06.416Z",
+  "reviewers": [
+    {
+      "dispatch_id": "wf_eca58e83-c62/agent-a00c25a8feab60dd8/skynet_review_diff",
+      "provider": "litellm/gpt-5.6-sol",
+      "model": "dispatch-adversary",
+      "output_tokens": 564,
+      "verdict": "revise"
+    },
+    {
+      "dispatch_id": "wf_eca58e83-c62/agent-a00c25a8feab60dd8/skynet_review_diff",
+      "provider": "litellm/gpt-5.6-sol",
+      "model": "dispatch-adversary",
+      "output_tokens": 12673,
+      "verdict": "revise"
+    },
+    {
+      "dispatch_id": "wf_eca58e83-c62/agent-a0c9ebc44fa872213/skynet_review_diff",
+      "provider": "litellm/glm-5.2",
+      "model": "dispatch-multi-agent-orchestration",
+      "output_tokens": 2387,
+      "verdict": "reject"
+    },
+    {
+      "dispatch_id": "wf_eca58e83-c62/agent-a0c9ebc44fa872213/skynet_review_diff",
+      "provider": "litellm/glm-5.2",
+      "model": "dispatch-multi-agent-orchestration",
+      "output_tokens": 568,
+      "verdict": "reject"
+    },
+    {
+      "dispatch_id": "wf_eca58e83-c62/agent-a0c9ebc44fa872213/skynet_review_diff",
+      "provider": "litellm/glm-5.2",
+      "model": "dispatch-multi-agent-orchestration",
+      "output_tokens": 7537,
+      "verdict": "reject"
+    }
+  ],
+  "lanes_failed": [
+    {
+      "dispatch_id": "wf_eca58e83-c62/agent-a0c9ebc44fa872213/skynet_review_diff",
+      "model": "dispatch-multi-agent-orchestration",
+      "error": "Missing required argument: diff"
+    },
+    {
+      "dispatch_id": "wf_eca58e83-c62/agent-a0c9ebc44fa872213/skynet_review_diff",
+      "model": "dispatch-multi-agent-orchestration",
+      "error": "Missing required argument: diff"
+    }
+  ],
+  "digest": "Plan gate — cross-vendor adversarial review digest (intent-to-completion)\nArtifacts: spec.md (rev 14) + plan.md + plan.index.json (48 tasks / 11 waves) — bytes embedded verbatim, sha256 78e845665b165e36a1355fd2609720f9afb5d6d03e9dfe256d2396d8ef843a7f, 256705 chars\nWorkflow: adversarial-review (wf_eca58e83-c62), intensity standard; cross-vendor lanes: openai/gpt-5.6-sol, zhipu/glm-5.2; degraded: none\nProvenance: dispatch-adversary → litellm/gpt-5.6-sol, 564 output tokens; dispatch-adversary → litellm/gpt-5.6-sol, 12673 output tokens; dispatch-multi-agent-orchestration → litellm/glm-5.2, 2387 output tokens; dispatch-multi-agent-orchestration → litellm/glm-5.2, 568 output tokens; dispatch-multi-agent-orchestration → litellm/glm-5.2, 7537 output tokens\nVerdict: revise; findings 12 (1 blocker, 8 should-fix, 3 nit); disagreements 6; dropped 7\n\nSummary: The plan is structurally coherent (goal coverage complete, no same-wave file collisions, every spec §11 suite owned) and most cross-vendor blockers did not survive in-tree verification. One blocker does: scripts/bootstrap-v10.mjs is written by Task 44 (wave 2) but its ~40 failure-path scenarios are proven by test-only Tasks 45–48 in waves 3–6, and masterplan's D6 scope check (docs/internals/task-verification.md:67-87, verified) reverts any out-of-scope edit and leaves the task pending — so the first real defect in the 14-step driver has no task that can fix it. The same single-owner/later-tester shape recurs at should-fix severity for lib/config.mjs, bin/masterplan.mjs, and lib/retro-goals.mjs (the finish-step chain, by contrast, co-owns its lib file in every test task). Eight should-fix items follow: Task 2's stale diagnosis (goals-choice is already in KNOWN_FLAGS at bin/masterplan.mjs:574 and threaded at :3712; the failing test 6 is an ENOENT/exit-2 collision in die()), the missing plan.md bootstrap marker the spec requires (stated only in index.meta and WORKLOG.md:414, with a waivable v9 goals_unmet as backstop), no producer for push_archive's \"install step pushed the base\" signal, Task 7 handing the critic a budget summary rather than a verbatim ledger, Task 45's rehearsal omitting the §10.3 failure fixtures, Task 30 regressing test/retro-goals.test.mjs without owning it, the CLAUDE_CODE_SESSION_ID read at bin/masterplan.mjs:626 unnamed in any contract list, and Task 3(e)'s `pushed: no` line verified by nothing. Revise the ownership model and the named gaps; the remaining reviewer claims were dropped as re-litigating spec decisions or misreading the plan.\n\nFindings (severity-first):\n 1. [blocker] scripts/bootstrap-v10.mjs is owned only by Task 44 (wave 2) while Tasks 45/46/47/48 (waves 3-6) exhaustively test it with no write scope, and D6 scope verification reverts out-of-scope edits and leaves the task pending, so a driver defect found by those suites has no fix path in the plan.\n 2. [should-fix] Task 2's description names a defect that no longer exists: --goals-choice is already in KNOWN_FLAGS and threaded to finishStep, and the currently failing test fails because die() uses exit 2 for the ENOENT on the missing state file, colliding with the unknown-flag exit code the test rules out.\n 3. [should-fix] The spec requires plan.md to list the bootstrap stage as a marker after its last wave (spec §10.1), but plan.md ends at Wave 10 with no marker; the stage lives only in plan.index.json meta.solution and WORKLOG.md, and plan.md is regenerated from the index by renderPlanMd so a hand-added marker cannot persist under the installed v9 renderer.\n 4. [should-fix] push_archive's trigger ('an install-group deploy_step receipt pushed the base' with `pushed_base`) has no producer anywhere in the plan: Task 16's done: step schema is {run, check?}, Task 23's receipts carry exit/check_exit/digest/source, and Task 29 only consumes the signal.\n 5. [should-fix] Task 7's exact dispatch contract hands the critic 'the interview ledger replay from `mp interview status`', but spec §5.1 step 2 defines status as a budget/state summary ({asked, answered, floor, cap, active_design_picks, critic, state}) and no task (11, 12, or 3) commits any op to emitting the verbatim question/answer text.\n 6. [should-fix] Spec §10.1.1 requires the rehearsal script itself to show every §10.3 failure row against fixtures, but Task 45's script and test cover only the successful walk plus gh-shim cleanup; the failure rows are exercised solely by Task 48's driver unit suite, which never runs scripts/rehearse-v9-finish.sh.\n 7. [should-fix] Task 30 changes renderRetroGoals in lib/retro-goals.mjs (its only render export) but neither owns nor runs test/retro-goals.test.mjs, which asserts `''` for goalsEnabled:false and no trailing newline.\n 8. [should-fix] The pre-existing Guard D session-identity read `process.env.CLAUDE_CODE_SESSION_ID` at bin/masterplan.mjs:626 (and its --session/--host flag companions) is swept into the readEnv migration by Task 3 and the knob inventory by Task 20, but is named in no contract list (Task 19), no documented environment list (Task 8), and none of the four metadata exemptions.\n 9. [should-fix] Task 3 contract item (e) — `mp runs list` and `mp status` print `pushed: no` until archive_pushed — has no task whose verify would fail if it shipped wrong.\n10. [nit] Task 3 defers its exhaustive behavioural matrix to 'orchestration-integration.cli-contract', a parallel-draft subsystem label that matches no task id; Task 6 (wave 6) is the evident target.\n11. [nit] The grep-alternation verify lines in Tasks 1 and 8 are satisfied by any single term (e.g. the word 'complete' anywhere in README.md) and so prove nothing on their own.\n12. [nit] Tasks 38-40 (wave 1 doctor checks) can only be tested against hand-built fixture bundles because their real writers (Task 28, the bootstrap stage) land waves later, and no later task re-verifies them against writer-produced bundles; Task 16 (config) and Task 7 (sequencer) are similarly large single-sitting tasks whose only verification is prose-pattern presence in Task 7's case.\n",
+  "result": {
+    "reviewed_sha256": "78e845665b165e36a1355fd2609720f9afb5d6d03e9dfe256d2396d8ef843a7f",
+    "reviewed_chars": 256705,
+    "reviewed_files": [
+      "spec.md",
+      "plan.md",
+      "plan.index.json"
+    ],
+    "final_verdict": "revise",
+    "summary": "The plan is structurally coherent (goal coverage complete, no same-wave file collisions, every spec §11 suite owned) and most cross-vendor blockers did not survive in-tree verification. One blocker does: scripts/bootstrap-v10.mjs is written by Task 44 (wave 2) but its ~40 failure-path scenarios are proven by test-only Tasks 45–48 in waves 3–6, and masterplan's D6 scope check (docs/internals/task-verification.md:67-87, verified) reverts any out-of-scope edit and leaves the task pending — so the first real defect in the 14-step driver has no task that can fix it. The same single-owner/later-tester shape recurs at should-fix severity for lib/config.mjs, bin/masterplan.mjs, and lib/retro-goals.mjs (the finish-step chain, by contrast, co-owns its lib file in every test task). Eight should-fix items follow: Task 2's stale diagnosis (goals-choice is already in KNOWN_FLAGS at bin/masterplan.mjs:574 and threaded at :3712; the failing test 6 is an ENOENT/exit-2 collision in die()), the missing plan.md bootstrap marker the spec requires (stated only in index.meta and WORKLOG.md:414, with a waivable v9 goals_unmet as backstop), no producer for push_archive's \"install step pushed the base\" signal, Task 7 handing the critic a budget summary rather than a verbatim ledger, Task 45's rehearsal omitting the §10.3 failure fixtures, Task 30 regressing test/retro-goals.test.mjs without owning it, the CLAUDE_CODE_SESSION_ID read at bin/masterplan.mjs:626 unnamed in any contract list, and Task 3(e)'s `pushed: no` line verified by nothing. Revise the ownership model and the named gaps; the remaining reviewer claims were dropped as re-litigating spec decisions or misreading the plan.",
+    "findings": [
+      {
+        "severity": "blocker",
+        "claim": "scripts/bootstrap-v10.mjs is owned only by Task 44 (wave 2) while Tasks 45/46/47/48 (waves 3-6) exhaustively test it with no write scope, and D6 scope verification reverts out-of-scope edits and leaves the task pending, so a driver defect found by those suites has no fix path in the plan.",
+        "failure": "Task 44 passes its four smoke checks with, e.g., ci_wait accepting a red conclusion; Task 47 (wave 5) fails on the fixture-backed rollout; the implementer edits scripts/bootstrap-v10.mjs; `mp verify-scope` (docs/internals/task-verification.md:67-87) reverts the edit and leaves Task 47 pending; no wave 3-6 task lists the driver in `files`, so the wave stalls until the plan is amended by hand.",
+        "fix_direction": "Add scripts/bootstrap-v10.mjs to the `files` of Tasks 45-48 (mirroring how Tasks 23-29 each co-own lib/finish-step.mjs), or fold the exhaustive scenarios into Task 44's own suite, or add a designated repair task per test wave. Apply the same correction to the weaker instances: lib/config.mjs for Tasks 17/18, bin/masterplan.mjs for Tasks 6/9, lib/retro-goals.mjs for Task 30.",
+        "location": "docs/masterplan/intent-to-completion/plan.index.json tasks 44-48 `files`; docs/internals/task-verification.md:67-87"
+      },
+      {
+        "severity": "should-fix",
+        "claim": "Task 2's description names a defect that no longer exists: --goals-choice is already in KNOWN_FLAGS and threaded to finishStep, and the currently failing test fails because die() uses exit 2 for the ENOENT on the missing state file, colliding with the unknown-flag exit code the test rules out.",
+        "failure": "`node --test test/cli-surface.test.mjs` fails subtest 6 with `expected: 2, actual: 2`; `node bin/masterplan.mjs finish-step --state=/nonexistent/x.yml --goals-choice=bogus` prints `masterplan: ENOENT: no such file or directory` and exits 2 (die default at bin/masterplan.mjs:601). An implementer following 'admit it through the known-flag guard' finds nothing to change and either closes the task as a no-op with its verify still red or burns wave-0 time rediscovering the real cause.",
+        "fix_direction": "Rewrite Task 2 to name the actual defect (die()'s uniform exit 2 vs the A7 unknown-flag contract) and the fix — a distinct exit code for uncaught errors, or a test fixture with a real state file so the flag reaches the engine.",
+        "location": "docs/masterplan/intent-to-completion/plan.md Task 2; bin/masterplan.mjs:574,601,3712; test/cli-surface.test.mjs:138-146"
+      },
+      {
+        "severity": "should-fix",
+        "claim": "The spec requires plan.md to list the bootstrap stage as a marker after its last wave (spec §10.1), but plan.md ends at Wave 10 with no marker; the stage lives only in plan.index.json meta.solution and WORKLOG.md, and plan.md is regenerated from the index by renderPlanMd so a hand-added marker cannot persist under the installed v9 renderer.",
+        "failure": "After Wave 10 the v9 sequencer sees a plan with no remaining work and proceeds to `mp finish`; the only durable backstop is the v9 goal check assessing G6 live, whose goals_unmet gate offers fix/waiver/abort (lib/finish-step.mjs:101) — the spec's 'never waived' is prose only. The stage is skippable by one waiver answer.",
+        "fix_direction": "Carry the stage into the plan artifact the running sequencer actually reads: either an explicit terminal marker row that plan-merge preserves (Task 4's meta-narrative rendering, pulled forward so the v9-era plan.md carries it), or a durable pre-finish precondition (e.g. a state.yml/events record that the operator's handoff rule checks) rather than WORKLOG prose plus a waivable gate.",
+        "location": "docs/masterplan/intent-to-completion/plan.md (post-Wave-10 boundary); plan.index.json meta.solution; bin/masterplan.mjs:2331-2335; WORKLOG.md:414"
+      },
+      {
+        "severity": "should-fix",
+        "claim": "push_archive's trigger ('an install-group deploy_step receipt pushed the base' with `pushed_base`) has no producer anywhere in the plan: Task 16's done: step schema is {run, check?}, Task 23's receipts carry exit/check_exit/digest/source, and Task 29 only consumes the signal.",
+        "failure": "Task 29's implementer must invent how finish-step knows a shell command pushed the base. If it emits the gate for every successful install receipt, a done: block whose install group never pushes triggers an unreviewed push of local-only main commits; if it never emits, archives never reach origin and the required-successor doctor on GitHub never sees completion. Either way the spec §11 finish-replay case 'an install group that never pushed → no op emitted' has no defined mechanism.",
+        "fix_direction": "Name the mechanism in the plan: either a declared step attribute (e.g. `pushes_base: true`) added to Task 16's schema and validated at seed, or a finish-step-side detection (fetch and compare origin/<base> to base_after after each install step) assigned to Task 29 with the corresponding test row. Task 29 owns lib/finish-step.mjs so the second option needs no wave-0 change.",
+        "location": "docs/masterplan/intent-to-completion/plan.md Tasks 16, 23, 29; spec.md §7.2 push_archive row"
+      },
+      {
+        "severity": "should-fix",
+        "claim": "Task 7's exact dispatch contract hands the critic 'the interview ledger replay from `mp interview status`', but spec §5.1 step 2 defines status as a budget/state summary ({asked, answered, floor, cap, active_design_picks, critic, state}) and no task (11, 12, or 3) commits any op to emitting the verbatim question/answer text.",
+        "failure": "The critic receives counts plus the intent draft and no Q/A text to diff against the draft; a load-bearing operator answer omitted from the draft is invisible to it, it returns a clean payload, and `mp interview end --reason=converged` succeeds. test/prompt-structure.test.mjs passes on the presence of the named block without proving it carries the ledger.",
+        "fix_direction": "Make Task 11's `status` (or a dedicated `mp interview replay` export) emit the verbatim ledger, name that op in Task 7's dispatch contract, and have test/prompt-structure.test.mjs assert the block carries question/answer text.",
+        "location": "docs/masterplan/intent-to-completion/plan.md Task 7 (dispatch contract) vs Tasks 11-12; spec.md §5.1 steps 2 and 4"
+      },
+      {
+        "severity": "should-fix",
+        "claim": "Spec §10.1.1 requires the rehearsal script itself to show every §10.3 failure row against fixtures, but Task 45's script and test cover only the successful walk plus gh-shim cleanup; the failure rows are exercised solely by Task 48's driver unit suite, which never runs scripts/rehearse-v9-finish.sh.",
+        "failure": "The live rehearsal receipt that gates every real action (§10.1.1 'the real steps run only after it passes') can be produced by a script that rehearses only the happy path; a partial push, red CI, or install-pi rollback path is first exercised for real during the irreversible stage.",
+        "fix_direction": "Extend Task 45 (or add a follow-on that co-owns scripts/rehearse-v9-finish.sh) so the script drives each §10.3 row through the same arm/record loop with fixture targets, and assert those rows in test/rehearse-v9-finish.test.mjs.",
+        "location": "docs/masterplan/intent-to-completion/plan.md Task 45 vs Task 48; spec.md §10.1.1"
+      },
+      {
+        "severity": "should-fix",
+        "claim": "Task 30 changes renderRetroGoals in lib/retro-goals.mjs (its only render export) but neither owns nor runs test/retro-goals.test.mjs, which asserts `''` for goalsEnabled:false and no trailing newline.",
+        "failure": "The natural implementation adds a completion/pushed line inside renderRetroGoals; test/retro-goals.test.mjs:7 (`assert.equal(result1, '')`) and :34 (`!str.endsWith('\\n')`) break; Task 30's verify (`node --test test/finish-step-goals.test.mjs`) stays green and the regression surfaces only at the bootstrap stage's full-suite verify or CI (.github/workflows/ci.yml:32), with no task owning the fix.",
+        "fix_direction": "Add test/retro-goals.test.mjs to Task 30's files and verify commands, or scope the completion-class rendering to a new function that leaves renderRetroGoals's existing contract untouched.",
+        "location": "docs/masterplan/intent-to-completion/plan.md Task 30; lib/retro-goals.mjs:74; test/retro-goals.test.mjs:7,34"
+      },
+      {
+        "severity": "should-fix",
+        "claim": "The pre-existing Guard D session-identity read `process.env.CLAUDE_CODE_SESSION_ID` at bin/masterplan.mjs:626 (and its --session/--host flag companions) is swept into the readEnv migration by Task 3 and the knob inventory by Task 20, but is named in no contract list (Task 19), no documented environment list (Task 8), and none of the four metadata exemptions.",
+        "failure": "Task 20's inventory (wave 10) discovers the readEnv call site and the flags and fails on an unmapped control unless Task 19's implementer happened to notice it; Task 8's docs/verbs.md Environment section omits it. A consumer-side observable exists (owner-lock acquire/heartbeat differs by session), so the fix is a named contract, not an exemption — but nothing in the plan says so.",
+        "fix_direction": "Name CLAUDE_CODE_SESSION_ID (and --session/--host) in Task 19's contract registry with the owner-lock observable, and in Task 8's Environment section.",
+        "location": "bin/masterplan.mjs:616-628; docs/masterplan/intent-to-completion/plan.md Tasks 3, 8, 19, 20"
+      },
+      {
+        "severity": "should-fix",
+        "claim": "Task 3 contract item (e) — `mp runs list` and `mp status` print `pushed: no` until archive_pushed — has no task whose verify would fail if it shipped wrong.",
+        "failure": "Task 3's verify is smoke-only; Task 6's exhaustive matrix asserts legacy class and required_successor obligations but not `pushed: no`; Task 29 asserts it inside finish-step and Task 30 inside the retro renderer, neither of which is the runs-list/status renderer in bin/masterplan.mjs (only a generic `pushed` flag pass-through exists there today at :3732).",
+        "fix_direction": "Add an explicit `pushed: no` until archive_pushed assertion for runs list and status to Task 6's suite.",
+        "location": "docs/masterplan/intent-to-completion/plan.md Task 3 item (e), Task 6; bin/masterplan.mjs:3732"
+      },
+      {
+        "severity": "nit",
+        "claim": "Task 3 defers its exhaustive behavioural matrix to 'orchestration-integration.cli-contract', a parallel-draft subsystem label that matches no task id; Task 6 (wave 6) is the evident target.",
+        "failure": "A reader cannot mechanically resolve the deferral; reviewer 2 read it as an orphaned guarantee. The seed-lock guarantee it worried about is in fact owned by Task 9 ('the seed lock is held across validate-then-create so a concurrent seed observes it', 'a refused seed leaves no bundle directory'), so nothing is actually unchecked.",
+        "fix_direction": "Replace the subsystem label with 'Task 6' (and, for the seed-lock rows, 'Task 9').",
+        "location": "docs/masterplan/intent-to-completion/plan.md Task 3 item (d)"
+      },
+      {
+        "severity": "nit",
+        "claim": "The grep-alternation verify lines in Tasks 1 and 8 are satisfied by any single term (e.g. the word 'complete' anywhere in README.md) and so prove nothing on their own.",
+        "failure": "Seven of eight event names could be missing from lib/bundle.mjs and Task 1's grep still exits 0; the real gates are the accompanying node --test suites (test/bundle-events.test.mjs covers every new event type; test/docs-contract.test.mjs for Task 8), so this is a weak supplementary check, not a broken gate.",
+        "fix_direction": "Either drop the grep lines or loop `grep -q` per term.",
+        "location": "docs/masterplan/intent-to-completion/plan.md Task 1 verify (3rd command), Task 8 verify (1st-3rd commands)"
+      },
+      {
+        "severity": "nit",
+        "claim": "Tasks 38-40 (wave 1 doctor checks) can only be tested against hand-built fixture bundles because their real writers (Task 28, the bootstrap stage) land waves later, and no later task re-verifies them against writer-produced bundles; Task 16 (config) and Task 7 (sequencer) are similarly large single-sitting tasks whose only verification is prose-pattern presence in Task 7's case.",
+        "failure": "A fixture shape that drifts from what Task 28 or bootstrap-v10.mjs actually writes passes wave 1 and misreports in production; a Task 7 op-table row can exist textually while misdescribing the runtime contract.",
+        "fix_direction": "State the fixture-only scope in Tasks 38-40 and add a doctor-against-real-output assertion to Task 47/48; consider splitting Task 16's YAML parser from its schema validation.",
+        "location": "docs/masterplan/intent-to-completion/plan.md Tasks 7, 16, 38, 39, 40"
+      }
+    ],
+    "disagreements": [
+      "Bootstrap driver ownership (scripts/bootstrap-v10.mjs, Task 44 vs 45-48): reviewer 1 rated should-fix, reviewer 4 rated blocker. Reviewer 4 is right — D6 scope verification is confirmed at docs/internals/task-verification.md:67-87 to revert out-of-scope edits and leave the task pending, so the plan as written has no fix path for a driver defect found in waves 3-6.",
+      "Missing bootstrap-stage marker in plan.md: reviewer 1 rated blocker, reviewer 4 called the plan structurally sound. Reviewer 1's fact is correct (plan.md ends at Wave 10; plan.md is generated by renderPlanMd at bin/masterplan.mjs:2331 so a hand marker cannot persist under v9), but severity is should-fix: the stage is stated in plan.index.json meta.solution and WORKLOG.md:414, and the v9 goal check's live G6 assessment lands a skipped stage at goals_unmet — a visible, if waivable, backstop rather than a silent archive.",
+      "Task 34 / Task 9 same-file collision on test/overlap-sequencer.test.mjs (reviewer 2) vs 'no same-wave file collisions' (reviewer 4): reviewer 4 is right. Task 34's `files` do not include test/overlap-sequencer.test.mjs; its integration note is addressed to orchestration-integration (Task 9's subsystem), not to Task 34's implementer. Task 9 is the sole owner.",
+      "Task 42 bumping version files in wave 0 'defeats version_not_bumped' (reviewer 2): wrong. Spec §7.1 requires the bump to be ordinary run-branch work; version_not_bumped fires when the branch's version is already tagged (the opposite condition), and this run's finish executes under v9.10.0 which has no such gate. The bump sits on the branch, so a mid-run abort leaves main untouched.",
+      "Required successor v10-validation never seeded by a task (reviewer 1 blocker): the plan conforms to spec §10 step 3 and A35, which the operator settled in panel 4 (S7) as soft enforcement by design. This re-litigates a spec decision rather than finding a plan defect.",
+      "CLAUDE_CODE_SESSION_ID (reviewer 5) framed as 'wave 10 breaks with no task able to resolve it': too strong. Task 19 (wave 9) covers every environment control and a consumer-side observable exists (owner-lock behaviour differs by session), so it is resolvable within the plan — the defect is that no task names it. Kept at should-fix with that framing."
+    ],
+    "dropped": [
+      "Reviewer 1 blocker: 'v10-validation successor is recorded but never seeded/executed by any task' — the plan matches spec §10 step 3 and A35 (soft enforcement, operator-decided at panel 4 S7); a plan review cannot reopen it.",
+      "Reviewer 2 blocker: 'Task 34 (wave 1) and Task 9 (wave 9) collide on test/overlap-sequencer.test.mjs' — Task 34's files list does not include that file; the integration note is addressed to orchestration-integration, which Task 9 fulfils.",
+      "Reviewer 2 blocker: 'no deps field in plan.index.json' — lib/plan-merge.mjs:119-147 derives waves from deps at merge time and the merged index drops them; WORKLOG.md:413 already records 'carry deps into the index' as a v10 tooling candidate. This is a tooling limitation, not a plan defect. The Task 33/Task 1 same-wave example is testable by fixture events and is file-disjoint.",
+      "Reviewer 2 should-fix: 'Task 42 bumps version files in wave 0 and structurally prevents version_not_bumped from firing' — misreads the gate (fires when the tag already exists) and the run's finish binary (v9.10.0 has no such gate); the bump on the branch is exactly what spec §7.1 requires.",
+      "Reviewer 2 should-fix: 'the wave N+1 waits for wave N gate lives only in Task 7 (wave 8)' — the wave barrier plus per-task verify is the installed v9 sequencer's existing execution model (docs/internals/task-verification.md), not something plan.md must restate.",
+      "Reviewer 2 should-fix: 'Tasks 2 and 6 have byte-identical verify commands' — normal for a test file that grows across waves; Task 2's verify is currently red, so it discriminates.",
+      "Reviewer 2 should-fix: 'goal coverage is self-declared with no cross-validation' — this is masterplan's plan-coverage contract (spec §6.2: every G cited by ≥1 task) and the finish-time goal assessor is the cross-check; not a plan defect."
+    ],
+    "reviewers": [
+      "openai/gpt-5.6-sol: revise",
+      "zhipu/glm-5.2: reject",
+      "approach-adversary (in-tree verification): revise",
+      "failure-case adversary (in-tree verification): revise",
+      "blast-radius adversary (in-tree verification): revise"
+    ],
+    "cross_vendor_lanes": [
+      "openai/gpt-5.6-sol",
+      "zhipu/glm-5.2"
+    ]
+  }
+}
