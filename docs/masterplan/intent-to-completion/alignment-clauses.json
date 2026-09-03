@@ -1,0 +1,67 @@
+{
+  "anchor_hash": "sha256:0843be43d8c7b5a39a3b1a3e8f0f099fc6d062c2e86a5e0c6f526edda0bb76bf",
+  "anchor_quality": "verbatim",
+  "confirmed": "2026-09-03 by the orchestrator under the operator's /goal directive (do next steps until everything is complete); clauses reused verbatim from the auditor's Mode A decomposition",
+  "clauses": [
+    {
+      "id": "A1",
+      "clause": "Enhance masterplan's interviewing of the operator so it better understands the true intent behind the requested feature.",
+      "anchor_span": "Enhance masterplan so it does a better job of interviewing the operator to understand the true intent of the requested feature."
+    },
+    {
+      "id": "A2",
+      "clause": "The interview should elicit the operator's intentions rather than require the operator to prescribe the exact solution, allowing the model to design its own solution.",
+      "anchor_span": "The goal isn't to have the operator tell the model exactly what to it, it's to help the model understand the operators' intentions, so it can design its own solution."
+    },
+    {
+      "id": "A3",
+      "clause": "Make --complexity=high substantially more probing, with questions continuing until the system has a true understanding.",
+      "anchor_span": "We currently don't do a good job of this, and our --complexity=high mode isn't nearly high enough in terms of getting the system to ask probing questions until it has a true understanding."
+    },
+    {
+      "id": "A4",
+      "clause": "Improve how goals are recorded so they capture true intent rather than merely accumulating a large list of specific items that may not be helpful.",
+      "anchor_span": "We're also poor at recording those \"goals\", our current goals implementation gathers a large list of specific items which may or may not be helpful, but it doesn't make much effort to try and capture the true \"intent\"."
+    },
+    {
+      "id": "A5",
+      "clause": "Improve end-of-project behavior so work is driven to completion and is actually deployed and completed.",
+      "anchor_span": "And lastly, we're particularly bad about the end of the project, driving the task to completion, and making sure it is ACTUALLY deployed and completed at the end of the work."
+    },
+    {
+      "id": "A6",
+      "clause": "Determine whether --autonomy is currently not being used.",
+      "anchor_span": "Are we not using --autonomy either?"
+    },
+    {
+      "id": "A7",
+      "clause": "Look for additional issues analogous to the suspected --autonomy issue.",
+      "anchor_span": "Look for more issues like this,"
+    },
+    {
+      "id": "A8",
+      "clause": "Support setting various levels of masterplan autonomy and complexity.",
+      "anchor_span": "we should be able to set various levels of masterplan autonomy and complexity."
+    },
+    {
+      "id": "A9",
+      "clause": "Review all other parameters for similar issues.",
+      "anchor_span": "Review all of the other parameters for issues like this!"
+    },
+    {
+      "id": "A10",
+      "clause": "On the first /masterplan invocation in a directory, load existing masterplans and check for conflicts before proceeding.",
+      "anchor_span": "When we first run /masterplan <anything> in a directory, we should load the existing masterplans to see if there are any conflicts first!"
+    },
+    {
+      "id": "A11",
+      "clause": "Monitor context-window usage at gates.",
+      "anchor_span": "Be sure to watch the context-window usage at gates,"
+    },
+    {
+      "id": "A12",
+      "clause": "Assess whether /compact should be performed automatically.",
+      "anchor_span": "and see if we should be doing a /compact automatically."
+    }
+  ]
+}

@@ -1,0 +1,1197 @@
+{
+  "schema_version": "6.0",
+  "tasks": [
+    {
+      "id": 1,
+      "description": "Extend the schema-v9 bundle contract without a version bump: validate new-seed autonomy and derived source fields while tolerating legacy fields and autonomy full, support complete/incomplete/merged completion with an absent field remaining legacy, and add append-time schemas for interview, overlap/config, deploy/final-goal-check, completion/archive, required-successor, and bootstrap armed/step events. Export the bootstrap event validation and fixed step enum needed by the one-off driver while preserving existing generic event compatibility. Own focused tests in test/bundle-events.test.mjs covering a valid and an invalid instance of every new event type, the append-time rejection path, the exported bootstrap validation and step enum, legacy-field tolerance (complexity_source, predecessor_transcript, autonomy full), the absent-completion legacy reading, and the post-archive restriction (only archive_pushed is accepted after archived).",
+      "wave": 0,
+      "files": [
+        "lib/bundle.mjs",
+        "test/bundle.test.mjs",
+        "test/bundle-events.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/bundle-events.test.mjs",
+        "node --test test/bundle.test.mjs",
+        "grep -nE 'interview_question|overlap_review|deploy_step_started|completion_confirmed|required_successor|archive_pushed|bootstrap_armed|bootstrap_step' lib/bundle.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G1",
+        "G2",
+        "G3",
+        "G4",
+        "G6"
+      ],
+      "spec_refs": [
+        "spec.md §4.1",
+        "spec.md §5.3",
+        "spec.md §6.2",
+        "spec.md §7.2",
+        "spec.md §7.4",
+        "spec.md §8",
+        "spec.md §10",
+        "spec.md §11",
+        "spec.md §12"
+      ]
+    },
+    {
+      "id": 2,
+      "description": "Repair the pre-existing CLI A1 failure by admitting and forwarding the existing finish-step goal-gate option family, including --goals-choice, through the known-flag guard while retaining exit 2 for genuinely unknown flags.",
+      "wave": 0,
+      "files": [
+        "bin/masterplan.mjs",
+        "test/cli-surface.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/cli-surface.test.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G2",
+        "G3"
+      ],
+      "spec_refs": [
+        "spec.md §6.2",
+        "spec.md §7.2",
+        "spec.md §11"
+      ]
+    },
+    {
+      "id": 3,
+      "description": "Wire bin/masterplan.mjs to the sibling subsystem APIs: resolve seed and config-show values and sources, persist warnings after the required second-position overlap_review event, enforce the overlap review and seed-lock sequence, expose interview and goals-load options, register overlap recording, enriched runs/status, context-status, resume-brief, and sweep behavior, forward all deploy/final-check/completion/archive finish flags, accept final goal-check receipts, and default plan commands from stored plan_path. Keep KNOWN_FLAGS and isKnownFlag authoritative, reject retired flags and any bootstrap verb, preserve the generic event verb, and route this file's environment reads through readEnv. Exact contracts: (a) `mp goals-load --interview-waived --reason` routes through the interview waiver operation, and goals-load receives the bundle replay and the spec path so the `assumed_row_missing` error code is raised exactly as the library emits it; (b) `mp config show` prints `harness.autoCompactWindow`, and the module exports the final `KNOWN_FLAGS` and `isKnownFlag`; (c) `mp seed --predecessor` projects the predecessor bundle's intent-rejection event (class and correction text) into the new bundle's seed record so the interview can open with it; (d) this task owns implementation-facing smoke cases in test/cli-surface.test.mjs and test/bin-masterplan.test.mjs: one accepted invocation per new verb and per new finish-step flag, one waiver-forwarding case, one final-receipt binding case, one config-show output case, and the stored plan-path default; the exhaustive behavioural matrix belongs to orchestration-integration.cli-contract. (e) `mp runs list` and `mp status` print the completion class (complete, incomplete:<reason>, merged, or legacy when the field is absent) and `pushed: no` until archive_pushed, and both call lib/resume-brief.mjs's obligation projection to print open required_successor obligations with the exact successor seed command; (f) `mp config show` reports `harness.autoCompactWindow` when the harness settings are readable, recommends a value no lower than the run's `context_watch.threshold`, and never writes harness settings.",
+      "wave": 4,
+      "files": [
+        "bin/masterplan.mjs",
+        "test/cli-surface.test.mjs",
+        "test/bin-masterplan.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/cli-surface.test.mjs",
+        "node --test test/bin-masterplan.test.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G1",
+        "G2",
+        "G3",
+        "G4",
+        "G5",
+        "G6"
+      ],
+      "spec_refs": [
+        "spec.md §4.1",
+        "spec.md §4.3",
+        "spec.md §5.3",
+        "spec.md §5.4",
+        "spec.md §6.2",
+        "spec.md §7.2",
+        "spec.md §8",
+        "spec.md §9",
+        "spec.md §10",
+        "spec.md §11",
+        "spec.md §12"
+      ]
+    },
+    {
+      "id": 4,
+      "description": "Connect planning and resume consumers to persisted controls: use state.plan_path when fragment merge or planner work-item construction omits plan-md while preserving explicit paths, make resume-phase routing observe resolved planning_mode, prevent the bootstrap-stage marker from entering plan-wave dispatch, and move environment reads in these modules through readEnv. Add behavioural cases: an explicit --plan-md wins over state.plan_path, the stored path is used when the flag is omitted, resume-phase routing follows the resolved planning_mode, and the bootstrap-stage marker never enters plan-wave dispatch. Render the index meta narrative (purpose, problem, solution) in plan.md the way plan.html already does, so a post-wave stage stated in index.meta is visible in the canonical plan after every wave; the sequencer task owns the stage's execution protocol.",
+      "wave": 5,
+      "files": [
+        "lib/continue.mjs",
+        "lib/resume.mjs",
+        "lib/plan-merge.mjs",
+        "test/plan-merge.test.mjs",
+        "test/continue.test.mjs",
+        "test/resume.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/plan-merge.test.mjs",
+        "node --test test/continue.test.mjs",
+        "node --test test/resume.test.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G4",
+        "G6"
+      ],
+      "spec_refs": [
+        "spec.md §4.2",
+        "spec.md §4.3",
+        "spec.md §10",
+        "spec.md §11",
+        "spec.md §12"
+      ]
+    },
+    {
+      "id": 5,
+      "description": "Update wave summaries to read v2 goals and quote the Intent outcome line in the mid-run reminder, with a compatible fallback for v1 bundles that have no Intent block. Add wave-summary cases proving the v2 Intent outcome line is quoted verbatim and a v1 bundle without an Intent block falls back without error.",
+      "wave": 5,
+      "files": [
+        "lib/wave.mjs",
+        "test/wave.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/wave.test.mjs",
+        "node --test test/goals.test.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G2"
+      ],
+      "spec_refs": [
+        "spec.md §6.1",
+        "spec.md §6.2",
+        "spec.md §11",
+        "spec.md §12"
+      ]
+    },
+    {
+      "id": 6,
+      "description": "Expand the CLI surface regression suite to cover all newly registered verbs and finish-step flags, required overlap-review seed behavior, interview and final-receipt forwarding, config/context/resume commands, stored plan-path defaults, removal of retired flags, and the intentional absence of an mp bootstrap verb. Assert the config-show `harness.autoCompactWindow` field, the exported KNOWN_FLAGS/isKnownFlag surface, and the black-box successor case: a bundle seeded with --predecessor naming a predecessor whose finish recorded an intent-class rejection carries that correction text in its seed record. Also assert: an archived bundle with no completion field prints `legacy` in both runs list and status; both commands print an open required_successor obligation with the exact seed command; config show's recommendation is no lower than the configured threshold and the harness settings file is byte-identical after the call.",
+      "wave": 6,
+      "files": [
+        "test/cli-surface.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/cli-surface.test.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G1",
+        "G2",
+        "G3",
+        "G4",
+        "G5",
+        "G6"
+      ],
+      "spec_refs": [
+        "spec.md §4.1",
+        "spec.md §4.3",
+        "spec.md §5.3",
+        "spec.md §6.2",
+        "spec.md §7.2",
+        "spec.md §8",
+        "spec.md §9",
+        "spec.md §10",
+        "spec.md §11"
+      ]
+    },
+    {
+      "id": 7,
+      "description": "Replace the sequencer contract with the complete intent-to-completion flow: perform runs-list overlap review before every seed, drive bounded ledger-backed intent rounds and fresh-context critic dispatches using quoted bundle data, enforce named terminal states, consume intent during planning and assessment, and render the full deploy/final-assessment/intent-confirm/archive-push operation table and autonomy stop set. Add the post-wave bootstrap arm-command-record stage without making it a plan task or mp verb, emit measured or explicit-unknown context status at every gate with compact advice, and declare every prompt-only control with a knob marker. Exact dispatch contracts: mp-intent-critic receives exactly three quoted-data blocks (the verbatim goals.md topic anchor, the interview ledger replay from `mp interview status`, and the current intent draft) and its receipt is recorded through `mp interview critic`; mp-goal-assessor is invoked in `implementation` mode before disposition with the base..tip diff and verify output, and in `final` mode after the live check with the binding tuple {deploy_base_sha, deploy_chain_hash, live_check_digest}, recorded via `mp record-goal-check --final`; at interview start on a bundle seeded with --predecessor the predecessor's stored intent-correction text is presented as quoted context; the bootstrap-stage rows record `required_successor {slug: v10-validation, reason}` through the pinned v9 `mp event` before `mp finish` on this run. Cover the dispatch payloads, mode names, and binding fields in test/prompt-structure.test.mjs and every new op row in test/op-table-parity.test.mjs.",
+      "wave": 8,
+      "files": [
+        "commands/masterplan.md",
+        "test/op-table-parity.test.mjs",
+        "test/prompt-structure.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/op-table-parity.test.mjs",
+        "node --test test/prompt-structure.test.mjs",
+        "grep -nE 'overlap.review|mp interview status|mp-intent-critic|run_deploy_step|deploy_indeterminate|run_final_check|intent_confirm|push_archive|bootstrap-v10\\.mjs.*arm|mp context-status|<!-- knob:' commands/masterplan.md"
+      ],
+      "codex": null,
+      "goals": [
+        "G1",
+        "G2",
+        "G3",
+        "G4",
+        "G5",
+        "G6"
+      ],
+      "spec_refs": [
+        "spec.md §4.2",
+        "spec.md §5.1",
+        "spec.md §5.3",
+        "spec.md §5.4",
+        "spec.md §6.2",
+        "spec.md §7.2",
+        "spec.md §7.3",
+        "spec.md §8",
+        "spec.md §9",
+        "spec.md §10",
+        "spec.md §11",
+        "spec.md §12"
+      ]
+    },
+    {
+      "id": 8,
+      "description": "Publish the integrated public contract across README, the masterplan skill, and the verb reference: document CLI > repo > user > default resolution, exact complexity/autonomy levels and aliases, overlap and interview verbs, done configuration and fixed deploy order, final intent confirmation, completion and push classes, context-status and resume-brief wiring, required successors, and the one-off v10 bootstrap boundary. Add an Environment section naming every readEnv-backed control, including MP_DISPATCH_WAVE_CONCURRENCY, MP_ROUTING_POLICY, SKYNET_VERIFY_ALLOWLIST, and MP_CONTEXT_WINDOW.",
+      "wave": 9,
+      "files": [
+        "README.md",
+        "skills/masterplan/SKILL.md",
+        "docs/verbs.md",
+        "test/docs-contract.test.mjs"
+      ],
+      "verify_commands": [
+        "grep -nE 'CLI.*repo.*user.*default|complexity|autonomy|planning_mode|context_watch|done:' README.md skills/masterplan/SKILL.md",
+        "grep -nE 'complete|incomplete|merged|legacy|context-status|resume-brief|overlap|required successor' README.md skills/masterplan/SKILL.md docs/verbs.md",
+        "grep -nE 'Environment|MP_DISPATCH_WAVE_CONCURRENCY|MP_ROUTING_POLICY|SKYNET_VERIFY_ALLOWLIST|MP_CONTEXT_WINDOW' docs/verbs.md",
+        "node --test test/docs-contract.test.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G1",
+        "G2",
+        "G3",
+        "G4",
+        "G5",
+        "G6"
+      ],
+      "spec_refs": [
+        "spec.md §4.1",
+        "spec.md §4.2",
+        "spec.md §4.3",
+        "spec.md §4.4",
+        "spec.md §5.3",
+        "spec.md §7.1",
+        "spec.md §7.4",
+        "spec.md §8",
+        "spec.md §9",
+        "spec.md §10",
+        "spec.md §11",
+        "spec.md §12"
+      ]
+    },
+    {
+      "id": 9,
+      "description": "Own test/overlap-sequencer.test.mjs, the black-box integration suite named by G1: seed refuses without --overlap-review; the overlap_review event is written second, after bundle_created; a review whose inventory_sha256 no longer matches the runs inventory is refused as overlap_review_stale; a refused seed leaves no bundle directory; the seed lock is held across validate-then-create so a concurrent seed observes it, and sweep breaks a dead-pid lock; resume after simulated compaction reconstructs the overlap outcome from events; and runs list exposes topic, goals, planned_paths, and worktree for the conflict view. Cover the full §8 matrix with durable-event assertions: an in-progress worktree/file conflict, a plan-level planned_paths intersection, an archived topic/goals candidate offered as --predecessor, no overlap (seed proceeds with the review recorded), the predecessor link recorded on the seed, the resume path recording the same review on the resumed bundle via mp record-overlap-review, abort (nothing seeded, nothing on disk), and gated versus loose behaviour (loose fires the ask only for in-progress or plan-level conflicts and records archived candidates silently).",
+      "wave": 9,
+      "files": [
+        "test/overlap-sequencer.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/overlap-sequencer.test.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G1"
+      ],
+      "spec_refs": [
+        "spec.md §8",
+        "spec.md §11",
+        "spec.md §12"
+      ]
+    },
+    {
+      "id": 10,
+      "description": "Add the fresh-context intent critic agent prompt with the required critic/breaker/frontier posture, quoted-data boundary, intent-versus-how review rules, and schema-constrained unknowns, misclassified question ids, contradictions, and synthesized intent draft. Document the interview budgets, round cadence, durable artifacts, honesty-bound receipts, terminal states, and disk-based resume behavior. Reuse the existing critic workflow-map class without changing policy/workflow-map.json.\nintegration note: bootstrap-release's Pi registration must discover mp-intent-critic, while the existing Claude agent loader should register it through normal agent discovery; orchestration-integration's sequencer should dispatch it with the verbatim anchor, ledger, and draft as quoted data. Add test/intent-critic-prompt.test.mjs, which parses the agent file's frontmatter and schema section and asserts the critic/breaker/frontier posture, the quoted-data boundary text, and the complete output schema (unknowns with why_it_changes_design, misclassified question ids, contradictions, intent draft).",
+      "wave": 0,
+      "files": [
+        "agents/mp-intent-critic.md",
+        "docs/design/intent-interview.md",
+        "test/intent-critic-prompt.test.mjs"
+      ],
+      "verify_commands": [
+        "grep -q '^name: mp-intent-critic$' agents/mp-intent-critic.md && grep -q 'why_it_changes_design' agents/mp-intent-critic.md && grep -q 'misclassified' agents/mp-intent-critic.md && grep -q 'contradictions' agents/mp-intent-critic.md",
+        "grep -q 'converged' docs/design/intent-interview.md && grep -q 'exhausted' docs/design/intent-interview.md && grep -q 'critic_off' docs/design/intent-interview.md && grep -q 'content_head' docs/design/intent-interview.md",
+        "node --test test/intent-critic-prompt.test.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G1"
+      ],
+      "spec_refs": [
+        "spec.md §5.1",
+        "spec.md §5.2",
+        "spec.md §5.3",
+        "spec.md §5.4",
+        "spec.md §12"
+      ]
+    },
+    {
+      "id": 11,
+      "description": "Implement the replayable interview ledger and its initial focused suite. Derive question, answer, round, active-design-pick, critic, budget, and terminal status from events; append mutations through the bundle writer; enforce question sequencing, unanswered-question and cap guards; record verbatim answers, withdrawals, supersession and resolution links; persist intent drafts and numbered critic payload artifacts with computed digests and honesty-bound receipt fields; support unavailable critic attempts, waiver, end, reopen, and read-only status without relying on in-memory counters.\nintegration note: orchestration-integration CLI should expose these library operations as mp interview ask|answer|withdraw|draft|critic|end|reopen|status and route goals-load --interview-waived through the waiver operation; this task does not edit bin/masterplan.mjs.",
+      "wave": 1,
+      "files": [
+        "lib/interview.mjs",
+        "test/interview-ledger-resume.test.mjs"
+      ],
+      "verify_commands": [
+        "node --check lib/interview.mjs",
+        "node --test test/interview-ledger-resume.test.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G1"
+      ],
+      "spec_refs": [
+        "spec.md §4.2",
+        "spec.md §5.3",
+        "spec.md §5.4",
+        "spec.md §11",
+        "spec.md §12"
+      ]
+    },
+    {
+      "id": 12,
+      "description": "Harden the interview replay and tests for the complete terminal-state contract: rounds seal on the first answer, withdrawal, draft, or critic event; batches may ask within the current round; completed intent rounds require an answered intent question; high complexity refuses a new intent round without the preceding receipt and convergence requires distinct per-round receipts; design events do not move content_head; drafts must follow all intent content; unavailable critics require two same-head failures plus operator acknowledgement; floors, intent floors, caps, and round minima cannot be padded by withdrawals or design picks; terminal and waived states are absorbing; reopen is brainstorm-only before goals freeze; exhausted events retain every unresolved item from the latest available payload. Extend replay fixtures to prove these rules after simulated compaction and to reject forged or malformed receipts and payloads.",
+      "wave": 2,
+      "files": [
+        "lib/interview.mjs",
+        "test/interview-ledger-resume.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/interview-ledger-resume.test.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G1"
+      ],
+      "spec_refs": [
+        "spec.md §4.2",
+        "spec.md §5.3",
+        "spec.md §5.4",
+        "spec.md §11"
+      ]
+    },
+    {
+      "id": 13,
+      "description": "Extend goal parsing, validation, hashing, amendment comparison, and tests for v2 documents containing an Intent block with why, outcome, anti_goals, and done_means followed by three to five outcome goals. Preserve v1 parsing behavior, keep optional signal and evidence fields in canonical hashes when present, include all Intent fields in goalsHash, retain the immutable topic anchor, and make an intent-only amendment re-arm the existing spec-gate change contract.",
+      "wave": 0,
+      "files": [
+        "lib/goals.mjs",
+        "test/goals.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/goals.test.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G2"
+      ],
+      "spec_refs": [
+        "spec.md §6.1",
+        "spec.md §11",
+        "spec.md §12"
+      ]
+    },
+    {
+      "id": 14,
+      "description": "Extend the library-level goals-load and goal-check contracts. Accept only converged, exhausted, critic_off, or durable waived interview exits; reject open or reopened interviews; require every unknown, contradiction, and misclassified id listed by an exhausted terminal event to appear in the spec Assumptions table with assumed_row_missing on omissions; validate final assessor receipts against deploy_base_sha, deploy_chain_hash, live_check_digest, and the final intent_verdict while preserving the implementation-assessment and v1 receipt shapes. Add focused regression cases to the existing goals suite.\nintegration note: orchestration-integration CLI should pass the bundle replay and spec path into this goals-load validation and preserve the assumed_row_missing error code; finish wiring should supply the expected final receipt bindings rather than accepting caller-provided values unbound.",
+      "wave": 3,
+      "files": [
+        "lib/goals.mjs",
+        "test/goals.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/goals.test.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G1",
+        "G2",
+        "G3"
+      ],
+      "spec_refs": [
+        "spec.md §5.4",
+        "spec.md §6.1",
+        "spec.md §6.2",
+        "spec.md §11"
+      ]
+    },
+    {
+      "id": 15,
+      "description": "Update the goal assessor prompt with separate implementation and final assessment modes, per-goal evidence rules, the final met|partial|missed intent verdict, and receipt bindings to the deployed base, deploy chain, and live-check digest. Add explicit v1 compatibility behavior to both the goal assessor and adversarial reviewer so a goals document without an Intent block or a legacy single-dispatch request returns the v9 verdict shape without intent_verdict.\nintegration note: orchestration-integration's sequencer should invoke the implementation mode before disposition and the final mode after live checking, passing only the mode-appropriate evidence and binding tuple. Own test/agents-compat.test.mjs: parse both prompts and assert the separate implementation/final modes, the per-goal evidence rules, the final intent verdict and its binding fields, and the declared v1 mode; feed a v1 goals document through the compatibility path; validate a fixture legacy assessor result with the v9-compatible goal-check validator; and prove that no intent_verdict is required or emitted in v1 mode while final v2 receipts retain their stronger bindings.",
+      "wave": 4,
+      "files": [
+        "agents/mp-goal-assessor.md",
+        "agents/mp-adversarial-reviewer.md",
+        "test/agents-compat.test.mjs"
+      ],
+      "verify_commands": [
+        "grep -qi 'v1 mode' agents/mp-goal-assessor.md && grep -q 'intent_verdict' agents/mp-goal-assessor.md && grep -q 'deploy_base_sha' agents/mp-goal-assessor.md && grep -q 'deploy_chain_hash' agents/mp-goal-assessor.md && grep -q 'live_check_digest' agents/mp-goal-assessor.md",
+        "grep -qi 'v1 mode' agents/mp-adversarial-reviewer.md",
+        "node --test test/agents-compat.test.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G2",
+        "G3"
+      ],
+      "spec_refs": [
+        "spec.md §6.2",
+        "spec.md §11",
+        "spec.md §12"
+      ]
+    },
+    {
+      "id": 16,
+      "description": "Choose and implement a dependency-free YAML parser for the recognized `.masterplan.yaml` subset inside `lib/config.mjs`, rather than adding a runtime package that installed plugin trees cannot assume is present. Implement `resolveRunConfig({ cli, repoRoot, home, env })`, deterministic warnings, CLI > repo > user > default precedence, whole-object replacement with partial `context_watch` defaults, complexity-derived planning mode, enum validation, `full` and `auto_compact` aliases, unknown-key handling, and repo-only `done`. Validate `done: none`, group and step shapes, `version_from`, hostile or unresolved `${version}` values, shell-safe version substitution, and `commit_paths` defaults and warnings; expose reusable parsing/revision-validation helpers so finish can resolve the definition at a supplied git SHA and calculate its digest. Export `readEnv(name)` as the sole permitted `process.env` access and schema metadata for the inventory guard. Cover source precedence, malformed files, aliases, nested replacement, schema failures, revision re-resolution, and warnings with resolver-level tests. Integration note: orchestration-integration.cli must feed seed/config-show overrides through this API, persist resolved values and derived source fields, print warnings and append one `config_warning` event, reject the removed flags, and expose the harness `autoCompactWindow`; finish-live must consume the revision helper at `deploy_base_sha`. Every owner of files under `lib/` or `bin/` must replace direct environment reads, including `MP_DISPATCH_WAVE_CONCURRENCY`, `MP_ROUTING_POLICY`, `SKYNET_VERIFY_ALLOWLIST`, and `MP_CONTEXT_WINDOW`, with `readEnv`. Alongside `readEnv`, export the single child-process environment passthrough used wherever a spawned process needs the inherited environment, so no module other than lib/config.mjs touches process.env.",
+      "wave": 0,
+      "files": [
+        "lib/config.mjs",
+        "test/config.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/config.test.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G3",
+        "G4",
+        "G5"
+      ],
+      "spec_refs": [
+        "spec.md §4.1",
+        "spec.md §4.2",
+        "spec.md §4.3",
+        "spec.md §4.4",
+        "spec.md §7.1",
+        "spec.md §9",
+        "spec.md §11",
+        "spec.md §12"
+      ]
+    },
+    {
+      "id": 17,
+      "description": "Update migration parsing so pre-v10 bundles containing `complexity_source`, `predecessor_transcript`, nullable historical values, or `autonomy: full` remain readable without a schema-version bump or destructive rewriting, while newly resolved configuration still uses validated non-null values and `loose`. Add migration compatibility cases to the config suite. Integration note: orchestration-integration.schema must retain validation tolerance for these legacy state fields and `autonomy: full` while treating the new source fields as derived data.",
+      "wave": 1,
+      "files": [
+        "lib/migrate.mjs",
+        "test/config.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/config.test.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G4"
+      ],
+      "spec_refs": [
+        "spec.md §4.1",
+        "spec.md §4.3",
+        "spec.md §11",
+        "spec.md §12"
+      ]
+    },
+    {
+      "id": 18,
+      "description": "Add this repository's literal `done:` configuration with `.claude-plugin/plugin.json` as `version_from` and the specified release, install, user-only, and live-check commands and exit-status predicates. Extend the config suite to load the checked-in file, exercise the default metadata-only `commit_paths`, reject `{text, evidence}`, and run the literal normalized `git ls-remote` predicate against a tagless bare remote to prove absence reports exit 1 rather than indeterminate.",
+      "wave": 2,
+      "files": [
+        ".masterplan.yaml",
+        "test/config.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/config.test.mjs",
+        "grep -q '^done:' .masterplan.yaml"
+      ],
+      "codex": null,
+      "goals": [
+        "G3",
+        "G4",
+        "G5"
+      ],
+      "spec_refs": [
+        "spec.md §4.1",
+        "spec.md §7.1",
+        "spec.md §9",
+        "spec.md §11",
+        "spec.md §12"
+      ]
+    },
+    {
+      "id": 19,
+      "description": "Implement the knob contract registry and its single-variable fixture harness. Build both fixtures from one shared base, prove exactly one input differs, and require a consumer-side observable rather than seeded state. Register or add two-value behavioral contracts for every current non-metadata flag, config path, emitted state control, environment control, and prompt-only marker, including complexity caps, autonomy deploy asks, planning-mode phase selection, both `context_watch` outputs, and the documented environment controls. Permit rendered protocol lines only for prompt-only controls. Assert the guard rejects a read-but-ignored synthetic knob, a seeded-state-only synthetic knob, and a fixture pair that changes two inputs. Integration note: these tests consume the final CLI, interview, finish, context-status, resume-phase, and sequencer surfaces but do not edit their owning files.",
+      "wave": 9,
+      "files": [
+        "test/knob-contract.test.mjs",
+        "test/fixtures/knobs/contracts.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/knob-contract.test.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G3",
+        "G4",
+        "G5"
+      ],
+      "spec_refs": [
+        "spec.md §4.2",
+        "spec.md §4.3",
+        "spec.md §4.4",
+        "spec.md §7.1",
+        "spec.md §9",
+        "spec.md §11"
+      ]
+    },
+    {
+      "id": 20,
+      "description": "Implement the generated knob inventory guard over exported CLI flags, all recognized config paths including nested paths, recursively emitted `buildSeedState` fields, every literal `readEnv` call site, and sequencer `<!-- knob: name -->` markers. Require each discovered control to resolve to a named behavioral contract or to one of the four closed metadata exemptions (`created_at`, `schema_version`, `slug`, `topic`), retain the lexical reader check as an early signal, and fail on unmapped additions. Reject every direct `process.env` token outside the `readEnv` implementation and test member access, destructuring, bracket access, aliasing, and `Object.entries` escape attempts. Verify contract names exist and add synthetic unmapped-control cases so the inventory cannot pass through stale metadata alone. Integration note: orchestration-integration.cli must export the final `KNOWN_FLAGS` and `isKnownFlag`, orchestration-integration.sequencer must provide the prompt-only markers, and source owners must remove inert controls or route their reads through `readEnv` before this guard can pass.",
+      "wave": 10,
+      "files": [
+        "test/knob-inventory.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/knob-inventory.test.mjs",
+        "node --test test/knob-contract.test.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G4"
+      ],
+      "spec_refs": [
+        "spec.md §4.3",
+        "spec.md §4.4",
+        "spec.md §11",
+        "spec.md §12"
+      ]
+    },
+    {
+      "id": 21,
+      "description": "Route every remaining direct process.env read outside lib/config.mjs through its exported accessors, preserving behaviour and the injected-env test seams: CLAUDE_CONFIG_DIR and HOME in lib/paths.mjs; MP_ROUTING_POLICY in lib/dispatch/routing-policy.mjs and lib/doctor/routing-policy-health.mjs; MP_DISPATCH_WAVE_CONCURRENCY, MP_ROUTING_POLICY, and SKYNET_VERIFY_ALLOWLIST in lib/dispatch-wave.mjs; HOME in bin/doctor.mjs, lib/doctor/codex-auth.mjs, and lib/doctor/pi-agent-registration.mjs (its spawn uses the config-owned passthrough). The existing suites for these modules stay green; the repo-wide zero-process.env assertion belongs to config-knobs.inventory, this task asserts only its own files. lib/continue.mjs, lib/sweep.mjs, lib/runs.mjs, and bin/install-pi.mjs are converted by their owning tasks.",
+      "wave": 1,
+      "files": [
+        "lib/paths.mjs",
+        "lib/dispatch/routing-policy.mjs",
+        "lib/dispatch-wave.mjs",
+        "lib/doctor/routing-policy-health.mjs",
+        "lib/doctor/codex-auth.mjs",
+        "lib/doctor/pi-agent-registration.mjs",
+        "bin/doctor.mjs",
+        "test/paths.test.mjs",
+        "test/routing-policy.test.mjs",
+        "test/dispatch-wave.test.mjs",
+        "test/doctor.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/paths.test.mjs",
+        "node --test test/routing-policy.test.mjs",
+        "node --test test/dispatch-wave.test.mjs",
+        "node --test test/doctor.test.mjs",
+        "test \"$(grep -l \"process\\.env\" lib/paths.mjs lib/dispatch/routing-policy.mjs lib/dispatch-wave.mjs lib/doctor/routing-policy-health.mjs lib/doctor/codex-auth.mjs lib/doctor/pi-agent-registration.mjs bin/doctor.mjs | wc -l)\" = 0 && grep -q \"readEnv\" lib/paths.mjs lib/dispatch-wave.mjs bin/doctor.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G4"
+      ],
+      "spec_refs": [
+        "spec.md §4.4",
+        "spec.md §11",
+        "spec.md §12"
+      ]
+    },
+    {
+      "id": 22,
+      "description": "Add deterministic finish helpers for canonical deploy-group ordering, exit-status-only run/check classification, safe validated ${version} substitution, deploy-chain hashing, and complete/incomplete/merged/legacy classification. Extend unit coverage for absent, none, and object done definitions and ensure command output never affects check classification.",
+      "wave": 0,
+      "files": [
+        "lib/finish.mjs",
+        "test/finish.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/finish.test.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G3"
+      ],
+      "spec_refs": [
+        "spec.md §7.1",
+        "spec.md §7.2",
+        "spec.md §7.4",
+        "spec.md §11"
+      ]
+    },
+    {
+      "id": 23,
+      "description": "Extend the one-op finish driver from branch disposition into the deploy pipeline: re-resolve the repo-local done definition from .masterplan.yaml at deploy_base_sha through the config contract, record deploy_base with branch_tip and done_sha256, handle no_definition_of_done with ad-hoc or incomplete paths, treat done: none as an empty deploy chain, execute groups in release → install → user_only → live_check order, and emit durable authorized → started → deploy_step transitions. Consume autonomy as a behavioral input: gated asks before each runnable step, loose auto-authorizes successful progression, failures and indeterminate results halt, and user_only always hands back for a checked result. Preserve the existing pre-disposition finish order. integration note: orchestration-integration.cli must expose --deploy-authorize, --deploy-step-done, --deploy-rerun, --deploy-attest, --deploy-retry, --deploy-skip, --deploy-abort, --deploy-abort-incomplete, --done-adhoc-file, --merged, --merge-sha, --version-fix, --goals-choice, --intent-confirmed, --intent-rejected, --class, --reason, --archive-pushed, and --sha and pass them to finishStep.",
+      "wave": 1,
+      "files": [
+        "lib/finish-step.mjs",
+        "test/finish-step.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/finish-step.test.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G3",
+        "G4"
+      ],
+      "spec_refs": [
+        "spec.md §7.1",
+        "spec.md §7.2",
+        "spec.md §7.4",
+        "spec.md §7.6",
+        "spec.md §11"
+      ]
+    },
+    {
+      "id": 24,
+      "description": "Enforce deploy commit identity and release guards: open version_not_bumped before merge or PR retirement when the branch version is already tagged locally or on origin; require the branch tip in the deploy base; require --merged and --merge-sha for PRs; accept merge ancestry or a single squash with git patch-id --verbatim on git 2.39 or newer; and reject rebase merges, whitespace-different squashes, or unsupported git versions with explicit diagnostics. Audit every deploy boundary per commit, allowing single-parent docs/masterplan bundle commits and recorded stage-produced commits only within done.commit_paths, requiring ${version} to remain unchanged, and treating every other commit as a base move that invalidates old receipts. Refuse authorization when MAIN is dirty outside docs/masterplan.",
+      "wave": 2,
+      "files": [
+        "lib/finish.mjs",
+        "lib/finish-step.mjs",
+        "test/deploy-commit-identity.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/deploy-commit-identity.test.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G3"
+      ],
+      "spec_refs": [
+        "spec.md §7.1",
+        "spec.md §7.2",
+        "spec.md §7.3",
+        "spec.md §11"
+      ]
+    },
+    {
+      "id": 25,
+      "description": "Implement event-keyed deploy recovery for every interruption point. Re-entry must preserve an authorization that has no started event, reject started without authorization, probe a started step's check before replay, require a new gated authorization before rerunning a previously started command, classify check exit 1 as absent and every other nonzero check result as indeterminate, and leave deploy abort resumable. Permit attestation only for an interrupted check-less step, record it as status attested, and prevent attestation from proving a checked step. Add real-writer replay cases for gated and loose authorization order and recovery after each deploy gate.",
+      "wave": 3,
+      "files": [
+        "lib/finish-step.mjs",
+        "test/finish-replay.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/finish-replay.test.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G3",
+        "G4"
+      ],
+      "spec_refs": [
+        "spec.md §7.2",
+        "spec.md §7.3",
+        "spec.md §7.4",
+        "spec.md §11"
+      ]
+    },
+    {
+      "id": 26,
+      "description": "Complete the finish replay suite against temporary real git repositories using the real bundle event writer. Cover fixed group order regardless of declaration order, user_only checks returning 0/1/other, sibling and same-repo bundle commits, foreign base moves and full run replay, stage-produced commits inside and outside commit_paths, dirty-tree refusal, mandatory-group skips, live-check retry-only behavior, done: none with an empty final chain, and a release rerun failing when moved code still names an already-tagged version.",
+      "wave": 4,
+      "files": [
+        "lib/finish-step.mjs",
+        "test/finish-replay.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/finish-replay.test.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G3",
+        "G4"
+      ],
+      "spec_refs": [
+        "spec.md §7.1",
+        "spec.md §7.2",
+        "spec.md §7.3",
+        "spec.md §7.4",
+        "spec.md §11"
+      ]
+    },
+    {
+      "id": 27,
+      "description": "Add the post-deploy final assessment transition after the required live check, binding run_final_check and its accepted receipt to deploy_base_sha, deploy_chain_hash, live_check_digest, and the final intent verdict. Re-audit commit identity before final assessment and intent confirmation, route partial or missed final verdicts through goals_unmet with waiver, abort, or reject-intent only, and emit intent_confirm only after a valid final receipt; for done: none, pass an empty chain and null live digest. integration note: consume the sibling-owned lib/goals.mjs final-receipt validator rather than duplicating it; that module must export validation for deploy_base_sha, deploy_chain_hash, live_check_digest, and intent_verdict, and orchestration-integration.cli must route mp record-goal-check --final receipts to the existing event writer.",
+      "wave": 5,
+      "files": [
+        "lib/finish-step.mjs",
+        "test/final-check.test.mjs",
+        "test/finish-step-goals.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/final-check.test.mjs",
+        "node --test test/finish-step-goals.test.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G3"
+      ],
+      "spec_refs": [
+        "spec.md §6.2",
+        "spec.md §7.2",
+        "spec.md §7.3",
+        "spec.md §11"
+      ]
+    },
+    {
+      "id": 28,
+      "description": "Enforce durable archive authorization and completion classes. Write completion_confirmed only for an accepted intent confirmation bound to the latest deploy base; write incomplete_authorized transactionally for keep, discard, deploy skip, no-definition abort-incomplete, attested mandatory steps, and both intent-rejection classes; and refuse archive without the matching authorization. Archive a fully deployed and confirmed run as complete, done: none as merged, and all authorized shortfalls as incomplete:<reason>. Persist implementation-versus-intent rejection and correction text, keep rejected runs receipt-isolated from successors, and ensure keep/discard never enter deploy replay. Emit `required_successor {slug, reason}` for both intent-rejection classes; the successor is seeded with --predecessor naming this run, and for class intent the stored correction text is what the successor's interview opens with.",
+      "wave": 6,
+      "files": [
+        "lib/finish-step.mjs",
+        "test/intent-rejected.test.mjs",
+        "test/finish-replay.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/intent-rejected.test.mjs",
+        "node --test test/finish-replay.test.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G3"
+      ],
+      "spec_refs": [
+        "spec.md §7.2",
+        "spec.md §7.4",
+        "spec.md §7.5",
+        "spec.md §11"
+      ]
+    },
+    {
+      "id": 29,
+      "description": "Add the post-archive push_archive state. Emit it only when an install-group receipt proves that it pushed the base and identifies pushed_base; always halt for operator approval under gated and loose autonomy; list exactly pushed_base..HEAD; and accept archive_pushed as the sole post-archive event. Re-entry without that event must re-emit the gate, while no done block, done: none, or an install chain that did not push must stop without a push gate. Exercise exact fast-forward publication and the non-fast-forward recovery path of fetch, per-commit audit, rebase, one retry, then stop, while reporting pushed: no until archive_pushed lands.",
+      "wave": 7,
+      "files": [
+        "lib/finish-step.mjs",
+        "test/finish-replay.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/finish-replay.test.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G3",
+        "G4"
+      ],
+      "spec_refs": [
+        "spec.md §7.2",
+        "spec.md §7.3",
+        "spec.md §7.4",
+        "spec.md §11"
+      ]
+    },
+    {
+      "id": 30,
+      "description": "Update finish retro rendering to print complete, incomplete:<reason>, merged, or legacy from durable state and events, treating pre-v10 archives with no completion field as legacy rather than complete or invalid. Include the archive publication state so a local archive without archive_pushed is visibly pushed: no.",
+      "wave": 8,
+      "files": [
+        "lib/retro-goals.mjs",
+        "test/finish-step-goals.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/finish-step-goals.test.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G3"
+      ],
+      "spec_refs": [
+        "spec.md §7.4",
+        "spec.md §11",
+        "spec.md §12"
+      ]
+    },
+    {
+      "id": 31,
+      "description": "Implement reusable repo-wide seed-lock primitives using atomic creation of docs/masterplan/.seed.lock, PID and ownership metadata, live-lock refusal, and owner-safe release. Cover competing acquisitions, release after failure, and live/dead owner inspection with temporary repositories.\nintegration note: orchestration-integration must hold this lock across overlap-digest revalidation and validate-then-create seeding, release it in a finally path, and leave no bundle directory when validation fails.",
+      "wave": 0,
+      "files": [
+        "lib/seed-lock.mjs",
+        "test/seed-lock.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/seed-lock.test.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G1"
+      ],
+      "spec_refs": [
+        "spec.md §8",
+        "spec.md §11",
+        "spec.md §12"
+      ]
+    },
+    {
+      "id": 32,
+      "description": "Extend sweepWorktrees so dry runs report a seed lock owned by a dead recorded PID and apply mode removes it through the shared lock primitive, while preserving live-owner locks and existing worktree cleanup behavior. Route lib/sweep.mjs's environment access through lib/config.mjs's readEnv.",
+      "wave": 1,
+      "files": [
+        "lib/sweep.mjs",
+        "test/sweep.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/sweep.test.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G1"
+      ],
+      "spec_refs": [
+        "spec.md §8",
+        "spec.md §11",
+        "spec.md §12"
+      ]
+    },
+    {
+      "id": 33,
+      "description": "Implement active-run brief resolution and rendering in a new library module: zero active bundles produce no output, one produces the five durable lines for slug, phase, open gate, goals.md outcome, and next mp operation, and several produce one summary line each. Surface unresolved required_successor obligations before active-run output, require the matching predecessor link when evaluating successors, and include the exact seed command.\nintegration note: orchestration-integration must expose this renderer as mp resume-brief --repo-root and reuse its obligation projection for runs list and status; doctor policy and severity remain owned by doctor-obligations.",
+      "wave": 0,
+      "files": [
+        "lib/resume-brief.mjs",
+        "test/resume-brief.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/resume-brief.test.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G5"
+      ],
+      "spec_refs": [
+        "spec.md §7.4",
+        "spec.md §9",
+        "spec.md §11",
+        "spec.md §12"
+      ]
+    },
+    {
+      "id": 34,
+      "description": "Implement the integration-facing run-awareness libraries. Enrich discoverRuns records with the full topic, phase, worktree path or null, parsed goals [{id,text}], and the sorted deduplicated union of plan.index.json task files; export canonical inventory serialization, inventory_sha256 computation over exactly the returned records, and a stale overlap-review assertion. Add transcript lineage resolution and context measurement in lib/context-status.mjs: encode the MAIN project path, prefer its session transcript, fall back only to direct sibling project transcripts, ignore subagent task transcripts, derive the last assistant usage total and trailing four-characters-per-token estimate, and return current, post-compaction, malformed, unsupported, or not-found without fabricating usage. Implement explicit-window, injected MP_CONTEXT_WINDOW, [1m] harness-model, and 200k window precedence with window_source, plus threshold/focus recommendations using the active-run projection for the generated default. Tests cover resumed and fresh transcripts, trailing records, compaction, malformed usage, missing sessions, subdirectory lineage, 200k/1M windows, and configured versus generated focus.\nintegration note: orchestration-integration must wire runs list and both overlap-review recorders to these digest helpers; acquire the seed lock before recomputing the digest; wire context-status and pass MP_CONTEXT_WINDOW through config-knobs' readEnv helper rather than reading process.env here; and complete the black-box seed/resume event-order coverage in test/overlap-sequencer.test.mjs. Route lib/runs.mjs's environment access through readEnv as well.",
+      "wave": 1,
+      "files": [
+        "lib/runs.mjs",
+        "lib/context-status.mjs",
+        "test/runs.test.mjs",
+        "test/context-status-session-lineage.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/runs.test.mjs",
+        "node --test test/context-status-session-lineage.test.mjs",
+        "node --test test/resume-brief.test.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G1",
+        "G5"
+      ],
+      "spec_refs": [
+        "spec.md §8",
+        "spec.md §9",
+        "spec.md §11",
+        "spec.md §12"
+      ]
+    },
+    {
+      "id": 35,
+      "description": "Extend the existing runs-list regression suite to prove enriched records expose untruncated multiline topics, phase, worktree path or null, parsed goal ids and text, and deterministic planned-path unions, including bundles where optional goals or plan artifacts are absent.",
+      "wave": 2,
+      "files": [
+        "test/runs-list.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/runs-list.test.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G1"
+      ],
+      "spec_refs": [
+        "spec.md §8",
+        "spec.md §11"
+      ]
+    },
+    {
+      "id": 36,
+      "description": "Add the auto-discovered resume-brief-hook doctor check. Inspect /srv/workflows/hooks/policy.toml when present, accept only a session_start rule whose command invokes resume-brief with --repo-root, WARN for missing or incomplete wiring, and return SKIP without a warning when the policy file is absent. Keep the production path fixed while allowing tests to supply a fixture path through internal check options rather than a new environment or CLI knob. Cover valid wiring, no matching rule, a resume-brief command lacking --repo-root, and an absent policy file through the doctor runner.",
+      "wave": 0,
+      "files": [
+        "lib/doctor/resume-brief-hook.mjs",
+        "test/resume-brief-hook.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/resume-brief-hook.test.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G5"
+      ],
+      "spec_refs": [
+        "spec.md §9",
+        "spec.md §11",
+        "spec.md §12"
+      ]
+    },
+    {
+      "id": 37,
+      "description": "Add the auto-discovered no-definition-of-done doctor check using the repo-config parser from lib/config.mjs rather than a second YAML parser. WARN only when the repository has a .masterplan.yaml with no done key; emit no warning when the file is absent, when done is the literal none sentinel, or when a done object is declared. Assert that WARN and non-applicable states keep the doctor exit code at zero.",
+      "wave": 1,
+      "files": [
+        "lib/doctor/no-definition-of-done.mjs",
+        "test/no-definition-of-done.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/no-definition-of-done.test.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G3"
+      ],
+      "spec_refs": [
+        "spec.md §7.4",
+        "spec.md §11",
+        "spec.md §12"
+      ]
+    },
+    {
+      "id": 38,
+      "description": "Add incomplete-archive as a separate auto-discovered check instead of extending dangling-run, preserving file-disjoint implementation. Emit a PASS informational finding for each archived bundle classified as incomplete:<reason> or merged, include its slug and completion class, and do not report complete, legacy, or active bundles. Cover incomplete reasons and the done:none merged class.",
+      "wave": 1,
+      "files": [
+        "lib/doctor/incomplete-archive.mjs",
+        "test/incomplete-archive.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/incomplete-archive.test.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G3"
+      ],
+      "spec_refs": [
+        "spec.md §7.4",
+        "spec.md §11",
+        "spec.md §12"
+      ]
+    },
+    {
+      "id": 39,
+      "description": "Add legacy-archive as a separate auto-discovered check that emits a PASS informational finding for archived bundles lacking the completion field, without treating pre-v10 state as a schema crash or as complete. Exclude active bundles and archived bundles carrying complete, merged, or incomplete:* classes, and cover the v9-finished bootstrap run shape.",
+      "wave": 1,
+      "files": [
+        "lib/doctor/legacy-archive.mjs",
+        "test/legacy-archive.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/legacy-archive.test.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G3",
+        "G6"
+      ],
+      "spec_refs": [
+        "spec.md §7.4",
+        "spec.md §10.2",
+        "spec.md §11",
+        "spec.md §12"
+      ]
+    },
+    {
+      "id": 40,
+      "description": "Add the auto-discovered required-successor check. For every required_successor event, match only a bundle whose slug equals the required slug and whose seed record names the obligation source via predecessor. Report an absent linked successor as WARN with an actionable seed command, a linked non-archived successor as an informational PASS, and an archived complete successor as PASS; report an archived incomplete:*, merged, or legacy successor as ERROR. Assert doctor exit codes for all lifecycle states and prove that a same-slug bundle without the predecessor link leaves the obligation absent and WARN-only.",
+      "wave": 1,
+      "files": [
+        "lib/doctor/required-successor.mjs",
+        "test/required-successor.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/required-successor.test.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G3",
+        "G6"
+      ],
+      "spec_refs": [
+        "spec.md §7.4",
+        "spec.md §10.2",
+        "spec.md §10.3",
+        "spec.md §11",
+        "spec.md §12"
+      ]
+    },
+    {
+      "id": 41,
+      "description": "Extend install-pi checking with --expect=vV so it resolves the current release, executes <install-root>/current/bin/masterplan.mjs version, and fails unless the executable reports the expected version while preserving the existing structural, fixture-root, and rollback behavior. Add success, mismatch, missing/non-executable binary, and fixture-root coverage. Route bin/install-pi.mjs's HOME lookup through lib/config.mjs's readEnv.",
+      "wave": 1,
+      "files": [
+        "bin/install-pi.mjs",
+        "test/install-pi.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/install-pi.test.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G6"
+      ],
+      "spec_refs": [
+        "spec.md §7.1",
+        "spec.md §10.1",
+        "spec.md §11",
+        "spec.md §12"
+      ]
+    },
+    {
+      "id": 42,
+      "description": "Implement scripts/release.mjs --version=V so it validates the release version, refuses version files that were not already bumped, never bumps them itself, inserts and commits only a missing CHANGELOG release header, creates an annotated tag, replays idempotently when its tag already points at HEAD, and fails for a foreign tag. Bump the branch-owned publication metadata and release notes to 10.0.0, document the release contract and corrective 10.0.x path, and update publish-hygiene expectations. Add test/release-script.test.mjs with isolated temporary-repository cases: an invalid version string is refused, unbumped version files are refused, a foreign tag at the version is refused, the release commit touches only CHANGELOG.md, and the tag is annotated and idempotent on replay.",
+      "wave": 0,
+      "files": [
+        "scripts/release.mjs",
+        ".claude-plugin/plugin.json",
+        "package.json",
+        "CHANGELOG.md",
+        "RELEASING.md",
+        "test/publish-hygiene.test.mjs",
+        "test/release-script.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/publish-hygiene.test.mjs",
+        "node --check scripts/release.mjs",
+        "grep -q 'never bumps' RELEASING.md && grep -Eq 'corrective.*10\\.0\\.x|10\\.0\\.x.*corrective' RELEASING.md",
+        "tmp=\"$(mktemp -d)\"; trap 'rm -rf \"$tmp\"' EXIT; git clone -q . \"$tmp/repo\"; cp scripts/release.mjs \"$tmp/repo/scripts/release.mjs\"; cp package.json \"$tmp/repo/package.json\"; cp .claude-plugin/plugin.json \"$tmp/repo/.claude-plugin/plugin.json\"; cp CHANGELOG.md \"$tmp/repo/CHANGELOG.md\"; (cd \"$tmp/repo\" && git config user.name masterplan-test && git config user.email masterplan@example.invalid && git add scripts/release.mjs package.json .claude-plugin/plugin.json CHANGELOG.md && (git diff --cached --quiet || git commit -qm fixture) && node scripts/release.mjs --version=10.0.0 && test \"$(git cat-file -t refs/tags/v10.0.0)\" = tag && before=\"$(git rev-parse refs/tags/v10.0.0^{commit})\" && node scripts/release.mjs --version=10.0.0 && test \"$before\" = \"$(git rev-parse refs/tags/v10.0.0^{commit})\")",
+        "node --test test/release-script.test.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G6"
+      ],
+      "spec_refs": [
+        "spec.md §7.1",
+        "spec.md §10.1",
+        "spec.md §10.3",
+        "spec.md §11",
+        "spec.md §12"
+      ]
+    },
+    {
+      "id": 43,
+      "description": "Add self-contained registration coverage proving the generic Pi registrar discovers an agents directory entry named mp-intent-critic.md, maps its lane model, writes it into the managed manifest, and reports clean under --check without taking ownership of the agent prompt itself.",
+      "wave": 0,
+      "files": [
+        "test/register-pi-agents.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/register-pi-agents.test.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G1"
+      ],
+      "spec_refs": [
+        "spec.md §11",
+        "spec.md §12"
+      ]
+    },
+    {
+      "id": 44,
+      "description": "Implement the one-off scripts/bootstrap-v10.mjs driver with status, arm, record, and corrective-pass start subcommands; the fixed step enum and pass ordering; schema-validated bootstrap_armed/bootstrap_step writes through appendEvent; same-SHA authorization matching; failed/recovered semantics; command and digest binding; fixture-target overrides; per-step preconditions and postconditions; workspace-root bundle scanning; carried-main commit reporting; reviewed-to-tag identity checks; PR reconciliation data; and the gate's clean-tree, remote-tip equality, ancestry, branch-path, and per-commit bundle-only audits. Status must reconstruct pass, completed steps, failures, and the next action solely from disk after compaction.\nintegration note: orchestration-integration must invoke this script's arm → printed command → record loop as a serial pre-finish bootstrap stage and must not expose a permanent mp bootstrap CLI verb. Own test/bootstrap-driver.test.mjs: fixture-bundle smoke cases proving status reconstructs pass and next action from disk, arm refuses when a precondition fails without writing an event, record refuses without a matching arm at the same base SHA, and --targets overrides route every path to fixture locations.",
+      "wave": 2,
+      "files": [
+        "scripts/bootstrap-v10.mjs",
+        "test/bootstrap-driver.test.mjs"
+      ],
+      "verify_commands": [
+        "node --check scripts/bootstrap-v10.mjs",
+        "node --test test/bootstrap-driver.test.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G6"
+      ],
+      "spec_refs": [
+        "spec.md §10.1",
+        "spec.md §10.2",
+        "spec.md §10.3",
+        "spec.md §11",
+        "spec.md §12"
+      ]
+    },
+    {
+      "id": 45,
+      "description": "Implement the v9-to-v10 rehearsal shell walk using the same bootstrap arm/record loop and fixture targets used by the live stage: copy and pin the installed 9.10.0 tree before any installation, route every rehearsed finish invocation through that copy, construct the bare remote and second-clone merge fixtures, exercise fixture Pi and Claude installations, preserve and audit bundle-only base commits, prove the non-empty v9 assessment/review diff and no-op finish merge, and clean up a real private throwaway GitHub repository after a gh pr create/merge cycle. The credentialed GitHub cycle is intentionally executed during the live rehearsal rather than routine CI, and its output digest becomes the rehearsal receipt. Own test/rehearse-v9-finish.test.mjs: with a gh shim on PATH and --targets fixture overrides, the walk pins the 9.10.0 copy before any install, routes every rehearsed finish through it, builds the bare remote and second clone, drives arm and record through the fixture driver, asserts the non-empty v9 diff and the no-op finish merge, audits the bundle-only base commits, and cleans up; the gh shim is stateful — it records every invocation and simulates repo create, pr create, pr merge, and repo delete — so the test asserts the full create/PR/merge/delete command sequence, the private-repository flag, cleanup after success, and cleanup after a simulated mid-cycle failure; real network execution is reserved for the live stage.",
+      "wave": 3,
+      "files": [
+        "scripts/rehearse-v9-finish.sh",
+        "test/rehearse-v9-finish.test.mjs"
+      ],
+      "verify_commands": [
+        "bash -n scripts/rehearse-v9-finish.sh",
+        "test -x scripts/rehearse-v9-finish.sh",
+        "grep -q 'bootstrap-v10.mjs' scripts/rehearse-v9-finish.sh && grep -q '9.10.0' scripts/rehearse-v9-finish.sh && grep -q 'gh pr create' scripts/rehearse-v9-finish.sh && grep -q 'gh pr merge --merge' scripts/rehearse-v9-finish.sh",
+        "node --test test/rehearse-v9-finish.test.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G6"
+      ],
+      "spec_refs": [
+        "spec.md §10.1",
+        "spec.md §10.2",
+        "spec.md §10.3",
+        "spec.md §11",
+        "spec.md §12"
+      ]
+    },
+    {
+      "id": 46,
+      "description": "Create the v9-to-v10 bootstrap suite foundation with isolated git, remote, installation, Claude-config, workspace-root, and gh-shim fixtures. Prove the exact step order, arm-before-record and same-base-SHA requirements, refusal of repeated or out-of-order steps, no event on failed arm preconditions, postcondition refusal, failed-record rules, recovered records, next-step blocking after failure, pass-2 startup at verify with the omitted steps enforced, target validation, and status reconstruction after simulated compaction.",
+      "wave": 4,
+      "files": [
+        "test/v9-to-v10-bootstrap.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/v9-to-v10-bootstrap.test.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G6"
+      ],
+      "spec_refs": [
+        "spec.md §10.1",
+        "spec.md §10.3",
+        "spec.md §11"
+      ]
+    },
+    {
+      "id": 47,
+      "description": "Extend the bootstrap suite with the complete fixture-backed successful rollout: pre-publish verify/review/assessment receipts, release refusal before a version bump, CHANGELOG-only release commit and annotated-tag identity, idempotent release replay, branch/tag push and CI receipts, executable Pi check, workspace_roots discovery across multiple depths, carried non-bundle main commits, publish acknowledgement, PR merge ancestry, Claude-cache evidence, both-surface checks, per-commit state-only auditing, dirty-bundle commit before gate rebase, remote-tip equality, conflict-free rebase, no-op v9 merge, branch retirement, legacy archive, and fast-forward archive push.",
+      "wave": 5,
+      "files": [
+        "test/v9-to-v10-bootstrap.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/v9-to-v10-bootstrap.test.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G6"
+      ],
+      "spec_refs": [
+        "spec.md §10.1",
+        "spec.md §10.2",
+        "spec.md §11"
+      ]
+    },
+    {
+      "id": 48,
+      "description": "Complete the bootstrap suite with every recovery and refusal path from the bootstrap failure table: partial or mismatched push, red tag CI, Pi install failure and v9.10.0 rollback, PR reconciliation for MERGED/OPEN/other states, rejected main push, unexpected or missing remote merge, dirty non-bundle state, merge commits and change-then-revert audit failures, review rejection before tagging, release farther than one CHANGELOG-only commit from its reviewed SHA, branch changes under docs/masterplan at the gate, sibling remote movement with stop/acknowledged retarget/rebase behavior, foreign overlap refusal, and a corrective 10.0.x pass that re-runs verify/review/assessment before release, uses a second PR without a second local-main push, assesses G6 at the latest version, and records the operator-declined keep/legacy path.",
+      "wave": 6,
+      "files": [
+        "test/v9-to-v10-bootstrap.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/v9-to-v10-bootstrap.test.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G6"
+      ],
+      "spec_refs": [
+        "spec.md §10.2",
+        "spec.md §10.3",
+        "spec.md §11"
+      ]
+    }
+  ],
+  "meta": {
+    "purpose": "Make masterplan understand operator intent before designing (interview + fresh-context critic), record intent-first goals (goals v2), and drive every run to a live, confirmed, archived completion (deploy stage, completion classes), with the config plane, inert-knob guard, seed-time overlap check, and context watch that the spec requires.",
+    "problem": "Rev 14 of the spec passed four cross-vendor panels; its acceptance list is spec.md section 11. The plan below is seven parallel-drafted subsystems merged deterministically; the integration subsystem owns the shared CLI, schema, sequencer, and docs files.",
+    "solution": "Every wave implements the spec; the post-wave stage below is NOT a plan task (spec A33 and section 10.1) and cannot be rendered by the installed 9.10.0 plan renderer, so it is stated here and in WORKLOG.md. After the LAST wave completes and BEFORE `mp finish` on this run, the orchestrator executes the live v9-to-v10 bootstrap stage from the branch with `node scripts/bootstrap-v10.mjs` (status, arm, run the printed command from MAIN, record) through pre-publish verify/review/assessment, release, push, CI, install of both surfaces, publish acknowledgement, the GitHub PR merge, and the gate rebase, then records `required_successor {slug: v10-validation}` via the pinned v9 `mp event`. Rule for this run: `mp finish` is invoked only after `node scripts/bootstrap-v10.mjs status` reports the pass complete; under the installed 9.10.0 sequencer the durable enforcement is the finish-time goal check, where G6 is assessed live and a skipped stage lands at goals_unmet rather than archiving."
+  },
+  "plan_hash": "sha256:3d019b7476b6786772729052d5d77024b6e838ec5fb8eda28908b43bac109b2c",
+  "generated_at": "2026-09-03T04:53:30.163Z"
+}
