@@ -4,7 +4,7 @@
 // MAIN+worktree pairs. Coverage is the plan-mandated re-entry-at-every-boundary set: each op
 // boundary is exercised both fresh and as a resume (a death between any two steps must land
 // back on the same op, never re-run a completed transaction).
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -15,6 +15,13 @@ import { finishStep } from '../lib/finish-step.mjs';
 import { readState, writeState } from '../lib/bundle.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
 import { acquireOwner } from '../lib/owner-fs.mjs';
+
+// Every fixture builds a git repo under os.tmpdir(); without this they accumulate across
+// runs and fill a shared /tmp. Registered here, removed once when the file finishes.
+const FIXTURE_TMPDIRS = [];
+after(() => {
+  for (const d of FIXTURE_TMPDIRS) fs.rmSync(d, { recursive: true, force: true });
+});
 
 function git(dir, ...args) {
   return String(execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' })).trim();
@@ -37,6 +44,7 @@ function readEvents(bundleDir) {
 // a bundle whose single task is done, and the owner lock held by sess-A.
 function makeFixture({ slug = 't24', state: over = {}, ownerLockOff = false, verifyCommands = null, explicitCodex = true } = {}) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-finishstep-'));
+  FIXTURE_TMPDIRS.push(tmp);
   const MAIN = path.join(tmp, 'main');
   fs.mkdirSync(MAIN, { recursive: true });
   git(MAIN, 'init', '--initial-branch=main');

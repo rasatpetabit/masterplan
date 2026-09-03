@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -262,6 +262,13 @@ import { readState, writeState } from '../lib/bundle.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
 import { acquireOwner } from '../lib/owner-fs.mjs';
 
+// Every fixture builds a git repo under os.tmpdir(); without this they accumulate across
+// runs and fill a shared /tmp. Registered here, removed once when the file finishes.
+const FIXTURE_TMPDIRS = [];
+after(() => {
+  for (const d of FIXTURE_TMPDIRS) fs.rmSync(d, { recursive: true, force: true });
+});
+
 function git(dir, ...args) {
   return String(execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' })).trim();
 }
@@ -283,6 +290,7 @@ function readEvents(bundleDir) {
 // a bundle whose single task is done, and the owner lock held by sess-A.
 function makeFixture({ slug = 't24', state: over = {}, ownerLockOff = false, verifyCommands = null, explicitCodex = true, objectFormat = null } = {}) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-finishstep-'));
+  FIXTURE_TMPDIRS.push(tmp);
   const MAIN = path.join(tmp, 'main');
   fs.mkdirSync(MAIN, { recursive: true });
   git(MAIN, 'init', '--initial-branch=main', ...(objectFormat ? [`--object-format=${objectFormat}`] : []));
