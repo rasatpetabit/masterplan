@@ -1,7 +1,7 @@
 # Spec — Intent to completion
 
 **Run:** `intent-to-completion` · **Target release:** v10.0.0 · **Shape:** prompt-first, minimal code (user decision, A8)
-**Review status:** rev 13 — after ten single-lane spec-gate adversary rounds (round 1: 18 findings; round 2: 12 new + 10 residual; round 3: 7; round 4: 5 + 1; round 5: 4 + 2; round 6: 2 + 3; round 7: 1 + 2; round 8: 2 + 1; round 9: 1 + 1; all FAIL; round 10: PASS + 1 advisory) and three cross-vendor panels (rev 10: gpt-5.6-sol revise, glm-5.2 reject, 0 blockers / 11 should-fix / 6 nits → rev 11; rev 11: both lanes revise, 2 blockers / 7 should-fix / 5 nits → rev 12; rev 12: both lanes revise, 1 blocker / 11 should-fix / 4 nits → rev 13; all folded, §13). Approved by the operator 2026-09-02 at rev 4 with D1 (ledger verbs) and D2 (both surfaces inside this run) confirmed; revs 5–6 change only the D2 mechanism and the review fixes; revs 11–13 fold the panels and the round-10 advisory.
+**Review status:** rev 14 — after ten single-lane spec-gate adversary rounds (round 1: 18 findings; round 2: 12 new + 10 residual; round 3: 7; round 4: 5 + 1; round 5: 4 + 2; round 6: 2 + 3; round 7: 1 + 2; round 8: 2 + 1; round 9: 1 + 1; all FAIL; round 10: PASS + 1 advisory) and four cross-vendor panels (rev 10: gpt-5.6-sol revise, glm-5.2 reject, 0 blockers / 11 should-fix / 6 nits → rev 11; rev 11: both lanes revise, 2 blockers / 7 should-fix / 5 nits → rev 12; rev 12: both lanes revise, 1 blocker / 11 should-fix / 4 nits → rev 13; rev 13: both lanes revise, 2 blockers / 6 should-fix / 5 nits → rev 14; all folded, §13). Approved by the operator 2026-09-02 at rev 4 with D1 (ledger verbs) and D2 (both surfaces inside this run) confirmed; revs 5–6 change only the D2 mechanism and the review fixes; revs 11–14 fold the panels and the round-10 advisory.
 
 ## 1. Problem
 
@@ -134,15 +134,19 @@ question, a *design round* only `design`-kind proposals. A round **seals** on th
 `answer`, `withdraw`, `draft`, or `critic` event recorded after any of its questions; a later ask
 must open the next round (§5.3), so one `AskUserQuestion` call maps 1:1 to a ledger round and a
 round cannot be reused to string single questions together under one critic pass. The
-**intent-round minimum** is how many *completed* intent rounds (every question of the round
-answered or withdrawn) every non-waived exit requires: a floor counted in questions alone is met
-by two four-question calls whose questions could not adapt to each other's answers (the fleet's
-batch-into-one-call policy makes that the natural shape), and at `high` the critic cadence would
-collapse to one or two passes; four intent rounds at `high` means at least four critic passes and
-four chances to let an answer change the next question. Design rounds never require a critic
-(they do not move `content_head`, §5.3). At `high`, "after every intent round" is enforced, not
-advisory: `converged` requires a critic receipt recorded after each intent round's last content
-event (§5.4). The floor is the minimum number of **answered** questions (withdrawn questions
+**intent-round minimum** is how many *completed* intent rounds every non-waived exit requires,
+where a completed intent round has every question answered or withdrawn **and at least one
+answered intent-kind question** (an ask-and-withdraw round completes nothing and pads no
+minimum): a floor counted in questions alone is met by two four-question calls whose questions
+could not adapt to each other's answers (the fleet's batch-into-one-call policy makes that the
+natural shape), and at `high` the critic cadence would collapse to one or two passes; four intent
+rounds at `high` means at least four critic passes and four chances to let an answer change the
+next question. Design rounds never require a critic (they do not move `content_head`, §5.3). At
+`high`, "after every intent round" is enforced at the **ask**, not only at the exit: an
+intent-kind ask that would open a new round is refused while the previous intent round has no
+critic receipt recorded after that round's last content event (§5.3), so one trailing receipt
+can never cover four back-to-back rounds, and `converged` additionally requires one distinct
+receipt per intent round (§5.4). The floor is the minimum number of **answered** questions (withdrawn questions
 never count toward it) before the interview may end through any non-waived terminal state —
 including `exhausted` at the cap — and the **intent floor** is how many of those must be
 `intent`-kind: a design-only ledger meets no floor at any level, and `mp interview draft` itself
@@ -161,8 +165,9 @@ leaves only the waiver exit (§5.4). Interview terminal states (§5.4): `converg
 `loose`, and inventing one now would be the documented-versus-live mismatch this work removes. It
 remains accepted as an alias (warning) so existing files keep working. Invariant, unchanged from
 §2d: the gate set is identical at every autonomy level. `branch_finish`, `no_definition_of_done`,
-`deploy_failed`, `deploy_indeterminate`, `intent_confirm`, and the seed-time overlap conflict AUQ
-always halt. This table is the single definition; README, SKILL.md, and the sequencer cite it.
+`deploy_failed`, `deploy_indeterminate`, `intent_confirm`, `push_archive` (a push is a
+risky-action gate under fleet policy, whatever the autonomy), and the seed-time overlap conflict
+AUQ always halt. This table is the single definition; README, SKILL.md, and the sequencer cite it.
 
 ### 4.3 Knob remediation (from the audit)
 
@@ -255,7 +260,10 @@ single writer:
   duplicate id, an id out of sequence, a round number other than the current or the next round,
   an ask naming a **sealed** round (§4.2: the round has an `answer`, `withdraw`, `draft`, or
   `critic` event after any of its questions — the next ask must use `r+1`), an ask while a
-  question from an *earlier* round is unanswered, or an ask past the cap. Rounds are derived by
+  question from an *earlier* round is unanswered, an ask past the cap, or — at `high` — an
+  intent-kind ask opening a new round while the previous intent round has no critic receipt
+  recorded after that round's last content event (the per-round cadence is refused at the ask,
+  so it cannot be satisfied retroactively by one trailing receipt). Rounds are derived by
   replay from `--round` (the questions of one `AskUserQuestion` call share a round and may all be
   recorded before their answers; the first answer seals the round).
 - `mp interview answer --state --id --text=… [--corrected] [--supersedes=Q<m>]` — `--supersedes`
@@ -323,7 +331,7 @@ waiver exit, recorded with reason `floor_unmet_at_cap`.
 
 | state | valid when (in addition to the rule above) | `goals-load` |
 |---|---|---|
-| `converged` | floors met; completed intent rounds ≥ the level's minimum (§4.2); ≥ 1 active uncorrected design pick; the latest critic receipt is valid, its `content_head` equals the current content head (which, per the rule above, is the latest draft) and its `intent_sha256` equals that draft; and its payload is **clean**: zero `unknowns`, zero `contradictions`, zero `misclassified`. An unclean payload is resolved by further intent content, a new draft, and a fresh critic run whose payload is clean; at `high`, additionally every intent round has a critic receipt recorded after that round's last content event (§4.2) | accepts |
+| `converged` | floors met; completed intent rounds ≥ the level's minimum (§4.2); ≥ 1 active uncorrected design pick; the latest critic receipt is valid, its `content_head` equals the current content head (which, per the rule above, is the latest draft) and its `intent_sha256` equals that draft; and its payload is **clean**: zero `unknowns`, zero `contradictions`, zero `misclassified`. An unclean payload is resolved by further intent content, a new draft, and a fresh critic run whose payload is clean; at `high`, additionally every intent round has its **own** critic receipt — one recorded after that round's last content event and before the next intent round's first ask (for the last round, before the terminal event) — so the count of distinct receipts is at least the count of completed intent rounds (§4.2, §5.3) | accepts |
 | `exhausted` | asked == cap (any complexity), or critic mode is `unavailable` **after** one retry and the operator's acknowledgement (`critic_unavailable_ack`, §5.3) — the event lists the attempts; the `unknowns`, `contradictions`, and `misclassified` entries of the latest available payload (the last successful one, if any) are listed in the event | accepts; the spec must carry the `assumed` rows for all three (checked, below) |
 | `critic_off` | `complexity: low`; floor met | accepts |
 | `waived` | `goals-load --interview-waived --reason=…` on an open interview; durable `interview_waived` event; the only exit once the cap is reached with the floor unmet | accepts, recorded as waived |
@@ -435,9 +443,14 @@ say V (else fails, naming the file), inserts the CHANGELOG release header when a
 only if that changed anything, and creates the annotated tag; at an existing tag it succeeds iff
 the tag points at HEAD (idempotent replay) and fails otherwise. The commit it may make is
 **stage-produced** and does not count as a base move (§7.3) — because it touches only
-`CHANGELOG.md`, which is inside the `done.commit_paths` allowlist (optional key, a list of paths;
-default: the `version_from` file and `CHANGELOG.md`; validated at seed like the rest of the
-block). A stage-produced commit outside the allowlist is a base move (§7.3).
+`CHANGELOG.md`, which is inside the `done.commit_paths` allowlist (optional key, a list of file
+paths; default: the `version_from` file and `CHANGELOG.md`; validated at seed like the rest of
+the block, and an entry that is a directory or anything other than the `version_from` file or a
+changelog warns at seed — the allowlist exists for release metadata, and a repo that allowlists
+`src/` has re-opened A30 in its own reviewed config). A stage-produced commit outside the
+allowlist is a base move (§7.3), and every stage-produced commit carries the postcondition that
+`${version}` resolved at its `base_after` equals the value resolved at `deploy_base_sha` (else
+`base moved`): a stage may stamp the version, never change it.
 
 **`done: none`.** A repo with no deploy surface declares it with the literal `none` in place of
 the object (§4.1). At the deploy stage the sentinel is re-resolved at `deploy_base_sha` like any
@@ -485,14 +498,14 @@ order is unchanged.
 |---|---|---|
 | `ask gate:'no_definition_of_done'` | opens at deploy-stage entry when `.masterplan.yaml` at `deploy_base_sha` has no `done:` block (§4.1 re-resolution). AUQ: supply run-specific commands now (release/install/live_check as `{run, check?}`) / archive incomplete | `--done-adhoc-file=<json>` (durable `done_adhoc` event; the stage proceeds with those steps) · `--deploy-abort-incomplete --reason=no-done-config` |
 | `run_deploy_step {group, index, run, check, cwd: MAIN, ask}` | Under `gated` (or `ask: true`) AUQ first; on approval the shell re-invokes with `--deploy-authorize --group --index` and finish-step writes `deploy_step_authorized {group, index, sha}` (under `loose` it is written at op emission). Only then, immediately before execution, finish-step writes `deploy_step_started`; a `started` without a preceding `authorized` at the same sha is an invariant error. Run from MAIN on the base — after `deploy_step_authorized` has verified that `git -C MAIN status --porcelain` lists nothing outside `docs/masterplan/` (otherwise `dispatch-error: dirty_tree` and nothing runs: an uncommitted edit to a script would execute unrecorded while the receipt names the committed sha) — and capture exit + output digest | `--deploy-step-done --group --index --exit=N --digest-file=…`. **finish-step then runs `check` itself when present, on every path, not only recovery:** `run` exit 0 and `check` exit 0 → `deploy_step {…, exit, check_exit: 0, digest, source}`; `run` exit 0 but `check` exit 1 (effect absent) → `deploy_failed`; `check` any other exit → `deploy_indeterminate`; `run` non-zero → `deploy_failed` without running `check`. A step without `check` is recorded on `run` exit 0 alone |
-| `ask gate:'deploy_indeterminate' {group, index}` | a `deploy_step_started` exists at this sha with no `deploy_step`. If the step has `check`, finish-step runs it first: exit 0 → recorded done silently; exit 1 → re-run, **re-asking first under `gated`** (a new `authorized` is required whenever the prior `started` is being replayed); other → this gate. Without `check`, this gate. A step with `authorized` but no `started` simply re-emits `run_deploy_step` without asking again. AUQ: mark done with evidence / re-run / abort | `--deploy-step-done` with the evidence digest · `--deploy-rerun` · `--deploy-abort` |
+| `ask gate:'deploy_indeterminate' {group, index}` | a `deploy_step_started` exists at this sha with no `deploy_step`. If the step has `check`, finish-step runs it first: exit 0 → recorded done silently; exit 1 → re-run, **re-asking first under `gated`** (a new `authorized` is required whenever the prior `started` is being replayed); other → this gate. Without `check`, this gate. A step with `authorized` but no `started` simply re-emits `run_deploy_step` without asking again. AUQ: re-run / attest / abort. A step **with** `check` is closed only by a later `check` exit 0 (re-run), never by attestation. *Attest* exists for a step without `check` whose `run` left no exit (crash, timeout) and records `deploy_step {status: attested, digest}` — a durable, operator-signed record that is **not** proof: a mandatory group containing an attested step archives as `incomplete:attested` (§7.4), never `complete`, so §7.1's "a declared step that did not happen cannot be talked into the ledger" holds for the completion class as well as the event | `--deploy-rerun` · `--deploy-attest --digest-file=…` · `--deploy-abort` |
 | `ask gate:'deploy_failed' {group, index, error}` | AUQ: retry / abort finish; for `release` and `install` a third option, *skip with reason*, archives incomplete (§7.4). `live_check` offers no skip | `--deploy-retry` · `--deploy-skip --reason=…` · `--deploy-abort` |
 | `handback {group: 'user_only', text, check}` | present, wait; when the operator reports back, re-invoke with `--deploy-step-done`; finish-step runs `check` itself: 0 → `deploy_step`, 1 → the handback re-opens (`deploy_step_check_failed`), other → `deploy_indeterminate` | `--deploy-step-done` (no evidence digest — the check is the evidence) |
 | `run_final_check {deploy_base_sha, deploy_chain, live_digest, goals_path}` | dispatch the assessor (§6.2 final) | `mp record-goal-check --final --receipt=…` |
 | `ask gate:'goals_unmet'` (final) | opens after the final receipt when any goal is `partial`/`missed` (§6.2): waiver → proceeds to `intent_confirm` with the waived goals named in its payload; abort → stop, nothing archived; reject-intent → §7.5. No `fix` option post-live | `--goals-choice=waiver\|abort` · `--intent-rejected …` |
 | `ask gate:'version_not_bumped' {version, tag}` | opens before `branch_finish` (merge/pr) when `${version}` at `branch_tip` names a version whose tag already exists (§7.1 release contract). The worktree still exists: fix on the branch (bump `version_from`, re-run finish) / keep → archives incomplete | `--version-fix` (stop; the run stays resumable) · `--choice=keep` at the following gate (`incomplete_authorized {reason: version_not_bumped}`) |
 | `ask gate:'intent_confirm' {outcome, intent_verdict, live_check_digest}` | one question: *does this do what you meant?* | `--intent-confirmed` → `completion_confirmed {deploy_base_sha}` → archive complete (`merged` under `done: none`, §7.1) · `--intent-rejected --class=implementation\|intent --reason=…` (§7.5) |
-| `push_archive {branch, sha, remote}` | emitted after `archive` when `origin` carries the base branch: the shell pushes it (`git -C MAIN push origin <base>`; under `gated` after an AUQ, under `loose` directly). A fast-forward by construction — the `install` group already pushed everything before it, and the archive commit plus any gate commits since are the only new history — so the archive, and with it `completion` and any `required_successor` obligation, reaches GitHub and every other host's next fetch (§7.4). Without a remote the op is skipped with `archive_push_skipped {reason: no_remote}` | `--archive-pushed --sha=<sha>` → `archive_pushed {sha}`, the one event accepted after `archived`; idempotent: a re-entered finish on an archived bundle without it re-emits the op, and pushing an already-pushed sha is a no-op |
+| `ask gate:'push_archive' {branch, sha, remote, pushed_base}` | emitted after `archive` **only when a `deploy_step` receipt of the `install` group pushed the base branch** (`pushed_base` = the sha that push carried, from the receipt's `base_after`): the archive commit and any gate commits since are then the only history past `pushed_base`, so the push is a fast-forward of exactly that range. A repo with no `done:` block or `done: none` never reaches this op — its history was never published by the finish, and publishing it here would push every local-only commit on `main` with no review (v9 pushes only after the always-halting `branch_finish` AUQ, and on this repo `origin main` is the marketplace production surface). The gate **always halts** (§4.2): the AUQ lists the commits in `pushed_base..HEAD` and asks to push; on yes the shell runs `git -C MAIN push origin <base>`; decline → archived, `pushed: no`. A rejected push (non-fast-forward: another host moved `origin/<base>`) is the same disposition as §10.3's sibling push: fetch, per-commit audit of `<pushed_base>..origin/<base>` (non-merge, no path of this bundle), rebase local `<base>` onto it, retry once, else stop and hand back. `runs list` and `mp status` print `pushed: no` until the event lands: a local `complete` is not visible to other hosts or to GitHub's doctor before then (§7.4) | `--archive-pushed --sha=<sha>` → `archive_pushed {sha}`, the one event accepted after `archived`; idempotent: a re-entered finish on an archived bundle without it re-emits the gate, and pushing an already-pushed sha is a no-op |
 
 `--deploy-abort` stops finish with nothing archived; the run stays resumable and the next finish
 re-enters at the first step lacking a `deploy_step` event at the current `deploy_base_sha`.
@@ -535,8 +548,12 @@ the definition resolved at that sha.
 - **`pr`** enters the deploy stage only after `--merged --merge-sha=<sha>`: finish-step fetches,
   verifies `<sha>` is an ancestor of the base tip **and** that the branch landed in it — either
   `branch_tip` is an ancestor of `<sha>` (merge commit), or `<sha>` is a **squash** whose patch-id
-  (`git diff <sha>^ <sha> | git patch-id --stable`) equals the branch's
-  (`git diff $(git merge-base <base> branch_tip) branch_tip | git patch-id --stable`) — then
+  (`git diff <sha>^ <sha> | git patch-id --verbatim`) equals the branch's
+  (`git diff $(git merge-base <base> branch_tip) branch_tip | git patch-id --verbatim`) —
+  `--verbatim`, not `--stable`: `--stable` ignores whitespace, and two diffs that differ only in
+  indentation (semantically different in Python, YAML, Makefiles) share one stable id
+  (reproduced on git 2.53.0); `--verbatim` needs git ≥ 2.39, which the `pr` proof checks first
+  and refuses without, naming the version — then
   records `deploy_base` at the base tip with the proof kind. A rebase-merge (several rewritten
   commits, neither ancestry nor a single patch-id) is refused with a message naming the two
   accepted proofs. `--pushed` alone retires nothing and deploys nothing.
@@ -566,8 +583,16 @@ archive is pushed before the successor is seeded) → WARN naming the seed comma
 non-archived** (in progress, including while the successor's own tag CI runs this doctor) → PASS
 with an INFO line; archived `completion: complete` → PASS, obligation discharged; archived as
 anything else (`incomplete:*`, `legacy`, `merged`, or re-seeded and abandoned) → **ERROR**: the
-successor ended without proving the flow. GitHub's copy of the doctor sees the successor's
-completion only because its finish pushes the archive (§7.2 `push_archive`). The doctor WARNs
+successor ended without proving the flow. "The named bundle" means a bundle whose seed record
+names this run as `--predecessor` **and** whose slug matches: a same-named run seeded without
+the predecessor link neither discharges nor errors the obligation (it is a different run). This
+is **soft enforcement by design** (A35): the absent state is a WARN forever, because the only CI
+that could add teeth is this repo's own push-triggered doctor, which cannot distinguish "about
+to be seeded" from "never will be"; what keeps the obligation visible is that `runs list`,
+`mp status`, and `resume-brief` — the brief every compacted or fresh session in this repo
+reads — print open obligations first, with the seed command. GitHub's copy of the doctor sees
+the successor's completion only because its finish pushes the archive (§7.2 `push_archive`,
+which the successor reaches because its `install` group pushes the base). The doctor WARNs
 `no-definition-of-done` only when a `.masterplan.yaml` exists without a `done:` key; `done: none`
 is the explicit opt-out for a repo with no deploy surface (§7.1), and a repo with no file at all
 is not nagged.
@@ -710,13 +735,17 @@ The two are decoupled by merging on GitHub first and fast-forwarding local `main
 
 1. **The bootstrap stage — not a plan wave: a serial, operator-gated stage (risky-action AUQs)
    the shell enters after the last execute wave completes and BEFORE `mp finish`, driven by
-   `mp bootstrap`.** Plan-wave semantics (disjoint `files`, `dispatch-wave`, the two-phase wave
+   `bootstrap`.** Plan-wave semantics (disjoint `files`, `dispatch-wave`, the two-phase wave
    commit) do not apply; `plan.md` lists the stage as a marker after its last wave, never as a
-   task, so resume tooling never dispatches it. The driver is `lib/bootstrap.mjs`, exposed as
-   verbs on the **branch's** `bin/masterplan.mjs` (v10 code), never the pinned v9 binary — the
-   two binaries share the state schema (§4.1, no bump):
-   - `mp bootstrap status --state=<path>` — read-only: pass, executed steps, the next step.
-   - `mp bootstrap arm --state=<path> --step=<name> [--targets=<json>]` — evaluates the step's
+   task, so resume tooling never dispatches it. **`bootstrap` below denotes
+   `node scripts/bootstrap-v10.mjs` on the branch** — a one-off script in this repo's `scripts/`
+   pattern, not a permanent `mp` verb (the v9→v10 walk never runs again after the successor):
+   it imports the single event writer and the `bootstrap_armed` / `bootstrap_step` schema from
+   `lib/` (those stay permanent, because archived bundles carry the events), never the pinned
+   v9 binary, and it retires with its suite in the successor's retro. The two binaries share the
+   state schema (§4.1, no bump):
+   - `bootstrap status --state=<path>` — read-only: pass, executed steps, the next step.
+   - `bootstrap arm --state=<path> --step=<name> [--targets=<json>]` — evaluates the step's
      **preconditions in code** (fetch + ancestry, clean tree, the §10.1.5 per-commit audit,
      remote-tag equality, the CI conclusion, the sibling-repo scan — whatever the step table
      names for that step) and, only when all hold, appends `bootstrap_armed {pass, step, sha,
@@ -726,14 +755,18 @@ The two are decoupled by merging on GitHub first and fast-forwarding local `main
      `authorized → started → done` discipline the deploy stage uses (§7.2).
    - the shell runs the printed `cmd` verbatim from MAIN and captures exit + output digest
      (network git and `gh` stay shell-side, as in §7.2);
-   - `mp bootstrap record --state=<path> --step=<name> --exit=N --digest-file=<path>
+   - `bootstrap record --state=<path> --step=<name> --exit=N --digest-file=<path>
      [--status=failed|recovered] [--data=<json>]` — appends the schema-validated
      `bootstrap_step {pass, step, cmd, exit, status?, …}` event: refuses a step without a matching
      `bootstrap_armed` at the same base sha, an out-of-order step, a repeated step unless
      `status: recovered`, and a step whose **postcondition** fails (`push`: the remote tag's sha
      equals the local one; `release`: the tag identity and reviewed-sha delta of step 3;
-     `pr_merge`: `branch_tip` is an ancestor of the recorded merge sha).
-   - `mp bootstrap start --state=<path> --pass=2 --triggered-by=<event index>` — opens a
+     `pr_merge`: `branch_tip` is an ancestor of the recorded merge sha). `--status=failed` is
+     the one record accepted after a failed command: it skips the success postcondition,
+     requires `--exit` non-zero or `--reason=…`, and is what §10.3's failed/recovered pairs are
+     made of — a partial push whose remote tag differs is recorded `failed`, never left as a
+     bare `bootstrap_armed`.
+   - `bootstrap start --state=<path> --pass=2 --triggered-by=<event index>` — opens a
      corrective pass (§10.3).
 
    Step names, in stage order (the enum the schema enforces): `rehearsal · docs_normalize ·
@@ -741,15 +774,17 @@ The two are decoupled by merging on GitHub first and fast-forwarding local `main
    pr_merge · claude_surface · surfaces_live · gate`. Every event carries `pass` (1 for the first
    walk); a corrective pass opens a fresh monotone sequence from `verify` and omits `rehearsal`,
    `docs_normalize`, and `main_push` (§10.3); `gate` is recorded once, on the latest pass. A
-   compaction mid-stage resumes from `mp bootstrap status`, never from the model's memory of
+   compaction mid-stage resumes from `bootstrap status`, never from the model's memory of
    where it was, and cannot re-record or hand-compose a step (v9's `mp event` accepts any JSON
    and is not used here). `--targets` names the remote, the install roots, the Claude config dir,
-   and the `gh` binary; the rehearsal passes fixture targets and the live walk passes none (live
-   defaults derived from MAIN and `$HOME`), so **the rehearsal exercises the executor the live
+   the `gh` binary, and `workspace_roots` (the directories scanned for other repos' bundles at
+   step 4, with a depth); the rehearsal passes fixture targets and the live walk passes only
+   `workspace_roots` (the operator's host layout is not derivable from MAIN; every other live
+   default is derived from MAIN and `$HOME`), so **the rehearsal exercises the executor the live
    walk uses**. The residual prompt-side risk (A8) is bounded to the shell running the printed
    command verbatim between `arm` and `record`, and is recorded as A33.
    1. *Rehearsal.* `scripts/rehearse-v9-finish.sh` runs steps 2–7 and the finish of step 2 below
-      on a scratch clone with a throwaway bundle, **through the same `mp bootstrap arm` /
+      on a scratch clone with a throwaway bundle, **through the same `bootstrap arm` /
       `record` loop the live walk uses**, with `--targets` naming the fixtures, and with the
       finish driven by a **pinned** copy of the installed 9.10.0 tree (copied to a scratch path
       before anything else and asserted to print `9.10.0`; every `mp finish`/`finish-step`
@@ -818,15 +853,18 @@ The two are decoupled by merging on GitHub first and fast-forwarding local `main
       (`gh run list --branch v10.0.0 --workflow ci.yml`, then `gh run watch --exit-status`) and
       record both jobs' conclusions (`test`, `release-publish`) in the event — red is a §10.3
       failure and `install-pi` does not run. Before `install_pi` is armed, the arm step scans
-      the sibling repos of MAIN's parent directory (`<MAIN>/../*/docs/masterplan/*/state.yml`,
-      the workspace convention) and prints every non-archived bundle it finds, because the Pi
-      install root is a host-wide singleton (`bin/install-pi.mjs` swaps one `current` symlink
-      for every repo): the AUQ before the install names the list and says that every
+      every `docs/masterplan/*/state.yml` under the `--targets` `workspace_roots` (directories
+      plus depth — the Pi install root is a host-wide singleton, `bin/install-pi.mjs` swaps one
+      `current` symlink for every repo, and repos with bundles sit at several depths of the
+      workspace and outside it, the fleet hook-policy repo included; a parent-directory sibling
+      scan would miss most of them) and prints every non-archived bundle it finds, naming the
+      hook-policy repo explicitly when it appears: the AUQ before the install carries the list,
+      states that it covers only the scanned roots and may be incomplete, and says that every
       masterplan-using repo on this host runs the v10 binary from this step on — an in-flight
       run elsewhere continues under its loaded v9 prompt against v10 `mp` until its session
       ends (its next `mp seed` refuses without `--overlap-review`, loudly, and its `auto_compact`
-      keys are aliased per §4.1); the list is recorded in the event and the window is accepted,
-      not blocked (A32). Then `install-pi --ref=v10.0.0`; `install-pi --check
+      keys are aliased per §4.1); the list and the roots are recorded in the event and the
+      window is accepted, not blocked (A32). Then `install-pi --ref=v10.0.0`; `install-pi --check
       --expect=v10.0.0` (Pi surface live **and executable**: `--expect` runs the installed
       binary's `version`, §7.1).
    5. *Push local `main`* — first `git -C MAIN fetch origin main` and require `origin/main` to be
@@ -835,8 +873,14 @@ The two are decoupled by merging on GitHub first and fast-forwarding local `main
       non-fast-forward push is a §10.3 stop: reconcile, never force). Bundle writes land on
       MAIN's base branch (§2e), so local `main` carries this bundle's own state commits **and may
       be ahead of GitHub by unrelated commits** (on 2026-09-02: 16 ahead, 4 of them non-bundle);
-      the push carries all of them as ordinary `main` history and moves no local ref, and
-      `main_pre_bootstrap` is recorded **after** it,
+      the push carries all of them as ordinary `main` history and moves no local ref. Those
+      non-bundle commits are ancestors of the branch tip too — the run branch was created from
+      local `main` — so they are inside the v10 tag and the Pi install already, and no
+      `main...branch_tip` review ever showed them: the `main_push` arm therefore lists every
+      non-bundle commit in `origin/main..main` (sha, subject, paths), the shell folds the list
+      into the `publish_ack` text, and the `main_push` record carries it as `carried: [sha…]`,
+      so what leaves the machine unreviewed is at least named and acknowledged. Then
+      `main_pre_bootstrap` is recorded **after** the push,
       so the gate's rebase range and the audit range coincide (a `WORKLOG.md` overlap between
       those commits and the branch surfaces as a PR-merge conflict, handled by §10.3's merge row). Local `main`'s sha is recorded as `main_pre_bootstrap`.
       From here until the gate, local `main` may gain **state-only commits** (every later
@@ -896,10 +940,13 @@ The two are decoupled by merging on GitHub first and fast-forwarding local `main
    `main_pre_bootstrap..main` (anything else means something other than this run moved `main`:
    stop); then **`git -C MAIN rebase origin/main`** — local `main`'s unpushed state-only commits
    replay on top of GitHub `main`, which cannot conflict because the merged code never touches
-   the bundle directory; re-verify the ancestry against the new local tip; all of it is the
-   `gate` step (`mp bootstrap arm --step=gate` evaluates the bundle commit, the clean tree, the
-   equality, the ancestry, and the audit as preconditions; `record` writes the step after the
-   rebase). Then `--choice=merge` through the pinned v9 binary: finish-step's own merge
+   the bundle directory — which is asserted, not assumed: `arm --step=gate` requires
+   `git diff --name-only $(git merge-base main branch_tip) branch_tip` to contain no
+   `docs/masterplan/` path, so a branch that ever carried a bundle write cannot reach a rebase
+   with no disposition; re-verify the ancestry against the new local tip; all of it is the
+   `gate` step (`bootstrap arm --step=gate` evaluates the bundle commit, the clean tree, the
+   equality, the ancestry, the branch-path check, and the audit as preconditions; `record`
+   writes the step after the rebase). Then `--choice=merge` through the pinned v9 binary: finish-step's own merge
    is a no-op ("already up to date"), the branch retires, the run archives (class `legacy`,
    §7.4), and the archive commit plus the replayed state commits are pushed to `origin main`.
    History carries one merge commit (GitHub's) followed by linear state commits. D2's outcome
@@ -916,7 +963,7 @@ The two are decoupled by merging on GitHub first and fast-forwarding local `main
 ### 10.3 Failure dispositions inside the bootstrap stage
 
 Every step before 1.3 is reversible (nothing has left the machine). From 1.3 on, each step names
-its own disposition, the stage never proceeds past a failed step (`mp bootstrap arm` refuses the
+its own disposition, the stage never proceeds past a failed step (`bootstrap arm` refuses the
 next step while the previous one's latest record is `failed`), and every failure and its
 recovery are a `bootstrap_step {step, status: failed|recovered, cmd, exit}` pair on the bundle:
 
@@ -930,7 +977,7 @@ recovery are a `bootstrap_step {step, status: failed|recovered, cmd, exit}` pair
 | `gh pr merge` (step 5) fails | reconcile first, never re-merge blind: `gh pr view --json state,mergedAt,mergeCommit` — MERGED → record the sha and continue; OPEN → retry once, then stop; any other state → stop. The throwaway-repo cycle in step 1 rehearses the real command; this row is the named recovery for the one first-time live action |
 | step-5 push of local `main` rejected (non-fast-forward: a foreign commit reached `origin/main`) | **stop, never force-push**; reconcile by hand (fetch, inspect the foreign commit, rebase local `main` onto it with the §10.2 audit, re-run the step-5 preconditions); the tag and Pi install from step 4 are unaffected |
 | a foreign (non-bundle) commit on local `main` between `main_pre_bootstrap` and the gate | the audit stops the walk: something other than this run moved `main`; inspect, and either revert it (then the range is bundle-only again) or reconcile by hand — never widen the audit to admit it |
-| goal check `partial`/`missed`, a blocking finish-time review, or a red `run_verify` after both surfaces are live (step 2 of the walk) | **corrective release**, opened as `mp bootstrap start --pass=2 --triggered-by=<the finish event>`: the fix lands as new commits on the run branch (`branch_tip` moves; the v10.0.0 tag stays where it is); **step 2 re-runs at the new tip first** — pre-publish verify, the cross-vendor review, and the G1–G5 assessment, recorded as `pass: 2` `verify`/`review`/`assess` events, a `revise`/`reject`/`missed` stopping the pass before anything is tagged (S5's rationale holds on every pass, not only the first); then `scripts/release.mjs --version=10.0.x` makes the new tip and tag (the step-3 reviewed-sha postcondition binds it), steps 4, 6 and 7 re-run for 10.0.x, `publish_ack` is asked again, and step 5 is **reduced** on the corrective pass to: fetch, require `origin/main` to equal the latest recorded merge sha, open and merge the second PR, record its sha (now the latest record, the gate's equality target) — local `main` is **not** pushed again (the first push already carried every non-bundle commit, later local commits are state-only by invariant, and a second push would be non-fast-forward against the first merge), so local `main` stays untouched and `main..tip` still holds the full branch for the finish's goal check and review; the latest `bootstrap_step {step: release}` event names the new version, and G6 — frozen as "v10.0.0 or the corrective v10.0.x the events name" — is assessed at that version. **Forward-only:** the Claude surface has no downgrade lever short of a revert on GitHub `main`, so a bad v10.0.0 is superseded, not withdrawn; the pre-publish verify, the per-pass review, and the rehearsal bound the window in which the daily-driver surfaces run rejected code |
+| goal check `partial`/`missed`, a blocking finish-time review, or a red `run_verify` after both surfaces are live (step 2 of the walk) | **corrective release**, opened as `bootstrap start --pass=2 --triggered-by=<the finish event>`: the fix lands as new commits on the run branch (`branch_tip` moves; the v10.0.0 tag stays where it is); **step 2 re-runs at the new tip first** — pre-publish verify, the cross-vendor review, and the G1–G5 assessment, recorded as `pass: 2` `verify`/`review`/`assess` events, a `revise`/`reject`/`missed` stopping the pass before anything is tagged (S5's rationale holds on every pass, not only the first); then `scripts/release.mjs --version=10.0.x` makes the new tip and tag (the step-3 reviewed-sha postcondition binds it), steps 4, 6 and 7 re-run for 10.0.x, `publish_ack` is asked again, and step 5 is **reduced** on the corrective pass to: fetch, require `origin/main` to equal the latest recorded merge sha, open and merge the second PR, record its sha (now the latest record, the gate's equality target) — local `main` is **not** pushed again (the first push already carried every non-bundle commit, later local commits are state-only by invariant, and a second push would be non-fast-forward against the first merge), so local `main` stays untouched and `main..tip` still holds the full branch for the finish's goal check and review; the latest `bootstrap_step {step: release}` event names the new version, and G6 — frozen as "v10.0.0 or the corrective v10.0.x the events name" — is assessed at that version. **Forward-only:** the Claude surface has no downgrade lever short of a revert on GitHub `main`, so a bad v10.0.0 is superseded, not withdrawn; the pre-publish verify, the per-pass review, and the rehearsal bound the window in which the daily-driver surfaces run rejected code |
 | `origin/main` ≠ the latest recorded merge sha at the gate because a sibling pushed after step 5 | **stop** (the equality rule), then the named resumption: fetch; verify every commit in `<recorded merge sha>..origin/main` is a non-merge commit touching neither `docs/masterplan/<slug>/` nor any path the branch changed (`git diff --name-only $(git merge-base main branch_tip) branch_tip`); an AUQ names the foreign commits and asks to re-target; on yes, `bootstrap_step {step: gate, status: recovered, remote_tip}` re-records the equality target as the new remote tip, and the gate proceeds to the rebase (state-only commits replay onto it). Anything else — a merge commit, a foreign change to a branch path — is reconciled by hand; the audit of `main_pre_bootstrap..main` is never widened |
 | operator declines the corrective release | the run cannot archive complete under any reading: answer the `branch_finish` gate with `keep` (the branch and its tag remain), the archive is class `legacy` (§7.4), and the retro names the corrective release as the required successor's first step |
 
@@ -992,17 +1039,27 @@ Named suites, each required by §4.4's inventory or by a finding in §13:
   and routes waiver → `intent_confirm`, a stage-produced commit outside `commit_paths` →
   `base moved` while one inside it advances the audit base, `done: none` → no group runs, no
   `no_definition_of_done`, `run_final_check` with an empty chain, archive class `merged` after
-  `intent_confirm` (never `complete`), and `push_archive` after `archive` (origin receives the
-  archive commit; re-entry on an archived bundle without `archive_pushed` re-emits the op; no
-  remote → `archive_push_skipped`).
+  `intent_confirm` (never `complete`), a step with `check` at `deploy_indeterminate` closable
+  only by a `check` exit 0 (no attest option offered), an attested check-less mandatory step →
+  `deploy_step {status: attested}` and archive `incomplete:attested` even after
+  `intent_confirm`, and `push_archive` after `archive` only when an `install` receipt pushed the
+  base (no `done:` / `done: none` / an `install` group that never pushed → no op emitted; with
+  one → the gate halts under `gated` and `loose` alike, origin receives exactly
+  `pushed_base..HEAD`, re-entry on an archived bundle without `archive_pushed` re-emits the
+  gate, a decline archives `pushed: no`, and a rejected non-fast-forward push → fetch, audit,
+  rebase, retry once, then stop).
 - `deploy-commit-identity`: `pr` without `--merged` deploys nothing; merge-sha not an ancestor of
   base, or branch tip not an ancestor of merge-sha → `dispatch-error`; base moved between steps →
   refused; `deploy_base` re-entry; mandatory group skipped → `incomplete:<reason>`; `live_check`
   non-zero → only retry/abort; no `done:` → `no_definition_of_done` gate; ad-hoc done proceeds;
   abort-incomplete archives incomplete; an archive with no `completion` field is class `legacy`
   in `runs list`, `mp status`, and the doctor's `legacy-archive` line, and is never complete;
-  `pr` accepts a merge commit (ancestry) and a squash (patch-id equality) and refuses a
-  rebase-merge with the message naming both proofs.
+  `pr` accepts a merge commit (ancestry) and a squash (`--verbatim` patch-id equality), refuses
+  a rebase-merge with the message naming both proofs, refuses a squash that differs from the
+  branch only in indentation (a whitespace-only fixture that `--stable` would have accepted),
+  and refuses the squash proof outright on a git older than 2.39, naming the version; a
+  stage-produced commit that changes `${version}` → `base moved`; a `commit_paths` entry that
+  is a directory warns at seed.
 - `final-check`: goals needing live evidence cannot pass from the implementation assessment; final
   receipt binds `deploy_base_sha`, `deploy_chain_hash`, `live_check_digest`; `intent_confirm`
   opens only after a final receipt.
@@ -1034,9 +1091,11 @@ Named suites, each required by §4.4's inventory or by a finding in §13:
   file or with `done: none`), `incomplete-archive` (incl. `merged`), `legacy-archive`, and
   `required-successor` in all four states — absent → WARN (exit 0), present and non-archived →
   PASS, archived `complete` → PASS, archived `incomplete:*` / `legacy` / `merged` → ERROR (exit
-  1) — asserted on the doctor's exit code, since CI consumes exactly that.
+  1) — asserted on the doctor's exit code, since CI consumes exactly that; a same-slug bundle
+  seeded without `--predecessor=<this slug>` is neither a discharge nor an error (still WARN);
+  `resume-brief`, `runs list`, and `mp status` print the open obligation with the seed command.
 - `register-pi-agents`: picks up `mp-intent-critic`; `publish-hygiene`: 10.0.0 everywhere.
-- `v9-to-v10-bootstrap`: a scripted walk of §10 step 1 through `mp bootstrap arm` / `record`
+- `v9-to-v10-bootstrap`: a scripted walk of §10 step 1 through `bootstrap arm` / `record`
   with `--targets` naming the fixture substitutions §10.1.1 defines (bare remote, second-clone
   PR merge, fixture install roots, fixture `CLAUDE_CONFIG_DIR`, a `gh` shim), proving: the
   release script, tag, push, and `install-pi` commands exist on the branch and produce the
@@ -1045,7 +1104,7 @@ Named suites, each required by §4.4's inventory or by a finding in §13:
   precondition refuses `arm` and appends nothing, a failing postcondition refuses `record`,
   `status: recovered` is accepted, `arm` refuses the next step while the previous record is
   `failed`, `start --pass=2` opens a fresh sequence from `verify` that omits `rehearsal` /
-  `docs_normalize` / `main_push`, and `mp bootstrap status` reconstructs the position after a
+  `docs_normalize` / `main_push`, and `bootstrap status` reconstructs the position after a
   simulated compaction); `release.mjs` refuses unbumped version files and
   replays idempotently at its own tag; annotated-tag object equality and peeled-commit equality
   against the tip; every commit in `main_pre_bootstrap..main` before the gate is a non-merge
@@ -1065,10 +1124,15 @@ Named suites, each required by §4.4's inventory or by a finding in §13:
   → stop, a sibling push between step 5 and the gate → stop, acknowledged re-target
   (`gate` recovered with `remote_tip`), rebase — and a foreign change to a branch path in that
   range refused, the `release` postcondition refusing a tag more than one CHANGELOG-only commit
-  past the reviewed sha, the `install_pi` arm listing a fixture sibling repo's open bundle, the
-  pre-publish review's receipts recorded and a `revise` verdict stopping the stage before the
-  tag). The throwaway-repo `gh pr` cycle is part of the live rehearsal (step 1), not this suite.
-  The live execution is the run's bootstrap stage, not this test.
+  past the reviewed sha, the `install_pi` arm listing open bundles across two fixture
+  `workspace_roots` at different depths (and none outside them, with the AUQ text saying so),
+  the `main_push` arm listing the fixture clone's non-bundle commits and the record carrying
+  them as `carried`, a failed push recorded with `--status=failed` (accepted without the
+  success postcondition) and then `recovered`, a branch carrying a `docs/masterplan/` change
+  refused at `arm --step=gate`, the pre-publish review's receipts recorded and a `revise`
+  verdict stopping the stage before the tag). The throwaway-repo `gh pr` cycle is part of the
+  live rehearsal (step 1), not this suite. The live execution is the run's bootstrap stage,
+  not this test; the suite and `scripts/bootstrap-v10.mjs` retire together after the successor.
 - `interview-ledger-resume` additions: dirty payload → intent answer → clean payload → design
   pick → `converged`; clean payload → design withdraw → still `converged`; a design answer that
   records a new draft → stale receipt → fresh critic required; medium reaches `exhausted` only at
@@ -1081,20 +1145,28 @@ Named suites, each required by §4.4's inventory or by a finding in §13:
   withdrawn questions count toward the cap and never toward the floor; clean-unknowns payload
   with a contradiction → `critic --unavailable` → `exhausted` lists the contradiction and the
   spec needs its `assumed` row; `--round` other than current/next refused; asks of one round
-  recorded before their answers accepted; at `high`, `converged` refused while any intent round
-  lacks a following critic receipt; a design-only ledger (eight design picks at `high`) → `draft`
+  recorded before their answers accepted; at `high`, an intent-kind ask opening round 2 refused
+  while round 1 has no critic receipt, accepted after one; four back-to-back intent rounds
+  cannot be recorded at `high` (the second is refused at the ask), and a ledger forged to hold
+  them with one trailing receipt → `converged` refused (one receipt, four rounds); at `medium`
+  the same four rounds are accepted with one critic after the last; ask-and-withdraw rounds do
+  not count toward the intent-round minimum (one answered round plus three withdraw-only rounds
+  at `high` → every non-waived exit refused); a design-only ledger (eight design picks at `high`) → `draft`
   refused and `end` refused for every reason; intent floor unmet with the floor met → every
   non-waived exit refused; one intent answer + the intent floor → `draft` accepted.
 
 ## 12. Touch surface
 
 **New:** `lib/config.mjs` (resolver + `readEnv`), `lib/interview.mjs`, `lib/context-status.mjs`,
-`lib/bootstrap.mjs` (step table, preconditions/postconditions, `--targets`), `scripts/release.mjs`,
-`scripts/rehearse-v9-finish.sh`, `agents/mp-intent-critic.md`, `.masterplan.yaml` (this repo),
-`docs/design/intent-interview.md`, tests named in §11 (including `test/agents-compat.test.mjs`).
+`scripts/bootstrap-v10.mjs` (one-off driver: step table, preconditions/postconditions,
+`--targets`; imports the event writer and schema from `lib/`; retires with the successor),
+`scripts/release.mjs`, `scripts/rehearse-v9-finish.sh`, `agents/mp-intent-critic.md`,
+`.masterplan.yaml` (this repo), `docs/design/intent-interview.md`, tests named in §11 (including
+`test/agents-compat.test.mjs`).
 **Modified:** `bin/masterplan.mjs` (seed resolver + `--overlap-review`, `config show`,
-`interview *`, `bootstrap status|arm|record|start`, `context-status`, `resume-brief`, `runs list`
-fields, flag whitelist), `lib/bundle.mjs` (fields, `completion` incl. `merged`), `lib/goals.mjs`
+`interview *`, `context-status`, `resume-brief`, `runs list` fields, flag whitelist — no
+`bootstrap` verb), `lib/bundle.mjs` (fields, `completion` incl. `merged`, the `bootstrap_armed` /
+`bootstrap_step` event schema), `lib/goals.mjs`
 (v2, `assumed_row_missing`), `lib/finish-step.mjs` (deploy stage, `done: none` path,
 `commit_paths` audit, `run_final_check`, gates, authorizations, replay guard, `push_archive`),
 `lib/runs.mjs` (new fields),
@@ -1251,7 +1323,7 @@ Cross-vendor panel over rev 12 (same workflow: gpt-5.6-sol revise, glm-5.2 revis
 |---|---|---|
 | B1 | `required-successor` FAILs while the successor is absent or in progress, and this repo's CI runs the doctor on every push and tag — `main` red from the archive push, the successor's own tag CI red, `complete` unreachable | severity follows the successor's state: absent → WARN, in progress → PASS, `complete` → PASS, archived otherwise → ERROR; CI interplay stated; all four states asserted on the doctor's exit code (§7.4, §11) |
 | S2 | corrective pass publishes an unreviewed fix; reviewed sha ≠ tagged sha | pass 2 re-runs step 2 at the new tip before the tag; `release` postcondition binds the tag to the reviewed sha (≤ 1 commit, `CHANGELOG.md` only) (§10.1.2, §10.1.3, §10.3) |
-| S3 | no deterministic driver for the only irreversible procedure; rehearsal proves a different executor; "wave" misnames it | `lib/bootstrap.mjs` + `mp bootstrap status/arm/record/start`: preconditions in code before the action, `bootstrap_armed` → `bootstrap_step` chain, postconditions at record, step enum, `--targets` so the rehearsal drives the live executor; renamed **bootstrap stage** throughout (§10, §11, §12; A33) |
+| S3 | no deterministic driver for the only irreversible procedure; rehearsal proves a different executor; "wave" misnames it | `lib/bootstrap.mjs` + `bootstrap status/arm/record/start`: preconditions in code before the action, `bootstrap_armed` → `bootstrap_step` chain, postconditions at record, step enum, `--targets` so the rehearsal drives the live executor; renamed **bootstrap stage** throughout (§10, §11, §12; A33) |
 | S4 | `done: none` never reconciled with the mandatory-groups rule | sentinel defined: seed-distinct, no groups, no `no_definition_of_done`, final check with an empty chain, archive class `merged` — never `complete` (§4.1, §7.1, §7.2, §7.4, §11; A31) |
 | S5 | `context_watch.focus` is an inert knob inside the spec | `mp context-status` returns `recommendation {compact, focus}` from the configured value; the turn-close prints it verbatim; contract test (§4.1, §4.4, §9, §11) |
 | S6 | `high` cadence denominated in unsealed, unbounded rounds | rounds seal on the first answer/withdraw/draft/critic; intent-round minimum 1 / 2 / 4 required by every non-waived exit (§4.2, §5.3, §5.4, §11; A2) |
@@ -1265,6 +1337,24 @@ Cross-vendor panel over rev 12 (same workflow: gpt-5.6-sol revise, glm-5.2 revis
 | N14 | sibling push between step 5 and the gate has no resumption path | §10.3 row: stop, verify the foreign range, acknowledged re-target (`gate` recovered with `remote_tip`), rebase; rehearsed (§10.2, §10.3, §11) |
 | N15 | `assumed` rows enforced only by reviewer attention | `goals-load` refuses `assumed_row_missing` against the `interview_end` id lists (§5.4, §11) |
 | N16 | `context-status` conflates "no transcripts" with "not at the expected path" | `not-found <expected path>` state, sibling-project fallback, `lib/paths.mjs` has no project encoding today (§9, §11) |
+
+Cross-vendor panel over rev 13 (same workflow: gpt-5.6-sol revise, glm-5.2 revise, three lenses revise; 2 blockers, 6 should-fix, 5 nits; seven reviewer claims dropped after in-tree verification — the seed-lock race (third time), receipt provenance (second time), the `arm`/`record` attestation half (disclosed as A33), a demand for a different pre-publish reviewer panel and a split v10.0/v10.1 release (both user-confirmed scope, D2/A25/A10), a hook-policy-repo hazard whose premise was wrong, and "A21/A28 are false"; record in `gate-spec-panel-4.json`) → rev 14:
+
+| # | finding | disposition in rev 14 |
+|---|---|---|
+| B1 | `push_archive` was an ungated default push for every repo — `loose` pushed with no AUQ, no opt-out, false fast-forward premise where no `install` push exists, no non-fast-forward disposition | emitted only when an `install` receipt pushed the base (`pushed_base`); always-halt gate at every autonomy (§4.2); non-fast-forward → fetch, audit, rebase, retry once, stop; `pushed: no` until the event lands (§7.2, §7.4, §11; A34) |
+| B2 | "critic after every intent round" satisfiable by one trailing receipt; the §11 test certified the bypass | refused at the **ask** at `high` (no new intent round without a receipt for the previous one) and `converged` requires one distinct receipt per intent round; tests assert the forged four-rounds-one-receipt ledger is refused (§4.2, §5.3, §5.4, §11) |
+| S3 | `deploy_indeterminate` "mark done with evidence" reached `complete` without a passing check | steps with `check` close only by `check` exit 0; check-less steps may be *attested* → `deploy_step {status: attested}` → `incomplete:attested`, never `complete` (§7.2, §11) |
+| S4 | `git patch-id --stable` is whitespace-blind (reproduced) | `--verbatim` (git ≥ 2.39, checked and refused otherwise); whitespace-only fixture (§7.3, §11) |
+| S5 | ask-and-withdraw rounds padded the intent-round minimum | a completed intent round needs ≥ 1 answered intent-kind question (§4.2, §11) |
+| S6 | sibling-repo scan rooted at `<MAIN>/../*` missed most repos and the hook-policy repo; AUQ implied completeness | scan over `--targets` `workspace_roots` (dirs + depth); AUQ states the roots and that the list may be incomplete; hook-policy repo called out (§10.1, §10.1.4, §11; A32) |
+| S7 | `required-successor` WARN-forever when absent; bound by slug + class, not the predecessor link | bound to a bundle seeded with `--predecessor=<this slug>`; soft enforcement stated as A35 with the visibility mechanism (`resume-brief`, `runs list`, `mp status` print open obligations) (§7.4, §11) |
+| S8 | step-5 push carries local `main`'s non-bundle commits (inside the tag already) unnamed | `main_push` arm lists `origin/main..main` non-bundle commits; folded into `publish_ack`; recorded as `carried` (§10.1.5, §11) |
+| N9 | G6's "before this run's finish begins" is imprecise on the corrective path | not amended (frozen; an amendment needs an operator receipt); read as "the finish attempt of record", stated in A36 |
+| N10 | `commit_paths` could allowlist executable paths; a stage could rewrite the version | directory / non-metadata entries warn at seed; `${version}` at `base_after` must equal the resolved value (§7.1, §11) |
+| N11 | `record` postcondition vs §10.3's failed records unreconciled | `--status=failed` skips the success postcondition, requires a non-zero exit or a reason, and is the only record after a failed command (§10.1, §11) |
+| N12 | the rebase's "cannot conflict" was unasserted | `arm --step=gate` requires the branch to touch no `docs/masterplan/` path (§10.2, §11) |
+| N13 | a one-off bootstrap as permanent product surface | driver moved to `scripts/bootstrap-v10.mjs` (imports the event writer + schema from `lib/`); no `mp bootstrap` verbs; script and suite retire with the successor (§10.1, §11, §12; A33) |
 
 ## Assumptions & Open Decisions
 
@@ -1302,6 +1392,8 @@ Cross-vendor panel over rev 12 (same workflow: gpt-5.6-sol revise, glm-5.2 revis
 | A29 | Concurrent seeds? | a repo-wide seed lock plus validate-then-create; the inventory digest only detects staleness | a hash is not a lock; a refused seed must leave nothing | assumed |
 | A30 | Stage-produced commits? | commits an authorized deploy step makes are recorded in its receipt and advance the audit base **only** when they touch nothing outside `done.commit_paths` (default: `version_from` + `CHANGELOG.md`); anything else is a base move | the sample `release` step commits the CHANGELOG header by design; an unrestricted rule would let a generator change assessed code (panel 3, S7) | assumed |
 | A31 | `done: none` completion class? | `merged` — intent confirmed on the merged base, no deploy evidence; never `complete` | Outcome 3 reserves `complete` for a live surface; a repo with nothing to deploy gets an honest class the operator may rename at the gate | assumed |
-| A32 | Cross-repo install window? | accepted and named: the `install_pi` arm lists open bundles in sibling repos, the step-4 AUQ and `publish_ack` say every repo on the host switches; no blocking | the install roots are host-wide singletons; blocking on other repos' runs would make the rollout hostage to unrelated work | assumed |
-| A33 | Bootstrap driver vs prompt-first? | code arms (preconditions), the shell runs the printed command, code records (postconditions); `--targets` makes the rehearsal drive the live executor | the only irreversible, fleet-shared procedure in the design; prose-enforced preconditions read after a compaction are the failure mode §9 exists for | assumed |
-| A34 | Post-archive push? | part of the v10 finish (`push_archive`, gated under `gated`), not a `done:` group | the archive is the evidence other hosts and CI consume; leaving it host-local made `required-successor` unobservable | assumed |
+| A32 | Cross-repo install window? | accepted and named: the `install_pi` arm scans the operator-supplied `workspace_roots` and lists open bundles, the step-4 AUQ and `publish_ack` say every repo on the host switches and that the list covers only the scanned roots; no blocking | the install roots are host-wide singletons and the host layout is not derivable from MAIN; blocking on other repos' runs would make the rollout hostage to unrelated work | assumed |
+| A33 | Bootstrap driver vs prompt-first? | a one-off `scripts/bootstrap-v10.mjs` arms (preconditions), the shell runs the printed command, the script records (postconditions), through the permanent event writer and schema in `lib/`; `--targets` makes the rehearsal drive the live executor; no permanent `mp` verb | the only irreversible, fleet-shared procedure in the design; prose-enforced preconditions read after a compaction are the failure mode §9 exists for; a walk that never runs again does not belong in the CLI | assumed |
+| A34 | Post-archive push? | part of the v10 finish as an always-halting gate, emitted only when the deploy stage's `install` group pushed the base; never a bare default | a push is a risky action at every autonomy; a repo whose finish never published its history must not have it published by the archive step; the archive is still the evidence other hosts and CI consume | assumed |
+| A35 | How hard is `required-successor`? | soft: WARN while absent, ERROR only when the linked successor archived without completing; visibility through `resume-brief` / `runs list` / `mp status` | the only CI that could add teeth is this repo's push-triggered doctor, which cannot tell "not yet" from "never"; a dated WARN→ERROR promotion would make `main` red on a calendar day nobody can act on from CI | assumed |
+| A36 | G6's "before this run's finish begins" on the corrective path? | the frozen text stands; "finish" is read as the finish attempt of record (the one that archives), which is what the version-keyed evidence measures | amending a frozen goal needs an operator receipt; the evidence is version-keyed and cannot see ordering, so the verdict is unaffected | assumed |

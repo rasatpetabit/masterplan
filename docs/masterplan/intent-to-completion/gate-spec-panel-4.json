@@ -1,0 +1,275 @@
+{
+  "summary": "Cross-vendor adversarial panel over the intent-to-completion spec-gate artifacts (spec.md rev 13 + goals.md), bytes embedded verbatim",
+  "agentCount": 6,
+  "logs": [
+    "review text: 127697 chars, sha256 5991638666f7",
+    "▸ running dynamic workflow adversarial-review",
+    "▸ adversarial-review done"
+  ],
+  "result": {
+    "reviewed_sha256": "5991638666f7414eece728638c39ef929e2ec16df1d9b0ad391801df9d42ebb5",
+    "reviewed_chars": 127697,
+    "final_verdict": "revise",
+    "summary": "Two blockers survive in-tree verification of spec rev 13. (1) `push_archive` (spec.md:495) is a new unconditional default in the core finish order for every repo that adopts v10, fires with no AUQ under `loose`, is missing from the §4.2 always-halt list (spec.md:165) that fleet policy would put it in, has no config opt-out (§4.1 has no such key), and its \"fast-forward by construction\" premise assumes a `done.install` push that does not exist for the ~40 sibling repos on this host that carry masterplan bundles and no `.masterplan.yaml` at all (verified by scan) — v9 today pushes only after the operator picks `pr` at the always-halting `branch_finish` AUQ (lib/finish-step.mjs:316-320, commands/masterplan.md:243,249), so this is genuinely new unreviewed network publication, and on the masterplan repo itself GitHub `main` is the Claude marketplace production surface. (2) The rev-13 S6 fix for `high` critic cadence is gameable as written: §4.2/§5.4 require only \"a critic receipt recorded after each intent round's last content event\" (spec.md:143, 326), `mp interview ask` (spec.md:254) never refuses opening round r+1 without a receipt for round r, so four back-to-back rounds plus one trailing receipt satisfy `converged` with one critic pass, and the §11 test is worded with the same \"following receipt\" predicate so it would certify the bypass — this undermines Outcome 1/G1, the run's primary goal. Six should-fixes follow (an operator-gated but §7.1-contradicting `deploy_indeterminate` \"mark done with evidence\" path into `complete`; `git patch-id --stable` whitespace-blindness reproduced on this host with two semantically different Python diffs sharing one id while `--verbatim` distinguishes them; ask+withdraw padding rounds counting toward the intent-round minimum; a sibling-repo scan rooted at `<MAIN>/../*` = `/srv/dev/ras/*` that misses `/srv/dev/*/`, `/srv/dev/*/*/` and `/srv/workflows` (two in-progress bundles verified) while the AUQ implies the list is exhaustive; a `required-successor` check that is WARN-forever when absent and binds slug+completion rather than the `--predecessor` relationship; and a step-5 push that carries local `main`'s non-bundle commits — 20 ahead, 3 non-bundle right now — into the tag and production `main` without naming them at `publish_ack`). Five nits and seven dropped claims are itemized. Verdict: revise.",
+    "findings": [
+      {
+        "severity": "blocker",
+        "claim": "`push_archive` is an unconditional new default in the v10 finish order for every repo, fires with no AUQ under `loose`, has no opt-out, is omitted from the always-halt gate list, and its fast-forward/only-new-history premise is false for repos with no `done:` block or `done: none`.",
+        "failure": "Any repo with autonomy `loose` and no `.masterplan.yaml` (verified: every sibling repo on this host with masterplan bundles — /srv/dev/ehr, /srv/dev/petabit/*, /srv/dev/yanos-project/*, /srv/workflows, 40+ total — has none) runs an ordinary `merge` finish → `no_definition_of_done` gate → archive incomplete → `push_archive` executes `git push origin main` directly, publishing every local-only commit on `main` (WIP, unreviewed, unrelated to the run) to origin with no gate; on the masterplan repo origin `main` is the Claude marketplace production surface. Second leg (reviewer 1): with a multi-host unprotected origin the push can be rejected non-fast-forward after the bundle is already locally archived `complete`, and §7.2 defines no fetch/rebase/re-target disposition — re-entry only re-emits the same rejected push; `archive_pushed` is written after the push so it is never part of the pushed history and peers will re-emit the op.",
+        "location": "docs/masterplan/intent-to-completion/spec.md:495 (§7.2 push_archive row); spec.md:165 (§4.2 always-halt list); §4.1 config table (no push_archive key); A34 spec.md:1307. Precedent: lib/finish-step.mjs:316-320, commands/masterplan.md:243,249 (v9 pushes only after the branch_finish AUQ).",
+        "fix_direction": "Add `push_archive` to the §4.2 always-halt list (an AUQ at every autonomy level, matching fleet policy that push is a risky-action gate) and/or scope it to fire only when a `done.install` group actually pushed the base; add a config-plane key (`push_archive: on|off`, default off when `done` is absent or `none`); define a non-fast-forward disposition (fetch, per-commit audit of the foreign range, rebase the archive commit, retry) and state that local `complete` is not durable until `archive_pushed` lands."
+      },
+      {
+        "severity": "blocker",
+        "claim": "The `high`-complexity 'critic after every intent round' requirement is enforced only by an event-log-position predicate ('a receipt recorded after that round's last content event'), so one trailing critic receipt satisfies every earlier round, and the §11 test is worded to certify the bypass.",
+        "failure": "At `high`: record four intent rounds back-to-back (nothing in the `mp interview ask` refusal list at spec.md:254 — duplicate id, out-of-sequence id, non-current/next round, sealed round, unanswered earlier round, past cap — blocks opening round r+1 without a critic receipt for round r); record a draft; dispatch the critic once with a clean payload; `mp interview end --reason=converged` succeeds because that single receipt's ledger index is later than rounds 1–3's last content events too. §4.2 (spec.md:143) says this is 'enforced, not advisory' and that four rounds mean 'at least four critic passes'; the §11 case 'converged refused while any intent round lacks a following critic receipt' passes on the bypass. Outcome 1 / G1 is the run's primary goal.",
+        "location": "docs/masterplan/intent-to-completion/spec.md:143 (§4.2), :254 (§5.3 ask refusals), :326 (§5.4 converged row 'at high' clause), §11 interview-ledger-resume additions",
+        "fix_direction": "Require a distinct receipt per intent round: either `ask` refuses to open intent round r+1 while round r (sealed) has no critic receipt whose `content_head` falls at or after round r's last content event and before round r+1's first ask, or `converged` requires count(distinct receipts with non-overlapping content_head coverage) ≥ completed intent rounds. Reword the §11 test to assert that one trailing receipt is refused for four rounds."
+      },
+      {
+        "severity": "should-fix",
+        "claim": "The `deploy_indeterminate` gate's 'mark done with evidence' resolution records a `deploy_step` for a mandatory `live_check` step without any check predicate having exited 0, contradicting §7.1's 'a declared step that did not happen cannot be talked into the ledger' and Outcome 3's 'the live check passed'.",
+        "failure": "A `live_check` step whose `check` exits 2 (or a step with no `check`, as in the §7.1 sample's live_check group) reaches `deploy_indeterminate`; the operator selects 'mark done with evidence' with any digest-bearing file; `deploy_step` is recorded, `goals_unmet` (final) is waived, `intent_confirm` is answered, and the bundle archives `completion: complete` with no live-check predicate ever having passed. Operator-gated and durable, so not silent — but the completion class is wrong and the §7.1 invariant is false as stated.",
+        "location": "docs/masterplan/intent-to-completion/spec.md:488 (§7.2 deploy_indeterminate row); §7.1 'Free-text evidence is never accepted as proof'; Outcome 3",
+        "fix_direction": "For `live_check` (and any mandatory step lacking `check`), remove 'mark done with evidence' or make it record `deploy_step {status: attested}` that yields archive class `incomplete:attested`, never `complete`; a step with `check` may only be closed by a subsequent `check` exit 0."
+      },
+      {
+        "severity": "should-fix",
+        "claim": "The `pr` squash proof via `git patch-id --stable` ignores whitespace, so a squash whose indentation differs from the reviewed branch — semantically significant in Python/YAML/Makefiles — is accepted as equivalent.",
+        "failure": "Reproduced on this host (git 2.53.0): branch b1 moves `b = 2` inside an `if` block; branch b2 dedents it to 2 spaces outside the block; `git diff X^ X | git patch-id --stable` yields the identical id 76f36b5e… for both, while `git patch-id --verbatim` yields distinct ids. Under §7.3 finish accepts the squash, deploys it, and archives `complete` on code that behaves differently from what was reviewed.",
+        "location": "docs/masterplan/intent-to-completion/spec.md:537-541 (§7.3 pr squash proof); spec.md:1004 (§11), :1241 (S9)",
+        "fix_direction": "Use `git patch-id --verbatim` (available since git 2.39), or compare the squash's resulting tree against the branch's tree applied on the same base (`git diff --stat <squash> <branch_tip>` empty modulo the merge base), and add a whitespace-only-difference fixture to `deploy-commit-identity`."
+      },
+      {
+        "severity": "should-fix",
+        "claim": "A round counts as 'completed' toward the intent-round minimum when every question is answered OR withdrawn, so ask-and-immediately-withdraw rounds pad the minimum with zero operator content, and each withdraw advances `content_head`, compounding the per-round critic bypass.",
+        "failure": "At `high` after one genuine answered round meeting the floors, ask one intent question in each of rounds 2–4 and withdraw it immediately; four 'completed' intent rounds exist with answers only in round 1, satisfying §5.4's round-minimum gate; the withdraws move `content_head` so one trailing receipt covers them.",
+        "location": "docs/masterplan/intent-to-completion/spec.md:137 (§4.2 intent-round minimum definition); §5.3 content_head includes intent withdraws; §5.4",
+        "fix_direction": "A completed intent round must contain at least one answered intent-kind question to count toward the minimum; add the padding fixture to `interview-ledger-resume`."
+      },
+      {
+        "severity": "should-fix",
+        "claim": "The `install_pi` sibling-repo scan (`<MAIN>/../*/docs/masterplan/*/state.yml`) is not host-wide although the Pi install root is a host-wide singleton, and the step-4/publish_ack AUQs present the list as every in-flight run on the host.",
+        "failure": "Verified in-tree: MAIN is /srv/dev/ras/masterplan, so the scan reaches only /srv/dev/ras/*; masterplan bundles also exist under /srv/dev/*/ (ehr, yanos-project), /srv/dev/*/*/ (petabit/*, hw/*, openxcvr/*, yanos-project/*, agents/*) and /srv/workflows, which right now carries two `status: in-progress` schema-9 bundles (agent-policy, ultracode-revamp) and is the fleet's hook-policy source. None would be named in the AUQ; `install_pi` swaps their binary anyway.",
+        "location": "docs/masterplan/intent-to-completion/spec.md:819-829 (§10.1.4 scan and AUQ); A32 spec.md:1305",
+        "fix_direction": "Scan a configured set of workspace roots (e.g. `/srv/dev` recursively to depth 3 plus `/srv/workflows`, from `--targets` or a fleet inventory such as /srv/dev/llms.txt) rather than parent-directory siblings, and state in the AUQ that the list may be incomplete; call out the hook-policy repo explicitly when it appears."
+      },
+      {
+        "severity": "should-fix",
+        "claim": "`required-successor` is soft enforcement: the successor absent yields a permanent non-blocking WARN (exit 0), the check binds by slug and completion class rather than the `--predecessor` relationship, and there is no staleness escalation.",
+        "failure": "If `v10-validation` is never seeded, CI stays green forever and Outcome 7's 'required, non-deferrable' successor is indistinguishable from 'about to be seeded'. Separately, any run seeded with slug `v10-validation` but without `--predecessor=intent-to-completion` that archives `complete` discharges the obligation without exercising the deploy stage. Panel-3 B1 forced WARN-when-absent because this repo's CI runs the bare doctor on every push and `v*` tag (verified: .github/workflows/ci.yml Doctor step, no `--only`), so the self-referential CI cannot supply teeth.",
+        "location": "docs/masterplan/intent-to-completion/spec.md:557-570 (§7.4 required_successor / doctor severity table); spec.md:1252 (B1); Outcome 7 spec.md:44-52",
+        "fix_direction": "Bind the check to a successor whose seed event names `--predecessor=<this slug>` (not slug alone); either state in the Assumptions table that enforcement is soft-only, or add a time-boxed WARN→ERROR promotion (recorded `due_by` on the `required_successor` event) or a host-level sweep outside this repo's push-triggered CI."
+      },
+      {
+        "severity": "should-fix",
+        "claim": "Step 5 pushes local `main`'s non-bundle commits — already ancestors of the branch tip and therefore inside the v10 tag and Pi install — to production without those commits ever appearing in a reviewed diff or being named at `publish_ack`.",
+        "failure": "Verified now: local `main` is 20 commits ahead of origin/main, 3 non-bundle (0b6159d WORKLOG, abc3b0a and 5aa3c27 workflow-map regenerations). The run branch is created from local `main` HEAD (lib/worktree.mjs), so `git diff main...branch_tip` in both the pre-publish and finish-time reviews excludes them; the tag at branch_tip contains them; step 4 publishes the tag and step 5 pushes them to GitHub `main`. The pre-publish verify (full suite at the tip) covers functional breakage, semantic defects are not reviewed. Reviewer 1's claim that A21/A28 are thereby 'false' is not supported — neither assumption asserts review coverage of pre-existing `main` history.",
+        "location": "docs/masterplan/intent-to-completion/spec.md:832-845 (§10.1.5); A21 spec.md:1293",
+        "fix_direction": "Have `mp bootstrap arm --step=main_push` list every non-bundle commit in `origin/main..main` (sha, subject, paths) and fold the list into the `publish_ack` AUQ text; optionally require an explicit `--carry=<sha,…>` acknowledgement recorded in the `main_push` event."
+      },
+      {
+        "severity": "nit",
+        "claim": "Frozen G6's 'before this run's finish begins' is literally false on the §10.3 corrective-release path, where v10.0.x is installed after finish began and the finish is re-entered.",
+        "failure": "Finish begins → blocking review → `mp bootstrap start --pass=2` → v10.0.1 tagged/installed → finish re-entered → G6 assessed at v10.0.1 via command-class liveness evidence, which cannot see the ordering; the verdict is right in spirit and the goal text is imprecise.",
+        "location": "docs/masterplan/intent-to-completion/goals.md:26 (G6); spec.md §10.3 corrective-release row",
+        "fix_direction": "`mp goals-amend` G6's temporal phrase to 'before the goal check of the finish attempt that archives this run' (or 'before the finish attempt of record')."
+      },
+      {
+        "severity": "nit",
+        "claim": "`done.commit_paths` is validated only as a path list, so a repo author can allowlist executable paths and re-open the A30 hole; the default also includes the `version_from` file, which a stage step could rewrite after `${version}` was resolved at `deploy_base_sha`.",
+        "failure": "`commit_paths: [src/]` in a repo's reviewed `.masterplan.yaml` lets a `release` step's generator commit application code that advances the audit base while `completion_confirmed` binds to the pre-stage sha. Requires the author to write the self-defeating config or a version-rewriting step; `release.mjs` itself never bumps.",
+        "location": "docs/masterplan/intent-to-completion/spec.md §7.1 release contract (commit_paths), §7.3, A30 spec.md:1303",
+        "fix_direction": "Warn at seed when an allowlist entry is a directory or a non-metadata file, and add a per-stage-commit postcondition that `${version}` at `base_after` equals the value resolved at `deploy_base_sha`."
+      },
+      {
+        "severity": "nit",
+        "claim": "§10.1's `record` 'refuses a step whose postcondition fails' is not reconciled with §10.3's requirement that every failed irreversible action leaves a durable `bootstrap_step {status: failed}` (e.g. a partial push whose remote-tag-equality postcondition fails).",
+        "failure": "Read literally, a failed push can never be recorded (the postcondition fails so `record` refuses), leaving only `bootstrap_armed` on the bundle and no failed record to resume from; read charitably `--status=failed` bypasses the postcondition, but the spec does not say so.",
+        "location": "docs/masterplan/intent-to-completion/spec.md:729-736 (§10.1 record verb); §10.3 preamble",
+        "fix_direction": "State that `record --status=failed` skips the success postcondition, requires `--exit≠0` or an explicit failure reason, and is the only record accepted after a failed command; the attestation half of reviewer 1's finding is already disclosed as A33."
+      },
+      {
+        "severity": "nit",
+        "claim": "The gate's claim that the rebase 'cannot conflict because the merged code never touches the bundle directory' is by design but never asserted as a precondition.",
+        "failure": "If the run branch ever carried a change under `docs/masterplan/<slug>/` (the design says bundle writes go to the base branch, but nothing checks the branch), the state-only audit accepts a later bundle commit on local `main` touching the same file and `git rebase origin/main` conflicts with no disposition.",
+        "location": "docs/masterplan/intent-to-completion/spec.md:898 (§10.2 rebase); §10.1.5 state-only audit",
+        "fix_direction": "Add to `arm --step=gate` the precondition `git diff --name-only $(git merge-base main branch_tip) branch_tip` contains no `docs/masterplan/` path (the §10.3 sibling-push row already computes this list)."
+      },
+      {
+        "severity": "nit",
+        "claim": "A one-time v9→v10 bootstrap is implemented as permanent product surface (`lib/bootstrap.mjs`, four `mp bootstrap` subcommands in the flag whitelist and help, a permanent test suite) when the repo already has a one-off `scripts/` pattern.",
+        "failure": "Every future refactor of finish/bundle schemas must keep `lib/bootstrap.mjs` and `v9-to-v10-bootstrap.test.mjs` consistent for a path that never executes again after `v10-validation`. A33's rationale (preconditions in code, surviving compaction) is satisfied equally by a `scripts/bootstrap-v10.mjs` importing `lib/` and the single event writer.",
+        "location": "docs/masterplan/intent-to-completion/spec.md:711-750 (§10.1 driver), §12 touch surface, A33 spec.md:1306; scripts/v5-orphan-grep.sh (existing one-off pattern)",
+        "fix_direction": "House the driver under `scripts/` (importing the event writer and schema validator from `lib/`), keep the schema-validated `bootstrap_armed`/`bootstrap_step` events, and drop the `mp bootstrap` subcommands from the permanent CLI — a design preference, not a correctness defect."
+      }
+    ],
+    "disagreements": [
+      "Critic-per-round cadence: reviewer 3 rated blocker, reviewer 1 should-fix. Reviewer 3 is right — §4.2 (spec.md:143) claims the cadence is 'enforced, not advisory', §5.3's ask refusal list (spec.md:254) contains no per-round receipt requirement, and §11's test uses the same 'following receipt' predicate, so the planned suite certifies the bypass; this is the rev-13 S6 fix failing on the run's primary goal.",
+      "push_archive: reviewer 4 rated blocker, reviewer 1 should-fix (different leg: multi-host non-FF with no recovery). Reviewer 4's severity is supported in-tree — v9 pushes only after the always-halting branch_finish AUQ (lib/finish-step.mjs:316-320, commands/masterplan.md:243,249), every sibling repo on this host with bundles has no `.masterplan.yaml` (so the FF premise fails), §4.1 has no opt-out key, and fleet policy names push a risky-action gate; reviewer 1's non-FF leg is merged as the second failure mode.",
+      "Unreviewed local-main commits (step 5): reviewer 1 rated blocker and claimed A21/A28 are false. Downgraded to should-fix: the spec discloses the topology (§10.1.5), the commits are pre-existing repo history that any push would carry, the pre-publish verify covers them functionally, and A21/A28 make no claim about review coverage of that range; the actionable gap is that `publish_ack` does not name them (3 non-bundle commits right now).",
+      "deploy_indeterminate 'mark done with evidence': reviewer 1 rated blocker. Should-fix: the path is behind an always-halting AUQ and leaves a durable digest-bearing record, so it is not silent; but it contradicts §7.1's stated invariant and mislabels the archive as `complete`.",
+      "commit_paths allowlist: reviewer 1 rated blocker. Nit: the exploit requires the repo author to allowlist `src/` in their own reviewed config or write a version-rewriting step; a seed-time warning and a `${version}` postcondition close it.",
+      "Ship-before-review ordering: reviewer 2 (should-fix) wants a different reviewer panel for the pre-publish pass. The operator confirmed the D2/A25 ordering with the S5 mitigation on 2026-09-03 (spec.md:1237, 1298); this is a recorded decision, not a defect — dropped.",
+      "Sibling-repo scan: reviewer 4 assumed /srv/workflows is in the step-4 list; reviewer 1 said the scan is not host-wide. Reviewer 1 is right — `<MAIN>/../*` resolves to /srv/dev/ras/*, which contains none of /srv/dev/ehr, /srv/dev/petabit/*, /srv/dev/yanos-project/*, or /srv/workflows; reviewer 4's underlying concern is folded into the scan-coverage should-fix.",
+      "Seed-lock race with non-seed writers: reviewer 1 re-raised it; the rev-12 panel dropped the identical claim because §8 discloses the digest as staleness detection and the lock as seed-only. The tree supports the drop again."
+    ],
+    "dropped": [
+      "Reviewer 1 should-fix (A29 seed lock vs ordinary plan/goal writers): already disclosed in §8 ('staleness detection, not a lock') and dropped after in-tree verification in the rev-12 panel (gate-spec-panel-3.json); no new evidence.",
+      "Reviewer 1 should-fix (A23 critic receipt binds recomputed state, not the dispatched request): §5.3 states the receipt is honesty-bound and 'not tamper-proof and is documented as such'; the rev-11 panel dropped 'receipt provenance strength' on the same ground; a dispatch-request digest would still be orchestrator-supplied.",
+      "Reviewer 1 should-fix, attestation half (arm/record never proves the printed command ran): explicitly disclosed as the A33 residual (spec.md:750, 1306) and accepted by the rev-12 panel as the proportionate mitigation; only the failed-record/postcondition ambiguity survives, as a nit.",
+      "Reviewer 2 should-fix (A: ship-before-review, demand for a different reviewer panel): the D2/A25 ordering and forward-only recovery are user-confirmed 2026-09-03 with the S5 pre-publish pass as the recorded mitigation; a reviewer-diversity preference, not a defect with a wrong outcome.",
+      "Reviewer 2 should-fix (C: split the release into a minimal v10.0 deploy-stage cutover plus v10.1+): scope is user-confirmed (A1–A10, v10.0.0 for the goals-format change); a scoping preference with no concrete wrong outcome beyond generic large-diff risk already mitigated by the pre-publish verify and review.",
+      "Reviewer 4 should-fix (hook policy in /srv/workflows mutating during the bootstrap window): premise that /srv/workflows appears in the step-4 scan is wrong (the scan root is /srv/dev/ras/*); the hazard is an operational concurrency concern between two runs the operator drives, not a spec design defect; the actionable coverage gap is kept as the sibling-scan should-fix.",
+      "Reviewer 1's sub-claim that A21/A28 are 'false' under the documented topology: neither assumption asserts review coverage of pre-existing local-main history; the substantive gap (commits not named at publish_ack) is kept as a should-fix."
+    ],
+    "reviewers": [
+      "openai/gpt-5.6-sol: revise",
+      "approach-lens adversarial (in-tree verification against masterplan repo state): revise",
+      "claude-sonnet-5 (failure-case lens): revise",
+      "blast-radius: revise"
+    ],
+    "cross_vendor_lanes": [
+      "openai/gpt-5.6-sol"
+    ],
+    "degraded": [
+      "zhipu/glm-5.2 FAILED: mcp__skynet__skynet_review_diff returned HTTP 502 (\"shim upstream error: timed out\") on both the first call and a retry with identical parameters (model_group: dispatch-multi-agent-orchestration, reasoning_effort: high). The skynet endpoint at 192.168.109.71:4000 appears to be down or unreachable. Per instructions, this is reported as verdict \"error\" rather than a false \"approve.\""
+    ]
+  },
+  "workflowProgress": [
+    {
+      "type": "workflow_phase",
+      "index": 1,
+      "title": "▸ adversarial-review",
+      "kind": "child"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 1,
+      "label": "cross:openai/gpt-5.6-sol",
+      "phaseIndex": 1,
+      "phaseTitle": "▸ adversarial-review",
+      "agentId": "a2879a4e18ffaecba",
+      "model": "claude-sonnet-5",
+      "state": "done",
+      "startedAt": 1788400116018,
+      "queuedAt": 1788400115999,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "revise",
+      "promptPreview": "You are a RELAY to an independent cross-vendor reviewer. Do NOT review the change yourself.\n\n1. Load the tool schema:  ToolSearch(\"select:mcp__skynet__skynet_review_diff\")\n2. Call mcp__skynet__skynet_review_diff with EXACTLY:\n     model_group: \"dispatch-adversary\"\n     reasoning_effort: \"high\"\n     task: <the framing + focus below>\n     diff: <the review text below, byte for byte, with nothing add…",
+      "lastProgressAt": 1788401163619,
+      "tokens": 177666,
+      "toolCalls": 4,
+      "durationMs": 1047596,
+      "resultPreview": "{\"verdict\":\"revise\",\"reviewer\":\"openai/gpt-5.6-sol\",\"summary\":\"Adversarial cross-vendor review of spec.md rev 13 + goals.md found 3 blockers, 5 high-severity, and 4 medium-severity concrete design failures. Core findings: (1) the bootstrap stage publishes every unpushed local `main` commit to production without any review covering that range — A21/A28 are false under the spec's own documented topo…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 2,
+      "label": "cross:zhipu/glm-5.2",
+      "phaseIndex": 1,
+      "phaseTitle": "▸ adversarial-review",
+      "agentId": "ab37c9234c560ff0c",
+      "model": "claude-sonnet-5",
+      "state": "done",
+      "startedAt": 1788400116019,
+      "queuedAt": 1788400116000,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "error",
+      "promptPreview": "You are a RELAY to an independent cross-vendor reviewer. Do NOT review the change yourself.\n\n1. Load the tool schema:  ToolSearch(\"select:mcp__skynet__skynet_review_diff\")\n2. Call mcp__skynet__skynet_review_diff with EXACTLY:\n     model_group: \"dispatch-multi-agent-orchestration\"\n     reasoning_effort: \"high\"\n     task: <the framing + focus below>\n     diff: <the review text below, byte for byte, …",
+      "lastProgressAt": 1788401971322,
+      "tokens": 179803,
+      "toolCalls": 4,
+      "durationMs": 1853536,
+      "resultPreview": "{\"verdict\":\"error\",\"reviewer\":\"zhipu/glm-5.2\",\"summary\":\"Relay to the cross-vendor reviewer (mcp__skynet__skynet_review_diff, model_group=dispatch-multi-agent-orchestration) failed on two consecutive attempts with the identical error: \\\"HTTP 502 from http://192.168.109.71:4000/v1 skynet endpoint: shim upstream error: timed out.\\\" No review content was returned by the reviewer on either attempt, so…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 3,
+      "label": "lens:approach",
+      "phaseIndex": 1,
+      "phaseTitle": "▸ adversarial-review",
+      "agentId": "a3eaaab4121bc06f3",
+      "model": "claude-sonnet-5",
+      "state": "done",
+      "startedAt": 1788400116020,
+      "queuedAt": 1788400116000,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "revise",
+      "promptPreview": "Adversarially try to BREAK this change. You are not proof-reading it — you are trying to show it is the wrong approach, or that it fails. Challenge the design, the tradeoffs, and the assumptions it depends on, not just implementation defects. A finding is only worth reporting if you can state the concrete failure: inputs or state that produce a wrong result, lost data, or a silent success. Do not …",
+      "lastProgressAt": 1788400481965,
+      "tokens": 148315,
+      "toolCalls": 17,
+      "durationMs": 364179,
+      "resultPreview": "{\"verdict\":\"revise\",\"reviewer\":\"approach-lens adversarial (in-tree verification against masterplan repo state)\",\"summary\":\"The spec's technical premises check out against the live tree (autonomy/complexity really are inert in lib/bundle.mjs and only prompt-side in commands/masterplan.md; lib/paths.mjs really has no project-path encoding; CI really runs the bare doctor on every push/tag with no --o…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 4,
+      "label": "lens:failure-case",
+      "phaseIndex": 1,
+      "phaseTitle": "▸ adversarial-review",
+      "agentId": "a392133741b4f8251",
+      "model": "claude-sonnet-5",
+      "state": "done",
+      "startedAt": 1788400116021,
+      "queuedAt": 1788400116001,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "revise",
+      "promptPreview": "Adversarially try to BREAK this change. You are not proof-reading it — you are trying to show it is the wrong approach, or that it fails. Challenge the design, the tradeoffs, and the assumptions it depends on, not just implementation defects. A finding is only worth reporting if you can state the concrete failure: inputs or state that produce a wrong result, lost data, or a silent success. Do not …",
+      "lastProgressAt": 1788400531640,
+      "tokens": 143773,
+      "toolCalls": 5,
+      "durationMs": 413854,
+      "resultPreview": "{\"verdict\":\"revise\",\"reviewer\":\"claude-sonnet-5 (failure-case lens)\",\"summary\":\"The bulk of the design holds up under adversarial construction — I traced the v9-pin/version_not_bumped interaction, the seed-lock race, the PR-merge-commit ancestry math, and the required-successor doctor severity table, and none produce a wrong result under the inputs I could construct. But rev 13's own S6 fix (inter…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 5,
+      "label": "lens:blast-radius",
+      "phaseIndex": 1,
+      "phaseTitle": "▸ adversarial-review",
+      "agentId": "a154ec8313f4fc136",
+      "model": "claude-sonnet-5",
+      "state": "done",
+      "startedAt": 1788400116023,
+      "queuedAt": 1788400116001,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "revise",
+      "promptPreview": "Adversarially try to BREAK this change. You are not proof-reading it — you are trying to show it is the wrong approach, or that it fails. Challenge the design, the tradeoffs, and the assumptions it depends on, not just implementation defects. A finding is only worth reporting if you can state the concrete failure: inputs or state that produce a wrong result, lost data, or a silent success. Do not …",
+      "lastProgressAt": 1788400557953,
+      "tokens": 157228,
+      "toolCalls": 16,
+      "durationMs": 440166,
+      "resultPreview": "{\"verdict\":\"revise\",\"reviewer\":\"blast-radius\",\"summary\":\"One design defect survives verification: `push_archive` (§7.2) is a new, unconditional default added to the core finish-step order for every future masterplan run in every repo — not scoped to this bootstrap run — and its stated safety rationale (\\\"fast-forward by construction\\\") is false for the common case (no `done:` block, or `done: none…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 6,
+      "label": "synthesize",
+      "phaseIndex": 1,
+      "phaseTitle": "▸ adversarial-review",
+      "agentId": "a492294afd74a0680",
+      "model": "claude-fable-5-1",
+      "state": "done",
+      "startedAt": 1788401971342,
+      "queuedAt": 1788401971324,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "revise",
+      "promptPreview": "Independent reviewers examined the same change. Converge their reports into ONE severity-first verdict.\n\nRules:\n- Merge duplicates; keep the sharpest statement of each defect and the strongest evidence for it.\n- Verify before you promote: open the cited file:line. A finding you cannot confirm in the tree goes in \"dropped\" with the reason — the cross-vendor reviewers never saw the tree, so some of …",
+      "lastProgressAt": 1788402381016,
+      "tokens": 146806,
+      "toolCalls": 13,
+      "durationMs": 409674,
+      "resultPreview": "{\"final_verdict\":\"revise\",\"summary\":\"Two blockers survive in-tree verification of spec rev 13. (1) `push_archive` (spec.md:495) is a new unconditional default in the core finish order for every repo that adopts v10, fires with no AUQ under `loose`, is missing from the §4.2 always-halt list (spec.md:165) that fleet policy would put it in, has no config opt-out (§4.1 has no such key), and its \\\"fast…"
+    }
+  ],
+  "totalTokens": 953591,
+  "totalToolCalls": 59
+}

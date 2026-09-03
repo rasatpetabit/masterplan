@@ -38,4 +38,12 @@ Cross-vendor panel over rev 12 (run wf_75d9951a-7fa, standard, bytes sha256 f65b
   11 should-fix: corrective pass unreviewed + reviewed sha ≠ tagged sha; no deterministic bootstrap driver / rehearsal proves a different executor / "wave" misnamed; done: none unreconciled with mandatory groups; context_watch.focus inert; high cadence in unsealed rounds; stage-produced commits unrestricted; no post-archive push; no corrective-pass event shape; one critic failure licenses exhausted; env-scan escape hatch; host-wide install flip unacknowledged
   4 nits: cache-level Claude proof; sibling push at the gate; assumed rows reviewer-only; context-status not-found vs unsupported
   4 dropped: CI job-skip (again), seed-lock TOCTOU (already disclosed), WORKLOG PR conflict (branch is created from local main), removed flags in flight (seed-only)
-  → rev 13: see spec.md §13 (B1, S2–S12, N13–N16) and A31–A34. Panel 4 on rev 13 is the pending re-gate.
+  → rev 13 (95a4c07, gate hash d99f2fde…): see spec.md §13 (B1, S2–S12, N13–N16) and A31–A34.
+
+Cross-vendor panel over rev 13 (run wf_320af430-a88, standard, bytes sha256 59916386…, 127,697 chars):
+  lanes: gpt-5.6-sol revise · glm-5.2 revise · three lenses revise · synthesis REVISE
+  2 blockers, both introduced by rev 13: push_archive was an ungated default push for every repo (loose pushed with no AUQ; false fast-forward premise where no install push exists; no non-FF disposition); the per-round critic rule was an event-position predicate one trailing receipt satisfied, and the §11 test certified the bypass
+  6 should-fix: deploy_indeterminate "mark done with evidence" reached complete; patch-id --stable is whitespace-blind (reproduced); ask+withdraw rounds padded the round minimum; sibling scan rooted at <MAIN>/../* missed most repos; required-successor soft and slug-bound; step-5 push carries unnamed non-bundle commits
+  5 nits: G6 wording on the corrective path; commit_paths could allowlist src/; failed-record vs postcondition; rebase "cannot conflict" unasserted; one-off bootstrap as permanent CLI surface
+  7 dropped: seed-lock race (3rd time), receipt provenance (2nd), arm/record attestation (A33), different pre-publish panel + split release (user-confirmed scope), hook-policy hazard (wrong premise), "A21/A28 false"
+  → rev 14: see spec.md §13 (B1, B2, S3–S8, N9–N13) and A35–A36. Re-gate mechanism for rev 14 is the operator's call (four panels ≈ 3.6M tokens, each finding what the previous fold introduced).

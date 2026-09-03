@@ -64,8 +64,24 @@ binds the tag to the reviewed sha; `done: none` gets real semantics (no groups, 
 allowlist; interview rounds seal on their first answer and each level has an intent-round
 minimum (1/2/4) so batching cannot collapse the `high` critic cadence; a failed critic dispatch
 needs a retry and an operator ack before `exhausted`; `context_watch.focus` became a live knob
-via `mp context-status`'s `recommendation`; env reads go through `readEnv`. Panel 4 on rev 13 is
-the pending re-gate — the spec gate is NOT recorded again until it returns.
+via `mp context-status`'s `recommendation`; env reads go through `readEnv`.
+
+**Panel 4 (rev 13): REVISE** — 2 blockers, 6 should-fix, 5 nits, 7 dropped (record
+`gate-spec-panel-4.json`). Both blockers were rev-13 fixes that overshot: `push_archive` had
+become an ungated default push for every repo (under `loose`, no AUQ; on repos with no `done:`
+it would have published every local-only `main` commit), and the per-round critic rule was an
+event-position predicate that one trailing receipt satisfied — with the §11 test worded to
+certify the bypass. Rev 14: `push_archive` fires only when an `install` receipt pushed the base
+and always halts; the per-round cadence is refused at the *ask* (no new intent round at `high`
+without a receipt for the previous one) and `converged` needs one distinct receipt per round;
+`deploy_indeterminate` attestation yields `incomplete:attested`, never `complete`; squash proof
+uses `patch-id --verbatim` (`--stable` is whitespace-blind, reproduced on this host); the
+bootstrap driver moved from a permanent `mp bootstrap` verb to a one-off
+`scripts/bootstrap-v10.mjs`; the cross-repo scan takes `workspace_roots` from `--targets`;
+`main_push` names the non-bundle commits it carries; `required-successor` binds to the
+`--predecessor` link and is declared soft (A35). Four panels so far (~3.6M tokens), each
+finding what the previous fold introduced — the re-gate mechanism for rev 14 is the operator's
+call; the spec gate is NOT recorded again until a re-gate passes.
 
 ## 2026-09-02 — intent-to-completion: brainstorm + spec (run seeded, not yet planned)
 
