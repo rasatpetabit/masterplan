@@ -1,0 +1,290 @@
+{
+  "summary": "Cross-vendor adversarial panel over the intent-to-completion spec-gate artifacts (spec.md rev 12 + goals.md), bytes embedded verbatim",
+  "agentCount": 6,
+  "logs": [
+    "review text: 103368 chars, sha256 f65ba7a4ff18",
+    "▸ running dynamic workflow adversarial-review",
+    "▸ adversarial-review done"
+  ],
+  "result": {
+    "reviewed_sha256": "f65ba7a4ff18b5bcb82160c7816c35188381e72aa58094de49abd7e2666c284e",
+    "reviewed_chars": 103368,
+    "final_verdict": "revise",
+    "summary": "One blocker survives in-tree verification and it is structural: §7.4's `required-successor` doctor check FAILs while the named successor is not `completion: complete`, and this repo's CI (`.github/workflows/ci.yml`, `test` job step \"Doctor\": `node bin/doctor.mjs`, exit 1 on any ERROR per `bin/doctor.mjs:76`) runs that doctor on every push and every `v*` tag — so from the moment this run's archive (carrying `required_successor{v10-validation}`) is pushed in §10.2, main CI is red until `v10-validation` completes, and `v10-validation`'s own tag CI is red, which fails its mandatory `install` step (`gh run watch --exit-status`) → `deploy_failed` → skip/abort only → it can never reach `complete`. Outcome 7 is unreachable as written. Beyond that, eleven should-fix items hold up: the corrective-release path publishes an unreviewed fix (the S5 mitigation only covers the first pass); the bootstrap walk is prose while its rehearsal is a script, so the rehearsal proves a different executor; `done: none` is named in four places and reconciled with §7.1's mandatory-groups rule in none; `context_watch.focus` is an inert knob inside the spec that exists to close that class; the `high` critic cadence can be satisfied with one or two critic passes because rounds are neither sealed nor size-bounded; stage-produced commits are path-unrestricted while the final assessment binds to the pre-commit sha; the v10 finish never pushes the archive (verified: `lib/finish-step.mjs` ends at `commitBundle` + `op: stop`); the `bootstrap_step` schema has no shape for a corrective second pass; a single failed critic dispatch licenses `exhausted` with no retry; the env-scan guard misses destructured/bracket access; and the install flip's cross-repo blast radius (single `current` symlink in `bin/install-pi.mjs`, real `auto_compact` block in `/srv/dev/xcvr-tools-fresh/.masterplan.yaml`) is not acknowledged. Four reviewer claims were dropped after checking the tree — most importantly the CI job-skip hazard (`release-publish` has `if: startsWith(github.ref, 'refs/tags/v')`, unskippable on a tag run) and the WORKLOG PR-merge conflict (the run branch is created from local `main`, which already contains the four non-bundle commits). The rest of §7/§10's git mechanics held under tracing, consistent with the failure-case reviewer's assessment.",
+    "findings": [
+      {
+        "severity": "blocker",
+        "claim": "The `required-successor` doctor check is self-referential through this repo's CI: it FAILs while `v10-validation` is not `completion: complete`, CI runs the doctor on every push and tag, and the successor's mandatory install step waits on its own tag CI — so the required successor can never archive complete and main CI goes red permanently.",
+        "failure": "§10.2 pushes this run's archive carrying `required_successor{slug: v10-validation}` → GitHub main's next CI run executes `node bin/doctor.mjs` (ci.yml `test` job) → ERROR → exit 1 (bin/doctor.mjs:76) → red. `v10-validation` seeds, works, tags v10.0.x; its tag CI runs the same doctor while its own bundle is non-archived → red → `gh run watch --exit-status` (§7.1 install group) non-zero → `deploy_failed` → retry is a no-op, `skip` archives incomplete, `abort` archives nothing. `completion: complete` is unreachable; Outcome 7's second sentence can never be satisfied; every later push to main stays red.",
+        "location": "docs/masterplan/intent-to-completion/spec.md §7.4 (lines 497–500) × §10 step 3 × .github/workflows/ci.yml `test` job \"Doctor\" step (needed by `release-publish`) × §7.1 install group `gh run watch --exit-status`",
+        "fix_direction": "FAIL only when the named bundle is absent or archived-but-not-complete; a successor bundle that exists and is non-archived (in progress) is OK/INFO. Alternatively make the check WARN. Either way add the in-progress-successor case to the `resume-brief` doctor suite in §11, and pair it with the post-archive push fix below so GitHub's copy can ever see `complete`."
+      },
+      {
+        "severity": "should-fix",
+        "claim": "The corrective-release path (§10.3) re-runs steps 4/6/7 but never step 2, so a fix triggered by a finish-time failure is tagged and installed on both surfaces with no pre-publish verify, adversarial review, or goal assessment — the exact ordering S5 was folded to prevent — and on the first pass the reviewed sha (T) is not the tagged sha (T + release.mjs commit).",
+        "failure": "Finish-time goal check returns `partial`; fix commits land on the branch; `scripts/release.mjs --version=10.0.1` tags the new tip; steps 4/6/7 publish and install 10.0.1 on Pi and the Claude cache; only afterwards does the re-entered finish run verify/review over `main..tip`. If the fix is wrong, both daily-driver surfaces run it before any review, and the Claude surface has no downgrade lever (A25).",
+        "location": "spec.md §10.1 steps 2–3 (review at tip, then release commit) and §10.3 corrective-release row (\"steps 4, 6 and 7 re-run\")",
+        "fix_direction": "Corrective pass must re-run step 2 (pre-publish verify + cross-vendor review + G1–G5 assessment) at the new tip before step 3, recorded as `bootstrap_step` events. For sha identity, either run `release.mjs` before the review so receipts bind to the tagged commit, or assert in the walk that `tag^{commit}` differs from the reviewed sha by a CHANGELOG-only commit (release.mjs never bumps, so that is the only legal delta). Not a blocker: tag CI re-runs tests+doctor on the tagged commit before `install-pi`, and the finish still reviews post-publish."
+      },
+      {
+        "severity": "should-fix",
+        "claim": "The bootstrap wave — the only irreversible, fleet-shared-state procedure in the design — has no deterministic driver: its preconditions (fetch/ancestor, per-commit audit, dirty tree, digest checks) are enforced only by prose read live by the model, the `bootstrap_step` schema validates a record after the action fired, and the rehearsal script exercises a different executor than the live walk.",
+        "failure": "`scripts/rehearse-v9-finish.sh` passes on fixtures. The live walk is then executed step-by-step from ~150 lines of §10 prose; step 4 blocks minutes on CI (a compaction-risk turn §9 exists to protect, yet §10 is not in §12's `commands/masterplan.md` touch list). After a mid-walk compaction the agent re-derives position from the event list; a step-5 push made without the fetch/ancestor precondition, or a rebase against the wrong tip, lands on `origin main` — shared by three hosts per /srv/dev/AGENTS.md — before any code refuses it. `mp event` (bin/masterplan.mjs:1037) is a generic append; §12 lists no bootstrap verb.",
+        "location": "spec.md:627–632 (§10.1 step 1), :914–919 (§12 touch surface), §10.1.1 rehearsal; contrast lib/dispatch-wave.mjs, lib/wave-commit.mjs, docs/internals/wave-dispatch.md",
+        "fix_direction": "Run the live walk through the same step functions as the rehearsal script (a `--live` mode with real targets), so the rehearsal proves the executor that will run; add an `mp bootstrap next`/`status` verb that computes the next unexecuted step from the event log and refuses out-of-order or precondition-failing steps before the git/gh action fires. Stop calling it a \"wave\" — plan-annotations wave semantics (disjoint `files`, `dispatch-wave`, two-phase commit) do not apply; name it a bootstrap stage so plan.md and resume tooling do not import the wrong model. If the operator's A8 prompt-first choice is kept for this step, record the residual risk as an explicit assumption row."
+      },
+      {
+        "severity": "should-fix",
+        "claim": "`done: none` is named as the explicit opt-out in four places but is never reconciled with §7.1's rule that `release`/`install`/`live_check` are mandatory groups or with §7.2's `no_definition_of_done` trigger, leaving seed acceptance, deploy-stage behavior, and completion class undefined.",
+        "failure": "A repo with no deploy surface sets `done: none` (e.g. /srv/dev/xcvr-tools-fresh, which today has no `done:` key). Depending on the implementation's reading: the seed rejects it (§4.1 schema is an object), or `no_definition_of_done` opens on every finish (\"no `done:` block\"), or every run in that repo archives `incomplete` forever (§7.1 mandatory groups), or — worst — it archives `complete` with zero deploy evidence, contradicting Outcome 3. §11's \"`done: none` accepted\" test cannot be written against any of these.",
+        "location": "spec.md:416 (§7.1 mandatory-groups rule) vs :499 (§7.4), :806 (§11 config suite), :869 (§11 doctor suite), :1065 (N14 disposition)",
+        "fix_direction": "Define the sentinel: seed accepts `done: none` as distinct from the object schema; the deploy stage skips the mandatory-group enforcement and `no_definition_of_done` does not open; the run archives under a distinct class (e.g. `complete:no-deploy-surface` or `incomplete:no_deploy_surface`, chosen deliberately against Outcome 3) that `runs list`/`mp status`/doctor print; add the case to `deploy-commit-identity`/`finish-replay`."
+      },
+      {
+        "severity": "should-fix",
+        "claim": "`context_watch.focus` is itself an inert knob: §4.1 declares it operator-settable with a default, but §9's rendering always emits the fixed masterplan-authored template and no consumer of the configured value is described.",
+        "failure": "Operator sets `context_watch: {focus: \"keep the auth-token flow\"}`; every gate line still prints `recommend: /compact run <slug>, phase <phase>, gate <id>; keep goals.md outcome + open gate; drop tool output`. `test/knob-contract.test.mjs` applied to this nested key (§4.4 lists `context_watch.threshold` as an example observable but not `focus`) either fails on the spec's own field or the field is quietly exempted — Problem §1's defect class reproduced inside the spec written to close it (G4).",
+        "location": "spec.md:86 (§4.1 schema row) vs :594–596 (§9 rendering)",
+        "fix_direction": "Either render the configured `focus` (operator value overrides or is appended to the auto-generated template) with its own knob-contract test and `<!-- knob -->` marker, or drop `focus` from the schema and make `context_watch` `{threshold}` only."
+      },
+      {
+        "severity": "should-fix",
+        "claim": "The `high`-complexity guarantee \"critic after every intent round\" is denominated in ledger rounds, but rounds are neither sealed nor size-bounded: `mp interview ask` accepts the current round number after its questions are answered, and the floor counts questions while a round may hold four — so an 8–20 question interview can be `converged` with one or two critic passes and no round-to-round adaptivity.",
+        "failure": "(a) Ask Q1 `--round=1`, answer, ask Q2 `--round=1` (permitted: only an *earlier* round's unanswered question blocks), … Q8 all round 1, one draft, one clean critic → `converged` at `high` with one critic over eight separate AUQ exchanges. (b) Following the fleet's mandatory batching policy (/srv/workflows/policy/auq.md:10, ~/AGENTS.md:64), round 1 = 4 intent questions, round 2 = 2 intent + 2 design → floor 8, intent floor 6, one design pick, two receipts → `converged` after two human exchanges whose questions could not adapt to each other's answers — the shallow probing the topic line complains about, with a ledger that reads as rigorous.",
+        "location": "spec.md §5.3 (`ask` refusal set: \"a round number other than the current or the next round\"), §4.2 lines 118–131 (round definition, floor in answered questions), §5.4 `converged` row",
+        "fix_direction": "Seal a round on its first answer/draft/critic (the next ask must use r+1) so one AUQ call maps 1:1 to a ledger round; denominate the floor (or at least the `high` cadence) in intent rounds, or cap questions per intent round below the AUQ maximum; optionally have the critic's clean verdict also judge whether round count/batch size shows iterative depth."
+      },
+      {
+        "severity": "should-fix",
+        "claim": "Stage-produced commits (§7.3 (b)) are unrestricted in what they may touch, while the final assessment and `completion_confirmed` stay bound to `deploy_base_sha`, so the assessed sha can differ from the installed code without the audit noticing.",
+        "failure": "A repo's `release` step runs `npm run generate && git add -A && git commit` and the generator changes application code. The receipt records `commits: [sha]`, `base_after` advances, no `base moved` error fires; `run_final_check` and `completion_confirmed` still bind to the pre-generation `deploy_base_sha`; the run archives `complete` having assessed code that is not what was tagged and installed. A30 generalizes a rule that is only safe for the sample (version files + CHANGELOG).",
+        "location": "spec.md §7.3 stage-produced rule (b) × §6.2/§7.2 `run_final_check` and `completion_confirmed {deploy_base_sha}` × A30",
+        "fix_direction": "Restrict stage-produced commits to a declared non-behavioral allowlist (`version_from` file + CHANGELOG; anything else is `base moved`), or advance the bound sha to `base_after` and re-run the final assessment at that sha before `completion_confirmed`."
+      },
+      {
+        "severity": "should-fix",
+        "claim": "The v10 finish flow has no post-archive push, so a successor's `completion: complete` exists only on the machine that produced it — unlike the bootstrap walk (§10.2), which pushes explicitly — and GitHub's doctor keeps seeing the successor as absent/incomplete.",
+        "failure": "`v10-validation`'s `done:` install group pushes main before archive; the archive commit lands on local main and finish-step returns `op: stop` (lib/finish-step.mjs:397–408: `commitBundle` then `stop`, push is shell-side only for the `pr` choice). `origin/main` never receives the completion; the other two host-local clones and every CI run on GitHub main evaluate `required-successor` against a bundle that is absent or not complete. Even with the blocker's exemption in place, CI on main goes red at the successor's archive-time push gap.",
+        "location": "spec.md §7.2 op table (ends at `archive`) vs §10 step 2 (explicit post-archive push); lib/finish-step.mjs:397–408",
+        "fix_direction": "Add a post-archive push step to §7.2 (or an `archive` group in `done:` that runs after archive under the same authorize/started/done ledger), and a `finish-replay` case asserting origin receives the archive commit."
+      },
+      {
+        "severity": "should-fix",
+        "claim": "The `bootstrap_step` schema (monotone step order; a repeated step refused unless `status: recovered`) has no shape for the corrective pass, whose second `release`/`push`/`install`/`claude_surface`/`pr_merge` sequence follows a successful first pass and is triggered by a finish-time event, not a `bootstrap_step` failure.",
+        "failure": "First `release` succeeds. Finish-time goal check returns `partial`. The corrective `release` event is a same-named repeat with no preceding `failed` bootstrap_step to recover from and out of monotone order after `pr_merge`; it is either refused or forced under a false `recovered` label. G6 reads \"the latest `bootstrap_step {step: release}`\" for its version; if the event cannot be legally recorded, G6 assesses v10.0.0 and stays `partial`.",
+        "location": "spec.md §10.1 step 1 (schema rules) vs §10.3 corrective-release row and §11 `v9-to-v10-bootstrap` (\"a repeated or out-of-order step is refused, `status: recovered` is accepted\")",
+        "fix_direction": "Define a corrective-pass shape (e.g. `pass: 2` or `status: corrective` opening a fresh monotone sequence from `release`, with the triggering event id recorded) and add it to the `v9-to-v10-bootstrap` fixtures."
+      },
+      {
+        "severity": "should-fix",
+        "claim": "A single failed critic dispatch at `medium`/`high` immediately makes `exhausted` a valid exit with no retry and no operator question — the only degradation path in the spec that does not fail closed or route through an AUQ.",
+        "failure": "Frontier-lane rate limit on one critic dispatch → `critic_unavailable` → `mp interview end --reason=exhausted` accepted with the floor met; remaining unknowns become assumptions and goals freeze without the operator ever being asked, at the complexity level whose whole purpose is to probe until understood. Fleet policy (~/AGENTS.md \"Fail closed\") treats an unavailable reviewer as an error to surface, not a state to proceed from.",
+        "location": "spec.md §5.4 terminal-states table (`exhausted`: \"or critic mode is `unavailable`\"), §4.2 critic column (\"until clean, cap, or unavailable\")",
+        "fix_direction": "Require at least one retry (and, under `gated`, an AUQ naming the error) before `critic_unavailable` may license `exhausted`; record the retry attempts in the event."
+      },
+      {
+        "severity": "should-fix",
+        "claim": "The knob-inventory scan's stated escape hatch is narrower than the language allows, and the contract test has no held-constant rule, so the guard's \"any future inert knob fails the suite\" claim is not established.",
+        "failure": "`const { MP_NEW_MODE } = process.env` or `process.env[key]` has no literal `process.env.NAME` member for the lexical inventory and is not the `const env = process.env` alias §4.4 rejects — an inert env knob never enters the inventory. Separately, a contract test whose two runs differ in the target knob and, via shared fixture setup, in complexity passes on the other input's difference.",
+        "location": "spec.md §4.4 (\"rejects aliased `process.env` access … (`const env = process.env`)\"; contract test definition)",
+        "fix_direction": "Reject any non-literal `process.env` access in `lib/`/`bin/` (destructuring, bracket, alias, `Object.entries(process.env)`) or route all env reads through one `readEnv(name)` helper the scan enumerates; give contract tests a harness that varies exactly one input and fails if the fixtures differ elsewhere."
+      },
+      {
+        "severity": "should-fix",
+        "claim": "The Pi install root and the Claude plugin cache are host/account-wide singletons, so steps 4 and 6 flip every masterplan-using repo's `mp` binary mid-session, but §10 and its rehearsal reason only about this repo and the `publish_ack` AUQ does not name the cross-repo window.",
+        "failure": "bin/install-pi.mjs:12 swaps one `<install-root>/current` symlink for all repos. After step 4, a session mid-run in /srv/dev/xcvr-tools-fresh (real `.masterplan.yaml` with `auto_compact: {enabled, interval, focus}`, no `done:`) runs a v9 sequencer against the v10 binary: `mp seed` now refuses without `--overlap-review`, unknown seed flags die at bin/masterplan.mjs:588, `auto_compact` is aliased to `context_watch` with `enabled`/`interval` discarded as unknown nested keys, and its next finish opens `no_definition_of_done`. Nothing scans for in-progress bundles elsewhere before the flip. (Impact is narrower than reviewer 5 stated: the removed flags are seed-only, so an in-flight session does not reissue them.)",
+        "location": "spec.md §10 steps 4 and 6, §10.1.1 rehearsal scope, A13/A29; bin/install-pi.mjs:12, bin/masterplan.mjs:588, /srv/dev/xcvr-tools-fresh/.masterplan.yaml",
+        "fix_direction": "Add a cross-repo note to §10: the `publish_ack` AUQ text names that every masterplan repo on the host switches binaries; before step 4 scan the fleet's known repos for non-archived bundles (or accept the window in an assumption row); document the `auto_compact` alias loss (`enabled`/`interval` dropped) in the warning text."
+      },
+      {
+        "severity": "nit",
+        "claim": "The Claude-surface live check proves the plugin cache (version binary + registry-drift doctor), not that the currently loaded session is running v10; the spec should state that limit rather than imply a loaded-surface proof.",
+        "failure": "Operator runs `/plugin update masterplan` but `/reload-plugins` fails silently; both checks pass against the cache directory; the current session keeps v9 behavior until it ends. Practical exposure is small — Outcome 7 and §7.1 define the Claude surface as the plugin cache, the current session is the one finishing the run, and the successor requires a fresh session — which is why this is not the blocker reviewer 1 rated it.",
+        "location": "spec.md §7.1 `user_only`/`live_check` Claude steps, §10 step 6, goals.md G6",
+        "fix_direction": "State in §7.1/Outcome 7 that the Claude-surface proof is cache-level and that a fresh session is the loaded-surface proof, or add a required fresh-session round-trip (e.g. `/masterplan version` in a new session) before the check is recorded."
+      },
+      {
+        "severity": "nit",
+        "claim": "A sibling push to `origin/main` between the step-5 push and the gate leaves only a bare \"stop\" (§10.2 equality rule) with no named resumption path that preserves `main..tip` for the review of record.",
+        "failure": "Another host pushes an unrelated commit after step 5; at the gate `origin/main` ≠ the latest recorded PR-merge sha → stop. The §10.3 table has a row for a rejected step-5 push (\"reconcile by hand\") and for a foreign commit on local main, but none for this state, so the operator has no instruction for reaching the rebase without widening the audit.",
+        "location": "spec.md §10.2 (\"a different remote tip means someone else moved GitHub `main`: stop\") vs §10.3 table",
+        "fix_direction": "Add a §10.3 row: fetch, verify the foreign commit is outside the bundle and the branch, re-record the equality target as the new remote tip after operator ack, and proceed to the rebase; rehearse it."
+      },
+      {
+        "severity": "nit",
+        "claim": "The `assumed` rows an `exhausted` exit owes the spec are enforced only by reviewer attention (already disclosed as N11), though a mechanical diff against the `interview_end` event's id lists is cheap.",
+        "failure": "Critic returns U1/C1, the next dispatch is unavailable, the interview ends `exhausted` listing both; the author omits C1 from the Assumptions table; the spec gate reviewer misses it; goals-load, plan, and finish proceed with no check comparing the table to the event.",
+        "location": "spec.md §5.4 last paragraph (\"reviewer-enforced at the spec gate; `goals-load` does not parse the spec\")",
+        "fix_direction": "Have `goals-load` (which already receives the spec path at the gate) grep the Assumptions table for each id in the `interview_end` lists and refuse when one is missing."
+      },
+      {
+        "severity": "nit",
+        "claim": "`mp context-status` reports `unsupported` both when the harness has no transcripts (Pi) and when the transcript is simply not at the expected `<encoded MAIN path>` (a session launched in a subdirectory of MAIN), so the context watch can be silently disabled on the primary harness while looking like the intentional Pi degradation.",
+        "failure": "Claude Code files transcripts under the cwd at launch; a session started in `<MAIN>/lib` resolves nothing under the MAIN encoding and prints `context: unknown (unsupported)` at every gate; no §11 fixture distinguishes the cases. (Note: lib/paths.mjs has no project-path encoding today — `claudeConfigDir` only — so the \"encoding `lib/paths.mjs` already uses\" claim will need to be implemented, not reused.)",
+        "location": "spec.md §9 state list (`unsupported`), §11 `context-status-session-lineage`",
+        "fix_direction": "Add a distinct state or diagnostic (`not-found <expected path>`) and a wrong-cwd fixture; fall back to searching sibling project encodings for the session id."
+      }
+    ],
+    "dropped": [
+      "Reviewer 1 should-fix: install-group CI check passes on a skipped `release-publish` job. In-tree, `.github/workflows/ci.yml` gives `release-publish` `needs: test` and `if: startsWith(github.ref, 'refs/tags/v')`, which is true for every `v*` tag run, so on the tag run the job cannot be skipped and a run-level `success` implies both jobs succeeded (a failed `test` yields run-level failure). §10.1 step 4 additionally records both jobs' conclusions. This claim was already dropped after in-tree verification in the rev-12 panel.",
+      "Reviewer 1 should-fix: seed-lock TOCTOU on an \"already-fetched\" inventory digest. §8 states both recorders recompute the inventory digest at write time and refuse a mismatch (`overlap_review_stale`), and `mp seed` validates under the lock before creating anything, so a concurrent plan.index.json write between the review and the seed is detected, not accepted. The residual recompute→mkdir window (non-seed writers do not take the lock) is exactly what the spec's own \"staleness detection, not a lock\" wording discloses; no design change is warranted.",
+      "Reviewer 2 should-fix (first half): WORKLOG.md PR-merge conflict between local main's non-bundle commits and the branch. The run branch is created by `git worktree add <path> -b masterplan/<slug>` from MAIN's HEAD (lib/worktree.mjs:35–37, no start-point), i.e. from local `main`, which already contains the four non-bundle commits (0b6159d and af52fe8 touch WORKLOG.md; abc3b0a and 5aa3c27 touch policy/workflow-map.json); they are ancestors of the branch tip and cannot conflict at the PR merge, and any later non-bundle commit on main is a §10.3 \"foreign commit\" stop. The spec's step-5 sentence over-warns but is harmless. The sibling-push-at-gate half survives as a nit.",
+      "Reviewer 5's sub-claim that a stale-context session elsewhere \"hits `rejectUnknownFlags` hard die() on the removed flags\": `--complexity-source` and `--predecessor-transcript` are seed-only flags; an in-flight session never reissues them. The cross-repo blast-radius finding is kept on its remaining, verified legs (singleton `current` symlink, `auto_compact` alias loss, v9 prompt against v10 `mp seed`/finish)."
+    ],
+    "disagreements": [
+      "`done: none` — reviewer 5 rated blocker, reviewer 1 nit. Evidence favors should-fix: the hole is real and confirmed at all four mentions with no reconciliation against §7.1's mandatory-groups rule or §7.2's trigger, and §11's \"`done: none` accepted\" test cannot be written without semantics; but this repo will carry a `done:` block, so nothing in Outcome 7 or this run's completion depends on it, and a repo with no deploy surface being unable to reach Outcome 3's `complete` may be the intended reading — the defect is that the spec does not say which.",
+      "Bootstrap driver — reviewer 3 (approach-adversary) rated blocker; reviewer 4 (failure-case) traced the same git mechanics and \"did not find a load-bearing flaw.\" Both are right about what they checked: the sequence as written is sound (reviewer 4), and nothing enforces it before an irreversible action fires while the rehearsal exercises a script the live walk does not use (reviewer 3). Should-fix, not blocker: the schema-validated events, the `publish_ack` AUQ, and the rehearsal are real mitigations, and A8 is the operator's recorded choice; the cheapest fix (run the live walk through the rehearsal's step functions) is what makes the rehearsal's proof transfer.",
+      "G6 Claude-surface check — reviewer 1 rated blocker (\"installed-but-not-running\"). Downgraded to nit: Outcome 7 and §7.1 define the Claude surface as the plugin cache and the check does execute the cache binary (rev-11 P9); the only session that can stay stale is the one finishing this run, and the successor requires a fresh session, which loads from the cache. The reviewer's demand for an in-session probe exceeds what the harness exposes deterministically; stating the limit is the proportionate fix.",
+      "CI job-skip — reviewer 1 re-raised it as should-fix; the rev-12 panel had dropped it after in-tree verification. The tree (ci.yml `if:` on a `v*` tag) supports the drop; reviewer 1 never saw the workflow file.",
+      "Interview rounds — reviewers 1 (round reuse) and 4 (batch size) describe two entrances to the same defect (the `high` critic cadence is denominated in unsealed, unbounded ledger rounds); merged into one should-fix with both failure modes because one accounting change closes both.",
+      "Corrective-release review gap — reviewer 1 rated blocker. Should-fix: `release.mjs` never bumps, so the first-pass tagged commit differs from the reviewed one by a CHANGELOG header only, and tag CI re-runs tests+doctor on the tagged commit before `install-pi`; the real gap is the corrective pass, which publishes a code fix with no pre-publish review — a violation of S5's stated rationale that must be fixed for internal consistency, but the finish still reviews it post-publish and the window is the one D2 accepted."
+    ],
+    "reviewers": [
+      "openai/gpt-5.6-sol: revise",
+      "zhipu/glm-5.2: revise",
+      "approach-adversary (in-tree, Claude): revise",
+      "failure-case (in-tree verification, no code exists yet — these are design/spec-adequacy findings): revise",
+      "blast-radius: revise"
+    ],
+    "cross_vendor_lanes": [
+      "openai/gpt-5.6-sol",
+      "zhipu/glm-5.2"
+    ]
+  },
+  "workflowProgress": [
+    {
+      "type": "workflow_phase",
+      "index": 1,
+      "title": "▸ adversarial-review",
+      "kind": "child"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 1,
+      "label": "cross:openai/gpt-5.6-sol",
+      "phaseIndex": 1,
+      "phaseTitle": "▸ adversarial-review",
+      "agentId": "acdfcc18eab9b56b0",
+      "model": "claude-sonnet-5",
+      "state": "done",
+      "startedAt": 1788397097411,
+      "queuedAt": 1788397097392,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "revise",
+      "promptPreview": "You are a RELAY to an independent cross-vendor reviewer. Do NOT review the change yourself.\n\n1. Load the tool schema:  ToolSearch(\"select:mcp__skynet__skynet_review_diff\")\n2. Call mcp__skynet__skynet_review_diff with EXACTLY:\n     model_group: \"dispatch-adversary\"\n     reasoning_effort: \"high\"\n     task: <the framing + focus below>\n     diff: <the review text below, byte for byte, with nothing add…",
+      "lastProgressAt": 1788398641411,
+      "tokens": 169949,
+      "toolCalls": 5,
+      "durationMs": 1543994,
+      "resultPreview": "{\"verdict\":\"revise\",\"reviewer\":\"openai/gpt-5.6-sol\",\"summary\":\"Cross-vendor adversary reviewed spec.md rev 12 + goals.md (intent-to-completion run). Verdict: revise, with 10 findings — 7 blocker/high-severity design failures and 3 medium. Not an approval; several dispositions from earlier rounds (B1/S5/A30/D1) are found to reopen or not actually close the finding they claim to close.\",\"findings\":[…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 2,
+      "label": "cross:zhipu/glm-5.2",
+      "phaseIndex": 1,
+      "phaseTitle": "▸ adversarial-review",
+      "agentId": "a0ce0e811284872f8",
+      "model": "claude-sonnet-5",
+      "state": "done",
+      "startedAt": 1788397097412,
+      "queuedAt": 1788397097393,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "revise",
+      "promptPreview": "You are a RELAY to an independent cross-vendor reviewer. Do NOT review the change yourself.\n\n1. Load the tool schema:  ToolSearch(\"select:mcp__skynet__skynet_review_diff\")\n2. Call mcp__skynet__skynet_review_diff with EXACTLY:\n     model_group: \"dispatch-multi-agent-orchestration\"\n     reasoning_effort: \"high\"\n     task: <the framing + focus below>\n     diff: <the review text below, byte for byte, …",
+      "lastProgressAt": 1788397900252,
+      "tokens": 132951,
+      "toolCalls": 3,
+      "durationMs": 801207,
+      "resultPreview": "{\"verdict\":\"revise\",\"reviewer\":\"zhipu/glm-5.2\",\"summary\":\"Reviewer found the design broadly coherent but identified one critical structural defect (a circular doctor-check dependency that makes the required successor run unable to ever archive complete) plus several high/medium severity gaps in the bootstrap corrective-release path, cross-machine archive visibility, PR-conflict recovery, critic-un…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 3,
+      "label": "lens:approach",
+      "phaseIndex": 1,
+      "phaseTitle": "▸ adversarial-review",
+      "agentId": "a93735e17402ec544",
+      "model": "claude-sonnet-5",
+      "state": "done",
+      "startedAt": 1788397097414,
+      "queuedAt": 1788397097393,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "revise",
+      "promptPreview": "Adversarially try to BREAK this change. You are not proof-reading it — you are trying to show it is the wrong approach, or that it fails. Challenge the design, the tradeoffs, and the assumptions it depends on, not just implementation defects. A finding is only worth reporting if you can state the concrete failure: inputs or state that produce a wrong result, lost data, or a silent success. Do not …",
+      "lastProgressAt": 1788397388459,
+      "tokens": 134872,
+      "toolCalls": 13,
+      "durationMs": 289414,
+      "resultPreview": "{\"verdict\":\"revise\",\"reviewer\":\"approach-adversary (in-tree, Claude)\",\"summary\":\"Ten single-lane rounds plus two cross-vendor panels have hardened the state machine (config, interview ledger, deploy-stage) into something genuinely well-specified. But the single piece the caller flagged as central — the v9-to-v10 bootstrap (§10) — rests on an assumption the rest of the spec itself refutes: that a r…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 4,
+      "label": "lens:failure-case",
+      "phaseIndex": 1,
+      "phaseTitle": "▸ adversarial-review",
+      "agentId": "a67451e9d00a86bd4",
+      "model": "claude-sonnet-5",
+      "state": "done",
+      "startedAt": 1788397097415,
+      "queuedAt": 1788397097394,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "revise",
+      "promptPreview": "Adversarially try to BREAK this change. You are not proof-reading it — you are trying to show it is the wrong approach, or that it fails. Challenge the design, the tradeoffs, and the assumptions it depends on, not just implementation defects. A finding is only worth reporting if you can state the concrete failure: inputs or state that produce a wrong result, lost data, or a silent success. Do not …",
+      "lastProgressAt": 1788397549426,
+      "tokens": 144351,
+      "toolCalls": 13,
+      "durationMs": 450381,
+      "resultPreview": "{\"verdict\":\"revise\",\"reviewer\":\"failure-case (in-tree verification, no code exists yet — these are design/spec-adequacy findings)\",\"summary\":\"Confirmed via `git log`/`ls` that none of the spec's \\\"New\\\" files (lib/config.mjs, lib/interview.mjs, agents/mp-intent-critic.md, etc.) exist yet — spec.md and goals.md are pure design artifacts, so this review targets design-level failure modes rather than…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 5,
+      "label": "lens:blast-radius",
+      "phaseIndex": 1,
+      "phaseTitle": "▸ adversarial-review",
+      "agentId": "af4092aaa87291312",
+      "model": "claude-sonnet-5",
+      "state": "done",
+      "startedAt": 1788397097416,
+      "queuedAt": 1788397097394,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "revise",
+      "promptPreview": "Adversarially try to BREAK this change. You are not proof-reading it — you are trying to show it is the wrong approach, or that it fails. Challenge the design, the tradeoffs, and the assumptions it depends on, not just implementation defects. A finding is only worth reporting if you can state the concrete failure: inputs or state that produce a wrong result, lost data, or a silent success. Do not …",
+      "lastProgressAt": 1788397438283,
+      "tokens": 130234,
+      "toolCalls": 19,
+      "durationMs": 339238,
+      "resultPreview": "{\"verdict\":\"revise\",\"reviewer\":\"blast-radius\",\"summary\":\"Two real, in-tree-verified blast-radius gaps survive: (1) done: none is defined only as a doctor-WARN opt-out and is never reconciled with §7.1's unconditional 'release/install/live_check are mandatory groups' rule, so any repo without an automatable deploy surface can never archive complete under v10 -- confirmed against a real, currently-e…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 6,
+      "label": "synthesize",
+      "phaseIndex": 1,
+      "phaseTitle": "▸ adversarial-review",
+      "agentId": "addd79b48e479e60f",
+      "model": "claude-fable-5-1",
+      "state": "done",
+      "startedAt": 1788398641431,
+      "queuedAt": 1788398641415,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "revise",
+      "promptPreview": "Independent reviewers examined the same change. Converge their reports into ONE severity-first verdict.\n\nRules:\n- Merge duplicates; keep the sharpest statement of each defect and the strongest evidence for it.\n- Verify before you promote: open the cited file:line. A finding you cannot confirm in the tree goes in \"dropped\" with the reason — the cross-vendor reviewers never saw the tree, so some of …",
+      "lastProgressAt": 1788399168431,
+      "tokens": 147797,
+      "toolCalls": 9,
+      "durationMs": 526999,
+      "resultPreview": "{\"final_verdict\":\"revise\",\"summary\":\"One blocker survives in-tree verification and it is structural: §7.4's `required-successor` doctor check FAILs while the named successor is not `completion: complete`, and this repo's CI (`.github/workflows/ci.yml`, `test` job step \\\"Doctor\\\": `node bin/doctor.mjs`, exit 1 on any ERROR per `bin/doctor.mjs:76`) runs that doctor on every push and every `v*` tag —…"
+    }
+  ],
+  "totalTokens": 860154,
+  "totalToolCalls": 62
+}

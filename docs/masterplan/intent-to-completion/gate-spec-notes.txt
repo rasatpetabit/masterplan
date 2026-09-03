@@ -25,3 +25,17 @@ Cross-vendor panel over rev 10 (operator-requested after the round-10 PASS; nati
   should-fix: (1) no failure disposition after the first irreversible §10 step; (2) gate rebase on a dirty bundle tree (reproduced exit 1); (3) §7.3 strict tip equality vs state-only commits; (4) this run's archive has no completion class; (5) exhausted-at-cap reachable with zero answers via withdraw; (6) contradictions/misclassified dropped on critic_unavailable → exhausted; (7) done: resolved at seed, stale at deploy; (8) "seeded state field" counts as a knob observable; (9) live_check/G6 never execute the installed binary; (10) tag-push CI run never queried; (11) v2 assessor prompt dispatched by v9 against v1 goals.md
   dropped after in-tree verification: rebase replays unaudited commits (push precedes main_pre_bootstrap); GitHub branch protection (main unprotected, merge commits allowed); "no terminal path after failed final assessment" (waiver → intent_confirm → --intent-rejected exists); §7.3 "livelock" (re-entry never commits)
 Spec gate hash unchanged (rev 10 bytes); disposition of the panel findings is pending the operator's choice.
+Operator chose: revise to rev 11 and re-gate (G6 amended a second time, approved; goals hash 191978ba…). Rev 11 = ebbe77a, gate hash 05e44a7a….
+
+Cross-vendor panel over rev 11 (run wf_d2251340-1a5, standard, bytes sha256 e6bf34e0…):
+  lanes: gpt-5.6-sol revise · glm-5.2 revise · three lenses revise · synthesis REVISE
+  2 blockers (the sample release step commits to the base and trips the §7.3 audit / an unbumped version dead-ends; converged reachable with zero intent questions), 7 should-fix, 5 nits; 6 dropped after in-tree verification; record in gate-spec-panel-2.json
+  → rev 12 (c5bd17d, gate hash ea71db5a…): release contract + version_not_bumped gate + stage-produced commits; intent floor; audit scope any bundle; step-5 fetch/rejection row; pre-publish review + publish_ack (D2 ordering user-confirmed 2026-09-03); user_only {text, check}; required_successor event + doctor; seed lock; squash by patch-id.
+
+Cross-vendor panel over rev 12 (run wf_75d9951a-7fa, standard, bytes sha256 f65ba7a4…, 103,368 chars):
+  lanes: gpt-5.6-sol revise · glm-5.2 revise · three lenses revise · synthesis REVISE
+  1 blocker: required-successor doctor FAIL is self-referential through ci.yml (doctor on every push and tag) → main red from the archive push, successor's tag CI red, complete unreachable
+  11 should-fix: corrective pass unreviewed + reviewed sha ≠ tagged sha; no deterministic bootstrap driver / rehearsal proves a different executor / "wave" misnamed; done: none unreconciled with mandatory groups; context_watch.focus inert; high cadence in unsealed rounds; stage-produced commits unrestricted; no post-archive push; no corrective-pass event shape; one critic failure licenses exhausted; env-scan escape hatch; host-wide install flip unacknowledged
+  4 nits: cache-level Claude proof; sibling push at the gate; assumed rows reviewer-only; context-status not-found vs unsupported
+  4 dropped: CI job-skip (again), seed-lock TOCTOU (already disclosed), WORKLOG PR conflict (branch is created from local main), removed flags in flight (seed-only)
+  → rev 13: see spec.md §13 (B1, S2–S12, N13–N16) and A31–A34. Panel 4 on rev 13 is the pending re-gate.

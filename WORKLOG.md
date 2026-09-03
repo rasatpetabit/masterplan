@@ -1,5 +1,72 @@
 # WORKLOG
 
+## 2026-09-02 (late) — intent-to-completion: cross-vendor panel → spec rev 11 (gate re-armed)
+
+Round 10 of the single-lane gate (gpt-5.6-sol) PASSED rev 10; the operator then asked for the
+cross-vendor panel (native `adversarial-review.mjs`: gpt-5.6-sol + glm-5.2 + three in-repo
+lenses). Mechanics worth keeping: the workflow reads only `args.diff`, so the 68 KB of spec+goals
+was embedded byte-exact by a generated wrapper script (`JSON.stringify` of the file bytes, length
+asserted at run time) — never retyped through the model.
+
+**Verdict: REVISE.** 0 blockers survived in-tree verification, 11 should-fix, 6 nits (record:
+`gate-spec-panel.json`; digest in `gate-spec-notes.txt`). Dropped after verification: the
+"rebase replays unaudited commits" blocker (the push precedes `main_pre_bootstrap`), GitHub
+branch protection (main is unprotected), the §7.3 "livelock" (re-entry never commits).
+
+**Why rev 11 looks the way it does.** The panel's real theme: §10 published irreversibly before
+any finish gate and named no recovery. Rev 11 adds §10.3 (per-step failure dispositions: a
+pre-publish verify before anything leaves the machine, forward-only corrective v10.0.x release,
+Pi rollback via `install-pi --ref=v9.10.0`, PR-merge reconcile before any re-merge, a throwaway
+GitHub repo rehearsal of the real `gh pr` cycle) and makes the gate rebase survivable (commit the
+dirty bundle state first — reproduced: `git rebase` exits 1 on a dirty tracked file; require
+`origin/main == recorded merge sha`, the round-10 advisory). §7.3 now treats bundle-only commits
+as not-a-move and forces a full `run` re-run on a real move (check-only replay could re-certify
+moved code). This run's own v9-written archive gets a `legacy` completion class. Interview:
+floor counts answered questions only (withdraw could otherwise reach `exhausted` with zero
+answers); `--round` makes "critic after every intent round" enforceable at high. `done:` is
+re-resolved at `deploy_base_sha` (this branch adds `.masterplan.yaml` after seed). Knob guard no
+longer accepts a seeded state field as an observable (that was the inert-knob class itself).
+
+**G6 amended a second time** (operator-approved receipt): accepts the corrective v10.0.x, requires
+the tag's CI run green, and requires the installed binary to execute on both surfaces (goals hash
+191978ba…). Gate hash re-armed to 05e44a7a… (rev 11 bytes + amended goals).
+
+**Panel 2 (rev 11): REVISE again** — both lanes revise, 2 blockers, 7 should-fix, 5 nits. The
+blockers were holes rev 11 itself opened or left: the sample `release` step commits to the base
+and so trips the §7.3 base-move audit it sits under (and an unbumped version dead-ends on the
+existing tag); and the interview floor counted design picks, so `converged` was reachable with
+zero intent questions. Rev 12 (c5bd17d, gate hash ea71db5a…): release contract (bump is branch
+work, `version_not_bumped` gate before `branch_finish`, `release.mjs` never bumps and replays
+idempotently), stage-produced commits recorded in the deploy receipt (`commits`, `base_after`)
+so the audit base advances, an intent-floor column (1/3/6) with `draft` refusing until an intent
+answer exists, audit scope widened to any `docs/masterplan/*/` bundle, step-5 push gets a
+fetch/ancestry precondition and the corrective pass never pushes local `main` again, a
+pre-publish cross-vendor review + G1–G5 assessment before the tag and a `publish_ack` go/no-go
+before the merge (the operator confirmed the publish-before-finish-review ordering: D2/A25 are
+now user-confirmed), `user_only` steps carry an executable `check` instead of free-text
+evidence, `required_successor` event + doctor FAIL, seed lock + validate-then-create with
+`--overlap-review` mandatory, squash merges accepted by patch-id.
+
+**Panel 3 (rev 12): REVISE** — 1 blocker, 11 should-fix, 4 nits (record `gate-spec-panel-3.json`;
+panel 2's record is now in `gate-spec-panel-2.json`). The blocker was a CI interaction nobody had
+traced: `required-successor` FAILed while the successor was absent or in progress, and
+`ci.yml` runs the doctor on every push and every tag — so the archive push would have turned
+`main` red and the successor's own tag CI red, making `complete` unreachable. Rev 13: the
+check's severity follows the successor's state (absent → WARN, in progress → PASS, archived
+not-complete → ERROR), and the v10 finish gains a `push_archive` op so GitHub's doctor can ever
+see a completion. The other structural fixes: the bootstrap procedure is now a **stage** (not a
+"wave") driven by `lib/bootstrap.mjs` — `mp bootstrap arm` evaluates preconditions in code and
+prints the command, the shell runs it, `record` checks postconditions — with `--targets` so the
+rehearsal script exercises the live executor; a corrective pass (`pass: 2`) re-runs the
+pre-publish verify/review/assess at the new tip before tagging, and the `release` postcondition
+binds the tag to the reviewed sha; `done: none` gets real semantics (no groups, archive class
+`merged`, never `complete`); stage-produced commits are restricted to a `commit_paths`
+allowlist; interview rounds seal on their first answer and each level has an intent-round
+minimum (1/2/4) so batching cannot collapse the `high` critic cadence; a failed critic dispatch
+needs a retry and an operator ack before `exhausted`; `context_watch.focus` became a live knob
+via `mp context-status`'s `recommendation`; env reads go through `readEnv`. Panel 4 on rev 13 is
+the pending re-gate — the spec gate is NOT recorded again until it returns.
+
 ## 2026-09-02 — intent-to-completion: brainstorm + spec (run seeded, not yet planned)
 
 Bundle `docs/masterplan/intent-to-completion/`. Scope grew mid-interview from three asks

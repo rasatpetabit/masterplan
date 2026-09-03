@@ -1,0 +1,282 @@
+{
+  "summary": "Cross-vendor adversarial panel over the intent-to-completion spec-gate artifacts (spec.md rev 11 + goals.md), bytes embedded verbatim",
+  "agentCount": 6,
+  "logs": [
+    "review text: 88103 chars, sha256 e6bf34e0002b",
+    "▸ running dynamic workflow adversarial-review",
+    "▸ adversarial-review done"
+  ],
+  "result": {
+    "reviewed_sha256": "e6bf34e0002b867a00e2083c30b8400dc197a6c25044f5d67702f0ed6448a5d0",
+    "reviewed_chars": 88103,
+    "final_verdict": "revise",
+    "summary": "Two blockers survive in-tree verification, both provable from the spec's own normative text: (1) the sample `done:` block's `release` step is self-defeating under §7.3 — `scripts/release.mjs` commits version files/CHANGELOG (§10.1.3), that commit is a non-bundle commit on the base, so the very next boundary declares `base moved`, discards the release receipt, re-runs release, and fails on the now-existing tag; and if the branch did not bump `${version}` the first attempt already fails on the existing tag, so every future masterplan-on-masterplan finish that does not bump the version cannot archive complete; (2) `converged` is reachable with zero intent-kind questions because the floor (§4.2 L127) is kind-agnostic and the `converged` row (§5.4 L282) requires no intent-kind answer or intent round, directly contradicting Outcome 1. Seven should-fixes remain (base-move audit scoped to this run's slug only; the corrective-release re-run of step 5 is guaranteed non-fast-forward and step 5 has no push-rejection disposition on an unprotected origin/main; the ship-before-review ordering is not an explicit operator decision; `user_only` evidence is never executed and the hook step has no live_check backstop; the required successor run is unenforced; the seed race is not actually closed by a digest and a refused seed orphans a bundle; `pr` rejects squash/rebase merges) plus five nits. Six reviewer claims were dropped after opening the tree — most notably the v9 assessor context (agents/mp-goal-assessor.md L26 runs a detached worktree of HEAD), the install-pi split-version hazard (bin/install-pi.mjs L105 links skills through `current`), the CI job-skip hazard (ci.yml gates `release-publish` on tag refs), and the §4.4 exemption \"bypass\" (a closed four-entry list). Verdict: revise; rev 12 should close both blockers and S1–S2 before the plan gate, since B1, S1, and S2 interact (a sibling bundle commit or the release step's own commit both cascade into the failed release re-run).",
+    "findings": [
+      {
+        "severity": "blocker",
+        "claim": "The sample `done:` block's `release` step cannot succeed under §7.3's base-move audit and `${version}` semantics: the step commits to the base (§10.1.3), which the next boundary classifies as `base moved`, and an unbumped version fails on the existing tag on the first attempt.",
+        "failure": "Bumped branch: deploy_base_sha=A; release step runs `scripts/release.mjs --version=V` which writes version files + CHANGELOG, commits B, tags; next boundary (first `install` step) audits A..B, sees a non-bundle commit → `dispatch-error: base moved` → new deploy_base at B, release receipt discarded, release `run` re-executed → tag vV already exists → `deploy_failed`; only skip (archive incomplete) or abort remain. Unbumped branch (the common small-fix case): `${version}` at deploy_base_sha is the already-released version → release.mjs fails on the existing tag (or, if tolerant, passes vacuously against the old release and the run archives complete having deployed nothing). §7.3 L427-429 names the unbumped re-run failure as 'the correct signal' but that is the sample block's default path, not an exception. §3 says masterplan never bumps versions; nothing says who does, on which branch, or whether the step's own commit is exempt. No §11 test covers a base move caused by the authorized step itself.",
+        "location": "docs/masterplan/intent-to-completion/spec.md:344-392 (§7.1 sample), :419-430 (§7.3 audit + re-run rule), :610-614 (§10.1.3 release.mjs commits), :59-60 (§3 no version bump); scripts/release.mjs does not exist in the tree",
+        "fix_direction": "Pin who bumps `${version}` (the run branch, pre-merge) and refuse stage entry when refs/tags/v${version} already exists; define commits authored by an authorized deploy step as stage-produced (record the post-step base tip in the `deploy_step` receipt and advance the audit base to it) or forbid deploy steps from committing to the base; specify release.mjs's contract at an already-tagged version; add a `finish-replay` case where the authorized step itself moves the base and the walk still reaches `install`."
+      },
+      {
+        "severity": "blocker",
+        "claim": "`converged` is mechanically reachable with zero intent-kind questions because the floor counts any answered question and the `converged` row never requires an answered intent-kind question or an intent round, contradicting Outcome 1.",
+        "failure": "At `complexity: high` (floor 8, cap 20) the orchestrator records 8 `design`-kind asks/answers (floor met per L127's kind-agnostic definition), calls `mp interview draft` once (no precondition, L232), dispatches the critic once against that draft (no precondition on a prior intent round, L236), receives a clean payload, and `mp interview end --reason=converged` is accepted: floor met, ≥1 design pick, receipt bound to the only content_head. 'Every intent round has a following critic receipt' is vacuously true with zero intent rounds. goals.md is then written from a draft the operator was never asked an intent question about — the 'how-not-why' failure §1 names, reachable through the state machine built to prevent it.",
+        "location": "docs/masterplan/intent-to-completion/spec.md:119-127 (§4.2 floor definition), :282 (§5.4 converged row), :232 (`mp interview draft` preconditions), :236 (`mp interview critic` preconditions)",
+        "fix_direction": "Require ≥1 answered `intent`-kind question (or ≥1 completed intent round) in the ledger before `mp interview draft` is accepted and before `converged`/`exhausted`/`critic_off`; consider an intent-specific sub-floor per complexity level; add `interview-ledger-resume` cases: design-only ledger → `end` refused for every reason."
+      },
+      {
+        "severity": "should-fix",
+        "claim": "The per-commit base-move audit (§7.3, §10.1.5, §10.2) accepts only commits touching this run's own `docs/masterplan/<slug>/`, so a sibling run's routine bundle-state commit on the shared base is misclassified as `base moved`, with no §10.3 row and no §11 fixture.",
+        "failure": "During the bootstrap wave's CI wait or operator handback, another masterplan session in the same repo commits a gate resolution to `docs/masterplan/<other-slug>/` on local main; the audit over `main_pre_bootstrap..main` sees a commit not touching `docs/masterplan/intent-to-completion/` → stop, after the tag is public and both surfaces installed. In the permanent §7.3 mechanism the same misclassification forces a full `run` re-run, which cascades into the release-step failure of B1. Tree evidence that multi-bundle commits on main are real: `ae4d51f` touched five bundle state files in one commit; no genuinely active sibling run exists today (the five in-execute bundles' last events all stamp 2026-08-30T06:40:2x from that migration), so this is a latent design gap, not today's most probable disruption.",
+        "location": "docs/masterplan/intent-to-completion/spec.md:420-421 (§7.3), :631-637 (§10.1.5), :669-673 (§10.2), :697-706 (§10.3 no row), :776-791 (§11 fixture list)",
+        "fix_direction": "Scope the audit to any `docs/masterplan/*/` path (single-parent, bundle-only) rather than this slug; add a fixture with a sibling-slug bundle commit that must be accepted and a non-bundle commit that must still stop; add the §10.3 disposition row for a genuine foreign commit."
+      },
+      {
+        "severity": "should-fix",
+        "claim": "Bootstrap step 5's direct `git push origin main` has no fetch-first or rejection disposition, and on the §10.3 corrective-release pass (steps 4–7 re-run) it is guaranteed to be rejected as non-fast-forward; after two PRs the gate's 'the recorded PR-merge sha' is ambiguous.",
+        "failure": "Original pass: origin/main is unprotected (verified: `gh api .../branches/main/protection` → 404 'Branch not protected') and this workspace is host-local across three hosts (AGENTS.md 'Workspace distribution'); a commit landed on GitHub main from another host between the last fetch and step 5 rejects the push — the tag is already public and CI green (step 4 done), and §10.3 has rows for step 4 and the PR merge but none for step 5. Corrective pass: after the first PR merge origin/main = M1, local main = main_pre_bootstrap + state-only commits and does not contain M1, so `git push origin main` is non-fast-forward before the second PR can open, contradicting the normative 'steps 4–7 re-run'. Then §10.2 'require origin/main to equal the recorded PR-merge sha' has two candidate records and a literal implementation compares against the first and stops. Live state now: local main 18 ahead / 0 behind origin/main.",
+        "location": "docs/masterplan/intent-to-completion/spec.md:622-637 (§10.1 step 5), :704 (§10.3 corrective row), :669 (§10.2 equality check), :697-706 (§10.3 table)",
+        "fix_direction": "Add `git -C MAIN fetch origin main` + an ancestry check before the step-5 push and a §10.3 row 'push local main rejected (non-fast-forward): stop, reconcile, never force-push'; define the corrective pass explicitly (skip or redefine step 5's push, re-record `main_pre_bootstrap`, or rebase onto origin/main first using the gate's own audit+rebase logic); define the gate's equality target as the latest `bootstrap_step` merge-sha record; add both to the rehearsal fixtures."
+      },
+      {
+        "severity": "should-fix",
+        "claim": "The bootstrap wave installs v10 into both production surfaces and merges into GitHub main before the whole-branch finish-time adversary review and goal check run, and this ordering is recorded only as an 'assumed' mechanism (D2/A25), never as an explicit operator decision.",
+        "failure": "Steps 4–6 (Pi install, PR merge into real main, Claude cache install for every session on the host) precede step 2's `run_goal_check` and `run_adversary_review` over the real diff; if either blocks, the only remedy is a forward-only corrective release (§10.3 L704) with no Claude downgrade lever (A25). The reviewer's 'before any semantic review' is overstated — per-wave adversary reviews run during execute when `state.review.adversary` is on (commands/masterplan.md:93) — but the whole-branch review and the goal check do run only after publish, and the pre-publish gate is tests + doctor only (§10.1.2). §10.1 promises 'risky-action AUQs' per step but none is specified to name this window.",
+        "location": "docs/masterplan/intent-to-completion/spec.md:622-662 (steps 5–7 precede step 2), :604-609 (pre-publish verify only), :969 (D2 mechanism 'assumed'), :972 (A25), :704 (forward-only)",
+        "fix_direction": "Run the native cross-vendor adversarial-review workflow and a G1–G5 assessment over `branch_tip` vs `main_pre_bootstrap` before step 3's tag (cheap, harness-native), and add a named risky-action AUQ immediately before step 5's merge stating that production installs precede the finish-time review with no Claude rollback; record the answer so D2/A25 become user-confirmed."
+      },
+      {
+        "severity": "should-fix",
+        "claim": "`user_only` steps are recorded done from operator-supplied evidence text that finish never executes, and the sample's hook-registration step has no `live_check` backstop, so a declared definition-of-done step can be marked done without occurring.",
+        "failure": "Operator never registers the SessionStart(source: compact) rule but answers the handback with stale/arbitrary text; `--deploy-step-done` records a `deploy_step` from the evidence digest; `live_check` runs only `install-pi --check --expect` and `doctor --only=plugin-registry-drift`, never `doctor --only=resume-brief-hook`; the final assessment need not enumerate done steps; the run archives complete despite a declared step never executing (Outcome 3). The plugin-update step is backstopped by the cache-path doctor live check; the hook step is not. §10.1.6 has the shell verify pasted evidence for the bootstrap, but §7.2's `handback` row does not.",
+        "location": "docs/masterplan/intent-to-completion/spec.md:370-380 (§7.1 user_only + live_check), :405 (§7.2 handback row), :64-65 (§3 honesty bound)",
+        "fix_direction": "Make `evidence` an executable `{check}` predicate that finish-step runs after the handback and requires exit 0 (same contract as `run` steps' `check`), or require every `user_only` step to have a corresponding `live_check` entry (add `doctor --only=resume-brief-hook` to the sample); state in §7.1 that free-text evidence is honesty-bound."
+      },
+      {
+        "severity": "should-fix",
+        "claim": "The successor run `v10-validation` is declared required and non-deferrable by Outcome 7 and §3, but no gate, doctor check, frozen goal, or inventory field enforces it.",
+        "failure": "The bootstrap wave completes, G1–G6 pass, this bundle archives class `legacy`; the doctor emits only a `legacy-archive` INFO line; nothing fails or warns if `v10-validation` is never seeded or never archives `completion: complete`; the automated deploy-to-confirm flow is never exercised — the 'deploy left as retro follow-up' failure §1 names — while the spec's own thesis is that prose-only requirements are the defect class.",
+        "location": "docs/masterplan/intent-to-completion/spec.md:44-51 (Outcome 7), :62-63 (§3), :680-688 (§10 step 3), :441-449 (§7.4 doctor lines)",
+        "fix_direction": "Add a doctor check (WARN at minimum, FAIL preferred) that fires while an archived bundle names a `required_successor` slug whose bundle is absent or not `completion: complete`; record the requirement as a durable field on this bundle's archive so `runs list`/`mp status` surface it."
+      },
+      {
+        "severity": "should-fix",
+        "claim": "§8's `inventory_sha256` binding detects a stale review but does not close a genuine concurrent-seed race as claimed, and a seed whose `overlap_review` write is refused leaves a partial bundle with no cleanup path.",
+        "failure": "Two seeds compute digest H from the same inventory; both recompute H at write time before either's bundle is visible to the other and both succeed (a hash check is not a lock or compare-and-create). In the interleaving §8 does describe, the loser's bundle directory and `capability` event already exist before the `overlap_review_stale` refusal, so a review-less bundle persists and pollutes every later inventory; §11's 'two seeds racing → the second is refused' test is sequential and cannot exercise the concurrent case. `--overlap-review` is also optional, so a seed without it satisfies G1's 'first event' phrasing vacuously.",
+        "location": "docs/masterplan/intent-to-completion/spec.md:494-508 (§8 event + digest binding), :761-763 (§11 overlap-sequencer)",
+        "fix_direction": "Reword §8 to claim staleness detection only, or add a repo-wide seed lock / validate-then-create ordering; specify rollback of a refused seed (nothing durable survives) and assert it in §11; make `--overlap-review` mandatory on `mp seed`."
+      },
+      {
+        "severity": "should-fix",
+        "claim": "The `pr` disposition's ancestry check (`branch_tip` must be an ancestor of `merge_sha`) rejects legitimate squash and rebase merges.",
+        "failure": "Operator picks `pr`; GitHub squash-merges (default or required in many repos); `--merged --merge-sha=<squash commit>`; `branch_tip` is not an ancestor of the squash commit → `dispatch-error`; the PR is already merged so there is no way to re-merge, and the run can only end via `keep` → incomplete despite all changes having landed. The bootstrap pins `gh pr merge --merge`, but the general mechanism does not state the restriction.",
+        "location": "docs/masterplan/intent-to-completion/spec.md:434-436 (§7.3 pr bullet)",
+        "fix_direction": "Either document that `pr` requires a merge commit and refuse squash/rebase with a clear message, or accept a patch-equivalence proof (`git range-diff` / `patch-id` of `main_base..branch_tip` vs the squash commit) as the alternative ancestry check."
+      },
+      {
+        "severity": "nit",
+        "claim": "§7.2's op-order line and table omit the post-final `goals_unmet` gate that §6.2 defines and §11 tests.",
+        "failure": "An implementer wiring from §7.2 alone routes `run_final_check` straight to `intent_confirm`; a final assessment with a `missed` goal never opens `goals_unmet`. The gate is defined at §6.2 and asserted in `finish-replay` (§11 L743), so this is a documentation inconsistency rather than a missing mechanism.",
+        "location": "docs/masterplan/intent-to-completion/spec.md:396-409 (§7.2) vs :330-333 (§6.2), :743 (§11)",
+        "fix_direction": "Add a `goals_unmet` (post-final) row to §7.2 between `run_final_check` and `intent_confirm` and state whether the waiver path proceeds to `intent_confirm` or archives incomplete."
+      },
+      {
+        "severity": "nit",
+        "claim": "The `exhausted` state's requirement that the spec's Assumptions table carry `assumed` rows for remaining unknowns/contradictions/misclassified has no enforcement point; `goals-load` accepts on ledger state alone.",
+        "failure": "`interview_end` lists U1/C1 durably but the spec table is never updated; `goals-load` still freezes goals. Nothing is lost (the event carries all three lists) and the operator reviews the spec at the spec gate, so the harm is bounded to a missing visible row.",
+        "location": "docs/masterplan/intent-to-completion/spec.md:283 (§5.4 exhausted row), :204-207 (§5.1 step 5)",
+        "fix_direction": "Have `goals-load` (or the spec gate) cross-check the `interview_end` IDs against a machine-readable assumptions section, or say explicitly that this is reviewer-enforced."
+      },
+      {
+        "severity": "nit",
+        "claim": "§4.4 accepts a rendered-protocol-line-only difference as a consumer-side observable, and the inventory generator's lexical `process.env.*` scan misses aliased/destructured reads.",
+        "failure": "A knob that only flips a status line from 'fabric: on' to 'fabric: off' while dispatch/gates/events are identical passes the two-value contract; `const env = process.env; env.NEW_KNOB` is never inventoried, so the guard never sees it. For prompt-only knobs the rendered line is the legitimate consumer, so the observable class should be narrowed rather than removed.",
+        "location": "docs/masterplan/intent-to-completion/spec.md:163-164 (inventory sources), :170-172 (observable classes)",
+        "fix_direction": "Restrict rendered-line observables to `<!-- knob -->`-declared prompt-only controls and require a code-side observable for every `mp` flag/config key/env var; have the inventory generator (or a lint) reject aliased `process.env` access in lib/ and bin/."
+      },
+      {
+        "severity": "nit",
+        "claim": "The bootstrap wave's live steps rely on prose discipline plus a schema-free `mp event` append, with no code-owned authorized→started→done sequencing like §7's `run_deploy_step`.",
+        "failure": "Verified: bin/masterplan.mjs:1037-1069 accepts any `--data` JSON with no type/sequence validation. A compaction mid-wave could re-run a step or record a hand-composed exit; the §10.3 reconcile row and per-step risky-action AUQs are advice, not refusals. A8 (prompt-first, operator decision), the required rehearsal, and the per-step AUQs bound this for a one-time operation, so it is a hardening opportunity rather than a defect.",
+        "location": "docs/masterplan/intent-to-completion/spec.md:573 (bootstrap_step command), :402 (§7.2 invariant, for contrast); bin/masterplan.mjs:1037-1069",
+        "fix_direction": "At minimum give `bootstrap_step` a validated schema (step-name enum, required cmd/exit, monotone step order) so a repeated or out-of-order step is refused by `mp event`; generalizing `run_deploy_step` is the fuller option if A8 is revisited."
+      },
+      {
+        "severity": "nit",
+        "claim": "The doctor's `no-definition-of-done` WARN has no scope condition and fires permanently for every repo that legitimately has no deploy surface.",
+        "failure": "A docs-only or library repo gets a permanent WARN alongside the `incomplete-archive`/`legacy-archive` INFO lines this spec relies on for honest status, training operators to ignore the surface.",
+        "location": "docs/masterplan/intent-to-completion/spec.md:449 (§7.4)",
+        "fix_direction": "Add a repo-level opt-out (e.g. `done: none` in `.masterplan.yaml`) or fire only when a `.masterplan.yaml` exists without a `done:` block."
+      }
+    ],
+    "disagreements": [
+      "Release step vs base-move audit (R1 blocker, R2 blocker, R5 should-fix): the evidence favors blocker — both the bumped-branch path (step's own commit trips §7.3 at the next boundary → re-run → existing tag) and the unbumped path (first attempt fails on the existing tag, or passes vacuously) dead-end as written; R5's idempotency framing is one facet of the same defect and is merged into B1.",
+      "Base-move audit scoping (R5 blocker vs no other reviewer): the scoping gap is real and verified against §7.3/§10.1.5, but R5's 'normal operating mode' evidence does not hold today — the five in-execute bundles' last events all stamp 2026-08-30T06:40:2x from the `ae4d51f` goals re-freeze migration, not active work — so it is a should-fix; its consequence when hit cascades into B1, which is why it ranks first among the should-fixes.",
+      "Ship-before-review (R3 blocker): R3 is right that the whole-branch finish-time review and the goal check run only after both surfaces are live and GitHub main has moved, and that D2/A25 record the mechanism as 'assumed'; R3 is wrong that no semantic review precedes publish — commands/masterplan.md:93 runs per-wave native adversary reviews during execute. Should-fix, not blocker.",
+      "G6 assessor execution context (R2 blocker): the tree supports the spec — agents/mp-goal-assessor.md:3 and :26 state the assessor runs against a disposable detached worktree of HEAD, and the sequencer's `run_goal_check` op (commands/masterplan.md:240) passes `op.head`/`op.wt`; v10-only commands exist at that HEAD. Dropped.",
+      "install-pi split-version install (R4 should-fix): the tree refutes it — bin/install-pi.mjs:105 targets skill links at `<installRoot>/current/skills/<name>` (verified live: `~/.pi/agent/skills/masterplan -> .../current/skills/masterplan`), so links flip with the atomic `current` rename and a crash between the two `ensureSkillLink` calls cannot leave a link at an old release directory. Dropped; the `check()` membership test could be tightened but no mixed-version hazard exists.",
+      "Exhausted-state assumed rows (R1 should-fix vs R2 nit): nit — the `interview_end` event durably carries all three lists, so nothing is lost; only the spec-table copy is unenforced.",
+      "§7.2 op-order omission (R2 should-fix): nit — the post-final `goals_unmet` gate is normatively defined in §6.2 and tested in §11 L743; §7.2 is inconsistent, not the sole definition.",
+      "Successor-run enforcement (R1 blocker): should-fix — it is an enforcement gap against the spec's own thesis, not a mechanism that breaks; the fix is a doctor check.",
+      "user_only evidence (R1 blocker): should-fix — the sample's plugin-update step is backstopped by the cache-path doctor live check; only the hook-registration step lacks a backstop, and the general fix (executable evidence predicate) is small.",
+      "Seed race (R1 blocker, R2 should-fix): should-fix — R1 is right that a digest is not a lock and §8 overclaims closure; R2 is right about the orphaned partial bundle; both are merged; true same-millisecond concurrency in one repo is rare enough that the overclaim and the missing cleanup, not data loss, are the defect."
+    ],
+    "dropped": [
+      "R2 blocker 'G6 depends on the v9.10.0 assessor executing commands from a worktree with v10 code, asserted not verified' — agents/mp-goal-assessor.md:3,26 ('runs against a disposable detached worktree of HEAD') and commands/masterplan.md:240 (`run_goal_check {goals_path, base, head, wt}`) establish the contract the spec cites at §10.1; v10-only commands resolve at HEAD.",
+      "R4 should-fix 'install-pi --check passes a split-version install after a crash between skill-link updates' — bin/install-pi.mjs:103-128 `ensureSkillLink` targets `<installRoot>/current/skills/<name>` (through the `current` symlink; verified live with readlink), so skill links never point at a release directory and flip atomically with `current`; the described state cannot arise from an install-pi crash.",
+      "R1 should-fix 'G6/CI check confirms run success but not that release-publish ran' — .github/workflows/ci.yml: `release-publish` has `needs: test` and `if: startsWith(github.ref, 'refs/tags/v')`; every run `gh run list --branch v<V>` selects is a tag-push run where the condition is true, so a skipped release-publish with run-level success cannot occur, and a failed `test` fails the run.",
+      "R2 should-fix '§4.4 metadata exemption is an unconditional bypass any future flag can use' — spec.md:166-168 defines the exemption as a closed list of exactly four named entries (`{created_at, schema_version, slug, topic}` and nothing else); a `--telemetry-endpoint` entry cannot be exempted. The sentence could be reworded for clarity but no bypass exists.",
+      "R1 should-fix 'critic receipt honesty bound does not enforce a fresh cross-vendor dispatch' — §3 (spec.md:64-65) and A23 explicitly scope receipts as honesty-bound, matching `record-gate-review`; the proposed dispatcher-written provenance record is the stronger mechanism the spec declines by design; no new evidence beyond what §5.3 already documents.",
+      "R5's supporting claim that concurrent same-repo runs are this repo's normal operating mode — the five in-execute bundles' last events all stamp 2026-08-30T06:40:25–27Z from the `ae4d51f` migration commit; no sibling run is active. The scoping finding itself is retained at should-fix."
+    ],
+    "reviewers": [
+      "openai/gpt-5.6-sol: revise",
+      "zhipu/glm-5.2: revise",
+      "approach-lens (in-repo adversarial): revise",
+      "failure-case adversary (in-tree verification): revise",
+      "blast-radius: revise"
+    ],
+    "cross_vendor_lanes": [
+      "openai/gpt-5.6-sol",
+      "zhipu/glm-5.2"
+    ]
+  },
+  "workflowProgress": [
+    {
+      "type": "workflow_phase",
+      "index": 1,
+      "title": "▸ adversarial-review",
+      "kind": "child"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 1,
+      "label": "cross:openai/gpt-5.6-sol",
+      "phaseIndex": 1,
+      "phaseTitle": "▸ adversarial-review",
+      "agentId": "ad2e14d2d84694e28",
+      "model": "claude-sonnet-5",
+      "state": "done",
+      "startedAt": 1788394825873,
+      "queuedAt": 1788394825854,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "revise",
+      "promptPreview": "You are a RELAY to an independent cross-vendor reviewer. Do NOT review the change yourself.\n\n1. Load the tool schema:  ToolSearch(\"select:mcp__skynet__skynet_review_diff\")\n2. Call mcp__skynet__skynet_review_diff with EXACTLY:\n     model_group: \"dispatch-adversary\"\n     reasoning_effort: \"high\"\n     task: <the framing + focus below>\n     diff: <the review text below, byte for byte, with nothing add…",
+      "lastProgressAt": 1788395436564,
+      "tokens": 131102,
+      "toolCalls": 3,
+      "durationMs": 610685,
+      "resultPreview": "{\"verdict\":\"revise\",\"reviewer\":\"openai/gpt-5.6-sol\",\"summary\":\"Independent cross-vendor review (dispatch-adversary / openai/gpt-5.6-sol) of spec.md rev 11 + goals.md returned 5 P1 and 5 P2 findings — not an approval. Relayed verbatim, unsoftened, unranked beyond the reviewer's own P1/P2 split.\",\"findings\":[{\"severity\":\"blocker\",\"claim\":\"Deploy stage cannot handle a valid `release` step that create…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 2,
+      "label": "cross:zhipu/glm-5.2",
+      "phaseIndex": 1,
+      "phaseTitle": "▸ adversarial-review",
+      "agentId": "aa7f12d5811348eb6",
+      "model": "claude-sonnet-5",
+      "state": "done",
+      "startedAt": 1788394825874,
+      "queuedAt": 1788394825854,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "revise",
+      "promptPreview": "You are a RELAY to an independent cross-vendor reviewer. Do NOT review the change yourself.\n\n1. Load the tool schema:  ToolSearch(\"select:mcp__skynet__skynet_review_diff\")\n2. Call mcp__skynet__skynet_review_diff with EXACTLY:\n     model_group: \"dispatch-multi-agent-orchestration\"\n     reasoning_effort: \"high\"\n     task: <the framing + focus below>\n     diff: <the review text below, byte for byte, …",
+      "lastProgressAt": 1788395886553,
+      "tokens": 134904,
+      "toolCalls": 4,
+      "durationMs": 1059090,
+      "resultPreview": "{\"verdict\":\"revise\",\"reviewer\":\"zhipu/glm-5.2\",\"summary\":\"Independent cross-vendor reviewer (routed via dispatch-multi-agent-orchestration) found the rev-11 spec genuinely breakable in several load-bearing ways, despite closing the letter of prior findings. Two P1s stand out: (F1) the deploy stage's own `done:` sample release step, run against §7.3's base-move audit, either dead-ends on an existin…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 3,
+      "label": "lens:approach",
+      "phaseIndex": 1,
+      "phaseTitle": "▸ adversarial-review",
+      "agentId": "aaf8fa5e667e1eed1",
+      "model": "claude-sonnet-5",
+      "state": "done",
+      "startedAt": 1788394825876,
+      "queuedAt": 1788394825855,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "revise",
+      "promptPreview": "Adversarially try to BREAK this change. You are not proof-reading it — you are trying to show it is the wrong approach, or that it fails. Challenge the design, the tradeoffs, and the assumptions it depends on, not just implementation defects. A finding is only worth reporting if you can state the concrete failure: inputs or state that produce a wrong result, lost data, or a silent success. Do not …",
+      "lastProgressAt": 1788395066333,
+      "tokens": 115610,
+      "toolCalls": 11,
+      "durationMs": 238870,
+      "resultPreview": "{\"verdict\":\"revise\",\"reviewer\":\"approach-lens (in-repo adversarial)\",\"summary\":\"The spec is meticulous everywhere it chose code, but §10's bootstrap wave — the single highest-blast-radius, least-repeatable part of the whole document — is the one place it stayed prompt-first (A8), and it shows: the live bootstrap has no code-owned durability/idempotency guarantee analogous to what this same spec bu…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 4,
+      "label": "lens:failure-case",
+      "phaseIndex": 1,
+      "phaseTitle": "▸ adversarial-review",
+      "agentId": "a9b19d6eb69ffe9a1",
+      "model": "claude-sonnet-5",
+      "state": "done",
+      "startedAt": 1788394825877,
+      "queuedAt": 1788394825855,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "revise",
+      "promptPreview": "Adversarially try to BREAK this change. You are not proof-reading it — you are trying to show it is the wrong approach, or that it fails. Challenge the design, the tradeoffs, and the assumptions it depends on, not just implementation defects. A finding is only worth reporting if you can state the concrete failure: inputs or state that produce a wrong result, lost data, or a silent success. Do not …",
+      "lastProgressAt": 1788395225294,
+      "tokens": 129598,
+      "toolCalls": 10,
+      "durationMs": 397831,
+      "resultPreview": "{\"verdict\":\"revise\",\"reviewer\":\"failure-case adversary (in-tree verification)\",\"summary\":\"Two of the three findings are provable purely from the spec's own mechanical definitions (no implementation needed to see the hole), and the third is verified against the actual bin/install-pi.mjs already in the tree plus this repo's live git/GitHub state. The most severe defeats the run's central promise: th…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 5,
+      "label": "lens:blast-radius",
+      "phaseIndex": 1,
+      "phaseTitle": "▸ adversarial-review",
+      "agentId": "a839a77a8043a369d",
+      "model": "claude-sonnet-5",
+      "state": "done",
+      "startedAt": 1788394825878,
+      "queuedAt": 1788394825855,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "revise",
+      "promptPreview": "Adversarially try to BREAK this change. You are not proof-reading it — you are trying to show it is the wrong approach, or that it fails. Challenge the design, the tradeoffs, and the assumptions it depends on, not just implementation defects. A finding is only worth reporting if you can state the concrete failure: inputs or state that produce a wrong result, lost data, or a silent success. Do not …",
+      "lastProgressAt": 1788395188653,
+      "tokens": 125310,
+      "toolCalls": 10,
+      "durationMs": 361189,
+      "resultPreview": "{\"verdict\":\"revise\",\"reviewer\":\"blast-radius\",\"summary\":\"Two real findings, both grounded directly in the working tree rather than the spec's own narrative. (1, blocker) The bootstrap gate's and the permanent §7.3 deploy-stage 'base moved' audit both scope the required commit-invariant to `docs/masterplan/<slug>/` — this run's own bundle directory — while confirmed git history shows bundle-state c…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 6,
+      "label": "synthesize",
+      "phaseIndex": 1,
+      "phaseTitle": "▸ adversarial-review",
+      "agentId": "a38bc2c059104f76b",
+      "model": "claude-fable-5-1",
+      "state": "done",
+      "startedAt": 1788395886574,
+      "queuedAt": 1788395886556,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "revise",
+      "promptPreview": "Independent reviewers examined the same change. Converge their reports into ONE severity-first verdict.\n\nRules:\n- Merge duplicates; keep the sharpest statement of each defect and the strongest evidence for it.\n- Verify before you promote: open the cited file:line. A finding you cannot confirm in the tree goes in \"dropped\" with the reason — the cross-vendor reviewers never saw the tree, so some of …",
+      "lastProgressAt": 1788396336826,
+      "tokens": 143351,
+      "toolCalls": 11,
+      "durationMs": 450252,
+      "resultPreview": "{\"final_verdict\":\"revise\",\"summary\":\"Two blockers survive in-tree verification, both provable from the spec's own normative text: (1) the sample `done:` block's `release` step is self-defeating under §7.3 — `scripts/release.mjs` commits version files/CHANGELOG (§10.1.3), that commit is a non-bundle commit on the base, so the very next boundary declares `base moved`, discards the release receipt, r…"
+    }
+  ],
+  "totalTokens": 779875,
+  "totalToolCalls": 49
+}
