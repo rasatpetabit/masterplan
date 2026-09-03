@@ -80,8 +80,11 @@ bootstrap driver moved from a permanent `mp bootstrap` verb to a one-off
 `scripts/bootstrap-v10.mjs`; the cross-repo scan takes `workspace_roots` from `--targets`;
 `main_push` names the non-bundle commits it carries; `required-successor` binds to the
 `--predecessor` link and is declared soft (A35). Four panels so far (~3.6M tokens), each
-finding what the previous fold introduced — the re-gate mechanism for rev 14 is the operator's
-call; the spec gate is NOT recorded again until a re-gate passes.
+finding what the previous fold introduced. **The operator chose to record the gate without
+another review**: `spec_adversary_review_skipped` at hash 3a4ff341… (rev 14, 6032efa) — the
+recorder's `--status=skipped` with reason + digest, because a `done` record must bind a review
+that saw the current bytes and panel 4 saw rev 13. Residual risk in the rev 14 deltas is carried
+to the plan gate. Phase is `plan`; the plan lifecycle (§3a) is the next step.
 
 ## 2026-09-02 — intent-to-completion: brainstorm + spec (run seeded, not yet planned)
 

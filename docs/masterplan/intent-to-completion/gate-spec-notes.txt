@@ -47,3 +47,5 @@ Cross-vendor panel over rev 13 (run wf_320af430-a88, standard, bytes sha256 5991
   5 nits: G6 wording on the corrective path; commit_paths could allowlist src/; failed-record vs postcondition; rebase "cannot conflict" unasserted; one-off bootstrap as permanent CLI surface
   7 dropped: seed-lock race (3rd time), receipt provenance (2nd), arm/record attestation (A33), different pre-publish panel + split release (user-confirmed scope), hook-policy hazard (wrong premise), "A21/A28 false"
   → rev 14: see spec.md §13 (B1, B2, S3–S8, N9–N13) and A35–A36. Re-gate mechanism for rev 14 is the operator's call (four panels ≈ 3.6M tokens, each finding what the previous fold introduced).
+
+Recorded 2026-09-03: spec_adversary_review_skipped at gate hash 3a4ff341… (rev 14, commit 6032efa) — operator attestation via AUQ ("Record the gate without another review"). Rev 14 has NOT been reviewed at this hash; the residual risk (fold-introduced defects in the rev 14 deltas: push_archive gating, ask-time critic cadence, attestation class, scripts/ driver) is carried to the plan gate, whose reviewer and alignment audit read the spec.
