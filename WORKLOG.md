@@ -433,3 +433,38 @@ deterministic python patches with a regression test each. Decisions worth keepin
   rerun answers indeterminate only; attest is offered only for check-less steps; abort only from a gate.
 Gateway note: review calls now routinely exceed the 120s MCP foreground window and one 502'd
 ("shim upstream error: timed out") — retry is the fix, TaskOutput(block) collects the rest.
+
+## 2026-09-03 — intent-to-completion wave 2 (deploy identity, config, env seams, runs-list)
+
+Recorded tasks 12, 18, 21, 24, 35, 44. Code `bbdca1a`, state `6bf9d55`,
+scope correction `ddb7e53`. Suite 2050/2053 (three failures owned by later
+tasks: two README doctor-inventory rows, one retired-identifier sentence).
+
+Decisions worth carrying:
+
+- **Commit identity is content-only and fails closed on ambiguity.** A branch
+  tip is proven in a deploy base by merge ancestry, or by a single squash whose
+  verbatim patch-id equals the whole branch diff. Where content cannot separate
+  a multi-commit replay from a squash — notably a replay whose prefix cancels,
+  and a squash landing after a no-op base prefix — both are refused and the
+  operator is told to land as a merge. This supersedes an earlier reviewer
+  position that the squash case should be accepted.
+- **Receipt provenance on every gate transition.** Authorizations, retries,
+  attestations, skips and aborts all audit the same boundary and carry
+  `head_after`; a bundle commit made while a gate is open is legal history, an
+  unreceipted `commit_paths` commit or any foreign commit is a base move.
+- **Gates are durable once opened.** A deleted tag or an unreachable origin is
+  not a version bump; a recorded `version_gate` stands until `keep` answers it.
+- **PR retirement returns `await_merge`**, resolved only by stage-terminal
+  reasons — a merged PR never silently skips the deploy stage.
+- **Bootstrap binds to the published tip and tag**, not to whatever the branch
+  points at now; corrective passes require a strictly newer untagged version.
+
+Process note, deliberately recorded: **task 24 ran 34 adversarial review
+rounds and that was a mistake.** The lane reversed its own round-20 ruling on
+squash identity at round 34, which is the point at which it had stopped
+locating defects and started expressing preferences. The series was terminated
+by operator decision; the wave-2 review record for task 24 is `error`, not
+`approve`, because the final revision carries no lane verdict. Later waves
+should cap a task's review series and escalate a non-converging reviewer to a
+scope question instead of another round.
