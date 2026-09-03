@@ -10,10 +10,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import fs from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
-import { runChecks, runFixes, parseArgs, discoverChecks } from '../bin/doctor.mjs';
+import { runChecks, runFixes, parseArgs, discoverChecks, selectCheck } from '../bin/doctor.mjs';
 import { check as scalarCap, fix as scalarCapFix } from '../lib/doctor/scalar-cap.mjs';
 import { check as worktreeIntegrity, fix as worktreeIntegrityFix } from '../lib/doctor/worktree-integrity.mjs';
 import { check as codexAuth } from '../lib/doctor/codex-auth.mjs';
@@ -109,10 +110,10 @@ test('dispatcher: discovers the lib/doctor check modules', async () => {
 
 test('dispatcher: parseArgs accepts --fix before or after optional repo root', () => {
   const cwd = process.cwd();
-  assert.deepEqual(parseArgs(['--fix']), { repoRoot: cwd, fix: true });
-  assert.deepEqual(parseArgs(['/repo', '--fix']), { repoRoot: '/repo', fix: true });
-  assert.deepEqual(parseArgs(['--fix', '/repo']), { repoRoot: '/repo', fix: true });
-  assert.deepEqual(parseArgs(['/repo']), { repoRoot: '/repo', fix: false });
+  assert.deepEqual(parseArgs(['--fix']), { repoRoot: cwd, fix: true, only: null });
+  assert.deepEqual(parseArgs(['/repo', '--fix']), { repoRoot: '/repo', fix: true, only: null });
+  assert.deepEqual(parseArgs(['--fix', '/repo']), { repoRoot: '/repo', fix: true, only: null });
+  assert.deepEqual(parseArgs(['/repo']), { repoRoot: '/repo', fix: false, only: null });
 });
 
 test('dispatcher: parseArgs rejects unknown flags and multiple repo roots', () => {
@@ -1247,7 +1248,7 @@ test('dangling-run: a stale in-progress owner lock triggers WARN independent of 
 
 // ---- dispatcher: all 17 modules auto-discovered ----------------------------
 
-test('dispatcher: discovers all 19 check modules', async () => {
+test('dispatcher: discovers every check module on disk', async () => {
   const checks = await discoverChecks(path.join(here, '..', 'lib', 'doctor'));
   const names = checks.map((c) => c.name);
   const expected = [
@@ -1259,7 +1260,10 @@ test('dispatcher: discovers all 19 check modules', async () => {
   for (const n of expected) {
     assert.ok(names.includes(n), `discovered ${n}`);
   }
-  assert.equal(names.length, expected.length, `expected ${expected.length} checks, found ${names.length}: ${names.join(', ')}`);
+  // The total is derived from the modules on disk: doctor checks are auto-discovered, so a new
+  // lib/doctor/*.mjs (the v10 checks, for instance) must never require editing this literal.
+  const onDisk = fs.readdirSync(path.join(here, '..', 'lib', 'doctor')).filter((f) => f.endsWith('.mjs') && !f.startsWith('_')).length;
+  assert.equal(names.length, onDisk, `expected ${onDisk} checks on disk, found ${names.length}: ${names.join(', ')}`);
 });
 
 // ---- plan-doc-cruft (#14, WARN) ------------------------------------------------
@@ -1804,4 +1808,23 @@ test('rejected-idea-kb: WARN when a required section is missing', () => {
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
+});
+
+test('--only=<check-id> runs exactly one discovered check and exits with its outcome', async () => {
+  assert.deepEqual(parseArgs(['--only=state-schema']).only, 'state-schema');
+  assert.throws(() => parseArgs(['--only=']), /--only requires a check id/);
+  const checks = await discoverChecks(path.join(here, '..', 'lib', 'doctor'));
+  assert.equal(selectCheck(checks, 'state-schema').name, 'state-schema');
+  assert.equal(selectCheck(checks, 'nope'), null);
+  const bin = path.join(here, '..', 'bin', 'doctor.mjs');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-doctor-only-'));
+  const unknown = spawnSync(process.execPath, [bin, '--only=nope', tmp], { encoding: 'utf8' });
+  assert.equal(unknown.status, 2);
+  assert.match(unknown.stderr, /unknown check id 'nope'/);
+  assert.match(unknown.stderr, /state-schema/);
+  const one = spawnSync(process.execPath, [bin, '--only=state-schema', tmp], { encoding: 'utf8' });
+  assert.equal(one.status, 0, one.stderr);
+  assert.ok(one.stdout.includes('state-schema'), 'the selected check reports');
+  assert.ok(!one.stdout.includes('worktree-integrity'), 'other checks do not run');
+  fs.rmSync(tmp, { recursive: true, force: true });
 });

@@ -4,7 +4,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import {
   parseMasterplanYaml,
   resolveRunConfig,
@@ -311,4 +312,44 @@ test('effectiveAutonomy maps autonomy values', () => {
   assert.equal(effectiveAutonomy({ autonomy: 'gated' }), 'gated');
   assert.equal(effectiveAutonomy({ autonomy: null }), 'gated');
   assert.equal(effectiveAutonomy({}), 'gated');
+});
+
+test('checked-in .masterplan.yaml loads and validates', () => {
+  const configPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '.masterplan.yaml');
+  const yaml = fs.readFileSync(configPath, 'utf8');
+  const doc = parseMasterplanYaml(yaml);
+  assert.equal(doc.done.version_from, '.claude-plugin/plugin.json');
+  assert.equal(doc.done.release.length, 1);
+  assert.equal(doc.done.install.length, 3);
+  assert.equal(doc.done.user_only.length, 2);
+  assert.equal(doc.done.live_check.length, 2);
+  assert.equal(doc.done.install[0].check, "git ls-remote --exit-code --tags origin refs/tags/v${version} >/dev/null || exit 1");
+  const validated = validateDoneDefinition(doc.done);
+  assert.ok(validated);
+});
+
+test('default commit_paths is metadata-only', () => {
+  const done = validateDoneDefinition({ version_from: '.claude-plugin/plugin.json', release: [{ run: 'echo ${version}' }] });
+  assert.deepEqual(done.commit_paths, ['.claude-plugin/plugin.json', 'CHANGELOG.md']);
+});
+
+test('a user_only step with {text, evidence} is rejected', () => {
+  assert.throws(() => validateDoneDefinition({ version_from: '.claude-plugin/plugin.json', user_only: [{ text: 'do it', evidence: 'trust me' }] }), /user_only/);
+});
+
+test('the literal ls-remote predicate reports absence as exit 1 against a tagless bare remote', () => {
+  const parent = tmpdir();
+  const bare = path.join(parent, 'remote.git');
+  const repo = path.join(parent, 'repo');
+  try {
+    execFileSync('git', ['init', '-q', '--bare', bare], { stdio: 'ignore' });
+    execFileSync('git', ['init', '-q', repo], { stdio: 'ignore' });
+    execFileSync('git', ['remote', 'add', 'origin', bare], { cwd: repo, stdio: 'ignore' });
+    const r1 = spawnSync('sh', ['-c', "git ls-remote --exit-code --tags origin refs/tags/v9.9.9 >/dev/null || exit 1"], { cwd: repo });
+    assert.equal(r1.status, 1);
+    const r2 = spawnSync('sh', ['-c', 'git ls-remote --exit-code --tags origin refs/tags/v9.9.9'], { cwd: repo });
+    assert.equal(r2.status, 2);
+  } finally {
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
 });

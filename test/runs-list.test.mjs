@@ -50,7 +50,7 @@ function mkrepo(dir, { gitlink = false } = {}) {
 //   unreadable   -> state.yml is a DIRECTORY (readFileSync -> EISDIR -> WARN+skip)
 //   events       -> raw events.jsonl body (may be intentionally corrupt)
 function bundle(root, slug, opts = {}) {
-  const { status = 'in-progress', phase = 'execute', tasks = [], events, corruptState = false, unreadable = false } = opts;
+  const { status = 'in-progress', phase = 'execute', tasks = [], events, corruptState = false, unreadable = false, topic, worktree } = opts;
   const dir = path.join(root, 'docs', 'masterplan', slug);
   fs.mkdirSync(dir, { recursive: true });
   const statePath = path.join(dir, 'state.yml');
@@ -59,7 +59,10 @@ function bundle(root, slug, opts = {}) {
   } else if (corruptState) {
     fs.writeFileSync(statePath, 'note: no slug or status on this bundle\nplain text line, not a field\n');
   } else {
-    writeState(statePath, { schema_version: 8, slug, status, phase, tasks });
+    const state = { schema_version: 8, slug, status, phase, tasks };
+    if (topic !== undefined) state.topic = topic;
+    if (worktree !== undefined) state.worktree = worktree;
+    writeState(statePath, state);
   }
   if (events !== undefined) fs.writeFileSync(path.join(dir, 'events.jsonl'), events);
   return { dir, statePath };
@@ -258,4 +261,73 @@ test('mp status prints the other-runs block for a second non-archived bundle in 
   assert.ok(otherSlugs.includes('other-run'), `other-run surfaced: ${JSON.stringify(otherSlugs)}`);
   assert.ok(!otherSlugs.includes('self-run'), 'the current bundle is excluded from other-runs');
   assert.ok(!otherSlugs.includes('archived-run'), 'archived bundles are excluded');
+});
+
+test('topic is exposed untruncated across lines', () => {
+  const root = tmp();
+  const MAIN = mkrepo(path.join(root, 'main'));
+  const longTopic = 'line1\nline2\n' + 'x'.repeat(200);
+  bundle(MAIN, 'topic-run', { topic: longTopic });
+  const rec = listRuns(MAIN).runs.find((r) => r.slug === 'topic-run');
+  assert.equal(rec.topic, longTopic);
+});
+
+test('phase and worktree path or null', () => {
+  const root = tmp();
+  const MAIN = mkrepo(path.join(root, 'main'));
+  const wtPath = path.join(root, 'worktrees', 'wt1');
+  bundle(MAIN, 'with-wt', { phase: 'review', worktree: wtPath });
+  bundle(MAIN, 'no-wt', { phase: 'execute' });
+  const runs = listRuns(MAIN).runs;
+  const withWt = runs.find((r) => r.slug === 'with-wt');
+  const noWt = runs.find((r) => r.slug === 'no-wt');
+  assert.equal(withWt.worktree, wtPath);
+  assert.equal(withWt.phase, 'review');
+  assert.equal(noWt.worktree, null);
+  assert.equal(noWt.phase, 'execute');
+});
+
+test('goals parsed to id/text pairs; absent goals.md yields the empty value', () => {
+  const root = tmp();
+  const MAIN = mkrepo(path.join(root, 'main'));
+  const withGoals = bundle(MAIN, 'with-goals');
+  fs.writeFileSync(
+    path.join(withGoals.dir, 'goals.md'),
+    'topic: t\n\n## G1: First goal\nsignal: test\n\n## G2: Second goal\nsignal: test\n'
+  );
+  const noGoals = bundle(MAIN, 'no-goals');
+  const runs = listRuns(MAIN).runs;
+  const withRec = runs.find((r) => r.slug === 'with-goals');
+  const noRec = runs.find((r) => r.slug === 'no-goals');
+  assert.deepEqual(withRec.goals, [
+    { id: 'G1', text: 'First goal' },
+    { id: 'G2', text: 'Second goal' },
+  ]);
+  assert.deepEqual(noRec.goals, []);
+});
+
+test('planned paths are a sorted deduplicated union; absent plan.index.json yields the empty union', () => {
+  const root = tmp();
+  const MAIN = mkrepo(path.join(root, 'main'));
+  const withPlan = bundle(MAIN, 'with-plan');
+  fs.writeFileSync(
+    path.join(withPlan.dir, 'plan.index.json'),
+    JSON.stringify({
+      tasks: [
+        { id: 1, files: ['b.txt', 'a.txt'] },
+        { id: 2, files: ['a.txt', 'c/d.txt'] },
+      ],
+    })
+  );
+  const noPlan = bundle(MAIN, 'no-plan');
+  const runs = listRuns(MAIN).runs;
+  const withRec = runs.find((r) => r.slug === 'with-plan');
+  const noRec = runs.find((r) => r.slug === 'no-plan');
+  assert.deepEqual(withRec.planned_paths, ['a.txt', 'b.txt', 'c/d.txt']);
+  assert.deepEqual(noRec.planned_paths, []);
+
+  // Two discoverRuns calls return deep-equal results.
+  const a = discoverRuns({ repoRoot: MAIN });
+  const b = discoverRuns({ repoRoot: MAIN });
+  assert.deepEqual(a, b);
 });

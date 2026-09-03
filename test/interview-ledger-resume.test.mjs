@@ -3,6 +3,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
+const sha256 = (text) => createHash('sha256').update(text).digest('hex');
+import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -158,6 +161,7 @@ test('exhausted at cap', (t) => {
   for (let i = 1; i <= BUDGETS.low.cap; i++) {
     answerQuestion({ statePath, id: `Q${i}`, text: `a${i}` });
   }
+  recordDraft({ statePath, intent: { why: 'w', outcome: 'o', anti_goals: ['x'], done_means: 'd' } });
   endInterview({ statePath, reason: 'exhausted' });
 });
 
@@ -166,6 +170,7 @@ test('critic_off at low', (t) => {
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   askQuestion({ statePath, id: 'Q1', round: 1, kind: 'intent', text: 'q1' });
   answerQuestion({ statePath, id: 'Q1', text: 'a1' });
+  recordDraft({ statePath, intent: { why: 'w', outcome: 'o', anti_goals: ['x'], done_means: 'd' } });
   endInterview({ statePath, reason: 'critic_off' });
 });
 
@@ -522,6 +527,12 @@ test('a durable critic-unavailable acknowledgement authorizes exhausted on repla
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   askQuestion({ statePath, id: 'Q1', round: 1, kind: 'intent', text: 'q1' });
   answerQuestion({ statePath, id: 'Q1', text: 'a1' });
+  askQuestion({ statePath, id: 'Q2', round: 2, kind: 'intent', text: 'q2' });
+  answerQuestion({ statePath, id: 'Q2', text: 'a2' });
+  askQuestion({ statePath, id: 'Q3', round: 3, kind: 'intent', text: 'q3' });
+  answerQuestion({ statePath, id: 'Q3', text: 'a3' });
+  askQuestion({ statePath, id: 'Q4', round: 4, kind: 'design', text: 'q4' });
+  answerQuestion({ statePath, id: 'Q4', text: 'a4' });
   recordDraft({ statePath, intent: { why: 'w', outcome: 'o', anti_goals: ['x'], done_means: 'd' } });
   assert.throws(() => acknowledgeCriticUnavailable({ statePath, answer: 'continue' }), /nothing to acknowledge/);
   recordCriticUnavailable({ statePath, error: 'e1' });
@@ -617,6 +628,12 @@ test('an invalid critic receipt does not clear the unavailable state or its ackn
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   askQuestion({ statePath, id: 'Q1', round: 1, kind: 'intent', text: 'q1' });
   answerQuestion({ statePath, id: 'Q1', text: 'a1' });
+  askQuestion({ statePath, id: 'Q2', round: 2, kind: 'intent', text: 'q2' });
+  answerQuestion({ statePath, id: 'Q2', text: 'a2' });
+  askQuestion({ statePath, id: 'Q3', round: 3, kind: 'intent', text: 'q3' });
+  answerQuestion({ statePath, id: 'Q3', text: 'a3' });
+  askQuestion({ statePath, id: 'Q4', round: 4, kind: 'design', text: 'q4' });
+  answerQuestion({ statePath, id: 'Q4', text: 'a4' });
   const intent = { why: 'w', outcome: 'o', anti_goals: ['x'], done_means: 'd' };
   recordDraft({ statePath, intent });
   recordCriticUnavailable({ statePath, error: 'e1' });
@@ -650,4 +667,110 @@ test('the first question must open round 1', (t) => {
   assert.throws(() => askQuestion({ statePath, id: 'Q1', round: 0, kind: 'intent', text: 'q1' }), /positive integer/);
   assert.throws(() => askQuestion({ statePath, id: 'Q1', round: 2, kind: 'intent', text: 'q1' }), /round must be current/);
   askQuestion({ statePath, id: 'Q1', round: 1, kind: 'intent', text: 'q1' });
+});
+
+test('exhausted at the cap still requires the floors and the latest draft; the record lists the unresolved items', (t) => {
+  const { dir, statePath } = makeBundle('low'); // cap 4, floor 1, intent floor 1, 1 round
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  askQuestion({ statePath, id: 'Q1', round: 1, kind: 'intent', text: 'q1' });
+  askQuestion({ statePath, id: 'Q2', round: 1, kind: 'intent', text: 'q2' });
+  askQuestion({ statePath, id: 'Q3', round: 1, kind: 'design', text: 'q3' });
+  askQuestion({ statePath, id: 'Q4', round: 1, kind: 'design', text: 'q4' });
+  withdrawQuestion({ statePath, id: 'Q1' });
+  withdrawQuestion({ statePath, id: 'Q2' });
+  answerQuestion({ statePath, id: 'Q3', text: 'a3' });
+  answerQuestion({ statePath, id: 'Q4', text: 'a4' });
+  assert.equal(interviewStatus(statePath).asked, 4, 'cap reached (withdrawn questions count against it)');
+  // Two design picks and two withdrawals satisfy no floor: exhausted is refused; only the waiver remains.
+  assert.throws(() => endInterview({ statePath, reason: 'exhausted' }), /intent floor/);
+  assert.throws(() => endInterview({ statePath, reason: 'critic_off' }), /intent floor/);
+  waiveInterview({ statePath, reason: 'operator gave up' });
+  const waived = replayLedger(statePath).find((e) => e.type === 'waived');
+  assert.equal(waived.reason, 'operator gave up');
+  assert.equal(interviewStatus(statePath).state, 'waived');
+});
+
+test('the exhausted record carries the latest valid payload\'s unresolved items and the attempt count', (t) => {
+  const { dir, statePath } = makeBundle('medium'); // cap 10
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const intent = { why: 'w', outcome: 'o', anti_goals: ['x'], done_means: 'd' };
+  let n = 0;
+  const ask = (kind, round) => { n += 1; askQuestion({ statePath, id: `Q${n}`, round, kind, text: `q${n}` }); answerQuestion({ statePath, id: `Q${n}`, text: `a${n}` }); };
+  ask('intent', 1); ask('intent', 2); ask('intent', 3); ask('design', 4);
+  recordDraft({ statePath, intent });
+  const status = interviewStatus(statePath);
+  const payloadPath = path.join(dir, 'payload.json');
+  fs.writeFileSync(payloadPath, JSON.stringify({ unknowns: [{ id: 'U1', text: 'who pays' }], contradictions: [{ id: 'C1', text: 'x vs y' }], misclassified: [] }));
+  recordCritic({ statePath, receipt: { dispatch_id: 'd1', model: 'm', output_tokens: 10, content_head: status.content_head, intent_sha256: intentSha(intent) }, payloadPath });
+  // pad to the cap with design questions (they never move the head)
+  while (interviewStatus(statePath).asked < 10) ask('design', interviewStatus(statePath).asked + 1);
+  endInterview({ statePath, reason: 'exhausted' });
+  const end = replayLedger(statePath).find((e) => e.type === 'end');
+  assert.equal(end.reason, 'exhausted');
+  assert.equal(end.asked, 10);
+  assert.equal(end.cap, 10);
+  assert.equal(end.attempts, 1);
+  assert.deepEqual(end.unknowns.map((u) => u.id), ['U1']);
+  assert.deepEqual(end.contradictions.map((c) => c.id), ['C1']);
+  assert.deepEqual(end.misclassified, []);
+});
+
+// Simulated compaction: everything in this process is forgotten; a NEW node process replays the
+// ledger from disk and evaluates `expr` with the interview module bound to I and statePath in scope.
+function freshProcess(statePath, expr) {
+  const mod = new URL('../lib/interview.mjs', import.meta.url).href;
+  const code = `import * as I from ${JSON.stringify(mod)}; const statePath = ${JSON.stringify(statePath)}; const out = (${expr}); console.log(JSON.stringify(out === undefined ? null : out));`;
+  const r = spawnSync(process.execPath, ['--input-type=module', '-e', code], { encoding: 'utf8' });
+  if (r.status !== 0) throw new Error(`fresh process failed: ${r.stderr}`);
+  return JSON.parse(r.stdout.trim());
+}
+
+test('a receipt forged on disk (hand-edited events.jsonl) is invalid after simulated compaction and blocks convergence', (t) => {
+  const { dir, statePath } = makeBundle('low');
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const intent = { why: 'w', outcome: 'o', anti_goals: ['x'], done_means: 'd' };
+  askQuestion({ statePath, id: 'Q1', round: 1, kind: 'intent', text: 'q1' });
+  answerQuestion({ statePath, id: 'Q1', text: 'a1' });
+  askQuestion({ statePath, id: 'Q2', round: 2, kind: 'design', text: 'q2' });
+  answerQuestion({ statePath, id: 'Q2', text: 'a2' });
+  recordDraft({ statePath, intent });
+  const status = interviewStatus(statePath);
+  const payloadPath = path.join(dir, 'payload.json');
+  // A CLEAN payload: with the genuine digest this interview converges, so only the forgery can
+  // explain a refusal — the test discriminates rejection from a merely unclean payload.
+  const cleanText = JSON.stringify({ unknowns: [], contradictions: [], misclassified: [] });
+  fs.writeFileSync(payloadPath, cleanText);
+  recordCritic({ statePath, receipt: { dispatch_id: 'd1', model: 'm', output_tokens: 10, content_head: status.content_head, intent_sha256: intentSha(intent) }, payloadPath });
+  const eventsPath = path.join(path.dirname(statePath), 'events.jsonl');
+  const genuine = fs.readFileSync(eventsPath, 'utf8');
+  assert.equal(freshProcess(statePath, "(() => { try { I.endInterview({ statePath, reason: 'converged' }); return 'ended'; } catch (e) { return e.message; } })()"), 'ended', 'the genuine ledger converges');
+  fs.writeFileSync(eventsPath, genuine); // roll the terminal event back: the forgery is tested on the same ledger
+  // Forge the receipt's digest on disk: the artifact no longer matches the receipt.
+  const forged = genuine.replace(/"payload_sha256":"[0-9a-f]+"/, '"payload_sha256":"' + '0'.repeat(64) + '"');
+  fs.writeFileSync(eventsPath, forged);
+  // Nothing survives in memory: a fresh process replays the ledger and refuses the forged receipt.
+  assert.equal(freshProcess(statePath, 'I.interviewStatus(statePath).critic.receipts'), 1);
+  const outcome = freshProcess(statePath, "(() => { try { I.endInterview({ statePath, reason: 'converged' }); return 'ended'; } catch (e) { return e.message; } })()");
+  assert.match(outcome, /clean critic payload/, 'the forged (digest-mismatched) receipt has no payload and cannot converge');
+  assert.ok(!replayLedger(statePath).some((e) => e.type === 'end'), 'no terminal event was written');
+  // A malformed artifact (valid JSON, wrong shape) is equally invalid after compaction.
+  const bundleDir = path.dirname(statePath);
+  const artifact = fs.readdirSync(bundleDir).find((f) => f.startsWith('interview-critic-') && f.endsWith('.json'));
+  fs.writeFileSync(eventsPath, genuine.replace(/"payload_sha256":"[0-9a-f]+"/, '"payload_sha256":"' + sha256('{}') + '"'));
+  fs.writeFileSync(path.join(bundleDir, artifact), '{}');
+  assert.equal(freshProcess(statePath, "I.interviewStatus(statePath).critic.mode"), 'off'); // low: off, never 'unavailable'
+  assert.match(freshProcess(statePath, "(() => { try { I.endInterview({ statePath, reason: 'converged' }); return 'ended'; } catch (e) { return e.message; } })()"), /critic/);
+});
+
+test('status after simulated compaction equals the in-process status', (t) => {
+  const { dir, statePath } = makeBundle('medium');
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  askQuestion({ statePath, id: 'Q1', round: 1, kind: 'intent', text: 'q1' });
+  answerQuestion({ statePath, id: 'Q1', text: 'a1' });
+  askQuestion({ statePath, id: 'Q2', round: 2, kind: 'design', text: 'q2' });
+  recordDraft({ statePath, intent: { why: 'w', outcome: 'o', anti_goals: ['x'], done_means: 'd' } });
+  const here = interviewStatus(statePath);
+  const there = freshProcess(statePath, 'I.interviewStatus(statePath)');
+  assert.deepEqual(there, JSON.parse(JSON.stringify(here)));
+  assert.deepEqual(freshProcess(statePath, 'I.replayLedger(statePath)'), JSON.parse(JSON.stringify(replayLedger(statePath))));
 });
