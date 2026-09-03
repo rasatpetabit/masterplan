@@ -219,7 +219,7 @@
     },
     {
       "id": 8,
-      "description": "Publish the integrated public contract across README, the masterplan skill, and the verb reference: document CLI > repo > user > default resolution, exact complexity/autonomy levels and aliases, overlap and interview verbs, done configuration and fixed deploy order, final intent confirmation, completion and push classes, context-status and resume-brief wiring, required successors, and the one-off v10 bootstrap boundary. Add an Environment section naming every readEnv-backed control, including MP_DISPATCH_WAVE_CONCURRENCY, MP_ROUTING_POLICY, SKYNET_VERIFY_ALLOWLIST, and MP_CONTEXT_WINDOW. The Environment section also names CLAUDE_CODE_SESSION_ID (Guard D session identity, with its --session/--host flag companions). Bump every version-bearing file to 10.0.0 together — .claude-plugin/plugin.json, .claude-plugin/marketplace.json (root version and plugins[0].version), .codex-plugin/plugin.json, package.json, and README.md's \"Current release\" line — so the publish-hygiene live test passes with 10.0.0 everywhere (spec §11 publish-hygiene).",
+      "description": "Publish the integrated public contract across README, the masterplan skill, and the verb reference: document CLI > repo > user > default resolution, exact complexity/autonomy levels and aliases, overlap and interview verbs, done configuration and fixed deploy order, final intent confirmation, completion and push classes, context-status and resume-brief wiring, required successors, and the one-off v10 bootstrap boundary. Add an Environment section naming every readEnv-backed control, including MP_DISPATCH_WAVE_CONCURRENCY, MP_ROUTING_POLICY, SKYNET_VERIFY_ALLOWLIST, and MP_CONTEXT_WINDOW. The Environment section also names CLAUDE_CODE_SESSION_ID (Guard D session identity, with its --session/--host flag companions). Bump every version-bearing file to 10.0.0 together — .claude-plugin/plugin.json, .claude-plugin/marketplace.json (root version and plugins[0].version), .codex-plugin/plugin.json, package.json, and README.md's \"Current release\" line — so the publish-hygiene live test passes with 10.0.0 everywhere (spec §11 publish-hygiene). README.md's doctor module-inventory gains one row per new check (resume-brief-hook, no-definition-of-done, incomplete-archive, legacy-archive, required-successor) so test/doctor-readme.test.mjs E9 matches the auto-discovered modules again.",
       "wave": 9,
       "files": [
         "README.md",
@@ -229,14 +229,16 @@
         ".claude-plugin/plugin.json",
         ".claude-plugin/marketplace.json",
         ".codex-plugin/plugin.json",
-        "package.json"
+        "package.json",
+        "test/doctor-readme.test.mjs"
       ],
       "verify_commands": [
         "for t in complexity autonomy planning_mode context_watch done:; do grep -q \"$t\" README.md || { echo \"missing $t in README.md\"; exit 1; }; done",
         "for t in complexity autonomy context-status resume-brief overlap; do grep -q \"$t\" skills/masterplan/SKILL.md || { echo \"missing $t in skills/masterplan/SKILL.md\"; exit 1; }; done",
         "for t in Environment MP_DISPATCH_WAVE_CONCURRENCY MP_ROUTING_POLICY SKYNET_VERIFY_ALLOWLIST MP_CONTEXT_WINDOW CLAUDE_CODE_SESSION_ID incomplete merged legacy required; do grep -q \"$t\" docs/verbs.md || { echo \"missing $t in docs/verbs.md\"; exit 1; }; done",
         "node --test test/docs-contract.test.mjs",
-        "node --test test/publish-hygiene.test.mjs"
+        "node --test test/publish-hygiene.test.mjs",
+        "node --test test/doctor-readme.test.mjs"
       ],
       "codex": null,
       "goals": [
@@ -554,7 +556,7 @@
     },
     {
       "id": 21,
-      "description": "Route every remaining direct process.env read outside lib/config.mjs through its exported accessors, preserving behaviour and the injected-env test seams: CLAUDE_CONFIG_DIR and HOME in lib/paths.mjs; MP_ROUTING_POLICY in lib/dispatch/routing-policy.mjs and lib/doctor/routing-policy-health.mjs; MP_DISPATCH_WAVE_CONCURRENCY, MP_ROUTING_POLICY, and SKYNET_VERIFY_ALLOWLIST in lib/dispatch-wave.mjs; HOME in bin/doctor.mjs, lib/doctor/codex-auth.mjs, and lib/doctor/pi-agent-registration.mjs (its spawn uses the config-owned passthrough). The existing suites for these modules stay green; the repo-wide zero-process.env assertion belongs to config-knobs.inventory, this task asserts only its own files. lib/continue.mjs, lib/sweep.mjs, lib/runs.mjs, and bin/install-pi.mjs are converted by their owning tasks. As the owner of bin/doctor.mjs, also add the `--only=<check-id>` option the spec relies on (spec §7.1 checks and the G6 evidence use `node bin/doctor.mjs --only=<check-id>`): run exactly one discovered check by id, exit with that check's outcome, and exit 2 with the list of known ids for an unknown id; cover it in test/doctor.test.mjs.",
+      "description": "Route every remaining direct process.env read outside lib/config.mjs through its exported accessors, preserving behaviour and the injected-env test seams: CLAUDE_CONFIG_DIR and HOME in lib/paths.mjs; MP_ROUTING_POLICY in lib/dispatch/routing-policy.mjs and lib/doctor/routing-policy-health.mjs; MP_DISPATCH_WAVE_CONCURRENCY, MP_ROUTING_POLICY, and SKYNET_VERIFY_ALLOWLIST in lib/dispatch-wave.mjs; HOME in bin/doctor.mjs, lib/doctor/codex-auth.mjs, and lib/doctor/pi-agent-registration.mjs (its spawn uses the config-owned passthrough). The existing suites for these modules stay green; the repo-wide zero-process.env assertion belongs to config-knobs.inventory, this task asserts only its own files. lib/continue.mjs, lib/sweep.mjs, lib/runs.mjs, and bin/install-pi.mjs are converted by their owning tasks. As the owner of bin/doctor.mjs, also add the `--only=<check-id>` option the spec relies on (spec §7.1 checks and the G6 evidence use `node bin/doctor.mjs --only=<check-id>`): run exactly one discovered check by id, exit with that check's outcome, and exit 2 with the list of known ids for an unknown id; cover it in test/doctor.test.mjs. While in test/doctor.test.mjs, update the discovered-module count assertion (19 today) to derive from the modules on disk or to the new total, since the wave-0 doctor checks are auto-discovered.",
       "wave": 2,
       "files": [
         "lib/paths.mjs",
@@ -1210,6 +1212,6 @@
     "problem": "Rev 14 of the spec passed four cross-vendor panels; its acceptance list is spec.md section 11. The plan below is seven parallel-drafted subsystems merged deterministically; the integration subsystem owns the shared CLI, schema, sequencer, and docs files.",
     "solution": "Every wave implements the spec; the post-wave stage below is NOT a plan task (spec A33 and section 10.1) and cannot be rendered by the installed 9.10.0 plan renderer, so it is stated here, in WORKLOG.md, and as a durable `pre_finish_stage_required` event on this bundle's events.jsonl (recorded 2026-09-03 via the pinned v9 `mp event`; superseded by a v2 event with the split rule). After the LAST wave completes, the orchestrator executes the live v9-to-v10 bootstrap stage from the branch with `node scripts/bootstrap-v10.mjs` (status, arm, run the printed command from MAIN, record) through pre-publish verify/review/assessment, release, push, CI, install of both surfaces, publish acknowledgement, and the GitHub PR merge. Two preconditions bind the finish: (a) `mp finish` is invoked only after `node scripts/bootstrap-v10.mjs status` reports the pass complete through `surfaces_live`, and `required_successor {slug: v10-validation}` has been recorded via the pinned v9 `mp event`; (b) the `gate` step (`arm --step=gate`, the rebase, `record --step=gate`) executes inside the branch_finish handling before `--choice=merge`, and is the only bootstrap step permitted after finish begins. Under the installed 9.10.0 sequencer the durable enforcement is the finish-time goal check, where G6 is assessed live and a skipped stage lands at goals_unmet rather than archiving."
   },
-  "plan_hash": "sha256:8e266ad06f30b497da50d557db626e190549a4f3e7bde56af52c8b8285be077c",
-  "generated_at": "2026-09-03T06:48:20.641Z"
+  "plan_hash": "sha256:3247594e3303edc2b8ff8fd5bb81c3ce1e19708c2feba40a14de795a0798818b",
+  "generated_at": "2026-09-03T06:53:41.145Z"
 }
