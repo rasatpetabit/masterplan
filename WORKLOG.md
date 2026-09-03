@@ -468,3 +468,45 @@ by operator decision; the wave-2 review record for task 24 is `error`, not
 `approve`, because the final revision carries no lane verdict. Later waves
 should cap a task's review series and escalate a non-converging reviewer to a
 scope question instead of another round.
+
+## 2026-09-03 — intent-to-completion wave 3 (goals contracts, deploy replay, v9 rehearsal)
+
+Recorded tasks 14, 25, 45. Code `a2cf31f`, state `b99d104`, plus corrective `77af416`.
+Suite 2117/2120 (the same three failures owned by later tasks).
+
+Decisions worth carrying:
+
+- **The goals-load gate refuses on absence, not just on contradiction.** A waived exit
+  needs a readable ledger carrying `interview_waived` — a missing or malformed event list
+  is not evidence of a waiver. A reopened interview is refused whatever terminal it also
+  claims. The terminal event comes from the ledger; there is no caller-supplied override,
+  because a stale one could mask the very ids the coverage gate exists to enforce.
+- **Assumptions coverage requires a real Markdown table.** A pipe-prefixed line in prose, a
+  second table in the section, and a fenced or indented code example all contribute
+  nothing. This spec quotes markdown in several places, so the code mask is load-bearing.
+- **Authorizations and starts are paired in ledger order.** Asking whether an authorization
+  exists somewhere accepts `authorized, start, start` — the second start is an unauthorized
+  rerun, and the recovery probe would record whatever it did as this run's output.
+- **The rehearsal drives the driver, it does not imitate it.** Every step is armed and
+  recorded in the driver's own order, so a row passes only when the fixture really produced
+  what that step's preconditions and postconditions require.
+
+Two process notes, both recorded because they cost real time:
+
+- **The D6 scope guard reverted 23 lines again** — in wave 2 it took `test/finish-step.test.mjs`
+  with task 24. The rule learned: when a task changes behaviour that an existing test
+  asserts, that test file must be in the task's declared scope, or the fix lands as a
+  separate corrective commit outside the wave transaction.
+- **The test fixtures were leaking git repos into /tmp** and filled a shared 64G filesystem
+  twice, blocking the harness with ENOSPC. Fixed for the four suites this run owns
+  (`77af416` and inside wave 3); the rest of the repo's suites leak the same way — ~1900
+  stale directories remain from `mp-bin-*`, `mp-continue-*`, `mp-wavecommit-*` and others.
+  Worth a repo-wide sweep.
+
+**Task 45 hit the five-round review ceiling** (`review_ceiling` event). Findings narrowed
+every round and none was a repeat, but one requirement stayed open: the mismatched-tag,
+partial-push and PR-reconciliation dispositions are asserted by the script rather than
+driven as arm/record turns, because the driver enforces step order and those steps cannot
+be re-entered in a failing state once recorded. Closing it needs fixture bundles poised at
+`push` and at `pr_merge` — a second harness. Recorded as a blocking review, not waved
+through. The task is plan-scale work in one wave slot.
