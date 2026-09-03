@@ -338,3 +338,6 @@ Planning-time task amendment applied through mp amend-tasks / amend-plan.
 
 ### 2026-09-03 — release-surface verify: the temp-clone 10.0.0 smoke command dropped (it presupposed the version bump that now lands in the docs task); test/release-script.test.mjs covers success, replay, foreign tag, unbumped files, dirty tree
 Planning-time task amendment applied through mp amend-tasks / amend-plan.
+
+### 2026-09-03 — task 24 co-owns test/finish-step.test.mjs
+finish-live.commit-identity enforces branch-tip identity at deploy_base; the wave-1 PR fixtures in test/finish-step.test.mjs (which pointed --merge-sha at a non-merge commit) must emulate a real merge, so the file is added to task 24's files. No other change.

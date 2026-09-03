@@ -1,0 +1,182 @@
+{
+  "key": "mp-wave-dispatch-v1:intent-to-completion:2:dispatch_fabric",
+  "run_id": "intent-to-completion",
+  "wave": 2,
+  "op": "dispatch_fabric",
+  "contract_version": "fabric-native-v1",
+  "status": "pending",
+  "attempt": 1,
+  "wave_token": "mp-wave-intent-to-completion-w2-a1",
+  "handles": [],
+  "dispatched_at": "2026-09-03T10:25:31.204Z",
+  "routing_inputs": {
+    "routing": "auto",
+    "codex_host_suppressed": false,
+    "linked_worktree": true
+  },
+  "payload": [
+    {
+      "id": 12,
+      "description": "Harden the interview replay and tests for the complete terminal-state contract: rounds seal on the first answer, withdrawal, draft, or critic event; batches may ask within the current round; completed intent rounds require an answered intent question; high complexity refuses a new intent round without the preceding receipt and convergence requires distinct per-round receipts; design events do not move content_head; drafts must follow all intent content; unavailable critics require two same-head failures plus operator acknowledgement; floors, intent floors, caps, and round minima cannot be padded by withdrawals or design picks; terminal and waived states are absorbing; reopen is brainstorm-only before goals freeze; exhausted events retain every unresolved item from the latest available payload. Extend replay fixtures to prove these rules after simulated compaction and to reject forged or malformed receipts and payloads.",
+      "files": [
+        "lib/interview.mjs",
+        "test/interview-ledger-resume.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/interview-ledger-resume.test.mjs"
+      ],
+      "class": "bounded-edit"
+    },
+    {
+      "id": 18,
+      "description": "Add this repository's literal `done:` configuration with `.claude-plugin/plugin.json` as `version_from` and the specified release, install, user-only, and live-check commands and exit-status predicates. Extend the config suite to load the checked-in file, exercise the default metadata-only `commit_paths`, reject `{text, evidence}`, and run the literal normalized `git ls-remote` predicate against a tagless bare remote to prove absence reports exit 1 rather than indeterminate.",
+      "files": [
+        ".masterplan.yaml",
+        "test/config.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/config.test.mjs",
+        "grep -q '^done:' .masterplan.yaml"
+      ],
+      "class": "bounded-edit"
+    },
+    {
+      "id": 21,
+      "description": "Route every remaining direct process.env read outside lib/config.mjs through its exported accessors, preserving behaviour and the injected-env test seams: CLAUDE_CONFIG_DIR and HOME in lib/paths.mjs; MP_ROUTING_POLICY in lib/dispatch/routing-policy.mjs and lib/doctor/routing-policy-health.mjs; MP_DISPATCH_WAVE_CONCURRENCY, MP_ROUTING_POLICY, and SKYNET_VERIFY_ALLOWLIST in lib/dispatch-wave.mjs; HOME in bin/doctor.mjs, lib/doctor/codex-auth.mjs, and lib/doctor/pi-agent-registration.mjs (its spawn uses the config-owned passthrough). The existing suites for these modules stay green; the repo-wide zero-process.env assertion belongs to config-knobs.inventory, this task asserts only its own files. lib/continue.mjs, lib/sweep.mjs, lib/runs.mjs, and bin/install-pi.mjs are converted by their owning tasks. As the owner of bin/doctor.mjs, also add the `--only=<check-id>` option the spec relies on (spec §7.1 checks and the G6 evidence use `node bin/doctor.mjs --only=<check-id>`): run exactly one discovered check by id, exit with that check's outcome, and exit 2 with the list of known ids for an unknown id; cover it in test/doctor.test.mjs. While in test/doctor.test.mjs, update the discovered-module count assertion (19 today) to derive from the modules on disk or to the new total, since the wave-0 doctor checks are auto-discovered.",
+      "files": [
+        "lib/paths.mjs",
+        "lib/dispatch/routing-policy.mjs",
+        "lib/dispatch-wave.mjs",
+        "lib/doctor/routing-policy-health.mjs",
+        "lib/doctor/codex-auth.mjs",
+        "lib/doctor/pi-agent-registration.mjs",
+        "bin/doctor.mjs",
+        "test/paths.test.mjs",
+        "test/routing-policy.test.mjs",
+        "test/dispatch-wave.test.mjs",
+        "test/doctor.test.mjs",
+        "lib/config.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/paths.test.mjs",
+        "node --test test/routing-policy.test.mjs",
+        "node --test test/dispatch-wave.test.mjs",
+        "node --test test/doctor.test.mjs",
+        "test \"$(grep -l \"process\\.env\" lib/paths.mjs lib/dispatch/routing-policy.mjs lib/dispatch-wave.mjs lib/doctor/routing-policy-health.mjs lib/doctor/codex-auth.mjs lib/doctor/pi-agent-registration.mjs bin/doctor.mjs | wc -l)\" = 0 && grep -q \"readEnv\" lib/paths.mjs lib/dispatch-wave.mjs bin/doctor.mjs"
+      ],
+      "class": "bounded-edit"
+    },
+    {
+      "id": 24,
+      "description": "Enforce deploy commit identity and release guards: open version_not_bumped before merge or PR retirement when the branch version is already tagged locally or on origin; require the branch tip in the deploy base; require --merged and --merge-sha for PRs; accept merge ancestry or a single squash with git patch-id --verbatim on git 2.39 or newer; and reject rebase merges, whitespace-different squashes, or unsupported git versions with explicit diagnostics. Audit every deploy boundary per commit, allowing single-parent docs/masterplan bundle commits and recorded stage-produced commits only within done.commit_paths, requiring ${version} to remain unchanged, and treating every other commit as a base move that invalidates old receipts. Refuse authorization when MAIN is dirty outside docs/masterplan.",
+      "files": [
+        "lib/finish.mjs",
+        "lib/finish-step.mjs",
+        "test/deploy-commit-identity.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/deploy-commit-identity.test.mjs"
+      ],
+      "class": "bounded-edit"
+    },
+    {
+      "id": 35,
+      "description": "Extend the existing runs-list regression suite to prove enriched records expose untruncated multiline topics, phase, worktree path or null, parsed goal ids and text, and deterministic planned-path unions, including bundles where optional goals or plan artifacts are absent.",
+      "files": [
+        "test/runs-list.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/runs-list.test.mjs"
+      ],
+      "class": "bounded-edit"
+    },
+    {
+      "id": 44,
+      "description": "Implement the one-off scripts/bootstrap-v10.mjs driver with status, arm, record, and corrective-pass start subcommands; the fixed step enum and pass ordering; schema-validated bootstrap_armed/bootstrap_step writes through appendEvent; same-SHA authorization matching; failed/recovered semantics; command and digest binding; fixture-target overrides; per-step preconditions and postconditions; workspace-root bundle scanning; carried-main commit reporting; reviewed-to-tag identity checks; PR reconciliation data; and the gate's clean-tree, remote-tip equality, ancestry, branch-path, and per-commit bundle-only audits. Status must reconstruct pass, completed steps, failures, and the next action solely from disk after compaction.\nintegration note: orchestration-integration must invoke this script's arm → printed command → record loop as a serial pre-finish bootstrap stage and must not expose a permanent mp bootstrap CLI verb. Own test/bootstrap-driver.test.mjs: fixture-bundle smoke cases proving status reconstructs pass and next action from disk, arm refuses when a precondition fails without writing an event, record refuses without a matching arm at the same base SHA, and --targets overrides route every path to fixture locations. The smoke suite includes one precondition and one postcondition from each of the three step shapes (git-only, gh-network, filesystem-install) so the step abstraction is proven before the dependent suites build on it.",
+      "files": [
+        "scripts/bootstrap-v10.mjs",
+        "test/bootstrap-driver.test.mjs"
+      ],
+      "verify_commands": [
+        "node --check scripts/bootstrap-v10.mjs",
+        "node --test test/bootstrap-driver.test.mjs"
+      ],
+      "class": "bounded-edit"
+    }
+  ],
+  "tasks": [
+    {
+      "task_id": 12,
+      "class": "bounded-edit",
+      "handoff_key": "fabric-idem-v1:intent-to-completion:12:f1c709bfcdf330c242cb62bcea46c5371b9a6cf91b2fd94452686d613c82056a:4a84eab3e480fb41b8f91d02c1a2a5ca05b82196b631f20e49a219f278f9260e"
+    },
+    {
+      "task_id": 18,
+      "class": "bounded-edit",
+      "handoff_key": "fabric-idem-v1:intent-to-completion:18:1b796b10f669b6027c923e3e6d338bb5c7216339fbc5d3037b75bce18d547788:4a84eab3e480fb41b8f91d02c1a2a5ca05b82196b631f20e49a219f278f9260e"
+    },
+    {
+      "task_id": 21,
+      "class": "bounded-edit",
+      "handoff_key": "fabric-idem-v1:intent-to-completion:21:01eb4a5b12eca0259734d6d17fc15bbeca0b5dc8db832018d23e8e1ce48ac777:4a84eab3e480fb41b8f91d02c1a2a5ca05b82196b631f20e49a219f278f9260e"
+    },
+    {
+      "task_id": 24,
+      "class": "bounded-edit",
+      "handoff_key": "fabric-idem-v1:intent-to-completion:24:79c6c7ee3785c7bff6590bc23a7b7aaee5d510f2f7e3e8f6ee76525e61f682e0:4a84eab3e480fb41b8f91d02c1a2a5ca05b82196b631f20e49a219f278f9260e"
+    },
+    {
+      "task_id": 35,
+      "class": "bounded-edit",
+      "handoff_key": "fabric-idem-v1:intent-to-completion:35:148a27975763f28f570de548bd81bfe128182c99b8d62cb65b9ccb3d23c65371:4a84eab3e480fb41b8f91d02c1a2a5ca05b82196b631f20e49a219f278f9260e"
+    },
+    {
+      "task_id": 44,
+      "class": "bounded-edit",
+      "handoff_key": "fabric-idem-v1:intent-to-completion:44:06b1402296ede8b41f53dae4d89e16f1d6bf162391a74a420ec018530acdbe6b:4a84eab3e480fb41b8f91d02c1a2a5ca05b82196b631f20e49a219f278f9260e"
+    }
+  ],
+  "gateway_verify_allowlist": "bash -c",
+  "review_context": {
+    "enabled": true,
+    "base_sha": "76086c5fa1910b79af902a88dc5ea9f567a8ba88",
+    "tasks": [
+      {
+        "task_id": 12,
+        "description": "Harden the interview replay and tests for the complete terminal-state contract: rounds seal on the first answer, withdrawal, draft, or critic event; batches may ask within the current round; completed intent rounds require an answered intent question; high complexity refuses a new intent round without the preceding receipt and convergence requires distinct per-round receipts; design events do not move content_head; drafts must follow all intent content; unavailable critics require two same-head failures plus operator acknowledgement; floors, intent floors, caps, and round minima cannot be padded by withdrawals or design picks; terminal and waived states are absorbing; reopen is brainstorm-only before goals freeze; exhausted events retain every unresolved item from the latest available payload. Extend replay fixtures to prove these rules after simulated compaction and to reject forged or malformed receipts and payloads.",
+        "class": "bounded-edit",
+        "repo": "/srv/dev/ras/masterplan/.worktrees/intent-to-completion"
+      },
+      {
+        "task_id": 18,
+        "description": "Add this repository's literal `done:` configuration with `.claude-plugin/plugin.json` as `version_from` and the specified release, install, user-only, and live-check commands and exit-status predicates. Extend the config suite to load the checked-in file, exercise the default metadata-only `commit_paths`, reject `{text, evidence}`, and run the literal normalized `git ls-remote` predicate against a tagless bare remote to prove absence reports exit 1 rather than indeterminate.",
+        "class": "bounded-edit",
+        "repo": "/srv/dev/ras/masterplan/.worktrees/intent-to-completion"
+      },
+      {
+        "task_id": 21,
+        "description": "Route every remaining direct process.env read outside lib/config.mjs through its exported accessors, preserving behaviour and the injected-env test seams: CLAUDE_CONFIG_DIR and HOME in lib/paths.mjs; MP_ROUTING_POLICY in lib/dispatch/routing-policy.mjs and lib/doctor/routing-policy-health.mjs; MP_DISPATCH_WAVE_CONCURRENCY, MP_ROUTING_POLICY, and SKYNET_VERIFY_ALLOWLIST in lib/dispatch-wave.mjs; HOME in bin/doctor.mjs, lib/doctor/codex-auth.mjs, and lib/doctor/pi-agent-registration.mjs (its spawn uses the config-owned passthrough). The existing suites for these modules stay green; the repo-wide zero-process.env assertion belongs to config-knobs.inventory, this task asserts only its own files. lib/continue.mjs, lib/sweep.mjs, lib/runs.mjs, and bin/install-pi.mjs are converted by their owning tasks. As the owner of bin/doctor.mjs, also add the `--only=<check-id>` option the spec relies on (spec §7.1 checks and the G6 evidence use `node bin/doctor.mjs --only=<check-id>`): run exactly one discovered check by id, exit with that check's outcome, and exit 2 with the list of known ids for an unknown id; cover it in test/doctor.test.mjs. While in test/doctor.test.mjs, update the discovered-module count assertion (19 today) to derive from the modules on disk or to the new total, since the wave-0 doctor checks are auto-discovered.",
+        "class": "bounded-edit",
+        "repo": "/srv/dev/ras/masterplan/.worktrees/intent-to-completion"
+      },
+      {
+        "task_id": 24,
+        "description": "Enforce deploy commit identity and release guards: open version_not_bumped before merge or PR retirement when the branch version is already tagged locally or on origin; require the branch tip in the deploy base; require --merged and --merge-sha for PRs; accept merge ancestry or a single squash with git patch-id --verbatim on git 2.39 or newer; and reject rebase merges, whitespace-different squashes, or unsupported git versions with explicit diagnostics. Audit every deploy boundary per commit, allowing single-parent docs/masterplan bundle commits and recorded stage-produced commits only within done.commit_paths, requiring ${version} to remain unchanged, and treating every other commit as a base move that invalidates old receipts. Refuse authorization when MAIN is dirty outside docs/masterplan.",
+        "class": "bounded-edit",
+        "repo": "/srv/dev/ras/masterplan/.worktrees/intent-to-completion"
+      },
+      {
+        "task_id": 35,
+        "description": "Extend the existing runs-list regression suite to prove enriched records expose untruncated multiline topics, phase, worktree path or null, parsed goal ids and text, and deterministic planned-path unions, including bundles where optional goals or plan artifacts are absent.",
+        "class": "bounded-edit",
+        "repo": "/srv/dev/ras/masterplan/.worktrees/intent-to-completion"
+      },
+      {
+        "task_id": 44,
+        "description": "Implement the one-off scripts/bootstrap-v10.mjs driver with status, arm, record, and corrective-pass start subcommands; the fixed step enum and pass ordering; schema-validated bootstrap_armed/bootstrap_step writes through appendEvent; same-SHA authorization matching; failed/recovered semantics; command and digest binding; fixture-target overrides; per-step preconditions and postconditions; workspace-root bundle scanning; carried-main commit reporting; reviewed-to-tag identity checks; PR reconciliation data; and the gate's clean-tree, remote-tip equality, ancestry, branch-path, and per-commit bundle-only audits. Status must reconstruct pass, completed steps, failures, and the next action solely from disk after compaction.\nintegration note: orchestration-integration must invoke this script's arm → printed command → record loop as a serial pre-finish bootstrap stage and must not expose a permanent mp bootstrap CLI verb. Own test/bootstrap-driver.test.mjs: fixture-bundle smoke cases proving status reconstructs pass and next action from disk, arm refuses when a precondition fails without writing an event, record refuses without a matching arm at the same base SHA, and --targets overrides route every path to fixture locations. The smoke suite includes one precondition and one postcondition from each of the three step shapes (git-only, gh-network, filesystem-install) so the step abstraction is proven before the dependent suites build on it.",
+        "class": "bounded-edit",
+        "repo": "/srv/dev/ras/masterplan/.worktrees/intent-to-completion"
+      }
+    ]
+  }
+}
