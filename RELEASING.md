@@ -4,6 +4,26 @@ Run this checklist for every version bump. The publish-hygiene live test validat
 
 **Publish-time gate:** `lib/hygiene.mjs` is the publish-time gate (C10, retain-intentionally). Its three detector families — (1) fixture-identifier leak scan, (2) cross-manifest version sync, (3) namespace collision — are driven ONLY by `test/publish-hygiene.test.mjs`, which runs under `npm test`. No runtime code imports it; the test is its sole consumer and its release-safety bar. If this module ever looks dead, it is not: it is the guard this checklist's step 7 runs.
 
+### Release contract
+
+The version bump is ordinary run-branch work: bump the version-bearing files
+(`.claude-plugin/plugin.json`, `package.json`, and the others in the checklist
+above) as part of the run's execute phase, before `branch_finish` opens.
+`scripts/release.mjs --version=V` is the release surface and **never bumps**
+version files itself — it requires them to already declare V and refuses
+(exit 1, "version files not bumped") otherwise. It inserts and commits only a
+missing `## [V]` CHANGELOG release header, refuses when any other path is
+dirty, and creates the annotated `vV` tag at HEAD. It is idempotent at its own
+tag: a replay when `vV` already points at HEAD exits 0 ("already released");
+a foreign tag at the version exits 1.
+
+**Corrective 10.0.x path.** When a released v10.0.0 is found wanting, the fix
+lands as new commits on the run branch (the v10.0.0 tag stays where it is),
+pre-publish verify / cross-vendor review / G1–G5 assessment re-run at the new
+tip first, then `scripts/release.mjs --version=10.0.x` makes the new tip and
+tag, and a second PR is opened and merged — local `main` is not pushed again.
+The corrective 10.0.x release supersedes, never withdraws, the bad v10.0.0.
+
 1. **`.claude-plugin/plugin.json`** — bump `version` (canonical source)
 2. **`.claude-plugin/marketplace.json`** — bump root `version` AND `plugins[0].version`
 3. **`.codex-plugin/plugin.json`** — bump `version`
@@ -11,8 +31,10 @@ Run this checklist for every version bump. The publish-hygiene live test validat
 5. **`README.md`** — update `Current release: **vX.Y.Z**` line
 6. **`CHANGELOG.md`** — add `## [X.Y.Z]` entry with date and summary
 7. Run `node --test test/*.test.mjs` — the publish-hygiene live test confirms all version-bearing files agree.
-8. **Tag the release** — create an annotated tag on the release commit:
-   `git tag -a vX.Y.Z -m "release: vX.Y.Z — <one-line summary>"`
+8. **Tag the release** — run `node scripts/release.mjs --version=X.Y.Z` (it
+   inserts and commits a missing CHANGELOG header, then creates the annotated
+   tag `vX.Y.Z` at HEAD; it never bumps version files and is idempotent at its
+   own tag).
 9. **Push the tag** — `git push origin vX.Y.Z` (push the tag explicitly; a plain
    `git push` of the branch does **not** carry tags). CI's `release-publish` job
    (`ci.yml`) only runs when a tag matching `v*` is pushed — **without step 8+9 the

@@ -604,6 +604,8 @@ export { KNOWN_FLAGS };
 function out(obj) {
   process.stdout.write(typeof obj === 'string' ? obj + '\n' : JSON.stringify(obj) + '\n');
 }
+// Exit codes: 2 = usage/unknown flag (A7 contract), 3 = gate op, 4 = uncaught error.
+const EXIT_UNCAUGHT = 4;
 function die(msg, code = 2) {
   process.stderr.write(`masterplan: ${msg}\n`);
   process.exit(code);
@@ -3736,7 +3738,7 @@ function main() {
           goalsChoice: goalsChoiceFlag,
         });
       } catch (e) {
-        die(e.message);
+        die(e.message, EXIT_UNCAUGHT);
       }
       out(op);
       break;

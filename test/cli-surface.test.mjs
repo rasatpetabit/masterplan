@@ -142,7 +142,7 @@ test('A1: finish-step goal-gate flags are parsed and threaded (unknown choice re
   // The flag is recognized (no "unknown flag" die). The engine rejects the choice.
   assert.notEqual(r.status, 2, 'recognized flag must not be rejected as unknown');
   assert.ok(
-    r.stderr.includes('unknown --goals-choice') || r.status === 1 || r.stderr.includes('cannot read state'),
+    r.stderr.includes('unknown --goals-choice') || r.status === 1 || r.status === 4 || r.stderr.includes('cannot read state'),
     `--goals-choice=bogus should reach the engine, got status ${r.status}: ${r.stderr}`,
   );
 });

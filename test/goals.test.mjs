@@ -791,3 +791,158 @@ test('legacyGoalsHash returns null when the block form is not used', () => {
   assert.equal(legacyGoalsHash('topic: plain seed\n\n## G1: X\nsignal: test\n'), null);
   assert.equal(legacyGoalsHash('topic: a | b\n\n## G1: X\nsignal: test\n'), null);
 });
+
+// --- V2 INTENT BLOCK TESTS (wave task 13) ---
+
+const V2_FIXTURE = `topic: |
+  Build the thing
+
+## Intent
+why: the problem
+outcome: the outcome
+anti_goals:
+- not this
+- nor that
+done_means: it is live
+
+## G1: first
+signal: test
+evidence: e1
+
+## G2: second
+
+## G3: third
+`;
+
+const V1_FIXTURE = `topic: |
+  Build the thing
+
+## G1: first
+signal: test
+evidence: e1
+
+## G2: second
+
+## G3: third
+`;
+
+const V2_TWO = `topic: |
+  Build the thing
+
+## Intent
+why: the problem
+outcome: the outcome
+anti_goals:
+- not this
+done_means: it is live
+
+## G1: first
+signal: test
+
+## G2: second
+`;
+
+const V2_SIX = `topic: |
+  Build the thing
+
+## Intent
+why: the problem
+outcome: the outcome
+anti_goals:
+- not this
+done_means: it is live
+
+## G1: first
+## G2: second
+## G3: third
+## G4: fourth
+## G5: fifth
+## G6: sixth
+`;
+
+const V2_EMPTY_WHY = `topic: |
+  Build the thing
+
+## Intent
+why:
+outcome: the outcome
+anti_goals:
+- not this
+done_means: it is live
+
+## G1: first
+## G2: second
+## G3: third
+`;
+
+const V2_NO_SIGNAL = `topic: |
+  Build the thing
+
+## Intent
+why: the problem
+outcome: the outcome
+anti_goals:
+- not this
+done_means: it is live
+
+## G1: first
+## G2: second
+## G3: third
+`;
+
+test('v2 parses intent block with why/outcome/anti_goals/done_means', () => {
+  const parsed = parseGoals(V2_FIXTURE);
+  assert.equal(parsed.version, 2);
+  assert.deepEqual(parsed.intent, {
+    why: 'the problem',
+    outcome: 'the outcome',
+    anti_goals: ['not this', 'nor that'],
+    done_means: 'it is live',
+  });
+  assert.equal(parsed.goals.length, 3);
+});
+
+test('v1 parses with intent null and version 1', () => {
+  const parsed = parseGoals(V1_FIXTURE);
+  assert.equal(parsed.version, 1);
+  assert.equal(parsed.intent, null);
+  assert.equal(parsed.goals.length, 3);
+});
+
+test('validateGoals rejects v2 with wrong goal count or empty why', () => {
+  assert.equal(validateGoals(parseGoals(V2_TWO)).ok, false);
+  assert.equal(validateGoals(parseGoals(V2_SIX)).ok, false);
+  assert.equal(validateGoals(parseGoals(V2_EMPTY_WHY)).ok, false);
+});
+
+test('goalsHash covers intent fields and stays deterministic', () => {
+  assert.equal(goalsHash(V1_FIXTURE), goalsHash(V1_FIXTURE));
+  assert.notEqual(goalsHash(V1_FIXTURE), goalsHash(V2_FIXTURE));
+  const changedDone = V2_FIXTURE.replace('done_means: it is live', 'done_means: it is deployed');
+  assert.notEqual(goalsHash(V2_FIXTURE), goalsHash(changedDone));
+});
+
+test('validateAmendment reports an intent-only change and no change for identical docs', () => {
+  const changedOutcome = V2_FIXTURE.replace('outcome: the outcome', 'outcome: a different outcome');
+  const res = validateAmendment(parseGoals(V2_FIXTURE), parseGoals(changedOutcome));
+  assert.equal(res.ok, true);
+  assert.equal(res.changed, true);
+  assert.match(res.reason || '', /intent amended/);
+
+  const sameRes = validateAmendment(parseGoals(V2_FIXTURE), parseGoals(V2_FIXTURE));
+  assert.equal(sameRes.ok, true);
+  assert.notEqual(sameRes.changed, true);
+});
+
+test('v2 goals without signal/evidence still validate', () => {
+  const res = validateGoals(parseGoals(V2_NO_SIGNAL));
+  assert.equal(res.ok, true);
+});
+
+test('validateAmendment still rejects an illegal goal mutation when the intent also changed', () => {
+  const variant = V2_FIXTURE
+    .replace('outcome: the outcome', 'outcome: a different outcome')
+    .replace('## G2: second', '## G9: second');
+  const res = validateAmendment(parseGoals(V2_FIXTURE), parseGoals(variant));
+  assert.equal(res.ok, false);
+});

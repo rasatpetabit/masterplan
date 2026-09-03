@@ -14,6 +14,11 @@ import {
   isVerified,
   dispositionForChoice,
   summarizePr,
+  orderDeployGroups,
+  classifyStepOutcome,
+  substituteVersionSafe,
+  deployChainHash,
+  classifyCompletion,
 } from '../lib/finish.mjs';
 
 // ---- classifyDirt: task-scope vs user-owned dirt -----------------------------
@@ -272,4 +277,163 @@ test('summarizePr: malformed JSON or a non-array payload → { hasPr:false } (ne
 test('summarizePr: a PR with no usable number → { hasPr:false }', () => {
   assert.deepEqual(summarizePr(JSON.stringify([{ title: 'x' }])), { hasPr: false });
   assert.deepEqual(summarizePr(JSON.stringify(['not-an-object'])), { hasPr: false });
+});
+
+// ---- orderDeployGroups: canonical §7.1 group order ----------------------------
+
+test('orderDeployGroups: returns groups in fixed order regardless of declaration order', () => {
+  const done = {
+    live_check: [{ run: 'x' }],
+    release: [{ run: 'r' }],
+    user_only: [{ text: 't', check: 'c' }],
+    install: [{ run: 'i' }],
+  };
+  assert.deepEqual(orderDeployGroups(done), ['release', 'install', 'user_only', 'live_check']);
+});
+
+test('orderDeployGroups: a partial object definition yields only the present groups, still in fixed order', () => {
+  assert.deepEqual(orderDeployGroups({ install: [{ run: 'i' }], release: [{ run: 'r' }] }),
+    ['release', 'install']);
+});
+
+test('orderDeployGroups: `done: none` → no groups', () => {
+  assert.deepEqual(orderDeployGroups('none'), []);
+});
+
+test('orderDeployGroups: an absent definition → no groups', () => {
+  assert.deepEqual(orderDeployGroups(undefined), []);
+  assert.deepEqual(orderDeployGroups(null), []);
+});
+
+test('orderDeployGroups: accepts a bare array of group names', () => {
+  assert.deepEqual(orderDeployGroups(['live_check', 'release']), ['release', 'live_check']);
+});
+
+// ---- classifyStepOutcome: exit-status-only classification ---------------------
+
+test('classifyStepOutcome: run 0 + check 0 → done', () => {
+  assert.equal(classifyStepOutcome({ runExit: 0, checkExit: 0 }), 'done');
+});
+
+test('classifyStepOutcome: run 0 with no check → done', () => {
+  assert.equal(classifyStepOutcome({ runExit: 0 }), 'done');
+  assert.equal(classifyStepOutcome({ runExit: 0, checkExit: undefined }), 'done');
+});
+
+test('classifyStepOutcome: run 0 + check 1 → failed (effect absent)', () => {
+  assert.equal(classifyStepOutcome({ runExit: 0, checkExit: 1 }), 'failed');
+});
+
+test('classifyStepOutcome: run 0 + check other exit → indeterminate', () => {
+  assert.equal(classifyStepOutcome({ runExit: 0, checkExit: 2 }), 'indeterminate');
+  assert.equal(classifyStepOutcome({ runExit: 0, checkExit: 127 }), 'indeterminate');
+});
+
+test('classifyStepOutcome: run non-zero → failed, check is ignored', () => {
+  assert.equal(classifyStepOutcome({ runExit: 1, checkExit: 0 }), 'failed');
+  assert.equal(classifyStepOutcome({ runExit: 2, checkExit: 1 }), 'failed');
+  assert.equal(classifyStepOutcome({ runExit: 1 }), 'failed');
+});
+
+test('classifyStepOutcome: command output never affects classification', () => {
+  // The function takes only exit codes — there is no output parameter at all. A step
+  // whose run prints anything still classifies purely on the two exit codes.
+  assert.equal(classifyStepOutcome({ runExit: 0, checkExit: 0 }), 'done');
+  assert.equal(classifyStepOutcome({ runExit: 0, checkExit: 1 }), 'failed');
+  assert.equal(classifyStepOutcome({ runExit: 0, checkExit: 3 }), 'indeterminate');
+});
+
+test('classifyStepOutcome: non-integer runExit → indeterminate', () => {
+  assert.equal(classifyStepOutcome({ runExit: null }), 'indeterminate');
+  assert.equal(classifyStepOutcome({ runExit: '0' }), 'indeterminate');
+});
+
+test('classifyStepOutcome: non-integer checkExit → indeterminate', () => {
+  assert.equal(classifyStepOutcome({ runExit: 0, checkExit: '' }), 'indeterminate');
+});
+
+// ---- substituteVersionSafe: validated ${version} substitution -----------------
+
+test('substituteVersionSafe: substitutes a valid version single-quoted into the command', () => {
+  assert.equal(
+    substituteVersionSafe('node scripts/release.mjs --version=${version}', '1.2.3'),
+    "node scripts/release.mjs --version='1.2.3'"
+  );
+});
+
+test('substituteVersionSafe: accepts a valid prerelease version', () => {
+  assert.equal(
+    substituteVersionSafe('git tag v${version}', '1.2.3-beta.1'),
+    "git tag v'1.2.3-beta.1'"
+  );
+});
+
+test('substituteVersionSafe: substitutes every occurrence', () => {
+  assert.equal(
+    substituteVersionSafe('a=${version} b=${version}', '2.0.0'),
+    "a='2.0.0' b='2.0.0'"
+  );
+});
+
+test('substituteVersionSafe: a hostile/absent version → null (refuse, never interpolate)', () => {
+  assert.equal(substituteVersionSafe('x ${version}', '1.2; rm -rf /'), null);
+  assert.equal(substituteVersionSafe('x ${version}', 'v1.2.3'), null);
+  assert.equal(substituteVersionSafe('x ${version}', '1.2'), null);
+  assert.equal(substituteVersionSafe('x ${version}', ''), null);
+  assert.equal(substituteVersionSafe('x ${version}', undefined), null);
+});
+
+// ---- deployChainHash: deterministic deploy-chain digest -----------------------
+
+test('deployChainHash: same chain → same hash; different chain → different hash', () => {
+  const a = [{ group: 'release', index: 0, exit: 0 }];
+  const b = [{ group: 'release', index: 0, exit: 0 }];
+  const c = [{ group: 'release', index: 0, exit: 1 }];
+  assert.equal(deployChainHash(a), deployChainHash(b));
+  assert.notEqual(deployChainHash(a), deployChainHash(c));
+});
+
+test('deployChainHash: is a 64-char sha256 hex digest', () => {
+  const h = deployChainHash([{ group: 'install', index: 0, exit: 0 }]);
+  assert.match(h, /^[0-9a-f]{64}$/);
+});
+
+test('deployChainHash: an empty chain hashes deterministically', () => {
+  assert.equal(deployChainHash([]), deployChainHash([]));
+  assert.equal(deployChainHash(undefined), deployChainHash([]));
+});
+
+test('deployChainHash: key order does not change the hash', () => {
+  const a = [{ group: 'release', index: 0, exit: 0 }];
+  const b = [{ exit: 0, index: 0, group: 'release' }];
+  assert.equal(deployChainHash(a), deployChainHash(b));
+  const c = [{ group: 'release', index: 0, exit: 1 }];
+  assert.notEqual(deployChainHash(a), deployChainHash(c));
+});
+
+// ---- classifyCompletion: complete / incomplete / merged / legacy --------------
+
+test('classifyCompletion: complete stays complete', () => {
+  assert.equal(classifyCompletion({ completion: 'complete' }), 'complete');
+});
+
+test('classifyCompletion: incomplete:<reason> is preserved', () => {
+  assert.equal(classifyCompletion({ completion: 'incomplete:attested' }), 'incomplete:attested');
+  assert.equal(classifyCompletion({ completion: 'incomplete:version_not_bumped' }), 'incomplete:version_not_bumped');
+});
+
+test('classifyCompletion: merged (done: none) stays merged', () => {
+  assert.equal(classifyCompletion({ completion: 'merged' }), 'merged');
+});
+
+test('classifyCompletion: no completion field → legacy (never complete)', () => {
+  assert.equal(classifyCompletion({}), 'legacy');
+  assert.equal(classifyCompletion(undefined), 'legacy');
+  assert.equal(classifyCompletion({ completion: null }), 'legacy');
+  assert.equal(classifyCompletion({ completion: '' }), 'legacy');
+  assert.equal(classifyCompletion({ completion: 'incomplete:' }), 'legacy');
+});
+
+test('classifyCompletion: an unknown completion value → legacy (defensive)', () => {
+  assert.equal(classifyCompletion({ completion: 'bogus' }), 'legacy');
 });

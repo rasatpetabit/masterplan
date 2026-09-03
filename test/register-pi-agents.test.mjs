@@ -494,3 +494,34 @@ test('A6: bare invocation (write mode) still works and is the only mutating path
   assert.equal(res.status, 0, `bare write should exit 0: ${res.stderr}`);
   assert.match(res.stderr, /wrote/, 'write mode should report what it wrote');
 });
+
+// ---- mp-intent-critic registration (generic registrar discovery) ----
+//
+// The registrar is generic: it discovers any agents/mp-*.md entry, maps its
+// `model:` lane alias via the routing-policy map, writes the bare copy into the
+// managed manifest, and reports clean under --check. This suite proves that for
+// mp-intent-critic.md using a minimal temp fixture — it never touches the real
+// agents/ tree or the real ~/.pi, so it takes no ownership of the agent prompt.
+
+test('register-pi-agents discovers mp-intent-critic.md, maps its lane model, and reports clean under --check', () => {
+  const intentCritic = `---\nname: mp-intent-critic\ndescription: Fresh-context intent critic (critic class, breaker role)\nmodel: frontier\npreset: breaker\ntools: read, bash\n---\n\nbody\n`;
+  const { agentsDir, targetDir } = setupTmpAgents({ 'mp-intent-critic.md': intentCritic });
+
+  const write = runRegister({ agentsDir, targetDir, check: false });
+  assert.equal(write.registered, 1, 'the generic registrar must discover mp-intent-critic.md');
+  assert.equal(write.written, 1, 'bare copy must be written');
+
+  const installed = readFileSync(join(targetDir, 'mp-intent-critic.md'), 'utf8');
+  assert.ok(installed.includes(`model: ${MODEL_MAP['frontier']}`), 'lane model must be mapped from the routing map');
+  assert.ok(installed.includes('name: mp-intent-critic'), 'name must be preserved');
+  assert.ok(installed.includes('preset: breaker'), 'preset must be preserved');
+  assert.ok(installed.includes('tools: read, bash'), 'tools must be preserved');
+
+  const manifest = JSON.parse(readFileSync(join(targetDir, '.masterplan-managed.json'), 'utf8'));
+  assert.equal(manifest.schema, 1);
+  assert.deepEqual(manifest.files, ['mp-intent-critic.md'], 'the produced bare copy must be recorded in the managed manifest');
+
+  const check = runRegister({ agentsDir, targetDir, check: true });
+  assert.equal(check.drift, 0, JSON.stringify(check.report));
+  assert.ok(check.report.some((l) => /OK\s+mp-intent-critic\.md/.test(l)), JSON.stringify(check.report));
+});
