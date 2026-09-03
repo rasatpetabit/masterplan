@@ -1,0 +1,79 @@
+{
+  "tool": "adversarial-review workflow (skynet_review_diff lanes + in-repo lenses + synthesis)",
+  "gate": "plan",
+  "verdict": "revise",
+  "findings_count": 1,
+  "ts": "2026-09-03T06:07:45.010Z",
+  "reviewers": [
+    {
+      "dispatch_id": "wf_8195246e-611/agent-a8f2675d1d10ae2fc/skynet_review_diff",
+      "provider": "litellm/gpt-5.6-sol",
+      "model": "dispatch-adversary",
+      "output_tokens": 262,
+      "verdict": "revise"
+    },
+    {
+      "dispatch_id": "wf_8195246e-611/agent-a8f2675d1d10ae2fc/skynet_review_diff",
+      "provider": "litellm/gpt-5.6-sol",
+      "model": "dispatch-adversary",
+      "output_tokens": 411,
+      "verdict": "revise"
+    },
+    {
+      "dispatch_id": "wf_8195246e-611/agent-a8f2675d1d10ae2fc/skynet_review_diff",
+      "provider": "litellm/gpt-5.6-sol",
+      "model": "dispatch-adversary",
+      "output_tokens": 7561,
+      "verdict": "revise"
+    }
+  ],
+  "lanes_failed": [
+    {
+      "dispatch_id": "wf_8195246e-611/agent-a8f2675d1d10ae2fc/skynet_review_diff",
+      "model": "dispatch-adversary",
+      "error": "HTTP 502 from http://192.168.109.71:4000/v1 skynet endpoint: {\"error\": {\"message\": \"shim upstream error: timed out\"}}"
+    },
+    {
+      "dispatch_id": "wf_8195246e-611/agent-a8f2675d1d10ae2fc/skynet_review_diff",
+      "model": "dispatch-adversary",
+      "error": "HTTP 502 from http://192.168.109.71:4000/v1 skynet endpoint:"
+    }
+  ],
+  "digest": "Plan gate — cross-vendor adversarial review digest (intent-to-completion)\nArtifacts: spec.md (rev 14) + plan.md + plan.index.json (48 tasks / 11 waves) — bytes embedded verbatim, sha256 c4a5ddec64a0c8f3a285944c1a15536efd58d7d6f1e410c92cc78113d427e3f6, 268761 chars\nWorkflow: adversarial-review (wf_8195246e-611), intensity standard; cross-vendor lanes: openai/gpt-5.6-sol; degraded: none\nProvenance: dispatch-adversary → litellm/gpt-5.6-sol, 262 output tokens; dispatch-adversary → litellm/gpt-5.6-sol, 411 output tokens; dispatch-adversary → litellm/gpt-5.6-sol, 7561 output tokens\nVerdict: revise; findings 1 (1 should-fix); disagreements 1; dropped 4\n\nSummary: The plan's wave structure holds up under in-tree verification: a script over plan.index.json finds zero same-wave file collisions in any of the 11 waves, the finish-step flag contract task 3 wires against is established by task 23 in wave 1 (not task 26), the `pushed: no` / required_successor CLI projections rest on wave-0 schemas and projections rather than the later finish-step writers, and the absence of a live-release task is the spec's explicit design (§10.1 / A33: the bootstrap stage is a post-wave operator-gated stage, never a plan task, and the index meta.solution says so). All four of reviewer 1's blockers are therefore dropped as context errors from a reviewer that never saw the tree or the full spec (its own process note says the successful pass ran on condensed descriptions). One defect survives, confirmed live: task 7's verify for commands/masterplan.md is a single `grep -nE` alternation that exits 0 on any one token (reproduced: the pattern currently exits 1 against the sequencer and exits 0 on a one-token line), while every other multi-token check in the plan (tasks 1, 8) uses AND semantics. That is a should-fix, not a blocker, because task 7's op-table-parity and prompt-structure suites remain the primary gate; the verify line should still be tightened before execution.\n\nFindings (severity-first):\n 1. [should-fix] Task 7's verify command for commands/masterplan.md uses grep -E alternation (OR semantics), so it passes when any single required token is present rather than requiring all of them.\n",
+  "result": {
+    "reviewed_sha256": "c4a5ddec64a0c8f3a285944c1a15536efd58d7d6f1e410c92cc78113d427e3f6",
+    "reviewed_chars": 268761,
+    "reviewed_files": [
+      "spec.md",
+      "plan.md",
+      "plan.index.json"
+    ],
+    "final_verdict": "revise",
+    "summary": "The plan's wave structure holds up under in-tree verification: a script over plan.index.json finds zero same-wave file collisions in any of the 11 waves, the finish-step flag contract task 3 wires against is established by task 23 in wave 1 (not task 26), the `pushed: no` / required_successor CLI projections rest on wave-0 schemas and projections rather than the later finish-step writers, and the absence of a live-release task is the spec's explicit design (§10.1 / A33: the bootstrap stage is a post-wave operator-gated stage, never a plan task, and the index meta.solution says so). All four of reviewer 1's blockers are therefore dropped as context errors from a reviewer that never saw the tree or the full spec (its own process note says the successful pass ran on condensed descriptions). One defect survives, confirmed live: task 7's verify for commands/masterplan.md is a single `grep -nE` alternation that exits 0 on any one token (reproduced: the pattern currently exits 1 against the sequencer and exits 0 on a one-token line), while every other multi-token check in the plan (tasks 1, 8) uses AND semantics. That is a should-fix, not a blocker, because task 7's op-table-parity and prompt-structure suites remain the primary gate; the verify line should still be tightened before execution.",
+    "findings": [
+      {
+        "severity": "should-fix",
+        "claim": "Task 7's verify command for commands/masterplan.md uses grep -E alternation (OR semantics), so it passes when any single required token is present rather than requiring all of them.",
+        "failure": "Implementer rewrites the deploy-ops table (adding e.g. intent_confirm) but omits the bootstrap-stage arm/record rows, the mp-intent-critic dispatch block, or any <!-- knob: --> marker; `grep -nE 'overlap.review|...|<!-- knob:' commands/masterplan.md` exits 0 on the first match, and no later task re-opens commands/masterplan.md. Reproduced: the pattern exits 1 against the current sequencer (nothing present yet) and exits 0 against a line containing only `intent_confirm`.",
+        "location": "docs/masterplan/intent-to-completion/plan.md:287 (Task 7 verify) and plan.index.json task id 7 verify_commands[2]",
+        "fix_direction": "Replace the alternation with the for-loop idiom tasks 1 and 8 already use: `for t in 'overlap.review' 'mp interview status' 'mp-intent-critic' 'run_deploy_step' 'deploy_indeterminate' 'run_final_check' 'intent_confirm' 'push_archive' 'bootstrap-v10.mjs' 'mp context-status' '<!-- knob:'; do grep -q \"$t\" commands/masterplan.md || { echo \"missing $t\"; exit 1; }; done` (plus a separate `grep -Eq 'bootstrap-v10\\.mjs.*arm'` for the arm row), and regenerate plan.index.json / plan_hash from the same source."
+      }
+    ],
+    "dropped": [
+      "Reviewer 1 #1 (task 3 depends same-wave on task 26's finish-step contract): not confirmed. The finish-step deploy contract and the full flag list task 3 forwards (--deploy-authorize … --archive-pushed, --sha) are established by task 23 in wave 1 (its integration note enumerates every flag); tasks 24/25 extend it in waves 2–3. Task 26 (wave 4) completes the replay test suite and shares no files with task 3. Residual caveat, not promoted: task 3's 'one gate-routing case per finish flag' touches intent_confirm/archive gates that tasks 27–29 finish in waves 5–7, but task 6 (wave 6) and the wave-9/10 knob-contract suites re-exercise the CLI-to-finish surface afterward.",
+      "Reviewer 1 #2 (task 6 in wave 6 asserts push_archive/pushed:no and required_successor before tasks 28/29 produce them): not confirmed. `pushed: no` and the required_successor obligation line are CLI projections over events whose append-time schemas land in task 1 (wave 0) and whose obligation projection lands in task 33 (wave 0); task 3 already implements both projections in wave 4. Task 6's fixtures write the same schema-validated events the later finish-step writers emit, so a divergence would fail append-time validation rather than pass silently; task 48 (wave 6) additionally re-runs the doctor checks against writer-produced bundles.",
+      "Reviewer 1 #3 (tasks 18 and 21 both edit test/config.test.mjs in wave 2): false. plan.index.json task 21's files are lib/paths.mjs, lib/dispatch/routing-policy.mjs, lib/dispatch-wave.mjs, lib/doctor/routing-policy-health.mjs, lib/doctor/codex-auth.mjs, lib/doctor/pi-agent-registration.mjs, bin/doctor.mjs, test/paths.test.mjs, test/routing-policy.test.mjs, test/dispatch-wave.test.mjs, test/doctor.test.mjs, lib/config.mjs — no test/config.test.mjs. A script over every wave reports zero same-wave file collisions.",
+      "Reviewer 1 #4 (task 42's wave-0 bump to 10.0.0 is premature and no task runs the real release script live): contradicts the spec by design. Spec §3 and §7.1 make the version bump ordinary run-branch work checked by `version_not_bumped` before the branch retires, and §11 `publish-hygiene` requires '10.0.0 everywhere' on the branch; the bump is on the run branch, not main (tree still shows 9.10.0 on main). Spec §10.1 step 1 and A33 state the live bootstrap stage (including `scripts/release.mjs --version=10.0.0`) is 'not a plan wave … never a task', and plan.index.json meta.solution records the stage as the post-wave operator-gated procedure with its finish preconditions. Adding it as a plan task would violate the spec."
+    ],
+    "disagreements": [
+      "Reviewer 1 (revise, four blockers on wave/dependency structure) vs reviewer 2 (revise, structure checks out, one verify-command defect): the evidence favours reviewer 2. Reviewer 2 verified in-tree; reviewer 1's process note admits the successful pass used condensed task descriptions, and each of its four claims fails against plan.index.json or the spec's explicit bootstrap-stage design (see dropped). No blocker survives; the single should-fix is reviewer 2's, reproduced live."
+    ],
+    "reviewers": [
+      "openai/gpt-5.6-sol: revise",
+      "approach-lens (in-tree verification): revise"
+    ],
+    "cross_vendor_lanes": [
+      "openai/gpt-5.6-sol"
+    ]
+  }
+}

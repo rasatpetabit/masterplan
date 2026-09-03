@@ -1,0 +1,17 @@
+# §3c alignment audit — Mode B verdicts (mp-alignment-auditor on dispatch-critic, 2026-09-03)
+anchor_quality: verbatim (anchor_hash sha256:0843be43d8c7b5a3…; clauses A1–A12 from alignment-clauses.json; plan_hash c19d76ac…)
+summary: 18 covered, 0 narrowed, 0 dropped, 0 contradicted, 0 widened
+A1 covered (7, 10, 11, 12) — durable intent interview, adaptive rounds, persisted drafts, fresh-context intent critic.
+A2 covered (7, 10, 11, 12) — intent questions separated from design proposals; how-level questions reclassified into model-proposed options.
+A3 covered (7, 12, 16) — high mode: larger floors, multiple adaptive intent rounds, per-round critic receipts, clean critic result before convergence.
+A4 covered (5, 13, 14, 15) — goals v2: hashed Intent block, three to five outcome-level goals consumed throughout the run.
+A5 covered (22–30) — ordered deploy and live-check steps, final intent assessment and confirmation, honest completion classes, archive publication.
+A6 covered (16, 19, 23) — inert-autonomy defect identified and remediated; validated resolution; observable gated-versus-loose deploy behaviour.
+A7 covered (19, 20, 21) — control-surface inventory, consumer-side behavioural contracts, read-but-ignored and writer-only detection.
+A8 covered (12, 16, 23) — validated complexity and autonomy levels through the config hierarchy with distinct interview/planning/deploy behaviour.
+A9 covered (19, 20) — generated inventory over CLI flags, nested config paths, emitted controls, environment controls, prompt-only controls.
+A10 covered (3, 7, 9, 31, 34) — pre-seed inventory load, overlap evaluation, recorded review, staleness detection, serialised concurrent seeds.
+A11 covered (7, 34) — every gate emits measured usage or an explicit unsupported/malformed/post-compaction/not-found state.
+A12 covered (7, 34) — no harness lever for automatic compaction; threshold-based /compact advice plus durable post-compaction recovery (a faithful answer, not a narrowing).
+G1 covered (7, 9, 10, 11, 12, 31, 34, 43) · G2 covered (5, 13, 14, 15) · G3 covered (22–29) · G4 covered (8, 16, 17, 19, 20, 21) · G5 covered (3, 7, 33, 34, 36) · G6 covered (7, 41, 42, 44–48).
+Advisory only (§3c): no alignment concerns to report.
