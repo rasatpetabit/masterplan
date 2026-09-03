@@ -20,13 +20,27 @@
 // NOT tested here; main() is import-guarded so this import is pure. Temp-dir
 // runRegister tests cover write/check/SKIP_FOR_PI exclusion + drift detection.
 
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync, mkdirSync, writeFileSync, mkdtempSync, existsSync, unlinkSync } from 'node:fs';
+import { readFileSync, readdirSync, mkdirSync, writeFileSync, mkdtempSync, existsSync, unlinkSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+
+// Every fixture here builds a tree under os.tmpdir(); without this they accumulate across
+// runs and fill a shared /tmp. Registered on creation, removed once when the file finishes.
+const FIXTURE_TMPDIRS = [];
+function mkdtempTracked(prefix) {
+  const dir = mkdtempSync(prefix);
+  FIXTURE_TMPDIRS.push(dir);
+  return dir;
+}
+after(() => {
+  for (const d of FIXTURE_TMPDIRS) {
+    try { rmSync(d, { recursive: true, force: true }); } catch { /* already gone */ }
+  }
+});
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -133,9 +147,9 @@ test('mapModelLine throws when there is no model line', () => {
 // ---- runRegister filesystem behavior (the CLI contract) ----
 
 function setupTmpAgents(files) {
-  const agentsDir = mkdtempSync(join(tmpdir(), 'mp-reg-agents-'));
+  const agentsDir = mkdtempTracked(join(tmpdir(), 'mp-reg-agents-'));
   for (const [name, body] of Object.entries(files)) writeFileSync(join(agentsDir, name), body);
-  const targetDir = mkdtempSync(join(tmpdir(), 'mp-reg-target-'));
+  const targetDir = mkdtempTracked(join(tmpdir(), 'mp-reg-target-'));
   return { agentsDir, targetDir };
 }
 
@@ -357,7 +371,7 @@ test('every non-skipped agent that declares tools covers its MCP-namespaced name
 const BIN = join(repoRoot, 'bin', 'register-pi-agents.mjs');
 
 function runCli(args, { withCanary = false } = {}) {
-  const home = mkdtempSync(join(tmpdir(), 'mp-reg-home-'));
+  const home = mkdtempTracked(join(tmpdir(), 'mp-reg-home-'));
   if (withCanary) {
     const piAgents = join(home, '.pi', 'agent', 'agents');
     mkdirSync(piAgents, { recursive: true });

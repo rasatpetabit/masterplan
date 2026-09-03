@@ -4,7 +4,7 @@
 // spawn plan out, orchestrator-provided review records in, per-task review
 // fields on digests, and a blocking verdict path through blocking_reviews[].
 
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -20,6 +20,20 @@ import { writeState, readState } from '../lib/bundle.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
 import { recordWaveResult } from '../lib/wave-commit.mjs';
 
+// Every fixture here builds a tree under os.tmpdir(); without this they accumulate across
+// runs and fill a shared /tmp. Registered on creation, removed once when the file finishes.
+const FIXTURE_TMPDIRS = [];
+function mkdtempTracked(prefix) {
+  const dir = fs.mkdtempSync(prefix);
+  FIXTURE_TMPDIRS.push(dir);
+  return dir;
+}
+after(() => {
+  for (const d of FIXTURE_TMPDIRS) {
+    try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* already gone */ }
+  }
+});
+
 function git(dir, ...args) {
   return String(execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' })).trim();
 }
@@ -30,7 +44,7 @@ function write(root, rel, content) {
 }
 
 function makeDogfoodFixture({ tasks, planIndex, slug = 'dogfood-v1' }) {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-dogfood-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-dogfood-'));
   const MAIN = path.join(tmp, 'main');
   fs.mkdirSync(MAIN, { recursive: true });
   git(MAIN, 'init', '--initial-branch=main');

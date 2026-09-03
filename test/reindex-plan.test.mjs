@@ -7,7 +7,7 @@
 //   - appends a plan_reindexed audit event (old -> new hash) when a sibling state.yml exists
 //   - fail-closed: missing plan / unreadable-or-invalid index / absent plan_hash field
 
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -16,6 +16,20 @@ import { createHash, randomBytes } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { serializeState } from '../lib/bundle.mjs';
+
+// Every fixture here builds a tree under os.tmpdir(); without this they accumulate across
+// runs and fill a shared /tmp. Registered on creation, removed once when the file finishes.
+const FIXTURE_TMPDIRS = [];
+function mkdtempTracked(prefix) {
+  const dir = fs.mkdtempSync(prefix);
+  FIXTURE_TMPDIRS.push(dir);
+  return dir;
+}
+after(() => {
+  for (const d of FIXTURE_TMPDIRS) {
+    try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* already gone */ }
+  }
+});
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const BIN = path.join(repoRoot, 'bin/masterplan.mjs');
@@ -32,7 +46,7 @@ const sha = (s) => 'sha256:' + createHash('sha256').update(s).digest('hex');
 
 // A bundle fixture whose index plan_hash is deliberately STALE vs plan.md.
 function makeBundle({ plan = '# Plan\n\n- [ ] T1\n', withState = true } = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-reindex-'));
+  const dir = mkdtempTracked(path.join(os.tmpdir(), 'mp-reindex-'));
   fs.writeFileSync(path.join(dir, 'plan.md'), plan);
   const staleHash = 'sha256:' + randomBytes(32).toString('hex');
   // Non-standard spacing in the tasks array below is deliberate: the restamp must

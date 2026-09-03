@@ -1,5 +1,5 @@
 // test/context-status-session-lineage.test.mjs — tests for lib/context-status.mjs
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -12,9 +12,23 @@ import {
   contextStatus,
 } from '../lib/context-status.mjs';
 
+// Every fixture here builds a tree under os.tmpdir(); without this they accumulate across
+// runs and fill a shared /tmp. Registered on creation, removed once when the file finishes.
+const FIXTURE_TMPDIRS = [];
+function mkdtempTracked(prefix) {
+  const dir = fs.mkdtempSync(prefix);
+  FIXTURE_TMPDIRS.push(dir);
+  return dir;
+}
+after(() => {
+  for (const d of FIXTURE_TMPDIRS) {
+    try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* already gone */ }
+  }
+});
+
 function makeTempDirs() {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-home-'));
-  const mainRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-main-'));
+  const home = mkdtempTracked(path.join(os.tmpdir(), 'mp-home-'));
+  const mainRoot = mkdtempTracked(path.join(os.tmpdir(), 'mp-main-'));
   return { home, mainRoot, encoded: encodeProjectPath(mainRoot) };
 }
 
@@ -284,8 +298,8 @@ test('a resolved but unreadable transcript never fabricates usage', (t) => {
 });
 
 test('a MAIN path containing "subagents" still resolves its subdirectory lineage', (t) => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-home-'));
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-'));
+  const home = mkdtempTracked(path.join(os.tmpdir(), 'mp-home-'));
+  const base = mkdtempTracked(path.join(os.tmpdir(), 'mp-'));
   const mainRoot = path.join(base, 'my-subagents-repo');
   fs.mkdirSync(path.join(mainRoot, 'app'), { recursive: true });
   t.after(() => { fs.rmSync(home, { recursive: true, force: true }); fs.rmSync(base, { recursive: true, force: true }); });

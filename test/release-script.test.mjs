@@ -1,10 +1,24 @@
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+// Every fixture here builds a tree under os.tmpdir(); without this they accumulate across
+// runs and fill a shared /tmp. Registered on creation, removed once when the file finishes.
+const FIXTURE_TMPDIRS = [];
+function mkdtempTracked(prefix) {
+  const dir = mkdtempSync(prefix);
+  FIXTURE_TMPDIRS.push(dir);
+  return dir;
+}
+after(() => {
+  for (const d of FIXTURE_TMPDIRS) {
+    try { rmSync(d, { recursive: true, force: true }); } catch { /* already gone */ }
+  }
+});
 
 const SCRIPT = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'release.mjs');
 
@@ -13,7 +27,7 @@ function dirname(p) {
 }
 
 function makeRepo(version) {
-  const dir = mkdtempSync(join(tmpdir(), 'release-test-'));
+  const dir = mkdtempTracked(join(tmpdir(), 'release-test-'));
   execFileSync('git', ['-C', dir, 'init', '-q']);
   execFileSync('git', ['-C', dir, 'config', 'user.name', 't']);
   execFileSync('git', ['-C', dir, 'config', 'user.email', 't@example.invalid']);
@@ -31,7 +45,7 @@ function run(dir, version) {
 }
 
 test('invalid versions exit with status 2', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'release-test-'));
+  const dir = mkdtempTracked(join(tmpdir(), 'release-test-'));
   for (const v of ['v1.2', '1.2', '1.2.3; rm']) {
     const res = run(dir, v);
     assert.equal(res.status, 2);
@@ -141,7 +155,7 @@ test('README without marker fails', () => {
 });
 
 test('invalid semver versions exit with status 2', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'release-test-'));
+  const dir = mkdtempTracked(join(tmpdir(), 'release-test-'));
   for (const v of ['01.2.3', '1.2.3-alpha..1']) {
     const res = run(dir, v);
     assert.equal(res.status, 2);

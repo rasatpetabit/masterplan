@@ -2,7 +2,7 @@
 // No disk: every fs-touching helper is exercised through its injected exists/realpath dep.
 // The CLI-driven success-criteria matrix (spawning `mp refs ...`) lands in a later task that
 // EXTENDS this file; this wave proves the pure core in isolation.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import {
@@ -284,6 +284,20 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { serializeState } from '../lib/bundle.mjs';
 
+// Every fixture here builds a tree under os.tmpdir(); without this they accumulate across
+// runs and fill a shared /tmp. Registered on creation, removed once when the file finishes.
+const FIXTURE_TMPDIRS = [];
+function mkdtempTracked(prefix) {
+  const dir = fs.mkdtempSync(prefix);
+  FIXTURE_TMPDIRS.push(dir);
+  return dir;
+}
+after(() => {
+  for (const d of FIXTURE_TMPDIRS) {
+    try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* already gone */ }
+  }
+});
+
 const BIN = fileURLToPath(new URL('../bin/masterplan.mjs', import.meta.url));
 
 function run(args, opts = {}) {
@@ -295,7 +309,7 @@ function run(args, opts = {}) {
 // A real repo root is a dir containing `.git` (findRepoRoot walks up to it). realpath the root so
 // expectations survive an os.tmpdir() that itself contains a symlink component.
 function mkRepo(prefix) {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+  const root = fs.realpathSync(mkdtempTracked(path.join(os.tmpdir(), prefix)));
   fs.mkdirSync(path.join(root, '.git'));
   return root;
 }
@@ -510,7 +524,7 @@ test('CLI refs add: --repo through a symlink alias is canonicalized to the real 
   assert.deepEqual(listRefsCli(a).forward, [{ slug: 'tgt', repo: repoB }], 'symlink alias normalized to realpath');
   fs.unlinkSync(alias);
   // A --repo that exists but is NOT a git repo root exits non-zero (strict add-side canonicalization).
-  const plain = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-refs-plain-'));
+  const plain = mkdtempTracked(path.join(os.tmpdir(), 'mp-refs-plain-'));
   const bad = run(['refs', 'add', `--state=${a}`, '--direction=back', '--target=tgt', `--repo=${plain}`, ...ident()]);
   assert.notEqual(bad.status, 0);
   assert.match(bad.stderr, /is not a git repo root/);

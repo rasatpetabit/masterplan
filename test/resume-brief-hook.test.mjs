@@ -1,6 +1,6 @@
 // test/resume-brief-hook.test.mjs — doctor check resume-brief-hook: the fleet SessionStart hook
 // must invoke resume-brief with --repo-root.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -9,8 +9,22 @@ import { check } from '../lib/doctor/resume-brief-hook.mjs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
+// Every fixture here builds a tree under os.tmpdir(); without this they accumulate across
+// runs and fill a shared /tmp. Registered on creation, removed once when the file finishes.
+const FIXTURE_TMPDIRS = [];
+function mkdtempTracked(prefix) {
+  const dir = fs.mkdtempSync(prefix);
+  FIXTURE_TMPDIRS.push(dir);
+  return dir;
+}
+after(() => {
+  for (const d of FIXTURE_TMPDIRS) {
+    try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* already gone */ }
+  }
+});
+
 function writePolicy(content) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'resume-brief-hook-'));
+  const dir = mkdtempTracked(path.join(os.tmpdir(), 'resume-brief-hook-'));
   const policyPath = path.join(dir, 'policy.toml');
   fs.writeFileSync(policyPath, content);
   return policyPath;
@@ -54,7 +68,7 @@ command = "node /usr/local/bin/mp resume-brief"
 });
 
 test('resume-brief-hook: SKIP without a warning when the policy file is absent', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'resume-brief-hook-'));
+  const dir = mkdtempTracked(path.join(os.tmpdir(), 'resume-brief-hook-'));
   const policyPath = path.join(dir, 'missing.toml');
   const findings = check('/tmp/repo', { policyPath });
   assert.equal(findings.length, 1);

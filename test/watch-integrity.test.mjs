@@ -12,7 +12,7 @@
 //   - writeWatchBaseline/readWatchBaseline: round-trip + missing file
 //   - MAIN_TRANSACTION_FILES / CONTROLLER_STATE_KEYS: membership
 
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -28,6 +28,20 @@ import {
   MAIN_TRANSACTION_FILES,
   CONTROLLER_STATE_KEYS,
 } from '../lib/watch-integrity.mjs';
+
+// Every fixture here builds a tree under os.tmpdir(); without this they accumulate across
+// runs and fill a shared /tmp. Registered on creation, removed once when the file finishes.
+const FIXTURE_TMPDIRS = [];
+function mkdtempTracked(prefix) {
+  const dir = fs.mkdtempSync(prefix);
+  FIXTURE_TMPDIRS.push(dir);
+  return dir;
+}
+after(() => {
+  for (const d of FIXTURE_TMPDIRS) {
+    try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* already gone */ }
+  }
+});
 
 // ── runGit ──────────────────────────────────────────────────────────────────
 
@@ -155,7 +169,7 @@ test('watchBaselinePath: wave 0', () => {
 // ── writeWatchBaseline / readWatchBaseline ──────────────────────────────────
 
 test('writeWatchBaseline + readWatchBaseline: round-trip', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'watch-bl-'));
+  const dir = mkdtempTracked(path.join(os.tmpdir(), 'watch-bl-'));
   const baseline = {
     snapshots: [{ repo: '/repo', head: 'abc123', dirty: new Map([['file.ts', 'hash']]) }],
     bundle: { bundleDir: dir, eventsBytes: 42, eventsSha: 'deadbeef', stateText: 'key: val' },
@@ -169,13 +183,13 @@ test('writeWatchBaseline + readWatchBaseline: round-trip', () => {
 });
 
 test('readWatchBaseline: returns null for missing file', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'watch-bl-'));
+  const dir = mkdtempTracked(path.join(os.tmpdir(), 'watch-bl-'));
   assert.equal(readWatchBaseline(dir, 99), null);
   fs.rmSync(dir, { recursive: true });
 });
 
 test('writeWatchBaseline: uses atomic tmp+rename', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'watch-bl-'));
+  const dir = mkdtempTracked(path.join(os.tmpdir(), 'watch-bl-'));
   writeWatchBaseline(dir, 1, { snapshots: [], bundle: {} });
   // No leftover .tmp file
   const files = fs.readdirSync(dir).filter((f) => f.endsWith('.tmp'));

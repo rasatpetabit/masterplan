@@ -3,7 +3,7 @@
 // (`mp amend-plan`) owns the fs / event / render integration and is covered by its own test later;
 // this file locks the writer contract from wave one so downstream verify commands run against a
 // file that already exists.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   amendPlan,
@@ -20,6 +20,20 @@ import { fileURLToPath } from 'node:url';
 import { serializeState } from '../lib/bundle.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
 import { acquireOwner } from '../lib/owner-fs.mjs';
+
+// Every fixture here builds a tree under os.tmpdir(); without this they accumulate across
+// runs and fill a shared /tmp. Registered on creation, removed once when the file finishes.
+const FIXTURE_TMPDIRS = [];
+function mkdtempTracked(prefix) {
+  const dir = fs.mkdtempSync(prefix);
+  FIXTURE_TMPDIRS.push(dir);
+  return dir;
+}
+after(() => {
+  for (const d of FIXTURE_TMPDIRS) {
+    try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* already gone */ }
+  }
+});
 
 const DATE = '2026-07-06';
 const PLAN = '# My Plan\n\n## Wave 0\n\n### Task 1: do a thing\n';
@@ -136,7 +150,7 @@ function run(args, opts = {}) {
   }
 }
 function mkBundle({ slug = 'amend-int', tasks = [] } = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-amend-'));
+  const dir = mkdtempTracked(path.join(os.tmpdir(), 'mp-amend-'));
   const p = path.join(dir, 'state.yml');
   fs.writeFileSync(p, serializeState({
     schema_version: '6.0', slug, status: 'in-progress', phase: 'execute',

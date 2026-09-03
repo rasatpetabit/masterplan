@@ -1,5 +1,5 @@
 // test/config.test.mjs — resolver tests for lib/config.mjs (wave task 16)
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -19,8 +19,22 @@ import {
 } from '../lib/config.mjs';
 import { migrate, effectiveAutonomy } from '../lib/migrate.mjs';
 
+// Every fixture here builds a tree under os.tmpdir(); without this they accumulate across
+// runs and fill a shared /tmp. Registered on creation, removed once when the file finishes.
+const FIXTURE_TMPDIRS = [];
+function mkdtempTracked(prefix) {
+  const dir = fs.mkdtempSync(prefix);
+  FIXTURE_TMPDIRS.push(dir);
+  return dir;
+}
+after(() => {
+  for (const d of FIXTURE_TMPDIRS) {
+    try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* already gone */ }
+  }
+});
+
 function tmpdir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'mp-'));
+  return mkdtempTracked(path.join(os.tmpdir(), 'mp-'));
 }
 
 function writeFile(dir, name, content) {

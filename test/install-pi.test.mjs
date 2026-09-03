@@ -10,13 +10,27 @@
 //   - regular-file skill entries are refused without --force
 //   - agent deletion in a new release prunes the installed copy (manifest sweep)
 
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+
+// Every fixture here builds a tree under os.tmpdir(); without this they accumulate across
+// runs and fill a shared /tmp. Registered on creation, removed once when the file finishes.
+const FIXTURE_TMPDIRS = [];
+function mkdtempTracked(prefix) {
+  const dir = fs.mkdtempSync(prefix);
+  FIXTURE_TMPDIRS.push(dir);
+  return dir;
+}
+after(() => {
+  for (const d of FIXTURE_TMPDIRS) {
+    try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* already gone */ }
+  }
+});
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const INSTALLER = path.join(repoRoot, 'bin/install-pi.mjs');
@@ -29,7 +43,7 @@ function git(cwd, ...args) {
 
 // A minimal source repo carrying every REQUIRED_PATH the installer validates.
 function makeSourceRepo() {
-  const src = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-install-src-'));
+  const src = mkdtempTracked(path.join(os.tmpdir(), 'mp-install-src-'));
   const put = (rel, body) => {
     fs.mkdirSync(path.dirname(path.join(src, rel)), { recursive: true });
     fs.writeFileSync(path.join(src, rel), body);
@@ -60,7 +74,7 @@ function run(opts, env) {
 }
 
 function layout() {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-install-env-'));
+  const base = mkdtempTracked(path.join(os.tmpdir(), 'mp-install-env-'));
   return {
     installRoot: path.join(base, 'share'),
     piRoot: path.join(base, 'pi'),
@@ -244,7 +258,7 @@ test('install-pi: --check --expect requires an exact version match', () => {
 });
 
 test('install-pi: --check without roots resolves the install root from HOME', () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-install-home-'));
+  const home = mkdtempTracked(path.join(os.tmpdir(), 'mp-install-home-'));
   const r = run(['--check'], { HOME: home });
   assert.equal(r.status, 1);
   const out = r.json();

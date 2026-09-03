@@ -2,7 +2,7 @@
 // Unit-tests the two exported helpers directly; integration-tests every subcommand by spawning the
 // real CLI over temp bundles (the contract the markdown shell depends on). bin is fs-only: no git
 // here. Results land on stdout; errors exit non-zero with a stderr hint.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -24,7 +24,7 @@ function run(args, opts = {}) {
   }
 }
 function tmpDir(prefix) {
-  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  return mkdtempTracked(path.join(os.tmpdir(), prefix));
 }
 function tmpBundle(stateObj) {
   const p = path.join(tmpDir('mp-bin-'), 'state.yml');
@@ -2353,6 +2353,20 @@ test('gate: --force bypasses set-phase→plan and appends a spec_gate_bypassed a
 
 // ---- goals-load: freeze goals.md into the bundle (one-shot capture + approval receipt) ----
 import { goalsHash as goalsHashFn } from '../lib/goals.mjs';
+
+// Every fixture here builds a tree under os.tmpdir(); without this they accumulate across
+// runs and fill a shared /tmp. Registered on creation, removed once when the file finishes.
+const FIXTURE_TMPDIRS = [];
+function mkdtempTracked(prefix) {
+  const dir = fs.mkdtempSync(prefix);
+  FIXTURE_TMPDIRS.push(dir);
+  return dir;
+}
+after(() => {
+  for (const d of FIXTURE_TMPDIRS) {
+    try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* already gone */ }
+  }
+});
 function goalsBundle(over = {}) {
   return tmpBundle(v8({ phase: 'brainstorm', goals_enabled: true, goals: [], tasks: [], ...over }));
 }

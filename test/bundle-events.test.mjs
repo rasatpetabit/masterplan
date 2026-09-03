@@ -1,4 +1,4 @@
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -14,6 +14,20 @@ import {
   appendEvent,
   buildSeedState,
 } from '../lib/bundle.mjs';
+
+// Every fixture here builds a tree under os.tmpdir(); without this they accumulate across
+// runs and fill a shared /tmp. Registered on creation, removed once when the file finishes.
+const FIXTURE_TMPDIRS = [];
+function mkdtempTracked(prefix) {
+  const dir = fs.mkdtempSync(prefix);
+  FIXTURE_TMPDIRS.push(dir);
+  return dir;
+}
+after(() => {
+  for (const d of FIXTURE_TMPDIRS) {
+    try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* already gone */ }
+  }
+});
 
 const validFixtures = {
   interview_question: { type: 'interview_question', id: 'q1', round: 1, kind: 'intent', text: 'Why?' },
@@ -172,7 +186,7 @@ test('validateBootstrapEvent throws for non-bootstrap types and validates bootst
 });
 
 test('appendEvent appends valid typed events, rejects invalid ones, tolerates generic, and enforces post-archive restriction', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bundle-events-'));
+  const dir = mkdtempTracked(path.join(os.tmpdir(), 'bundle-events-'));
   const statePath = path.join(dir, 'state.yml');
   const eventsPath = path.join(dir, 'events.jsonl');
   const state = buildSeedState({ slug: 'test', topic: 't', createdAt: '2024-01-01' });

@@ -5,7 +5,7 @@
 // same base sha; --targets overrides route every path to fixture locations; and one precondition
 // plus one postcondition from each of the three step shapes (git-only, gh-network,
 // filesystem-install) prove the step abstraction before the dependent suites build on it.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -16,6 +16,20 @@ import {
   STEP_ORDER, PASS2_OMITTED, stepsForPass, STEP_SHAPES, STEPS,
   resolveTargets, bootstrapStatus, armStep, recordStep, startPass, scanWorkspaceBundles, readBundleEvents, targetsDigest, isBlockingFinding, SELF_BLOCKING_TRIGGERS, CORRECTIVE_TRIGGERS, openCorrectiveFindings, ghRepoFromRemoteUrl, priorVersions,
 } from '../scripts/bootstrap-v10.mjs';
+
+// Every fixture here builds a tree under os.tmpdir(); without this they accumulate across
+// runs and fill a shared /tmp. Registered on creation, removed once when the file finishes.
+const FIXTURE_TMPDIRS = [];
+function mkdtempTracked(prefix) {
+  const dir = fs.mkdtempSync(prefix);
+  FIXTURE_TMPDIRS.push(dir);
+  return dir;
+}
+after(() => {
+  for (const d of FIXTURE_TMPDIRS) {
+    try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* already gone */ }
+  }
+});
 
 function git(dir, ...args) {
   return execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', ...args], { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
@@ -31,7 +45,7 @@ function events(statePath) {
 
 // A MAIN repo with a bare remote, a run branch one commit ahead, a bundle, and fixture surfaces.
 function makeFixture(t, { version = '10.0.0' } = {}) {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-bootstrap-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-bootstrap-'));
   t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
   const MAIN = path.join(tmp, 'main');
   const bare = path.join(tmp, 'remote.git');
@@ -489,7 +503,7 @@ test('gate: MAIN must have main checked out; the record needs local main rebased
 });
 
 test('workspace scan lists non-archived bundles up to the depth and flags the hook-policy repo', (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-scan-'));
+  const root = mkdtempTracked(path.join(os.tmpdir(), 'mp-scan-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   writeState(path.join(root, 'a', 'docs', 'masterplan', 's1', 'state.yml'), { schema_version: 8, slug: 's1', status: 'in-progress', phase: 'execute', tasks: [] });
   writeState(path.join(root, 'a', 'deep', 'b', 'docs', 'masterplan', 's2', 'state.yml'), { schema_version: 8, slug: 's2', status: 'in-progress', phase: 'plan', tasks: [] });

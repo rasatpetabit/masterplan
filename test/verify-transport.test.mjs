@@ -5,7 +5,7 @@
 // removed with the retired dispatch-era transport; wave children verify
 // through the harness and report worker digests.
 
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -29,6 +29,20 @@ test('CONTRACT_VERSION is the native fabric seam version', () => {
 // ---------------------------------------------------------------------------
 
 import { execFileSync } from 'node:child_process';
+
+// Every fixture here builds a tree under os.tmpdir(); without this they accumulate across
+// runs and fill a shared /tmp. Registered on creation, removed once when the file finishes.
+const FIXTURE_TMPDIRS = [];
+function mkdtempTracked(prefix) {
+  const dir = fs.mkdtempSync(prefix);
+  FIXTURE_TMPDIRS.push(dir);
+  return dir;
+}
+after(() => {
+  for (const d of FIXTURE_TMPDIRS) {
+    try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* already gone */ }
+  }
+});
 const git = (cwd, ...args) => execFileSync('git', ['-C', cwd, ...args], { stdio: 'ignore' });
 const write = (base, rel, content) => {
   const p = path.join(base, rel);
@@ -37,7 +51,7 @@ const write = (base, rel, content) => {
 };
 
 function makeFabricFixture({ verify_commands = [] } = {}) {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-vtrans-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-vtrans-'));
   const MAIN = path.join(tmp, 'main');
   fs.mkdirSync(MAIN, { recursive: true });
   git(MAIN, 'init', '--initial-branch=main');

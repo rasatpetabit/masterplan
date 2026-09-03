@@ -5,7 +5,7 @@
 // bundle through seed → launch → injected result → record → next wave → complete, plus the
 // gate cases: owner-blocked, owner_lock=off, migrate-on-load, wave backfill, probe gating,
 // and the inline finalize_run reconcile.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -18,6 +18,20 @@ import { readState, writeState } from '../lib/bundle.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
 import { acquireOwner } from '../lib/owner-fs.mjs';
 import { goalsHash } from '../lib/goals.mjs';
+
+// Every fixture here builds a tree under os.tmpdir(); without this they accumulate across
+// runs and fill a shared /tmp. Registered on creation, removed once when the file finishes.
+const FIXTURE_TMPDIRS = [];
+function mkdtempTracked(prefix) {
+  const dir = fs.mkdtempSync(prefix);
+  FIXTURE_TMPDIRS.push(dir);
+  return dir;
+}
+after(() => {
+  for (const d of FIXTURE_TMPDIRS) {
+    try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* already gone */ }
+  }
+});
 
 function git(dir, ...args) {
   return String(execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' })).trim();
@@ -35,7 +49,7 @@ const planEntry = (id, wave, files) => ({
 // A MAIN repo (initial commit: src/seed.txt), a bundle with the given tasks/marker, and a
 // plan.index.json beside it. NO worktree pre-created — ensureWorktree's create path is under test.
 function makeFixture({ tasks, activeRun = null, phase = 'execute', planIndex, slug = 't23', extra = {} }) {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-continue-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-continue-'));
   const MAIN = path.join(tmp, 'main');
   fs.mkdirSync(MAIN, { recursive: true });
   git(MAIN, 'init', '--initial-branch=main');

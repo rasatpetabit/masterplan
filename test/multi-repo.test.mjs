@@ -7,7 +7,7 @@
 //   4. Multi-repo task files → loud error
 //   5. ensureSiblingWorktree create-or-reuse against a real temp sibling git repo
 
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -26,6 +26,20 @@ import {
 } from '../lib/dispatch/multi-repo.mjs';
 import { worktreePathFor, worktreeBranchFor } from '../lib/worktree.mjs';
 
+// Every fixture here builds a tree under os.tmpdir(); without this they accumulate across
+// runs and fill a shared /tmp. Registered on creation, removed once when the file finishes.
+const FIXTURE_TMPDIRS = [];
+function mkdtempTracked(prefix) {
+  const dir = fs.mkdtempSync(prefix);
+  FIXTURE_TMPDIRS.push(dir);
+  return dir;
+}
+after(() => {
+  for (const d of FIXTURE_TMPDIRS) {
+    try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* already gone */ }
+  }
+});
+
 function git(dir, ...args) {
   return String(execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' })).trim();
 }
@@ -37,7 +51,7 @@ function write(root, rel, content = 'x\n') {
 
 /** Umbrella MAIN + worktree + one sibling git repo (yanos-os), matching yanos-project layout. */
 function makeUmbrellaFixture({ withSiblingWt = false } = {}) {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-mrepo-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-mrepo-'));
   const MAIN = path.join(tmp, 'yanos-project');
   fs.mkdirSync(MAIN, { recursive: true });
   git(MAIN, 'init', '--initial-branch=main');

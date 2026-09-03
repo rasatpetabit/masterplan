@@ -16,7 +16,7 @@
 //   - deriveLastActivity: events / heartbeat / state-mtime / none
 //   - discoveryConfigPath: path composition
 
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 
@@ -42,6 +42,20 @@ import {
   inventorySha256,
   assertOverlapReviewFresh,
 } from '../lib/runs.mjs';
+
+// Every fixture here builds a tree under os.tmpdir(); without this they accumulate across
+// runs and fill a shared /tmp. Registered on creation, removed once when the file finishes.
+const FIXTURE_TMPDIRS = [];
+function mkdtempTracked(prefix) {
+  const dir = fs.mkdtempSync(prefix);
+  FIXTURE_TMPDIRS.push(dir);
+  return dir;
+}
+after(() => {
+  for (const d of FIXTURE_TMPDIRS) {
+    try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* already gone */ }
+  }
+});
 
 // ── discoveryConfigPath ─────────────────────────────────────────────────────
 
@@ -348,7 +362,7 @@ test('deriveLastActivity: returns source none + ts 0 when nothing exists', () =>
 // ── discoverRuns record enrichment (topic/phase/goals/planned_paths) ───────
 
 function makeBundle({ slug, state, goalsText, planIndex }) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-test-'));
+  const dir = mkdtempTracked(path.join(os.tmpdir(), 'mp-test-'));
   const runsDir = path.join(dir, 'docs', 'masterplan');
   const bundleDir = path.join(runsDir, slug);
   fs.mkdirSync(bundleDir, { recursive: true });

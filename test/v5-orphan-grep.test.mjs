@@ -7,13 +7,27 @@
 // fixture per frozen symbol, each asserted to fail individually, plus the
 // clean fixture must-pass. A symbol the script misses fails this self-test.
 
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+// Every fixture here builds a tree under os.tmpdir(); without this they accumulate across
+// runs and fill a shared /tmp. Registered on creation, removed once when the file finishes.
+const FIXTURE_TMPDIRS = [];
+function mkdtempTracked(prefix) {
+  const dir = mkdtempSync(prefix);
+  FIXTURE_TMPDIRS.push(dir);
+  return dir;
+}
+after(() => {
+  for (const d of FIXTURE_TMPDIRS) {
+    try { rmSync(d, { recursive: true, force: true }); } catch { /* already gone */ }
+  }
+});
 
 const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const script = path.join(repoRoot, 'scripts', 'v5-orphan-grep.sh');
@@ -39,7 +53,7 @@ function runGate(root) {
  * CHANGELOG, WORKLOG) — proving the exclusion allowlist actually excludes.
  */
 function makeCleanTree() {
-  const dir = mkdtempSync(path.join(os.tmpdir(), 'v5-orphan-grep-'));
+  const dir = mkdtempTracked(path.join(os.tmpdir(), 'v5-orphan-grep-'));
   mkdirSync(path.join(dir, 'lib'), { recursive: true });
   writeFileSync(path.join(dir, 'lib', 'wave.mjs'), 'export const fabricOnly = true;\n');
   mkdirSync(path.join(dir, 'docs', 'masterplan', 'old-run'), { recursive: true });

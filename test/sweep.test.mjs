@@ -2,7 +2,7 @@
 // The safety inversion under test: dry-run is the DEFAULT (report-only), `--apply` executes,
 // and `manual` classifications are never automated in either mode. Real git in temp repos —
 // the classifier's proof-gated remove ladder is exactly what must hold against live gitdirs.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -11,6 +11,20 @@ import { execFileSync } from 'node:child_process';
 
 import { sweepWorktrees, breakSeedLock } from '../lib/sweep.mjs';
 import { readState, writeState } from '../lib/bundle.mjs';
+
+// Every fixture here builds a tree under os.tmpdir(); without this they accumulate across
+// runs and fill a shared /tmp. Registered on creation, removed once when the file finishes.
+const FIXTURE_TMPDIRS = [];
+function mkdtempTracked(prefix) {
+  const dir = fs.mkdtempSync(prefix);
+  FIXTURE_TMPDIRS.push(dir);
+  return dir;
+}
+after(() => {
+  for (const d of FIXTURE_TMPDIRS) {
+    try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* already gone */ }
+  }
+});
 
 function git(dir, ...args) {
   return String(execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' })).trim();
@@ -40,7 +54,7 @@ const registeredPaths = (MAIN) =>
 //   s3 prune       — registered managed path GONE from disk, bundle retired → worktree prune
 //   stray manual   — unregistered dir, gitdir pointer that resolves nowhere → foreign-unverified
 function makeFixture() {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-sweep-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-sweep-'));
   const MAIN = path.join(tmp, 'main');
   initRepo(MAIN);
 
@@ -133,7 +147,7 @@ test('a PROVABLY foreign leftover is rm-able; second sweep is empty (idempotent)
 });
 
 test('seed lock with dead pid is reported in dry-run and removed in apply', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-sweep-lock-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-sweep-lock-'));
   const MAIN = path.join(tmp, 'main');
   initRepo(MAIN);
   const lockDir = path.join(MAIN, 'docs', 'masterplan');
@@ -154,7 +168,7 @@ test('seed lock with dead pid is reported in dry-run and removed in apply', () =
 });
 
 test('seed lock with live owner is skipped in both modes', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-sweep-lock-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-sweep-lock-'));
   const MAIN = path.join(tmp, 'main');
   initRepo(MAIN);
   const lockDir = path.join(MAIN, 'docs', 'masterplan');
@@ -172,7 +186,7 @@ test('seed lock with live owner is skipped in both modes', () => {
 });
 
 test('malformed seed lock is reported and removed in apply', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-sweep-lock-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-sweep-lock-'));
   const MAIN = path.join(tmp, 'main');
   initRepo(MAIN);
   const lockDir = path.join(MAIN, 'docs', 'masterplan');
@@ -192,7 +206,7 @@ test('malformed seed lock is reported and removed in apply', () => {
 });
 
 test('sweep from a linked worktree still targets the MAIN lock', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-sweep-link-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-sweep-link-'));
   const MAIN = path.join(tmp, 'main');
   initRepo(MAIN);
   const linked = path.join(tmp, 'linked');
@@ -215,7 +229,7 @@ test('sweep from a linked worktree still targets the MAIN lock', () => {
 });
 
 test('breakSeedLock refuses to remove a live lock', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-sweep-live-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-sweep-live-'));
   const MAIN = path.join(tmp, 'main');
   initRepo(MAIN);
   const lockDir = path.join(MAIN, 'docs', 'masterplan');

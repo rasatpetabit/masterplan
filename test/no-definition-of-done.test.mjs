@@ -1,4 +1,4 @@
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -7,10 +7,24 @@ import { check } from '../lib/doctor/no-definition-of-done.mjs';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
+// Every fixture here builds a tree under os.tmpdir(); without this they accumulate across
+// runs and fill a shared /tmp. Registered on creation, removed once when the file finishes.
+const FIXTURE_TMPDIRS = [];
+function mkdtempTracked(prefix) {
+  const dir = fs.mkdtempSync(prefix);
+  FIXTURE_TMPDIRS.push(dir);
+  return dir;
+}
+after(() => {
+  for (const d of FIXTURE_TMPDIRS) {
+    try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* already gone */ }
+  }
+});
+
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 function runCheck(content) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-'));
+  const dir = mkdtempTracked(path.join(os.tmpdir(), 'mp-'));
   if (content !== null) {
     fs.writeFileSync(path.join(dir, '.masterplan.yaml'), content);
   }
@@ -56,7 +70,7 @@ test('unparseable -> WARN', () => {
 });
 
 test('doctor auto-discovers no-definition-of-done and exits 0 on WARN', (t) => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-'));
+  const dir = mkdtempTracked(path.join(os.tmpdir(), 'mp-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   fs.writeFileSync(path.join(dir, '.masterplan.yaml'), 'complexity: low\n');
   const res = spawnSync(process.execPath, ['bin/doctor.mjs', dir], { cwd: repoRoot, encoding: 'utf8' });

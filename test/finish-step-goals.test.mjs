@@ -3,7 +3,7 @@
 // run_verify and write_retro on a goals_enabled bundle; all-achieved → silent auto-progress; partial →
 // goals_unmet AUQ; waiver resolution; fix/abort stops; fail-closed manual gate on assessor failure;
 // spec-gate re-arm refusal after a post-plan goals amendment; pre-feature bundles skip entirely.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -14,6 +14,20 @@ import { execFileSync } from 'node:child_process';
 import { finishStep } from '../lib/finish-step.mjs';
 import { writeState, readState } from '../lib/bundle.mjs';
 import { goalsHash } from '../lib/goals.mjs';
+
+// Every fixture here builds a tree under os.tmpdir(); without this they accumulate across
+// runs and fill a shared /tmp. Registered on creation, removed once when the file finishes.
+const FIXTURE_TMPDIRS = [];
+function mkdtempTracked(prefix) {
+  const dir = fs.mkdtempSync(prefix);
+  FIXTURE_TMPDIRS.push(dir);
+  return dir;
+}
+after(() => {
+  for (const d of FIXTURE_TMPDIRS) {
+    try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* already gone */ }
+  }
+});
 
 function git(dir, ...args) {
   return String(execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' })).trim();
@@ -55,7 +69,7 @@ signal: test
 // goals_enabled bundle (owner lock off, adversary review off). goals.md + spec.md written into the
 // bundle. By default a satisfying spec-gate review is recorded (pass recordReview:false to omit it).
 function mkFixture({ slug = 'g14', recordReview = true, goalsMd = GOALS_MD } = {}) {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-finishgoals-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-finishgoals-'));
   const MAIN = path.join(tmp, 'main');
   fs.mkdirSync(MAIN, { recursive: true });
   git(MAIN, 'init', '--initial-branch=main');
@@ -186,7 +200,7 @@ test('a bundle with NO recorded spec review is refused before any goal check', (
 });
 
 test('pre-feature bundle (no goals_enabled, no goal events) skips goal gating entirely', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-finishpre-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-finishpre-'));
   const MAIN = path.join(tmp, 'main');
   fs.mkdirSync(MAIN, { recursive: true });
   git(MAIN, 'init', '--initial-branch=main');

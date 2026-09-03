@@ -1,6 +1,6 @@
 // test/seed-lock.test.mjs — unit tests for lib/seed-lock.mjs.
 
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -13,8 +13,22 @@ import {
   isPidAlive,
 } from '../lib/seed-lock.mjs';
 
+// Every fixture here builds a tree under os.tmpdir(); without this they accumulate across
+// runs and fill a shared /tmp. Registered on creation, removed once when the file finishes.
+const FIXTURE_TMPDIRS = [];
+function mkdtempTracked(prefix) {
+  const dir = fs.mkdtempSync(prefix);
+  FIXTURE_TMPDIRS.push(dir);
+  return dir;
+}
+after(() => {
+  for (const d of FIXTURE_TMPDIRS) {
+    try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* already gone */ }
+  }
+});
+
 function makeTempRepo() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'seed-lock-'));
+  const dir = mkdtempTracked(path.join(os.tmpdir(), 'seed-lock-'));
   fs.mkdirSync(path.join(dir, 'docs', 'masterplan'), { recursive: true });
   return dir;
 }
@@ -124,7 +138,7 @@ test('isPidAlive distinguishes live and dead pids', () => {
 });
 
 test('acquisition creates the parent directory in a fresh repo', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'seed-lock-fresh-'));
+  const repo = mkdtempTracked(path.join(os.tmpdir(), 'seed-lock-fresh-'));
   const owner = { pid: process.pid, host: 'host-fresh', session: 'sess-fresh' };
   const res = acquireSeedLock(repo, owner);
   assert.equal(res.ok, true);

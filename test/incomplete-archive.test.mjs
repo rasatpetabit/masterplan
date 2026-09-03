@@ -1,4 +1,4 @@
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -6,8 +6,22 @@ import path from 'node:path';
 import { writeState, buildSeedState } from '../lib/bundle.mjs';
 import { check } from '../lib/doctor/incomplete-archive.mjs';
 
+// Every fixture here builds a tree under os.tmpdir(); without this they accumulate across
+// runs and fill a shared /tmp. Registered on creation, removed once when the file finishes.
+const FIXTURE_TMPDIRS = [];
+function mkdtempTracked(prefix) {
+  const dir = fs.mkdtempSync(prefix);
+  FIXTURE_TMPDIRS.push(dir);
+  return dir;
+}
+after(() => {
+  for (const d of FIXTURE_TMPDIRS) {
+    try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* already gone */ }
+  }
+});
+
 function makeRepo() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'incomplete-archive-'));
+  const dir = mkdtempTracked(path.join(os.tmpdir(), 'incomplete-archive-'));
   const base = path.join(dir, 'docs', 'masterplan');
   fs.mkdirSync(base, { recursive: true });
   return { dir, base };

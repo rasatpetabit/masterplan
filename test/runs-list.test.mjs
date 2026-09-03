@@ -9,7 +9,7 @@
 // needed, which keeps the suite hermetic and fast. Unreadable state is modeled
 // by making state.yml a DIRECTORY (readFileSync then throws EISDIR regardless
 // of uid — robust even if the test host runs as root).
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -19,6 +19,20 @@ import { fileURLToPath } from 'node:url';
 
 import { discoverRuns, deriveLastActivity, readDiscoveryConfig } from '../lib/runs.mjs';
 import { writeState } from '../lib/bundle.mjs';
+
+// Every fixture here builds a tree under os.tmpdir(); without this they accumulate across
+// runs and fill a shared /tmp. Registered on creation, removed once when the file finishes.
+const FIXTURE_TMPDIRS = [];
+function mkdtempTracked(prefix) {
+  const dir = fs.mkdtempSync(prefix);
+  FIXTURE_TMPDIRS.push(dir);
+  return dir;
+}
+after(() => {
+  for (const d of FIXTURE_TMPDIRS) {
+    try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* already gone */ }
+  }
+});
 
 const BIN = fileURLToPath(new URL('../bin/masterplan.mjs', import.meta.url));
 
@@ -33,7 +47,7 @@ function run(args, opts = {}) {
 
 // Canonicalized temp root so /tmp symlink quirks never skew realpath() dedupe.
 function tmp(prefix = 'mp-runs-') {
-  return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+  return fs.realpathSync(mkdtempTracked(path.join(os.tmpdir(), prefix)));
 }
 
 // Mark `dir` as a repo root. gitlink=true writes `.git` as a FILE (the

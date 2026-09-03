@@ -1,6 +1,6 @@
 // test/interview-ledger-resume.test.mjs — focused suite for the replayable interview ledger.
 
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -28,8 +28,22 @@ import {
   replayLedger,
 } from '../lib/interview.mjs';
 
+// Every fixture here builds a tree under os.tmpdir(); without this they accumulate across
+// runs and fill a shared /tmp. Registered on creation, removed once when the file finishes.
+const FIXTURE_TMPDIRS = [];
+function mkdtempTracked(prefix) {
+  const dir = fs.mkdtempSync(prefix);
+  FIXTURE_TMPDIRS.push(dir);
+  return dir;
+}
+after(() => {
+  for (const d of FIXTURE_TMPDIRS) {
+    try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* already gone */ }
+  }
+});
+
 function makeBundle(complexity = 'medium', phase = 'brainstorm', extra = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'iv-'));
+  const dir = mkdtempTracked(path.join(os.tmpdir(), 'iv-'));
   const statePath = path.join(dir, 'state.yml');
   const state = { ...buildSeedState({ slug: 'iv', topic: 't', createdAt: '2026-01-01T00:00:00.000Z' }), complexity, phase, ...extra };
   writeState(statePath, state);

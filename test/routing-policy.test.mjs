@@ -5,7 +5,7 @@
 // fleet workflow routing map). These tests are hermetic: repo copy + injected
 // fixtures, never a host path.
 
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -20,6 +20,20 @@ import {
   resolvePanel,
   laneAliasMap,
 } from '../lib/dispatch/routing-policy.mjs';
+
+// Every fixture here builds a tree under os.tmpdir(); without this they accumulate across
+// runs and fill a shared /tmp. Registered on creation, removed once when the file finishes.
+const FIXTURE_TMPDIRS = [];
+function mkdtempTracked(prefix) {
+  const dir = fs.mkdtempSync(prefix);
+  FIXTURE_TMPDIRS.push(dir);
+  return dir;
+}
+after(() => {
+  for (const d of FIXTURE_TMPDIRS) {
+    try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* already gone */ }
+  }
+});
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -83,7 +97,7 @@ test('laneAliasMap derives every alias from the policy (no hard-coded ids)', () 
 test('fail-closed: unreadable path, invalid JSON, missing sections, unresolvable class', () => {
   assert.throws(() => loadRoutingPolicy({ policyPath: '/nonexistent/policy.json' }), /unreadable/);
 
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-policy-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-policy-'));
   const bad = path.join(tmp, 'bad.json');
   fs.writeFileSync(bad, '{ not json');
   assert.throws(() => loadRoutingPolicy({ policyPath: bad }), /not valid JSON/);
@@ -104,7 +118,7 @@ test('fail-closed: unreadable path, invalid JSON, missing sections, unresolvable
 });
 
 test('MP_ROUTING_POLICY override is honored when present', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-policy-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-policy-'));
   const override = path.join(tmp, 'override.json');
   fs.writeFileSync(override, JSON.stringify({
     lanes: { only: { model: 'litellm/override-model' } },

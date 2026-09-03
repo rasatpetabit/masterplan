@@ -4,7 +4,7 @@
 // The five plan-mandated cases: clean wave, out-of-scope revert, dirty-WT crash reconcile,
 // split-commit isolation, lost-to-other abort — plus the failed-task marker semantics and the
 // precondition guards (foreign wave / plan run).
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -16,6 +16,20 @@ import { captureWatchBaseline, writeWatchBaseline, snapshotRepoState, workspaceR
 import { readState, writeState } from '../lib/bundle.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
 import { acquireOwner } from '../lib/owner-fs.mjs';
+
+// Every fixture here builds a tree under os.tmpdir(); without this they accumulate across
+// runs and fill a shared /tmp. Registered on creation, removed once when the file finishes.
+const FIXTURE_TMPDIRS = [];
+function mkdtempTracked(prefix) {
+  const dir = fs.mkdtempSync(prefix);
+  FIXTURE_TMPDIRS.push(dir);
+  return dir;
+}
+after(() => {
+  for (const d of FIXTURE_TMPDIRS) {
+    try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* already gone */ }
+  }
+});
 
 function git(dir, ...args) {
   return String(execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' })).trim();
@@ -30,7 +44,7 @@ function write(root, rel, content) {
 // masterplan/<slug>, a bundle with the given tasks + active_run marker, and the owner
 // lock held by identity sess-A (record-result's heartbeat is STRICT: acquire precedes).
 function makeFixture({ tasks, activeRun, slug = 't22' }) {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-wavecommit-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-wavecommit-'));
   const MAIN = path.join(tmp, 'main');
   fs.mkdirSync(MAIN, { recursive: true });
   git(MAIN, 'init', '--initial-branch=main');
@@ -918,7 +932,7 @@ test('a sibling file that was ALREADY dirty at launch is reported but never reve
 // loose-file drift detection works off-fleet and for any worktree nesting.
 
 test('A8 workspaceRootFor derives the repo-root parent, off-fleet and non-null', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-wsroot-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-wsroot-'));
   // Off-fleet (under os.tmpdir, not /srv/dev) and a plain repo at the container root.
   const wsRoot = tmp;
   const repo = path.join(wsRoot, 'repo');
@@ -935,7 +949,7 @@ test('A8 workspaceRootFor derives the repo-root parent, off-fleet and non-null',
 });
 
 test('A8 workspaceRootFor is stable across a linked worktree nesting', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-wsroot-wt-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-wsroot-wt-'));
   const wsRoot = path.join(tmp, 'ws');
   const repo = path.join(wsRoot, 'repo');
   fs.mkdirSync(repo, { recursive: true });

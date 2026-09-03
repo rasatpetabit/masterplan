@@ -5,7 +5,7 @@
 //   A2 — update-issue-map: create + shallow-merge + numeric coercion + missing-flag error
 //   A3 — load-plan plan_hash parity: stamps when absent + plan.md present; idempotent; skips when plan.md absent
 //   A4 — coord-status flag exit codes: --fail-if-unconfigured + --fail-if-unpublishable
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -13,6 +13,20 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { serializeState, parseState } from '../lib/bundle.mjs';
+
+// Every fixture here builds a tree under os.tmpdir(); without this they accumulate across
+// runs and fill a shared /tmp. Registered on creation, removed once when the file finishes.
+const FIXTURE_TMPDIRS = [];
+function mkdtempTracked(prefix) {
+  const dir = fs.mkdtempSync(prefix);
+  FIXTURE_TMPDIRS.push(dir);
+  return dir;
+}
+after(() => {
+  for (const d of FIXTURE_TMPDIRS) {
+    try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* already gone */ }
+  }
+});
 
 const BIN = fileURLToPath(new URL('../bin/masterplan.mjs', import.meta.url));
 
@@ -24,7 +38,7 @@ function run(args, opts = {}) {
   }
 }
 function tmpDir(prefix) {
-  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  return mkdtempTracked(path.join(os.tmpdir(), prefix));
 }
 function tmpBundle(stateObj) {
   const p = path.join(tmpDir('mp-coord-'), 'state.yml');
