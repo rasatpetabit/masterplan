@@ -291,5 +291,10 @@
         "repo": "/srv/dev/ras/masterplan/.worktrees/intent-to-completion"
       }
     ]
+  },
+  "record_error": {
+    "outcome": "lost-to-other",
+    "reason": "lock vanished (no .owner.lock)",
+    "recorded": []
   }
 }
