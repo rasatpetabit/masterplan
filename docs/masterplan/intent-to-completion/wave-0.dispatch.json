@@ -1,0 +1,295 @@
+{
+  "key": "mp-wave-dispatch-v1:intent-to-completion:0:dispatch_fabric",
+  "run_id": "intent-to-completion",
+  "wave": 0,
+  "op": "dispatch_fabric",
+  "contract_version": "fabric-native-v1",
+  "status": "pending",
+  "attempt": 1,
+  "wave_token": "mp-wave-intent-to-completion-w0-a1",
+  "handles": [],
+  "dispatched_at": "2026-09-03T06:09:56.128Z",
+  "routing_inputs": {
+    "routing": "auto",
+    "codex_host_suppressed": false,
+    "linked_worktree": true
+  },
+  "payload": [
+    {
+      "id": 1,
+      "description": "Extend the schema-v9 bundle contract without a version bump: validate new-seed autonomy and derived source fields while tolerating legacy fields and autonomy full, support complete/incomplete/merged completion with an absent field remaining legacy, and add append-time schemas for interview, overlap/config, deploy/final-goal-check, completion/archive, required-successor, and bootstrap armed/step events. Export the bootstrap event validation and fixed step enum needed by the one-off driver while preserving existing generic event compatibility. Own focused tests in test/bundle-events.test.mjs covering a valid and an invalid instance of every new event type, the append-time rejection path, the exported bootstrap validation and step enum, legacy-field tolerance (complexity_source, predecessor_transcript, autonomy full), the absent-completion legacy reading, and the post-archive restriction (only archive_pushed is accepted after archived). Generic event types already present in existing bundles (for example the pre_finish_stage_required note recorded on this run) stay readable and replayable: append-time validation binds only the new typed events.",
+      "files": [
+        "lib/bundle.mjs",
+        "test/bundle.test.mjs",
+        "test/bundle-events.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/bundle-events.test.mjs",
+        "node --test test/bundle.test.mjs",
+        "for t in interview_question overlap_review deploy_step_started completion_confirmed required_successor archive_pushed bootstrap_armed bootstrap_step; do grep -q \"$t\" lib/bundle.mjs || { echo \"missing $t in lib/bundle.mjs\"; exit 1; }; done"
+      ],
+      "class": "bounded-edit"
+    },
+    {
+      "id": 2,
+      "description": "Repair the pre-existing RED test A1 in test/cli-surface.test.mjs. The actual defect: --goals-choice is already in KNOWN_FLAGS and threaded to finishStep, but die() exits 2 for every uncaught error, so the ENOENT for the test's nonexistent state file collides with the unknown-flag exit code the test rules out. Give uncaught and I/O errors a distinct exit code (keep 2 for the unknown-flag contract) so a recognized flag is provably not rejected as unknown, and keep every other CLI exit-code assertion green.",
+      "files": [
+        "bin/masterplan.mjs",
+        "test/cli-surface.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/cli-surface.test.mjs"
+      ],
+      "class": "bounded-edit"
+    },
+    {
+      "id": 10,
+      "description": "Add the fresh-context intent critic agent prompt with the required critic/breaker/frontier posture, quoted-data boundary, intent-versus-how review rules, and schema-constrained unknowns, misclassified question ids, contradictions, and synthesized intent draft. Document the interview budgets, round cadence, durable artifacts, honesty-bound receipts, terminal states, and disk-based resume behavior. Reuse the existing critic workflow-map class without changing policy/workflow-map.json.\nintegration note: bootstrap-release's Pi registration must discover mp-intent-critic, while the existing Claude agent loader should register it through normal agent discovery; orchestration-integration's sequencer should dispatch it with the verbatim anchor, ledger, and draft as quoted data. Add test/intent-critic-prompt.test.mjs, which parses the agent file's frontmatter and schema section and asserts the critic/breaker/frontier posture, the quoted-data boundary text, and the complete output schema (unknowns with why_it_changes_design, misclassified question ids, contradictions, intent draft).",
+      "files": [
+        "agents/mp-intent-critic.md",
+        "docs/design/intent-interview.md",
+        "test/intent-critic-prompt.test.mjs"
+      ],
+      "verify_commands": [
+        "grep -q '^name: mp-intent-critic$' agents/mp-intent-critic.md && grep -q 'why_it_changes_design' agents/mp-intent-critic.md && grep -q 'misclassified' agents/mp-intent-critic.md && grep -q 'contradictions' agents/mp-intent-critic.md",
+        "grep -q 'converged' docs/design/intent-interview.md && grep -q 'exhausted' docs/design/intent-interview.md && grep -q 'critic_off' docs/design/intent-interview.md && grep -q 'content_head' docs/design/intent-interview.md",
+        "node --test test/intent-critic-prompt.test.mjs"
+      ],
+      "class": "bounded-edit"
+    },
+    {
+      "id": 13,
+      "description": "Extend goal parsing, validation, hashing, amendment comparison, and tests for v2 documents containing an Intent block with why, outcome, anti_goals, and done_means followed by three to five outcome goals. Preserve v1 parsing behavior, keep optional signal and evidence fields in canonical hashes when present, include all Intent fields in goalsHash, retain the immutable topic anchor, and make an intent-only amendment re-arm the existing spec-gate change contract.",
+      "files": [
+        "lib/goals.mjs",
+        "test/goals.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/goals.test.mjs"
+      ],
+      "class": "bounded-edit"
+    },
+    {
+      "id": 16,
+      "description": "Choose and implement a dependency-free YAML parser for the recognized `.masterplan.yaml` subset inside `lib/config.mjs`, rather than adding a runtime package that installed plugin trees cannot assume is present. Implement `resolveRunConfig({ cli, repoRoot, home, env })`, deterministic warnings, CLI > repo > user > default precedence, whole-object replacement with partial `context_watch` defaults, complexity-derived planning mode, enum validation, `full` and `auto_compact` aliases, unknown-key handling, and repo-only `done`. Validate `done: none`, group and step shapes, `version_from`, hostile or unresolved `${version}` values, shell-safe version substitution, and `commit_paths` defaults and warnings; expose reusable parsing/revision-validation helpers so finish can resolve the definition at a supplied git SHA and calculate its digest. Export `readEnv(name)` as the sole permitted `process.env` access and schema metadata for the inventory guard. Cover source precedence, malformed files, aliases, nested replacement, schema failures, revision re-resolution, and warnings with resolver-level tests. Integration note: orchestration-integration.cli must feed seed/config-show overrides through this API, persist resolved values and derived source fields, print warnings and append one `config_warning` event, reject the removed flags, and expose the harness `autoCompactWindow`; finish-live must consume the revision helper at `deploy_base_sha`. Every owner of files under `lib/` or `bin/` must replace direct environment reads, including `MP_DISPATCH_WAVE_CONCURRENCY`, `MP_ROUTING_POLICY`, `SKYNET_VERIFY_ALLOWLIST`, and `MP_CONTEXT_WINDOW`, with `readEnv`. Alongside `readEnv`, export the single child-process environment passthrough used wherever a spawned process needs the inherited environment, so no module other than lib/config.mjs touches process.env.",
+      "files": [
+        "lib/config.mjs",
+        "test/config.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/config.test.mjs"
+      ],
+      "class": "bounded-edit"
+    },
+    {
+      "id": 22,
+      "description": "Add deterministic finish helpers for canonical deploy-group ordering, exit-status-only run/check classification, safe validated ${version} substitution, deploy-chain hashing, and complete/incomplete/merged/legacy classification. Extend unit coverage for absent, none, and object done definitions and ensure command output never affects check classification.",
+      "files": [
+        "lib/finish.mjs",
+        "test/finish.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/finish.test.mjs"
+      ],
+      "class": "bounded-edit"
+    },
+    {
+      "id": 31,
+      "description": "Implement reusable repo-wide seed-lock primitives using atomic creation of docs/masterplan/.seed.lock, PID and ownership metadata, live-lock refusal, and owner-safe release. Cover competing acquisitions, release after failure, and live/dead owner inspection with temporary repositories.\nintegration note: orchestration-integration must hold this lock across overlap-digest revalidation and validate-then-create seeding, release it in a finally path, and leave no bundle directory when validation fails.",
+      "files": [
+        "lib/seed-lock.mjs",
+        "test/seed-lock.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/seed-lock.test.mjs"
+      ],
+      "class": "bounded-edit"
+    },
+    {
+      "id": 33,
+      "description": "Implement active-run brief resolution and rendering in a new library module: zero active bundles produce no output, one produces the five durable lines for slug, phase, open gate, goals.md outcome, and next mp operation, and several produce one summary line each. Surface unresolved required_successor obligations before active-run output, require the matching predecessor link when evaluating successors, and include the exact seed command.\nintegration note: orchestration-integration must expose this renderer as mp resume-brief --repo-root and reuse its obligation projection for runs list and status; doctor policy and severity remain owned by doctor-obligations.",
+      "files": [
+        "lib/resume-brief.mjs",
+        "test/resume-brief.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/resume-brief.test.mjs"
+      ],
+      "class": "bounded-edit"
+    },
+    {
+      "id": 36,
+      "description": "Add the auto-discovered resume-brief-hook doctor check. Inspect /srv/workflows/hooks/policy.toml when present, accept only a session_start rule whose command invokes resume-brief with --repo-root, WARN for missing or incomplete wiring, and return SKIP without a warning when the policy file is absent. Keep the production path fixed while allowing tests to supply a fixture path through internal check options rather than a new environment or CLI knob. Cover valid wiring, no matching rule, a resume-brief command lacking --repo-root, and an absent policy file through the doctor runner.",
+      "files": [
+        "lib/doctor/resume-brief-hook.mjs",
+        "test/resume-brief-hook.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/resume-brief-hook.test.mjs"
+      ],
+      "class": "bounded-edit"
+    },
+    {
+      "id": 42,
+      "description": "Implement scripts/release.mjs --version=V so it validates the release version, refuses version files that were not already bumped, never bumps them itself, inserts and commits only a missing CHANGELOG release header, creates an annotated tag, replays idempotently when its tag already points at HEAD, and fails for a foreign tag. Bump the branch-owned publication metadata and release notes to 10.0.0, document the release contract and corrective 10.0.x path, and update publish-hygiene expectations. Add test/release-script.test.mjs with isolated temporary-repository cases: an invalid version string is refused, unbumped version files are refused, a foreign tag at the version is refused, the release commit touches only CHANGELOG.md, and the tag is annotated and idempotent on replay.",
+      "files": [
+        "scripts/release.mjs",
+        ".claude-plugin/plugin.json",
+        "package.json",
+        "CHANGELOG.md",
+        "RELEASING.md",
+        "test/publish-hygiene.test.mjs",
+        "test/release-script.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/publish-hygiene.test.mjs",
+        "node --check scripts/release.mjs",
+        "grep -q 'never bumps' RELEASING.md && grep -Eq 'corrective.*10\\.0\\.x|10\\.0\\.x.*corrective' RELEASING.md",
+        "tmp=\"$(mktemp -d)\"; trap 'rm -rf \"$tmp\"' EXIT; git clone -q . \"$tmp/repo\"; cp scripts/release.mjs \"$tmp/repo/scripts/release.mjs\"; cp package.json \"$tmp/repo/package.json\"; cp .claude-plugin/plugin.json \"$tmp/repo/.claude-plugin/plugin.json\"; cp CHANGELOG.md \"$tmp/repo/CHANGELOG.md\"; (cd \"$tmp/repo\" && git config user.name masterplan-test && git config user.email masterplan@example.invalid && git add scripts/release.mjs package.json .claude-plugin/plugin.json CHANGELOG.md && (git diff --cached --quiet || git commit -qm fixture) && node scripts/release.mjs --version=10.0.0 && test \"$(git cat-file -t refs/tags/v10.0.0)\" = tag && before=\"$(git rev-parse refs/tags/v10.0.0^{commit})\" && node scripts/release.mjs --version=10.0.0 && test \"$before\" = \"$(git rev-parse refs/tags/v10.0.0^{commit})\")",
+        "node --test test/release-script.test.mjs"
+      ],
+      "class": "bounded-edit"
+    },
+    {
+      "id": 43,
+      "description": "Add self-contained registration coverage proving the generic Pi registrar discovers an agents directory entry named mp-intent-critic.md, maps its lane model, writes it into the managed manifest, and reports clean under --check without taking ownership of the agent prompt itself.",
+      "files": [
+        "test/register-pi-agents.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/register-pi-agents.test.mjs"
+      ],
+      "class": "bounded-edit"
+    }
+  ],
+  "tasks": [
+    {
+      "task_id": 1,
+      "class": "bounded-edit",
+      "handoff_key": "fabric-idem-v1:intent-to-completion:1:b40cc9dddd53de411cfcc93066ef749179bcb72a2ed9c21eb47e033bdda749a7:765dc49a8a971ce87bf0732a4462d31a9a9996966c830d6914b691e4568b7ac7"
+    },
+    {
+      "task_id": 2,
+      "class": "bounded-edit",
+      "handoff_key": "fabric-idem-v1:intent-to-completion:2:3525d535a7c4c62074f3279c9248fa64404c1552e84562de7c45a779a5d39a36:765dc49a8a971ce87bf0732a4462d31a9a9996966c830d6914b691e4568b7ac7"
+    },
+    {
+      "task_id": 10,
+      "class": "bounded-edit",
+      "handoff_key": "fabric-idem-v1:intent-to-completion:10:27120ed714e8812e7642b186eb56d1854b888ba6aac3e803690212b9e1ec02eb:765dc49a8a971ce87bf0732a4462d31a9a9996966c830d6914b691e4568b7ac7"
+    },
+    {
+      "task_id": 13,
+      "class": "bounded-edit",
+      "handoff_key": "fabric-idem-v1:intent-to-completion:13:d0b51984aafe105fed2c65627e41f5b8897d52ffbdaf9b3546e292aeae373cfd:765dc49a8a971ce87bf0732a4462d31a9a9996966c830d6914b691e4568b7ac7"
+    },
+    {
+      "task_id": 16,
+      "class": "bounded-edit",
+      "handoff_key": "fabric-idem-v1:intent-to-completion:16:c15086fbb9a5046aa5a8d02c4766d9cad3b7e49a841656f6216613377919c5fa:765dc49a8a971ce87bf0732a4462d31a9a9996966c830d6914b691e4568b7ac7"
+    },
+    {
+      "task_id": 22,
+      "class": "bounded-edit",
+      "handoff_key": "fabric-idem-v1:intent-to-completion:22:55076cbb3f4249e75f5851ae9a8bf8b9f75c3b828b23d7000f36c9b9056879d3:765dc49a8a971ce87bf0732a4462d31a9a9996966c830d6914b691e4568b7ac7"
+    },
+    {
+      "task_id": 31,
+      "class": "bounded-edit",
+      "handoff_key": "fabric-idem-v1:intent-to-completion:31:89e871e65d8754d2c2e2bc72546ba5e591fbb3b7379df970b82c47e41a56efa2:765dc49a8a971ce87bf0732a4462d31a9a9996966c830d6914b691e4568b7ac7"
+    },
+    {
+      "task_id": 33,
+      "class": "bounded-edit",
+      "handoff_key": "fabric-idem-v1:intent-to-completion:33:6ac1270285b8b75377b2c9215737916ae40a80390590cdbc73e2b2016df43829:765dc49a8a971ce87bf0732a4462d31a9a9996966c830d6914b691e4568b7ac7"
+    },
+    {
+      "task_id": 36,
+      "class": "bounded-edit",
+      "handoff_key": "fabric-idem-v1:intent-to-completion:36:039aae4edaaa74a5119b1d00e6ad248c0d18e9de9370e0b85f383d70247817c2:765dc49a8a971ce87bf0732a4462d31a9a9996966c830d6914b691e4568b7ac7"
+    },
+    {
+      "task_id": 42,
+      "class": "bounded-edit",
+      "handoff_key": "fabric-idem-v1:intent-to-completion:42:26be96888e8953ba7e6909b9f69d1d88736e82cacec8f99559572a98ccfb0a15:765dc49a8a971ce87bf0732a4462d31a9a9996966c830d6914b691e4568b7ac7"
+    },
+    {
+      "task_id": 43,
+      "class": "bounded-edit",
+      "handoff_key": "fabric-idem-v1:intent-to-completion:43:04ce426a956778ec22105c982275d2c2f5d50210fdbef7630f6bda6e611568ff:765dc49a8a971ce87bf0732a4462d31a9a9996966c830d6914b691e4568b7ac7"
+    }
+  ],
+  "gateway_verify_allowlist": "bash -c",
+  "review_context": {
+    "enabled": true,
+    "base_sha": "52e564ff4e9d0513a47f17054c533f4fe4c852f2",
+    "tasks": [
+      {
+        "task_id": 1,
+        "description": "Extend the schema-v9 bundle contract without a version bump: validate new-seed autonomy and derived source fields while tolerating legacy fields and autonomy full, support complete/incomplete/merged completion with an absent field remaining legacy, and add append-time schemas for interview, overlap/config, deploy/final-goal-check, completion/archive, required-successor, and bootstrap armed/step events. Export the bootstrap event validation and fixed step enum needed by the one-off driver while preserving existing generic event compatibility. Own focused tests in test/bundle-events.test.mjs covering a valid and an invalid instance of every new event type, the append-time rejection path, the exported bootstrap validation and step enum, legacy-field tolerance (complexity_source, predecessor_transcript, autonomy full), the absent-completion legacy reading, and the post-archive restriction (only archive_pushed is accepted after archived). Generic event types already present in existing bundles (for example the pre_finish_stage_required note recorded on this run) stay readable and replayable: append-time validation binds only the new typed events.",
+        "class": "bounded-edit",
+        "repo": "/srv/dev/ras/masterplan/.worktrees/intent-to-completion"
+      },
+      {
+        "task_id": 2,
+        "description": "Repair the pre-existing RED test A1 in test/cli-surface.test.mjs. The actual defect: --goals-choice is already in KNOWN_FLAGS and threaded to finishStep, but die() exits 2 for every uncaught error, so the ENOENT for the test's nonexistent state file collides with the unknown-flag exit code the test rules out. Give uncaught and I/O errors a distinct exit code (keep 2 for the unknown-flag contract) so a recognized flag is provably not rejected as unknown, and keep every other CLI exit-code assertion green.",
+        "class": "bounded-edit",
+        "repo": "/srv/dev/ras/masterplan/.worktrees/intent-to-completion"
+      },
+      {
+        "task_id": 10,
+        "description": "Add the fresh-context intent critic agent prompt with the required critic/breaker/frontier posture, quoted-data boundary, intent-versus-how review rules, and schema-constrained unknowns, misclassified question ids, contradictions, and synthesized intent draft. Document the interview budgets, round cadence, durable artifacts, honesty-bound receipts, terminal states, and disk-based resume behavior. Reuse the existing critic workflow-map class without changing policy/workflow-map.json.\nintegration note: bootstrap-release's Pi registration must discover mp-intent-critic, while the existing Claude agent loader should register it through normal agent discovery; orchestration-integration's sequencer should dispatch it with the verbatim anchor, ledger, and draft as quoted data. Add test/intent-critic-prompt.test.mjs, which parses the agent file's frontmatter and schema section and asserts the critic/breaker/frontier posture, the quoted-data boundary text, and the complete output schema (unknowns with why_it_changes_design, misclassified question ids, contradictions, intent draft).",
+        "class": "bounded-edit",
+        "repo": "/srv/dev/ras/masterplan/.worktrees/intent-to-completion"
+      },
+      {
+        "task_id": 13,
+        "description": "Extend goal parsing, validation, hashing, amendment comparison, and tests for v2 documents containing an Intent block with why, outcome, anti_goals, and done_means followed by three to five outcome goals. Preserve v1 parsing behavior, keep optional signal and evidence fields in canonical hashes when present, include all Intent fields in goalsHash, retain the immutable topic anchor, and make an intent-only amendment re-arm the existing spec-gate change contract.",
+        "class": "bounded-edit",
+        "repo": "/srv/dev/ras/masterplan/.worktrees/intent-to-completion"
+      },
+      {
+        "task_id": 16,
+        "description": "Choose and implement a dependency-free YAML parser for the recognized `.masterplan.yaml` subset inside `lib/config.mjs`, rather than adding a runtime package that installed plugin trees cannot assume is present. Implement `resolveRunConfig({ cli, repoRoot, home, env })`, deterministic warnings, CLI > repo > user > default precedence, whole-object replacement with partial `context_watch` defaults, complexity-derived planning mode, enum validation, `full` and `auto_compact` aliases, unknown-key handling, and repo-only `done`. Validate `done: none`, group and step shapes, `version_from`, hostile or unresolved `${version}` values, shell-safe version substitution, and `commit_paths` defaults and warnings; expose reusable parsing/revision-validation helpers so finish can resolve the definition at a supplied git SHA and calculate its digest. Export `readEnv(name)` as the sole permitted `process.env` access and schema metadata for the inventory guard. Cover source precedence, malformed files, aliases, nested replacement, schema failures, revision re-resolution, and warnings with resolver-level tests. Integration note: orchestration-integration.cli must feed seed/config-show overrides through this API, persist resolved values and derived source fields, print warnings and append one `config_warning` event, reject the removed flags, and expose the harness `autoCompactWindow`; finish-live must consume the revision helper at `deploy_base_sha`. Every owner of files under `lib/` or `bin/` must replace direct environment reads, including `MP_DISPATCH_WAVE_CONCURRENCY`, `MP_ROUTING_POLICY`, `SKYNET_VERIFY_ALLOWLIST`, and `MP_CONTEXT_WINDOW`, with `readEnv`. Alongside `readEnv`, export the single child-process environment passthrough used wherever a spawned process needs the inherited environment, so no module other than lib/config.mjs touches process.env.",
+        "class": "bounded-edit",
+        "repo": "/srv/dev/ras/masterplan/.worktrees/intent-to-completion"
+      },
+      {
+        "task_id": 22,
+        "description": "Add deterministic finish helpers for canonical deploy-group ordering, exit-status-only run/check classification, safe validated ${version} substitution, deploy-chain hashing, and complete/incomplete/merged/legacy classification. Extend unit coverage for absent, none, and object done definitions and ensure command output never affects check classification.",
+        "class": "bounded-edit",
+        "repo": "/srv/dev/ras/masterplan/.worktrees/intent-to-completion"
+      },
+      {
+        "task_id": 31,
+        "description": "Implement reusable repo-wide seed-lock primitives using atomic creation of docs/masterplan/.seed.lock, PID and ownership metadata, live-lock refusal, and owner-safe release. Cover competing acquisitions, release after failure, and live/dead owner inspection with temporary repositories.\nintegration note: orchestration-integration must hold this lock across overlap-digest revalidation and validate-then-create seeding, release it in a finally path, and leave no bundle directory when validation fails.",
+        "class": "bounded-edit",
+        "repo": "/srv/dev/ras/masterplan/.worktrees/intent-to-completion"
+      },
+      {
+        "task_id": 33,
+        "description": "Implement active-run brief resolution and rendering in a new library module: zero active bundles produce no output, one produces the five durable lines for slug, phase, open gate, goals.md outcome, and next mp operation, and several produce one summary line each. Surface unresolved required_successor obligations before active-run output, require the matching predecessor link when evaluating successors, and include the exact seed command.\nintegration note: orchestration-integration must expose this renderer as mp resume-brief --repo-root and reuse its obligation projection for runs list and status; doctor policy and severity remain owned by doctor-obligations.",
+        "class": "bounded-edit",
+        "repo": "/srv/dev/ras/masterplan/.worktrees/intent-to-completion"
+      },
+      {
+        "task_id": 36,
+        "description": "Add the auto-discovered resume-brief-hook doctor check. Inspect /srv/workflows/hooks/policy.toml when present, accept only a session_start rule whose command invokes resume-brief with --repo-root, WARN for missing or incomplete wiring, and return SKIP without a warning when the policy file is absent. Keep the production path fixed while allowing tests to supply a fixture path through internal check options rather than a new environment or CLI knob. Cover valid wiring, no matching rule, a resume-brief command lacking --repo-root, and an absent policy file through the doctor runner.",
+        "class": "bounded-edit",
+        "repo": "/srv/dev/ras/masterplan/.worktrees/intent-to-completion"
+      },
+      {
+        "task_id": 42,
+        "description": "Implement scripts/release.mjs --version=V so it validates the release version, refuses version files that were not already bumped, never bumps them itself, inserts and commits only a missing CHANGELOG release header, creates an annotated tag, replays idempotently when its tag already points at HEAD, and fails for a foreign tag. Bump the branch-owned publication metadata and release notes to 10.0.0, document the release contract and corrective 10.0.x path, and update publish-hygiene expectations. Add test/release-script.test.mjs with isolated temporary-repository cases: an invalid version string is refused, unbumped version files are refused, a foreign tag at the version is refused, the release commit touches only CHANGELOG.md, and the tag is annotated and idempotent on replay.",
+        "class": "bounded-edit",
+        "repo": "/srv/dev/ras/masterplan/.worktrees/intent-to-completion"
+      },
+      {
+        "task_id": 43,
+        "description": "Add self-contained registration coverage proving the generic Pi registrar discovers an agents directory entry named mp-intent-critic.md, maps its lane model, writes it into the managed manifest, and reports clean under --check without taking ownership of the agent prompt itself.",
+        "class": "bounded-edit",
+        "repo": "/srv/dev/ras/masterplan/.worktrees/intent-to-completion"
+      }
+    ]
+  }
+}
