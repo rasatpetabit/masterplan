@@ -25,10 +25,21 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const BIN = fileURLToPath(new URL('../bin/masterplan.mjs', import.meta.url));
 
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+
+/** Spawn the real binary; { status, stdout, stderr } — mirrors test/cli-surface.test.mjs. */
+function run(args, opts = {}) {
+  try {
+    return { status: 0, stdout: execFileSync('node', [BIN, ...args], { encoding: 'utf8', ...opts }), stderr: '' };
+  } catch (e) {
+    return { status: e.status ?? 1, stdout: e.stdout ?? '', stderr: e.stderr ?? '' };
+  }
+}
 
 /** All op-name literals a producer source emits/declares: op:'name' / op: 'name'. */
 function producerOps(rel) {
@@ -45,6 +56,28 @@ function opTableRegion() {
   assert.ok(start !== -1, 'commands/masterplan.md §2 anchor "4. **The loop.**" not found — update the parity test anchors');
   assert.ok(end > start, 'commands/masterplan.md §2 anchor "5. **CD-7 commit discipline.**" not found — update the parity test anchors');
   return text.slice(start, end);
+}
+
+/** The §2c finish op-table region (anchored on the section headers, fail-loud). */
+function finishOpTableRegion() {
+  const text = read('commands/masterplan.md');
+  const start = text.indexOf('## 2c');
+  const end = text.indexOf('## 2d');
+  assert.ok(start !== -1, 'commands/masterplan.md §2c anchor not found — update the parity test anchors');
+  assert.ok(end > start, 'commands/masterplan.md §2d anchor not found — update the parity test anchors');
+  return text.slice(start, end);
+}
+
+/** Parse the §2c finish op-table rows into [{ op, opCell, do }]. */
+function finishOpTableRows() {
+  const rows = [];
+  for (const line of finishOpTableRegion().split('\n')) {
+    const m = line.match(/^\s*\|\s*`([a-z_]+)`(.*)$/);
+    if (!m) continue;
+    const cells = m[2].split('|');
+    rows.push({ op: m[1], opCell: m[2], do: cells.length > 1 ? cells[1] : '' });
+  }
+  return rows;
 }
 
 /** Parse the §2 op-table rows into [{ op, do }] (first backticked token per row). */
@@ -94,4 +127,43 @@ test("the dispatch_fabric row's consumer is the deterministic `mp dispatch-wave`
     /`mp dispatch-wave --state=<path>`/,
     'the dispatch_fabric row must consume the op via the deterministic `mp dispatch-wave --state=<path>` command, not sequencer prose',
   );
+});
+
+test('every §2c finish op-table row names an op lib/finish-step.mjs actually emits', () => {
+  const emitted = producerOps('lib/finish-step.mjs');
+  const rows = finishOpTableRows();
+  assert.ok(rows.length >= 12, `expected >=12 §2c finish rows, extracted ${rows.length} — table parsing broken?`);
+  for (const { op } of rows) {
+    assert.ok(
+      emitted.has(op),
+      `phantom finish row: the §2c table documents '${op}' but lib/finish-step.mjs does not emit it — remove the row or wire the producer`,
+    );
+  }
+  // The deploy/final/push contract the intent-to-completion flow depends on must each be taught.
+  for (const required of ['run_deploy_step', 'run_final_check']) {
+    assert.ok(
+      rows.some((r) => r.op === required),
+      `§2c finish op table missing the ${required} row the intent-to-completion contract requires`,
+    );
+  }
+  const gates = rows.map((r) => `${r.opCell}|${r.do}`).filter((t) => /gate:'[a-z_]+'/.test(t))
+    .map((t) => t.match(/gate:'([a-z_]+)'/)[1]);
+  for (const required of ['deploy_indeterminate', 'deploy_failed', 'intent_confirm', 'push_archive',
+    'final_check_invalid', 'live_check_evidence_missing', 'no_definition_of_done']) {
+    assert.ok(gates.includes(required), `§2c finish op table missing the '${required}' gate row`);
+  }
+});
+
+test('--done-adhoc-file is a KNOWN flag that parses through the real binary', () => {
+  // Finding 3 (adversary round 1): the operation table taught `mp finish-step --done-adhoc-file=…`
+  // while bin REJECTED it (`unknown flag --done-adhoc-file`, exit 2) — the engine's doneAdhocFile
+  // parameter existed but was never wired through the CLI. The flag must now PARSE: on a state that
+  // cannot reach the engine, the failure is a normal non-parse exit (≠2), not the exit-2
+  // unknown-flag refusal — mirroring test/cli-surface.test.mjs's `notEqual(r.status, 2)` contract.
+  const bad = run(['finish-step', '--state=/tmp/does-not-exist-mp.yml', '--done-adhoc-file=/tmp/adhoc.json', '--session=mp-w8-t7']);
+  assert.notEqual(bad.status, 2, `--done-adhoc-file must parse (got status ${bad.status}: ${bad.stderr}) — the flag is still rejected as unknown`);
+  assert.doesNotMatch(bad.stderr, /unknown flag --done-adhoc-file/, 'the flag must not be rejected as unknown');
+  // And the malformed-file path must reach the engine's own error, not the flag parser.
+  const withMissingFile = run(['finish-step', '--state=/tmp/does-not-exist-mp.yml', '--done-adhoc-file=/tmp/nope-does-not-exist.json', '--session=mp-w8-t7']);
+  assert.notEqual(withMissingFile.status, 2, 'a missing ad-hoc file must fail in the engine, not the flag parser');
 });

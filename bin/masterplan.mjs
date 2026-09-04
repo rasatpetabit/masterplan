@@ -594,9 +594,9 @@ const KNOWN_FLAGS = new Set(
     'ws-baseline ' +
     // §5.3 interview ledger + §6 goals-load gate + §7.5 rejection + the deploy/final-check flags
     'class corrected critic-unavailable-ack deploy-abort deploy-attest deploy-authorize deploy-rerun '  +
-    'deploy-retry deploy-skip deploy-step-done error file final intent-confirmed intent-rejected '  + 'archive-pushed archive-push-skipped '  +
+    'deploy-retry deploy-skip deploy-step-done done-adhoc-file error file final intent-confirmed intent-rejected '  + 'archive-pushed archive-push-skipped '  +
     'deploy-chain-hash exit focus interview-waived model overlap-review payload-file resolves '  +
-    'review-file round '  +
+    'review-file round supersedes '  +
     'successor text unavailable '  +
     'version-fix window').split(' ')
 );
@@ -4322,6 +4322,12 @@ function main() {
           retroOnly: !!flags['retro-only'],
           goalCheck: goalCheckFlag,
           goalsChoice: goalsChoiceFlag,
+          // §7.3 the no_definition_of_done gate's `adhoc` answer: --done-adhoc-file=<path> supplies
+          // a JSON ad-hoc done definition (the engine's doneAdhocFile parameter — it deploys, so it
+          // is bound by the release/identity contract like any other definition). rejectUnknownFlags
+          // means the flag is registered in KNOWN_FLAGS above.
+          doneAdhocFile: typeof flags['done-adhoc-file'] === 'string' && flags['done-adhoc-file'].trim()
+            ? flags['done-adhoc-file'].trim() : null,
           // §7.2 deploy-stage answers. Each names a step as group[index] so a flag can never be
           // applied to whichever step happens to be current.
           ...deployFlags(flags),
