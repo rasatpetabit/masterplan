@@ -103,7 +103,8 @@
         "lib/plan-merge.mjs",
         "test/plan-merge.test.mjs",
         "test/continue.test.mjs",
-        "test/resume.test.mjs"
+        "test/resume.test.mjs",
+        "lib/config.mjs"
       ],
       "verify_commands": [
         "node --test test/plan-merge.test.mjs",
@@ -129,7 +130,10 @@
       "wave": 5,
       "files": [
         "lib/wave.mjs",
-        "test/wave.test.mjs"
+        "test/wave.test.mjs",
+        "lib/wave-commit.mjs",
+        "test/wave-commit.test.mjs",
+        "lib/goals.mjs"
       ],
       "verify_commands": [
         "node --test test/wave.test.mjs",
@@ -713,7 +717,11 @@
       "files": [
         "lib/finish-step.mjs",
         "test/final-check.test.mjs",
-        "test/finish-step-goals.test.mjs"
+        "test/finish-step-goals.test.mjs",
+        "lib/finish.mjs",
+        "bin/masterplan.mjs",
+        "test/bin-masterplan.test.mjs",
+        "test/finish-step.test.mjs"
       ],
       "verify_commands": [
         "node --test test/final-check.test.mjs",
@@ -1170,7 +1178,10 @@
       "wave": 5,
       "files": [
         "test/v9-to-v10-bootstrap.test.mjs",
-        "scripts/bootstrap-v10.mjs"
+        "scripts/bootstrap-v10.mjs",
+        "test/bootstrap-driver.test.mjs",
+        "scripts/rehearse-v9-finish.sh",
+        "test/rehearse-v9-finish.test.mjs"
       ],
       "verify_commands": [
         "node --test test/v9-to-v10-bootstrap.test.mjs"

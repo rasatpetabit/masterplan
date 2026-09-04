@@ -341,3 +341,5 @@ Planning-time task amendment applied through mp amend-tasks / amend-plan.
 
 ### 2026-09-03 — task 24 co-owns test/finish-step.test.mjs
 finish-live.commit-identity enforces branch-tip identity at deploy_base; the wave-1 PR fixtures in test/finish-step.test.mjs (which pointed --merge-sha at a non-merge commit) must emulate a real merge, so the file is added to task 24's files. No other change.
+
+### 2026-09-04 — Task 4 scope extended to lib/config.mjs: the planning modes are now defined once (PLANNING_MODES) and the config schema derives its enum from them, because lib/resume.mjs validates a caller-resolved mode against the same list; two hand-maintained copies would drift and resume.mjs's copy would drift silently (it fails closed). Recorded after the edit was discovered unamended at record time; the edit itself predates the handoff commit.

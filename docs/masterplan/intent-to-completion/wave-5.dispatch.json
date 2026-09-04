@@ -1,0 +1,129 @@
+{
+  "key": "mp-wave-dispatch-v1:intent-to-completion:5:dispatch_fabric",
+  "run_id": "intent-to-completion",
+  "wave": 5,
+  "op": "dispatch_fabric",
+  "contract_version": "fabric-native-v1",
+  "status": "pending",
+  "attempt": 1,
+  "wave_token": "mp-wave-intent-to-completion-w5-a1",
+  "handles": [],
+  "dispatched_at": "2026-09-04T00:36:05.339Z",
+  "routing_inputs": {
+    "routing": "auto",
+    "codex_host_suppressed": false,
+    "linked_worktree": true
+  },
+  "payload": [
+    {
+      "id": 4,
+      "description": "Connect planning and resume consumers to persisted controls: use state.plan_path when fragment merge or planner work-item construction omits plan-md while preserving explicit paths, make resume-phase routing observe resolved planning_mode, prevent the bootstrap-stage marker from entering plan-wave dispatch, and move environment reads in these modules through readEnv. Add behavioural cases: an explicit --plan-md wins over state.plan_path, the stored path is used when the flag is omitted, resume-phase routing follows the resolved planning_mode, and the bootstrap-stage marker never enters plan-wave dispatch. Render the index meta narrative (purpose, problem, solution) in plan.md the way plan.html already does, so a post-wave stage stated in index.meta is visible in the canonical plan after every wave; the sequencer task owns the stage's execution protocol.",
+      "files": [
+        "lib/continue.mjs",
+        "lib/resume.mjs",
+        "lib/plan-merge.mjs",
+        "test/plan-merge.test.mjs",
+        "test/continue.test.mjs",
+        "test/resume.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/plan-merge.test.mjs",
+        "node --test test/continue.test.mjs",
+        "node --test test/resume.test.mjs"
+      ],
+      "class": "bounded-edit"
+    },
+    {
+      "id": 5,
+      "description": "Update wave summaries to read v2 goals and quote the Intent outcome line in the mid-run reminder, with a compatible fallback for v1 bundles that have no Intent block. Add wave-summary cases proving the v2 Intent outcome line is quoted verbatim and a v1 bundle without an Intent block falls back without error.",
+      "files": [
+        "lib/wave.mjs",
+        "test/wave.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/wave.test.mjs",
+        "node --test test/goals.test.mjs"
+      ],
+      "class": "bounded-edit"
+    },
+    {
+      "id": 27,
+      "description": "Add the post-deploy final assessment transition after the required live check, binding run_final_check and its accepted receipt to deploy_base_sha, deploy_chain_hash, live_check_digest, and the final intent verdict. Re-audit commit identity before final assessment and intent confirmation, route partial or missed final verdicts through goals_unmet with waiver, abort, or reject-intent only, and emit intent_confirm only after a valid final receipt; for done: none, pass an empty chain and null live digest. integration note: consume the sibling-owned lib/goals.mjs final-receipt validator rather than duplicating it; that module must export validation for deploy_base_sha, deploy_chain_hash, live_check_digest, and intent_verdict, and orchestration-integration.cli must route mp record-goal-check --final receipts to the existing event writer.",
+      "files": [
+        "lib/finish-step.mjs",
+        "test/final-check.test.mjs",
+        "test/finish-step-goals.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/final-check.test.mjs",
+        "node --test test/finish-step-goals.test.mjs"
+      ],
+      "class": "bounded-edit"
+    },
+    {
+      "id": 47,
+      "description": "Extend the bootstrap suite with the complete fixture-backed successful rollout: pre-publish verify/review/assessment receipts, release refusal before a version bump, CHANGELOG-only release commit and annotated-tag identity, idempotent release replay, branch/tag push and CI receipts, executable Pi check, workspace_roots discovery across multiple depths, carried non-bundle main commits, publish acknowledgement, PR merge ancestry, Claude-cache evidence, both-surface checks, per-commit state-only auditing, dirty-bundle commit before gate rebase, remote-tip equality, conflict-free rebase, no-op v9 merge, branch retirement, legacy archive, and fast-forward archive push.",
+      "files": [
+        "test/v9-to-v10-bootstrap.test.mjs",
+        "scripts/bootstrap-v10.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/v9-to-v10-bootstrap.test.mjs"
+      ],
+      "class": "bounded-edit"
+    }
+  ],
+  "tasks": [
+    {
+      "task_id": 4,
+      "class": "bounded-edit",
+      "handoff_key": "fabric-idem-v1:intent-to-completion:4:f20721bc359a422e98a736120e17944b56b10e32d0a34e26948c2de7a33ecfa0:d0cb1b5e4288829168c78cda8f734586b2fe87b195a449c6dfa545dc819dab8f"
+    },
+    {
+      "task_id": 5,
+      "class": "bounded-edit",
+      "handoff_key": "fabric-idem-v1:intent-to-completion:5:63e782cb22139792982bb24ac71127cfec468dd3c6b87de2e7237c882375cab5:d0cb1b5e4288829168c78cda8f734586b2fe87b195a449c6dfa545dc819dab8f"
+    },
+    {
+      "task_id": 27,
+      "class": "bounded-edit",
+      "handoff_key": "fabric-idem-v1:intent-to-completion:27:3072368fe89ec141e23aa4b75ea1c51673079e88b5b2b10dc06336bd685a6a21:d0cb1b5e4288829168c78cda8f734586b2fe87b195a449c6dfa545dc819dab8f"
+    },
+    {
+      "task_id": 47,
+      "class": "bounded-edit",
+      "handoff_key": "fabric-idem-v1:intent-to-completion:47:42e6ded546e4c500a5bba41ab5e26b2fb61a7d3577c113964eef7f7f8453277e:d0cb1b5e4288829168c78cda8f734586b2fe87b195a449c6dfa545dc819dab8f"
+    }
+  ],
+  "gateway_verify_allowlist": "bash -c",
+  "review_context": {
+    "enabled": true,
+    "base_sha": "d650bcc7f4c4228d69a2f3cca583e043efff42c2",
+    "tasks": [
+      {
+        "task_id": 4,
+        "description": "Connect planning and resume consumers to persisted controls: use state.plan_path when fragment merge or planner work-item construction omits plan-md while preserving explicit paths, make resume-phase routing observe resolved planning_mode, prevent the bootstrap-stage marker from entering plan-wave dispatch, and move environment reads in these modules through readEnv. Add behavioural cases: an explicit --plan-md wins over state.plan_path, the stored path is used when the flag is omitted, resume-phase routing follows the resolved planning_mode, and the bootstrap-stage marker never enters plan-wave dispatch. Render the index meta narrative (purpose, problem, solution) in plan.md the way plan.html already does, so a post-wave stage stated in index.meta is visible in the canonical plan after every wave; the sequencer task owns the stage's execution protocol.",
+        "class": "bounded-edit",
+        "repo": "/srv/dev/ras/masterplan/.worktrees/intent-to-completion"
+      },
+      {
+        "task_id": 5,
+        "description": "Update wave summaries to read v2 goals and quote the Intent outcome line in the mid-run reminder, with a compatible fallback for v1 bundles that have no Intent block. Add wave-summary cases proving the v2 Intent outcome line is quoted verbatim and a v1 bundle without an Intent block falls back without error.",
+        "class": "bounded-edit",
+        "repo": "/srv/dev/ras/masterplan/.worktrees/intent-to-completion"
+      },
+      {
+        "task_id": 27,
+        "description": "Add the post-deploy final assessment transition after the required live check, binding run_final_check and its accepted receipt to deploy_base_sha, deploy_chain_hash, live_check_digest, and the final intent verdict. Re-audit commit identity before final assessment and intent confirmation, route partial or missed final verdicts through goals_unmet with waiver, abort, or reject-intent only, and emit intent_confirm only after a valid final receipt; for done: none, pass an empty chain and null live digest. integration note: consume the sibling-owned lib/goals.mjs final-receipt validator rather than duplicating it; that module must export validation for deploy_base_sha, deploy_chain_hash, live_check_digest, and intent_verdict, and orchestration-integration.cli must route mp record-goal-check --final receipts to the existing event writer.",
+        "class": "bounded-edit",
+        "repo": "/srv/dev/ras/masterplan/.worktrees/intent-to-completion"
+      },
+      {
+        "task_id": 47,
+        "description": "Extend the bootstrap suite with the complete fixture-backed successful rollout: pre-publish verify/review/assessment receipts, release refusal before a version bump, CHANGELOG-only release commit and annotated-tag identity, idempotent release replay, branch/tag push and CI receipts, executable Pi check, workspace_roots discovery across multiple depths, carried non-bundle main commits, publish acknowledgement, PR merge ancestry, Claude-cache evidence, both-surface checks, per-commit state-only auditing, dirty-bundle commit before gate rebase, remote-tip equality, conflict-free rebase, no-op v9 merge, branch retirement, legacy archive, and fast-forward archive push.",
+        "class": "bounded-edit",
+        "repo": "/srv/dev/ras/masterplan/.worktrees/intent-to-completion"
+      }
+    ]
+  }
+}
