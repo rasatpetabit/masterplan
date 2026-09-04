@@ -1,8 +1,9 @@
-# Handoff — `intent-to-completion` wave 6 (2026-09-04, mid-wave)
+# Handoff — `intent-to-completion` waves 7–10 (2026-09-04)
 
-Successor to `docs/handoffs/2026-09-04-intent-to-completion-wave5.md`. Wave 5 is RECORDED
-(38/48 done; code `7d926cf`, state `2e93456`, WORKLOG `a7f1178`). This file covers wave 6,
-which is implemented, reviewed (2 of 3), and mid-fix.
+Successor to `docs/handoffs/2026-09-04-intent-to-completion-wave5.md`. Waves 5 AND 6 are
+RECORDED (41/48 done; w6 code `e938c8a`, state `b213f79`, WORKLOG `9443cde`). This file now
+covers wave 7 (IN FLIGHT: task 29, builder async run `b0d58cf5`) and waves 8–10 (tasks 7, 8,
+9, 19, 20, 30).
 
 ## 1. Objective and authorization
 
@@ -64,37 +65,30 @@ task 28's §7.4 semantics).
   per launch, sequential.
 - `plan.index.json` edits: `json.dumps(d, indent=2)` with `ensure_ascii=True` (default).
 
-## 4. Wave-6 review state and what remains
+## 4. Wave-6 outcome (recorded; pattern to repeat per wave)
 
-**Task 6 — rework verdict, fixes COMPLETE and verified.** Round-1 findings (missing
-forwarding/default regression cases; hand-written successor fixture; ambient-session
-dependence) all fixed in `test/cli-surface.test.mjs` (38→40 cases, bare-clean) and a REAL
-defect fixed in `bin/masterplan.mjs`: `record-goal-check --final` dropped the final-assessment
-bindings (`final`, `deploy_base_sha`, `deploy_chain_hash`, `live_check_digest`,
-`intent_verdict`) — regression case fails without the fix. Record as `rework` with
-findings-fixed disclosure. Do NOT re-review (no auto-grind).
+All three tasks recorded with honest `rework` verdicts: ONE review round per task
+(`mp-adversarial-reviewer`, model `litellm/gpt-5.6-sol`, one launch per turn, sequential),
+then ONE builder fix round per task fixing every finding in scope, then record with the
+blocking finding naming the true residual ("fixes never verified by a second round").
+No second review round — operator's no-grinding directive.
 
-**Task 28 — rework verdict (6 findings), fix builder IN FLIGHT** (async run
-`4b03c7dc-27d3-432e-aad2-9d22e6402239`, glm-5.2). Findings (full text is in the brief that
-launched it, and in this session's transcript):
-1. BLOCKING `lib/finish-step.mjs:1866` — discard still enters deploy replay.
-2. BLOCKING `:532` — intent rejection not transactional (crash → archive without
-   required_successor).
-3. MAJOR `:435` — final-gate answers not replay-idempotent / conflict-rejecting.
-4. MAJOR `:423` — attestation split-write window (unrecoverable state).
-5. MAJOR `:944` — completion_confirmed not bound to the LATEST deploy base.
-6. MAJOR `test/intent-rejected.test.mjs:357` — empty test conceals archive gap
-   (state completion: complete + no ledger confirmation → preserved and archived).
-When the builder delivers: verify the three suites + full suite, spot-check findings 1/2/6
-against the diff, then record as `rework` with findings-fixed disclosure (unless something is
-unfixed — then judge honestly). Do NOT re-review.
+Wave-6 review results (3 invocations, 3 rework verdicts, all findings fixed): task 6 —
+record-goal-check --final dead-forwarding fixed in bin (bindings were written by the
+validator but dropped by the writer) + 40-case bare-clean matrix; task 28 — six findings
+(discard→deploy-replay leak, split-write rejection, non-idempotent answers, attestation
+split window, wrong-base confirmation, empty test) all fixed in lib/finish-step.mjs;
+task 48 — driver release preflight + tag rollback, independently-reachable single_commit,
+§7.4-shaped doctor fixtures. Full suite at record time: 2357/2360 (3 pre-existing, tasks 8/10).
 
-**Task 48 — NOT YET REVIEWED (0 rounds).** Launch `mp-adversarial-reviewer` next (review
-ledger: 3rd invocation), diff at `/tmp/w6review/w6-t48.diff` (regenerate if stale:
-`git diff HEAD -- test/v9-to-v10-bootstrap.test.mjs scripts/bootstrap-v10.mjs`). Same brief
-shape as tasks 6/28 (task claims + check-hard list + verify commands). Its claims: 5 new
-driver-level failure-table cases + doctor checks against real rollout bundles; driver
-intentionally unchanged (guard chain asserted honestly).
+Two scope amendments followed the advisor-approved snapshot/amend/re-freeze/reapply path
+(task 28 += deploy-commit-identity consumer; task 48 += bootstrap-driver consumers).
+
+**Wave 7 (in flight):** task 29 (post-archive push_archive state; lib/finish-step.mjs +
+test/finish-replay.test.mjs). Builder briefed to build on the §0.6 patterns. On delivery:
+verify (finish-replay + intent-rejected + full suite with the §3 wrapper), then ONE review
+round, one fix round if needed, then record per §5 with wave 7 / token
+`mp-wave-intent-to-completion-w7-a1` / diffs in a fresh /tmp dir.
 
 ## 5. Recording wave 6 (after task 48's review)
 
