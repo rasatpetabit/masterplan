@@ -389,8 +389,12 @@ export function bootstrapStatus(statePath) {
     const rec = latestRecord(events, pass, step);
     if (!rec || (!isDone(rec) && rec.status !== 'recovered')) {
       next = step;
-      // blocked if previous step's latest record is failed
-      if (i > 0) {
+      // What is holding the stage. A failed step STAYS `next` (that is the blocking rule), so
+      // reporting only "the PREVIOUS step failed" could never fire: the previous step of a
+      // `next` is always done or recovered. The field names the failed step itself.
+      if (rec && rec.status === 'failed') {
+        blockedBy = `failed:${step}`;
+      } else if (i > 0) {
         const prev = stepList[i - 1];
         const prevRec = latestRecord(events, pass, prev);
         if (prevRec && prevRec.status === 'failed') {

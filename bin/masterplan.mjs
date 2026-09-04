@@ -191,7 +191,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readState, parseState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, setWorktree, setWorktreeDisposition, setVerifiedSha, setCodexConfig, setReviewConfig, setRenderConfig, loadPlanTasks, buildSeedState, buildTasksFromPlanIndex, appendEvent, setCoordination, applyPlanIndex, upsertTasks, rebasePaths, GOAL_LIFECYCLE_EVENT_TYPES, inferGoalsCapability, CURRENT_SCHEMA_VERSION } from '../lib/bundle.mjs';
-import { parseGoals, validateGoals, goalsHash, legacyGoalsHash, validateUserApprovalReceipt, validateAmendment, amendmentDiff, crossCheckGoals, validateGoalCheckReceipt, validateGoalWaiver, waiverKey } from '../lib/goals.mjs';
+import { parseGoals, validateGoals, goalsHash, legacyGoalsHash, validateUserApprovalReceipt, validateAmendment, amendmentDiff, crossCheckGoals, validateGoalCheckReceipt, validateGoalWaiver, waiverKey, validateGoalsLoadGate } from '../lib/goals.mjs';
 import { planWorktreeCreate, parseWorktreeList, classifyWorktrees, normalizeDisposition, dispositionAfterTeardown, VALID_DISPOSITIONS as VALID_WORKTREE_DISPOSITION } from '../lib/worktree.mjs';
 import { collectDiskDirs, collectBundleRecords } from '../lib/worktree-fs.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
@@ -204,6 +204,14 @@ import { prepareWave, declaredScope, verifyScope } from '../lib/wave.mjs';
 import { detectHost } from '../lib/dispatch/index.mjs';
 import { selectReentry, reentryEventTypes, validateGateReceipt } from '../lib/reentry-guard.mjs';
 import { resolveConfigDir } from '../lib/paths.mjs';
+import { readEnv, childEnv, resolveRunConfig } from '../lib/config.mjs';
+import { projectObligations, resolveResumeBrief, renderResumeBrief } from '../lib/resume-brief.mjs';
+import { contextStatus } from '../lib/context-status.mjs';
+import {
+  replayInterview, interviewStatus, askQuestion, answerQuestion, withdrawQuestion, recordDraft,
+  recordCritic, recordCriticUnavailable, acknowledgeCriticUnavailable, endInterview,
+  waiveInterview, reopenInterview, replayLedger,
+} from '../lib/interview.mjs';
 import { createHash } from 'node:crypto';
 import { mergePlanFragments, validatePlanIndex, renderPlanMd, renderPlanHtml } from '../lib/plan-merge.mjs';
 import { amendPlan } from '../lib/amend.mjs';
@@ -218,6 +226,7 @@ import { continueRun, dispatchPlanFanout } from '../lib/continue.mjs';
 import { finishStep } from '../lib/finish-step.mjs';
 import { sweepWorktrees } from '../lib/sweep.mjs';
 import { discoverRuns, readDiscoveryConfig, serializeDiscoveryConfig, addDiscoveryRoot, removeDiscoveryRoot, discoveryConfigPath } from '../lib/runs.mjs';
+import { acquireSeedLock, releaseSeedLock } from '../lib/seed-lock.mjs';
 
 // ---- spec/plan gate-review enforcement (the two PRE-EXECUTE adversary gates) ----
 // The bin fs boundary for lib/reentry-guard.mjs (the pure scanner). These two functions recompute a
@@ -582,8 +591,19 @@ const KNOWN_FLAGS = new Set(
     'schema-version scope session sha slug spec-path state status subsystems ' +
     'subsystems-file summary takeover target task task-id to topic ts ttl-ms type verify-failed ' +
     'verify-output-hash verify-passed waive waiver wave worktree worktree-list worktree-registered ' +
-    'ws-baseline').split(' ')
+    'ws-baseline ' +
+    // §5.3 interview ledger + §6 goals-load gate + §7.5 rejection + the deploy/final-check flags
+    'class corrected critic-unavailable-ack deploy-abort deploy-attest deploy-authorize deploy-rerun '  +
+    'deploy-retry deploy-skip deploy-step-done error file final intent-confirmed intent-rejected '  +
+    'deploy-chain-hash exit focus interview-waived model overlap-review payload-file resolves '  +
+    'review-file round '  +
+    'successor text unavailable '  +
+    'version-fix window').split(' ')
 );
+
+// `bootstrap` is scripts/bootstrap-v10.mjs's own CLI, never an `mp` verb. Accepting it here —
+// even to print an error later — would imply masterplan drives the irreversible stage.
+const REFUSED_VERBS = new Set(['bootstrap', 'bootstrap-arm', 'bootstrap-record', 'bootstrap-status']);
 
 function rejectUnknownFlags(flags) {
   for (const name of Object.keys(flags)) {
@@ -600,6 +620,249 @@ export function isKnownFlag(name) {
 }
 export { KNOWN_FLAGS };
 
+
+// The environment is read through ONE seam so tests can inject it and the audit has a single
+// site to check (task 21's readEnv/childEnv contract). Several callees take a whole env OBJECT
+// rather than a name, so `readEnvAll` hands them a view whose every property read still goes
+// through `readEnv` — returning `process.env` directly would route around the seam it claims
+// to be, which is how an audit passes while the reads escape it.
+function readEnvAll() {
+  return new Proxy(Object.create(null), {
+    get: (_t, name) => (typeof name === 'string' ? readEnv(name) : undefined),
+    has: (_t, name) => typeof name === 'string' && readEnv(name) !== undefined,
+    // Enumeration goes through the seam as well: taking the key set from process.env would
+    // hide a key an injected environment supplies and the real one lacks.
+    ownKeys: () => Object.keys(childEnv({})),
+    getOwnPropertyDescriptor: (_t, name) => {
+      const value = typeof name === 'string' ? readEnv(name) : undefined;
+      return value === undefined ? undefined : { value, enumerable: true, configurable: true };
+    },
+  });
+}
+
+// The deploy-stage answer flags. Every one of them names its step explicitly as
+// `<group>[<index>]`, so a flag intended for one step can never land on another.
+function parseStepRef(value, flagName) {
+  const m = /^([A-Za-z_]+)\[(\d+)\]$/.exec(String(value ?? '').trim());
+  if (!m) die(`${flagName} expects <group>[<index>], e.g. release[0] — got ${JSON.stringify(value)}`, 2);
+  return { group: m[1], index: Number(m[2]) };
+}
+
+function deployFlags(flags) {
+  const out = {};
+  if (flags['deploy-authorize']) out.deployAuthorize = parseStepRef(flags['deploy-authorize'], '--deploy-authorize');
+  // retry answers a FAILED step; rerun answers an INDETERMINATE one. They are distinct verbs
+  // because the states they answer are distinct: a retry re-runs work known to have failed, a
+  // rerun replays work whose outcome was never observed.
+  if (flags['deploy-retry']) out.deployRetry = parseStepRef(flags['deploy-retry'], '--deploy-retry');
+  if (flags['deploy-rerun']) out.deployRerun = parseStepRef(flags['deploy-rerun'], '--deploy-rerun');
+  if (flags['deploy-skip']) out.deploySkip = parseStepRef(flags['deploy-skip'], '--deploy-skip');
+  if (flags['deploy-attest']) out.deployAttest = parseStepRef(flags['deploy-attest'], '--deploy-attest');
+  if (flags['deploy-abort']) out.deployAbort = true;
+  if (flags['deploy-step-done']) {
+    const ref = parseStepRef(flags['deploy-step-done'], '--deploy-step-done');
+    // The exit status IS the report. Defaulting a missing or malformed one to 0 would record an
+    // unobserved result as a success — the exact thing §7.1 exists to prevent.
+    if (flags.exit === undefined) die('--deploy-step-done requires --exit=<status> — the step\'s observed exit code', 2);
+    const exit = Number(flags.exit);
+    if (!Number.isInteger(exit) || exit < 0 || exit > 255) {
+      die(`--exit must be an integer 0-255 (the observed exit code), got ${JSON.stringify(flags.exit)}`, 2);
+    }
+    out.deployStepDone = {
+      ...ref,
+      exit,
+      ...(typeof flags['digest-file'] === 'string' ? { digestFile: flags['digest-file'] } : {}),
+    };
+  }
+  return out;
+}
+
+// §7.5: a rejection names its class AND the successor that discharges it. --successor is
+// required because an obligation with no named successor is one nobody can close.
+function intentRejection(flags) {
+  const cls = String(flags.class ?? '');
+  if (cls !== 'implementation' && cls !== 'intent') {
+    die('--intent-rejected requires --class=implementation|intent', 2);
+  }
+  const successor = typeof flags.successor === 'string' ? flags.successor.trim() : '';
+  if (!successor) {
+    die('--intent-rejected requires --successor=<slug> — the successor bundle that discharges the obligation', 2);
+  }
+  return { class: cls, reason: need(flags, 'reason'), successor };
+}
+
+// A plan verb defaults to the plan index the bundle recorded at seed: the state file already
+// names it, so requiring the caller to repeat it invites the two disagreeing.
+function storedPlanIndexPath(flags) {
+  const statePath = flags.state;
+  if (typeof statePath !== 'string' || !statePath) die('missing required --plan-index (and no --state to read plan_index_path from)', 2);
+  let st = null;
+  try { st = parseState(fs.readFileSync(statePath, 'utf8')); } catch { st = null; }
+  const stored = st && typeof st.plan_index_path === 'string' ? st.plan_index_path : null;
+  if (stored) return stored;
+  const fallback = path.join(path.dirname(statePath), 'plan.index.json');
+  if (fs.existsSync(fallback)) return fallback;
+  die('missing required --plan-index (the bundle records no plan_index_path and no plan.index.json sits beside state.yml)', 2);
+  return null;
+}
+
+// §7.5: read the predecessor's intent-rejection, if it has one. Only an `intent`-class
+// rejection carries a correction for the successor's interview — an `implementation` rejection
+// says the build was wrong, not that the goal was misunderstood, so it projects the class alone.
+function projectPredecessorRejection(statePath, predecessorSlug) {
+  try {
+    const repoRoot = deriveDefaultTargetRepo(statePath);
+    const bundleDir = path.join(repoRoot, 'docs', 'masterplan', predecessorSlug);
+    const rejection = [...readEventsSafe(bundleDir)].reverse()
+      .find((e) => e && e.type === 'incomplete_authorized' && String(e.reason ?? '').startsWith('intent_rejected'));
+    if (!rejection) return null;
+    return {
+      class: rejection.class ?? null,
+      ...(rejection.class === 'intent' && rejection.correction ? { correction: rejection.correction } : {}),
+      ...(rejection.correction && !rejection.class ? { correction: rejection.correction } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+// §8: the digest of the run inventory a review judged. `runs list` prints it, the review file
+// carries it, and both recorders recompute it and refuse a mismatch (`overlap_review_stale`).
+// It is STALENESS DETECTION, not a lock — concurrency is handled by the seed lock's ordering.
+function inventoryDigest(runs) {
+  const canonical = (runs ?? []).map((r) => ({
+    repo: r.repo ?? null, slug: r.slug ?? null, status: r.status ?? null,
+    phase: r.phase ?? null, planned_paths: Array.isArray(r.planned_paths) ? [...r.planned_paths].sort() : [],
+  })).sort((a, b) => `${a.repo}\u0000${a.slug}`.localeCompare(`${b.repo}\u0000${b.slug}`));
+  return createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
+}
+
+// The overlap review a seed (or a resumed run) records. Its digest must match the inventory as
+// it stands NOW; anything else is a review of a repository that has since moved.
+// THROWS rather than die()s: it runs inside the repo seed lock, and `die` calls process.exit(),
+// which skips `finally` and would leak the lock on every refusal.
+function loadOverlapReview(reviewPath, repoRoot, label) {
+  let review;
+  try {
+    review = JSON.parse(fs.readFileSync(String(reviewPath), 'utf8'));
+  } catch (e) {
+    throw new Error(`${label}: --overlap-review unreadable or not JSON: ${e.message}`);
+  }
+  if (!review || typeof review !== 'object' || Array.isArray(review)) {
+    throw new Error(`${label}: the overlap review must be a JSON object`);
+  }
+  if (typeof review.inventory_sha256 !== 'string' || !review.inventory_sha256) {
+    throw new Error(`${label}: the overlap review must carry the inventory_sha256 it judged`);
+  }
+  if (!Array.isArray(review.candidates)) {
+    throw new Error(`${label}: the overlap review must carry a candidates array (an empty inventory still yields a review with zero candidates)`);
+  }
+  const action = review.action ?? review.outcome;
+  if (typeof action !== 'string' || !action) {
+    throw new Error(`${label}: the overlap review must carry an action`);
+  }
+  let current;
+  try {
+    current = inventoryDigest(discoverRuns({ repoRoot }).runs);
+  } catch (e) {
+    throw new Error(`${label}: cannot recompute the run inventory: ${e.message}`);
+  }
+  if (current !== review.inventory_sha256) {
+    throw new Error(`${label}: overlap_review_stale — the review judged inventory ${review.inventory_sha256.slice(0, 12)} but the repository now reads ${current.slice(0, 12)}; re-run \`mp runs list\` and review again`);
+  }
+  return { review, action, digest: current };
+}
+
+// A bundle's events, or an empty list: a surface that merely REPORTS must never fail because
+// a foreign or half-written bundle could not be read.
+function readEventsSafe(bundleDir) {
+  try {
+    return fs.readFileSync(path.join(bundleDir, 'events.jsonl'), 'utf8')
+      .split('\n').filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } })
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+// The completion class a bundle archived under. `state.completion_class` is authoritative when
+// present; a bundle archived before the field existed reads as `legacy` rather than being
+// guessed at from its status.
+function completionClassOf(state) {
+  if (!state || state.status !== 'archived') return null;
+  if (typeof state.completion_class === 'string' && state.completion_class) return state.completion_class;
+  // `legacy` is what an ABSENT field means. Inferring a modern class from ledger events would
+  // report a class the run never recorded — and would read `complete` off evidence that was
+  // never the completion decision.
+  return 'legacy';
+}
+
+// `pushed: no` until an archive_pushed event lands: a local `complete` is not visible to another
+// host or to GitHub's doctor, and reporting it as pushed would claim a visibility it lacks (§7.4).
+function archivePushedOf(events) {
+  return (events ?? []).some((e) => e && e.type === 'archive_pushed') ? 'yes' : 'no';
+}
+
+// Open required_successor obligations, with the exact seed command that discharges each one.
+// Both surfaces print these through lib/resume-brief.mjs's projection so a run cannot be read
+// as finished while it still owes a successor.
+function openObligations(repoRoot) {
+  try {
+    return projectObligations({ repoRoot }).map((o) => ({
+      ...o,
+      // The EXACT command, not a sketch: seed requires a state path, a topic and the overlap
+      // review, so a string missing them is not something the operator can run.
+      seed_command: seedCommandFor(repoRoot, o),
+    }));
+  } catch {
+    return [];
+  }
+}
+
+// The full `mp seed` invocation that discharges an obligation. Every argument seed requires is
+// present, so the printed line is runnable rather than illustrative.
+function seedCommandFor(repoRoot, obligation) {
+  const statePath = path.join(repoRoot, 'docs', 'masterplan', obligation.slug, 'state.yml');
+  const topic = obligation.reason ? String(obligation.reason) : `successor to ${obligation.source}`;
+  // A concrete path, not a placeholder: `<review.json ...>` contains shell redirection
+  // characters and spaces, so a command carrying it cannot be pasted and run.
+  const reviewPath = path.join(repoRoot, 'docs', 'masterplan', `.overlap-review-${obligation.slug}.json`);
+  return [
+    'mp', 'seed',
+    `--state=${statePath}`,
+    `--slug=${obligation.slug}`,
+    `--topic=${topic}`,
+    `--repo-root=${repoRoot}`,
+    `--predecessor=${obligation.source}`,
+    `--overlap-review=${reviewPath}`,
+  ].map(shellQuote).join(' ');
+}
+
+// POSIX single-quoting: every argument survives spaces, $, backticks and quotes intact. A path
+// like `/tmp/my repo` or a topic carrying `$(...)` must not change meaning when pasted.
+function shellQuote(arg) {
+  const str = String(arg);
+  return /^[A-Za-z0-9_./:=-]+$/.test(str) ? str : `'${str.replace(/'/g, `'\\''`)}'`;
+}
+
+// The harness's auto-compact window, read from the harness's OWN settings file. This is a
+// read: masterplan never writes harness settings, so an unreadable file is reported as such
+// rather than created or defaulted silently.
+function readHarnessAutoCompactWindow() {
+  const dir = resolveConfigDir(readEnvAll());
+  const file = path.join(dir, 'settings.json');
+  try {
+    const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const value = data?.autoCompactWindow ?? data?.env?.autoCompactWindow ?? null;
+    return {
+      value: Number.isFinite(Number(value)) ? Number(value) : null,
+      source: file,
+      readable: true,
+    };
+  } catch {
+    return { value: null, source: file, readable: false };
+  }
+}
 
 function out(obj) {
   process.stdout.write(typeof obj === 'string' ? obj + '\n' : JSON.stringify(obj) + '\n');
@@ -625,7 +888,7 @@ function resolveOwnerSelf(flags, statePath) {
   const session =
     typeof flags.session === 'string' && flags.session.trim()
       ? flags.session.trim()
-      : String(process.env.CLAUDE_CODE_SESSION_ID ?? '').trim();
+      : String(readEnv('CLAUDE_CODE_SESSION_ID') ?? '').trim();
   if (!session) {
     die('owner: no session id — pass --session or set CLAUDE_CODE_SESSION_ID', 1);
   }
@@ -753,6 +1016,7 @@ function performRefsAdd(flags, { sourcePath, direction, targetSlug, subLabel }) 
   const release = acquireRefsLocks(bundles, flags, subLabel);
   let renderOk = true;
   let applied;
+  let refsEventSkipped = null;
   try {
     const plan = planRefsAdd({
       direction: dir, sourceRepoRoot, sourceSlug, sourceTopic,
@@ -765,15 +1029,27 @@ function performRefsAdd(flags, { sourcePath, direction, targetSlug, subLabel }) 
     if (applied.targetChanged) writeState(targetBundlePath, applied.targetState);
     if (applied.sourceChanged) writeState(sourcePath, applied.sourceState);
     const ts = new Date().toISOString();
-    if (applied.targetChanged) appendEvent(targetBundlePath, { type: 'refs_added', ts, direction: plan.target.direction, slug: sourceSlug });
+    // An ARCHIVED target accepts no further events (only archive_pushed). That is the normal
+    // shape for `seed --predecessor`: the predecessor archived, and the successor exists to
+    // discharge its obligation. The target's state.refs is still updated — the link is real —
+    // but its ledger stays closed, and the skip is reported rather than passed off as written.
+    let targetEventSkipped = null;
+    if (applied.targetChanged) {
+      if (applied.targetState?.status === 'archived') {
+        targetEventSkipped = 'archived';
+      } else {
+        appendEvent(targetBundlePath, { type: 'refs_added', ts, direction: plan.target.direction, slug: sourceSlug });
+      }
+    }
     if (applied.sourceChanged) appendEvent(sourcePath, { type: 'refs_added', ts, direction: dir, target: tslug });
+    refsEventSkipped = targetEventSkipped;
     // Inline render-freshness AFTER the state/event commit — only the sides that changed.
     if (applied.sourceChanged && !rerenderRefsHtml(sourcePath, subLabel)) renderOk = false;
     if (applied.targetChanged && !rerenderRefsHtml(targetBundlePath, subLabel)) renderOk = false;
   } finally {
     release();
   }
-  out({ refs: 'add', direction: dir, target: tslug, source_changed: applied.sourceChanged, target_changed: applied.targetChanged });
+  out({ refs: 'add', direction: dir, target: tslug, source_changed: applied.sourceChanged, target_changed: applied.targetChanged, ...(refsEventSkipped ? { target_event_skipped: refsEventSkipped } : {}) });
   if (!renderOk) process.exit(1);
 }
 
@@ -894,11 +1170,16 @@ function main() {
   // A7 (2026-08-30): fail closed on unknown flags before dispatch — a typo'd/misspelled
   // flag is a hard exit 2, never a silent drop.
   rejectUnknownFlags(flags);
+  // A bootstrap verb is refused by NAME, with the reason: the irreversible stage is driven by
+  // scripts/bootstrap-v10.mjs, and accepting the verb here would imply otherwise.
+  if (REFUSED_VERBS.has(String(cmd))) {
+    die(`'${cmd}' is not an mp verb — the bootstrap stage is driven by scripts/bootstrap-v10.mjs (arm/record), never by mp`, 2);
+  }
 
   switch (cmd) {
     case 'version': {
       const cwd = flags.cwd || process.cwd();
-      out(formatBanner(readPluginVersion(cwd, process.env), flags.args || '', cwd));
+      out(formatBanner(readPluginVersion(cwd, readEnvAll()), flags.args || '', cwd));
       break;
     }
     case 'detect-host': {
@@ -938,6 +1219,27 @@ function main() {
       if (flags['planning-mode'] !== undefined && !VALID_PLANNING_MODE.includes(flags['planning-mode'])) {
         die(`invalid --planning-mode '${flags['planning-mode']}' — expected one of: ${VALID_PLANNING_MODE.join(', ')}`);
       }
+      // The configuration hierarchy is resolved before the state is built, so repository and
+      // user defaults reach the seeded run; its warnings are persisted after the review. A
+      // resolver failure is fatal — a silently unconfigured seed is worse than a refused one.
+      // It runs AFTER the bin-level enum checks so a bad CLI flag keeps the CLI's own message.
+      let seedConfig = null;
+      {
+        const cliLayer = {};
+        for (const [flag, key] of [['complexity', 'complexity'], ['autonomy', 'autonomy'], ['planning-mode', 'planning_mode']]) {
+          if (flags[flag] !== undefined) cliLayer[key] = flags[flag];
+        }
+        const root = flags['repo-root'] ?? (() => {
+          try { return deriveDefaultTargetRepo(p); } catch { return null; }
+        })();
+        if (root) {
+          try {
+            seedConfig = resolveRunConfig({ cli: cliLayer, repoRoot: root, env: readEnvAll() });
+          } catch (e) {
+            die(`seed: cannot resolve the run configuration: ${e.message}`, 1);
+          }
+        }
+      }
       if (flags['owner-lock'] !== undefined && !['on', 'off'].includes(flags['owner-lock'])) {
         die(`invalid --owner-lock '${flags['owner-lock']}' — expected on or off`);
       }
@@ -964,6 +1266,15 @@ function main() {
         state = buildSeedState({
           slug: need(flags, 'slug'),
           topic: need(flags, 'topic'),
+          // The resolved hierarchy (CLI > repo > user > default) and where each value came
+          // from — resolved BEFORE the state is built, so repository and user defaults
+          // actually reach the seeded run instead of being computed and discarded.
+          ...(seedConfig ? {
+            complexity: seedConfig.values.complexity,
+            complexitySource: flags['complexity-source'] ?? seedConfig.sources.complexity,
+            autonomy: seedConfig.values.autonomy,
+            planningMode: seedConfig.values.planning_mode,
+          } : {}),
           createdAt: flags['created-at'] ?? new Date().toISOString(),
           phase: flags.phase ?? 'brainstorm',
           status: flags.status ?? 'in-progress',
@@ -974,10 +1285,10 @@ function main() {
           // of bundles, degrading to SKIP rather than failing, which is why it went
           // unnoticed. Keep this symbolic so the constant stays single-source.
           schemaVersion: flags['schema-version'] !== undefined ? Number(flags['schema-version']) : CURRENT_SCHEMA_VERSION,
-          complexity: flags.complexity,
-          complexitySource: flags['complexity-source'],
-          autonomy: flags.autonomy,
-          planningMode: flags['planning-mode'],
+          ...(flags.complexity !== undefined ? { complexity: flags.complexity } : {}),
+          ...(flags['complexity-source'] !== undefined ? { complexitySource: flags['complexity-source'] } : {}),
+          ...(flags.autonomy !== undefined ? { autonomy: flags.autonomy } : {}),
+          ...(flags['planning-mode'] !== undefined ? { planningMode: flags['planning-mode'] } : {}),
           predecessorTranscript: flags['predecessor-transcript'],
           // Path fields default to siblings of the BUNDLE DIR (its authoritative location), so a
           // non-canonical seed path stays self-consistent; explicit flags override. RELATIVE flags
@@ -994,15 +1305,88 @@ function main() {
       } catch (e) {
         die(e.message, 1);
       }
-      writeState(p, state);
+      // §8: the seed is a validate-then-create transaction under a repo-wide lock. The lock is
+      // held across BOTH halves so two seeds can never pass the same inventory, and the bundle
+      // directory is created last — a refused seed leaves nothing on disk.
+      const seedRepoRoot = flags['repo-root'] ?? (() => {
+        try { return deriveDefaultTargetRepo(p); } catch { return null; }
+      })();
+      if (!seedRepoRoot) die('seed: cannot derive the repository root (pass --repo-root)', 1);
+      // A seed without a review is refused: otherwise the "first event is the review" property
+      // holds vacuously, which is the same as not having the property at all.
+      if (flags['overlap-review'] === undefined) {
+        die('seed: --overlap-review=<json file> is required — record the overlap decision before creating a bundle (an empty inventory still yields a review with zero candidates)', 2);
+      }
+      const seedLock = acquireSeedLock(seedRepoRoot, {
+        pid: process.pid,
+        host: os.hostname(),
+        session: readEnv('CLAUDE_CODE_SESSION_ID') ?? 'cli',
+      });
+      if (!seedLock.ok) {
+        die(`seed: another seed holds the repo seed lock (${seedLock.reason}) — serialize, or clear a dead lock with \`mp sweep --apply\``, 1);
+      }
+      let seedReview;
+      try {
+        // Validated BEFORE anything is created, and re-checked under the lock: existence read
+        // outside it could have changed between the check and the create.
+        if (fs.existsSync(p) && !flags.force) {
+          throw new Error(`seed: ${p} already exists — pass --force to overwrite (this replaces the bundle's core state).`);
+        }
+        seedReview = loadOverlapReview(flags['overlap-review'], seedRepoRoot, 'seed');
+        // --predecessor is validated BEFORE the bundle is created: a link that cannot be made
+        // must not leave a fresh bundle behind, which is what "validate then create" means.
+        if (flags.predecessor !== undefined) {
+          const target = resolveTargetBundlePath(seedRepoRoot, validateTargetSlug(String(flags.predecessor)));
+          if (!fs.existsSync(target)) {
+            throw new Error(`seed: predecessor bundle ${target} does not exist — nothing was created`);
+          }
+        }
+        writeState(p, state);
+        // --force replaces the bundle, and that includes its LEDGER: appending to the old one
+        // would leave overlap_review somewhere past second, breaking the property the review's
+        // position is supposed to guarantee.
+        fs.writeFileSync(path.join(dir, 'events.jsonl'), '');
+        const seedTs = flags.ts ?? new Date().toISOString();
+        // The capability event first, the review second: a freshly seeded bundle's array begins
+        // [capability, overlap_review].
+        appendEvent(p, {
+          type: 'bundle_created', ts: seedTs,
+          data: { goals_enabled: state.goals_enabled === true, slug: state.slug },
+          ...(flags.predecessor !== undefined ? { predecessor: String(flags.predecessor) } : {}),
+        });
+        appendEvent(p, {
+          type: 'overlap_review', ts: seedTs,
+          inventory_sha256: seedReview.digest,
+          outcome: seedReview.action,
+          candidates: seedReview.review.candidates,
+        });
+        // Resolution warnings are persisted AFTER the review, so the review keeps second place.
+        if (seedConfig && Array.isArray(seedConfig.warnings) && seedConfig.warnings.length) {
+          appendEvent(p, { type: 'config_warning', ts: seedTs, warnings: seedConfig.warnings });
+        }
+      } catch (e) {
+        // Release BEFORE exiting: die() calls process.exit(), which never reaches `finally`.
+        releaseSeedLock(seedRepoRoot, seedLock.owner ?? seedLock);
+        die(e.message, 1);
+      }
+      releaseSeedLock(seedRepoRoot, seedLock.owner ?? seedLock);
       // --predecessor=<slug>: seed a back ref to the named prior run (+ its reciprocal forward ref in
       // that bundle) now that state.yml exists. Reuses the F1 add transaction (same-repo target derived
       // from THIS bundle's repo root); a missing predecessor fails loud (add is strict) after the seed
       // has already committed — the fresh bundle stands, the link did not.
+      let projected = null;
       if (flags.predecessor !== undefined) {
         performRefsAdd(flags, { sourcePath: p, direction: 'back', targetSlug: String(flags.predecessor), subLabel: 'seed --predecessor' });
+        // §7.5: a successor seeded from a run that was rejected on INTENT starts from that
+        // rejection — its class and the operator's correction text are projected into this
+        // bundle's seed record so the new interview opens holding what went wrong, rather than
+        // asking the operator to remember it.
+        projected = projectPredecessorRejection(p, String(flags.predecessor));
+        if (projected) {
+          appendEvent(p, { type: 'predecessor_rejection', ts: flags.ts ?? new Date().toISOString(), predecessor: String(flags.predecessor), ...projected });
+        }
       }
-      out({ seeded: state.slug, phase: state.phase, status: state.status, path: p }); // terse: no full-state echo (anti-flood)
+      out({ seeded: state.slug, phase: state.phase, status: state.status, path: p, ...(projected ? { predecessor_rejection: projected } : {}) }); // terse: no full-state echo (anti-flood)
       break;
     }
     case 'seed-tasks': {
@@ -1090,6 +1474,55 @@ function main() {
       // temp+rename, then state.yml temp+rename via the single-writer writeState), event append LAST.
       const p = need(flags, 'state');
       const dir = path.dirname(p);
+      // --interview-waived routes through the interview's OWN waiver operation before anything
+      // is frozen: a waiver is a durable ledger event, not a flag this verb interprets itself.
+      if (flags['interview-waived'] === true || flags['interview-waived'] === 'true') {
+        try {
+          waiveInterview({ statePath: p, reason: need(flags, 'reason') });
+        } catch (e) {
+          die(`goals-load: --interview-waived refused: ${e.message}`, 1);
+        }
+      }
+      // The §5.4 gate: goals load only from a permitted interview exit, and an `exhausted` exit
+      // owes an Assumptions row for every unresolved id its terminal event listed. The replay and
+      // the spec path are handed to the library so its error CODE is what surfaces —
+      // `assumed_row_missing` is raised exactly as lib/goals.mjs emits it, never re-worded here.
+      {
+        // The replay is produced UNCONDITIONALLY: a replay that cannot be read is a hard
+        // failure, never a reason to skip the gate. (Swallowing the error would make an
+        // unreadable ledger the easiest way past the check.)
+        let replay;
+        try {
+          replay = replayInterview(p);
+        } catch (e) {
+          die(`goals-load: cannot replay the interview ledger: ${e.message}`, 1);
+        }
+        // The gate is keyed on the INTERVIEW LEDGER, not on the bundle's capability record.
+        // Keying it on the capability marker was tried and is wrong: this repo carries an
+        // explicit contract — test/bin-masterplan.test.mjs, "the seed-time capability event
+        // does NOT block the first goals-load" — that a freshly seeded bundle may load goals.
+        // So the rule is: an interview that was STARTED must exit properly (§5.4); a bundle
+        // where none ran proceeds, and `--interview-waived` is the documented way to record
+        // that choice durably.
+        const evs = replay.events ?? [];
+        const hasInterview = evs.some((e) => String(e?.type ?? '').startsWith('interview_'));
+        if (hasInterview) {
+          let specText = null;
+          const specPath = flags['spec-path'] ?? null;
+          if (specPath) {
+            try { specText = fs.readFileSync(String(specPath), 'utf8'); } catch (e) {
+              die(`goals-load: --spec-path unreadable: ${e.message}`, 1);
+            }
+          }
+          const gate = validateGoalsLoadGate({ replay, specText });
+          if (!gate.ok) die(`goals-load: ${gate.code}: ${gate.error}`, 1);
+        } else {
+          // A bundle with NO interview ledger predates the interview (a v1 bundle); it has no
+          // exit to gate on. The skip is stated rather than silent, so it can never be mistaken
+          // for a gate that passed.
+          process.stderr.write('masterplan: goals-load: no interview ledger on this bundle — the §5.4 exit gate has no exit to judge; use --interview-waived --reason to record a deliberate skip\n');
+        }
+      }
       const state = loadForWrite(p);
       let goalsMd;
       try {
@@ -1487,6 +1920,11 @@ function main() {
       const gcVerifyHash =
         flags['verify-output-hash'] !== undefined ? String(flags['verify-output-hash']) : undefined;
       const receipt = readReceiptArg(need(flags, 'receipt'), '--receipt');
+      // --final marks the §6.2 FINAL assessment: the one that runs after the live check and
+      // answers the intent question. Its extra bindings come from the RECORDER (the flags the
+      // finish passes), never from the receipt itself — a receipt that supplied its own
+      // deploy base would be validating its own claim.
+      const gcFinal = flags.final === true || flags.final === 'true';
       const v = validateGoalCheckReceipt(receipt, {
         goalsHash: gcHash,
         headSha: gcHead,
@@ -1494,6 +1932,12 @@ function main() {
         verifyOutputHash: gcVerifyHash,
         clean: true,
         goals: gcParsed.goals,
+        ...(gcFinal ? {
+          final: true,
+          deployBaseSha: need(flags, 'base-sha'),
+          deployChainHash: need(flags, 'deploy-chain-hash'),
+          liveCheckDigest: need(flags, 'digest-file'),
+        } : {}),
       });
       if (!v.ok) die(`record-goal-check: receipt rejected — ${v.error}`, 1);
       const checkedAlready = gcEvents.some(
@@ -2371,7 +2815,7 @@ function main() {
       // bytes so the rest of the file keeps its original formatting; nothing else in
       // the index is touched. Bundles with a sibling state.yml also get a
       // plan_reindexed audit event (old -> new hash).
-      const idxPath = need(flags, 'plan-index');
+      const idxPath = flags['plan-index'] ?? storedPlanIndexPath(flags);
       let raw;
       try {
         raw = readText(idxPath);
@@ -3580,7 +4024,7 @@ function main() {
         // Routing-input parity with `mp continue`: the SAME host-suppression fact
         // (--codex-suppressed / --no-workflow / PI_CODING_AGENT), persisted into
         // the record's routing_inputs so retries re-prepare from identical inputs.
-        codexSuppressed: shouldSuppressWorkflow(flags, process.env),
+        codexSuppressed: shouldSuppressWorkflow(flags, readEnvAll()),
       })
         .then(out)
         .catch((e) => die(e.message));
@@ -3664,7 +4108,7 @@ function main() {
           ttlMs,
           alive,
           force: !!flags.force,
-          codexSuppressed: shouldSuppressWorkflow(flags, process.env),
+          codexSuppressed: shouldSuppressWorkflow(flags, readEnvAll()),
           routing: typeof flags.routing === 'string' ? flags.routing : undefined,
           review: flags.review,
           reposAllowlist,
@@ -3736,6 +4180,16 @@ function main() {
           retroOnly: !!flags['retro-only'],
           goalCheck: goalCheckFlag,
           goalsChoice: goalsChoiceFlag,
+          // §7.2 deploy-stage answers. Each names a step as group[index] so a flag can never be
+          // applied to whichever step happens to be current.
+          ...deployFlags(flags),
+          // §7.3/§7.5 dispositions. --intent-confirmed archives complete; --intent-rejected
+          // archives INCOMPLETE and names the successor that must discharge it.
+          intentConfirmed: !!flags['intent-confirmed'],
+          ...(flags['intent-rejected'] ? { intentRejected: intentRejection(flags) } : {}),
+          versionFix: !!flags['version-fix'],
+          merged: !!flags.merged,
+          mergeSha: typeof flags['merge-sha'] === 'string' ? flags['merge-sha'] : null,
         });
       } catch (e) {
         die(e.message, EXIT_UNCAUGHT);
@@ -3784,6 +4238,212 @@ function main() {
       }
       break;
     }
+    case 'record-overlap-review': {
+      // §8 resume path: the run continues rather than a new one being seeded, so the same review
+      // is appended at the CURRENT tail of the resumed bundle (same schema, same staleness rule).
+      const p = need(flags, 'state');
+      const repoRoot = flags['repo-root'] ?? deriveDefaultTargetRepo(p);
+      // The digest check and the append are ONE transaction under the repo seed lock. Without
+      // it a seed committing between the two would leave a stale review recorded as fresh —
+      // the digest is staleness detection, and the lock is what makes it decisive.
+      const reviewLock = acquireSeedLock(repoRoot, {
+        pid: process.pid, host: os.hostname(), session: readEnv('CLAUDE_CODE_SESSION_ID') ?? 'cli',
+      });
+      if (!reviewLock.ok) {
+        die(`record-overlap-review: another seed holds the repo seed lock (${reviewLock.reason}) — serialize, or clear a dead lock with \`mp sweep --apply\``, 1);
+      }
+      let recorded;
+      try {
+        const { review, action, digest } = loadOverlapReview(need(flags, 'review-file'), repoRoot, 'record-overlap-review');
+        appendEvent(p, {
+          type: 'overlap_review', ts: flags.ts ?? new Date().toISOString(),
+          inventory_sha256: digest, outcome: action, candidates: review.candidates,
+        });
+        recorded = { recorded: 'overlap_review', outcome: action, inventory_sha256: digest };
+      } catch (e) {
+        releaseSeedLock(repoRoot, reviewLock.owner ?? reviewLock);
+        die(e.message, 1);
+      }
+      releaseSeedLock(repoRoot, reviewLock.owner ?? reviewLock);
+      out(recorded);
+      break;
+    }
+    case 'context-status': {
+      // READ-ONLY measurement of the session transcript against the harness's context window.
+      // It reports one of the documented states — current / post-compaction / malformed /
+      // unsupported / not-found — and never guesses a number it could not measure.
+      const mainRoot = need(flags, 'repo-root');
+      let activeRuns = [];
+      try {
+        activeRuns = discoverRuns({ repoRoot: mainRoot }).runs.filter((r) => r.status === 'in-progress');
+      } catch { activeRuns = []; }
+      let threshold = 70;
+      try {
+        const cfg = resolveRunConfig({ cli: {}, repoRoot: mainRoot, env: readEnvAll() });
+        threshold = cfg.values?.context_watch?.threshold ?? 70;
+      } catch { /* the default stands */ }
+      out(contextStatus({
+        sessionId: typeof flags.session === 'string' ? flags.session : (readEnv('CLAUDE_CODE_SESSION_ID') ?? null),
+        mainRoot,
+        home: os.homedir(),
+        explicitWindow: flags.window === undefined ? undefined : Number(flags.window),
+        harnessModel: typeof flags.model === 'string' ? flags.model : undefined,
+        threshold,
+        focus: typeof flags.focus === 'string' ? flags.focus : undefined,
+        activeRuns,
+        env: readEnvAll(),
+      }));
+      break;
+    }
+    case 'resume-brief': {
+      // READ-ONLY: the active runs across the discovery roots and every open successor
+      // obligation, so a resumed session learns what is in flight without opening bundles.
+      const repoRoot = need(flags, 'repo-root');
+      let brief;
+      try {
+        brief = resolveResumeBrief({ repoRoot });
+      } catch (e) {
+        die(`resume-brief: ${e.message}`, 1);
+      }
+      if (flags.porcelain) {
+        out({
+          active: brief.active,
+          obligations: brief.obligations.map((o) => ({ ...o, seed_command: seedCommandFor(repoRoot, o) })),
+          warnings: brief.warnings,
+        });
+      } else {
+        out(renderResumeBrief(brief));
+      }
+      break;
+    }
+    case 'config': {
+      // READ-ONLY view of the resolved run configuration and of the harness setting the
+      // context watch depends on. It never writes: harness settings files are the operator's,
+      // and a tool that edits them cannot be trusted to report them.
+      const sub = positional[0];
+      if (sub !== 'show') {
+        die(`unknown config subcommand '${sub ?? ''}' — expected: show`, 1);
+      }
+      const repoRoot = need(flags, 'repo-root');
+      let resolved;
+      try {
+        resolved = resolveRunConfig({ cli: {}, repoRoot, env: readEnvAll() });
+      } catch (e) {
+        die(`config show: ${e.message}`, 1);
+      }
+      // The harness's auto-compact window is NOT masterplan config — it lives in the harness's
+      // own settings file. Report it when it is readable, say so plainly when it is not, and
+      // recommend a value no lower than this run's context-watch threshold: a window below the
+      // threshold compacts before the run ever gets to warn.
+      const threshold = resolved.values?.context_watch?.threshold
+        ?? resolved.values?.['context_watch.threshold'] ?? null;
+      const harness = readHarnessAutoCompactWindow();
+      const recommended = threshold === null ? null : Math.max(threshold, harness.value ?? 0) || threshold;
+      out({
+        values: resolved.values,
+        sources: resolved.sources,
+        warnings: resolved.warnings,
+        harness: {
+          autoCompactWindow: harness.value,
+          source: harness.source,
+          readable: harness.readable,
+          recommended_min: recommended,
+          ...(harness.readable && threshold !== null && harness.value !== null && harness.value < threshold
+            ? { recommendation: `raise autoCompactWindow to at least ${threshold} to match context_watch.threshold` }
+            : {}),
+        },
+      });
+      break;
+    }
+    case 'interview': {
+      // The §5.3 ledger verbs. Every one of them is an events.jsonl append through
+      // lib/interview.mjs's single writer — this case only parses flags and forwards.
+      const sub = positional[0];
+      const p = need(flags, 'state');
+      const num = (name) => (flags[name] === undefined ? undefined : Number(flags[name]));
+      try {
+        switch (sub) {
+          case 'ask':
+            askQuestion({
+              statePath: p, id: need(flags, 'id'), round: num('round'),
+              kind: need(flags, 'kind'), text: need(flags, 'text'),
+              supersedes: flags.supersedes ?? undefined,
+            });
+            break;
+          case 'answer':
+            answerQuestion({
+              statePath: p, id: need(flags, 'id'), text: need(flags, 'text'),
+              corrected: flags.corrected === true || flags.corrected === 'true',
+              supersedes: flags.supersedes ?? undefined,
+              resolves: flags.resolves ?? undefined,
+            });
+            break;
+          case 'withdraw':
+            withdrawQuestion({
+              statePath: p, id: need(flags, 'id'), reason: need(flags, 'reason'),
+              resolves: flags.resolves ?? undefined,
+            });
+            break;
+          case 'draft': {
+            let intent;
+            try {
+              intent = JSON.parse(fs.readFileSync(String(need(flags, 'file')), 'utf8'));
+            } catch (e) {
+              die(`interview draft: --file unreadable or not JSON: ${e.message}`, 1);
+            }
+            recordDraft({ statePath: p, intent });
+            break;
+          }
+          case 'critic': {
+            // `--unavailable` on the critic verb is the same event as the dedicated verb: the
+            // dispatch failed, so there is no receipt to validate.
+            if (flags.unavailable === true || flags.unavailable === 'true') {
+              recordCriticUnavailable({ statePath: p, error: need(flags, 'error') });
+              break;
+            }
+            let receipt;
+            try {
+              receipt = JSON.parse(fs.readFileSync(String(need(flags, 'receipt')), 'utf8'));
+            } catch (e) {
+              die(`interview critic: --receipt unreadable or not JSON: ${e.message}`, 1);
+            }
+            recordCritic({ statePath: p, receipt, payloadPath: need(flags, 'payload-file') });
+            break;
+          }
+          case 'critic-unavailable':
+            recordCriticUnavailable({ statePath: p, error: need(flags, 'error') });
+            break;
+          case 'critic-unavailable-ack':
+            acknowledgeCriticUnavailable({ statePath: p, answer: need(flags, 'reason') });
+            break;
+          case 'end':
+            endInterview({
+              statePath: p, reason: need(flags, 'reason'),
+              criticUnavailableAck: flags['critic-unavailable-ack'] ?? undefined,
+            });
+            break;
+          case 'waive':
+            waiveInterview({ statePath: p, reason: need(flags, 'reason') });
+            break;
+          case 'reopen':
+            reopenInterview({ statePath: p, reason: need(flags, 'reason') });
+            break;
+          case 'status':
+            out(interviewStatus(p));
+            break;
+          case 'replay':
+            // The verbatim ledger: what was asked, answered, drafted and judged, in order.
+            out({ ledger: replayLedger(p) });
+            break;
+          default:
+            die(`unknown interview subcommand '${sub ?? ''}' — expected: ask|answer|withdraw|draft|critic|critic-unavailable|critic-unavailable-ack|end|waive|reopen|status|replay`, 1);
+        }
+      } catch (e) {
+        die(`interview ${sub}: ${e.message}`, 1);
+      }
+      if (sub !== 'status' && sub !== 'replay') out({ ok: true, interview: sub });
+      break;
+    }
     case 'runs': {
       // F5: read-only cross-repo run inventory via the shared lib/runs.mjs discovery engine. NEVER writes
       // state.yml (no lock, no event, no CD-7 concern). Sub-dispatch on the first positional; only `list`
@@ -3803,7 +4463,23 @@ function main() {
       }
       // Porcelain shape mirrors the engine's per-bundle record verbatim under `runs`, plus the isolated
       // per-bundle/per-root `warnings` the scan collected.
-      out({ runs: result.runs, warnings: result.warnings });
+      // The same completion/visibility projection every surface uses, per discovered run.
+      const runs = result.runs.map((r) => {
+        const evs = readEventsSafe(r.bundleDir);
+        let st = null;
+        try { st = parseState(fs.readFileSync(r.statePath, 'utf8')); } catch { st = null; }
+        return {
+          ...r,
+          completion_class: completionClassOf(st ?? { status: r.status }),
+          pushed: archivePushedOf(evs),
+        };
+      });
+      out({
+        runs,
+        inventory_sha256: inventoryDigest(result.runs),
+        warnings: result.warnings,
+        obligations: openObligations(repoRoot),
+      });
       break;
     }
     case 'set-discovery': {
@@ -3879,12 +4555,18 @@ function main() {
       } catch {
         other_runs = [];
       }
+      const statusEvents = readEventsSafe(path.dirname(p));
+      let obligations = [];
+      try { obligations = openObligations(deriveDefaultTargetRepo(p)); } catch { obligations = []; }
       out({
         slug: state.slug ?? null,
         status: state.status ?? null,
+        completion_class: completionClassOf(state),
+        pushed: archivePushedOf(statusEvents),
         phase: state.phase ?? null,
         tasks: { done, total: tasks.length },
         refs,
+        obligations,
         other_runs,
       });
       break;

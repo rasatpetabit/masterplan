@@ -107,6 +107,20 @@ Emit ordered findings — most severe first:
 
 Then one closing line: `verdict: blocking | advisory | clean | inconclusive`.
 
+## v1 mode (compatibility)
+A **v1 mode** dispatch is the legacy single-request shape: a brief carrying only the diff and the
+task text, with no v2 additions (no intent block, no deploy-stage bindings, no mode named). Detect
+it from the inputs rather than being told.
+
+In v1 mode return the **v9 output exactly** — the severity-first findings and the single
+`verdict:` line above, and nothing else. Emit no `intent_verdict` and no deploy-stage fields: a
+v9 recorder validates the shape it knows and would reject anything further. The review itself is
+unchanged; only the envelope is.
+
+This mode exists because this run's own v10 prompts are dispatched by a **pinned v9.10.0 finish**
+while both surfaces already serve v10 (§10 steps 4 and 6): one prompt file has to satisfy both
+recorders during the changeover.
+
 ## Architecture invariants
 - Read-only with respect to the run: never commit, never write `state.yml`.
 - Return a **compact findings digest**, never your full reasoning transcript (design goal 3).

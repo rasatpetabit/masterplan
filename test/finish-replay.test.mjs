@@ -76,11 +76,24 @@ function makeFixture({ slug = 't25', done, autonomy = 'loose' } = {}) {
   const self = buildOwnerIdentity({ host: 'h1', session: 'sess-A', slug, now: 1000 });
   assert.equal(acquireOwner(bundleDir, self, { now: 1000 }).outcome, 'acquire');
   const step = (extra = {}) => finishStep({ statePath, self, now: 2000, ...extra });
-  return { tmp, MAIN, WT, bundleDir, statePath, self, step };
+  return { tmp, MAIN, WT, bundleDir, statePath, self, step, slug };
 }
 
 // verify → retro → branch_finish gate → merge, landing on the first deploy step.
 function walkToDeploy(fx) {
+  let op = fx.step();
+  assert.equal(op.op, 'run_verify');
+  op = fx.step({ verify: 'pass' });
+  assert.equal(op.op, 'write_retro');
+  fs.writeFileSync(op.path, '# retro\n');
+  op = fx.step();
+  assert.equal(op.gate, 'branch_finish');
+  return fx.step({ choice: 'merge' });
+}
+
+// Like walkToDeploy, but for a bundle whose `done` runs no steps: the merge choice lands on
+// whatever the stage does next rather than on a deploy step.
+function walkToDeployOrArchive(fx) {
   let op = fx.step();
   assert.equal(op.op, 'run_verify');
   op = fx.step({ verify: 'pass' });
@@ -377,4 +390,313 @@ test('a halted step refuses a plain report — the operator must retry or rerun 
   assert.throws(() => fx.step({ deployStepDone: { group: 'release', index: 0, exit: 0 } }), /is halted/);
   const retry = fx.step({ deployRetry: { group: 'release', index: 0 } });
   assert.equal(retry.op, 'run_deploy_step');
+});
+
+// ---------------------------------------------------------------------------
+// Group order, mandatory groups and skips (wave task 26)
+// ---------------------------------------------------------------------------
+
+// The declaration order in the YAML is deliberately scrambled; the chain must still run
+// release -> install -> user_only -> live_check.
+const SCRAMBLED = [
+  'done:',
+  '  live_check:',
+  '    - run: /bin/true',
+  '  user_only:',
+  '    - text: click the button',
+  '      check: /bin/true',
+  '  install:',
+  '    - run: /bin/true',
+  '  release:',
+  '    - run: /bin/true',
+  '',
+].join('\n');
+
+test('the deploy chain runs in fixed group order regardless of declaration order', () => {
+  const fx = makeFixture({ done: SCRAMBLED });
+  let op = walkToDeploy(fx);
+  // release first, though it is declared last.
+  assert.equal(op.op, 'run_deploy_step', JSON.stringify(op));
+  assert.equal(op.group, 'release', JSON.stringify(op));
+  op = fx.step({ deployStepDone: { group: 'release', index: 0, exit: 0 } });
+  assert.equal(op.group, 'install', JSON.stringify(op));
+  op = fx.step({ deployStepDone: { group: 'install', index: 0, exit: 0 } });
+  // user_only is handed back rather than run.
+  assert.equal(op.ask, 'handback', JSON.stringify(op));
+  assert.equal(op.group, 'user_only');
+  op = fx.step({ deployStepDone: { group: 'user_only', index: 0, exit: 0 } });
+  assert.equal(op.group, 'live_check', JSON.stringify(op));
+  const order = readEvents(fx.bundleDir).filter((e) => e.type === 'deploy_step').map((e) => e.group);
+  assert.deepEqual(order, ['release', 'install', 'user_only']);
+});
+
+test('a step cannot be reported out of the chain order', () => {
+  const fx = makeFixture({ done: SCRAMBLED });
+  walkToDeploy(fx);
+  // live_check is last; reporting it while release is pending is refused. The authorization
+  // check happens to fire first — either way no outcome is recorded for a step the chain has
+  // not reached.
+  assert.throws(
+    () => fx.step({ deployStepDone: { group: 'live_check', index: 0, exit: 0 } }),
+    /without authorization\/start|out of order/,
+  );
+  assert.equal(typesFor(fx, 'deploy_step').length, 0);
+});
+
+test('release and install offer skip; live_check never does', () => {
+  const fx = makeFixture({ done: 'done:\n  release:\n    - run: /bin/false\n  install:\n    - run: /bin/false\n  live_check:\n    - run: /bin/false\n' });
+  walkToDeploy(fx);
+  let op = fx.step({ deployStepDone: { group: 'release', index: 0, exit: 1 } });
+  assert.equal(op.gate, 'deploy_failed');
+  assert.deepEqual(op.choices, ['retry', 'skip', 'abort'], 'release is skippable, archiving incomplete');
+  // Skip release and reach install, which is skippable on the same terms.
+  op = fx.step({ deploySkip: { group: 'release', index: 0 } });
+  assert.equal(op.group, 'install', JSON.stringify(op));
+  op = fx.step({ deployStepDone: { group: 'install', index: 0, exit: 1 } });
+  assert.equal(op.gate, 'deploy_failed');
+  assert.deepEqual(op.choices, ['retry', 'skip', 'abort'], 'install is skippable too');
+  op = fx.step({ deploySkip: { group: 'install', index: 0 } });
+  assert.equal(op.group, 'live_check', JSON.stringify(op));
+  assert.ok(readEvents(fx.bundleDir).some((e) => e.reason === 'deploy_skip:install[0]'), 'the install skip is durable');
+  op = fx.step({ deployStepDone: { group: 'live_check', index: 0, exit: 1 } });
+  assert.equal(op.gate, 'deploy_failed');
+  // The run's own liveness evidence cannot be waived.
+  assert.deepEqual(op.choices, ['retry', 'abort'], 'live_check offers no skip');
+  assert.throws(() => fx.step({ deploySkip: { group: 'live_check', index: 0 } }), /live_check\[0\] cannot be skipped/);
+  assert.ok(!readEvents(fx.bundleDir).some((e) => e.reason === 'deploy_skip:live_check[0]'));
+});
+
+test('a skipped mandatory step archives the run incomplete, never complete', () => {
+  const fx = makeFixture({ done: 'done:\n  release:\n    - run: /bin/false\n' });
+  walkToDeploy(fx);
+  assert.equal(fx.step({ deployStepDone: { group: 'release', index: 0, exit: 1 } }).gate, 'deploy_failed');
+  const op = fx.step({ deploySkip: { group: 'release', index: 0 } });
+  assert.equal(op.reason, 'archived', JSON.stringify(op));
+  const skip = readEvents(fx.bundleDir).find((e) => e.reason === 'deploy_skip:release[0]');
+  assert.equal(skip.type, 'incomplete_authorized');
+  assert.equal(typeof skip.head_after, 'string', 'the skip audits and records the boundary');
+  assert.notEqual(readState(fx.statePath).status, 'complete');
+});
+
+// ---------------------------------------------------------------------------
+// user_only handback
+// ---------------------------------------------------------------------------
+
+test('a user_only step is handed back and its check result maps to the three outcomes', () => {
+  // exit 0 -> done
+  const done = makeFixture({ done: 'done:\n  user_only:\n    - text: register the hook\n      check: /bin/true\n' });
+  walkToDeploy(done);
+  let op = done.step();
+  assert.equal(op.ask, 'handback', JSON.stringify(op));
+  assert.match(op.text, /register the hook/);
+  op = done.step({ deployStepDone: { group: 'user_only', index: 0, exit: 0 } });
+  assert.equal(latest(done, 'deploy_step').status, 'done');
+
+  // exit 1 -> the work is absent, so the operator is asked AGAIN rather than sent to a gate;
+  // the attempt is durable as deploy_step_check_failed.
+  const absent = makeFixture({ done: 'done:\n  user_only:\n    - text: register the hook\n      check: /bin/false\n' });
+  walkToDeploy(absent);
+  absent.step();
+  op = absent.step({ deployStepDone: { group: 'user_only', index: 0, exit: 1 } });
+  assert.equal(op.ask, 'handback', JSON.stringify(op));
+  assert.equal(latest(absent, 'deploy_step_check_failed').index, 0);
+  assert.equal(latest(absent, 'deploy_step'), null, 'an absent handback records no done step');
+
+  // any other exit -> indeterminate
+  const indet = makeFixture({ done: "done:\n  user_only:\n    - text: register the hook\n      check: sh -c 'exit 7'\n" });
+  walkToDeploy(indet);
+  indet.step();
+  op = indet.step({ deployStepDone: { group: 'user_only', index: 0, exit: 7 } });
+  assert.equal(op.gate, 'deploy_indeterminate', JSON.stringify(op));
+  assert.equal(latest(indet, 'deploy_indeterminate').check_exit, 7);
+});
+
+test('a user_only step is never authorized — it is handed back', () => {
+  const fx = makeFixture({ done: 'done:\n  user_only:\n    - text: do the thing\n      check: /bin/true\n' });
+  walkToDeploy(fx);
+  assert.throws(() => fx.step({ deployAuthorize: { group: 'user_only', index: 0 } }), /handed back, never authorized/);
+});
+
+// ---------------------------------------------------------------------------
+// Stage-produced commits: inside commit_paths, and outside
+// ---------------------------------------------------------------------------
+
+const RELEASE_WITH_PATHS = [
+  'done:',
+  '  version_from: .claude-plugin/plugin.json',
+  '  commit_paths:',
+  '    - CHANGELOG.md',
+  '  release:',
+  '    - run: /bin/true',
+  '',
+].join('\n');
+
+test('a stage commit inside commit_paths is a receipt; one outside is a base move', () => {
+  const inside = makeFixture({ done: RELEASE_WITH_PATHS });
+  write(inside.MAIN, '.claude-plugin/plugin.json', JSON.stringify({ name: 'x', version: '3.0.0' }));
+  commitOn(inside.MAIN, 'version file', '.claude-plugin/plugin.json');
+  walkToDeploy(inside);
+  // The step's own command commits CHANGELOG.md — declared in commit_paths, version unchanged.
+  write(inside.MAIN, 'CHANGELOG.md', '## 3.0.0\n');
+  commitOn(inside.MAIN, 'release: changelog', 'CHANGELOG.md');
+  const op = inside.step({ deployStepDone: { group: 'release', index: 0, exit: 0 } });
+  assert.equal(latest(inside, 'deploy_step').status, 'done', JSON.stringify(op));
+  assert.ok(latest(inside, 'deploy_step').commits.length >= 1, 'the receipt names the commit it produced');
+
+  // The same shape, but the commit touches a path nobody declared.
+  const outside = makeFixture({ done: RELEASE_WITH_PATHS });
+  write(outside.MAIN, '.claude-plugin/plugin.json', JSON.stringify({ name: 'x', version: '3.0.0' }));
+  commitOn(outside.MAIN, 'version file', '.claude-plugin/plugin.json');
+  walkToDeploy(outside);
+  write(outside.MAIN, 'src/sneaky.js', 'application code\n');
+  commitOn(outside.MAIN, 'a commit outside commit_paths', 'src/sneaky.js');
+  assert.throws(() => outside.step({ deployStepDone: { group: 'release', index: 0, exit: 0 } }), /base moved/);
+  assert.equal(latest(outside, 'deploy_step'), null, 'no outcome is recorded for a moved base');
+});
+
+test('a stage commit inside commit_paths that CHANGES the version is still a base move', () => {
+  const fx = makeFixture({ done: RELEASE_WITH_PATHS });
+  write(fx.MAIN, '.claude-plugin/plugin.json', JSON.stringify({ name: 'x', version: '3.0.0' }));
+  commitOn(fx.MAIN, 'version file', '.claude-plugin/plugin.json');
+  walkToDeploy(fx);
+  // version_from is not in commit_paths, and moving it under cover of the stage would let the
+  // released version differ from the reviewed one.
+  write(fx.MAIN, '.claude-plugin/plugin.json', JSON.stringify({ name: 'x', version: '4.0.0' }));
+  commitOn(fx.MAIN, 'quietly bump the version', '.claude-plugin/plugin.json');
+  assert.throws(() => fx.step({ deployStepDone: { group: 'release', index: 0, exit: 0 } }), /base moved/);
+});
+
+// ---------------------------------------------------------------------------
+// Bundle commits: this run's, a sibling's, and a foreign commit
+// ---------------------------------------------------------------------------
+
+test('this run\'s bundle commit and a sibling bundle\'s commit are both legal history', () => {
+  const fx = makeFixture({ done: CHECKED });
+  walkToDeploy(fx);
+  write(fx.MAIN, `docs/masterplan/${fx.slug}/notes.md`, 'this run wrote its ledger\n');
+  commitOn(fx.MAIN, 'own bundle commit', `docs/masterplan/${fx.slug}/notes.md`);
+  write(fx.MAIN, 'docs/masterplan/other-run/state.yml', 'a sibling run\n');
+  commitOn(fx.MAIN, 'sibling bundle commit', 'docs/masterplan/other-run/state.yml');
+  const op = fx.step({ deployStepDone: { group: 'release', index: 0, exit: 0 } });
+  assert.equal(latest(fx, 'deploy_step').status, 'done', JSON.stringify(op));
+});
+
+test('a foreign commit made during a step invalidates the step, not just the run', () => {
+  const fx = makeFixture({ done: CHECKED });
+  walkToDeploy(fx);
+  write(fx.MAIN, 'src/foreign.js', 'someone else\n');
+  commitOn(fx.MAIN, 'foreign commit', 'src/foreign.js');
+  assert.throws(() => fx.step({ deployStepDone: { group: 'release', index: 0, exit: 0 } }), /base moved/);
+  // The refusal REPEATS on replay — a moved base does not become acceptable by asking twice —
+  // and it names the receipts at that deploy base as invalid rather than silently keeping them.
+  assert.throws(
+    () => fx.step({ deployStepDone: { group: 'release', index: 0, exit: 0 } }),
+    /receipts (recorded )?at deploy_base/,
+  );
+  assert.equal(latest(fx, 'deploy_step'), null, 'no outcome is recorded on either attempt');
+});
+
+// ---------------------------------------------------------------------------
+// Dirty tree
+// ---------------------------------------------------------------------------
+
+test('a dirty tree outside the bundle refuses the stage; a dirty bundle does not', () => {
+  // The dirt check guards every AUTHORIZATION, so the tree must be dirty before the stage is
+  // entered — once a step is authorized and started, a re-entry probes it instead.
+  const fx = makeFixture({ done: CHECKED });
+  let op = fx.step();
+  assert.equal(op.op, 'run_verify');
+  op = fx.step({ verify: 'pass' });
+  fs.writeFileSync(op.path, '# retro\n');
+  assert.equal(fx.step().gate, 'branch_finish');
+  write(fx.MAIN, 'src/uncommitted.js', 'work in progress\n');
+  assert.throws(() => fx.step({ choice: 'merge' }), /dirty outside docs\/masterplan/);
+  assert.equal(typesFor(fx, 'deploy_step_authorized').length, 0, 'nothing was authorized');
+  fs.rmSync(path.join(fx.MAIN, 'src', 'uncommitted.js'));
+  // An uncommitted BUNDLE file is this run's own ledger and never blocks the stage.
+  write(fx.MAIN, `docs/masterplan/${fx.slug}/scratch.md`, 'ledger in progress\n');
+  op = fx.step({ choice: 'merge' });
+  assert.equal(op.op, 'run_deploy_step', JSON.stringify(op));
+});
+
+// ---------------------------------------------------------------------------
+// done: none
+// ---------------------------------------------------------------------------
+
+test('done: none runs no groups and produces an empty deploy chain', () => {
+  const fx = makeFixture({ done: 'done: none\n' });
+  const op = walkToDeployOrArchive(fx);
+  // Nothing to run: the stage has no steps at all.
+  assert.notEqual(op.op, 'run_deploy_step', JSON.stringify(op));
+  assert.deepEqual(readEvents(fx.bundleDir).filter((e) => e.type === 'deploy_step'), []);
+  assert.deepEqual(readEvents(fx.bundleDir).filter((e) => e.type === 'deploy_step_authorized'), []);
+});
+
+// ---------------------------------------------------------------------------
+// Full-run replay
+// ---------------------------------------------------------------------------
+
+test('a full run replays from the ledger: every re-entry lands on the same next step', () => {
+  const fx = makeFixture({ done: 'done:\n  release:\n    - run: /bin/true\n  install:\n    - run: /bin/true\n' });
+  const first = walkToDeploy(fx);
+  assert.equal(first.group, 'release', JSON.stringify(first));
+  // A check-less step that was started but never reported is indeterminate on re-entry —
+  // the ledger, not the process, decides where the stage stands.
+  const again = fx.step();
+  assert.equal(again.gate, 'deploy_indeterminate', JSON.stringify(again));
+  const before = readEvents(fx.bundleDir).length;
+  assert.equal(fx.step().gate, 'deploy_indeterminate');
+  assert.equal(readEvents(fx.bundleDir).length, before, 'a re-rendered gate appends nothing');
+  // Attesting the interrupted check-less step closes it and the chain moves to install.
+  const afterAttest = fx.step({ deployAttest: { group: 'release', index: 0 } });
+  assert.equal(afterAttest.op, 'run_deploy_step', JSON.stringify(afterAttest));
+  assert.equal(afterAttest.group, 'install', 'the attestation advances the chain to the next step');
+  assert.equal(typesFor(fx, 'deploy_step').length, 1);
+
+  // Complete the last step: the stage ends and the run archives.
+  const terminal = fx.step({ deployStepDone: { group: 'install', index: 0, exit: 0 } });
+  assert.equal(terminal.reason, 'archived', JSON.stringify(terminal));
+  assert.equal(typesFor(fx, 'deploy_step').length, 2, 'both steps are recorded exactly once');
+  // The archive is a STATE transition plus a bundle commit, not an event append.
+  assert.equal(readState(fx.statePath).status, 'archived');
+
+  // ...and the TERMINAL state replays too: re-entering an archived bundle reconstructs the same
+  // answer from disk and appends nothing.
+  const beforeReplay = readEvents(fx.bundleDir).length;
+  const replayed = fx.step();
+  assert.equal(replayed.reason, 'archived', JSON.stringify(replayed));
+  assert.equal(readEvents(fx.bundleDir).length, beforeReplay, 're-entry after completion appends nothing');
+  assert.equal(typesFor(fx, 'deploy_step').length, 2);
+});
+
+test('a release re-entry still fails while the moved code names an already-tagged version', () => {
+  const fx = makeFixture({
+    done: 'done:\n  version_from: .claude-plugin/plugin.json\n  release:\n    - run: /bin/true\n',
+  });
+  write(fx.WT, '.claude-plugin/plugin.json', JSON.stringify({ name: 'x', version: '1.2.3' }));
+  commitOn(fx.WT, 'the branch names 1.2.3');
+  git(fx.MAIN, 'tag', 'v1.2.3'); // ...which is already published
+  let op = fx.step();
+  assert.equal(op.op, 'run_verify');
+  op = fx.step({ verify: 'pass' });
+  fs.writeFileSync(op.path, '# retro\n');
+  assert.equal(fx.step().gate, 'branch_finish');
+  op = fx.step({ choice: 'merge' });
+  assert.equal(op.gate, 'version_not_bumped', JSON.stringify(op));
+  assert.equal(op.tag, 'v1.2.3');
+
+  // The operator goes to fix it...
+  assert.equal(fx.step({ choice: 'merge', versionFix: true }).reason, 'version_fix');
+  // ...and commits a change that moves code WITHOUT bumping the version.
+  write(fx.WT, 'src/fix.txt', 'a real fix, but no bump\n');
+  commitOn(fx.WT, 'fix without a bump');
+  op = fx.step({ choice: 'merge' });
+  assert.equal(op.gate, 'version_not_bumped', 'moved code that still names the tagged version is refused again');
+  assert.ok(!readEvents(fx.bundleDir).some((e) => e.type === 'deploy_base'), 'the stage was never entered');
+
+  // A real bump clears it and the stage opens.
+  write(fx.WT, '.claude-plugin/plugin.json', JSON.stringify({ name: 'x', version: '1.2.4' }));
+  commitOn(fx.WT, 'bump to 1.2.4');
+  op = fx.step({ choice: 'merge' });
+  assert.equal(op.op, 'run_deploy_step', JSON.stringify(op));
 });
