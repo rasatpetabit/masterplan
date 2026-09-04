@@ -513,6 +513,20 @@ through. The task is plan-scale work in one wave slot.
 
 Handoff for this state: [`docs/handoffs/2026-09-03-intent-to-completion-wave3.md`](docs/handoffs/2026-09-03-intent-to-completion-wave3.md) — verified state, restore paths, and the two operator-approved next steps (repo-wide /tmp fixture-leak sweep; fold task 45's open requirement into task 46).
 
+## 2026-09-04 — intent-to-completion wave 8 recorded (44/48)
+
+Tasks 7 (sequencer contract) and 30 (retro completion rendering) recorded with honest `rework`
+verdicts after one review round and one fix round each. The reviews caught: a temporally
+impossible critic contract (quoting goals.md before it exists — the critic now quotes the seed
+topic); an implementation-mode assessor contract missing from the row that dispatches it; a
+documented flag the binary rejected (--done-adhoc-file, now wired); deploy_indeterminate
+choices contradicting the engine; whole-document substring tests pinning nothing (now
+section-scoped ordered assertions); a dead-exported retro renderer with a timing problem (now
+wired into the archive and push-answer transactions); a duplicated classifier (now a thin
+re-export); and a first-terminal-answer rule the renderer ignored. Full suite 2410/2413
+(3 pre-existing, tasks 8/10 — task 8 lands in wave 9). Two recorded scope amendments
+(task 7 += bin flag registration; task 30 += lib/finish-step.mjs seams).
+
 ## 2026-09-04 — intent-to-completion wave 7 recorded (42/48)
 
 Task 29 (post-archive push_archive) recorded with an honest `rework` verdict after ONE review
