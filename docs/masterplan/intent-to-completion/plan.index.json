@@ -235,7 +235,11 @@
         ".claude-plugin/marketplace.json",
         ".codex-plugin/plugin.json",
         "package.json",
-        "test/doctor-readme.test.mjs"
+        "test/doctor-readme.test.mjs",
+        "lib/doctor/README.md",
+        "agents/mp-intent-critic.md",
+        "llms.txt",
+        ".gitignore"
       ],
       "verify_commands": [
         "for t in complexity autonomy planning_mode context_watch done:; do grep -q \"$t\" README.md || { echo \"missing $t in README.md\"; exit 1; }; done",
@@ -517,7 +521,8 @@
       "wave": 9,
       "files": [
         "test/knob-contract.test.mjs",
-        "test/fixtures/knobs/contracts.mjs"
+        "test/fixtures/knobs/contracts.mjs",
+        "test/fixtures/knobs/discovery.mjs"
       ],
       "verify_commands": [
         "node --test test/knob-contract.test.mjs"
