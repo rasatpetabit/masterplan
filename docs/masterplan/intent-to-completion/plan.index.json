@@ -189,7 +189,8 @@
       "files": [
         "commands/masterplan.md",
         "test/op-table-parity.test.mjs",
-        "test/prompt-structure.test.mjs"
+        "test/prompt-structure.test.mjs",
+        "bin/masterplan.mjs"
       ],
       "verify_commands": [
         "node --test test/op-table-parity.test.mjs",
@@ -796,7 +797,8 @@
       "files": [
         "lib/retro-goals.mjs",
         "test/finish-step-goals.test.mjs",
-        "test/retro-goals.test.mjs"
+        "test/retro-goals.test.mjs",
+        "lib/finish-step.mjs"
       ],
       "verify_commands": [
         "node --test test/finish-step-goals.test.mjs",

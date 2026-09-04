@@ -1,0 +1,80 @@
+{
+  "key": "mp-wave-dispatch-v1:intent-to-completion:8:dispatch_fabric",
+  "run_id": "intent-to-completion",
+  "wave": 8,
+  "op": "dispatch_fabric",
+  "contract_version": "fabric-native-v1",
+  "status": "pending",
+  "attempt": 1,
+  "wave_token": "mp-wave-intent-to-completion-w8-a1",
+  "handles": [],
+  "dispatched_at": "2026-09-04T07:17:27.196Z",
+  "routing_inputs": {
+    "routing": "auto",
+    "codex_host_suppressed": true,
+    "linked_worktree": true
+  },
+  "payload": [
+    {
+      "id": 7,
+      "description": "Replace the sequencer contract with the complete intent-to-completion flow: perform runs-list overlap review before every seed, drive bounded ledger-backed intent rounds and fresh-context critic dispatches using quoted bundle data, enforce named terminal states, consume intent during planning and assessment, and render the full deploy/final-assessment/intent-confirm/archive-push operation table and autonomy stop set. Add the post-wave bootstrap arm-command-record stage without making it a plan task or mp verb, emit measured or explicit-unknown context status at every gate with compact advice, and declare every prompt-only control with a knob marker. Exact dispatch contracts: mp-intent-critic receives exactly three quoted-data blocks (the verbatim goals.md topic anchor, the verbatim interview ledger (every question, answer, withdrawal, draft, and critic receipt in order) from `mp interview replay`, and the current intent draft) and its receipt is recorded through `mp interview critic`; mp-goal-assessor is invoked in `implementation` mode before disposition with the base..tip diff and verify output, and in `final` mode after the live check with the binding tuple {deploy_base_sha, deploy_chain_hash, live_check_digest}, recorded via `mp record-goal-check --final`; at interview start on a bundle seeded with --predecessor the predecessor's stored intent-correction text is presented as quoted context; the bootstrap-stage rows record `required_successor {slug: v10-validation, reason}` through the pinned v9 `mp event` before `mp finish` on this run. Cover the dispatch payloads, mode names, and binding fields in test/prompt-structure.test.mjs and every new op row in test/op-table-parity.test.mjs. test/prompt-structure.test.mjs asserts that the critic dispatch block carries question and answer text, not only the budget summary. Bootstrap-stage rows encode two preconditions: (a) `node scripts/bootstrap-v10.mjs status` reports the pass complete through `surfaces_live` before `mp finish` starts; (b) `arm --step=gate` and `record --step=gate` execute inside the branch_finish handling before `--choice=merge`, the gate step being the only bootstrap step permitted after finish begins.",
+      "files": [
+        "commands/masterplan.md",
+        "test/op-table-parity.test.mjs",
+        "test/prompt-structure.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/op-table-parity.test.mjs",
+        "node --test test/prompt-structure.test.mjs",
+        "for t in 'overlap.review' 'mp interview status' 'mp interview replay' 'mp-intent-critic' 'run_deploy_step' 'deploy_indeterminate' 'run_final_check' 'intent_confirm' 'push_archive' 'bootstrap-v10.mjs' 'mp context-status' '<!-- knob:'; do grep -qF \"$t\" commands/masterplan.md || { echo \"missing $t in commands/masterplan.md\"; exit 1; }; done",
+        "grep -Eq 'bootstrap-v10\\.mjs.*arm' commands/masterplan.md"
+      ],
+      "class": "bounded-edit"
+    },
+    {
+      "id": 30,
+      "description": "Update finish retro rendering to print complete, incomplete:<reason>, merged, or legacy from durable state and events, treating pre-v10 archives with no completion field as legacy rather than complete or invalid. Include the archive publication state so a local archive without archive_pushed is visibly pushed: no.",
+      "files": [
+        "lib/retro-goals.mjs",
+        "test/finish-step-goals.test.mjs",
+        "test/retro-goals.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/finish-step-goals.test.mjs",
+        "node --test test/retro-goals.test.mjs"
+      ],
+      "class": "bounded-edit"
+    }
+  ],
+  "tasks": [
+    {
+      "task_id": 7,
+      "class": "bounded-edit",
+      "handoff_key": "fabric-idem-v1:intent-to-completion:7:b274e28b72213cb18fc47cc75c7dac68e49a38d815075ede86127e34e5005de9:6c9837fb3a7bcd7c2da70a4d69e2f4400df4febabc43da4f13c9ab16fa6ecdc5"
+    },
+    {
+      "task_id": 30,
+      "class": "bounded-edit",
+      "handoff_key": "fabric-idem-v1:intent-to-completion:30:27cf6250ad1873e690c1fb526631aff5ee6421713be4dd7209c51f66dd14d16c:6c9837fb3a7bcd7c2da70a4d69e2f4400df4febabc43da4f13c9ab16fa6ecdc5"
+    }
+  ],
+  "gateway_verify_allowlist": "bash -c",
+  "review_context": {
+    "enabled": true,
+    "base_sha": "1e5e3b6ccc310f98916c4f0443a61a6fea87c34d",
+    "tasks": [
+      {
+        "task_id": 7,
+        "description": "Replace the sequencer contract with the complete intent-to-completion flow: perform runs-list overlap review before every seed, drive bounded ledger-backed intent rounds and fresh-context critic dispatches using quoted bundle data, enforce named terminal states, consume intent during planning and assessment, and render the full deploy/final-assessment/intent-confirm/archive-push operation table and autonomy stop set. Add the post-wave bootstrap arm-command-record stage without making it a plan task or mp verb, emit measured or explicit-unknown context status at every gate with compact advice, and declare every prompt-only control with a knob marker. Exact dispatch contracts: mp-intent-critic receives exactly three quoted-data blocks (the verbatim goals.md topic anchor, the verbatim interview ledger (every question, answer, withdrawal, draft, and critic receipt in order) from `mp interview replay`, and the current intent draft) and its receipt is recorded through `mp interview critic`; mp-goal-assessor is invoked in `implementation` mode before disposition with the base..tip diff and verify output, and in `final` mode after the live check with the binding tuple {deploy_base_sha, deploy_chain_hash, live_check_digest}, recorded via `mp record-goal-check --final`; at interview start on a bundle seeded with --predecessor the predecessor's stored intent-correction text is presented as quoted context; the bootstrap-stage rows record `required_successor {slug: v10-validation, reason}` through the pinned v9 `mp event` before `mp finish` on this run. Cover the dispatch payloads, mode names, and binding fields in test/prompt-structure.test.mjs and every new op row in test/op-table-parity.test.mjs. test/prompt-structure.test.mjs asserts that the critic dispatch block carries question and answer text, not only the budget summary. Bootstrap-stage rows encode two preconditions: (a) `node scripts/bootstrap-v10.mjs status` reports the pass complete through `surfaces_live` before `mp finish` starts; (b) `arm --step=gate` and `record --step=gate` execute inside the branch_finish handling before `--choice=merge`, the gate step being the only bootstrap step permitted after finish begins.",
+        "class": "bounded-edit",
+        "repo": "/srv/dev/ras/masterplan/.worktrees/intent-to-completion"
+      },
+      {
+        "task_id": 30,
+        "description": "Update finish retro rendering to print complete, incomplete:<reason>, merged, or legacy from durable state and events, treating pre-v10 archives with no completion field as legacy rather than complete or invalid. Include the archive publication state so a local archive without archive_pushed is visibly pushed: no.",
+        "class": "bounded-edit",
+        "repo": "/srv/dev/ras/masterplan/.worktrees/intent-to-completion"
+      }
+    ]
+  }
+}

@@ -351,3 +351,7 @@ finish-live.commit-identity enforces branch-tip identity at deploy_base; the wav
 ### 2026-09-04 — Task 29 scope extended to bin/masterplan.mjs: adversary round 1 found the --archive-pushed/--archive-push-skipped answers are implemented in the lib but not wired through the CLI adapter (unknown flags are hard-rejected, so the user-facing surface the task claims does not exist). The wiring belongs to the task that claims the flags.
 
 ### 2026-09-04 — Task 29 scope extended to lib/bundle.mjs and test/bundle-events.test.mjs: the review fix round's durable push_probe side record is a NEW event type, and the repo invariant requires every schema entry to carry a validator fixture and invalid-field/required-type coverage. Direct consumers of the change that mandated them.
+
+### 2026-09-04 — Task 7 scope extended to bin/masterplan.mjs: the rewritten sequencer contract documents flags the flag cross-check suite requires registered (supersedes added to KNOWN_FLAGS — one word, the same registration the wave-7 round established for its archive-push flags). The registration belongs to the contract that names the flag.
+
+### 2026-09-04 — Task 30 scope extended to lib/finish-step.mjs: the adversary found renderRetroSummary exported but never called — the write_retro op runs before completion classification, so reporting completion/pushed in retro.md requires a durable post-archive/post-push update step in the archive and push-answer paths, which live in lib/finish-step.mjs. The consumer wiring belongs to the renderer that needs it.
