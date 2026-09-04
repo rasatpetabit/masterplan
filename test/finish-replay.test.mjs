@@ -5,6 +5,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -28,6 +29,19 @@ function write(root, rel, content) {
   fs.mkdirSync(path.dirname(p), { recursive: true });
   fs.writeFileSync(p, content);
 }
+
+const BIN = fileURLToPath(new URL('../bin/masterplan.mjs', import.meta.url));
+
+// Spawn the REAL mp binary (finding 2 — the CLI surface must accept the archive flags). The
+// finishStep lib is exercised directly everywhere else; this proves the flags are registered in
+// KNOWN_FLAGS and forwarded through the adapter.
+function run(args, opts = {}) {
+  try {
+    return { status: 0, stdout: execFileSync('node', [BIN, ...args], { encoding: 'utf8', ...opts }), stderr: '' };
+  } catch (e) {
+    return { status: e.status ?? 1, stdout: e.stdout ?? '', stderr: e.stderr ?? '' };
+  }
+}
 function readEvents(bundleDir) {
   try {
     return fs.readFileSync(path.join(bundleDir, 'events.jsonl'), 'utf8')
@@ -43,8 +57,10 @@ function commitOn(dir, message, ...paths) {
 }
 
 // A MAIN repo, a linked worktree with one done task, the owner lock held, and a `done:`
-// block supplied by the caller so each case picks its own step shapes.
-function makeFixture({ slug = 't25', done, autonomy = 'loose' } = {}) {
+// block supplied by the caller so each case picks its own step shapes. With `origin: true` a
+// bare remote is created, wired as `origin`, and the initial MAIN state pushed to it — the
+// setup an install push (and thus the push_archive gate) needs.
+function makeFixture({ slug = 't25', done, autonomy = 'loose', origin = false } = {}) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-replay-'));
   FIXTURE_TMPDIRS.push(tmp);
   const MAIN = path.join(tmp, 'main');
@@ -60,6 +76,13 @@ function makeFixture({ slug = 't25', done, autonomy = 'loose' } = {}) {
   write(MAIN, '.masterplan.yaml', done);
   git(MAIN, 'add', '.masterplan.yaml');
   git(MAIN, 'commit', '-q', '-m', 'done definition');
+  let bare = null;
+  if (origin) {
+    bare = path.join(tmp, 'origin.git');
+    git(MAIN, 'init', '--bare', '-q', bare);
+    git(MAIN, 'remote', 'add', 'origin', bare);
+    git(MAIN, 'push', '-q', 'origin', 'main');
+  }
   const WT = path.join(MAIN, '.worktrees', slug);
   git(MAIN, 'worktree', 'add', '-q', '-b', `masterplan/${slug}`, WT);
   write(WT, 'src/a.txt', 'A\n');
@@ -76,7 +99,7 @@ function makeFixture({ slug = 't25', done, autonomy = 'loose' } = {}) {
   const self = buildOwnerIdentity({ host: 'h1', session: 'sess-A', slug, now: 1000 });
   assert.equal(acquireOwner(bundleDir, self, { now: 1000 }).outcome, 'acquire');
   const step = (extra = {}) => finishStep({ statePath, self, now: 2000, ...extra });
-  return { tmp, MAIN, WT, bundleDir, statePath, self, step, slug };
+  return { tmp, MAIN, WT, bundleDir, statePath, self, step, slug, bare, origin };
 }
 
 // verify → retro → branch_finish gate → merge, landing on the first deploy step.
@@ -699,4 +722,566 @@ test('a release re-entry still fails while the moved code names an already-tagge
   commitOn(fx.WT, 'bump to 1.2.4');
   op = fx.step({ choice: 'merge' });
   assert.equal(op.op, 'run_deploy_step', JSON.stringify(op));
+});
+
+// ---------------------------------------------------------------------------
+// §7.2 push_archive — the post-archive push gate (wave task 29)
+// ---------------------------------------------------------------------------
+//
+// The push gate is emitted ONLY when an install-group receipt PROVED it pushed the base
+// (the producer stamped `pushed_base` on the receipt = the sha the install push carried).
+// It always halts (operator approval) under gated and loose alike, lists exactly
+// `pushed_base..HEAD`, and accepts `archive_pushed {sha}` as the sole post-archive event.
+// An install chain that never moved the remote (or a repo with no origin) records no
+// pushed_base and stops with a plain archived stop, never a push gate.
+
+const INSTALL_ONLY = 'done:\n  install:\n    - run: /bin/true\n';
+
+// Walk to the deploy stage and run a single install step whose run "pushes" origin/main to
+// the post-merge HEAD (what a real install step's `git push origin <base>` does). Returns
+// the op that follows the deploy_step_done report.
+function walkInstallPush(fx, { push = true } = {}) {
+  let op = walkToDeploy(fx);
+  assert.equal(op.group, 'install', JSON.stringify(op));
+  if (push) git(fx.MAIN, 'push', '-q', 'origin', 'main'); // the install step moves origin/main
+  return fx.step({ deployStepDone: { group: 'install', index: 0, exit: 0 } });
+}
+
+test('an install step that pushed the base records pushed_base and the archive opens the push_archive gate', () => {
+  const fx = makeFixture({ done: INSTALL_ONLY, origin: true });
+  const op = walkInstallPush(fx);
+  // The run archives and the gate opens in the SAME call — the gate replaces the plain stop.
+  assert.equal(op.gate, 'push_archive', JSON.stringify(op));
+  assert.equal(op.remote, 'origin');
+  assert.equal(op.branch, 'main');
+  const install = latest(fx, 'deploy_step');
+  assert.equal(install.group, 'install');
+  assert.ok(install.pushed_base, 'the install receipt carries pushed_base');
+  // The offered range is exactly pushed_base..HEAD: the archive commit and the gate-state
+  // commit (the gate is opened and its state committed at archive — §7.2's "the archive commit
+  // and any gate commits since"). Nothing else: the install push carried the merge/release line
+  // already on origin.
+  const head = git(fx.MAIN, 'rev-parse', 'HEAD');
+  assert.equal(op.sha, head, 'the gate offers the archive HEAD');
+  assert.equal(op.commits.length, 2, 'pushed_base..HEAD = archive commit + gate-state commit');
+  assert.equal(op.commits[op.commits.length - 1], head, 'the last listed commit is the archive HEAD');
+  // The run is archived (status) while the gate is open — a durable, re-entrant state.
+  assert.equal(readState(fx.statePath).status, 'archived');
+  assert.equal(readState(fx.statePath).pending_gate?.id, 'push_archive');
+});
+
+test('re-entry on an archived bundle without archive_pushed re-emits the push_archive gate', () => {
+  const fx = makeFixture({ done: INSTALL_ONLY, origin: true });
+  assert.equal(walkInstallPush(fx).gate, 'push_archive');
+  const before = readEvents(fx.bundleDir).length;
+  const again = fx.step();
+  assert.equal(again.gate, 'push_archive', JSON.stringify(again));
+  assert.equal(readEvents(fx.bundleDir).length, before, 're-emitting the gate appends nothing');
+  assert.equal(readState(fx.statePath).pending_gate?.id, 'push_archive');
+});
+
+test('--archive-pushed --sha records archive_pushed and resolves the gate', () => {
+  const fx = makeFixture({ done: INSTALL_ONLY, origin: true });
+  assert.equal(walkInstallPush(fx).gate, 'push_archive');
+  // The operator pushes origin/main to the archive HEAD, then reports it.
+  git(fx.MAIN, 'push', '-q', 'origin', 'main');
+  const head = git(fx.MAIN, 'rev-parse', 'HEAD');
+  const op = fx.step({ archivePushed: { sha: head } });
+  assert.equal(op.reason, 'archived', JSON.stringify(op));
+  assert.ok(readEvents(fx.bundleDir).some((e) => e.type === 'archive_pushed' && e.sha === head));
+  assert.equal(readState(fx.statePath).pending_gate, null, 'the gate is cleared');
+  // The bundle is archived and the push event is durable — re-entry stays a plain archived stop.
+  assert.equal(fx.step().reason, 'archived');
+});
+
+test('--archive-pushed with a sha that is not the archive HEAD is refused', () => {
+  const fx = makeFixture({ done: INSTALL_ONLY, origin: true });
+  assert.equal(walkInstallPush(fx).gate, 'push_archive');
+  const notHead = git(fx.MAIN, 'rev-parse', 'HEAD~1');
+  assert.throws(() => fx.step({ archivePushed: { sha: notHead } }), /does not match the archive HEAD/);
+  assert.ok(!readEvents(fx.bundleDir).some((e) => e.type === 'archive_pushed'), 'nothing recorded');
+});
+
+test('declining the push_archive gate records archive_push_skipped and the archive stays pushed: no', () => {
+  const fx = makeFixture({ done: INSTALL_ONLY, origin: true });
+  assert.equal(walkInstallPush(fx).gate, 'push_archive');
+  const op = fx.step({ archivePushSkipped: { reason: 'the operator declined to publish' } });
+  assert.equal(op.reason, 'archived', JSON.stringify(op));
+  const skip = readEvents(fx.bundleDir).find((e) => e.type === 'archive_push_skipped');
+  assert.ok(skip, 'the decline is durable');
+  assert.equal(skip.reason, 'the operator declined to publish');
+  assert.ok(!readEvents(fx.bundleDir).some((e) => e.type === 'archive_pushed'), 'no push claimed');
+  // Re-entry on a declined archive is a plain archived stop (the decision is final).
+  assert.equal(fx.step().reason, 'archived');
+});
+
+test('an install chain that never moved the remote records no pushed_base and stops without a push gate', () => {
+  const fx = makeFixture({ done: INSTALL_ONLY, origin: true });
+  // No `git push` in the shell: origin/main never advances past its initial state.
+  const op = walkInstallPush(fx, { push: false });
+  assert.equal(op.reason, 'archived', JSON.stringify(op));
+  assert.equal(readState(fx.statePath).pending_gate, null, 'no push gate');
+  const install = latest(fx, 'deploy_step');
+  assert.equal(install.pushed_base, undefined, 'no pushed_base without a remote move');
+});
+
+test('a repo with no origin remote never reaches the push gate, whatever the install group', () => {
+  const fx = makeFixture({ done: INSTALL_ONLY, origin: false });
+  const op = walkInstallPush(fx, { push: false });
+  assert.equal(op.reason, 'archived', JSON.stringify(op));
+  assert.equal(readState(fx.statePath).pending_gate, null, 'no push gate without an origin');
+});
+
+test('done: none archives as merged and never reaches the push gate', () => {
+  const fx = makeFixture({ done: 'done: none\n', origin: true });
+  let op = walkToDeployOrArchive(fx);
+  if (op.op === 'run_verify') { op = fx.step({ verify: 'pass' }); }
+  assert.equal(op.reason, 'archived', JSON.stringify(op));
+  const st = readState(fx.statePath);
+  assert.equal(st.status, 'archived');
+  assert.equal(st.completion, 'merged');
+  assert.equal(st.pending_gate, null, 'done: none has no push gate');
+});
+
+test('release steps never record pushed_base and never open the push gate, even with an origin', () => {
+  const fx = makeFixture({ done: 'done:\n  release:\n    - run: /bin/true\n', origin: true });
+  let op = walkToDeploy(fx);
+  assert.equal(op.group, 'release', JSON.stringify(op));
+  git(fx.MAIN, 'push', '-q', 'origin', 'main'); // a release step pushing does not gate
+  op = fx.step({ deployStepDone: { group: 'release', index: 0, exit: 0 } });
+  assert.equal(op.reason, 'archived', JSON.stringify(op));
+  const release = latest(fx, 'deploy_step');
+  assert.equal(release.pushed_base, undefined, 'release never carries pushed_base');
+  assert.equal(readState(fx.statePath).pending_gate, null, 'no push gate after release-only deploy');
+});
+
+test('push succeeded, crash before --deploy-step-done, recovery records pushed_base', () => {
+  // The install step ran, PUSHED origin/main to the post-step HEAD, then the process died
+  // before the report. Re-entry finds a started-but-unreported install step; the check probe
+  // (exit 0) records it done from the probe — and the producer records pushed_base on the
+  // recovery record, exactly as on a live report.
+  const fx = makeFixture({ done: 'done:\n  install:\n    - run: /bin/true\n      check: /bin/true\n', origin: true });
+  let op = walkToDeploy(fx);
+  assert.equal(op.group, 'install', JSON.stringify(op));
+  // The shell ran the step AND pushed origin/main (the step's real effect), then died before
+  // the --deploy-step-done report.
+  git(fx.MAIN, 'push', '-q', 'origin', 'main');
+  op = fx.step(); // recovery probe: check exits 0 → recorded done from the probe, with pushed_base
+  assert.equal(op.gate, 'push_archive', JSON.stringify(op)); // the push gate follows the recovery record
+  const install = latest(fx, 'deploy_step');
+  assert.equal(install.status, 'done');
+  assert.equal(install.source, 'recovery-probe');
+  assert.ok(install.pushed_base, 'the recovery record carries pushed_base too');
+});
+
+test('the push gate lists exactly pushed_base..HEAD when a gate commit lands between push and archive', () => {
+  const fx = makeFixture({ done: INSTALL_ONLY, origin: true });
+  let op = walkToDeploy(fx);
+  assert.equal(op.group, 'install', JSON.stringify(op));
+  git(fx.MAIN, 'push', '-q', 'origin', 'main'); // install pushes the base
+  op = fx.step({ deployStepDone: { group: 'install', index: 0, exit: 0 } });
+  assert.equal(op.gate, 'push_archive', JSON.stringify(op));
+  const install = latest(fx, 'deploy_step');
+  assert.ok(install.pushed_base);
+  const head = git(fx.MAIN, 'rev-parse', 'HEAD');
+  // The offered range is the archive commit plus the gate-state commit (the fixed history the
+  // push will fast-forward — exactly "the archive commit and any gate commits since", §7.2).
+  assert.equal(op.commits.length, 2, 'pushed_base..HEAD = archive commit + gate-state commit');
+  assert.equal(op.commits[op.commits.length - 1], head);
+  assert.equal(op.pushed_base, install.pushed_base);
+  // The range is fast-forwardable: pushed_base is an ancestor of HEAD.
+  assert.doesNotThrow(() => git(fx.MAIN, 'merge-base', '--is-ancestor', install.pushed_base, head));
+});
+
+test('non-fast-forward: another host moves origin/main, the operator rebases, and the push is recorded against the rebased HEAD', () => {
+  // The gate opened offering pushed_base..HEAD. Before the operator pushes, ANOTHER host moves
+  // origin/main (a foreign commit). The shell-side disposition (§10.3 sibling push) is: fetch,
+  // per-commit audit, rebase local <base> onto it, retry once. The operator does exactly that,
+  // pushes the rebased archive, and answers --archive-pushed with the NEW HEAD — the recorded
+  // push is the one that actually landed.
+  const fx = makeFixture({ done: INSTALL_ONLY, origin: true });
+  assert.equal(walkInstallPush(fx).gate, 'push_archive');
+  const pushedBase = latest(fx, 'deploy_step').pushed_base;
+  const offeredHead = git(fx.MAIN, 'rev-parse', 'HEAD');
+
+  // Another host advances origin/main: clone the bare, commit, push.
+  const foreign = path.join(fx.tmp, 'foreign');
+  fs.mkdirSync(foreign, { recursive: true });
+  git(foreign, 'clone', '-q', '-b', 'main', fx.bare, 'work');
+  const foreignWork = path.join(foreign, 'work');
+  git(foreignWork, 'config', 'user.email', 'f@f');
+  git(foreignWork, 'config', 'user.name', 'f');
+  git(foreignWork, 'config', 'commit.gpgsign', 'false');
+  fs.writeFileSync(path.join(foreignWork, 'foreign.txt'), 'another host moved main\n');
+  git(foreignWork, 'add', '.');
+  git(foreignWork, 'commit', '-q', '-m', 'foreign advance');
+  git(foreignWork, 'push', '-q', 'origin', 'main');
+
+  // The operator: the tree is already clean (the gate state was committed at open), so fetch,
+  // rebase local main onto the foreign tip, retry push.
+  git(fx.MAIN, 'fetch', '-q', 'origin', 'main');
+  git(fx.MAIN, 'rebase', '-q', 'origin/main');
+  const rebasedHead = git(fx.MAIN, 'rev-parse', 'HEAD');
+  git(fx.MAIN, 'push', '-q', 'origin', 'main');
+  assert.notEqual(rebasedHead, offeredHead, 'the rebase moved the archive head past the foreign advance');
+
+  const op = fx.step({ archivePushed: { sha: rebasedHead } });
+  assert.equal(op.reason, 'archived', JSON.stringify(op));
+  const pushed = readEvents(fx.bundleDir).find((e) => e.type === 'archive_pushed');
+  assert.ok(pushed, 'the push is recorded');
+  assert.equal(pushed.sha, rebasedHead, 'the recorded sha is the rebased archive head');
+  // The fast-forward premise holds through the rebase: pushed_base is an ancestor of the new head.
+  assert.doesNotThrow(() => git(fx.MAIN, 'merge-base', '--is-ancestor', pushedBase, rebasedHead));
+});
+
+test('--archive-pushed without an open push_archive gate is refused (the gate is the offer)', () => {
+  const fx = makeFixture({ done: INSTALL_ONLY, origin: false });
+  // No origin → no pushed_base → no gate ever opens; the run archives plainly.
+  const op = walkInstallPush(fx, { push: false });
+  assert.equal(op.reason, 'archived', JSON.stringify(op));
+  const head = git(fx.MAIN, 'rev-parse', 'HEAD');
+  assert.throws(() => fx.step({ archivePushed: { sha: head } }), /no open push_archive gate/);
+  assert.ok(!readEvents(fx.bundleDir).some((e) => e.type === 'archive_pushed'), 'nothing recorded');
+});
+
+// ---------------------------------------------------------------------------
+// Adversary round-1 fix tests (wave task 29 review round)
+// ---------------------------------------------------------------------------
+//
+// Findings covered:
+//   1. Indeterminate push probe (a transient fetch failure at the install step) must not
+//      silently archive as `pushed: no` — the archive re-probes and halts while unresolved.
+//   3. The first terminal push_archive answer is authoritative: identical replay is a no-op,
+//      an opposite answer type or a mismatched sha/reason is refused.
+//   4. The lib performs the REAL non-fast-forward recovery (audit + rebase + push once with
+//      one retry) instead of the fixture hand-rolling it; a foreign fetched commit refuses.
+//   5. --archive-pushed is bound to the REMOTE: a remote that does not carry the sha refuses.
+//   6. A divergent/forged pushed_base surfaces the invariant error, not a gate listing.
+
+test('finding-1: a transient fetch failure at the install step records an indeterminate probe and the archive halts for a re-probe', () => {
+  const fx = makeFixture({ done: INSTALL_ONLY, origin: true });
+  // Walk to the install step and push origin/main (the install's real effect).
+  let op = walkToDeploy(fx);
+  assert.equal(op.group, 'install', JSON.stringify(op));
+  git(fx.MAIN, 'push', '-q', 'origin', 'main');
+  // Make the remote probe fail: hide the bare repo so the producer's fetch fails. The step
+  // still records done (a completed step is never refused by a network blip), but the probe is
+  // INDETERMINATE — and the archive must NOT stop as `pushed: no`.
+  const hidden = path.join(fx.tmp, 'origin.hidden');
+  fs.renameSync(fx.bare, hidden);
+  let recorded;
+  try {
+    recorded = fx.step({ deployStepDone: { group: 'install', index: 0, exit: 0 } });
+  } finally {
+    fs.renameSync(hidden, fx.bare);
+  }
+  const install = latest(fx, 'deploy_step');
+  assert.equal(install.status, 'done');
+  assert.equal(install.pushed_base, undefined, 'the indeterminate probe stamps no pushed_base');
+  const probe = latest(fx, 'push_probe');
+  assert.ok(probe, 'an indeterminate push_probe is durable');
+  assert.equal(probe.status, 'indeterminate');
+  // The step+archive call itself surfaced the indeterminate ask (the re-probe in the SAME call
+  // ran while the remote was still hidden) — NOT a plain `pushed: no` stop.
+  assert.equal(recorded.ask, 'push-probe-indeterminate', JSON.stringify(recorded));
+  // With the remote restored, re-entry re-probes, confirms the push, adopts the install head as
+  // pushed_base and opens the push gate.
+  op = fx.step();
+  assert.equal(op.gate, 'push_archive', JSON.stringify(op));
+  assert.equal(op.pushed_base, install.head_after, 'the re-probe adopted the install head as pushed_base');
+});
+
+test('finding-1: an unresolved indeterminate probe (remote still unreachable) halts with a push-probe-indeterminate ask, never a plain stop', () => {
+  const fx = makeFixture({ done: INSTALL_ONLY, origin: true });
+  let op = walkToDeploy(fx);
+  assert.equal(op.group, 'install', JSON.stringify(op));
+  git(fx.MAIN, 'push', '-q', 'origin', 'main');
+  // Hide the bare for BOTH the step report AND the archive's re-probe: the whole finish-step
+  // call cannot confirm the push, so it must surface the indeterminate ask, not stop plainly.
+  const hidden = path.join(fx.tmp, 'origin.hidden2');
+  fs.renameSync(fx.bare, hidden);
+  try {
+    op = fx.step({ deployStepDone: { group: 'install', index: 0, exit: 0 } });
+  } finally {
+    fs.renameSync(hidden, fx.bare);
+  }
+  const install = latest(fx, 'deploy_step');
+  assert.equal(install.status, 'done');
+  assert.equal(op.ask, 'push-probe-indeterminate', JSON.stringify(op));
+  assert.notEqual(op.reason, 'archived', 'the archive did NOT stop as pushed: no');
+  assert.equal(readState(fx.statePath).pending_gate, null, 'no plain archive gate while the probe is indeterminate');
+  // Restoring the remote and re-entering confirms the push and opens the gate.
+  const again = fx.step();
+  assert.equal(again.gate, 'push_archive', JSON.stringify(again));
+});
+
+test('finding-3: the first terminal push_archive answer is authoritative — identical replay is a no-op, opposite types refuse', () => {
+  const fx = makeFixture({ done: INSTALL_ONLY, origin: true });
+  assert.equal(walkInstallPush(fx).gate, 'push_archive');
+  git(fx.MAIN, 'push', '-q', 'origin', 'main');
+  const head = git(fx.MAIN, 'rev-parse', 'HEAD');
+  const op = fx.step({ archivePushed: { sha: head } });
+  assert.equal(op.reason, 'archived');
+  assert.equal(latest(fx, 'archive_pushed').sha, head);
+  const countAfterFirst = readEvents(fx.bundleDir).filter((e) => e.type === 'archive_pushed').length;
+
+  // Identical replay (crash after the append, before the gate clear): a no-op, still archived.
+  const replay = fx.step({ archivePushed: { sha: head } });
+  assert.equal(replay.reason, 'archived', JSON.stringify(replay));
+  assert.equal(readEvents(fx.bundleDir).filter((e) => e.type === 'archive_pushed').length, countAfterFirst, 'identical replay appends nothing');
+
+  // A conflicting decline after a recorded push refuses.
+  assert.throws(() => fx.step({ archivePushSkipped: { reason: 'changed my mind' } }), /already RECORDED/);
+  assert.ok(!readEvents(fx.bundleDir).some((e) => e.type === 'archive_push_skipped'), 'no skip event written');
+});
+
+test('finding-3: a mismatched sha on a replayed --archive-pushed refuses; a decline followed by a push refuses', () => {
+  const fx = makeFixture({ done: INSTALL_ONLY, origin: true });
+  assert.equal(walkInstallPush(fx).gate, 'push_archive');
+  git(fx.MAIN, 'push', '-q', 'origin', 'main');
+  const head = git(fx.MAIN, 'rev-parse', 'HEAD');
+  fx.step({ archivePushed: { sha: head } });
+
+  // A replay naming a DIFFERENT sha refuses (the recorded sha is authoritative; a stale or
+  // wrong sha must not be accepted as an idempotent replay).
+  const other = '0'.repeat(40);
+  assert.notEqual(other, head, 'the forged sha differs from the recorded one');
+  assert.throws(() => fx.step({ archivePushed: { sha: other } }), /replayed push must name the same sha/);
+
+  // A decline first, then a push: the decline is authoritative.
+  const fx2 = makeFixture({ done: INSTALL_ONLY, origin: true });
+  assert.equal(walkInstallPush(fx2).gate, 'push_archive');
+  fx2.step({ archivePushSkipped: { reason: 'never mind' } });
+  const head2 = git(fx2.MAIN, 'rev-parse', 'HEAD');
+  assert.throws(() => fx2.step({ archivePushed: { sha: head2 } }), /already DECLINED/);
+  assert.ok(!readEvents(fx2.bundleDir).some((e) => e.type === 'archive_pushed'), 'no pushed event after the decline');
+});
+
+test('finding-5: --archive-pushed is bound to the remote — a remote that does not carry the sha refuses and writes nothing', () => {
+  const fx = makeFixture({ done: INSTALL_ONLY, origin: true });
+  assert.equal(walkInstallPush(fx).gate, 'push_archive');
+  // The operator did NOT push origin/main past the archive head — the remote tip is the install
+  // head (behind the archive). The claim must refuse: the archive is not on the remote.
+  const head = git(fx.MAIN, 'rev-parse', 'HEAD');
+  assert.throws(() => fx.step({ archivePushed: { sha: head } }), /does not carry the archive head/);
+  assert.ok(!readEvents(fx.bundleDir).some((e) => e.type === 'archive_pushed'), 'nothing recorded');
+  assert.equal(readState(fx.statePath).pending_gate?.id, 'push_archive', 'the gate stays open');
+});
+
+test('finding-4: the lib performs the real non-fast-forward recovery when the remote moved with a KNOWN receipt sha', () => {
+  // The gate opened offering pushed_base..HEAD. ANOTHER host advances origin/main with a commit
+  // whose sha the run's own ledger KNOWS (a push receipt the run previously observed) — the
+  // "known receipt sha" branch of the audit. The operator answers --archive-pushed WITHOUT
+  // hand-rolling fetch/rebase/push; the lib fetches, audits the fetched commit as known, rebases
+  // local main onto the remote tip, pushes once, and records the rebased head.
+  const fx = makeFixture({ done: INSTALL_ONLY, origin: true });
+  assert.equal(walkInstallPush(fx).gate, 'push_archive');
+  const offeredHead = git(fx.MAIN, 'rev-parse', 'HEAD');
+
+  // Another host advances origin/main with a commit. Its sha is then recorded in the run's own
+  // ledger as a push_receipt head_after (a prior probe observed the remote carrying it) — so the
+  // recovery audit knows it, exactly the finding's "known receipt sha" permitted case.
+  const foreign = path.join(fx.tmp, 'foreign-ok');
+  fs.mkdirSync(foreign, { recursive: true });
+  git(foreign, 'clone', '-q', '-b', 'main', fx.bare, 'work');
+  const foreignWork = path.join(foreign, 'work');
+  git(foreignWork, 'config', 'user.email', 'f@f');
+  git(foreignWork, 'config', 'user.name', 'f');
+  git(foreignWork, 'config', 'commit.gpgsign', 'false');
+  fs.writeFileSync(path.join(foreignWork, 'src/seed.txt'), 'seed\nplus\n');
+  git(foreignWork, 'add', '.');
+  git(foreignWork, 'commit', '-q', '-m', 'operator commit on another machine');
+  git(foreignWork, 'push', '-q', 'origin', 'main');
+  git(fx.MAIN, 'fetch', '-q', 'origin', 'main'); // MAIN now sees the foreign tip
+  const knownSha = git(fx.MAIN, 'rev-parse', 'refs/remotes/origin/main'); // after the foreign push
+  // Seed the run's ledger with a prior probe that observed this exact sha on the remote — a
+  // legitimate "known receipt sha" the recovery audit may accept.
+  const install = latest(fx, 'deploy_step');
+  const evs = readEvents(fx.bundleDir);
+  evs.push({ type: 'push_probe', ts: '2026-01-01T00:00:00.000Z', group: 'install', index: install.index, sha: install.sha, head_after: knownSha, base: 'main', status: 'confirmed_not_pushed' });
+  writeEvents(fx.bundleDir, evs);
+
+  // The operator answers with the ORIGINAL offered head (they have NOT pushed or rebased). The
+  // lib detects the divergence, audits the fetched commit (known receipt sha → permitted),
+  // rebases, pushes once, and records the rebased head.
+  const op = fx.step({ archivePushed: { sha: offeredHead } });
+  assert.equal(op.reason, 'archived', JSON.stringify(op));
+  const pushed = readEvents(fx.bundleDir).find((e) => e.type === 'archive_pushed');
+  assert.ok(pushed, 'the recovery records the push');
+  // The recorded sha is the rebased archive head — the commit that was actually pushed. It is an
+  // ancestor of HEAD (the `archive push recorded` commit lands on top of it).
+  assert.notEqual(pushed.sha, offeredHead, 'the rebase moved the archive head past the foreign advance');
+  assert.doesNotThrow(() => git(fx.MAIN, 'merge-base', '--is-ancestor', pushed.sha, git(fx.MAIN, 'rev-parse', 'HEAD')), 'the recorded sha is part of the archive history');
+  // The remote carries exactly the rebased head that was pushed.
+  const remoteTip = git(fx.MAIN, 'rev-parse', 'refs/remotes/origin/main');
+  assert.equal(remoteTip, pushed.sha, 'the remote tip equals the recorded sha');
+});
+
+test('finding-4: a FOREIGN fetched commit (not in this run\'s history) refuses the non-fast-forward recovery', () => {
+  const fx = makeFixture({ done: INSTALL_ONLY, origin: true });
+  assert.equal(walkInstallPush(fx).gate, 'push_archive');
+  const offeredHead = git(fx.MAIN, 'rev-parse', 'HEAD');
+
+  // Another host advances origin/main with a FOREIGN change (foreign.txt) the run cannot attest.
+  const foreign = path.join(fx.tmp, 'foreign-bad');
+  fs.mkdirSync(foreign, { recursive: true });
+  git(foreign, 'clone', '-q', '-b', 'main', fx.bare, 'work');
+  const foreignWork = path.join(foreign, 'work');
+  git(foreignWork, 'config', 'user.email', 'f@f');
+  git(foreignWork, 'config', 'user.name', 'f');
+  git(foreignWork, 'config', 'commit.gpgsign', 'false');
+  fs.writeFileSync(path.join(foreignWork, 'foreign.txt'), 'unattested change\n');
+  git(foreignWork, 'add', '.');
+  git(foreignWork, 'commit', '-q', '-m', 'foreign advance');
+  git(foreignWork, 'push', '-q', 'origin', 'main');
+
+  // The operator answers --archive-pushed; the lib's recovery audits the fetched commit, finds
+  // it foreign, and REFUSES — nothing recorded, gate stays open.
+  assert.throws(() => fx.step({ archivePushed: { sha: offeredHead } }), /is foreign/);
+  assert.ok(!readEvents(fx.bundleDir).some((e) => e.type === 'archive_pushed'), 'nothing recorded');
+  assert.equal(readState(fx.statePath).pending_gate?.id, 'push_archive', 'the gate stays open for manual reconciliation');
+});
+
+test('finding-6: a divergent pushed_base surfaces the invariant error, not a gate listing', () => {
+  const fx = makeFixture({ done: INSTALL_ONLY, origin: true });
+  assert.equal(walkInstallPush(fx).gate, 'push_archive');
+  const install = latest(fx, 'deploy_step');
+  // Build a genuinely DIVERGENT sha: a commit on a throwaway branch that shares no line with
+  // HEAD (so `merge-base --is-ancestor forged HEAD` fails). Forge the install receipt to carry
+  // it as pushed_base, then re-enter. The gate must refuse with the invariant error rather than
+  // listing a bogus range.
+  const divergeBranch = 'divergent-base';
+  git(fx.MAIN, 'checkout', '-q', '-b', divergeBranch, git(fx.MAIN, 'rev-parse', 'HEAD~1'));
+  fs.writeFileSync(path.join(fx.MAIN, 'diverged.txt'), 'a divergent line\n');
+  git(fx.MAIN, 'add', '.');
+  git(fx.MAIN, 'commit', '-q', '-m', 'divergent base');
+  const forgedBase = git(fx.MAIN, 'rev-parse', 'HEAD');
+  git(fx.MAIN, 'checkout', '-q', 'main');
+  git(fx.MAIN, 'branch', '-q', '-D', divergeBranch);
+  let isAnc = false;
+  try { git(fx.MAIN, 'merge-base', '--is-ancestor', forgedBase, git(fx.MAIN, 'rev-parse', 'HEAD')); isAnc = true; } catch { isAnc = false; }
+  assert.equal(isAnc, false, 'the forged base really diverges from HEAD');
+
+  const evs = readEvents(fx.bundleDir);
+  const forged = evs.map((e) => (e.type === 'deploy_step' && e.index === install.index
+    ? { ...e, pushed_base: forgedBase }
+    : e));
+  writeEvents(fx.bundleDir, forged);
+  const op = fx.step();
+  assert.equal(op.ask, 'dispatch-error', JSON.stringify(op));
+  assert.match(op.error, /NOT an ancestor/);
+  assert.equal(readState(fx.statePath).pending_gate?.id, 'push_archive', 'the durable gate stays open');
+});
+
+test('finding-4: the non-fast-forward recovery pushes ONCE with one retry — a rejected first push succeeds on the single retry', () => {
+  const fx = makeFixture({ done: INSTALL_ONLY, origin: true });
+  assert.equal(walkInstallPush(fx).gate, 'push_archive');
+  const offeredHead = git(fx.MAIN, 'rev-parse', 'HEAD');
+
+  // Another host advances origin/main with a KNOWN receipt sha (the recovery's audit accepts it).
+  const foreign = path.join(fx.tmp, 'foreign-retry');
+  fs.mkdirSync(foreign, { recursive: true });
+  git(foreign, 'clone', '-q', '-b', 'main', fx.bare, 'work');
+  const foreignWork = path.join(foreign, 'work');
+  git(foreignWork, 'config', 'user.email', 'f@f');
+  git(foreignWork, 'config', 'user.name', 'f');
+  git(foreignWork, 'config', 'commit.gpgsign', 'false');
+  fs.writeFileSync(path.join(foreignWork, 'src/seed.txt'), 'seed\nplus\n');
+  git(foreignWork, 'add', '.');
+  git(foreignWork, 'commit', '-q', '-m', 'operator commit on another machine');
+  git(foreignWork, 'push', '-q', 'origin', 'main');
+  git(fx.MAIN, 'fetch', '-q', 'origin', 'main');
+  const knownSha = git(fx.MAIN, 'rev-parse', 'refs/remotes/origin/main');
+  const install = latest(fx, 'deploy_step');
+  const evs = readEvents(fx.bundleDir);
+  evs.push({ type: 'push_probe', ts: '2026-01-01T00:00:00.000Z', group: 'install', index: install.index, sha: install.sha, head_after: knownSha, base: 'main', status: 'confirmed_not_pushed' });
+  writeEvents(fx.bundleDir, evs);
+
+  // A pre-receive hook on the bare repo rejects the FIRST push observed and accepts the retry —
+  // proving the recovery pushes exactly once plus the single retry.
+  const attemptsLog = path.join(fx.tmp, 'push-attempts.log');
+  fs.writeFileSync(attemptsLog, '0');
+  const hookDir = path.join(fx.bare, 'hooks');
+  fs.mkdirSync(hookDir, { recursive: true });
+  const hookBody = '#!/bin/sh\n' +
+    'n=$(cat "' + attemptsLog + '")\n' +
+    'echo $((n + 1)) > "' + attemptsLog + '"\n' +
+    'if [ "$n" -eq 0 ]; then echo "reject first push" >&2; exit 1; fi\n' +
+    'exit 0\n';
+  fs.writeFileSync(path.join(hookDir, 'pre-receive'), hookBody);
+  fs.chmodSync(path.join(hookDir, 'pre-receive'), 0o755);
+
+  const op = fx.step({ archivePushed: { sha: offeredHead } });
+  assert.equal(op.reason, 'archived', JSON.stringify(op));
+  const attempts = Number(fs.readFileSync(attemptsLog, 'utf8'));
+  assert.equal(attempts, 2, 'the recovery pushed exactly once + one retry');
+  const pushed = readEvents(fx.bundleDir).find((e) => e.type === 'archive_pushed');
+  assert.ok(pushed, 'the push is recorded');
+  assert.equal(git(fx.MAIN, 'rev-parse', 'refs/remotes/origin/main'), pushed.sha, 'the remote carries the recorded sha');
+});
+
+test('finding-4: a rebase conflict during the recovery stops with the surfaced reason and records nothing', () => {
+  // Another host advances origin/main with a commit whose TREE collides with the local archive
+  // commit (same path), so the recovery's rebase conflicts and stops with the surfaced reason —
+  // the "terminal failure state with reason" requirement. The commit is seeded as a known
+  // receipt sha so the audit passes and the failure is genuinely the rebase.
+  const fx = makeFixture({ done: INSTALL_ONLY, origin: true });
+  assert.equal(walkInstallPush(fx).gate, 'push_archive');
+  const offeredHead = git(fx.MAIN, 'rev-parse', 'HEAD');
+  const foreign = path.join(fx.tmp, 'foreign-conflict');
+  fs.mkdirSync(foreign, { recursive: true });
+  git(foreign, 'clone', '-q', '-b', 'main', fx.bare, 'work');
+  const foreignWork = path.join(foreign, 'work');
+  git(foreignWork, 'config', 'user.email', 'f@f');
+  git(foreignWork, 'config', 'user.name', 'f');
+  git(foreignWork, 'config', 'commit.gpgsign', 'false');
+  // Collide on the EXACT path the archive/gate commits change (the bundle state file), with
+  // different content, so the rebase genuinely conflicts.
+  write(foreignWork, 'docs/masterplan/t25/state.yml', 'foreign: changed\n');
+  git(foreignWork, 'add', '.');
+  git(foreignWork, 'commit', '-q', '-m', 'foreign change colliding with archive');
+  git(foreignWork, 'push', '-q', 'origin', 'main');
+  git(fx.MAIN, 'fetch', '-q', 'origin', 'main');
+  const knownSha = git(fx.MAIN, 'rev-parse', 'refs/remotes/origin/main');
+  const install = latest(fx, 'deploy_step');
+  const evs = readEvents(fx.bundleDir);
+  evs.push({ type: 'push_probe', ts: '2026-01-01T00:00:00.000Z', group: 'install', index: install.index, sha: install.sha, head_after: knownSha, base: 'main', status: 'confirmed_not_pushed' });
+  writeEvents(fx.bundleDir, evs);
+
+  assert.throws(() => fx.step({ archivePushed: { sha: offeredHead } }), /rebase failed/);
+  assert.ok(!readEvents(fx.bundleDir).some((e) => e.type === 'archive_pushed'), 'nothing recorded on a terminal recovery failure');
+  // The run is still archived with the gate decision outstanding (the recovery threw before any
+  // gate-clear or archive_pushed append).
+  assert.equal(readState(fx.statePath).status, 'archived');
+  assert.equal(readState(fx.statePath).pending_gate?.id, 'push_archive', 'the push was not recorded and the gate stays open for re-entry');
+});
+
+test('finding-2: the real mp CLI accepts --archive-pushed --sha and records archive_pushed (wired through bin)', () => {
+  const fx = makeFixture({ done: INSTALL_ONLY, origin: true });
+  assert.equal(walkInstallPush(fx).gate, 'push_archive');
+  git(fx.MAIN, 'push', '-q', 'origin', 'main');
+  const head = git(fx.MAIN, 'rev-parse', 'HEAD');
+  // Invoke the REAL binary; the lib-level owner lock is held by the fixture's self, so pass the
+  // same session id and let the CLI's Guard-D heartbeat re-confirm it.
+  const r = run(['finish-step', `--state=${fx.statePath}`, '--archive-pushed', `--sha=${head}`, '--session=sess-A', '--host=h1']);
+  assert.equal(r.status, 0, `CLI --archive-pushed should succeed: ${r.stderr}`);
+  assert.ok(readEvents(fx.bundleDir).some((e) => e.type === 'archive_pushed' && e.sha === head), 'the CLI path recorded archive_pushed');
+});
+
+test('finding-2: the real mp CLI accepts --archive-push-skipped with --reason (wired through bin)', () => {
+  const fx = makeFixture({ done: INSTALL_ONLY, origin: true });
+  assert.equal(walkInstallPush(fx).gate, 'push_archive');
+  const r = run(['finish-step', `--state=${fx.statePath}`, '--archive-push-skipped', '--reason=no publish', '--session=sess-A', '--host=h1']);
+  assert.equal(r.status, 0, `CLI --archive-push-skipped should succeed: ${r.stderr}`);
+  const skip = readEvents(fx.bundleDir).find((e) => e.type === 'archive_push_skipped');
+  assert.ok(skip && skip.reason === 'no publish', 'the CLI path recorded the decline with its reason');
+});
+
+test('finding-2: --archive-pushed without --sha exits 2 (parse-time refusal, never silently dropped)', () => {
+  const fx = makeFixture({ done: INSTALL_ONLY, origin: true });
+  assert.equal(walkInstallPush(fx).gate, 'push_archive');
+  const r = run(['finish-step', `--state=${fx.statePath}`, '--archive-pushed', '--session=sess-A', '--host=h1']);
+  assert.equal(r.status, 2, `missing --sha must exit 2, got ${r.status}`);
+  assert.match(r.stderr, /--archive-pushed requires --sha/, r.stderr);
+  assert.ok(!readEvents(fx.bundleDir).some((e) => e.type === 'archive_pushed'), 'nothing recorded');
 });

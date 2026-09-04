@@ -594,7 +594,7 @@ const KNOWN_FLAGS = new Set(
     'ws-baseline ' +
     // §5.3 interview ledger + §6 goals-load gate + §7.5 rejection + the deploy/final-check flags
     'class corrected critic-unavailable-ack deploy-abort deploy-attest deploy-authorize deploy-rerun '  +
-    'deploy-retry deploy-skip deploy-step-done error file final intent-confirmed intent-rejected '  +
+    'deploy-retry deploy-skip deploy-step-done error file final intent-confirmed intent-rejected '  + 'archive-pushed archive-push-skipped '  +
     'deploy-chain-hash exit focus interview-waived model overlap-review payload-file resolves '  +
     'review-file round '  +
     'successor text unavailable '  +
@@ -673,6 +673,30 @@ function deployFlags(flags) {
       exit,
       ...(typeof flags['digest-file'] === 'string' ? { digestFile: flags['digest-file'] } : {}),
     };
+  }
+  return out;
+}
+
+// §7.2 post-archive push answers. --archive-pushed --sha=<head> records the archive push;
+// --archive-push-skipped [--reason=...] records the decline. Both parse-then-forward like
+// intentRejection; the lib refuses an answer without an open push_archive gate, and
+// rejectUnknownFlags means the flags are registered in KNOWN_FLAGS.
+function pushArchiveAnswer(flags) {
+  const out = {};
+  if (flags['archive-pushed']) {
+    const sha = typeof flags.sha === 'string' ? flags.sha.trim() : '';
+    if (!sha) die('--archive-pushed requires --sha=<sha> (the pushed archive head)', 2);
+    out.archivePushed = { sha };
+  }
+  if (flags['archive-push-skipped']) {
+    out.archivePushSkipped = {
+      reason: typeof flags.reason === 'string' && flags.reason.trim()
+        ? flags.reason.trim()
+        : 'the operator declined to push the archive',
+    };
+  }
+  if (out.archivePushed && out.archivePushSkipped) {
+    die('--archive-pushed and --archive-push-skipped were supplied together — the push_archive gate takes exactly one answer', 2);
   }
   return out;
 }
@@ -4308,6 +4332,11 @@ function main() {
           versionFix: !!flags['version-fix'],
           merged: !!flags.merged,
           mergeSha: typeof flags['merge-sha'] === 'string' ? flags['merge-sha'] : null,
+          // §7.2 post-archive push answers: --archive-pushed --sha=<head> records the pushed
+          // archive; --archive-push-skipped [--reason=...] records the decline. Both only on an
+          // archived bundle with an open push_archive gate. Mirrors intentRejection's parse-then-
+          // forward shape; rejectUnknownFlags means the flags are registered in KNOWN_FLAGS above.
+          ...pushArchiveAnswer(flags),
         });
       } catch (e) {
         die(e.message, EXIT_UNCAUGHT);
