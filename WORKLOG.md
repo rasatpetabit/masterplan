@@ -513,6 +513,26 @@ through. The task is plan-scale work in one wave slot.
 
 Handoff for this state: [`docs/handoffs/2026-09-03-intent-to-completion-wave3.md`](docs/handoffs/2026-09-03-intent-to-completion-wave3.md) — verified state, restore paths, and the two operator-approved next steps (repo-wide /tmp fixture-leak sweep; fold task 45's open requirement into task 46).
 
+## 2026-09-04 — intent-to-completion wave 5 recorded (Pi resume session)
+
+Resumed from `docs/handoffs/2026-09-04-intent-to-completion-wave5.md`. Suite re-verified
+(2319/2322; the other 5 failures seen first were Pi-environment artifacts: no
+`CLAUDE_CODE_SESSION_ID`, `PI_CODING_AGENT=true`), review posture decided as stop-and-record
+per the operator's wrap-up directive — all four tasks recorded with honest `rework` verdicts
+naming the unverified post-review fixes, plus a `review_ceiling` note.
+
+- Task 4 scope amended to `lib/config.mjs` (PLANNING_MODES define-once, consumed by
+  `lib/resume.mjs`); `state.tasks[].files` refreshed from the amended plan index via
+  `amend-tasks` — the plan-index amendments alone had left state/tasks divergent, which
+  `prepareWave` refuses at dispatch.
+- **Incident:** `mp continue` over the stale `launching` marker ran the crash-scope reset and
+  wiped the unrecorded WT work. Recovery: r4 diff snapshots + assert-guarded edit scripts +
+  transcript heredocs (incl. one import fixup dropped by a naive heredoc split), verified by
+  suite parity. **Rule: never `mp continue` over a WT holding unrecorded wave work — record
+  directly.** Why it happened: the handoff's "re-emit dispatch_fabric" was read as op-only,
+  missing that crash-reconcile also resets the declared scope in the WT.
+- Wave 5 recorded: code `7d926cf` (WT), state `2e93456` (MAIN), 38/48 done.
+
 ## 2026-09-04 — intent-to-completion wave 4 (CLI wiring, agent prompts, replay, bootstrap suite)
 
 Recorded tasks 3, 15, 26, 46. Code `d650bcc`, state `5d3c5d4`. Suite 2203/2206 (the same
