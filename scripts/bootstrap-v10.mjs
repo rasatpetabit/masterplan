@@ -353,6 +353,31 @@ function cleanTree(ctx) {
   return dirtyOutsideBundle(ctx.MAIN, `docs/masterplan/${ctx.state.slug}`).length === 0;
 }
 
+// The legal delta a release may present at the reviewed sha: exactly ONE commit that touches
+// CHANGELOG.md alone (the release header scripts/release.mjs inserts), or — for an idempotent
+// replay — zero commits only if the tip's CHANGELOG.md already carries the version header. This
+// is the single_commit contract. It is shared so the record-time PREFLIGHT (which runs before
+// the release's side effects are trusted and rolls a stray tag back) and the postcondition
+// (the after-the-fact invariant) can never disagree about what a legal release is.
+function releaseDeltaProblems(ctx, newTip) {
+  const problems = [];
+  const count = Number(tryGit(ctx.MAIN, ['rev-list', '--count', `${reviewedSha(ctx)}..${newTip}`]) ?? -1);
+  const changed = (tryGit(ctx.MAIN, ['diff', '--name-only', reviewedSha(ctx), newTip]) || '').split('\n').filter(Boolean);
+  if (count === 1) {
+    if (changed.length !== 1 || changed[0] !== 'CHANGELOG.md') {
+      problems.push({ name: 'only_changelog', ok: false, detail: `the release commit must change CHANGELOG.md only; it changed ${changed.join(', ') || 'nothing'}` });
+    }
+  } else if (count === 0) {
+    const changelog = tryGit(ctx.MAIN, ['show', `${newTip}:CHANGELOG.md`]) ?? '';
+    if (!changelog.split('\n').some((l) => new RegExp(`^##\\s+\\[?${ctx.version.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(l))) {
+      problems.push({ name: 'release_commit', ok: false, detail: `no release commit since the reviewed sha and CHANGELOG.md at the tip carries no '## ${ctx.version}' header` });
+    }
+  } else {
+    problems.push({ name: 'single_commit', ok: false, detail: `expected exactly the release commit since review, found ${count}` });
+  }
+  return problems;
+}
+
 // The tree a step's command executes in (targets.worktree, else MAIN's checkout of the branch): it
 // must be a checkout of the run branch at exactly ctx.tip, and clean — otherwise the receipt would
 // describe code other than the recorded tip (§10.1 same-SHA authorisation).
@@ -567,6 +592,29 @@ export function recordStep({ statePath, step, exit, digestFile = null, status = 
   if (armed.targets_sha256 !== targetsDigest(resolvedTargets)) {
     throw new Error(`targets differ from the arm's (${armed.targets_sha256.slice(0, 12)} vs ${targetsDigest(resolvedTargets).slice(0, 12)}) — record with the same --targets`);
   }
+  if (statusInfo.finish_begun && step !== 'gate') {
+    // The finish lock is a sequencing rule and takes precedence over content validation: once
+    // the finish has begun, no non-gate step may be recorded AT ALL, whatever its content.
+    throw new Error('finish has begun; only gate may be recorded');
+  }
+  if (step === 'release' && (status === null || status === 'done' || status === 'recovered')) {
+    // §10.3 pre-tag validation, run at RECORD time (the tag is created between arm and record
+    // by the release command): the to-be-recorded tip must be exactly one CHANGELOG-only commit
+    // past the reviewed sha (or an idempotent header replay). A malformed range is refused HERE,
+    // before the tag is trusted and before any record lands — and any local tag created on the
+    // unverified tip is rolled back, so a refused release leaves no tag behind. The postcondition
+    // keeps the same check as the after-the-fact invariant (defense in depth). This guard runs
+    // BEFORE the execution-tree position check below, so a too-far release is refused on the
+    // single-commit contract itself, not masked as a tree-position error.
+    const preflight = releaseDeltaProblems(ctx, ctx.tip);
+    if (preflight.some((p) => !p.ok)) {
+      const bad = preflight.filter((p) => !p.ok).map((p) => `${p.name}: ${p.detail}`).join('; ');
+      // Roll the tag back: the refusal must not leave the tag it was refused over (the release
+      // command may have created it before the malformed state was noticed).
+      try { git(ctx.MAIN, ['tag', '-d', ctx.tag]); } catch { /* no local tag to delete */ }
+      throw new Error(`release preflight refused: ${bad} — the release was not recorded and any tag on the unverified tip was removed`);
+    }
+  }
   if (['rehearsal', 'verify', 'release', 'install_pi', 'surfaces_live'].includes(step) && (status === null || status === 'done' || status === 'recovered')) {
     // The receipt describes the armed tip only if the execution tree is still that tip and clean.
     // A release moves the tip by exactly its own commit; everything else must not have moved at all.
@@ -586,9 +634,6 @@ export function recordStep({ statePath, step, exit, digestFile = null, status = 
     if (!(step === 'release' && parentOfTip === armed.tip)) {
       throw new Error(`branch tip moved since arm: armed at ${armed.tip}, now ${ctx.tip} — re-arm`);
     }
-  }
-  if (statusInfo.finish_begun && step !== 'gate') {
-    throw new Error('finish has begun; only gate may be recorded');
   }
   // Independently of the arm: an arm receipt left behind by an earlier pass, or written before
   // the pass was corrected, must not be enough to record a step this pass does not run.
@@ -952,18 +997,8 @@ export const STEPS = {
       }
       // scripts/release.mjs never bumps: the only legal delta from the reviewed sha is ONE commit that
       // touches CHANGELOG.md alone (the release header); a replay whose header already exists adds none.
-      const count = Number(tryGit(ctx.MAIN, ['rev-list', '--count', `${reviewedSha(ctx)}..${newTip}`]) ?? -1);
-      const changed = (tryGit(ctx.MAIN, ['diff', '--name-only', reviewedSha(ctx), newTip]) || '').split('\n').filter(Boolean);
-      if (count === 1) {
-        if (changed.length !== 1 || changed[0] !== 'CHANGELOG.md') problems.push({ name: 'only_changelog', ok: false, detail: `the release commit must change CHANGELOG.md only; it changed ${changed.join(', ') || 'nothing'}` });
-      } else if (count === 0) {
-        const changelog = tryGit(ctx.MAIN, ['show', `${newTip}:CHANGELOG.md`]) ?? '';
-        if (!changelog.split('\n').some((l) => new RegExp(`^##\\s+\\[?${ctx.version.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(l))) {
-          problems.push({ name: 'release_commit', ok: false, detail: `no release commit since the reviewed sha and CHANGELOG.md at the tip carries no '## ${ctx.version}' header` });
-        }
-      } else {
-        problems.push({ name: 'single_commit', ok: false, detail: `expected exactly the release commit since review, found ${count}` });
-      }
+      // Shared with the record-time preflight so the two can never disagree.
+      problems.push(...releaseDeltaProblems(ctx, newTip));
       return problems;
     },
   },

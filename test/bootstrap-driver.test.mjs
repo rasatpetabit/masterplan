@@ -258,10 +258,13 @@ test('git-only shape (release): precondition tag_absent refuses; postcondition b
   armed = armStep({ statePath: fx.statePath, step: 'release', targets: fx.targets });
   assert.equal(armed.ok, true, JSON.stringify(armed));
   assert.match(armed.cmd, /release\.mjs --version='10\.0\.0'/);
-  // postcondition: the tag must point at the branch tip (here: tag a foreign commit → refused)
+  // postcondition: the tag must point at the branch tip (here: tag a foreign commit → refused).
+  // The release preflight now refuses the record BEFORE the tag is trusted: the branch carries no
+  // release commit at all (reviewed→tip is empty, no CHANGELOG header), so the refusal names the
+  // malformed delta and rolls the stray tag back.
   git(fx.MAIN, 'tag', '-a', 'v10.0.0', '-m', 'v10.0.0', git(fx.MAIN, 'rev-parse', 'main'));
-  assert.throws(() => recordStep({ statePath: fx.statePath, step: 'release', exit: 0, targets: fx.targets }), /postcondition failed: tag_at_tip/);
-  git(fx.MAIN, 'tag', '-d', 'v10.0.0');
+  assert.throws(() => recordStep({ statePath: fx.statePath, step: 'release', exit: 0, targets: fx.targets }), /release preflight refused/);
+  assert.throws(() => git(fx.MAIN, 'rev-parse', '--verify', 'refs/tags/v10.0.0'), /Needed a single revision|unknown revision|not found/, 'the stray tag is rolled back by the preflight');
   // the release commit (CHANGELOG header only) on the branch, then the tag at the new tip
   write(fx.worktree, 'CHANGELOG.md', '# Changelog\n\n## 10.0.0\n');
   git(fx.worktree, 'add', 'CHANGELOG.md'); git(fx.worktree, 'commit', '-q', '-m', 'release: v10.0.0');
@@ -895,8 +898,9 @@ test('release: a tag without the release commit is refused; a replay with the he
   walk(fx, 'docs_normalize'); walk(fx, 'verify'); walk(fx, 'review', { verdict: 'approve' }); walk(fx, 'assess', { goals: { G1: 'achieved' } });
   assert.equal(armStep({ statePath: fx.statePath, step: 'release', targets: fx.targets }).ok, true);
   git(fx.MAIN, 'tag', '-a', 'v10.0.0', '-m', 'v10.0.0', fx.tip); // tag only, no release commit, no header
-  assert.throws(() => recordStep({ statePath: fx.statePath, step: 'release', exit: 0, targets: fx.targets }), /release_commit/);
-  git(fx.MAIN, 'tag', '-d', 'v10.0.0');
+  // The preflight refuses the malformed delta and rolls the tag back (no release commit, no header).
+  assert.throws(() => recordStep({ statePath: fx.statePath, step: 'release', exit: 0, targets: fx.targets }), /release preflight refused: release_commit/);
+  assert.throws(() => git(fx.MAIN, 'rev-parse', '--verify', 'refs/tags/v10.0.0'), /Needed a single revision|unknown revision|not found/, 'the preflight removed the tag');
   // a tip whose CHANGELOG already carries the header (a replay) needs no new commit
   write(fx.worktree, 'CHANGELOG.md', '# Changelog\n\n## 10.0.0\n');
   git(fx.worktree, 'add', 'CHANGELOG.md'); git(fx.worktree, 'commit', '-q', '-m', 'header already present');

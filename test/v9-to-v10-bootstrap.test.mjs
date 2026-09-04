@@ -14,7 +14,11 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { writeState, appendEvent } from '../lib/bundle.mjs';
+import { writeState, appendEvent, readState, setStatus } from '../lib/bundle.mjs';
+import { doneDigest } from '../lib/config.mjs';
+import { check as requiredSuccessorCheck } from '../lib/doctor/required-successor.mjs';
+import { check as incompleteArchiveCheck } from '../lib/doctor/incomplete-archive.mjs';
+import { check as legacyArchiveCheck } from '../lib/doctor/legacy-archive.mjs';
 import {
   STEP_ORDER, PASS2_OMITTED, stepsForPass, FINISH_EVENT_TYPES,
   resolveTargets, bootstrapStatus, armStep, recordStep, startPass, readBundleEvents,
@@ -111,6 +115,18 @@ function makeFixture({ version = '10.0.0', slug = 'bs' } = {}) {
 }
 
 const arm = (fx, step, over = {}) => armStep({ statePath: fx.statePath, step, targets: fx.targets, ...over });
+const armOk = (fx, step, over = {}) => {
+  const a = arm(fx, step, over);
+  assert.equal(a.ok, true, `arm ${step}: ${JSON.stringify(a)}`);
+  return a;
+};
+// Arm then record a successful turn (the mirror of walkRollout's internal recordOk).
+const walkOk = (fx, step, data = {}, { digestFile = null } = {}) => {
+  armOk(fx, step);
+  const r = record(fx, step, { data, ...(digestFile ? { digestFile } : {}) });
+  assert.equal(r.status, 'done', `${step}: ${JSON.stringify(r)}`);
+  return r;
+};
 const record = (fx, step, over = {}) => recordStep({
   statePath: fx.statePath, step, exit: 0, targets: fx.targets, ...over,
 });
@@ -1381,4 +1397,278 @@ test('the archived bundle survives the rollout in main, and a LEGACY bundle is l
   // ...and the legacy bundle is byte-identical, in the clone as well as locally.
   assert.equal(git(fx.MAIN, 'rev-parse', 'HEAD:docs/masterplan/legacy-run/state.yml'), legacyBefore);
   assert.ok(fs.existsSync(path.join(clone, 'docs', 'masterplan', 'legacy-run', 'state.yml')));
+});
+
+// ---------------------------------------------------------------------------
+// Wave task 48 — driver-level release/review refusals and the doctor checks
+// against REAL fixture output.
+// ---------------------------------------------------------------------------
+
+test('a release whose tree moved more than the release commit past the armed tip is refused and leaves NO tag', () => {
+  // §10.3 / §10.1.3: the tagged commit must differ from the reviewed sha by AT MOST the
+  // release commit. The rehearsal proves this at the git level (release_extra_commit_refused);
+  // here is the DRIVER-level path. The single_commit contract is enforced TWICE: the record-time
+  // release PREFLIGHT (which runs before the tag is trusted and ROLLS a stray tag back) and the
+  // postcondition (the after-the-fact invariant). A two-commit move is refused by the preflight
+  // with nothing recorded AND no tag left behind — the guard chain that keeps a too-far release
+  // out, proven from the refusal to the on-disk state.
+  const fx = makeRolloutFixture({ slug: 'ro-single-commit' });
+  const t = fx.tip();
+  walkOk(fx, 'rehearsal', {}, { digestFile: digest(fx, 'ok') });
+  walkOk(fx, 'docs_normalize');
+  walkOk(fx, 'verify', { tip: t });
+  walkOk(fx, 'review', { tip: t, verdict: 'approve' });
+  walkOk(fx, 'assess', { tip: t, goals: { G1: 'achieved' } });
+  // Arm release, then TWO commits land after the armed tip before the record: an unrelated
+  // commit and the CHANGELOG one. A tag is created at the far tip the way release.mjs would.
+  armOk(fx, 'release');
+  write(fx.worktree, 'src/extra.txt', 'a second unreviewed commit\n');
+  git(fx.worktree, 'add', 'src/extra.txt');
+  git(fx.worktree, 'commit', '-q', '-m', 'an unreviewed second commit');
+  write(fx.worktree, 'CHANGELOG.md', '# Changelog\n\n## 10.0.0\n');
+  git(fx.worktree, 'add', 'CHANGELOG.md');
+  git(fx.worktree, 'commit', '-q', '-m', 'release: 10.0.0');
+  const farTip = git(fx.worktree, 'rev-parse', 'HEAD');
+  assert.notEqual(farTip, t, 'the tip really is more than one commit past the reviewed sha');
+  assert.equal(git(fx.MAIN, 'rev-list', '--count', `${t}..${farTip}`), '2');
+  git(fx.MAIN, 'tag', '-a', 'v10.0.0', '-m', 'release 10.0.0', farTip);
+  // The record is refused by the release preflight, which names the two-commit move.
+  assert.throws(
+    () => record(fx, 'release'),
+    /release preflight refused: single_commit/,
+  );
+  // Nothing is recorded: the refusal left no bootstrap_step for release.
+  const steps = readBundleEvents(fx.statePath).filter((e) => e.type === 'bootstrap_step' && e.step === 'release');
+  assert.deepEqual(steps, [], 'the refused release records no outcome');
+  // The tag the release command created on the unverified tip is ROLLED BACK: a refused release
+  // must not leave unreviewed code tagged. This is the property the reviewer's finding 1 demanded.
+  assert.throws(
+    () => git(fx.MAIN, 'rev-parse', '--verify', 'refs/tags/v10.0.0'),
+    /Needed a single revision|unknown revision|not found/, 'no tag exists after the refused release',
+  );
+  // The stage stays on release — it is refused, not waved through.
+  assert.equal(bootstrapStatus(fx.statePath).next.step, 'release', 'the stage stays on release');
+});
+
+test('the single_commit guard is independently reachable: a malformed delta is refused even when the execution-tree check would pass', () => {
+  // Finding 2 (adversary round 1): the ORIGINAL test reached the two-commit case only through
+  // the earlier execution-tree guard, so deleting STEPS.release.post's single_commit check would
+  // not have failed it. The preflight now runs BEFORE the tree-position check and enforces the
+  // same single_commit contract, so the guard is reached on its own terms. Prove it by deleting
+  // nothing: walk a full rollout, then malform the reviewed→release delta in a way the tree
+  // guard would NOT have caught on its own (an extra commit on the branch), and assert the
+  // refusal names single_commit specifically — the tree guard never had the first say.
+  const fx = makeRolloutFixture({ slug: 'ro-single-commit-reach' });
+  const t = fx.tip();
+  walkOk(fx, 'rehearsal', {}, { digestFile: digest(fx, 'ok') });
+  walkOk(fx, 'docs_normalize');
+  walkOk(fx, 'verify', { tip: t });
+  walkOk(fx, 'review', { tip: t, verdict: 'approve' });
+  walkOk(fx, 'assess', { tip: t, goals: { G1: 'achieved' } });
+  armOk(fx, 'release');
+  // ONE unrelated commit lands (not CHANGELOG-only), then a tag at the tip — the tree guard
+  // sees HEAD at the tip and would pass its position check, but the delta is two commits.
+  write(fx.worktree, 'src/extra.txt', 'an unrelated unreviewed change\n');
+  git(fx.worktree, 'add', 'src/extra.txt');
+  git(fx.worktree, 'commit', '-q', '-m', 'an unrelated unreviewed commit');
+  write(fx.worktree, 'CHANGELOG.md', '# Changelog\n\n## 10.0.0\n');
+  git(fx.worktree, 'add', 'CHANGELOG.md');
+  git(fx.worktree, 'commit', '-q', '-m', 'release: 10.0.0');
+  const farTip = git(fx.worktree, 'rev-parse', 'HEAD');
+  assert.equal(git(fx.MAIN, 'rev-list', '--count', `${t}..${farTip}`), '2', 'two commits past the reviewed sha');
+  git(fx.MAIN, 'tag', '-a', 'v10.0.0', '-m', 'release 10.0.0', farTip);
+  assert.throws(
+    () => record(fx, 'release'),
+    /release preflight refused: single_commit/,
+    'the single_commit contract refuses independently of the tree-position guard',
+  );
+  assert.throws(
+    () => git(fx.MAIN, 'rev-parse', '--verify', 'refs/tags/v10.0.0'),
+    /Needed a single revision|unknown revision|not found/, 'no tag remains',
+  );
+});
+
+test('a review rejection stops the stage BEFORE the release is armable — nothing is tagged', () => {
+  // §10.3: a revise/reject review verdict stops the stage before step 3, while the worktree
+  // still exists to fix it. The review postcondition refuses a non-approve verdict; the
+  // chained consequence — release cannot even arm — is what this asserts. Without the chain,
+  // a driver that refused the review record but let release proceed would pass the review
+  // test while still tagging unreviewed code.
+  const fx = makeRolloutFixture({ slug: 'ro-review-reject' });
+  const t = fx.tip();
+  walkOk(fx, 'rehearsal', {}, { digestFile: digest(fx, 'ok') });
+  walkOk(fx, 'docs_normalize');
+  walkOk(fx, 'verify', { tip: t });
+  // A revise verdict is refused by the review postcondition...
+  armOk(fx, 'review');
+  assert.throws(
+    () => record(fx, 'review', { data: { tip: t, verdict: 'revise' } }),
+    /postcondition failed: verdict_approve/,
+  );
+  // ...and the stage stays ON review: release is out of order, and the ordering guard is the
+  // ONLY thing between this refusal and a tag. Assert the refusal names the ordering so a
+  // driver that jumped straight to release (via a deleted postcondition) cannot pass.
+  const afterReject = bootstrapStatus(fx.statePath);
+  assert.equal(afterReject.next.step, 'review', 'the stage stays on review after the refusal');
+  const releaseArm = arm(fx, 'release');
+  assert.equal(releaseArm.ok, false, 'release must not be armable after a rejected review');
+  assert.match((releaseArm.refusals ?? []).join(' '), /out of order: expected review/);
+  // The tag was never created.
+  assert.throws(
+    () => git(fx.MAIN, 'rev-parse', '--verify', 'refs/tags/v10.0.0'),
+    /unknown revision|fatal/, 'no tag exists after a rejected review',
+  );
+});
+
+// The finish-archive writer (lib/finish-step.mjs, task 28) is not in this task's scope, so
+// these tests emulate its durable archive output on top of a REAL rollout bundle (one the
+// driver actually walked) and confirm the doctor checks consume it. The point is that the
+// doctor checks work against REAL writer-shaped state/events, not only the hand-built
+// fixtures the doctor tests use.
+//
+// Round-1 finding 3 (adversary): archiveLikeFinish used to write `completion` into state with
+// NO matching ledger authorization — a `complete` without a completion_confirmed bound to a
+// deploy_base, an incomplete:keep without an incomplete_authorized {reason:'kept'}. The real
+// finish writer (task 28) REFUSES exactly those states (lib/finish-step.mjs archive guard), so
+// the fixtures silently drifted from what the writer produces. This version emits the FULL
+// ledger contract the writer requires, then ASSERTS the contract holds by re-deriving the
+// completion class from the ledger the way lib/finish-step.mjs's deriveCompletionClass does,
+// before any doctor check runs. If the fixture drifts again, the assertion fails here — not
+// silently in the doctor's output.
+function archiveLikeFinish(fx, { completion, successorSlug = null, successorReason = null, predecessor = null } = {}) {
+  // The finish emits the required_successor obligation BEFORE it archives (appendEvent refuses
+  // new events after archived except archive_pushed), so the event lands first, then the archive
+  // state write — the same order the real writer uses.
+  if (successorSlug && successorReason) {
+    appendEvent(fx.statePath, { type: 'required_successor', ts: 1, slug: successorSlug, reason: successorReason });
+  }
+  if (predecessor) {
+    const succDir = path.join(fx.MAIN, 'docs', 'masterplan', successorSlug);
+    fs.mkdirSync(succDir, { recursive: true });
+    writeState(path.join(succDir, 'state.yml'), {
+      schema_version: 8, slug: successorSlug, status: 'in-progress', phase: 'brainstorm',
+      predecessor, tasks: [], active_run: null, pending_gate: null,
+    });
+    fs.writeFileSync(path.join(succDir, 'events.jsonl'), JSON.stringify({
+      type: 'bundle_created', ts: 1, slug: successorSlug, predecessor,
+      data: { goals_enabled: true },
+    }) + '\n');
+  }
+
+  // §7.4 ledger contract, emitted BEFORE the state write (appendEvent is the commit point):
+  // the archive class the state claims must have a matching authorization on the ledger, or the
+  // real writer (lib/finish-step.mjs archive guard) would refuse it.
+  const deployBaseSha = fx.head(); // post-gate HEAD: the merged, released tip the deployment landed on
+  if (completion === 'complete') {
+    appendEvent(fx.statePath, {
+      type: 'deploy_base', ts: 1, sha: deployBaseSha,
+      branch_tip: fx.tip(),
+      done_sha256: doneDigest({ run: 'node scripts/release.mjs' }),
+    });
+    appendEvent(fx.statePath, {
+      type: 'completion_confirmed', ts: 2, deploy_base_sha: deployBaseSha,
+    });
+  } else if (completion && completion.startsWith('incomplete:')) {
+    const reason = completion.slice('incomplete:'.length);
+    // The real writer's terminal reasons: kept, discarded, deploy_skip:<g>[<i>], deploy_abort:<gate>,
+    // attested, intent_waived, intent_rejected:<class>, version_not_bumped, no_definition_of_done.
+    appendEvent(fx.statePath, {
+      type: 'incomplete_authorized', ts: 1, reason,
+      ...(reason.startsWith('intent_rejected:')
+        ? { class: reason.split(':')[1] ?? null, successor: successorSlug ?? null, deploy_base_sha: deployBaseSha }
+        : {}),
+    });
+  }
+
+  const state = readState(fx.statePath);
+  const archived = setStatus({ ...state, ...(completion ? { completion } : {}) }, 'archived');
+  writeState(fx.statePath, archived);
+
+  // ASSERT the writer contract holds BEFORE any doctor check consumes the bundle: re-derive the
+  // completion class from the ledger exactly as lib/finish-step.mjs's deriveCompletionClass does.
+  const events = readBundleEvents(fx.statePath);
+  const terminalReasons = ['kept', 'discarded', 'attested', 'version_not_bumped', 'no_definition_of_done',
+    'deploy_abort', 'intent_waived'];
+  const terminal = events.filter((e) => e.type === 'incomplete_authorized'
+    && (terminalReasons.includes(String(e.reason))
+      || String(e.reason ?? '').startsWith('deploy_skip:')
+      || String(e.reason ?? '').startsWith('deploy_abort:')
+      || String(e.reason ?? '').startsWith('intent_rejected:')));
+  const bases = events.filter((e) => e.type === 'deploy_base');
+  const latestBase = bases.length ? bases[bases.length - 1] : null;
+  const confirmations = events.filter((e) => e.type === 'completion_confirmed');
+  let derived;
+  if (terminal.length) {
+    derived = `incomplete:${terminal[terminal.length - 1].reason}`;
+  } else if (latestBase && latestBase.done_sha256 === doneDigest('none')) {
+    derived = 'merged';
+  } else if (confirmations.some((c) => c.deploy_base_sha === (latestBase ? latestBase.sha : null))) {
+    derived = 'complete';
+  } else {
+    derived = null; // legacy
+  }
+  const expect = completion === 'complete' || completion === null || completion === undefined ? (completion ?? null) : completion;
+  assert.equal(derived, expect,
+    `the ledger must derive the requested archive class: state asked for ${JSON.stringify(completion)} `
+    + `but the ledger derives ${JSON.stringify(derived)} — the fixture drifted from the real finish writer's contract`);
+}
+
+test('the doctor checks consume a real rollout bundle archived complete', () => {
+  const fx = makeRolloutFixture({ slug: 'ro-doctor-complete' });
+  walkRollout(fx);
+  completeGate(fx);
+  archiveLikeFinish(fx, { completion: 'complete' });
+  // A real, fully-walked bundle archived as complete: legacy-archive and incomplete-archive
+  // must both stay silent (it is neither), and required-successor sees no obligation.
+  const legacy = legacyArchiveCheck(fx.MAIN);
+  assert.equal(legacy.some((f) => f.summary.includes('ro-doctor-complete')), false, JSON.stringify(legacy));
+  assert.ok(legacy.some((f) => f.severity === 'PASS'), JSON.stringify(legacy));
+  const incomplete = incompleteArchiveCheck(fx.MAIN);
+  assert.equal(incomplete.some((f) => f.summary.includes('ro-doctor-complete')), false, JSON.stringify(incomplete));
+  assert.equal(requiredSuccessorCheck(fx.MAIN).find((f) => f.id === 'required-successor').summary, 'no required-successor obligations');
+});
+
+test('the doctor checks consume a real rollout bundle archived incomplete with a required successor', () => {
+  const fx = makeRolloutFixture({ slug: 'ro-doctor-incomplete' });
+  walkRollout(fx);
+  completeGate(fx);
+  // The corrective-release decline (operator keeps the branch) archives incomplete:kept — the
+  // REAL §7.4 class (incomplete_authorized {reason:'kept'}), not the pre-fix drift 'incomplete:keep'
+  // which the real finish writer would refuse. A keep with a successor obligation is what §7.4's
+  // incomplete-archive PASS + required-successor PASS model.
+  archiveLikeFinish(fx, {
+    completion: 'incomplete:kept', successorSlug: 'ro-doctor-succ', successorReason: 'corrective release declined', predecessor: 'ro-doctor-incomplete',
+  });
+  // The SOURCE is incomplete:* — incomplete-archive reports it; legacy-archive does not.
+  const incomplete = incompleteArchiveCheck(fx.MAIN);
+  assert.ok(
+    incomplete.some((f) => f.summary.includes('ro-doctor-incomplete') && f.summary.includes('incomplete:kept')),
+    JSON.stringify(incomplete),
+  );
+  const legacy = legacyArchiveCheck(fx.MAIN);
+  assert.equal(legacy.some((f) => f.summary.includes('ro-doctor-incomplete')), false, JSON.stringify(legacy));
+  // The successor is linked and in-progress: required-successor PASSes (not ERROR).
+  const req = requiredSuccessorCheck(fx.MAIN);
+  const f = req.find((x) => x.id === 'required-successor');
+  assert.ok(f);
+  assert.equal(f.severity, 'PASS', JSON.stringify(req));
+  assert.equal(f.summary, 'ro-doctor-succ: required successor of ro-doctor-incomplete in progress');
+});
+
+test('the legacy-archive check sees a real pre-v10 archived bundle the rollout left alone', () => {
+  const fx = makeRolloutFixture({ slug: 'ro-doctor-legacy' });
+  // A pre-v10 bundle with no completion field, committed so the rollout's clean-tree check
+  // tolerates it (mirrors the rollout-archive test, which commits it before the walk).
+  const legacyDir = path.join(fx.MAIN, 'docs', 'masterplan', 'legacy-run');
+  fs.mkdirSync(legacyDir, { recursive: true });
+  fs.writeFileSync(path.join(legacyDir, 'state.yml'), 'schema_version: 8\nslug: legacy-run\nstatus: archived\n');
+  git(fx.MAIN, 'add', '--', path.join('docs', 'masterplan', 'legacy-run'));
+  git(fx.MAIN, 'commit', '-q', '-m', 'a pre-v10 archived bundle');
+  walkRollout(fx);
+  completeGate(fx);
+  archiveLikeFinish(fx, { completion: 'complete' });
+  const legacy = legacyArchiveCheck(fx.MAIN);
+  const lf = legacy.find((f) => f.summary.startsWith('legacy-run:'));
+  assert.ok(lf, JSON.stringify(legacy));
+  assert.equal(lf.severity, 'PASS', JSON.stringify(legacy));
 });

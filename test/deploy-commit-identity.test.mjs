@@ -1529,9 +1529,11 @@ test('mergeIdentity: a transformed replay whose prefix is emptied and whose last
   }
 });
 
-test('an ordinary keep is not a release override: it neither consults origin nor archives incomplete', () => {
+test('an ordinary keep is not a release override: it consults neither origin nor a release record, and archives incomplete on its own authorization', () => {
   // a release definition, an already-tagged version, and an UNREACHABLE origin: `keep` retires
-  // nothing, so the release contract does not apply to it
+  // nothing, so the release contract does not apply to it. §7.4 (task 28): keep is the
+  // operator's own not-done decision — it archives incomplete on the incomplete_authorized
+  // {reason: kept} it writes transactionally, not by satisfying any release contract.
   const fx = makeFixture({ state: { autonomy: 'loose' } });
   write(fx.WT, '.claude-plugin/plugin.json', JSON.stringify({ name: 'x', version: '4.5.6' }));
   write(fx.WT, '.masterplan.yaml', 'done:\n  version_from: .claude-plugin/plugin.json\n  release:\n    - run: /bin/true\n');
@@ -1541,7 +1543,9 @@ test('an ordinary keep is not a release override: it neither consults origin nor
   walkToGate(fx);
   const op = fx.step({ choice: 'keep' });
   assert.equal(op.reason, 'archived', JSON.stringify(op));
-  assert.ok(!readEvents(fx.bundleDir).some((e) => e.type === 'incomplete_authorized'), 'no incomplete disposition');
+  const auth = readEvents(fx.bundleDir).find((e) => e.type === 'incomplete_authorized');
+  assert.equal(auth && auth.reason, 'kept', 'keep authorizes its own shortfall, not a release contract');
+  assert.equal(readState(fx.statePath).completion, 'incomplete:kept');
   assert.equal(readState(fx.statePath).worktree_disposition, 'kept_by_user');
 });
 

@@ -1996,6 +1996,7 @@ function main() {
       const checkedAlready = gcEvents.some(
         (e) =>
           e.type === 'goal_check' &&
+          (e.data?.final === true) === gcFinal &&
           e.data?.goals_hash === gcHash &&
           e.data?.head_sha === gcHead &&
           e.data?.base === gcBase &&
@@ -2030,6 +2031,20 @@ function main() {
           provenance_kind: v.provenance_kind,
           verdicts: v.normalized.verdicts,
           provenance,
+          // §6.2 FINAL-assessment bindings: the validator normalized them (and demanded the
+          // receipt echo them), but they must also be WRITTEN or the machine's finalReceiptFor
+          // can never find a valid final assessment — an implementation-only event has
+          // final !== true, so a `--final` check recorded on the same tuple would be
+          // indistinguishable from the implementation check that preceded it.
+          ...(gcFinal
+            ? {
+                final: true,
+                deploy_base_sha: v.normalized.deploy_base_sha,
+                deploy_chain_hash: v.normalized.deploy_chain_hash,
+                live_check_digest: v.normalized.live_check_digest,
+                intent_verdict: v.normalized.intent_verdict,
+              }
+            : {}),
         },
         summary: `goal check recorded (${v.provenance_kind}) at ${gcHash}`,
       };
