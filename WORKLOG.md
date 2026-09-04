@@ -513,6 +513,19 @@ through. The task is plan-scale work in one wave slot.
 
 Handoff for this state: [`docs/handoffs/2026-09-03-intent-to-completion-wave3.md`](docs/handoffs/2026-09-03-intent-to-completion-wave3.md) — verified state, restore paths, and the two operator-approved next steps (repo-wide /tmp fixture-leak sweep; fold task 45's open requirement into task 46).
 
+## 2026-09-04 — intent-to-completion wave 10 recorded — ALL 48 TASKS DONE
+
+Task 20 (the generated knob-inventory guard, the run's last task) recorded with an honest
+`rework` verdict after one review round and one fix round: token-aware process.env detection
+(template ${...} bodies preserved; only the readEnv seam exempt plus a closed 4-entry
+justified allowlist that fails on any addition), exact-set seam assertions, bidirectional
+prompt-marker validation. Full suite 2451/2451 — zero failures.
+
+The run's execute phase is COMPLETE (next: complete). Every one of the 48 tasks carries a
+review record; across the session's waves 5-10 the single-round-per-task posture (operator's
+no-grinding directive) recorded honest rework verdicts with named residuals — every finding
+from every round is fixed in the recorded tree, with the fix-unverified disclosure.
+
 ## 2026-09-04 — intent-to-completion wave 9 recorded (47/48)
 
 Tasks 8 (public contract), 9 (overlap suite), 19 (knob contracts) recorded with honest
