@@ -513,6 +513,21 @@ through. The task is plan-scale work in one wave slot.
 
 Handoff for this state: [`docs/handoffs/2026-09-03-intent-to-completion-wave3.md`](docs/handoffs/2026-09-03-intent-to-completion-wave3.md) — verified state, restore paths, and the two operator-approved next steps (repo-wide /tmp fixture-leak sweep; fold task 45's open requirement into task 46).
 
+## 2026-09-04 — intent-to-completion wave 7 recorded (42/48)
+
+Task 29 (post-archive push_archive) recorded with an honest `rework` verdict after ONE review
+round (mp-adversarial-reviewer) and ONE fix round. The review caught four blocking defects:
+a transient fetch failure at the last install step permanently mislabeled a pushed run
+`pushed:no`; the --archive-pushed/--archive-push-skipped flags were never wired through the
+CLI (the lib answered flags the binary rejected); conflicting terminal answers were accepted
+as idempotent replay; and the non-FF recovery was simulated in fixtures, not implemented. All
+fixed: durable push_probe states (confirmed_pushed/confirmed_not_pushed/indeterminate with
+re-probe + halt), CLI wiring, first-answer-authoritative replay with conflict refusal, a real
+fetch/audit/rebase/retry transaction with per-commit provenance checks, remote-bound
+archive_pushed (the remote must actually carry the sha), and a merge-base --is-ancestor gate
+guard. Full suite 2383/2386 (3 pre-existing, tasks 8/10). Two recorded scope amendments
+(bin wiring; push_probe schema fixture consumers).
+
 ## 2026-09-04 — intent-to-completion wave 6 recorded (Pi session)
 
 Tasks 6, 28, 48 recorded with honest `rework` verdicts: ONE review round per task
