@@ -525,3 +525,32 @@ test('classifyLegacyMarker is pure: does not mutate the marker', () => {
   classifyLegacyMarker(marker);
   assert.deepEqual(marker, snapshot);
 });
+
+// ---------------------------------------------------------------------------
+// Resolved planning mode and the bootstrap-stage marker (wave task 4)
+// ---------------------------------------------------------------------------
+
+test('resume_phase routes on the RESOLVED planning mode, not the value stamped at seed', () => {
+  const state = { phase: 'plan', tasks: [], planning_mode: 'serial' };
+  // With nothing resolved, the stamped value stands.
+  assert.equal(decideNextAction(state, { alive: false }).planning_mode, 'serial');
+  // A resolved mode from the config hierarchy WINS: the hierarchy is what decides it, and a
+  // value stamped at seed can be months stale.
+  assert.equal(
+    decideNextAction(state, { alive: false, planning_mode: 'parallel' }).planning_mode,
+    'parallel',
+  );
+  // ...and with neither, the documented default.
+  assert.equal(decideNextAction({ phase: 'brainstorm', tasks: [] }, { alive: false }).planning_mode, 'auto');
+});
+
+test('a bootstrap-stage marker is classified as its own kind, never as a plan marker', () => {
+  const marker = { kind: 'bootstrap', pass: 1, step: 'push' };
+  const classified = classifyLegacyMarker(marker);
+  assert.equal(classified.legacy, 'bootstrap');
+  // It must NOT be mistaken for a plan marker: converting it would dispatch plan drafters
+  // during the irreversible stage.
+  assert.notEqual(classified.legacy, 'plan-promoted');
+  assert.notEqual(classified.legacy, 'plan-launching');
+  assert.notEqual(classified.legacy, 'unrecognized');
+});

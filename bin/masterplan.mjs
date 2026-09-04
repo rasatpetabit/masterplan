@@ -191,7 +191,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readState, parseState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, setWorktree, setWorktreeDisposition, setVerifiedSha, setCodexConfig, setReviewConfig, setRenderConfig, loadPlanTasks, buildSeedState, buildTasksFromPlanIndex, appendEvent, setCoordination, applyPlanIndex, upsertTasks, rebasePaths, GOAL_LIFECYCLE_EVENT_TYPES, inferGoalsCapability, CURRENT_SCHEMA_VERSION } from '../lib/bundle.mjs';
-import { parseGoals, validateGoals, goalsHash, legacyGoalsHash, validateUserApprovalReceipt, validateAmendment, amendmentDiff, crossCheckGoals, validateGoalCheckReceipt, validateGoalWaiver, waiverKey, validateGoalsLoadGate } from '../lib/goals.mjs';
+import { parseGoals, validateGoals, goalsHash, legacyGoalsHash, preCodeMaskGoalsHash, validateUserApprovalReceipt, validateAmendment, amendmentDiff, crossCheckGoals, validateGoalCheckReceipt, validateGoalWaiver, waiverKey, validateGoalsLoadGate } from '../lib/goals.mjs';
 import { planWorktreeCreate, parseWorktreeList, classifyWorktrees, normalizeDisposition, dispositionAfterTeardown, VALID_DISPOSITIONS as VALID_WORKTREE_DISPOSITION } from '../lib/worktree.mjs';
 import { collectDiskDirs, collectBundleRecords } from '../lib/worktree-fs.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
@@ -204,7 +204,7 @@ import { prepareWave, declaredScope, verifyScope } from '../lib/wave.mjs';
 import { detectHost } from '../lib/dispatch/index.mjs';
 import { selectReentry, reentryEventTypes, validateGateReceipt } from '../lib/reentry-guard.mjs';
 import { resolveConfigDir } from '../lib/paths.mjs';
-import { readEnv, childEnv, resolveRunConfig } from '../lib/config.mjs';
+import { readEnv, childEnv, resolveRunConfig, PLANNING_MODES } from '../lib/config.mjs';
 import { projectObligations, resolveResumeBrief, renderResumeBrief } from '../lib/resume-brief.mjs';
 import { contextStatus } from '../lib/context-status.mjs';
 import {
@@ -215,14 +215,14 @@ import {
 import { createHash } from 'node:crypto';
 import { mergePlanFragments, validatePlanIndex, renderPlanMd, renderPlanHtml } from '../lib/plan-merge.mjs';
 import { amendPlan } from '../lib/amend.mjs';
-import { classifyDirt, detectBase, collectVerifyCommands, isVerified, dispositionForChoice, summarizePr } from '../lib/finish.mjs';
+import { classifyDirt, detectBase, collectVerifyCommands, isVerified, dispositionForChoice, summarizePr, liveCheckDigest } from '../lib/finish.mjs';
 import { computeEnqueueKey, decideEnqueue } from '../lib/qctl-enqueue.mjs';
 import { verifyArtifact, parseQctlDigest } from '../lib/qctl-artifact.mjs';
 import { mapQctlStatus } from '../lib/qctl-status.mjs';
 import { decideBaseDrift } from '../lib/qctl-requeue.mjs';
 import { recordWaveResult } from '../lib/wave-commit.mjs';
 import { dispatchWaveViaFabric, reviewNativeResult, readWaveDispatchRecord, writeWaveDispatchRecord } from '../lib/dispatch-wave.mjs';
-import { continueRun, dispatchPlanFanout } from '../lib/continue.mjs';
+import { continueRun, dispatchPlanFanout, resolvePlanMdPath } from '../lib/continue.mjs';
 import { finishStep } from '../lib/finish-step.mjs';
 import { sweepWorktrees } from '../lib/sweep.mjs';
 import { discoverRuns, readDiscoveryConfig, serializeDiscoveryConfig, addDiscoveryRoot, removeDiscoveryRoot, discoveryConfigPath } from '../lib/runs.mjs';
@@ -724,6 +724,46 @@ function projectPredecessorRejection(statePath, predecessorSlug) {
   } catch {
     return null;
   }
+}
+
+// The planning mode `mp continue` routes on: resolved from the config chain (CLI > repo > user
+// > default) at the run's own repo root. Null means the chain RESOLVED and had nothing to say,
+// in which case the value the bundle recorded at seed stands.
+//
+// A resolution FAILURE is not null. "The hierarchy said nothing" and "the hierarchy could not
+// be read" are different facts, and collapsing them is how a malformed config silently routes
+// a run on a stale persisted mode — the substitution the fail-closed rule forbids. The error
+// propagates to the caller's own try, which turns it into a loud stop.
+function continuePlanningMode(flags, statePath) {
+  // A PRESENT flag with a non-string value is `--planning-mode` written bare, which the parser
+  // reads as a boolean. Dropping it would discard an explicit control and resume on the mode
+  // recorded at seed — the stale-value substitution this whole path exists to prevent — so
+  // presence is checked independently of type.
+  const cli = {};
+  if (Object.prototype.hasOwnProperty.call(flags, 'planning-mode')) {
+    const raw = flags['planning-mode'];
+    if (typeof raw !== 'string' || raw.trim() === '') {
+      throw new Error(`continue: --planning-mode needs a value (one of ${PLANNING_MODES.join('|')})`);
+    }
+    cli.planning_mode = raw;
+  }
+  let resolved;
+  try {
+    resolved = resolveRunConfig({ cli, repoRoot: deriveDefaultTargetRepo(statePath), env: readEnvAll() });
+  } catch (e) {
+    // "The hierarchy could not be evaluated" is not "the hierarchy said nothing". An invalid
+    // configured value throws out of validateEnum and lands here; so does an underivable repo
+    // root. Either way the persisted mode must not quietly take over.
+    throw new Error(`continue: the planning mode could not be resolved (${e.message}) — fix the configuration rather than resuming on the mode recorded at seed`);
+  }
+  const mode = resolved?.values?.planning_mode ?? null;
+  // Validated against the enum HERE as well. The resolver is the authority, but a value that
+  // slipped through would otherwise surface much later as a decide-error ask, which the CLI
+  // reports as a successful op rather than a failure.
+  if (mode !== null && !PLANNING_MODES.includes(mode)) {
+    throw new Error(`continue: resolved planning mode ${JSON.stringify(mode)} is not one of ${PLANNING_MODES.join('|')}`);
+  }
+  return mode;
 }
 
 // §8: the digest of the run inventory a review judged. `runs list` prints it, the review file
@@ -1612,6 +1652,19 @@ function main() {
           + `receipt bound to the stored hash. Rewrite the topic in the bare \`topic: <text>\` form to `
           + `keep the old hash, or re-approve the goals deliberately to adopt the new anchor.`, 1);
       }
+      // The SAME hazard, one normalization change later: masking fenced/indented code and
+      // ending the Intent block at an H1 are corrections, but a goals.md that quotes
+      // parser-looking text parsed differently before them. Re-hashing it here would void every
+      // receipt keyed to the stored hash, silently.
+      const preMaskHash = preCodeMaskGoalsHash(goalsMd);
+      if (preMaskHash && state.goals_md_hash && state.goals_md_hash === preMaskHash && preMaskHash !== hash) {
+        die(`goals-load: refusing to re-hash — this bundle's goals.md quotes parser-looking text `
+          + `inside a code block (or carries Intent fields under an H1), which an earlier masterplan `
+          + `read as content (stored hash ${preMaskHash}); code is no longer read as content `
+          + `(${hash}). Re-freezing would invalidate every receipt bound to the stored hash. Move the `
+          + `example out of the Intent block to keep the old hash, or re-approve the goals `
+          + `deliberately to adopt the corrected parse.`, 1);
+      }
       // ---- multi-file write: artifacts FIRST (each temp+rename), event append LAST as commit ----
       const goalsMdTmp = path.join(dir, 'goals.md.tmp');
       fs.mkdirSync(dir, { recursive: true });
@@ -1936,7 +1989,7 @@ function main() {
           final: true,
           deployBaseSha: need(flags, 'base-sha'),
           deployChainHash: need(flags, 'deploy-chain-hash'),
-          liveCheckDigest: need(flags, 'digest-file'),
+          liveCheckDigest: liveCheckDigest(String(need(flags, 'digest-file'))),
         } : {}),
       });
       if (!v.ok) die(`record-goal-check: receipt rejected — ${v.error}`, 1);
@@ -2752,7 +2805,53 @@ function main() {
     case 'merge-plan-fragments': {
       const fragsPath = need(flags, 'fragments');
       const outIndex = need(flags, 'out');
-      const planMdPath = flags['plan-md'] ?? path.join(path.dirname(outIndex), 'plan.md');
+      // The SAME selection rule the planning fan-out advertised to the drafters (§2b): an
+      // explicit --plan-md wins, else the bundle's own state.plan_path, else the conventional
+      // sibling. Defaulting straight to plan.md here would write a different file from the one
+      // the fan-out named, leaving the run's real plan stale forever.
+      const mergeBundleDir = path.dirname(path.resolve(outIndex));
+      const mergeStatePath = path.join(mergeBundleDir, 'state.yml');
+      let mergeState = {};
+      // An ABSENT state file is a bundle-less merge (fixtures, ad-hoc), which keeps the
+      // conventional default. An entry that EXISTS but cannot be understood is a bundle whose
+      // recorded plan_path we cannot see, and defaulting to plan.md there writes a different
+      // file from the one the fan-out advertised — the exact divergence the shared resolver
+      // exists to prevent. So it fails instead.
+      //
+      // lstat, not existsSync: existsSync follows symlinks and swallows errors, so a DANGLING
+      // state.yml symlink — an entry that plainly exists and plainly cannot be read — would
+      // report false and be treated as "no bundle at all".
+      let mergeStateEntry = null;
+      try {
+        mergeStateEntry = fs.lstatSync(mergeStatePath);
+      } catch (e) {
+        if (e.code !== 'ENOENT') {
+          die(`merge-plan-fragments: ${mergeStatePath} could not be examined (${e.message}) — refusing to fall back to plan.md, which may not be the plan this run owns`, 1);
+        }
+      }
+      if (mergeStateEntry) {
+        try {
+          mergeState = parseState(fs.readFileSync(mergeStatePath, 'utf8'));
+        } catch (e) {
+          die(`merge-plan-fragments: ${mergeStatePath} exists but could not be read (${e.message}) — refusing to fall back to plan.md, which may not be the plan this run owns`, 1);
+        }
+        // parseState is deliberately lenient, so "it parsed" is not "it is a bundle state". An
+        // empty or truncated file yields an object with no plan_path, which is indistinguishable
+        // from a bundle that deliberately omitted one — and one of those two should write
+        // plan.md while the other must not.
+        if (!mergeState || typeof mergeState !== 'object' || Array.isArray(mergeState) || !mergeState.slug) {
+          die(`merge-plan-fragments: ${mergeStatePath} is not a readable bundle state (no slug) — refusing to fall back to plan.md, which may not be the plan this run owns`, 1);
+        }
+        if (mergeState.plan_path !== undefined && (typeof mergeState.plan_path !== 'string' || mergeState.plan_path.trim() === '')) {
+          die(`merge-plan-fragments: ${mergeStatePath} records a plan_path that is not a path (${JSON.stringify(mergeState.plan_path)})`, 1);
+        }
+      }
+      let planMdPath;
+      try {
+        planMdPath = resolvePlanMdPath({ explicit: flags['plan-md'] ?? null, state: mergeState, bundleDir: mergeBundleDir });
+      } catch (e) {
+        die(`merge-plan-fragments: ${e.message}`, 2);
+      }
       const meta = flags.meta ? JSON.parse(flags.meta) : {};
       let fragments;
       try {
@@ -4112,6 +4211,10 @@ function main() {
           routing: typeof flags.routing === 'string' ? flags.routing : undefined,
           review: flags.review,
           reposAllowlist,
+          // Resolved here, where the config chain lives, and passed in — the same shape as
+          // `routing` above. A resume must route on what config says NOW, not on whatever was
+          // stamped into state at seed.
+          planningMode: continuePlanningMode(flags, statePath),
         });
       } catch (e) {
         die(e.message);

@@ -164,7 +164,18 @@ printf 'seed\n' > "$WORK/src.txt"
 printf '# masterplan skill (fixture)\n' > "$WORK/skills/masterplan/SKILL.md"
 printf '# masterplan-detect (fixture)\n' > "$WORK/skills/masterplan-detect/SKILL.md"
 printf '# /masterplan (fixture)\n' > "$WORK/commands/masterplan.md"
-printf 'console.log("masterplan 9.10.0");\n' > "$WORK/bin/masterplan.mjs"
+# The entry point READS its own plugin.json, exactly as the real binary does. A stub printing
+# a literal version would still report 9.10.0 after the release bumps to v10 — and the
+# surfaces_live postcondition RUNS this file and compares what it reports, so a hardcoded
+# version would fail the very check it is meant to satisfy.
+{
+  printf '%s\n' "import { readFileSync } from 'node:fs';"
+  printf '%s\n' "import { dirname, join } from 'node:path';"
+  printf '%s\n' "import { fileURLToPath } from 'node:url';"
+  printf '%s\n' "const root = dirname(dirname(fileURLToPath(import.meta.url)));"
+  printf '%s\n' "const pkg = JSON.parse(readFileSync(join(root, '.claude-plugin', 'plugin.json'), 'utf8'));"
+  printf '%s\n' "console.log(\`masterplan \${pkg.version}\`);"
+} > "$WORK/bin/masterplan.mjs"
 printf 'console.log("doctor");\n' > "$WORK/bin/doctor.mjs"
 printf 'console.log("register-pi-agents");\n' > "$WORK/bin/register-pi-agents.mjs"
 printf 'export const bundle = true;\n' > "$WORK/lib/bundle.mjs"
@@ -600,8 +611,10 @@ if selected walk; then
   mkdir -p "$CACHE/.claude-plugin" "$CACHE_BIN" "$CLAUDE_DIR/plugins"
   printf '{"repositories":{"rasatpetabit-masterplan":{"plugins":{"masterplan":{"version":"%s"}}}}}\n' "$VERSION" \
     > "$CLAUDE_DIR/plugins/installed_plugins.json"
-  G "$WORK" show "$RELEASE_TIP:$VERSION_FROM" > "$CACHE/$VERSION_FROM" 2>/dev/null
-  G "$WORK" show "$RELEASE_TIP:bin/masterplan.mjs" > "$CACHE_BIN/masterplan.mjs" 2>/dev/null
+  # The WHOLE released tree, not two files: the entry point reads its sibling plugin.json, and
+  # surfaces_live RUNS it. A cache holding only bin/masterplan.mjs is an installation that
+  # cannot start — which is exactly the state the executable check exists to catch.
+  G "$WORK" archive "$RELEASE_TIP" | tar -x -C "$CACHE" 2>/dev/null
   walk claude_surface
   walk surfaces_live
 

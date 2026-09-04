@@ -12,7 +12,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
-import { continueRun, dispatchPlanFanout, snapshotRootsPorcelain, diffRootsPorcelain } from '../lib/continue.mjs';
+import { continueRun, dispatchPlanFanout, snapshotRootsPorcelain, diffRootsPorcelain, buildPlanWorkItem, resolvePlanMdPath } from '../lib/continue.mjs';
+import { classifyLegacyMarker, decideNextAction } from '../lib/resume.mjs';
 import { recordWaveResult } from '../lib/wave-commit.mjs';
 import { readState, writeState } from '../lib/bundle.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
@@ -918,4 +919,147 @@ test('A8 continue launch captures a wsBaseline off-fleet (no /srv/dev gate)', ()
   const marker = readState(fx.statePath).active_run;
   assert.ok(Array.isArray(marker.wsBaseline), 'launch marker carries a workspace-root baseline');
   assert.ok(marker.wsBaseline.includes(path.basename(fx.MAIN)), 'the repo itself is the baseline entry');
+});
+
+// ---------------------------------------------------------------------------
+// The bootstrap-stage marker never enters plan-wave dispatch (wave task 4)
+// ---------------------------------------------------------------------------
+
+test('dispatchPlanFanout refuses a bootstrap-stage marker by name', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-planfanout-'));
+  try {
+    const statePath = path.join(dir, 'state.yml');
+    writeState(statePath, {
+      schema_version: 8, slug: 'bs', status: 'in-progress', phase: 'plan',
+      pending_gate: null, tasks: [],
+      // The irreversible stage is in flight.
+      active_run: { kind: 'bootstrap', pass: 1, step: 'push' },
+    });
+    fs.writeFileSync(path.join(dir, 'events.jsonl'), '');
+    assert.throws(
+      () => dispatchPlanFanout({ statePath, subsystems: [{ key: 'a', title: 'A' }] }),
+      /BOOTSTRAP-stage marker/,
+      'plan drafters must never dispatch while the bootstrap stage is in flight',
+    );
+    // ...and the generic "not a plan marker" message is NOT what it gets: the refusal names
+    // the actual condition, so the operator does not try to clear it as a stale marker.
+    try {
+      dispatchPlanFanout({ statePath, subsystems: [{ key: 'a', title: 'A' }] });
+    } catch (e) {
+      assert.doesNotMatch(e.message, /run `mp continue` first/);
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a planner work item carries the plan path it is given, and none when it is not', () => {
+  // The BUILDER's own contract only. Precedence is resolvePlanMdPath's job and is tested
+  // against that function below — asserting it here, where the path arrives pre-selected,
+  // would prove nothing about how it was selected.
+  const item = buildPlanWorkItem({ key: 'sub', title: 'Sub' }, {
+    roots: ['/repo'], specPath: '/repo/spec.md', planPath: '/repo/docs/masterplan/x/plan.md', repoRoot: '/repo',
+  });
+  assert.equal(item.plan_path, '/repo/docs/masterplan/x/plan.md');
+  assert.match(item.brief, /The plan this run owns: \/repo\/docs\/masterplan\/x\/plan\.md/);
+  // Omitted: the descriptor simply carries none rather than inventing a path.
+  const without = buildPlanWorkItem({ key: 'sub', title: 'Sub' }, {
+    roots: ['/repo'], specPath: '/repo/spec.md', repoRoot: '/repo',
+  });
+  assert.equal(without.plan_path, undefined);
+  assert.doesNotMatch(without.brief, /The plan this run owns/);
+});
+
+test('resolvePlanMdPath: an EXPLICIT path beats the stored one, which beats the convention', () => {
+  // The precedence rule itself, with a conflicting stored path present in every case — the
+  // only shape in which "explicit wins" means anything.
+  const bundleDir = '/repo/docs/masterplan/x';
+  const stored = { plan_path: 'custom-plan.md' };
+  assert.equal(
+    resolvePlanMdPath({ explicit: '/elsewhere/explicit.md', state: stored, bundleDir }),
+    '/elsewhere/explicit.md',
+    'explicit wins even when the bundle stores a different path',
+  );
+  assert.equal(
+    resolvePlanMdPath({ explicit: null, state: stored, bundleDir }),
+    path.join(bundleDir, 'custom-plan.md'),
+    'the stored path is used when the flag is omitted, resolved against the BUNDLE',
+  );
+  assert.equal(
+    resolvePlanMdPath({ explicit: null, state: {}, bundleDir }),
+    path.join(bundleDir, 'plan.md'),
+    'and the convention only when neither is given',
+  );
+  // A stored ABSOLUTE path is taken as-is.
+  assert.equal(
+    resolvePlanMdPath({ explicit: null, state: { plan_path: '/abs/plan.md' }, bundleDir }),
+    '/abs/plan.md',
+  );
+});
+
+test('resolvePlanMdPath REFUSES a blank explicit path rather than resolving it to cwd', () => {
+  // path.resolve('') is the current working directory — neither a plan file nor a safe
+  // fallback, and cwd is routinely a linked worktree. A wrapper passing an empty flag must be
+  // told, not silently handed a directory.
+  const bundleDir = '/repo/docs/masterplan/x';
+  for (const bad of ['', '   ', 42, {}]) {
+    assert.throws(
+      () => resolvePlanMdPath({ explicit: bad, state: { plan_path: 'custom.md' }, bundleDir }),
+      /non-empty string/,
+      JSON.stringify(bad),
+    );
+  }
+});
+
+test('an unknown NAMED active_run marker is unrecognized, never shape-inferred to execute', () => {
+  // Fail-closed: the shape checks below the allowlist recognize an execute marker by its
+  // integer wave plus run/task ids — exactly the fields a renamed stage marker carries. Left
+  // to fall through, a future `bootstrap-v2` (or a typo) would be promoted to execute recovery
+  // and dispatch a wave underneath a stage that owns the repo.
+  const m = classifyLegacyMarker({ kind: 'bootstrap-v2', wave: 1, run_id: 'r', task_id: 't', step: 'push' });
+  assert.equal(m.legacy, 'unrecognized', JSON.stringify(m));
+  assert.equal(m.kind, 'bootstrap-v2', 'and it names the kind it did not recognize');
+  // A typo in a known kind is equally unrecognized.
+  assert.equal(classifyLegacyMarker({ kind: 'boostrap', wave: 2, run_id: 'r', task_id: 't' }).legacy, 'unrecognized');
+  // The known kinds still classify as before.
+  assert.equal(classifyLegacyMarker({ kind: 'bootstrap', pass: 1, step: 'push' }).legacy, 'bootstrap');
+  assert.equal(classifyLegacyMarker({ kind: 'plan', phase: 'launching' }).legacy, 'plan-launching');
+  // A genuinely old marker — no `kind` at all — is still shape-inferred.
+  assert.equal(classifyLegacyMarker({ wave: 1, run_id: 'r', task_id: 't' }).legacy, 'execute-promoted');
+});
+
+test('a bootstrap marker cannot reach plan dispatch through the CONTROLLER either', () => {
+  // dispatchPlanFanout refuses it by name; this proves the resume controller in front of it
+  // does not convert the marker into an execute dispatch before it ever gets there.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-bootstrap-ctl-'));
+  try {
+    const statePath = path.join(dir, 'state.yml');
+    writeState(statePath, {
+      schema_version: 8, slug: 'bs2', status: 'in-progress', phase: 'execute',
+      pending_gate: null, tasks: [{ id: 1, status: 'pending', wave: 1, files: ['a.txt'] }],
+      concurrency: { owner_lock: 'off' },
+      active_run: { kind: 'bootstrap', pass: 1, step: 'push', wave: 1, run_id: 'r', task_id: 't' },
+    });
+    fs.writeFileSync(path.join(dir, 'events.jsonl'), '');
+    const op = continueRun({ statePath, now: 1000, alive: false });
+    assert.notEqual(op.op, 'dispatch_fabric', JSON.stringify(op));
+    assert.notEqual(op.op, 'dispatch_plan', JSON.stringify(op));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('decideNextAction FAILS CLOSED on an unknown resolved planning mode', () => {
+  // Silently falling back to the stale persisted value would route a run serial while the
+  // operator had configured parallel — the substitution the fail-closed rule forbids.
+  const st = { schema_version: 8, phase: 'plan', tasks: [], planning_mode: 'serial', pending_gate: null, active_run: null };
+  assert.throws(
+    () => decideNextAction(st, { alive: false, planning_mode: 'sideways' }),
+    /planning_mode "sideways" is not one of serial\/parallel\/auto/,
+  );
+  assert.throws(() => decideNextAction(st, { alive: false, planning_mode: '' }), /is not one of/);
+  // A resolved mode OUTRANKS the persisted one...
+  assert.equal(decideNextAction(st, { alive: false, planning_mode: 'parallel' }).planning_mode, 'parallel');
+  // ...and absent means "nothing was resolved", which is not an error.
+  assert.equal(decideNextAction(st, { alive: false }).planning_mode, 'serial');
 });

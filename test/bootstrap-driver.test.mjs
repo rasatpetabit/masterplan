@@ -123,10 +123,15 @@ function release(fx, version = '10.0.0') {
 
 // The install root as bin/install-pi.mjs leaves it: the release dir, the `current` symlink and the
 // receipt naming the commit it resolved.
+// A surface entry point that RUNS and reports its version — surfaces_live executes it, so a
+// stub comment is an installation that cannot start, which is what the check exists to reject.
+const SURFACE_ENTRY = (version) => `console.log('masterplan ${version}');\n`;
+
 function fakeInstall(fx, version = '10.0.0', sha = null) {
   const resolved = sha ?? publishedTipOf(fx);
   const rel = path.join(fx.installRoot, 'releases', version);
   write(rel, '.claude-plugin/plugin.json', JSON.stringify({ name: 'masterplan', version }));
+  write(path.join(rel, 'bin'), 'masterplan.mjs', SURFACE_ENTRY(version));
   const cur = path.join(fx.installRoot, 'current');
   try { fs.unlinkSync(cur); } catch { /* first install */ }
   fs.symlinkSync(path.join('releases', version), cur);
@@ -1182,7 +1187,7 @@ function installPi(fx, version) {
   fakeInstall(fx, version);
 }
 function claudeSurface(fx, version) {
-  write(path.join(fx.claudeDir, 'plugins', 'cache', 'rasatpetabit-masterplan', 'masterplan', version, 'bin'), 'masterplan.mjs', '// cached\n');
+  write(path.join(fx.claudeDir, 'plugins', 'cache', 'rasatpetabit-masterplan', 'masterplan', version, 'bin'), 'masterplan.mjs', SURFACE_ENTRY(version));
 }
 function runPrinted(fx, step, extra = {}) {
   const armed = armStep({ statePath: fx.statePath, step, targets: fx.targets });
@@ -1334,7 +1339,7 @@ test('after the push, every step is bound to the published tip: a branch that mo
   assert.ok((blocked2.preconditions || []).some((p) => p.name === 'tip_is_published' && !p.ok), JSON.stringify(blocked2));
   git(fx.worktree, 'reset', '-q', '--hard', published);
   fx.tip = published;
-  write(path.join(fx.claudeDir, 'plugins', 'cache', 'rasatpetabit-masterplan', 'masterplan', '10.0.0', 'bin'), 'masterplan.mjs', '// cached\n');
+  write(path.join(fx.claudeDir, 'plugins', 'cache', 'rasatpetabit-masterplan', 'masterplan', '10.0.0', 'bin'), 'masterplan.mjs', SURFACE_ENTRY('10.0.0'));
   const restored = armStep({ statePath: fx.statePath, step: 'surfaces_live', targets: fx.targets });
   assert.equal(restored.ok, true, JSON.stringify(restored));
 });

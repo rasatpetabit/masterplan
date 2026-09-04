@@ -11,6 +11,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { formatBanner, applyPlanIndex, readPluginVersion, shouldSuppressWorkflow } from '../bin/masterplan.mjs';
 import { serializeState, parseState, CURRENT_SCHEMA_VERSION } from '../lib/bundle.mjs';
+import { liveCheckDigest } from '../lib/finish.mjs';
 import { createHash } from 'node:crypto';
 
 const BIN = fileURLToPath(new URL('../bin/masterplan.mjs', import.meta.url));
@@ -3222,7 +3223,12 @@ test('record-goal-check --final binds the deploy tuple the RECORDER supplies', (
   const VOUT = 'sha256:verify-1';
   const DEPLOY_BASE = 'd'.repeat(40);
   const CHAIN = 'sha256:deploy-chain';
-  const LIVE = 'sha256:live-check';
+  // --digest-file names the FILE the live check wrote; the binding is the digest of its
+  // CONTENT, so the fixture computes it exactly as the recorder does rather than inventing a
+  // literal that no evidence backs.
+  const LIVE_FILE = path.join(tmpDir('mp-final-live-'), 'live.txt');
+  fs.writeFileSync(LIVE_FILE, 'the live check observed the deployed surface\n');
+  const LIVE = liveCheckDigest(LIVE_FILE);
 
   const mkBundle = () => {
     const dir = tmpDir('mp-final-');
@@ -3254,7 +3260,7 @@ test('record-goal-check --final binds the deploy tuple the RECORDER supplies', (
   // implementation diff hash are independent values, and forcing them equal would make a
   // valid final receipt unrecordable.
   const accepted = run(['record-goal-check', ...baseFlags(ok.statePath), '--final',
-    `--base-sha=${DEPLOY_BASE}`, `--deploy-chain-hash=${CHAIN}`, `--digest-file=${LIVE}`,
+    `--base-sha=${DEPLOY_BASE}`, `--deploy-chain-hash=${CHAIN}`, `--digest-file=${LIVE_FILE}`,
     `--receipt=${receipt({
       deploy_base_sha: DEPLOY_BASE, deploy_chain_hash: CHAIN, live_check_digest: LIVE,
       intent_verdict: { verdict: 'met', evidence: 'the deployed surface answers as intended' },
@@ -3271,7 +3277,7 @@ test('record-goal-check --final binds the deploy tuple the RECORDER supplies', (
   ]) {
     const b = mkBundle();
     const bad = run(['record-goal-check', ...baseFlags(b.statePath), '--final',
-      `--base-sha=${DEPLOY_BASE}`, `--deploy-chain-hash=${CHAIN}`, `--digest-file=${LIVE}`,
+      `--base-sha=${DEPLOY_BASE}`, `--deploy-chain-hash=${CHAIN}`, `--digest-file=${LIVE_FILE}`,
       `--receipt=${receipt({
         deploy_base_sha: DEPLOY_BASE, deploy_chain_hash: CHAIN, live_check_digest: LIVE,
         intent_verdict: { verdict: 'met', evidence: 'x' },
@@ -3371,4 +3377,174 @@ test('seed --predecessor projects an intent rejection into the successor bundle'
   const projected = evs.find((e) => e.type === 'predecessor_rejection');
   assert.ok(projected, 'the projection is durable, not just printed');
   assert.equal(projected.predecessor, 'pred');
+});
+
+// ---- merge-plan-fragments honours the plan path the bundle owns (wave task 4) ----
+//
+// The planning fan-out advertises a plan path to its drafters; the merge writes the plan. If
+// the two pick differently, the run's real plan is never written and stays stale forever —
+// which is why one selection rule is shared rather than each side defaulting for itself.
+
+function planPathBundle(planPath) {
+  const dir = tmpDir('mp-planpath-');
+  fs.writeFileSync(path.join(dir, 'state.yml'), serializeState({
+    schema_version: 8, slug: 'pp', status: 'in-progress', phase: 'plan',
+    ...(planPath ? { plan_path: planPath } : {}),
+  }));
+  const fp = path.join(dir, 'frags.json');
+  fs.writeFileSync(fp, JSON.stringify([{
+    key: 'sub',
+    tasks: [{ key: 'sub.one', description: 'do a thing', files: ['a.js'], verify_commands: [], codex: 'no' }],
+  }]));
+  return { dir, fp, out: path.join(dir, 'plan.index.json') };
+}
+
+test('merge-plan-fragments writes the bundle\'s OWN plan_path when --plan-md is omitted', () => {
+  const { dir, fp, out } = planPathBundle('custom-plan.md');
+  const r = run(['merge-plan-fragments', `--fragments=${fp}`, `--out=${out}`, '--generated-at=2026-07-01T00:00:00Z']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(fs.existsSync(path.join(dir, 'custom-plan.md')), 'the plan the run owns is the one written');
+  assert.equal(fs.existsSync(path.join(dir, 'plan.md')), false, 'and the conventional name is NOT');
+});
+
+test('merge-plan-fragments: an explicit --plan-md beats a conflicting stored plan_path', () => {
+  const { dir, fp, out } = planPathBundle('custom-plan.md');
+  const explicit = path.join(dir, 'explicit.md');
+  const r = run(['merge-plan-fragments', `--fragments=${fp}`, `--out=${out}`, `--plan-md=${explicit}`, '--generated-at=2026-07-01T00:00:00Z']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(fs.existsSync(explicit));
+  assert.equal(fs.existsSync(path.join(dir, 'custom-plan.md')), false, 'only the explicit file is written');
+});
+
+test('merge-plan-fragments: no stored path and no flag keeps the conventional plan.md', () => {
+  const { dir, fp, out } = planPathBundle(null);
+  const r = run(['merge-plan-fragments', `--fragments=${fp}`, `--out=${out}`, '--generated-at=2026-07-01T00:00:00Z']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(fs.existsSync(path.join(dir, 'plan.md')));
+});
+
+test('merge-plan-fragments REFUSES a blank --plan-md instead of writing into cwd', () => {
+  const { fp, out } = planPathBundle('custom-plan.md');
+  const r = run(['merge-plan-fragments', `--fragments=${fp}`, `--out=${out}`, '--plan-md=', '--generated-at=2026-07-01T00:00:00Z']);
+  assert.equal(r.status, 2, r.stderr);
+  assert.match(r.stderr, /non-empty string/);
+});
+
+test('merge-plan-fragments REFUSES an unreadable state.yml rather than defaulting to plan.md', () => {
+  // Round-2 finding: catching every read/parse error made "no bundle" and "this bundle's
+  // recorded plan_path is unreadable" the same thing, and the second silently wrote a
+  // different file from the one the fan-out advertised.
+  const { dir, fp, out } = planPathBundle('custom-plan.md');
+  // Unreadable, not malformed: parseState is deliberately lenient, so the read is what has to
+  // fail for this to be the "exists but cannot be seen" case.
+  fs.rmSync(path.join(dir, 'state.yml'));
+  fs.mkdirSync(path.join(dir, 'state.yml'));
+  const r = run(['merge-plan-fragments', `--fragments=${fp}`, `--out=${out}`, '--generated-at=2026-07-01T00:00:00Z']);
+  assert.equal(r.status, 1, r.stdout);
+  assert.match(r.stderr, /could not be read/);
+  assert.equal(fs.existsSync(path.join(dir, 'plan.md')), false, 'no plan was written at all');
+  assert.equal(fs.existsSync(path.join(dir, 'custom-plan.md')), false);
+});
+
+test('mp continue STOPS when the planning mode cannot be resolved', () => {
+  // Round-2 finding: swallowing the resolution failure routed the run on the mode recorded at
+  // seed, which is the stale-value substitution the fail-closed rule forbids.
+  const dir = tmpDir('mp-planmode-');
+  const bundleDir = path.join(dir, 'docs', 'masterplan', 'pm');
+  fs.mkdirSync(bundleDir, { recursive: true });
+  const statePath = path.join(bundleDir, 'state.yml');
+  fs.writeFileSync(statePath, serializeState({
+    schema_version: 8, slug: 'pm', status: 'in-progress', phase: 'plan', tasks: [],
+    planning_mode: 'serial', concurrency: { owner_lock: 'off' },
+  }));
+  fs.writeFileSync(path.join(bundleDir, 'events.jsonl'), '');
+  // A real repo, so the config chain actually runs and can reject the value it finds.
+  execFileSync('git', ['init', '-q', dir]);
+  // A configured value the chain rejects: continuing would route on the persisted `serial`.
+  fs.writeFileSync(path.join(dir, '.masterplan.yaml'), 'planning_mode: sideways\n');
+  const r = run(['continue', `--state=${statePath}`, '--dead']);
+  assert.notEqual(r.status, 0, `expected a stop, got: ${r.stdout}`);
+  assert.match(`${r.stderr}${r.stdout}`, /planning_mode/, r.stderr);
+});
+
+test('mp continue STOPS when the repo root cannot be derived, rather than using the seeded mode', () => {
+  // The other half of the same finding: "could not evaluate the hierarchy" must not read as
+  // "the hierarchy said nothing".
+  const dir = tmpDir('mp-planmode-noroot-');
+  const bundleDir = path.join(dir, 'docs', 'masterplan', 'pm');
+  fs.mkdirSync(bundleDir, { recursive: true });
+  const statePath = path.join(bundleDir, 'state.yml');
+  fs.writeFileSync(statePath, serializeState({
+    schema_version: 8, slug: 'pm', status: 'in-progress', phase: 'plan', tasks: [],
+    planning_mode: 'serial', concurrency: { owner_lock: 'off' },
+  }));
+  fs.writeFileSync(path.join(bundleDir, 'events.jsonl'), '');
+  const r = run(['continue', `--state=${statePath}`, '--dead']); // not a git repo
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /planning mode could not be resolved/);
+});
+
+// ---- round-3: the fail-open edges of both boundaries ------------------------------------
+
+test('merge-plan-fragments refuses a DANGLING state.yml symlink', () => {
+  // existsSync follows symlinks and swallows errors, so a dangling link — an entry that plainly
+  // exists and plainly cannot be read — reported false and was treated as "no bundle at all".
+  const { dir, fp, out } = planPathBundle('custom-plan.md');
+  fs.rmSync(path.join(dir, 'state.yml'));
+  fs.symlinkSync(path.join(dir, 'gone.yml'), path.join(dir, 'state.yml'));
+  const r = run(['merge-plan-fragments', `--fragments=${fp}`, `--out=${out}`, '--generated-at=2026-07-01T00:00:00Z']);
+  assert.equal(r.status, 1, r.stdout);
+  assert.equal(fs.existsSync(path.join(dir, 'plan.md')), false, 'no plan was written');
+});
+
+test('merge-plan-fragments refuses a state.yml that parses but is not a bundle state', () => {
+  // parseState is lenient: an empty or truncated file yields an object with no plan_path, which
+  // is indistinguishable from a bundle that deliberately omitted one — and one of those two
+  // should write plan.md while the other must not.
+  for (const content of ['', '# just a comment\n', 'not: a bundle\n']) {
+    const { dir, fp, out } = planPathBundle('custom-plan.md');
+    fs.writeFileSync(path.join(dir, 'state.yml'), content);
+    const r = run(['merge-plan-fragments', `--fragments=${fp}`, `--out=${out}`, '--generated-at=2026-07-01T00:00:00Z']);
+    assert.equal(r.status, 1, `${JSON.stringify(content)}: ${r.stdout}`);
+    assert.match(r.stderr, /not a readable bundle state/);
+    assert.equal(fs.existsSync(path.join(dir, 'plan.md')), false);
+    assert.equal(fs.existsSync(path.join(dir, 'custom-plan.md')), false);
+  }
+});
+
+test('a bare --planning-mode is refused, not silently discarded', () => {
+  // `--planning-mode` with no value parses as a boolean. Dropping it discarded an explicit
+  // control and resumed on the mode recorded at seed.
+  const dir = tmpDir('mp-planmode-bare-');
+  const bundleDir = path.join(dir, 'docs', 'masterplan', 'pm');
+  fs.mkdirSync(bundleDir, { recursive: true });
+  const statePath = path.join(bundleDir, 'state.yml');
+  fs.writeFileSync(statePath, serializeState({
+    schema_version: 8, slug: 'pm', status: 'in-progress', phase: 'plan', tasks: [],
+    planning_mode: 'serial', concurrency: { owner_lock: 'off' },
+  }));
+  fs.writeFileSync(path.join(bundleDir, 'events.jsonl'), '');
+  execFileSync('git', ['init', '-q', dir]);
+  const r = run(['continue', `--state=${statePath}`, '--dead', '--planning-mode']);
+  assert.notEqual(r.status, 0, r.stdout);
+  assert.match(r.stderr, /--planning-mode needs a value/);
+});
+
+test('a resolved planning mode OVERRIDES the one recorded at seed, through the real CLI', () => {
+  // The positive half: without it, a stop-on-everything implementation would satisfy the
+  // negatives above while never actually routing on the resolved value.
+  const dir = tmpDir('mp-planmode-override-');
+  const bundleDir = path.join(dir, 'docs', 'masterplan', 'pm');
+  fs.mkdirSync(bundleDir, { recursive: true });
+  const statePath = path.join(bundleDir, 'state.yml');
+  fs.writeFileSync(statePath, serializeState({
+    schema_version: 8, slug: 'pm', status: 'in-progress', phase: 'plan', tasks: [],
+    planning_mode: 'serial', concurrency: { owner_lock: 'off' },
+  }));
+  fs.writeFileSync(path.join(bundleDir, 'events.jsonl'), '');
+  execFileSync('git', ['init', '-q', dir]);
+  const r = run(['continue', `--state=${statePath}`, '--dead', '--planning-mode=parallel']);
+  assert.equal(r.status, 0, r.stderr);
+  const op = JSON.parse(r.stdout);
+  assert.equal(op.planning_mode, 'parallel', `the persisted serial must not win: ${r.stdout}`);
 });

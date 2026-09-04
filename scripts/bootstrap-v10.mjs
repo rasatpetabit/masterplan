@@ -198,6 +198,36 @@ export function piSurfaceVersion(installRoot) {
 export function claudeSurfacePath(claudeConfigDir, version) {
   return join(claudeConfigDir, 'plugins', 'cache', 'rasatpetabit-masterplan', 'masterplan', version, 'bin', 'masterplan.mjs');
 }
+export function piSurfaceEntry(installRoot) {
+  return join(installRoot, 'current', 'bin', 'masterplan.mjs');
+}
+
+/**
+ * RUN the installed entry point and read the version it reports. G6 requires the release to be
+ * "installed and executable in both running surfaces" — a plugin.json naming the right version
+ * is not that. An install can carry perfect metadata over an entry point that is absent, has a
+ * broken import, or dies on start, and a metadata-only probe accepts every one of them.
+ *
+ * Returns the reported version, or null when the surface cannot be executed at all.
+ */
+export function surfaceExecVersion(entry) {
+  if (!existsSync(entry)) return null;
+  try {
+    const out = execFileSync(process.execPath, [entry, 'version'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 30_000,
+    });
+    // An EXACT contract, anchored on the whole trimmed output. Hunting a semver out of
+    // arbitrary stdout accepts an entry point that ignores its argument and prints its own
+    // path — `.../masterplan/10.0.0/bin/masterplan.mjs` contains a perfectly good 10.0.0 — so
+    // the probe would pass a surface that has no version command at all.
+    const m = /^masterplan v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/.exec(String(out).trim());
+    return m ? m[1] : null;
+  } catch {
+    return null;
+  }
+}
 // owner/repo from a GitHub remote URL (ssh or https, with or without .git), else null.
 export function ghRepoFromRemoteUrl(url) {
   if (typeof url !== 'string') return null;
@@ -433,6 +463,14 @@ export function armStep({ statePath, step, targets = {}, now = Date.now() }) {
     return { ok: false, refusals: [`unknown step: ${step}`] };
   }
   const refusals = [];
+  // A step omitted from THIS pass is refused on its own terms. Ordering happens to refuse it
+  // too — the pass sits at its first step, so anything else is out of order — but ordering is a
+  // sequencing rule that moves as the pass advances, while omission is permanent. Relying on
+  // the coincidence would let the omission rule be deleted without any refusal changing, and
+  // `release` and `push` are among the omitted steps: they are irreversible.
+  if (!stepsForPass(status.pass).includes(step)) {
+    refusals.push(`${step} is not part of pass ${status.pass} — a corrective pass omits it`);
+  }
   if (status.next.step !== step) {
     if (status.next.step === null) {
       refusals.push('all steps already done');
@@ -551,6 +589,11 @@ export function recordStep({ statePath, step, exit, digestFile = null, status = 
   }
   if (statusInfo.finish_begun && step !== 'gate') {
     throw new Error('finish has begun; only gate may be recorded');
+  }
+  // Independently of the arm: an arm receipt left behind by an earlier pass, or written before
+  // the pass was corrected, must not be enough to record a step this pass does not run.
+  if (!stepsForPass(statusInfo.pass).includes(step)) {
+    throw new Error(`step ${step} is not part of pass ${statusInfo.pass} — a corrective pass omits it, so it cannot be recorded`);
   }
   if (prior && (isDone(prior) || prior.status === 'recovered')) {
     throw new Error(`step ${step} is already ${prior.status} in pass ${statusInfo.pass} — a step is recorded once`);
@@ -1383,9 +1426,17 @@ export const STEPS = {
       // §10.1 step 7: both surfaces live — the precondition for the v9 finish.
       const v = piSurfaceVersion(ctx.targets.install_root);
       const p = claudeSurfacePath(ctx.targets.claude_config_dir, ctx.version);
+      // Metadata AND execution. The metadata says what was installed; running it says the
+      // install works. G6 requires both, and this is the last gate before the v9 finish, so a
+      // surface that cannot start must fail HERE rather than after the run has archived.
+      const piEntry = piSurfaceEntry(ctx.targets.install_root);
+      const piExec = surfaceExecVersion(piEntry);
+      const claudeExec = surfaceExecVersion(p);
       return [
         { name: 'pi_current_version', ok: v === ctx.version, detail: `current → ${v ?? 'none'}` },
         { name: 'claude_cache_present', ok: existsSync(p), detail: p },
+        { name: 'pi_executable', ok: piExec === ctx.version, detail: `${piEntry} → ${piExec ?? 'did not run'}` },
+        { name: 'claude_executable', ok: claudeExec === ctx.version, detail: `${p} → ${claudeExec ?? 'did not run'}` },
       ];
     },
   },

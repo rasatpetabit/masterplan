@@ -18,6 +18,7 @@ import { writeState, appendEvent } from '../lib/bundle.mjs';
 import {
   STEP_ORDER, PASS2_OMITTED, stepsForPass, FINISH_EVENT_TYPES,
   resolveTargets, bootstrapStatus, armStep, recordStep, startPass, readBundleEvents,
+  scanWorkspaceBundles, piSurfaceVersion, claudeSurfacePath,
 } from '../scripts/bootstrap-v10.mjs';
 
 // Every fixture here builds a tree under os.tmpdir(); without this they accumulate across
@@ -109,7 +110,7 @@ function makeFixture({ version = '10.0.0', slug = 'bs' } = {}) {
   };
 }
 
-const arm = (fx, step) => armStep({ statePath: fx.statePath, step, targets: fx.targets });
+const arm = (fx, step, over = {}) => armStep({ statePath: fx.statePath, step, targets: fx.targets, ...over });
 const record = (fx, step, over = {}) => recordStep({
   statePath: fx.statePath, step, exit: 0, targets: fx.targets, ...over,
 });
@@ -625,4 +626,759 @@ test('the gate can be armed AND recorded after the finish has begun', () => {
   } catch (err) {
     assert.doesNotMatch(err.message, /finish has begun/, `the gate must not be blocked by the finish lock: ${err.message}`);
   }
+});
+
+// ===========================================================================
+// The complete fixture-backed successful rollout (wave task 47)
+//
+// Every step of the walk, in the driver's own order, against REAL effects: a real release
+// commit and annotated tag, real pushes to a bare remote, a real installed Pi surface, a real
+// server-side merge by a second clone, a real bundle commit and rebase at the gate. The
+// driver's own preconditions and postconditions are the assertions — a step passes only
+// because the fixture actually produced what that step requires.
+// ===========================================================================
+
+// A rollout fixture: MAIN with a bare remote, a run branch in a linked worktree, a second
+// clone standing in for the server-side merge, and the install/Claude/workspace surfaces.
+function makeRolloutFixture({ version = '10.0.0', slug = 'ro' } = {}) {
+  const fx = makeFixture({ version, slug });
+  // The Claude cache and the install root live under the fixture's own tmp.
+  const second = path.join(fx.tmp, 'second');
+  git(fx.tmp, 'clone', '-q', fx.bare, second);
+  git(second, 'config', 'user.email', 'second@example.invalid');
+  git(second, 'config', 'user.name', 'second');
+  git(second, 'config', 'commit.gpgsign', 'false');
+  // MAIN starts AHEAD of the remote by a non-bundle commit (§10.1.5): the real local main is
+  // ahead of GitHub by unrelated work, and that commit must be CARRIED, not lost.
+  write(fx.MAIN, 'src/unrelated.txt', 'work that predates the bootstrap\n');
+  git(fx.MAIN, 'add', 'src/unrelated.txt');
+  git(fx.MAIN, 'commit', '-q', '-m', 'a non-bundle commit ahead of the remote');
+  const mainPreBootstrap = git(fx.MAIN, 'rev-parse', 'main');
+  // Nested workspace roots at two depths, so workspace discovery has something to find.
+  for (const rel of ['sibling-a', 'nested/sibling-b']) {
+    const dir = path.join(fx.tmp, rel);
+    fs.mkdirSync(path.join(dir, 'docs', 'masterplan', 'other'), { recursive: true });
+    git(fx.tmp, 'init', '-q', dir);
+    fs.writeFileSync(path.join(dir, 'docs', 'masterplan', 'other', 'state.yml'),
+      'schema_version: 8\nslug: other\nstatus: in-progress\nphase: execute\ntasks: []\n');
+    fs.writeFileSync(path.join(dir, 'docs', 'masterplan', 'other', 'events.jsonl'), '');
+  }
+  return { ...fx, second, mainPreBootstrap };
+}
+
+// Install the Pi surface the way the step's postcondition reads it: `current` resolves to a
+// tree whose plugin.json names the version, and the receipt names the commit that was
+// published. (bin/install-pi.mjs's own behaviour is test/install-pi.test.mjs's subject; this
+// suite is about the DRIVER's checks.)
+// A surface's entry point: a real Node program that prints its version, because the step's
+// postcondition RUNS it. A stub that only exists would prove nothing about the install.
+const ENTRY_SOURCE = (version) => `#!/usr/bin/env node\nconsole.log('masterplan ${version}');\n`;
+// ...and one that starts and dies, for the negative cases.
+const BROKEN_ENTRY = `#!/usr/bin/env node\nimport 'node:definitely-not-a-real-module';\n`;
+
+function installPiSurface(fx, { version, sha, entrySource = ENTRY_SOURCE(version), omitEntry = false }) {
+  const release = path.join(fx.installRoot, 'releases', sha);
+  fs.mkdirSync(path.join(release, '.claude-plugin'), { recursive: true });
+  fs.writeFileSync(path.join(release, '.claude-plugin', 'plugin.json'),
+    `${JSON.stringify({ name: 'masterplan', version })}\n`);
+  if (!omitEntry) {
+    fs.mkdirSync(path.join(release, 'bin'), { recursive: true });
+    fs.writeFileSync(path.join(release, 'bin', 'masterplan.mjs'), entrySource);
+  }
+  const current = path.join(fx.installRoot, 'current');
+  fs.rmSync(current, { recursive: true, force: true });
+  fs.symlinkSync(release, current);
+  fs.writeFileSync(path.join(fx.installRoot, '.pi-install.json'),
+    `${JSON.stringify({ version, sha, ref: `v${version}`, installed_at: '2026-01-01T00:00:00Z' })}\n`);
+}
+
+// The Claude cache the step's postcondition looks for: the plugin's entry point under the
+// released version — again a real program, since the postcondition runs it.
+function installClaudeSurface(fx, { version, entrySource = ENTRY_SOURCE(version), omitEntry = false }) {
+  const entry = claudeSurfacePath(fx.claudeDir, version);
+  fs.mkdirSync(path.dirname(entry), { recursive: true });
+  if (!omitEntry) fs.writeFileSync(entry, entrySource);
+  return entry;
+}
+// A fixture whose claude_surface step must still RECORD while surfaces_live must not: the
+// step's own postcondition wants the file present, so an "absent Claude surface" case removes
+// it after that step has passed.
+function removeClaudeSurface(fx, version) {
+  fs.rmSync(claudeSurfacePath(fx.claudeDir, version), { force: true });
+}
+
+// One full pass, step by step, with the real effect each step's contract requires. Returns the
+// per-step records so the assertions can read what actually landed.
+function walkRollout(fx, { version = '10.0.0', mainPushData = null, surfaces = null } = {}) {
+  const records = {};
+  const armOk = (step) => {
+    const a = arm(fx, step);
+    assert.equal(a.ok, true, `arm ${step}: ${JSON.stringify(a)}`);
+    return a;
+  };
+  const recordOk = (step, over = {}) => {
+    const r = record(fx, step, over);
+    records[step] = r;
+    return r;
+  };
+
+  // 1. The rehearsal's output digest IS its receipt.
+  armOk('rehearsal');
+  const digestPath = path.join(fx.tmp, 'rehearsal-digest.txt');
+  fs.writeFileSync(digestPath, 'REHEARSAL PASS\n');
+  recordOk('rehearsal', { digestFile: digestPath });
+
+  armOk('docs_normalize');
+  recordOk('docs_normalize');
+
+  // 2. Pre-publish verify / review / assessment, each bound to the branch tip they judged.
+  const tip = fx.tip();
+  armOk('verify');
+  recordOk('verify', { data: { tip } });
+  armOk('review');
+  recordOk('review', { data: { tip, verdict: 'approve' } });
+  armOk('assess');
+  recordOk('assess', { data: { tip, goals: { G1: 'achieved', G2: 'achieved' } } });
+
+  // 3. The release: armed at the reviewed tip, then ONE CHANGELOG commit and an annotated tag.
+  armOk('release');
+  write(fx.worktree, 'CHANGELOG.md', `# Changelog\n\n## ${version}\n`);
+  git(fx.worktree, 'add', 'CHANGELOG.md');
+  git(fx.worktree, 'commit', '-q', '-m', `release: ${version}`);
+  const releaseTip = git(fx.worktree, 'rev-parse', 'HEAD');
+  git(fx.MAIN, 'tag', '-a', `v${version}`, '-m', `release ${version}`, releaseTip);
+  recordOk('release');
+
+  // 4. The push: branch and tag really go to the remote, between arm and record.
+  armOk('push');
+  git(fx.MAIN, 'push', '-q', fx.targets.remote, fx.branch, `refs/tags/v${version}`);
+  recordOk('push');
+
+  // 5. Tag CI, both jobs green.
+  armOk('ci_wait');
+  recordOk('ci_wait', { data: { conclusions: { test: 'success', 'release-publish': 'success' } } });
+
+  // 6. The Pi surface is really installed at the PUBLISHED tip.
+  const published = records.push?.data?.published_tip ?? releaseTip;
+  armOk('install_pi');
+  installPiSurface(fx, { version, sha: published, ...(surfaces?.pi ?? {}) });
+  recordOk('install_pi');
+
+  // 7. Local main is pushed, carrying the non-bundle commit it was ahead by.
+  const mainArm = armOk('main_push');
+  git(fx.MAIN, 'push', '-q', fx.targets.remote, 'main');
+  recordOk('main_push', mainPushData ? { data: mainPushData } : {});
+
+  armOk('publish_ack');
+  recordOk('publish_ack', { data: { answer: 'proceed' } });
+
+  // 8. The server-side merge, performed by the second clone and pushed.
+  armOk('pr_merge');
+  git(fx.second, 'fetch', '-q', 'origin');
+  git(fx.second, 'checkout', '-q', 'main');
+  git(fx.second, 'reset', '-q', '--hard', 'origin/main');
+  try { git(fx.second, 'fetch', '-q', 'origin', `${fx.branch}:${fx.branch}`); }
+  catch { git(fx.second, 'fetch', '-q', 'origin', fx.branch); }
+  git(fx.second, 'merge', '-q', '--no-ff', '--no-edit', fx.branch);
+  git(fx.second, 'push', '-q', 'origin', 'main');
+  const mergeSha = git(fx.second, 'rev-parse', 'HEAD');
+  recordOk('pr_merge', { data: { merge_sha: mergeSha } });
+
+  // 9. Both surfaces live. `surfaces` lets a caller install DIFFERENT surfaces here and stop
+  // before surfaces_live, so a negative case reaches that step with every earlier receipt real
+  // — seeding the earlier steps instead leaves tip_is_published failing, and the step never
+  // arms at all, which is how a negative test passes without testing anything.
+  armOk('claude_surface');
+  installClaudeSurface(fx, { version, ...(surfaces?.claude ?? {}) });
+  recordOk('claude_surface');
+  if (surfaces !== null) return { records, tip, releaseTip, published, mergeSha, mainArm, stoppedBeforeSurfacesLive: true };
+  armOk('surfaces_live');
+  recordOk('surfaces_live');
+
+  return { records, tip, releaseTip, published, mergeSha, mainArm };
+}
+
+test('the whole rollout walks every step in order with real effects', () => {
+  const fx = makeRolloutFixture();
+  const { records, releaseTip, mergeSha } = walkRollout(fx);
+  for (const step of EXPECTED_ORDER.filter((s) => s !== 'gate')) {
+    assert.equal(records[step]?.status, 'done', `${step}: ${JSON.stringify(records[step])}`);
+  }
+  const s = bootstrapStatus(fx.statePath);
+  assert.equal(s.next.step, 'gate', 'only the gate remains');
+  assert.equal(s.failed.length, 0);
+  // The published tip is the release commit, and the merge carries it.
+  assert.equal(records.push.data.published_tip, releaseTip);
+  assert.doesNotThrow(() => git(fx.MAIN, 'merge-base', '--is-ancestor', releaseTip, mergeSha),
+    'the merge carries the released tip');
+});
+
+test('the release refuses before the version is bumped, and its tag identity is exact', () => {
+  // Walk to the release with a version the branch tip does NOT name: the version AT THE TIP is
+  // what may be released, so a release for anything else is refused before it can tag.
+  const fx2 = makeRolloutFixture({ slug: 'ro-bump' });
+  const t = fx2.tip();
+  const armAnd = (step, over = {}) => { assert.equal(arm(fx2, step).ok, true, step); return record(fx2, step, over); };
+  const dp = path.join(fx2.tmp, 'd.txt'); fs.writeFileSync(dp, 'x\n');
+  armAnd('rehearsal', { digestFile: dp });
+  armAnd('docs_normalize');
+  armAnd('verify', { data: { tip: t } });
+  armAnd('review', { data: { tip: t, verdict: 'approve' } });
+  armAnd('assess', { data: { tip: t, goals: { G1: 'achieved' } } });
+  // The tip names 10.0.0; arming a release for 10.5.0 is refused on version_matches.
+  const mismatched = armStep({ statePath: fx2.statePath, step: 'release', targets: { ...fx2.targets, version: '10.5.0' } });
+  assert.equal(mismatched.ok, false);
+  assert.ok(
+    (mismatched.preconditions ?? []).some((p) => p.name === 'version_matches' && !p.ok),
+    JSON.stringify(mismatched),
+  );
+});
+
+test('the release commit is CHANGELOG-only and exactly one commit past the reviewed sha', () => {
+  const fx = makeRolloutFixture({ slug: 'ro-changelog' });
+  const { records, tip, releaseTip } = walkRollout(fx);
+  assert.equal(records.release.status, 'done');
+  // Exactly one commit past the reviewed sha...
+  assert.equal(git(fx.MAIN, 'rev-list', '--count', `${tip}..${releaseTip}`), '1');
+  // ...and it touches CHANGELOG.md alone.
+  const touched = git(fx.MAIN, 'show', '--pretty=format:', '--name-only', releaseTip).split('\n').filter(Boolean);
+  assert.deepEqual(touched, ['CHANGELOG.md']);
+  // The tag is annotated and peels to that commit.
+  const tagType = git(fx.MAIN, 'cat-file', '-t', 'refs/tags/v10.0.0');
+  assert.equal(tagType, 'tag', 'an annotated tag, not a lightweight ref');
+  assert.equal(git(fx.MAIN, 'rev-parse', 'refs/tags/v10.0.0^{commit}'), releaseTip);
+});
+
+test('a release replay at the same tag is refused rather than re-tagging', () => {
+  const fx = makeRolloutFixture({ slug: 'ro-replay' });
+  walkRollout(fx);
+  // The tag is published; arming release again on this pass is out of order, and even the
+  // ordering aside the tag already exists.
+  const again = arm(fx, 'release');
+  assert.equal(again.ok, false);
+  assert.match((again.refusals ?? []).join(' '), /out of order/);
+  // The tag still points where it did — a replay never moves a published tag.
+  assert.equal(git(fx.MAIN, 'rev-parse', 'refs/tags/v10.0.0^{commit}'), git(fx.worktree, 'rev-parse', 'HEAD'));
+});
+
+test('the push binds the published tip and tag, and later steps bind to THEM', () => {
+  const fx = makeRolloutFixture({ slug: 'ro-push' });
+  const { records, releaseTip } = walkRollout(fx);
+  assert.equal(records.push.data.published_tip, releaseTip);
+  assert.equal(typeof records.push.data.published_tag, 'string');
+  // The remote really has both refs.
+  assert.match(git(fx.MAIN, 'ls-remote', fx.targets.remote, `refs/heads/${fx.branch}`), new RegExp(releaseTip));
+  assert.match(git(fx.MAIN, 'ls-remote', '--tags', fx.targets.remote, 'refs/tags/v10.0.0'), /v10\.0\.0/);
+  // install_pi's postcondition matched the INSTALLED sha to the published tip — it passed, so
+  // the surface really carries the published commit.
+  const installed = JSON.parse(fs.readFileSync(path.join(fx.installRoot, '.pi-install.json'), 'utf8'));
+  assert.equal(installed.sha, records.push.data.published_tip);
+});
+
+test('main_push reports the carried non-bundle commit from git, not from caller data', () => {
+  const fx = makeRolloutFixture({ slug: 'ro-carry' });
+  // The caller supplies a deliberately FALSE carried list: the report is git-derived, and a
+  // record that accepted this would let an unreported commit ride out under a clean report.
+  const { records, mainArm } = walkRollout(fx, {
+    mainPushData: { carried: [{ sha: '0'.repeat(40), subject: 'a commit that does not exist' }] },
+  });
+  assert.ok(Array.isArray(mainArm.data.carried), JSON.stringify(mainArm.data));
+  assert.deepEqual(records.main_push.data.carried, mainArm.data.carried, 'the arm\'s value wins');
+  const serialized = JSON.stringify(records.main_push.data.carried);
+  assert.equal(serialized.includes('0'.repeat(40)), false, 'the forged entry is gone');
+  // The actual non-bundle commit the fixture started ahead by is named, by sha.
+  assert.ok(
+    serialized.includes(fx.mainPreBootstrap) || serialized.includes(fx.mainPreBootstrap.slice(0, 12)),
+    `the carried report must name ${fx.mainPreBootstrap}: ${serialized}`,
+  );
+});
+
+test('workspace discovery finds sibling bundles at more than one depth', () => {
+  const fx = makeRolloutFixture({ slug: 'ro-ws' });
+  // Two sibling repos at DIFFERENT depths: one beside the fixture, one nested a level down.
+  // The scan must reach both — an implementation that never descends finds only the shallow one.
+  const roots = [{ dir: fx.tmp, depth: 3 }];
+  const scanned = scanWorkspaceBundles(roots);
+  const paths = scanned.map((b) => String(b.statePath ?? b.repo ?? b.dir ?? ''));
+  // The scan returns the repo DIRECTORY, with no trailing separator.
+  const shallow = paths.find((pth) => pth.endsWith(`${path.sep}sibling-a`));
+  const nested = paths.find((pth) => pth.endsWith(`${path.sep}nested${path.sep}sibling-b`));
+  assert.ok(shallow, `the shallow sibling was not discovered: ${JSON.stringify(paths)}`);
+  assert.ok(nested, `the NESTED sibling was not discovered: ${JSON.stringify(paths)}`);
+  // ...and they really are at different depths, so this is depth traversal and not luck.
+  assert.notEqual(shallow.split(path.sep).length, nested.split(path.sep).length);
+});
+
+test('the PR merge sha is an ancestor of the remote main and a descendant of the released tip', () => {
+  const fx = makeRolloutFixture({ slug: 'ro-merge' });
+  const { releaseTip, mergeSha } = walkRollout(fx);
+  git(fx.MAIN, 'fetch', '-q', fx.targets.remote);
+  // Both relations, asserted in the direction that can actually fail.
+  assert.doesNotThrow(() => git(fx.MAIN, 'merge-base', '--is-ancestor', mergeSha, `${fx.targets.remote}/main`));
+  assert.doesNotThrow(() => git(fx.MAIN, 'merge-base', '--is-ancestor', releaseTip, mergeSha));
+  // ...and the remote main IS the merge.
+  assert.match(git(fx.MAIN, 'ls-remote', fx.targets.remote, 'refs/heads/main'), new RegExp(mergeSha));
+});
+
+test('both surfaces are checked, and surfaces_live passes only when both are live', () => {
+  const fx = makeRolloutFixture({ slug: 'ro-surfaces' });
+  walkRollout(fx);
+  // Both were installed by the walk, and the step recorded done — so both checks passed.
+  assert.equal(fs.existsSync(claudeSurfacePath(fx.claudeDir, '10.0.0')), true);
+  assert.equal(piSurfaceVersion(fx.installRoot), '10.0.0');
+});
+
+// ---------------------------------------------------------------------------
+// The gate: a real bundle commit, a real rebase, and a recorded gate. This is also the
+// successful gate arm AND record that task 46 could not build on its own fixture.
+// ---------------------------------------------------------------------------
+
+// The remote's actual main tip, read with ls-remote rather than taken from the code under test.
+function remoteMainTip(fx) {
+  const out = git(fx.MAIN, 'ls-remote', fx.targets.remote, 'refs/heads/main');
+  return out.split(/\s+/)[0];
+}
+
+function completeGate(fx) {
+  const liveTip = remoteMainTip(fx);
+  const a = arm(fx, 'gate');
+  assert.equal(a.ok, true, `gate arm: ${JSON.stringify(a)}`);
+  // The arm must bind the LIVE remote tip, established independently — comparing the rebase
+  // target to the arm's own output would let a wrong-but-valid ancestor pass unnoticed.
+  assert.equal(a.data?.remote_tip, liveTip, 'the gate binds the tip the remote actually has');
+  // The gate's own command commits the bundle before the rebase.
+  git(fx.MAIN, 'add', '--', path.join('docs', 'masterplan', fx.slug));
+  try { git(fx.MAIN, 'commit', '-q', '-m', `masterplan(${fx.slug}): bundle ledger`, '--', path.join('docs', 'masterplan', fx.slug)); } catch { /* nothing to commit */ }
+  // ...and rebases local main onto the remote tip the arm bound.
+  git(fx.MAIN, 'fetch', '-q', fx.targets.remote);
+  git(fx.MAIN, 'rebase', '-q', a.data?.remote_tip ?? `${fx.targets.remote}/main`, 'main');
+  const r = record(fx, 'gate');
+  return { armed: a, record: r };
+}
+
+test('the gate is armed AND recorded after a real rollout WITH THE FINISH LOCK ACTIVE', () => {
+  // This is task 46's recorded open finding. Its foundation suite proved the lock does not
+  // REFUSE a gate — an empty refusal set — which is not the same claim: a lock that rejected
+  // every record after the finish began, gate included, would satisfy it. What was missing is
+  // the successful conjunction, and the gate's own preconditions need a full rollout to reach.
+  const fx = makeRolloutFixture({ slug: 'ro-gate' });
+  walkRollout(fx);
+
+  // The finish begins.
+  appendEvent(fx.statePath, { type: 'retro_written', ts: 99 });
+  assert.equal(bootstrapStatus(fx.statePath).finish_begun, true);
+  // ...and the lock is provably ACTIVE, not merely assumed: a non-gate step is refused for the
+  // lock's own reason. Without this the success below could be a lock that never engaged.
+  const locked = arm(fx, 'verify');
+  assert.equal(locked.ok, false);
+  assert.match(locked.refusals.join(' '), /only gate may be armed/);
+
+  const { armed, record: rec } = completeGate(fx);
+  assert.equal(armed.ok, true, 'the gate arms THROUGH the active lock');
+  assert.deepEqual(armed.refusals ?? [], [], 'and with no refusals at all');
+  assert.equal(rec.status, 'done', JSON.stringify(rec));
+  const s = bootstrapStatus(fx.statePath);
+  assert.equal(s.finish_begun, true, 'the lock was still on when the gate recorded');
+  assert.equal(s.next.step, null, 'every step is complete');
+  assert.equal(s.steps.gate.status, 'done');
+  assert.ok(s.completed.includes('gate'));
+});
+
+test('the gate binds the remote tip: a remote that moves after the arm is refused', () => {
+  const fx = makeRolloutFixture({ slug: 'ro-gate-moved' });
+  walkRollout(fx);
+  const a = arm(fx, 'gate');
+  assert.equal(a.ok, true, JSON.stringify(a));
+  // A sibling pushes between the arm and the record.
+  write(fx.second, 'sibling.txt', 'a sibling pushed after the gate was armed\n');
+  git(fx.second, 'add', 'sibling.txt');
+  git(fx.second, 'commit', '-q', '-m', 'sibling after the arm');
+  git(fx.second, 'push', '-q', 'origin', 'main');
+  git(fx.MAIN, 'add', '--', path.join('docs', 'masterplan', fx.slug));
+  try { git(fx.MAIN, 'commit', '-q', '-m', 'bundle ledger', '--', path.join('docs', 'masterplan', fx.slug)); } catch { /* nothing */ }
+  assert.throws(() => record(fx, 'gate'), /remote main moved since the gate was armed/);
+});
+
+test('the gate refuses while the bundle ledger is uncommitted', () => {
+  const fx = makeRolloutFixture({ slug: 'ro-gate-dirty' });
+  walkRollout(fx);
+  const a = arm(fx, 'gate');
+  assert.equal(a.ok, true, JSON.stringify(a));
+  // The arm's own event is uncommitted; the gate's command commits the bundle FIRST, so a
+  // still-dirty ledger means the command did not run as printed.
+  git(fx.MAIN, 'fetch', '-q', fx.targets.remote);
+  assert.throws(() => record(fx, 'gate'), /bundle ledger is not committed/);
+});
+
+test('the rebase is conflict-free and the state-only commits replay onto the merge', () => {
+  const fx = makeRolloutFixture({ slug: 'ro-rebase' });
+  const { mergeSha } = walkRollout(fx);
+  const before = git(fx.MAIN, 'rev-parse', 'main');
+  completeGate(fx);
+  const after = git(fx.MAIN, 'rev-parse', 'main');
+  assert.notEqual(before, after, 'main moved');
+  // The merge is now in local main's history, and every commit main gained past it is
+  // bundle-only — the state-only commits that replayed on top.
+  assert.doesNotThrow(() => git(fx.MAIN, 'merge-base', '--is-ancestor', mergeSha, 'main'));
+  const past = git(fx.MAIN, 'log', '--format=%H', `${mergeSha}..main`).split('\n').filter(Boolean);
+  // STATE-ONLY, and only THIS bundle's state: `docs/masterplan/**` would also admit another
+  // run's spec or arbitrary documentation, which is not what "state-only" means.
+  const allowed = new Set([
+    `docs/masterplan/${fx.slug}/state.yml`,
+    `docs/masterplan/${fx.slug}/events.jsonl`,
+  ]);
+  const allowedPrefix = `docs/masterplan/${fx.slug}/.bootstrap-targets-`;
+  for (const sha of past) {
+    const files = git(fx.MAIN, 'show', '--pretty=format:', '--name-only', sha).split('\n').filter(Boolean);
+    for (const f of files) {
+      const ok = allowed.has(f) || f.startsWith(allowedPrefix);
+      assert.ok(ok, `${sha.slice(0, 8)} touched ${f} — only this bundle's ledger may replay`);
+    }
+  }
+});
+
+test('the v9 merge after the rollout is a NO-OP: the branch is already in main', () => {
+  const fx = makeRolloutFixture({ slug: 'ro-noop' });
+  walkRollout(fx);
+  completeGate(fx);
+  const before = git(fx.MAIN, 'rev-parse', 'main');
+  git(fx.MAIN, 'merge', '-q', '--no-ff', '--no-edit', fx.branch);
+  const changed = git(fx.MAIN, 'diff', '--name-only', `${before}..main`).split('\n').filter(Boolean);
+  assert.deepEqual(changed, [], 'the finish merge changes no files — the PR merge already carried the branch');
+  // Identity, not just an empty file diff: an EMPTY MERGE COMMIT changes no files while still
+  // moving main, and "no-op" has to mean the history did not move either.
+  assert.equal(git(fx.MAIN, 'rev-parse', 'main'), before, 'main did not move');
+});
+
+test('after the gate the archive push is a fast-forward of the remote', () => {
+  const fx = makeRolloutFixture({ slug: 'ro-ffpush' });
+  walkRollout(fx);
+  completeGate(fx);
+  // The archive commit and any gate commits since are the only history past the remote.
+  write(fx.MAIN, path.join('docs', 'masterplan', fx.slug, 'retro.md'), '# retro\n');
+  git(fx.MAIN, 'add', '--', path.join('docs', 'masterplan', fx.slug));
+  git(fx.MAIN, 'commit', '-q', '-m', `masterplan(${fx.slug}): archive run`, '--', path.join('docs', 'masterplan', fx.slug));
+  git(fx.MAIN, 'fetch', '-q', fx.targets.remote);
+  // A fast-forward: the remote tip is an ancestor of what is being pushed.
+  assert.doesNotThrow(() => git(fx.MAIN, 'merge-base', '--is-ancestor', `${fx.targets.remote}/main`, 'main'));
+  assert.doesNotThrow(() => git(fx.MAIN, 'push', fx.targets.remote, 'main'));
+});
+
+// ---------------------------------------------------------------------------
+// Adversary round 1 — the findings each of these closes is named in its comment.
+// ---------------------------------------------------------------------------
+
+test('a release cannot re-tag a published tag EVEN when it is otherwise armable', () => {
+  // Finding: the replay test armed release after the whole pass had run, so the ordering guard
+  // refused it before the tag rule was ever consulted. The rule was therefore untested. Here
+  // the tag exists at a point where release IS the current step, so nothing but the tag rule
+  // can refuse it.
+  const fx = makeRolloutFixture({ slug: 'ro-retag' });
+  // The tag is already published — by an interrupted earlier attempt, or by a sibling. It is
+  // created BEFORE the pre-publish steps are seeded so their receipts bind THIS tip: a stale
+  // reviewed_at_tip would refuse the arm for an unrelated reason and hide the tag rule again.
+  write(fx.worktree, 'CHANGELOG.md', '# Changelog\n\n## 10.0.0\n');
+  git(fx.worktree, 'add', 'CHANGELOG.md');
+  git(fx.worktree, 'commit', '-q', '-m', 'release: 10.0.0');
+  const tagged = git(fx.worktree, 'rev-parse', 'HEAD');
+  git(fx.MAIN, 'tag', '-a', 'v10.0.0', '-m', 'release 10.0.0', tagged);
+  const tagObjectBefore = git(fx.MAIN, 'rev-parse', 'refs/tags/v10.0.0');
+  // PUBLISHED, not merely local: a sibling or an interrupted run pushes the tag, and a clone
+  // that has not fetched it would otherwise see `tag_absent` pass and create a conflicting
+  // local tag that only fails much later, at the push.
+  git(fx.MAIN, 'push', '-q', fx.targets.remote, 'refs/tags/v10.0.0');
+  seedThrough(fx, ['rehearsal', 'docs_normalize', 'verify', 'review', 'assess']);
+
+  // release is the current step, so ordering cannot be what refuses this.
+  assert.equal(bootstrapStatus(fx.statePath).next.step, 'release');
+  const a = arm(fx, 'release');
+  assert.equal(a.ok, false, JSON.stringify(a));
+  assert.doesNotMatch([...(a.refusals ?? []), ...(a.preconditions ?? []).map((c) => c.detail ?? '')].join(' '), /out of order/,
+    'ordering must not be what refuses it');
+  // The failing precondition is the TAG one, by name — a refusal for some other reason would
+  // leave the re-tag rule as untested as it was before.
+  // Both tag guards fire: the tag is present locally AND on the remote. Nothing else may be
+  // the reason, or the tag rule is again not what refused it.
+  const failed = (a.preconditions ?? []).filter((c) => !c.ok).map((c) => c.name).sort();
+  assert.deepEqual(failed, ['remote_tag_absent', 'tag_absent'], JSON.stringify(a.preconditions));
+
+  // Both identities are unchanged: replacing an annotated tag object with a new one at the
+  // same commit would leave the peeled sha equal while still rewriting a published tag.
+  assert.equal(git(fx.MAIN, 'rev-parse', 'refs/tags/v10.0.0'), tagObjectBefore, 'the tag OBJECT is untouched');
+  assert.equal(git(fx.MAIN, 'rev-parse', 'refs/tags/v10.0.0^{commit}'), tagged, 'and so is the commit it names');
+  // ...on the remote too, which is where "published" actually lives.
+  assert.equal(git(fx.MAIN, 'ls-remote', fx.targets.remote, 'refs/tags/v10.0.0').split(/\s+/)[0], tagObjectBefore);
+});
+
+test('a tag published on the REMOTE but absent locally still refuses the release', () => {
+  // The narrower guard the test above cannot distinguish: a clone that has not fetched the tag
+  // sees nothing locally, so a local-only check would let it create a conflicting one.
+  const fx = makeRolloutFixture({ slug: 'ro-retag-remote' });
+  write(fx.worktree, 'CHANGELOG.md', '# Changelog\n\n## 10.0.0\n');
+  git(fx.worktree, 'add', 'CHANGELOG.md');
+  git(fx.worktree, 'commit', '-q', '-m', 'release: 10.0.0');
+  const tagged = git(fx.worktree, 'rev-parse', 'HEAD');
+  git(fx.MAIN, 'tag', '-a', 'v10.0.0', '-m', 'release 10.0.0', tagged);
+  const published = git(fx.MAIN, 'rev-parse', 'refs/tags/v10.0.0');
+  git(fx.MAIN, 'push', '-q', fx.targets.remote, 'refs/tags/v10.0.0');
+  git(fx.MAIN, 'tag', '-d', 'v10.0.0'); // the local clone has not fetched it
+  seedThrough(fx, ['rehearsal', 'docs_normalize', 'verify', 'review', 'assess']);
+
+  assert.equal(bootstrapStatus(fx.statePath).next.step, 'release');
+  const a = arm(fx, 'release');
+  assert.equal(a.ok, false, `a published tag must refuse the release: ${JSON.stringify(a)}`);
+  // The REMOTE guard specifically: the local tag is gone, so only a remote-aware check can
+  // refuse this, and nothing else may be the reason.
+  const failed = (a.preconditions ?? []).filter((c) => !c.ok).map((c) => c.name);
+  assert.deepEqual(failed, ['remote_tag_absent'], JSON.stringify(a.preconditions));
+  assert.equal(git(fx.MAIN, 'ls-remote', fx.targets.remote, 'refs/tags/v10.0.0').split(/\s+/)[0], published,
+    'the published tag is untouched');
+});
+
+// surfaces_live's record throws when a postcondition fails, naming the conditions that did.
+// These negatives assert the failure BY NAME: a bare "it failed" would pass for an unrelated
+// precondition and prove nothing about the executable check.
+function recordSurfacesLiveExpectingFailure(fx, expectedFail, label) {
+  const a = arm(fx, 'surfaces_live');
+  assert.equal(a.ok, true, `${label}: surfaces_live must arm so the postcondition is reached: ${JSON.stringify(a)}`);
+  let err = null;
+  try {
+    const r = record(fx, 'surfaces_live');
+    assert.fail(`${label}: expected surfaces_live to fail, got ${JSON.stringify(r)}`);
+  } catch (e) {
+    err = e;
+  }
+  assert.match(err.message, /postcondition failed/, `${label}: ${err.message}`);
+  assert.match(err.message, new RegExp(expectedFail), `${label}: expected ${expectedFail}, got ${err.message}`);
+  return err;
+}
+
+test('surfaces_live fails when ONLY Pi is live, and when ONLY Claude is', () => {
+  // Finding: the test asserted the two-surface success and was titled "only when both", which
+  // its assertions did not establish. An AND silently changed to an OR would have passed.
+  for (const missing of ['claude', 'pi']) {
+    const fx = makeRolloutFixture({ slug: `ro-one-${missing}` });
+    // Each surface's OWN step validates its install, so a surface cannot be missing while that
+    // step passes. The rollout installs both, and the one under test is removed afterwards —
+    // which is also the real failure mode: a surface that was installed and later disappeared.
+    walkRollout(fx, { surfaces: {} });
+    if (missing === 'pi') fs.rmSync(path.join(fx.installRoot, 'current'), { recursive: true, force: true });
+    else removeClaudeSurface(fx, '10.0.0');
+    // The step must genuinely ARM and the failure must name the MISSING surface's own
+    // condition: a conditional record would let this pass by never reaching the postcondition,
+    // which is exactly how a vacuous negative hides a regression from AND to OR.
+    const err = recordSurfacesLiveExpectingFailure(fx, missing === 'pi' ? 'pi_' : 'claude_', `only ${missing} missing`);
+    // ...and the surface that IS installed does not appear among the failures, so the refusal
+    // is the absent one rather than a broken probe.
+    const other = missing === 'pi' ? 'claude_executable' : 'pi_executable';
+    assert.doesNotMatch(err.message, new RegExp(other), `${other} should have passed`);
+  }
+});
+
+test('a surface that is INSTALLED but cannot run fails surfaces_live', () => {
+  // Finding: the check read plugin.json and the cache path, so an install whose entry point is
+  // absent or dies on start satisfied it. G6 requires the release to be executable in both
+  // surfaces, which only running it can establish.
+  for (const [label, piOpts, claudeOpts, expectedFail] of [
+    ['pi entry missing', { omitEntry: true }, {}, 'pi_executable'],
+    ['pi entry broken', { entrySource: BROKEN_ENTRY }, {}, 'pi_executable'],
+    ['claude entry broken', {}, { entrySource: BROKEN_ENTRY }, 'claude_executable'],
+    ['pi reports the WRONG version', { entrySource: ENTRY_SOURCE('9.10.0') }, {}, 'pi_executable'],
+  ]) {
+    const fx = makeRolloutFixture({ slug: `ro-exec-${label.replace(/\W+/g, '-')}` });
+    walkRollout(fx, { surfaces: { pi: piOpts, claude: claudeOpts } });
+    // The EXECUTABLE condition is what fails — not the metadata one, which these fixtures
+    // deliberately satisfy so that only running the surface can distinguish them.
+    recordSurfacesLiveExpectingFailure(fx, expectedFail, label);
+  }
+});
+
+test('a surface that prints something OTHER than its version does not pass as executable', () => {
+  // The probe used to hunt a semver out of arbitrary stdout, so an entry point that ignored its
+  // argument and echoed its own install path — which contains the version — passed.
+  const fx = makeRolloutFixture({ slug: 'ro-exec-noise' });
+  walkRollout(fx, { surfaces: { pi: { entrySource: 'console.log(process.argv[1]);\n' } } });
+  recordSurfacesLiveExpectingFailure(fx, 'pi_executable', 'prints its own path');
+});
+
+test('an entry point that ignores the version ARGUMENT is not accepted', () => {
+  // The command contract, not just "some program started": a stub answering every invocation
+  // identically would satisfy a probe that passed the wrong argument.
+  const fx = makeRolloutFixture({ slug: 'ro-exec-arg' });
+  walkRollout(fx, {
+    surfaces: {
+      pi: { entrySource: "console.log(process.argv[2] === 'version' ? 'no version verb here' : 'masterplan 10.0.0');\n" },
+    },
+  });
+  recordSurfacesLiveExpectingFailure(fx, 'pi_executable', 'ignores the version argument');
+});
+
+test('a corrective pass REFUSES every omitted step through the real arm/record path', () => {
+  // Finding: `stepsForPass` was asserted structurally, but the state machine was never asked
+  // to arm an omitted step on a live pass-2 fixture. A regression that let `release` or `push`
+  // through would not have been caught — and those are the irreversible ones.
+  const fx = makeRolloutFixture({ slug: 'ro-pass2' });
+  walkRollout(fx);
+  // Before the gate: once pass 1's gate is recorded the bootstrap is COMPLETE, and a later
+  // finding needs a new run rather than a corrective pass.
+  // The trigger is the INDEX of the event that opened the pass — an unreferenced string would
+  // leave a corrective pass nobody can trace back to a finding.
+  appendEvent(fx.statePath, { type: 'adversary_review', ts: 90, verdict: 'rework' });
+  startPass({ statePath: fx.statePath, pass: 2, triggeredBy: events(fx.statePath).length - 1, version: '10.0.1', targets: fx.targets });
+
+  assert.ok(PASS2_OMITTED.length > 0, 'there is something to omit');
+  // The corrective pass is bound to its OWN version; the targets must name it.
+  const p2 = { ...fx.targets, version: '10.0.1' };
+  for (const step of PASS2_OMITTED) {
+    const before = readBundleEvents(fx.statePath).length;
+    const a = arm(fx, step, { targets: p2 });
+    assert.equal(a.ok, false, `${step} must be unreachable on a corrective pass: ${JSON.stringify(a)}`);
+    // The refusal must NAME the omission. Every omitted step is also out of order here (the
+    // pass sits at `verify`), so accepting an ordering refusal would let the omission rule be
+    // deleted outright with this test still green.
+    assert.match((a.refusals ?? []).join(' '), /pass 2|omitted/,
+      `${step}: the refusal must name corrective-pass omission, not ordering: ${JSON.stringify(a)}`);
+    assert.equal(readBundleEvents(fx.statePath).length, before, `${step}: a refused arm writes nothing`);
+    // ...and it cannot be recorded past the arm either, for the SAME reason — asserted by name,
+    // because "not armed" would otherwise make this pass whatever the omission rule did.
+    assert.throws(() => record(fx, step, { targets: p2 }), /pass 2|omitted/,
+      `${step} must not be recordable on a corrective pass`);
+    assert.equal(readBundleEvents(fx.statePath).length, before, `${step}: a refused record writes nothing`);
+  }
+  // The pass still sequences its own permitted steps.
+  assert.ok(!PASS2_OMITTED.includes(bootstrapStatus(fx.statePath).next.step));
+  assert.equal(bootstrapStatus(fx.statePath).next.step, 'verify', 'a corrective pass re-enters at verify');
+});
+
+test('the state-only replay audit REJECTS a non-state commit, not just accepts a clean one', () => {
+  // Finding: the audit walked a history it had itself produced and asserted nothing about a
+  // violating one, and never checked the loop was non-vacuous. A gate that stopped auditing
+  // would have passed.
+  const fx = makeRolloutFixture({ slug: 'ro-stateonly-neg' });
+  walkRollout(fx);
+  // A SOURCE commit lands on local main before the gate — exactly what must not be replayed
+  // over the merge unaudited.
+  write(fx.MAIN, 'src/sneaky.js', 'not bundle state\n');
+  git(fx.MAIN, 'add', 'src/sneaky.js');
+  git(fx.MAIN, 'commit', '-q', '-m', 'a source commit that is not bundle state');
+  const sneaky = git(fx.MAIN, 'rev-parse', 'HEAD');
+
+  // The gate REFUSES to arm, naming the offending commit — the audit is a precondition, not a
+  // post-hoc inspection, so nothing is rebased or pushed at all.
+  const a = arm(fx, 'gate');
+  assert.equal(a.ok, false, JSON.stringify(a));
+  const bundleOnly = (a.preconditions ?? []).find((c) => c.name === 'bundle_only');
+  assert.ok(bundleOnly && !bundleOnly.ok, JSON.stringify(a.preconditions));
+  assert.match(bundleOnly.detail, new RegExp(sneaky.slice(0, 12)), 'it names the commit that violated it');
+});
+
+test('the state-only audit is NON-VACUOUS: a clean rollout really does replay state commits', () => {
+  // The positive half of the pair above. Without it, a gate that audited nothing at all would
+  // satisfy the refusal test's counterpart by simply having no history to walk.
+  const fx = makeRolloutFixture({ slug: 'ro-stateonly-pos' });
+  const { mergeSha } = walkRollout(fx);
+  completeGate(fx);
+  const past = git(fx.MAIN, 'log', '--format=%H', `${mergeSha}..main`).split('\n').filter(Boolean);
+  assert.ok(past.length > 0, 'there IS replayed history, so the audit loop is not vacuous');
+  for (const sha of past) {
+    const files = git(fx.MAIN, 'show', '--pretty=format:', '--name-only', sha).split('\n').filter(Boolean);
+    assert.ok(files.length > 0, `${sha.slice(0, 8)} is an empty commit`);
+    for (const f of files) {
+      assert.ok(f.startsWith(`docs/masterplan/${fx.slug}/`), `${sha.slice(0, 8)} touched ${f}`);
+    }
+  }
+});
+
+test('the archive push is REFUSED when the remote has diverged', () => {
+  // Finding: only a naturally fast-forwarding push was covered, so a workflow that force-pushed
+  // over a sibling's commit was never challenged. This is the security-relevant half.
+  const fx = makeRolloutFixture({ slug: 'ro-ffpush-neg' });
+  walkRollout(fx);
+  completeGate(fx);
+  write(fx.MAIN, path.join('docs', 'masterplan', fx.slug, 'retro.md'), '# retro\n');
+  git(fx.MAIN, 'add', '--', path.join('docs', 'masterplan', fx.slug));
+  git(fx.MAIN, 'commit', '-q', '-m', `masterplan(${fx.slug}): archive run`, '--', path.join('docs', 'masterplan', fx.slug));
+
+  // A sibling lands on the remote after the local archive commit was made.
+  write(fx.second, 'sibling-late.txt', 'landed after the archive commit\n');
+  git(fx.second, 'add', 'sibling-late.txt');
+  git(fx.second, 'commit', '-q', '-m', 'sibling after the archive commit');
+  git(fx.second, 'push', '-q', 'origin', 'main');
+  const siblingTip = remoteMainTip(fx);
+
+  // It is no longer a fast-forward, and the push is refused.
+  git(fx.MAIN, 'fetch', '-q', fx.targets.remote);
+  assert.throws(() => git(fx.MAIN, 'merge-base', '--is-ancestor', 'main', `${fx.targets.remote}/main`));
+  assert.throws(() => git(fx.MAIN, 'push', fx.targets.remote, 'main'), /rejected|non-fast-forward|fetch first/i);
+  assert.equal(remoteMainTip(fx), siblingTip, "the sibling's commit is still the remote tip");
+});
+
+test('a successful archive push leaves remote main EQUAL to local main', () => {
+  // Ancestry alone would hold even if the push landed something other than what was built.
+  const fx = makeRolloutFixture({ slug: 'ro-ffpush-eq' });
+  walkRollout(fx);
+  completeGate(fx);
+  write(fx.MAIN, path.join('docs', 'masterplan', fx.slug, 'retro.md'), '# retro\n');
+  git(fx.MAIN, 'add', '--', path.join('docs', 'masterplan', fx.slug));
+  git(fx.MAIN, 'commit', '-q', '-m', `masterplan(${fx.slug}): archive run`, '--', path.join('docs', 'masterplan', fx.slug));
+  git(fx.MAIN, 'fetch', '-q', fx.targets.remote);
+  git(fx.MAIN, 'push', '-q', fx.targets.remote, 'main');
+  assert.equal(remoteMainTip(fx), git(fx.MAIN, 'rev-parse', 'main'));
+});
+
+test('the run branch is RETIRED after the rollout: gone locally and on the remote', () => {
+  // Finding: branch retirement is a named acceptance criterion with no coverage at all. A
+  // finish that stopped deleting the branch, or deleted only the local one, would pass.
+  const fx = makeRolloutFixture({ slug: 'ro-retire' });
+  walkRollout(fx);
+  completeGate(fx);
+  // Retirement is safe precisely because the PR merge already carried the branch into main.
+  assert.doesNotThrow(() => git(fx.MAIN, 'merge-base', '--is-ancestor', fx.branch, 'main'),
+    'the branch is fully contained in main before it is deleted');
+
+  // The run's worktree still holds the branch; a finish retires the worktree before the branch.
+  git(fx.MAIN, 'worktree', 'remove', '--force', fx.worktree);
+  git(fx.MAIN, 'push', '-q', fx.targets.remote, '--delete', fx.branch);
+  git(fx.MAIN, 'branch', '-D', fx.branch);
+
+  assert.equal(git(fx.MAIN, 'ls-remote', fx.targets.remote, `refs/heads/${fx.branch}`), '', 'gone on the remote');
+  assert.throws(() => git(fx.MAIN, 'rev-parse', '--verify', `refs/heads/${fx.branch}`), 'gone locally');
+  // The released tag is NOT retired with it — the history has to stay reachable.
+  assert.doesNotThrow(() => git(fx.MAIN, 'rev-parse', 'refs/tags/v10.0.0'));
+  assert.doesNotThrow(() => git(fx.MAIN, 'merge-base', '--is-ancestor', 'refs/tags/v10.0.0^{commit}', 'main'));
+});
+
+test('the archived bundle survives the rollout in main, and a LEGACY bundle is left alone', () => {
+  // Finding: the "archive push" test only committed a retro and pushed, which is not evidence
+  // that the run's ledger is what landed — nor that a pre-v10 bundle beside it is untouched.
+  const fx = makeRolloutFixture({ slug: 'ro-archive' });
+  // A pre-v10 bundle with no completion field: the rollout must not rewrite or remove it.
+  const legacyDir = path.join(fx.MAIN, 'docs', 'masterplan', 'legacy-run');
+  fs.mkdirSync(legacyDir, { recursive: true });
+  fs.writeFileSync(path.join(legacyDir, 'state.yml'), 'schema_version: 8\nslug: legacy-run\nstatus: archived\n');
+  git(fx.MAIN, 'add', '--', path.join('docs', 'masterplan', 'legacy-run'));
+  git(fx.MAIN, 'commit', '-q', '-m', 'a pre-v10 archived bundle');
+  const legacyBefore = git(fx.MAIN, 'rev-parse', 'HEAD:docs/masterplan/legacy-run/state.yml');
+
+  walkRollout(fx);
+  completeGate(fx);
+  git(fx.MAIN, 'add', '--', path.join('docs', 'masterplan', fx.slug));
+  try { git(fx.MAIN, 'commit', '-q', '-m', `masterplan(${fx.slug}): archive run`, '--', path.join('docs', 'masterplan', fx.slug)); } catch { /* already committed */ }
+  git(fx.MAIN, 'fetch', '-q', fx.targets.remote);
+  git(fx.MAIN, 'push', '-q', fx.targets.remote, 'main');
+
+  // The ledger that landed on the remote is THIS run's, with its whole rollout in it.
+  const clone = path.join(fx.tmp, 'verify-clone');
+  // `-b main` explicitly: the bare remote's HEAD is not main, so a default clone checks out
+  // nothing and the assertions below would read an empty tree.
+  execFileSync('git', ['clone', '-q', '-b', 'main', fx.bare, clone]);
+  const landed = fs.readFileSync(path.join(clone, 'docs', 'masterplan', fx.slug, 'events.jsonl'), 'utf8')
+    .split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  const steps = new Set(landed.filter((e) => e.type === 'bootstrap_step' && e.status === 'done').map((e) => e.step));
+  for (const step of EXPECTED_ORDER) {
+    assert.ok(steps.has(step), `${step} is missing from the archived ledger on the remote`);
+  }
+  // ...and the legacy bundle is byte-identical, in the clone as well as locally.
+  assert.equal(git(fx.MAIN, 'rev-parse', 'HEAD:docs/masterplan/legacy-run/state.yml'), legacyBefore);
+  assert.ok(fs.existsSync(path.join(clone, 'docs', 'masterplan', 'legacy-run', 'state.yml')));
 });

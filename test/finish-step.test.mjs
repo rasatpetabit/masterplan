@@ -12,6 +12,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 import { finishStep } from '../lib/finish-step.mjs';
+import { liveCheckDigest } from '../lib/finish.mjs';
 import { readState, writeState } from '../lib/bundle.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
 import { acquireOwner } from '../lib/owner-fs.mjs';
@@ -743,13 +744,16 @@ test('deploy: gated flow — authorize → start → done → next group', () =>
   // the shell ran `touch rel.ok` from MAIN; simulate its effect before reporting the exit
   write(fx.MAIN, 'rel.ok', '');
   // report done
-  op = fx.step({ deployStepDone: { group: 'release', index: 0, exit: 0, digest: 'd' } });
+  // The report names an evidence FILE; the event carries the digest of what is in it.
+  const evidence = path.join(fx.MAIN, 'release-evidence.txt');
+  fs.writeFileSync(evidence, 'released\n');
+  op = fx.step({ deployStepDone: { group: 'release', index: 0, exit: 0, digestFile: evidence } });
   assert.equal(op.op, 'run_deploy_step');
   assert.equal(op.group, 'install');
   assert.equal(op.index, 0);
   const doneEv = readEvents(fx.bundleDir).find((e) => e.type === 'deploy_step' && e.group === 'release' && e.index === 0);
   assert.equal(doneEv.status, 'done');
-  assert.equal(doneEv.digest, 'd');
+  assert.equal(doneEv.digest, liveCheckDigest(evidence));
 });
 
 test('deploy: loose autonomy — authorize+start recorded before the first run_deploy_step', () => {
