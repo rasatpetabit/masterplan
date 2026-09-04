@@ -513,6 +513,31 @@ through. The task is plan-scale work in one wave slot.
 
 Handoff for this state: [`docs/handoffs/2026-09-03-intent-to-completion-wave3.md`](docs/handoffs/2026-09-03-intent-to-completion-wave3.md) — verified state, restore paths, and the two operator-approved next steps (repo-wide /tmp fixture-leak sweep; fold task 45's open requirement into task 46).
 
+## 2026-09-04 — intent-to-completion wave 9 recorded (47/48)
+
+Tasks 8 (public contract), 9 (overlap suite), 19 (knob contracts) recorded with honest
+verdicts after one review round each (task 19's round-1 verdict was REJECT; every finding
+closed across a builder round plus an orchestrator-finished tail). The full suite reached
+2438/2438 — ZERO failures for the first time in the run: the two E9 README failures cleared
+with task 8's inventory parity, and the retired-identifiers failure closed with the critic
+prompt reword (negated mentions count) plus task 10's earlier work.
+
+Reviews again found real defects: the Environment section missed readEnvAll-proxied controls
+(PI_CODING_AGENT); the documented config hierarchy overclaimed seed consumption; llms.txt
+still said v9.10.0; the overlap suite was missing resume/abort/gated-vs-loose rows and three
+fixture-theater cases; and the knob registry was a fraction of the discovered inventory with
+seeded-state observables and self-fulfilling prompt markers — now derived from the exported
+inventories behind one shared validator.
+
+RECORDING INCIDENT (resolved): the wave-9 Phase B transaction crashed twice — first D6's
+out-of-scope clean deleted test/fixtures/knobs/discovery.mjs (never in the frozen scope),
+then the split commit's `git add` refused the tracked plugin manifests because directory-level
+gitignore rules covered them. Fixed the .gitignore (file-level rules with re-includes),
+reconstructed discovery.mjs byte-exactly from the builder's session transcript (write + two
+edits replayed, verified by the 10/10 suite), recorded the scope amendments, and completed
+the transaction deliberately per the run's own crash guidance (commit stranded work, then
+`mp clear-active-run`): code 736a438, state 3140612. Only task 20 (wave 10) remains.
+
 ## 2026-09-04 — intent-to-completion wave 8 recorded (44/48)
 
 Tasks 7 (sequencer contract) and 30 (retro completion rendering) recorded with honest `rework`
