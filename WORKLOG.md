@@ -513,6 +513,26 @@ through. The task is plan-scale work in one wave slot.
 
 Handoff for this state: [`docs/handoffs/2026-09-03-intent-to-completion-wave3.md`](docs/handoffs/2026-09-03-intent-to-completion-wave3.md) — verified state, restore paths, and the two operator-approved next steps (repo-wide /tmp fixture-leak sweep; fold task 45's open requirement into task 46).
 
+## 2026-09-04 — intent-to-completion wave 6 recorded (Pi session)
+
+Tasks 6, 28, 48 recorded with honest `rework` verdicts: ONE review round per task
+(mp-adversarial-reviewer, adversary lane), every finding fixed in one builder round each,
+fixes disclosed as unverified-by-second-round. Full suite 2357/2360 (3 pre-existing, tasks 8/10).
+
+- Reviews found real defects again: `record-goal-check --final` dropped the final-assessment
+  bindings the validator demanded (dead forwarding in bin); discard could still enter deploy
+  replay; intent rejection was split-write crash-unsafe (a crash between appends archived
+  without the required_successor obligation, unrecoverable); final-gate answers were not
+  replay-idempotent; attestation had an unrecoverable split window; completion confirmations
+  were not bound to the latest deploy base; one empty test concealed an archive gap; and the
+  bootstrap driver had NO pre-tag validation — an invalid two-commit release left the v10.0.0
+  tag on unreviewed code, and the "no tag" test asserted the opposite of its name.
+- Two recorded scope amendments (task 28 += deploy-commit-identity consumer test; task 48 +=
+  bootstrap-driver consumer tests) — both consumer updates mandated by semantic/driver
+  changes, both applied via the snapshot/amend/re-freeze/reapply path after the wave's work
+  existed (the advisor-approved procedure; no work lost this time).
+- Waves remaining: 7 (task 29), then 8-10 (7, 8, 9, 19, 20, 30).
+
 ## 2026-09-04 — intent-to-completion wave 5 recorded (Pi resume session)
 
 Resumed from `docs/handoffs/2026-09-04-intent-to-completion-wave5.md`. Suite re-verified
