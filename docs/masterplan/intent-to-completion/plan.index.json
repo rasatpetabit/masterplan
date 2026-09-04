@@ -769,7 +769,10 @@
       "wave": 7,
       "files": [
         "lib/finish-step.mjs",
-        "test/finish-replay.test.mjs"
+        "test/finish-replay.test.mjs",
+        "bin/masterplan.mjs",
+        "lib/bundle.mjs",
+        "test/bundle-events.test.mjs"
       ],
       "verify_commands": [
         "node --test test/finish-replay.test.mjs"

@@ -1,0 +1,51 @@
+{
+  "key": "mp-wave-dispatch-v1:intent-to-completion:7:dispatch_fabric",
+  "run_id": "intent-to-completion",
+  "wave": 7,
+  "op": "dispatch_fabric",
+  "contract_version": "fabric-native-v1",
+  "status": "pending",
+  "attempt": 1,
+  "wave_token": "mp-wave-intent-to-completion-w7-a1",
+  "handles": [],
+  "dispatched_at": "2026-09-04T06:13:21.998Z",
+  "routing_inputs": {
+    "routing": "auto",
+    "codex_host_suppressed": true,
+    "linked_worktree": true
+  },
+  "payload": [
+    {
+      "id": 29,
+      "description": "Add the post-archive push_archive state. Emit it only when an install-group receipt proves that it pushed the base and identifies pushed_base; always halt for operator approval under gated and loose autonomy; list exactly pushed_base..HEAD; and accept archive_pushed as the sole post-archive event. Re-entry without that event must re-emit the gate, while no done block, done: none, or an install chain that did not push must stop without a push gate. Exercise exact fast-forward publication and the non-fast-forward recovery path of fetch, per-commit audit, rebase, one retry, then stop, while reporting pushed: no until archive_pushed lands. The producer of the trigger is finish-step itself: after each install-group step it fetches origin/<base> and records pushed_base on the receipt when the remote tip moved to that receipt's base_after; an install chain that never moved the remote records no pushed_base and never reaches push_archive. Test rows cover both. The producer runs on every install-group deploy_step receipt write, including the check-only recovery record, and test/finish-replay.test.mjs gets the row \"push succeeded, crash before --deploy-step-done, recovery records pushed_base\".",
+      "files": [
+        "lib/finish-step.mjs",
+        "test/finish-replay.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/finish-replay.test.mjs"
+      ],
+      "class": "bounded-edit"
+    }
+  ],
+  "tasks": [
+    {
+      "task_id": 29,
+      "class": "bounded-edit",
+      "handoff_key": "fabric-idem-v1:intent-to-completion:29:78eff2a75874dc8fa528ee1eeaaf43ab2939f159ae654403eb32b15466560259:e6dfc7b1c53689b7d68b3183c2b67cb878ab046a1ba350e5e714515f4ad843aa"
+    }
+  ],
+  "gateway_verify_allowlist": "bash -c",
+  "review_context": {
+    "enabled": true,
+    "base_sha": "e938c8a472b41b6a16a1cb34c681d48a178afc70",
+    "tasks": [
+      {
+        "task_id": 29,
+        "description": "Add the post-archive push_archive state. Emit it only when an install-group receipt proves that it pushed the base and identifies pushed_base; always halt for operator approval under gated and loose autonomy; list exactly pushed_base..HEAD; and accept archive_pushed as the sole post-archive event. Re-entry without that event must re-emit the gate, while no done block, done: none, or an install chain that did not push must stop without a push gate. Exercise exact fast-forward publication and the non-fast-forward recovery path of fetch, per-commit audit, rebase, one retry, then stop, while reporting pushed: no until archive_pushed lands. The producer of the trigger is finish-step itself: after each install-group step it fetches origin/<base> and records pushed_base on the receipt when the remote tip moved to that receipt's base_after; an install chain that never moved the remote records no pushed_base and never reaches push_archive. Test rows cover both. The producer runs on every install-group deploy_step receipt write, including the check-only recovery record, and test/finish-replay.test.mjs gets the row \"push succeeded, crash before --deploy-step-done, recovery records pushed_base\".",
+        "class": "bounded-edit",
+        "repo": "/srv/dev/ras/masterplan/.worktrees/intent-to-completion"
+      }
+    ]
+  }
+}
