@@ -554,3 +554,29 @@ One reviewer finding was disputed with evidence and not accepted: keying the goa
 on the bundle's capability marker breaks a stated contract in this repo ("the seed-time
 capability event does NOT block the first goals-load"), so the gate stays keyed on the
 interview ledger.
+
+## 2026-09-04 — intent-to-completion wave 5 (implemented + reviewed, NOT yet recorded)
+
+Wave 5 (tasks 4, 5, 27, 47) implemented in the worktree; suite 2316/2319 (the 3 failures are
+tasks 8 and 10's, pre-existing). **Nothing is committed and the wave is not recorded** — the
+`active_run` marker still says `phase: launching`, so `mp continue` will read this as a crash.
+Handoff with verified state and restore paths:
+[`docs/handoffs/2026-09-04-intent-to-completion-wave5.md`](docs/handoffs/2026-09-04-intent-to-completion-wave5.md).
+
+Review rounds so far: tasks 4 and 5 at three, tasks 27 and 47 at two — all `rework`, every
+finding fixed, none repeated or reversed. Under the five-round ceiling the budget is two more
+rounds for 4/5 and three for 27/47; the successor decides whether to spend them or record now.
+
+Four `plan_amended` events extend task scope (27 → `lib/finish.mjs` + `bin/masterplan.mjs`;
+5 → `lib/wave-commit.mjs`, then `lib/goals.mjs`; 47 → the driver + rehearsal fixtures). Each
+was recorded *before* the edit so D6 accepts it, rather than letting D6 revert and restoring
+afterwards as wave 3 did.
+
+The reviews found real product defects, not test churn: `--digest-file` was inert on both
+sides (no live digest was ever recorded, and the recorder bound the flag's path string);
+`surfaces_live` never executed either surface, so a broken install passed a goal that requires
+it to be *executable*; `PASS2_OMITTED` was enforced only as a side effect of ordering, leaving
+`release` and `push` reachable if that coincidence changed; the intent confirmation could
+authorize a receipt the operator was never shown; and the mid-run goals reminder had its own
+markdown scanner that could quote a fenced example the verdict was never judged against — the
+parser now captures the raw source line of the field it assigns, so the two cannot diverge.
