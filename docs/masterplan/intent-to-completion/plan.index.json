@@ -745,7 +745,8 @@
       "files": [
         "lib/finish-step.mjs",
         "test/intent-rejected.test.mjs",
-        "test/finish-replay.test.mjs"
+        "test/finish-replay.test.mjs",
+        "test/deploy-commit-identity.test.mjs"
       ],
       "verify_commands": [
         "node --test test/intent-rejected.test.mjs",
@@ -1202,7 +1203,8 @@
       "wave": 6,
       "files": [
         "test/v9-to-v10-bootstrap.test.mjs",
-        "scripts/bootstrap-v10.mjs"
+        "scripts/bootstrap-v10.mjs",
+        "test/bootstrap-driver.test.mjs"
       ],
       "verify_commands": [
         "node --test test/v9-to-v10-bootstrap.test.mjs"
