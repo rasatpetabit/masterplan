@@ -62,7 +62,13 @@ Run the health checks — `node bin/doctor.mjs` over the `lib/doctor/*.mjs` modu
 repo + active bundles. Report-only by default; `--fix` applies the safe auto-fixes.
 
 ## `status`
-Read-only situation report: `mp decide` (no writes) plus a one-screen summary from `state.yml`.
+Read-only situation report: `mp decide` (no writes) plus a one-screen summary from `state.yml`. Prints the completion/push state for archived bundles (`legacy`, `complete`, `incomplete:<reason>`, `merged`; `pushed: no` until `archive_pushed` lands) and any open `required_successor` obligation with the exact seed command.
+
+## `context-status`
+Report measured/unknown context usage: `mp context-status` returns `tokens_at_last_request`, `appended_est`, `window`, and one of `current | post-compaction | malformed | not-found | unsupported` (`lib/context-status.mjs`; `not-found` when no transcript resolves, `unsupported` when there is no session id). When no measurement is available (`not-found` / `malformed` / `unsupported`) `window` and `used_pct` are `null` — there is no `unknown` state. `MP_CONTEXT_WINDOW` overrides the window (or `--window=<n>` explicitly).
+
+## `resume-brief`
+`mp resume-brief --repo-root=<path>` resolves zero, one, or several active bundles and renders a carry-forward brief (wired as a SessionStart hook where hooks are registered; the `resume-brief-hook` doctor check verifies the wiring).
 
 ## `validate`
 Parse-check the active bundle's `state.yml` (and its persisted config) and report findings.
@@ -113,6 +119,17 @@ local bundle, and open a PR against `mp-int/<slug>`.
 Steps: preflight → optimistic claim (settle guard) → build (fetch contract ref, dispatch
 implementer + D6 `verify-scope` + `verify_commands`) → deliver PR (on pass) or release
 claim with a failure comment (on fail). Spec §7.1.
+
+## `interview`
+The §5.3 intent interview — a bounded, ledger-backed sequence of `mp interview` subcommands:
+`ask` / `answer` / `withdraw` / `draft` / `critic` (each an `events.jsonl` append through
+`lib/interview.mjs`), plus `replay` (prints every question, answer, withdrawal, draft, and
+critic receipt in order). The `mp-intent-critic` agent receives exactly three quoted-data blocks
+(the verbatim `goals.md` topic anchor, the verbatim replay ledger, and the current intent draft);
+its receipt is recorded through `mp interview critic --receipt=<json> --payload-file=<json>`.
+Terminal states: `converged | exhausted | critic_off`. A bundle seeded with `--predecessor` whose
+predecessor archived an `intent`-class rejection opens the interview with the stored correction
+text as quoted context.
 
 ## Goal subcommands
 - `goals-load` — parse `goals.md`, freeze the goal set into `state.goals` + a `goals_frozen`
@@ -245,3 +262,40 @@ is terminal for dispatch + finalize but operator-reversible.
 ## seed flags (fabric)
 
 New seeds default `--fabric=on` (`state.dispatch.fabric: true`) and fabric is the only wave path since the L2 legacy dispatch path was deleted (A3) — the flag's `off` value is gone; a bundle without `state.dispatch.fabric: true` is unexecutable.
+
+## Config hierarchy & environment
+
+Configuration resolves **CLI > repo (`.masterplan.yaml`) > user (`~/.masterplan.yaml`) > default**
+(`lib/config.mjs` `resolveRunConfig`); `config show` prints resolved values + `*_source` for each key.
+Recognized keys: `complexity` (`low|medium|high`), `autonomy` (`gated|loose`, alias `full`→`loose`),
+`planning_mode` (`serial|parallel|auto`), `adversary_review` (`on|off`), `render_images` (`on|off`),
+`fabric` (`on|off`), `context_watch` (`{threshold 1–99, focus}`), `done` (definition of done with fixed-order
+`release` steps). Only `complexity`, `autonomy`, and `planning_mode` are resolved from the chain at seed;
+`adversary_review`, `render_images`, `fabric` come from seed flags/defaults only (`fabric: off` marks a bundle
+unexecutable — the legacy dispatch path is deleted). Deploy groups run in the fixed order
+`release → install → user_only → live_check` (group order normative, within-group list order). Environment
+controls: `CLAUDE_CODE_SESSION_ID` (+ `--session`/`--host` flags; Guard-D
+session identity), `MP_DISPATCH_WAVE_CONCURRENCY` (wave fan-out cap, default 8),
+`MP_ROUTING_POLICY` (routing-policy override path), `SKYNET_VERIFY_ALLOWLIST` (recorded verify allowlist),
+`MP_CONTEXT_WINDOW` (context-status window override), `MP_BIN`, `MP_MARKETPLACE_DIR`, `MASTERPLAN_RUNS_DIR`,
+`CLAUDE_PLUGIN_ROOT`, `PI_CODING_AGENT` (host routing, see the Pi adaptation sections).
+
+## Completion, push & successor classes
+
+Archived bundles carry `state.completion` ∈ {`complete`, `merged`, `incomplete:<reason>`, `legacy`};
+`incomplete:<reason>` reasons are exactly the terminal reasons the archive derives from the ledger
+(`isStageTerminalReason` in `lib/finish-step.mjs`): `no_definition_of_done`, `deploy_abort`,
+`version_not_bumped`, `kept`, `discarded`, `attested`, `intent_waived` (bare), or a qualified prefix
+`deploy_skip:<group>[<index>]` / `deploy_abort:<gate>` / `intent_rejected:<class>`. After archive only
+`archive_pushed` / `archive_push_skipped` are accepted; `pushed: no` persists until `archive_pushed` lands.
+An `intent_rejected` archive writes `required_successor {slug, reason}` (slug from the mandatory
+`--successor` flag) and the obligation is printed by `status` / `runs list` and verified by the
+`required-successor` doctor check.
+
+## v10 bootstrap boundary
+
+`scripts/bootstrap-v10.mjs` is the **one-off** v9→v10 release driver: it arms the release targets and walks
+a fixed step order (verify → review → assessment → release → tag → CI → install both surfaces →
+`surfaces_live`), recording every command as a durable bootstrap event. It is **not a plan task and not an
+`mp` verb** — `status` must report the pass complete through `surfaces_live` before `mp finish` begins, and
+`arm --step=gate` / `record --step=gate` run inside `branch_finish` handling before `--choice=merge`.
