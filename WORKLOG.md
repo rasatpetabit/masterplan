@@ -512,3 +512,45 @@ be re-entered in a failing state once recorded. Closing it needs fixture bundles
 through. The task is plan-scale work in one wave slot.
 
 Handoff for this state: [`docs/handoffs/2026-09-03-intent-to-completion-wave3.md`](docs/handoffs/2026-09-03-intent-to-completion-wave3.md) — verified state, restore paths, and the two operator-approved next steps (repo-wide /tmp fixture-leak sweep; fold task 45's open requirement into task 46).
+
+## 2026-09-04 — intent-to-completion wave 4 (CLI wiring, agent prompts, replay, bootstrap suite)
+
+Recorded tasks 3, 15, 26, 46. Code `d650bcc`, state `5d3c5d4`. Suite 2203/2206 (the same
+three failures owned by later tasks). No scope reverts — the wave-2 lesson held twice.
+
+Decisions worth carrying:
+
+- **`mp seed` is a transaction, not a write.** It requires an overlap review, holds the
+  repo seed lock across validate-then-create, refuses `overlap_review_stale` when the
+  review's inventory digest no longer matches, and leaves nothing on disk when refused. The
+  ledger begins `[bundle_created, overlap_review]`; warnings land after, so the review keeps
+  second place; a `--force` reseed replaces the ledger too, or the review would drift past
+  second.
+- **`live_check` offers no skip** (§7.2), enforced in both the rendered gate choices and the
+  `--deploy-skip` verb — a run cannot waive the evidence that its own deployment works.
+- **The assessor has two modes.** The implementation pass returns no `intent_verdict`
+  because nothing is deployed yet; only the final pass, bound to the deployed base, answers
+  "does this do what you meant?". Both prompts carry a v1 mode detected from their inputs,
+  because this run's v10 prompts are dispatched by a pinned v9.10.0 finish.
+- **`legacy` means the field is absent.** Inferring a completion class from ledger events
+  would report a class the run never decided.
+
+Two bugs worth remembering, both caught by review rather than by the suite:
+
+- **`blocked_by` could never fire.** A failed step stays `next`, so the "previous step
+  failed" branch was unreachable and the field was permanently null — an always-null
+  implementation was indistinguishable from the real one *because it was* the real one.
+- **`die()` inside a lock leaks the lock.** `process.exit()` never reaches `finally`, so
+  every refusal inside the seed lock left it held and the next seed failed. Locked regions
+  now throw and release before exiting.
+
+**Tasks 3 and 46 hit the five-round ceiling** (`review_ceiling` event) with one open
+requirement each: per-flag accepted finish-stage invocations (the task text assigns the
+exhaustive matrix to orchestration-integration), and a successful gate arm+record (needs the
+rollout fixture task 47 is declared to build). Both recorded as blocking reviews, not waved
+through. Findings narrowed every round and none repeated.
+
+One reviewer finding was disputed with evidence and not accepted: keying the goals-load gate
+on the bundle's capability marker breaks a stated contract in this repo ("the seed-time
+capability event does NOT block the first goals-load"), so the gate stays keyed on the
+interview ledger.

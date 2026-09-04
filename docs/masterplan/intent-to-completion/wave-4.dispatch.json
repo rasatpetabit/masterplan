@@ -4,7 +4,7 @@
   "wave": 4,
   "op": "dispatch_fabric",
   "contract_version": "fabric-native-v1",
-  "status": "pending",
+  "status": "recorded",
   "attempt": 1,
   "wave_token": "mp-wave-intent-to-completion-w4-a1",
   "handles": [],
@@ -121,5 +121,16 @@
         "repo": "/srv/dev/ras/masterplan/.worktrees/intent-to-completion"
       }
     ]
+  },
+  "completed_at": "2026-09-04T00:34:22.336Z",
+  "record_outcome": {
+    "recorded": [
+      3,
+      15,
+      26,
+      46
+    ],
+    "failed": [],
+    "cleared": true
   }
 }
