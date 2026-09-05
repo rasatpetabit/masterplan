@@ -815,3 +815,10 @@ The approved temporary settings exception was restored in finally and verified
 byte-identical to its preimage. GitHub delete_repo OAuth scope was user-approved
 and remains on the CLI credential. Bootstrap next step: docs_normalize. No real
 v10 release, production installation, or release-gate approval is implied.
+
+Bootstrap docs_normalize marker and verify are now recorded done. Fresh verify
+ran npm test && node bin/doctor.mjs . at WT 4c99cec: 2457/2457 tests, doctor exit 0
+with 0 errors and 6 warnings. Bounded evidence and all warning messages are in
+docs/masterplan/intent-to-completion/bootstrap-verify-summary.txt; complete local
+output /tmp/bootstrap-verify.log (digest in driver event). Next step is review,
+then assess. No release approval, publication, or production install yet.
