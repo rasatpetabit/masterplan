@@ -780,3 +780,24 @@ Live bootstrap rehearsal remains recorded FAILED. Scratch repository
 rasatpetabit/masterplan-rehearsal-164145 still requires operator cleanup. The
 explicit gh repo delete policy denial was not bypassed, and no live retry ran.
 Future cleanup capability must be authorized/resolved before another live cycle.
+
+## 2026-09-06 — authorized cleanup completed; fixture CI identity repaired
+
+User explicitly authorized agent-owned cleanup and temporary removal/restoration
+of only Bash(gh repo delete *) in /home/ras/.claude/settings.json. GitHub OAuth
+consent completed, verified delete_repo scope. Verified old scratch identity and
+deleted rasatpetabit/masterplan-rehearsal-164145 (exit 0, authenticated 404).
+Live rehearsal retry successfully created/merged PR #1 and deleted its own
+rasatpetabit/masterplan-rehearsal-3675009 (also authenticated 404). Settings were
+restored byte-for-byte to the saved preimage immediately after the run.
+
+Retry remained FAILED (58 rows, 14 failures), recorded by driver with digest
+74d966745992a960240e48177d3b47e6204317c8f2e06ca352cb69fe1346c373. Offline
+walk-only reproduction exposed first cause: gh_repo_resolved=false because the
+live gh_repo is null and the fixture origin is a local bare path. Parent added
+a synthetic scratch-derived gh_repo fallback ONLY to fixture target projection;
+real gh_cycle targets and production CI checks remain unchanged. New integration
+regression reproduces null live gh_repo, asserts fixture CI recovery and surfaces,
+and asserts zero gh invocations. Red before fix, green after; full WT 2457/2457.
+One separate inline review of this new issue returned clean. Prior host-fix review
+remains blocking-as-returned/fixes-unreviewed, not rewritten. Live rerun pending.
