@@ -79,7 +79,7 @@ is not itself a `phase` value.
 
 - **All `mp-*` agents** declare a routing-policy **lane name** as `model:` (e.g.
   `frontier`) and are resolved to the lane's model ref from
-  `policy/workflow-map.json` (`frontier` → `litellm/gpt-5.6-sol`).
+  `policy/workflow-map.json` (`frontier` → `litellm/gpt-6-astra`).
 - **New seeds default fabric on:** `mp seed` writes `state.dispatch.fabric: true`; fabric is the only wave path since the L2 legacy `launch_workflow` / `dispatch_foreground` path was deleted (A3) — the flag's `off` value is gone.
 - **Pi registration is bare-only:** `bin/register-pi-agents.mjs` writes `mp-*.md`
   under `~/.pi/agent/agents/`; managed `masterplan:mp-*` leftovers are removed;

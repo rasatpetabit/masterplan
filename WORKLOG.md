@@ -687,3 +687,49 @@ it to be *executable*; `PASS2_OMITTED` was enforced only as a side effect of ord
 authorize a receipt the operator was never shown; and the mid-run goals reminder had its own
 markdown scanner that could quote a fenced example the verdict was never judged against — the
 parser now captures the raw source line of the field it assigns, so the two cannot diverge.
+
+## 2026-09-05 — Astra consumer routing follow-up
+
+The authorized Sol→Astra migration was already applied in fleet source and MAIN's
+routing map by another session, but the intent-to-completion worktree still selected
+Sol. Refreshed its routing map through the authoritative generator (also carries
+already-authored Gemini fallback/effort changes), corrected current documentation
+examples in both trees, and made the WT resolver test check policy-defined effort
+rather than a stale xhigh literal. Focused WT routing/registration tests: 53/53.
+
+Fresh gateway probes returned HTTP 200 for bare gpt-6-astra and chatgpt/gpt-6-astra
+on both gateways; earlier unavailable-model conclusions are superseded. Catalogue
+cost/modality declarations alone do not prove billing or runtime capability loss.
+Registered mp-* agents use Astra, but loaded builtin breaker/judge still name
+legacy dispatch aliases. No legacy release was modified or activated and unrelated
+/srv/workflows WIP remains untouched. Full WT suite: 2451/2451, exit 0 (log /tmp/astra-full-tests-wflmxkzu.log).
+Native reviewer run 79d70761 returned clean for the effort assertion and made
+successful Bash/Read calls; resolver smoke returned Astra/high. The harness still
+marked the job failed: completion_guard incorrectly required edits for this
+explicitly read-only review. This is a reporting defect, not repaired here, and the
+review proves neither serving-model identity nor whole-release approval.
+
+### Live dispatch evidence supersedes the presumed serving gap
+
+Read `/srv/dev/petabit/litellm/AGENTS.md`: gateway alias ownership moved to
+LiteLLM `config/dispatch-policy.jsonc`; the legacy agent-dispatch release is not
+the gateway authority. Both authored/install policy and local blue/green config
+already map adversary, architecture, critic, cross-review, planned-execution to
+Astra. Fresh /model/info on 192.168.109.71:4000 and 192.168.109.72:4000 reports
+chatgpt/gpt-6-astra for every one of these five dispatch aliases. All ten alias
+chat-completion probes returned HTTP 200 and report_probe({"value":"ok"}).
+Responses expose the alias in `model`, so backend attribution comes from the
+live model/info mapping, not that response field. Initial probes omitted strict
+and returned 400 (`tools[0].strict must be a boolean`); rerun used strict:true.
+No production deployment was needed or performed. Legacy CLI provider=Sol is
+stale reporting, not evidence of an unmigrated serving route. Reporting defect
+and the separate read-only completion_guard defect remain open.
+
+MAIN verification: 1657/1659 full-suite tests pass. Both failures (A1 finish-step
+CLI flags, historical handoff references in no-agent-dispatch) reproduce on an
+unmodified git-archive of MAIN HEAD: targeted baseline 6/8. They are pre-existing
+and remain open; MAIN is not claimed green. Applied the same policy-effort
+assertion correction to MAIN as to WT. WT full suite remains 2451/2451.
+Fresh generator output byte-matches both repo routing maps. Installed workflow
+small tier has unrelated drift (deepseek-v4-flash:max vs canonical without :max);
+left untouched. Seven installed mp registrations check in sync with Astra.

@@ -41,7 +41,7 @@ test('resolveWorkClass returns the governed record for a known class', () => {
   assert.equal(r.agent, 'breaker');
   assert.equal(r.lane, 'frontier');
   assert.equal(r.cap, 'review');
-  assert.equal(r.effort, 'xhigh');
+  assert.equal(r.effort, loadRoutingPolicy().classes.adversary.effort);
   assert.equal(r.panel, 'adversarial');
   assert.equal(r.writes, false);
   assert.match(r.model, /^litellm\//);
