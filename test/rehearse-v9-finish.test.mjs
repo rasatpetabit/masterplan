@@ -294,6 +294,15 @@ test('the whole walk passes against fixtures and reports every row', () => {
   assert.ok(r.rows.size >= 55, `expected a broad row set, got ${r.rows.size}`);
 });
 
+test('local fixture walk resolves CI identity when live gh_repo is unset', (t) => {
+  const r = run(makeEnv(t, { ghRepo: null }), { only: 'walk' });
+  assert.equal(r.status, 0, r.out);
+  assert.equal(r.rows.get('fail_ci_wait_recorded'), 'ok');
+  assert.equal(r.rows.get('fail_ci_wait_recovered'), 'ok');
+  assert.equal(r.rows.get('walk_surfaces_live'), 'ok');
+  assert.deepEqual(r.ghLog, [], 'fixture CI evidence must not call live GitHub');
+});
+
 test('bare creation names use canonical metadata for every PR operation', (t) => {
   const r = run(makeEnv(t, { ghRepo: 'throwaway' }), { only: 'gh_cycle' });
   assert.equal(r.status, 0, r.out);

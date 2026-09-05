@@ -265,6 +265,9 @@ node -e '
   delete t.tag;
   Object.assign(t, {
     branch: process.argv[2], worktree: process.argv[3],
+    // The local bare remote cannot identify a GitHub repository. This synthetic identity
+    // is only for the fixture driver walk, whose CI outcomes are recorded locally.
+    gh_repo: t.gh_repo || "fixture/" + require("path").basename(process.argv[4]),
     install_root: process.argv[4] + "/install-root",
     pi_root: process.argv[4] + "/pi-root",
     claude_config_dir: process.argv[4] + "/claude-config",
