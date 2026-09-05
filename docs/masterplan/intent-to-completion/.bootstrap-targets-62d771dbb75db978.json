@@ -1,0 +1,17 @@
+{
+  "remote": "origin",
+  "version": "10.0.0",
+  "version_from": ".claude-plugin/plugin.json",
+  "branch": "masterplan/intent-to-completion",
+  "worktree": "/srv/dev/ras/masterplan/.worktrees/intent-to-completion",
+  "install_root": "/home/ras/.local/share/masterplan",
+  "pi_root": "/home/ras/.pi",
+  "claude_config_dir": "/home/ras/.claude",
+  "gh": "gh",
+  "gh_repo": null,
+  "workspace_roots": [],
+  "rehearsal_script": "scripts/rehearse-v9-finish.sh",
+  "verify_cmd": "npm test",
+  "pinned_v9": "/home/ras/.claude/plugins/cache/rasatpetabit-masterplan/masterplan/9.10.0",
+  "tag": "v10.0.0"
+}
