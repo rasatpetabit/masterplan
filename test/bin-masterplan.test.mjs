@@ -2832,6 +2832,43 @@ test('spec gate re-arm: goals-amend rewrites goals.md and re-arms the spec gate 
   assert.equal(op.gate, 'spec');
 });
 
+test('spec gate re-arm: an intent-only amendment invalidates review without changing any goal', () => {
+  const p = goalsBundle();
+  const dir = path.dirname(p);
+  const original = `topic: ship the widget
+
+## Intent
+why: operators need reliable delivery
+outcome: operators can use the widget
+anti_goals:
+- unrelated infrastructure
+done_means: the widget is usable
+
+## G1: the widget compiles
+## G2: the widget is documented
+## G3: the widget is available
+`;
+  const oldHash = goalsHashFn(original);
+  const gp = writeGoals(dir, original);
+  const approval = writeApproval(dir, oldHash);
+  const loaded = run(['goals-load', `--state=${p}`, `--goals=${gp}`, `--approval=${approval}`]);
+  assert.equal(loaded.status, 0, loaded.stderr);
+  const originalGoals = read(p).goals;
+  fs.writeFileSync(path.join(dir, 'spec.md'), '# spec\n');
+  passGate(p, 'spec');
+  const amended = original.replace('outcome: operators can use the widget', 'outcome: operators can use the widget independently');
+  const ap = writeAmendApproval(dir, oldHash, goalsHashFn(amended));
+  const change = run(['goals-amend', `--state=${p}`, `--goals=${writeAmendGoals(dir, amended)}`, `--approval=${ap}`, '--reason=clarify outcome', '--ts=2026-07-02T00:00:00Z']);
+  assert.equal(change.status, 0, change.stderr);
+  assert.deepEqual(read(p).goals, originalGoals);
+  assert.equal(read(p).goals_md_hash, goalsHashFn(amended));
+  const transition = run(['set-phase', `--state=${p}`, '--phase=plan']);
+  assert.equal(transition.status, 3, transition.stderr);
+  assert.equal(JSON.parse(transition.stdout).op, 'run_gate_review');
+  assert.equal(JSON.parse(transition.stdout).gate, 'spec');
+  assert.equal(read(p).phase, 'brainstorm');
+});
+
 test('split-brain guard (set-phase): goals.md drifted out-of-band from the committed hash → reconcile error, no advance', () => {
   const p = goalsBundle();
   const dir = path.dirname(p);

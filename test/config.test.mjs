@@ -111,6 +111,20 @@ test('context_watch partial defaults: repo sets threshold, focus stays null', ()
   assert.deepEqual(values.context_watch, { threshold: 80, focus: null });
 });
 
+test('nested context_watch replaces the whole lower-layer object rather than merging fields', () => {
+  for (const layer of ['repo', 'cli']) {
+    const { home, repoRoot } = freshDirs();
+    const user = 'context_watch:\n  threshold: 61\n  focus: user focus\n';
+    const repo = layer === 'repo'
+      ? 'context_watch:\n  threshold: 72\n'
+      : 'context_watch:\n  threshold: 72\n  focus: repository focus\n';
+    const cli = layer === 'cli' ? { context_watch: { threshold: 83 } } : {};
+    const { values, sources } = runConfig({ user, repo, cli, home, repoRoot });
+    assert.deepEqual(values.context_watch, { threshold: layer === 'repo' ? 72 : 83, focus: null });
+    assert.equal(sources.context_watch, layer);
+  }
+});
+
 test('context_watch threshold out of range throws', () => {
   const { home, repoRoot } = freshDirs();
   writeFile(repoRoot, '.masterplan.yaml', 'context_watch:\n  threshold: 100\n');

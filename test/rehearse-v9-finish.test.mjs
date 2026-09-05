@@ -55,6 +55,10 @@ require_repo() {
 }
 
 case "$sub" in
+  "api user")
+    [ "\${GH_SHIM_FAIL:-}" = "auth_identity" ] && exit 1
+    printf '%s\\n' "\${GH_SHIM_OWNER:-acme}"
+    exit 0 ;;
   "repo create")
     [ "\${GH_SHIM_FAIL:-}" = "repo_create" ] && { echo "repo already exists" >&2; exit 1; }
     grep -q "^created" "$STATE" 2>/dev/null && { echo "repo already exists" >&2; exit 1; }
@@ -67,9 +71,18 @@ case "$sub" in
   "repo view")
     [ "\${GH_SHIM_FAIL:-}" = "repo_view" ] && { echo "metadata unavailable" >&2; exit 1; }
     grep -q "^created" "$STATE" 2>/dev/null || { echo "no such repo" >&2; exit 1; }
-    # The shim emulates real gh: repo view accepts a bare short name and always reports the
-    # canonical nameWithOwner (the script binds PR/cleanup to it).
-    printf '{"url":"%s","nameWithOwner":"%s"}\\n' "$BARE" "\${GH_SHIM_OWNER:-acme}/throwaway"
+    # Model real HTTPS metadata; process-scoped Git config maps only this repository to BARE.
+    identity="\${GH_SHIM_OWNER:-acme}/throwaway"
+    url="https://$(cat "$STATE.host")/$identity"
+    case "\${GH_SHIM_FAIL:-}" in
+      meta_owner) identity="unrelated/throwaway" ;;
+      meta_name) identity="\${GH_SHIM_OWNER:-acme}/unrelated" ;;
+      meta_host) url="https://unrelated.invalid/$identity" ;;
+      meta_path) url="https://$(cat "$STATE.host")/unrelated/repository" ;;
+      meta_scheme) url="file://$BARE" ;;
+      meta_malformed) identity="invalid identity" ;;
+    esac
+    printf '{"url":"%s","nameWithOwner":"%s"}\\n' "$url" "$identity"
     exit 0 ;;
   "pr create")
     require_repo "$@" || exit 1
@@ -222,11 +235,22 @@ function runUncached(env, { only = null, scratch = null, fault = null, ghFail = 
   if (only) args.push(`--only=${only}`);
   if (scratch) args.push(`--scratch=${scratch}`);
   if (keep) args.push('--keep');
+  const selector = JSON.parse(fs.readFileSync(env.targetsPath, 'utf8')).gh_repo || 'throwaway';
+  const host = selector.split('/').length === 3 ? selector.split('/')[0] : 'default.invalid';
+  const configIndex = Number(process.env.GIT_CONFIG_COUNT || 0);
   const r = spawnSync('bash', args, {
     encoding: 'utf8',
     cwd: REPO,
     env: {
       ...process.env,
+      // Only the expected HTTPS identity maps to the local bare repository; all real
+      // network transports are forbidden, including in the deliberately-red regressions.
+      GH_HOST: 'default.invalid',
+      GH_SHIM_DEFAULT_HOST: 'default.invalid',
+      GIT_ALLOW_PROTOCOL: 'file',
+      GIT_CONFIG_COUNT: String(configIndex + 1),
+      [`GIT_CONFIG_KEY_${configIndex}`]: `url.${env.ghLog}.repos/repo.git.insteadOf`,
+      [`GIT_CONFIG_VALUE_${configIndex}`]: `https://${host}/acme/throwaway`,
       PATH: `${env.bin}:${process.env.PATH}`,
       GH_SHIM_LOG: env.ghLog,
       MP_PINNED_LOG: env.pinnedLog,
@@ -306,7 +330,8 @@ test('local fixture walk resolves CI identity when live gh_repo is unset', (t) =
 test('bare creation names use canonical metadata for every PR operation', (t) => {
   const r = run(makeEnv(t, { ghRepo: 'throwaway' }), { only: 'gh_cycle' });
   assert.equal(r.status, 0, r.out);
-  assert.ok(r.ghLog.some((l) => l.startsWith('repo create throwaway ')));
+  assert.ok(r.ghLog.some((l) => l === 'api user --jq .login'));
+  assert.ok(r.ghLog.some((l) => l.startsWith('repo create acme/throwaway ')));
   const calls = r.ghLog.filter((l) => /^pr (create|merge|view) /.test(l));
   assert.ok(calls.length >= 5);
   for (const call of calls) assert.match(call, /--repo acme\/throwaway(?: |$)/);
@@ -334,8 +359,28 @@ test('metadata failure retains the successfully created identity for cleanup', (
   const r = run(makeEnv(t, { ghRepo: 'throwaway' }), { only: 'gh_cycle', ghFail: 'repo_view' });
   assert.notEqual(r.status, 0);
   assert.match(r.out, /metadata unavailable/);
-  assert.ok(r.ghLog.some((l) => l === 'repo delete throwaway --yes'), r.out);
+  assert.ok(r.ghLog.some((l) => l === 'repo delete acme/throwaway --yes'), r.out);
   assert.equal(r.ghLog.filter((l) => l.startsWith('pr ')).length, 0);
+});
+
+for (const fault of ['meta_owner', 'meta_name', 'meta_host', 'meta_path', 'meta_scheme', 'meta_malformed']) {
+  test(`metadata mismatch ${fault} stops before push/PR and cannot redirect cleanup`, (t) => {
+    const env = makeEnv(t);
+    const r = run(env, { only: 'gh_cycle', ghFail: fault });
+    assert.notEqual(r.status, 0, r.out);
+    assert.equal(r.rows.get('gh_repo_resolve'), 'fail', r.out);
+    assert.deepEqual(r.ghLog.filter((l) => l.startsWith('repo delete ')), ['repo delete acme/throwaway --yes']);
+    assert.deepEqual(r.ghLog.filter((l) => l.startsWith('pr ')), []);
+    const refs = spawnSync('git', ['--git-dir', `${env.ghLog}.repos/repo.git`, 'for-each-ref'], { encoding: 'utf8' });
+    assert.equal(refs.status, 0, refs.stderr);
+    assert.equal(refs.stdout, '', 'no branch may be pushed before metadata identity validation');
+  });
+}
+
+test('bare creation refuses an unavailable authenticated identity before creating anything', (t) => {
+  const r = run(makeEnv(t, { ghRepo: 'throwaway' }), { only: 'gh_cycle', ghFail: 'auth_identity' });
+  assert.notEqual(r.status, 0);
+  assert.equal(r.ghLog.filter((l) => l.startsWith('repo create ') || l.startsWith('repo delete ')).length, 0);
 });
 
 test('cleanup denial reports the owned repository and diagnostic', (t) => {

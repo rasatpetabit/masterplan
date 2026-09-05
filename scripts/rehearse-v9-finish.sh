@@ -307,28 +307,49 @@ fi
 # create/populate/PR/merge/delete cycle here is what makes it not first-time.
 if selected gh_cycle; then
   THROWAWAY_NAME="${GH_REPO:-masterplan-rehearsal-$$}"
-  THROWAWAY_REPO=""   # canonical nameWithOwner, resolved after creation; empty until then
+  # Resolve a bare selector BEFORE creation, independently of repository metadata.
+  case "$THROWAWAY_NAME" in
+    */*) ;;
+    *)
+      if ! AUTH_OWNER="$("$GH_BIN" api user --jq .login 2>>"$GH_ERR")" ||
+         ! printf '%s\n' "$AUTH_OWNER" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9-]*$'; then
+        row gh_repo_resolve fail "cannot establish the authenticated owner before creation"
+        exit 3
+      fi
+      THROWAWAY_NAME="$AUTH_OWNER/$THROWAWAY_NAME" ;;
+  esac
+  THROWAWAY_REPO=""   # populated only after metadata matches the creation identity
   say "RUN: gh repo create $THROWAWAY_NAME --private --confirm"
   if "$GH_BIN" repo create "$THROWAWAY_NAME" --private --confirm >/dev/null 2>>"$GH_ERR"; then
     OWNED_REPO="$THROWAWAY_NAME"
     row gh_repo_create ok "created private throwaway $THROWAWAY_NAME"
-    # Resolve the canonical nameWithOwner from the repository metadata (create's own stdout is not
-    # reliable across gh versions), then bind EVERY later --repo to THAT name: gh pr list/pr create/
-    # pr merge/pr view reject a bare short name with 'expected the [HOST/]OWNER/REPO format'.
+    # Metadata is evidence, never authority to retarget ownership. Validate it before
+    # using its URL for a push or invoking any PR operation.
     say "RUN: gh repo view $THROWAWAY_NAME --json nameWithOwner,url"
-    THROWAWAY_META="$("$GH_BIN" repo view "$THROWAWAY_NAME" --json nameWithOwner,url 2>>"$GH_ERR")"
-    THROWAWAY_REPO="$(printf '%s' "$THROWAWAY_META" | json_field nameWithOwner)"
-    THROWAWAY_URL="$(printf '%s' "$THROWAWAY_META" | json_field url)"
-    if [ -z "$THROWAWAY_REPO" ]; then
-      row gh_repo_resolve fail "gh repo view returned no nameWithOwner — cannot bind the PR commands to a canonical repository: $(tail -c 200 "$GH_ERR" | tr '\n' ' ')"
+    if ! THROWAWAY_META="$("$GH_BIN" repo view "$THROWAWAY_NAME" --json nameWithOwner,url 2>>"$GH_ERR")"; then
+      row gh_repo_resolve fail "repository metadata unavailable: $(tail -c 200 "$GH_ERR" | tr '\n' ' ')"
       exit 3
     fi
-    # nameWithOwner omits the host. Preserve an explicit HOST/OWNER/REPO selector
-    # so PR operations and cleanup stay on the server where creation succeeded.
-    case "$THROWAWAY_NAME" in
-      */*/*) THROWAWAY_REPO="${THROWAWAY_NAME%%/*}/$THROWAWAY_REPO" ;;
-    esac
-    OWNED_REPO="$THROWAWAY_REPO"
+    THROWAWAY_URL="$(printf '%s' "$THROWAWAY_META" | json_field url)"
+    if ! node -e '
+      const [selector, defaultHost, metadata] = process.argv.slice(1);
+      try {
+        const parts = selector.split("/");
+        const host = parts.length === 3 ? parts.shift() : defaultHost;
+        const identity = parts.join("/");
+        const meta = JSON.parse(metadata);
+        if (parts.length !== 2 || !parts.every(p => /^[A-Za-z0-9_.-]+$/.test(p))) throw Error("invalid creation selector");
+        if (typeof meta.nameWithOwner !== "string" || meta.nameWithOwner.toLowerCase() !== identity.toLowerCase()) throw Error("owner/name mismatch");
+        const url = new URL(meta.url);
+        if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash ||
+            url.host.toLowerCase() !== host.toLowerCase() ||
+            url.pathname.replace(/\/$/, "").toLowerCase() !== "/" + identity.toLowerCase()) throw Error("repository URL mismatch");
+      } catch (error) { console.error(error.message); process.exit(1); }
+    ' "$THROWAWAY_NAME" "${GH_HOST:-github.com}" "$THROWAWAY_META" 2>>"$GH_ERR"; then
+      row gh_repo_resolve fail "repository metadata does not match the created identity: $(tail -c 200 "$GH_ERR" | tr '\n' ' ')"
+      exit 3
+    fi
+    THROWAWAY_REPO="$THROWAWAY_NAME"
     # A newly created repository is EMPTY. A pull request needs both a base and a head branch
     # to exist on it, so the branches are pushed first — without this the live cycle fails
     # regardless of what a shim would accept.
@@ -408,8 +429,8 @@ if selected gh_cycle; then
     else
       row gh_pr_reconcile_other fail "an unknown PR reported MERGED"
     fi
-    say "RUN: gh repo delete $THROWAWAY_REPO --yes"
-    if "$GH_BIN" repo delete "$THROWAWAY_REPO" --yes >/dev/null 2>>"$GH_ERR"; then
+    say "RUN: gh repo delete $OWNED_REPO --yes"
+    if "$GH_BIN" repo delete "$OWNED_REPO" --yes >/dev/null 2>>"$GH_ERR"; then
       row gh_repo_delete ok "throwaway repo deleted"
       OWNED_REPO=""; THROWAWAY_REPO=""
     else
