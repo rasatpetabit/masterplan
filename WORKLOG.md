@@ -801,3 +801,17 @@ regression reproduces null live gh_repo, asserts fixture CI recovery and surface
 and asserts zero gh invocations. Red before fix, green after; full WT 2457/2457.
 One separate inline review of this new issue returned clean. Prior host-fix review
 remains blocking-as-returned/fixes-unreviewed, not rewritten. Live rerun pending.
+
+## 2026-09-06 — live rehearsal recovered and cleanup verified
+
+After fixture-CI repair 4c99cec, the live rehearsal passed 69/69 rows, exit 0.
+Real throwaway GitHub PR #1 merged and its repo was deleted by the script.
+Authenticated lookups confirm 404 for the original orphan 164145, first retry
+3675009, and final scratch 3783258 (all rasatpetabit/masterplan-rehearsal-*).
+The driver recorded rehearsal status=recovered, event index 122, digest
+6f5d227dab902959b97d847318435ecad017c118f6b2a4a8646bd9f39e494482.
+Exact output is durable at docs/masterplan/intent-to-completion/rehearsal-recovered.log.
+The approved temporary settings exception was restored in finally and verified
+byte-identical to its preimage. GitHub delete_repo OAuth scope was user-approved
+and remains on the CLI credential. Bootstrap next step: docs_normalize. No real
+v10 release, production installation, or release-gate approval is implied.
