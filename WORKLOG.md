@@ -822,3 +822,34 @@ with 0 errors and 6 warnings. Bounded evidence and all warning messages are in
 docs/masterplan/intent-to-completion/bootstrap-verify-summary.txt; complete local
 output /tmp/bootstrap-verify.log (digest in driver event). Next step is review,
 then assess. No release approval, publication, or production install yet.
+
+## 2026-09-06 — release review finding fixed once, approval remains open
+
+Native parallel run 4af02f77-d83b-4bdf-847d-a772e8b2d1b9 assessed frozen 4c99cec.
+Security slice returned rework: unvalidated metadata could overwrite the successfully
+created cleanup identity. Parent verified the cited lines and frozen clean detached
+snapshot. Bootstrap review was recorded FAILED: emitted diff-stat exited 0, while
+the separately executed structured verdict gate exited 1. Original report is retained
+at docs/masterplan/intent-to-completion/release-security-cleanup-review.md. Only the
+reported security ranges were reviewed; the remaining release regions are unreviewed.
+
+One parent fix round binds both cleanup paths permanently to the creation selector,
+resolves bare selectors through authenticated identity before creation, and validates
+metadata owner/name and HTTPS URL scheme/host/path before pushes or PR operations.
+Failure status is checked before trusting auth or repository metadata. Test transport
+mapping is PROCESS-SCOPED, all actual network protocols disabled; no global Git or
+harness setting changes. Seven new regressions failed against the original script,
+then passed; focused rehearsal suite 42/42. No post-fix reviewer invocation.
+
+G1–G5 assessor returned achieved/partial/achieved/partial/achieved. G6 explicitly remains
+pending, outside pre-publish scope per approved spec:829–838. Parent added two missing
+behavioral assertions: intent-only amendment re-arms the spec gate with goals unchanged;
+repo-over-user and CLI-over-repo nested config use whole-object replacement. Both pass
+without production behavior changes. Original partial verdicts remain unchanged; these
+are additional parent-confirmed evidence, not a fabricated assessor approval.
+
+Final npm test && node bin/doctor.mjs . && git diff --check: exit0, 2466/2466 tests,
+doctor0 errors6 warnings. Latest fix has NOT been live-rehearsed. Prior live 69/69 receipt
+belongs to 4c99cec. Release review remains failed; verification at the new SHA must be
+recorded through the driver before advancing. Stop for explicit user decision on review
+cap/remaining coverage; no release/tag/push/install or silent review override.
