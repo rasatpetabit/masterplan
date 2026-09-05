@@ -88,13 +88,22 @@ VERSION_FROM="$(tgt version_from)"; VERSION_FROM="${VERSION_FROM:-.claude-plugin
 # ---- scratch -----------------------------------------------------------------
 if [ -z "$SCRATCH" ]; then SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/mp-rehearsal-XXXXXX")"; fi
 mkdir -p "$SCRATCH"
+# gh stderr for the throwaway cycle lands here and is surfaced in the fail rows, so an error
+# is diagnostic instead of silently swallowed into an empty capture.
+GH_ERR="$SCRATCH/gh-errors.log"
+# Ownership is established only by successful creation, independently of metadata lookup.
+OWNED_REPO=""
+THROWAWAY_REPO=""
 cleanup() {
-  # Unconditional: the throwaway GitHub repo must not survive a failure, which is exactly
-  # the row the test simulates a mid-cycle crash for.
-  if [ -n "${THROWAWAY_REPO:-}" ]; then
-    "$GH_BIN" repo delete "$THROWAWAY_REPO" --yes >/dev/null 2>&1 || true
+  local code=$?
+  if [ -n "$OWNED_REPO" ]; then
+    if ! "$GH_BIN" repo delete "$OWNED_REPO" --yes >/dev/null 2>>"$GH_ERR"; then
+      printf 'cleanup failed for owned repository %s: %s\n' "$OWNED_REPO" "$(tail -c 200 "$GH_ERR" | tr '\n' ' ')" >&2
+      code=1
+    fi
   fi
   if [ "$KEEP" -eq 0 ]; then rm -rf "$SCRATCH"; fi
+  exit "$code"
 }
 trap cleanup EXIT
 
@@ -248,6 +257,12 @@ YAML
 node -e '
   const fs = require("fs");
   const t = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+  // The driver-arm-created target file carries the FULL resolved set, including the tag it
+  // DERIVES from the version at resolve time. That tag is not an authored override —
+  // resolveTargets refuses it by design — so it is projected out of the fixture overrides
+  // here, while the original armed file (and its digest) is left untouched for the record
+  // re-hash. tag is the only derived-only key; every other resolved key is a valid override.
+  delete t.tag;
   Object.assign(t, {
     branch: process.argv[2], worktree: process.argv[3],
     install_root: process.argv[4] + "/install-root",
@@ -288,15 +303,32 @@ fi
 # The one first-time live action in step 5 is `gh pr merge`. Rehearsing the whole
 # create/populate/PR/merge/delete cycle here is what makes it not first-time.
 if selected gh_cycle; then
-  THROWAWAY_REPO="${GH_REPO:-masterplan-rehearsal-$$}"
-  say "RUN: gh repo create $THROWAWAY_REPO --private --confirm"
-  if "$GH_BIN" repo create "$THROWAWAY_REPO" --private --confirm >/dev/null 2>&1; then
-    row gh_repo_create ok "created private throwaway $THROWAWAY_REPO"
+  THROWAWAY_NAME="${GH_REPO:-masterplan-rehearsal-$$}"
+  THROWAWAY_REPO=""   # canonical nameWithOwner, resolved after creation; empty until then
+  say "RUN: gh repo create $THROWAWAY_NAME --private --confirm"
+  if "$GH_BIN" repo create "$THROWAWAY_NAME" --private --confirm >/dev/null 2>>"$GH_ERR"; then
+    OWNED_REPO="$THROWAWAY_NAME"
+    row gh_repo_create ok "created private throwaway $THROWAWAY_NAME"
+    # Resolve the canonical nameWithOwner from the repository metadata (create's own stdout is not
+    # reliable across gh versions), then bind EVERY later --repo to THAT name: gh pr list/pr create/
+    # pr merge/pr view reject a bare short name with 'expected the [HOST/]OWNER/REPO format'.
+    say "RUN: gh repo view $THROWAWAY_NAME --json nameWithOwner,url"
+    THROWAWAY_META="$("$GH_BIN" repo view "$THROWAWAY_NAME" --json nameWithOwner,url 2>>"$GH_ERR")"
+    THROWAWAY_REPO="$(printf '%s' "$THROWAWAY_META" | json_field nameWithOwner)"
+    THROWAWAY_URL="$(printf '%s' "$THROWAWAY_META" | json_field url)"
+    if [ -z "$THROWAWAY_REPO" ]; then
+      row gh_repo_resolve fail "gh repo view returned no nameWithOwner — cannot bind the PR commands to a canonical repository: $(tail -c 200 "$GH_ERR" | tr '\n' ' ')"
+      exit 3
+    fi
+    # nameWithOwner omits the host. Preserve an explicit HOST/OWNER/REPO selector
+    # so PR operations and cleanup stay on the server where creation succeeded.
+    case "$THROWAWAY_NAME" in
+      */*/*) THROWAWAY_REPO="${THROWAWAY_NAME%%/*}/$THROWAWAY_REPO" ;;
+    esac
+    OWNED_REPO="$THROWAWAY_REPO"
     # A newly created repository is EMPTY. A pull request needs both a base and a head branch
     # to exist on it, so the branches are pushed first — without this the live cycle fails
     # regardless of what a shim would accept.
-    say "RUN: gh repo view $THROWAWAY_REPO --json url"
-    THROWAWAY_URL="$("$GH_BIN" repo view "$THROWAWAY_REPO" --json url 2>/dev/null | json_field url)"
     if [ -n "$THROWAWAY_URL" ]; then
       G "$WORK" remote remove throwaway >/dev/null 2>&1 || true
       G "$WORK" remote add throwaway "$THROWAWAY_URL"
@@ -313,22 +345,22 @@ if selected gh_cycle; then
       exit 3
     fi
     say "RUN: gh pr create --repo $THROWAWAY_REPO --head $BRANCH --base main"
-    PR_URL="$("$GH_BIN" pr create --repo "$THROWAWAY_REPO" --title "rehearsal" --body "rehearsal" --head "$BRANCH" --base main 2>/dev/null)"
+    PR_URL="$("$GH_BIN" pr create --repo "$THROWAWAY_REPO" --title "rehearsal" --body "rehearsal" --head "$BRANCH" --base main 2>>"$GH_ERR")"
     PR_NUM="${PR_URL##*/}"
     if [ -n "$PR_NUM" ] && [ "$PR_NUM" -eq "$PR_NUM" ] 2>/dev/null; then
       row gh_pr_create ok "gh pr create opened PR #$PR_NUM on the populated repo"
     else
-      row gh_pr_create fail "gh pr create returned no PR number (got '${PR_URL:-<empty>}')"
+      row gh_pr_create fail "gh pr create returned no PR number (got '${PR_URL:-<empty>}': $(tail -c 200 "$GH_ERR" | tr '\n' ' '))"
       PR_NUM=""
     fi
     say "RUN: gh pr merge --merge --repo $THROWAWAY_REPO $PR_NUM"
-    if [ -n "$PR_NUM" ] && "$GH_BIN" pr merge --repo "$THROWAWAY_REPO" "$PR_NUM" --merge >/dev/null 2>&1; then
+    if [ -n "$PR_NUM" ] && "$GH_BIN" pr merge --repo "$THROWAWAY_REPO" "$PR_NUM" --merge >/dev/null 2>>"$GH_ERR"; then
       row gh_pr_merge ok "gh pr merge --merge landed PR #$PR_NUM"
     else
-      row gh_pr_merge fail "gh pr merge failed"
+      row gh_pr_merge fail "gh pr merge failed: $(tail -c 200 "$GH_ERR" | tr '\n' ' ')"
     fi
     # §10.3 reconciliation: read the state back, never re-merge blind.
-    PR_VIEW="$("$GH_BIN" pr view --repo "$THROWAWAY_REPO" "${PR_NUM:-0}" --json state,mergedAt,mergeCommit 2>/dev/null)"
+    PR_VIEW="$("$GH_BIN" pr view --repo "$THROWAWAY_REPO" "${PR_NUM:-0}" --json state,mergedAt,mergeCommit 2>>"$GH_ERR")"
     PR_STATE="$(printf '%s' "$PR_VIEW" | json_field state)"
     # "record the sha and continue" means a sha is actually taken: a MERGED response with no
     # mergeCommit oid is not something to continue from.
@@ -359,32 +391,31 @@ if selected gh_cycle; then
     G "$WORK" add open-probe.txt; G "$WORK" commit -q -m "open-probe commit"
     G "$WORK" push -q throwaway "$PROBE_BRANCH"
     G "$WORK" checkout -q main
-    OPEN_URL="$("$GH_BIN" pr create --repo "$THROWAWAY_REPO" --title "unmerged" --body "unmerged" --head "$PROBE_BRANCH" --base main 2>/dev/null)"
+    OPEN_URL="$("$GH_BIN" pr create --repo "$THROWAWAY_REPO" --title "unmerged" --body "unmerged" --head "$PROBE_BRANCH" --base main 2>>"$GH_ERR")"
     OPEN_NUM="${OPEN_URL##*/}"
-    OPEN_STATE="$("$GH_BIN" pr view --repo "$THROWAWAY_REPO" "${OPEN_NUM:-0}" --json state,mergedAt,mergeCommit 2>/dev/null | json_field state)"
+    OPEN_STATE="$("$GH_BIN" pr view --repo "$THROWAWAY_REPO" "${OPEN_NUM:-0}" --json state,mergedAt,mergeCommit 2>>"$GH_ERR" | json_field state)"
     if [ "$OPEN_STATE" = "OPEN" ]; then
       row gh_pr_reconcile_open ok "an unmerged PR (#${OPEN_NUM}, distinct head) reports OPEN -> retry once, then stop"
     else
       row gh_pr_reconcile_open fail "the unmerged probe PR reported '${OPEN_STATE:-<unreadable>}', not OPEN"
     fi
-    OTHER_STATE="$("$GH_BIN" pr view --repo "$THROWAWAY_REPO" 4242 --json state,mergedAt,mergeCommit 2>/dev/null | json_field state)"
+    OTHER_STATE="$("$GH_BIN" pr view --repo "$THROWAWAY_REPO" 4242 --json state,mergedAt,mergeCommit 2>>"$GH_ERR" | json_field state)"
     if [ "$OTHER_STATE" != "MERGED" ]; then
       row gh_pr_reconcile_other ok "an unknown PR reports '${OTHER_STATE:-unreadable}' -> stop, never a blind re-merge"
     else
       row gh_pr_reconcile_other fail "an unknown PR reported MERGED"
     fi
     say "RUN: gh repo delete $THROWAWAY_REPO --yes"
-    if "$GH_BIN" repo delete "$THROWAWAY_REPO" --yes >/dev/null 2>&1; then
+    if "$GH_BIN" repo delete "$THROWAWAY_REPO" --yes >/dev/null 2>>"$GH_ERR"; then
       row gh_repo_delete ok "throwaway repo deleted"
-      THROWAWAY_REPO=""
+      OWNED_REPO=""; THROWAWAY_REPO=""
     else
-      row gh_repo_delete fail "throwaway repo NOT deleted — it would outlive the rehearsal"
+      row gh_repo_delete fail "throwaway repo NOT deleted — it would outlive the rehearsal: $(tail -c 200 "$GH_ERR" | tr '\n' ' ')"
     fi
     G "$WORK" remote remove throwaway >/dev/null 2>&1 || true
     G "$WORK" branch -q -D "$PROBE_BRANCH" >/dev/null 2>&1 || true
   else
-    row gh_repo_create fail "gh repo create failed; the live merge would be a first-time action"
-    THROWAWAY_REPO=""
+    row gh_repo_create fail "gh repo create failed; the live merge would be a first-time action: $(tail -c 200 "$GH_ERR" | tr '\n' ' ')"
   fi
 fi
 

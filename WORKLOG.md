@@ -460,3 +460,31 @@ assertion correction to MAIN as to WT. WT full suite remains 2451/2451.
 Fresh generator output byte-matches both repo routing maps. Installed workflow
 small tier has unrelated drift (deepseek-v4-flash:max vs canonical without :max);
 left untouched. Seven installed mp registrations check in sync with Astra.
+
+## 2026-09-05 — offline bootstrap rehearsal repair
+
+Recovered partial work from timed-out builder 0fb9803f (both attempts failed; no
+accepted builder result). Scoped files: scripts/rehearse-v9-finish.sh and the
+actual integration harness test/rehearse-v9-finish.test.mjs. Parent completed
+fixture-only fixes and tests: strip derived tag at fixture-override boundary
+without changing the armed receipt; resolve canonical repository metadata for PR
+commands; retain created-resource identity across metadata failure; never delete
+after failed creation; emit cleanup error and identity instead of swallowing it.
+Tests consume an actual armStep-produced targets file and preserve its bytes.
+New regressions on the original script: 4 failures, 1 already-safe case passed.
+Focused suite before review: 33/33; full suite before review: 2455/2455.
+
+Single review 5f3b1872 returned BLOCKING: nameWithOwner drops an explicit host,
+risking PR operations/deletion on the default server. Parent reproduced this
+with distinct explicit/default fixture hosts, then retained HOST when building
+the canonical selector. Host regression red then green; final full WT suite
+2456/2456 (exit 0), git diff --check passes. Logs: /tmp/bootstrap-host-red.log,
+/tmp/bootstrap-host-green.log, /tmp/bootstrap-full-green.log. All GitHub test
+operations used the local shim. One permitted fix round; NO second review.
+Review remains blocking-as-returned, host correction fixes-not-re-reviewed; no
+release approval or live outcome inferred from offline tests.
+
+Live bootstrap rehearsal remains recorded FAILED. Scratch repository
+rasatpetabit/masterplan-rehearsal-164145 still requires operator cleanup. The
+explicit gh repo delete policy denial was not bypassed, and no live retry ran.
+Future cleanup capability must be authorized/resolved before another live cycle.

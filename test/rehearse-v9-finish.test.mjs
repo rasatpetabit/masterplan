@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { armStep, targetsDigest } from '../scripts/bootstrap-v10.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SCRIPT = path.join(REPO, 'scripts', 'rehearse-v9-finish.sh');
@@ -29,27 +30,59 @@ echo "$*" >> "$LOG"
 sub="$1 $2"
 
 pr_file() { echo "$STATE.pr.$1"; }
+repo_host() {
+  case "$1" in
+    */*/*) printf '%s' "\${1%%/*}" ;;
+    *) printf '%s' "\${GH_SHIM_DEFAULT_HOST:-default.invalid}" ;;
+  esac
+}
+check_host() {
+  [ "$(repo_host "$1")" = "$(cat "$STATE.host")" ] || {
+    echo "wrong host: $1 addresses an unrelated repository" >&2; return 1;
+  }
+}
+require_repo() {
+  local repo=""
+  while [ $# -gt 0 ]; do
+    if [ "$1" = "--repo" ]; then repo="$2"; break; fi
+    shift
+  done
+  check_host "$repo" || return 1
+  case "$repo" in */*/*) repo="\${repo#*/}" ;; esac
+  [ "$repo" = "\${GH_SHIM_OWNER:-acme}/throwaway" ] || {
+    echo "expected canonical [HOST/]OWNER/REPO, got $repo" >&2; return 1;
+  }
+}
 
 case "$sub" in
   "repo create")
+    [ "\${GH_SHIM_FAIL:-}" = "repo_create" ] && { echo "repo already exists" >&2; exit 1; }
     grep -q "^created" "$STATE" 2>/dev/null && { echo "repo already exists" >&2; exit 1; }
     mkdir -p "$REPOS"
     git init -q --bare --initial-branch=main "$BARE" || exit 1
     echo created >> "$STATE"
+    repo_host "$3" > "$STATE.host"
     echo 0 > "$STATE.counter"
     exit 0 ;;
   "repo view")
+    [ "\${GH_SHIM_FAIL:-}" = "repo_view" ] && { echo "metadata unavailable" >&2; exit 1; }
     grep -q "^created" "$STATE" 2>/dev/null || { echo "no such repo" >&2; exit 1; }
-    printf '{"url":"%s"}\\n' "$BARE"
+    # The shim emulates real gh: repo view accepts a bare short name and always reports the
+    # canonical nameWithOwner (the script binds PR/cleanup to it).
+    printf '{"url":"%s","nameWithOwner":"%s"}\\n' "$BARE" "\${GH_SHIM_OWNER:-acme}/throwaway"
     exit 0 ;;
   "pr create")
+    require_repo "$@" || exit 1
     grep -q "^created" "$STATE" 2>/dev/null || { echo "no such repo" >&2; exit 1; }
     [ "\${GH_SHIM_FAIL:-}" = "pr_create" ] && exit 1
-    head=""; base="main"
+    # real gh pr create rejects a bare --repo with the [HOST/]OWNER/REPO format error; the
+    # script must pass the canonical nameWithOwner, so a bare name is a fixture failure.
+    head=""; base="main"; repo=""
     while [ $# -gt 0 ]; do
-      case "$1" in --head) head="$2" ;; --base) base="$2" ;; esac
+      case "$1" in --repo) repo="$2" ;; --head) head="$2" ;; --base) base="$2" ;; esac
       shift
     done
+    case "$repo" in */*) ;; *) echo "expected the \\"[HOST/]OWNER/REPO\\" format, got \\"$repo\\"" >&2; exit 1 ;; esac
     [ -n "$head" ] || { echo "no head branch given" >&2; exit 1; }
     git -C "$BARE" rev-parse --verify -q "refs/heads/$base" >/dev/null || { echo "base branch $base does not exist" >&2; exit 1; }
     git -C "$BARE" rev-parse --verify -q "refs/heads/$head" >/dev/null || { echo "head branch $head does not exist" >&2; exit 1; }
@@ -64,6 +97,7 @@ case "$sub" in
     echo "https://example.invalid/pr/$n"
     exit 0 ;;
   "pr merge")
+    require_repo "$@" || exit 1
     num=""
     for a in "$@"; do case "$a" in ''|*[!0-9]*) ;; *) num="$a"; break ;; esac; done
     [ -n "$num" ] && [ -f "$(pr_file "$num")" ] || { echo "no such pr" >&2; exit 1; }
@@ -86,6 +120,7 @@ case "$sub" in
     echo merged >> "$STATE"
     exit 0 ;;
   "pr view")
+    require_repo "$@" || exit 1
     num=""
     for a in "$@"; do case "$a" in ''|*[!0-9]*) ;; *) num="$a"; break ;; esac; done
     [ -n "$num" ] && [ -f "$(pr_file "$num")" ] || { echo "no pull request found" >&2; exit 1; }
@@ -99,6 +134,8 @@ case "$sub" in
     fi
     exit 0 ;;
   "repo delete")
+    check_host "$3" || exit 1
+    [ "\${GH_SHIM_FAIL:-}" = "repo_delete" ] && { echo "deletion denied" >&2; exit 1; }
     grep -q "^created" "$STATE" 2>/dev/null || { echo "no such repo" >&2; exit 1; }
     echo deleted >> "$STATE"
     exit 0 ;;
@@ -215,7 +252,33 @@ let DEFAULT = null;
 function defaultRun() {
   if (!DEFAULT) {
     const env = makeEnv(null);
+    // Exercise the actual driver-produced resolved artifact, not hand-authored overrides.
+    const root = path.join(env.tmp, 'armed');
+    const bundle = path.join(root, 'docs', 'masterplan', 'rehearsal');
+    fs.mkdirSync(bundle, { recursive: true });
+    fs.mkdirSync(path.join(root, 'scripts'), { recursive: true });
+    fs.copyFileSync(SCRIPT, path.join(root, 'scripts', path.basename(SCRIPT)));
+    const git = (...args) => {
+      const r = spawnSync('git', ['-c', 'user.name=fixture', '-c', 'user.email=fixture@invalid', '-c', 'commit.gpgsign=false', ...args], { cwd: root, encoding: 'utf8' });
+      assert.equal(r.status, 0, r.stderr);
+    };
+    git('init', '-q', '--initial-branch=masterplan/rehearsal');
+    git('add', 'scripts');
+    git('commit', '-qm', 'fixture');
+    git('branch', 'main');
+    const statePath = path.join(bundle, 'state.yml');
+    fs.copyFileSync(env.statePath, statePath);
+    const targets = JSON.parse(fs.readFileSync(env.targetsPath, 'utf8'));
+    const armed = armStep({ statePath, step: 'rehearsal', targets });
+    assert.equal(armed.ok, true, JSON.stringify(armed));
+    const files = fs.readdirSync(bundle).filter((name) => name.startsWith('.bootstrap-targets-'));
+    assert.equal(files.length, 1);
+    env.targetsPath = path.join(bundle, files[0]);
+    const before = fs.readFileSync(env.targetsPath, 'utf8');
+    assert.equal(JSON.parse(before).tag, 'v10.0.0');
+    assert.equal(files[0], `.bootstrap-targets-${targetsDigest(JSON.parse(before)).slice(0, 16)}.json`);
     DEFAULT = { env, r: run(env) };
+    assert.equal(fs.readFileSync(env.targetsPath, 'utf8'), before, 'rehearsal must preserve the armed receipt bytes');
   }
   return DEFAULT;
 }
@@ -229,6 +292,49 @@ test('the whole walk passes against fixtures and reports every row', () => {
   const failed = [...r.rows].filter(([, v]) => v !== 'ok');
   assert.deepEqual(failed, [], `failing rows: ${JSON.stringify(failed)}`);
   assert.ok(r.rows.size >= 55, `expected a broad row set, got ${r.rows.size}`);
+});
+
+test('bare creation names use canonical metadata for every PR operation', (t) => {
+  const r = run(makeEnv(t, { ghRepo: 'throwaway' }), { only: 'gh_cycle' });
+  assert.equal(r.status, 0, r.out);
+  assert.ok(r.ghLog.some((l) => l.startsWith('repo create throwaway ')));
+  const calls = r.ghLog.filter((l) => /^pr (create|merge|view) /.test(l));
+  assert.ok(calls.length >= 5);
+  for (const call of calls) assert.match(call, /--repo acme\/throwaway(?: |$)/);
+  assert.ok(r.ghLog.some((l) => l === 'repo delete acme/throwaway --yes'));
+});
+
+test('explicit creation host is preserved for PR operations and cleanup', (t) => {
+  const repo = 'enterprise.invalid/acme/throwaway';
+  const r = run(makeEnv(t, { ghRepo: repo }), { only: 'gh_cycle' });
+  assert.equal(r.status, 0, r.out);
+  const calls = r.ghLog.filter((l) => /^pr (create|merge|view) /.test(l));
+  assert.ok(calls.length >= 5);
+  for (const call of calls) assert.ok(call.includes(`--repo ${repo} `), call);
+  assert.deepEqual(r.ghLog.filter((l) => l.startsWith('repo delete ')), [`repo delete ${repo} --yes`]);
+});
+
+test('failed creation never deletes a pre-existing repository', (t) => {
+  const r = run(makeEnv(t), { only: 'gh_cycle', ghFail: 'repo_create' });
+  assert.notEqual(r.status, 0);
+  assert.equal(r.rows.get('gh_repo_create'), 'fail');
+  assert.equal(r.ghLog.filter((l) => l.startsWith('repo delete ')).length, 0);
+});
+
+test('metadata failure retains the successfully created identity for cleanup', (t) => {
+  const r = run(makeEnv(t, { ghRepo: 'throwaway' }), { only: 'gh_cycle', ghFail: 'repo_view' });
+  assert.notEqual(r.status, 0);
+  assert.match(r.out, /metadata unavailable/);
+  assert.ok(r.ghLog.some((l) => l === 'repo delete throwaway --yes'), r.out);
+  assert.equal(r.ghLog.filter((l) => l.startsWith('pr ')).length, 0);
+});
+
+test('cleanup denial reports the owned repository and diagnostic', (t) => {
+  const r = run(makeEnv(t), { only: 'gh_cycle', ghFail: 'repo_delete' });
+  assert.notEqual(r.status, 0);
+  assert.match(r.out, /acme\/throwaway/);
+  assert.match(r.out, /deletion denied/);
+  assert.match(r.out, /cleanup failed.*acme\/throwaway/);
 });
 
 // ---- the pinned v9 executor -------------------------------------------------
