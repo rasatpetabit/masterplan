@@ -733,3 +733,22 @@ assertion correction to MAIN as to WT. WT full suite remains 2451/2451.
 Fresh generator output byte-matches both repo routing maps. Installed workflow
 small tier has unrelated drift (deepseek-v4-flash:max vs canonical without :max);
 left untouched. Seven installed mp registrations check in sync with Astra.
+
+## 2026-09-05 — bootstrap live rehearsal failed, release stopped
+
+Routing commits: MAIN aa5f29f, WT 5cf8749. Bootstrap rehearsal armed via driver at
+MAIN aa5f29f and executed its exact command with pinned 9.10.0. Exit 1: 58 rows,
+30 failed. Failure recorded via bootstrap-v10.mjs record --status=failed, digest
+8f60a63013acb966e395716206b28485bc7dc46d347aa31d5a8cf57227e82c11.
+Output: /tmp/bootstrap-rehearsal-output.log. Minimal local repro:
+resolveTargets('.', {slug:'fixture'}, resolveTargets('.', {slug:'fixture'}))
+throws `unknown target: tag`; many failed walk rows cascade from this.
+GitHub PR creation/merge/reconcile also failed and need separate diagnosis.
+
+Private scratch repository rasatpetabit/masterplan-rehearsal-164145 remains
+(createdAt 2026-09-05T05:29:00Z, verified with gh repo view). Its deletion was
+explicitly denied by security policy Bash(gh repo delete *). No alternate deletion
+route attempted. Operator cleanup/authorization is required before a live retry.
+Advisor directs offline regression/fix first, preserve unknown-key/tag invariants,
+then sanctioned failed-step re-arm; no release stage advances on this failure.
+No real release tag or production install occurred.
