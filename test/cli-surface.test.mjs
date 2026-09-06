@@ -18,13 +18,14 @@
 //   - End-to-end: a genuinely unknown `--flag` exits 2 with a clear message;
 //     a known-but-typo'd-in-context flag that is still in the global set is
 //     accepted (documented residual gap, see A7 note in bin).
-//   - A1 regression: `mp finish-step --goals-choice=<bad>` is rejected by the
-//     engine, and the documented goal-gate flags parse (threaded to the ctx).
+//   - A1 regression: documented goal-gate flags pass the CLI parser and reach
+//     state loading; exit 2 alone does not distinguish a bad flag from ENOENT.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { KNOWN_FLAGS, isKnownFlag } from '../bin/masterplan.mjs';
@@ -135,16 +136,21 @@ test('A7 fail-closed applies to mutating verbs, not just read-only ones', () => 
   assert.match(r.stderr, /unknown flag --typod-flag/);
 });
 
-test('A1: finish-step goal-gate flags are parsed and threaded (unknown choice rejected by engine)', () => {
-  // --goals-choice is now a known flag (in KNOWN_FLAGS) and is passed through to
-  // finishStep's ctx; an invalid choice is rejected by the engine's GOALS_CHOICES.
-  const r = run(['finish-step', '--state=/nonexistent/x.yml', '--goals-choice=bogus']);
-  // The flag is recognized (no "unknown flag" die). The engine rejects the choice.
-  assert.notEqual(r.status, 2, 'recognized flag must not be rejected as unknown');
-  assert.ok(
-    r.stderr.includes('unknown --goals-choice') || r.status === 1 || r.stderr.includes('cannot read state'),
-    `--goals-choice=bogus should reach the engine, got status ${r.status}: ${r.stderr}`,
-  );
+test('A1: finish-step recognizes goal-gate flags before attempting state reads', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-cli-goals-'));
+  try {
+    // A known flag reaches state loading. Both ENOENT and an unknown flag can
+    // exit 2, so assert the diagnostic instead of mistaking the shared code.
+    const r = run([
+      'finish-step', `--state=${path.join(dir, 'missing.yml')}`,
+      '--session=cli-surface-test', '--goals-choice=bogus',
+    ]);
+    assert.notEqual(r.status, 0, 'missing state must be rejected');
+    assert.doesNotMatch(r.stderr, /unknown flag --goals-choice/);
+    assert.match(r.stderr, /ENOENT/, `recognized flag should reach state loading: ${r.stderr}`);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('A1: --goal-check and --goals-choice are documented AND recognized (A7 scan closure)', () => {
