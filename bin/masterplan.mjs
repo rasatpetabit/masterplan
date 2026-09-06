@@ -204,7 +204,7 @@ import { prepareWave, declaredScope, verifyScope } from '../lib/wave.mjs';
 import { detectHost } from '../lib/dispatch/index.mjs';
 import { selectReentry, reentryEventTypes, validateGateReceipt } from '../lib/reentry-guard.mjs';
 import { resolveConfigDir } from '../lib/paths.mjs';
-import { readEnv, childEnv, resolveRunConfig, PLANNING_MODES } from '../lib/config.mjs';
+import { readEnv, childEnv, resolveRunConfig, resolveProbingMinimum, PLANNING_MODES } from '../lib/config.mjs';
 import { projectObligations, resolveResumeBrief, renderResumeBrief } from '../lib/resume-brief.mjs';
 import { contextStatus } from '../lib/context-status.mjs';
 import {
@@ -604,6 +604,10 @@ const KNOWN_FLAGS = new Set(
     // task-52 snapshot/identity result the recorder consumes; --approval is the operator's
     // approval receipt JSON for the amendment.
     'identity-file skill-root '  +
+    // §5.3 schema-backed convergence (task 53): --coverage-file is the section-coverage
+    // record a schema-backed terminal evaluation requires (one row per checked section,
+    // validated against the frozen schema snapshot).
+    'coverage-file '  +
     'version-fix window').split(' ')
 );
 
@@ -4634,15 +4638,27 @@ function main() {
           case 'critic-unavailable-ack':
             acknowledgeCriticUnavailable({ statePath: p, answer: need(flags, 'reason') });
             break;
-          case 'end':
+          case 'end': {
+            // §5.3: the probing minimum resolves from the complexity through the §4 config
+            // hierarchy (fail-closed validation lives in lib/config.mjs) and the coverage
+            // record rides --coverage-file for schema-backed interviews.
+            const ivCfg = resolveRunConfig({ cli: {}, repoRoot: deriveDefaultTargetRepo(p), env: readEnvAll() });
             endInterview({
               statePath: p, reason: need(flags, 'reason'),
               criticUnavailableAck: flags['critic-unavailable-ack'] ?? undefined,
+              coverageFile: flags['coverage-file'] ?? undefined,
+              probingMinimum: resolveProbingMinimum(ivCfg, readState(p)?.complexity),
             });
             break;
-          case 'waive':
-            waiveInterview({ statePath: p, reason: need(flags, 'reason') });
+          }
+          case 'waive': {
+            const ivCfg = resolveRunConfig({ cli: {}, repoRoot: deriveDefaultTargetRepo(p), env: readEnvAll() });
+            waiveInterview({
+              statePath: p, reason: need(flags, 'reason'),
+              probingMinimum: resolveProbingMinimum(ivCfg, readState(p)?.complexity),
+            });
             break;
+          }
           case 'reopen':
             reopenInterview({ statePath: p, reason: need(flags, 'reason') });
             break;

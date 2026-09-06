@@ -700,12 +700,28 @@ async function buildFixture(entry, spec, tag) {
     contextStatus = JSON.parse(r.stdout);
   }
 
+  let probing = null;
+  if (entry.id === 'interview.probing_minimum' || entry.id === 'interview') {
+    // The REAL resolution path: a repo-local .masterplan.yaml carries the varied value, and
+    // resolveRunConfig + resolveProbingMinimum (lib/config.mjs, fail-closed validation live
+    // there) produce the minimum endInterview enforces at a fixed complexity.
+    const { resolveRunConfig, resolveProbingMinimum } = await import(path.join(ROOT, 'lib', 'config.mjs'));
+    const dir = tmpdir(`mp-knob-iv-${tag}`);
+    const pm = entry.id === 'interview'
+      ? need.interview.probing_minimum
+      : { medium: need['interview.probing_minimum'] };
+    write(dir, '.masterplan.yaml', 'interview:\n  probing_minimum:\n' +
+      Object.entries(pm).map(([k, v]) => `    ${k}: ${v}`).join('\n') + '\n');
+    const cfg = resolveRunConfig({ cli: {}, repoRoot: dir, env: {} });
+    probing = { resolved: resolveProbingMinimum(cfg, 'medium') };
+  }
+
   let finish = null;
   if (entry.id === 'autonomy') {
     finish = await walkAutonomy({ statePath, MAIN, WT, bundleDir, slug, autonomy: need.autonomy });
   }
 
-  return { statePath, repoRoot: MAIN, WT, bundleDir, slug, tmp, seeded, seededState, interviewStatus, resumeOp, contextStatus, finish };
+  return { statePath, repoRoot: MAIN, WT, bundleDir, slug, tmp, seeded, seededState, interviewStatus, resumeOp, contextStatus, probing, finish };
 }
 
 function buildRepoForKnob({ configYaml, slug }) {

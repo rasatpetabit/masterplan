@@ -90,7 +90,15 @@ test('agent body declares the complete output schema', () => {
   assert.equal(typeof schema.intent_draft.outcome, 'string');
   assert.equal(typeof schema.intent_draft.done_means, 'string');
   assert.ok(Array.isArray(schema.intent_draft.anti_goals));
-  assert.deepEqual(Object.keys(schema).sort(), ['contradictions', 'intent_draft', 'misclassified', 'unknowns']);
+  // Task 54 (wiring): the critic payload gains the eligible question set (the ids of the
+  // asked questions judged eligible — intent-kind, answered, not withdrawn, never design-kind)
+  // and the forks_remaining boolean verdict. Consumer update of the payload extension; the
+  // wave transaction's verify-scope owns this file's scope, so this edit follows the
+  // task-52/58 consumer-update precedent: made here, disclosed in the task digest,
+  // restored post-transaction if the revert lands first.
+  assert.ok(Array.isArray(schema.eligible_question_set));
+  assert.equal(typeof schema.forks_remaining, 'boolean');
+  assert.deepEqual(Object.keys(schema).sort(), ['contradictions', 'eligible_question_set', 'forks_remaining', 'intent_draft', 'misclassified', 'unknowns']);
 });
 
 test('design doc documents budgets, cadence, artifacts, receipts, terminal states, resume', () => {
