@@ -322,6 +322,106 @@ integration note: orchestration-integration's sequencer should invoke the implem
 - codex: heuristic
 - spec_refs: spec.md §4.3, spec.md §4.4, spec.md §11, spec.md §12
 
+## Wave 11
+
+
+### Task 49: behavior-skills side of the shared contract, committed in that repo, not here. Teach /design-intent plan mode the masterplan host contract — existing anchor and evidence, current draft, ledger status, permitted recorder operations in, questions/answers/draft out — so it stops refusing a goals.md merely because it carries '## G<n>:' blocks, and present only the intent projection to the shared validator. Publish the skill's manifest (the closed file set skill identity is computed over: SKILL.md, schema.json, the manifest itself, and every declared asset) and its host-contract and schema-format versions. Preserve repo and assess mode public behavior byte-for-byte. Land it as a separate repository-local commit, then PIN it here: record the behavior-skills commit sha and the manifest digest into the bundle as a cross-repo dependency, and have every dependent task verify against that pinned revision rather than whatever the checkout happens to hold. No push.
+- files: docs/internals/design-intent-integration.md, docs/masterplan/intent-to-completion/skill-dependency.json, test/design-intent-host-contract.test.mjs
+- verify: node -e "const d=require('./docs/masterplan/intent-to-completion/skill-dependency.json'); if(!/^[0-9a-f]{40}$/.test(d.commit)||!d.manifest_digest||!d.host_contract_version) {console.error('skill-dependency.json must pin commit, manifest_digest and host_contract_version');process.exit(1)}" ; node -e "const cp=require('child_process'),d=require('./docs/masterplan/intent-to-completion/skill-dependency.json');const r=cp.execFileSync('git',['-C',d.repo,'cat-file','-t',d.commit],{encoding:'utf8'}).trim();if(r!=='commit'){console.error('pinned commit not present in '+d.repo);process.exit(1)}" ; node -e "const cp=require('child_process'),d=require('./docs/masterplan/intent-to-completion/skill-dependency.json');const dirty=cp.execFileSync('git',['-C',d.repo,'status','--porcelain','--',d.skill_path],{encoding:'utf8'});if(dirty.trim()){console.error('pinned skill path is dirty; the tested bytes are not the committed bytes');process.exit(1)}" ; node --test test/design-intent-host-contract.test.mjs
+- codex: null
+- goals: G7
+- spec_refs: spec.md §5, spec.md §5.5
+
+
+### Task 50: Native section codec inside the '## Intent' block: an explicitly versioned, schema-backed representation carrying section bodies, schema identity, source evidence and reconciliation, with a narrow encoder/decoder adapter. Emit the four native fields (why, outcome, anti_goals, done_means) as a deterministic legacy projection, and fail validation when a persisted legacy view disagrees with the authoritative representation rather than preferring either copy. The codec must distinguish native anti-goal items from bullets inside other sections — today's parser treats every intent-block bullet as an anti-goal. Round-trip multiline prose, bullets, extensions and reconciliation without polluting anti_goals.
+- files: lib/goals.mjs, test/design-intent-adapter.test.mjs
+- verify: node --test test/design-intent-adapter.test.mjs ; node --test test/goals.test.mjs
+- codex: ok
+- goals: G7
+- spec_refs: spec.md §6.1
+
+
+### Task 58: Public surface for the two operations the amendment adds, which no existing task owns: register `mp interview capture-schema` (the approved schema-capture control that writes the snapshot, its digest and the skill identity, and stamps the durable format pin) and `mp interview amend-skill-identity` (the single guard-exempt, resumable identity replacement requiring the operator's approval). Define and validate their append-time event schemas — schema_captured and skill_identity_amended — so §6.1's pin repair has a real event to repair from and §5.5's guards have a real producer. Black-box CLI acceptance and refusal, interrupted-amendment replay, and no identity adoption before approval.
+- files: bin/masterplan.mjs, lib/bundle.mjs, test/interview-cli-surface.test.mjs
+- verify: node --test test/interview-cli-surface.test.mjs ; node --test test/bundle-events.test.mjs ; node --test test/cli-surface.test.mjs
+- codex: null
+- goals: G7, G8
+- spec_refs: spec.md §5.5, spec.md §6.1
+
+## Wave 12
+
+
+### Task 51: Versioned hash coverage and the format pin. Select the legacy canonicalizer for a v1 document and the richer one for a versioned document from a discriminator held in durable bundle state, not inside the removable representation, and make every consumer — parser, checkpoint and reader — dispatch on that same pin. Extend new-format canonical coverage to every section, the plan context, the reconciliation and the schema digest, including source-evidence provenance so a provenance edit invalidates the receipts bound to it. Reject duplicate fields, duplicate sections, unknown versions and malformed version markers. Refuse a stripped schema-backed document as a downgrade, and repair a missing pin from the schema-capture event rather than reading it as legacy. Legacy documents keep their parse results and hashes byte-for-byte.
+- files: lib/goals.mjs, lib/bundle.mjs, test/goals-hash-versioning.test.mjs
+- verify: node --test test/goals-hash-versioning.test.mjs ; node --test test/goals.test.mjs ; node --test test/bundle.test.mjs
+- codex: ok
+- goals: G7
+- spec_refs: spec.md §6.1, spec.md §5.5
+
+
+### Task 52: Schema snapshot and skill identity. Resolve schema.json from the installed skill, validate the format version, copy the exact bytes to a bundle snapshot on approved capture and record its digest; a frozen bundle reads its snapshot, never the live file. Compute skill identity as a digest over the closed manifest-declared file set, sorted by manifest-relative path, each entry contributing path and content, with missing files and path escapes failing closed. Enforce identity equality at every later operation with the named failures skill_absent, skill_identity_changed, host_contract_unsupported, schema_unsupported and undeclared_dependency, and no fallback to native questioning or a live schema. Add `mp interview amend-skill-identity` as the single guard-exempt, resumable operation that inspects a changed skill, invalidates old-identity receipts, takes the operator's approval and commits the replacement.
+- files: lib/interview.mjs, lib/schema-snapshot.mjs, test/schema-snapshot-identity.test.mjs
+- verify: node --test test/schema-snapshot-identity.test.mjs ; node --test test/interview-ledger-resume.test.mjs
+- codex: null
+- goals: G7, G8
+- spec_refs: spec.md §5.5
+
+## Wave 13
+
+
+### Task 53: Convergence and the ledger's actual-interaction contract. Implement the two required conditions — coverage of every checked section with provenance and stated uncertainty, and the probing minimum of genuine open questions answered fresh — resolving interview.probing_minimum from complexity through the config hierarchy with its validation (integer >= 1, non-decreasing with complexity, high strictly greater than low, failing closed on violation). Take eligibility from the critic's eligible set and forks_remaining verdict where a critic runs, rejecting an eligible set naming an unknown, duplicate, withdrawn, unanswered or design-kind id; fall back to the recorder's mechanical test at low complexity where the critic is off. Add no terminal states: route cap-with-minimum-unmet to the existing waiver as probing_minimum_unmet_at_cap and coverage-with-no-forks-remaining to the existing exhausted as forks_exhausted, exempting only the latter from the probing minimum, with the cap taking precedence where both predicates hold. Reused evidence keeps its provenance and never increments a fresh-answer count; a whole-draft approval is never expanded into synthetic question/answer events. Deliver the substitution as a schema-backed-versus-legacy terminal matrix that proves the schema-backed path stops applying all three legacy floors while still enforcing zero unanswered questions, the latest-draft rule, the high-complexity per-round critic receipts, and goals-load's exhausted-assumption handling — keeping the legacy suite green does not prove the legacy floors stopped applying.
+- files: lib/interview.mjs, lib/config.mjs, test/interview-design-intent.test.mjs
+- verify: node --test test/interview-design-intent.test.mjs ; node --test test/interview-ledger-resume.test.mjs ; node --test test/config.test.mjs
+- codex: null
+- goals: G7
+- spec_refs: spec.md §5.3, spec.md §5.4, spec.md §4.1
+
+
+### Task 54: Sequencer and critic integration. Delegate the questioning to /design-intent plan mode over the host contract, keep mp interview the only recorder, and pass the critic the same schema-backed draft the operator sees. Extend the critic payload with the eligible question set and the forks_remaining verdict, Wiring only: the duplicate questioning implementation stays in place here and is removed by task 59, after the replacement is proven capability-complete. Reconcile §11's legacy-only assertions so the test plan no longer states them unqualified.
+- files: agents/mp-intent-critic.md, test/interview-sequencer-delegation.test.mjs
+- verify: node --test test/interview-sequencer-delegation.test.mjs ; node bin/doctor.mjs
+- codex: null
+- goals: G7
+- spec_refs: spec.md §5, spec.md §5.1, spec.md §11
+
+## Wave 14
+
+
+### Task 55: Repository INTENT.md reconciliation and the promotion transaction. Build one reconciliation row per repository INTENT.md section from the run's integration target resolved as an identity {repository, remote, ref, resolved_commit, resolved_at}, reading at the recorded commit rather than a moving ref or a worktree path; separate unknown/unavailable from a verified absence, treat a detached HEAD with a configured freshly-resolved target as resolvable, invalidate on retarget, and treat a target that moves with unchanged bytes as not drift. Implement promotion as the durable transaction the spec now specifies: approval binds base hashes, a diff and result hashes; the bases are pinned by ref against gc; recovery classifies each artifact against its approved identities and applies the decision table, refusing symmetrically when either artifact is neither base nor result and treating an unchanged artifact as satisfied; recording is exactly-once by transaction_id. This replaces the by-hand promotion this amendment itself required. Own the actual promotion entry path and the gate's combined spec+goals binding, including the bundle write lock held across both writes and the record, the expected-revision check immediately before mutation, and proof that the diff reproduces both approved result hashes before anything is written — a standalone transaction module that existing amendment paths bypass does not satisfy this.
+- files: lib/reconcile-intent.mjs, lib/promote.mjs, lib/wave-commit.mjs, test/intent-reconciliation.test.mjs, test/promotion-transaction.test.mjs
+- verify: node --test test/intent-reconciliation.test.mjs ; node --test test/promotion-transaction.test.mjs
+- codex: null
+- goals: G8
+- spec_refs: spec.md §6.3, spec.md §5.6
+
+
+### Task 56: Checkpoint integration over the existing seams. Bind spec review, the end-of-planning alignment audit, per-task adversarial review and the finish assessment to the receipt identity tuples, with intent_identity carrying goals_hash, schema_snapshot_digest, skill_identity and reconciliation_digest so evidence cannot cross an identity boundary, and the finish tuple naming deploy_base_sha, deploy_chain_hash and live_check_digest outright. Reject missing, partial, unreadable, stale and mismatched evidence and an unresolved reviewer identity as unavailable rather than approval, and report a legacy absence explicitly rather than as a schema-backed pass. Prove the checked-section set is data-driven with alternate schema content, and keep artifact identity (exact bytes, what approval binds) distinct from evidence identity (canonical) everywhere both appear. Own the existing producer and consumer seams, not only the validator: each checkpoint is exercised through its real orchestration path, and a mutation test that bypasses the validator must fail the suite.
+- files: lib/checkpoint-evidence.mjs, lib/task-review.mjs, lib/finish.mjs, agents/mp-alignment-auditor.md, agents/mp-adversarial-reviewer.md, agents/mp-goal-assessor.md, test/intent-checkpoints.test.mjs
+- verify: node --test test/intent-checkpoints.test.mjs ; node --test test/task-review.test.mjs ; npm test
+- codex: null
+- goals: G8
+- spec_refs: spec.md §5.5, spec.md §11
+
+## Wave 15
+
+
+### Task 59: Cutover: remove masterplan's duplicate questioning implementation, only now that capture, host dispatch, convergence, reconciliation and disk resume all pass independently. This is deliberately the last structural change, because until it lands the old questioner remains the working path — an interrupted run must never be left unable to interview. Prove the removal against real dispatch and resume on both harnesses rather than against source-text assertions, and prove an absent or version-skewed skill refuses rather than silently falling back to the code this task deletes.
+- files: commands/masterplan.md, test/interview-cutover.test.mjs
+- verify: node --test test/interview-cutover.test.mjs ; node --test test/interview-design-intent.test.mjs ; npm test ; node bin/doctor.mjs
+- codex: null
+- goals: G7
+- spec_refs: spec.md §5, spec.md §5.1
+
+## Wave 16
+
+
+### Task 57: Contract verification and documentation. Extend the knob-contract guard to every control this amendment adds — interview.probing_minimum across its levels, the format pin, and the schema-capture switch — so each has a two-value behavioral contract rather than an inert key, and prove a configured override actually changes a consumer-side threshold. Exercise alternate schema content end to end to demonstrate no copied list of today's section headings controls behavior. Verify the installed skill is reachable and capability-complete from both harnesses without changing global routing or relay settings. Document the integration in docs/internals and point AGENTS.md at it.
+- files: docs/internals/design-intent-integration.md, AGENTS.md, test/knob-contract.test.mjs
+- verify: node --test test/knob-contract.test.mjs ; npm test ; node bin/doctor.mjs ; grep -q 'design-intent-integration' AGENTS.md
+- codex: ok
+- goals: G7, G8
+- spec_refs: spec.md §4.1, spec.md §5.5, spec.md §11
+
 ## Amendments
 
 ### 2026-09-03 — Task 7 verify tightened after plan gate panel 3 (should-fix): per-term AND loop over commands/masterplan.md replaces the grep alternation; the recorded gate review bound the previous bytes (hash 5fd620be)
@@ -364,3 +464,9 @@ finish-live.commit-identity enforces branch-tip identity at deploy_base; the wav
 
 ### 2026-09-06 — Expand release scope: delegate native intent interviewing to design-intent
 User explicitly chose Expand the existing run. Confirmed behavior-skills spec section5 delegates questioning to design-intent plan mode, shares its schema with the native critic, and preserves goals.md Intent and interview ledger. Source decision, provenance, boundaries, and pending exact-artifact approvals: design-intent-scope-amendment.md. Reopen for amendment planning; retain48 done tasks and release blockers. No new run or automatic release/review loop.
+
+### 2026-09-06 — Design-intent amendment approved: tasks 49-57 appended
+Operator's exact-artifact approval landed goals 191978ba -> e83f49fe and spec 6111aaf4 -> bfa864f4 after four cross-vendor adversary rounds. Eleven tasks appended across waves 11-16 for the six work packages: shared skill host contract, native section codec, versioned hash coverage and format pin, schema snapshot and skill identity, convergence and ledger, sequencer/critic integration, reconciliation and the promotion transaction, checkpoint integration, and contract verification. Appended via mp amend-tasks with every existing task status preserved; the 48 completed records are untouched. Task 55 replaces the by-hand promotion this amendment itself required.
+
+### 2026-09-06 — Plan-gate adversary pass: tasks revised before any execution
+The plan review blocked execution and was right on two checkable counts: no task owned bin/masterplan.mjs though the amendment adds mp interview capture-schema and amend-skill-identity, and G7's own declared evidence files (test/design-intent-adapter.test.mjs, test/interview-design-intent.test.mjs) were produced by no task. Task 58 now owns the CLI surface and the two event schemas in wave 11, so §6.1's pin repair has a real producer. Tasks 50 and 53 produce G7's declared evidence under its declared names. Task 56 owns the real checkpoint seams (lib/task-review.mjs, lib/finish.mjs and the three reviewer prompts) rather than a helper nothing calls, and task 55 owns the promotion entry path and the gate's combined binding. Task 49 pins the behavior-skills commit and manifest digest in skill-dependency.json instead of testing whatever a checkout holds. The cutover that deletes the old questioner moved out of task 54 into task 59 at wave 15, after capture, convergence, reconciliation and resume are all proven, so an interrupted run is never left unable to interview.
