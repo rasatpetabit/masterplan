@@ -183,7 +183,7 @@
     "package.json": "pending",
     "policy/workflow-map.json": "pending",
     "scripts/bootstrap-v10.mjs": "pending",
-    "scripts/rehearse-v9-finish.sh": "pending",
+    "scripts/rehearse-v9-finish.sh": "general reviewer inspected; rework; harness acceptance rejected; cross-vendor review did not spawn",
     "scripts/release.mjs": "pending",
     "skills/masterplan/SKILL.md": "pending",
     "test/agents-compat.test.mjs": "pending",
@@ -231,7 +231,7 @@
     "test/qctl-apply-rollback.test.mjs": "pending",
     "test/refs.test.mjs": "pending",
     "test/register-pi-agents.test.mjs": "pending",
-    "test/rehearse-v9-finish.test.mjs": "pending",
+    "test/rehearse-v9-finish.test.mjs": "general reviewer inspected; rework; harness acceptance rejected; cross-vendor review did not spawn",
     "test/reindex-plan.test.mjs": "pending",
     "test/release-script.test.mjs": "pending",
     "test/required-successor.test.mjs": "pending",
@@ -260,5 +260,7 @@
     "G4 nested replacement evidence"
   ],
   "production": "Not executed",
-  "G6": "pending live release"
+  "G6": "pending live release",
+  "status": "stopped_on_new_blocker",
+  "outcome": "release-pass-2-outcome.json"
 }

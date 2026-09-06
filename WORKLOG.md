@@ -853,3 +853,29 @@ doctor0 errors6 warnings. Latest fix has NOT been live-rehearsed. Prior live 69/
 belongs to 4c99cec. Release review remains failed; verification at the new SHA must be
 recorded through the driver before advancing. Stop for explicit user decision on review
 cap/remaining coverage; no release/tag/push/install or silent review override.
+
+## 2026-09-06 — authorized additional review STOPPED on new blocker
+
+Run fb6ffd18-a8a3-4279-86f6-b608c7e0e27a: all three cross-review tasks denied by
+spawn guard (unknown agent preset: release-cross-review), zero verdicts. Project
+agent discovery and model-catalog availability did not establish admission; the
+new project-local registration remains incomplete. Do not retry under renamed
+agents, raw model overrides, or weakened guard. Canonical preset repair required.
+
+General reviewer returned rework after inspecting rehearsal script/test; harness
+acceptance rejected its command attestation. Parent verified its three source
+findings directly: missing driven pinned finish lifecycle, an extra-commit refusal
+row that merely counts commits, and unchecked --only selectors yielding PASS.
+Original report retained at pass2-rehearsal-general.md; exact failure status and
+corrected parent citations at release-pass-2-outcome.json. No gate approval.
+
+CORRECTION: prior live69/69 is a successful script run, NOT proof that the pinned
+v9 full finish lifecycle ran after the surfaces changed. Fixture tests and script
+pass rows missed that acceptance criterion. G2/G4 reassessments did not spawn;
+their prior partial verdicts and parent-passing added tests remain distinct.
+
+Stopped per explicit user agreement: no further automatic review or fix loop.
+WT1f2741f remains unchanged (2466 tests previously passed). No new live rehearsal,
+release/tag/push/install. Detached review snapshot removed only after clean check.
+Required next decision: authorize targeted rehearsal and canonical preset repairs,
+or leave the release paused. Remaining release regions are not approved.
