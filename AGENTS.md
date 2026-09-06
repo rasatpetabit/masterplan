@@ -28,8 +28,15 @@ modes are in [`docs/internals.md`](./docs/internals.md); the public overview is
 
 ## Where to read first
 
-Design intent — why this exists, what must never happen, what it must not
-become — is in [`INTENT.md`](./INTENT.md); read it before changing the lifecycle or gates.
+<!-- intent:consultation-rule v1 -->
+**Intent.** `INTENT.md` at the repo root states why this repo exists, what must never
+happen, what it is not, and where it is going. Before a substantive change, read it and
+state in one line which of `serves` / `neutral` / `fights` / `unavailable` the change is,
+judged against its checked sections:
+Purpose / Top invariant / Non-goals / Direction / Posture.
+`fights` or unsure stops and puts it to the owner before code is written. Its decisions
+are the owner's — amend it through the owner, never to fit the change.
+<!-- /intent:consultation-rule -->
 
 | If you need... | Read |
 |---|---|
