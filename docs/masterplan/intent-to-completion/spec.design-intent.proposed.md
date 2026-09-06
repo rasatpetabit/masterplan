@@ -45,24 +45,39 @@ context keeps its original provenance and is never relabelled as a fresh answer,
 an operator's approval of a whole draft is never expanded into several synthetic
 question/answer events.
 
-**Convergence — OPEN, awaiting the operator.** Masterplan's high-complexity interview
+**Convergence — decided by the operator, 2026-09-05.** Masterplan's high-complexity interview
 today may only stop after 8 answers, 6 of them about intent, across 4 completed rounds. The
 skill instead looks facts up and asks only about real gaps, so it can be schema-complete having
-asked fewer questions. Which rule governs a schema-backed interview is an unresolved owner
-question, recorded in the WORKLOG as "the next owner question". It is **not** decided, and no
-receipt for it exists in `events.jsonl`. This amendment cannot be approved while this paragraph
-is open.
+asked fewer questions. Asked which rule should govern a schema-backed interview, the operator
+chose **"Cover everything, and still probe"**: the interview must fill every checked section
+*and* ask a set number of genuine open questions before it may stop. Running out of things to
+look up is not a finish. This answers the run's own anchor, which asked for more probing at high
+complexity, not less.
 
-Whatever the operator decides, these hold: question caps and honest counters are retained;
-evidence reused from prior context never increments a fresh-answer count; legacy records keep
-the legacy rules; and missing evidence, unresolved contradictions, or a required-but-unavailable
-critic check all still prevent convergence.
+The rule is therefore two independent conditions, both required:
 
-If a completeness-based rule is chosen, it needs a testable standard, not a judgment call —
-sufficiency defined per checked section including provenance and unresolved uncertainty, a
-defined observable meaning for "higher complexity deepens scrutiny", the applicable critic
-checks and their independence named, and negative controls in which a complete-looking draft
-must NOT converge because it merely restates the request or rests on unsupported assumptions.
+1. **Coverage.** Every checked section carries real evidence, each with its provenance and its
+   unresolved uncertainty stated. A section satisfied from prior context is covered but is not
+   an answer.
+2. **Probing.** A configured minimum of genuine open questions — a question at a real fork whose
+   answer only the operator holds — has been asked and answered fresh in this interview. The
+   minimum is resolved from the complexity level through the config hierarchy (§4), not written
+   into the code, and it is what "higher complexity deepens scrutiny" means observably.
+
+Neither condition substitutes for the other: a fully covered draft that asked too few genuine
+questions has not converged, and a heavily questioned draft with an unevidenced section has not
+either. Question caps still bound the total, so a run that cannot satisfy the probing minimum
+within its cap reaches a named terminal state and stops for the operator — it never invents
+filler questions to reach a number, and a look-up never increments the fresh count.
+
+The applicable critic checks must be fresh against the current schema-backed draft and
+independent of the questioner. Negative controls are required: a draft that merely restates the
+request, and one resting on an unsupported assumption, must each fail to converge despite
+looking complete.
+
+Legacy records keep the legacy rules. Evidence reused from prior context keeps its original
+provenance and never increments a fresh-answer count. Missing evidence, unresolved
+contradictions, and a required-but-unavailable critic check each still prevent convergence.
 
 Unanswered-question handling, current-draft freshness, the named terminal states, and
 failure/unavailability evidence are unchanged. A clean critic result must cover the
