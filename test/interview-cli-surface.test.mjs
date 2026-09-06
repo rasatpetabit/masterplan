@@ -601,3 +601,77 @@ function runCliTree(tree, args) {
     return { status: e.status ?? 1, stdout: e.stdout ?? '', stderr: e.stderr ?? '' };
   }
 }
+// ---- review fix-round regressions (wave-11 adversary findings, 2026-09-06) --------
+
+test('a changed skill identity cannot re-capture: capture records the FIRST state only', () => {
+  register();
+  const { statePath, skillRoot } = mkbundle();
+  captureSchema({ statePath, skillRoot });
+  fs.appendFileSync(path.join(skillRoot, 'SKILL.md'), 'the skill changed\n');
+  assert.throws(
+    () => captureSchema({ statePath, skillRoot }),
+    /replace it through mp interview amend-skill-identity/
+  );
+  // And the stranded-declaration deadlock cannot form: capture never adopts B, so an
+  // A -> B declaration still amends cleanly afterwards.
+  const changed = stubIdentity(skillRoot);
+  const ev = amendSkillIdentity({ statePath, newSkillIdentity: changed, skillRoot, approval: validApproval(changed) });
+  assert.equal(ev.new_skill_identity, changed);
+});
+
+test('approval-only replay with the module absent reports the named seam failure', () => {
+  register();
+  const { statePath, skillRoot } = mkbundle();
+  captureSchema({ statePath, skillRoot });
+  fs.appendFileSync(path.join(skillRoot, 'SKILL.md'), 'routine skill update\n');
+  const changedIdentity = stubIdentity(skillRoot);
+  assert.throws(
+    () => amendSkillIdentity({ statePath, newSkillIdentity: changedIdentity, skillRoot }),
+    /amendment_pending/
+  );
+  registerSchemaSnapshotModule(null); // the interruption window — the module is gone
+  assert.throws(
+    () => amendSkillIdentity({ statePath, approval: validApproval(changedIdentity) }),
+    /schema_snapshot_module_not_implemented/
+  );
+  // Nothing was adopted:
+  const mid = replaySchemaCapture(statePath);
+  assert.equal(mid.recorded_skill_identity, mid.captured.skill_identity);
+  assert.equal(mid.amendments.length, 0);
+});
+
+test('invalidated_receipts counts identity-bound fields, not textual mentions', () => {
+  register();
+  const { statePath, skillRoot } = mkbundle();
+  captureSchema({ statePath, skillRoot });
+  const capturedIdentity = replaySchemaCapture(statePath).recorded_skill_identity;
+  // A prose mention of the digest is NOT a receipt:
+  appendEvent(statePath, {
+    type: 'interview_checkpoint',
+    data: { note: `the old identity was ${capturedIdentity}, quoted in prose` },
+  });
+  // A nested identity-bound receipt IS one (any §5.5 tuple position):
+  appendEvent(statePath, {
+    type: 'interview_checkpoint',
+    data: { intent_identity: { skill_identity: capturedIdentity, goals_hash: 'h' } },
+  });
+  fs.appendFileSync(path.join(skillRoot, 'SKILL.md'), 'routine skill update\n');
+  const changedIdentity = stubIdentity(skillRoot);
+  const ev = amendSkillIdentity({
+    statePath, newSkillIdentity: changedIdentity, skillRoot, approval: validApproval(changedIdentity),
+  });
+  assert.equal(ev.invalidated_receipts, 1, 'prose mention excluded, nested bound field counted');
+});
+
+test('a B->C amendment does not count the B declaration checkpoint as a stranded receipt', () => {
+  register();
+  const { statePath, skillRoot } = mkbundle();
+  captureSchema({ statePath, skillRoot });
+  fs.appendFileSync(path.join(skillRoot, 'SKILL.md'), 'first change\n');
+  const b = stubIdentity(skillRoot);
+  amendSkillIdentity({ statePath, newSkillIdentity: b, skillRoot, approval: validApproval(b) });
+  fs.appendFileSync(path.join(skillRoot, 'SKILL.md'), 'second change\n');
+  const c = stubIdentity(skillRoot);
+  const ev = amendSkillIdentity({ statePath, newSkillIdentity: c, skillRoot, approval: validApproval(c) });
+  assert.equal(ev.invalidated_receipts, 0, 'the A->B declaration checkpoint names B, not A: not a receipt of A');
+});

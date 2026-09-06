@@ -252,3 +252,133 @@ test('encodeIntentBlock rejects invalid authoritative shapes with named problems
   assert.equal(rc.ok, false);
   assert.match(rc.error, /schema must be/);
 });
+
+// ---- review fix-round regressions (wave-11 adversary findings, 2026-09-06) --------
+
+test('an unclosed codec fence is an error, never a silent legacy downgrade', () => {
+  const enc = encodeIntentBlock(fixtureAuthoritative());
+  assert.ok(enc.ok);
+  const unclosed = enc.block.replace(/\n```\n$/m, '\n'); // remove the closing fence
+  const v = validateIntentBinding(wrapBlock(unclosed));
+  assert.equal(v.ok, false);
+  assert.match(v.error, /not closed/);
+});
+
+test('a tab-mangled version marker claims the form and is rejected', () => {
+  const enc = encodeIntentBlock(fixtureAuthoritative());
+  assert.ok(enc.ok);
+  const mangled = enc.block.replace('```mp-intent-schema v1', '```mp-intent-schema\tv99');
+  const v = validateIntentBinding(wrapBlock(mangled));
+  assert.equal(v.ok, false);
+  assert.match(v.error, /unknown or malformed intent codec version marker/);
+});
+
+test('a codec fence nested inside a longer quotation is quoted content, not a claim', () => {
+  const enc = encodeIntentBlock(fixtureAuthoritative());
+  assert.ok(enc.ok);
+  // MOVE the codec portion inside a 4-backtick quotation (a copy would leave the real
+  // fence in place outside it and trivially claim the form).
+  const fenceStart = enc.block.indexOf('```mp-intent-schema v1');
+  const quoted = enc.block.slice(0, fenceStart) + '````\n' + enc.block.slice(fenceStart) + '````\n';
+  const v = validateIntentBinding(wrapBlock(quoted));
+  // The only codec fence sits inside the 4-backtick quotation: quoted content, not a
+  // claim. The document degrades to its legacy view — the honest read, not a false pairing.
+  assert.ok(v.ok, JSON.stringify(v));
+  assert.equal(v.versioned, false);
+});
+
+test('a heading inside an ordinary fence does not hide the codec block that follows', () => {
+  const enc = encodeIntentBlock(fixtureAuthoritative());
+  assert.ok(enc.ok);
+  const withSample = enc.block.replace(
+    'done_means: release',
+    'done_means: release\n\n```\n## sample heading inside quoted code\n```',
+  );
+  const dec = decodeIntent(wrapBlock(withSample));
+  assert.ok(!dec.error, dec.error || '');
+  assert.equal(dec.versioned, true);
+});
+
+test('two Intent sections: the binding pairs the LAST section (parser last-wins)', () => {
+  const a = fixtureAuthoritative();
+  const b = fixtureAuthoritative();
+  b.sections.purpose.body = 'Second section purpose.\nWith more prose.';
+  const encA = encodeIntentBlock(a);
+  const encB = encodeIntentBlock(b);
+  assert.ok(encA.ok && encB.ok);
+  // Tamper only the FIRST section's legacy why: the last section is the document.
+  const first = encA.block.replace('why: Users need the codec to round-trip.', 'why: tampered first section');
+  const doc = `topic: |\n  Fixture run.\n${first}\n## G1: Works\n\n${encB.block}\n## G2: Fast\n## G3: Documented\n`;
+  const okV = validateIntentBinding(doc);
+  assert.ok(okV.ok, JSON.stringify(okV));
+  assert.equal(okV.versioned, true);
+  const dec = decodeIntent(doc);
+  assert.equal(dec.legacyView.why, 'Second section purpose.');
+  // Tampering the LAST section's copy FAILS the binding.
+  const lastTampered = doc.replace('why: Second section purpose.', 'why: tampered last section');
+  const bad = validateIntentBinding(lastTampered);
+  assert.equal(bad.ok, false);
+  assert.match(bad.error, /legacy view disagrees/);
+});
+
+test('non-goal items that cannot be one legacy bullet are rejected, never mangled', () => {
+  for (const badItem of ['', ' untrimmed ', 'first\n- second', 'with\rcarriage']) {
+    const a = fixtureAuthoritative();
+    a.sections.non_goals.items = ['ok item', badItem];
+    const r = encodeIntentBlock(a);
+    assert.equal(r.ok, false, JSON.stringify(badItem));
+    assert.match(r.error, /single-line, trimmed, non-empty/);
+    // And decode rejects them too (both share codecValidateAuthoritative):
+    const enc = encodeIntentBlock(fixtureAuthoritative());
+    assert.ok(enc.ok);
+    const jsonStart = enc.block.indexOf('{');
+    const obj = JSON.parse(enc.block.slice(jsonStart, enc.block.lastIndexOf('}') + 1));
+    obj.sections.non_goals.items = ['ok item', badItem];
+    const doc = wrapBlock(enc.block.slice(0, jsonStart) + JSON.stringify(obj, null, 2) + enc.block.slice(enc.block.lastIndexOf('}') + 1));
+    const v = validateIntentBinding(doc);
+    assert.equal(v.ok, false, JSON.stringify(badItem));
+  }
+});
+
+test('the projection uses the parser line grammar: a CR cannot inject a second line', () => {
+  const a = fixtureAuthoritative();
+  a.sections.purpose.body = 'why\r- injected';
+  const enc = encodeIntentBlock(a);
+  assert.ok(enc.ok);
+  const dec = decodeIntent(wrapBlock(enc.block));
+  assert.ok(!dec.error, dec.error || '');
+  assert.equal(dec.legacyView.why, 'why');
+  assert.deepEqual(dec.legacyView.anti_goals, ['no new dependencies', 'no second goals resolver']);
+  const v = validateIntentBinding(wrapBlock(enc.block));
+  assert.ok(v.ok, JSON.stringify(v));
+});
+
+test('a __proto__ context key corrupting the object prototype is rejected at encode', () => {
+  const a = fixtureAuthoritative();
+  a.context['__proto__'] = { body: 'keep me' }; // invokes the prototype setter
+  const r = encodeIntentBlock(a);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /corrupted prototype/);
+});
+
+test('a __proto__ own key from JSON round-trips instead of disappearing', () => {
+  const enc = encodeIntentBlock(fixtureAuthoritative());
+  assert.ok(enc.ok);
+  // An own __proto__ key can only come from JSON.parse — plain-object assignment invokes
+  // the prototype setter instead (covered by the corrupted-prototype test above). Inject it
+  // as JSON text so the decoder receives exactly what a round-tripped document carries.
+  const jsonStart = enc.block.indexOf('{');
+  const jsonEnd = enc.block.lastIndexOf('}') + 1;
+  const objText = enc.block.slice(jsonStart, jsonEnd);
+  assert.ok(objText.includes('"context": {'));
+  const injected = objText.replace('"context": {', '"context": {\n    "__proto__": { "body": "keep me" },');
+  const rewritten = enc.block.slice(0, jsonStart) + injected + enc.block.slice(jsonEnd);
+  const dec = decodeIntent(wrapBlock(rewritten));
+  assert.ok(!dec.error, dec.error || '');
+  assert.equal(dec.authoritative.context['__proto__'].body, 'keep me');
+  // Re-encoded bytes keep it:
+  const re = encodeIntentBlock(dec.authoritative);
+  assert.ok(re.ok);
+  const dec2 = decodeIntent(wrapBlock(re.block));
+  assert.equal(dec2.authoritative.context['__proto__'].body, 'keep me');
+});

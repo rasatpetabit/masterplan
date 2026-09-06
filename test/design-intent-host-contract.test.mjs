@@ -10,7 +10,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -84,7 +84,10 @@ test('the manifest closes over SKILL.md, schema.json, itself, and the validator'
     assert.ok(set.has(required), `closed_file_set must include ${required}`);
   }
   // The set must cover every file the skill consists of — no undeclared behavior-affecting asset.
-  const tracked = git(pin.repo, 'ls-files', '--', pin.skill_path).toString().trim().split('\n').filter(Boolean);
+  // Enumerate the PINNED COMMIT'S TREE, not the current index: the checkout may sit at any
+  // revision, and only the pinned tree is the pinned skill (an index enumeration would let a
+  // later revision's file list pass against the pin's manifest).
+  const tracked = git(pin.repo, 'ls-tree', '-r', '--name-only', pin.commit, '--', pin.skill_path).toString().trim().split('\n').filter(Boolean);
   const trackedRel = new Set(tracked.map((f) => f.slice(pin.skill_path.length + 1)));
   for (const rel of trackedRel) {
     assert.ok(set.has(rel), `skill file ${rel} is not declared in the manifest's closed_file_set`);
@@ -104,6 +107,10 @@ test('the pinned skill teaches the host contract and stops refusing goal blocks'
     'permitted recorder operations',
     'never writes `state.yml` or `events.jsonl`',
     'presents **only the intent projection** to `validate-intent.mjs`',
+    // The plan-mode draft lifecycle is the HOST's — no confirm-the-restatement gate in plan
+    // mode (spec §5.1 step 6: intent review lands at the spec gate).
+    'Plan mode: the host owns the draft lifecycle',
+    'Confirm, then write (repo and assess modes)',
   ]) {
     assert.ok(flat.includes(expected), `SKILL.md must teach: ${expected}`);
   }
@@ -128,6 +135,15 @@ test('repo and assess mode contracts survive in the pinned skill', () => {
 test('the shared validator accepts an intent projection while goal blocks are host-owned input', () => {
   // The plan-mode projection the skill presents to validate-intent.mjs validates clean. The
   // host's goals.md may carry ## G<n>: blocks beside it — they never reach the validator.
+  // The validator EXECUTED is the PINNED revision's: the closed file set is extracted from
+  // pin.commit's tree into a temp dir and run from there, so behavioral verification can
+  // never slide to whatever the working tree happens to hold.
+  const pinnedSkillDir = mkdtempSync(path.join(os.tmpdir(), 'design-intent-pinned-skill-'));
+  for (const rel of skillManifest().identity.closed_file_set) {
+    const dest = path.join(pinnedSkillDir, rel);
+    mkdirSync(path.dirname(dest), { recursive: true });
+    writeFileSync(dest, git(pin.repo, 'show', `${pin.commit}:${pin.skill_path}/${rel}`));
+  }
   const tmp = mkdtempSync(path.join(os.tmpdir(), 'design-intent-pin-'));
   const projection = path.join(tmp, 'projection.md');
   writeFileSync(
@@ -163,9 +179,10 @@ repo_intent: none
   );
   const out = execFileSync(
     process.execPath,
-    [path.join(pin.repo, pin.skill_path, 'validate-intent.mjs'), projection, '--mode', 'plan', '--complexity', 'low'],
+    [path.join(pinnedSkillDir, 'validate-intent.mjs'), projection, '--mode', 'plan', '--complexity', 'low'],
     { encoding: 'utf8' },
   );
   assert.match(out, /^ok: /);
   rmSync(tmp, { recursive: true, force: true });
+  rmSync(pinnedSkillDir, { recursive: true, force: true });
 });
