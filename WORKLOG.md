@@ -980,3 +980,26 @@ agent-policy run's migration completion; the workflow review route is the
 standing alternative. Wave-3 execution belongs to the sibling session; running
 Claude sessions need restart to activate 9.10.1. Receipt:
 docs/handoffs/2026-09-06-routing-cache-release-review.md.
+
+## 2026-09-05 — design-intent amendment draft: D1 landed, reconciliation ref bound
+
+Committed the paused D1 edit as made (evidenced completeness wins over the native
+numeric interview floors) and cleared D1 from the proposal's unresolved list, so
+the artifact heading for the exact-artifact approval is self-consistent.
+
+Bound §5's reconciliation to the run's integration target rather than the
+executing branch's worktree. This repo's INTENT.md landed on main while the
+implementation branch at 1f2741f does not carry it; without the binding, G8's
+repository-intent-drift tests would run on the branch, find no artifact, and
+report a clean absent-source state instead of a discrepancy. Absent-source now
+means the target has no INTENT.md at all; the resolved ref is recorded beside
+path and digest so a moved target is distinguishable from a changed file.
+
+Assessed the draft against the new INTENT.md. §3 fail-closed binding, §7's
+"tests are requirements, not evidence", and §8's open gate all serve the stated
+posture and invariant. Concurrent-run awareness is NOT a draft gap — G1 already
+owns it (overlap_review first event, runs-list with planned_paths/worktree,
+test/overlap-sequencer.test.mjs), on the branch. No goals, spec, or plan.index
+bytes were touched; design-intent-amendment-approval stays open. Root TODO.md
+still untouched. Another session published v9.10.1 (0ffe456) into this repo
+mid-turn; no overlap with these files.
