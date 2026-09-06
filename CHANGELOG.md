@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [9.10.1] — 2026-09-06
+
+### Fixed
+
+- Refresh the bundled workflow routing snapshot so installed plugins resolve the current governed lanes instead of retired model routes. Publishing a new version makes the source fixes available to version-keyed plugin caches.
+- Make the routing contract test validate the configured review effort against the dispatch effort vocabulary instead of pinning an obsolete value.
+- Correct the CLI flag regression fixture to distinguish missing-state errors from unknown flags by their diagnostics, independent of the caller's session environment.
+- Synchronize the remaining version-bearing surfaces (`llms.txt`, `.okf/index.md`) that the publish-hygiene manifest guard does not cover.
+
 ## [9.10.0] — 2026-08-30
 
 Fresh-eyes remediation of `/srv/dev/ras/masterplan` — a verified audit (42 lenses + 42

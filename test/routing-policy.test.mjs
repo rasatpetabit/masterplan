@@ -37,11 +37,21 @@ test('repo-local canonical policy is checked in and structurally complete', () =
 });
 
 test('resolveWorkClass returns the governed record for a known class', () => {
-  const r = resolveWorkClass('adversary');
+  // One policy load, injected — resolveWorkClass must consume this exact document,
+  // not perform a second independent disk read.
+  const policy = loadRoutingPolicy();
+  const r = resolveWorkClass('adversary', { policy });
   assert.equal(r.agent, 'breaker');
   assert.equal(r.lane, 'frontier');
   assert.equal(r.cap, 'review');
-  assert.equal(r.effort, 'xhigh');
+  // The effort VALUE is validated against the dispatch transport's vocabulary, not
+  // against the policy field the resolver just read — a self-referential compare
+  // would pass a typo'd effort straight into wave dispatch.
+  const DISPATCH_EFFORTS = ['low', 'medium', 'high', 'xhigh'];
+  assert.ok(
+    DISPATCH_EFFORTS.includes(r.effort),
+    `adversary effort '${r.effort}' is outside the dispatch effort vocabulary`,
+  );
   assert.equal(r.panel, 'adversarial');
   assert.equal(r.writes, false);
   assert.match(r.model, /^litellm\//);

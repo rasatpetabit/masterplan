@@ -25,12 +25,12 @@
       "strengths": "Cheap and quick with better instruction-following than sweep. Mechanical multi-file edits, renames, formatting, boilerplate."
     },
     "code": {
-      "model": "litellm/glm-5.2",
+      "model": "litellm/glm-5.3",
       "ctx": 1000000,
       "cost": "low",
       "fallback": "bulk",
       "chain": [
-        "litellm/glm-5.2",
+        "litellm/glm-5.3",
         "litellm/skynet3/deepseek-v4-flash",
         "litellm/gemini-3.7-flash"
       ],
@@ -43,7 +43,7 @@
       "fallback": "code",
       "chain": [
         "litellm/grok-4.6",
-        "litellm/glm-5.2",
+        "litellm/glm-5.3",
         "litellm/skynet3/deepseek-v4-flash",
         "litellm/gemini-3.7-flash"
       ],
@@ -56,29 +56,29 @@
       "fallback": "longform",
       "chain": [
         "litellm/deepseek-v4-pro",
-        "litellm/gemini-3.1-pro-preview"
+        "litellm/gemini-3.7-flash"
       ],
       "strengths": "Deep step-by-step reasoning at a moderate price with a million token window. Root-cause tracing and multi-hop investigation."
     },
     "longform": {
-      "model": "litellm/gemini-3.1-pro-preview",
+      "model": "litellm/gemini-3.7-flash",
       "ctx": 1048576,
       "cost": "medium",
       "fallback": "reason",
       "chain": [
-        "litellm/gemini-3.1-pro-preview",
+        "litellm/gemini-3.7-flash",
         "litellm/deepseek-v4-pro"
       ],
       "strengths": "Best sustained reasoning over a very large corpus. Use when the evidence does not fit anywhere else — repo-wide synthesis, long traces."
     },
     "frontier": {
-      "model": "litellm/gpt-5.6-sol",
+      "model": "litellm/gpt-6-astra",
       "ctx": 372000,
       "cost": "high",
       "fallback": "longform",
       "chain": [
-        "litellm/gpt-5.6-sol",
-        "litellm/gemini-3.1-pro-preview",
+        "litellm/gpt-6-astra",
+        "litellm/gemini-3.7-flash",
         "litellm/deepseek-v4-pro"
       ],
       "strengths": "Strongest judgment available here. Architecture calls, adversarial review, and anything where being wrong is expensive. Smallest window of the group, so feed it curated evidence rather than raw dumps."
@@ -87,28 +87,14 @@
       "model": "litellm/qwen3.8-max",
       "ctx": 983616,
       "cost": "medium",
-      "fallback": "mid",
+      "fallback": "code",
       "chain": [
         "litellm/qwen3.8-max",
-        "litellm/qwen3.7-plus",
-        "litellm/glm-5.2",
+        "litellm/glm-5.3",
         "litellm/skynet3/deepseek-v4-flash",
         "litellm/gemini-3.7-flash"
       ],
       "strengths": "Strong generalist from a different family than the lanes above. Its value is being a genuinely different model — use it for second opinions where vendor diversity matters more than raw peak ability."
-    },
-    "mid": {
-      "model": "litellm/qwen3.7-plus",
-      "ctx": 983616,
-      "cost": "low",
-      "fallback": "code",
-      "chain": [
-        "litellm/qwen3.7-plus",
-        "litellm/glm-5.2",
-        "litellm/skynet3/deepseek-v4-flash",
-        "litellm/gemini-3.7-flash"
-      ],
-      "strengths": "Competent mid-weight generalist. Overflow capacity when a cheaper lane is too weak and a frontier lane is not worth the spend."
     },
     "local": {
       "model": "litellm/qwen38-27b-awq",
@@ -131,12 +117,12 @@
     },
     "medium": {
       "lane": "code",
-      "model": "litellm/glm-5.2",
+      "model": "litellm/glm-5.3",
       "intent": "Default working tier — read, reason, and write code to a spec."
     },
     "big": {
       "lane": "frontier",
-      "model": "litellm/gpt-5.6-sol",
+      "model": "litellm/gpt-6-astra",
       "intent": "Hardest calls — design, adversarial review, final synthesis."
     }
   },
@@ -176,7 +162,7 @@
       "tier": "medium",
       "writes": true,
       "lane": "code",
-      "model": "litellm/glm-5.2",
+      "model": "litellm/glm-5.3",
       "intent": "Implement a bounded, specified change and verify it.",
       "classes": [
         "bounded-edit",
@@ -189,7 +175,7 @@
       "tier": "medium",
       "writes": true,
       "lane": "code",
-      "model": "litellm/glm-5.2",
+      "model": "litellm/glm-5.3",
       "intent": "Write and run tests; judge whether evidence supports a claim.",
       "classes": [
         "tester"
@@ -199,7 +185,7 @@
       "tier": "big",
       "writes": false,
       "lane": "frontier",
-      "model": "litellm/gpt-5.6-sol",
+      "model": "litellm/gpt-6-astra",
       "intent": "Design judgment, trade-off calls, synthesis across findings.",
       "classes": [
         "planned-execution",
@@ -211,7 +197,7 @@
       "tier": "big",
       "writes": false,
       "lane": "frontier",
-      "model": "litellm/gpt-5.6-sol",
+      "model": "litellm/gpt-6-astra",
       "intent": "Adversarial review — try to refute the work, not confirm it.",
       "classes": [
         "diff-review",
@@ -256,7 +242,7 @@
       "model": "litellm/deepseek-v4-pro",
       "chain": [
         "litellm/deepseek-v4-pro",
-        "litellm/gemini-3.1-pro-preview"
+        "litellm/gemini-3.7-flash"
       ],
       "cap": "investigate",
       "effort": "high",
@@ -267,9 +253,9 @@
     "deep-investigation": {
       "agent": "tracer",
       "lane": "longform",
-      "model": "litellm/gemini-3.1-pro-preview",
+      "model": "litellm/gemini-3.7-flash",
       "chain": [
-        "litellm/gemini-3.1-pro-preview",
+        "litellm/gemini-3.7-flash",
         "litellm/deepseek-v4-pro"
       ],
       "cap": "investigate",
@@ -282,9 +268,9 @@
     "bounded-edit": {
       "agent": "builder",
       "lane": "code",
-      "model": "litellm/glm-5.2",
+      "model": "litellm/glm-5.3",
       "chain": [
-        "litellm/glm-5.2",
+        "litellm/glm-5.3",
         "litellm/skynet3/deepseek-v4-flash",
         "litellm/gemini-3.7-flash"
       ],
@@ -300,7 +286,7 @@
       "model": "litellm/grok-4.6",
       "chain": [
         "litellm/grok-4.6",
-        "litellm/glm-5.2",
+        "litellm/glm-5.3",
         "litellm/skynet3/deepseek-v4-flash",
         "litellm/gemini-3.7-flash"
       ],
@@ -314,9 +300,9 @@
     "graph-execution": {
       "agent": "builder",
       "lane": "code",
-      "model": "litellm/glm-5.2",
+      "model": "litellm/glm-5.3",
       "chain": [
-        "litellm/glm-5.2",
+        "litellm/glm-5.3",
         "litellm/skynet3/deepseek-v4-flash",
         "litellm/gemini-3.7-flash"
       ],
@@ -329,14 +315,14 @@
     "planned-execution": {
       "agent": "judge",
       "lane": "frontier",
-      "model": "litellm/gpt-5.6-sol",
+      "model": "litellm/gpt-6-astra",
       "chain": [
-        "litellm/gpt-5.6-sol",
-        "litellm/gemini-3.1-pro-preview",
+        "litellm/gpt-6-astra",
+        "litellm/gemini-3.7-flash",
         "litellm/deepseek-v4-pro"
       ],
       "cap": "chat",
-      "effort": "xhigh",
+      "effort": "high",
       "writes": false,
       "tier": "big",
       "fallback": "graph-execution",
@@ -345,9 +331,9 @@
     "tester": {
       "agent": "prover",
       "lane": "code",
-      "model": "litellm/glm-5.2",
+      "model": "litellm/glm-5.3",
       "chain": [
-        "litellm/glm-5.2",
+        "litellm/glm-5.3",
         "litellm/skynet3/deepseek-v4-flash",
         "litellm/gemini-3.7-flash"
       ],
@@ -360,14 +346,14 @@
     "architecture": {
       "agent": "judge",
       "lane": "frontier",
-      "model": "litellm/gpt-5.6-sol",
+      "model": "litellm/gpt-6-astra",
       "chain": [
-        "litellm/gpt-5.6-sol",
-        "litellm/gemini-3.1-pro-preview",
+        "litellm/gpt-6-astra",
+        "litellm/gemini-3.7-flash",
         "litellm/deepseek-v4-pro"
       ],
       "cap": "chat",
-      "effort": "xhigh",
+      "effort": "high",
       "writes": false,
       "tier": "big",
       "intent": "Interface and seam design; trade-offs with long-lived consequences."
@@ -375,9 +361,9 @@
     "multi-agent-orchestration": {
       "agent": "judge",
       "lane": "longform",
-      "model": "litellm/gemini-3.1-pro-preview",
+      "model": "litellm/gemini-3.7-flash",
       "chain": [
-        "litellm/gemini-3.1-pro-preview",
+        "litellm/gemini-3.7-flash",
         "litellm/deepseek-v4-pro"
       ],
       "cap": "chat",
@@ -389,10 +375,10 @@
     "diff-review": {
       "agent": "breaker",
       "lane": "frontier",
-      "model": "litellm/gpt-5.6-sol",
+      "model": "litellm/gpt-6-astra",
       "chain": [
-        "litellm/gpt-5.6-sol",
-        "litellm/gemini-3.1-pro-preview",
+        "litellm/gpt-6-astra",
+        "litellm/gemini-3.7-flash",
         "litellm/deepseek-v4-pro"
       ],
       "cap": "review",
@@ -404,10 +390,10 @@
     "critic": {
       "agent": "breaker",
       "lane": "frontier",
-      "model": "litellm/gpt-5.6-sol",
+      "model": "litellm/gpt-6-astra",
       "chain": [
-        "litellm/gpt-5.6-sol",
-        "litellm/gemini-3.1-pro-preview",
+        "litellm/gpt-6-astra",
+        "litellm/gemini-3.7-flash",
         "litellm/deepseek-v4-pro"
       ],
       "cap": "review",
@@ -422,8 +408,7 @@
       "model": "litellm/qwen3.8-max",
       "chain": [
         "litellm/qwen3.8-max",
-        "litellm/qwen3.7-plus",
-        "litellm/glm-5.2",
+        "litellm/glm-5.3",
         "litellm/skynet3/deepseek-v4-flash",
         "litellm/gemini-3.7-flash"
       ],
@@ -436,14 +421,14 @@
     "adversary": {
       "agent": "breaker",
       "lane": "frontier",
-      "model": "litellm/gpt-5.6-sol",
+      "model": "litellm/gpt-6-astra",
       "chain": [
-        "litellm/gpt-5.6-sol",
-        "litellm/gemini-3.1-pro-preview",
+        "litellm/gpt-6-astra",
+        "litellm/gemini-3.7-flash",
         "litellm/deepseek-v4-pro"
       ],
       "cap": "review",
-      "effort": "xhigh",
+      "effort": "high",
       "writes": false,
       "tier": "big",
       "panel": "adversarial",
@@ -452,9 +437,9 @@
     "unknown": {
       "agent": "builder",
       "lane": "code",
-      "model": "litellm/glm-5.2",
+      "model": "litellm/glm-5.3",
       "chain": [
-        "litellm/glm-5.2",
+        "litellm/glm-5.3",
         "litellm/skynet3/deepseek-v4-flash",
         "litellm/gemini-3.7-flash"
       ],
@@ -470,7 +455,7 @@
       "members": [
         {
           "lane": "frontier",
-          "model": "litellm/gpt-5.6-sol"
+          "model": "litellm/gpt-6-astra"
         },
         {
           "lane": "broad",
@@ -478,7 +463,7 @@
         },
         {
           "lane": "longform",
-          "model": "litellm/gemini-3.1-pro-preview"
+          "model": "litellm/gemini-3.7-flash"
         }
       ],
       "quorum": 2,
@@ -488,11 +473,11 @@
       "members": [
         {
           "lane": "frontier",
-          "model": "litellm/gpt-5.6-sol"
+          "model": "litellm/gpt-6-astra"
         },
         {
           "lane": "longform",
-          "model": "litellm/gemini-3.1-pro-preview"
+          "model": "litellm/gemini-3.7-flash"
         }
       ],
       "quorum": 2,
