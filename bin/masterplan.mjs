@@ -221,7 +221,7 @@ import { computeEnqueueKey, decideEnqueue } from '../lib/qctl-enqueue.mjs';
 import { verifyArtifact, parseQctlDigest } from '../lib/qctl-artifact.mjs';
 import { mapQctlStatus } from '../lib/qctl-status.mjs';
 import { decideBaseDrift } from '../lib/qctl-requeue.mjs';
-import { recordWaveResult } from '../lib/wave-commit.mjs';
+import { recordWaveResult, promoteAmendment } from '../lib/wave-commit.mjs';
 import { dispatchWaveViaFabric, reviewNativeResult, readWaveDispatchRecord, writeWaveDispatchRecord } from '../lib/dispatch-wave.mjs';
 import { continueRun, dispatchPlanFanout, resolvePlanMdPath } from '../lib/continue.mjs';
 import { finishStep } from '../lib/finish-step.mjs';
@@ -597,6 +597,7 @@ const KNOWN_FLAGS = new Set(
     'class corrected critic-unavailable-ack deploy-abort deploy-attest deploy-authorize deploy-rerun '  +
     'deploy-retry deploy-skip deploy-step-done done-adhoc-file error file final intent-confirmed intent-rejected '  + 'archive-pushed archive-push-skipped '  +
     'deploy-chain-hash exit focus interview-waived model overlap-review payload-file resolves '  +
+    'approval-file diff-file result-goals-file result-spec-file self transaction-id '  +
     'review-file round supersedes '  +
     'successor text unavailable '  +
     // §5.5/§6.1 schema capture + skill-identity amendment (task 58): the capture/amendment
@@ -2249,6 +2250,33 @@ function main() {
       if (!rerenderRefsHtml(p, 'amend-tasks')) renderOk = false;
       out({ amend_tasks: 'upserted', appended: up.appended, refreshed: up.refreshed, pruned: up.pruned });
       if (!renderOk) process.exit(1);
+      break;
+    }
+    case 'amend-promote': {
+      // §5.6 (task 55): the promotion entry path — the durable transaction that REPLACES the
+      // by-hand promotion the amendment flow itself required. Thin parse-and-forward: the
+      // verb owns fs reads of the four artifacts (diff, result spec/goals, approval receipt)
+      // and forwards to lib/wave-commit.mjs's promoteAmendment, which owns the lock (Guard D
+      // across begin + both writes + the record), the expected-revision check, the
+      // reproduction proof, and exactly-once recording. An existing transaction_id routes
+      // through recovery INSIDE the library (never a second begin) — the verb never decides.
+      const p = need(flags, 'state');
+      const txid = need(flags, 'transaction-id');
+      const diff = readText(need(flags, 'diff-file'));
+      const resultSpec = readText(need(flags, 'result-spec-file'));
+      const resultGoals = readText(need(flags, 'result-goals-file'));
+      const approval = JSON.parse(readText(need(flags, 'approval-file')));
+      // --self is the owner identity OBJECT (buildOwnerIdentity's shape) as JSON — Guard D
+      // needs the real identity, not a bare string.
+      const self = JSON.parse(need(flags, 'self'));
+      let res;
+      try {
+        res = promoteAmendment({ statePath: p, transactionId: txid, diff, resultSpec, resultGoals, approval, reason: flags.reason, self });
+      } catch (e) {
+        die(`amend-promote: ${e.message}`, 1);
+      }
+      out({ amend_promote: res.outcome ?? 'promoted', transaction_id: txid, ...(res.replay !== undefined ? { replay: res.replay } : {}), writes: res.writes ?? undefined, ...(res.note ? { note: res.note } : {}), ...(res.reason ? { refusal_reason: res.reason } : {}) });
+      if (res.outcome && res.outcome !== 'promoted' && res.outcome !== 'recorded') process.exit(1);
       break;
     }
     case 'load-plan': {

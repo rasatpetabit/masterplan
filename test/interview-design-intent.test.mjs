@@ -28,6 +28,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+const BIN = path.join(fileURLToPath(new URL('..', import.meta.url)), 'bin', 'masterplan.mjs');
 
 import { writeState, buildSeedState, appendEvent, readState } from '../lib/bundle.mjs';
 import {
@@ -630,18 +633,26 @@ test('a waiver persists the resolved minimum it was judged under, and the cap ca
   // probing_minimum_unmet_at_cap), and schema-backed waivers omitted the resolved minimum
   // from their persisted policy identity. Both routes resolve the same configuration and
   // both persist the minimum.
-  const build = () => {
+  const build = (withConfig) => {
     const { dir, statePath } = mkbundle('medium');
     const skillRoot = mkskill();
     capture({ statePath, skillRoot });
+    // The route resolves config through deriveDefaultTargetRepo — a git repo root is
+    // required, and the repo-local .masterplan.yaml is where the minimum lives:
+    execFileSync('git', ['-C', dir, 'init', '-q']);
+    if (withConfig) fs.writeFileSync(path.join(dir, '.masterplan.yaml'), 'interview:\n  probing_minimum:\n    medium: 3\n');
     askQuestion({ statePath, id: 'Q1', round: 1, kind: 'intent', text: 'why?' });
+    askQuestion({ statePath, id: 'Q2', round: 1, kind: 'intent', text: 'outcome?' });
     answerQuestion({ statePath, id: 'Q1', text: 'because' });
-    recordDraft({ statePath, intent: INTENT });
-    recordReceipt({ statePath, intent: INTENT, eligible: ['Q1'], forks: false, dir });
-    for (let i = 2; i <= 10; i += 1) {
-      askQuestion({ statePath, id: `Q${i}`, round: i, kind: 'design', text: `filler ${i}?` });
+    answerQuestion({ statePath, id: 'Q2', text: 'ships' });
+    // Cap fillers FIRST, then the draft + the CURRENT receipt at the draft head (fillers
+    // after the receipt would stale it and the route would refuse for the wrong reason):
+    for (let i = 3; i <= 10; i += 1) {
+      askQuestion({ statePath, id: `Q${i}`, round: i - 1, kind: 'design', text: `filler ${i}?` });
       withdrawQuestion({ statePath, id: `Q${i}`, reason: 'cap filler' });
     }
+    recordDraft({ statePath, intent: INTENT });
+    recordReceipt({ statePath, intent: INTENT, eligible: ['Q1', 'Q2'], forks: true, dir });
     return { dir, statePath };
   };
   const a = build();
@@ -649,12 +660,34 @@ test('a waiver persists the resolved minimum it was judged under, and the cap ca
   const ev = lastEvent(a.statePath, 'interview_waived');
   assert.equal(ev.cause, 'probing_minimum_unmet_at_cap');
   assert.equal(ev.probing_minimum, 3, 'the waiver persists the resolved minimum it was judged under');
-  // The CLI route resolves the same configuration through the same seam (the verb delegates
-  // to waiveInterview with resolveProbingMinimum-resolved values, proven by the shared code
-  // path this suite exercises; the black-box equivalence is the same function):
-  const { waiveInterview: wf, interviewPolicy } = await import('../lib/interview.mjs');
-  assert.equal(typeof wf, 'function');
-  void interviewPolicy;
+  // THE BLACK-BOX ROUTE (advisor, wave-13 fix-round completion): drive the ACTUAL
+  // `goals-load --interview-waived` CLI route on the same ledger shape. The configured
+  // bundle (repo config medium: 3) records the cap-waiver cause + its resolved minimum
+  // 3; an identical unconfigured bundle (shipped default 2) records NO cause — omitting
+  // the configuration changes the recorded outcome, which is exactly the regression the
+  // adversary named (the route used to bypass the resolved minimum entirely).
+  const runWaiveRoute = (sp) => spawnSync(process.execPath, [BIN, 'goals-load', `--state=${sp}`, '--interview-waived', '--reason=operator closed it'], { encoding: 'utf8' });
+  const cfg = build(true);
+  const r1 = runWaiveRoute(cfg.statePath);
+  // The waive runs FIRST; the verb then dies on the freeze's missing --goals flag — the
+  // refusal is the freeze's, never the waiver's:
+  assert.match(r1.stderr, /missing required --goals/, 'the route got past the waiver to the freeze');
+  assert.doesNotMatch(r1.stderr, /interview-waived refused/);
+  const e1 = lastEvent(cfg.statePath, 'interview_waived');
+  assert.equal(e1.cause, 'probing_minimum_unmet_at_cap', 'the CONFIGURED route records the cap cause');
+  assert.equal(e1.probing_minimum, 3, 'the CONFIGURED route persists the resolved minimum 3');
+  const noCfg = build(false);
+  const r2 = runWaiveRoute(noCfg.statePath);
+  assert.match(r2.stderr, /missing required --goals/);
+  const e2 = lastEvent(noCfg.statePath, 'interview_waived');
+  assert.equal(e2.cause, undefined, 'the UNCONFIGURED route (default minimum 2) has 2 eligible = met: no cap cause');
+  assert.equal(e2.probing_minimum, 2, 'the unconfigured route persists the shipped default it was judged under');
+  // Policy-identity durability: the config the waiver was judged under is GONE, the event
+  // keeps its recorded identity — a later config change never rewrites history:
+  fs.rmSync(path.join(cfg.dir, '.masterplan.yaml'));
+  const e1After = lastEvent(cfg.statePath, 'interview_waived');
+  assert.equal(e1After.probing_minimum, 3);
+  assert.equal(e1After.cause, 'probing_minimum_unmet_at_cap');
 });
 
 test('the event-schema validators reject malformed adjudication and terminal-policy fields', async () => {

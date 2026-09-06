@@ -400,10 +400,11 @@ test('the critic receipt binds the recorded draft, so a divergent rendering is r
   assert.notEqual(divergentProj.done_means, draft.done_means, 'a rewritten artifact visibly diverges');
   fs.writeFileSync(operatorGoalsPath, `topic: delegated draft\n\n${enc.block}\n\n## G1: Works\n`); // restore the honest artifact
   // The critic is dispatched with the SAME recorded draft: the receipt must name the
-  // recorded draft's digest. A divergent rendering (someone re-projected the draft with a
-  // different done_means) is refused by the honesty bound:
-  const divergent = { ...draft, done_means: 'a divergent rendering' };
-  assert.notEqual(intentSha(divergent), intentSha(draft));
+  // recorded draft's digest. A divergent rendering — named by the ARTIFACT-DECODED
+  // projection of a rewritten operator goals.md (advisor, wave-13 fix-round
+  // completion: the refusal must exercise the artifact-derived projection, not a locally
+  // fabricated object) — is refused by the honesty bound:
+  assert.notEqual(intentSha(divergentProj), intentSha(draft));
   const payloadPath = path.join(path.dirname(statePath), 'payload.json');
   fs.writeFileSync(payloadPath, JSON.stringify({
     unknowns: [], contradictions: [], misclassified: [],
@@ -417,19 +418,20 @@ test('the critic receipt binds the recorded draft, so a divergent rendering is r
       receipt: {
         dispatch_id: 'd1', model: 'm', output_tokens: 10,
         content_head: status.content_head,
-        intent_sha256: intentSha(divergent),
+        intent_sha256: intentSha(divergentProj),
       },
       payloadPath,
     }),
     /stale receipt/,
   );
-  // The SAME schema-backed draft the operator sees is accepted:
+  // The SAME schema-backed draft the operator sees — bound through the ARTIFACT-decoded
+  // projection — is accepted:
   recordCritic({
     statePath,
     receipt: {
       dispatch_id: 'd1', model: 'm', output_tokens: 10,
       content_head: status.content_head,
-      intent_sha256: intentSha(draft),
+      intent_sha256: intentSha(artifactProj),
     },
     payloadPath,
   });
