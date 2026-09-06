@@ -190,7 +190,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readState, parseState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, setWorktree, setWorktreeDisposition, setVerifiedSha, setCodexConfig, setReviewConfig, setRenderConfig, loadPlanTasks, buildSeedState, buildTasksFromPlanIndex, appendEvent, setCoordination, applyPlanIndex, upsertTasks, rebasePaths, GOAL_LIFECYCLE_EVENT_TYPES, inferGoalsCapability, CURRENT_SCHEMA_VERSION } from '../lib/bundle.mjs';
+import { readState, parseState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, setWorktree, setWorktreeDisposition, setVerifiedSha, setCodexConfig, setReviewConfig, setRenderConfig, loadPlanTasks, buildSeedState, buildTasksFromPlanIndex, appendEvent, setCoordination, applyPlanIndex, upsertTasks, rebasePaths, GOAL_LIFECYCLE_EVENT_TYPES, inferGoalsCapability, CURRENT_SCHEMA_VERSION, resolveFormatPin, repairFormatPin } from '../lib/bundle.mjs';
 import { parseGoals, validateGoals, goalsHash, legacyGoalsHash, preCodeMaskGoalsHash, validateUserApprovalReceipt, validateAmendment, amendmentDiff, crossCheckGoals, validateGoalCheckReceipt, validateGoalWaiver, waiverKey, validateGoalsLoadGate } from '../lib/goals.mjs';
 import { planWorktreeCreate, parseWorktreeList, classifyWorktrees, normalizeDisposition, dispositionAfterTeardown, VALID_DISPOSITIONS as VALID_WORKTREE_DISPOSITION } from '../lib/worktree.mjs';
 import { collectDiskDirs, collectBundleRecords } from '../lib/worktree-fs.mjs';
@@ -216,7 +216,8 @@ import {
 import { createHash } from 'node:crypto';
 import { mergePlanFragments, validatePlanIndex, renderPlanMd, renderPlanHtml } from '../lib/plan-merge.mjs';
 import { amendPlan } from '../lib/amend.mjs';
-import { classifyDirt, detectBase, collectVerifyCommands, isVerified, dispositionForChoice, summarizePr, liveCheckDigest } from '../lib/finish.mjs';
+import { classifyDirt, detectBase, collectVerifyCommands, isVerified, dispositionForChoice, summarizePr, liveCheckDigest, finishCheckpointIdentity } from '../lib/finish.mjs';
+import { buildIntentIdentity, verifyCheckpointEvidence } from '../lib/checkpoint-evidence.mjs';
 import { computeEnqueueKey, decideEnqueue } from '../lib/qctl-enqueue.mjs';
 import { verifyArtifact, parseQctlDigest } from '../lib/qctl-artifact.mjs';
 import { mapQctlStatus } from '../lib/qctl-status.mjs';
@@ -375,7 +376,74 @@ function enforceGateReview(gate, statePath, flags, state, opts = {}) {
   } catch (e) {
     if (e.code !== 'ENOENT') die(`gate-review: events.jsonl unreadable: ${e.message}`, 1);
   }
-  if (selectReentry(text, { kind: 'artifact-hash', gate, key: hash }).present) return;
+  const hit = selectReentry(text, { kind: 'artifact-hash', gate, key: hash });
+  if (hit.present) {
+    // The spec-review checkpoint's identity re-verification (§5.5, task 56): on a
+    // SCHEMA-BACKED bundle a recorded review satisfies the gate only when the
+    // identity it was recorded under still matches the CURRENT tuple — evidence
+    // cannot cross an identity boundary, and a receipt recorded before an amended
+    // goal set / drifted reconciliation / replaced skill is unavailable here, never
+    // a pass. The recorded event's OWN binding is re-verified (never re-derived from
+    // the gate hash, which covers only the artifact bytes); a failed re-verification
+    // re-arms the gate exactly like an absent review. A LEGACY bundle (or a
+    // pre-binding recorded event on one) keeps its historical behavior: the absence
+    // is explicit, and the legacy family never satisfies as a schema-backed pass.
+    if (gate === 'spec') {
+      const specIdentity = buildIntentIdentity({ statePath });
+      if (!specIdentity.ok) {
+        die(`gate-review: the spec-review checkpoint cannot establish the run's intent identity — ${specIdentity.reason}`, 1);
+      }
+      if (specIdentity.family === 'schema_backed') {
+        // The newest spec event at THIS hash — the same record selectReentry found.
+        let newest = null;
+        for (const raw of text.split('\n')) {
+          const line = raw.trim();
+          if (line === '') continue;
+          let rec;
+          try { rec = JSON.parse(line); } catch { continue; }
+          if (rec?.type !== 'spec_adversary_review' && rec?.type !== 'spec_adversary_review_skipped') continue;
+          if (rec.data?.hash !== hash) continue;
+          newest = rec;
+        }
+        if (newest && newest.type === 'spec_adversary_review') {
+          // The receipt handed to the checkpoint verifier is the recorded event's OWN
+          // shape — its identity binding, its coverage, its gate hash, and its lane
+          // provenance (the event stores provenance under data.receipt; the verifier's
+          // candidates cover provenance/reviewer_identity/flat members).
+          const recData = newest.data ?? {};
+          const recheck = verifyCheckpointEvidence({
+            checkpoint: 'spec_review',
+            receipt: {
+              ...recData,
+              hash,
+              ...(recData.receipt && typeof recData.receipt === 'object'
+                ? {
+                    reviewer_identity: {
+                      dispatch_id: recData.receipt.dispatch_id,
+                      model: recData.receipt.model,
+                      output_tokens: recData.receipt.output_tokens,
+                    },
+                  }
+                : {}),
+            },
+            current: specIdentity,
+          });
+          if (!recheck.ok) {
+            fs.writeSync(1, JSON.stringify({
+              op: 'run_gate_review',
+              gate,
+              hash,
+              artifacts: descriptors.map((d) => d.relName),
+              reason: `the recorded review no longer verifies against the current intent identity — [${recheck.status}] ${recheck.reason}`,
+              message: `spec gate: the recorded review is stale at the checkpoint: [${recheck.status}] ${recheck.reason} — re-run the adversary review over the CURRENT run state and record it again.`,
+            }) + '\n');
+            process.exit(3);
+          }
+        }
+      }
+    }
+    return;
+  }
   const opObj = {
     op: 'run_gate_review',
     gate,
@@ -434,6 +502,22 @@ function bundleGoalsEnabled(state, events) {
   if (inferGoalsCapability(events).enabled) return true;
   return state != null && typeof state === 'object' && state.goals_enabled === true;
 }
+// §6.1 helper: the goals hash under the bundle's DURABLE format pin — the pin selects
+// the canonicalizer, and the goals gates compare against event hashes written by
+// goals-load/goals-amend under the SAME pin. A pin-less bundle (the legacy shape) keeps
+// the unpinned hash, which IS its canonical one. The repair is §6.1's sanctioned one.
+function pinnedGoalsHash(statePath, goalsMd) {
+  let pin = resolveFormatPin(statePath);
+  if (!pin.pin && pin.repairable) {
+    try { repairFormatPin(statePath); } catch { /* fall through to the refusal */ }
+    pin = resolveFormatPin(statePath);
+  }
+  if (!pin.pin) {
+    die(`goals hash: ${pin.repairable ? 'the durable format pin is missing and could not be repaired from the capture history' : (pin.error ?? 'the durable format pin could not be resolved')}`, 1);
+  }
+  return goalsHash(goalsMd, { formatPin: pin.pin });
+}
+
 // Part 1 — the goals_frozen CAPTURE gate (set-phase --phase=plan). On a goals_enabled bundle, refuse to
 // leave brainstorm until the goal set is frozen: emit an actionable run_goals_capture op and exit 3
 // (mirrors the fail-closed spec-gate pattern) whenever NO goals_frozen event exists yet. Pre-feature
@@ -489,7 +573,7 @@ function enforceGoalsSplitBrainGuard(statePath, state, transition) {
       1
     );
   }
-  const actual = goalsHash(goalsMd);
+  const actual = pinnedGoalsHash(statePath, goalsMd);
   if (actual !== committed) {
     die(
       `${transition}: goals.md hash ${actual} does not match the committed goal set ${committed} from the ` +
@@ -527,7 +611,7 @@ function loadGoalsForCoverage(statePath, label) {
   }
   const mdGoals = parseGoals(goalsMd).goals;
   const committed = committedGoalsHash(events);
-  const actual = goalsHash(goalsMd);
+  const actual = pinnedGoalsHash(statePath, goalsMd);
   if (committed !== null && actual !== committed) {
     die(
       `${label}: goals.md hash ${actual} does not match the committed goal set ${committed} — reconcile ` +
@@ -1897,7 +1981,23 @@ function main() {
         die(`record-goal-check: goals.md unreadable (${e.message}) — freeze the goal set with \`mp goals-load\` first`, 1);
       }
       const gcParsed = parseGoals(goalsMd);
-      const gcHash = goalsHash(goalsMd);
+      // §6.1: goals.md hashes under the bundle's DURABLE format pin — a schema-backed
+      // bundle's canonical goals_hash is the pinned one, and hashing unpinned here
+      // would demand the assessor echo a hash no other checkpoint computes (the
+      // finish identity, the task-review tuple, and the split-brain guard all hash
+      // under the pin; the recorder is the same seam, not an exception).
+      const gcPin = resolveFormatPin(p);
+      if (!gcPin.pin) {
+        die(`record-goal-check: ${gcPin.repairable ? 'the durable format pin is missing and could not be repaired from the capture history' : gcPin.error}`, 1);
+      }
+      if (gcPin.pin === 'schema_backed') {
+        try {
+          repairFormatPin(p); // idempotent §6.1 repair: a capture event with no recorded pin refuses to parse as legacy
+        } catch (e) {
+          die(`record-goal-check: the durable format pin could not be repaired from the capture history (${e.message})`, 1);
+        }
+      }
+      const gcHash = goalsHash(goalsMd, { formatPin: gcPin.pin });
       // Git facts passed in by the shell (bin is fs-only).
       const gcHead = String(need(flags, 'head-sha'));
       const gcBase = String(need(flags, 'base'));
@@ -2031,6 +2131,46 @@ function main() {
         } : {}),
       });
       if (!v.ok) die(`record-goal-check: receipt rejected — ${v.error}`, 1);
+      // The finish checkpoint's identity binding (§5.5, task 56): a FINAL assessment is
+      // evidence about the run state it judged under, and the receipt must name that
+      // state itself — `intent_identity` echoed verbatim from the brief, plus resolvable
+      // assessor provenance. The binding is judged HERE, at record time, against the
+      // bundle's CURRENT identity: a receipt naming a foreign tuple (an amended goal set,
+      // a drifted reconciliation, a replaced skill) is refused before it ever reaches the
+      // ledger, and a replayed receipt is re-validated by the same rule at selection.
+      // The implementation check (no --final) binds the task-review-style identity at
+      // its own checkpoint and stays out of scope here (task 56's finish surface).
+      if (gcFinal) {
+        const finishIdentity = finishCheckpointIdentity({ statePath: p });
+        if (!finishIdentity.ok) {
+          die(`record-goal-check: the finish checkpoint's intent identity could not be established — ${finishIdentity.reason}`, 1);
+        }
+        // The FULL finish tuple, composed from the recorder's OWN deploy members (the
+        // same flags the sibling validator demanded the receipt echo): the checkpoint
+        // judges the receipt against the whole binding it will write, never a
+        // half-composed one.
+        const gcLiveDigest = liveCheckDigest(String(need(flags, 'digest-file')));
+        const iv = verifyCheckpointEvidence({
+          checkpoint: 'finish',
+          receipt,
+          current: { ok: true, family: finishIdentity.family, identity: finishIdentity.intent_identity },
+          finishTuple: { ok: true, tuple: {
+            deploy_base_sha: String(need(flags, 'base-sha')),
+            deploy_chain_hash: String(need(flags, 'deploy-chain-hash')),
+            live_check_digest: gcLiveDigest,
+          } },
+          goalsArtifactDigest: finishIdentity.goals_artifact_digest,
+        });
+        if (!iv.ok) {
+          die(`record-goal-check: final receipt refused at the finish checkpoint — [${iv.status}] ${iv.reason}`, 1);
+        }
+        // The verified identity binding is WRITTEN beside the deploy members, so a later
+        // replay surface (finalReceiptFor) re-validates the same binding it judged.
+        v.normalized.intent_identity = iv.normalized?.intent_identity
+          ?? (finishIdentity.family === 'legacy'
+            ? { legacy: true, goals_hash: gcHash }
+            : finishIdentity.intent_identity);
+      }
       const checkedAlready = gcEvents.some(
         (e) =>
           e.type === 'goal_check' &&
@@ -2081,6 +2221,12 @@ function main() {
                 deploy_chain_hash: v.normalized.deploy_chain_hash,
                 live_check_digest: v.normalized.live_check_digest,
                 intent_verdict: v.normalized.intent_verdict,
+                // The §5.5 identity binding, as verified at record time: the tuple the
+                // assessment judged under, written so the replay surfaces re-validate the
+                // same binding (a receipt the recorder refused never reaches the ledger).
+                ...(v.normalized.intent_identity !== undefined
+                  ? { intent_identity: v.normalized.intent_identity }
+                  : {}),
               }
             : {}),
         },
@@ -2275,8 +2421,13 @@ function main() {
       } catch (e) {
         die(`amend-promote: ${e.message}`, 1);
       }
-      out({ amend_promote: res.outcome ?? 'promoted', transaction_id: txid, ...(res.replay !== undefined ? { replay: res.replay } : {}), writes: res.writes ?? undefined, ...(res.note ? { note: res.note } : {}), ...(res.reason ? { refusal_reason: res.reason } : {}) });
-      if (res.outcome && res.outcome !== 'promoted' && res.outcome !== 'recorded') process.exit(1);
+      out({ amend_promote: res.outcome ?? 'promoted', transaction_id: txid, ...(res.replay !== undefined ? { replay: res.replay } : {}), writes: res.writes ?? undefined, ...(res.converged_goals_cache !== undefined ? { converged_goals_cache: res.converged_goals_cache } : {}), ...(res.note ? { note: res.note } : {}), ...(res.reason ? { refusal_reason: res.reason } : {}) });
+      // Recovered is a SUCCESS: the transaction converged through the decision table
+      // exactly as approved (its writes and record landed; recovery completed them).
+      // Every refusal (lock_refused, base_drifted, diff_mismatch, refused, …) keeps
+      // exiting 1 — the operator decides, the verb never blesses a failure.
+      const AMEND_PROMOTE_SUCCESS = ['promoted', 'recorded', 'recovered'];
+      if (res.outcome && !AMEND_PROMOTE_SUCCESS.includes(res.outcome)) process.exit(1);
       break;
     }
     case 'load-plan': {
@@ -3512,6 +3663,35 @@ function main() {
         };
         if (v.normalized.base) data.base = v.normalized.base;
         else if (flags.base !== undefined) data.base = String(flags.base);
+        // The spec-review checkpoint's identity binding (§5.5, task 56): on a
+        // SCHEMA-BACKED bundle the recorded review is evidence about the run state it
+        // judged under, and the receipt must name that state itself — the identity
+        // tuple echoed verbatim from the brief, per-section coverage over the frozen
+        // snapshot's checked set, and the artifact binding is the hash this very verb
+        // already demanded the receipt echo. Validated HERE at record time against the
+        // bundle's own derivations (never caller-asserted), then WRITTEN on the event
+        // so the guard re-verifies the same binding at the transition. A LEGACY bundle
+        // reports its absence explicitly and keeps its historical shape.
+        if (gate === 'spec') {
+          const specIdentity = buildIntentIdentity({ statePath: p });
+          if (!specIdentity.ok) {
+            die(`record-gate-review: the spec-review checkpoint cannot establish the run's intent identity — ${specIdentity.reason}`, 1);
+          }
+          if (specIdentity.family === 'schema_backed') {
+            const coverage = receipt.sections !== undefined ? receipt.sections : {};
+            const specCheck = verifyCheckpointEvidence({
+              checkpoint: 'spec_review',
+              receipt: { ...receipt, hash },
+              current: specIdentity,
+              checkedSections: undefined,
+            });
+            if (!specCheck.ok) {
+              die(`record-gate-review: receipt refused at the spec-review checkpoint — [${specCheck.status}] ${specCheck.reason}`, 1);
+            }
+            data.intent_identity = specCheck.normalized?.intent_identity ?? specIdentity.identity;
+            data.sections = specCheck.normalized?.sections ?? coverage;
+          }
+        }
         note = v.normalized.digest; // selectReentry surfaces note as the findings digest
       } else {
         // skipped — degraded lane. Evidence required: non-empty reason AND a readable, non-empty digest.

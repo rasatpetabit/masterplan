@@ -30,7 +30,7 @@ import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-import { writeState, buildSeedState, appendEvent } from '../lib/bundle.mjs';
+import { writeState, buildSeedState, appendEvent, resolveFormatPin, repairFormatPin } from '../lib/bundle.mjs';
 import { captureSchema, registerSchemaSnapshotModule, SCHEMA_SNAPSHOT_FILENAME } from '../lib/interview.mjs';
 import { captureSchemaSnapshot, computeSkillIdentity } from '../lib/schema-snapshot.mjs';
 import {
@@ -45,6 +45,10 @@ import {
   verifyCheckpointEvidence,
   resolveReviewerIdentity,
   checkedSectionsOf,
+  requiredCoverageSections,
+  specGateArtifactHash,
+  anchorArtifactHash,
+  planArtifactHash,
   artifactDigest,
   reconciliationDigest,
   REJECTION_STATUSES,
@@ -238,6 +242,15 @@ const approveRecord = (over = {}) => ({
   ...over,
 });
 
+// The ECHOING reviewer: the brief now carries the run's intent_identity (task 56, the
+// fresh-path binding), and a record that wants to COUNT echoes it back verbatim — the
+// agent contract's own rule. Non-echoing / foreign-echo variants are the refusal
+// regressions below, so the echoing shape stays honest here.
+const echoingApprove = (brief, over = {}) => {
+  assert.ok(brief?.intent_identity, 'the review brief must carry the intent identity');
+  return approveRecord({ intent_identity: brief.intent_identity, ...over });
+};
+
 // ---------------------------------------------------------------------------
 // buildIntentIdentity — the tuple itself
 // ---------------------------------------------------------------------------
@@ -397,6 +410,12 @@ test('the rejection vocabulary is exactly G8\'s mirrored set — the statuses ar
 
 test('per-checkpoint rejection matrix: every vocabulary term refuses, never approves', () => {
   const { statePath } = mkBundle();
+  // The bundle's own gate artifacts: the spec checkpoint's `hash` binding and the
+  // alignment checkpoint's anchor/plan bindings are INDEPENDENTLY computed by the
+  // checkpoint from these bytes, so a matching receipt echoes exactly these values.
+  const bundleDir = path.dirname(statePath);
+  fs.writeFileSync(path.join(bundleDir, 'spec.md'), '# spec\nthe fixture gate artifact\n');
+  fs.writeFileSync(path.join(bundleDir, 'plan.md'), '# plan\nthe fixture plan artifact\n');
   const current = schemaBackedCurrent(statePath);
   const good = {
     goals_hash: current.identity.goals_hash,
@@ -423,9 +442,23 @@ test('per-checkpoint rejection matrix: every vocabulary term refuses, never appr
       current,
       finishTuple: checkpoint === 'finish' ? finishTuple : undefined,
     };
+    // Coverage + artifact bindings, as the checkpoint derives them from the bundle's
+    // own snapshot and artifacts (data-driven: the set follows the frozen snapshot,
+    // the artifact hashes follow the bytes on disk).
+    const fullCoverage = {};
+    for (const s of requiredCoverageSections(statePath)) fullCoverage[s] = 'serves';
+    const artifactBindings = checkpoint === 'spec_review'
+      ? { hash: specGateArtifactHash({ statePath }) }
+      : checkpoint === 'alignment_audit'
+        ? { anchor_hash: anchorArtifactHash({ statePath }), plan_hash: planArtifactHash({ statePath }) }
+        : {};
+    const requiredEvidence = (checkpoint === 'spec_review' || checkpoint === 'alignment_audit')
+      ? { sections: fullCoverage, ...artifactBindings }
+      : {};
     const receiptFor = (over) => schemaReceipt({
       intent_identity: { ...good },
       ...finishMembers,
+      ...requiredEvidence,
       ...over,
     });
     // MISSING: no tuple on the receipt at all.
@@ -469,8 +502,33 @@ test('per-checkpoint rejection matrix: every vocabulary term refuses, never appr
     }), 'reviewer_unavailable');
     expectStatus(verifyCheckpointEvidence({
       ...ctx,
-      receipt: { ...finishMembers, intent_identity: { ...good } },
+      receipt: { ...finishMembers, ...requiredEvidence, intent_identity: { ...good } },
     }), 'reviewer_unavailable');
+    // The ARTIFACT-BINDING refusals (schema-backed spec/alignment only): a receipt
+    // missing the checkpoint's independently computed binding is partial; one naming
+    // different bytes is stale. The checkpoint computes the binding from the bundle —
+    // the receipt's value is compared against it, never adopted.
+    if (checkpoint === 'spec_review' || checkpoint === 'alignment_audit') {
+      const bindingField = checkpoint === 'spec_review' ? 'hash' : 'anchor_hash';
+      const stripBinding = checkpoint === 'spec_review'
+        ? { hash: undefined }
+        : { anchor_hash: undefined };
+      expectStatus(verifyCheckpointEvidence({
+        ...ctx,
+        receipt: receiptFor(stripBinding),
+      }), 'partial');
+      expectStatus(verifyCheckpointEvidence({
+        ...ctx,
+        receipt: receiptFor({ [bindingField]: `sha256:${'f'.repeat(64)}` }),
+      }), 'stale');
+      // COVERAGE refusals: no section evidence at all is missing (the coverage
+      // requirement follows the bundle's frozen snapshot — never the caller's choice).
+      expectStatus(verifyCheckpointEvidence({
+        ...ctx,
+        checkedSections: undefined,
+        receipt: receiptFor({ sections: undefined }),
+      }), 'missing');
+    }
     // UNREADABLE: the current tuple cannot be established at all.
     expectStatus(verifyCheckpointEvidence({
       ...ctx,
@@ -647,6 +705,9 @@ test('the checked-section set comes from the FROZEN SNAPSHOT — alternate conte
   assert.notDeepEqual(standard, alternate, 'the sets genuinely differ');
 
   const { statePath } = mkBundle();
+  // The bundle's own gate artifact: the spec checkpoint's `hash` binding is computed
+  // from these bytes, so the matching receipt echoes exactly this value.
+  fs.writeFileSync(path.join(path.dirname(statePath), 'spec.md'), '# spec\nthe fixture gate artifact\n');
   const current = schemaBackedCurrent(statePath);
   const identity = {
     goals_hash: current.identity.goals_hash,
@@ -654,9 +715,11 @@ test('the checked-section set comes from the FROZEN SNAPSHOT — alternate conte
     skill_identity: current.identity.skill_identity,
     reconciliation_digest: current.identity.reconciliation_digest,
   };
+  const gateHash = specGateArtifactHash({ statePath });
   const receiptCovering = (sections) => schemaReceipt({
     intent_identity: identity,
     sections,
+    hash: gateHash,
   });
   // Under the bundle's own snapshot, full coverage verifies.
   const full = {};
@@ -681,13 +744,20 @@ test('the checked-section set comes from the FROZEN SNAPSHOT — alternate conte
   for (const s of alternate) altCov[s] = 'serves';
   expectStatus(verifyCheckpointEvidence({ checkpoint: 'spec_review', current, receipt: receiptCovering(altCov), checkedSections: standard }), 'mismatched');
   // The alignment-audit checkpoint consumes the same data-driven set: the alternate
-  // snapshot's own coverage verifies under the alternate snapshot.
-  const altOk = verifyCheckpointEvidence({ checkpoint: 'alignment_audit', current, receipt: receiptCovering(altCov), checkedSections: alternate });
+  // snapshot's own coverage verifies under the alternate snapshot. Its artifact
+  // bindings (anchor + plan) are computed from the bundle's own bytes — goals.md's
+  // `topic:` anchor and plan.md — so the matching receipt echoes exactly those.
+  fs.writeFileSync(path.join(path.dirname(statePath), 'plan.md'), '# plan\nthe fixture plan artifact\n');
+  const alignmentEvidence = {
+    anchor_hash: anchorArtifactHash({ statePath }),
+    plan_hash: planArtifactHash({ statePath }),
+  };
+  const altOk = verifyCheckpointEvidence({ checkpoint: 'alignment_audit', current, receipt: schemaReceipt({ intent_identity: identity, sections: altCov, ...alignmentEvidence }), checkedSections: alternate });
   assert.equal(altOk.ok, true, JSON.stringify(altOk));
   // and the standard coverage does not satisfy it.
-  expectStatus(verifyCheckpointEvidence({ checkpoint: 'alignment_audit', current, receipt: receiptCovering(full), checkedSections: alternate }), 'mismatched');
+  expectStatus(verifyCheckpointEvidence({ checkpoint: 'alignment_audit', current, receipt: schemaReceipt({ intent_identity: identity, sections: full, ...alignmentEvidence }), checkedSections: alternate }), 'mismatched');
   // No section evidence at all: missing.
-  expectStatus(verifyCheckpointEvidence({ checkpoint: 'alignment_audit', current, receipt: schemaReceipt({ intent_identity: identity }), checkedSections: standard }), 'missing');
+  expectStatus(verifyCheckpointEvidence({ checkpoint: 'alignment_audit', current, receipt: schemaReceipt({ intent_identity: identity, ...alignmentEvidence }), checkedSections: standard }), 'missing');
   // A declared section with a BLANK verdict: unreadable (present, says nothing).
   expectStatus(verifyCheckpointEvidence({
     checkpoint: 'spec_review', current, checkedSections: standard,
@@ -719,7 +789,7 @@ test('the task-review checkpoint records the identity tuple on its events and ac
   const items = await reviewCompletedTasks({
     statePath, runId: 'ckpt-run', wave: 1, baseSha: 'base', now: 1000,
     items: [{ task_id: 1, digest: { task_id: 1, status: 'done' }, review_input: reviewInput() }],
-    callReview: async () => { calls += 1; return approveRecord(); },
+    callReview: async (brief) => { calls += 1; return echoingApprove(brief); },
   });
   assert.equal(calls, 1);
   assert.equal(items[0].review.verdict, 'approve');
@@ -735,7 +805,7 @@ test('the task-review checkpoint records the identity tuple on its events and ac
   const again = await reviewCompletedTasks({
     statePath, runId: 'ckpt-run', wave: 1, baseSha: 'base', now: 1001,
     items: [{ task_id: 1, digest: { task_id: 1, status: 'done' }, review_input: reviewInput() }],
-    callReview: async () => { calls += 1; return approveRecord(); },
+    callReview: async (brief) => { calls += 1; return echoingApprove(brief); },
   });
   assert.equal(calls, 1, 'the matching tuple satisfies re-entry');
   assert.equal(again[0].review.verdict, 'approve');
@@ -747,7 +817,7 @@ test('the task-review checkpoint re-reviews a STALE receipt: an amended goal set
   const run = () => reviewCompletedTasks({
     statePath, runId: 'ckpt-run', wave: 1, baseSha: 'base', now: Date.now(),
     items: [{ task_id: 1, digest: { task_id: 1, status: 'done' }, review_input: reviewInput() }],
-    callReview: async () => { calls += 1; return approveRecord(); },
+    callReview: async (brief) => { calls += 1; return echoingApprove(brief); },
   });
   await run();
   assert.equal(calls, 1);
@@ -800,7 +870,7 @@ test('MUTATION: a receipt forged straight into the ledger with a mismatched tupl
   const items = await reviewCompletedTasks({
     statePath, runId: 'ckpt-run', wave: 1, baseSha: 'base', now: 1000,
     items: [{ task_id: 1, digest: { task_id: 1, status: 'done' }, review_input: reviewInput() }],
-    callReview: async () => { calls += 1; return approveRecord(); },
+    callReview: async (brief) => { calls += 1; return echoingApprove(brief); },
   });
   assert.equal(calls, 1, 'the forged event never satisfies re-entry');
   assert.equal(items[0].review.verdict, 'approve');
@@ -814,7 +884,7 @@ test('MUTATION: editing the recorded reconciliation to a stale digest is caught 
   const run = () => reviewCompletedTasks({
     statePath, runId: 'ckpt-run', wave: 1, baseSha: 'base', now: Date.now(),
     items: [{ task_id: 1, digest: { task_id: 1, status: 'done' }, review_input: reviewInput() }],
-    callReview: async () => { calls += 1; return approveRecord(); },
+    callReview: async (brief) => { calls += 1; return echoingApprove(brief); },
   });
   await run();
   assert.equal(calls, 1);
@@ -833,7 +903,7 @@ test('the task-review checkpoint refuses an unresolved reviewer identity — una
   const items = await reviewCompletedTasks({
     statePath, runId: 'ckpt-run', wave: 1, baseSha: 'base', now: 1000,
     items: [{ task_id: 1, digest: { task_id: 1, status: 'done' }, review_input: reviewInput() }],
-    callReview: async () => approveRecord({ reviewer_identity: { dispatch_id: '', model: 'm', output_tokens: 4 } }),
+    callReview: async (brief) => echoingApprove(brief, { reviewer_identity: { dispatch_id: '', model: 'm', output_tokens: 4 } }),
   });
   assert.equal(items[0].review.verdict, 'approve');
   assert.equal(items[0].review.reviewer_unavailable, true, 'the unresolved identity is marked on the review');
@@ -846,7 +916,7 @@ test('the task-review checkpoint refuses an unresolved reviewer identity — una
   await reviewCompletedTasks({
     statePath, runId: 'ckpt-run', wave: 1, baseSha: 'base', now: 1001,
     items: [{ task_id: 1, digest: { task_id: 1, status: 'done' }, review_input: reviewInput() }],
-    callReview: async () => { calls += 1; return approveRecord(); },
+    callReview: async (brief) => { calls += 1; return echoingApprove(brief); },
   });
   assert.equal(calls, 1);
 });
@@ -858,7 +928,7 @@ test('the task-review checkpoint stops on a bundle whose identity cannot be esta
     () => reviewCompletedTasks({
       statePath, runId: 'ckpt-run', wave: 1, baseSha: 'base', now: 1000,
       items: [{ task_id: 1, digest: { task_id: 1, status: 'done' }, review_input: reviewInput() }],
-      callReview: async () => approveRecord(),
+      callReview: async (brief) => echoingApprove(brief),
     }),
     /cannot establish the run's intent identity/,
   );
@@ -879,7 +949,7 @@ test('LEGACY task review: pre-binding events keep satisfying re-entry, and the i
   const items = await reviewCompletedTasks({
     statePath, runId: 'legacy-run', wave: 1, baseSha: 'base', now: 1000,
     items: [{ task_id: 1, digest: { task_id: 1, status: 'done' }, review_input: reviewInput() }],
-    callReview: async () => { calls += 1; return approveRecord(); },
+    callReview: async (brief) => { calls += 1; return echoingApprove(brief); },
   });
   assert.equal(calls, 0, 'a pre-binding legacy event satisfies re-entry');
   assert.equal(items[0].review.verdict, 'approve');
@@ -887,7 +957,7 @@ test('LEGACY task review: pre-binding events keep satisfying re-entry, and the i
   const fresh = await reviewCompletedTasks({
     statePath, runId: 'legacy-run', wave: 1, baseSha: 'base', now: 1000,
     items: [{ task_id: 2, digest: { task_id: 2, status: 'done' }, review_input: reviewInput('b'.repeat(64)) }],
-    callReview: async () => approveRecord(),
+    callReview: async (brief) => echoingApprove(brief),
   });
   assert.equal(fresh[0].review.verdict, 'approve');
   const [ev] = readEventsOf(dir).filter((e) => e.type === 'task_adversary_review' && e.data.task === 2);
@@ -898,7 +968,7 @@ test('LEGACY task review: pre-binding events keep satisfying re-entry, and the i
   await reviewCompletedTasks({
     statePath, runId: 'legacy-run', wave: 1, baseSha: 'base', now: 1001,
     items: [{ task_id: 2, digest: { task_id: 2, status: 'done' }, review_input: reviewInput('b'.repeat(64)) }],
-    callReview: async () => { reCalls += 1; return approveRecord(); },
+    callReview: async (brief) => { reCalls += 1; return echoingApprove(brief); },
   });
   assert.equal(reCalls, 1, 'the legacy tuple is real: a goals amendment re-arms the review');
 });
@@ -973,15 +1043,28 @@ function mkFinishFixture({ capture = false, goalsMd = LEGACY_GOALS_MD, seedSpecG
   const gHash = goalsHash(goalsMd);
   const headAtBuild = git(WT, 'rev-parse', 'HEAD');
   const step = (extra = {}) => finishStep({ statePath, now: 2000, ...extra });
+  // The goals hash under the durable pin, read fresh at call time: capture-schema (which
+  // walkToFinalCheck performs AFTER this fixture is built) repairs the pin, and the
+  // implementation check must key on whatever the CURRENT pin canonicalizes.
+  const fxGoalsHash = () => {
+    let pin = resolveFormatPin(statePath);
+    if (!pin.pin && pin.repairable) { try { repairFormatPin(statePath); } catch {} pin = resolveFormatPin(statePath); }
+    const pinName = pin.pin ?? 'legacy';
+    return goalsHash(fs.readFileSync(path.join(bundleDir, 'goals.md'), 'utf8'), { formatPin: pinName });
+  };
   const recordImplementationCheck = () => appendEvent(statePath, {
     type: 'goal_check', ts: '2026-01-01T00:00:01Z',
     data: {
-      goals_hash: gHash, head_sha: headAtBuild, base: 'main',
+      goals_hash: fxGoalsHash(), head_sha: headAtBuild, base: 'main',
       diff_hash: 'sha256:diff', verify_output_hash: 'sha256:vo', provenance_kind: 'assessor',
       verdicts: { G1: { verdict: 'achieved' }, G2: { verdict: 'achieved' }, G3: { verdict: 'achieved' } },
     },
   });
-  return { tmp, MAIN, WT, bundleDir, statePath, step, gHash, headAtBuild, recordImplementationCheck };
+  return { tmp, MAIN, WT, bundleDir, statePath, step, gHash, headAtBuild, recordImplementationCheck,
+    // The goals hash under the CURRENT durable pin (§6.1) — re-derived at call time so a
+    // fixture that captured its schema after construction (walkToFinalCheck) records its
+    // implementation check under the hash the goal gate actually keys on.
+    fxGoalsHash };
 }
 
 // verify → retro → branch_finish → merge → release → live_check (with its digest file).
@@ -1253,27 +1336,65 @@ test('the spec-review gate through its REAL orchestration path: record-gate-revi
   assert.equal(identityAfter.identity.goals_hash, movedIdentityGoalsHashBeforeEdit, 'the canonical identity did not move on a spec edit');
 });
 
-test('the alignment-audit checkpoint binds anchor_hash + plan_hash beside the identity tuple', () => {
+test('the alignment-audit checkpoint binds anchor_hash + plan_hash beside the identity tuple — computed at the checkpoint, never caller-asserted', () => {
   const { statePath } = mkBundle();
+  // The bundle's own audit artifacts: the anchor is goals.md's `topic:` seed (the
+  // verbatim ask), the plan is the exact bytes the audit judged.
+  fs.writeFileSync(path.join(path.dirname(statePath), 'plan.md'), '# plan\nthe fixture plan artifact\n');
   const current = schemaBackedCurrent(statePath);
-  const receipt = {
-    anchor_hash: `sha256:${sha256Hex(Buffer.from('anchor bytes', 'utf8'))}`,
-    plan_hash: `sha256:${sha256Hex(Buffer.from('plan bytes', 'utf8'))}`,
-    intent_identity: current.identity,
-    reviewer_identity: VALID_REVIEWER,
-  };
-  const v = verifyCheckpointEvidence({ checkpoint: 'alignment_audit', receipt, current, checkedSections: checkedSectionsOf(SCHEMA) });
-  assert.equal(v.ok, false, 'coverage is demanded on the schema-backed family');
-  assert.equal(v.status, 'missing', 'no section evidence at all is missing, not partial');
   const full = {};
   for (const s of checkedSectionsOf(SCHEMA)) full[s] = 'covered';
-  const ok = verifyCheckpointEvidence({
+  const receipt = {
+    anchor_hash: anchorArtifactHash({ statePath }),
+    plan_hash: planArtifactHash({ statePath }),
+    intent_identity: current.identity,
+    reviewer_identity: VALID_REVIEWER,
+    sections: full,
+  };
+  const ok = verifyCheckpointEvidence({ checkpoint: 'alignment_audit', receipt, current, checkedSections: checkedSectionsOf(SCHEMA) });
+  assert.equal(ok.ok, true, JSON.stringify(ok));
+  // The reviewer's reproduction (F4): an IDENTITY-ONLY receipt — the tuple and
+  // reviewer provenance present, no anchor_hash, no plan_hash, no coverage — is
+  // PARTIAL on a schema-backed bundle, never ok.
+  const identityOnly = verifyCheckpointEvidence({
     checkpoint: 'alignment_audit',
-    receipt: { ...receipt, sections: full },
+    receipt: { intent_identity: current.identity, reviewer_identity: VALID_REVIEWER },
     current,
     checkedSections: checkedSectionsOf(SCHEMA),
   });
-  assert.equal(ok.ok, true, JSON.stringify(ok));
+  assert.equal(identityOnly.ok, false, 'an identity-only receipt never passes the alignment checkpoint');
+  assert.equal(identityOnly.status, 'missing', JSON.stringify(identityOnly));
+  // And even WITH coverage, a missing artifact binding is partial...
+  expectStatus(verifyCheckpointEvidence({
+    checkpoint: 'alignment_audit',
+    receipt: { ...receipt, anchor_hash: undefined },
+    current,
+    checkedSections: checkedSectionsOf(SCHEMA),
+  }), 'partial');
+  // ...a WRONG anchor_hash is stale (the artifact the receipt names is not the
+  // artifact the checkpoint reads)...
+  expectStatus(verifyCheckpointEvidence({
+    checkpoint: 'alignment_audit',
+    receipt: { ...receipt, anchor_hash: `sha256:${'f'.repeat(64)}` },
+    current,
+    checkedSections: checkedSectionsOf(SCHEMA),
+  }), 'stale');
+  // ...and an edit to the plan under the audit re-arms the binding: the SAME receipt
+  // is stale against the CURRENT plan bytes without any caller asserting anything.
+  fs.writeFileSync(path.join(path.dirname(statePath), 'plan.md'), '# plan\nedited after the audit\n');
+  expectStatus(verifyCheckpointEvidence({
+    checkpoint: 'alignment_audit',
+    receipt,
+    current,
+    checkedSections: checkedSectionsOf(SCHEMA),
+  }), 'stale');
+  fs.writeFileSync(path.join(path.dirname(statePath), 'plan.md'), '# plan\nthe fixture plan artifact\n');
+  // The anchor binding is the verbatim ask itself: an amendment that rewords the
+  // topic anchor moves it even when the goal list is untouched.
+  const anchorBefore = anchorArtifactHash({ statePath });
+  fs.writeFileSync(path.join(path.dirname(statePath), 'goals.md'),
+    fs.readFileSync(path.join(path.dirname(statePath), 'goals.md'), 'utf8').replace('Versioned checkpoint fixture.', 'A reworded anchor.'));
+  assert.notEqual(anchorArtifactHash({ statePath }), anchorBefore, 'an anchor edit moves the artifact binding');
 });
 
 // ---------------------------------------------------------------------------
@@ -1334,4 +1455,347 @@ test('the agent docs keep their existing structure and roles (additive sections 
     assert.ok(fm, `${name} frontmatter`);
     assert.match(fm[1], /^name: mp-/m, name);
   }
+});
+// ---------------------------------------------------------------------------
+// The WAVE-14 review-fix regressions (four reproduced findings, task 56)
+// ---------------------------------------------------------------------------
+
+// F1 [rework]: a reviewer returning a foreign/absent identity echo on a schema-backed
+// bundle is REFUSED at the checkpoint — the projection's relabeling is not the
+// reviewer's voice, and the orchestrator's own tuple is never stamped over a foreign
+// one to make the review count.
+test('F1 regression: a fresh review with a FOREIGN or ABSENT identity echo is refused, never recorded as satisfying', async () => {
+  const { dir, statePath } = mkBundle();
+  const current = buildIntentIdentity({ statePath });
+  assert.equal(current.family, 'schema_backed');
+  const foreignEcho = async (brief) => echoingApprove(brief, {
+    intent_identity: {
+      // The reviewer's reproduction: a foreign LEGACY tuple on a schema-backed bundle.
+      legacy: true,
+      goals_hash: `sha256:${'0'.repeat(64)}`,
+    },
+  });
+  const run = async (callReview) => reviewCompletedTasks({
+    statePath, runId: 'w14-run', wave: 1, baseSha: 'base', now: 1000,
+    items: [{ task_id: 1, digest: { task_id: 1, status: 'done' }, review_input: reviewInput() }],
+    callReview,
+  });
+  // ABSENT echo: the record carries no intent_identity at all.
+  const absent = await run(async (brief) => approveRecord());
+  assert.equal(absent[0].review.verdict, 'approve');
+  assert.equal(absent[0].review.reviewer_unavailable, true, 'an absent echo never counts as satisfying');
+  assert.equal(taskReviewBlocksWave(absent[0].review), true, 'the wave is not cleared');
+  const [absentEv] = readEventsOf(dir).filter((e) => e.type === 'task_adversary_review_skipped');
+  assert.ok(absentEv, 'the refusal is recorded as a non-satisfying (skipped) event');
+  assert.match(absentEv.data.review.summary, /echo/);
+  // FOREIGN echo: a LEGACY tuple on a schema-backed bundle.
+  const foreign = await run(foreignEcho);
+  assert.equal(foreign[0].review.reviewer_unavailable, true, 'a foreign echo never counts as satisfying');
+  const skipped = readEventsOf(dir).filter((e) => e.type === 'task_adversary_review_skipped');
+  assert.equal(skipped.length, 2, 'both refusals landed as skipped events');
+  // And NEITHER skipped event satisfies re-entry: the next attempt re-reviews.
+  let calls = 0;
+  const reentered = await run(async (brief) => { calls += 1; return echoingApprove(brief); });
+  assert.equal(calls, 1, 'the refused reviews never satisfy re-entry');
+  assert.equal(reentered[0].review.verdict, 'approve');
+  assert.equal(reentered[0].review.reviewer_unavailable, undefined);
+  // The satisfying event carries the reviewer's OWN echo (which matches the CURRENT
+  // tuple — the only echo that can count), not a projection.
+  const [done] = readEventsOf(dir).filter((e) => e.type === 'task_adversary_review' && e.data.task === 1);
+  assert.deepEqual(done.data.intent_identity, {
+    goals_hash: current.identity.goals_hash,
+    schema_snapshot_digest: current.identity.schema_snapshot_digest,
+    skill_identity: current.identity.skill_identity,
+    reconciliation_digest: current.identity.reconciliation_digest,
+  });
+});
+
+// F2 [rework]: re-entry validates the prior event's reviewer PROVENANCE before it
+// satisfies — a recorded review whose reviewer_identity was stripped is
+// reviewer_unavailable and the review is re-run, exactly like the fresh path.
+test('F2 regression: a recorded review with its reviewer_identity STRIPPED never satisfies re-entry', async () => {
+  const { dir, statePath } = mkBundle();
+  let calls = 0;
+  const run = () => reviewCompletedTasks({
+    statePath, runId: 'w14-run', wave: 1, baseSha: 'base', now: Date.now(),
+    items: [{ task_id: 1, digest: { task_id: 1, status: 'done' }, review_input: reviewInput() }],
+    callReview: async (brief) => { calls += 1; return echoingApprove(brief); },
+  });
+  await run();
+  assert.equal(calls, 1);
+  // The reviewer's reproduction: record a review, then strip ONLY the
+  // reviewer_identity from the recorded event (a torn/edited ledger entry whose tuple
+  // still matches). The identity check alone would pass — the provenance check must
+  // not.
+  const eventsPath = path.join(dir, 'events.jsonl');
+  const lines = fs.readFileSync(eventsPath, 'utf8').split('\n').filter(Boolean);
+  const rewritten = lines.map((l) => {
+    const rec = JSON.parse(l);
+    if (rec.type !== 'task_adversary_review') return l;
+    const stripped = structuredClone(rec);
+    delete stripped.data.review.reviewer_identity;
+    return JSON.stringify(stripped);
+  });
+  fs.writeFileSync(eventsPath, `${rewritten.join('\n')}\n`);
+  // Re-entry: the provenance-stripped review is REVIEWER_UNAVAILABLE and never
+  // satisfies — a fresh review is owed and run.
+  const items = await run();
+  assert.equal(calls, 2, 'the provenance-stripped receipt never satisfies re-entry');
+  assert.equal(items[0].review.verdict, 'approve');
+  assert.equal(items[0].review.reviewer_unavailable, undefined);
+  const events = readEventsOf(dir).filter((e) => e.type === 'task_adversary_review');
+  assert.equal(events.length, 2, 'a real review landed beside the stripped one');
+});
+
+// F3 [rework]: the finish identity binding is wired into the PRODUCTION finish
+// consumers — final receipt RECORDING (record-goal-check --final refuses a
+// foreign/missing intent_identity at record time), replay SELECTION (finalReceiptFor
+// re-validates the recorded binding), and the confirmation gate (intent_confirm opens
+// only over a receipt whose tuple matches the current finish identity). The reviewer's
+// reproduction — a foreign LEGACY receipt on a captured bundle reaching intent_confirm —
+// must now fail closed.
+test('F3 regression: a foreign-LEGACY final receipt fails closed at every finish consumer', () => {
+  const fx = mkFinishFixture({ goalsMd: versionedGoalsMd() });
+  const { op } = walkToFinalCheck(fx, { capture: true });
+  const current = finishCheckpointEvidence({
+    statePath: fx.statePath,
+    deployBaseSha: op.deploy_base_sha,
+    chain: op.deploy_chain,
+    liveDigest: op.live_digest,
+  });
+  assert.equal(current.family, 'schema_backed');
+  // The reviewer's reproduction: an otherwise-accepted final receipt whose
+  // intent_identity is a FOREIGN LEGACY tuple.
+  const receipt = {
+    final: true,
+    goals_hash: fx.gHash,
+    head_sha: fx.headAtBuild,
+    base_diff_hash: 'sha256:diff',
+    verify_output_hash: 'sha256:vo',
+    clean: true,
+    deploy_base_sha: op.deploy_base_sha,
+    deploy_chain_hash: op.deploy_chain_hash,
+    live_check_digest: op.live_digest,
+    provenance_kind: 'assessor',
+    dispatch_id: 'disp-final-1', model: 'assessor', output_tokens: 256,
+    verdicts: {
+      G1: { verdict: 'achieved', evidence: 'e' },
+      G2: { verdict: 'achieved', evidence: 'e' },
+      G3: { verdict: 'achieved', evidence: 'e' },
+    },
+    intent_verdict: { verdict: 'met', evidence: 'the deployed surface answers as intended' },
+    ts: '2026-01-01T00:00:08Z',
+    intent_identity: { legacy: true, goals_hash: fx.gHash }, // the FOREIGN tuple
+  };
+  // The RECORDED event shape (what the ledger append bypassing the recorder writes):
+  // provenance rides under `provenance`, exactly as record-goal-check persists it.
+  const recordedForeign = {
+    ...receipt,
+    provenance: { dispatch_id: receipt.dispatch_id, model: receipt.model, output_tokens: receipt.output_tokens },
+    dispatch_id: undefined,
+  };
+  // CONSUMER 1 — record time: `mp record-goal-check --final` refuses the receipt
+  // before it reaches the ledger.
+  const BIN = fileURLToPath(new URL('../bin/masterplan.mjs', import.meta.url));
+  const runCli = (args) => {
+    try {
+      return { status: 0, stdout: execFileSync('node', [BIN, ...args], { encoding: 'utf8' }) };
+    } catch (e) {
+      return { status: e.status ?? 1, stdout: e.stdout ?? '', stderr: e.stderr ?? '' };
+    }
+  };
+  const refused = (() => {
+    const receiptFile = path.join(fx.tmp, 'foreign-receipt.json');
+    fs.writeFileSync(receiptFile, JSON.stringify(receipt));
+    try {
+      return { status: 0, stdout: execFileSync('node', [BIN,
+        'record-goal-check', `--state=${fx.statePath}`, `--head-sha=${fx.headAtBuild}`, '--base=main',
+        '--diff-hash=sha256:diff', '--verify-output-hash=sha256:vo', '--final',
+        `--base-sha=${op.deploy_base_sha}`, `--deploy-chain-hash=${op.deploy_chain_hash}`,
+        `--digest-file=${path.join(fx.tmp, 'live-digest.txt')}`,
+        `--receipt=${receiptFile}`,
+      ], { encoding: 'utf8' }) };
+    } catch (e) {
+      return { status: e.status ?? 1, stdout: e.stdout ?? '', stderr: e.stderr ?? '' };
+    }
+  })();
+  assert.notEqual(refused.status, 0, 'the recorder must refuse a foreign identity at record time');
+  assert.match(`${refused.stderr}${refused.stdout}`, /finish checkpoint/);
+  assert.equal(
+    readEventsOf(fx.bundleDir).some((e) => e.type === 'goal_check' && e.data?.final === true),
+    false,
+    'the refused receipt never reached the ledger',
+  );
+  // CONSUMERS 2 + 3 — replay selection and the confirmation gate: with the receipt
+  // appended straight into the ledger (bypassing the recorder — the mutation the
+  // reviewer performed), the machine must fail closed at final_check_invalid, never
+  // open intent_confirm over it.
+  appendEvent(fx.statePath, { type: 'goal_check', ts: '2026-01-01T00:00:09Z', data: { ...recordedForeign } });
+  const gate = fx.step();
+  assert.equal(gate.gate, 'final_check_invalid', `the foreign receipt must not reach intent_confirm: ${JSON.stringify(gate).slice(0, 200)}`);
+  assert.match(gate.error, /finish checkpoint identity/);
+  assert.match(gate.error, /missing|stale|mismatched|partial|unreadable/);
+  // And the matching-tuple receipt DOES open intent_confirm through the same path —
+  // the binding refuses the foreign one, not the gate itself.
+  const fx2 = mkFinishFixture({ goalsMd: versionedGoalsMd() });
+  const op2 = walkToFinalCheck(fx2, { capture: true });
+  const okReceipt = {
+    final: true,
+    goals_hash: fx2.gHash,
+    head_sha: fx2.headAtBuild,
+    base_diff_hash: 'sha256:diff',
+    verify_output_hash: 'sha256:vo',
+    clean: true,
+    deploy_base_sha: op2.op.deploy_base_sha,
+    deploy_chain_hash: op2.op.deploy_chain_hash,
+    live_check_digest: op2.op.live_digest,
+    provenance_kind: 'assessor',
+    provenance: { dispatch_id: 'disp-final-1', model: 'assessor', output_tokens: 256 },
+    verdicts: {
+      G1: { verdict: 'achieved', evidence: 'e' },
+      G2: { verdict: 'achieved', evidence: 'e' },
+      G3: { verdict: 'achieved', evidence: 'e' },
+    },
+    intent_verdict: { verdict: 'met', evidence: 'the deployed surface answers as intended' },
+    ts: '2026-01-01T00:00:08Z',
+    // The CURRENT finish identity — the echo the recorder itself would have written.
+    intent_identity: finishCheckpointEvidence({
+      statePath: fx2.statePath,
+      deployBaseSha: op2.op.deploy_base_sha,
+      chain: op2.op.deploy_chain,
+      liveDigest: op2.op.live_digest,
+    }).intent_identity,
+  };
+  appendEvent(fx2.statePath, { type: 'goal_check', ts: '2026-01-01T00:00:09Z', data: { ...okReceipt } });
+  const gate2 = fx2.step();
+  if (gate2.gate !== 'intent_confirm') {
+  }
+  assert.equal(gate2.gate, 'intent_confirm', `the matching receipt opens the confirmation gate: ${JSON.stringify(gate2).slice(0, 200)}`);
+});
+
+// F4 [rework], real-path half: the schema-backed SPEC gate's own verbs bind the
+// checkpoint — `record-gate-review` refuses an identity-only receipt at record time
+// (coverage + the artifact binding are the checkpoint's own derivations), and the
+// recorded event carries the binding so `set-phase` (the guard) re-verifies it.
+test('F4 regression: the spec gate verbs demand coverage + artifact binding on a schema-backed bundle', () => {
+  const BIN = fileURLToPath(new URL('../bin/masterplan.mjs', import.meta.url));
+  const run = (args) => {
+    try {
+      return { status: 0, stdout: execFileSync('node', [BIN, ...args], { encoding: 'utf8' }) };
+    } catch (e) {
+      return { status: e.status ?? 1, stdout: e.stdout ?? '', stderr: e.stderr ?? '' };
+    }
+  };
+  const fx = mkFinishFixture({ goalsMd: versionedGoalsMd(), seedSpecGate: false });
+  // Capture the schema on the fixture bundle: the spec gate is now schema-backed.
+  const skillRoot = path.join(fx.tmp, 'skill');
+  fs.mkdirSync(skillRoot, { recursive: true });
+  fs.writeFileSync(path.join(skillRoot, 'SKILL.md'), '# fixture design-intent\n');
+  fs.writeFileSync(path.join(skillRoot, 'schema.json'), `${JSON.stringify(SCHEMA, null, 2)}\n`);
+  fs.writeFileSync(path.join(skillRoot, 'manifest.json'), `${JSON.stringify({
+    manifest_version: 1, skill: 'fixture-intent', host_contract_version: 1, schema_format_version: 1,
+    identity: { algorithm: 'sha256', closed_file_set: ['SKILL.md', 'manifest.json', 'schema.json'] },
+  }, null, 2)}\n`);
+  registerSchemaSnapshotModule({ captureSchemaSnapshot, computeSkillIdentity });
+  captureSchema({ statePath: fx.statePath, skillRoot });
+  mkRecordedReconciliation(fx.statePath);
+  // The capture repairs the durable pin to schema_backed, and the goals gates hash
+  // under it (§6.1) — so the frozen event must carry the PINNED hash, exactly as
+  // goals-load would re-freeze on a captured bundle.
+  fs.writeFileSync(path.join(fx.bundleDir, 'goals.md'), versionedGoalsMd());
+  const pinnedFrozenHash = goalsHash(versionedGoalsMd(), { formatPin: 'schema_backed' });
+  const evText = fs.readFileSync(path.join(fx.bundleDir, 'events.jsonl'), 'utf8');
+  const reFrozen = evText.split('\n').filter(Boolean).map((l) => {
+    const rec = JSON.parse(l);
+    if (rec.type === 'goals_frozen') rec.data.goals_hash = pinnedFrozenHash;
+    return JSON.stringify(rec);
+  });
+  fs.writeFileSync(path.join(fx.bundleDir, 'events.jsonl'), `${reFrozen.join('\n')}\n`);
+
+  // The reviewer's F4 reproduction, at the real verb: an IDENTITY-ONLY receipt —
+  // the receipt validates against the gate's own hash/artifacts/provenance, but
+  // carries no per-section coverage. The record verb must refuse it.
+  const hashInfo = JSON.parse(run(['gate-hash', `--state=${fx.statePath}`, '--gate=spec']).stdout);
+  const identityOnlyReceipt = {
+    status: 'done', gate: 'spec', hash: hashInfo.hash, artifacts: hashInfo.artifacts,
+    dispatch_id: 'disp-gate-1', provider: 'openai', model: 'gpt-x', output_tokens: 512,
+    ts: '2026-09-06T00:00:00Z', digest: 'reviewed the artifacts',
+  };
+  const refused = run(['record-gate-review', `--state=${fx.statePath}`, '--gate=spec',
+    '--status=done', `--receipt=${JSON.stringify(identityOnlyReceipt)}`]);
+  assert.notEqual(refused.status, 0, 'an identity-only receipt is refused at the spec gate record verb');
+  assert.match(`${refused.stderr}${refused.stdout}`, /spec-review checkpoint/);
+
+  // The MATCHING receipt — coverage over the frozen snapshot's checked set, the
+  // identity tuple, and the artifact binding the verb itself derives — records.
+  const identity = buildIntentIdentity({ statePath: fx.statePath });
+  assert.equal(identity.family, 'schema_backed');
+  const sections = {};
+  for (const s of requiredCoverageSections(fx.statePath)) sections[s] = 'serves';
+  const goodReceipt = {
+    ...identityOnlyReceipt,
+    intent_identity: identity.identity,
+    sections,
+  };
+  const recorded = run(['record-gate-review', `--state=${fx.statePath}`, '--gate=spec',
+    '--status=done', `--receipt=${JSON.stringify(goodReceipt)}`]);
+  assert.equal(recorded.status, 0, `${recorded.stderr}${recorded.stdout}`);
+  const [ev] = readEventsOf(fx.bundleDir).filter((e) => e.type === 'spec_adversary_review');
+  assert.ok(ev, 'the record verb wrote the spec review event');
+  assert.deepEqual(ev.data.intent_identity, identity.identity, 'the recorded event carries the identity binding');
+  // And the transition the guard owns now passes with the bound event on disk.
+  const advanced = run(['set-phase', `--state=${fx.statePath}`, '--phase=plan']);
+  assert.equal(advanced.status, 0, `the bound spec review satisfies the gate: ${advanced.stderr}${advanced.stdout}`);
+
+  // The guard's re-verification across an identity boundary: a hand-amended
+  // goals.md moves the tuple AND the artifact hash, and a review recorded at the
+  // NEW artifact hash but still carrying the OLD identity binding (the replay shape
+  // this re-check exists for) is refused by the record verb at the checkpoint — and,
+  // hand-appended to the ledger, refused by the GUARD at the transition, never allowed
+  // through on the artifact hash alone.
+  const goalsPath = path.join(fx.bundleDir, 'goals.md');
+  fs.writeFileSync(goalsPath, fs.readFileSync(goalsPath, 'utf8').replace('## G1: Works', '## G1: Works differently'));
+  const amendedHashInfo = JSON.parse(run(['gate-hash', `--state=${fx.statePath}`, '--gate=spec']).stdout);
+  // Keep the goals-capture gate satisfied at the amended bytes (the spec gate is the
+  // surface under test; the goals gate re-hash follows the same durable pin seam).
+  const amendedGoalsHash = goalsHash(fs.readFileSync(goalsPath, 'utf8'), { formatPin: 'schema_backed' });
+  const eventsText = fs.readFileSync(path.join(fx.bundleDir, 'events.jsonl'), 'utf8');
+  const rewritten = eventsText.split('\n').filter(Boolean).map((l) => {
+    const rec = JSON.parse(l);
+    if (rec.type === 'goals_frozen') rec.data.goals_hash = amendedGoalsHash;
+    return JSON.stringify(rec);
+  });
+  fs.writeFileSync(path.join(fx.bundleDir, 'events.jsonl'), `${rewritten.join('\n')}\n`);
+  // A receipt at the NEW artifact hash (so the gate's own artifact check passes)
+  // whose identity binding is the OLD tuple — the record verb refuses it.
+  const staleTupleReceipt = {
+    ...goodReceipt,
+    hash: amendedHashInfo.hash,
+    artifacts: amendedHashInfo.artifacts,
+  };
+  const staleRecorded = run(['record-gate-review', `--state=${fx.statePath}`, '--gate=spec',
+    '--status=done', `--receipt=${JSON.stringify(staleTupleReceipt)}`]);
+  assert.notEqual(staleRecorded.status, 0, 'the record verb refuses the stale tuple at the checkpoint');
+  assert.match(`${staleRecorded.stderr}${staleRecorded.stdout}`, /spec-review checkpoint/);
+  // And even hand-appended to the ledger (bypassing the record verb), the GUARD at
+  // the transition refuses it: identity evidence cannot cross the boundary.
+  appendEvent(fx.statePath, {
+    type: 'spec_adversary_review', ts: '2026-09-06T00:00:01Z',
+    data: {
+      hash: amendedHashInfo.hash,
+      count: 0,
+      receipt: {
+        dispatch_id: 'disp-gate-1', provider: 'openai', model: 'gpt-x',
+        output_tokens: 512, ts: '2026-09-06T00:00:00Z',
+      },
+      base: 'main',
+      // The OLD identity binding — recorded at the NEW artifact hash.
+      intent_identity: identity.identity,
+      sections,
+    },
+    summary: 'spec adversary review complete',
+  });
+  const reArmed = run(['set-phase', `--state=${fx.statePath}`, '--phase=plan']);
+  assert.equal(reArmed.status, 3, 'the guard re-arms on a foreign identity even at a matching artifact hash');
+  assert.match(`${reArmed.stdout}${reArmed.stderr}`, /no longer verifies against the current intent identity/);
 });

@@ -32,11 +32,11 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
 
-import { writeState, readState, buildSeedState } from '../lib/bundle.mjs';
+import { writeState, readState, buildSeedState, appendEvent } from '../lib/bundle.mjs';
 import { goalsHash } from '../lib/goals.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
 import { acquireOwner } from '../lib/owner-fs.mjs';
-import { beginPromotion, commitPromotion, recoverPromotion, promotionDocPath, PROMOTION_REFS_PREFIX } from '../lib/promote.mjs';
+import { beginPromotion, commitPromotion, recoverPromotion, promotionDocPath, PROMOTION_REFS_PREFIX, classifyArtifact } from '../lib/promote.mjs';
 import { promoteAmendment } from '../lib/wave-commit.mjs';
 
 const TMPDIRS = [];
@@ -404,6 +404,107 @@ test('a satisfied artifact never contributes a torn state after a crash', () => 
   assert.equal(readEvents(fx.bundleDir).filter((e) => e.type === 'spec_amended').length, 1);
 });
 
+// ---- a DRIFTED unchanged artifact never bypasses drift detection (W14 finding 1) ------
+//
+// base == result must never waive the drift check: the unchanged artifact still has to
+// BE its approved base on disk. Any other bytes classify `neither` — the symmetric
+// refusal, in BOTH orientations (spec-only amendment with drifted goals.md; goals-only
+// amendment with drifted spec.md), through BOTH the commit and the recovery paths.
+
+test('spec-only amendment with a DRIFTED goals.md refuses on the COMMIT path (drifted satisfied is neither)', () => {
+  const fx = mkbundle();
+  const specResult = SPEC.replace('The old problem statement.', 'The amended problem statement.');
+  const inputs = amendmentInputs(fx, { specResult, goalsResult: GOALS, txid: 'tx-f1-commit' });
+  delete inputs.approval.goals_amend;
+  beginPromotion({ statePath: fx.statePath, ...inputs, now: 1000 });
+  // An UNAPPROVED hand edit to the unchanged goals.md AFTER the begin: the approval
+  // bound its exact base bytes, and unchanged never means "anything goes".
+  const unapproved = GOALS + '## G9: UNAPPROVED\nsignal: never\n';
+  fs.writeFileSync(path.join(fx.bundleDir, 'goals.md'), unapproved);
+  const out = commitPromotion({ statePath: fx.statePath, transactionId: 'tx-f1-commit', self: self(fx), now: 2000 });
+  assert.equal(out.outcome, 'base_drifted', JSON.stringify(out));
+  assert.equal(out.artifact, 'goals');
+  assert.deepEqual(out.writes, []);
+  // NOTHING was written: the unapproved bytes stay on disk, no event, no record.
+  assert.equal(fs.readFileSync(path.join(fx.bundleDir, 'goals.md'), 'utf8'), unapproved);
+  assert.equal(fs.readFileSync(path.join(fx.bundleDir, 'spec.md'), 'utf8'), SPEC);
+  assert.deepEqual(readEvents(fx.bundleDir), []);
+  // And the RECOVERY path refuses the same disk — the symmetric refusal.
+  const rec = recoverPromotion({ statePath: fx.statePath, transactionId: 'tx-f1-commit', self: self(fx), now: 3000 });
+  assert.equal(rec.outcome, 'refused');
+  assert.equal(rec.refusal, 'intervening_edit');
+  assert.equal(rec.artifact, 'goals');
+  assert.deepEqual(rec.writes, []);
+  assert.equal(readEvents(fx.bundleDir).filter((e) => e.type === 'spec_amended').length, 0);
+  assert.equal(fs.readFileSync(path.join(fx.bundleDir, 'goals.md'), 'utf8'), unapproved);
+});
+
+test('goals-only amendment with a DRIFTED spec.md refuses on the COMMIT path (the symmetric orientation)', () => {
+  const fx = mkbundle();
+  const goalsResult = GOALS + '## G4: GoalsOnly\nsignal: test\n';
+  const inputs = amendmentInputs(fx, { specResult: SPEC, goalsResult, txid: 'tx-f1-commit2' });
+  beginPromotion({ statePath: fx.statePath, ...inputs, now: 1000 });
+  const unapproved = SPEC + '\n<!-- an unapproved spec edit -->\n';
+  fs.writeFileSync(path.join(fx.bundleDir, 'spec.md'), unapproved);
+  const out = commitPromotion({ statePath: fx.statePath, transactionId: 'tx-f1-commit2', self: self(fx), now: 2000 });
+  assert.equal(out.outcome, 'base_drifted', JSON.stringify(out));
+  assert.equal(out.artifact, 'spec');
+  assert.deepEqual(out.writes, []);
+  assert.equal(fs.readFileSync(path.join(fx.bundleDir, 'spec.md'), 'utf8'), unapproved);
+  assert.equal(fs.readFileSync(path.join(fx.bundleDir, 'goals.md'), 'utf8'), GOALS);
+  assert.deepEqual(readEvents(fx.bundleDir), []);
+});
+
+test('spec-only amendment with a DRIFTED goals.md refuses on the RECOVERY path (never blessed as satisfied)', () => {
+  const fx = mkbundle();
+  const specResult = SPEC.replace('The old problem statement.', 'The amended problem statement.');
+  const inputs = amendmentInputs(fx, { specResult, goalsResult: GOALS, txid: 'tx-f1-rec' });
+  delete inputs.approval.goals_amend;
+  beginPromotion({ statePath: fx.statePath, ...inputs, now: 1000 });
+  // Crash shape + drift: the spec write landed, and goals.md carries UNAPPROVED bytes a
+  // later hand edit wrote. The pre-fix bug classified goals as satisfied (base == result
+  // bypassed the hash check) and blessed the drifted disk; it must refuse instead.
+  fs.writeFileSync(path.join(fx.bundleDir, 'spec.md'), specResult);
+  const unapproved = GOALS + '## G9: UNAPPROVED\nsignal: never\n';
+  fs.writeFileSync(path.join(fx.bundleDir, 'goals.md'), unapproved);
+  const out = recoverPromotion({ statePath: fx.statePath, transactionId: 'tx-f1-rec', self: self(fx), now: 2000 });
+  assert.equal(out.outcome, 'refused', JSON.stringify(out));
+  assert.equal(out.refusal, 'intervening_edit');
+  assert.equal(out.artifact, 'goals');
+  assert.deepEqual(out.classifications, { spec: 'result', goals: 'neither' });
+  assert.deepEqual(out.writes, []);
+  // The transaction never blesses drifted disk: no event, no record, and the unapproved
+  // bytes stay EXACTLY as the operator left them.
+  assert.equal(readEvents(fx.bundleDir).filter((e) => e.type === 'spec_amended').length, 0);
+  assert.equal(fs.readFileSync(path.join(fx.bundleDir, 'goals.md'), 'utf8'), unapproved);
+  assert.equal(fs.readFileSync(path.join(fx.bundleDir, 'spec.md'), 'utf8'), specResult);
+});
+
+test('goals-only amendment with a DRIFTED spec.md refuses on the RECOVERY path (never blessed as satisfied)', () => {
+  const fx = mkbundle();
+  const goalsResult = GOALS + '## G4: GoalsOnlyRec\nsignal: test\n';
+  const inputs = amendmentInputs(fx, { specResult: SPEC, goalsResult, txid: 'tx-f1-rec2' });
+  beginPromotion({ statePath: fx.statePath, ...inputs, now: 1000 });
+  fs.writeFileSync(path.join(fx.bundleDir, 'goals.md'), goalsResult); // the torn half landed
+  fs.writeFileSync(path.join(fx.bundleDir, 'spec.md'), SPEC + '\n<!-- an unapproved spec edit -->\n');
+  const out = recoverPromotion({ statePath: fx.statePath, transactionId: 'tx-f1-rec2', self: self(fx), now: 2000 });
+  assert.equal(out.outcome, 'refused');
+  assert.equal(out.refusal, 'intervening_edit');
+  assert.equal(out.artifact, 'spec');
+  assert.deepEqual(out.classifications, { spec: 'neither', goals: 'result' });
+  assert.deepEqual(out.writes, []);
+  assert.equal(readEvents(fx.bundleDir).filter((e) => e.type === 'spec_amended').length, 0);
+});
+
+test('classifyArtifact: a satisfied classification requires the disk to BE the approved base', () => {
+  // The decision table's unit contract, proven directly: base == result + disk == base →
+  // satisfied; base == result + drifted disk → neither (never satisfied).
+  assert.equal(classifyArtifact(sha256Of(SPEC), sha256Of(SPEC), sha256Of(SPEC)), 'satisfied');
+  assert.equal(classifyArtifact(sha256Of(SPEC + 'drift\n'), sha256Of(SPEC), sha256Of(SPEC)), 'neither');
+  assert.equal(classifyArtifact(sha256Of(GOALS), sha256Of(GOALS), sha256Of(GOALS)), 'satisfied');
+  assert.equal(classifyArtifact(sha256Of(GOALS + '## G9: X\n'), sha256Of(GOALS), sha256Of(GOALS)), 'neither');
+});
+
 // ---- the reproduction proof ----------------------------------------------------------
 
 test('a diff that does not reproduce the approved result hashes is refused BEFORE anything is written', () => {
@@ -545,6 +646,146 @@ test('an unknown transaction id refuses (there is nothing to recover)', () => {
   );
 });
 
+// ---- a crash after the terminal event but before state convergence (W14 finding 2) --
+//
+// The exactly-once terminal event is the commit point; the goals-cache convergence
+// (state.yml's goals_md_hash) is a DERIVED write that follows it. A crash between them
+// must not strand the cache forever: the replay path completes the convergence under the
+// held lock, from the event's data (the authority), and never double-appends.
+// The crash is injected through the module's real state-write seam: writeState's
+// tmp+rename (lib/bundle.mjs) targets a DETERMINISTIC `<statePath>.tmp` path, so a
+// DIRECTORY planted there raises EISDIR exactly at the convergence write — the exact
+// crash window under test, reached with the REAL entry path.
+
+test('a crash between the terminal event and the state write: the replay CONVERGES the stranded goals cache, exactly-once', () => {
+  const fx = mkbundle();
+  const specResult = SPEC.replace('The old problem statement.', 'The amended problem statement.');
+  const goalsResult = GOALS + '## G4: CrashConverge\nsignal: test\n';
+  const inputs = amendmentInputs(fx, { specResult, goalsResult, txid: 'tx-crashconv' });
+  // Inject the crash AT THE STATE WRITE: the tmp+rename seam's deterministic temp path
+  // becomes a directory → EISDIR exactly at recordTransaction's convergence write, AFTER
+  // both events have appended. The real entry path throws — the crash is simulated.
+  const tmpSeam = `${fx.statePath}.tmp`;
+  fs.mkdirSync(tmpSeam);
+  assert.throws(
+    () => promoteAmendment({ statePath: fx.statePath, ...inputs, self: self(fx), now: 1000 }),
+    /EISDIR|already exists and is not a file/
+  );
+  fs.rmSync(tmpSeam, { recursive: true, force: true });
+  // The crash shape: both artifacts landed at their approved results, the terminal event
+  // + goal_amended are recorded, but state.goals_md_hash was NEVER converged.
+  assert.equal(fs.readFileSync(path.join(fx.bundleDir, 'spec.md'), 'utf8'), specResult);
+  assert.equal(fs.readFileSync(path.join(fx.bundleDir, 'goals.md'), 'utf8'), goalsResult);
+  const events = readEvents(fx.bundleDir);
+  assert.equal(events.filter((e) => e.type === 'spec_amended').length, 1);
+  assert.equal(events.filter((e) => e.type === 'goal_amended').length, 1);
+  const stateBefore = readState(fx.statePath);
+  assert.equal(stateBefore.goals_md_hash, undefined);
+  // The REPLAY (the real entry path, same transaction_id): the terminal event is already
+  // recorded, so the replay detects the unconverged cache, completes the convergence
+  // under the held lock, and reports recorded/replay — WITHOUT double-appending.
+  const replay = promoteAmendment({ statePath: fx.statePath, ...inputs, self: self(fx), now: 2000 });
+  assert.equal(replay.outcome, 'recorded', JSON.stringify(replay));
+  assert.equal(replay.replay, true);
+  assert.equal(replay.converged_goals_cache, true, 'the replay completed the stranded convergence');
+  assert.deepEqual(replay.writes, []);
+  assert.deepEqual(replay.appended, []);
+  const stateAfter = readState(fx.statePath);
+  assert.equal(stateAfter.goals_md_hash, goalsHash(goalsResult), 'the goals cache converged to the amended evidence hash');
+  // Exactly-once held: the replay did NOT double-append either event.
+  const after = readEvents(fx.bundleDir);
+  assert.equal(after.filter((e) => e.type === 'spec_amended').length, 1);
+  assert.equal(after.filter((e) => e.type === 'goal_amended').length, 1);
+});
+
+test('a converged replay stays a pure no-op — the converged-cache completion is not re-run', () => {
+  const fx = mkbundle();
+  const goalsResult = GOALS + '## G4: PureReplay\nsignal: test\n';
+  const inputs = amendmentInputs(fx, { specResult: SPEC, goalsResult, txid: 'tx-purereplay' });
+  const first = promoteAmendment({ statePath: fx.statePath, ...inputs, self: self(fx), now: 1000 });
+  assert.equal(first.outcome, 'promoted');
+  const replay = promoteAmendment({ statePath: fx.statePath, ...inputs, self: self(fx), now: 2000 });
+  assert.equal(replay.outcome, 'recorded');
+  assert.equal(replay.replay, true);
+  assert.equal(replay.converged_goals_cache, undefined, 'a converged cache is not re-converged');
+});
+
+test('a crash after the event leaves the recovery-path REPLAY convergent too (commit re-entry)', () => {
+  const fx = mkbundle();
+  const specResult = SPEC.replace('The old outcome.', 'The amended outcome.');
+  const goalsResult = GOALS + '## G4: RecConverge\nsignal: test\n';
+  const inputs = amendmentInputs(fx, { specResult, goalsResult, txid: 'tx-recconv' });
+  beginPromotion({ statePath: fx.statePath, ...inputs, now: 1000 });
+  const tmpSeam = `${fx.statePath}.tmp`;
+  fs.mkdirSync(tmpSeam);
+  assert.throws(
+    () => commitPromotion({ statePath: fx.statePath, transactionId: 'tx-recconv', self: self(fx), now: 2000 }),
+    /EISDIR|already exists and is not a file/
+  );
+  fs.rmSync(tmpSeam, { recursive: true, force: true });
+  assert.equal(readState(fx.statePath).goals_md_hash, undefined);
+  // Commit re-entry routes through the recovery table → the recorded event → the
+  // convergent replay: same completion, same exactly-once.
+  const out = commitPromotion({ statePath: fx.statePath, transactionId: 'tx-recconv', self: self(fx), now: 3000 });
+  assert.equal(out.outcome, 'recorded', JSON.stringify(out));
+  assert.equal(out.replay, true);
+  assert.equal(out.converged_goals_cache, true);
+  assert.equal(readState(fx.statePath).goals_md_hash, goalsHash(goalsResult));
+  const events = readEvents(fx.bundleDir);
+  assert.equal(events.filter((e) => e.type === 'spec_amended').length, 1);
+  assert.equal(events.filter((e) => e.type === 'goal_amended').length, 1);
+});
+
+test('a crash before the terminal event never fakes convergence: recovery completes the torn write instead', () => {
+  const fx = mkbundle();
+  const specResult = SPEC.replace('The old problem statement.', 'The amended problem statement.');
+  const goalsResult = GOALS + '## G4: TornNotFake\nsignal: test\n';
+  const inputs = amendmentInputs(fx, { specResult, goalsResult, txid: 'tx-tornnotfake' });
+  beginPromotion({ statePath: fx.statePath, ...inputs, now: 1000 });
+  // The artifact writes landed but the events did NOT: recovery classifies both=result,
+  // appends exactly once, and converges the cache — the decision-table path, never the
+  // replay path (there is no terminal event yet to have committed anything).
+  fs.writeFileSync(path.join(fx.bundleDir, 'spec.md'), specResult);
+  fs.writeFileSync(path.join(fx.bundleDir, 'goals.md'), goalsResult);
+  const out = recoverPromotion({ statePath: fx.statePath, transactionId: 'tx-tornnotfake', self: self(fx), now: 2000 });
+  assert.equal(out.outcome, 'recovered');
+  assert.equal(readState(fx.statePath).goals_md_hash, goalsHash(goalsResult));
+  const events = readEvents(fx.bundleDir);
+  assert.equal(events.filter((e) => e.type === 'spec_amended').length, 1);
+  assert.equal(events.filter((e) => e.type === 'goal_amended').length, 1);
+});
+
+test('a superseding goal_amended after the crash is NOT unconverged — the replay never rewinds a newer lineage hash', () => {
+  const fx = mkbundle();
+  const specResult = SPEC.replace('The old outcome.', 'The amended outcome.');
+  const goalsResult = GOALS + '## G4: CrashSupersede\nsignal: test\n';
+  const inputs = amendmentInputs(fx, { specResult, goalsResult, txid: 'tx-supersede' });
+  const tmpSeam = `${fx.statePath}.tmp`;
+  fs.mkdirSync(tmpSeam);
+  assert.throws(
+    () => promoteAmendment({ statePath: fx.statePath, ...inputs, self: self(fx), now: 1000 }),
+    /EISDIR|already exists and is not a file/
+  );
+  fs.rmSync(tmpSeam, { recursive: true, force: true });
+  // A LATER amendment on top (the legitimate lineage continuation): its event carries a
+  // new_goals_hash newer than this transaction's result, and the cache converged TO IT.
+  const later = goalsResult + '## G5: Later\nsignal: test\n';
+  fs.writeFileSync(path.join(fx.bundleDir, 'goals.md'), later);
+  appendEvent(fx.statePath, {
+    type: 'goal_amended',
+    ts: new Date(3000).toISOString(),
+    data: { old_goals_hash: goalsHash(goalsResult), new_goals_hash: goalsHash(later), goals_hash: goalsHash(later), reason: 'a later amendment' },
+    summary: 'a later amendment superseded the crashed one',
+  });
+  writeState(fx.statePath, { ...readState(fx.statePath), goals_md_hash: goalsHash(later) });
+  // The replay recognizes the supersession and does NOT rewind the cache to the crashed
+  // transaction's older result hash.
+  const replay = promoteAmendment({ statePath: fx.statePath, ...inputs, self: self(fx), now: 4000 });
+  assert.equal(replay.outcome, 'recorded', JSON.stringify(replay));
+  assert.equal(replay.converged_goals_cache, undefined, 'a superseded lineage is not unconverged');
+  assert.equal(readState(fx.statePath).goals_md_hash, goalsHash(later), 'the newer lineage hash stands');
+});
+
 test('a malformed transaction id refuses before touching anything', () => {
   const fx = mkbundle();
   assert.throws(
@@ -651,5 +892,76 @@ test('mp amend-promote: the bin verb drives the transaction end-to-end, exactly-
   ], { encoding: 'utf8' });
   assert.notEqual(staleRun.status, 0, 'a stale approval must exit non-zero');
   assert.match(staleRun.stderr, /base_hashes|invalid promotion approval/);
+});
+
+// ---- successful crash recovery is a SUCCESS exit (W14 finding 4) --------------------
+
+test('mp amend-promote: a torn transaction driven to recovery by the real bin exits 0 and reports recovered', () => {
+  const fx = mkbundle();
+  const specResult = SPEC.replace('The old problem statement.', 'The amended problem statement.');
+  const goalsResult = GOALS + '## G4: Recovered\nsignal: test\n';
+  const inputs = amendmentInputs(fx, { specResult, goalsResult, txid: 'tx-recover-exit' });
+  // Begin the transaction, then TEAR it: the durable doc stays (state 'prepared'), the
+  // spec write landed, goals did not. The next amend-promote call must route through
+  // recovery, converge, print amend_promote: recovered, and EXIT 0 — a successful crash
+  // recovery is a success, never a failure.
+  beginPromotion({ statePath: fx.statePath, ...inputs, now: 1000 });
+  fs.writeFileSync(path.join(fx.bundleDir, 'spec.md'), specResult);
+  const art = fs.mkdtempSync(path.join(os.tmpdir(), 'promo-bin-'));
+  fs.writeFileSync(path.join(art, 'diff.patch'), inputs.diff);
+  fs.writeFileSync(path.join(art, 'spec.md'), inputs.resultSpec);
+  fs.writeFileSync(path.join(art, 'goals.md'), inputs.resultGoals);
+  fs.writeFileSync(path.join(art, 'approval.json'), JSON.stringify(inputs.approval));
+  const run = () => spawnSync(process.execPath, [
+    BIN, 'amend-promote',
+    `--state=${fx.statePath}`,
+    '--transaction-id=tx-recover-exit',
+    `--diff-file=${path.join(art, 'diff.patch')}`,
+    `--result-spec-file=${path.join(art, 'spec.md')}`,
+    `--result-goals-file=${path.join(art, 'goals.md')}`,
+    `--approval-file=${path.join(art, 'approval.json')}`,
+    `--self=${JSON.stringify(self(fx, 'sess-recover'))}`,
+  ], { encoding: 'utf8' });
+  const r = run();
+  assert.equal(r.status, 0, `successful crash recovery must exit 0 — got ${r.status}: ${r.stderr}`);
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.amend_promote, 'recovered', JSON.stringify(out));
+  // The convergence is real: the torn half completed and the record landed exactly once.
+  assert.equal(fs.readFileSync(path.join(fx.bundleDir, 'goals.md'), 'utf8'), goalsResult);
+  const events = readEvents(fx.bundleDir);
+  assert.equal(events.filter((e) => e.type === 'spec_amended').length, 1);
+  assert.equal(events.filter((e) => e.type === 'goal_amended').length, 1);
+  // And the idempotent re-entry (now recorded) still exits 0: recorded is a success too.
+  const r2 = run();
+  assert.equal(r2.status, 0);
+  assert.equal(JSON.parse(r2.stdout).amend_promote, 'recorded');
+});
+
+test('mp amend-promote: the refusals keep exiting 1 (recovered never blesses a refusal)', () => {
+  const fx = mkbundle();
+  const specResult = SPEC.replace('The old problem statement.', 'The amended problem statement.');
+  const goalsResult = GOALS + '## G4: RefuseExit\nsignal: test\n';
+  const inputs = amendmentInputs(fx, { specResult, goalsResult, txid: 'tx-refuse-exit' });
+  beginPromotion({ statePath: fx.statePath, ...inputs, now: 1000 });
+  // An intervening edit: recovery must refuse (exit 1), never recover.
+  fs.writeFileSync(path.join(fx.bundleDir, 'spec.md'), SPEC + '\n<!-- an intervening edit -->\n');
+  const art = fs.mkdtempSync(path.join(os.tmpdir(), 'promo-bin-'));
+  fs.writeFileSync(path.join(art, 'diff.patch'), inputs.diff);
+  fs.writeFileSync(path.join(art, 'spec.md'), inputs.resultSpec);
+  fs.writeFileSync(path.join(art, 'goals.md'), inputs.resultGoals);
+  fs.writeFileSync(path.join(art, 'approval.json'), JSON.stringify(inputs.approval));
+  const r = spawnSync(process.execPath, [
+    BIN, 'amend-promote',
+    `--state=${fx.statePath}`,
+    '--transaction-id=tx-refuse-exit',
+    `--diff-file=${path.join(art, 'diff.patch')}`,
+    `--result-spec-file=${path.join(art, 'spec.md')}`,
+    `--result-goals-file=${path.join(art, 'goals.md')}`,
+    `--approval-file=${path.join(art, 'approval.json')}`,
+    `--self=${JSON.stringify(self(fx, 'sess-refuse'))}`,
+  ], { encoding: 'utf8' });
+  assert.equal(r.status, 1, 'a refusal must keep exiting 1');
+  assert.match(r.stdout, /"amend_promote":"refused"/);
+  assert.match(r.stdout + r.stderr, /intervening edit/);
 });
 

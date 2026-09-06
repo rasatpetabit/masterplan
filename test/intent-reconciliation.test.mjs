@@ -205,6 +205,62 @@ test('a detached HEAD with a configured freshly-resolved target resolves normall
   assert.equal(read.record.status, 'resolved');
 });
 
+// ---- annotated tags peel: resolved_commit names a COMMIT, never the tag object (W14 finding 3) --
+//
+// ls-remote reports the ref's OBJECT id — for an annotated tag that is the TAG object,
+// not the commit. Recording it as resolved_commit is a bogus identity: the read later
+// dereferences it with cat-file, where a tag object either fails or means something
+// else entirely. The resolution PEELS and VERIFIES; a target that does not peel to a
+// commit is unknown/unavailable, never a resolution.
+
+test('an ANNOTATED TAG target resolves to its underlying COMMIT (peeled, type-verified)', () => {
+  const { consumer, target } = mkTargetPair();
+  git(target, 'tag', '-a', '-m', 'annotated release', 'release');
+  const tagSha = git(target, 'rev-parse', 'refs/tags/release');
+  const commitSha = git(target, 'rev-parse', 'refs/tags/release^{commit}');
+  assert.equal(git(target, 'cat-file', '-t', tagSha), 'tag');
+  assert.notEqual(tagSha, commitSha, 'the fixture must exercise the peel (tag object differs from its commit)');
+  const r = resolveReconciliationTarget({ repository: consumer, remote: 'origin', ref: 'refs/tags/release' });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  // The REPRODUCED defect: resolved_commit was the tag's object id, whose cat-file -t is
+  // 'tag'. The fix records the PEELED COMMIT — a real commit id, type-verified.
+  assert.equal(r.identity.resolved_commit, commitSha);
+  assert.notEqual(r.identity.resolved_commit, tagSha);
+  assert.equal(git(target, 'cat-file', '-t', r.identity.resolved_commit), 'commit');
+  // And the recorded identity READS: the reconciliation rows resolve at the peeled commit.
+  const rows = buildReconciliationRows({
+    identity: r.identity,
+    statePath: mkbundle().statePath,
+    verdictBySection: ALL_SERVES,
+  });
+  assert.equal(rows.ok, true);
+  assert.equal(rows.record.status, 'resolved');
+  assert.equal(rows.record.rows.length, 3);
+});
+
+test('a LIGHTWEIGHT tag target resolves identically (its object already IS the commit)', () => {
+  const { consumer, target } = mkTargetPair();
+  git(target, 'tag', 'release-light');
+  const r = resolveReconciliationTarget({ repository: consumer, remote: 'origin', ref: 'refs/tags/release-light' });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.identity.resolved_commit, git(target, 'rev-parse', 'refs/tags/release-light'));
+  assert.equal(r.identity.resolved_commit, git(target, 'rev-parse', 'main'));
+  assert.equal(git(target, 'cat-file', '-t', r.identity.resolved_commit), 'commit');
+});
+
+test('a tag pointing at a NON-COMMIT object is rejected — never a bogus resolved_commit', () => {
+  const { consumer, target } = mkTargetPair();
+  // A tag whose target is a BLOB: it resolves on the remote, but it does not peel to a
+  // commit — unknown/unavailable, the operator decides.
+  const blobSha = git(target, 'hash-object', '-w', path.join(target, 'INTENT.md'));
+  git(target, 'tag', 'blob-tag', blobSha);
+  const r = resolveReconciliationTarget({ repository: consumer, remote: 'origin', ref: 'refs/tags/blob-tag' });
+  assert.equal(r.ok, false, JSON.stringify(r));
+  assert.equal(r.status, 'unknown_unavailable');
+  assert.match(r.reason, /does not peel to a commit|peels to a/);
+  assert.equal(r.identity, undefined, 'nothing is recorded for an unpeelable target');
+});
+
 // ---- reading at the recorded commit ----------------------------------------------
 
 test('reads use the RECORDED commit: a moved remote does not move the read', () => {
