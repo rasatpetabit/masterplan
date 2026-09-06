@@ -1,0 +1,136 @@
+{
+  "key": "mp-wave-dispatch-v1:intent-to-completion:4:dispatch_fabric",
+  "run_id": "intent-to-completion",
+  "wave": 4,
+  "op": "dispatch_fabric",
+  "contract_version": "fabric-native-v1",
+  "status": "recorded",
+  "attempt": 1,
+  "wave_token": "mp-wave-intent-to-completion-w4-a1",
+  "handles": [],
+  "dispatched_at": "2026-09-03T22:49:08.027Z",
+  "routing_inputs": {
+    "routing": "auto",
+    "codex_host_suppressed": false,
+    "linked_worktree": true
+  },
+  "payload": [
+    {
+      "id": 3,
+      "description": "Wire bin/masterplan.mjs to the sibling subsystem APIs: resolve seed and config-show values and sources, persist warnings after the required second-position overlap_review event, enforce the overlap review and seed-lock sequence, expose interview and goals-load options, register overlap recording, enriched runs/status, context-status, resume-brief, and sweep behavior, forward all deploy/final-check/completion/archive finish flags, accept final goal-check receipts, and default plan commands from stored plan_path. Keep KNOWN_FLAGS and isKnownFlag authoritative, reject retired flags and any bootstrap verb, preserve the generic event verb, and route this file's environment reads through readEnv. Exact contracts: (a) `mp goals-load --interview-waived --reason` routes through the interview waiver operation, and goals-load receives the bundle replay and the spec path so the `assumed_row_missing` error code is raised exactly as the library emits it; (b) `mp config show` prints `harness.autoCompactWindow`, and the module exports the final `KNOWN_FLAGS` and `isKnownFlag`; (c) `mp seed --predecessor` projects the predecessor bundle's intent-rejection event (class and correction text) into the new bundle's seed record so the interview can open with it; (d) this task owns implementation-facing smoke cases in test/cli-surface.test.mjs and test/bin-masterplan.test.mjs: one accepted invocation per new verb and per new finish-step flag, one waiver-forwarding case, one final-receipt binding case, one config-show output case, and the stored plan-path default; the exhaustive behavioural matrix belongs to orchestration-integration.cli-contract. (e) `mp runs list` and `mp status` print the completion class (complete, incomplete:<reason>, merged, or legacy when the field is absent) and `pushed: no` until archive_pushed, and both call lib/resume-brief.mjs's obligation projection to print open required_successor obligations with the exact successor seed command; (f) `mp config show` reports `harness.autoCompactWindow` when the harness settings are readable, recommends a value no lower than the run's `context_watch.threshold`, and never writes harness settings. Also expose `mp interview replay` (the verbatim ledger from lib/interview.mjs). Interview flag surface, verbatim from spec §5.3: --id --round --kind --text --corrected --supersedes --resolves --file --receipt --payload-file --unavailable --error --reason --critic-unavailable-ack. The rejection interface is `--intent-rejected --class=<implementation|intent> --reason --successor=<slug>`; --successor is required and names the successor bundle that discharges the required_successor obligation. Smoke suite additions: the semantics of --deploy-retry versus --deploy-rerun and one gate-routing case per finish flag.",
+      "files": [
+        "bin/masterplan.mjs",
+        "test/cli-surface.test.mjs",
+        "test/bin-masterplan.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/cli-surface.test.mjs",
+        "node --test test/bin-masterplan.test.mjs"
+      ],
+      "class": "bounded-edit"
+    },
+    {
+      "id": 15,
+      "description": "Update the goal assessor prompt with separate implementation and final assessment modes, per-goal evidence rules, the final met|partial|missed intent verdict, and receipt bindings to the deployed base, deploy chain, and live-check digest. Add explicit v1 compatibility behavior to both the goal assessor and adversarial reviewer so a goals document without an Intent block or a legacy single-dispatch request returns the v9 verdict shape without intent_verdict.\nintegration note: orchestration-integration's sequencer should invoke the implementation mode before disposition and the final mode after live checking, passing only the mode-appropriate evidence and binding tuple. Own test/agents-compat.test.mjs: parse both prompts and assert the separate implementation/final modes, the per-goal evidence rules, the final intent verdict and its binding fields, and the declared v1 mode; feed a v1 goals document through the compatibility path; validate a fixture legacy assessor result with the v9-compatible goal-check validator; and prove that no intent_verdict is required or emitted in v1 mode while final v2 receipts retain their stronger bindings.",
+      "files": [
+        "agents/mp-goal-assessor.md",
+        "agents/mp-adversarial-reviewer.md",
+        "test/agents-compat.test.mjs"
+      ],
+      "verify_commands": [
+        "grep -qi 'v1 mode' agents/mp-goal-assessor.md && grep -q 'intent_verdict' agents/mp-goal-assessor.md && grep -q 'deploy_base_sha' agents/mp-goal-assessor.md && grep -q 'deploy_chain_hash' agents/mp-goal-assessor.md && grep -q 'live_check_digest' agents/mp-goal-assessor.md",
+        "grep -qi 'v1 mode' agents/mp-adversarial-reviewer.md",
+        "node --test test/agents-compat.test.mjs"
+      ],
+      "class": "bounded-edit"
+    },
+    {
+      "id": 26,
+      "description": "Complete the finish replay suite against temporary real git repositories using the real bundle event writer. Cover fixed group order regardless of declaration order, user_only checks returning 0/1/other, sibling and same-repo bundle commits, foreign base moves and full run replay, stage-produced commits inside and outside commit_paths, dirty-tree refusal, mandatory-group skips, live-check retry-only behavior, done: none with an empty final chain, and a release rerun failing when moved code still names an already-tagged version.",
+      "files": [
+        "lib/finish-step.mjs",
+        "test/finish-replay.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/finish-replay.test.mjs"
+      ],
+      "class": "bounded-edit"
+    },
+    {
+      "id": 46,
+      "description": "Create the v9-to-v10 bootstrap suite foundation with isolated git, remote, installation, Claude-config, workspace-root, and gh-shim fixtures. Prove the exact step order, arm-before-record and same-base-SHA requirements, refusal of repeated or out-of-order steps, no event on failed arm preconditions, postcondition refusal, failed-record rules, recovered records, next-step blocking after failure, pass-2 startup at verify with the omitted steps enforced, target validation, and status reconstruction after simulated compaction. Assert that `gate` is the only step whose arm and record are permitted after finish begins, and that status reports the pass complete through surfaces_live before finish.",
+      "files": [
+        "test/v9-to-v10-bootstrap.test.mjs",
+        "scripts/bootstrap-v10.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/v9-to-v10-bootstrap.test.mjs"
+      ],
+      "class": "bounded-edit"
+    }
+  ],
+  "tasks": [
+    {
+      "task_id": 3,
+      "class": "bounded-edit",
+      "handoff_key": "fabric-idem-v1:intent-to-completion:3:be30608f4b21c4ca04eb9766277c07de048427da0258754bc920f0f603f6292f:5d7fb032ac93298b5f42a89eb53568e370a7c14d03416ba58f8a53e15835000b"
+    },
+    {
+      "task_id": 15,
+      "class": "bounded-edit",
+      "handoff_key": "fabric-idem-v1:intent-to-completion:15:3f897c0a8d0286a741260735bad15b0aec5edf15f2c203266c398324f99910b6:5d7fb032ac93298b5f42a89eb53568e370a7c14d03416ba58f8a53e15835000b"
+    },
+    {
+      "task_id": 26,
+      "class": "bounded-edit",
+      "handoff_key": "fabric-idem-v1:intent-to-completion:26:795c92b169caae2244af3c8fb6531a1a9a5afe3a5face89a470b2178a9c657eb:5d7fb032ac93298b5f42a89eb53568e370a7c14d03416ba58f8a53e15835000b"
+    },
+    {
+      "task_id": 46,
+      "class": "bounded-edit",
+      "handoff_key": "fabric-idem-v1:intent-to-completion:46:c36c020944c612bb504ae7c4d35526218f723e1649784fadc546549d5eb3ff04:5d7fb032ac93298b5f42a89eb53568e370a7c14d03416ba58f8a53e15835000b"
+    }
+  ],
+  "gateway_verify_allowlist": "bash -c",
+  "review_context": {
+    "enabled": true,
+    "base_sha": "9b1a1fd6f7b15794821f330d0db129041aa65195",
+    "tasks": [
+      {
+        "task_id": 3,
+        "description": "Wire bin/masterplan.mjs to the sibling subsystem APIs: resolve seed and config-show values and sources, persist warnings after the required second-position overlap_review event, enforce the overlap review and seed-lock sequence, expose interview and goals-load options, register overlap recording, enriched runs/status, context-status, resume-brief, and sweep behavior, forward all deploy/final-check/completion/archive finish flags, accept final goal-check receipts, and default plan commands from stored plan_path. Keep KNOWN_FLAGS and isKnownFlag authoritative, reject retired flags and any bootstrap verb, preserve the generic event verb, and route this file's environment reads through readEnv. Exact contracts: (a) `mp goals-load --interview-waived --reason` routes through the interview waiver operation, and goals-load receives the bundle replay and the spec path so the `assumed_row_missing` error code is raised exactly as the library emits it; (b) `mp config show` prints `harness.autoCompactWindow`, and the module exports the final `KNOWN_FLAGS` and `isKnownFlag`; (c) `mp seed --predecessor` projects the predecessor bundle's intent-rejection event (class and correction text) into the new bundle's seed record so the interview can open with it; (d) this task owns implementation-facing smoke cases in test/cli-surface.test.mjs and test/bin-masterplan.test.mjs: one accepted invocation per new verb and per new finish-step flag, one waiver-forwarding case, one final-receipt binding case, one config-show output case, and the stored plan-path default; the exhaustive behavioural matrix belongs to orchestration-integration.cli-contract. (e) `mp runs list` and `mp status` print the completion class (complete, incomplete:<reason>, merged, or legacy when the field is absent) and `pushed: no` until archive_pushed, and both call lib/resume-brief.mjs's obligation projection to print open required_successor obligations with the exact successor seed command; (f) `mp config show` reports `harness.autoCompactWindow` when the harness settings are readable, recommends a value no lower than the run's `context_watch.threshold`, and never writes harness settings. Also expose `mp interview replay` (the verbatim ledger from lib/interview.mjs). Interview flag surface, verbatim from spec §5.3: --id --round --kind --text --corrected --supersedes --resolves --file --receipt --payload-file --unavailable --error --reason --critic-unavailable-ack. The rejection interface is `--intent-rejected --class=<implementation|intent> --reason --successor=<slug>`; --successor is required and names the successor bundle that discharges the required_successor obligation. Smoke suite additions: the semantics of --deploy-retry versus --deploy-rerun and one gate-routing case per finish flag.",
+        "class": "bounded-edit",
+        "repo": "/srv/dev/ras/masterplan/.worktrees/intent-to-completion"
+      },
+      {
+        "task_id": 15,
+        "description": "Update the goal assessor prompt with separate implementation and final assessment modes, per-goal evidence rules, the final met|partial|missed intent verdict, and receipt bindings to the deployed base, deploy chain, and live-check digest. Add explicit v1 compatibility behavior to both the goal assessor and adversarial reviewer so a goals document without an Intent block or a legacy single-dispatch request returns the v9 verdict shape without intent_verdict.\nintegration note: orchestration-integration's sequencer should invoke the implementation mode before disposition and the final mode after live checking, passing only the mode-appropriate evidence and binding tuple. Own test/agents-compat.test.mjs: parse both prompts and assert the separate implementation/final modes, the per-goal evidence rules, the final intent verdict and its binding fields, and the declared v1 mode; feed a v1 goals document through the compatibility path; validate a fixture legacy assessor result with the v9-compatible goal-check validator; and prove that no intent_verdict is required or emitted in v1 mode while final v2 receipts retain their stronger bindings.",
+        "class": "bounded-edit",
+        "repo": "/srv/dev/ras/masterplan/.worktrees/intent-to-completion"
+      },
+      {
+        "task_id": 26,
+        "description": "Complete the finish replay suite against temporary real git repositories using the real bundle event writer. Cover fixed group order regardless of declaration order, user_only checks returning 0/1/other, sibling and same-repo bundle commits, foreign base moves and full run replay, stage-produced commits inside and outside commit_paths, dirty-tree refusal, mandatory-group skips, live-check retry-only behavior, done: none with an empty final chain, and a release rerun failing when moved code still names an already-tagged version.",
+        "class": "bounded-edit",
+        "repo": "/srv/dev/ras/masterplan/.worktrees/intent-to-completion"
+      },
+      {
+        "task_id": 46,
+        "description": "Create the v9-to-v10 bootstrap suite foundation with isolated git, remote, installation, Claude-config, workspace-root, and gh-shim fixtures. Prove the exact step order, arm-before-record and same-base-SHA requirements, refusal of repeated or out-of-order steps, no event on failed arm preconditions, postcondition refusal, failed-record rules, recovered records, next-step blocking after failure, pass-2 startup at verify with the omitted steps enforced, target validation, and status reconstruction after simulated compaction. Assert that `gate` is the only step whose arm and record are permitted after finish begins, and that status reports the pass complete through surfaces_live before finish.",
+        "class": "bounded-edit",
+        "repo": "/srv/dev/ras/masterplan/.worktrees/intent-to-completion"
+      }
+    ]
+  },
+  "completed_at": "2026-09-04T00:34:22.336Z",
+  "record_outcome": {
+    "recorded": [
+      3,
+      15,
+      26,
+      46
+    ],
+    "failed": [],
+    "cleared": true
+  }
+}

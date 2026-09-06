@@ -1,0 +1,57 @@
+{
+  "status": "proposed_not_approved",
+  "old_goals_hash": "sha256:191978ba79880f42f071f2d89f256c9704c7995298578ecc3ad9a39cbc4c38e7",
+  "proposed_goals_hash": "sha256:e83f49fe9823d8208b5e000b7591eb5b1aa169a3c2c0d381e4ee75c5366e0d1d",
+  "anchor_unchanged": true,
+  "existing_goals_unchanged": true,
+  "structural_validation": {
+    "ok": true
+  },
+  "added_goal_ids": [
+    "G7",
+    "G8"
+  ],
+  "unresolved": [],
+  "implementation_started": false,
+  "proposed_spec_amendment": {
+    "rationale_doc": "spec.design-intent.proposed.md",
+    "rationale_sha256": "sha256:1246821a7a85b51d9bc2bcb36126a2875509f132e6501b490a6b2e2c12af97da",
+    "base_spec_sha256": "sha256:6111aaf4dbb804994bd592985cc4da28bee8de385eef4d13a1e0a137b6e54595",
+    "patch": "spec.design-intent.patch",
+    "patch_sha256": "sha256:5bb036112315a9ff846a0c699c0f7f28a4da9116f36b20fa0a3b9bb0d8eae2d4",
+    "resulting_spec": "spec.design-intent.resulting.md",
+    "resulting_spec_sha256": "sha256:bfa864f4fdcadcc86e1155e4f44664fa8cc38fa7529eea7e2a5fe0eadffc7a6c",
+    "apply_verified": "patch applied to base reproduces resulting_spec_sha256",
+    "amends": [
+      "4.1",
+      "5",
+      "5.1",
+      "5.3",
+      "5.4",
+      "6.1",
+      "11"
+    ],
+    "adds": [
+      "5.5",
+      "5.6",
+      "6.3"
+    ]
+  },
+  "adversarial_review": {
+    "lane": "dispatch-adversary",
+    "verdict": "four rounds; all blockers addressed in the artifact; final pass not yet run",
+    "reviewed_goals_hash": "sha256:f35cea4404473499b4b7a92f13246c31f379121ffc78ae4bc3325449636e20eb",
+    "reviewed_spec_amendment_sha256": "sha256:03ee148a72de679f43e86834c32a839085ad6fc35175ce46b89247c9d0f58170",
+    "blocking_findings_addressed": [
+      "skill/host-contract handshake (\u00a7D)",
+      "promotion transaction (\u00a7H)",
+      "integration-target identity (\u00a7E)",
+      "hash/receipt identity and downgrade rejection (\u00a7C)",
+      "G7/G8 evidence requires passing results and negative controls",
+      "convergence rule (\u00a7B) \u2014 decided by the operator: coverage AND a configured probing minimum, both required"
+    ],
+    "blocking_findings_open": [],
+    "re_review_required": true,
+    "rounds": 4
+  }
+}

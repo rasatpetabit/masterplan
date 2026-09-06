@@ -1,0 +1,59 @@
+{
+  "key": "mp-wave-dispatch-v1:intent-to-completion:10:dispatch_fabric",
+  "run_id": "intent-to-completion",
+  "wave": 10,
+  "op": "dispatch_fabric",
+  "contract_version": "fabric-native-v1",
+  "status": "recorded",
+  "attempt": 1,
+  "wave_token": "mp-wave-intent-to-completion-w10-a1",
+  "handles": [],
+  "dispatched_at": "2026-09-04T10:02:46.562Z",
+  "routing_inputs": {
+    "routing": "auto",
+    "codex_host_suppressed": true,
+    "linked_worktree": true
+  },
+  "payload": [
+    {
+      "id": 20,
+      "description": "Implement the generated knob inventory guard over exported CLI flags, all recognized config paths including nested paths, recursively emitted `buildSeedState` fields, every literal `readEnv` call site, and sequencer `<!-- knob: name -->` markers. Require each discovered control to resolve to a named behavioral contract or to one of the four closed metadata exemptions (`created_at`, `schema_version`, `slug`, `topic`), retain the lexical reader check as an early signal, and fail on unmapped additions. Reject every direct `process.env` token outside the `readEnv` implementation and test member access, destructuring, bracket access, aliasing, and `Object.entries` escape attempts. Verify contract names exist and add synthetic unmapped-control cases so the inventory cannot pass through stale metadata alone. Integration note: orchestration-integration.cli must export the final `KNOWN_FLAGS` and `isKnownFlag`, orchestration-integration.sequencer must provide the prompt-only markers, and source owners must remove inert controls or route their reads through `readEnv` before this guard can pass.",
+      "files": [
+        "test/knob-inventory.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/knob-inventory.test.mjs",
+        "node --test test/knob-contract.test.mjs"
+      ],
+      "class": "bounded-edit"
+    }
+  ],
+  "tasks": [
+    {
+      "task_id": 20,
+      "class": "bounded-edit",
+      "handoff_key": "fabric-idem-v1:intent-to-completion:20:8364914bf34b1907137b90ac853dd68983330903a8b73c6a6a2de043cad8017d:fa14d8b2bd9d9d7190300ad2f0a9f9d4c49ed7128dd4530aab5168734a57364a"
+    }
+  ],
+  "gateway_verify_allowlist": "bash -c",
+  "review_context": {
+    "enabled": true,
+    "base_sha": "736a4389f5e0973ec3f87352affe1d676a2515e6",
+    "tasks": [
+      {
+        "task_id": 20,
+        "description": "Implement the generated knob inventory guard over exported CLI flags, all recognized config paths including nested paths, recursively emitted `buildSeedState` fields, every literal `readEnv` call site, and sequencer `<!-- knob: name -->` markers. Require each discovered control to resolve to a named behavioral contract or to one of the four closed metadata exemptions (`created_at`, `schema_version`, `slug`, `topic`), retain the lexical reader check as an early signal, and fail on unmapped additions. Reject every direct `process.env` token outside the `readEnv` implementation and test member access, destructuring, bracket access, aliasing, and `Object.entries` escape attempts. Verify contract names exist and add synthetic unmapped-control cases so the inventory cannot pass through stale metadata alone. Integration note: orchestration-integration.cli must export the final `KNOWN_FLAGS` and `isKnownFlag`, orchestration-integration.sequencer must provide the prompt-only markers, and source owners must remove inert controls or route their reads through `readEnv` before this guard can pass.",
+        "class": "bounded-edit",
+        "repo": "/srv/dev/ras/masterplan/.worktrees/intent-to-completion"
+      }
+    ]
+  },
+  "completed_at": "2026-09-04T10:52:08.482Z",
+  "record_outcome": {
+    "recorded": [
+      20
+    ],
+    "failed": [],
+    "cleared": true
+  }
+}

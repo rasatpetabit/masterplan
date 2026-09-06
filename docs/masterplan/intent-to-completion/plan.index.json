@@ -24,15 +24,15 @@
         "G6"
       ],
       "spec_refs": [
-        "spec.md §4.1",
-        "spec.md §5.3",
-        "spec.md §6.2",
-        "spec.md §7.2",
-        "spec.md §7.4",
-        "spec.md §8",
-        "spec.md §10",
-        "spec.md §11",
-        "spec.md §12"
+        "spec.md \u00a74.1",
+        "spec.md \u00a75.3",
+        "spec.md \u00a76.2",
+        "spec.md \u00a77.2",
+        "spec.md \u00a77.4",
+        "spec.md \u00a78",
+        "spec.md \u00a710",
+        "spec.md \u00a711",
+        "spec.md \u00a712"
       ]
     },
     {
@@ -52,14 +52,14 @@
         "G3"
       ],
       "spec_refs": [
-        "spec.md §6.2",
-        "spec.md §7.2",
-        "spec.md §11"
+        "spec.md \u00a76.2",
+        "spec.md \u00a77.2",
+        "spec.md \u00a711"
       ]
     },
     {
       "id": 3,
-      "description": "Wire bin/masterplan.mjs to the sibling subsystem APIs: resolve seed and config-show values and sources, persist warnings after the required second-position overlap_review event, enforce the overlap review and seed-lock sequence, expose interview and goals-load options, register overlap recording, enriched runs/status, context-status, resume-brief, and sweep behavior, forward all deploy/final-check/completion/archive finish flags, accept final goal-check receipts, and default plan commands from stored plan_path. Keep KNOWN_FLAGS and isKnownFlag authoritative, reject retired flags and any bootstrap verb, preserve the generic event verb, and route this file's environment reads through readEnv. Exact contracts: (a) `mp goals-load --interview-waived --reason` routes through the interview waiver operation, and goals-load receives the bundle replay and the spec path so the `assumed_row_missing` error code is raised exactly as the library emits it; (b) `mp config show` prints `harness.autoCompactWindow`, and the module exports the final `KNOWN_FLAGS` and `isKnownFlag`; (c) `mp seed --predecessor` projects the predecessor bundle's intent-rejection event (class and correction text) into the new bundle's seed record so the interview can open with it; (d) this task owns implementation-facing smoke cases in test/cli-surface.test.mjs and test/bin-masterplan.test.mjs: one accepted invocation per new verb and per new finish-step flag, one waiver-forwarding case, one final-receipt binding case, one config-show output case, and the stored plan-path default; the exhaustive behavioural matrix belongs to orchestration-integration.cli-contract. (e) `mp runs list` and `mp status` print the completion class (complete, incomplete:<reason>, merged, or legacy when the field is absent) and `pushed: no` until archive_pushed, and both call lib/resume-brief.mjs's obligation projection to print open required_successor obligations with the exact successor seed command; (f) `mp config show` reports `harness.autoCompactWindow` when the harness settings are readable, recommends a value no lower than the run's `context_watch.threshold`, and never writes harness settings. Also expose `mp interview replay` (the verbatim ledger from lib/interview.mjs). Interview flag surface, verbatim from spec §5.3: --id --round --kind --text --corrected --supersedes --resolves --file --receipt --payload-file --unavailable --error --reason --critic-unavailable-ack. The rejection interface is `--intent-rejected --class=<implementation|intent> --reason --successor=<slug>`; --successor is required and names the successor bundle that discharges the required_successor obligation. Smoke suite additions: the semantics of --deploy-retry versus --deploy-rerun and one gate-routing case per finish flag.",
+      "description": "Wire bin/masterplan.mjs to the sibling subsystem APIs: resolve seed and config-show values and sources, persist warnings after the required second-position overlap_review event, enforce the overlap review and seed-lock sequence, expose interview and goals-load options, register overlap recording, enriched runs/status, context-status, resume-brief, and sweep behavior, forward all deploy/final-check/completion/archive finish flags, accept final goal-check receipts, and default plan commands from stored plan_path. Keep KNOWN_FLAGS and isKnownFlag authoritative, reject retired flags and any bootstrap verb, preserve the generic event verb, and route this file's environment reads through readEnv. Exact contracts: (a) `mp goals-load --interview-waived --reason` routes through the interview waiver operation, and goals-load receives the bundle replay and the spec path so the `assumed_row_missing` error code is raised exactly as the library emits it; (b) `mp config show` prints `harness.autoCompactWindow`, and the module exports the final `KNOWN_FLAGS` and `isKnownFlag`; (c) `mp seed --predecessor` projects the predecessor bundle's intent-rejection event (class and correction text) into the new bundle's seed record so the interview can open with it; (d) this task owns implementation-facing smoke cases in test/cli-surface.test.mjs and test/bin-masterplan.test.mjs: one accepted invocation per new verb and per new finish-step flag, one waiver-forwarding case, one final-receipt binding case, one config-show output case, and the stored plan-path default; the exhaustive behavioural matrix belongs to orchestration-integration.cli-contract. (e) `mp runs list` and `mp status` print the completion class (complete, incomplete:<reason>, merged, or legacy when the field is absent) and `pushed: no` until archive_pushed, and both call lib/resume-brief.mjs's obligation projection to print open required_successor obligations with the exact successor seed command; (f) `mp config show` reports `harness.autoCompactWindow` when the harness settings are readable, recommends a value no lower than the run's `context_watch.threshold`, and never writes harness settings. Also expose `mp interview replay` (the verbatim ledger from lib/interview.mjs). Interview flag surface, verbatim from spec \u00a75.3: --id --round --kind --text --corrected --supersedes --resolves --file --receipt --payload-file --unavailable --error --reason --critic-unavailable-ack. The rejection interface is `--intent-rejected --class=<implementation|intent> --reason --successor=<slug>`; --successor is required and names the successor bundle that discharges the required_successor obligation. Smoke suite additions: the semantics of --deploy-retry versus --deploy-rerun and one gate-routing case per finish flag.",
       "wave": 4,
       "files": [
         "bin/masterplan.mjs",
@@ -80,17 +80,17 @@
         "G6"
       ],
       "spec_refs": [
-        "spec.md §4.1",
-        "spec.md §4.3",
-        "spec.md §5.3",
-        "spec.md §5.4",
-        "spec.md §6.2",
-        "spec.md §7.2",
-        "spec.md §8",
-        "spec.md §9",
-        "spec.md §10",
-        "spec.md §11",
-        "spec.md §12"
+        "spec.md \u00a74.1",
+        "spec.md \u00a74.3",
+        "spec.md \u00a75.3",
+        "spec.md \u00a75.4",
+        "spec.md \u00a76.2",
+        "spec.md \u00a77.2",
+        "spec.md \u00a78",
+        "spec.md \u00a79",
+        "spec.md \u00a710",
+        "spec.md \u00a711",
+        "spec.md \u00a712"
       ]
     },
     {
@@ -103,7 +103,8 @@
         "lib/plan-merge.mjs",
         "test/plan-merge.test.mjs",
         "test/continue.test.mjs",
-        "test/resume.test.mjs"
+        "test/resume.test.mjs",
+        "lib/config.mjs"
       ],
       "verify_commands": [
         "node --test test/plan-merge.test.mjs",
@@ -116,11 +117,11 @@
         "G6"
       ],
       "spec_refs": [
-        "spec.md §4.2",
-        "spec.md §4.3",
-        "spec.md §10",
-        "spec.md §11",
-        "spec.md §12"
+        "spec.md \u00a74.2",
+        "spec.md \u00a74.3",
+        "spec.md \u00a710",
+        "spec.md \u00a711",
+        "spec.md \u00a712"
       ]
     },
     {
@@ -129,7 +130,10 @@
       "wave": 5,
       "files": [
         "lib/wave.mjs",
-        "test/wave.test.mjs"
+        "test/wave.test.mjs",
+        "lib/wave-commit.mjs",
+        "test/wave-commit.test.mjs",
+        "lib/goals.mjs"
       ],
       "verify_commands": [
         "node --test test/wave.test.mjs",
@@ -140,10 +144,10 @@
         "G2"
       ],
       "spec_refs": [
-        "spec.md §6.1",
-        "spec.md §6.2",
-        "spec.md §11",
-        "spec.md §12"
+        "spec.md \u00a76.1",
+        "spec.md \u00a76.2",
+        "spec.md \u00a711",
+        "spec.md \u00a712"
       ]
     },
     {
@@ -167,15 +171,15 @@
         "G6"
       ],
       "spec_refs": [
-        "spec.md §4.1",
-        "spec.md §4.3",
-        "spec.md §5.3",
-        "spec.md §6.2",
-        "spec.md §7.2",
-        "spec.md §8",
-        "spec.md §9",
-        "spec.md §10",
-        "spec.md §11"
+        "spec.md \u00a74.1",
+        "spec.md \u00a74.3",
+        "spec.md \u00a75.3",
+        "spec.md \u00a76.2",
+        "spec.md \u00a77.2",
+        "spec.md \u00a78",
+        "spec.md \u00a79",
+        "spec.md \u00a710",
+        "spec.md \u00a711"
       ]
     },
     {
@@ -185,7 +189,8 @@
       "files": [
         "commands/masterplan.md",
         "test/op-table-parity.test.mjs",
-        "test/prompt-structure.test.mjs"
+        "test/prompt-structure.test.mjs",
+        "bin/masterplan.mjs"
       ],
       "verify_commands": [
         "node --test test/op-table-parity.test.mjs",
@@ -203,35 +208,46 @@
         "G6"
       ],
       "spec_refs": [
-        "spec.md §4.2",
-        "spec.md §5.1",
-        "spec.md §5.3",
-        "spec.md §5.4",
-        "spec.md §6.2",
-        "spec.md §7.2",
-        "spec.md §7.3",
-        "spec.md §8",
-        "spec.md §9",
-        "spec.md §10",
-        "spec.md §11",
-        "spec.md §12"
+        "spec.md \u00a74.2",
+        "spec.md \u00a75.1",
+        "spec.md \u00a75.3",
+        "spec.md \u00a75.4",
+        "spec.md \u00a76.2",
+        "spec.md \u00a77.2",
+        "spec.md \u00a77.3",
+        "spec.md \u00a78",
+        "spec.md \u00a79",
+        "spec.md \u00a710",
+        "spec.md \u00a711",
+        "spec.md \u00a712"
       ]
     },
     {
       "id": 8,
-      "description": "Publish the integrated public contract across README, the masterplan skill, and the verb reference: document CLI > repo > user > default resolution, exact complexity/autonomy levels and aliases, overlap and interview verbs, done configuration and fixed deploy order, final intent confirmation, completion and push classes, context-status and resume-brief wiring, required successors, and the one-off v10 bootstrap boundary. Add an Environment section naming every readEnv-backed control, including MP_DISPATCH_WAVE_CONCURRENCY, MP_ROUTING_POLICY, SKYNET_VERIFY_ALLOWLIST, and MP_CONTEXT_WINDOW. The Environment section also names CLAUDE_CODE_SESSION_ID (Guard D session identity, with its --session/--host flag companions).",
+      "description": "Publish the integrated public contract across README, the masterplan skill, and the verb reference: document CLI > repo > user > default resolution, exact complexity/autonomy levels and aliases, overlap and interview verbs, done configuration and fixed deploy order, final intent confirmation, completion and push classes, context-status and resume-brief wiring, required successors, and the one-off v10 bootstrap boundary. Add an Environment section naming every readEnv-backed control, including MP_DISPATCH_WAVE_CONCURRENCY, MP_ROUTING_POLICY, SKYNET_VERIFY_ALLOWLIST, and MP_CONTEXT_WINDOW. The Environment section also names CLAUDE_CODE_SESSION_ID (Guard D session identity, with its --session/--host flag companions). Bump every version-bearing file to 10.0.0 together \u2014 .claude-plugin/plugin.json, .claude-plugin/marketplace.json (root version and plugins[0].version), .codex-plugin/plugin.json, package.json, and README.md's \"Current release\" line \u2014 so the publish-hygiene live test passes with 10.0.0 everywhere (spec \u00a711 publish-hygiene). README.md's doctor module-inventory gains one row per new check (resume-brief-hook, no-definition-of-done, incomplete-archive, legacy-archive, required-successor) so test/doctor-readme.test.mjs E9 matches the auto-discovered modules again.",
       "wave": 9,
       "files": [
         "README.md",
         "skills/masterplan/SKILL.md",
         "docs/verbs.md",
-        "test/docs-contract.test.mjs"
+        "test/docs-contract.test.mjs",
+        ".claude-plugin/plugin.json",
+        ".claude-plugin/marketplace.json",
+        ".codex-plugin/plugin.json",
+        "package.json",
+        "test/doctor-readme.test.mjs",
+        "lib/doctor/README.md",
+        "agents/mp-intent-critic.md",
+        "llms.txt",
+        ".gitignore"
       ],
       "verify_commands": [
         "for t in complexity autonomy planning_mode context_watch done:; do grep -q \"$t\" README.md || { echo \"missing $t in README.md\"; exit 1; }; done",
         "for t in complexity autonomy context-status resume-brief overlap; do grep -q \"$t\" skills/masterplan/SKILL.md || { echo \"missing $t in skills/masterplan/SKILL.md\"; exit 1; }; done",
         "for t in Environment MP_DISPATCH_WAVE_CONCURRENCY MP_ROUTING_POLICY SKYNET_VERIFY_ALLOWLIST MP_CONTEXT_WINDOW CLAUDE_CODE_SESSION_ID incomplete merged legacy required; do grep -q \"$t\" docs/verbs.md || { echo \"missing $t in docs/verbs.md\"; exit 1; }; done",
-        "node --test test/docs-contract.test.mjs"
+        "node --test test/docs-contract.test.mjs",
+        "node --test test/publish-hygiene.test.mjs",
+        "node --test test/doctor-readme.test.mjs"
       ],
       "codex": null,
       "goals": [
@@ -243,23 +259,23 @@
         "G6"
       ],
       "spec_refs": [
-        "spec.md §4.1",
-        "spec.md §4.2",
-        "spec.md §4.3",
-        "spec.md §4.4",
-        "spec.md §5.3",
-        "spec.md §7.1",
-        "spec.md §7.4",
-        "spec.md §8",
-        "spec.md §9",
-        "spec.md §10",
-        "spec.md §11",
-        "spec.md §12"
+        "spec.md \u00a74.1",
+        "spec.md \u00a74.2",
+        "spec.md \u00a74.3",
+        "spec.md \u00a74.4",
+        "spec.md \u00a75.3",
+        "spec.md \u00a77.1",
+        "spec.md \u00a77.4",
+        "spec.md \u00a78",
+        "spec.md \u00a79",
+        "spec.md \u00a710",
+        "spec.md \u00a711",
+        "spec.md \u00a712"
       ]
     },
     {
       "id": 9,
-      "description": "Own test/overlap-sequencer.test.mjs, the black-box integration suite named by G1: seed refuses without --overlap-review; the overlap_review event is written second, after bundle_created; a review whose inventory_sha256 no longer matches the runs inventory is refused as overlap_review_stale; a refused seed leaves no bundle directory; the seed lock is held across validate-then-create so a concurrent seed observes it, and sweep breaks a dead-pid lock; resume after simulated compaction reconstructs the overlap outcome from events; and runs list exposes topic, goals, planned_paths, and worktree for the conflict view. Cover the full §8 matrix with durable-event assertions: an in-progress worktree/file conflict, a plan-level planned_paths intersection, an archived topic/goals candidate offered as --predecessor, no overlap (seed proceeds with the review recorded), the predecessor link recorded on the seed, the resume path recording the same review on the resumed bundle via mp record-overlap-review, abort (nothing seeded, nothing on disk), and gated versus loose behaviour (loose fires the ask only for in-progress or plan-level conflicts and records archived candidates silently). Co-owns bin/masterplan.mjs, lib/seed-lock.mjs, and lib/runs.mjs so a defect the suite exposes has a fix path in the same task.",
+      "description": "Own test/overlap-sequencer.test.mjs, the black-box integration suite named by G1: seed refuses without --overlap-review; the overlap_review event is written second, after bundle_created; a review whose inventory_sha256 no longer matches the runs inventory is refused as overlap_review_stale; a refused seed leaves no bundle directory; the seed lock is held across validate-then-create so a concurrent seed observes it, and sweep breaks a dead-pid lock; resume after simulated compaction reconstructs the overlap outcome from events; and runs list exposes topic, goals, planned_paths, and worktree for the conflict view. Cover the full \u00a78 matrix with durable-event assertions: an in-progress worktree/file conflict, a plan-level planned_paths intersection, an archived topic/goals candidate offered as --predecessor, no overlap (seed proceeds with the review recorded), the predecessor link recorded on the seed, the resume path recording the same review on the resumed bundle via mp record-overlap-review, abort (nothing seeded, nothing on disk), and gated versus loose behaviour (loose fires the ask only for in-progress or plan-level conflicts and records archived candidates silently). Co-owns bin/masterplan.mjs, lib/seed-lock.mjs, and lib/runs.mjs so a defect the suite exposes has a fix path in the same task.",
       "wave": 9,
       "files": [
         "test/overlap-sequencer.test.mjs",
@@ -275,9 +291,9 @@
         "G1"
       ],
       "spec_refs": [
-        "spec.md §8",
-        "spec.md §11",
-        "spec.md §12"
+        "spec.md \u00a78",
+        "spec.md \u00a711",
+        "spec.md \u00a712"
       ]
     },
     {
@@ -299,16 +315,16 @@
         "G1"
       ],
       "spec_refs": [
-        "spec.md §5.1",
-        "spec.md §5.2",
-        "spec.md §5.3",
-        "spec.md §5.4",
-        "spec.md §12"
+        "spec.md \u00a75.1",
+        "spec.md \u00a75.2",
+        "spec.md \u00a75.3",
+        "spec.md \u00a75.4",
+        "spec.md \u00a712"
       ]
     },
     {
       "id": 11,
-      "description": "Implement the replayable interview ledger and its initial focused suite. Derive question, answer, round, active-design-pick, critic, budget, and terminal status from events; append mutations through the bundle writer; enforce question sequencing, unanswered-question and cap guards; record verbatim answers, withdrawals, supersession and resolution links; persist intent drafts and numbered critic payload artifacts with computed digests and honesty-bound receipt fields; support unavailable critic attempts, waiver, end, reopen, read-only status (the budget/state summary), and a verbatim ledger replay — every question, answer, withdrawal, draft, and critic receipt in order — as a distinct library operation, without relying on in-memory counters.\nintegration note: orchestration-integration CLI should expose these library operations as mp interview ask|answer|withdraw|draft|critic|end|reopen|status|replay and route goals-load --interview-waived through the waiver operation; this task does not edit bin/masterplan.mjs. Flag surface for the CLI wiring, verbatim from spec §5.3: --id --round --kind --text --corrected --supersedes --resolves --file --receipt --payload-file --unavailable --error --reason --critic-unavailable-ack.",
+      "description": "Implement the replayable interview ledger and its initial focused suite. Derive question, answer, round, active-design-pick, critic, budget, and terminal status from events; append mutations through the bundle writer; enforce question sequencing, unanswered-question and cap guards; record verbatim answers, withdrawals, supersession and resolution links; persist intent drafts and numbered critic payload artifacts with computed digests and honesty-bound receipt fields; support unavailable critic attempts, waiver, end, reopen, read-only status (the budget/state summary), and a verbatim ledger replay \u2014 every question, answer, withdrawal, draft, and critic receipt in order \u2014 as a distinct library operation, without relying on in-memory counters.\nintegration note: orchestration-integration CLI should expose these library operations as mp interview ask|answer|withdraw|draft|critic|end|reopen|status|replay and route goals-load --interview-waived through the waiver operation; this task does not edit bin/masterplan.mjs. Flag surface for the CLI wiring, verbatim from spec \u00a75.3: --id --round --kind --text --corrected --supersedes --resolves --file --receipt --payload-file --unavailable --error --reason --critic-unavailable-ack.",
       "wave": 1,
       "files": [
         "lib/interview.mjs",
@@ -323,11 +339,11 @@
         "G1"
       ],
       "spec_refs": [
-        "spec.md §4.2",
-        "spec.md §5.3",
-        "spec.md §5.4",
-        "spec.md §11",
-        "spec.md §12"
+        "spec.md \u00a74.2",
+        "spec.md \u00a75.3",
+        "spec.md \u00a75.4",
+        "spec.md \u00a711",
+        "spec.md \u00a712"
       ]
     },
     {
@@ -346,10 +362,10 @@
         "G1"
       ],
       "spec_refs": [
-        "spec.md §4.2",
-        "spec.md §5.3",
-        "spec.md §5.4",
-        "spec.md §11"
+        "spec.md \u00a74.2",
+        "spec.md \u00a75.3",
+        "spec.md \u00a75.4",
+        "spec.md \u00a711"
       ]
     },
     {
@@ -368,9 +384,9 @@
         "G2"
       ],
       "spec_refs": [
-        "spec.md §6.1",
-        "spec.md §11",
-        "spec.md §12"
+        "spec.md \u00a76.1",
+        "spec.md \u00a711",
+        "spec.md \u00a712"
       ]
     },
     {
@@ -391,10 +407,10 @@
         "G3"
       ],
       "spec_refs": [
-        "spec.md §5.4",
-        "spec.md §6.1",
-        "spec.md §6.2",
-        "spec.md §11"
+        "spec.md \u00a75.4",
+        "spec.md \u00a76.1",
+        "spec.md \u00a76.2",
+        "spec.md \u00a711"
       ]
     },
     {
@@ -417,9 +433,9 @@
         "G3"
       ],
       "spec_refs": [
-        "spec.md §6.2",
-        "spec.md §11",
-        "spec.md §12"
+        "spec.md \u00a76.2",
+        "spec.md \u00a711",
+        "spec.md \u00a712"
       ]
     },
     {
@@ -440,14 +456,14 @@
         "G5"
       ],
       "spec_refs": [
-        "spec.md §4.1",
-        "spec.md §4.2",
-        "spec.md §4.3",
-        "spec.md §4.4",
-        "spec.md §7.1",
-        "spec.md §9",
-        "spec.md §11",
-        "spec.md §12"
+        "spec.md \u00a74.1",
+        "spec.md \u00a74.2",
+        "spec.md \u00a74.3",
+        "spec.md \u00a74.4",
+        "spec.md \u00a77.1",
+        "spec.md \u00a79",
+        "spec.md \u00a711",
+        "spec.md \u00a712"
       ]
     },
     {
@@ -467,10 +483,10 @@
         "G4"
       ],
       "spec_refs": [
-        "spec.md §4.1",
-        "spec.md §4.3",
-        "spec.md §11",
-        "spec.md §12"
+        "spec.md \u00a74.1",
+        "spec.md \u00a74.3",
+        "spec.md \u00a711",
+        "spec.md \u00a712"
       ]
     },
     {
@@ -492,11 +508,11 @@
         "G5"
       ],
       "spec_refs": [
-        "spec.md §4.1",
-        "spec.md §7.1",
-        "spec.md §9",
-        "spec.md §11",
-        "spec.md §12"
+        "spec.md \u00a74.1",
+        "spec.md \u00a77.1",
+        "spec.md \u00a79",
+        "spec.md \u00a711",
+        "spec.md \u00a712"
       ]
     },
     {
@@ -505,7 +521,8 @@
       "wave": 9,
       "files": [
         "test/knob-contract.test.mjs",
-        "test/fixtures/knobs/contracts.mjs"
+        "test/fixtures/knobs/contracts.mjs",
+        "test/fixtures/knobs/discovery.mjs"
       ],
       "verify_commands": [
         "node --test test/knob-contract.test.mjs"
@@ -517,12 +534,12 @@
         "G5"
       ],
       "spec_refs": [
-        "spec.md §4.2",
-        "spec.md §4.3",
-        "spec.md §4.4",
-        "spec.md §7.1",
-        "spec.md §9",
-        "spec.md §11"
+        "spec.md \u00a74.2",
+        "spec.md \u00a74.3",
+        "spec.md \u00a74.4",
+        "spec.md \u00a77.1",
+        "spec.md \u00a79",
+        "spec.md \u00a711"
       ]
     },
     {
@@ -541,15 +558,15 @@
         "G4"
       ],
       "spec_refs": [
-        "spec.md §4.3",
-        "spec.md §4.4",
-        "spec.md §11",
-        "spec.md §12"
+        "spec.md \u00a74.3",
+        "spec.md \u00a74.4",
+        "spec.md \u00a711",
+        "spec.md \u00a712"
       ]
     },
     {
       "id": 21,
-      "description": "Route every remaining direct process.env read outside lib/config.mjs through its exported accessors, preserving behaviour and the injected-env test seams: CLAUDE_CONFIG_DIR and HOME in lib/paths.mjs; MP_ROUTING_POLICY in lib/dispatch/routing-policy.mjs and lib/doctor/routing-policy-health.mjs; MP_DISPATCH_WAVE_CONCURRENCY, MP_ROUTING_POLICY, and SKYNET_VERIFY_ALLOWLIST in lib/dispatch-wave.mjs; HOME in bin/doctor.mjs, lib/doctor/codex-auth.mjs, and lib/doctor/pi-agent-registration.mjs (its spawn uses the config-owned passthrough). The existing suites for these modules stay green; the repo-wide zero-process.env assertion belongs to config-knobs.inventory, this task asserts only its own files. lib/continue.mjs, lib/sweep.mjs, lib/runs.mjs, and bin/install-pi.mjs are converted by their owning tasks.",
+      "description": "Route every remaining direct process.env read outside lib/config.mjs through its exported accessors, preserving behaviour and the injected-env test seams: CLAUDE_CONFIG_DIR and HOME in lib/paths.mjs; MP_ROUTING_POLICY in lib/dispatch/routing-policy.mjs and lib/doctor/routing-policy-health.mjs; MP_DISPATCH_WAVE_CONCURRENCY, MP_ROUTING_POLICY, and SKYNET_VERIFY_ALLOWLIST in lib/dispatch-wave.mjs; HOME in bin/doctor.mjs, lib/doctor/codex-auth.mjs, and lib/doctor/pi-agent-registration.mjs (its spawn uses the config-owned passthrough). The existing suites for these modules stay green; the repo-wide zero-process.env assertion belongs to config-knobs.inventory, this task asserts only its own files. lib/continue.mjs, lib/sweep.mjs, lib/runs.mjs, and bin/install-pi.mjs are converted by their owning tasks. As the owner of bin/doctor.mjs, also add the `--only=<check-id>` option the spec relies on (spec \u00a77.1 checks and the G6 evidence use `node bin/doctor.mjs --only=<check-id>`): run exactly one discovered check by id, exit with that check's outcome, and exit 2 with the list of known ids for an unknown id; cover it in test/doctor.test.mjs. While in test/doctor.test.mjs, update the discovered-module count assertion (19 today) to derive from the modules on disk or to the new total, since the wave-0 doctor checks are auto-discovered.",
       "wave": 2,
       "files": [
         "lib/paths.mjs",
@@ -577,9 +594,9 @@
         "G4"
       ],
       "spec_refs": [
-        "spec.md §4.4",
-        "spec.md §11",
-        "spec.md §12"
+        "spec.md \u00a74.4",
+        "spec.md \u00a711",
+        "spec.md \u00a712"
       ]
     },
     {
@@ -598,15 +615,15 @@
         "G3"
       ],
       "spec_refs": [
-        "spec.md §7.1",
-        "spec.md §7.2",
-        "spec.md §7.4",
-        "spec.md §11"
+        "spec.md \u00a77.1",
+        "spec.md \u00a77.2",
+        "spec.md \u00a77.4",
+        "spec.md \u00a711"
       ]
     },
     {
       "id": 23,
-      "description": "Extend the one-op finish driver from branch disposition into the deploy pipeline: re-resolve the repo-local done definition from .masterplan.yaml at deploy_base_sha through the config contract, record deploy_base with branch_tip and done_sha256, handle no_definition_of_done with ad-hoc or incomplete paths, treat done: none as an empty deploy chain, execute groups in release → install → user_only → live_check order, and emit durable authorized → started → deploy_step transitions. Consume autonomy as a behavioral input: gated asks before each runnable step, loose auto-authorizes successful progression, failures and indeterminate results halt, and user_only always hands back for a checked result. Preserve the existing pre-disposition finish order. integration note: orchestration-integration.cli must expose --deploy-authorize, --deploy-step-done, --deploy-rerun, --deploy-attest, --deploy-retry, --deploy-skip, --deploy-abort, --deploy-abort-incomplete, --done-adhoc-file, --merged, --merge-sha, --version-fix, --goals-choice, --intent-confirmed, --intent-rejected, --class, --reason, --archive-pushed, and --sha and pass them to finishStep.",
+      "description": "Extend the one-op finish driver from branch disposition into the deploy pipeline: re-resolve the repo-local done definition from .masterplan.yaml at deploy_base_sha through the config contract, record deploy_base with branch_tip and done_sha256, handle no_definition_of_done with ad-hoc or incomplete paths, treat done: none as an empty deploy chain, execute groups in release \u2192 install \u2192 user_only \u2192 live_check order, and emit durable authorized \u2192 started \u2192 deploy_step transitions. Consume autonomy as a behavioral input: gated asks before each runnable step, loose auto-authorizes successful progression, failures and indeterminate results halt, and user_only always hands back for a checked result. Preserve the existing pre-disposition finish order. integration note: orchestration-integration.cli must expose --deploy-authorize, --deploy-step-done, --deploy-rerun, --deploy-attest, --deploy-retry, --deploy-skip, --deploy-abort, --deploy-abort-incomplete, --done-adhoc-file, --merged, --merge-sha, --version-fix, --goals-choice, --intent-confirmed, --intent-rejected, --class, --reason, --archive-pushed, and --sha and pass them to finishStep.",
       "wave": 1,
       "files": [
         "lib/finish-step.mjs",
@@ -621,11 +638,11 @@
         "G4"
       ],
       "spec_refs": [
-        "spec.md §7.1",
-        "spec.md §7.2",
-        "spec.md §7.4",
-        "spec.md §7.6",
-        "spec.md §11"
+        "spec.md \u00a77.1",
+        "spec.md \u00a77.2",
+        "spec.md \u00a77.4",
+        "spec.md \u00a77.6",
+        "spec.md \u00a711"
       ]
     },
     {
@@ -635,7 +652,8 @@
       "files": [
         "lib/finish.mjs",
         "lib/finish-step.mjs",
-        "test/deploy-commit-identity.test.mjs"
+        "test/deploy-commit-identity.test.mjs",
+        "test/finish-step.test.mjs"
       ],
       "verify_commands": [
         "node --test test/deploy-commit-identity.test.mjs"
@@ -645,10 +663,10 @@
         "G3"
       ],
       "spec_refs": [
-        "spec.md §7.1",
-        "spec.md §7.2",
-        "spec.md §7.3",
-        "spec.md §11"
+        "spec.md \u00a77.1",
+        "spec.md \u00a77.2",
+        "spec.md \u00a77.3",
+        "spec.md \u00a711"
       ]
     },
     {
@@ -668,10 +686,10 @@
         "G4"
       ],
       "spec_refs": [
-        "spec.md §7.2",
-        "spec.md §7.3",
-        "spec.md §7.4",
-        "spec.md §11"
+        "spec.md \u00a77.2",
+        "spec.md \u00a77.3",
+        "spec.md \u00a77.4",
+        "spec.md \u00a711"
       ]
     },
     {
@@ -691,11 +709,11 @@
         "G4"
       ],
       "spec_refs": [
-        "spec.md §7.1",
-        "spec.md §7.2",
-        "spec.md §7.3",
-        "spec.md §7.4",
-        "spec.md §11"
+        "spec.md \u00a77.1",
+        "spec.md \u00a77.2",
+        "spec.md \u00a77.3",
+        "spec.md \u00a77.4",
+        "spec.md \u00a711"
       ]
     },
     {
@@ -705,7 +723,11 @@
       "files": [
         "lib/finish-step.mjs",
         "test/final-check.test.mjs",
-        "test/finish-step-goals.test.mjs"
+        "test/finish-step-goals.test.mjs",
+        "lib/finish.mjs",
+        "bin/masterplan.mjs",
+        "test/bin-masterplan.test.mjs",
+        "test/finish-step.test.mjs"
       ],
       "verify_commands": [
         "node --test test/final-check.test.mjs",
@@ -716,10 +738,10 @@
         "G3"
       ],
       "spec_refs": [
-        "spec.md §6.2",
-        "spec.md §7.2",
-        "spec.md §7.3",
-        "spec.md §11"
+        "spec.md \u00a76.2",
+        "spec.md \u00a77.2",
+        "spec.md \u00a77.3",
+        "spec.md \u00a711"
       ]
     },
     {
@@ -729,7 +751,8 @@
       "files": [
         "lib/finish-step.mjs",
         "test/intent-rejected.test.mjs",
-        "test/finish-replay.test.mjs"
+        "test/finish-replay.test.mjs",
+        "test/deploy-commit-identity.test.mjs"
       ],
       "verify_commands": [
         "node --test test/intent-rejected.test.mjs",
@@ -740,10 +763,10 @@
         "G3"
       ],
       "spec_refs": [
-        "spec.md §7.2",
-        "spec.md §7.4",
-        "spec.md §7.5",
-        "spec.md §11"
+        "spec.md \u00a77.2",
+        "spec.md \u00a77.4",
+        "spec.md \u00a77.5",
+        "spec.md \u00a711"
       ]
     },
     {
@@ -752,7 +775,10 @@
       "wave": 7,
       "files": [
         "lib/finish-step.mjs",
-        "test/finish-replay.test.mjs"
+        "test/finish-replay.test.mjs",
+        "bin/masterplan.mjs",
+        "lib/bundle.mjs",
+        "test/bundle-events.test.mjs"
       ],
       "verify_commands": [
         "node --test test/finish-replay.test.mjs"
@@ -763,10 +789,10 @@
         "G4"
       ],
       "spec_refs": [
-        "spec.md §7.2",
-        "spec.md §7.3",
-        "spec.md §7.4",
-        "spec.md §11"
+        "spec.md \u00a77.2",
+        "spec.md \u00a77.3",
+        "spec.md \u00a77.4",
+        "spec.md \u00a711"
       ]
     },
     {
@@ -776,7 +802,8 @@
       "files": [
         "lib/retro-goals.mjs",
         "test/finish-step-goals.test.mjs",
-        "test/retro-goals.test.mjs"
+        "test/retro-goals.test.mjs",
+        "lib/finish-step.mjs"
       ],
       "verify_commands": [
         "node --test test/finish-step-goals.test.mjs",
@@ -787,9 +814,9 @@
         "G3"
       ],
       "spec_refs": [
-        "spec.md §7.4",
-        "spec.md §11",
-        "spec.md §12"
+        "spec.md \u00a77.4",
+        "spec.md \u00a711",
+        "spec.md \u00a712"
       ]
     },
     {
@@ -808,9 +835,9 @@
         "G1"
       ],
       "spec_refs": [
-        "spec.md §8",
-        "spec.md §11",
-        "spec.md §12"
+        "spec.md \u00a78",
+        "spec.md \u00a711",
+        "spec.md \u00a712"
       ]
     },
     {
@@ -829,9 +856,9 @@
         "G1"
       ],
       "spec_refs": [
-        "spec.md §8",
-        "spec.md §11",
-        "spec.md §12"
+        "spec.md \u00a78",
+        "spec.md \u00a711",
+        "spec.md \u00a712"
       ]
     },
     {
@@ -850,10 +877,10 @@
         "G5"
       ],
       "spec_refs": [
-        "spec.md §7.4",
-        "spec.md §9",
-        "spec.md §11",
-        "spec.md §12"
+        "spec.md \u00a77.4",
+        "spec.md \u00a79",
+        "spec.md \u00a711",
+        "spec.md \u00a712"
       ]
     },
     {
@@ -877,10 +904,10 @@
         "G5"
       ],
       "spec_refs": [
-        "spec.md §8",
-        "spec.md §9",
-        "spec.md §11",
-        "spec.md §12"
+        "spec.md \u00a78",
+        "spec.md \u00a79",
+        "spec.md \u00a711",
+        "spec.md \u00a712"
       ]
     },
     {
@@ -898,8 +925,8 @@
         "G1"
       ],
       "spec_refs": [
-        "spec.md §8",
-        "spec.md §11"
+        "spec.md \u00a78",
+        "spec.md \u00a711"
       ]
     },
     {
@@ -918,9 +945,9 @@
         "G5"
       ],
       "spec_refs": [
-        "spec.md §9",
-        "spec.md §11",
-        "spec.md §12"
+        "spec.md \u00a79",
+        "spec.md \u00a711",
+        "spec.md \u00a712"
       ]
     },
     {
@@ -939,9 +966,9 @@
         "G3"
       ],
       "spec_refs": [
-        "spec.md §7.4",
-        "spec.md §11",
-        "spec.md §12"
+        "spec.md \u00a77.4",
+        "spec.md \u00a711",
+        "spec.md \u00a712"
       ]
     },
     {
@@ -960,9 +987,9 @@
         "G3"
       ],
       "spec_refs": [
-        "spec.md §7.4",
-        "spec.md §11",
-        "spec.md §12"
+        "spec.md \u00a77.4",
+        "spec.md \u00a711",
+        "spec.md \u00a712"
       ]
     },
     {
@@ -982,10 +1009,10 @@
         "G6"
       ],
       "spec_refs": [
-        "spec.md §7.4",
-        "spec.md §10.2",
-        "spec.md §11",
-        "spec.md §12"
+        "spec.md \u00a77.4",
+        "spec.md \u00a710.2",
+        "spec.md \u00a711",
+        "spec.md \u00a712"
       ]
     },
     {
@@ -1005,11 +1032,11 @@
         "G6"
       ],
       "spec_refs": [
-        "spec.md §7.4",
-        "spec.md §10.2",
-        "spec.md §10.3",
-        "spec.md §11",
-        "spec.md §12"
+        "spec.md \u00a77.4",
+        "spec.md \u00a710.2",
+        "spec.md \u00a710.3",
+        "spec.md \u00a711",
+        "spec.md \u00a712"
       ]
     },
     {
@@ -1028,15 +1055,15 @@
         "G6"
       ],
       "spec_refs": [
-        "spec.md §7.1",
-        "spec.md §10.1",
-        "spec.md §11",
-        "spec.md §12"
+        "spec.md \u00a77.1",
+        "spec.md \u00a710.1",
+        "spec.md \u00a711",
+        "spec.md \u00a712"
       ]
     },
     {
       "id": 42,
-      "description": "Implement scripts/release.mjs --version=V so it validates the release version, refuses version files that were not already bumped, never bumps them itself, inserts and commits only a missing CHANGELOG release header, creates an annotated tag, replays idempotently when its tag already points at HEAD, and fails for a foreign tag. Bump the branch-owned publication metadata and release notes to 10.0.0, document the release contract and corrective 10.0.x path, and update publish-hygiene expectations. Add test/release-script.test.mjs with isolated temporary-repository cases: an invalid version string is refused, unbumped version files are refused, a foreign tag at the version is refused, the release commit touches only CHANGELOG.md, and the tag is annotated and idempotent on replay.",
+      "description": "Implement scripts/release.mjs --version=V so it validates the release version, refuses version files that were not already bumped, never bumps them itself, inserts and commits only a missing CHANGELOG release header, creates an annotated tag, replays idempotently when its tag already points at HEAD, and fails for a foreign tag. Add the 10.0.0 release notes section to CHANGELOG.md and document the release contract and corrective 10.0.x path in RELEASING.md. The version-bearing files are NOT bumped here: the publish-hygiene live test requires every manifest and README to agree, so the bump of all of them to 10.0.0 lands together in the docs task (orchestration-integration.docs), which owns README.md. Add test/release-script.test.mjs with isolated temporary-repository cases: an invalid version string is refused, unbumped version files are refused, a foreign tag at the version is refused, the release commit touches only CHANGELOG.md, and the tag is annotated and idempotent on replay.",
       "wave": 0,
       "files": [
         "scripts/release.mjs",
@@ -1051,7 +1078,6 @@
         "node --test test/publish-hygiene.test.mjs",
         "node --check scripts/release.mjs",
         "grep -q 'never bumps' RELEASING.md && grep -Eq 'corrective.*10\\.0\\.x|10\\.0\\.x.*corrective' RELEASING.md",
-        "tmp=\"$(mktemp -d)\"; trap 'rm -rf \"$tmp\"' EXIT; git clone -q . \"$tmp/repo\"; cp scripts/release.mjs \"$tmp/repo/scripts/release.mjs\"; cp package.json \"$tmp/repo/package.json\"; cp .claude-plugin/plugin.json \"$tmp/repo/.claude-plugin/plugin.json\"; cp CHANGELOG.md \"$tmp/repo/CHANGELOG.md\"; (cd \"$tmp/repo\" && git config user.name masterplan-test && git config user.email masterplan@example.invalid && git add scripts/release.mjs package.json .claude-plugin/plugin.json CHANGELOG.md && (git diff --cached --quiet || git commit -qm fixture) && node scripts/release.mjs --version=10.0.0 && test \"$(git cat-file -t refs/tags/v10.0.0)\" = tag && before=\"$(git rev-parse refs/tags/v10.0.0^{commit})\" && node scripts/release.mjs --version=10.0.0 && test \"$before\" = \"$(git rev-parse refs/tags/v10.0.0^{commit})\")",
         "node --test test/release-script.test.mjs"
       ],
       "codex": null,
@@ -1059,11 +1085,11 @@
         "G6"
       ],
       "spec_refs": [
-        "spec.md §7.1",
-        "spec.md §10.1",
-        "spec.md §10.3",
-        "spec.md §11",
-        "spec.md §12"
+        "spec.md \u00a77.1",
+        "spec.md \u00a710.1",
+        "spec.md \u00a710.3",
+        "spec.md \u00a711",
+        "spec.md \u00a712"
       ]
     },
     {
@@ -1081,13 +1107,13 @@
         "G1"
       ],
       "spec_refs": [
-        "spec.md §11",
-        "spec.md §12"
+        "spec.md \u00a711",
+        "spec.md \u00a712"
       ]
     },
     {
       "id": 44,
-      "description": "Implement the one-off scripts/bootstrap-v10.mjs driver with status, arm, record, and corrective-pass start subcommands; the fixed step enum and pass ordering; schema-validated bootstrap_armed/bootstrap_step writes through appendEvent; same-SHA authorization matching; failed/recovered semantics; command and digest binding; fixture-target overrides; per-step preconditions and postconditions; workspace-root bundle scanning; carried-main commit reporting; reviewed-to-tag identity checks; PR reconciliation data; and the gate's clean-tree, remote-tip equality, ancestry, branch-path, and per-commit bundle-only audits. Status must reconstruct pass, completed steps, failures, and the next action solely from disk after compaction.\nintegration note: orchestration-integration must invoke this script's arm → printed command → record loop as a serial pre-finish bootstrap stage and must not expose a permanent mp bootstrap CLI verb. Own test/bootstrap-driver.test.mjs: fixture-bundle smoke cases proving status reconstructs pass and next action from disk, arm refuses when a precondition fails without writing an event, record refuses without a matching arm at the same base SHA, and --targets overrides route every path to fixture locations. The smoke suite includes one precondition and one postcondition from each of the three step shapes (git-only, gh-network, filesystem-install) so the step abstraction is proven before the dependent suites build on it.",
+      "description": "Implement the one-off scripts/bootstrap-v10.mjs driver with status, arm, record, and corrective-pass start subcommands; the fixed step enum and pass ordering; schema-validated bootstrap_armed/bootstrap_step writes through appendEvent; same-SHA authorization matching; failed/recovered semantics; command and digest binding; fixture-target overrides; per-step preconditions and postconditions; workspace-root bundle scanning; carried-main commit reporting; reviewed-to-tag identity checks; PR reconciliation data; and the gate's clean-tree, remote-tip equality, ancestry, branch-path, and per-commit bundle-only audits. Status must reconstruct pass, completed steps, failures, and the next action solely from disk after compaction.\nintegration note: orchestration-integration must invoke this script's arm \u2192 printed command \u2192 record loop as a serial pre-finish bootstrap stage and must not expose a permanent mp bootstrap CLI verb. Own test/bootstrap-driver.test.mjs: fixture-bundle smoke cases proving status reconstructs pass and next action from disk, arm refuses when a precondition fails without writing an event, record refuses without a matching arm at the same base SHA, and --targets overrides route every path to fixture locations. The smoke suite includes one precondition and one postcondition from each of the three step shapes (git-only, gh-network, filesystem-install) so the step abstraction is proven before the dependent suites build on it.",
       "wave": 2,
       "files": [
         "scripts/bootstrap-v10.mjs",
@@ -1102,16 +1128,16 @@
         "G6"
       ],
       "spec_refs": [
-        "spec.md §10.1",
-        "spec.md §10.2",
-        "spec.md §10.3",
-        "spec.md §11",
-        "spec.md §12"
+        "spec.md \u00a710.1",
+        "spec.md \u00a710.2",
+        "spec.md \u00a710.3",
+        "spec.md \u00a711",
+        "spec.md \u00a712"
       ]
     },
     {
       "id": 45,
-      "description": "Implement the v9-to-v10 rehearsal shell walk using the same bootstrap arm/record loop and fixture targets used by the live stage: copy and pin the installed 9.10.0 tree before any installation, route every rehearsed finish invocation through that copy, construct the bare remote and second-clone merge fixtures, exercise fixture Pi and Claude installations, preserve and audit bundle-only base commits, prove the non-empty v9 assessment/review diff and no-op finish merge, and clean up a real private throwaway GitHub repository after a gh pr create/merge cycle. The credentialed GitHub cycle is intentionally executed during the live rehearsal rather than routine CI, and its output digest becomes the rehearsal receipt. Own test/rehearse-v9-finish.test.mjs: with a gh shim on PATH and --targets fixture overrides, the walk pins the 9.10.0 copy before any install, routes every rehearsed finish through it, builds the bare remote and second clone, drives arm and record through the fixture driver, asserts the non-empty v9 diff and the no-op finish merge, audits the bundle-only base commits, and cleans up; the gh shim is stateful — it records every invocation and simulates repo create, pr create, pr merge, and repo delete — so the test asserts the full create/PR/merge/delete command sequence, the private-repository flag, cleanup after success, and cleanup after a simulated mid-cycle failure; real network execution is reserved for the live stage. The script also drives every §10.3 failure row (partial or mismatched push, red tag CI, install failure with the 9.10.0 rollback, PR reconciliation for MERGED/OPEN/other, rejected main push, unexpected or missing remote merge, dirty non-bundle state, sibling remote movement) through the same arm/record loop against fixture targets, and test/rehearse-v9-finish.test.mjs asserts each row's disposition. Co-owns scripts/bootstrap-v10.mjs so a driver defect the rehearsal exposes has a fix path.",
+      "description": "Implement the v9-to-v10 rehearsal shell walk using the same bootstrap arm/record loop and fixture targets used by the live stage: copy and pin the installed 9.10.0 tree before any installation, route every rehearsed finish invocation through that copy, construct the bare remote and second-clone merge fixtures, exercise fixture Pi and Claude installations, preserve and audit bundle-only base commits, prove the non-empty v9 assessment/review diff and no-op finish merge, and clean up a real private throwaway GitHub repository after a gh pr create/merge cycle. The credentialed GitHub cycle is intentionally executed during the live rehearsal rather than routine CI, and its output digest becomes the rehearsal receipt. Own test/rehearse-v9-finish.test.mjs: with a gh shim on PATH and --targets fixture overrides, the walk pins the 9.10.0 copy before any install, routes every rehearsed finish through it, builds the bare remote and second clone, drives arm and record through the fixture driver, asserts the non-empty v9 diff and the no-op finish merge, audits the bundle-only base commits, and cleans up; the gh shim is stateful \u2014 it records every invocation and simulates repo create, pr create, pr merge, and repo delete \u2014 so the test asserts the full create/PR/merge/delete command sequence, the private-repository flag, cleanup after success, and cleanup after a simulated mid-cycle failure; real network execution is reserved for the live stage. The script also drives every \u00a710.3 failure row (partial or mismatched push, red tag CI, install failure with the 9.10.0 rollback, PR reconciliation for MERGED/OPEN/other, rejected main push, unexpected or missing remote merge, dirty non-bundle state, sibling remote movement) through the same arm/record loop against fixture targets, and test/rehearse-v9-finish.test.mjs asserts each row's disposition. Co-owns scripts/bootstrap-v10.mjs so a driver defect the rehearsal exposes has a fix path.",
       "wave": 3,
       "files": [
         "scripts/rehearse-v9-finish.sh",
@@ -1129,11 +1155,11 @@
         "G6"
       ],
       "spec_refs": [
-        "spec.md §10.1",
-        "spec.md §10.2",
-        "spec.md §10.3",
-        "spec.md §11",
-        "spec.md §12"
+        "spec.md \u00a710.1",
+        "spec.md \u00a710.2",
+        "spec.md \u00a710.3",
+        "spec.md \u00a711",
+        "spec.md \u00a712"
       ]
     },
     {
@@ -1152,9 +1178,9 @@
         "G6"
       ],
       "spec_refs": [
-        "spec.md §10.1",
-        "spec.md §10.3",
-        "spec.md §11"
+        "spec.md \u00a710.1",
+        "spec.md \u00a710.3",
+        "spec.md \u00a711"
       ]
     },
     {
@@ -1163,7 +1189,10 @@
       "wave": 5,
       "files": [
         "test/v9-to-v10-bootstrap.test.mjs",
-        "scripts/bootstrap-v10.mjs"
+        "scripts/bootstrap-v10.mjs",
+        "test/bootstrap-driver.test.mjs",
+        "scripts/rehearse-v9-finish.sh",
+        "test/rehearse-v9-finish.test.mjs"
       ],
       "verify_commands": [
         "node --test test/v9-to-v10-bootstrap.test.mjs"
@@ -1173,9 +1202,9 @@
         "G6"
       ],
       "spec_refs": [
-        "spec.md §10.1",
-        "spec.md §10.2",
-        "spec.md §11"
+        "spec.md \u00a710.1",
+        "spec.md \u00a710.2",
+        "spec.md \u00a711"
       ]
     },
     {
@@ -1184,7 +1213,8 @@
       "wave": 6,
       "files": [
         "test/v9-to-v10-bootstrap.test.mjs",
-        "scripts/bootstrap-v10.mjs"
+        "scripts/bootstrap-v10.mjs",
+        "test/bootstrap-driver.test.mjs"
       ],
       "verify_commands": [
         "node --test test/v9-to-v10-bootstrap.test.mjs"
@@ -1194,9 +1224,268 @@
         "G6"
       ],
       "spec_refs": [
-        "spec.md §10.2",
-        "spec.md §10.3",
-        "spec.md §11"
+        "spec.md \u00a710.2",
+        "spec.md \u00a710.3",
+        "spec.md \u00a711"
+      ]
+    },
+    {
+      "id": 49,
+      "wave": 11,
+      "description": "behavior-skills side of the shared contract, committed in that repo, not here. Teach /design-intent plan mode the masterplan host contract \u2014 existing anchor and evidence, current draft, ledger status, permitted recorder operations in, questions/answers/draft out \u2014 so it stops refusing a goals.md merely because it carries '## G<n>:' blocks, and present only the intent projection to the shared validator. Publish the skill's manifest (the closed file set skill identity is computed over: SKILL.md, schema.json, the manifest itself, and every declared asset) and its host-contract and schema-format versions. Preserve repo and assess mode public behavior byte-for-byte. Land it as a separate repository-local commit, then PIN it here: record the behavior-skills commit sha and the manifest digest in policy/design-intent-skill.json \u2014 a repo-side pin beside policy/workflow-map.json, NOT a bundle artifact: bundle state lives on main and is written only by L1 per CD-7, while this pin is branch-side code the tasks consume, and have every dependent task verify against that pinned revision rather than whatever the checkout happens to hold. No push.",
+      "files": [
+        "docs/internals/design-intent-integration.md",
+        "test/design-intent-host-contract.test.mjs",
+        "policy/design-intent-skill.json"
+      ],
+      "verify_commands": [
+        "node -e \"const d=require('./policy/design-intent-skill.json'); if(!/^[0-9a-f]{40}$/.test(d.commit)||!d.manifest_digest||!d.host_contract_version) {console.error('skill-dependency.json must pin commit, manifest_digest and host_contract_version');process.exit(1)}\"",
+        "node -e \"const cp=require('child_process'),d=require('./policy/design-intent-skill.json');const r=cp.execFileSync('git',['-C',d.repo,'cat-file','-t',d.commit],{encoding:'utf8'}).trim();if(r!=='commit'){console.error('pinned commit not present in '+d.repo);process.exit(1)}\"",
+        "node -e \"const cp=require('child_process'),d=require('./policy/design-intent-skill.json');const dirty=cp.execFileSync('git',['-C',d.repo,'status','--porcelain','--',d.skill_path],{encoding:'utf8'});if(dirty.trim()){console.error('pinned skill path is dirty; the tested bytes are not the committed bytes');process.exit(1)}\"",
+        "node --test test/design-intent-host-contract.test.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G7"
+      ],
+      "spec_refs": [
+        "spec.md \u00a75",
+        "spec.md \u00a75.5"
+      ]
+    },
+    {
+      "id": 50,
+      "wave": 11,
+      "description": "Native section codec inside the '## Intent' block: an explicitly versioned, schema-backed representation carrying section bodies, schema identity, source evidence and reconciliation, with a narrow encoder/decoder adapter. Emit the four native fields (why, outcome, anti_goals, done_means) as a deterministic legacy projection, and fail validation when a persisted legacy view disagrees with the authoritative representation rather than preferring either copy. The codec must distinguish native anti-goal items from bullets inside other sections \u2014 today's parser treats every intent-block bullet as an anti-goal. Round-trip multiline prose, bullets, extensions and reconciliation without polluting anti_goals.",
+      "files": [
+        "lib/goals.mjs",
+        "test/design-intent-adapter.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/design-intent-adapter.test.mjs",
+        "node --test test/goals.test.mjs"
+      ],
+      "codex": "ok",
+      "goals": [
+        "G7"
+      ],
+      "spec_refs": [
+        "spec.md \u00a76.1"
+      ]
+    },
+    {
+      "id": 51,
+      "wave": 12,
+      "description": "Versioned hash coverage and the format pin. Select the legacy canonicalizer for a v1 document and the richer one for a versioned document from a discriminator held in durable bundle state, not inside the removable representation, and make every consumer \u2014 parser, checkpoint and reader \u2014 dispatch on that same pin. Extend new-format canonical coverage to every section, the plan context, the reconciliation and the schema digest, including source-evidence provenance so a provenance edit invalidates the receipts bound to it. Reject duplicate fields, duplicate sections, unknown versions and malformed version markers. Refuse a stripped schema-backed document as a downgrade, and repair a missing pin from the schema-capture event rather than reading it as legacy. Legacy documents keep their parse results and hashes byte-for-byte.",
+      "files": [
+        "lib/goals.mjs",
+        "lib/bundle.mjs",
+        "test/goals-hash-versioning.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/goals-hash-versioning.test.mjs",
+        "node --test test/goals.test.mjs",
+        "node --test test/bundle.test.mjs"
+      ],
+      "codex": "ok",
+      "goals": [
+        "G7"
+      ],
+      "spec_refs": [
+        "spec.md \u00a76.1",
+        "spec.md \u00a75.5"
+      ]
+    },
+    {
+      "id": 52,
+      "wave": 12,
+      "description": "Schema snapshot and skill identity. Resolve schema.json from the installed skill, validate the format version, copy the exact bytes to a bundle snapshot on approved capture and record its digest; a frozen bundle reads its snapshot, never the live file. Compute skill identity as a digest over the closed manifest-declared file set, sorted by manifest-relative path, each entry contributing path and content, with missing files and path escapes failing closed. Enforce identity equality at every later operation with the named failures skill_absent, skill_identity_changed, host_contract_unsupported, schema_unsupported and undeclared_dependency, and no fallback to native questioning or a live schema. Add `mp interview amend-skill-identity` as the single guard-exempt, resumable operation that inspects a changed skill, invalidates old-identity receipts, takes the operator's approval and commits the replacement.",
+      "files": [
+        "lib/interview.mjs",
+        "lib/schema-snapshot.mjs",
+        "test/schema-snapshot-identity.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/schema-snapshot-identity.test.mjs",
+        "node --test test/interview-ledger-resume.test.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G7",
+        "G8"
+      ],
+      "spec_refs": [
+        "spec.md \u00a75.5"
+      ]
+    },
+    {
+      "id": 53,
+      "wave": 13,
+      "description": "Convergence and the ledger's actual-interaction contract. Implement the two required conditions \u2014 coverage of every checked section with provenance and stated uncertainty, and the probing minimum of genuine open questions answered fresh \u2014 resolving interview.probing_minimum from complexity through the config hierarchy with its validation (integer >= 1, non-decreasing with complexity, high strictly greater than low, failing closed on violation). Take eligibility from the critic's eligible set and forks_remaining verdict where a critic runs, rejecting an eligible set naming an unknown, duplicate, withdrawn, unanswered or design-kind id; fall back to the recorder's mechanical test at low complexity where the critic is off. Add no terminal states: route cap-with-minimum-unmet to the existing waiver as probing_minimum_unmet_at_cap and coverage-with-no-forks-remaining to the existing exhausted as forks_exhausted, exempting only the latter from the probing minimum, with the cap taking precedence where both predicates hold. Reused evidence keeps its provenance and never increments a fresh-answer count; a whole-draft approval is never expanded into synthetic question/answer events. Deliver the substitution as a schema-backed-versus-legacy terminal matrix that proves the schema-backed path stops applying all three legacy floors while still enforcing zero unanswered questions, the latest-draft rule, the high-complexity per-round critic receipts, and goals-load's exhausted-assumption handling \u2014 keeping the legacy suite green does not prove the legacy floors stopped applying.",
+      "files": [
+        "lib/interview.mjs",
+        "lib/config.mjs",
+        "test/interview-design-intent.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/interview-design-intent.test.mjs",
+        "node --test test/interview-ledger-resume.test.mjs",
+        "node --test test/config.test.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G7"
+      ],
+      "spec_refs": [
+        "spec.md \u00a75.3",
+        "spec.md \u00a75.4",
+        "spec.md \u00a74.1"
+      ]
+    },
+    {
+      "id": 54,
+      "wave": 13,
+      "description": "Sequencer and critic integration. Delegate the questioning to /design-intent plan mode over the host contract, keep mp interview the only recorder, and pass the critic the same schema-backed draft the operator sees. Extend the critic payload with the eligible question set and the forks_remaining verdict, Wiring only: the duplicate questioning implementation stays in place here and is removed by task 59, after the replacement is proven capability-complete. Reconcile \u00a711's legacy-only assertions so the test plan no longer states them unqualified.",
+      "files": [
+        "agents/mp-intent-critic.md",
+        "test/interview-sequencer-delegation.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/interview-sequencer-delegation.test.mjs",
+        "node bin/doctor.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G7"
+      ],
+      "spec_refs": [
+        "spec.md \u00a75",
+        "spec.md \u00a75.1",
+        "spec.md \u00a711"
+      ]
+    },
+    {
+      "id": 55,
+      "wave": 14,
+      "description": "Repository INTENT.md reconciliation and the promotion transaction. Build one reconciliation row per repository INTENT.md section from the run's integration target resolved as an identity {repository, remote, ref, resolved_commit, resolved_at}, reading at the recorded commit rather than a moving ref or a worktree path; separate unknown/unavailable from a verified absence, treat a detached HEAD with a configured freshly-resolved target as resolvable, invalidate on retarget, and treat a target that moves with unchanged bytes as not drift. Implement promotion as the durable transaction the spec now specifies: approval binds base hashes, a diff and result hashes; the bases are pinned by ref against gc; recovery classifies each artifact against its approved identities and applies the decision table, refusing symmetrically when either artifact is neither base nor result and treating an unchanged artifact as satisfied; recording is exactly-once by transaction_id. This replaces the by-hand promotion this amendment itself required. Own the actual promotion entry path and the gate's combined spec+goals binding, including the bundle write lock held across both writes and the record, the expected-revision check immediately before mutation, and proof that the diff reproduces both approved result hashes before anything is written \u2014 a standalone transaction module that existing amendment paths bypass does not satisfy this.",
+      "files": [
+        "lib/reconcile-intent.mjs",
+        "lib/promote.mjs",
+        "lib/wave-commit.mjs",
+        "test/intent-reconciliation.test.mjs",
+        "test/promotion-transaction.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/intent-reconciliation.test.mjs",
+        "node --test test/promotion-transaction.test.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G8"
+      ],
+      "spec_refs": [
+        "spec.md \u00a76.3",
+        "spec.md \u00a75.6"
+      ]
+    },
+    {
+      "id": 56,
+      "wave": 14,
+      "description": "Checkpoint integration over the existing seams. Bind spec review, the end-of-planning alignment audit, per-task adversarial review and the finish assessment to the receipt identity tuples, with intent_identity carrying goals_hash, schema_snapshot_digest, skill_identity and reconciliation_digest so evidence cannot cross an identity boundary, and the finish tuple naming deploy_base_sha, deploy_chain_hash and live_check_digest outright. Reject missing, partial, unreadable, stale and mismatched evidence and an unresolved reviewer identity as unavailable rather than approval, and report a legacy absence explicitly rather than as a schema-backed pass. Prove the checked-section set is data-driven with alternate schema content, and keep artifact identity (exact bytes, what approval binds) distinct from evidence identity (canonical) everywhere both appear. Own the existing producer and consumer seams, not only the validator: each checkpoint is exercised through its real orchestration path, and a mutation test that bypasses the validator must fail the suite.",
+      "files": [
+        "lib/checkpoint-evidence.mjs",
+        "lib/task-review.mjs",
+        "lib/finish.mjs",
+        "agents/mp-alignment-auditor.md",
+        "agents/mp-adversarial-reviewer.md",
+        "agents/mp-goal-assessor.md",
+        "test/intent-checkpoints.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/intent-checkpoints.test.mjs",
+        "node --test test/task-review.test.mjs",
+        "npm test"
+      ],
+      "codex": null,
+      "goals": [
+        "G8"
+      ],
+      "spec_refs": [
+        "spec.md \u00a75.5",
+        "spec.md \u00a711"
+      ]
+    },
+    {
+      "id": 57,
+      "wave": 16,
+      "description": "Contract verification and documentation. Extend the knob-contract guard to every control this amendment adds \u2014 interview.probing_minimum across its levels, the format pin, and the schema-capture switch \u2014 so each has a two-value behavioral contract rather than an inert key, and prove a configured override actually changes a consumer-side threshold. Exercise alternate schema content end to end to demonstrate no copied list of today's section headings controls behavior. Verify the installed skill is reachable and capability-complete from both harnesses without changing global routing or relay settings. Document the integration in docs/internals and point AGENTS.md at it.",
+      "files": [
+        "docs/internals/design-intent-integration.md",
+        "AGENTS.md",
+        "test/knob-contract.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/knob-contract.test.mjs",
+        "npm test",
+        "node bin/doctor.mjs",
+        "grep -q 'design-intent-integration' AGENTS.md"
+      ],
+      "codex": "ok",
+      "goals": [
+        "G7",
+        "G8"
+      ],
+      "spec_refs": [
+        "spec.md \u00a74.1",
+        "spec.md \u00a75.5",
+        "spec.md \u00a711"
+      ]
+    },
+    {
+      "id": 58,
+      "wave": 11,
+      "description": "Public surface for the two operations the amendment adds, which no existing task owns: register `mp interview capture-schema` (the approved schema-capture control that writes the snapshot, its digest and the skill identity, and stamps the durable format pin) and `mp interview amend-skill-identity` (the single guard-exempt, resumable identity replacement requiring the operator's approval). Define and validate their append-time event schemas \u2014 schema_captured and skill_identity_amended \u2014 so \u00a76.1's pin repair has a real event to repair from and \u00a75.5's guards have a real producer. Black-box CLI acceptance and refusal, interrupted-amendment replay, and no identity adoption before approval.",
+      "files": [
+        "bin/masterplan.mjs",
+        "lib/bundle.mjs",
+        "test/interview-cli-surface.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/interview-cli-surface.test.mjs",
+        "node --test test/bundle-events.test.mjs",
+        "node --test test/cli-surface.test.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G7",
+        "G8"
+      ],
+      "spec_refs": [
+        "spec.md \u00a75.5",
+        "spec.md \u00a76.1"
+      ]
+    },
+    {
+      "id": 59,
+      "wave": 15,
+      "description": "Cutover: remove masterplan's duplicate questioning implementation, only now that capture, host dispatch, convergence, reconciliation and disk resume all pass independently. This is deliberately the last structural change, because until it lands the old questioner remains the working path \u2014 an interrupted run must never be left unable to interview. Prove the removal against real dispatch and resume on both harnesses rather than against source-text assertions, and prove an absent or version-skewed skill refuses rather than silently falling back to the code this task deletes.",
+      "files": [
+        "commands/masterplan.md",
+        "test/interview-cutover.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/interview-cutover.test.mjs",
+        "node --test test/interview-design-intent.test.mjs",
+        "npm test",
+        "node bin/doctor.mjs"
+      ],
+      "codex": null,
+      "goals": [
+        "G7"
+      ],
+      "spec_refs": [
+        "spec.md \u00a75",
+        "spec.md \u00a75.1"
       ]
     }
   ],
@@ -1205,6 +1494,6 @@
     "problem": "Rev 14 of the spec passed four cross-vendor panels; its acceptance list is spec.md section 11. The plan below is seven parallel-drafted subsystems merged deterministically; the integration subsystem owns the shared CLI, schema, sequencer, and docs files.",
     "solution": "Every wave implements the spec; the post-wave stage below is NOT a plan task (spec A33 and section 10.1) and cannot be rendered by the installed 9.10.0 plan renderer, so it is stated here, in WORKLOG.md, and as a durable `pre_finish_stage_required` event on this bundle's events.jsonl (recorded 2026-09-03 via the pinned v9 `mp event`; superseded by a v2 event with the split rule). After the LAST wave completes, the orchestrator executes the live v9-to-v10 bootstrap stage from the branch with `node scripts/bootstrap-v10.mjs` (status, arm, run the printed command from MAIN, record) through pre-publish verify/review/assessment, release, push, CI, install of both surfaces, publish acknowledgement, and the GitHub PR merge. Two preconditions bind the finish: (a) `mp finish` is invoked only after `node scripts/bootstrap-v10.mjs status` reports the pass complete through `surfaces_live`, and `required_successor {slug: v10-validation}` has been recorded via the pinned v9 `mp event`; (b) the `gate` step (`arm --step=gate`, the rebase, `record --step=gate`) executes inside the branch_finish handling before `--choice=merge`, and is the only bootstrap step permitted after finish begins. Under the installed 9.10.0 sequencer the durable enforcement is the finish-time goal check, where G6 is assessed live and a skipped stage lands at goals_unmet rather than archiving."
   },
-  "plan_hash": "sha256:95f2359eb39937603ea459906bc5ada3dce6eaa603af7ed3ac4d0e9eb3af5f15",
-  "generated_at": "2026-09-03T06:08:41.212Z"
+  "plan_hash": "650047c58f79c1538abbb105d2efb0e3dd68f9e2ae24fb270834d5726da9d287",
+  "generated_at": "2026-09-03T06:57:19.646Z"
 }

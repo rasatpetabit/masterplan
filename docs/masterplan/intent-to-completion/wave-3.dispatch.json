@@ -1,0 +1,111 @@
+{
+  "key": "mp-wave-dispatch-v1:intent-to-completion:3:dispatch_fabric",
+  "run_id": "intent-to-completion",
+  "wave": 3,
+  "op": "dispatch_fabric",
+  "contract_version": "fabric-native-v1",
+  "status": "recorded",
+  "attempt": 1,
+  "wave_token": "mp-wave-intent-to-completion-w3-a1",
+  "handles": [],
+  "dispatched_at": "2026-09-03T20:46:40.017Z",
+  "routing_inputs": {
+    "routing": "auto",
+    "codex_host_suppressed": false,
+    "linked_worktree": true
+  },
+  "payload": [
+    {
+      "id": 14,
+      "description": "Extend the library-level goals-load and goal-check contracts. Accept only converged, exhausted, critic_off, or durable waived interview exits; reject open or reopened interviews; require every unknown, contradiction, and misclassified id listed by an exhausted terminal event to appear in the spec Assumptions table with assumed_row_missing on omissions; validate final assessor receipts against deploy_base_sha, deploy_chain_hash, live_check_digest, and the final intent_verdict while preserving the implementation-assessment and v1 receipt shapes. Add focused regression cases to the existing goals suite.\nintegration note: orchestration-integration CLI should pass the bundle replay and spec path into this goals-load validation and preserve the assumed_row_missing error code; finish wiring should supply the expected final receipt bindings rather than accepting caller-provided values unbound.",
+      "files": [
+        "lib/goals.mjs",
+        "test/goals.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/goals.test.mjs"
+      ],
+      "class": "bounded-edit"
+    },
+    {
+      "id": 25,
+      "description": "Implement event-keyed deploy recovery for every interruption point. Re-entry must preserve an authorization that has no started event, reject started without authorization, probe a started step's check before replay, require a new gated authorization before rerunning a previously started command, classify check exit 1 as absent and every other nonzero check result as indeterminate, and leave deploy abort resumable. Permit attestation only for an interrupted check-less step, record it as status attested, and prevent attestation from proving a checked step. Add real-writer replay cases for gated and loose authorization order and recovery after each deploy gate.",
+      "files": [
+        "lib/finish-step.mjs",
+        "test/finish-replay.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/finish-replay.test.mjs"
+      ],
+      "class": "bounded-edit"
+    },
+    {
+      "id": 45,
+      "description": "Implement the v9-to-v10 rehearsal shell walk using the same bootstrap arm/record loop and fixture targets used by the live stage: copy and pin the installed 9.10.0 tree before any installation, route every rehearsed finish invocation through that copy, construct the bare remote and second-clone merge fixtures, exercise fixture Pi and Claude installations, preserve and audit bundle-only base commits, prove the non-empty v9 assessment/review diff and no-op finish merge, and clean up a real private throwaway GitHub repository after a gh pr create/merge cycle. The credentialed GitHub cycle is intentionally executed during the live rehearsal rather than routine CI, and its output digest becomes the rehearsal receipt. Own test/rehearse-v9-finish.test.mjs: with a gh shim on PATH and --targets fixture overrides, the walk pins the 9.10.0 copy before any install, routes every rehearsed finish through it, builds the bare remote and second clone, drives arm and record through the fixture driver, asserts the non-empty v9 diff and the no-op finish merge, audits the bundle-only base commits, and cleans up; the gh shim is stateful — it records every invocation and simulates repo create, pr create, pr merge, and repo delete — so the test asserts the full create/PR/merge/delete command sequence, the private-repository flag, cleanup after success, and cleanup after a simulated mid-cycle failure; real network execution is reserved for the live stage. The script also drives every §10.3 failure row (partial or mismatched push, red tag CI, install failure with the 9.10.0 rollback, PR reconciliation for MERGED/OPEN/other, rejected main push, unexpected or missing remote merge, dirty non-bundle state, sibling remote movement) through the same arm/record loop against fixture targets, and test/rehearse-v9-finish.test.mjs asserts each row's disposition. Co-owns scripts/bootstrap-v10.mjs so a driver defect the rehearsal exposes has a fix path.",
+      "files": [
+        "scripts/rehearse-v9-finish.sh",
+        "test/rehearse-v9-finish.test.mjs",
+        "scripts/bootstrap-v10.mjs"
+      ],
+      "verify_commands": [
+        "bash -n scripts/rehearse-v9-finish.sh",
+        "test -x scripts/rehearse-v9-finish.sh",
+        "grep -q 'bootstrap-v10.mjs' scripts/rehearse-v9-finish.sh && grep -q '9.10.0' scripts/rehearse-v9-finish.sh && grep -q 'gh pr create' scripts/rehearse-v9-finish.sh && grep -q 'gh pr merge --merge' scripts/rehearse-v9-finish.sh",
+        "node --test test/rehearse-v9-finish.test.mjs"
+      ],
+      "class": "bounded-edit"
+    }
+  ],
+  "tasks": [
+    {
+      "task_id": 14,
+      "class": "bounded-edit",
+      "handoff_key": "fabric-idem-v1:intent-to-completion:14:51f7e45a8ba040a6c530c0f67dfb234806c1f4a74715d964efd9dfed0de224e3:52a6222a8f3ad21c25d2f1dbcf53f71999309415560d63e58a8d0ff1aa34e8a7"
+    },
+    {
+      "task_id": 25,
+      "class": "bounded-edit",
+      "handoff_key": "fabric-idem-v1:intent-to-completion:25:20f8373be62a25ede4952753d6ea3d41c6676fe07267c56119e1e08fae92b5cd:52a6222a8f3ad21c25d2f1dbcf53f71999309415560d63e58a8d0ff1aa34e8a7"
+    },
+    {
+      "task_id": 45,
+      "class": "bounded-edit",
+      "handoff_key": "fabric-idem-v1:intent-to-completion:45:ee74b4e23644d7979797e1c82257e711272d75367e5c882f8d4c9c588f5fc06a:52a6222a8f3ad21c25d2f1dbcf53f71999309415560d63e58a8d0ff1aa34e8a7"
+    }
+  ],
+  "gateway_verify_allowlist": "bash -c",
+  "review_context": {
+    "enabled": true,
+    "base_sha": "ddb7e53bee7002bdacf086c5f4d4caeee5f5d4d6",
+    "tasks": [
+      {
+        "task_id": 14,
+        "description": "Extend the library-level goals-load and goal-check contracts. Accept only converged, exhausted, critic_off, or durable waived interview exits; reject open or reopened interviews; require every unknown, contradiction, and misclassified id listed by an exhausted terminal event to appear in the spec Assumptions table with assumed_row_missing on omissions; validate final assessor receipts against deploy_base_sha, deploy_chain_hash, live_check_digest, and the final intent_verdict while preserving the implementation-assessment and v1 receipt shapes. Add focused regression cases to the existing goals suite.\nintegration note: orchestration-integration CLI should pass the bundle replay and spec path into this goals-load validation and preserve the assumed_row_missing error code; finish wiring should supply the expected final receipt bindings rather than accepting caller-provided values unbound.",
+        "class": "bounded-edit",
+        "repo": "/srv/dev/ras/masterplan/.worktrees/intent-to-completion"
+      },
+      {
+        "task_id": 25,
+        "description": "Implement event-keyed deploy recovery for every interruption point. Re-entry must preserve an authorization that has no started event, reject started without authorization, probe a started step's check before replay, require a new gated authorization before rerunning a previously started command, classify check exit 1 as absent and every other nonzero check result as indeterminate, and leave deploy abort resumable. Permit attestation only for an interrupted check-less step, record it as status attested, and prevent attestation from proving a checked step. Add real-writer replay cases for gated and loose authorization order and recovery after each deploy gate.",
+        "class": "bounded-edit",
+        "repo": "/srv/dev/ras/masterplan/.worktrees/intent-to-completion"
+      },
+      {
+        "task_id": 45,
+        "description": "Implement the v9-to-v10 rehearsal shell walk using the same bootstrap arm/record loop and fixture targets used by the live stage: copy and pin the installed 9.10.0 tree before any installation, route every rehearsed finish invocation through that copy, construct the bare remote and second-clone merge fixtures, exercise fixture Pi and Claude installations, preserve and audit bundle-only base commits, prove the non-empty v9 assessment/review diff and no-op finish merge, and clean up a real private throwaway GitHub repository after a gh pr create/merge cycle. The credentialed GitHub cycle is intentionally executed during the live rehearsal rather than routine CI, and its output digest becomes the rehearsal receipt. Own test/rehearse-v9-finish.test.mjs: with a gh shim on PATH and --targets fixture overrides, the walk pins the 9.10.0 copy before any install, routes every rehearsed finish through it, builds the bare remote and second clone, drives arm and record through the fixture driver, asserts the non-empty v9 diff and the no-op finish merge, audits the bundle-only base commits, and cleans up; the gh shim is stateful — it records every invocation and simulates repo create, pr create, pr merge, and repo delete — so the test asserts the full create/PR/merge/delete command sequence, the private-repository flag, cleanup after success, and cleanup after a simulated mid-cycle failure; real network execution is reserved for the live stage. The script also drives every §10.3 failure row (partial or mismatched push, red tag CI, install failure with the 9.10.0 rollback, PR reconciliation for MERGED/OPEN/other, rejected main push, unexpected or missing remote merge, dirty non-bundle state, sibling remote movement) through the same arm/record loop against fixture targets, and test/rehearse-v9-finish.test.mjs asserts each row's disposition. Co-owns scripts/bootstrap-v10.mjs so a driver defect the rehearsal exposes has a fix path.",
+        "class": "bounded-edit",
+        "repo": "/srv/dev/ras/masterplan/.worktrees/intent-to-completion"
+      }
+    ]
+  },
+  "completed_at": "2026-09-03T22:37:44.898Z",
+  "record_outcome": {
+    "recorded": [
+      14,
+      25,
+      45
+    ],
+    "failed": [],
+    "cleared": true
+  }
+}

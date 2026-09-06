@@ -1,0 +1,13 @@
+Command: npm test && node bin/doctor.mjs . && git diff --check
+Exit: 0
+Full output SHA256: 8381b65416dfbdad6aaf841747b3fe48f0fa00205891c762608768b31623fcef
+# tests 2466
+# pass 2466
+# fail 0
+WARN  incomplete-archive: unreadable state file docs/masterplan/.implemented-plan-archive/state.yml
+WARN  legacy-archive: unreadable state file docs/masterplan/.implemented-plan-archive/state.yml: ENOENT: no such file or directory, open 'docs/masterplan/.implemented-plan-archive/state.yml'
+WARN  pi-agent-registration: pi agent registration drifted — DRIFT  mp-adversarial-reviewer.md (installed differs from canonical+map); DRIFT  mp-goal-assessor.md (installed differs from canonical+map); DRIFT  mp-intent-critic.md (installed MISSING); register-pi-agents: 3 drift item(s) — re-run without --check to resync.
+WARN  plugin-registry-drift: installed masterplan v9.10.0 matches marketplace version but was installed from commit c4ba19c3d while marketplace HEAD is f7e0b2a01 — runtime cache is stale
+WARN  resume-brief-hook: no SessionStart hook rule invokes resume-brief
+WARN  scalar-cap: bundle intent-to-completion: 'topic' value is 883 chars (> 200)
+masterplan doctor: 38 finding(s) — 0 error, 6 warn.

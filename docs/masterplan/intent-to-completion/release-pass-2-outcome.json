@@ -1,0 +1,62 @@
+{
+  "round": 2,
+  "run_id": "fb6ffd18-a8a3-4279-86f6-b608c7e0e27a",
+  "status": "stopped_on_new_blocker",
+  "head": "1f2741f8136066b1c40dc1008b34c98115064675",
+  "checks": [
+    {
+      "agent": "release-cross-review",
+      "status": "failed",
+      "error": "[spawn-guard] denied model=\"litellm/qwen3.8-max\" rule=core-guard-deny: unknown agent preset: release-cross-review",
+      "acceptance": "rejected",
+      "acceptance_failures": [
+        "Structured acceptance report not found."
+      ]
+    },
+    {
+      "agent": "mp-adversarial-reviewer",
+      "status": "complete",
+      "error": null,
+      "acceptance": "rejected",
+      "acceptance_failures": [
+        "commandsRun claim \"git rev-parse HEAD\" has no matching structured toolCall in the transcript."
+      ]
+    },
+    {
+      "agent": "release-cross-review",
+      "status": "failed",
+      "error": "[spawn-guard] denied model=\"litellm/qwen3.8-max\" rule=core-guard-deny: unknown agent preset: release-cross-review",
+      "acceptance": "rejected",
+      "acceptance_failures": [
+        "Structured acceptance report not found."
+      ]
+    },
+    {
+      "agent": "release-cross-review",
+      "status": "failed",
+      "error": "[spawn-guard] denied model=\"litellm/qwen3.8-max\" rule=core-guard-deny: unknown agent preset: release-cross-review",
+      "acceptance": "rejected",
+      "acceptance_failures": [
+        "Structured acceptance report not found."
+      ]
+    }
+  ],
+  "parent_verified_findings": [
+    {
+      "path": "scripts/rehearse-v9-finish.sh:287-303,876-885",
+      "finding": "Only one early pinned finish-step invocation; later merge is handwritten Git, not driven pinned finish lifecycle."
+    },
+    {
+      "path": "scripts/rehearse-v9-finish.sh:968-974",
+      "finding": "Extra-commit refusal row counts commits rather than invoking driver refusal."
+    },
+    {
+      "path": "scripts/rehearse-v9-finish.sh:23-33,58,996-1002",
+      "finding": "Unknown only selector may skip optional groups and still print REHEARSAL PASS."
+    }
+  ],
+  "evidence_correction": "Prior live69/69 shows script success, not full pinned finish lifecycle coverage.",
+  "production": "Not executed",
+  "review_approved": false,
+  "further_automatic_reviews_or_fixes": false
+}

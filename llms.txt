@@ -14,6 +14,7 @@ masterplan is a Claude Code and Codex CLI plugin implementing the /masterplan co
 
 ## Repo entry points
 
+- [INTENT.md](INTENT.md): design intent — purpose, top invariants, non-goals, direction, posture.
 - [README.md](README.md): project overview, install, usage.
 - [AGENTS.md](AGENTS.md): agent operating conventions for this repo.
 - [CLAUDE.md](CLAUDE.md): Claude/agent guidance and project rules.

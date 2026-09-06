@@ -368,26 +368,6 @@ The ledger records real questions and real answers only. Evidence reused from pr
 its original provenance and is never relabelled as a fresh answer, and an operator's approval of
 a whole draft is never expanded into several synthetic question/answer events.
 
-**Which policy judged an interview.** The policy identity in force — legacy floors, or coverage
-and probing with the resolved probing minimum — is persisted with the interview. A terminal event
-is read under the policy it was recorded against and is never revalidated under a later one, so
-adopting schema-backed capture cannot retroactively reopen or re-bless a completed legacy
-interview. Capture may be approved while an interview is open, and it applies from that point
-forward without reinterpreting answers already recorded; it is refused on an interview that has
-already reached a terminal state, which starts a new interview instead.
-
-**Eligibility freshness.** For a schema-backed interview above `low`, only a critic-supplied
-eligible set counts toward the probing minimum, and that set must come from a critic receipt
-current for the latest draft. An eligible set that predates the latest draft is stale and counts
-for nothing. Where no current eligible set exists — the acknowledged
-`critic_unavailable` path included — the probing minimum cannot be satisfied at all. The
-interview therefore **stays open** and stops for the operator, taking the existing direct
-`goals-load --interview-waived` exit, which §5.4 permits only on an open interview. It does not
-record `exhausted` first: terminal states are absorbing, so an `exhausted` event would foreclose
-the very waiver it was supposed to lead to, and §5.4's single probing exemption is
-`forks_exhausted`, which this is not. The cap rule is unchanged and still takes precedence. An
-outage never lowers the bar mechanically and never manufactures a terminal state.
-
 ### 5.4 Terminal states and `goals-load`
 
 **A schema-backed interview (§5.5) replaces the three numeric floors below with §5.3's two
@@ -629,15 +609,8 @@ persists the result. Missing rows, unresolved conflicts, and repository-intent d
 neutral outcomes.
 
 The repository artifact resolves from the run's **integration target**, not from the working tree
-of whichever branch execution happens on. The target is an identity, not a name, and it has two halves that are
-never compared together. Its **authorization** is `{repository, remote, ref, repo_intent_digest}`
-— what the operator's approval was about. Its **observation** is `{resolved_commit, resolved_at}`
-— where and when that authorization was last read. Receipts, `intent_identity` and
-`completion_confirmed` bind the authorization only; the observation is recorded beside it for
-reading and auditing and never participates in an equality check. This is what makes a benign
-re-resolution safe: §5.5's rule that any change to a tuple member invalidates the receipt applies
-to the authorization, so a refresh that moves `resolved_commit` or `resolved_at` while the digest
-is unchanged invalidates nothing. Reads use the recorded `resolved_commit`, never a ref
+of whichever branch execution happens on. The target is an identity, not a name: `{repository,
+remote, ref, resolved_commit, resolved_at}`. Reads use the recorded `resolved_commit`, never a ref
 that may have moved and never a working-tree path, and the recorded identity and the recorded
 bytes always come from the same resolution.
 
@@ -652,23 +625,6 @@ and the digest are recorded.
 
 A branch that lacks an artifact its target carries is drift, reported at the checkpoint. It is not
 resolved by moving the branch base.
-
-**Freshness.** The target is re-resolved at every checkpoint that consumes it, not once at capture
-— reading a commit recorded long ago cannot discover drift. Each re-resolution is compared against
-the reconciliation it would replace, and the four outcomes are distinct:
-
-| Outcome | Disposition |
-|---|---|
-| same target, same `INTENT.md` bytes, newer commit | reconciliation stands; `resolved_commit` and `resolved_at` are refreshed as observation, and the refresh alone does not invalidate a receipt |
-| same target, changed `INTENT.md` bytes | drift: the reconciliation is invalidated and re-earned, and any receipt binding it is invalidated with it |
-| retarget | the previous target's reconciliation is invalidated outright; a new one is earned against the new target |
-| resolution fails | unknown/unavailable — a named failure that stops the checkpoint; never a verified absence and never a silent reuse of the last good resolution |
-
-So `target_identity` in a receipt tuple means the authorization half. A changed `resolved_at` or
-`resolved_commit` is an observation and invalidates nothing; a changed `repo_intent_digest`, ref,
-remote or repository is an authorization change and invalidates every receipt binding it.
-Verified absence is an explicit value of the digest, not a null: absent-to-absent is unchanged,
-while absent-to-present and present-to-absent are both authorization changes.
 
 ## 7. Finish drives to live (prose + durable gates in finish-step)
 
@@ -871,13 +827,7 @@ is not nagged.
 
 Two distinct durable authorizations replace the old "retired disposition → archive" shortcut:
 
-- `completion_confirmed {deploy_base_sha, final_receipt_id, intent_identity, repo_intent_digest,
-  target_identity}` — written only by `--intent-confirmed`, and bound to the identity the operator
-  actually confirmed, not to the deploy SHA alone. Archive re-validates all five against current
-  state and refuses (`confirmation_stale`) when any has moved, so a goals amendment, a
-  reconciliation replacement, or a skill-identity amendment recorded in bundle-only commits after
-  confirmation cannot be archived on the strength of the old authorization. Re-confirmation is a
-  fresh final assessment and a fresh `intent_confirm`, never a re-use of the stale event; archive
+- `completion_confirmed {deploy_base_sha}` — written only by `--intent-confirmed`; archive
   **complete** requires it and requires its sha to equal the latest `deploy_base` event.
 - `incomplete_authorized {reason, disposition_sha}` — written by `keep`/`discard` (in the
   disposition transaction; `disposition_sha` = branch tip), by `--deploy-skip` (mandatory group
@@ -1108,7 +1058,7 @@ The two are decoupled by merging on GitHub first and fast-forwarding local `main
       branch tip; red stops the stage before anything leaves the machine (§10.3), and the
       finish-time `run_verify` later repeats it. Then the **pre-publish review**: the native
       cross-vendor `adversarial-review` workflow over `git diff main...branch_tip` (the same diff
-      the finish will review) and an implementation assessment of **every active branch-assessable goal** by `mp-goal-assessor` — G1–G5 as first written, and G7/G8 since the design-intent amendment; the set is read from `goals.md` at dispatch, never a list frozen in this sentence
+      the finish will review) and an implementation assessment of G1–G5 by `mp-goal-assessor`
       over it, both recorded as `bootstrap_step` events carrying the reviewer receipts; a
       `revise`/`reject` verdict or a `missed` goal stops the stage before step 3, while the
       worktree still exists to fix it. The finish-time review and goal check remain the run's
@@ -1201,7 +1151,7 @@ The two are decoupled by merging on GitHub first and fast-forwarding local `main
    consumer of `bootstrap_step` events is needed for the verdict; the events are the
    human-readable receipt.
 2. **Then `mp finish` under v9.10.0:** verify at the tip → goal check over the real `main..tip`
-   diff (every active branch-assessable goal from the branch — G1–G5 plus G7/G8 — and G6 from the live commands above; a `partial` here is a real gap
+   diff (G1–G5 from the branch, G6 from the live commands above; a `partial` here is a real gap
    and a §10.3 corrective-release trigger, never waived) → retro → the finish-time adversary
    review over the same real diff → `branch_finish` gate opens. At the gate, before answering:
    **commit the pending bundle state first** — `git -C MAIN add docs/masterplan/<slug> && git -C
@@ -1255,7 +1205,7 @@ recovery are a `bootstrap_step {step, status: failed|recovered, cmd, exit}` pair
 | `gh pr merge` (step 5) fails | reconcile first, never re-merge blind: `gh pr view --json state,mergedAt,mergeCommit` — MERGED → record the sha and continue; OPEN → retry once, then stop; any other state → stop. The throwaway-repo cycle in step 1 rehearses the real command; this row is the named recovery for the one first-time live action |
 | step-5 push of local `main` rejected (non-fast-forward: a foreign commit reached `origin/main`) | **stop, never force-push**; reconcile by hand (fetch, inspect the foreign commit, rebase local `main` onto it with the §10.2 audit, re-run the step-5 preconditions); the tag and Pi install from step 4 are unaffected |
 | a foreign (non-bundle) commit on local `main` between `main_pre_bootstrap` and the gate | the audit stops the walk: something other than this run moved `main`; inspect, and either revert it (then the range is bundle-only again) or reconcile by hand — never widen the audit to admit it |
-| goal check `partial`/`missed`, a blocking finish-time review, or a red `run_verify` after both surfaces are live (step 2 of the walk) | **corrective release**, opened as `bootstrap start --pass=2 --triggered-by=<the finish event>`: the fix lands as new commits on the run branch (`branch_tip` moves; the v10.0.0 tag stays where it is); **step 2 re-runs at the new tip first** — pre-publish verify, the cross-vendor review, and the assessment of every active branch-assessable goal (G1–G5 plus G7/G8; read from `goals.md`, not frozen here) with results current for the corrective tip — evidence recorded against an earlier revision does not carry forward, recorded as `pass: 2` `verify`/`review`/`assess` events, a `revise`/`reject`/`missed` stopping the pass before anything is tagged (S5's rationale holds on every pass, not only the first); then `scripts/release.mjs --version=10.0.x` makes the new tip and tag (the step-3 reviewed-sha postcondition binds it), steps 4, 6 and 7 re-run for 10.0.x, `publish_ack` is asked again, and step 5 is **reduced** on the corrective pass to: fetch, require `origin/main` to equal the latest recorded merge sha, open and merge the second PR, record its sha (now the latest record, the gate's equality target) — local `main` is **not** pushed again (the first push already carried every non-bundle commit, later local commits are state-only by invariant, and a second push would be non-fast-forward against the first merge), so local `main` stays untouched and `main..tip` still holds the full branch for the finish's goal check and review; the latest `bootstrap_step {step: release}` event names the new version, and G6 — frozen as "v10.0.0 or the corrective v10.0.x the events name" — is assessed at that version. **Forward-only:** the Claude surface has no downgrade lever short of a revert on GitHub `main`, so a bad v10.0.0 is superseded, not withdrawn; the pre-publish verify, the per-pass review, and the rehearsal bound the window in which the daily-driver surfaces run rejected code |
+| goal check `partial`/`missed`, a blocking finish-time review, or a red `run_verify` after both surfaces are live (step 2 of the walk) | **corrective release**, opened as `bootstrap start --pass=2 --triggered-by=<the finish event>`: the fix lands as new commits on the run branch (`branch_tip` moves; the v10.0.0 tag stays where it is); **step 2 re-runs at the new tip first** — pre-publish verify, the cross-vendor review, and the G1–G5 assessment, recorded as `pass: 2` `verify`/`review`/`assess` events, a `revise`/`reject`/`missed` stopping the pass before anything is tagged (S5's rationale holds on every pass, not only the first); then `scripts/release.mjs --version=10.0.x` makes the new tip and tag (the step-3 reviewed-sha postcondition binds it), steps 4, 6 and 7 re-run for 10.0.x, `publish_ack` is asked again, and step 5 is **reduced** on the corrective pass to: fetch, require `origin/main` to equal the latest recorded merge sha, open and merge the second PR, record its sha (now the latest record, the gate's equality target) — local `main` is **not** pushed again (the first push already carried every non-bundle commit, later local commits are state-only by invariant, and a second push would be non-fast-forward against the first merge), so local `main` stays untouched and `main..tip` still holds the full branch for the finish's goal check and review; the latest `bootstrap_step {step: release}` event names the new version, and G6 — frozen as "v10.0.0 or the corrective v10.0.x the events name" — is assessed at that version. **Forward-only:** the Claude surface has no downgrade lever short of a revert on GitHub `main`, so a bad v10.0.0 is superseded, not withdrawn; the pre-publish verify, the per-pass review, and the rehearsal bound the window in which the daily-driver surfaces run rejected code |
 | `origin/main` ≠ the latest recorded merge sha at the gate because a sibling pushed after step 5 | **stop** (the equality rule), then the named resumption: fetch; verify every commit in `<recorded merge sha>..origin/main` is a non-merge commit touching neither `docs/masterplan/<slug>/` nor any path the branch changed (`git diff --name-only $(git merge-base main branch_tip) branch_tip`); an AUQ names the foreign commits and asks to re-target; on yes, `bootstrap_step {step: gate, status: recovered, remote_tip}` re-records the equality target as the new remote tip, and the gate proceeds to the rebase (state-only commits replay onto it). Anything else — a merge commit, a foreign change to a branch path — is reconciled by hand; the audit of `main_pre_bootstrap..main` is never widened |
 | operator declines the corrective release | the run cannot archive complete under any reading: answer the `branch_finish` gate with `keep` (the branch and its tag remain), the archive is class `legacy` (§7.4), and the retro names the corrective release as the required successor's first step |
 
@@ -1447,15 +1397,6 @@ not invalidating; the promotion transaction replaying correctly from `prepared`,
 and alternate schema content proving the checked-section set is data-driven.
 
 ## 12. Touch surface
-
-**New (design-intent amendment):** the native section adapter and versioned hash coverage in
-`lib/goals.mjs`, the schema snapshot and skill-identity enforcement (`lib/schema-snapshot.mjs`),
-repository-intent reconciliation (`lib/reconcile-intent.mjs`), the promotion transaction
-(`lib/promote.mjs`), checkpoint evidence binding (`lib/checkpoint-evidence.mjs`) and its consumers
-in `lib/task-review.mjs` and `lib/finish.mjs`, the `mp interview capture-schema` and
-`amend-skill-identity` verbs with their `schema_captured` and `skill_identity_amended` events in
-`bin/masterplan.mjs` and `lib/bundle.mjs`, and — in the separate behavior-skills repository, pinned
-here by commit and manifest digest — `/design-intent` plan mode's host contract and its manifest.
 
 **New:** `lib/config.mjs` (resolver + `readEnv`), `lib/interview.mjs`, `lib/context-status.mjs`,
 `scripts/bootstrap-v10.mjs` (one-off driver: step table, preconditions/postconditions,

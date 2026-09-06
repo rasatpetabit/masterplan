@@ -1,0 +1,158 @@
+== rehearse-v9-finish: scratch=/tmp/mp-rehearsal-a16HEU version=10.0.0 branch=masterplan/intent-to-completion
+ROW pinned_v9_copy                             ok   pinned 9.10.0 at /tmp/mp-rehearsal-a16HEU/pinned-9.10.0
+PINNED_FINISH_BINARY=/tmp/mp-rehearsal-a16HEU/pinned-9.10.0/bin/masterplan.mjs
+ROW clone_ahead_of_remote                      ok   local main is ahead of the fixture remote by a non-bundle commit
+ROW v9_diff_non_empty                          ok   main..masterplan/intent-to-completion touches 3 file(s)
+ROW second_clone_built                         ok   second clone emulates the server-side merge
+PINNED_RUN: masterplan version --cwd=/tmp/mp-rehearsal-a16HEU/work
+ROW pinned_finish_version                      ok   the pinned binary answered the version verb
+PINNED_RUN: masterplan finish-step --state=/tmp/mp-rehearsal-a16HEU/work/docs/masterplan/rehearsal/state.yml
+ROW pinned_finish_step                         ok   the pinned binary executed the finish-step verb successfully
+ROW pinned_finish_routed                       ok   2 invocation(s) through the pinned copy, including a finish verb
+RUN: gh repo create masterplan-rehearsal-3783258 --private --confirm
+ROW gh_repo_create                             ok   created private throwaway masterplan-rehearsal-3783258
+RUN: gh repo view masterplan-rehearsal-3783258 --json nameWithOwner,url
+remote: 
+remote: Create a pull request for 'masterplan/intent-to-completion' on GitHub by visiting:        
+remote:      https://github.com/rasatpetabit/masterplan-rehearsal-3783258/pull/new/masterplan/intent-to-completion        
+remote: 
+ROW gh_repo_populated                          ok   main and masterplan/intent-to-completion pushed to the throwaway repo before the PR
+RUN: gh pr create --repo rasatpetabit/masterplan-rehearsal-3783258 --head masterplan/intent-to-completion --base main
+ROW gh_pr_create                               ok   gh pr create opened PR #1 on the populated repo
+RUN: gh pr merge --merge --repo rasatpetabit/masterplan-rehearsal-3783258 1
+ROW gh_pr_merge                                ok   gh pr merge --merge landed PR #1
+ROW gh_pr_reconcile_merged                     ok   MERGED with oid d784f522f829, and the repo's main is that commit -> record and continue
+remote: 
+remote: Create a pull request for 'masterplan/rehearsal-open-probe' on GitHub by visiting:        
+remote:      https://github.com/rasatpetabit/masterplan-rehearsal-3783258/pull/new/masterplan/rehearsal-open-probe        
+remote: 
+ROW gh_pr_reconcile_open                       ok   an unmerged PR (#2, distinct head) reports OPEN -> retry once, then stop
+ROW gh_pr_reconcile_other                      ok   an unknown PR reports 'unreadable' -> stop, never a blind re-merge
+RUN: gh repo delete rasatpetabit/masterplan-rehearsal-3783258 --yes
+ROW gh_repo_delete                             ok   throwaway repo deleted
+ROW walk_rehearsal                             ok   armed and recorded through the live driver
+ROW walk_docs_normalize                        ok   armed and recorded through the live driver
+ROW walk_verify                                ok   armed and recorded through the live driver
+ROW walk_review                                ok   armed and recorded through the live driver
+ROW walk_assess                                ok   armed and recorded through the live driver
+ROW walk_release                               ok   a real release commit and tag at the new tip, recorded through the driver
+ROW walk_push                                  ok   branch and tag pushed to the fixture remote and recorded through the driver
+ROW fail_ci_wait_recorded                      ok   a red tag CI is durable as status failed
+ROW fail_ci_wait_blocks_next                   ok   the stage does not proceed to install_pi while ci_wait is failed
+ROW fail_ci_wait_recovered                     ok   the failure is closed by a recorded recovery
+ROW ci_red_no_install                          ok   no install ran while the tag CI record was red
+ROW install_pi_failure_refused                 ok   install-pi refused a nonexistent ref (exit 1)
+ROW install_pi_surface_intact                  ok   the failed install left the live surface where it was
+ROW fail_install_pi_recorded                   ok   the failed install is durable as status failed
+ROW fail_install_pi_blocks_next                ok   the stage does not proceed to main_push while install_pi is failed
+ROW walk_install_pi                            ok   a real install-pi placed the published tip on the fixture Pi surface, recorded as recovered
+ROW ci_green_allows_install                    ok   exactly one install ran once the CI record was green: 1
+ROW main_push_rejected                         ok   the driver refuses main_push while origin/main is not an ancestor of local main: {"ok":false,"preconditions":[{"name":"remote_main_ancestor","ok":false,"detail":"remote main is not an ancestor of local
+ROW main_push_rejected_by_git                  ok   a non-fast-forward push of local main is refused by git too
+ROW main_push_rebase_recovers                  ok   local main rebases onto the fetched remote tip
+ROW walk_main_push                             ok   after the rebase the driver arms main_push, and the push is recorded
+ROW walk_publish_ack                           ok   armed and recorded through the live driver
+ROW walk_pr_merge                              ok   the emulated server-side merge 91a64a374e5b was accepted by the driver
+ROW walk_claude_surface                        ok   armed and recorded through the live driver
+ROW walk_surfaces_live                         ok   armed and recorded through the live driver
+ROW gate_arms_before_remote_moves              ok   with origin/main at the recorded merge, the gate arms
+ROW gate_remote_moved                          ok   a sibling really moved origin/main past the recorded merge sha
+ROW gate_equality_stops                        ok   the driver refuses the gate while origin/main is past the recorded merge: {"ok":false,"preconditions":[{"name":"remote_main_equals_pr_merge","ok":false,"detail":"remote main does not equal lates
+ROW walk_gate                                  ok   the bundle was committed and the gate recorded through the driver
+ROW surfaces_live_at_v10                       ok   both fixture surfaces report 10.0.0 after the walk
+SURFACES pi=10.0.0 claude=10.0.0
+ROW install_pi_rollback                        ok   install-pi --ref=9.10.0 restored the Pi surface, verified by installed content
+ROW push_tag_idempotent                        ok   re-pushing an identical tag is a no-op
+ROW push_tag_moved_stops                       ok   a remote tag whose sha differs is a stop, never a force
+ROW push_partial_state                         ok   the fixture really is partial: branch present, tag absent
+ROW push_partial_retry                         ok   the retry pushed the missing tag and left the branch alone
+ROW base_audit_bundle_only                     ok   every commit main gained touches only docs/masterplan (a sibling bundle's commit is accepted)
+ROW base_audit_foreign_stops                   ok   a foreign non-bundle commit is detected and stops the walk
+ROW base_audit_merge_stops                     ok   a merge commit in the audited range is refused outright (the range must be non-merge commits)
+ROW dirty_non_bundle_stops                     ok   an uncommitted non-bundle file is seen as dirty state
+ROW dirty_bundle_allowed                       ok   an uncommitted BUNDLE file is not non-bundle dirt
+ROW merge_sha_ancestor_of_remote               ok   the recorded merge sha is an ancestor of the remote main
+ROW merge_sha_descendant_of_tip                ok   the recorded merge sha is a descendant of the released tip
+ROW gate_rebase_clean                          ok   local main rebases onto the remote tip without conflict
+ROW merge_sha_ancestor_after_rebase            ok   ancestry survives the gate rebase
+ROW finish_merge_is_noop                       ok   the finish's merge changes no files — the branch is already in main
+ROW merged_tip_positive_control                ok   the released tip IS an ancestor of origin/main — the check is not inverted
+ROW missing_remote_merge_stops                 ok   a tip absent from origin/main means no merge landed -> stop
+ROW gate_retarget_eligible                     ok   the intervening commit is a non-merge touching no bundle or branch path — a re-target is offerable
+ROW gate_retarget_refuses_branch_path          ok   a foreign change to a branch path is reconciled by hand, never re-targeted
+ROW release_changelog_allowed                  ok   the tagged commit is exactly one CHANGELOG commit past the reviewed sha
+ROW release_extra_commit_refused               ok   a tagged commit more than the CHANGELOG past the reviewed sha is refused
+ROW user_only_check_done                       ok   an evidence file that exists -> done
+ROW user_only_check_absent                     ok   a missing evidence file (exit 1) -> absent
+ROW user_only_check_indeterminate              ok   a check that errors (exit != 0/1) -> indeterminate
+== rows=69 failed=0
+SUMMARY pinned_v9_copy ok
+SUMMARY clone_ahead_of_remote ok
+SUMMARY v9_diff_non_empty ok
+SUMMARY second_clone_built ok
+SUMMARY pinned_finish_version ok
+SUMMARY pinned_finish_step ok
+SUMMARY pinned_finish_routed ok
+SUMMARY gh_repo_create ok
+SUMMARY gh_repo_populated ok
+SUMMARY gh_pr_create ok
+SUMMARY gh_pr_merge ok
+SUMMARY gh_pr_reconcile_merged ok
+SUMMARY gh_pr_reconcile_open ok
+SUMMARY gh_pr_reconcile_other ok
+SUMMARY gh_repo_delete ok
+SUMMARY walk_rehearsal ok
+SUMMARY walk_docs_normalize ok
+SUMMARY walk_verify ok
+SUMMARY walk_review ok
+SUMMARY walk_assess ok
+SUMMARY walk_release ok
+SUMMARY walk_push ok
+SUMMARY fail_ci_wait_recorded ok
+SUMMARY fail_ci_wait_blocks_next ok
+SUMMARY fail_ci_wait_recovered ok
+SUMMARY ci_red_no_install ok
+SUMMARY install_pi_failure_refused ok
+SUMMARY install_pi_surface_intact ok
+SUMMARY fail_install_pi_recorded ok
+SUMMARY fail_install_pi_blocks_next ok
+SUMMARY walk_install_pi ok
+SUMMARY ci_green_allows_install ok
+SUMMARY main_push_rejected ok
+SUMMARY main_push_rejected_by_git ok
+SUMMARY main_push_rebase_recovers ok
+SUMMARY walk_main_push ok
+SUMMARY walk_publish_ack ok
+SUMMARY walk_pr_merge ok
+SUMMARY walk_claude_surface ok
+SUMMARY walk_surfaces_live ok
+SUMMARY gate_arms_before_remote_moves ok
+SUMMARY gate_remote_moved ok
+SUMMARY gate_equality_stops ok
+SUMMARY walk_gate ok
+SUMMARY surfaces_live_at_v10 ok
+SUMMARY install_pi_rollback ok
+SUMMARY push_tag_idempotent ok
+SUMMARY push_tag_moved_stops ok
+SUMMARY push_partial_state ok
+SUMMARY push_partial_retry ok
+SUMMARY base_audit_bundle_only ok
+SUMMARY base_audit_foreign_stops ok
+SUMMARY base_audit_merge_stops ok
+SUMMARY dirty_non_bundle_stops ok
+SUMMARY dirty_bundle_allowed ok
+SUMMARY merge_sha_ancestor_of_remote ok
+SUMMARY merge_sha_descendant_of_tip ok
+SUMMARY gate_rebase_clean ok
+SUMMARY merge_sha_ancestor_after_rebase ok
+SUMMARY finish_merge_is_noop ok
+SUMMARY merged_tip_positive_control ok
+SUMMARY missing_remote_merge_stops ok
+SUMMARY gate_retarget_eligible ok
+SUMMARY gate_retarget_refuses_branch_path ok
+SUMMARY release_changelog_allowed ok
+SUMMARY release_extra_commit_refused ok
+SUMMARY user_only_check_done ok
+SUMMARY user_only_check_absent ok
+SUMMARY user_only_check_indeterminate ok
+REHEARSAL PASS

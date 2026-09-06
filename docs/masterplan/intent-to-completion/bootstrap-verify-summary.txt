@@ -1,0 +1,19 @@
+Command: npm test && node bin/doctor.mjs .
+Exit: 0
+Full output SHA-256: de7ebfa16584a0e57c3bbe2b4b0fbc656c9435b5e46210a5999127b200e752cd
+WT tip: 4c99cec239054f0208ba4f7fb33c66bbbadf2547
+
+# tests 2457
+# pass 2457
+# fail 0
+WARN  incomplete-archive: unreadable state file docs/masterplan/.implemented-plan-archive/state.yml
+WARN  legacy-archive: unreadable state file docs/masterplan/.implemented-plan-archive/state.yml: ENOENT: no such file or directory, open 'docs/masterplan/.implemented-plan-archive/state.yml'
+WARN  pi-agent-registration: pi agent registration drifted — DRIFT  mp-adversarial-reviewer.md (installed differs from canonical+map); DRIFT  mp-goal-assessor.md (installed differs from canonical+map); DRIFT  mp-intent-critic.md (installed MISSING); register-pi-agents: 3 drift item(s) — re-run without --check to resync.
+      fix: cd . && node bin/register-pi-agents.mjs  # write mode, then re-run --check
+WARN  plugin-registry-drift: installed masterplan v9.10.0 matches marketplace version but was installed from commit c4ba19c3d while marketplace HEAD is f7e0b2a01 — runtime cache is stale
+      fix: run `/plugin update masterplan` then `/reload-plugins` to rebuild the runtime cache from marketplace HEAD
+WARN  resume-brief-hook: no SessionStart hook rule invokes resume-brief
+      fix: add a [rules.resume_brief] table with events = ["session_start"] and command = "node <installed mp> resume-brief --repo-root=$CWD" to /srv/workflows/hooks/policy.toml
+WARN  scalar-cap: bundle intent-to-completion: 'topic' value is 883 chars (> 200)
+      fix: move the value to an overflow file and replace it with `*overflow at <file> L<n>*`
+masterplan doctor: 38 finding(s) — 0 error, 6 warn.

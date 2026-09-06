@@ -379,14 +379,10 @@ already reached a terminal state, which starts a new interview instead.
 **Eligibility freshness.** For a schema-backed interview above `low`, only a critic-supplied
 eligible set counts toward the probing minimum, and that set must come from a critic receipt
 current for the latest draft. An eligible set that predates the latest draft is stale and counts
-for nothing. Where no current eligible set exists — the acknowledged
-`critic_unavailable` path included — the probing minimum cannot be satisfied at all. The
-interview therefore **stays open** and stops for the operator, taking the existing direct
-`goals-load --interview-waived` exit, which §5.4 permits only on an open interview. It does not
-record `exhausted` first: terminal states are absorbing, so an `exhausted` event would foreclose
-the very waiver it was supposed to lead to, and §5.4's single probing exemption is
-`forks_exhausted`, which this is not. The cap rule is unchanged and still takes precedence. An
-outage never lowers the bar mechanically and never manufactures a terminal state.
+for nothing. Where no successful critic has ever supplied one — the acknowledged
+`critic_unavailable` path included — the probing minimum cannot be satisfied at all, so the
+interview reaches `exhausted` and stops for the operator, whose waiver is recorded as a waiver.
+An outage never lowers the bar mechanically.
 
 ### 5.4 Terminal states and `goals-load`
 
@@ -629,15 +625,8 @@ persists the result. Missing rows, unresolved conflicts, and repository-intent d
 neutral outcomes.
 
 The repository artifact resolves from the run's **integration target**, not from the working tree
-of whichever branch execution happens on. The target is an identity, not a name, and it has two halves that are
-never compared together. Its **authorization** is `{repository, remote, ref, repo_intent_digest}`
-— what the operator's approval was about. Its **observation** is `{resolved_commit, resolved_at}`
-— where and when that authorization was last read. Receipts, `intent_identity` and
-`completion_confirmed` bind the authorization only; the observation is recorded beside it for
-reading and auditing and never participates in an equality check. This is what makes a benign
-re-resolution safe: §5.5's rule that any change to a tuple member invalidates the receipt applies
-to the authorization, so a refresh that moves `resolved_commit` or `resolved_at` while the digest
-is unchanged invalidates nothing. Reads use the recorded `resolved_commit`, never a ref
+of whichever branch execution happens on. The target is an identity, not a name: `{repository,
+remote, ref, resolved_commit, resolved_at}`. Reads use the recorded `resolved_commit`, never a ref
 that may have moved and never a working-tree path, and the recorded identity and the recorded
 bytes always come from the same resolution.
 
@@ -664,11 +653,9 @@ the reconciliation it would replace, and the four outcomes are distinct:
 | retarget | the previous target's reconciliation is invalidated outright; a new one is earned against the new target |
 | resolution fails | unknown/unavailable — a named failure that stops the checkpoint; never a verified absence and never a silent reuse of the last good resolution |
 
-So `target_identity` in a receipt tuple means the authorization half. A changed `resolved_at` or
-`resolved_commit` is an observation and invalidates nothing; a changed `repo_intent_digest`, ref,
-remote or repository is an authorization change and invalidates every receipt binding it.
-Verified absence is an explicit value of the digest, not a null: absent-to-absent is unchanged,
-while absent-to-present and present-to-absent are both authorization changes.
+This is why `target_identity` separates what was observed from what was authorized: a changed
+`resolved_at` is an observation, while a changed `repo_intent_digest` is an authorization
+change.
 
 ## 7. Finish drives to live (prose + durable gates in finish-step)
 

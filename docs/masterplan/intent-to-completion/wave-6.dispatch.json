@@ -1,0 +1,109 @@
+{
+  "key": "mp-wave-dispatch-v1:intent-to-completion:6:dispatch_fabric",
+  "run_id": "intent-to-completion",
+  "wave": 6,
+  "op": "dispatch_fabric",
+  "contract_version": "fabric-native-v1",
+  "status": "recorded",
+  "attempt": 1,
+  "wave_token": "mp-wave-intent-to-completion-w6-a1",
+  "handles": [],
+  "dispatched_at": "2026-09-04T03:57:03.694Z",
+  "routing_inputs": {
+    "routing": "auto",
+    "codex_host_suppressed": true,
+    "linked_worktree": true
+  },
+  "payload": [
+    {
+      "id": 6,
+      "description": "Expand the CLI surface regression suite to cover all newly registered verbs and finish-step flags, required overlap-review seed behavior, interview and final-receipt forwarding, config/context/resume commands, stored plan-path defaults, removal of retired flags, and the intentional absence of an mp bootstrap verb. Assert the config-show `harness.autoCompactWindow` field, the exported KNOWN_FLAGS/isKnownFlag surface, and the black-box successor case: a bundle seeded with --predecessor naming a predecessor whose finish recorded an intent-class rejection carries that correction text in its seed record. Also assert: an archived bundle with no completion field prints `legacy` in both runs list and status; both commands print an open required_successor obligation with the exact seed command; config show's recommendation is no lower than the configured threshold and the harness settings file is byte-identical after the call. Assert that runs list and status print `pushed: no` for an archived bundle until archive_pushed lands. This task co-owns bin/masterplan.mjs so a wiring defect its matrix exposes can be fixed in the same task.",
+      "files": [
+        "test/cli-surface.test.mjs",
+        "bin/masterplan.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/cli-surface.test.mjs"
+      ],
+      "class": "bounded-edit"
+    },
+    {
+      "id": 28,
+      "description": "Enforce durable archive authorization and completion classes. Write completion_confirmed only for an accepted intent confirmation bound to the latest deploy base; write incomplete_authorized transactionally for keep, discard, deploy skip, no-definition abort-incomplete, attested mandatory steps, and both intent-rejection classes; and refuse archive without the matching authorization. Archive a fully deployed and confirmed run as complete, done: none as merged, and all authorized shortfalls as incomplete:<reason>. Persist implementation-versus-intent rejection and correction text, keep rejected runs receipt-isolated from successors, and ensure keep/discard never enter deploy replay. Emit `required_successor {slug, reason}` for both intent-rejection classes, with slug taken from the required --successor flag (a rejection without it is refused before any event is written); the successor is seeded with --predecessor naming this run, and for class intent the stored correction text is what the successor's interview opens with.",
+      "files": [
+        "lib/finish-step.mjs",
+        "test/intent-rejected.test.mjs",
+        "test/finish-replay.test.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/intent-rejected.test.mjs",
+        "node --test test/finish-replay.test.mjs"
+      ],
+      "class": "bounded-edit"
+    },
+    {
+      "id": 48,
+      "description": "Complete the bootstrap suite with every recovery and refusal path from the bootstrap failure table: partial or mismatched push, red tag CI, Pi install failure and v9.10.0 rollback, PR reconciliation for MERGED/OPEN/other states, rejected main push, unexpected or missing remote merge, dirty non-bundle state, merge commits and change-then-revert audit failures, review rejection before tagging, release farther than one CHANGELOG-only commit from its reviewed SHA, branch changes under docs/masterplan at the gate, sibling remote movement with stop/acknowledged retarget/rebase behavior, foreign overlap refusal, and a corrective 10.0.x pass that re-runs verify/review/assessment before release, uses a second PR without a second local-main push, assesses G6 at the latest version, and records the operator-declined keep/legacy path. Also run the required-successor, incomplete-archive, and legacy-archive doctor checks against the bundles the rollout and recovery fixtures actually produce, so the doctor tasks' fixture-only coverage is confirmed against real writer output. Co-owns scripts/bootstrap-v10.mjs (as do the protocol and rollout suites) so a driver defect found here is fixable in the same task.",
+      "files": [
+        "test/v9-to-v10-bootstrap.test.mjs",
+        "scripts/bootstrap-v10.mjs"
+      ],
+      "verify_commands": [
+        "node --test test/v9-to-v10-bootstrap.test.mjs"
+      ],
+      "class": "bounded-edit"
+    }
+  ],
+  "tasks": [
+    {
+      "task_id": 6,
+      "class": "bounded-edit",
+      "handoff_key": "fabric-idem-v1:intent-to-completion:6:81658b7d387c934bd2b028777d2f4ce6e808afefe5de69a7b5880902b87c4ad6:4f35b26fd3049a0ab7aeeaf4ce06209ac92d724e042713b6a094eabb2bde42eb"
+    },
+    {
+      "task_id": 28,
+      "class": "bounded-edit",
+      "handoff_key": "fabric-idem-v1:intent-to-completion:28:5d9bca2df3ff93e584a20444efa71010086bf1cc3b9b3701c176dffbafe467e5:4f35b26fd3049a0ab7aeeaf4ce06209ac92d724e042713b6a094eabb2bde42eb"
+    },
+    {
+      "task_id": 48,
+      "class": "bounded-edit",
+      "handoff_key": "fabric-idem-v1:intent-to-completion:48:034c5bb11633a907f3e55ecba230d0a1d0c3c4f68119703221e75e551bcd6556:4f35b26fd3049a0ab7aeeaf4ce06209ac92d724e042713b6a094eabb2bde42eb"
+    }
+  ],
+  "gateway_verify_allowlist": "bash -c",
+  "review_context": {
+    "enabled": true,
+    "base_sha": "7d926cfabc9b614cc4d76fcfe178de972f18fee3",
+    "tasks": [
+      {
+        "task_id": 6,
+        "description": "Expand the CLI surface regression suite to cover all newly registered verbs and finish-step flags, required overlap-review seed behavior, interview and final-receipt forwarding, config/context/resume commands, stored plan-path defaults, removal of retired flags, and the intentional absence of an mp bootstrap verb. Assert the config-show `harness.autoCompactWindow` field, the exported KNOWN_FLAGS/isKnownFlag surface, and the black-box successor case: a bundle seeded with --predecessor naming a predecessor whose finish recorded an intent-class rejection carries that correction text in its seed record. Also assert: an archived bundle with no completion field prints `legacy` in both runs list and status; both commands print an open required_successor obligation with the exact seed command; config show's recommendation is no lower than the configured threshold and the harness settings file is byte-identical after the call. Assert that runs list and status print `pushed: no` for an archived bundle until archive_pushed lands. This task co-owns bin/masterplan.mjs so a wiring defect its matrix exposes can be fixed in the same task.",
+        "class": "bounded-edit",
+        "repo": "/srv/dev/ras/masterplan/.worktrees/intent-to-completion"
+      },
+      {
+        "task_id": 28,
+        "description": "Enforce durable archive authorization and completion classes. Write completion_confirmed only for an accepted intent confirmation bound to the latest deploy base; write incomplete_authorized transactionally for keep, discard, deploy skip, no-definition abort-incomplete, attested mandatory steps, and both intent-rejection classes; and refuse archive without the matching authorization. Archive a fully deployed and confirmed run as complete, done: none as merged, and all authorized shortfalls as incomplete:<reason>. Persist implementation-versus-intent rejection and correction text, keep rejected runs receipt-isolated from successors, and ensure keep/discard never enter deploy replay. Emit `required_successor {slug, reason}` for both intent-rejection classes, with slug taken from the required --successor flag (a rejection without it is refused before any event is written); the successor is seeded with --predecessor naming this run, and for class intent the stored correction text is what the successor's interview opens with.",
+        "class": "bounded-edit",
+        "repo": "/srv/dev/ras/masterplan/.worktrees/intent-to-completion"
+      },
+      {
+        "task_id": 48,
+        "description": "Complete the bootstrap suite with every recovery and refusal path from the bootstrap failure table: partial or mismatched push, red tag CI, Pi install failure and v9.10.0 rollback, PR reconciliation for MERGED/OPEN/other states, rejected main push, unexpected or missing remote merge, dirty non-bundle state, merge commits and change-then-revert audit failures, review rejection before tagging, release farther than one CHANGELOG-only commit from its reviewed SHA, branch changes under docs/masterplan at the gate, sibling remote movement with stop/acknowledged retarget/rebase behavior, foreign overlap refusal, and a corrective 10.0.x pass that re-runs verify/review/assessment before release, uses a second PR without a second local-main push, assesses G6 at the latest version, and records the operator-declined keep/legacy path. Also run the required-successor, incomplete-archive, and legacy-archive doctor checks against the bundles the rollout and recovery fixtures actually produce, so the doctor tasks' fixture-only coverage is confirmed against real writer output. Co-owns scripts/bootstrap-v10.mjs (as do the protocol and rollout suites) so a driver defect found here is fixable in the same task.",
+        "class": "bounded-edit",
+        "repo": "/srv/dev/ras/masterplan/.worktrees/intent-to-completion"
+      }
+    ]
+  },
+  "completed_at": "2026-09-04T06:12:49.400Z",
+  "record_outcome": {
+    "recorded": [
+      6,
+      28,
+      48
+    ],
+    "failed": [],
+    "cleared": true
+  }
+}

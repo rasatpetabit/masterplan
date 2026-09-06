@@ -1,0 +1,41 @@
+{
+  "kind": "scope-reopen-receipt",
+  "commands": [
+    "mp amend-plan --state=<MAIN bundle> --summary=<accepted scope> --detail=<boundaries>",
+    "mp set-phase --state=<MAIN bundle> --phase=brainstorm",
+    "mp decide --state=<MAIN bundle>",
+    "mp acquire-owner --state=<MAIN bundle>",
+    "mp open-gate --state=<MAIN bundle> --id=design-intent-amendment-approval",
+    "mp decide --state=<MAIN bundle>",
+    "mp release-owner --state=<MAIN bundle>"
+  ],
+  "preserved": [
+    "48 task records (exact comparison)",
+    "goals.md bytes",
+    "spec.md bytes",
+    "plan.index.json bytes",
+    "refs"
+  ],
+  "not_done": [
+    "exact goal/spec/task amendments",
+    "new implementation",
+    "renewed review/release evidence"
+  ],
+  "phase_only_decide": {
+    "action": "complete"
+  },
+  "decide": {
+    "action": "surface_gate",
+    "gate": {
+      "id": "design-intent-amendment-approval",
+      "opened_at": "2026-09-06T02:16:07.922009+00:00"
+    }
+  },
+  "failed_nonmutating_probe": "mp owner status: unknown subcommand; replaced with documented acquire-owner/release-owner protocol.",
+  "protected_artifact_sha256": {
+    "goals.md": "39d14e659189c356b8fd839d3089ec4865152e3054da2cfe28c18346858c7828",
+    "spec.md": "6111aaf4dbb804994bd592985cc4da28bee8de385eef4d13a1e0a137b6e54595",
+    "plan.index.json": "0931970a7eedecc78a8f06ecf62a9fd0546fdb5ae788864ce102a7735db949e3"
+  },
+  "gate_release_condition": "Clear only after exact approved amendments and pending tasks are durable, with required spec/plan gates satisfied."
+}
