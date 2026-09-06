@@ -1,0 +1,86 @@
+{
+ "wave": 11,
+ "review_kind": "retroactive per-task adversarial review (CD-10 severity-first digest)",
+ "transport": "workflow agents at the adversary lane model litellm/gpt-6-astra (the spawn-guard subagent route was fail-closed in this process; disclosed)",
+ "orchestration_note": "Reviews ran AFTER record-result because the wave result file lacked the digest wrapper reviewNativeResult requires; root cause fixed for waves 12-16 (digest-wrapped result shape). Verdicts preserved verbatim below; fix round disclosed.",
+ "reviews": {
+  "49": {
+   "verdict": "rework",
+   "findings": [
+    {
+     "severity": "ERROR",
+     "summary": "Plan mode added a mandatory draft-approval gate the host protocol excludes (spec 5.1 step 6: intent review lands at the spec gate; no confirm-the-restatement question).",
+     "fix": "behavior-skills commit amended to e4e2fad: Confirm-then-write scoped to repo/assess; new plan-mode section makes the host own the draft lifecycle; Done-when and hard-failure lists scoped."
+    },
+    {
+     "severity": "WARN",
+     "summary": "Host-contract test executed the checkout's validator and enumerated the current index rather than the pinned revision.",
+     "fix": "Test extracts the pinned closed file set (git show) into a temp dir and executes it; completeness enumerates the pinned tree via ls-tree."
+    }
+   ],
+   "verdict_text": "VERDICT: rework\nFINDINGS:\n- [ERROR] /srv/dev/ai/behavior-skills/skills/productivity/design-intent/SKILL.md:199\u2013205 \u2014 Plan mode adds a mandatory draft-approval gate that the normative protocol explicitly excludes \u2014 the skill permits `mp interview draft` only after a separate `Approve`, and lines 191\u2013197 require fresh approval for every draft change. Spec \u00a75.1 step 6 instead places intent review at the spec gate and says there is no separate \u201cconfirm my restatement\u201d question. During an ordinary interview or critic-driven revision, the skill therefore blocks draft recording on an unauthorized extra confirmation. Scope the existing confirmation behavior to repo mode and let plan mode follow the host\u2019s draft/spec-gate lifecycle.\n- [WARN] /srv/dev/ras/masterplan/.worktrees/intent-to-completion/test/design-intent-host-contract.test.mjs:166 \u2014 Behavioral verification executes the checkout\u2019s validator, not the pinned revision \u2014 the digest correctly uses `git show <pin.commit>:\u2026`, but this test executes an absolute working-tree path; the cleanliness assertion at lines 63\u201365 does not establish equality with the pin. The completeness check at line 87 likewise enumerates the current index instea"
+  },
+  "50": {
+   "verdict": "rework",
+   "findings": [
+    {
+     "severity": "ERROR",
+     "summary": "Malformed/unclosed codec fences silently downgraded to legacy; tab-mangled markers skipped.",
+     "fix": "Full fence state machine (mirrors codeLineMask); unclosed and malformed markers error; claims nested in longer quotations are quoted content."
+    },
+    {
+     "severity": "ERROR",
+     "summary": "Codec paired with the FIRST Intent section while the parser is last-wins; copies from different sections could be compared.",
+     "fix": "Codec pairs with the LAST Intent section."
+    },
+    {
+     "severity": "ERROR",
+     "summary": "Fence/quotation boundary violations: a heading inside an ordinary fence hid the codec; a quoted codec still claimed the form.",
+     "fix": "Single-scan state machine tracks all fences for both block termination and claim discovery."
+    },
+    {
+     "severity": "ERROR",
+     "summary": "Non-goal items with newlines/empty/untrimmed content broke their own legacy projection.",
+     "fix": "Such items are rejected at encode and decode (single-line trimmed non-empty rule)."
+    },
+    {
+     "severity": "WARN",
+     "summary": "Projection split only LF while the parser splits CRLF/LF/CR (CR injection).",
+     "fix": "firstNonEmptyLine uses the parser grammar."
+    },
+    {
+     "severity": "WARN",
+     "summary": "__proto__ context key silently lost via prototype setter.",
+     "fix": "Prototype-corrupted inputs rejected; own keys from JSON round-trip via safeSet."
+    }
+   ],
+   "verdict_text": "Both requested suites passed: adapter **12/12**, goals **87/87**. Additional read-only probes reproduced silent legacy fallback, a missed disagreement across duplicate Intent headings, and encoder outputs that fail their own binding check. CRLF documents passed; empty codec payloads were rejected. The diff leaves the pre-existing parser and hash implementations unchanged.\n\nVERDICT: rework\nFINDINGS:\n- [ERROR] lib/goals.mjs:1482\u20131498 \u2014 Malformed codec fences silently downgrade to legacy \u2014 Only closed fences are returned, and recognition requires `info.split(' ')[0]` to match exactly; zero matches become successful legacy validation at lines 1519 and 1546 \u2014 Removing the closing fence or changing the marker to `mp-intent-schema\\tv99` produces `{ok:true,versioned:false}`. This violates spec \u00a76.1\u2019s malformed/unknown-version rejection requirement.\n- [ERROR] lib/goals.mjs:1457\u20131462 \u2014 The binding check can compare copies from different Intent sections and miss actual disagreement \u2014 The codec scanner selects the **first** Intent section, whereas `parseGoals` resets its legacy view at every Intent heading (lines 193\u2013197) \u2014 Concatenate two valid encoded blocks and edit only the first block\u2019s legacy `why:`: validation still returns `{ok:true,versioned:true}`, comparing the first authoritative copy against the second legacy copy. This violates task 50 / draft \u00a72\u2019s disagreement binding and unambiguous representation requirements.\n- [ERROR] lib/goals.mjs:1453\u20131462,1490\u20131495 \u2014 Codec discovery"
+  },
+  "58": {
+   "verdict": "rework",
+   "findings": [
+    {
+     "severity": "ERROR",
+     "summary": "Re-capture of a changed identity bypassed the single approval-bound amendment path and could strand pending declarations.",
+     "fix": "capture records the FIRST schema state; a changed identity refuses and names the amendment path."
+    },
+    {
+     "severity": "ERROR",
+     "summary": "Approval-only replay bypassed the seam module and identity validation.",
+     "fix": "Replay requires the registered module (named failure); the declaration's recompute happened at declare time and rides the durable checkpoint."
+    },
+    {
+     "severity": "WARN",
+     "summary": "invalidated_receipts counted textual mentions in interview_checkpoint only.",
+     "fix": "Counts identity-bound fields (key skill_identity, any tuple position) across all events, excluding captures/amendments/declarations; prose mentions never count."
+    }
+   ],
+   "verdict_text": "VERDICT: rework\nFINDINGS:\n- [ERROR] lib/interview.mjs:866\u2013881 \u2014 Re-capture bypasses the sole approved identity-replacement path \u2014 `captureSchema` rejects an unchanged identity but appends a changed identity without approval; replay adopts it at lines 838\u2013840. Reproduced capture A \u2192 change skill to B \u2192 capture again: B becomes recorded without an amendment or approval. This violates \u00a75.5\u2019s single guard-exempt amendment and no-adoption-before-approval requirements. It also breaks task 58\u2019s interrupted replay: declare B \u2192 capture B \u2192 approve B fails because old and new identities are equal, leaving the pending declaration permanently uncleared.\n\n- [ERROR] lib/interview.mjs:970\u2013992 \u2014 Approval-only replay bypasses the required module and identity-validation seam \u2014 Only the declaration branch calls `requireSnapshotModule` and recomputes identity; replay commits directly from checkpoint data. Reproduced a pending declaration followed by unregistering the module: approval still appends `skill_identity_amended`, rather than reporting `schema_snapshot_module_not_implemented`. Moreover, lines 845\u2013848 trust any checkpoint with the marker: an `appendEvent`-accepted synthetic declaration plus a matching approval adopts an identity that was never recomputed. This does not bypass approval binding, but does bypass \u00a75.5\u2019s computed-identity requirement and task 58\u2019s fail-loud seam contract.\n\n- [WARN] lib/interview.mjs:945\u2013950 \u2014 `invalidated_receipts` counts textual mentions rather than identity"
+  }
+ },
+ "fix_round": {
+  "commit": "81303d3",
+  "tests": "2497/2497 full suite green (post-fix); adapter 21/21, interview-cli 34/34, host-contract 9/9",
+  "disclosure": "One review round per task per wave, one fix round, per the operator's standing no-grinding directive. The fix round was NOT re-submitted for a second LLM review; it is deterministically verified and will be covered by the end-of-waves whole-scope adversarial review before the finish assessment."
+ }
+}
