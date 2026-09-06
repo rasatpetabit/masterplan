@@ -1552,7 +1552,10 @@ function main() {
       // is frozen: a waiver is a durable ledger event, not a flag this verb interprets itself.
       if (flags['interview-waived'] === true || flags['interview-waived'] === 'true') {
         try {
-          waiveInterview({ statePath: p, reason: need(flags, 'reason') });
+          // The SAME config-resolved probing minimum as `mp interview waive` (review finding,
+          // wave 13): this route's cap-waiver cause must not depend on which verb entered it.
+          const ivCfg = resolveRunConfig({ cli: {}, repoRoot: deriveDefaultTargetRepo(p), env: readEnvAll() });
+          waiveInterview({ statePath: p, reason: need(flags, 'reason'), probingMinimum: resolveProbingMinimum(ivCfg, readState(p)?.complexity) });
         } catch (e) {
           die(`goals-load: --interview-waived refused: ${e.message}`, 1);
         }

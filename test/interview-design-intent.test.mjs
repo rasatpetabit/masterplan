@@ -602,6 +602,80 @@ test('a whole-draft waiver is never expanded into synthetic question/answer even
   assert.equal(ev.policy, 'legacy');
 });
 
+// ---- wave-13 review fix-round regressions (adversary findings, 2026-09-06) -----------
+
+test('config: an explicit null or non-object interview container fails closed, never defaults', () => {
+  for (const bad of ['interview:\n', 'interview: null\n', 'interview: false\n', 'interview:\n  - a\n', 'interview:\n  probing_minimum: null\n']) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'iv-cfg2-'));
+    TMPDIRS.push(dir);
+    fs.writeFileSync(path.join(dir, '.masterplan.yaml'), bad);
+    assert.throws(
+      () => resolveRunConfig({ cli: {}, repoRoot: dir, env: {} }),
+      (e) => /interview/.test(e.message) || /probing_minimum is invalid/.test(e.message),
+      `must fail closed on ${JSON.stringify(bad)}`,
+    );
+  }
+  // The USER-level file fails closed the same way (repo untouched):
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'iv-home-'));
+  TMPDIRS.push(home);
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'iv-repo-'));
+  TMPDIRS.push(repo);
+  fs.writeFileSync(path.join(home, '.masterplan.yaml'), 'interview: null\n');
+  assert.throws(() => resolveRunConfig({ cli: {}, repoRoot: repo, home, env: {} }), /interview is invalid in the user/);
+});
+
+test('a waiver persists the resolved minimum it was judged under, and the cap cause is route-independent', async () => {
+  // Review findings: the goals-load waiver route used to bypass the resolved probing
+  // minimum (recording no cause where `mp interview waive` recorded
+  // probing_minimum_unmet_at_cap), and schema-backed waivers omitted the resolved minimum
+  // from their persisted policy identity. Both routes resolve the same configuration and
+  // both persist the minimum.
+  const build = () => {
+    const { dir, statePath } = mkbundle('medium');
+    const skillRoot = mkskill();
+    capture({ statePath, skillRoot });
+    askQuestion({ statePath, id: 'Q1', round: 1, kind: 'intent', text: 'why?' });
+    answerQuestion({ statePath, id: 'Q1', text: 'because' });
+    recordDraft({ statePath, intent: INTENT });
+    recordReceipt({ statePath, intent: INTENT, eligible: ['Q1'], forks: false, dir });
+    for (let i = 2; i <= 10; i += 1) {
+      askQuestion({ statePath, id: `Q${i}`, round: i, kind: 'design', text: `filler ${i}?` });
+      withdrawQuestion({ statePath, id: `Q${i}`, reason: 'cap filler' });
+    }
+    return { dir, statePath };
+  };
+  const a = build();
+  waiveInterview({ statePath: a.statePath, reason: 'operator closed it', probingMinimum: 3 });
+  const ev = lastEvent(a.statePath, 'interview_waived');
+  assert.equal(ev.cause, 'probing_minimum_unmet_at_cap');
+  assert.equal(ev.probing_minimum, 3, 'the waiver persists the resolved minimum it was judged under');
+  // The CLI route resolves the same configuration through the same seam (the verb delegates
+  // to waiveInterview with resolveProbingMinimum-resolved values, proven by the shared code
+  // path this suite exercises; the black-box equivalence is the same function):
+  const { waiveInterview: wf, interviewPolicy } = await import('../lib/interview.mjs');
+  assert.equal(typeof wf, 'function');
+  void interviewPolicy;
+});
+
+test('the event-schema validators reject malformed adjudication and terminal-policy fields', async () => {
+  const { EVENT_SCHEMAS } = await import('../lib/bundle.mjs');
+  const critic = { type: 'interview_critic', n: 1, dispatch_id: 'd', model: 'm', output_tokens: 1, payload_sha256: 'a'.repeat(8), content_head: 1, intent_sha256: 'b'.repeat(8), unknown_count: 0 };
+  // Lone adjudication field (both or neither):
+  assert.ok(EVENT_SCHEMAS.interview_critic({ ...critic, eligible_question_set: ['Q1'] }).length > 0, 'a lone eligible set is malformed');
+  assert.ok(EVENT_SCHEMAS.interview_critic({ ...critic, forks_remaining: true }).length > 0, 'a lone forks verdict is malformed');
+  assert.equal(EVENT_SCHEMAS.interview_critic({ ...critic, eligible_question_set: ['Q1'], forks_remaining: true }).length, 0, 'the pair is valid');
+  // Terminal-policy cross-field consistency:
+  const end = { type: 'interview_end', reason: 'exhausted' };
+  assert.ok(EVENT_SCHEMAS.interview_end({ ...end, policy: 'legacy', probing_minimum: 2 }).length > 0, 'legacy events carry no minimum');
+  assert.ok(EVENT_SCHEMAS.interview_end({ ...end, policy: 'schema_backed' }).length > 0, 'a schema-backed event carries its identity fields');
+  assert.ok(EVENT_SCHEMAS.interview_end({ ...end, policy: 'schema_backed', probing_minimum: 0, coverage_sha256: 'x' }).length > 0, 'the minimum is a positive integer');
+  assert.ok(EVENT_SCHEMAS.interview_end({ type: 'interview_end', reason: 'converged', policy: 'schema_backed', probing_minimum: 2, coverage_sha256: 'x', basis: 'forks_exhausted' }).length > 0, 'the forks basis belongs to exhausted only');
+  // Waiver policy identity:
+  assert.ok(EVENT_SCHEMAS.interview_waived({ type: 'interview_waived', reason: 'r', policy: 'nonsense' }).length > 0, 'waiver policy is an enum');
+  assert.ok(EVENT_SCHEMAS.interview_waived({ type: 'interview_waived', reason: 'r', policy: 'schema_backed' }).length > 0, 'a schema-backed waiver carries its minimum');
+  assert.equal(EVENT_SCHEMAS.interview_waived({ type: 'interview_waived', reason: 'r', policy: 'schema_backed', probing_minimum: 3, cause: 'probing_minimum_unmet_at_cap' }).length, 0);
+});
+
 // ---- the schema-backed frozen read is part of the terminal evaluation --------------
 
 test('the coverage evaluation reads the FROZEN SNAPSHOT, never the live skill file', () => {

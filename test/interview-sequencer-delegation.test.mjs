@@ -156,6 +156,23 @@ test('the delegation target is the pinned plan mode, not an ad-hoc prompt', () =
   // digest, and the declared contract versions (task 49's host contract).
   assert.ok(/^[0-9a-f]{40}$/.test(pin.commit), 'the pin names an exact 40-hex commit');
   assert.ok(/^[0-9a-f]{64}$/.test(pin.manifest_digest), 'the pin names the skill identity digest');
+  // CORRESPONDENCE, not shape (wave-13 review finding): the pinned tree's recomputed
+  // identity — the real algorithm over the pinned commit's exact bytes — EQUALS the pin's
+  // digest. A fabricated hex string must fail here.
+  const pinnedTree = fs.mkdtempSync(path.join(os.tmpdir(), 'pin-tree-'));
+  TMPDIRS.push(pinnedTree);
+  const pinnedSkillRoot = path.join(pinnedTree, 'skill');
+  fs.mkdirSync(pinnedSkillRoot, { recursive: true });
+  for (const rel of pinnedManifest.identity.closed_file_set) {
+    const dest = path.join(pinnedSkillRoot, ...rel.split('/'));
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.writeFileSync(dest, pinnedBytes(rel));
+  }
+  assert.equal(
+    computeSkillIdentity({ skillRoot: pinnedSkillRoot }),
+    pin.manifest_digest,
+    'the pinned bytes recomputed through the REAL identity algorithm must equal the pin digest',
+  );
   assert.equal(pin.host_contract_version, pinnedManifest.host_contract_version);
   assert.equal(pin.schema_format_version, pinnedManifest.schema_format_version);
   assert.equal(pinnedManifest.skill, 'design-intent');
@@ -315,7 +332,7 @@ repo_intent: none
 // ---- 2. SAME DRAFT: the critic is handed the schema-backed draft the operator sees ------
 
 test('the critic receipt binds the recorded draft, so a divergent rendering is refused', () => {
-  const { statePath, skillRoot } = mkCapturedBundle('medium');
+  const { statePath, skillRoot, dir } = mkCapturedBundle('medium');
   // The interview that produced a schema-backed draft (every recording through the verbs):
   askQuestion({ statePath, id: 'Q1', round: 1, kind: 'intent', text: 'What is the outcome in the world?' });
   answerQuestion({ statePath, id: 'Q1', text: 'The delegation lands over the host contract.' });
@@ -353,6 +370,35 @@ test('the critic receipt binds the recorded draft, so a divergent rendering is r
   assert.deepEqual(proj.anti_goals, draft.anti_goals);
   assert.equal(proj.outcome, draft.outcome);
   assert.equal(proj.done_means, draft.done_means);
+  // OPERATOR-ARTIFACT BINDING (wave-13 review finding): the proof above must run against
+  // the ACTUAL operator-facing artifact — a versioned goals.md written through the host
+  // adapter — not a locally fabricated projection. Write it, decode it with the native
+  // adapter, and assert the ARTIFACT's authoritative projection equals the recorded draft.
+  const operatorGoalsPath = path.join(dir, 'goals.md');
+  const enc = encodeIntentBlock(authoritative);
+  assert.ok(enc.ok, 'the encoder accepts the authoritative representation');
+  fs.writeFileSync(operatorGoalsPath, `topic: delegated draft\n\n${enc.block}\n\n## G1: Works\n`);
+  const dec = decodeIntent(fs.readFileSync(operatorGoalsPath, 'utf8'));
+  assert.equal(dec.error, undefined, 'the operator artifact decodes clean');
+  const artifactProj = projectLegacyIntent(dec.authoritative);
+  assert.equal(artifactProj.why, draft.why, 'the artifact the operator sees projects the recorded why');
+  assert.equal(artifactProj.done_means, draft.done_means, 'the artifact the operator sees projects the recorded done_means');
+  // The NEGATIVE CONTROL on the artifact: a divergent operator rendering (someone rewrote
+  // the artifact's done_means) decodes to a projection that NO LONGER equals the recorded
+  // draft, and the receipt naming it is refused — the same-draft bound is on the artifact,
+  // not on the local object.
+  const divergentArtifact = {
+    ...authoritative,
+    context: { ...authoritative.context, done_means: { body: 'a divergent rendering' } },
+  };
+  const encDiv = encodeIntentBlock(divergentArtifact);
+  assert.ok(encDiv.ok);
+  fs.writeFileSync(operatorGoalsPath, `topic: delegated draft\n\n${encDiv.block}\n\n## G1: Works\n`);
+  const decDiv = decodeIntent(fs.readFileSync(operatorGoalsPath, 'utf8'));
+  assert.equal(decDiv.error, undefined);
+  const divergentProj = projectLegacyIntent(decDiv.authoritative);
+  assert.notEqual(divergentProj.done_means, draft.done_means, 'a rewritten artifact visibly diverges');
+  fs.writeFileSync(operatorGoalsPath, `topic: delegated draft\n\n${enc.block}\n\n## G1: Works\n`); // restore the honest artifact
   // The critic is dispatched with the SAME recorded draft: the receipt must name the
   // recorded draft's digest. A divergent rendering (someone re-projected the draft with a
   // different done_means) is refused by the honesty bound:
@@ -606,11 +652,25 @@ test('a schema-captured bundle reads §5.4\'s substitution — the floors are no
   assert.equal(snap.format_pin, 'schema_backed');
   assert.equal(snap.host_contract_version, replaySchemaCapture(statePath).captured.host_contract_version, 'the host contract version is the one the capture recorded');
   // The legacy vocabulary still names what a LEGACY interview means, so the plan text
-  // carries both readings without contradiction:
+  // carries both readings without contradiction — and §11 ITSELF is reconciled
+  // (wave-13 review finding: a whole-spec regex could find §5.4's qualification while
+  // §11 stayed unqualified; the check is now pinned to §11's own lines):
   const specLegacy = fs.readFileSync(
     path.join(ROOT, 'docs', 'masterplan', 'intent-to-completion', 'spec.md'),
     'utf8',
   );
+  const section11 = (() => {
+    const m = /## 11[^]*?(?=\n## \d|\n\Z|$)/.exec(specLegacy.replace(/\r/g, ''));
+    return m ? m[0] : '';
+  })();
+  assert.ok(section11.length > 0, 'the spec carries a §11 test plan');
+  const flat11 = section11.replace(/\s+/g, ' ');
+  assert.match(
+    flat11,
+    /eight intent answers in two rounds at `high`\) → every non-waived exit refused — a LEGACY-path assertion: a schema-backed interview/i,
+    '§11 itself must state the floor assertion as the legacy path, qualified',
+  );
+  assert.match(flat11, /interview-design-intent.*substitution.*matrix/i, '§11 points at the matrix suite that proves the substitution');
   assert.match(specLegacy, /a legacy interview reads it as written/);
   const flatSpec = specLegacy.replace(/\s+/g, ' ');
   assert.match(flatSpec, /a schema-backed interview reads "coverage and the probing minimum"/);
