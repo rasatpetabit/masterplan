@@ -18,14 +18,16 @@
     "rationale_sha256": "sha256:1246821a7a85b51d9bc2bcb36126a2875509f132e6501b490a6b2e2c12af97da",
     "base_spec_sha256": "sha256:6111aaf4dbb804994bd592985cc4da28bee8de385eef4d13a1e0a137b6e54595",
     "patch": "spec.design-intent.patch",
-    "patch_sha256": "sha256:15ffd471ea876d3add8c43bb8d52a28bab7253bfa8da7a36cde72f1f681bdca5",
+    "patch_sha256": "sha256:c78644db4029bdee65d684af21869063fe23530ac601f0c4239ebbfb0e7427f8",
     "resulting_spec": "spec.design-intent.resulting.md",
-    "resulting_spec_sha256": "sha256:0720cfab7c8ab7f0e7b8883a9ac2cbe7ca4e519d335b1a9ac40fea3641f5a9b2",
+    "resulting_spec_sha256": "sha256:ef6826583791da24be4ed1181bdd00a8fc9e1ccd54283924aafc0bf0349dbbed",
     "apply_verified": "patch applied to base reproduces resulting_spec_sha256",
     "amends": [
+      "4.1",
       "5",
       "5.1",
       "5.3",
+      "5.4",
       "6.1",
       "11"
     ],
@@ -49,6 +51,7 @@
       "convergence rule (\u00a7B) \u2014 decided by the operator: coverage AND a configured probing minimum, both required"
     ],
     "blocking_findings_open": [],
-    "re_review_required": true
+    "re_review_required": true,
+    "rounds": 3
   }
 }
