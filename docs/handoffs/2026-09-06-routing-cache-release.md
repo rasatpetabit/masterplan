@@ -51,3 +51,34 @@ Do not restore the retired control plane, invent a raw model override, switch to
 **Not executed:** release tag, publication/push, Claude installation of9.10.1, post-install consumer verification. Native review is unavailable in this process. The next decision is whether to wait for the governed review lane to be repaired or explicitly waive this review for the tested narrow patch and authorize its publication.
 
 If authorized to publish: re-fetch/check origin/main for concurrent changes; push only the candidate as a fast-forward of published main (not local main), create/push its annotated9.10.1 tag through RELEASING.md, verify CI/release, refresh marketplace and update the Claude plugin, then resolve bounded-edit from the newly installed cache and exercise that installed route. Respect any plugin-manager restart-only activation step; do not claim an already-running session reloaded automatically. Preserve the unrelated local-main work and do not run the v10 bootstrap as this patch's release path.
+
+## Resolution (2026-09-06, later)
+
+The user overruled the wait: a review was obtainable all along via the native
+code-review workflow route, which does not depend on the spawn-guard policy plane
+that the sibling agent-policy run's agent-dispatch retirement had broken (breaker
+and mp-adversarial-reviewer subagent spawns were guard-denied; the earlier
+"unroutable" conclusion in this file was wrong).
+
+Review: workflow code-review on the exact candidate diff; 5 findings, all
+verify-CONFIRMED; 2 actionable fixed (tautological effort assertion -> transport-
+vocabulary validation; redundant double policy load -> single injected load), plus
+the version-surface drift the verifier found (llms.txt, .okf/index.md) synced.
+Correctness-lane timeouts compensated deterministically; fix round not re-reviewed
+(one-review/one-fix discipline). Full receipt:
+docs/handoffs/2026-09-06-routing-cache-release-review.md.
+
+Published: final release commit 723e8d6 (amended from reviewed 4ec1eed), pushed
+as fast-forward of published main, annotated tag v9.10.1 pushed. CI green on both
+runs (tag run 34011376444: test + release-publish success, GitHub Release created;
+main run 34011375647: success). Claude plugin updated 9.10.0 -> 9.10.1 and the
+INSTALLED cache verified: resolveWorkClass bounded-edit -> litellm/glm-5.3, served,
+default environment, no override. Pi install --ref=v9.10.1 -> check_ok (release
+723e8d6, 7 agents registered), Pi binary reports v9.10.1. Doctor: 0 errors,
+0 warnings (stale-cache warning cleared).
+
+Not executed by this session: wave-3 dispatch (owned by the sibling agent-policy
+session, which had already moved it to Pi); activation inside already-running
+Claude sessions (plugin update reports restart required). Local main remains
+76 commits ahead of origin/main with unrelated WIP, deliberately unpushed. The
+release worktree/branch were temporary and were removed after verification.

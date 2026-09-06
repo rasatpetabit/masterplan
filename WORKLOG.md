@@ -962,3 +962,21 @@ This gives §5 of design-intent-integration-draft.md a live reconciliation sourc
 for the first time — its absent-source branch no longer describes this repo.
 Nothing in the intent-to-completion bundle was touched; the paused D1 edit and
 root TODO.md remain untouched.
+
+## 2026-09-06 — v9.10.1 routing patch reviewed, fixed once, published
+
+User ordered the review run after my incorrect wait: native code-review workflow
+(diff-exact, 13 agents) returned 5 verify-confirmed findings; 2 actionable fixed
+(effort-value vocabulary validation replacing a tautological self-compare; single
+injected policy load) plus llms.txt/.okf version-surface sync. Correctness-lane
+timeouts compensated deterministically: 1659/1659, doctor 0 errors, full map
+referential+served-ness integrity PASS, retired refs absent. Final release commit
+723e8d6 (reviewed 4ec1eed + fix round, amended), published fast-forward to
+origin/main, tag v9.10.1 pushed; CI green on both runs, release-publish created
+the GitHub Release. Claude plugin cache installed 9.10.1 and verified from the
+consumed path: bounded-edit -> glm-5.3 served, default env. Pi install check_ok.
+Spawn-guard subagent lanes remain broken fleet-wide pending the sibling
+agent-policy run's migration completion; the workflow review route is the
+standing alternative. Wave-3 execution belongs to the sibling session; running
+Claude sessions need restart to activate 9.10.1. Receipt:
+docs/handoffs/2026-09-06-routing-cache-release-review.md.
