@@ -50,15 +50,15 @@ Record real questions and answers only. Reused prior evidence retains its origin
 
 Keep unanswered-question handling, current-draft freshness, cap accounting, named terminal states, and failure/unavailability evidence. A clean critic result must cover the current schema-backed draft. The shared rewrite test distinguishes intent from implementation, including Top invariant versus completion mechanics.
 
-### Open decision D1: numerical floors versus evidenced completeness
+### Decision D1: evidenced completeness (user-confirmed)
 
 The original run explicitly sought deeper high-complexity questioning. The native high profile currently requires 8 answers, 6 intent answers, and 4 completed intent rounds (`lib/interview.mjs:18–22,601–647`). The skill instead looks up facts, reuses unchanged evidence, and asks only gaps or contradictions. A fully specified request can therefore be schema-complete before meeting those numerical minimums.
 
-Recommended: for schema-backed interviews, require evidenced completeness plus the applicable fresh critic checks, while retaining question caps and honest counters. Preserve legacy interview rules for legacy records. Known evidence may satisfy a section but never increments fresh-answer counts. Greater complexity deepens scrutiny and reconciliation rather than forcing filler questions.
+The user selected **Evidence completeness wins**: for schema-backed interviews, require evidenced completeness plus the applicable fresh critic checks, while retaining question caps and honest counters. Preserve legacy interview rules for legacy records. Known evidence may satisfy a section but never increments fresh-answer counts. Greater complexity deepens scrutiny and reconciliation rather than forcing filler questions.
 
-Alternative: retain the numerical minimums for schema-backed interviews too. When no genuine unresolved questions remain before a floor is reached, stop for an explicit existing waiver rather than invent questions or answers. This can interrupt an otherwise fully specified request.
+Rejected alternative: retain numerical minimums for schema-backed interviews and require a waiver when genuine questions run out. No additional answer or round minimum is imposed on the new schema-backed path. Coverage and freshness replace that termination criterion; missing evidence, unresolved contradictions, and required unavailable critic checks still prevent convergence.
 
-This is an owner-visible behavioral policy decision, not a field-renaming detail. It remains unresolved in this draft.
+This decision changes the new interview's convergence policy, not the original run's completed interview history or the requirement for exact goal amendments.
 
 ## 5. Reconciliation and checkpoints
 
