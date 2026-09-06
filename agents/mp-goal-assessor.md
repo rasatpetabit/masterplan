@@ -87,6 +87,18 @@ They are supplied by the recorder, never invented by you: they are what tie your
 specific deployment. If any of the three is absent from the brief, you cannot produce a final
 assessment — say so rather than emitting an unbound one.
 
+The receipt also names the **intent identity** the assessment was judged under — the tuple
+`{goals_hash, schema_snapshot_digest, skill_identity, reconciliation_digest}` on a schema-backed
+run, or the explicit LEGACY marker (`legacy: true`, `goals_hash` only) on a run with no schema
+capture — echoed verbatim from the brief under `intent_identity`, beside your dispatch provenance
+(`dispatch_id`, `model`, `output_tokens`). Evidence cannot cross an identity boundary: an
+assessment earned under one tuple cannot satisfy a checkpoint under another, so a run whose goal
+set, schema snapshot, skill identity or repository reconciliation changed since the tuple you
+were handed needs a fresh assessment. If the brief carries no tuple, say so explicitly in the
+summary rather than fabricating one — and never phrase a tuple-less (legacy) assessment as though
+the schema-backed contract had been checked. A receipt whose reviewer identity cannot be resolved
+(dispatch id, model, positive token count) is **unavailable** — never approval.
+
 ### The intent verdict (final only)
 Beyond the per-goal verdicts, the final assessment answers the run's own question — *does the
 deployed thing do what the operator meant?* — against the `## Intent` block of `goals.md`:

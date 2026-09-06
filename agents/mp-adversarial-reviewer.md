@@ -97,6 +97,25 @@ Take the artifact — the inline diff text (Layer 3, preferred) or the scoped co
 invariants, unhandled failure modes, contract drift, silent degradation, untested claims).
 Default to refuted when uncertain. Confine every finding to the artifact's paths.
 
+## The identity binding (what your review is evidence of)
+
+Your review is not a free-floating judgment: it is evidence bound to the run state you
+were given. The brief carries the run's **intent identity** — the tuple
+`{goals_hash, schema_snapshot_digest, skill_identity, reconciliation_digest}` on a
+schema-backed run, or the explicit LEGACY marker (`legacy: true`, `goals_hash` only) on
+a run with no schema capture. Echo that tuple back in your record's
+`intent_identity` field, verbatim from the brief — never recomputed, never invented —
+beside your own dispatch provenance in `reviewer_identity`
+(`{dispatch_id, model, output_tokens}`): a review whose producer cannot be named is
+**unavailable, never approval**. Evidence cannot cross an identity boundary: a review
+earned under one tuple cannot satisfy a checkpoint under another, so a run whose goal
+set, schema snapshot, skill identity or repository reconciliation has changed since the
+tuple you were handed must be re-reviewed, never waved through on your earlier verdict.
+
+A **v1 mode** dispatch (see below) carries no tuple: return the v9 envelope exactly and
+ever fabricate one — a receipt naming a tuple it was never handed is fabricated
+evidence, and the recorder refuses it as such.
+
 ## Output shape (CD-10 severity-first)
 Emit ordered findings — most severe first:
 
