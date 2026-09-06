@@ -879,3 +879,32 @@ WT1f2741f remains unchanged (2466 tests previously passed). No new live rehearsa
 release/tag/push/install. Detached review snapshot removed only after clean check.
 Required next decision: authorize targeted rehearsal and canonical preset repairs,
 or leave the release paused. Remaining release regions are not approved.
+
+## 2026-09-06 — expand intent-to-completion for design-intent integration
+
+Cross-session handoff reconciled against behavior-skills65eea6a (clean,7 commits
+ahead of recorded origin/main; no push) and its spec§5:237–246 DECIDED paragraph.
+The later decision wins over the stale blocked header/old standalone-intent.md
+design record: one skill-owned interview/schema, native goals.md Intent+ledger,
+skill-owned repo reconciliation, critic bound to shared schema.
+
+User AUQ explicitly chose Expand the existing run, not a separate integration run.
+Accepted scope/provenance captured in design-intent-scope-amendment.md. Native WT
+CLI ran amend-plan against MAIN state, then set-phase brainstorm. All48 task records
+remain exactly unchanged/done; goals/spec/index bytes and refs unchanged. This is
+scope reopening, not approval of new goals, mapping design or task definitions.
+
+Safety discovery: phase-only reopening still makes mp decide return complete
+because all48 tasks are done. After advisory review, acquired native owner lock,
+opened design-intent-amendment-approval with mp open-gate, verified mp decide now
+returns surface_gate for that exact id, then released ownership. Do NOT clear this
+gate or run mp continue before approved goal/spec/task amendments and pending tasks
+are durable and required spec/plan gates satisfied. No dummy task or state hand-edit.
+Receipt: design-intent-reopen-receipt.json (retains initial complete response too).
+
+Both recon agents returned evidence but harness rejected attestations; primary-source
+checks support the decisions above, not a fabricated clean delegation result. Earlier
+release-review failures, rehearsal findings, registration admission gap and G6 remain
+open. No behavior-skills push, home policy/relay changes, automatic release review
+or repair loop. Next: develop exact mapping/ledger/reconciliation/critic amendment,
+propose new goals/tasks without replacing the original anchor or completed work.
