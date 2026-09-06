@@ -1035,3 +1035,25 @@ Reconciled by substitution rather than addition — schema-backed interviews rea
 
 Gate still open, nothing applied; spec.md, goals.md, plan.index.json and the 48
 task records are untouched. Root TODO.md still untouched.
+
+## 2026-09-06 — design-intent amendment approved and promoted
+
+Operator gave the exact-artifact approval after four cross-vendor adversary
+rounds. Both halves landed together, which is the point of the promotion
+contract the amendment itself adds: goals 191978ba -> e83f49fe through
+mp goals-amend with a user-attested receipt binding both hashes and recording
+the question and the operator's own answer; spec 6111aaf4 -> bfa864f4 by
+applying the approved patch, base identity verified before and result identity
+after. Performed by hand because §5.6 is specified but not implemented — that
+is now G7/G8 work, and the first thing the implementation replaces.
+
+G7 and G8 are active; G1–G6, the anchor and the 48 completed task records are
+unchanged, and no receipts were invalidated. doctor 0 errors (4 pre-existing
+warnings: routing-policy drift, topic scalar cap).
+
+design-intent-amendment-approval stays OPEN by design — it clears only once
+the amended task plan is durable. Next is the task plan for the six work
+packages, appended via mp amend-tasks so the completed records survive; it
+needs its own plan gate and adversary pass before any implementation. Nothing
+was pushed, deployed, or claimed as release evidence, and the branch base
+stays 1f2741f per the accepted scope.
