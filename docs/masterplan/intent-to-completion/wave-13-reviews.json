@@ -1,0 +1,42 @@
+{
+  "wave": 13,
+  "recorded_at": "2026-09-06T15:3Z",
+  "review_kind": "retroactive adversarial (workflow transport, governed adversary lane litellm/gpt-6-astra; native phase-A no-op — no wave-11+ dispatch records carry review_context)",
+  "tasks": {
+    "53": {
+      "verdict": "rework",
+      "findings": [
+        "[rework] lib/config.mjs — interview: {probing_minimum: null} and interview: false silently became the shipped defaults instead of failing closed",
+        "[rework] bin goals-load --interview-waived bypassed the resolved probing minimum, recording no cap-waiver cause where mp interview waive recorded probing_minimum_unmet_at_cap",
+        "[fix-now] schema-backed waiver events omitted the resolved probing_minimum from their persisted policy identity",
+        "[fix-now] the new event validators accepted malformed fields (lone eligible set, probing_minimum 0, basis on non-exhausted, unvalidated waiver policy)"
+      ],
+      "fixed": true,
+      "fix_commit": "d6306d9",
+      "fix_summary": "fail-closed containers (repo+user), route-independent cap cause via the same config resolution, persisted waiver minimum, hardened cross-field validators; 3 regression tests",
+      "re_reviewed": false
+    },
+    "54": {
+      "verdict": "rework",
+      "findings": [
+        "[rework] the same-draft proof compared a locally fabricated projection, not the operator-facing artifact (a divergent goals.md left all 14 tests passing)",
+        "[fix-now] the pin's manifest_digest was checked for hex shape, not correspondence to the pinned bytes",
+        "[rework] §11 itself still stated the floor assertion unqualified at spec.md:1297-1298 (the whole-spec regex found §5.4's qualification)"
+      ],
+      "fixed": true,
+      "fix_commit": "d6306d9",
+      "fix_summary": "operator-artifact binding through the host adapter with a divergence negative control; identity correspondence via the real algorithm over the pinned commit's bytes; §11 qualified in the spec text itself (task-mandated; disclosed direct edit of bundle state) and the doc check pinned to §11's lines",
+      "re_reviewed": false
+    }
+  },
+  "task53_builder": "glm-5.3 timed out at 109 turns / 12.5M tokens with zero files written — implemented in-session (the task-50 pattern), disclosed in the digest",
+  "task54_builder": "glm-5.3 completed (205 turns / 27.1M tokens), verified in-session",
+  "out_of_scope_restorations": {
+    "commit": "41458bd",
+    "files": ["lib/bundle.mjs", "bin/masterplan.mjs", "test/knob-inventory.test.mjs", "test/fixtures/knobs/contracts.mjs", "test/knob-contract.test.mjs", "test/intent-critic-prompt.test.mjs"],
+    "why": "the plan's task lists under-declare the mandated edit loci (same defect class as tasks 52/58); disclosed in both digests"
+  },
+  "discipline": "one review round, one fix round per task; fixes disclosed as not re-reviewed; the end-of-waves whole-scope adversarial review covers the final diff",
+  "suite_after_fix_round": "2592/2592",
+  "review_run": "w13-adversary-reviews-mtq1j10a-kibn5m (2 agents, 143.1K tok, $4.43)"
+}
