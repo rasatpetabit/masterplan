@@ -5,7 +5,7 @@
 // fleet workflow routing map). These tests are hermetic: repo copy + injected
 // fixtures, never a host path.
 
-import { test, after } from 'node:test';
+import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -20,20 +20,6 @@ import {
   resolvePanel,
   laneAliasMap,
 } from '../lib/dispatch/routing-policy.mjs';
-
-// Every fixture here builds a tree under os.tmpdir(); without this they accumulate across
-// runs and fill a shared /tmp. Registered on creation, removed once when the file finishes.
-const FIXTURE_TMPDIRS = [];
-function mkdtempTracked(prefix) {
-  const dir = fs.mkdtempSync(prefix);
-  FIXTURE_TMPDIRS.push(dir);
-  return dir;
-}
-after(() => {
-  for (const d of FIXTURE_TMPDIRS) {
-    try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* already gone */ }
-  }
-});
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -51,11 +37,21 @@ test('repo-local canonical policy is checked in and structurally complete', () =
 });
 
 test('resolveWorkClass returns the governed record for a known class', () => {
-  const r = resolveWorkClass('adversary');
+  // One policy load, injected — resolveWorkClass must consume this exact document,
+  // not perform a second independent disk read.
+  const policy = loadRoutingPolicy();
+  const r = resolveWorkClass('adversary', { policy });
   assert.equal(r.agent, 'breaker');
   assert.equal(r.lane, 'frontier');
   assert.equal(r.cap, 'review');
-  assert.equal(r.effort, loadRoutingPolicy().classes.adversary.effort);
+  // The effort VALUE is validated against the dispatch transport's vocabulary, not
+  // against the policy field the resolver just read — a self-referential compare
+  // would pass a typo'd effort straight into wave dispatch.
+  const DISPATCH_EFFORTS = ['low', 'medium', 'high', 'xhigh'];
+  assert.ok(
+    DISPATCH_EFFORTS.includes(r.effort),
+    `adversary effort '${r.effort}' is outside the dispatch effort vocabulary`,
+  );
   assert.equal(r.panel, 'adversarial');
   assert.equal(r.writes, false);
   assert.match(r.model, /^litellm\//);
@@ -97,7 +93,7 @@ test('laneAliasMap derives every alias from the policy (no hard-coded ids)', () 
 test('fail-closed: unreadable path, invalid JSON, missing sections, unresolvable class', () => {
   assert.throws(() => loadRoutingPolicy({ policyPath: '/nonexistent/policy.json' }), /unreadable/);
 
-  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-policy-'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-policy-'));
   const bad = path.join(tmp, 'bad.json');
   fs.writeFileSync(bad, '{ not json');
   assert.throws(() => loadRoutingPolicy({ policyPath: bad }), /not valid JSON/);
@@ -118,7 +114,7 @@ test('fail-closed: unreadable path, invalid JSON, missing sections, unresolvable
 });
 
 test('MP_ROUTING_POLICY override is honored when present', () => {
-  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-policy-'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-policy-'));
   const override = path.join(tmp, 'override.json');
   fs.writeFileSync(override, JSON.stringify({
     lanes: { only: { model: 'litellm/override-model' } },
