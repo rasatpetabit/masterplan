@@ -211,6 +211,7 @@ import {
   replayInterview, interviewStatus, askQuestion, answerQuestion, withdrawQuestion, recordDraft,
   recordCritic, recordCriticUnavailable, acknowledgeCriticUnavailable, endInterview,
   waiveInterview, reopenInterview, replayLedger,
+  captureSchema, amendSkillIdentity, registerSchemaSnapshotModule,
 } from '../lib/interview.mjs';
 import { createHash } from 'node:crypto';
 import { mergePlanFragments, validatePlanIndex, renderPlanMd, renderPlanHtml } from '../lib/plan-merge.mjs';
@@ -598,6 +599,11 @@ const KNOWN_FLAGS = new Set(
     'deploy-chain-hash exit focus interview-waived model overlap-review payload-file resolves '  +
     'review-file round supersedes '  +
     'successor text unavailable '  +
+    // §5.5/§6.1 schema capture + skill-identity amendment (task 58): the capture/amendment
+    // subcommand flags. --skill-root is the installed skill to capture; --identity-file is the
+    // task-52 snapshot/identity result the recorder consumes; --approval is the operator's
+    // approval receipt JSON for the amendment.
+    'identity-file skill-root '  +
     'version-fix window').split(' ')
 );
 
@@ -4514,6 +4520,65 @@ function main() {
       const sub = positional[0];
       const p = need(flags, 'state');
       const num = (name) => (flags[name] === undefined ? undefined : Number(flags[name]));
+      // The two §5.5 amendment operations route through the task-52 seam BEFORE the sync
+      // dispatch: lib/schema-snapshot.mjs is resolved with an async import (the rest of the
+      // verbs are sync), registered with lib/interview.mjs, and only then do the sync recorder
+      // verbs run. Absent module — task 52 not landed — surfaces as the named
+      // schema_snapshot_module_not_implemented failure inside the verb, never as fake success.
+      if (sub === 'capture-schema' || sub === 'amend-skill-identity') {
+        const readJsonFile = (flagName) => {
+          try {
+            return JSON.parse(fs.readFileSync(String(need(flags, flagName)), 'utf8'));
+          } catch (e) {
+            die(`interview ${sub}: --${flagName} unreadable or not JSON: ${e.message}`, 1);
+          }
+        };
+        const args = { statePath: p, skillRoot: flags['skill-root'] };
+        if (sub === 'capture-schema') {
+          if (flags['identity-file'] !== undefined) {
+            die('interview capture-schema: --identity-file is the amend-skill-identity flag (the identity is COMPUTED at capture, not supplied)', 1);
+          }
+        } else {
+          if (flags['identity-file'] !== undefined) {
+            // The identity FILE carries the operator-facing declaration: an object naming the
+            // skill_identity (a bare string is accepted for one-liner use). The verb still
+            // refuses an asserted identity that the changed skill does not recompute to.
+            const identityDoc = readJsonFile('identity-file');
+            args.newSkillIdentity = typeof identityDoc === 'string'
+              ? identityDoc
+              : identityDoc && identityDoc.skill_identity;
+            if (typeof args.newSkillIdentity !== 'string' || args.newSkillIdentity === '') {
+              die('interview amend-skill-identity: --identity-file must carry a skill_identity string (the declared identity of the changed skill)', 1);
+            }
+          }
+          if (flags['approval'] !== undefined) {
+            args.approval = readJsonFile('approval');
+          }
+        }
+        import('../lib/schema-snapshot.mjs')
+          .then((mod) => registerSchemaSnapshotModule(mod))
+          .catch((e) => {
+            // Absent module is task 52 not landed: register NOTHING so the verb reports the
+            // named not-implemented failure. Any OTHER import error (a module that exists but
+            // fails to load) must not be swallowed — rethrow it.
+            if (e && e.code === 'ERR_MODULE_NOT_FOUND' && /schema-snapshot\.mjs/.test(String(e.message))) {
+              return registerSchemaSnapshotModule(null);
+            }
+            throw e;
+          })
+          .then(() => {
+            const event = sub === 'capture-schema'
+              ? captureSchema(args)
+              : amendSkillIdentity(args);
+            out({ ok: true, interview: sub, event_type: event.type, ...(event.type === 'schema_captured'
+              ? { skill_identity: event.skill_identity, schema_sha256: event.schema_sha256, format_pin: event.format_pin }
+              : { old_skill_identity: event.old_skill_identity, new_skill_identity: event.new_skill_identity }) });
+          })
+          .catch((e) => {
+            die(`interview ${sub}: ${e.message}`, 1);
+          });
+        break; // async path prints and exits on its own; never fall through
+      }
       try {
         switch (sub) {
           case 'ask':
@@ -4589,7 +4654,7 @@ function main() {
             out({ ledger: replayLedger(p) });
             break;
           default:
-            die(`unknown interview subcommand '${sub ?? ''}' — expected: ask|answer|withdraw|draft|critic|critic-unavailable|critic-unavailable-ack|end|waive|reopen|status|replay`, 1);
+            die(`unknown interview subcommand '${sub ?? ''}' — expected: ask|answer|withdraw|draft|critic|critic-unavailable|critic-unavailable-ack|end|waive|reopen|capture-schema|amend-skill-identity|status|replay`, 1);
         }
       } catch (e) {
         die(`interview ${sub}: ${e.message}`, 1);
