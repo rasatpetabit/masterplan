@@ -1,5 +1,9 @@
 # Routing-cache repair — prepared, not published
 
+## Decision (user-confirmed)
+
+The user explicitly chose **Wait for governed review**. The candidate remains committed but unpublished; the installed Claude cache is unchanged; no review requirement was waived. Wave 3 may be unblocked by its owning session through the documented `MP_ROUTING_POLICY` override on the affected invocation. When a governed reviewer lane is repaired, obtain a native verdict on the exact candidate, then publish with a valid review.
+
 ## Scope and ownership
 
 User explicitly requested fixing the installed masterplan bounded-edit route whose source fixes were committed but unreleased at the same version. The reported wave is agent-policy wave 3, owned by Claude session `383695f5-b79c-494f-8201-68f603f7d819`, state `/srv/workflows/docs/masterplan/agent-policy/state.yml`. Its owner is handling Pi dispatch; this session has not changed that run's state or launched its workers.
