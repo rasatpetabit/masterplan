@@ -1,7 +1,7 @@
 {
   "status": "proposed_not_approved",
   "old_goals_hash": "sha256:191978ba79880f42f071f2d89f256c9704c7995298578ecc3ad9a39cbc4c38e7",
-  "proposed_goals_hash": "sha256:f35cea4404473499b4b7a92f13246c31f379121ffc78ae4bc3325449636e20eb",
+  "proposed_goals_hash": "sha256:e83f49fe9823d8208b5e000b7591eb5b1aa169a3c2c0d381e4ee75c5366e0d1d",
   "anchor_unchanged": true,
   "existing_goals_unchanged": true,
   "structural_validation": {
@@ -11,11 +11,13 @@
     "G7",
     "G8"
   ],
-  "unresolved": [],
+  "unresolved": [
+    "convergence rule for schema-backed interviews (spec amendment \u00a7B) \u2014 open owner question, no receipt exists"
+  ],
   "implementation_started": false,
   "proposed_spec_amendment": {
     "path": "spec.design-intent.proposed.md",
-    "sha256": "sha256:03ee148a72de679f43e86834c32a839085ad6fc35175ce46b89247c9d0f58170",
+    "sha256": "sha256:1950ad5618e97dc1b177a962bd7eca55b189fb65a0afa4dbe0fddd9c52724afa",
     "amends": [
       "5",
       "5.1",
@@ -28,5 +30,22 @@
       "6.3"
     ],
     "spec_md_unchanged_sha256": "sha256:6111aaf4dbb804994bd592985cc4da28bee8de385eef4d13a1e0a137b6e54595"
+  },
+  "adversarial_review": {
+    "lane": "dispatch-adversary",
+    "verdict": "refuted_block_approval",
+    "reviewed_goals_hash": "sha256:f35cea4404473499b4b7a92f13246c31f379121ffc78ae4bc3325449636e20eb",
+    "reviewed_spec_amendment_sha256": "sha256:03ee148a72de679f43e86834c32a839085ad6fc35175ce46b89247c9d0f58170",
+    "blocking_findings_addressed": [
+      "skill/host-contract handshake (\u00a7D)",
+      "promotion transaction (\u00a7H)",
+      "integration-target identity (\u00a7E)",
+      "hash/receipt identity and downgrade rejection (\u00a7C)",
+      "G7/G8 evidence requires passing results and negative controls"
+    ],
+    "blocking_findings_open": [
+      "convergence rule (\u00a7B) \u2014 returned to the operator as an open question"
+    ],
+    "re_review_required": true
   }
 }

@@ -2,7 +2,7 @@
 
 Status: proposed, not approved. This document is the exact artifact for the
 `design-intent-amendment-approval` gate, paired with `goals.design-intent.proposed.md`
-(G7, G8). It amends `spec.md` in place at the sections named below; it does not
+(G7, G8). It amends `spec.md` in place at the sections named below and adds §5.6 (promotion); it does not
 replace the spec, the immutable anchor, the existing goals, or the 48 completed
 task records. Nothing here is implemented: `implementation_started` is false.
 
@@ -45,14 +45,24 @@ context keeps its original provenance and is never relabelled as a fresh answer,
 an operator's approval of a whole draft is never expanded into several synthetic
 question/answer events.
 
-**Convergence (D1, decided).** For a schema-backed interview, the termination
-criterion is evidenced completeness of the checked sections plus the applicable fresh
-critic checks — not the native high profile's numerical minimums (8 answers, 6 intent
-answers, 4 completed rounds). Question caps and honest counters are retained. Known
-evidence may satisfy a section but never increments a fresh-answer count. Higher
-complexity deepens scrutiny and reconciliation rather than forcing filler questions.
-Legacy records keep the legacy rules. Missing evidence, unresolved contradictions, and
-a required critic check that is unavailable all still prevent convergence.
+**Convergence — OPEN, awaiting the operator.** Masterplan's high-complexity interview
+today may only stop after 8 answers, 6 of them about intent, across 4 completed rounds. The
+skill instead looks facts up and asks only about real gaps, so it can be schema-complete having
+asked fewer questions. Which rule governs a schema-backed interview is an unresolved owner
+question, recorded in the WORKLOG as "the next owner question". It is **not** decided, and no
+receipt for it exists in `events.jsonl`. This amendment cannot be approved while this paragraph
+is open.
+
+Whatever the operator decides, these hold: question caps and honest counters are retained;
+evidence reused from prior context never increments a fresh-answer count; legacy records keep
+the legacy rules; and missing evidence, unresolved contradictions, or a required-but-unavailable
+critic check all still prevent convergence.
+
+If a completeness-based rule is chosen, it needs a testable standard, not a judgment call —
+sufficiency defined per checked section including provenance and unresolved uncertainty, a
+defined observable meaning for "higher complexity deepens scrutiny", the applicable critic
+checks and their independence named, and negative controls in which a complete-looking draft
+must NOT converge because it merely restates the request or rests on unsupported assumptions.
 
 Unanswered-question handling, current-draft freshness, the named terminal states, and
 failure/unavailability evidence are unchanged. A clean critic result must cover the
@@ -93,6 +103,19 @@ canonical coverage to every section, the plan context, the reconciliation, and t
 schema digest. Legacy documents keep their existing parse results and hashes
 byte-for-byte.
 
+Both promises hold together only through an explicit format discriminator: the legacy
+canonicalizer is retained and selected for a v1 document, and a richer canonicalizer is selected
+for an explicitly versioned one. The new canonical coverage includes the source-evidence
+provenance introduced above, so a provenance edit — which can change whether completeness was
+justified without changing a single section body — invalidates the receipts bound to it.
+Duplicate fields, duplicate sections, an unknown version, and a malformed version marker are
+rejected rather than parsed leniently, and stripping the new representation from a schema-backed
+bundle is a rejected downgrade, not a fall back to legacy handling. Each checkpoint names its
+receipt identity tuple, and the amendment states which text normalizations are semantic and
+which are cosmetic. The exception for equivalent key ordering is scoped to the canonical
+representation only: the schema snapshot is compared by exact bytes, so reordering keys inside
+it is a different snapshot.
+
 ## D. New §5.5 — schema ownership and binding
 
 The skill's `schema.json` is the schema authority. Masterplan resolves it from the
@@ -101,6 +124,16 @@ into a bundle snapshot when schema-backed capture is approved, recording the dig
 frozen bundle reads its snapshot, never a mutable live skill file. A schema that is
 missing, malformed, unsupported, or mismatched fails closed. A schema upgrade requires
 an explicit amendment; there is no silent migration.
+
+A snapshot of schema bytes does not establish that the installed skill can operate against it.
+Capture therefore records a handshake: the skill's supported host-contract version and its
+schema-format version alongside the snapshot digest, hashed from the exact bytes persisted. At
+every later operation the installed skill must declare support for that run's snapshot or the
+operation stops. A skill that is absent when questioning or reconciliation must resume, a
+host-contract version skew, and a skill whose behavior moved without a schema-byte change are
+each named failures, per operation. Falling back to native questioning or to a newer live schema
+is prohibited. Receipts and results never cross snapshot identities, so two runs holding
+different snapshots cannot share evidence.
 
 The same representation participates in draft identity, critic receipts, goal
 amendments, and checkpoint identities. Changing a checked section, a contextual
@@ -122,6 +155,19 @@ and digest, so a later checkpoint can distinguish a moved target from a changed 
 (Concretely: this repository carries `INTENT.md` on `main` from `3186a2e`, while
 `masterplan/intent-to-completion` at `1f2741f` does not.)
 
+The target is an identity, not a name: repository, remote, target ref, and the resolved commit,
+all recorded with the resolution's freshness. A run with no target selected yet, a retarget, a
+fork whose local and upstream branches share a name, a detached worktree, and a target ref whose
+local cache is stale are **unknown or unavailable** — a named failure, never the absent-source
+state, which is reserved for a verified target that carries no `INTENT.md`. A retarget
+invalidates the reconciliation bound to the previous target. A target that moves while
+`INTENT.md`'s bytes are unchanged is not drift, which is why the resolved commit is recorded
+beside the digest.
+
+The known case in this run resolves the same way: the branch's absence of an artifact `main`
+carries is drift to be reported at the checkpoint, not a condition to be silently passed, and it
+is not resolved by moving the branch base, which the accepted scope fixes at `1f2741f`.
+
 ## F. Amends §11 — the four checkpoints carry intent evidence
 
 The existing spec-review, end-of-planning alignment, per-task adversarial, and finish
@@ -141,6 +187,28 @@ Evidence that is missing, partial, unreadable, or stale, or a reviewer identity 
 unresolved, is **unavailable** — never approval. A substantive `fights` verdict, a
 mechanism leak, or source drift is a real decision for the operator. Legacy behavior
 stays explicit: the absence of legacy evidence is not a new-format pass.
+
+## H. Promotion — what approval authorizes, and how it lands
+
+The operator approves these two proposed files by digest. Approval of a proposal is not
+approval of an unspecified result, so promotion is defined deterministically: this amendment's
+lettered sections replace or extend exactly the named `spec.md` sections and nothing else, and
+the resulting `spec.md` and `goals.md` bytes are computed and their hashes recorded **before**
+either file is written.
+
+The gate hash spans `spec.md` + `goals.md`, so the pair promotes together. `mp goals-amend`
+requires its own exact-artifact user-approval receipt binding both the prior and the resulting
+goals hash; the combined gate receipt binds the resulting pair. Order is: compute the resulting
+pair, obtain the goal-amend receipt, write, then record. A crash between the two writes leaves
+the recorded hashes disagreeing with the files, which is a named failure that refuses to
+advance rather than a state to repair silently — the bundle is restored from the recorded
+hashes, not reconciled by preference.
+
+Any edit to either artifact after approval and before promotion invalidates the approval and
+requires a fresh one. Replay recognizes an already-promoted pair by its recorded hashes and
+neither re-asks nor accepts a mixed pair. A second session changing goals, the snapshot, or the
+target identity between review and receipt persistence is detected by the expected-revision
+check and refuses.
 
 ## G. Boundaries
 
