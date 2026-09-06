@@ -137,9 +137,24 @@ test('registerSchemaSnapshotModule refuses a module missing the seam ops', () =>
   assert.equal(registeredSchemaSnapshotModule(), before);
 });
 
+// Task 52 landed lib/schema-snapshot.mjs for real, so the two module-absence tests here
+// run against a COPIED bin+lib tree with the module OMITTED: the absence they prove is the
+// structural one the seam contract still requires (a bin+lib tree shipped without the
+// module must fail with the named error, never fake success). Same contracts, same count —
+// the copied-tree technique the acceptance test further down uses.
+function mkTreeWithoutSnapshotModule() {
+  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'iv-cli-nomod-'));
+  TMPDIRS.push(tree);
+  fs.cpSync(path.join(ROOT, 'bin'), path.join(tree, 'bin'), { recursive: true });
+  fs.cpSync(path.join(ROOT, 'lib'), path.join(tree, 'lib'), { recursive: true });
+  fs.rmSync(path.join(tree, 'lib', 'schema-snapshot.mjs'), { force: true });
+  return tree;
+}
+
 test('capture-schema without task 52 fails loudly with the named error (black-box CLI)', () => {
+  const tree = mkTreeWithoutSnapshotModule();
   const { statePath, skillRoot } = mkbundle();
-  const r = runCli(['interview', 'capture-schema', `--state=${statePath}`, `--skill-root=${skillRoot}`]);
+  const r = runCliTree(tree, ['interview', 'capture-schema', `--state=${statePath}`, `--skill-root=${skillRoot}`]);
   assert.equal(r.status, 1, `expected exit 1, got ${r.status}: ${r.stderr}`);
   assert.match(
     r.stderr,
@@ -152,6 +167,7 @@ test('capture-schema without task 52 fails loudly with the named error (black-bo
 });
 
 test('amend-skill-identity without task 52 fails loudly with the named error (black-box CLI)', () => {
+  const tree = mkTreeWithoutSnapshotModule();
   const { statePath, skillRoot } = mkbundle();
   // The refusal ORDER is the contract: an amendment requires a prior capture regardless of
   // task 52, so seed a real capture event first (through the registered seam), then run the
@@ -160,7 +176,7 @@ test('amend-skill-identity without task 52 fails loudly with the named error (bl
   captureSchema({ statePath, skillRoot });
   const identity = path.join(path.dirname(statePath), 'identity.json');
   fs.writeFileSync(identity, JSON.stringify({ skill_identity: 'abc123' }));
-  const r = runCli(['interview', 'amend-skill-identity', `--state=${statePath}`, `--identity-file=${identity}`]);
+  const r = runCliTree(tree, ['interview', 'amend-skill-identity', `--state=${statePath}`, `--identity-file=${identity}`]);
   assert.equal(r.status, 1, `expected exit 1, got ${r.status}: ${r.stderr}`);
   assert.match(r.stderr, /schema_snapshot_module_not_implemented/);
 });
