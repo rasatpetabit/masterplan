@@ -14,8 +14,14 @@
   "unresolved": [],
   "implementation_started": false,
   "proposed_spec_amendment": {
-    "path": "spec.design-intent.proposed.md",
-    "sha256": "sha256:70eda3df85cf4acc35c3ec88fe3c6e2745c6aa2aa17a4702b53ee2a372f6c0ff",
+    "rationale_doc": "spec.design-intent.proposed.md",
+    "rationale_sha256": "sha256:1246821a7a85b51d9bc2bcb36126a2875509f132e6501b490a6b2e2c12af97da",
+    "base_spec_sha256": "sha256:6111aaf4dbb804994bd592985cc4da28bee8de385eef4d13a1e0a137b6e54595",
+    "patch": "spec.design-intent.patch",
+    "patch_sha256": "sha256:15ffd471ea876d3add8c43bb8d52a28bab7253bfa8da7a36cde72f1f681bdca5",
+    "resulting_spec": "spec.design-intent.resulting.md",
+    "resulting_spec_sha256": "sha256:0720cfab7c8ab7f0e7b8883a9ac2cbe7ca4e519d335b1a9ac40fea3641f5a9b2",
+    "apply_verified": "patch applied to base reproduces resulting_spec_sha256",
     "amends": [
       "5",
       "5.1",
@@ -25,9 +31,9 @@
     ],
     "adds": [
       "5.5",
+      "5.6",
       "6.3"
-    ],
-    "spec_md_unchanged_sha256": "sha256:6111aaf4dbb804994bd592985cc4da28bee8de385eef4d13a1e0a137b6e54595"
+    ]
   },
   "adversarial_review": {
     "lane": "dispatch-adversary",

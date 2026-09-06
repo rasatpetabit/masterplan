@@ -1,10 +1,12 @@
 # Proposed spec amendment — the shared design-intent interview
 
-Status: proposed, not approved. This document is the exact artifact for the
-`design-intent-amendment-approval` gate, paired with `goals.design-intent.proposed.md`
-(G7, G8). It amends `spec.md` in place at the sections named below and adds §5.6 (promotion); it does not
-replace the spec, the immutable anchor, the existing goals, or the 48 completed
-task records. Nothing here is implemented: `implementation_started` is false.
+Status: proposed, not approved. This document is the **rationale** for the
+`design-intent-amendment-approval` gate — it explains what changes and why. Per §5.6 the
+approval binds resulting bytes, not editing instructions, so the artifacts actually approved
+are `spec.design-intent.resulting.md` (the full resulting `spec.md`), `spec.design-intent.patch`
+(which applies to the pinned base and reproduces it), and `goals.design-intent.proposed.md`
+(G7, G8). The immutable anchor, the existing goals, and the 48 completed task records are
+unchanged. Nothing here is implemented: `implementation_started` is false.
 
 Design record: `design-intent-integration-draft.md`. Accepted scope:
 `design-intent-scope-amendment.md`. Direction source: behavior-skills
