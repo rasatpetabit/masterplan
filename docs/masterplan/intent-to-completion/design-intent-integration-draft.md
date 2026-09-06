@@ -64,6 +64,8 @@ This decision changes the new interview's convergence policy, not the original r
 
 The skill constructs one reconciliation row per repository INTENT.md section, with the repository artifact's path and digest, or an explicit absent-source state. Masterplan validates and persists that result. Missing rows, unresolved conflicts, or repository-intent drift are not neutral outcomes.
 
+The repository artifact resolves from the run's integration target, not from the working tree of whatever branch execution happens on. This repository now carries `INTENT.md` on `main` (added in `3186a2e`) while `masterplan/intent-to-completion` at `1f2741f` does not. A branch that lacks an artifact its target carries is drift against the target, not an absent source; the absent-source state is reserved for a target with no INTENT.md at all. Reconciliation records the resolved ref beside the path and digest, so a later checkpoint can distinguish a moved target from a changed file.
+
 Retarget the original checkpoint requirements onto the native intent projection and snapshot:
 
 | Existing checkpoint | Required added evidence |
@@ -96,6 +98,7 @@ Actual task IDs and waves will be derived from the current index. Use native `am
 - Unanswered questions, caps, corrected answers, draft freshness, critic unavailability, and disk replay retain truthful behavior.
 - All four checkpoints reject omitted, partial, stale, or mismatched evidence and retain legacy compatibility explicitly.
 - Repository INTENT.md changes between planning and finish are detected rather than silently accepted.
+- Reconciliation resolves the repository INTENT.md from the integration target: a branch missing an artifact the target carries reports drift, only a target without the artifact yields the absent-source state, and the recorded ref distinguishes the two.
 - Alternate configured schema/checked-section content proves no copied list of today's headings or models controls behavior.
 - Task amendment preserves all existing task records/statuses and appends new work pending; no auto-completion while the amendment is incomplete.
 
