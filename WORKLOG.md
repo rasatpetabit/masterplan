@@ -938,3 +938,27 @@ full-autonomy instruction. This is the next owner question, not 'continue?'.
 ## 2026-09-06 — routing-cache patch held for governed review
 
 User reported installed masterplan bounded-edit routing to retired glm-5.2 with fixes committed but unreleased at same version. Confirmed installed cache resolution and that official marketplace/plugin updates return unchanged 9.10.0; source fixes not on published origin/main. Prepared isolated routing-only candidate 4ec1eed (9.10.1) on fix/routing-cache-release from published main: refreshed routing snapshot, synchronized manifests, and corrected one conflating CLI fixture (exit 2 vs ENOENT). 1659/1659 tests, doctor 0 errors 1 stale-cache warning; candidate resolver and real strict-tool probe pass. Native breaker review could not execute; all seven built-in governed roles unresolved against the missing retired policy plane, and policy-authority still references it — no verdict exists and nothing was published or installed. Real wave-3 owner (agent-policy Claude session) already progressed to Pi dispatch; its state untouched. User explicitly chose WAIT FOR GOVERNED REVIEW: no waiver, no publication; documented MP_ROUTING_POLICY override remains the per-invocation unblock. Handoff and decision recorded in docs/handoffs/2026-09-06-routing-cache-release.md. Root TODO.md appeared and remains untouched; paused D1 integration edit preserved.
+
+## 2026-09-05 — repo INTENT.md authored; design-intent skill corrected twice
+
+Ran /design-intent in repo mode; the repo had no INTENT.md. Interviewed the
+owner into all three core sections and all four standard extensions, written as
+prose. Two owner corrections drove skill changes in the owning repo
+(/srv/dev/ai/behavior-skills, edit made, commit blocked by the lane guard and
+pending an approved detour): list-type sections must be multi-select with all
+four AUQ option slots spent on positions, and free-text answers are a brief to
+interrogate, never text to paste into the artifact.
+
+Substantive intent captured beyond the earlier bundle material: off-track means
+drift from the owner's intent or from decisions already made — the spec and plan
+may change under review and approval, but work must not be left unfinished,
+unmerged, undeployed, or stranded in a forgotten worktree. Concurrent masterplan
+runs in one repo should become aware of each other rather than conflict or
+duplicate. Where the spec is silent the model decides from intent; where
+something contradicts its understanding of intent it asks. Understanding intent
+up front is bet as equal in value to the spec and plan.
+
+This gives §5 of design-intent-integration-draft.md a live reconciliation source
+for the first time — its absent-source branch no longer describes this repo.
+Nothing in the intent-to-completion bundle was touched; the paused D1 edit and
+root TODO.md remain untouched.

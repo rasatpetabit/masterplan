@@ -28,6 +28,9 @@ modes are in [`docs/internals.md`](./docs/internals.md); the public overview is
 
 ## Where to read first
 
+Design intent — why this exists, what must never happen, what it must not
+become — is in [`INTENT.md`](./INTENT.md); read it before changing the lifecycle or gates.
+
 | If you need... | Read |
 |---|---|
 | The orchestrator prompt itself (L1 — the sequencer) | [`commands/masterplan.md`](./commands/masterplan.md) |
