@@ -1003,3 +1003,35 @@ test/overlap-sequencer.test.mjs), on the branch. No goals, spec, or plan.index
 bytes were touched; design-intent-amendment-approval stays open. Root TODO.md
 still untouched. Another session published v9.10.1 (0ffe456) into this repo
 mid-turn; no overlap with these files.
+
+## 2026-09-05 — design-intent amendment: three adversary rounds, artifact reshaped
+
+Built the missing half of the design-intent-amendment-approval gate (the spec
+amendment; only G7/G8 existed) and put the pair through three cross-vendor
+adversary rounds on the dispatch-adversary class. Six blocking findings became
+two resolved (integration-target identity, G7/G8 evidence), then four, then a
+new set on the full resulting spec.
+
+Two things worth carrying forward. First, a correction: this session committed
+the paused D1 edit asserting the operator had decided the convergence rule.
+No receipt existed — events.jsonl had none and the prior WORKLOG called it
+"the next owner question". Retracted in a833285, then genuinely decided by the
+operator (coverage AND a configured probing minimum, both required) and recorded
+as a design_decision event carrying the question and their own words.
+
+Second, a structural change the reviewer forced: approval binds resulting bytes,
+not editing instructions. The amendment doc is now rationale; the approval
+artifacts are spec.design-intent.resulting.md plus spec.design-intent.patch,
+verified by applying the patch to the pinned base and reproducing the result
+hash (6111aaf4 + c78644db -> ef682658). Promotion became a durable transaction
+with a decision table over both artifacts' hashes, so a torn write completes and
+an intervening edit refuses.
+
+The sharpest finding was mine to own: new terminal states bolted onto §5.4's
+exhaustive table, with interview.probing_minimum inert because §4.1 ignores
+unknown keys. A high-complexity run with full coverage could not have exited.
+Reconciled by substitution rather than addition — schema-backed interviews read
+"coverage and the probing minimum" wherever §5.4 says the three floors.
+
+Gate still open, nothing applied; spec.md, goals.md, plan.index.json and the 48
+task records are untouched. Root TODO.md still untouched.
