@@ -908,3 +908,29 @@ release-review failures, rehearsal findings, registration admission gap and G6 r
 open. No behavior-skills push, home policy/relay changes, automatic release review
 or repair loop. Next: develop exact mapping/ledger/reconciliation/critic amendment,
 propose new goals/tasks without replacing the original anchor or completed work.
+
+## 2026-09-06 — autonomous integration draft; one substantive policy fork
+
+User: /masterplan next, run in full autonomy, do not gate unless you have a real
+question. Followed current §2d: auto-progress between genuine decisions, no
+ceremonial continuation questions; no fabricated goal-amend approval.
+
+Drafted design-intent-integration-draft.md: shared skill/native host boundary,
+versioned section representation inside native Intent, meaningful legacy field
+projections (Top invariant is NOT done_means), legacy-stable/new-complete hash
+binding, actual-interaction ledger, snapshot/reconciliation, and four existing
+checkpoints. Proposed six work packages, including separately committed owning-
+repo skill changes, plus regression matrix. No implementation has begun.
+
+Draft goals G7/G8 in goals.design-intent.proposed.md pass native validateAmendment;
+original anchor and G1–G6 parsed records remain unchanged. Native goals.md, spec,
+index,48done task records and safety gate remain untouched. Hashes/validation in
+design-intent-amendment-proposal.json. These are unreviewed, unapproved drafts.
+
+Real policy fork D1: native high interview requires8answers/6intent/4rounds, while
+the new skill reuses known evidence and asks only real gaps. A complete evidence
+set may not meet those minimums. Proposed completeness+fresh critic for new-format
+interviews, retaining caps/counters and legacy rules; alternative retains floors
+and may require explicit waiver. Original ask demanded more high-complexity
+probing, so do not silently change this behavior based only on this session's
+full-autonomy instruction. This is the next owner question, not 'continue?'.

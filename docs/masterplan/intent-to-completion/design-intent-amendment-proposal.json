@@ -1,0 +1,18 @@
+{
+  "status": "proposed_not_approved",
+  "old_goals_hash": "sha256:191978ba79880f42f071f2d89f256c9704c7995298578ecc3ad9a39cbc4c38e7",
+  "proposed_goals_hash": "sha256:f35cea4404473499b4b7a92f13246c31f379121ffc78ae4bc3325449636e20eb",
+  "anchor_unchanged": true,
+  "existing_goals_unchanged": true,
+  "structural_validation": {
+    "ok": true
+  },
+  "added_goal_ids": [
+    "G7",
+    "G8"
+  ],
+  "unresolved": [
+    "D1: evidenced completeness versus numeric interview floors"
+  ],
+  "implementation_started": false
+}
