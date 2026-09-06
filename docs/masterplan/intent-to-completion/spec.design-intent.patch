@@ -1,5 +1,5 @@
 --- spec.md	2026-09-02 19:32:59.367200039 -0700
-+++ spec.design-intent.resulting.md	2026-09-05 22:07:44.469388243 -0700
++++ spec.design-intent.resulting.md	2026-09-05 22:11:08.355832263 -0700
 @@ -87,6 +87,7 @@
  | `render_images` | `on\|off` | `--render-images` | all | `off` |
  | `fabric` | `on\|off` | `--fabric` | all | `on` |
@@ -38,7 +38,7 @@
  4. **Critic round** (per §4.2): dispatch `agents/mp-intent-critic.md` (critic class, breaker role,
     frontier lane, read-only, fresh context) with the verbatim anchor, the ledger, and the current
     intent draft as QUOTED DATA. Its payload `{unknowns: [{id, question, why_it_changes_design,
-@@ -316,8 +331,53 @@
+@@ -316,24 +331,76 @@
  Verbatim question and answer text is stored so a compaction mid-interview resumes from disk; the
  latest critic payload is re-read from its artifact.
  
@@ -89,10 +89,19 @@
 +probing minimum"; a legacy interview reads it as written. The `converged` row's per-round critic
 +requirement at `high` applies to both.
 +
++One exemption, because the state is defined by the minimum going unmet: `exhausted` with reason
++`forks_exhausted` requires coverage but **not** the probing minimum. Every other prerequisite —
++zero unanswered questions, the latest-draft rule, and the critic evidence that state requires —
++still holds. Where both predicates hold at once, the cap wins: a cap reached with the probing
++minimum unmet leaves only the waiver, whatever the critic said about remaining forks.
++
  Every terminal state other than `waived` requires **zero unanswered questions** (answer or
  withdraw first), **the floor, the intent floor, and the intent-round minimum met** (answered ≥
  floor, answered intent-kind ≥ intent floor, completed intent rounds ≥ the level's minimum, §4.2
-@@ -327,13 +387,14 @@
+ — withdrawn questions never count toward the floors, so twenty asks and twenty withdraws satisfy
+-nothing, eight design picks satisfy nothing, and eight intent questions in two rounds satisfy
++nothing, eight design picks satisfy nothing, and — for a legacy interview — eight intent questions in two rounds satisfy
+ nothing at `high`), **and an `interview_draft` as the latest
  intent-content event** — the draft is the synthesis §5.1 step 6 writes into `goals.md`, so an
  intent answer recorded after the latest draft blocks every exit until a new draft is recorded
  (and, where a critic is required, reviewed). A cap reached with the floor unmet leaves only the
@@ -110,7 +119,7 @@
  | `waived` | `goals-load --interview-waived --reason=…` on an open interview; durable `interview_waived` event; the only exit once the cap is reached with the floor unmet | accepts, recorded as waived |
  | (none) | interview still open | refuses |
  
-@@ -347,6 +408,119 @@
+@@ -347,6 +414,128 @@
  spec's Assumptions table; the event remains the durable record of all three lists, so a lagging
  table is caught, not lost.
  
@@ -205,13 +214,22 @@
 +Recovery does not trust the state field alone; it hashes each artifact on disk and compares
 +against the approved base and result identities, which is decidable for every combination:
 +
++Each artifact is first classified against its own approved identities, and an artifact whose base
++and result hashes are equal — an amendment that does not change that file — is classified
++`satisfied` and never contributes a torn state. Refusal is symmetric: if **either** artifact is
++neither its approved base nor its approved result, recovery refuses.
++
 +| `spec.md` | `goals.md` | action |
 +|---|---|---|
-+| base | base | no writes happened — apply the diff, then record |
-+| result | base | the torn case — write the remaining file, then record |
-+| base | result | the torn case, other order — write the remaining file, then record |
-+| result | result | writes completed — record if the state says `prepared` or `written`; no-op if `recorded` |
-+| neither | any | an intervening edit, not a transaction write — refuse and surface it |
++| neither | any | refuse — an intervening edit, not a transaction write |
++| any | neither | refuse — same, symmetric |
++| base or satisfied | base or satisfied | no writes landed — apply the diff, then record |
++| result or satisfied | base | the torn case — write the remaining file, then record |
++| base | result or satisfied | the torn case, other order — write the remaining file, then record |
++| result or satisfied | result or satisfied | writes completed — record if the state says `prepared` or `written`; no-op if `recorded` |
++
++Rows are evaluated top to bottom, so the two refusals take precedence and no combination matches
++twice.
 +
 +That table is why a transaction-owned write is never mistaken for an unauthorized edit: only the
 +approved base and result hashes are recognized, and anything else refuses. Recovery completes the
@@ -230,7 +248,7 @@
  ## 6. Intent-first goals (small parser change)
  
  ### 6.1 Format v2
-@@ -375,6 +549,20 @@
+@@ -375,6 +564,20 @@
  parser validates it; its intent lives in §2 of this spec. The successor validation run (§10) is the
  first v2 bundle.
  
@@ -251,7 +269,7 @@
  ### 6.2 Consumers
  
  - **Plan coverage:** unchanged; every `G<n>` must be cited by ≥ 1 task.
-@@ -398,6 +586,31 @@
+@@ -398,6 +601,31 @@
    `test/agents-compat.test.mjs` asserts the declared mode and validates a fixture v1-mode output
    against the v9 `record-goal-check` validator.
  
@@ -283,7 +301,18 @@
  ## 7. Finish drives to live (prose + durable gates in finish-step)
  
  ### 7.1 Definition of done — `done:` block, repo-local `.masterplan.yaml`
-@@ -1155,6 +1368,19 @@
+@@ -1135,8 +1363,8 @@
+   not this test; the suite and `scripts/bootstrap-v10.mjs` retire together after the successor.
+ - `interview-ledger-resume` additions: dirty payload → intent answer → clean payload → design
+   pick → `converged`; clean payload → design withdraw → still `converged`; a design answer that
+-  records a new draft → stale receipt → fresh critic required; medium reaches `exhausted` only at
+-  the cap or on `critic_unavailable`; each of `converged`/`exhausted`/`critic_off` refused with no
++  records a new draft → stale receipt → fresh critic required; a legacy interview at medium reaches `exhausted` only at
++  the cap or on `critic_unavailable` (schema-backed adds `forks_exhausted`, §5.4); each of `converged`/`exhausted`/`critic_off` refused with no
+   draft, refused with an intent answer after the latest draft, accepted after re-drafting; every
+   mutating verb refused after each terminal state and after waiver (including on replay);
+   `reopen` accepted only in `brainstorm` before `goals_frozen`, refused otherwise; `goals-load`
+@@ -1155,6 +1383,19 @@
    refused and `end` refused for every reason; intent floor unmet with the floor met → every
    non-waived exit refused; one intent answer + the intent floor → `draft` accepted.
  
