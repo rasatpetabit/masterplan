@@ -1091,3 +1091,38 @@ fix in the verb, on the branch, not here.
 mp decide still surfaces design-intent-amendment-approval. Clearing it is the
 operator's decision, and the goals amendment re-arms the spec gate, so a spec
 review may be owed before execution begins.
+
+## 2026-09-06 — spec gate PASSES; amendment gate cleared; run ready at wave 11
+
+The spec gate took three passes over its own artifacts. The first was refused by
+the reviewer because I supplied only goals.md when the gate covers spec.md AND
+goals.md — my error. The second returned REVISE with five findings, all needing
+text outside the approved amendment's sections; the operator chose to fix all
+five as a second amendment. The third closed three and left two blockers, both
+contradictions the remediation itself introduced. The fourth passed.
+
+The two self-inflicted ones are worth remembering. target_identity was placed in
+receipt tuples while §5.5 says any tuple member change invalidates the receipt
+and §6.3 said a benign re-resolution does not — a direct contradiction that would
+have invalidated confirmation on every refresh. Split into an authorization half
+{repository, remote, ref, repo_intent_digest} that receipts bind and an
+observation half {resolved_commit, resolved_at} that never enters an equality
+check. And the critic-outage path claimed the interview reaches exhausted and is
+then waived, which is impossible: terminal states are absorbing and the waiver
+exit requires an open interview. The interview now stays open and takes the
+direct waiver.
+
+Landed: goals e83f49fe -> e8d12bc8 under the operator's approval; spec bfa864f4
+-> 7dbac2f4 by patch, then the two corrections -> 2891e3d8. Spec gate receipt
+recorded at gate hash 2446cc5f, status done, 0 blocking findings.
+design-intent-amendment-approval is CLEARED; pending_gate is null.
+
+mp decide now returns dispatch_wave for wave 11 (tasks 49, 50, 58). Phase label
+is still brainstorm and deliberately untouched — decide dispatches off the task
+list, not the label, and mutating it buys nothing.
+
+Advisory, carried into implementation rather than blocking: four
+correction-specific test cases the reviewer named (observation-only refresh,
+absence transitions, schema-backed outage replay, outage at cap), and Codex's
+support disposition, which the spec leaves undefined although the README calls
+it a host. Nothing pushed, deployed, or claimed as release evidence.
