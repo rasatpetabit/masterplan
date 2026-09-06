@@ -260,6 +260,83 @@ test('repair without capture history names the absence', () => {
   assert.throws(() => repairFormatPin(statePath), /no schema_captured event/);
 });
 
+// ---- wave-12 review fix-round regressions (adversary findings, 2026-09-06) ------------
+
+test('an accepted extension section body moves the richer hash (review finding: dropped extensions)', () => {
+  const withA = versionedDoc(fixtureAuthoritative({ sections: { extra: { body: 'A' } } }));
+  const withB = versionedDoc(fixtureAuthoritative({ sections: { extra: { body: 'B' } } }));
+  const plain = versionedDoc(fixtureAuthoritative());
+  const hA = goalsHash(withA, { formatPin: 'schema_backed' });
+  const hB = goalsHash(withB, { formatPin: 'schema_backed' });
+  const h0 = goalsHash(plain, { formatPin: 'schema_backed' });
+  assert.notEqual(hA, h0, 'an added extension section must move the richer hash');
+  assert.notEqual(hB, hA, 'an edited extension section body must move the richer hash');
+  // Extension key ORDER does not matter (canonical sort):
+  const withAB = versionedDoc(fixtureAuthoritative({ sections: { zeta: { body: 'z' }, extra: { body: 'A' } } }));
+  const withBA = versionedDoc(fixtureAuthoritative({ sections: { extra: { body: 'A' }, zeta: { body: 'z' } } }));
+  assert.equal(goalsHash(withBA, { formatPin: 'schema_backed' }), goalsHash(withAB, { formatPin: 'schema_backed' }));
+  // A non-body-shaped extension is rejected loudly by the codec (encode and decode share the
+  // validator), never silently accepted-then-dropped:
+  const encBad = encodeIntentBlock(fixtureAuthoritative({ sections: { extra: { items: ['x'] } } }));
+  assert.equal(encBad.ok, false);
+  assert.match(encBad.error, /sections\.extra must be \{body: string\}/);
+});
+
+test('raw control characters inside canonical-JSON strings are rejected (review finding: lenient reader)', () => {
+  const enc = encodeIntentBlock(fixtureAuthoritative());
+  assert.ok(enc.ok);
+  // Inject a literal TAB into a body string (JSON forbids raw U+0000–U+001F):
+  const jsonStart = enc.block.indexOf('{');
+  const patched = enc.block.slice(0, jsonStart) +
+    enc.block.slice(jsonStart).replace(
+      /("purpose": \{\s*"body": ")Round-trip/,
+      '$1Round-trip\tX ',
+    );
+  assert.notEqual(patched, enc.block, 'the injection must have landed');
+  const doc = `topic: |\n  Fixture.\n${patched}\n## G1: Works\n## G2: Fast\n## G3: Documented\n`;
+  const dec = decodeIntent(doc);
+  assert.match(dec.error, /unescaped control character/);
+  assert.throws(() => goalsHash(doc, { formatPin: 'schema_backed' }), /unescaped control character/);
+  // The escaped form (\\t) remains perfectly legal:
+  const esc = enc.block.slice(0, jsonStart) +
+    enc.block.slice(jsonStart).replace(
+      /("purpose": \{\s*"body": ")Round-trip/,
+      '$1Round-trip\\\\tX ',
+    );
+  const docEsc = `topic: |\n  Fixture.\n${esc}\n## G1: Works\n## G2: Fast\n## G3: Documented\n`;
+  assert.equal(decodeIntent(docEsc).error, undefined);
+});
+
+test('non-string notes are rejected, never insertion-order-hashed (review finding: note shape)', () => {
+  // An object note would round-trip insertion-ordered, letting equivalent key order move
+  // the richer hash. The declared shape is string-only — reject it at decode.
+  const withObjNote = versionedDoc(fixtureAuthoritative({
+    evidence: [{ section: 'purpose', source: 's', note: 'text note' }],
+  }));
+  assert.equal(decodeIntent(withObjNote).error, undefined);
+  const enc = encodeIntentBlock(fixtureAuthoritative());
+  assert.ok(enc.ok);
+  const jsonStart = enc.block.indexOf('{');
+  const patched = enc.block.slice(0, jsonStart) +
+    enc.block.slice(jsonStart).replace(
+      /(\[\s*\{\s*"section": "purpose",\s*"source": "operator interview 2026-09-06"\s*\})/,
+      '$1, { "section": "purpose", "source": "s", "note": {"a":1,"b":2} }',
+    );
+  assert.notEqual(patched, enc.block, 'the note injection must have landed');
+  const doc = `topic: |\n  Fixture.\n${patched}\n## G1: Works\n## G2: Fast\n## G3: Documented\n`;
+  const dec = decodeIntent(doc);
+  assert.match(dec.error, /evidence notes must be strings/);
+  assert.throws(() => goalsHash(doc, { formatPin: 'schema_backed' }), /evidence notes must be strings/);
+  // Same for a reconciliation row:
+  const patched2 = enc.block.slice(0, jsonStart) +
+    enc.block.slice(jsonStart).replace(
+      /(\[\s*\{\s*"target": "repository INTENT\.md §1",\s*"status": "verified"\s*\})/,
+      '$1, { "target": "t", "status": "s", "note": {"b":2,"a":1} }',
+    );
+  const doc2 = `topic: |\n  Fixture.\n${patched2}\n## G1: Works\n## G2: Fast\n## G3: Documented\n`;
+  assert.match(decodeIntent(doc2).error, /reconciliation notes must be strings/);
+});
+
 // ---- end-to-end pin dispatch --------------------------------------------------------
 
 test('the versioned document hashes richer under schema_backed and legacy-identical under legacy', () => {

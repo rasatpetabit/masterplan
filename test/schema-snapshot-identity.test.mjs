@@ -598,6 +598,108 @@ test('black-box CLI: amend-skill-identity recomputes the changed skill end to en
   assert.equal(assertSkillIdentity({ statePath, skillRoot }).ok, true);
 });
 
+// ---- wave-12 review fix-round regressions (adversary findings, 2026-09-06) -------
+
+test('an ancestor symlink inside the closed set fails closed as undeclared_dependency', () => {
+  // Review finding: a textually-in-range path whose ANCESTOR is a symlink to outside the
+  // root used to pass the leaf lstat and digest OUTSIDE bytes into the identity. The
+  // confined read re-verifies every ancestor as a real directory at read time.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sk-esc-'));
+  TMPDIRS.push(dir);
+  const skillRoot = path.join(dir, 'skill');
+  const outside = path.join(dir, 'outside');
+  fs.mkdirSync(path.join(skillRoot, 'assets'), { recursive: true });
+  fs.mkdirSync(outside, { recursive: true });
+  fs.writeFileSync(path.join(outside, 'ref.md'), 'content outside the skill root\n');
+  fs.writeFileSync(path.join(skillRoot, 'SKILL.md'), '# fixture design-intent\n');
+  fs.writeFileSync(path.join(skillRoot, 'schema.json'), '{"version": 1, "core": ["Purpose"]}\n');
+  fs.writeFileSync(path.join(skillRoot, 'manifest.json'), `${JSON.stringify({
+    manifest_version: 1,
+    skill: 'fixture-intent',
+    host_contract_version: 1,
+    schema_format_version: 1,
+    identity: { algorithm: 'sha256', closed_file_set: ['SKILL.md', 'manifest.json', 'schema.json', 'assets/ref.md'] },
+  }, null, 2)}\n`);
+  // Swap the real assets dir for a symlink to outside — the leaf lstat passes (it stats the
+  // outside regular file); the digest-time ancestor walk must refuse.
+  fs.rmSync(path.join(skillRoot, 'assets'), { recursive: true, force: true });
+  fs.symlinkSync(outside, path.join(skillRoot, 'assets'));
+  for (const op of [computeSkillIdentity, captureSchemaSnapshot]) {
+    assert.throws(
+      () => op({ skillRoot }),
+      (e) => /undeclared_dependency: .*ancestor assets is not a real directory/.test(e.message),
+      `the ancestor symlink must fail ${op.name} closed`,
+    );
+  }
+});
+
+test('a leaf swapped for a symlink fails its no-follow open and never digests outside bytes', () => {
+  // The confinement's leaf half: O_NOFOLLOW means a post-inspection swap of a closed-set
+  // member for an outside symlink can never reappear through the read — the open fails
+  // (ELOOP) instead of digesting outside content. The deterministic proof of the open's
+  // behavior, plus the validation-level refusal through the module ops.
+  const { skillRoot } = mkskill();
+  const outside = path.join(path.dirname(skillRoot), 'outside-leaf');
+  fs.writeFileSync(outside, 'outside leaf content\n');
+  const real = path.join(skillRoot, 'reference.md');
+  fs.rmSync(real);
+  fs.symlinkSync(outside, real);
+  assert.throws(
+    () => { fs.openSync(real, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW); },
+    (e) => e.code === 'ELOOP',
+    'O_NOFOLLOW must refuse a symlinked leaf (the digest-time read fails closed, not outside)',
+  );
+  assert.throws(() => computeSkillIdentity({ skillRoot }), (e) => /^undeclared_dependency:/.test(e.message));
+  assert.throws(() => captureSchemaSnapshot({ skillRoot }), (e) => /^undeclared_dependency:/.test(e.message));
+});
+
+test('a snapshot replaced by a symlink to the live file is refused, never followed', () => {
+  // Review finding: readSchemaSnapshot used to follow symlinks, so a frozen bundle could
+  // read the LIVE skill file through a snapshot symlink (digest equality did not establish
+  // snapshot independence). The no-follow read must name the tamper and fail closed.
+  registerSchemaSnapshotModule({ captureSchemaSnapshot, computeSkillIdentity });
+  const { skillRoot } = mkskill();
+  const { statePath } = mkbundle();
+  captureSchema({ statePath, skillRoot });
+  const snapshotPath = path.join(path.dirname(statePath), SCHEMA_SNAPSHOT_FILENAME);
+  const live = fs.readFileSync(path.join(skillRoot, 'schema.json'));
+  fs.rmSync(snapshotPath);
+  fs.symlinkSync(path.join(skillRoot, 'schema.json'), snapshotPath);
+  assert.throws(
+    () => readSchemaSnapshot({ statePath }),
+    (e) => /schema_snapshot_not_regular: .*symlink/.test(e.message),
+    'a symlink snapshot must fail closed as not-regular, never read the live file through it',
+  );
+  // And once the symlink is replaced by the real bytes again, the read works — the refusal
+  // is about the entry's shape, not a poisoned state:
+  fs.rmSync(snapshotPath);
+  fs.writeFileSync(snapshotPath, live);
+  const snap = readSchemaSnapshot({ statePath });
+  assert.deepEqual(snap.bytes, live);
+});
+
+test('a capture whose destination is a pre-existing symlink is refused, not followed', () => {
+  // The copy half of the same finding: writeFileSync would FOLLOW a destination symlink and
+  // clobber its target (possibly the live schema.json). The copy refuses a non-regular
+  // destination outright and publishes via temp + atomic rename.
+  registerSchemaSnapshotModule({ captureSchemaSnapshot, computeSkillIdentity });
+  const { skillRoot } = mkskill();
+  const { statePath } = mkbundle();
+  const snapshotPath = path.join(path.dirname(statePath), SCHEMA_SNAPSHOT_FILENAME);
+  const target = path.join(path.dirname(statePath), 'clobber-target.json');
+  fs.writeFileSync(target, '{"version": 1, "core": ["Purpose"]}\n');
+  fs.symlinkSync(target, snapshotPath);
+  assert.throws(() => captureSchema({ statePath, skillRoot }), /schema_snapshot_not_regular/);
+  assert.equal(replaySchemaCapture(statePath).captured, null, 'a refusal is not a partial write');
+  // The symlink's TARGET was not clobbered (its bytes are still its own):
+  assert.equal(fs.readFileSync(target, 'utf8'), '{"version": 1, "core": ["Purpose"]}\n');
+  // A clean capture after removing the symlink still works and publishes a regular file:
+  fs.rmSync(snapshotPath);
+  const ev = captureSchema({ statePath, skillRoot });
+  assert.ok(fs.lstatSync(snapshotPath).isFile(), 'the published snapshot is a regular file');
+  assert.equal(sha256Hex(fs.readFileSync(snapshotPath)), ev.schema_sha256);
+});
+
 function runCli(args) {
   try {
     return {
