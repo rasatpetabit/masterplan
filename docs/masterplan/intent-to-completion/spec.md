@@ -87,6 +87,7 @@ can see this; a "does a different value produce different behavior" test can.
 | `render_images` | `on\|off` | `--render-images` | all | `off` |
 | `fabric` | `on\|off` | `--fabric` | all | `on` |
 | `context_watch` | object `{threshold: 1–99, focus: string \| null}` | — | all | `{threshold: 70, focus: null}` (`null` = the masterplan-authored text §9 generates; a string replaces it and is consumed by `mp context-status`) |
+| `interview` | object `{probing_minimum: {low: int, medium: int, high: int}}` (§5.3) | — | all | `{probing_minimum: {low: 1, medium: 2, high: 4}}` |
 | `done` | object (§7.1) **or the literal `none`** (no deploy surface, §7.1) | — | **repo-local only** | absent |
 
 Rules:
@@ -219,6 +220,19 @@ Two tests, both required:
 Replaces the sequencer's "invoke `superpowers:brainstorming` directly" with a masterplan-owned
 questioning phase; the brainstorming skill still governs the design/spec half.
 
+The questioning phase does not implement its own question generator. `/design-intent` plan mode
+owns the questions, the rewrite test, the section schema, and reconciliation with the repository
+`INTENT.md` (§6.3). Masterplan owns the ledger, the native `goals.md` artifact, the hashes, the
+gate integration, and the lifecycle. There is one interview implementation with two consumers.
+The sequencer supplies plan mode with a host contract — the existing anchor and evidence, the
+current draft, the ledger status, and the permitted recorder operations — and the skill returns
+questions, answers and a draft; it never writes `state.yml` or `events.jsonl`. `mp interview`
+remains the only recorder. The skill's repo and assess modes keep their existing public behavior;
+plan mode learns this host contract instead of refusing a `goals.md` because it carries `## G<n>:`
+blocks, and the native adapter presents only the intent projection to the shared validator while
+the goal blocks stay owned and validated by masterplan.
+
+
 ### 5.1 Steps
 
 1. **Context.** Existing recon, plus the seed-time overlap check (§8).
@@ -232,7 +246,8 @@ questioning phase; the brainstorming skill still governs the design/spec half.
    longer than ~25 words. A *how* question (which file, which flag, which library) is forbidden: the
    model proposes 2–3 concrete options with a recommendation and records the operator's pick as a
    `design` entry. The intent-vs-how classification is a judgment the prompt makes and the critic
-   reviews; it is **not** mechanically enforced, and the docs say so.
+   reviews; it is **not** mechanically enforced, and the docs say so. Per §5's delegation this step's
+   discipline is the skill's; the spec cites it rather than keeping a second copy.
 4. **Critic round** (per §4.2): dispatch `agents/mp-intent-critic.md` (critic class, breaker role,
    frontier lane, read-only, fresh context) with the verbatim anchor, the ledger, and the current
    intent draft as QUOTED DATA. Its payload `{unknowns: [{id, question, why_it_changes_design,
@@ -316,24 +331,76 @@ single writer:
 Verbatim question and answer text is stored so a compaction mid-interview resumes from disk; the
 latest critic payload is re-read from its artifact.
 
+
+**Convergence.** A schema-backed interview converges only when two independent conditions both
+hold. **Coverage:** every checked section carries real evidence, each with its provenance and its
+unresolved uncertainty stated; a section satisfied from prior context is covered but is not an
+answer. **Probing:** at least `interview.probing_minimum` genuine open questions — a question at a
+real fork whose answer only the operator holds — have been asked and answered fresh in this
+interview. Neither condition substitutes for the other.
+
+`probing_minimum` resolves from the complexity level through the §4 config hierarchy and is
+validated on load: an integer ≥ 1, non-decreasing as complexity rises, with `high` strictly
+greater than `low`. A configuration violating those constraints fails closed at resolution. The
+shipped defaults are `low: 1`, `medium: 2`, `high: 4` — configuration, not invariants.
+
+Which recorded questions count toward the minimum is not the questioner's own judgment. Where a
+critic runs, it assesses eligibility against the actual ledger entries and returns an
+`eligible: [question_id]` set and a `forks_remaining: bool` verdict in its payload (§5.1 step 4);
+a question absent from `eligible` does not count, and the recorder rejects an eligible set naming
+an unknown, duplicate, withdrawn, unanswered, or design-kind id. At `complexity: low` the critic
+is off (§4.2) and there is no adjudicator, so eligibility is the recorder's own mechanical test —
+intent-kind, answered, not withdrawn, recorded fresh in this interview — and `forks_remaining` is
+not consulted; this is why `low`'s probing minimum is 1.
+
+This introduces **no new terminal states**: §5.4's set is exhaustive and unchanged. Cap reached
+with the probing minimum unmet is the existing cap-with-floor-unmet case, whose only exit is
+`waived` (reason `probing_minimum_unmet_at_cap`). Coverage complete with the critic returning
+`forks_remaining: false` before the minimum is met is `exhausted`, carrying reason
+`forks_exhausted` — it is not `converged`, and a waiver over it is recorded as a waiver, never as
+a converged interview. A run never manufactures a question to reach a number, and a look-up never
+increments the fresh count.
+
+Negative controls are required: a draft that merely restates the request, and one resting on an
+unsupported assumption, must each fail to converge despite appearing complete.
+
+The ledger records real questions and real answers only. Evidence reused from prior context keeps
+its original provenance and is never relabelled as a fresh answer, and an operator's approval of
+a whole draft is never expanded into several synthetic question/answer events.
+
 ### 5.4 Terminal states and `goals-load`
+
+**A schema-backed interview (§5.5) replaces the three numeric floors below with §5.3's two
+conditions** — coverage of every checked section, and the probing minimum met. Everything else in
+this section governs it unchanged: zero unanswered questions, the latest-draft rule, the critic
+requirements per state, and the `goals-load` dispositions. Where this section says "the floor, the
+intent floor, and the intent-round minimum", a schema-backed interview reads "coverage and the
+probing minimum"; a legacy interview reads it as written. The `converged` row's per-round critic
+requirement at `high` applies to both.
+
+One exemption, because the state is defined by the minimum going unmet: `exhausted` with reason
+`forks_exhausted` requires coverage but **not** the probing minimum. Every other prerequisite —
+zero unanswered questions, the latest-draft rule, and the critic evidence that state requires —
+still holds. Where both predicates hold at once, the cap wins: a cap reached with the probing
+minimum unmet leaves only the waiver, whatever the critic said about remaining forks.
 
 Every terminal state other than `waived` requires **zero unanswered questions** (answer or
 withdraw first), **the floor, the intent floor, and the intent-round minimum met** (answered ≥
 floor, answered intent-kind ≥ intent floor, completed intent rounds ≥ the level's minimum, §4.2
 — withdrawn questions never count toward the floors, so twenty asks and twenty withdraws satisfy
-nothing, eight design picks satisfy nothing, and eight intent questions in two rounds satisfy
+nothing, eight design picks satisfy nothing, and — for a legacy interview — eight intent questions in two rounds satisfy
 nothing at `high`), **and an `interview_draft` as the latest
 intent-content event** — the draft is the synthesis §5.1 step 6 writes into `goals.md`, so an
 intent answer recorded after the latest draft blocks every exit until a new draft is recorded
 (and, where a critic is required, reviewed). A cap reached with the floor unmet leaves only the
-waiver exit, recorded with reason `floor_unmet_at_cap`.
+waiver exit, recorded with reason `floor_unmet_at_cap` (schema-backed:
+`probing_minimum_unmet_at_cap`).
 
 | state | valid when (in addition to the rule above) | `goals-load` |
 |---|---|---|
 | `converged` | floors met; completed intent rounds ≥ the level's minimum (§4.2); ≥ 1 active uncorrected design pick; the latest critic receipt is valid, its `content_head` equals the current content head (which, per the rule above, is the latest draft) and its `intent_sha256` equals that draft; and its payload is **clean**: zero `unknowns`, zero `contradictions`, zero `misclassified`. An unclean payload is resolved by further intent content, a new draft, and a fresh critic run whose payload is clean; at `high`, additionally every intent round has its **own** critic receipt — one recorded after that round's last content event and before the next intent round's first ask (for the last round, before the terminal event) — so the count of distinct receipts is at least the count of completed intent rounds (§4.2, §5.3) | accepts |
-| `exhausted` | asked == cap (any complexity), or critic mode is `unavailable` **after** one retry and the operator's acknowledgement (`critic_unavailable_ack`, §5.3) — the event lists the attempts; the `unknowns`, `contradictions`, and `misclassified` entries of the latest available payload (the last successful one, if any) are listed in the event | accepts; the spec must carry the `assumed` rows for all three (checked, below) |
-| `critic_off` | `complexity: low`; floor met | accepts |
+| `exhausted` | asked == cap (any complexity); or, schema-backed, coverage complete with the critic's `forks_remaining: false` before the probing minimum is met (reason `forks_exhausted`); or critic mode is `unavailable` **after** one retry and the operator's acknowledgement (`critic_unavailable_ack`, §5.3) — the event lists the attempts; the `unknowns`, `contradictions`, and `misclassified` entries of the latest available payload (the last successful one, if any) are listed in the event | accepts; the spec must carry the `assumed` rows for all three (checked, below) |
+| `critic_off` | `complexity: low`; floor met (schema-backed: coverage complete and the probing minimum met under the recorder's mechanical eligibility test, §5.3) | accepts |
 | `waived` | `goals-load --interview-waived --reason=…` on an open interview; durable `interview_waived` event; the only exit once the cap is reached with the floor unmet | accepts, recorded as waived |
 | (none) | interview still open | refuses |
 
@@ -346,6 +413,128 @@ receives the spec path at the gate and refuses (`assumed_row_missing`) when any 
 `interview_end` event lists (`unknowns`, `contradictions`, `misclassified`) has no row in the
 spec's Assumptions table; the event remains the durable record of all three lists, so a lagging
 table is caught, not lost.
+
+### 5.5 Schema ownership, snapshot, and skill identity
+
+The `/design-intent` skill's `schema.json` is the schema authority. Masterplan resolves it from
+the installed skill, validates that the format version is supported, and copies the exact bytes
+into a bundle snapshot when schema-backed capture is approved, recording the snapshot digest. A
+frozen bundle reads its snapshot, never the live skill file. A schema that is missing, malformed,
+unsupported, or mismatched fails closed. A schema upgrade is an explicit amendment; there is no
+silent migration.
+
+Schema bytes do not identify the code that reads them, so capture also records a **skill
+identity**: a digest over a *closed* file set — `SKILL.md`, `schema.json`, the manifest itself,
+and every file the manifest lists — together with the skill's declared host-contract version and
+schema-format version. The digest is the identity; the declarations are supplementary and never
+substitute for it. An ordinary update that changes behavior without bumping a version therefore
+changes the identity and is detected.
+
+The set is closed by requiring the manifest to be complete: the skill declares every
+behavior-affecting asset it loads, and loading an undeclared file at runtime is a named failure
+(`undeclared_dependency`), not a silent read. Without that rule the digest would cover a chosen
+subset rather than the implementation. Identity is computed deterministically over the set sorted
+by manifest-relative path, each entry contributing its path and its content, so filesystem
+enumeration order cannot change it; a listed file that is missing, or a path escaping the skill
+root, fails closed.
+
+At every later operation the installed skill's recomputed identity must equal the run's recorded
+identity, or the operation stops with a named failure — `skill_absent`, `skill_identity_changed`,
+`host_contract_unsupported`, `schema_unsupported`, or `undeclared_dependency`, per operation.
+There is no fallback to native questioning and none to a newer live schema.
+
+A routine skill update is therefore not a dead end: `mp interview amend-skill-identity` is the one
+operation exempt from the equality guard, precisely so it can inspect a changed skill. It records
+the new identity, invalidates every receipt bound to the old one, requires the operator's
+approval, and commits the replacement — and it is itself resumable, so an interrupted identity
+amendment completes without reusing old receipts. Every other operation stays blocked until it
+runs. An identity is never adopted in place or by inference.
+Receipts and results never cross snapshot or identity boundaries, so two runs holding different
+snapshots cannot share evidence.
+
+**Receipt identity tuples.** Every receipt names what it authorizes, and any change to a member
+invalidates it:
+
+| Receipt | Identity tuple |
+|---|---|
+| Interview draft | `{goals_hash, schema_snapshot_digest, skill_identity, ledger_seq}` |
+| Critic | `{draft_identity, reviewer_identity, schema_snapshot_digest, skill_identity}` |
+| Goal amendment | `{old_goals_hash, new_goals_hash, spec_hash, approval_receipt_id}` |
+| Spec review | `{spec_hash, intent_identity, reviewer_identity}` |
+| Alignment audit | `{anchor_hash, plan_hash, intent_identity, reviewer_identity}` |
+| Task adversarial review | `{task_id, commit_sha, intent_identity, reviewer_identity}` |
+| Finish assessment | `{intent_identity, repo_intent_digest, target_identity, deploy_base_sha, deploy_chain_hash, live_check_digest, reviewer_identity}` |
+
+`intent_identity` is `{goals_hash, schema_snapshot_digest, skill_identity,
+reconciliation_digest}`. Carrying `skill_identity` inside it is what makes the claim above true
+that evidence never crosses an identity boundary: two skills with identical schema bytes but
+different instructions produce different `intent_identity` values, so evidence earned under one
+cannot satisfy a checkpoint under the other. The finish tuple names §6.2's deploy fields
+explicitly rather than referring to them, so the tuple is the whole authorization.
+
+**Two identities, never confused.** An *artifact* identity is the exact bytes of a file —
+`spec.md`, `goals.md`, the schema snapshot, an approved promotion result. An *evidence* identity
+is the canonical hash of parsed content, which is what receipts bind. Approval under §5.6 is
+always artifact identity: no cosmetic edit is equivalent there. Canonical equivalence below
+applies only to evidence identity. The legacy canonicalizer is unchanged and keeps legacy hashes
+byte-stable; the rules below define the new one, and the format pin selects between them.
+
+**Canonical equivalence.** Canonicalization before hashing is defined once here and shared by
+every consumer of the new format: line endings normalize to `\n`, a single trailing newline is enforced, trailing
+whitespace on each line is stripped, and object key order is irrelevant. Everything else is
+semantic — interior whitespace, list order, heading text, and section order all change the hash.
+The schema snapshot is exempt: it is compared by exact bytes, so reordering keys inside it
+produces a different snapshot.
+
+### 5.6 Promotion of an approved amendment
+
+An amendment is approved as **resulting bytes**, never as an instruction to edit. It therefore
+ships three things whose digests the approval binds: the base `spec.md` and `goals.md` hashes it
+was produced against, a unified diff that applies cleanly to exactly those bases, and the
+resulting `spec.md` and `goals.md` hashes. Applying the diff to the bases must reproduce the
+resulting hashes; if it does not, the amendment is invalid and refuses before anything is
+written.
+
+Promotion is a durable transaction, written before any mutation: `{transaction_id, base_hashes,
+result_hashes, diff_digest, approval_receipt_id, state}`. The pre-image is recoverable because
+the bases are committed git objects and the diff is durable — the transaction never relies on
+hashes alone to restore bytes. The transaction also records the git object ids of both bases and pins them with a ref
+so they cannot be garbage-collected, which is what makes the pre-image recoverable rather than
+merely identified.
+
+Recovery does not trust the state field alone; it hashes each artifact on disk and compares
+against the approved base and result identities, which is decidable for every combination:
+
+Each artifact is first classified against its own approved identities, and an artifact whose base
+and result hashes are equal — an amendment that does not change that file — is classified
+`satisfied` and never contributes a torn state. Refusal is symmetric: if **either** artifact is
+neither its approved base nor its approved result, recovery refuses.
+
+| `spec.md` | `goals.md` | action |
+|---|---|---|
+| neither | any | refuse — an intervening edit, not a transaction write |
+| any | neither | refuse — same, symmetric |
+| base or satisfied | base or satisfied | no writes landed — apply the diff, then record |
+| result or satisfied | base | the torn case — write the remaining file, then record |
+| base | result or satisfied | the torn case, other order — write the remaining file, then record |
+| result or satisfied | result or satisfied | writes completed — record if the state says `prepared` or `written`; no-op if `recorded` |
+
+Rows are evaluated top to bottom, so the two refusals take precedence and no combination matches
+twice.
+
+That table is why a transaction-owned write is never mistaken for an unauthorized edit: only the
+approved base and result hashes are recognized, and anything else refuses. Recovery completes the
+approved promotion, never rolls one back, and never re-asks the operator. Recording is
+exactly-once: the record carries the `transaction_id`, and a replay that finds it already present
+is a no-op.
+
+The gate hash spans `spec.md` + `goals.md`, so the pair promotes together and a partial write is
+a named failure that refuses to advance. `mp goals-amend` requires its own exact-artifact
+user-approval receipt binding both the prior and the resulting goals hash. The transaction holds
+the bundle's write lock across both file writes and the record, so a competing writer is
+serialized rather than merely detected; an expected-revision check on the bases catches a writer
+that changed them between approval and promotion. Any edit to either artifact after approval and
+before promotion invalidates the approval and requires a fresh one.
 
 ## 6. Intent-first goals (small parser change)
 
@@ -375,6 +564,20 @@ immutable (`validateAmendment` unchanged).
 parser validates it; its intent lives in §2 of this spec. The successor validation run (§10) is the
 first v2 bundle.
 
+
+Both hash promises hold together through an explicit format discriminator recorded in durable
+bundle state, not inside the removable representation: that pin selects the legacy canonicalizer
+for a v1 document and the richer one for a versioned document, and every consumer — parser,
+checkpoint and reader alike — dispatches on the same pin. The new canonical coverage includes the
+source-evidence provenance, so a provenance edit invalidates the receipts bound to it even when no
+section body changed. Duplicate fields, duplicate sections, an unknown version, and a malformed
+version marker are rejected rather than parsed leniently. Stripping the representation from a
+bundle the pin marks schema-backed is a rejected downgrade, not a fall back to legacy handling. A
+*missing* pin is not read as legacy either: `events.jsonl` carries the schema-capture event, so a
+bundle with a capture event and no pin is repaired from that history and refuses to parse as
+legacy in the meantime — otherwise deleting the pin would reopen the downgrade it closes.
+Canonical equivalence is defined once in §5.5 and shared.
+
 ### 6.2 Consumers
 
 - **Plan coverage:** unchanged; every `G<n>` must be cited by ≥ 1 task.
@@ -397,6 +600,31 @@ first v2 bundle.
   final-assessment payload) produce the v9 verdict schema with no `intent_verdict`.
   `test/agents-compat.test.mjs` asserts the declared mode and validates a fixture v1-mode output
   against the v9 `record-goal-check` validator.
+
+### 6.3 Reconciliation with the repository INTENT.md
+
+The skill constructs one reconciliation row per repository `INTENT.md` section, carrying the
+repository artifact's path and digest or an explicit absent-source state. Masterplan validates and
+persists the result. Missing rows, unresolved conflicts, and repository-intent drift are not
+neutral outcomes.
+
+The repository artifact resolves from the run's **integration target**, not from the working tree
+of whichever branch execution happens on. The target is an identity, not a name: `{repository,
+remote, ref, resolved_commit, resolved_at}`. Reads use the recorded `resolved_commit`, never a ref
+that may have moved and never a working-tree path, and the recorded identity and the recorded
+bytes always come from the same resolution.
+
+A target that cannot be established — none selected yet, a stale cache, or a name that resolves
+ambiguously between a local branch and its upstream — is **unknown/unavailable**, a named failure.
+That is distinct from a verified absence, which is the absent-source state and is reserved for a
+target that demonstrably carries no `INTENT.md`. A detached `HEAD` is neither by itself: an
+executor with a detached worktree but an explicitly configured, freshly resolved target resolves
+normally. Retargeting invalidates the reconciliation bound to the previous target. A target that
+moves while `INTENT.md`'s bytes are unchanged is not drift, which is why both the resolved commit
+and the digest are recorded.
+
+A branch that lacks an artifact its target carries is drift, reported at the checkpoint. It is not
+resolved by moving the branch base.
 
 ## 7. Finish drives to live (prose + durable gates in finish-step)
 
@@ -1135,8 +1363,8 @@ Named suites, each required by §4.4's inventory or by a finding in §13:
   not this test; the suite and `scripts/bootstrap-v10.mjs` retire together after the successor.
 - `interview-ledger-resume` additions: dirty payload → intent answer → clean payload → design
   pick → `converged`; clean payload → design withdraw → still `converged`; a design answer that
-  records a new draft → stale receipt → fresh critic required; medium reaches `exhausted` only at
-  the cap or on `critic_unavailable`; each of `converged`/`exhausted`/`critic_off` refused with no
+  records a new draft → stale receipt → fresh critic required; a legacy interview at medium reaches `exhausted` only at
+  the cap or on `critic_unavailable` (schema-backed adds `forks_exhausted`, §5.4); each of `converged`/`exhausted`/`critic_off` refused with no
   draft, refused with an intent answer after the latest draft, accepted after re-drafting; every
   mutating verb refused after each terminal state and after waiver (including on replay);
   `reopen` accepted only in `brainstorm` before `goals_frozen`, refused otherwise; `goals-load`
@@ -1154,6 +1382,19 @@ Named suites, each required by §4.4's inventory or by a finding in §13:
   at `high` → every non-waived exit refused); a design-only ledger (eight design picks at `high`) → `draft`
   refused and `end` refused for every reason; intent floor unmet with the floor met → every
   non-waived exit refused; one intent answer + the intent floor → `draft` accepted.
+
+
+**Intent evidence at the four checkpoints.** Spec review, the end-of-planning alignment audit,
+per-task adversarial review, and the finish assessment each additionally carry the evidence named
+by §5.5's receipt tuples. Evidence that is missing, partial, unreadable or stale, and a reviewer
+identity that is unresolved, are **unavailable** — never approval. A substantive `fights` verdict,
+a mechanism leak, or source drift is a decision for the operator. Legacy behavior stays explicit:
+the absence of legacy evidence is not a new-format pass. Tests cover, per checkpoint, rejection of
+omitted, partial, stale and mismatched evidence; mutation of every section, the provenance, the
+reconciliation and the schema digest invalidating bound receipts; cosmetic equivalence per §5.5
+not invalidating; the promotion transaction replaying correctly from `prepared`, `written` and
+`recorded`; a stripped schema-backed document rejected as a downgrade through every parser path;
+and alternate schema content proving the checked-section set is data-driven.
 
 ## 12. Touch surface
 
