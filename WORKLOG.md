@@ -1057,3 +1057,37 @@ packages, appended via mp amend-tasks so the completed records survive; it
 needs its own plan gate and adversary pass before any implementation. Nothing
 was pushed, deployed, or claimed as release evidence, and the branch base
 stays 1f2741f per the accepted scope.
+
+## 2026-09-06 — amendment task plan appended and revised at the plan gate
+
+Eleven tasks (49-59, waves 11-16) for the six work packages, appended via
+mp amend-tasks; 48 completed records preserved, 0 pruned. The plan gate's
+adversary pass blocked the first cut and two of its findings were verifiable
+rather than judgment: no task owned bin/masterplan.mjs although the approved
+amendment adds two mp verbs, and G7's own declared evidence files were produced
+by no task — the goals landed at approval named evidence the plan did not
+create. Both fixed (task 58 owns the CLI surface and the two event schemas;
+tasks 50 and 53 produce G7's evidence under its declared names).
+
+The structural lesson worth keeping: several tasks owned a new helper library
+while nothing owned the existing call sites, so the suite could have gone green
+with nothing actually enforced. Task 56 now owns lib/task-review.mjs,
+lib/finish.mjs and the three reviewer prompts; task 55 owns the promotion entry
+path and the gate's combined binding.
+
+The cutover deleting the old questioner is task 59 at wave 15, deliberately
+after capture, convergence, reconciliation and resume are proven, so an
+interrupted run is never left unable to interview.
+
+Accepted risk, not applied: the reviewer wants acceptance ownership separated
+from implementation ownership on every task. That changes how this run assigns
+work and is the operator's call, not a defect in these tasks.
+
+Also found: mp reindex-plan cannot restamp this bundle — its regex requires a
+"sha256:" prefix while the index carries bare hex, which is true at HEAD too.
+plan_hash was restamped by hand in the bundle's existing format. Worth a real
+fix in the verb, on the branch, not here.
+
+mp decide still surfaces design-intent-amendment-approval. Clearing it is the
+operator's decision, and the goals amendment re-arms the spec gate, so a spec
+review may be owed before execution begins.
