@@ -59,9 +59,13 @@ const validFixtures = {
   bootstrap_armed: { type: 'bootstrap_armed', pass: 1, step: 'rehearsal', cmd: 'c', sha: 's' },
   bootstrap_step: { type: 'bootstrap_step', pass: 1, step: 'rehearsal', cmd: 'c', exit: 0, status: 'done' },
   goal_check: { type: 'goal_check', final: true, deploy_base_sha: 's', deploy_chain_hash: 'h', live_check_digest: null, intent_verdict: 'met' },
+  schema_captured: { type: 'schema_captured', schema_sha256: 'a'.repeat(64), skill_identity: 'b'.repeat(64), host_contract_version: '1', schema_format_version: '1', format_pin: 'schema_backed' },
+  skill_identity_amended: { type: 'skill_identity_amended', old_skill_identity: 'a'.repeat(64), new_skill_identity: 'b'.repeat(64), approval: { attested_by: 'user', purpose: 'skill_identity_amend', skill_identity: 'b'.repeat(64), question: 'approve?', answer: 'approved', ts: '2026-01-02T00:00:00.000Z' } },
 };
 
 const invalidField = {
+  schema_captured: 'schema_sha256',
+  skill_identity_amended: 'approval',
   interview_question: 'id',
   interview_answer: 'id',
   interview_withdraw: 'id',
@@ -117,6 +121,8 @@ const REQUIRED_EVENT_TYPES = [
   'completion_confirmed',
   'incomplete_authorized',
   'required_successor',
+  'schema_captured',
+  'skill_identity_amended',
   'archive_pushed',
   'archive_push_skipped',
   'push_probe',

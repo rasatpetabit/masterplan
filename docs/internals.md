@@ -66,6 +66,7 @@ artifacts — see `commands/masterplan.md` §3b.
 | [wave-dispatch.md](internals/wave-dispatch.md) | Routing decisions and one-wave dispatch: how `lib/dispatch/` classifies tasks and `lib/dispatch-wave.mjs` runs a single wave | `lib/dispatch/` + `lib/dispatch-wave.mjs` |
 | [task-verification.md](internals/task-verification.md) | D6 scope verify and the review stage: acceptance criteria, trust-skip conditions | `lib/wave.mjs` |
 | [doctor.md](internals/doctor.md) | Doctor contract: discovery, crash isolation, Finding shape, all 19 check modules | `bin/doctor.mjs` + `lib/doctor/*.mjs` |
+| [design-intent-integration.md](internals/design-intent-integration.md) | Design-intent skill host contract: ownership split, schema capture, the skill-identity pin and its amendment | `policy/design-intent-skill.json` + `lib/interview.mjs` |
 
 ## Cross-cutting References
 
