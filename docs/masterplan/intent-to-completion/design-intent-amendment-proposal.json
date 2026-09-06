@@ -12,5 +12,21 @@
     "G8"
   ],
   "unresolved": [],
-  "implementation_started": false
+  "implementation_started": false,
+  "proposed_spec_amendment": {
+    "path": "spec.design-intent.proposed.md",
+    "sha256": "sha256:03ee148a72de679f43e86834c32a839085ad6fc35175ce46b89247c9d0f58170",
+    "amends": [
+      "5",
+      "5.1",
+      "5.3",
+      "6.1",
+      "11"
+    ],
+    "adds": [
+      "5.5",
+      "6.3"
+    ],
+    "spec_md_unchanged_sha256": "sha256:6111aaf4dbb804994bd592985cc4da28bee8de385eef4d13a1e0a137b6e54595"
+  }
 }
