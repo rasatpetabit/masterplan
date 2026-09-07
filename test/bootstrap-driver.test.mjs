@@ -1627,6 +1627,54 @@ test('the FIRST pr_merge of a run whose pass 1 died before step 5 binds the base
   assert.ok(armed.preconditions.some((p) => p.name === 'remote_main_expected' && p.ok), JSON.stringify(armed));
 });
 
+test('a later pass whose main_push is OMITTED (a prior pass completed it) still finds the pr_merge base', (t) => {
+  const fx = makeFixture(t);
+  const targets2 = { ...fx.targets, version: '10.0.1' };
+  // Pass 1 died at ci_wait; pass 2 carried the first main_push (done) and died before pr_merge.
+  for (const step of STEP_ORDER.filter((s) => !['gate', 'main_push', 'pr_merge', 'claude_surface', 'surfaces_live'].includes(s))) {
+    const data = step === 'publish_ack' ? { answer: 'proceed' } : step === 'push' ? { published_tip: fx.tip, published_tag: 'x' } : {};
+    appendEvent(fx.statePath, { type: 'bootstrap_step', ts: 2, pass: 1, step, cmd: 'seeded', exit: step === 'ci_wait' ? 1 : 0, status: step === 'ci_wait' ? 'failed' : 'done', data });
+  }
+  const eventsNow = fs.readFileSync(fx.statePath.replace(/state\.yml$/, 'events.jsonl'), 'utf8').trim().split('\n');
+  const ciWaitIdx = eventsNow.findIndex((l) => { try { const e = JSON.parse(l); return e.type === 'bootstrap_step' && e.pass === 1 && e.step === 'ci_wait' && e.status === 'failed'; } catch { return false; } });
+  appendEvent(fx.statePath, { type: 'bootstrap_pass', ts: 3, pass: 2, version: '10.0.1', triggered_by: ciWaitIdx, trigger_step: 'ci_wait' });
+  for (const step of stepsForPass(2, [{ type: 'bootstrap_step', pass: 1, step: 'main_push', status: 'done' }]).filter((s) => !['gate', 'main_push', 'pr_merge', 'claude_surface', 'surfaces_live'].includes(s))) {
+    const data = step === 'push' ? { published_tip: fx.tip, published_tag: 'x' } : {};
+    appendEvent(fx.statePath, { type: 'bootstrap_step', ts: 4, pass: 2, step, cmd: 'seeded', exit: 0, status: 'done', data });
+  }
+  git(fx.MAIN, 'push', '-q', 'origin', fx.branch);
+  // pass 2 (with a done prior main_push in its ledger view) OMITS main_push — seed its ledger with
+  // the done main_push FIRST so stepsForPass omits it, exactly as the real pass-5 shape.
+  // (Re-seed: rebuild pass 2's steps with the main_push record present in the ledger.)
+  const armedMain = armStep({ statePath: fx.statePath, step: 'main_push', targets: targets2 });
+  if (armedMain.ok) { execFileSync('sh', ['-c', armedMain.cmd], { stdio: 'ignore' }); recordStep({ statePath: fx.statePath, step: 'main_push', exit: 0, targets: targets2 }); }
+  appendEvent(fx.statePath, { type: 'bootstrap_step', ts: 5, pass: 2, step: 'publish_ack', cmd: 'seeded', exit: 0, status: 'done', data: { answer: 'proceed' } });
+  // pass 3 opens over pass 2's post-push failure; its main_push is OMITTED (pass 2's is done);
+  // its pr_merge must expect pass 2's main_sha.
+  // pass 2's own pr_merge arms against its own main_push (the FIRST-merge rule) — then the merge
+  // command itself fails (recorded failed: the run's real post-push failure class).
+  const armed2 = armStep({ statePath: fx.statePath, step: 'pr_merge', targets: targets2 });
+  assert.equal(armed2.ok, true, JSON.stringify(armed2));
+  const rec2 = recordStep({ statePath: fx.statePath, step: 'pr_merge', exit: 1, status: 'failed', reason: 'simulated merge failure', targets: targets2 });
+  assert.equal(rec2.status, 'failed');
+  const events3 = fs.readFileSync(fx.statePath.replace(/state\.yml$/, 'events.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  const trigIdx = events3.length - 1; // the failed pr_merge record just appended
+  appendEvent(fx.statePath, { type: 'bootstrap_pass', ts: 7, pass: 3, version: '10.0.2', triggered_by: trigIdx, trigger_step: 'pr_merge' });
+  const targets3 = { ...fx.targets, version: '10.0.2' };
+  // pass 3 OMITS main_push (pass 2's is done) — the ledger drives stepsForPass now.
+  for (const step of stepsForPass(3, events3).filter((s) => !['gate', 'pr_merge', 'claude_surface', 'surfaces_live'].includes(s))) {
+    const data = step === 'push' ? { published_tip: fx.tip, published_tag: 'x' } : {};
+    appendEvent(fx.statePath, { type: 'bootstrap_step', ts: 8, pass: 3, step, cmd: 'seeded', exit: 0, status: 'done', data });
+  }
+  appendEvent(fx.statePath, { type: 'bootstrap_step', ts: 9, pass: 3, step: 'publish_ack', cmd: 'seeded', exit: 0, status: 'done', data: { answer: 'proceed' } });
+  // Its pr_merge still finds the base: the latest DONE main_push (pass 2's), since no pr_merge ever succeeded.
+  const armed = armStep({ statePath: fx.statePath, step: 'pr_merge', targets: targets3 });
+  assert.equal(armed.ok, true, JSON.stringify(armed));
+  const pre = armed.preconditions.find((p) => p.name === 'remote_main_expected');
+  assert.ok(pre && pre.ok, JSON.stringify(armed));
+  assert.ok(pre.detail.includes('vs expected'), `the base detail names the expected base: ${pre.detail}`);
+});
+
 test('a forged main_sha on the main_push record is replaced by the armed one', (t) => {
   const fx = makeFixture(t);
   for (const step of STEP_ORDER.filter((s) => !['gate', 'main_push', 'pr_merge', 'claude_surface', 'surfaces_live'].includes(s))) {

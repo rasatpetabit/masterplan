@@ -1587,20 +1587,25 @@ export const STEPS = {
       const ack = latestRecord(ctx.events, ctx.status.pass, 'publish_ack');
       problems.push({ name: 'publish_ack_proceed', ok: !!(ack && isDone(ack)), detail: ack ? ack.status : 'no publish_ack record' });
       const remoteMain = data.remote_main;
+      // The expected remote base is the last thing that SUCCESSFULLY moved main: the latest DONE
+      // pr_merge of an earlier pass (its merge commit), else the latest DONE main_push — this pass's
+      // own (pass 1's ordinary step 5, or a later pass's when pass 1 died before step 5 and the
+      // corrective pass carries it), else an earlier pass's (when this pass omits main_push because
+      // a prior pass completed it). A commit added to main after that is in no carried report and
+      // would slip past every later audit.
       let expected = null;
-      const prevPrMerge = latestOfType(ctx.events, 'bootstrap_step', ctx.status.pass - 1, 'pr_merge');
-      if (ctx.status.pass === 1 || !(prevPrMerge && prevPrMerge.data)) {
-        // The FIRST pr_merge of the run lands on the main that main_push published — pass 1's
-        // ordinary step 5, or (as here) a later pass's main_push when pass 1 died before step 5
-        // and the corrective pass carried it. No prior PR has ever moved main, so the same pass's
-        // main_push is the expected remote base; a commit added to main after that push is in no
-        // carried report and would slip past every later audit.
-        const mainPush = latestOfType(ctx.events, 'bootstrap_step', ctx.status.pass, 'main_push');
-        expected = isDone(mainPush) && mainPush.data ? (mainPush.data.main_sha ?? mainPush.data.main_pre_bootstrap ?? null) : null;
-      } else {
-        const prev = prevPrMerge;
-        expected = prev && prev.data ? prev.data.merge_sha ?? null : null;
+      let basePr = null;
+      for (let p = ctx.status.pass - 1; p >= 1 && !basePr; p -= 1) {
+        const pr = latestOfType(ctx.events, 'bootstrap_step', p, 'pr_merge');
+        if (pr && isDone(pr) && pr.data) basePr = pr;
       }
+      let baseMain = null;
+      for (let p = ctx.status.pass; p >= 1 && !baseMain; p -= 1) {
+        const mp = latestOfType(ctx.events, 'bootstrap_step', p, 'main_push');
+        if (mp && isDone(mp) && mp.data) baseMain = mp;
+      }
+      if (basePr) expected = basePr.data.merge_sha ?? null;
+      else if (baseMain) expected = baseMain.data.main_sha ?? baseMain.data.main_pre_bootstrap ?? null;
       problems.push({ name: 'remote_main_expected', ok: !!remoteMain && remoteMain === expected, detail: `remote ${remoteMain ?? 'unreachable'} vs expected ${expected ?? 'unknown'}` });
       // What GitHub will merge is what was released: the tip the push published, on the remote and
       // locally. A branch that moved after the push (local, remote, or both) is refused here.
