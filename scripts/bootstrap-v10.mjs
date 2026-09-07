@@ -25,13 +25,13 @@ import { spawnSync } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { appendEvent, readState, validateEvent, BOOTSTRAP_STEPS } from '../lib/bundle.mjs';
+import { appendEvent, readState, validateEvent, BOOTSTRAP_STEPS, normalizeLegacyEventShape } from '../lib/bundle.mjs';
 
 // The bundle's event ledger, read from disk on every call (status is never reconstructed from memory).
 export function readBundleEvents(statePath) {
   const file = join(dirname(statePath), 'events.jsonl');
   if (!existsSync(file)) return [];
-  const events = readFileSync(file, 'utf8').split('\n').filter((l) => l.trim()).map((l) => JSON.parse(l));
+  const events = readFileSync(file, 'utf8').split('\n').filter((l) => l.trim()).map((l) => JSON.parse(l)).map(normalizeLegacyEventShape);
   // REPLAY-TIME validation (finding 5): every event with a PERMANENT schema is validated
   // against it as the ledger is read — appendEvent already gates writes, but the reviewer's
   // hand-append bypassed it, so an invalid typed event must be the named refusal HERE too,

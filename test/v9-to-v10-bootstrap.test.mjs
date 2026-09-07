@@ -14,7 +14,8 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { writeState, appendEvent, readState, setStatus } from '../lib/bundle.mjs';
+import { writeState, appendEvent, readState, setStatus, loadBundleEvents } from '../lib/bundle.mjs';
+import { parseEventArray } from '../lib/finish-step.mjs';
 import { doneDigest } from '../lib/config.mjs';
 import { check as requiredSuccessorCheck } from '../lib/doctor/required-successor.mjs';
 import { check as incompleteArchiveCheck } from '../lib/doctor/incomplete-archive.mjs';
@@ -1704,6 +1705,35 @@ test('finding 5: a hand-appended bootstrap_pass without its schema is refused at
     /invalid.*bootstrap_pass|bootstrap_pass.*invalid/,
     'the replay-time validation refuses the hand-appended schema-less pass',
   );
+});
+
+test('the legacy data-wrapped required_successor is lifted on read — validating, projecting, never rewriting the file', () => {
+  // This run's OWN ledger carries one required_successor recorded 2026-09-04 through v9's
+  // mp event with the payload under `data` (before any validator existed) — the F5 replay
+  // validation surfaced it and refused the whole stage. The canonical writer emits top-level
+  // {slug, reason}; the lift normalizes on read at every validating/projecting seam, and the
+  // FILE's bytes stay untouched (the durable record is never rewritten). An event with
+  // NEITHER shape is not lifted — the refusal stands (a nameless handoff is never honored).
+  const fx = makeFixture();
+  const ledger = path.join(fx.bundleDir, 'events.jsonl');
+  fs.appendFileSync(ledger, `${JSON.stringify({ type: 'required_successor', ts: 't1', data: { slug: 'v10-validation', reason: 'the validation run' } })}\n`);
+  const bytesBefore = fs.readFileSync(ledger, 'utf8');
+  // All three reading seams lift: the driver's validator (no refusal, pass derivable), the
+  // shared lib reader, and the finish-step projection (r.slug readable).
+  const st = bootstrapStatus(fx.statePath);
+  assert.equal(st.pass, 1, 'the legacy event validates — the stage derives from the ledger');
+  const lifted = loadBundleEvents(fx.statePath).find((e) => e.type === 'required_successor');
+  assert.equal(lifted.slug, 'v10-validation');
+  assert.equal(lifted.reason, 'the validation run');
+  assert.equal(
+    parseEventArray(fs.readFileSync(ledger, 'utf8')).some((e) => e.type === 'required_successor' && e.slug === 'v10-validation'),
+    true, 'the finish-step parser lifts too (the archive guard reads r.slug)',
+  );
+  assert.equal(fs.readFileSync(ledger, 'utf8'), bytesBefore, 'the file is never rewritten');
+  // A nameless handoff is NOT lifted — the validator's refusal stands.
+  fs.appendFileSync(ledger, `${JSON.stringify({ type: 'required_successor', ts: 't2', data: { note: 'no slug' } })}\n`);
+  assert.throws(() => bootstrapStatus(fx.statePath), /required_successor.*invalid|invalid.*required_successor/,
+    'an event with neither shape is refused, never silently honored');
 });
 
 test('finding 5: replay refuses an out-of-sequence pass (not exactly highest_pass+1) and a pass with no corrective trigger', () => {
