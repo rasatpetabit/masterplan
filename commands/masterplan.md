@@ -439,33 +439,62 @@ create-or-reuse runs inside `mp continue`, the sweep inside `mp sweep`, and the 
      `>TTL`-abandoned owner that resurrects at the exact instant a reclaimer breaks its lock. Narrow, benign,
      documented — NOT a gap to close with another mechanism.
 
-## 2f — Intent interview (the masterplan-owned questioning phase)
+## 2f — Intent interview (delegated to the /design-intent skill's plan mode)
 
 The `brainstorm` verb's first half: a bounded, ledger-backed questioning phase that learns the
 operator's INTENT before any design/spec work. `superpowers:brainstorming` still governs the
-design/spec half; this section owns intent. The ledger lives in `events.jsonl` (each event an
-`mp interview …` append through `lib/interview.mjs` — CD-7 single writer); verbatim question
-and answer text is stored so a compaction mid-interview resumes from disk, never from the
-model's memory of where it was.
+design/spec half; this section owns the dispatch, the recording, and the lifecycle — the
+QUESTIONS are not composed here. The questioner is the **pinned `/design-intent` skill's plan
+mode**, dispatched under the masterplan host contract; `mp interview` remains the ONLY
+recorder. The ledger lives in `events.jsonl` (each event an `mp interview …` append through
+`lib/interview.mjs` — CD-7 single writer); verbatim question and answer text is stored so a
+compaction mid-interview resumes from disk, never from the model's memory of where it was.
+There is ONE interview implementation (the skill's plan mode) with two consumers (the bare
+operator and this host); composing questions natively is the removed duplicate — never fall
+back to it.
 
 1. **Context.** Existing recon, plus the seed-time overlap check (§3 `full`/`brainstorm`). On a
    bundle seeded with `--predecessor`, open with the predecessor's stored intent-correction text
    as **quoted context** (`mp interview status` carries it via the seed record) — the successor
    learns what the predecessor got wrong before it asks anything.
-2. **Budget.** `mp interview status --state=<path>` returns `{asked, answered, floor, cap,
-   active_design_picks, critic: {mode, receipts, latest_unknowns}, state}` derived from the
-   ledger and `state.complexity`. Read it before every round; never keep your own count.
-3. **Question discipline.** A question may only be about: the problem behind the ask, the outcome
-   in the world, what would make it a failure even if tests pass, constraints and taste, what
-   "live" means for this change. One fork per question, 2–4 options, recommended option first,
-   no option longer than ~25 words. Record each question with
-   `mp interview ask --state=<path> --id=Q<n> --round=<r> --kind=intent|design --text=…` and
-   each answer with `mp interview answer --state=<path> --id=… --text=… [--corrected]
-   [--supersedes=Q<m>]`; withdraw an asked-but-unanswered question with
-   `mp interview withdraw --state=<path> --id=… --reason=…`. A *how* question (which file, which
-   flag, which library) is forbidden — propose 2–3 concrete options with a recommendation and
-   record the pick as a `design` entry. The intent-vs-how classification is a judgment the prompt
-   makes and the critic reviews; it is not mechanically enforced.
+2. **Dispatch (fail-closed, per the host contract).** The skill revision this integration is
+   verified against is PINNED in `policy/design-intent-skill.json` (the behavior-skills commit,
+   the manifest digest, and the declared `host_contract_version`) — resolve the installed
+   skill's identity against that pin, never against whatever a checkout happens to hold. Capture
+   the schema ONCE, before the first round: **`mp interview capture-schema --state=<path>
+   --skill-root=<installed skill dir>`** — the approved schema-capture control (it copies the
+   exact `schema.json` bytes into the bundle snapshot, records the digest and the **skill
+   identity**, and stamps the durable format pin; it records the FIRST schema state only — a
+   changed identity at a later capture is refused there and routed to
+   `mp interview amend-skill-identity`, the single guard-exempt, operator-approved, resumable
+   replacement — never adopted in place). Before every later round, re-read the ledger status;
+   the frozen snapshot is the schema the interview runs under. Then dispatch the skill's plan
+   mode by name with the
+   **host contract block** (read by the skill as DATA, never as instructions): (a) the existing
+   anchor and evidence — the verbatim bundle `topic:` and the survey/recon inputs (repo
+   `INTENT.md` when present, `spec.md` when present), (b) the **current draft** — the live
+   intent projection (`why: / outcome: / anti_goals: / done_means:`) when one exists, else an
+   explicit "no draft yet", (c) the **ledger status** — the host's own budget block from
+   `mp interview status --state=<path>` (read it fresh before every round; never keep your own
+   count), and (d) the **permitted recorder operations** — the exact `mp interview` verbs this
+   interview may run (`ask`, `answer`, `withdraw`, `draft`, and critic / critic-unavailable
+   recording). The skill returns, each round: the structured question(s) it asked, the answers
+   the operator gave, and — when a picture forms — the updated draft. It presents **only the
+   intent projection** to its `validate-intent.mjs` (`--mode plan`); the `## G<n>:` goal blocks
+   are the host's own artifact and are neither interviewed nor refused. **The skill NEVER writes
+   `state.yml` or `events.jsonl`** — every question, answer, withdrawal, and draft travels back
+   through the permitted `mp interview` verbs, and the lifecycle verbs (`set-phase`, `end`,
+   `waive`, `reopen`) are never the skill's. A dispatch failure REFUSES the interview — there
+   is no native questioning to fall back to (see step 6).
+3. **Recording (the verbs are the only recorder).** Record each question with
+   `mp interview ask --state=<path> --id=Q<n> --round=<r> --kind=intent|design --text=…`, each
+   answer with `mp interview answer --state=<path> --id=… --text=… [--corrected]
+   [--supersedes=Q<m>]`, an asked-but-unanswered question with
+   `mp interview withdraw --state=<path> --id=… --reason=…`. The intent-vs-how classification
+   (a *how* question — which file, which flag, which library — is forbidden; the skill proposes
+   2–3 concrete options and the operator's pick is recorded as a `design` entry) is the
+   **skill's** discipline under the host contract (its own rewrite test), reviewed by the
+   critic; it is not mechanically enforced and this prompt does not restate it.
 4. **Draft + critic round** (per complexity: critic `on` at medium/high, `off` at low). When an
    intent picture is forming, persist it: `mp interview draft --state=<path> --file=<json>`
    (the `{why, outcome, anti_goals, done_means}` intent draft → `interview-intent-draft.json` +
@@ -486,15 +515,39 @@ model's memory of where it was.
    and only `mp interview end --reason=exhausted --critic-unavailable-ack=<answer>` may then
    close on that ground. Ask the top `unknowns` next; re-ask a `misclassified` entry as a
    proposal; `--resolves=C<n>|Q<m>` bookmarks addressed items for the next critic round.
-5. **Exit.** Reach a named terminal state (§5.4 of the spec) and record it with
-   `mp interview end --state=<path> --reason=converged|exhausted|critic_off`. Terminal states
-   are **absorbing** — every mutating verb refuses after them until `mp interview reopen
-   --state=<path> --reason=…` (allowed only while `phase==brainstorm` and before
-   `goals_frozen`). On `exhausted`, write every remaining `unknowns`, `contradictions`, and
-   `misclassified` entry of the latest available critic payload as an `assumed` row in the spec's
-   Assumptions table before the design is presented. `goals-load` refuses a bundle whose
-   interview is still open (`--interview-waived` records a deliberate skip).
-6. **Output.** Write the intent block into `goals.md` AND as `## Intent` in `spec.md` (the
+5. **Convergence and exit.** A schema-backed interview converges only when BOTH independent
+   conditions hold — **coverage**: every checked section carries real evidence with its
+   provenance and stated uncertainty (a section satisfied from prior context is covered but is
+   not an answer), and **probing**: at least `interview.probing_minimum` genuine open questions
+   answered fresh (a question at a real fork whose answer only the operator holds). Neither
+   substitutes for the other; the three legacy floors govern legacy interviews only. The
+   probing count comes from the critic's `eligible_question_set` (where a critic runs) or the
+   recorder's mechanical test (at `low`); the skill never counts for itself. Reach a named
+   terminal state (§5.4 of the spec) and record it with
+   `mp interview end --state=<path> --reason=converged|exhausted|critic_off
+   --coverage-file=<path>` — the coverage record (`{sections:[{section, source, uncertainty,
+   verdict?}]}`, one row per checked section, validated against the frozen schema snapshot) is
+   REQUIRED for a schema-backed end. Terminal states are **absorbing** — every mutating verb
+   refuses after them until `mp interview reopen --state=<path> --reason=…` (allowed only while
+   `phase==brainstorm` and before `goals_frozen`). On `exhausted`, write every remaining
+   `unknowns`, `contradictions`, and `misclassified` entry of the latest available critic
+   payload as an `assumed` row in the spec's Assumptions table before the design is presented.
+   `goals-load` refuses a bundle whose interview is still open (`--interview-waived` records a
+   deliberate skip).
+6. **Refusal — there is NO native fallback.** An absent skill (the pin's commit unresolvable,
+   the skill root missing its `SKILL.md`/manifest), a version-skewed skill
+   (`host_contract_version` mismatch), a changed skill identity, a malformed/unsupported
+   schema, or a broken capture each REFUSE the interview with the named error
+   (`skill_absent`, `host_contract_unsupported`, `skill_identity_changed`,
+   `schema_unsupported`, `undeclared_dependency` — the closed §5.5 list, surfaced verbatim by
+   the capture and identity guards). Surface the error and stop — composing questions
+   natively is not a fallback this prompt offers (that path no longer exists here); the
+   operator resolves the skill (reinstall the pinned revision, or amend the skill identity
+   through `mp interview amend-skill-identity`) and the interview resumes from the ledger,
+   where it stopped. An interrupted run is never left unable to interview: the events on disk
+   reconstruct the rounds, kinds, answers, drafts, and receipts, and the next dispatch
+   continues from them through the SAME host contract.
+7. **Output.** Write the intent block into `goals.md` AND as `## Intent` in `spec.md` (the
    `why: / outcome: / anti_goals: / done_means:` lines, §3 `full`/`brainstorm` row). The operator
    reviews it at the spec gate; there is no separate "confirm my restatement" question.
 
@@ -508,7 +561,7 @@ block is the yardstick, not the plan.
 
 | verb | v8 target |
 |---|---|
-| `full` / `brainstorm` / `plan` | Locate the bundle, or **seed a new one** — first run **`mp runs list --repo-root=<MAIN>`** (the read-only inventory) and perform the **`overlap.review`** over it (are there other live bundles whose work would collide?): write the review decision to an artifact file and pass it as `mp seed --state=<path> --slug=<slug> --topic="<topic>" [--complexity=… --autonomy=… --planning-mode=serial\|parallel\|auto --adversary-review=on\|off --fabric=on\|off --predecessor=<slug> --predecessor-transcript=… --overlap-review=<review-file>]` — **`--overlap-review` is REQUIRED** (exit 2 without it; an empty inventory still yields a review with zero candidates) and the recorder refuses a stale review whose `inventory_sha256` no longer matches (`overlap_review_stale`). `--predecessor=<slug>` carries an intent-rejection forward: a predecessor archived `incomplete_authorized` with an `intent_rejected:*` reason projects `{class, correction}` into the new bundle's seed record, and the new interview opens with that stored correction as quoted context. (writes a valid v8 brainstorm-phase bundle; refuses an existing one unless `--force`). `--adversary-review` defaults `on` (alias: `--codex-review`) — new bundles arm `state.review.adversary: true` automatically; `--fabric` defaults `on` — new bundles arm `state.dispatch.fabric: true` (opt out with `--fabric=off` for the legacy dispatch_fabric path) (the hindsight-historian fix: the finish-time review was silently skipping because the flag was never set at seed). Pass `off` for explicit opt-out. **Brainstorm:** run the **intent interview (§2f)** — a masterplan-owned questioning phase that replaces a bare "invoke brainstorming" — then invoke `superpowers:brainstorming` for the design/spec half. **Before the spec is presented for approval — a hard pre-approval requirement, not optional —** persist an `## Assumptions & Open Decisions` section into `spec.md`: one table row per material decision, columns `question | decision | rationale | source` where `source` is `assumed` or `user-confirmed`. This section is written INTO `spec.md`, so it falls under the **spec-gate hash coverage** (§3b — spec gate → `[spec.md]`) and gets reviewed and frozen with the rest of the spec; the spec may only reach the approval gate once it is present. On spec approval, **capture goals first** — auto-distill the spec's success criteria into `<MAIN>/docs/masterplan/<slug>/goals.md` (a dispatch/AUQ pass proposing the goal list; `goals.md` is an ARTIFACT, not CD-7 state, so the `Write` is allowed) and freeze it with `mp goals-load --state=<path> --goals=<MAIN>/docs/masterplan/<slug>/goals.md --approval=<receipt.json>` **only after the user approves the distilled list** (that approval is the receipt setting `goals_frozen` to the current `goals.md` hash). `goals-load` forwards an `--interview-waived --reason=…` to the interview's own waiver op, and refuses to load goals while an interview it started is still open (§5.4). **Open that file with a `topic: |` block carrying the user's ORIGINAL request verbatim** — their words, in full, not a summary and not the spec's restatement of them (the bare `topic:` form truncates at the first blank line and flattens indentation, losing most of a multi-paragraph ask) — and the **`## Intent` block from §2f step 6** (the `why: / outcome: / anti_goals: / done_means:` lines) under it. This is the run's **anchor**: `goalsHash` covers the topic seed, so freezing `goals.md` freezes the anchor, and it is captured here — before the spec gate's adversary rounds and before every plan-phase review→fix turn — so §3c can measure the plan against what was actually asked for rather than against an artifact those rounds reshaped. Amendments may add or tombstone goals but must never restate the anchor (`validateAmendment` rejects a changed seed). Fail-closed via the **`run_goals_capture` guard**: on a goals-enabled bundle `mp set-phase --phase=plan` exits 3 with a `run_goals_capture` op until `goals_frozen` matches the current `goals.md` hash. Then `mp set-phase --state=<path> --phase=plan` (this transition trips the **spec gate** — §3b: it exits 3 with a `run_gate_review` op until the cross-vendor adversarial pass over `spec.md` + `goals.md` recorded via `mp record-gate-review --gate=spec` (the spec-gate hash now covers `spec.md` + `goals.md`, so a later `mp goals-amend` to the frozen goals re-arms this spec gate on its next transition); satisfy it, re-run set-phase) + `mp event --state=<path> --type=phase_transition --phase=plan` (never hand-edit `state.yml` — CD-7). **Plan:** hand to the **plan lifecycle (§3a)**, which selects serial vs parallel per `planning.mode`, then materializes `state.tasks` **and** advances `phase→execute` in one atomic `mp load-plan` write (the plan→execute seam; the lower-level `mp seed-tasks` populates tasks *without* touching phase, for recovering an already-`execute` bundle). The seam is guard-enforced: `mp set-phase --phase=execute` refuses a 0-task bundle without `--force`, and `decide` *throws* on a `phase:execute` + `tasks:[]` bundle rather than finalizing an unseeded run — so a bare `set-phase execute` can never silently archive a planned-but-unseeded run. Log other milestones with `mp event …`; gates via `mp open-gate` + an `AskUserQuestion`. (`brainstorm` stops once the plan phase is reached; `plan` runs §3a; `full` continues through execution via §2.) |
+| `full` / `brainstorm` / `plan` | Locate the bundle, or **seed a new one** — first run **`mp runs list --repo-root=<MAIN>`** (the read-only inventory) and perform the **`overlap.review`** over it (are there other live bundles whose work would collide?): write the review decision to an artifact file and pass it as `mp seed --state=<path> --slug=<slug> --topic="<topic>" [--complexity=… --autonomy=… --planning-mode=serial\|parallel\|auto --adversary-review=on\|off --fabric=on\|off --predecessor=<slug> --predecessor-transcript=… --overlap-review=<review-file>]` — **`--overlap-review` is REQUIRED** (exit 2 without it; an empty inventory still yields a review with zero candidates) and the recorder refuses a stale review whose `inventory_sha256` no longer matches (`overlap_review_stale`). `--predecessor=<slug>` carries an intent-rejection forward: a predecessor archived `incomplete_authorized` with an `intent_rejected:*` reason projects `{class, correction}` into the new bundle's seed record, and the new interview opens with that stored correction as quoted context. (writes a valid v8 brainstorm-phase bundle; refuses an existing one unless `--force`). `--adversary-review` defaults `on` (alias: `--codex-review`) — new bundles arm `state.review.adversary: true` automatically; `--fabric` defaults `on` — new bundles arm `state.dispatch.fabric: true` (opt out with `--fabric=off` for the legacy dispatch_fabric path) (the hindsight-historian fix: the finish-time review was silently skipping because the flag was never set at seed). Pass `off` for explicit opt-out. **Brainstorm:** run the **intent interview (§2f)** — the pinned design-intent skill's plan mode questioning over the host contract (fail-closed: `mp interview` is the only recorder and there is no native fallback) — then invoke `superpowers:brainstorming` for the design/spec half. **Before the spec is presented for approval — a hard pre-approval requirement, not optional —** persist an `## Assumptions & Open Decisions` section into `spec.md`: one table row per material decision, columns `question | decision | rationale | source` where `source` is `assumed` or `user-confirmed`. This section is written INTO `spec.md`, so it falls under the **spec-gate hash coverage** (§3b — spec gate → `[spec.md]`) and gets reviewed and frozen with the rest of the spec; the spec may only reach the approval gate once it is present. On spec approval, **capture goals first** — auto-distill the spec's success criteria into `<MAIN>/docs/masterplan/<slug>/goals.md` (a dispatch/AUQ pass proposing the goal list; `goals.md` is an ARTIFACT, not CD-7 state, so the `Write` is allowed) and freeze it with `mp goals-load --state=<path> --goals=<MAIN>/docs/masterplan/<slug>/goals.md --approval=<receipt.json>` **only after the user approves the distilled list** (that approval is the receipt setting `goals_frozen` to the current `goals.md` hash). `goals-load` forwards an `--interview-waived --reason=…` to the interview's own waiver op, and refuses to load goals while an interview it started is still open (§5.4). **Open that file with a `topic: |` block carrying the user's ORIGINAL request verbatim** — their words, in full, not a summary and not the spec's restatement of them (the bare `topic:` form truncates at the first blank line and flattens indentation, losing most of a multi-paragraph ask) — and the **`## Intent` block from §2f step 7** (the `why: / outcome: / anti_goals: / done_means:` lines) under it. This is the run's **anchor**: `goalsHash` covers the topic seed, so freezing `goals.md` freezes the anchor, and it is captured here — before the spec gate's adversary rounds and before every plan-phase review→fix turn — so §3c can measure the plan against what was actually asked for rather than against an artifact those rounds reshaped. Amendments may add or tombstone goals but must never restate the anchor (`validateAmendment` rejects a changed seed). Fail-closed via the **`run_goals_capture` guard**: on a goals-enabled bundle `mp set-phase --phase=plan` exits 3 with a `run_goals_capture` op until `goals_frozen` matches the current `goals.md` hash. Then `mp set-phase --state=<path> --phase=plan` (this transition trips the **spec gate** — §3b: it exits 3 with a `run_gate_review` op until the cross-vendor adversarial pass over `spec.md` + `goals.md` recorded via `mp record-gate-review --gate=spec` (the spec-gate hash now covers `spec.md` + `goals.md`, so a later `mp goals-amend` to the frozen goals re-arms this spec gate on its next transition); satisfy it, re-run set-phase) + `mp event --state=<path> --type=phase_transition --phase=plan` (never hand-edit `state.yml` — CD-7). **Plan:** hand to the **plan lifecycle (§3a)**, which selects serial vs parallel per `planning.mode`, then materializes `state.tasks` **and** advances `phase→execute` in one atomic `mp load-plan` write (the plan→execute seam; the lower-level `mp seed-tasks` populates tasks *without* touching phase, for recovering an already-`execute` bundle). The seam is guard-enforced: `mp set-phase --phase=execute` refuses a 0-task bundle without `--force`, and `decide` *throws* on a `phase:execute` + `tasks:[]` bundle rather than finalizing an unseeded run — so a bare `set-phase execute` can never silently archive a planned-but-unseeded run. Log other milestones with `mp event …`; gates via `mp open-gate` + an `AskUserQuestion`. (`brainstorm` stops once the plan phase is reached; `plan` runs §3a; `full` continues through execution via §2.) |
 | `execute` | The resume controller (§2). |
 | `finish` | The finalization verb → the flow in **§2c** (docs-normalize offer → verify → retro → durable `branch_finish` gate → archive **LAST**). Bare `finish` = run §2c (on pending tasks, AUQ "finalize anyway / keep working / `--retro-only`" — never silent-archive an incomplete run). `finish --retro-only` = (re)generate `retro.md` only — no verification, no gate, no archive (the old `retro` behavior); safe on an in-progress or finished run, and it must NOT `set-status archived` (that would strand a run: the §2 discover filter hides archived bundles). |
 | `retro` | Deprecated alias for `finish --retro-only`. Print a one-line "`retro` was renamed to `finish` (running `finish --retro-only`)" notice, then run it. Kept for muscle-memory/back-compat. |
