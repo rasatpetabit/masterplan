@@ -25,10 +25,20 @@ stage's remaining steps.
 1. **publish_ack**: record with answer 'proceed' + the operator-directive note (the standing directive
    "do not stop until all work is finished reviewed committed merged pushed and fleet deployed" is the
    acceptance; NEVER invent a user-attested Q/A receipt).
-2. **pr_merge**: arm → `gh pr create` + `gh pr merge --merge` on GitHub (the FIRST merge — no prior PR; the
-   throwaway-repo rehearsal already rehearsed the exact command). Record with the merge sha.
-   NOTE: pass 4 has NO main_push step (PASS2_OMITTED) — local main's publication folds into the
-   gate/finish flow (the push_archive gate pushes local main after the archive).
+2. **THE CURRENT BLOCKER (the exact seam)**: the pr_merge arm refuses on remote_main_expected
+   ("remote 017a7c6 vs expected unknown") — its expected base comes from a prior pass's
+   main_push (pass 1) or pr_merge (later passes) record, and NO pass ever ran either (pass 1
+   died at ci_wait BEFORE step 5; every corrective pass OMITS main_push via PASS2_OMITTED).
+   THE FIX (well-defined): PASS2_OMITTED's main_push omission was written for the case where
+   pass 1 COMPLETED main_push — make the omission conditional (omit main_push on a corrective
+   pass only when a prior pass's main_push is done). With the fix, pass 4 gains main_push:
+   arm → the printed cmd (fetch + the ancestry check: origin/main 017a7c6 must be an ancestor
+   of local main — local main is ~108 ahead / 1 BEHIND: the 1-behind commit is the §10.2
+   per-commit audit case, 'a foreign commit reached origin/main') → run → record (its
+   postcondition: the remote main equals the pushed sha). THEN pr_merge: expected =
+   main_push.data.main_sha ✓ → arm → `gh pr create` + `gh pr merge --merge` (the FIRST merge;
+   the throwaway-repo rehearsal rehearsed the exact commands) → record with the merge sha.
+   Then claude_surface → surfaces_live → gate per the original list below.
 3. **claude_surface**: arm → the documented plugin-cache replication for the OPERATOR's real
    ~/.claude (the doctor's plugin-registry-drift must PASS on it) — the market/plugin-manager normally owns
    this; the stage's step builds/verifies the cache layout at the tag. Read the step's printed cmd.
