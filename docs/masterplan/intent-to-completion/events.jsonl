@@ -141,3 +141,4 @@
 {"type":"wave_recorded","ts":"2026-09-06T16:38:32.606Z","phase":"brainstorm","note":"wave 13 record: 2 done, 0 failed/blocked, 0 qctl; reverted 6 out-of-scope"}
 {"type":"wave_recorded","ts":"2026-09-06T21:37:27.245Z","phase":"brainstorm","note":"wave 14 record: 2 done, 0 failed/blocked, 0 qctl"}
 {"type":"wave_recorded","ts":"2026-09-07T01:11:42.400Z","phase":"brainstorm","note":"wave 15 record: 1 done, 0 failed/blocked, 0 qctl; reverted 1 out-of-scope"}
+{"type":"wave_recorded","ts":"2026-09-07T05:25:50.156Z","phase":"brainstorm","note":"wave 16 record: 1 done, 0 failed/blocked, 0 qctl; reverted 4 out-of-scope"}
