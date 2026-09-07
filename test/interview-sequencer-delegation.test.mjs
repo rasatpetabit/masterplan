@@ -343,17 +343,17 @@ repo_intent: none
 test('the critic receipt binds the recorded draft, so a divergent rendering is refused', () => {
   const { statePath, skillRoot, dir } = mkCapturedBundle('medium');
   // The interview that produced a schema-backed draft (every recording through the verbs):
-  askQuestion({ statePath, id: 'Q1', round: 1, kind: 'intent', text: 'What is the outcome in the world?' });
-  answerQuestion({ statePath, id: 'Q1', text: 'The delegation lands over the host contract.' });
-  askQuestion({ statePath, id: 'Q2', round: 2, kind: 'design', text: 'Pick the projection path: A or B?' });
-  answerQuestion({ statePath, id: 'Q2', text: 'A' });
+  askQuestion({ skillRoot, statePath, id: 'Q1', round: 1, kind: 'intent', text: 'What is the outcome in the world?' });
+  answerQuestion({ skillRoot, statePath, id: 'Q1', text: 'The delegation lands over the host contract.' });
+  askQuestion({ skillRoot, statePath, id: 'Q2', round: 2, kind: 'design', text: 'Pick the projection path: A or B?' });
+  answerQuestion({ skillRoot, statePath, id: 'Q2', text: 'A' });
   const draft = {
     why: 'The problem behind the ask.',
     outcome: 'The outcome in the world.',
     anti_goals: ['a second native questioner'],
     done_means: 'the pinned suite passes',
   };
-  recordDraft({ statePath, intent: draft });
+  recordDraft({ skillRoot, statePath, intent: draft });
   const status = interviewStatus(statePath);
   // The draft the OPERATOR sees in the bundle's versioned goals.md is the same recorded
   // draft: the authoritative projection equals the recorded draft, byte for byte.
@@ -423,7 +423,7 @@ test('the critic receipt binds the recorded draft, so a divergent rendering is r
   }));
   assert.throws(
     () => recordCritic({
-      statePath,
+      statePath, skillRoot,
       receipt: {
         dispatch_id: 'd1', model: 'm', output_tokens: 10,
         content_head: status.content_head,
@@ -436,7 +436,7 @@ test('the critic receipt binds the recorded draft, so a divergent rendering is r
   // The SAME schema-backed draft the operator sees — bound through the ARTIFACT-decoded
   // projection — is accepted:
   recordCritic({
-    statePath,
+    statePath, skillRoot,
     receipt: {
       dispatch_id: 'd1', model: 'm', output_tokens: 10,
       content_head: status.content_head,
@@ -452,7 +452,7 @@ test('the critic receipt binds the recorded draft, so a divergent rendering is r
 });
 
 test('a captured bundle resolves the schema_backed pin — the operator reads under the new policy', () => {
-  const { statePath } = mkCapturedBundle('medium');
+  const { statePath, skillRoot } = mkCapturedBundle('medium');
   assert.deepEqual(resolveFormatPin(statePath), { pin: 'schema_backed' });
   // The recorded capture is the §5.5 history: snapshot + identity, readable without the live skill.
   const snap = readSchemaSnapshot({ statePath });
@@ -463,11 +463,11 @@ test('a captured bundle resolves the schema_backed pin — the operator reads un
 // ---- 3. ONLY RECORDER: mp interview is the sole writer of interview state --------------
 
 test('every interview event in this suite landed through the mp interview verbs', () => {
-  const { statePath } = mkCapturedBundle('medium');
-  askQuestion({ statePath, id: 'Q1', round: 1, kind: 'intent', text: 'q1' });
-  answerQuestion({ statePath, id: 'Q1', text: 'a1' });
+  const { statePath, skillRoot } = mkCapturedBundle('medium');
+  askQuestion({ skillRoot, statePath, id: 'Q1', round: 1, kind: 'intent', text: 'q1' });
+  answerQuestion({ skillRoot, statePath, id: 'Q1', text: 'a1' });
   const draft = { why: 'w', outcome: 'o', anti_goals: ['x'], done_means: 'd' };
-  recordDraft({ statePath, intent: draft });
+  recordDraft({ skillRoot, statePath, intent: draft });
   const status = interviewStatus(statePath);
   const payloadPath = path.join(path.dirname(statePath), 'payload.json');
   fs.writeFileSync(payloadPath, JSON.stringify({
@@ -477,7 +477,7 @@ test('every interview event in this suite landed through the mp interview verbs'
     forks_remaining: false,
   }));
   recordCritic({
-    statePath,
+    statePath, skillRoot,
     receipt: {
       dispatch_id: 'd1', model: 'm', output_tokens: 10,
       content_head: status.content_head,
@@ -655,7 +655,7 @@ test('a schema-captured bundle reads §5.4\'s substitution — the floors are no
   // delivers the substitution; this pins that the captured bundle's POLICY identity is the
   // schema-backed one (the pin + the capture history are the persisted policy identity §5.3
   // names), so the §11 floor assertions can no longer be read as gating both paths.
-  const { statePath } = mkCapturedBundle('high');
+  const { statePath, skillRoot } = mkCapturedBundle('high');
   assert.deepEqual(resolveFormatPin(statePath), { pin: 'schema_backed' });
   // The capture history is durable and re-readable without the live skill — the evidence
   // the substituted policy judged under:

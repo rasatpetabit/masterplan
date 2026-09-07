@@ -123,7 +123,7 @@ function writeCoverage(dir, rows) {
   return file;
 }
 
-function recordReceipt({ statePath, intent, eligible, forks, unknowns = [], n = 1, dir }) {
+function recordReceipt({ statePath, intent, eligible, forks, unknowns = [], n = 1, dir, skillRoot }) {
   const status = interviewStatus(statePath);
   const payloadPath = path.join(dir, `payload-${n}-${Math.random().toString(36).slice(2, 8)}.json`);
   fs.writeFileSync(payloadPath, JSON.stringify({
@@ -132,10 +132,10 @@ function recordReceipt({ statePath, intent, eligible, forks, unknowns = [], n = 
     misclassified: [],
     ...(eligible !== undefined ? { eligible_question_set: eligible, forks_remaining: forks } : {}),
   }));
-  recordCritic({
-    statePath,
+  recordCritic({ skillRoot, statePath,
     receipt: { dispatch_id: `d${n}`, model: 'm', output_tokens: 10, content_head: status.content_head, intent_sha256: intentSha(intent) },
     payloadPath,
+    skillRoot,
   });
 }
 
@@ -146,14 +146,14 @@ function convergingSchemaBackedMedium() {
   const { dir, statePath } = mkbundle('medium');
   const skillRoot = mkskill();
   capture({ statePath, skillRoot });
-  askQuestion({ statePath, id: 'Q1', round: 1, kind: 'intent', text: 'why?' });
-  askQuestion({ statePath, id: 'Q2', round: 1, kind: 'intent', text: 'outcome?' });
-  askQuestion({ statePath, id: 'Q3', round: 1, kind: 'design', text: 'pick A or B?' });
-  answerQuestion({ statePath, id: 'Q1', text: 'because' });
-  answerQuestion({ statePath, id: 'Q2', text: 'ships' });
-  answerQuestion({ statePath, id: 'Q3', text: 'A' });
-  recordDraft({ statePath, intent: INTENT });
-  recordReceipt({ statePath, intent: INTENT, eligible: ['Q1', 'Q2'], forks: true, dir });
+  askQuestion({ skillRoot, statePath, id: 'Q1', round: 1, kind: 'intent', text: 'why?' });
+  askQuestion({ skillRoot, statePath, id: 'Q2', round: 1, kind: 'intent', text: 'outcome?' });
+  askQuestion({ skillRoot, statePath, id: 'Q3', round: 1, kind: 'design', text: 'pick A or B?' });
+  answerQuestion({ skillRoot, statePath, id: 'Q1', text: 'because' });
+  answerQuestion({ skillRoot, statePath, id: 'Q2', text: 'ships' });
+  answerQuestion({ skillRoot, statePath, id: 'Q3', text: 'A' });
+  recordDraft({ skillRoot, statePath, intent: INTENT });
+  recordReceipt({ skillRoot, statePath, intent: INTENT, eligible: ['Q1', 'Q2'], forks: true, dir });
   const coverageFile = writeCoverage(dir, coverageRows());
   return { dir, statePath, skillRoot, coverageFile };
 }
@@ -170,7 +170,7 @@ function lastEvent(statePath, type) {
 // ---- THE MATRIX: the schema-backed path stops applying the three legacy floors ------
 
 test('matrix row 1: a schema-backed interview converges with ALL THREE legacy floors deliberately unmet', async () => {
-  const { statePath, coverageFile } = convergingSchemaBackedMedium();
+  const { statePath, skillRoot, coverageFile } = convergingSchemaBackedMedium();
   const before = interviewStatus(statePath);
   // The three floors, measured on this ledger before the end: 3 answered total (medium's
   // answer floor wants 4), only 2 of them intent-kind (the intent floor wants 3), and one
@@ -179,7 +179,7 @@ test('matrix row 1: a schema-backed interview converges with ALL THREE legacy fl
   const r = (await import('../lib/interview.mjs')).replayInterview(statePath);
   assert.ok(r.answeredIntent < r.budget.intent_floor, `intent floor unmet (${r.answeredIntent}/${r.budget.intent_floor})`);
   assert.ok(r.completedIntentRounds < r.budget.intent_rounds_min, `intent-round minimum unmet (${r.completedIntentRounds}/${r.budget.intent_rounds_min})`);
-  endInterview({ statePath, reason: 'converged', coverageFile, probingMinimum: 2 });
+  endInterview({ skillRoot, statePath, reason: 'converged', coverageFile, probingMinimum: 2 });
   const ev = lastEvent(statePath, 'interview_end');
   assert.equal(ev.reason, 'converged');
   assert.equal(ev.policy, 'schema_backed');
@@ -249,26 +249,26 @@ test('matrix row 2: zero unanswered questions still gates a schema-backed end', 
   // Re-open a fresh variant with an unanswered question: build it directly.
   const { dir: d2, statePath: sp2 } = mkbundle('medium');
   capture({ statePath: sp2, skillRoot });
-  askQuestion({ statePath: sp2, id: 'Q1', round: 1, kind: 'intent', text: 'why?' });
-  askQuestion({ statePath: sp2, id: 'Q2', round: 1, kind: 'intent', text: 'outcome?' }); // never answered
-  answerQuestion({ statePath: sp2, id: 'Q1', text: 'because' });
-  recordDraft({ statePath: sp2, intent: INTENT });
-  recordReceipt({ statePath: sp2, intent: INTENT, eligible: ['Q1'], forks: true, dir: d2 });
+  askQuestion({ skillRoot, statePath: sp2, id: 'Q1', round: 1, kind: 'intent', text: 'why?' });
+  askQuestion({ skillRoot, statePath: sp2, id: 'Q2', round: 1, kind: 'intent', text: 'outcome?' }); // never answered
+  answerQuestion({ skillRoot, statePath: sp2, id: 'Q1', text: 'because' });
+  recordDraft({ skillRoot, statePath: sp2, intent: INTENT });
+  recordReceipt({ skillRoot, statePath: sp2, intent: INTENT, eligible: ['Q1'], forks: true, dir: d2 });
   const coverageFile = writeCoverage(d2, coverageRows());
   assert.throws(
-    () => endInterview({ statePath: sp2, reason: 'converged', coverageFile, probingMinimum: 1 }),
+    () => endInterview({ skillRoot, statePath: sp2, reason: 'converged', coverageFile, probingMinimum: 1 }),
     /there are unanswered questions/,
   );
   assert.equal(lastEvent(sp2, 'interview_end'), null, 'a refusal appends nothing');
 });
 
 test('matrix row 3: the latest-draft rule still gates a schema-backed end', () => {
-  const { statePath, coverageFile } = convergingSchemaBackedMedium();
+  const { statePath, skillRoot, coverageFile } = convergingSchemaBackedMedium();
   // An intent answer AFTER the latest draft moves the head — every exit is blocked.
-  askQuestion({ statePath, id: 'Q4', round: 2, kind: 'intent', text: 'a later fork?' });
-  answerQuestion({ statePath, id: 'Q4', text: 'resolved' });
+  askQuestion({ skillRoot, statePath, id: 'Q4', round: 2, kind: 'intent', text: 'a later fork?' });
+  answerQuestion({ skillRoot, statePath, id: 'Q4', text: 'resolved' });
   assert.throws(
-    () => endInterview({ statePath, reason: 'converged', coverageFile, probingMinimum: 2 }),
+    () => endInterview({ skillRoot, statePath, reason: 'converged', coverageFile, probingMinimum: 2 }),
     /requires an interview_draft as the latest intent-content event/,
   );
 });
@@ -282,24 +282,24 @@ test('matrix row 4: high-complexity per-round critic receipts still gate a schem
   const { dir, statePath } = mkbundle('high');
   const skillRoot = mkskill();
   capture({ statePath, skillRoot });
-  askQuestion({ statePath, id: 'Q1', round: 1, kind: 'intent', text: 'why?' });
-  answerQuestion({ statePath, id: 'Q1', text: 'because' });
-  recordDraft({ statePath, intent: INTENT });
+  askQuestion({ skillRoot, statePath, id: 'Q1', round: 1, kind: 'intent', text: 'why?' });
+  answerQuestion({ skillRoot, statePath, id: 'Q1', text: 'because' });
+  recordDraft({ skillRoot, statePath, intent: INTENT });
   // The cadence receipt round 2's intent asks require at high, at the draft head:
-  recordReceipt({ statePath, intent: INTENT, eligible: ['Q1'], forks: true, dir, n: 1 });
-  askQuestion({ statePath, id: 'Q2', round: 2, kind: 'intent', text: 'r2 fork?' });
-  askQuestion({ statePath, id: 'Q3', round: 2, kind: 'design', text: 'pick?' });
-  answerQuestion({ statePath, id: 'Q2', text: 'a' });
-  answerQuestion({ statePath, id: 'Q3', text: 'A' });
-  recordDraft({ statePath, intent: INTENT });
+  recordReceipt({ skillRoot, statePath, intent: INTENT, eligible: ['Q1'], forks: true, dir, n: 1 });
+  askQuestion({ skillRoot, statePath, id: 'Q2', round: 2, kind: 'intent', text: 'r2 fork?' });
+  askQuestion({ skillRoot, statePath, id: 'Q3', round: 2, kind: 'design', text: 'pick?' });
+  answerQuestion({ skillRoot, statePath, id: 'Q2', text: 'a' });
+  answerQuestion({ skillRoot, statePath, id: 'Q3', text: 'A' });
+  recordDraft({ skillRoot, statePath, intent: INTENT });
   // The current receipt on the second draft head — valid, clean, eligible (probing met):
-  recordReceipt({ statePath, intent: INTENT, eligible: ['Q1', 'Q2'], forks: true, dir, n: 2 });
+  recordReceipt({ skillRoot, statePath, intent: INTENT, eligible: ['Q1', 'Q2'], forks: true, dir, n: 2 });
   // TAMPER the round-1 cadence receipt's artifact: it stops being a VALID receipt, and the
   // distinct valid receipt-head count (1) falls below the completed intent rounds (2).
   fs.rmSync(path.join(dir, 'interview-critic-1.json'));
   const coverageFile = writeCoverage(dir, coverageRows());
   assert.throws(
-    () => endInterview({ statePath, reason: 'converged', coverageFile, probingMinimum: 2 }),
+    () => endInterview({ skillRoot, statePath, reason: 'converged', coverageFile, probingMinimum: 2 }),
     /converged at high complexity requires one critic receipt per intent round/,
   );
 });
@@ -310,19 +310,19 @@ test('matrix row 5: goals-load exhausted assumed-rows handling still works on a 
   const { dir, statePath } = mkbundle('medium');
   const skillRoot = mkskill();
   capture({ statePath, skillRoot });
-  askQuestion({ statePath, id: 'Q1', round: 1, kind: 'intent', text: 'why?' });
-  askQuestion({ statePath, id: 'Q2', round: 1, kind: 'intent', text: 'outcome?' });
-  answerQuestion({ statePath, id: 'Q1', text: 'because' });
-  answerQuestion({ statePath, id: 'Q2', text: 'ships' });
-  recordDraft({ statePath, intent: INTENT });
+  askQuestion({ skillRoot, statePath, id: 'Q1', round: 1, kind: 'intent', text: 'why?' });
+  askQuestion({ skillRoot, statePath, id: 'Q2', round: 1, kind: 'intent', text: 'outcome?' });
+  answerQuestion({ skillRoot, statePath, id: 'Q1', text: 'because' });
+  answerQuestion({ skillRoot, statePath, id: 'Q2', text: 'ships' });
+  recordDraft({ skillRoot, statePath, intent: INTENT });
   // Eligible: [Q1] only — the minimum (2) is unmet; the critic says no forks remain; the
   // payload carries an unknown the spec must carry as an Assumptions row.
   recordReceipt({
-    statePath, intent: INTENT, eligible: ['Q1'], forks: false, dir,
+    skillRoot, statePath, intent: INTENT, eligible: ['Q1'], forks: false, dir,
     unknowns: [{ id: 'U1', why_it_changes_design: 'the storage choice' }],
   });
   const coverageFile = writeCoverage(dir, coverageRows());
-  endInterview({ statePath, reason: 'exhausted', coverageFile, probingMinimum: 2 });
+  endInterview({ skillRoot, statePath, reason: 'exhausted', coverageFile, probingMinimum: 2 });
   const ev = lastEvent(statePath, 'interview_end');
   assert.equal(ev.reason, 'exhausted');
   assert.equal(ev.basis, 'forks_exhausted');
@@ -374,13 +374,13 @@ test('recordCritic rejects an eligible set naming unknown, duplicate, withdrawn,
   const { dir, statePath } = mkbundle('medium');
   const skillRoot = mkskill();
   capture({ statePath, skillRoot });
-  askQuestion({ statePath, id: 'Q1', round: 1, kind: 'intent', text: 'why?' });
-  askQuestion({ statePath, id: 'Q2', round: 1, kind: 'design', text: 'pick?' });
-  askQuestion({ statePath, id: 'Q3', round: 1, kind: 'intent', text: 'withdrawn without an answer' });
-  answerQuestion({ statePath, id: 'Q1', text: 'because' });
-  answerQuestion({ statePath, id: 'Q2', text: 'A' });
-  withdrawQuestion({ statePath, id: 'Q3', reason: 'superseded by Q1' });
-  recordDraft({ statePath, intent: INTENT });
+  askQuestion({ skillRoot, statePath, id: 'Q1', round: 1, kind: 'intent', text: 'why?' });
+  askQuestion({ skillRoot, statePath, id: 'Q2', round: 1, kind: 'design', text: 'pick?' });
+  askQuestion({ skillRoot, statePath, id: 'Q3', round: 1, kind: 'intent', text: 'withdrawn without an answer' });
+  answerQuestion({ skillRoot, statePath, id: 'Q1', text: 'because' });
+  answerQuestion({ skillRoot, statePath, id: 'Q2', text: 'A' });
+  withdrawQuestion({ skillRoot, statePath, id: 'Q3', reason: 'superseded by Q1' });
+  recordDraft({ skillRoot, statePath, intent: INTENT });
   const status = interviewStatus(statePath);
   const payload = (extra) => {
     const file = path.join(dir, `p-${Math.random().toString(36).slice(2, 8)}.json`);
@@ -390,12 +390,12 @@ test('recordCritic rejects an eligible set naming unknown, duplicate, withdrawn,
     return file;
   };
   const receipt = () => ({ dispatch_id: 'd1', model: 'm', output_tokens: 10, content_head: status.content_head, intent_sha256: intentSha(INTENT) });
-  assert.throws(() => recordCritic({ statePath, receipt: receipt(), payloadPath: payload({ eligible_question_set: ['Q99'], forks_remaining: true }) }), /unknown question Q99/);
-  assert.throws(() => recordCritic({ statePath, receipt: receipt(), payloadPath: payload({ eligible_question_set: ['Q1', 'Q1'], forks_remaining: true }) }), /names Q1 more than once/);
-  assert.throws(() => recordCritic({ statePath, receipt: receipt(), payloadPath: payload({ eligible_question_set: ['Q2'], forks_remaining: true }) }), /design-kind question Q2/);
-  assert.throws(() => recordCritic({ statePath, receipt: receipt(), payloadPath: payload({ eligible_question_set: ['Q3'], forks_remaining: true }) }), /withdrawn question Q3/);
+  assert.throws(() => recordCritic({ skillRoot, statePath, receipt: receipt(), payloadPath: payload({ eligible_question_set: ['Q99'], forks_remaining: true }) }), /unknown question Q99/);
+  assert.throws(() => recordCritic({ skillRoot, statePath, receipt: receipt(), payloadPath: payload({ eligible_question_set: ['Q1', 'Q1'], forks_remaining: true }) }), /names Q1 more than once/);
+  assert.throws(() => recordCritic({ skillRoot, statePath, receipt: receipt(), payloadPath: payload({ eligible_question_set: ['Q2'], forks_remaining: true }) }), /design-kind question Q2/);
+  assert.throws(() => recordCritic({ skillRoot, statePath, receipt: receipt(), payloadPath: payload({ eligible_question_set: ['Q3'], forks_remaining: true }) }), /withdrawn question Q3/);
   // A valid set lands and its event carries both verdict fields:
-  recordCritic({ statePath, receipt: receipt(), payloadPath: payload({ eligible_question_set: ['Q1'], forks_remaining: true }) });
+  recordCritic({ skillRoot, statePath, receipt: receipt(), payloadPath: payload({ eligible_question_set: ['Q1'], forks_remaining: true }) });
   const ev = lastEvent(statePath, 'interview_critic');
   assert.deepEqual(ev.eligible_question_set, ['Q1']);
   assert.equal(ev.forks_remaining, true);
@@ -405,14 +405,14 @@ test('eligible_question_set and forks_remaining arrive together or neither', () 
   const { dir, statePath } = mkbundle('medium');
   const skillRoot = mkskill();
   capture({ statePath, skillRoot });
-  askQuestion({ statePath, id: 'Q1', round: 1, kind: 'intent', text: 'why?' });
-  answerQuestion({ statePath, id: 'Q1', text: 'because' });
-  recordDraft({ statePath, intent: INTENT });
+  askQuestion({ skillRoot, statePath, id: 'Q1', round: 1, kind: 'intent', text: 'why?' });
+  answerQuestion({ skillRoot, statePath, id: 'Q1', text: 'because' });
+  recordDraft({ skillRoot, statePath, intent: INTENT });
   const status = interviewStatus(statePath);
   const file = path.join(dir, 'solo.json');
   fs.writeFileSync(file, JSON.stringify({ unknowns: [], contradictions: [], misclassified: [], eligible_question_set: ['Q1'] }));
   assert.throws(
-    () => recordCritic({ statePath, receipt: { dispatch_id: 'd', model: 'm', output_tokens: 1, content_head: status.content_head, intent_sha256: intentSha(INTENT) }, payloadPath: file }),
+    () => recordCritic({ skillRoot, statePath, receipt: { dispatch_id: 'd', model: 'm', output_tokens: 1, content_head: status.content_head, intent_sha256: intentSha(INTENT) }, payloadPath: file }),
     /arrive together/,
   );
 });
@@ -423,25 +423,25 @@ test('a stale eligible set counts for nothing: the probing minimum cannot be sat
   const { dir, statePath } = mkbundle('medium');
   const skillRoot = mkskill();
   capture({ statePath, skillRoot });
-  askQuestion({ statePath, id: 'Q1', round: 1, kind: 'intent', text: 'why?' });
-  askQuestion({ statePath, id: 'Q2', round: 1, kind: 'intent', text: 'outcome?' });
-  askQuestion({ statePath, id: 'Q3', round: 1, kind: 'design', text: 'pick?' });
-  answerQuestion({ statePath, id: 'Q1', text: 'because' });
-  answerQuestion({ statePath, id: 'Q2', text: 'ships' });
-  answerQuestion({ statePath, id: 'Q3', text: 'A' });
-  recordDraft({ statePath, intent: INTENT });
-  recordReceipt({ statePath, intent: INTENT, eligible: ['Q1', 'Q2'], forks: true, dir });
+  askQuestion({ skillRoot, statePath, id: 'Q1', round: 1, kind: 'intent', text: 'why?' });
+  askQuestion({ skillRoot, statePath, id: 'Q2', round: 1, kind: 'intent', text: 'outcome?' });
+  askQuestion({ skillRoot, statePath, id: 'Q3', round: 1, kind: 'design', text: 'pick?' });
+  answerQuestion({ skillRoot, statePath, id: 'Q1', text: 'because' });
+  answerQuestion({ skillRoot, statePath, id: 'Q2', text: 'ships' });
+  answerQuestion({ skillRoot, statePath, id: 'Q3', text: 'A' });
+  recordDraft({ skillRoot, statePath, intent: INTENT });
+  recordReceipt({ skillRoot, statePath, intent: INTENT, eligible: ['Q1', 'Q2'], forks: true, dir });
   // New content AFTER the receipt: a new draft moves the head — the receipt is now stale.
-  askQuestion({ statePath, id: 'Q4', round: 2, kind: 'intent', text: 'a later fork?' });
-  answerQuestion({ statePath, id: 'Q4', text: 'resolved' });
-  recordDraft({ statePath, intent: INTENT });
+  askQuestion({ skillRoot, statePath, id: 'Q4', round: 2, kind: 'intent', text: 'a later fork?' });
+  answerQuestion({ skillRoot, statePath, id: 'Q4', text: 'resolved' });
+  recordDraft({ skillRoot, statePath, intent: INTENT });
   // A CURRENT receipt at the new draft — but one that carries NO eligible set (a
   // pre-adjudication receipt): converged's own checks pass, and the probing evaluation
   // names the missing adjudication. The STALE first receipt counts for nothing.
-  recordReceipt({ statePath, intent: INTENT, eligible: undefined, forks: undefined, dir, n: 2 });
+  recordReceipt({ skillRoot, statePath, intent: INTENT, eligible: undefined, forks: undefined, dir, n: 2 });
   const coverageFile = writeCoverage(dir, coverageRows());
   assert.throws(
-    () => endInterview({ statePath, reason: 'converged', coverageFile, probingMinimum: 2 }),
+    () => endInterview({ skillRoot, statePath, reason: 'converged', coverageFile, probingMinimum: 2 }),
     /probing minimum met \(0\/2 .*no eligible set/,
   );
 });
@@ -450,24 +450,24 @@ test('the CAP takes precedence: at cap with the minimum unmet, exhausted is refu
   const { dir, statePath } = mkbundle('medium');
   const skillRoot = mkskill();
   capture({ statePath, skillRoot });
-  askQuestion({ statePath, id: 'Q1', round: 1, kind: 'intent', text: 'why?' });
-  answerQuestion({ statePath, id: 'Q1', text: 'because' });
-  recordDraft({ statePath, intent: INTENT });
+  askQuestion({ skillRoot, statePath, id: 'Q1', round: 1, kind: 'intent', text: 'why?' });
+  answerQuestion({ skillRoot, statePath, id: 'Q1', text: 'because' });
+  recordDraft({ skillRoot, statePath, intent: INTENT });
   // Current receipt, forks_remaining FALSE, eligible [Q1] — minimum 2 unmet.
-  recordReceipt({ statePath, intent: INTENT, eligible: ['Q1'], forks: false, dir });
+  recordReceipt({ skillRoot, statePath, intent: INTENT, eligible: ['Q1'], forks: false, dir });
   // Reach the cap (10): design asks only — they are not content events, so the receipt
   // stays current and the draft stays latest. Design withdraws keep zero-unanswered true.
   for (let i = 2; i <= 10; i += 1) {
-    askQuestion({ statePath, id: `Q${i}`, round: i, kind: 'design', text: `filler ${i}?` });
-    withdrawQuestion({ statePath, id: `Q${i}`, reason: 'cap filler' });
+    askQuestion({ skillRoot, statePath, id: `Q${i}`, round: i, kind: 'design', text: `filler ${i}?` });
+    withdrawQuestion({ skillRoot, statePath, id: `Q${i}`, reason: 'cap filler' });
   }
   const coverageFile = writeCoverage(dir, coverageRows());
   assert.throws(
-    () => endInterview({ statePath, reason: 'exhausted', coverageFile, probingMinimum: 2 }),
+    () => endInterview({ skillRoot, statePath, reason: 'exhausted', coverageFile, probingMinimum: 2 }),
     /cap is reached with the probing minimum unmet \(1\/2\)/,
   );
   // The waiver is the ONLY exit, carrying the routed cause:
-  waiveInterview({ statePath, reason: 'operator closed it', probingMinimum: 2 });
+  waiveInterview({ skillRoot, statePath, reason: 'operator closed it', probingMinimum: 2 });
   const ev = lastEvent(statePath, 'interview_waived');
   assert.equal(ev.cause, 'probing_minimum_unmet_at_cap');
   assert.equal(ev.policy, 'schema_backed');
@@ -477,12 +477,12 @@ test('at low complexity the mechanical test decides: critic_off end under captur
   const { dir, statePath } = mkbundle('low');
   const skillRoot = mkskill();
   capture({ statePath, skillRoot });
-  askQuestion({ statePath, id: 'Q1', round: 1, kind: 'intent', text: 'why?' });
-  answerQuestion({ statePath, id: 'Q1', text: 'because' });
-  recordDraft({ statePath, intent: INTENT });
+  askQuestion({ skillRoot, statePath, id: 'Q1', round: 1, kind: 'intent', text: 'why?' });
+  answerQuestion({ skillRoot, statePath, id: 'Q1', text: 'because' });
+  recordDraft({ skillRoot, statePath, intent: INTENT });
   const coverageFile = writeCoverage(dir, coverageRows());
   // Minimum 1 (the shipped low default): the mechanical count is 1 — the end is permitted.
-  endInterview({ statePath, reason: 'critic_off', coverageFile, probingMinimum: 1 });
+  endInterview({ skillRoot, statePath, reason: 'critic_off', coverageFile, probingMinimum: 1 });
   const ev = lastEvent(statePath, 'interview_end');
   assert.equal(ev.reason, 'critic_off');
   assert.equal(ev.policy, 'schema_backed');
@@ -490,11 +490,11 @@ test('at low complexity the mechanical test decides: critic_off end under captur
   // Above the mechanical count, the same end refuses:
   const second = mkbundle('low');
   capture({ statePath: second.statePath, skillRoot });
-  askQuestion({ statePath: second.statePath, id: 'Q1', round: 1, kind: 'intent', text: 'why?' });
-  answerQuestion({ statePath: second.statePath, id: 'Q1', text: 'because' });
-  recordDraft({ statePath: second.statePath, intent: INTENT });
+  askQuestion({ skillRoot, statePath: second.statePath, id: 'Q1', round: 1, kind: 'intent', text: 'why?' });
+  answerQuestion({ skillRoot, statePath: second.statePath, id: 'Q1', text: 'because' });
+  recordDraft({ skillRoot, statePath: second.statePath, intent: INTENT });
   assert.throws(
-    () => endInterview({ statePath: second.statePath, reason: 'critic_off', coverageFile: writeCoverage(second.dir, coverageRows()), probingMinimum: 2 }),
+    () => endInterview({ skillRoot, statePath: second.statePath, reason: 'critic_off', coverageFile: writeCoverage(second.dir, coverageRows()), probingMinimum: 2 }),
     /mechanical test \(1\/2\)/,
   );
 });
@@ -505,15 +505,15 @@ test('coverage: the record is validated EXACTLY against the frozen snapshot, fai
   const { dir, statePath } = mkbundle('medium');
   const skillRoot = mkskill();
   capture({ statePath, skillRoot });
-  askQuestion({ statePath, id: 'Q1', round: 1, kind: 'intent', text: 'why?' });
-  askQuestion({ statePath, id: 'Q2', round: 1, kind: 'intent', text: 'outcome?' });
-  answerQuestion({ statePath, id: 'Q1', text: 'because' });
-  answerQuestion({ statePath, id: 'Q2', text: 'ships' });
-  recordDraft({ statePath, intent: INTENT });
-  recordReceipt({ statePath, intent: INTENT, eligible: ['Q1', 'Q2'], forks: true, dir });
+  askQuestion({ skillRoot, statePath, id: 'Q1', round: 1, kind: 'intent', text: 'why?' });
+  askQuestion({ skillRoot, statePath, id: 'Q2', round: 1, kind: 'intent', text: 'outcome?' });
+  answerQuestion({ skillRoot, statePath, id: 'Q1', text: 'because' });
+  answerQuestion({ skillRoot, statePath, id: 'Q2', text: 'ships' });
+  recordDraft({ skillRoot, statePath, intent: INTENT });
+  recordReceipt({ skillRoot, statePath, intent: INTENT, eligible: ['Q1', 'Q2'], forks: true, dir });
   // No record at all:
   assert.throws(
-    () => endInterview({ statePath, reason: 'converged', coverageFile: undefined, probingMinimum: 2 }),
+    () => endInterview({ skillRoot, statePath, reason: 'converged', coverageFile: undefined, probingMinimum: 2 }),
     /requires its section-coverage record/,
   );
   // Missing a section; an unknown section; a duplicate; fights; unavailable; empty source;
@@ -529,7 +529,7 @@ test('coverage: the record is validated EXACTLY against the frozen snapshot, fai
   ];
   for (const [rows, re] of cases) {
     assert.throws(
-      () => endInterview({ statePath, reason: 'converged', coverageFile: writeCoverage(dir, rows), probingMinimum: 2 }),
+      () => endInterview({ skillRoot, statePath, reason: 'converged', coverageFile: writeCoverage(dir, rows), probingMinimum: 2 }),
       (e) => re.test(e.message),
       `must refuse ${JSON.stringify(rows).slice(0, 60)}`,
     );
@@ -541,14 +541,14 @@ test('prior-context coverage COVERS but is never an answer: the probing minimum 
   const { dir, statePath } = mkbundle('medium');
   const skillRoot = mkskill();
   capture({ statePath, skillRoot });
-  askQuestion({ statePath, id: 'Q1', round: 1, kind: 'intent', text: 'why?' });
-  askQuestion({ statePath, id: 'Q2', round: 1, kind: 'design', text: 'pick?' });
-  answerQuestion({ statePath, id: 'Q1', text: 'because' });
-  answerQuestion({ statePath, id: 'Q2', text: 'A' });
-  recordDraft({ statePath, intent: INTENT });
+  askQuestion({ skillRoot, statePath, id: 'Q1', round: 1, kind: 'intent', text: 'why?' });
+  askQuestion({ skillRoot, statePath, id: 'Q2', round: 1, kind: 'design', text: 'pick?' });
+  answerQuestion({ skillRoot, statePath, id: 'Q1', text: 'because' });
+  answerQuestion({ skillRoot, statePath, id: 'Q2', text: 'A' });
+  recordDraft({ skillRoot, statePath, intent: INTENT });
   // Every section's evidence is reused prior context — covered, but the probing minimum
   // (2) counts only ledger questions, and the eligible set is empty:
-  recordReceipt({ statePath, intent: INTENT, eligible: [], forks: false, dir });
+  recordReceipt({ skillRoot, statePath, intent: INTENT, eligible: [], forks: false, dir });
   const priorRows = SCHEMA.checked_sections.map((section) => ({
     section,
     source: `prior context: goals.md ${section}`,
@@ -556,7 +556,7 @@ test('prior-context coverage COVERS but is never an answer: the probing minimum 
     verdict: 'serves',
   }));
   assert.throws(
-    () => endInterview({ statePath, reason: 'converged', coverageFile: writeCoverage(dir, priorRows), probingMinimum: 2 }),
+    () => endInterview({ skillRoot, statePath, reason: 'converged', coverageFile: writeCoverage(dir, priorRows), probingMinimum: 2 }),
     /converged requires the probing minimum met \(0\/2\)/,
   );
 });
@@ -587,7 +587,7 @@ test('the policy is persisted on every terminal event; a legacy end carries lega
 
 test('capture is forward-only: refused on a terminal interview (the operator starts a new one)', () => {
   const { statePath, skillRoot, coverageFile } = convergingSchemaBackedMedium();
-  endInterview({ statePath, reason: 'converged', coverageFile, probingMinimum: 2 });
+  endInterview({ skillRoot, statePath, reason: 'converged', coverageFile, probingMinimum: 2 });
   registerSchemaSnapshotModule({ captureSchemaSnapshot, computeSkillIdentity });
   assert.throws(() => captureSchema({ statePath, skillRoot }), /interview is converged/);
 });
@@ -641,22 +641,22 @@ test('a waiver persists the resolved minimum it was judged under, and the cap ca
     // required, and the repo-local .masterplan.yaml is where the minimum lives:
     execFileSync('git', ['-C', dir, 'init', '-q']);
     if (withConfig) fs.writeFileSync(path.join(dir, '.masterplan.yaml'), 'interview:\n  probing_minimum:\n    medium: 3\n');
-    askQuestion({ statePath, id: 'Q1', round: 1, kind: 'intent', text: 'why?' });
-    askQuestion({ statePath, id: 'Q2', round: 1, kind: 'intent', text: 'outcome?' });
-    answerQuestion({ statePath, id: 'Q1', text: 'because' });
-    answerQuestion({ statePath, id: 'Q2', text: 'ships' });
+    askQuestion({ skillRoot, statePath, id: 'Q1', round: 1, kind: 'intent', text: 'why?' });
+    askQuestion({ skillRoot, statePath, id: 'Q2', round: 1, kind: 'intent', text: 'outcome?' });
+    answerQuestion({ skillRoot, statePath, id: 'Q1', text: 'because' });
+    answerQuestion({ skillRoot, statePath, id: 'Q2', text: 'ships' });
     // Cap fillers FIRST, then the draft + the CURRENT receipt at the draft head (fillers
     // after the receipt would stale it and the route would refuse for the wrong reason):
     for (let i = 3; i <= 10; i += 1) {
-      askQuestion({ statePath, id: `Q${i}`, round: i - 1, kind: 'design', text: `filler ${i}?` });
-      withdrawQuestion({ statePath, id: `Q${i}`, reason: 'cap filler' });
+      askQuestion({ skillRoot, statePath, id: `Q${i}`, round: i - 1, kind: 'design', text: `filler ${i}?` });
+      withdrawQuestion({ skillRoot, statePath, id: `Q${i}`, reason: 'cap filler' });
     }
-    recordDraft({ statePath, intent: INTENT });
-    recordReceipt({ statePath, intent: INTENT, eligible: ['Q1', 'Q2'], forks: true, dir });
-    return { dir, statePath };
+    recordDraft({ skillRoot, statePath, intent: INTENT });
+    recordReceipt({ skillRoot, statePath, intent: INTENT, eligible: ['Q1', 'Q2'], forks: true, dir });
+    return { dir, statePath, skillRoot };
   };
   const a = build();
-  waiveInterview({ statePath: a.statePath, reason: 'operator closed it', probingMinimum: 3 });
+  waiveInterview({ skillRoot: a.skillRoot, statePath: a.statePath, reason: 'operator closed it', probingMinimum: 3 });
   const ev = lastEvent(a.statePath, 'interview_waived');
   assert.equal(ev.cause, 'probing_minimum_unmet_at_cap');
   assert.equal(ev.probing_minimum, 3, 'the waiver persists the resolved minimum it was judged under');
@@ -666,9 +666,9 @@ test('a waiver persists the resolved minimum it was judged under, and the cap ca
   // 3; an identical unconfigured bundle (shipped default 2) records NO cause — omitting
   // the configuration changes the recorded outcome, which is exactly the regression the
   // adversary named (the route used to bypass the resolved minimum entirely).
-  const runWaiveRoute = (sp) => spawnSync(process.execPath, [BIN, 'goals-load', `--state=${sp}`, '--interview-waived', '--reason=operator closed it'], { encoding: 'utf8' });
+  const runWaiveRoute = (sp, sr) => spawnSync(process.execPath, [BIN, 'goals-load', `--state=${sp}`, '--interview-waived', '--reason=operator closed it', `--skill-root=${sr}`], { encoding: 'utf8' });
   const cfg = build(true);
-  const r1 = runWaiveRoute(cfg.statePath);
+  const r1 = runWaiveRoute(cfg.statePath, cfg.skillRoot);
   // The waive runs FIRST; the verb then dies on the freeze's missing --goals flag — the
   // refusal is the freeze's, never the waiver's:
   assert.match(r1.stderr, /missing required --goals/, 'the route got past the waiver to the freeze');
@@ -677,7 +677,7 @@ test('a waiver persists the resolved minimum it was judged under, and the cap ca
   assert.equal(e1.cause, 'probing_minimum_unmet_at_cap', 'the CONFIGURED route records the cap cause');
   assert.equal(e1.probing_minimum, 3, 'the CONFIGURED route persists the resolved minimum 3');
   const noCfg = build(false);
-  const r2 = runWaiveRoute(noCfg.statePath);
+  const r2 = runWaiveRoute(noCfg.statePath, noCfg.skillRoot);
   assert.match(r2.stderr, /missing required --goals/);
   const e2 = lastEvent(noCfg.statePath, 'interview_waived');
   assert.equal(e2.cause, undefined, 'the UNCONFIGURED route (default minimum 2) has 2 eligible = met: no cap cause');
@@ -713,11 +713,27 @@ test('the event-schema validators reject malformed adjudication and terminal-pol
 
 test('the coverage evaluation reads the FROZEN SNAPSHOT, never the live skill file', () => {
   const { dir, statePath, skillRoot } = convergingSchemaBackedMedium();
-  // Mutate the LIVE skill schema after capture: the terminal evaluation must not see it.
+  // Mutate the LIVE skill schema after capture. Two things are true at once, and the
+  // §5.5 identity guard (review round 2 — finding 3) makes the second visible: (1) the
+  // frozen SNAPSHOT is what the coverage evaluation reads — readSchemaSnapshot still
+  // resolves the captured bytes, whatever the live file now says; and (2) a changed
+  // live skill is a CHANGED IDENTITY, so the schema-backed operation boundary REFUSES
+  // with skill_identity_changed — the terminal evaluation never even runs on the
+  // mutated skill, which is exactly the surface-and-stop the guard exists for.
   fs.writeFileSync(path.join(skillRoot, 'schema.json'), `${JSON.stringify({ ...SCHEMA, checked_sections: ['Purpose'] }, null, 2)}\n`);
-  // The coverage record for all five snapshot sections still validates against the
-  // SNAPSHOT (the live file now declares one), and the end succeeds:
-  endInterview({ statePath, reason: 'converged', coverageFile: writeCoverage(dir, coverageRows()), probingMinimum: 2 });
   const snap = readSchemaSnapshot({ statePath });
-  assert.deepEqual(snap.schema.checked_sections, SCHEMA.checked_sections);
+  assert.deepEqual(snap.schema.checked_sections, SCHEMA.checked_sections,
+    'the frozen snapshot still resolves the CAPTURED bytes, never the mutated live file');
+  assert.throws(
+    () => endInterview({ skillRoot, statePath, reason: 'converged', coverageFile: writeCoverage(dir, coverageRows()), probingMinimum: 2 }),
+    /skill_identity_changed/,
+    'a mutated live skill is a changed identity — the §5.5 guard stops the schema-backed operation',
+  );
+  // And the coverage evaluation itself is proven to read the snapshot (not the live
+  // file) on an UNCHANGED skill: the end succeeds there.
+  const { dir: d2, statePath: sp2, skillRoot: sr2, coverageFile: cf2 } = convergingSchemaBackedMedium();
+  endInterview({ skillRoot: sr2, statePath: sp2, reason: 'converged', coverageFile: cf2, probingMinimum: 2 });
+  const snap2 = readSchemaSnapshot({ statePath: sp2 });
+  assert.deepEqual(snap2.schema.checked_sections, SCHEMA.checked_sections);
+  assert.equal(lastEvent(sp2, 'interview_end').policy, 'schema_backed');
 });

@@ -965,3 +965,209 @@ test('mp amend-promote: the refusals keep exiting 1 (recovered never blesses a r
   assert.match(r.stdout + r.stderr, /intervening edit/);
 });
 
+
+// ---- the whole-scope review fix round (2026-09-07): findings 1, 6, 7 ----------------
+//
+// The reviewers left reproduction probes at /tmp/agent1-promotion-probe.mjs and
+// /tmp/agent2-promotion.mjs; the regressions below mirror their exact scenarios.
+
+// F1 [rework] — the promotion's goals lineage hashes under the bundle's DURABLE format
+// pin (§6.1), the same pin every consumer (checkpoint identity, finish tuple, split-brain
+// guard) dispatches on. The probe promoted a versioned goals amendment on a bundle whose
+// pin said schema_backed and found state.goals_md_hash recorded UNPINNED — the legacy
+// flavor — while buildIntentIdentity hashed under the pin: the lineage and the consumer
+// never agreed. The regression is the probe's exact scenario, schema-backed end to end.
+import { resolveFormatPin, repairFormatPin } from '../lib/bundle.mjs';
+import { encodeIntentBlock, INTENT_CODEC_VERSION } from '../lib/goals.mjs';
+import { buildIntentIdentity } from '../lib/checkpoint-evidence.mjs';
+import { captureSchema, registerSchemaSnapshotModule } from '../lib/interview.mjs';
+import { captureSchemaSnapshot, computeSkillIdentity } from '../lib/schema-snapshot.mjs';
+import { readRecordedReconciliation, resolveReconciliationTarget, buildReconciliationRows, recordReconciliation, RECONCILIATION_FILENAME } from '../lib/reconcile-intent.mjs';
+
+function versionedGoalsMdForPin() {
+  const authoritative = {
+    version: INTENT_CODEC_VERSION,
+    schema: { identity: 'design-intent@fixture', format_version: 1 },
+    sections: {
+      purpose: { body: 'The promotion hashes under the durable pin.\n' },
+      non_goals: { items: ['no second canonicalizer'] },
+      top_invariant: { body: 'One pin, every hash family.' },
+      direction: { body: 'The lineage and the consumers agree.' },
+      posture: { body: 'Refuse unpinned hashes.' },
+    },
+    context: { outcome: { body: 'The lineage matches the checkpoint identity.' }, done_means: { body: 'release' } },
+    evidence: [{ section: 'purpose', source: 'operator interview 2026-09-07' }],
+    reconciliation: [{ target: 'repository INTENT.md §1', status: 'verified' }],
+  };
+  const enc = encodeIntentBlock(authoritative);
+  assert.ok(enc.ok, JSON.stringify(enc));
+  return `topic: |\n  Versioned promotion fixture.\n${enc.block}\n## G1: Works\nsignal: test\n## G2: Fast\nsignal: test\n## G3: Documented\nsignal: docs\n`;
+}
+
+test('F1 regression: a versioned goals amendment promotes with its lineage hashed under the DURABLE pin — the checkpoint identity agrees', () => {
+  const base = versionedGoalsMdForPin();
+  const fx = mkbundle({ goalsBase: base });
+  // A schema-backed bundle: capture the schema (stamps format_pin schema_backed), then a
+  // recorded §6.3 reconciliation — the exact state the checkpoint identity requires.
+  const skillRoot = path.join(fx.tmp, 'skill');
+  const manifest = {
+    manifest_version: 1, skill: 'fixture-intent', host_contract_version: 1, schema_format_version: 1,
+    identity: { algorithm: 'sha256', closed_file_set: ['SKILL.md', 'manifest.json', 'schema.json'] },
+  };
+  fs.mkdirSync(skillRoot, { recursive: true });
+  fs.writeFileSync(path.join(skillRoot, 'SKILL.md'), '# fixture design-intent\n');
+  fs.writeFileSync(path.join(skillRoot, 'schema.json'), `${JSON.stringify({
+    version: 1,
+    core: ['Purpose'],
+    standard_extensions: ['Direction', 'Posture'],
+    checked_sections: ['Purpose', 'Top invariant', 'Non-goals', 'Direction', 'Posture'],
+    check_verdicts: ['serves', 'neutral', 'fights', 'unavailable'],
+    plan_level: {
+      anchor_key: 'topic',
+      reconciliation: 'Reconciliation',
+      reconciliation_unit: 'section',
+      reconciliation_verdicts: ['serves', 'neutral', 'conflicts'],
+      goal_heading_pattern: '^## G\\d+:',
+    },
+  }, null, 2)}\n`);
+  fs.writeFileSync(path.join(skillRoot, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
+  registerSchemaSnapshotModule({ captureSchemaSnapshot, computeSkillIdentity });
+  captureSchema({ statePath: fx.statePath, skillRoot });
+  // §6.1's sanctioned repair: the capture stamps the pin into the history; the durable
+  // state field is repaired from it (idempotent — the same repair every consumer performs).
+  repairFormatPin(fx.statePath);
+  assert.deepEqual(resolveFormatPin(fx.statePath), { pin: 'schema_backed' });
+  // The §6.3 reconciliation the checkpoint identity's reconciliation_digest requires.
+  const targetTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-f1-target-'));
+  TMPDIRS.push(targetTmp);
+  const target = path.join(targetTmp, 'target');
+  write(target, 'INTENT.md', '# INTENT\n\n## Purpose\nPinned lineage.\n');
+  git(target, 'init', '-q', '--initial-branch=main');
+  git(target, 'config', 'user.email', 'test@test');
+  git(target, 'config', 'user.name', 'test');
+  git(target, 'config', 'commit.gpgsign', 'false');
+  git(target, 'add', '--all');
+  git(target, 'commit', '-q', '-m', 'init');
+  execFileSync('git', ['clone', '-q', target, path.join(targetTmp, 'consumer')], { encoding: 'utf8' });
+  const rr = resolveReconciliationTarget({ repository: path.join(targetTmp, 'consumer'), remote: 'origin', ref: 'main', now: 1757112000000 });
+  assert.equal(rr.ok, true);
+  const rows = buildReconciliationRows({ identity: rr.identity, statePath: fx.statePath, verdictBySection: { Purpose: 'serves' } });
+  assert.equal(rows.ok, true, JSON.stringify(rows));
+  recordReconciliation({ statePath: fx.statePath, record: rows.record, at: 1757112000001 });
+
+  // The versioned goals amendment: only goals.md changes, by one word.
+  const result = base.replace('## G1: Works', '## G1: Works better\nsignal: test');
+  fs.writeFileSync(path.join(fx.scratch.b, 'spec.md'), SPEC);
+  fs.writeFileSync(path.join(fx.scratch.b, 'goals.md'), result);
+  const diff = gitDiffText(fx.scratch.a, fx.scratch.b);
+  const approval = approvalReceipt({
+    txid: 'f1-pin-seam',
+    bases: { spec: sha256Of(SPEC), goals: sha256Of(base) },
+    results: { spec: sha256Of(SPEC), goals: sha256Of(result) },
+    diffDigest: sha256Of(diff),
+  });
+  const out = promoteAmendment({
+    statePath: fx.statePath, transactionId: 'f1-pin-seam', diff,
+    resultSpec: SPEC, resultGoals: result, approval, self: self(fx), now: 1000,
+  });
+  assert.equal(out.outcome, 'promoted', JSON.stringify(out));
+
+  // THE SEAM: state.goals_md_hash, the goal_amended event, the recovery path, and the
+  // checkpoint identity all hash under the SAME pin — the probe's expected hash, not the
+  // unpinned legacy flavor it reproduced before the fix.
+  const pinnedExpected = goalsHash(result, { formatPin: 'schema_backed' });
+  const unpinnedLegacy = goalsHash(result);
+  assert.notEqual(pinnedExpected, unpinnedLegacy, 'the two flavors must differ (the seam is real)');
+  assert.equal(readState(fx.statePath).goals_md_hash, pinnedExpected,
+    'the goals cache converges to the PINNED evidence hash, never the unpinned flavor');
+  const amended = readEvents(fx.bundleDir).find((e) => e.type === 'goal_amended');
+  assert.equal(amended.data.new_goals_hash, pinnedExpected);
+  assert.equal(amitted_old(amended), pinnedEvidenceOf(base), 'the lineage old hash is the PINNED base hash');
+
+  // The promotion->checkpoint regression the finding names: promote a versioned goals
+  // amendment, then build the CHECKPOINT IDENTITY and assert the lineage hashes MATCH.
+  const identity = buildIntentIdentity({ statePath: fx.statePath, skillRoot });
+  assert.equal(identity.ok, true, JSON.stringify(identity));
+  assert.equal(identity.identity.goals_hash, pinnedExpected,
+    'the checkpoint identity (the consumer) and the recorded lineage (the producer) agree under the pin');
+  // And the REPLAY path repeats the pinned hash, never reverting to the unpinned one.
+  const replay = promoteAmendment({
+    statePath: fx.statePath, transactionId: 'f1-pin-seam', diff,
+    resultSpec: SPEC, resultGoals: result, approval, self: self(fx), now: 2000,
+  });
+  assert.equal(replay.outcome, 'recorded');
+  assert.equal(readState(fx.statePath).goals_md_hash, pinnedExpected);
+});
+
+// The pinned evidence hash of the BASE bytes (a local alias so the lineage assertion reads).
+function amitted_old(ev) { return ev.data.old_goals_hash; }
+function pinnedEvidenceOf(text) { return goalsHash(text, { formatPin: 'schema_backed' }); }
+
+// F6 [rework] — commit/recovery/replay REVALIDATE the durable doc before any mutation: a
+// tampered durable diff, a rewritten result_hashes.spec, or a swapped approval receipt all
+// refuse with ZERO writes (the symmetric refusal), never write UNAPPROVED spec bytes.
+for (const mode of ['rewritten-diff', 'rewritten-result', 'agent-attested-approval']) {
+  test(`F6 regression: a tampered durable doc (${mode}) refuses before any mutation — no unapproved writes`, () => {
+    const fx = mkbundle();
+    const specResult = SPEC.replace('old problem', 'approved problem');
+    const inputs = amendmentInputs(fx, { specResult, goalsResult: GOALS, txid: 'f6-tamper' });
+    beginPromotion({ statePath: fx.statePath, ...inputs, now: 1000 });
+    // The tamper: the durable doc's own fields are rewritten between begin and the commit.
+    const dp = promotionDocPath(fx.statePath, 'f6-tamper');
+    const doc = JSON.parse(fs.readFileSync(dp, 'utf8'));
+    if (mode === 'rewritten-diff') {
+      doc.diff = doc.diff.replace('approved problem', 'UNAPPROVED problem');
+    } else if (mode === 'rewritten-result') {
+      doc.result_hashes.spec = sha256Of(SPEC.replace('old problem', 'UNAPPROVED problem'));
+    } else {
+      doc.approval.attested_by = 'agent';
+    }
+    fs.writeFileSync(dp, JSON.stringify(doc, null, 2) + '\n', 'utf8');
+    // The commit path revalidates and REFUSES: no artifact is touched, no event lands.
+    let threw = null;
+    try {
+      commitPromotion({ statePath: fx.statePath, transactionId: 'f6-tamper', self: self(fx), now: 2000 });
+    } catch (e) {
+      threw = e;
+    }
+    assert.ok(threw, 'the tampered doc refuses (a throw, never a silent write)');
+    assert.match(threw.message, /does not match its recorded diff_digest|no longer binds its recorded fields|attested_by must be 'user'/,
+      `the refusal names the revalidation failure (${threw.message.slice(0, 80)})`);
+    assert.equal(fs.readFileSync(path.join(fx.bundleDir, 'spec.md'), 'utf8'), SPEC,
+      'spec.md stays at its approved base — UNAPPROVED bytes were never written');
+    assert.equal(fs.readFileSync(path.join(fx.bundleDir, 'goals.md'), 'utf8'), GOALS);
+    assert.deepEqual(readEvents(fx.bundleDir).filter((e) => e.type === 'spec_amended'), [],
+      'no promotion record landed for a tampered transaction');
+  });
+}
+
+// F7 [rework] — a forged terminal event does not suppress an unfinished promotion: a
+// hand-appended {type:'spec_amended', data:{transaction_id}} binds nothing, is ignored as
+// a commit point, and the transaction proceeds through its decision table (spec=base →
+// the diff applies), never a silent zero-write "replay".
+test('F7 regression: a forged terminal event is ignored as a commit point — the promotion completes through its decision table, never a zero-write pass', () => {
+  const fx = mkbundle();
+  const specResult = SPEC.replace('old problem', 'approved problem');
+  const inputs = amendmentInputs(fx, { specResult, goalsResult: GOALS, txid: 'f7-forged' });
+  beginPromotion({ statePath: fx.statePath, ...inputs, now: 1000 });
+  // The forgery: the reviewers' exact hand-appended event — the transaction_id and nothing
+  // else. It binds no bases, no results, no diff digest, no approval receipt.
+  fs.appendFileSync(path.join(fx.bundleDir, 'events.jsonl'),
+    `${JSON.stringify({ type: 'spec_amended', data: { transaction_id: 'f7-forged' } })}\n`, 'utf8');
+  const out = promoteAmendment({ statePath: fx.statePath, ...inputs, self: self(fx), now: 2000 });
+  // The table classifies spec=base (not yet applied) and COMPLETES the promotion — the
+  // forged event never turned an unfinished transaction into a no-op.
+  assert.equal(out.outcome, 'recovered', JSON.stringify(out));
+  assert.deepEqual(out.writes, ['spec'], 'the real write landed');
+  assert.equal(fs.readFileSync(path.join(fx.bundleDir, 'spec.md'), 'utf8'), specResult,
+    'spec.md is at its APPROVED result — the promotion completed, never a silent zero-write pass');
+  const events = readEvents(fx.bundleDir).filter((e) => e.type === 'spec_amended');
+  assert.equal(events.length, 2, 'the forged event and the real record both stand; the real one is the fully-bound commit point');
+  assert.ok(events.some((e) => e.data?.result_hashes?.spec === sha256Of(specResult) && e.data?.state === 'recorded'),
+    'the FULLY transaction-bound record is what the replay recognizes');
+  // And the idempotent re-entry now replays on the REAL commit point.
+  const replay = promoteAmendment({ statePath: fx.statePath, ...inputs, self: self(fx), now: 3000 });
+  assert.equal(replay.outcome, 'recorded');
+  assert.equal(replay.replay, true);
+  assert.deepEqual(replay.writes, []);
+});

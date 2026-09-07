@@ -265,7 +265,7 @@ const CLOSED_SEAM_ALLOWLIST = [
   { at: 'lib/runs.mjs:267', why: 'discoveryConfigPath(mainRoot, env = process.env): default-param env injection into resolveRunsDir (all reads via readEnv)' },
   { at: 'lib/runs.mjs:336', why: 'readDiscoveryConfig(mainRoot, { env = process.env }): default-param env injection, forwarded to discoveryConfigPath/resolveRunsDir (all reads via readEnv)' },
   { at: 'lib/runs.mjs:458', why: 'discoverRuns({ env = process.env }): default-param env injection into resolveRunsDir/readDiscoveryConfig (all reads via readEnv)' },
-  { at: 'bin/masterplan.mjs:1311', why: 'shouldSuppressWorkflow(flags = {}, env = process.env): default-param env injection; callers pass readEnvAll() (the seam proxy) and the only read is env.PI_CODING_AGENT' },
+  { at: 'bin/masterplan.mjs:1339', why: 'shouldSuppressWorkflow(flags = {}, env = process.env): default-param env injection; callers pass readEnvAll() (the seam proxy) and the only read is env.PI_CODING_AGENT' },
 ];
 
 // ---------------------------------------------------------------------------

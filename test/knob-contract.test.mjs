@@ -135,7 +135,7 @@ const KNOB_INTENT = { why: 'w', outcome: 'o', anti_goals: ['x'], done_means: 'd'
 
 // Record a critic receipt with an eligible set — the §5.3 adjudication the probing consumer
 // counts. Mirrors the interview-design-intent fixture's recordReceipt.
-async function knobRecordReceipt({ statePath, intent, eligible, forks, dir, n = 1 }) {
+async function knobRecordReceipt({ statePath, intent, eligible, forks, dir, n = 1, skillRoot }) {
   const iv = await requireInterview();
   const status = iv.interviewStatus(statePath);
   const payloadPath = path.join(dir, `knob-payload-${n}-${Math.random().toString(36).slice(2, 8)}.json`);
@@ -145,6 +145,7 @@ async function knobRecordReceipt({ statePath, intent, eligible, forks, dir, n = 
   }));
   iv.recordCritic({
     statePath,
+    skillRoot,
     receipt: { dispatch_id: `d${n}`, model: 'm', output_tokens: 10, content_head: status.content_head, intent_sha256: iv.intentSha(intent) },
     payloadPath,
   });
@@ -153,17 +154,17 @@ async function knobRecordReceipt({ statePath, intent, eligible, forks, dir, n = 
 // The twin ledger the probing contracts waive at the cap. `complexity` picks the budget; the
 // ledger holds exactly `eligibleCount` answered intent questions so the mechanical/critic
 // count is FIXED while only the configured minimum varies (single-variable discipline).
-async function buildProbingLedger({ statePath, complexity, eligibleCount }) {
+async function buildProbingLedger({ statePath, complexity, eligibleCount, skillRoot }) {
   const iv = await requireInterview();
   const { BUDGETS } = iv;
   const cap = BUDGETS[complexity].cap;
   const critic = BUDGETS[complexity].critic;
   // Round 1: the eligible intent questions, asked and answered.
   for (let i = 1; i <= eligibleCount; i += 1) {
-    iv.askQuestion({ statePath, id: `Q${i}`, round: 1, kind: 'intent', text: `intent ${i}?` });
+    iv.askQuestion({ statePath, skillRoot, id: `Q${i}`, round: 1, kind: 'intent', text: `intent ${i}?` });
   }
   for (let i = 1; i <= eligibleCount; i += 1) {
-    iv.answerQuestion({ statePath, id: `Q${i}`, text: `a${i}` });
+    iv.answerQuestion({ statePath, skillRoot, id: `Q${i}`, text: `a${i}` });
   }
   // Cap fillers to the SAME ask count on both fixtures: design asks, immediately withdrawn
   // (they never count toward probing and keep the twin ledgers identical apart from the
@@ -173,16 +174,16 @@ async function buildProbingLedger({ statePath, complexity, eligibleCount }) {
   let round = 2;
   while (n < cap) {
     n += 1;
-    iv.askQuestion({ statePath, id: `Q${n}`, round, kind: 'design', text: `filler ${n}?` });
-    iv.withdrawQuestion({ statePath, id: `Q${n}`, reason: 'cap filler' });
+    iv.askQuestion({ statePath, skillRoot, id: `Q${n}`, round, kind: 'design', text: `filler ${n}?` });
+    iv.withdrawQuestion({ statePath, skillRoot, id: `Q${n}`, reason: 'cap filler' });
     round += 1;
   }
   // The draft + (where a critic runs) a CURRENT receipt at the draft head.
-  iv.recordDraft({ statePath, intent: KNOB_INTENT });
+  iv.recordDraft({ statePath, skillRoot, intent: KNOB_INTENT });
   if (critic === 'on') {
     const eligible = [];
     for (let i = 1; i <= eligibleCount; i += 1) eligible.push(`Q${i}`);
-    await knobRecordReceipt({ statePath, intent: KNOB_INTENT, eligible, forks: true, dir: path.dirname(statePath) });
+    await knobRecordReceipt({ statePath, skillRoot, intent: KNOB_INTENT, eligible, forks: true, dir: path.dirname(statePath) });
   }
 }
 
@@ -212,8 +213,8 @@ async function observeProbingContract({ complexity, level, configured }) {
   const { dir, statePath } = await makeKnobBundle(complexity);
   const skillRoot = makeKnobSkill();
   await knobCapture({ statePath, skillRoot });
-  await buildProbingLedger({ statePath, complexity, eligibleCount });
-  iv.waiveInterview({ statePath, reason: 'knob contract', probingMinimum: resolved });
+  await buildProbingLedger({ statePath, complexity, eligibleCount, skillRoot });
+  iv.waiveInterview({ statePath, skillRoot, reason: 'knob contract', probingMinimum: resolved });
   const events = fs.readFileSync(path.join(dir, 'events.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
   const ev = [...events].reverse().find((e) => e.type === 'interview_waived');
   return {
@@ -271,21 +272,21 @@ async function observeFormatPin(pin) {
 async function observeCaptureSwitch(captured) {
   const iv = await requireInterview();
   const { dir, statePath } = await makeKnobBundle('medium');
+  const skillRoot = captured ? makeKnobSkill() : null;
   if (captured) {
-    const skillRoot = makeKnobSkill();
     await knobCapture({ statePath, skillRoot });
   }
   // The twin ledger: 2 intent + 1 design answered (every legacy floor deliberately unmet at
   // medium: floor 4, intent floor 3, rounds-min 2), one active design pick, a draft and a
   // current clean critic receipt with an eligible set of 2 (probing met at default 2).
-  iv.askQuestion({ statePath, id: 'Q1', round: 1, kind: 'intent', text: 'why?' });
-  iv.askQuestion({ statePath, id: 'Q2', round: 1, kind: 'intent', text: 'outcome?' });
-  iv.answerQuestion({ statePath, id: 'Q1', text: 'because' });
-  iv.answerQuestion({ statePath, id: 'Q2', text: 'ships' });
-  iv.askQuestion({ statePath, id: 'Q3', round: 2, kind: 'design', text: 'pick A or B?' });
-  iv.answerQuestion({ statePath, id: 'Q3', text: 'A' });
-  iv.recordDraft({ statePath, intent: KNOB_INTENT });
-  await knobRecordReceipt({ statePath, intent: KNOB_INTENT, eligible: ['Q1', 'Q2'], forks: true, dir });
+  iv.askQuestion({ statePath, skillRoot, id: 'Q1', round: 1, kind: 'intent', text: 'why?' });
+  iv.askQuestion({ statePath, skillRoot, id: 'Q2', round: 1, kind: 'intent', text: 'outcome?' });
+  iv.answerQuestion({ statePath, skillRoot, id: 'Q1', text: 'because' });
+  iv.answerQuestion({ statePath, skillRoot, id: 'Q2', text: 'ships' });
+  iv.askQuestion({ statePath, skillRoot, id: 'Q3', round: 2, kind: 'design', text: 'pick A or B?' });
+  iv.answerQuestion({ statePath, skillRoot, id: 'Q3', text: 'A' });
+  iv.recordDraft({ statePath, skillRoot, intent: KNOB_INTENT });
+  await knobRecordReceipt({ statePath, skillRoot, intent: KNOB_INTENT, eligible: ['Q1', 'Q2'], forks: true, dir });
   // Coverage rows for the SNAPSHOT's checked sections (only consumed under the captured
   // policy; the uncaptured fixture never reaches the coverage read because the floors refuse
   // first — which is itself the observable).
@@ -303,7 +304,7 @@ async function observeCaptureSwitch(captured) {
   }
   let outcome;
   try {
-    iv.endInterview({ statePath, reason: 'converged', coverageFile, probingMinimum: 2 });
+    iv.endInterview({ statePath, skillRoot, reason: 'converged', coverageFile, probingMinimum: 2 });
     const events = fs.readFileSync(path.join(dir, 'events.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
     const ev = [...events].reverse().find((e) => e.type === 'interview_end');
     outcome = { converged: true, policy: ev.policy, refusal: null };
@@ -1226,22 +1227,22 @@ test('alternate schema content drives the coverage consumer end to end — no co
     const { dir, statePath } = await makeKnobBundle('medium');
     const skillRoot = makeKnobSkill({ checkedSections: sections });
     await knobCapture({ statePath, skillRoot });
-    return { dir, statePath, sections };
+    return { dir, statePath, sections, skillRoot };
   };
   const std = await mk(STANDARD);
   const alt = await mk(ALTERNATE);
 
   // The twin ledger the terminal evaluation judges (the capture-switch shape: floors
   // unmet, probing met — so under the schema-backed policy only COVERAGE decides).
-  const buildLedger = async ({ dir, statePath }) => {
-    iv.askQuestion({ statePath, id: 'Q1', round: 1, kind: 'intent', text: 'why?' });
-    iv.askQuestion({ statePath, id: 'Q2', round: 1, kind: 'intent', text: 'outcome?' });
-    iv.answerQuestion({ statePath, id: 'Q1', text: 'because' });
-    iv.answerQuestion({ statePath, id: 'Q2', text: 'ships' });
-    iv.askQuestion({ statePath, id: 'Q3', round: 2, kind: 'design', text: 'pick A or B?' });
-    iv.answerQuestion({ statePath, id: 'Q3', text: 'A' });
-    iv.recordDraft({ statePath, intent: KNOB_INTENT });
-    await knobRecordReceipt({ statePath, intent: KNOB_INTENT, eligible: ['Q1', 'Q2'], forks: true, dir });
+  const buildLedger = async ({ dir, statePath, skillRoot }) => {
+    iv.askQuestion({ statePath, skillRoot, id: 'Q1', round: 1, kind: 'intent', text: 'why?' });
+    iv.askQuestion({ statePath, skillRoot, id: 'Q2', round: 1, kind: 'intent', text: 'outcome?' });
+    iv.answerQuestion({ statePath, skillRoot, id: 'Q1', text: 'because' });
+    iv.answerQuestion({ statePath, skillRoot, id: 'Q2', text: 'ships' });
+    iv.askQuestion({ statePath, skillRoot, id: 'Q3', round: 2, kind: 'design', text: 'pick A or B?' });
+    iv.answerQuestion({ statePath, skillRoot, id: 'Q3', text: 'A' });
+    iv.recordDraft({ statePath, skillRoot, intent: KNOB_INTENT });
+    await knobRecordReceipt({ statePath, skillRoot, intent: KNOB_INTENT, eligible: ['Q1', 'Q2'], forks: true, dir });
   };
   await buildLedger(std);
   await buildLedger(alt);
@@ -1263,7 +1264,7 @@ test('alternate schema content drives the coverage consumer end to end — no co
   // 2. OWN coverage converges on BOTH bundles: the consumer demands the ALTERNATE sections
   //    when the snapshot declares them — not today's headings.
   for (const [label, b] of [['standard', std], ['alternate', alt]]) {
-    iv.endInterview({ statePath: b.statePath, reason: 'converged', coverageFile: coverageFile(b.dir, b.sections), probingMinimum: 2 });
+    iv.endInterview({ statePath: b.statePath, skillRoot: b.skillRoot, reason: 'converged', coverageFile: coverageFile(b.dir, b.sections), probingMinimum: 2 });
     const events = fs.readFileSync(path.join(b.dir, 'events.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
     const ev = [...events].reverse().find((e) => e.type === 'interview_end');
     assert.equal(ev.policy, 'schema_backed', `${label}: the terminal event carries the schema-backed policy`);
@@ -1277,7 +1278,7 @@ test('alternate schema content drives the coverage consumer end to end — no co
     const fresh = await mk(b.sections);
     await buildLedger(fresh);
     assert.throws(
-      () => iv.endInterview({ statePath: fresh.statePath, reason: 'converged', coverageFile: coverageFile(fresh.dir, wrong), probingMinimum: 2 }),
+      () => iv.endInterview({ statePath: fresh.statePath, skillRoot: fresh.skillRoot, reason: 'converged', coverageFile: coverageFile(fresh.dir, wrong), probingMinimum: 2 }),
       (e) => /does not declare as checked/.test(String(e.message)),
       `${label}: the coverage consumer must refuse foreign sections naming the snapshot`,
     );
@@ -1286,7 +1287,7 @@ test('alternate schema content drives the coverage consumer end to end — no co
     const fresh2 = await mk(b.sections);
     await buildLedger(fresh2);
     assert.throws(
-      () => iv.endInterview({ statePath: fresh2.statePath, reason: 'converged', coverageFile: partial, probingMinimum: 2 }),
+      () => iv.endInterview({ statePath: fresh2.statePath, skillRoot: fresh2.skillRoot, reason: 'converged', coverageFile: partial, probingMinimum: 2 }),
       (e) => /has no row/.test(String(e.message)),
       `${label}: incomplete coverage of the SNAPSHOT's own sections is refused`,
     );
