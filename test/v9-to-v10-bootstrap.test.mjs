@@ -1936,12 +1936,49 @@ test('targeted closure: the anchors themselves are validated, and the no-history
   assert.equal(st.pass, 2);
   assert.equal(st.version, '11.4.1', 'replay validates against the RECORDED anchor, never a re-derived default');
   // And the recorded anchor is validated too: a hand-edited series_anchor refuses.
-  const ledger = path.join(nb.bundleDir, 'events.jsonl');
-  const rows = fs.readFileSync(ledger, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
-  rows.find((e) => e.type === 'bootstrap_pass').series_anchor = '10.0.0.junk';
-  fs.writeFileSync(ledger, `${rows.map((r) => JSON.stringify(r)).join('\n')}\n`);
+  const ledgerNb = path.join(nb.bundleDir, 'events.jsonl');
+  const rowsNb = fs.readFileSync(ledgerNb, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  rowsNb.find((e) => e.type === 'bootstrap_pass').series_anchor = '10.0.0.junk';
+  fs.writeFileSync(ledgerNb, `${rowsNb.map((r) => JSON.stringify(r)).join('\n')}\n`);
   assert.throws(() => bootstrapStatus(nb.statePath), /MALFORMED recorded version/,
     'a hand-edited recorded anchor is the named refusal');
+});
+
+test('§10.3 red-tag boundary: a pass complete through PUSH with a failed post-push step opens the corrective pass; a pre-push stall does not', () => {
+  // The v10.0.0 tag CI went red (recorded ci_wait status failed on the real run): §10.3's
+  // red-tag row prescribes the corrective release, but the machinery required the predecessor
+  // complete through surfaces_live — unreachable when the tag is red (install-pi is not run on
+  // a red tag). The boundary is PUBLICATION: complete through push + the trigger is the pass's
+  // own failed post-push driver step (the tag is public, pass 2 re-does everything from verify
+  // for the new version). A stall BEFORE push publishes nothing — ordinary branch work.
+  const fx = makeFixture();
+  seedThrough(fx, STEP_ORDER.slice(0, STEP_ORDER.indexOf('ci_wait'))); // rehearsal..push done
+  appendEvent(fx.statePath, {
+    type: 'bootstrap_step', ts: 50, pass: 1, step: 'ci_wait', cmd: 'seeded', exit: 1, status: 'failed',
+    sha: fx.head(), data: { conclusions: { test: 'failure', 'release-publish': 'skipped' } },
+  });
+  const ciFailIdx = events(fx.statePath).length - 1;
+  const started = startPass({ statePath: fx.statePath, pass: 2, triggeredBy: ciFailIdx, version: '10.0.1', targets: fx.targets });
+  assert.equal(started.pass, 2, JSON.stringify(started));
+  // The replay validation accepts the same boundary (writer and replay agree).
+  const st = bootstrapStatus(fx.statePath);
+  assert.equal(st.pass, 2);
+  assert.equal(st.version, '10.0.1');
+  assert.equal(st.next.step, 'verify', 'the corrective pass re-enters at the pre-publish verify');
+  // The negative: a stall BEFORE push (a failed verify with release unrecorded) refuses —
+  // nothing was published, so the fix is ordinary branch work in pass 1.
+  const fx2 = makeFixture();
+  seedThrough(fx2, ['rehearsal', 'docs_normalize']);
+  appendEvent(fx2.statePath, {
+    type: 'bootstrap_step', ts: 51, pass: 1, step: 'verify', cmd: 'seeded', exit: 1, status: 'failed',
+    sha: fx2.head(), data: { tip: fx2.tip() },
+  });
+  const verifyFailIdx = events(fx2.statePath).length - 1;
+  assert.throws(
+    () => startPass({ statePath: fx2.statePath, pass: 2, triggeredBy: verifyFailIdx, version: '10.0.1', targets: fx2.targets }),
+    /not complete through surfaces_live|not a blocking|failed published-tag/,
+    'a pre-publish stall opens no corrective pass — nothing was published',
+  );
 });
 
 test('finding 6: a zero-exit failed WITH a reason records through the driver and lands on the ledger', () => {

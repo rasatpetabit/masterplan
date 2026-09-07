@@ -57,6 +57,7 @@ export function readBundleEvents(statePath) {
           problems.push(`event ${i} (bootstrap_pass) names event ${e.triggered_by} as its corrective trigger, which does not PRECEDE the pass (index ${i}) — a corrective pass opens on a finding that already happened, never on one that has not (§10.3)`);
           return;
         }
+        const triggerRec = events[e.triggered_by];
         // DURABLE PREREQUISITES (mirroring startPass, the re-review's finding 2): the prior
         // pass must have been COMPLETE through surfaces_live — every step but the gate done —
         // BEFORE the pass opened, judged on the history slice only (the ledger's state at open
@@ -70,16 +71,27 @@ export function readBundleEvents(statePath) {
         };
         const missing = required.filter((st) => !stepDone(st));
         if (missing.length) {
-          problems.push(`event ${i} (bootstrap_pass) opens pass ${e.pass} but pass ${passSoFar} was not complete through surfaces_live at that point (missing: ${missing.join(', ')}) — a corrective pass cannot open over an incomplete predecessor (§10.3)`);
-          return;
+          // §10.3's red-tag boundary, mirrored from startPass: a predecessor complete through PUSH
+          // whose trigger is its own failed post-push driver step (the tag is public) may open the
+          // corrective pass; everything before push missing is drift — nothing was published.
+          const pushIdx = required.indexOf('push');
+          const publishedTagFailure = stepDone('push') && triggerRec && triggerRec.type === 'bootstrap_step'
+            && triggerRec.status === 'failed' && Number.isInteger(pushIdx)
+            && required.indexOf(triggerRec.step) > pushIdx && missing.every((st) => required.indexOf(st) > pushIdx);
+          if (!publishedTagFailure) {
+            problems.push(`event ${i} (bootstrap_pass) opens pass ${e.pass} but pass ${passSoFar} was not complete through surfaces_live at that point (missing: ${missing.join(', ')}) — a corrective pass cannot open over an incomplete predecessor (§10.3)`);
+            return;
+          }
         }
         const priorGate = history.find((h) => h && h.type === 'bootstrap_step' && h.pass === passSoFar && h.step === 'gate');
         if (priorGate && isDone(priorGate)) {
           problems.push(`event ${i} (bootstrap_pass) opens pass ${e.pass} but pass ${passSoFar}'s gate was already recorded — the bootstrap is complete; a later finding needs a new run (§10.3)`);
           return;
         }
-        if (!CORRECTIVE_TRIGGERS.includes(events[e.triggered_by] && events[e.triggered_by].type)) {
-          problems.push(`event ${i} (bootstrap_pass) names event ${e.triggered_by} as its corrective trigger, which is not a blocking corrective finding (${CORRECTIVE_TRIGGERS.join(', ')}) — a corrective pass opens on a finding, never by hand (§10.3)`);
+        if (!(CORRECTIVE_TRIGGERS.includes(triggerRec && triggerRec.type)
+          || (triggerRec && triggerRec.type === 'bootstrap_step' && triggerRec.status === 'failed'
+            && STEP_ORDER.indexOf(triggerRec.step) > STEP_ORDER.indexOf('push')))) {
+          problems.push(`event ${i} (bootstrap_pass) names event ${e.triggered_by} as its corrective trigger, which is not a blocking corrective finding (${CORRECTIVE_TRIGGERS.join(', ')} or a failed published-tag driver step) — a corrective pass opens on a finding, never by hand (§10.3)`);
           return;
         }
         if (!isBlockingFinding(events[e.triggered_by])) {
@@ -959,11 +971,24 @@ export function startPass({ statePath, pass, triggeredBy, version = null, target
     throw new Error(`pass must be exactly ${status.pass + 1}, got ${pass}`);
   }
   // Fixed pass ordering: the previous pass must have reached surfaces_live (every step but the gate,
-  // which is recorded once on the latest pass) before a corrective pass may open.
+  // which is recorded once on the latest pass) before a corrective pass may open — OR, per §10.3's
+  // red-tag rows (red tag CI, a failed install after the push, a rejected step-5 push), the
+  // predecessor completed through PUSH and failed at a step AFTER it: the tag is public, pass 1 is
+  // deliberately stuck (install-pi is not run on a red tag), and the corrective pass re-does the
+  // sequence from verify for the new version. Nothing before push may be missing — nothing was
+  // published, so the failure is ordinary branch work, not a corrective release.
   const required = stepsForPass(status.pass).filter((st) => st !== 'gate');
   const missing = required.filter((st) => !isDone(latestOfType(events, 'bootstrap_step', status.pass, st)));
   if (missing.length) {
-    throw new Error(`pass ${status.pass} is not complete through surfaces_live (missing: ${missing.join(', ')}) — a corrective pass cannot open`);
+    const pushIdx = required.indexOf('push');
+    const triggerRecord = Number.isInteger(triggeredBy) && triggeredBy >= 0 && triggeredBy < events.length ? events[triggeredBy] : null;
+    const publishedTagFailure = isDone(latestOfType(events, 'bootstrap_step', status.pass, 'push'))
+      && triggerRecord && triggerRecord.type === 'bootstrap_step' && triggerRecord.status === 'failed'
+      && Number.isInteger(pushIdx) && required.indexOf(triggerRecord.step) > pushIdx
+      && missing.every((st) => required.indexOf(st) > pushIdx);
+    if (!publishedTagFailure) {
+      throw new Error(`pass ${status.pass} is not complete through surfaces_live (missing: ${missing.join(', ')}) — a corrective pass cannot open`);
+    }
   }
   // The gate ends the bootstrap: once it is recorded on a pass, that pass is the last one. A finding
   // raised after a recorded gate needs a new run, never a pass behind the gate's back.
@@ -975,14 +1000,22 @@ export function startPass({ statePath, pass, triggeredBy, version = null, target
     throw new Error(`triggeredBy must be a valid event index (0..${events.length - 1})`);
   }
   const trigger = events[triggeredBy];
-  if (!trigger || !CORRECTIVE_TRIGGERS.includes(trigger.type)) {
-    throw new Error(`triggeredBy must name a corrective finding event (${CORRECTIVE_TRIGGERS.join(', ')}), got ${trigger ? trigger.type : 'nothing'}`);
+  // §10.3's red-tag rows: a FAILED DRIVER STEP after push (the tag is public — red CI, a failed
+  // install) is a corrective finding in its own right, alongside the typed findings. It is
+  // blocking by construction (a failed record) and it is the pass's own durable failure receipt.
+  const publishedStepTrigger = !!(trigger && trigger.type === 'bootstrap_step' && trigger.status === 'failed'
+    && STEP_ORDER.indexOf(trigger.step) > STEP_ORDER.indexOf('push'));
+  if (!trigger || !(CORRECTIVE_TRIGGERS.includes(trigger.type) || publishedStepTrigger)) {
+    throw new Error(`triggeredBy must name a corrective finding event (${CORRECTIVE_TRIGGERS.join(', ')}) or a failed published-tag driver step, got ${trigger ? trigger.type : 'nothing'}`);
   }
   if (!isBlockingFinding(trigger)) {
     throw new Error(`event ${triggeredBy} (${trigger.type}) is not a blocking finding — a corrective pass needs a partial/missed goal, a revise/reject review or a red verify`);
   }
   const live = latestOfType(events, 'bootstrap_step', status.pass, 'surfaces_live');
-  if (!live || triggeredBy <= live.index) {
+  // The finding window: a finding raised after BOTH SURFACES WENT LIVE opens the corrective pass
+  // (the finish-time class) — and a pass that never reached surfaces_live (the red-tag class:
+  // deliberately stuck at the failed post-push step) is opened by that step's own failure record.
+  if (live && triggeredBy <= live.index) {
     throw new Error(`event ${triggeredBy} precedes pass ${status.pass}'s surfaces_live record — only a finding raised after both surfaces went live opens a corrective pass`);
   }
   if (events.some((e) => e && e.type === 'bootstrap_pass' && e.triggered_by === triggeredBy)) {
