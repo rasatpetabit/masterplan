@@ -1,11 +1,12 @@
 {
   "wave": "whole-scope (waves 11-16 + the /intent handoff pickup)",
-  "recorded_at": "2026-09-07T09:1Z",
-  "review_kind": "end-of-waves whole-scope adversarial (workflow transport, governed adversary lane litellm/gpt-6-astra, two lenses run concurrently; the review the per-wave reviews structurally could not be — the seams between waves, the unreviewed disclosed fix/restoration commits, and the pickup's own seams)",
-  "reviewed_diff": "81303d3..67eb52d (19 commits + the fix round itself; 42 files, +12142/-148 pre-fix)",
+  "recorded_at": "2026-09-07T11:5Z",
+  "record_revised_at": "2026-09-07T12:0Z",
+  "record_revision_note": "repaired 2026-09-07 per an advisor audit of the evidence records: this file was invalid JSON (a bare number followed by unquoted prose), the reviewed range named the fix commit instead of the reviewed tip, the two lenses were described as concurrent when the workflow's sequential awaits serialized them, the verification-cause account conflated two distinct mechanisms, and the record omitted the later gate-iteration trail. Historical verdicts are preserved as issued; nothing here rewrites a verdict as an approval.",
+  "review_kind": "end-of-waves whole-scope adversarial (workflow transport, governed adversary lane litellm/gpt-6-astra, two lenses run SEQUENTIALLY — the workflow script's consecutive awaits serialized them despite the concurrency setting; the review the per-wave reviews structurally could not be — the seams between waves, the unreviewed disclosed fix/restoration commits, and the pickup's own seams)",
+  "reviewed_diff": "81303d3..76da5f1 (the waves 11-16 diff INCLUDING the /intent handoff pickup; 67eb52d was the FIX round that followed, not part of what this pass reviewed)",
   "lenses": {
     "integration_coherence": {
-      "agent": "lens 1",
       "verdict": "rework",
       "findings": [
         "[rework] lib/promote.mjs:534-535,596,708 — promotion ignores the durable format pin; a schema-backed goals amendment persists an unpinned legacy goals_md_hash while the pinned consumer computes a different value; recovery repeats it (the goals lineage breaks at the promotion->checkpoint boundary)",
@@ -15,7 +16,6 @@
       ]
     },
     "invariants_hostile_input": {
-      "agent": "lens 2",
       "verdict": "rework",
       "findings": [
         "[rework] lib/checkpoint-evidence.mjs:291,265 — skill-equality unenforced by consumers (no production caller for the guard; reviewCompletedTasks approved with a changed SKILL.md); checkpoint reuses recorded reconciliation without fresh resolution (changed target bytes and a nonexistent remote both approved)",
@@ -29,15 +29,80 @@
   "fix_round": {
     "builder": "glm-5.3 via workflow transport (whole-scope-fix-round-mtqwiyv2-2wik5b, 1 agent, 91.5M tok, $128.93)",
     "commit": "67eb52d",
-    "verified_by_orchestrator": "all four reviewer probe scripts re-run in-session at the true sites — every original bad outcome fails to reproduce: PROMOTION recorded==expected==replay (pinned 54f539... not legacy bf3064...); DRIFT {checkpointOk:false}; OUTAGE {resolution:unknown_unavailable, checkpoint:false}; AFTER_SKILL_CHANGE {askError:skill_absent, askRecorded:false, checkpoint:false} + reviewCompletedTasks refuses on skill-change/target-change/outage/empty-rows; tampered approval/diff/result-hashes all throw with spec at base; the forged event now completes through the decision table (recovered, real writes)",
-    "regressions_added": 9 (promotion-transaction F1/F6 x3/F7; checkpoint F2; guard F3; finish-auth F4 mutation; reconciliation F5)",
+    "verified_by_orchestrator": "all four reviewer probe scripts re-run in-session at the true sites — every original bad outcome fails to reproduce: PROMOTION recorded==expected==replay (pinned hash, not legacy); DRIFT {checkpointOk:false}; OUTAGE {resolution:unknown_unavailable, checkpoint:false}; AFTER_SKILL_CHANGE {askError:skill_absent, askRecorded:false, checkpoint:false} + reviewCompletedTasks refuses on skill-change/target-change/outage/empty-rows; tampered approval/diff/result-hashes all throw with spec at base; the forged event now completes through the decision table (recovered, real writes)",
+    "regressions_added": 9,
+    "regressions_added_detail": "promotion-transaction: F1 schema-backed lineage, F6 x3 (rewritten-diff, rewritten-result, agent-attested-approval), F7 forged-terminal-event; checkpoint F2 fresh target resolution; guard F3 changed-skill refusal at askQuestion/reviewCompletedTasks/checkpoint; finish-auth F4 absent-or-foreign authorization mutation; reconciliation F5 empty-rows refusal",
     "disclosed_deviations": "F3's consumer wiring extends past the five named files (lib/dispatch-wave.mjs, lib/finish-step.mjs, lib/task-review.mjs gain the skill-root guard — the guard needs the root at each consumer boundary); two existing mutation tests updated to the STRONGER spec behavior (drift now refuses the checkpoint per §6.3; finish receipts carry §5.5's authorization members); knob-inventory ENV line re-anchored after the bin insertion",
-    "suite_after_fix_round": "2719/2719"
+    "suite_after_fix_round": "2719 by test count in the builder's report",
+    "verification_causes_recorded": [
+      "the builder's 2719/2719 claim: the installed-surface suites (interview-cutover) build their fixture installs from the COMMITTED HEAD via git archive, and the builder ran PRE-commit — its installed-surface tests exercised the PRE-fix-round bin, so the recorder-verbs wiring defect was invisible to its run. Demonstrated by the post-commit cutover run failing 4/15 at the identical tree the builder had reported green.",
+      "the orchestrator's own subsequent 2719/2719 verification: the aggregated suite output prints one summary per xargs chunk and the verification read only the last chunk's summary (tail -3); the 4 cutover failures sat in an earlier chunk. Demonstrated by the per-file run at the same tree.",
+      "both mechanisms are recorded as demonstrated; neither is offered as a general explanation for other green results."
+    ],
+    "wiring_defect_in_fix_round": "the recorder verbs' guard received the RAW --skill-root flag while every other consumer used resolveInstalledSkillRoot — no flag, no resolution, skill_absent even when the installed pin resolves; fixed in 48b3857 with the aggregation lesson applied (sum every chunk summary)"
   },
-  "coverage_limit_recorded": "the exhaustive kill-between-every-write crash matrix remains unperformed (lens 2's honest limit) — the live release rehearsal exercises real kill points next (todo #22)",
-  "discipline": "one review round, one fix round; the fix round is disclosed as not re-reviewed at the whole-scope level; the reviewers' own probes re-run by the orchestrator serve as the independent verification",
+  "coverage_limits_recorded": "the exhaustive kill-between-every-write promotion crash matrix remains unperformed (lens 2's honest limit). The named crash classes ARE covered (mid-flight expected-revision abort, the crash-after-event cache-convergence path, the §10.3 fixture rows), but no test kills the process between every consecutive pair of writes across both artifacts + state + the doc + the refs. The live release rehearsal exercises REAL kill points but is a distinct exercise, not this matrix. Retained as an explicit limitation for the gate-of-record reviewer to judge.",
+  "gate_of_record_iterations": [
+    {
+      "iteration": "pre-publish review",
+      "tip": "47f104d",
+      "verdicts": {"lens_1": "revise", "lens_2": "revise"},
+      "findings": 6,
+      "finding_summary": "runtime skill-root default read the developer checkout (pin.repo); commitPointReached inspected only the changed half; install-pi --expect judged the version through the host's Claude marketplace; --check accepted a broken skill link; bootstrap_pass had no permanent event validator; the event validator contradicted §10.1's failure-with-reason contract",
+      "fix_commits": ["aad6b36", "05af5d0"],
+      "note": "05af5d0 additionally repaired real drift the F5 replay validation surfaced in this run's own ledger (a legacy data-wrapped required_successor recorded 2026-09-04 through v9's mp event) with a disclosed read-time lift at every validating/projecting seam — the file's bytes never rewritten"
+    },
+    {
+      "iteration": "re-review 1",
+      "tip": "05af5d0",
+      "verdicts": {"lens_1": "revise", "lens_2": "approve"},
+      "findings": 2,
+      "finding_summary": "the events-only supersession match accepted a hand-appended amendment event; the F5 replay gate accepted a future corrective trigger and a pass over an incomplete predecessor",
+      "fix_commit": "54eb75b",
+      "fix_summary": "supersession demands route (a) a durable, F6-revalidated transaction record naming the current bytes or route (b) an operator-attested approval replayed through validateUserApprovalReceipt; replay mirrors startPass's causal-ordering and prior-pass-completion prerequisites"
+    },
+    {
+      "iteration": "re-review 2",
+      "tip": "54eb75b",
+      "verdicts": {"single_lens": "revise"},
+      "findings": 1,
+      "finding_summary": "revalidateTransactionDoc never bound result_goals_evidence_hash to the approval-bound result bytes — a tamperer rewriting only that field laundered unapproved bytes through the supersession route",
+      "fix_commit": "6eab226",
+      "fix_summary": "both lineage halves are re-derived from the durable pre-image + diff and compared against the stored fields"
+    },
+    {
+      "iteration": "re-review 3",
+      "tip": "6eab226",
+      "verdicts": {"single_lens": "revise"},
+      "findings": 1,
+      "finding_summary": "base pins were repository-global by transaction id while documents are bundle-local — two bundles sharing an id overwrote each other's GC protection",
+      "fix_commit": "b61a52d",
+      "fix_summary": "refs namespaced by the bundle slug (later found insufficient — see iteration 5)"
+    },
+    {
+      "iteration": "re-review 4",
+      "tip": "b61a52d",
+      "verdicts": {"single_lens": "revise"},
+      "findings": 3,
+      "finding_summary": "same-slug LINKED WORKTREES still overwrote each other's pins (the shared object store); the slug gate's regex rejected slugs mp seed accepts (Valid_legacy); String(undefined) passed the gate fail-open",
+      "fix_commit": "0142bf7",
+      "fix_summary": "content-addressed pins — the base oid is part of the ref name, so pins are additive and overwrite is impossible by construction; no slug component remains (the charset and missing-slug findings have no seam left)"
+    },
+    {
+      "iteration": "re-review 5",
+      "tip": "0142bf7",
+      "verdicts": {"single_lens": "revise"},
+      "findings": 1,
+      "finding_summary": "git hash-object -w applied clean/EOL filters — under .gitattributes '*.md text eol=lf' with a CRLF artifact the pinned blob was the normalized LF bytes, not the approved on-disk bytes, and both commit and recovery refused a legitimate transaction",
+      "fix_commit": "a10a89f",
+      "fix_summary": "--no-filters: the pin is exact bytes, the same identity the approval bound"
+    }
+  ],
+  "attestation_constraint_recorded": "no future evidence receipt may carry attested_by:'user' with an invented question and answer: the operator's standing execution authorization is NOT evidence that the user answered a specific approval question. Any evidence requiring a user-attested receipt either quotes the operator's actual words naming that decision or is not created. (The 2026-09-07 ledger-amendment approval draft in /tmp was never applied — the bundle was unarmed, no capture, no identity to amend — and is retained only as a negative example of this constraint.)",
+  "discipline": "one review round, one fix round per iteration; every fix round disclosed as not re-reviewed at the iteration that spawned it, with the NEXT iteration covering the fix's own seam; historical verdicts are never rewritten as approvals",
   "review_runs": {
-    "review": "whole-scope-review-mtqw5dep-nzwsfq (2 agents, gpt-6-astra, 186.8K tok, $7.61)",
-    "fix_round": "whole-scope-fix-round-mtqwiyv2-2wik5b (glm-5.3, 91.5M tok, $128.93)"
+    "review": "whole-scope-review-mtqw5dep-nzwsfq (2 agents, gpt-6-astra, run sequentially, 186.8K tok, $7.61)",
+    "fix_round": "whole-scope-fix-round-mtqwiyv2-2wik5b (glm-5.3, 91.5M tok, $128.93)",
+    "gate_iterations": "prepublish-review-mtr1rslc-jhputc, prepublish-rereview-mtr4iyo6-4yyouw, gate-rereview-3-mtr5r1xl-b6rm4f, gate-rereview-4-mtr6e9gr-1d7spx, gate-rereview-5-mtr708e8-5wl2gk, gate-rereview-6-mtr7eqg5-t38g7j (all gpt-6-astra)"
   }
 }
