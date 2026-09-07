@@ -1446,8 +1446,13 @@ test('a release whose tree moved more than the release commit past the armed tip
     () => git(fx.MAIN, 'rev-parse', '--verify', 'refs/tags/v10.0.0'),
     /Needed a single revision|unknown revision|not found/, 'no tag exists after the refused release',
   );
-  // The stage stays on release — it is refused, not waved through.
-  assert.equal(bootstrapStatus(fx.statePath).next.step, 'release', 'the stage stays on release');
+  // The stage stays REFUSED, never waved through — and the two-commit move STALES the recorded
+  // §10.2 chain (recordIsStale: the move is not the one designed release commit, and release has
+  // no record), so the honest next step is verify: the unreviewed extra commit must re-run the
+  // pre-publish chain at the new tip before any release is re-armed (§10.2's principle —
+  // publishing never precedes every whole-branch review — now enforced end to end).
+  assert.equal(bootstrapStatus(fx.statePath).next.step, 'verify',
+    'the stage stales the chain at the moved tip, never waves the release through');
 });
 
 test('the single_commit guard is independently reachable: a malformed delta is refused even when the execution-tree check would pass', () => {

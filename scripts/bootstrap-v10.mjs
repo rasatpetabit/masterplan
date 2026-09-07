@@ -167,6 +167,37 @@ export function loadBundle(statePath) {
 
 const isDone = (r) => !!r && (r.status === 'done' || r.status === 'recovered');
 
+// The §10.2 pre-publish chain steps whose records bind data.tip to the tip they ran at
+// (each one's precondition demands its predecessor's data.tip equal the CURRENT tip).
+const STALE_RERUN_STEPS = ['verify', 'review', 'assess'];
+
+// The ONE designed tip move past a recorded chain: the release commit (§10.2, the `release`
+// postcondition's own rule) — exactly one CHANGELOG-only commit.
+function isReleaseDelta(MAIN, from, to) {
+  if (!from || !to || from === to) return false;
+  const count = Number(tryGit(MAIN, ['rev-list', '--count', `${from}..${to}`]) ?? -1);
+  if (count !== 1) return false;
+  const changed = (tryGit(MAIN, ['diff', '--name-only', from, to]) || '').split('\n').filter(Boolean);
+  return changed.length === 1 && changed[0] === 'CHANGELOG.md';
+}
+
+// A done/recovered record is STALE — the step must re-run at the current tip — when the step is
+// one of the §10.2 chain, the branch has moved past its recorded tip, the move is not the one
+// designed release commit, and the pass has not yet recorded `release` (once the tag is cut the
+// chain is frozen; later tip moves are §10.3 dispositions handled by the later steps' own
+// bindings — tip_is_published, the push postconditions — never by re-running the chain).
+// Without staleness, a fixed pre-publish review deadlock: review's precondition demands verify
+// at the current tip while the order guard refuses the verify re-record because verify's slot
+// has a record. An unresolvable branch tip (null) cannot be compared; never stale then.
+function recordIsStale({ MAIN, events, pass, step, rec, tip }) {
+  if (!tip || !rec || !rec.data || !rec.data.tip || rec.data.tip === tip) return false;
+  if (!STALE_RERUN_STEPS.includes(step)) return false;
+  if (isReleaseDelta(MAIN, rec.data.tip, tip)) return false;
+  const release = latestRecord(events, pass, 'release');
+  if (release && isDone(release)) return false;
+  return true;
+}
+
 function latestRecord(events, pass, step) {
   // Return the last event (by index) that is bootstrap_armed or bootstrap_step for this pass/step.
   let found = null;
@@ -408,7 +439,7 @@ export function execTreeProblems(ctx) {
 // ---- bootstrap status --------------------------------------------------------
 
 export function bootstrapStatus(statePath) {
-  const { events } = loadBundle(statePath);
+  const { MAIN, state, events } = loadBundle(statePath);
   // pass = highest bootstrap_pass event's pass, else 1
   let pass = 1;
   for (const e of events) {
@@ -436,13 +467,19 @@ export function bootstrapStatus(statePath) {
     if (status === 'done' || status === 'recovered') completed.push(step);
     if (status === 'failed') failed.push(step);
   }
-  // next step: first step whose latest record is not done/recovered
+  // next step: first step whose latest record is not done/recovered — or is STALE (recordIsStale):
+  // §10.2's pre-publish chain (verify → review → assess) re-runs at the CURRENT tip after a
+  // failed-review fix moves the branch. A done-at-an-old-tip record is not current, so the step
+  // is next again and re-armable (its re-record is the repeated-step status: recovered, answering
+  // a fresh arm at the new tip).
+  const tip = tipSha({ MAIN, targets: resolveTargets(MAIN, state, {}) });
+  const staleTip = (rec, step) => recordIsStale({ MAIN, events, pass, step, rec, tip });
   let next = null;
   let blockedBy = null;
   for (let i = 0; i < stepList.length; i++) {
     const step = stepList[i];
     const rec = latestRecord(events, pass, step);
-    if (!rec || (!isDone(rec) && rec.status !== 'recovered')) {
+    if (!rec || !isDone(rec) || staleTip(rec, step)) {
       next = step;
       // What is holding the stage. A failed step STAYS `next` (that is the blocking rule), so
       // reporting only "the PREVIOUS step failed" could never fire: the previous step of a
@@ -640,10 +677,11 @@ export function recordStep({ statePath, step, exit, digestFile = null, status = 
   if (!stepsForPass(statusInfo.pass).includes(step)) {
     throw new Error(`step ${step} is not part of pass ${statusInfo.pass} — a corrective pass omits it, so it cannot be recorded`);
   }
-  if (prior && (isDone(prior) || prior.status === 'recovered')) {
+  const priorStale = recordIsStale({ MAIN, events, pass: statusInfo.pass, step, rec: prior, tip: ctx.tip });
+  if (prior && (isDone(prior) || prior.status === 'recovered') && !priorStale) {
     throw new Error(`step ${step} is already ${prior.status} in pass ${statusInfo.pass} — a step is recorded once`);
   }
-  if (status === 'recovered' && !(prior && prior.status === 'failed')) {
+  if (status === 'recovered' && !(prior && prior.status === 'failed') && !priorStale) {
     throw new Error('recovered requires the latest record of the step to be failed');
   }
   if (prior && prior.status === 'failed' && status !== 'recovered' && status !== 'failed') {

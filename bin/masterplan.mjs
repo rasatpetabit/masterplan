@@ -1680,7 +1680,7 @@ function main() {
           // The SAME config-resolved probing minimum as `mp interview waive` (review finding,
           // wave 13): this route's cap-waiver cause must not depend on which verb entered it.
           const ivCfg = resolveRunConfig({ cli: {}, repoRoot: deriveDefaultTargetRepo(p), env: readEnvAll() });
-          waiveInterview({ statePath: p, reason: need(flags, 'reason'), probingMinimum: resolveProbingMinimum(ivCfg, readState(p)?.complexity), skillRoot: flags['skill-root'] });
+          waiveInterview({ statePath: p, reason: need(flags, 'reason'), probingMinimum: resolveProbingMinimum(ivCfg, readState(p)?.complexity), skillRoot: resolveInstalledSkillRoot(flags) });
         } catch (e) {
           die(`goals-load: --interview-waived refused: ${e.message}`, 1);
         }
@@ -4845,10 +4845,12 @@ function main() {
         // §5.5 (review round 2 — finding 3): the schema-backed recorder verbs guard the
         // installed skill's identity at every operation. The guard recomputes through the
         // task-52 seam (already imported above the capture/amend dispatch), and
-        // --skill-root names the installed skill the capture used. A captured bundle with
-        // no resolvable skill root FAILS CLOSED with the named refusal (skill_absent) —
-        // never proceeds on an unresolved identity; a legacy bundle (no capture) is exempt.
-        const guardedSkillRoot = flags['skill-root'];
+        // --skill-root names the installed skill the capture used — OVERRIDING the installed
+        // pin's resolution (repo + skill_path), which is the default the other guard consumers
+        // (task-review, finish, gate, record-*) use. A captured bundle with no resolvable root
+        // by EITHER route FAILS CLOSED with the named refusal (skill_absent) — never proceeds
+        // on an unresolved identity; a legacy bundle (no capture) is exempt.
+        const guardedSkillRoot = resolveInstalledSkillRoot(flags);
         switch (sub) {
           case 'ask':
             askQuestion({

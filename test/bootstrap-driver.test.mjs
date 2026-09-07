@@ -216,6 +216,59 @@ test('status reconstructs pass, completed steps, failures and the next action fr
   assert.equal(st.next.step, 'review');
 });
 
+test('a done-at-an-old-tip record is stale: after a failed-review fix moves the tip, verify re-arms and the §10.2 chain re-runs', (t) => {
+  const fx = makeFixture(t);
+  addRehearsalScript(fx);
+  const digest = path.join(fx.tmp, 'rehearsal.out');
+  fs.writeFileSync(digest, 'rehearsal ok\n');
+  walk(fx, 'rehearsal', {}, { digestFile: digest });
+  walk(fx, 'docs_normalize');
+  walk(fx, 'verify'); // verify done at tip1
+  // the pre-publish review fails at tip1 (§10.3: stops the stage before step 3)
+  const armedReview = armStep({ statePath: fx.statePath, step: 'review', targets: fx.targets });
+  assert.equal(armedReview.ok, true, JSON.stringify(armedReview));
+  recordStep({ statePath: fx.statePath, step: 'review', exit: 1, status: 'failed', targets: fx.targets, data: { tip: fx.tip, verdict: 'reject' } });
+  // the fix lands as ordinary execute-phase work: the branch tip moves
+  write(fx.worktree, 'src/review-fix.txt', 'review fix\n');
+  git(fx.worktree, 'add', '-A'); git(fx.worktree, 'commit', '-q', '-m', 'review fix');
+  fx.tip = git(fx.MAIN, 'rev-parse', fx.branch);
+  // OLD behavior (the deadlock): next=review while review's precondition demands verify at the
+  // NEW tip and the order guard refuses the verify re-record because verify's slot has a record.
+  // FIXED: the stale-tip verify record is not current, so verify is next again and re-armable.
+  let st = bootstrapStatus(fx.statePath);
+  assert.equal(st.next.step, 'verify', 'verify done at the old tip is stale — it is next again');
+  // review still refuses — now on ORDER (verify is next), and once verify re-records, on its
+  // own precondition (the belt-and-braces verify_done_at_tip check stays armed)
+  const refusedReview = armStep({ statePath: fx.statePath, step: 'review', targets: fx.targets });
+  assert.equal(refusedReview.ok, false);
+  assert.match(refusedReview.refusals.join(' '), /out of order: expected verify, got review/);
+  // verify re-arms at the new tip and re-records with the repeated-step status: recovered
+  const armed = armStep({ statePath: fx.statePath, step: 'verify', targets: fx.targets });
+  assert.equal(armed.ok, true, JSON.stringify(armed));
+  const rec = recordStep({ statePath: fx.statePath, step: 'verify', exit: 0, status: 'recovered', targets: fx.targets });
+  assert.equal(rec.data.tip, fx.tip, 'the re-record names the NEW tip');
+  // now review arms: verify_done_at_tip is satisfied at the new tip
+  const review = armStep({ statePath: fx.statePath, step: 'review', targets: fx.targets });
+  assert.equal(review.ok, true, JSON.stringify(review));
+  st = bootstrapStatus(fx.statePath);
+  assert.equal(st.next.step, 'review');
+  // the designed exemption: the release commit (one CHANGELOG-only commit) does NOT stale the
+  // recorded chain — after release records at the moved tip, the next step is push, not verify.
+  recordStep({ statePath: fx.statePath, step: 'review', exit: 0, status: 'recovered', targets: fx.targets, data: { tip: fx.tip, verdict: 'approve' } });
+  walk(fx, 'assess', { goals: { G1: 'achieved' } });
+  // the designed exemption: the release commit (one CHANGELOG-only commit) does NOT stale the
+  // recorded chain. Real order: arm release at the fix tip, run the release commit + tag, record.
+  const releaseArm = armStep({ statePath: fx.statePath, step: 'release', targets: fx.targets });
+  assert.equal(releaseArm.ok, true, JSON.stringify(releaseArm));
+  write(fx.worktree, 'CHANGELOG.md', '# Changelog\n\n## 10.0.0\n');
+  git(fx.worktree, 'add', 'CHANGELOG.md'); git(fx.worktree, 'commit', '-q', '-m', 'release: v10.0.0');
+  fx.tip = git(fx.MAIN, 'rev-parse', fx.branch);
+  git(fx.MAIN, 'tag', '-a', 'v10.0.0', '-m', 'v10.0.0', fx.tip);
+  recordStep({ statePath: fx.statePath, step: 'release', exit: 0, targets: fx.targets });
+  st = bootstrapStatus(fx.statePath);
+  assert.equal(st.next.step, 'push', 'the release commit is the designed exemption — the chain stays current');
+});
+
 test('arm refuses on a failed precondition without writing; record refuses without an arm at the same sha', (t) => {
   const fx = makeFixture(t);
   const before = events(fx.statePath).length;
