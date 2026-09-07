@@ -72,7 +72,11 @@ const scenarios = (checkName) =>
 const GIT_STUB = (args) => {
   if (args[0] === 'worktree') return 'worktree /repo\nworktree /repo/.worktrees/feat\n';
   if (args[0] === 'branch') return 'main\nfeat\n';
-  if (args[0] === 'rev-parse') return '.git\n'; // --git-common-dir, resolved against repoRoot by the check
+  // --git-common-dir, resolved against repoRoot by the check. The stub's world is a repo ROOTED
+  // AT /repo (its worktree list says so) — the common dir names that root so the doctor's
+  // mainRepoRoot and the declared worktrees agree (the host-local-state rule: a declaration
+  // under the examined repo's root is the owner-host case; under another root, another host's).
+  if (args[0] === 'rev-parse') return '/repo/.git\n';
   throw new Error(`unexpected git args: ${args.join(' ')}`);
 };
 
@@ -474,7 +478,11 @@ test('worktree-integrity fix: clears a legacy schema<6 bundle (issue #7\'s real 
   const gitExec = (args) => {
     if (args[0] === 'worktree') return `worktree ${tmp}\n`;
     if (args[0] === 'branch') return 'main\n';
-    if (args[0] === 'rev-parse') return '.git\n';
+    // The legacy bundle's repo ROOT (per the stub's world) is its pre-rename location — the
+    // declared worktree lives under THAT root, so the owner-host ERROR semantics apply (the
+    // host-local-state rule: under the examined repo's root, full verification; a path under
+    // a root absent on this machine — a CI runner seeing another host's live bundle — skips).
+    if (args[0] === 'rev-parse') return '/home/ras/dev/petabit-os-stack/petabit-os-mgmt/.git\n';
     throw new Error(`unexpected git args: ${args.join(' ')}`);
   };
   // check ERRORs on BOTH the dangling worktree and the dangling branch.
