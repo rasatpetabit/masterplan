@@ -1850,3 +1850,40 @@ test('--only=<check-id> runs exactly one discovered check and exits with its out
   assert.ok(!one.stdout.includes('worktree-integrity'), 'other checks do not run');
   fs.rmSync(tmp, { recursive: true, force: true });
 });
+
+test('worktree-integrity: path-alias seams resolve to owner-host semantics (the pass-4 review findings)', () => {
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-wt-alias-'));
+  fs.mkdirSync(path.join(tmp, '.git', 'worktrees'), { recursive: true });
+  // A symlink ALIAS of the repo root; a bundle declares the alias spelling of a GONE worktree.
+  const alias = path.join(path.dirname(tmp), `alias-${path.basename(tmp)}`);
+  fs.symlinkSync(tmp, alias);
+  const gone = path.join(alias, '.worktrees', 'gone');
+  const bdir = path.join(tmp, 'docs', 'masterplan', 'aliascase');
+  fs.mkdirSync(bdir, { recursive: true });
+  fs.writeFileSync(path.join(bdir, 'state.yml'), `slug: aliascase\nstatus: in-progress\nworktree: ${gone}\n`);
+  const gitExec = (args) => {
+    if (args[0] === 'worktree') return `worktree ${tmp}\n`;
+    if (args[0] === 'branch') return 'main\n';
+    if (args[0] === 'rev-parse') return '.git\n';
+    throw new Error(`unexpected git args: ${args.join(' ')}`);
+  };
+  let findings = worktreeIntegrity(tmp, { gitExec });
+  let err = findings.find((f) => f.severity === 'ERROR' && /not a registered git worktree/.test(f.summary));
+  assert.ok(err, `the alias-spelled declaration still earns the owner-host ERROR: ${JSON.stringify(findings)}`);
+
+  // A RELATIVE declaration resolves against the repo root — owner-host semantics, not a skip.
+  const bdir2 = path.join(tmp, 'docs', 'masterplan', 'relcase');
+  fs.mkdirSync(bdir2, { recursive: true });
+  fs.writeFileSync(path.join(bdir2, 'state.yml'), `slug: relcase\nstatus: in-progress\nworktree: .worktrees/also-gone\n`);
+  findings = worktreeIntegrity(tmp, { gitExec });
+  err = findings.find((f) => f.severity === 'ERROR' && /relcase.*also-gone/.test(f.summary));
+  assert.ok(err, `a relative declaration resolves against the repo root (owner-host ERROR): ${JSON.stringify(findings)}`);
+
+  // The foreign-root SKIP still stands: a declaration under a root absent on this machine.
+  const bdir3 = path.join(tmp, 'docs', 'masterplan', 'foreigncase');
+  fs.mkdirSync(bdir3, { recursive: true });
+  fs.writeFileSync(path.join(bdir3, 'state.yml'), `slug: foreigncase\nstatus: in-progress\nworktree: /no-such-root/repo/.worktrees/live\n`);
+  findings = worktreeIntegrity(tmp, { gitExec });
+  const skip = findings.find((f) => f.severity === 'SKIP' && /another repository root/.test(f.summary));
+  assert.ok(skip, `the genuinely foreign-root declaration still skips: ${JSON.stringify(findings)}`);
+});

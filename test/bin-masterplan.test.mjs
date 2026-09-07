@@ -25,6 +25,9 @@ function run(args, opts = {}) {
   const env = {
     ...process.env,
     CLAUDE_CODE_SESSION_ID: process.env.CLAUDE_CODE_SESSION_ID ?? 'mp-bin-test-hermetic-session',
+    PI_CODING_AGENT: undefined, // hermetic non-pi host (the pass-4 review's finding: the pi-host
+    // suppression branch routes planning serial — tests asserting non-pi behavior must not see the
+    // ambient host marker; tests asserting pi-host behavior set it via opts.env, which wins).
     ...(opts.env ?? {}),
   };
   try {
