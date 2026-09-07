@@ -86,7 +86,7 @@ test('prompt teaches the intent-to-completion dispatch contracts (critic blocks,
   // The block is parsed BOUNDED (between the §2f step-4 heading and the step-5 heading) so a
   // deletion anywhere else in the document cannot satisfy it.
   const start = prompt.indexOf('4. **Draft + critic round**');
-  const end = prompt.indexOf('5. **Exit.**');
+  const end = prompt.indexOf('5. **Convergence and exit.**');
   assert.ok(start !== -1 && end > start, 'the §2f draft+critic round anchor must exist — update the structure test anchors');
   const criticSection = prompt.slice(start, end);
   // Exactly ONE dispatch paragraph: the block containing the three quoted-data blocks.
