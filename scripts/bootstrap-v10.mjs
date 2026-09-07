@@ -75,8 +75,11 @@ export function readBundleEvents(statePath) {
           // whose trigger is its own failed post-push driver step (the tag is public) may open the
           // corrective pass; everything before push missing is drift — nothing was published.
           const pushIdx = required.indexOf('push');
+          const pushRecIdx = history.reduce((acc, h, hi) => (h && h.type === 'bootstrap_step' && h.pass === passSoFar && h.step === 'push' && isDone(h) ? hi : acc), -1);
           const publishedTagFailure = stepDone('push') && triggerRec && triggerRec.type === 'bootstrap_step'
-            && triggerRec.status === 'failed' && Number.isInteger(pushIdx)
+            && triggerRec.status === 'failed' && triggerRec.pass === passSoFar
+            && e.triggered_by > pushRecIdx && pushRecIdx >= 0
+            && Number.isInteger(pushIdx)
             && required.indexOf(triggerRec.step) > pushIdx && missing.every((st) => required.indexOf(st) > pushIdx);
           if (!publishedTagFailure) {
             problems.push(`event ${i} (bootstrap_pass) opens pass ${e.pass} but pass ${passSoFar} was not complete through surfaces_live at that point (missing: ${missing.join(', ')}) — a corrective pass cannot open over an incomplete predecessor (§10.3)`);
@@ -982,8 +985,15 @@ export function startPass({ statePath, pass, triggeredBy, version = null, target
   if (missing.length) {
     const pushIdx = required.indexOf('push');
     const triggerRecord = Number.isInteger(triggeredBy) && triggeredBy >= 0 && triggeredBy < events.length ? events[triggeredBy] : null;
+    // The trigger must be THE PREDECESSOR'S OWN failure receipt (the pass-2 review's finding 1:
+    // a foreign pass's failed ci_wait record opened a corrective pass) and it must postdate the
+    // predecessor's successful push (finding 2: a failure appended BEFORE the push records was
+    // retroactively legitimized by later publication — the failure predates the tag).
+    const pushRecIdx = events.reduce((acc, e, ei) => (e && e.type === 'bootstrap_step' && e.pass === status.pass && e.step === 'push' && isDone(e) ? ei : acc), -1);
     const publishedTagFailure = isDone(latestOfType(events, 'bootstrap_step', status.pass, 'push'))
       && triggerRecord && triggerRecord.type === 'bootstrap_step' && triggerRecord.status === 'failed'
+      && triggerRecord.pass === status.pass
+      && triggeredBy > pushRecIdx && pushRecIdx >= 0
       && Number.isInteger(pushIdx) && required.indexOf(triggerRecord.step) > pushIdx
       && missing.every((st) => required.indexOf(st) > pushIdx);
     if (!publishedTagFailure) {
@@ -1004,6 +1014,7 @@ export function startPass({ statePath, pass, triggeredBy, version = null, target
   // install) is a corrective finding in its own right, alongside the typed findings. It is
   // blocking by construction (a failed record) and it is the pass's own durable failure receipt.
   const publishedStepTrigger = !!(trigger && trigger.type === 'bootstrap_step' && trigger.status === 'failed'
+    && trigger.pass === status.pass
     && STEP_ORDER.indexOf(trigger.step) > STEP_ORDER.indexOf('push'));
   if (!trigger || !(CORRECTIVE_TRIGGERS.includes(trigger.type) || publishedStepTrigger)) {
     throw new Error(`triggeredBy must name a corrective finding event (${CORRECTIVE_TRIGGERS.join(', ')}) or a failed published-tag driver step, got ${trigger ? trigger.type : 'nothing'}`);

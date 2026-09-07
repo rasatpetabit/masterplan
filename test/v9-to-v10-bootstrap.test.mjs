@@ -1979,6 +1979,36 @@ test('§10.3 red-tag boundary: a pass complete through PUSH with a failed post-p
     /not complete through surfaces_live|not a blocking|failed published-tag/,
     'a pre-publish stall opens no corrective pass — nothing was published',
   );
+
+  // The pass-2 review's finding 1: a FOREIGN PASS's failed ci_wait record must not open the
+  // corrective pass — the trigger must be THE PREDECESSOR'S OWN failure receipt.
+  const fx3 = makeFixture();
+  seedThrough(fx3, STEP_ORDER.slice(0, STEP_ORDER.indexOf('ci_wait')));
+  appendEvent(fx3.statePath, {
+    type: 'bootstrap_step', ts: 52, pass: 9, step: 'ci_wait', cmd: 'seeded', exit: 1, status: 'failed',
+    sha: fx3.head(), data: { conclusions: { test: 'failure' } },
+  });
+  const foreignIdx = events(fx3.statePath).length - 1;
+  assert.throws(
+    () => startPass({ statePath: fx3.statePath, pass: 2, triggeredBy: foreignIdx, version: '10.0.1', targets: fx3.targets }),
+    /not complete through surfaces_live|not a blocking|failed published-tag/,
+    'a foreign pass\'s failure receipt opens no corrective pass',
+  );
+
+  // The pass-2 review's finding 2: a failure recorded BEFORE the pass's push must not be
+  // retroactively legitimized by later publication — the trigger must postdate the push.
+  const fx4 = makeFixture();
+  appendEvent(fx4.statePath, {
+    type: 'bootstrap_step', ts: 40, pass: 1, step: 'ci_wait', cmd: 'seeded', exit: 1, status: 'failed',
+    sha: fx4.head(), data: { conclusions: { test: 'failure' } },
+  });
+  seedThrough(fx4, STEP_ORDER.slice(0, STEP_ORDER.indexOf('ci_wait'))); // the push records come AFTER the failure
+  const prePubIdx = 0; // the failure is the first event, the push records come later
+  assert.throws(
+    () => startPass({ statePath: fx4.statePath, pass: 2, triggeredBy: prePubIdx, version: '10.0.1', targets: fx4.targets }),
+    /not complete through surfaces_live|not a blocking|failed published-tag/,
+    'a failure predating the publication opens no corrective pass — the tag was not yet public when it happened',
+  );
 });
 
 test('finding 6: a zero-exit failed WITH a reason records through the driver and lands on the ledger', () => {
