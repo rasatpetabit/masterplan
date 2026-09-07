@@ -1778,6 +1778,54 @@ test('finding 5: replay refuses an out-of-sequence pass (not exactly highest_pas
   );
 });
 
+test('re-review finding 2: replay refuses a FUTURE corrective trigger and a pass opened over an incomplete predecessor — the durable prerequisites mirror startPass', () => {
+  // (a) The reviewer's exact reproduction: a ledger whose pass-2 event's triggered_by points
+  // at a LATER adversary_review, with pass 1 never completed. The OLD replay check read
+  // events[triggered_by] by index regardless of position, so a trigger that had not happened
+  // yet was accepted, and no prerequisite existed. Causal ordering + prior-pass completion
+  // must both refuse.
+  const fx = makeFixture();
+  fs.appendFileSync(path.join(fx.bundleDir, 'events.jsonl'), [
+    `${JSON.stringify({ type: 'bootstrap_pass', pass: 2, triggered_by: 1, version: '10.0.1', ts: 100 })}`,
+    `${JSON.stringify({ type: 'adversary_review', ts: 101, verdict: 'rework' })}`,
+  ].join('\n') + '\n');
+  assert.throws(
+    () => bootstrapStatus(fx.statePath),
+    /does not PRECEDE the pass|not complete through surfaces_live/,
+    'a future trigger over an incomplete predecessor is the named refusal during replay',
+  );
+
+  // (b) Causal ordering alone: even with pass 1 COMPLETE, a trigger pointing at a future
+  // event is not a cause — the pass event precedes its own trigger.
+  const fx2 = makeFixture();
+  seedThrough(fx2, STEP_ORDER.slice(0, STEP_ORDER.indexOf('gate')));
+  const after = events(fx2.statePath).length; // the index the future review WILL occupy
+  fs.appendFileSync(path.join(fx2.bundleDir, 'events.jsonl'), [
+    `${JSON.stringify({ type: 'bootstrap_pass', pass: 2, triggered_by: after, version: '10.0.1', ts: 100 })}`,
+    `${JSON.stringify({ type: 'adversary_review', ts: 101, verdict: 'rework' })}`,
+  ].join('\n') + '\n');
+  assert.throws(
+    () => bootstrapStatus(fx2.statePath),
+    /does not PRECEDE the pass/,
+    'a trigger that has not happened yet is not a cause, even over a complete predecessor',
+  );
+
+  // (c) The prior-pass prerequisite alone: a PRECEDING blocking trigger but an incomplete
+  // pass 1 (stopped at verify) — the pass may not open over an incomplete predecessor.
+  const fx3 = makeFixture();
+  seedThrough(fx3, ['rehearsal', 'docs_normalize', 'verify']);
+  const trigger3 = events(fx3.statePath).length;
+  fs.appendFileSync(path.join(fx3.bundleDir, 'events.jsonl'),
+    `${JSON.stringify({ type: 'adversary_review', ts: 101, verdict: 'rework' })}\n`);
+  fs.appendFileSync(path.join(fx3.bundleDir, 'events.jsonl'),
+    `${JSON.stringify({ type: 'bootstrap_pass', pass: 2, triggered_by: trigger3, version: '10.0.1', ts: 102 })}\n`);
+  assert.throws(
+    () => bootstrapStatus(fx3.statePath),
+    /not complete through surfaces_live/,
+    'a corrective pass cannot open over an incomplete predecessor, even with a real preceding trigger',
+  );
+});
+
 test('finding 5 positive control: a legitimate startPass still writes cleanly and reports the pass', () => {
   const fx = makeFixture();
   seedThrough(fx, STEP_ORDER.slice(0, STEP_ORDER.indexOf('gate')));

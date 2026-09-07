@@ -36,7 +36,7 @@ import { writeState, readState, buildSeedState, appendEvent } from '../lib/bundl
 import { goalsHash } from '../lib/goals.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
 import { acquireOwner } from '../lib/owner-fs.mjs';
-import { beginPromotion, commitPromotion, recoverPromotion, promotionDocPath, PROMOTION_REFS_PREFIX, classifyArtifact } from '../lib/promote.mjs';
+import { beginPromotion, commitPromotion, recoverPromotion, promotionDocPath, PROMOTION_REFS_PREFIX, classifyArtifact, pinnedGoalsEvidenceHash } from '../lib/promote.mjs';
 import { promoteAmendment } from '../lib/wave-commit.mjs';
 
 const TMPDIRS = [];
@@ -769,13 +769,32 @@ test('a superseding goal_amended after the crash is NOT unconverged — the repl
   fs.rmSync(tmpSeam, { recursive: true, force: true });
   // A LATER amendment on top (the legitimate lineage continuation): its event carries a
   // new_goals_hash newer than this transaction's result, and the cache converged TO IT.
+  // The supersession is recognized ONLY through its AUTHORIZATION (the re-review's finding
+  // 1: hash claims alone prove nothing): this simulates the interview goals-amend verb's
+  // REAL event shape — the approval receipt the verb validates at write time, replayed by
+  // the same validateUserApprovalReceipt at read time (a stale or approval-less event is
+  // not a supersession; see the re-review finding-1 regression).
   const later = goalsResult + '## G5: Later\nsignal: test\n';
   fs.writeFileSync(path.join(fx.bundleDir, 'goals.md'), later);
   appendEvent(fx.statePath, {
     type: 'goal_amended',
     ts: new Date(3000).toISOString(),
-    data: { old_goals_hash: goalsHash(goalsResult), new_goals_hash: goalsHash(later), goals_hash: goalsHash(later), reason: 'a later amendment' },
-    summary: 'a later amendment superseded the crashed one',
+    data: {
+      old_goals_hash: goalsHash(goalsResult),
+      new_goals_hash: goalsHash(later),
+      goals_hash: goalsHash(later),
+      reason: 'a later amendment',
+      approval: {
+        attested_by: 'user',
+        purpose: 'goal_amend',
+        goals_hash: goalsHash(later),
+        old_goals_hash: goalsHash(goalsResult),
+        question: 'Approve the goals amendment?',
+        answer: 'Approve',
+        ts: new Date(3000).toISOString(),
+      },
+    },
+    summary: 'goals amended (1 changed) by the approved interview amendment: a later amendment superseded the crashed one',
   });
   writeState(fx.statePath, { ...readState(fx.statePath), goals_md_hash: goalsHash(later) });
   // The replay recognizes the supersession and does NOT rewind the cache to the crashed
@@ -1216,4 +1235,77 @@ test('finding 2 regression: a mutated UNCHANGED half is drift at the commit poin
   assert.equal(clean.outcome, 'recorded', JSON.stringify(clean));
   assert.equal(clean.replay, true, 'a clean re-entry still replays as a no-op');
   assert.deepEqual(clean.writes, []);
+});
+
+test('re-review finding 1: a hand-appended amendment event is NOT a supersession — only a revalidated durable transaction record is', () => {
+  const fx = mkbundle();
+  const inputs = amendmentInputs(fx, {
+    specResult: SPEC.replace('old problem', 'approved problem'),
+    goalsResult: GOALS, // unchanged half
+    txid: 'rr1-forged-supersession',
+  });
+  beginPromotion({ statePath: fx.statePath, ...inputs });
+  const committed = commitPromotion({ statePath: fx.statePath, transactionId: inputs.transactionId, self: self(fx), now: 2000 });
+  assert.equal(committed.outcome, 'promoted');
+
+  // The drift: the unchanged goals half is mutated on disk.
+  const mutated = GOALS.replace('Works', 'WRONG');
+  fs.writeFileSync(path.join(fx.bundleDir, 'goals.md'), mutated);
+
+  // The reviewer's exact bypass: a hand-appended goal_amended event naming the mutated
+  // bytes' pinned hash as new_goals_hash — no summary, no transaction, no approval. The
+  // OLD events-only supersession match accepted it and recovery replayed with the
+  // unapproved goals still on disk. The fix demands the supersession be a DURABLE
+  // transaction record: event -> named transaction -> doc on disk -> F6 revalidation ->
+  // approved result binding the CURRENT bytes.
+  const forgedHash = pinnedGoalsEvidenceHash(fx.statePath, mutated);
+  fs.appendFileSync(path.join(fx.bundleDir, 'events.jsonl'),
+    `${JSON.stringify({ type: 'goal_amended', ts: '2026-09-07T00:00:00.000Z', data: { new_goals_hash: forgedHash, goals_hash: forgedHash, reason: 'forged' } })}\n`);
+  const refused = recoverPromotion({ statePath: fx.statePath, transactionId: inputs.transactionId, self: self(fx), now: 2001 });
+  assert.equal(refused.outcome, 'refused', JSON.stringify(refused));
+  assert.equal(refused.refusal, 'intervening_edit');
+  assert.equal(refused.artifact, 'goals', 'the forged supersession does not excuse the drifted half');
+  assert.equal(refused.classifications.goals, 'neither');
+  assert.deepEqual(refused.writes, []);
+  assert.equal(fs.readFileSync(path.join(fx.bundleDir, 'goals.md'), 'utf8'), mutated,
+    'the refused recovery left the (drifted) disk bytes alone');
+
+  // A forged event WITH a transaction-naming summary whose doc does not exist is equally
+  // refused (the durable record is the proof, not the summary's claim).
+  fs.appendFileSync(path.join(fx.bundleDir, 'events.jsonl'),
+    `${JSON.stringify({ type: 'goal_amended', ts: '2026-09-07T00:00:01.000Z', summary: 'goals amended by promotion rr1-no-such-transaction x -> y', data: { new_goals_hash: forgedHash } })}\n`);
+  const refused2 = recoverPromotion({ statePath: fx.statePath, transactionId: inputs.transactionId, self: self(fx), now: 2002 });
+  assert.equal(refused2.outcome, 'refused', JSON.stringify(refused2));
+
+  // The LEGITIMATE supersession: a second approved promotion that AMENDS the goals half
+  // from the drifted bytes onward (its base binds the CURRENT disk — the drifted goals
+  // and the already-amended spec — and its approved result is where the goals legitimately
+  // stand next). After it commits, recovering the FIRST transaction reads the drifted half
+  // as superseded through the SECOND's durable doc + its goal_amended lineage event — the
+  // commit point holds, the replay is a no-op, never a rewind.
+  const currentSpec = SPEC.replace('old problem', 'approved problem');
+  const mutatedV2 = mutated + '## G9: LegitimateFollowOn\nsignal: test\n';
+  fs.writeFileSync(path.join(fx.scratch.a, 'spec.md'), currentSpec);
+  fs.writeFileSync(path.join(fx.scratch.a, 'goals.md'), mutated);
+  fs.writeFileSync(path.join(fx.scratch.b, 'spec.md'), currentSpec);
+  fs.writeFileSync(path.join(fx.scratch.b, 'goals.md'), mutatedV2);
+  const diff2 = gitDiffText(fx.scratch.a, fx.scratch.b);
+  const bases2 = { spec: sha256Of(currentSpec), goals: sha256Of(mutated) };
+  const results2 = { spec: sha256Of(currentSpec), goals: sha256Of(mutatedV2) };
+  const second = {
+    transactionId: 'rr1-second-legitimate',
+    diff: diff2,
+    resultSpec: currentSpec,
+    resultGoals: mutatedV2,
+    approval: approvalReceipt({ txid: 'rr1-second-legitimate', bases: bases2, results: results2, diffDigest: sha256Of(diff2) }),
+  };
+  beginPromotion({ statePath: fx.statePath, ...second });
+  const secondCommit = commitPromotion({ statePath: fx.statePath, transactionId: second.transactionId, self: self(fx), now: 2003 });
+  assert.equal(secondCommit.outcome, 'promoted', JSON.stringify(secondCommit));
+  const superseded = recoverPromotion({ statePath: fx.statePath, transactionId: inputs.transactionId, self: self(fx), now: 2004 });
+  assert.equal(superseded.outcome, 'recorded', JSON.stringify(superseded));
+  assert.equal(superseded.replay, true, 'a validated supersession lets the earlier transaction replay as a no-op');
+  assert.deepEqual(superseded.writes, []);
+  assert.equal(fs.readFileSync(path.join(fx.bundleDir, 'goals.md'), 'utf8'), mutatedV2,
+    'the replay never rewinds the superseding transaction\'s approved bytes');
 });

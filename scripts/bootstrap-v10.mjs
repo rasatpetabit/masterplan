@@ -50,7 +50,35 @@ export function readBundleEvents(statePath) {
           problems.push(`event ${i} (bootstrap_pass) declares pass ${e.pass} but the ledger is at pass ${passSoFar} — the next pass must be exactly ${passSoFar + 1}; the ledger never silently switches passes (§10.3)`);
           return;
         }
-        if (!CORRECTIVE_TRIGGERS.includes(e.triggered_by && events[e.triggered_by] && events[e.triggered_by].type)) {
+        // CAUSAL ORDERING (the re-review's finding 2): the corrective trigger must PRECEDE
+        // the pass it opens — a triggered_by that points at a FUTURE event is not a cause,
+        // and the prior array read accepted it. The trigger is read from the history slice.
+        if (!Number.isInteger(e.triggered_by) || e.triggered_by < 0 || e.triggered_by >= i) {
+          problems.push(`event ${i} (bootstrap_pass) names event ${e.triggered_by} as its corrective trigger, which does not PRECEDE the pass (index ${i}) — a corrective pass opens on a finding that already happened, never on one that has not (§10.3)`);
+          return;
+        }
+        // DURABLE PREREQUISITES (mirroring startPass, the re-review's finding 2): the prior
+        // pass must have been COMPLETE through surfaces_live — every step but the gate done —
+        // BEFORE the pass opened, judged on the history slice only (the ledger's state at open
+        // time, never retroactively justified by later records), and its gate not yet recorded.
+        const history = events.slice(0, i);
+        const required = stepsForPass(passSoFar).filter((st) => st !== 'gate');
+        const stepDone = (st) => {
+          const recs = history.map((h, hi) => (h && h.type === 'bootstrap_step' && h.pass === passSoFar && h.step === st ? { ...h, index: hi } : null)).filter(Boolean);
+          const last = recs[recs.length - 1];
+          return last && isDone(last);
+        };
+        const missing = required.filter((st) => !stepDone(st));
+        if (missing.length) {
+          problems.push(`event ${i} (bootstrap_pass) opens pass ${e.pass} but pass ${passSoFar} was not complete through surfaces_live at that point (missing: ${missing.join(', ')}) — a corrective pass cannot open over an incomplete predecessor (§10.3)`);
+          return;
+        }
+        const priorGate = history.find((h) => h && h.type === 'bootstrap_step' && h.pass === passSoFar && h.step === 'gate');
+        if (priorGate && isDone(priorGate)) {
+          problems.push(`event ${i} (bootstrap_pass) opens pass ${e.pass} but pass ${passSoFar}'s gate was already recorded — the bootstrap is complete; a later finding needs a new run (§10.3)`);
+          return;
+        }
+        if (!CORRECTIVE_TRIGGERS.includes(events[e.triggered_by] && events[e.triggered_by].type)) {
           problems.push(`event ${i} (bootstrap_pass) names event ${e.triggered_by} as its corrective trigger, which is not a blocking corrective finding (${CORRECTIVE_TRIGGERS.join(', ')}) — a corrective pass opens on a finding, never by hand (§10.3)`);
           return;
         }
