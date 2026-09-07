@@ -43,6 +43,7 @@ are the owner's — amend it through the owner, never to fit the change.
 | The orchestrator prompt itself (L1 — the sequencer) | [`commands/masterplan.md`](./commands/masterplan.md) |
 | Deterministic logic (the real "source code") | `lib/*.mjs` behind `bin/masterplan.mjs` |
 | Layer-by-layer internals + failure modes | [`docs/internals.md`](./docs/internals.md) index → `docs/internals/{bundle-resume,wave-dispatch,plan-parser,task-verification,doctor}.md` |
+| The design-intent integration (interview host contract, schema capture + skill identity, §5.3 convergence, format pin, reconciliation, promotion, checkpoints, knob-contract verification) | [`docs/internals/design-intent-integration.md`](./docs/internals/design-intent-integration.md) |
 | Public-facing overview + install + usage | [`README.md`](./README.md) · [`docs/install.md`](./docs/install.md) · [`docs/verbs.md`](./docs/verbs.md) |
 | Release history + decision rationale per version | [`CHANGELOG.md`](./CHANGELOG.md) |
 | Cross-cutting rules (CD-1…CD-10) + plan-field contract | `docs/conventions/cd-rules.md` · `docs/conventions/plan-annotations.md` |

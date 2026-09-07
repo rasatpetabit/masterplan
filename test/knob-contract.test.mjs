@@ -69,6 +69,249 @@ function tmpdir(prefix) {
   FIXTURE_TMPDIRS.push(d);
   return d;
 }
+
+// The design-intent fixture skill (the same shape test/interview-design-intent.test.mjs
+// builds): a manifest-declared closed file set whose schema.json carries the checked_sections
+// the coverage consumer validates against. `sections` overrides the snapshot's checked set so
+// the ALTERNATE-SCHEMA end-to-end proof can drive different content through the same path.
+const FIXTURE_SCHEMA_VERDICTS = ['serves', 'neutral', 'fights', 'unavailable'];
+function makeKnobSkill({ checkedSections = ['Purpose', 'Top invariant', 'Non-goals', 'Direction', 'Posture'] } = {}) {
+  const root = tmpdir('mp-knob-skill-');
+  const skillRoot = path.join(root, 'skill');
+  fs.mkdirSync(skillRoot, { recursive: true });
+  const schema = {
+    version: 1,
+    core: [checkedSections[0]],
+    checked_sections: checkedSections,
+    check_verdicts: FIXTURE_SCHEMA_VERDICTS,
+  };
+  const manifest = {
+    manifest_version: 1,
+    skill: 'knob-fixture-intent',
+    host_contract_version: 1,
+    schema_format_version: 1,
+    identity: { algorithm: 'sha256', closed_file_set: ['SKILL.md', 'manifest.json', 'schema.json'] },
+  };
+  fs.writeFileSync(path.join(skillRoot, 'SKILL.md'), '# knob fixture design-intent\n');
+  fs.writeFileSync(path.join(skillRoot, 'schema.json'), `${JSON.stringify(schema, null, 2)}\n`);
+  fs.writeFileSync(path.join(skillRoot, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
+  return skillRoot;
+}
+
+// A minimal bundle for the interview/snapshot fixtures. `complexity` is the knob the probing
+// contracts hold FIXED per level (the ledger is built for that level's budget).
+async function makeKnobBundle(complexity = 'medium') {
+  const dir = tmpdir('mp-knob-ivb-');
+  const statePath = path.join(dir, 'state.yml');
+  const { buildSeedState, writeState } = await requireBundle();
+  writeState(statePath, buildSeedState({ slug: 'knob', topic: 't', createdAt: '2026-01-01T00:00:00.000Z', complexity }));
+  return { dir, statePath };
+}
+
+// lib/bundle.mjs and lib/interview.mjs are imported lazily inside the fixture builders (the
+// knob-contract harness runs before some suites; a top-level import would couple the two).
+let _bundleMod = null;
+async function requireBundle() {
+  if (!_bundleMod) _bundleMod = await import(path.join(ROOT, 'lib', 'bundle.mjs'));
+  return _bundleMod;
+}
+let _interviewMod = null;
+async function requireInterview() {
+  if (!_interviewMod) _interviewMod = await import(path.join(ROOT, 'lib', 'interview.mjs'));
+  return _interviewMod;
+}
+
+// Capture on a fresh knob bundle through the REAL task-52 seam (the same registration the
+// CLI verb performs), so the schema_captured event, the bundle snapshot and the format pin's
+// repair source all exist exactly as the runtime would create them.
+async function knobCapture({ statePath, skillRoot }) {
+  const { captureSchemaSnapshot, computeSkillIdentity } = await import(path.join(ROOT, 'lib', 'schema-snapshot.mjs'));
+  const iv = await requireInterview();
+  iv.registerSchemaSnapshotModule({ captureSchemaSnapshot, computeSkillIdentity });
+  return iv.captureSchema({ statePath, skillRoot });
+}
+
+const KNOB_INTENT = { why: 'w', outcome: 'o', anti_goals: ['x'], done_means: 'd' };
+
+// Record a critic receipt with an eligible set — the §5.3 adjudication the probing consumer
+// counts. Mirrors the interview-design-intent fixture's recordReceipt.
+async function knobRecordReceipt({ statePath, intent, eligible, forks, dir, n = 1 }) {
+  const iv = await requireInterview();
+  const status = iv.interviewStatus(statePath);
+  const payloadPath = path.join(dir, `knob-payload-${n}-${Math.random().toString(36).slice(2, 8)}.json`);
+  fs.writeFileSync(payloadPath, JSON.stringify({
+    unknowns: [], contradictions: [], misclassified: [],
+    eligible_question_set: eligible, forks_remaining: forks,
+  }));
+  iv.recordCritic({
+    statePath,
+    receipt: { dispatch_id: `d${n}`, model: 'm', output_tokens: 10, content_head: status.content_head, intent_sha256: iv.intentSha(intent) },
+    payloadPath,
+  });
+}
+
+// The twin ledger the probing contracts waive at the cap. `complexity` picks the budget; the
+// ledger holds exactly `eligibleCount` answered intent questions so the mechanical/critic
+// count is FIXED while only the configured minimum varies (single-variable discipline).
+async function buildProbingLedger({ statePath, complexity, eligibleCount }) {
+  const iv = await requireInterview();
+  const { BUDGETS } = iv;
+  const cap = BUDGETS[complexity].cap;
+  const critic = BUDGETS[complexity].critic;
+  // Round 1: the eligible intent questions, asked and answered.
+  for (let i = 1; i <= eligibleCount; i += 1) {
+    iv.askQuestion({ statePath, id: `Q${i}`, round: 1, kind: 'intent', text: `intent ${i}?` });
+  }
+  for (let i = 1; i <= eligibleCount; i += 1) {
+    iv.answerQuestion({ statePath, id: `Q${i}`, text: `a${i}` });
+  }
+  // Cap fillers to the SAME ask count on both fixtures: design asks, immediately withdrawn
+  // (they never count toward probing and keep the twin ledgers identical apart from the
+  // config). Round 1 sealed at the first answer, so the fillers open round 2 onward; a
+  // withdraw seals its round too, so each filler advances the round.
+  let n = eligibleCount;
+  let round = 2;
+  while (n < cap) {
+    n += 1;
+    iv.askQuestion({ statePath, id: `Q${n}`, round, kind: 'design', text: `filler ${n}?` });
+    iv.withdrawQuestion({ statePath, id: `Q${n}`, reason: 'cap filler' });
+    round += 1;
+  }
+  // The draft + (where a critic runs) a CURRENT receipt at the draft head.
+  iv.recordDraft({ statePath, intent: KNOB_INTENT });
+  if (critic === 'on') {
+    const eligible = [];
+    for (let i = 1; i <= eligibleCount; i += 1) eligible.push(`Q${i}`);
+    await knobRecordReceipt({ statePath, intent: KNOB_INTENT, eligible, forks: true, dir: path.dirname(statePath) });
+  }
+}
+
+// The consumer-side observable of a configured per-level minimum: the RECORDED WAIVER. Both
+// fixtures build the IDENTICAL twin ledger (same asks/answers/drafts/receipts); the only
+// difference is the repo-local .masterplan.yaml the real resolveRunConfig reads. The waiver
+// is driven through the same chain as `mp interview waive` (bin/masterplan.mjs): the resolved
+// minimum comes from resolveProbingMinimum(resolveRunConfig(...), complexity).
+async function observeProbingContract({ complexity, level, configured }) {
+  const { resolveRunConfig, resolveProbingMinimum } = await import(path.join(ROOT, 'lib', 'config.mjs'));
+  const iv = await requireInterview();
+  // A repo-local .masterplan.yaml carrying ONLY the varied level (per-key defaults merge in
+  // validateProbingMinimum, so the unvaried levels keep the shipped defaults on both sides).
+  const repoRoot = tmpdir(`mp-knob-pm-${level}-`);
+  const yaml = configured !== null
+    ? `interview:\n  probing_minimum:\n    ${level}: ${configured}\n`
+    : '';
+  if (yaml) fs.writeFileSync(path.join(repoRoot, '.masterplan.yaml'), yaml);
+  const cfg = resolveRunConfig({ cli: {}, repoRoot, env: {} });
+  const resolved = resolveProbingMinimum(cfg, complexity);
+  // The fixed eligible count per level — chosen so the CONFIGURED minimum (value A) is unmet
+  // and the SHIPPED DEFAULT (value B) is met on the identical ledger:
+  //   low:     1 eligible (mechanical test, critic off) — default 1 met, configured 2 unmet.
+  //   medium:  2 eligible (critic set) — default 2 met, configured 3 unmet.
+  //   high:    4 eligible (critic set) — default 4 met, configured 5 unmet.
+  const eligibleCount = complexity === 'low' ? 1 : complexity === 'medium' ? 2 : 4;
+  const { dir, statePath } = await makeKnobBundle(complexity);
+  const skillRoot = makeKnobSkill();
+  await knobCapture({ statePath, skillRoot });
+  await buildProbingLedger({ statePath, complexity, eligibleCount });
+  iv.waiveInterview({ statePath, reason: 'knob contract', probingMinimum: resolved });
+  const events = fs.readFileSync(path.join(dir, 'events.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  const ev = [...events].reverse().find((e) => e.type === 'interview_waived');
+  return {
+    resolvedMinimum: ev.probing_minimum,
+    capCause: ev.cause ?? null,
+    policy: ev.policy,
+  };
+}
+
+// The format-pin consumer observable: the pinned goals hash the real consumers (checkpoint
+// identity, finish tuple, split-brain guard, record-goal-check) all bind. Drives the real
+// resolveFormatPin -> goalsHash chain on a REAL bundle state carrying the varied pin.
+async function observeFormatPin(pin) {
+  const { goalsHash, encodeIntentBlock, INTENT_CODEC_VERSION } = await import(path.join(ROOT, 'lib', 'goals.mjs'));
+  const { writeState, buildSeedState, resolveFormatPin } = await requireBundle();
+  const dir = tmpdir('mp-knob-pin-');
+  const statePath = path.join(dir, 'state.yml');
+  writeState(statePath, buildSeedState({ slug: 'knob', topic: 't', createdAt: '2026-01-01T00:00:00.000Z', complexity: 'medium' }));
+  // The durable pin is exactly what a capture would have stamped (schema_backed) or the
+  // pre-capture default (legacy) — written through the same single-writer path repairFormatPin uses.
+  const state = (await requireBundle()).readState(statePath);
+  writeState(statePath, { ...state, format_pin: pin });
+  // A versioned goals document — decodable under both pins (the legacy projection and the
+  // authoritative representation coexist; §6.1 keeps both parse results).
+  const enc = encodeIntentBlock({
+    version: INTENT_CODEC_VERSION,
+    schema: { identity: 'design-intent@knob-fixture', format_version: 1 },
+    sections: {
+      purpose: { body: 'The pin selects the canonicalizer.\n' },
+      non_goals: { items: ['no second canonicalizer'] },
+      top_invariant: { body: 'Legacy hashes stay byte-stable.' },
+      direction: { body: 'One pin, every consumer.' },
+      posture: { body: 'Refuse downgrades loudly.' },
+    },
+    context: { outcome: { body: 'The richer hash covers everything.' }, done_means: { body: 'release' } },
+    evidence: [{ section: 'purpose', source: 'operator interview 2026-09-06' }],
+    reconciliation: [{ target: 'repository INTENT.md §1', status: 'verified' }],
+  });
+  if (!enc.ok) throw new Error(`format-pin fixture: the versioned document did not encode (${enc.error})`);
+  const doc = `topic: |\n  Knob fixture.\n${enc.block}\n## G1: Works\n## G2: Fast\n## G3: Documented\n`;
+  fs.writeFileSync(path.join(dir, 'goals.md'), doc);
+  // The REAL consumer chain (bin/masterplan.mjs pinnedGoalsHash / lib/checkpoint-evidence.mjs
+  // buildIntentIdentity): resolve the durable pin, hash under it.
+  const resolved = resolveFormatPin(statePath);
+  if (!resolved.pin) throw new Error(`format-pin fixture: the pin did not resolve (${resolved.error ?? 'unknown'})`);
+  return { pin: resolved.pin, goalsHash: goalsHash(doc, { formatPin: resolved.pin }) };
+}
+
+// The schema-capture switch consumer observable: the CONVERGENCE POLICY endInterview enforces
+// on an IDENTICAL twin ledger. Both fixtures hold the same floor-unmet, coverage-met, probing-met
+// ledger; only the capture event differs. Captured -> the §5.3 two conditions govern and
+// converged SUCCEEDS (policy schema_backed persisted); uncaptured -> the three legacy floors
+// govern and converged REFUSES (the floor error). The matrix suite (interview-design-intent)
+// proves the full substitution; this contract proves the SWITCH itself is a two-value control.
+async function observeCaptureSwitch(captured) {
+  const iv = await requireInterview();
+  const { dir, statePath } = await makeKnobBundle('medium');
+  if (captured) {
+    const skillRoot = makeKnobSkill();
+    await knobCapture({ statePath, skillRoot });
+  }
+  // The twin ledger: 2 intent + 1 design answered (every legacy floor deliberately unmet at
+  // medium: floor 4, intent floor 3, rounds-min 2), one active design pick, a draft and a
+  // current clean critic receipt with an eligible set of 2 (probing met at default 2).
+  iv.askQuestion({ statePath, id: 'Q1', round: 1, kind: 'intent', text: 'why?' });
+  iv.askQuestion({ statePath, id: 'Q2', round: 1, kind: 'intent', text: 'outcome?' });
+  iv.answerQuestion({ statePath, id: 'Q1', text: 'because' });
+  iv.answerQuestion({ statePath, id: 'Q2', text: 'ships' });
+  iv.askQuestion({ statePath, id: 'Q3', round: 2, kind: 'design', text: 'pick A or B?' });
+  iv.answerQuestion({ statePath, id: 'Q3', text: 'A' });
+  iv.recordDraft({ statePath, intent: KNOB_INTENT });
+  await knobRecordReceipt({ statePath, intent: KNOB_INTENT, eligible: ['Q1', 'Q2'], forks: true, dir });
+  // Coverage rows for the SNAPSHOT's checked sections (only consumed under the captured
+  // policy; the uncaptured fixture never reaches the coverage read because the floors refuse
+  // first — which is itself the observable).
+  // The coverage record exists only under the captured policy (the uncaptured fixture is
+  // refused by the legacy floors before coverage is ever consulted — which is itself the
+  // observable: the two values enforce DIFFERENT policies on identical bytes).
+  let coverageFile;
+  if (captured) {
+    const snap = iv.readSchemaSnapshot({ statePath });
+    const rows = snap.schema.checked_sections.map((section) => ({
+      section, source: `operator interview, ${section} check`, uncertainty: '', verdict: 'serves',
+    }));
+    coverageFile = path.join(dir, `knob-coverage-${Math.random().toString(36).slice(2, 8)}.json`);
+    fs.writeFileSync(coverageFile, `${JSON.stringify({ sections: rows }, null, 2)}\n`);
+  }
+  let outcome;
+  try {
+    iv.endInterview({ statePath, reason: 'converged', coverageFile, probingMinimum: 2 });
+    const events = fs.readFileSync(path.join(dir, 'events.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+    const ev = [...events].reverse().find((e) => e.type === 'interview_end');
+    outcome = { converged: true, policy: ev.policy, refusal: null };
+  } catch (e) {
+    outcome = { converged: false, policy: null, refusal: String(e.message).split('—')[0].trim() };
+  }
+  return outcome;
+}
 // The env a spawned mp needs: session identity for Guard D, and PI_CODING_AGENT cleared so the
 // codex-suppressed path doesn't change op shapes. Host must not leak its own session.
 function mpEnv(extra = {}) {
@@ -191,6 +434,21 @@ async function buildPair(entry) {
 async function buildFixture(entry, spec, tag) {
   const need = { ...spec };
   delete need._id;
+
+  // ---- durable-control contracts (the design-intent amendment's run-machinery state) ----
+  if (entry.id === 'format_pin') {
+    return { pinnedGoals: await observeFormatPin(need.format_pin) };
+  }
+  if (entry.id === 'schema_capture') {
+    return { captureSwitch: await observeCaptureSwitch(need.schema_capture === 'captured') };
+  }
+  if (entry.id.startsWith('interview.probing_minimum.')) {
+    const level = entry.id.slice('interview.probing_minimum.'.length);
+    // values [configured, default]: the FIRST value writes the repo config, the second is the
+    // shipped default (no config file — the same absence the shipped state carries).
+    const configured = tag === 'A' ? need[entry.id] : null;
+    return { probingContract: await observeProbingContract({ complexity: level, level, configured }) };
+  }
 
   if (entry.id === 'MP_DISPATCH_WAVE_CONCURRENCY') {
     const { normalizeWaveConcurrency } = await import(path.join(ROOT, 'lib', 'dispatch-wave.mjs'));
@@ -868,6 +1126,12 @@ test('registry: every derived non-exempt control has a contract or a registratio
     if (byId.has(s)) mapped.push(`state:${s}`);
     else unmapped.push(`state:${s}`);
   }
+  // Durable bundle controls (the design-intent amendment's run-machinery state).
+  for (const d of inv.durable ?? []) {
+    if (isExempt(d)) continue;
+    if (byId.has(d)) mapped.push(`durable:${d}`);
+    else unmapped.push(`durable:${d}`);
+  }
   // Prompt markers.
   for (const m of inv.markers) {
     if (isExempt(m)) continue;
@@ -942,6 +1206,106 @@ test('guard: rejects a fixture pair that changes two inputs', async () => {
   }, /single-variable/);
 });
 
+// ---------------------------------------------------------------------------
+// ALTERNATE SCHEMA CONTENT, END TO END (spec §5.5/§11: the checked-section set is
+// data-driven — no copied list of today's section headings controls behavior)
+// ---------------------------------------------------------------------------
+// The wave-14 checkpoint tests prove the CHECKPOINT side against an alternate snapshot. This
+// test proves the CONVERGENCE side end to end through the REAL consumers: an alternate
+// snapshot content (DIFFERENT checked_sections) flows capture -> the frozen snapshot read ->
+// the coverage validation -> the terminal evaluation, and the consumer DEMANDS the alternate
+// sections — accepting coverage for exactly them and refusing coverage for today's.
+test('alternate schema content drives the coverage consumer end to end — no copied heading list', async () => {
+  const iv = await requireInterview();
+  const STANDARD = ['Purpose', 'Top invariant', 'Non-goals', 'Direction', 'Posture'];
+  const ALTERNATE = ['Mission statement', 'Operating principles', 'Success criteria'];
+  assert.notDeepEqual(STANDARD, ALTERNATE, 'the two snapshots must genuinely differ');
+
+  // Two bundles, each capturing a DIFFERENT snapshot content through the REAL seam.
+  const mk = async (sections) => {
+    const { dir, statePath } = await makeKnobBundle('medium');
+    const skillRoot = makeKnobSkill({ checkedSections: sections });
+    await knobCapture({ statePath, skillRoot });
+    return { dir, statePath, sections };
+  };
+  const std = await mk(STANDARD);
+  const alt = await mk(ALTERNATE);
+
+  // The twin ledger the terminal evaluation judges (the capture-switch shape: floors
+  // unmet, probing met — so under the schema-backed policy only COVERAGE decides).
+  const buildLedger = async ({ dir, statePath }) => {
+    iv.askQuestion({ statePath, id: 'Q1', round: 1, kind: 'intent', text: 'why?' });
+    iv.askQuestion({ statePath, id: 'Q2', round: 1, kind: 'intent', text: 'outcome?' });
+    iv.answerQuestion({ statePath, id: 'Q1', text: 'because' });
+    iv.answerQuestion({ statePath, id: 'Q2', text: 'ships' });
+    iv.askQuestion({ statePath, id: 'Q3', round: 2, kind: 'design', text: 'pick A or B?' });
+    iv.answerQuestion({ statePath, id: 'Q3', text: 'A' });
+    iv.recordDraft({ statePath, intent: KNOB_INTENT });
+    await knobRecordReceipt({ statePath, intent: KNOB_INTENT, eligible: ['Q1', 'Q2'], forks: true, dir });
+  };
+  await buildLedger(std);
+  await buildLedger(alt);
+
+  const coverageFile = (dir, sections) => {
+    const file = path.join(dir, `alt-coverage-${Math.random().toString(36).slice(2, 8)}.json`);
+    fs.writeFileSync(file, `${JSON.stringify({
+      sections: sections.map((section) => ({
+        section, source: `operator interview, ${section} check`, uncertainty: '', verdict: 'serves',
+      })),
+    }, null, 2)}\n`);
+    return file;
+  };
+
+  // 1. Each bundle's snapshot declares its OWN set — the frozen read carries it.
+  assert.deepEqual(iv.readSchemaSnapshot({ statePath: std.statePath }).schema.checked_sections, STANDARD);
+  assert.deepEqual(iv.readSchemaSnapshot({ statePath: alt.statePath }).schema.checked_sections, ALTERNATE);
+
+  // 2. OWN coverage converges on BOTH bundles: the consumer demands the ALTERNATE sections
+  //    when the snapshot declares them — not today's headings.
+  for (const [label, b] of [['standard', std], ['alternate', alt]]) {
+    iv.endInterview({ statePath: b.statePath, reason: 'converged', coverageFile: coverageFile(b.dir, b.sections), probingMinimum: 2 });
+    const events = fs.readFileSync(path.join(b.dir, 'events.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+    const ev = [...events].reverse().find((e) => e.type === 'interview_end');
+    assert.equal(ev.policy, 'schema_backed', `${label}: the terminal event carries the schema-backed policy`);
+  }
+
+  // 3. CROSSED coverage REFUSES on both directions — evidence for a different schema's
+  //    sections never satisfies this one, and the refusal names the section that is not
+  //    declared, proving the DEMANDED set came from the snapshot.
+  for (const [label, b, wrong] of [['std refuses alt coverage', std, ALTERNATE], ['alt refuses std coverage', alt, STANDARD]]) {
+    // A fresh twin for each refusal (a terminal state is absorbing).
+    const fresh = await mk(b.sections);
+    await buildLedger(fresh);
+    assert.throws(
+      () => iv.endInterview({ statePath: fresh.statePath, reason: 'converged', coverageFile: coverageFile(fresh.dir, wrong), probingMinimum: 2 }),
+      (e) => /does not declare as checked/.test(String(e.message)),
+      `${label}: the coverage consumer must refuse foreign sections naming the snapshot`,
+    );
+    // And the OTHER failure mode — a record missing one of the SNAPSHOT's own sections:
+    const partial = coverageFile(fresh.dir, b.sections.slice(0, 1));
+    const fresh2 = await mk(b.sections);
+    await buildLedger(fresh2);
+    assert.throws(
+      () => iv.endInterview({ statePath: fresh2.statePath, reason: 'converged', coverageFile: partial, probingMinimum: 2 }),
+      (e) => /has no row/.test(String(e.message)),
+      `${label}: incomplete coverage of the SNAPSHOT's own sections is refused`,
+    );
+  }
+
+  // 4. NO COPIED LIST: the control path (lib/interview.mjs coverage validation,
+  //    lib/checkpoint-evidence.mjs checkedSectionsOf, lib/schema-snapshot.mjs) contains no
+  //    literal of any checked-section heading — the sets above exist only in fixtures and
+  //    the snapshot bytes. A heading literal inside the consumers would be exactly the
+  //    copied list this proof must rule out.
+  for (const rel of ['lib/interview.mjs', 'lib/checkpoint-evidence.mjs', 'lib/schema-snapshot.mjs']) {
+    const text = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    for (const heading of [...STANDARD, ...ALTERNATE]) {
+      const re = new RegExp(`['"]${heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}['"]`);
+      assert.ok(!re.test(text), `${rel}: a checked-section heading literal ('${heading}') must not live in the consumer — the snapshot is the only authority`);
+    }
+  }
+});
+
 test('registry: the closed metadata exemption list is exactly the canonical identity set plus documented write-only storage', () => {
   // Closed list: identity metadata (created_at, schema_version, slug, topic) plus fields
   // whose only writer is storage and whose consumer flows read durable events instead
@@ -971,6 +1335,7 @@ test('discovery: the derived inventories are non-trivial and self-consistent', a
   assert.ok(inv.env.length >= 8, `expected env controls, got ${inv.env.length}`);
   assert.ok(inv.state.length >= 15, `expected emitted state fields, got ${inv.state.length}`);
   assert.ok(inv.markers.length >= 2, `expected prompt markers, got ${inv.markers.length}`);
+  assert.ok((inv.durable ?? []).length >= 2, `expected the durable bundle controls (format_pin, schema_capture), got ${JSON.stringify(inv.durable)}`);
   // Every discovery member is non-empty strings.
   for (const name of inv.all) assert.ok(typeof name === 'string' && name.length > 0, `bad control id ${JSON.stringify(name)}`);
 });
