@@ -25,13 +25,48 @@ import { spawnSync } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { appendEvent, readState, BOOTSTRAP_STEPS } from '../lib/bundle.mjs';
+import { appendEvent, readState, validateEvent, BOOTSTRAP_STEPS } from '../lib/bundle.mjs';
 
 // The bundle's event ledger, read from disk on every call (status is never reconstructed from memory).
 export function readBundleEvents(statePath) {
   const file = join(dirname(statePath), 'events.jsonl');
   if (!existsSync(file)) return [];
-  return readFileSync(file, 'utf8').split('\n').filter((l) => l.trim()).map((l) => JSON.parse(l));
+  const events = readFileSync(file, 'utf8').split('\n').filter((l) => l.trim()).map((l) => JSON.parse(l));
+  // REPLAY-TIME validation (finding 5): every event with a PERMANENT schema is validated
+  // against it as the ledger is read — appendEvent already gates writes, but the reviewer's
+  // hand-append bypassed it, so an invalid typed event must be the named refusal HERE too,
+  // never silently honored by the status the pass switch is derived from. bootstrap_pass
+  // transitions are additionally checked for PASS-SEQUENCE correctness below: a hand-appended
+  // pass that skips one, re-declares pass 1, or opens without its corrective trigger is
+  // drift, and drift refuses loudly.
+  const problems = [];
+  let passSoFar = 1;
+  events.forEach((e, i) => {
+    const p = validateEvent(e);
+    if (p.length) problems.push(`event ${i} (${e && e.type}) is invalid: ${p.join('; ')}`);
+    if (e && e.type === 'bootstrap_pass') {
+      const seq = (next) => {
+        if (!Number.isInteger(e.pass) || e.pass !== passSoFar + 1) {
+          problems.push(`event ${i} (bootstrap_pass) declares pass ${e.pass} but the ledger is at pass ${passSoFar} — the next pass must be exactly ${passSoFar + 1}; the ledger never silently switches passes (§10.3)`);
+          return;
+        }
+        if (!CORRECTIVE_TRIGGERS.includes(e.triggered_by && events[e.triggered_by] && events[e.triggered_by].type)) {
+          problems.push(`event ${i} (bootstrap_pass) names event ${e.triggered_by} as its corrective trigger, which is not a blocking corrective finding (${CORRECTIVE_TRIGGERS.join(', ')}) — a corrective pass opens on a finding, never by hand (§10.3)`);
+          return;
+        }
+        if (!isBlockingFinding(events[e.triggered_by])) {
+          problems.push(`event ${i} (bootstrap_pass) names event ${e.triggered_by}, which is not a blocking finding — a corrective pass needs a partial/missed goal, a revise/reject review or a red verify (§10.3)`);
+          return;
+        }
+        passSoFar = e.pass;
+      };
+      seq();
+    }
+  });
+  if (problems.length) {
+    throw new Error(`the bundle ledger carries invalid events — refusing to derive the bootstrap status from drift: ${problems.slice(0, 3).join(' | ')}${problems.length > 3 ? ` (+${problems.length - 3} more)` : ''}`);
+  }
+  return events;
 }
 import { readEnv } from '../lib/config.mjs';
 import { versionAtRevision, tagExists, dirtyOutsideBundle } from '../lib/finish.mjs';

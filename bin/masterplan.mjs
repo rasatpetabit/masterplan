@@ -212,7 +212,7 @@ import {
   replayInterview, interviewStatus, askQuestion, answerQuestion, withdrawQuestion, recordDraft,
   recordCritic, recordCriticUnavailable, acknowledgeCriticUnavailable, endInterview,
   waiveInterview, reopenInterview, replayLedger,
-  captureSchema, amendSkillIdentity, registerSchemaSnapshotModule,
+  captureSchema, amendSkillIdentity, registerSchemaSnapshotModule, replaySchemaCapture,
 } from '../lib/interview.mjs';
 import { createHash } from 'node:crypto';
 import { mergePlanFragments, validatePlanIndex, renderPlanMd, renderPlanHtml } from '../lib/plan-merge.mjs';
@@ -390,7 +390,7 @@ function enforceGateReview(gate, statePath, flags, state, opts = {}) {
     // pre-binding recorded event on one) keeps its historical behavior: the absence
     // is explicit, and the legacy family never satisfies as a schema-backed pass.
     if (gate === 'spec') {
-      const specIdentity = buildIntentIdentity({ statePath, skillRoot: resolveInstalledSkillRoot(flags) });
+      const specIdentity = buildIntentIdentity({ statePath, skillRoot: resolveInstalledSkillRoot(flags, statePath) });
       if (!specIdentity.ok) {
         die(`gate-review: the spec-review checkpoint cannot establish the run's intent identity — ${specIdentity.reason}`, 1);
       }
@@ -716,31 +716,39 @@ export function isKnownFlag(name) {
 }
 export { KNOWN_FLAGS };
 
-// §5.5 (review round 2 — finding 3): the installed /intent skill's root, resolved from
-// the repo-side pin (policy/design-intent-skill.json — the task-49 pin naming the
-// behavior-skills repo and skill_path the integration is verified against), with an
-// explicit --skill-root flag overriding the pin. This is the production resolution source
-// for the schema-backed operation boundaries' identity guard: the guard recomputes the
-// installed skill's identity, and the checkpoint/recorder consumers that run in-process
-// (record-goal-check --final, the gate-review guard, finish) need the root the same way
-// the interview verbs' --skill-root provides it. Returns null when the pin is unreadable —
-// every caller then FAILS CLOSED through the guard's named refusal rather than proceeding
-// on an unresolved identity.
-function resolveInstalledSkillRoot(flags) {
+// §5.5 (pre-publish review fix round — finding 1): the installed /intent skill's root the
+// RUNTIME identity guard resolves. The resolution order is:
+//   1. the explicit --skill-root flag (the operator names the installed skill),
+//   2. the bundle's OWN recorded capture root — the schema_captured event's skill_root
+//      field (the absolute path the capture resolved, read back through the same replay
+//      path every ledger consumer uses),
+//   3. null — and every caller FAILS CLOSED through the guard's named skill_absent refusal.
+// The repo-side pin (policy/design-intent-skill.json) is the IDENTITY CONTRACT — commit,
+// digest and provenance, verified by test/design-intent-host-contract.test.mjs — and is
+// NEVER read for a runtime root: a runtime read of the dev checkout it names would both
+// recompute the wrong skill (a dev edit silently passes or fails the guard) and route the
+// production guard through the development tree (a production-boundary violation). The
+// root the CAPTURE used is the root the guard recomputes — that is the whole point of the
+// §5.5 equality: the identity recorded at capture is the identity of the skill at that root.
+// Existing bundles whose capture predates the field carry no skill_root: they resolve null
+// and fail closed, exactly like any other unresolved root.
+function resolveInstalledSkillRoot(flags, statePath) {
   if (flags?.['skill-root'] !== undefined && String(flags['skill-root']).trim() !== '') {
     return String(flags['skill-root']);
   }
-  try {
-    const pinPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'policy', 'design-intent-skill.json');
-    const pin = JSON.parse(fs.readFileSync(pinPath, 'utf8'));
-    if (typeof pin.repo === 'string' && typeof pin.skill_path === 'string'
-      && path.isAbsolute(pin.repo) && !path.isAbsolute(pin.skill_path) && pin.skill_path.length > 0) {
-      return path.join(pin.repo, ...pin.skill_path.split('/'));
+  if (typeof statePath === 'string' && statePath.trim() !== '') {
+    try {
+      const ledger = replaySchemaCapture(statePath);
+      const recorded = ledger.captured && typeof ledger.captured.skill_root === 'string'
+        ? ledger.captured.skill_root.trim()
+        : '';
+      if (recorded !== '') return recorded;
+    } catch {
+      // An unreadable ledger is a fail-closed outcome, not a fallback to another source:
+      // the guard's consumers surface their own named unreadable failures.
     }
-    return null;
-  } catch {
-    return null;
   }
+  return null;
 }
 
 
@@ -1680,7 +1688,7 @@ function main() {
           // The SAME config-resolved probing minimum as `mp interview waive` (review finding,
           // wave 13): this route's cap-waiver cause must not depend on which verb entered it.
           const ivCfg = resolveRunConfig({ cli: {}, repoRoot: deriveDefaultTargetRepo(p), env: readEnvAll() });
-          waiveInterview({ statePath: p, reason: need(flags, 'reason'), probingMinimum: resolveProbingMinimum(ivCfg, readState(p)?.complexity), skillRoot: resolveInstalledSkillRoot(flags) });
+          waiveInterview({ statePath: p, reason: need(flags, 'reason'), probingMinimum: resolveProbingMinimum(ivCfg, readState(p)?.complexity), skillRoot: resolveInstalledSkillRoot(flags, p) });
         } catch (e) {
           die(`goals-load: --interview-waived refused: ${e.message}`, 1);
         }
@@ -2181,7 +2189,7 @@ function main() {
       // The implementation check (no --final) binds the task-review-style identity at
       // its own checkpoint and stays out of scope here (task 56's finish surface).
       if (gcFinal) {
-        const finishIdentity = finishCheckpointIdentity({ statePath: p, skillRoot: resolveInstalledSkillRoot(flags) });
+        const finishIdentity = finishCheckpointIdentity({ statePath: p, skillRoot: resolveInstalledSkillRoot(flags, p) });
         if (!finishIdentity.ok) {
           die(`record-goal-check: the finish checkpoint's intent identity could not be established — ${finishIdentity.reason}`, 1);
         }
@@ -3713,7 +3721,7 @@ function main() {
         // so the guard re-verifies the same binding at the transition. A LEGACY bundle
         // reports its absence explicitly and keeps its historical shape.
         if (gate === 'spec') {
-          const specIdentity = buildIntentIdentity({ statePath: p, skillRoot: resolveInstalledSkillRoot(flags) });
+          const specIdentity = buildIntentIdentity({ statePath: p, skillRoot: resolveInstalledSkillRoot(flags, p) });
           if (!specIdentity.ok) {
             die(`record-gate-review: the spec-review checkpoint cannot establish the run's intent identity — ${specIdentity.reason}`, 1);
           }
@@ -4319,9 +4327,10 @@ function main() {
         result,
         providedReviews,
         now,
-        // §5.5 (review round 2 — finding 3): the installed skill root the task-review
-        // checkpoint's identity guard recomputes under (the pin, or --skill-root).
-        skillRoot: resolveInstalledSkillRoot(flags),
+        // §5.5 (pre-publish fix round — finding 1): the installed skill root the task-review
+        // checkpoint's identity guard recomputes under (the --skill-root flag, else the
+        // bundle's recorded capture root; never the developer checkout).
+        skillRoot: resolveInstalledSkillRoot(flags, statePath),
       })
         .then((reviewedResult) => {
           // Phase A: reviews are still owed — hand the orchestrator the native review
@@ -4607,10 +4616,11 @@ function main() {
           // archived bundle with an open push_archive gate. Mirrors intentRejection's parse-then-
           // forward shape; rejectUnknownFlags means the flags are registered in KNOWN_FLAGS above.
           ...pushArchiveAnswer(flags),
-          // §5.5 (review round 2 — finding 3): the installed skill root the finish checkpoint's
-          // identity guard recomputes under — the pin (or --skill-root) resolves it, and a
-          // captured bundle without one fails closed inside the guard.
-          skillRoot: resolveInstalledSkillRoot(flags),
+          // §5.5 (pre-publish fix round — finding 1): the installed skill root the finish
+          // checkpoint's identity guard recomputes under — the --skill-root flag, else the
+          // bundle's recorded capture root; a captured bundle without one fails closed inside
+          // the guard (skill_absent), never through the developer checkout.
+          skillRoot: resolveInstalledSkillRoot(flags, statePath),
         });
       } catch (e) {
         die(e.message, EXIT_UNCAUGHT);
@@ -4842,15 +4852,12 @@ function main() {
         break; // async path prints and exits on its own; never fall through
       }
       try {
-        // §5.5 (review round 2 — finding 3): the schema-backed recorder verbs guard the
-        // installed skill's identity at every operation. The guard recomputes through the
-        // task-52 seam (already imported above the capture/amend dispatch), and
-        // --skill-root names the installed skill the capture used — OVERRIDING the installed
-        // pin's resolution (repo + skill_path), which is the default the other guard consumers
-        // (task-review, finish, gate, record-*) use. A captured bundle with no resolvable root
-        // by EITHER route FAILS CLOSED with the named refusal (skill_absent) — never proceeds
-        // on an unresolved identity; a legacy bundle (no capture) is exempt.
-        const guardedSkillRoot = resolveInstalledSkillRoot(flags);
+        // §5.5 (pre-publish fix round — finding 1): the schema-backed recorder verbs guard
+        // the installed skill's identity at every operation, resolving the root through the
+        // SAME function as every other guard consumer — the --skill-root flag, else the
+        // bundle's recorded capture root, else null (skill_absent, fail closed). Never the
+        // developer checkout: the guard recomputes the skill the CAPTURE resolved.
+        const guardedSkillRoot = resolveInstalledSkillRoot(flags, p);
         switch (sub) {
           case 'ask':
             askQuestion({

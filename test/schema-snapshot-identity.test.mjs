@@ -711,3 +711,71 @@ function runCli(args) {
     return { status: e.status ?? 1, stdout: e.stdout ?? '', stderr: e.stderr ?? '' };
   }
 }
+// ---- the pre-publish review fix round (2026-09-08): finding 1 — the capture-root seam ----
+//
+// The reviewer's reproduction: capture a copied skill with --skill-root=<copy A>; append
+// instructions to copy A's SKILL.md; ask Q1. WITHOUT the flag the runtime default previously
+// resolved the developer checkout (the pin.repo fallback — a production-boundary violation
+// reading the dev tree at runtime) instead of the root the capture used, so the changed
+// installed instructions ESCAPED DETECTION (exit 0 ok). The default must resolve the root
+// THE CAPTURE USED: the schema_captured event's skill_root field.
+
+test('finding 1: the runtime guard default resolves the CAPTURE root — a mutated installed copy is detected without the flag', () => {
+  registerSchemaSnapshotModule({ captureSchemaSnapshot, computeSkillIdentity });
+  const { skillRoot: copyA, dir } = mkskill();
+  // A second PRISTINE copy of the same bytes: --skill-root=B must still override the default.
+  const copyB = path.join(dir, 'skill-b');
+  fs.mkdirSync(copyB, { recursive: true });
+  for (const rel of ['SKILL.md', 'schema.json', 'manifest.json', 'reference.md']) {
+    fs.writeFileSync(path.join(copyB, rel), fs.readFileSync(path.join(copyA, rel)));
+  }
+  const { statePath } = mkbundle();
+
+  // Capture names copy A — the event records the root THE CAPTURE RESOLVED.
+  const capture = runCli(['interview', 'capture-schema', `--state=${statePath}`, `--skill-root=${copyA}`]);
+  assert.equal(capture.status, 0, capture.stderr);
+  const captured = JSON.parse(capture.stdout.trim().split('\n').pop());
+  assert.equal(captured.event_type, 'schema_captured');
+  const ev = replaySchemaCapture(statePath).captured;
+  assert.equal(ev.skill_root, copyA, 'the capture records the skill root it resolved');
+
+  // The reviewer's mutation: append instructions to copy A's SKILL.md.
+  fs.appendFileSync(path.join(copyA, 'SKILL.md'), 'HOSTILE NEW INSTRUCTIONS\n');
+
+  // (1) The reproduction's broken half: ask WITHOUT the flag. The default now resolves the
+  // capture's recorded root (copy A), so the changed installed skill is DETECTED — the §5.5
+  // named failure, never a pass, and never a read of the developer checkout.
+  const noFlag = runCli(['interview', 'ask', `--state=${statePath}`, '--id=Q1', '--round=1', '--kind=intent', '--text=What is the outcome?']);
+  assert.notEqual(noFlag.status, 0, 'a mutated installed skill must not pass the default guard');
+  assert.match(`${noFlag.stderr}`, /skill_identity_changed/, `the named failure: ${noFlag.stderr}`);
+  assert.equal(
+    fs.readFileSync(path.join(path.dirname(statePath), 'events.jsonl'), 'utf8').includes('"interview_question"'),
+    false,
+    'the refused ask never reached the ledger',
+  );
+
+  // (2) The flag still overrides: asking at copy B (pristine, same identity) passes.
+  const withFlag = runCli(['interview', 'ask', `--state=${statePath}`, `--skill-root=${copyB}`, '--id=Q1', '--round=1', '--kind=intent', '--text=What is the outcome?']);
+  assert.equal(withFlag.status, 0, `the explicit root still overrides: ${withFlag.stderr}`);
+  assert.equal(assertSkillIdentity({ statePath, skillRoot: copyB }).ok, true);
+
+  // (3) A capture WITHOUT a resolvable root fails closed at every guarded verb: a bundle
+  // whose schema_captured event predates the field carries no skill_root, so the default
+  // resolves null and the guard refuses with skill_absent — never a fallback to the
+  // developer checkout (the pin.repo path the reviewer flagged).
+  const legacyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sk-snap-noroot-'));
+  TMPDIRS.push(legacyDir);
+  const legacyState = path.join(legacyDir, 'state.yml');
+  writeState(legacyState, buildSeedState({ slug: 'nr', topic: 't', createdAt: '2026-01-01T00:00:00.000Z', complexity: 'low' }));
+  appendEvent(legacyState, {
+    type: 'schema_captured',
+    schema_sha256: 'a'.repeat(64),
+    skill_identity: 'b'.repeat(64),
+    host_contract_version: '1',
+    schema_format_version: '1',
+    format_pin: 'schema_backed',
+  });
+  const noRoot = runCli(['interview', 'ask', `--state=${legacyState}`, '--id=Q1', '--round=1', '--kind=intent', '--text=What is the outcome?']);
+  assert.notEqual(noRoot.status, 0, 'a capture with no recorded root fails closed');
+  assert.match(noRoot.stderr, /skill_absent/, `the named refusal: ${noRoot.stderr}`);
+});

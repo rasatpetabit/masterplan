@@ -58,6 +58,7 @@ const validFixtures = {
   push_probe: { type: 'push_probe', status: 'indeterminate', group: 'install', index: 0, sha: 's', head_after: 'h', base: 'main' },
   bootstrap_armed: { type: 'bootstrap_armed', pass: 1, step: 'rehearsal', cmd: 'c', sha: 's' },
   bootstrap_step: { type: 'bootstrap_step', pass: 1, step: 'rehearsal', cmd: 'c', exit: 0, status: 'done' },
+  bootstrap_pass: { type: 'bootstrap_pass', pass: 2, triggered_by: 3, version: '10.0.1', consumed: [3, 4] },
   goal_check: { type: 'goal_check', final: true, deploy_base_sha: 's', deploy_chain_hash: 'h', live_check_digest: null, intent_verdict: 'met' },
   schema_captured: { type: 'schema_captured', schema_sha256: 'a'.repeat(64), skill_identity: 'b'.repeat(64), host_contract_version: '1', schema_format_version: '1', format_pin: 'schema_backed' },
   skill_identity_amended: { type: 'skill_identity_amended', old_skill_identity: 'a'.repeat(64), new_skill_identity: 'b'.repeat(64), approval: { attested_by: 'user', purpose: 'skill_identity_amend', skill_identity: 'b'.repeat(64), question: 'approve?', answer: 'approved', ts: '2026-01-02T00:00:00.000Z' } },
@@ -94,6 +95,7 @@ const invalidField = {
   push_probe: 'status',
   bootstrap_armed: 'pass',
   bootstrap_step: 'pass',
+  bootstrap_pass: 'pass',
   goal_check: 'deploy_base_sha',
 };
 
@@ -128,6 +130,7 @@ const REQUIRED_EVENT_TYPES = [
   'push_probe',
   'bootstrap_armed',
   'bootstrap_step',
+  'bootstrap_pass',
   'goal_check',
 ];
 
@@ -168,11 +171,18 @@ test('deploy invariants', () => {
   assert.ok(validateEvent({ type: 'deploy_failed', group: 'g', index: 0, exit: 2, check_exit: 0 }).length > 0);
 });
 
-test('bootstrap_step binds status to exit', () => {
+test('bootstrap_step binds status to exit (and permits zero-exit failures WITH a reason — §10.1 failure-with-reason, finding 6)', () => {
   assert.ok(validateBootstrapEvent({ type: 'bootstrap_step', pass: 1, step: 'rehearsal', cmd: 'false', exit: 1, status: 'done' }).length > 0);
-  assert.ok(validateBootstrapEvent({ type: 'bootstrap_step', pass: 1, step: 'rehearsal', cmd: 'true', exit: 0, status: 'failed' }).length > 0);
+  // The reviewer's finding 6: a zero-exit failed WITHOUT a reason still refuses (both validators).
+  assert.ok(validateBootstrapEvent({ type: 'bootstrap_step', pass: 1, step: 'rehearsal', cmd: 'x', exit: 0, status: 'failed' }).length > 0, 'a zero-exit failed with no reason is the contradiction that refuses');
+  assert.ok(validateEvent({ type: 'bootstrap_step', pass: 1, step: 'rehearsal', cmd: 'x', exit: 0, status: 'failed' }).length > 0, 'the permanent schema refuses it too, consistently with the driver');
+  // The reviewer's exact reproduction: exit 0 + status failed + a nonblank reason LANDS.
+  assert.deepEqual(validateBootstrapEvent({ type: 'bootstrap_step', pass: 1, step: 'rehearsal', cmd: 'x', exit: 0, status: 'failed', reason: 'the gate returned revise' }), []);
+  assert.deepEqual(validateEvent({ type: 'bootstrap_step', pass: 1, step: 'rehearsal', cmd: 'x', exit: 0, status: 'failed', reason: 'the gate returned revise' }), []);
   assert.deepEqual(validateBootstrapEvent({ type: 'bootstrap_step', pass: 1, step: 'rehearsal', cmd: 'x', exit: 1, status: 'failed' }), []);
   assert.deepEqual(validateBootstrapEvent({ type: 'bootstrap_step', pass: 1, step: 'rehearsal', cmd: 'x', exit: 0, status: 'recovered' }), []);
+  // A blank reason is as good as none — the contract demands a NAMED failure.
+  assert.ok(validateEvent({ type: 'bootstrap_step', pass: 1, step: 'rehearsal', cmd: 'x', exit: 0, status: 'failed', reason: '   ' }).length > 0, 'a blank reason does not name the failure');
 });
 
 test('goal_check non-final passes and final missing intent_verdict fails', () => {

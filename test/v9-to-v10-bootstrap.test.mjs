@@ -1677,3 +1677,117 @@ test('the legacy-archive check sees a real pre-v10 archived bundle the rollout l
   assert.ok(lf, JSON.stringify(legacy));
   assert.equal(lf.severity, 'PASS', JSON.stringify(legacy));
 });
+
+// ---------------------------------------------------------------------------
+// The pre-publish review fix round (2026-09-08): findings 5 + 6 — the bootstrap_pass
+// permanent schema, replay-time validation, and the zero-exit failure-with-reason.
+// ---------------------------------------------------------------------------
+
+test('finding 5: a hand-appended bootstrap_pass without its schema is refused at appendEvent AND at replay', () => {
+  const fx = makeFixture();
+  // The reviewer's exact reproduction: appendEvent({type:'bootstrap_pass', pass:999})
+  // previously SUCCEEDED (bootstrap_pass had no permanent schema and fell through as an
+  // unknown event), then bootstrapStatus reported pass 999 with version:null and next verify —
+  // abandoning the prior pass with no version and no corrective trigger. Both halves must now
+  // refuse: the append is refused by the schema, and a hand-appended copy (written straight
+  // into events.jsonl, bypassing the append gate) is refused by the REPLAY gate.
+  assert.throws(
+    () => appendEvent(fx.statePath, { type: 'bootstrap_pass', pass: 999 }),
+    /appendEvent: invalid bootstrap_pass event: .*must be a non-empty string|appendEvent: invalid bootstrap_pass event:/,
+    'the permanent schema refuses the schema-less pass at append time',
+  );
+  // The hand-append path: the same record written straight into the ledger.
+  const raw = { type: 'bootstrap_pass', pass: 999, ts: 123 };
+  fs.appendFileSync(path.join(fx.bundleDir, 'events.jsonl'), `${JSON.stringify(raw)}\n`);
+  assert.throws(
+    () => bootstrapStatus(fx.statePath),
+    /invalid.*bootstrap_pass|bootstrap_pass.*invalid/,
+    'the replay-time validation refuses the hand-appended schema-less pass',
+  );
+});
+
+test('finding 5: replay refuses an out-of-sequence pass (not exactly highest_pass+1) and a pass with no corrective trigger', () => {
+  // A legitimate pass-1 walk through surfaces_live, then the drift probes.
+  const fx = makeFixture();
+  seedThrough(fx, STEP_ORDER.slice(0, STEP_ORDER.indexOf('gate')));
+  appendEvent(fx.statePath, { type: 'adversary_review', ts: 90, verdict: 'rework' });
+  const trigger = events(fx.statePath).length - 1;
+
+  // (a) A pass that skips a number (3 when the ledger is at 1) is drift at replay.
+  const skipDir = path.dirname(fx.statePath);
+  fs.appendFileSync(path.join(skipDir, 'events.jsonl'),
+    `${JSON.stringify({ type: 'bootstrap_pass', pass: 3, triggered_by: trigger, version: '10.0.1', ts: 100 })}\n`);
+  assert.throws(
+    () => bootstrapStatus(fx.statePath),
+    /declares pass 3 but the ledger is at pass 1.*next pass must be exactly 2/,
+    'an out-of-sequence pass is the named refusal during replay',
+  );
+
+  // (b) A pass whose trigger is not a corrective finding is drift at replay.
+  const fx2 = makeFixture();
+  seedThrough(fx2, STEP_ORDER.slice(0, STEP_ORDER.indexOf('gate')));
+  appendEvent(fx2.statePath, { type: 'adversary_review', ts: 90, verdict: 'approve' }); // NOT a blocking finding
+  const benign = events(fx2.statePath).length - 1;
+  fs.appendFileSync(path.join(fx2.bundleDir, 'events.jsonl'),
+    `${JSON.stringify({ type: 'bootstrap_pass', pass: 2, triggered_by: benign, version: '10.0.1', ts: 100 })}\n`);
+  assert.throws(
+    () => bootstrapStatus(fx2.statePath),
+    /not a blocking finding/,
+    'a pass opened on a benign event is the named refusal during replay',
+  );
+
+  // (c) Pass 1 re-declared: the run starts there implicitly; a re-declaration is drift.
+  const fx3 = makeFixture();
+  seedThrough(fx3, ['rehearsal', 'docs_normalize']);
+  fs.appendFileSync(path.join(fx3.bundleDir, 'events.jsonl'),
+    `${JSON.stringify({ type: 'bootstrap_pass', pass: 1, triggered_by: 0, version: '10.0.1', ts: 100 })}\n`);
+  assert.throws(
+    () => bootstrapStatus(fx3.statePath),
+    /pass 1.*cannot be re-declared|declares pass 1 but the ledger is at pass 1/,
+    'a re-declared pass 1 is the named refusal during replay',
+  );
+});
+
+test('finding 5 positive control: a legitimate startPass still writes cleanly and reports the pass', () => {
+  const fx = makeFixture();
+  seedThrough(fx, STEP_ORDER.slice(0, STEP_ORDER.indexOf('gate')));
+  appendEvent(fx.statePath, { type: 'adversary_review', ts: 90, verdict: 'rework' });
+  const trigger = events(fx.statePath).length - 1;
+  const started = startPass({
+    statePath: fx.statePath, pass: 2, triggeredBy: trigger, version: '10.0.1', targets: fx.targets,
+  });
+  assert.equal(started.pass, 2, 'the legitimate corrective pass writes cleanly through the same schema');
+  const s = bootstrapStatus(fx.statePath);
+  assert.equal(s.pass, 2);
+  assert.equal(s.version, '10.0.1', 'the version is bound at open and reported');
+  assert.equal(s.next.step, 'verify', 'the corrective pass re-enters at the pre-publish verify');
+});
+
+test('finding 6: a zero-exit failed WITH a reason records through the driver and lands on the ledger', () => {
+  const fx = makeFixture();
+  seedThrough(fx, ['rehearsal', 'docs_normalize']);
+  armOk(fx, 'verify');
+  // The reviewer's exact reproduction: recordStep({exit:0,status:'failed',reason:'...'})
+  // previously passed the driver's own reason check but threw at the permanent schema
+  // ('status failed requires a non-zero exit') — no failure receipt landed. Both validators
+  // now accept it consistently: the receipt lands as a bootstrap_step with the reason.
+  const r = record(fx, 'verify', { exit: 0, status: 'failed', reason: 'the suite printed 2 failures in the summary' });
+  assert.equal(r.status, 'failed');
+  assert.equal(r.reason, 'the suite printed 2 failures in the summary');
+  const evs = events(fx.statePath).filter((e) => e.type === 'bootstrap_step' && e.step === 'verify');
+  assert.equal(evs.length, 1, 'the failure receipt landed');
+  assert.equal(evs[0].status, 'failed');
+  assert.equal(evs[0].exit, 0);
+  assert.equal(evs[0].reason, 'the suite printed 2 failures in the summary');
+  // And the step now BLOCKS the stage (a failed step stays `next`).
+  const s = bootstrapStatus(fx.statePath);
+  assert.equal(s.next.step, 'verify');
+  assert.equal(s.next.blocked_by, 'failed:verify');
+  // ...while a zero-exit failed WITHOUT a reason still refuses in the driver.
+  armOk(fx, 'verify'); // re-arm: the failed step is armable again at the same tip
+  assert.throws(
+    () => record(fx, 'verify', { exit: 0, status: 'failed' }),
+    /failed requires a non-zero exit or a reason/,
+    'a reasonless zero-exit failure is still the driver\'s refusal',
+  );
+});

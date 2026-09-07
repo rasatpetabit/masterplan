@@ -1171,3 +1171,49 @@ test('F7 regression: a forged terminal event is ignored as a commit point — th
   assert.equal(replay.replay, true);
   assert.deepEqual(replay.writes, []);
 });
+
+// ---- the pre-publish review fix round (2026-09-08): finding 2 — the commit-point shortcut
+// bypassed the symmetric drift refusal for an amendment's unchanged half --------------
+//
+// The reviewer's probe (/tmp/agent1-promotion-probe.mjs): a spec-only promotion completes;
+// the unchanged goals.md is mutated from Works to WRONG; recoverPromotion returned
+// {outcome:'recorded', replay:true, writes:[]} with the unapproved bytes present — because
+// commitPointReached skipped the base===result half entirely, so the mutated unchanged
+// artifact never marked the commit point unreached and the decision table never ran.
+test('finding 2 regression: a mutated UNCHANGED half is drift at the commit point — the decision table runs, never a zero-write replay pass', () => {
+  const fx = mkbundle();
+  const inputs = amendmentInputs(fx, {
+    specResult: SPEC.replace('old problem', 'approved problem'),
+    goalsResult: GOALS, // the goals half is UNCHANGED (base == result)
+    txid: 'f2-unchanged-drift',
+  });
+  beginPromotion({ statePath: fx.statePath, ...inputs });
+  const committed = commitPromotion({ statePath: fx.statePath, transactionId: inputs.transactionId, self: self(fx), now: 1000 });
+  assert.equal(committed.outcome, 'promoted');
+  assert.deepEqual(committed.writes, ['spec'], 'a spec-only promotion writes the spec half only');
+  assert.equal(committed.classifications.goals, 'satisfied', 'the goals half is unchanged');
+
+  // The reviewer's mutation: change the UNCHANGED goals.md from Works to WRONG.
+  fs.writeFileSync(path.join(fx.bundleDir, 'goals.md'), GOALS.replace('Works', 'WRONG'));
+
+  // The commit-point shortcut must NOT accept this state: the unchanged half no longer
+  // equals its approved bytes, so the commit point is unreached and the decision table
+  // runs — the symmetric refusal (goals = neither), never a zero-write replay pass.
+  const out = recoverPromotion({ statePath: fx.statePath, transactionId: inputs.transactionId, self: self(fx), now: 1001 });
+  assert.equal(out.outcome, 'refused', JSON.stringify(out));
+  assert.equal(out.refusal, 'intervening_edit');
+  assert.equal(out.artifact, 'goals', 'the mutated unchanged half is the named artifact');
+  assert.equal(out.classifications.goals, 'neither', 'the mutated bytes classify as neither — drift, not convergence');
+  assert.deepEqual(out.writes, [], 'a refusal writes nothing');
+  // The unapproved bytes remain on disk UNTOUCHED — a refusal never guesses, never rewrites.
+  assert.equal(fs.readFileSync(path.join(fx.bundleDir, 'goals.md'), 'utf8'), GOALS.replace('Works', 'WRONG'),
+    'the refused recovery left the (drifted) disk bytes alone — the operator decides');
+
+  // The shortcut still fires for a genuinely clean replay: with the drift reverted, the
+  // same re-entry is the zero-write idempotent replay the commit point exists for.
+  fs.writeFileSync(path.join(fx.bundleDir, 'goals.md'), GOALS);
+  const clean = recoverPromotion({ statePath: fx.statePath, transactionId: inputs.transactionId, self: self(fx), now: 1002 });
+  assert.equal(clean.outcome, 'recorded', JSON.stringify(clean));
+  assert.equal(clean.replay, true, 'a clean re-entry still replays as a no-op');
+  assert.deepEqual(clean.writes, []);
+});
