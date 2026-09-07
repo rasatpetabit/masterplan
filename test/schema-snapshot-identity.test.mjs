@@ -12,7 +12,7 @@
 // Fixture skill trees land under os.tmpdir() (the mkbundle style of
 // test/interview-cli-surface.test.mjs) and are removed once at teardown.
 
-import test from 'node:test';
+import { test as rawTest } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -45,6 +45,17 @@ const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const BIN = path.join(ROOT, 'bin/masterplan.mjs');
 const PIN_PATH = path.join(ROOT, 'policy', 'design-intent-skill.json');
 const pin = JSON.parse(fs.readFileSync(PIN_PATH, 'utf8'));
+// HOST-LOCAL PIN EVIDENCE: the pin's repo is an absolute host path. On a machine without it
+// (the CI runner), the pinned bytes cannot be read — this whole suite is pinned-skill
+// identity evidence, so it SKIPS (never fails): CI is the product-surface contract, not the
+// pin-provenance witness. The pin verification runs on the dev host and in the rehearsal.
+const PINNED_REPO_AVAILABLE = fs.existsSync(path.join(pin.repo, '.git')); // a bare existing dir is not a repo (the CI path is absent; an empty mount is not a checkout)
+const test = PINNED_REPO_AVAILABLE ? rawTest : Object.assign(
+  // The skip alias keeps the harness surface: every registration becomes a skipped test,
+  // and the lifecycle hooks no-op (nothing was registered, nothing to clean up).
+  (name, opts, fn) => rawTest.skip(name, typeof opts === 'function' ? opts : fn),
+  { after: () => {}, before: () => {}, beforeEach: () => {}, afterEach: () => {} },
+);
 
 const TMPDIRS = [];
 const sha256Hex = (b) => crypto.createHash('sha256').update(b).digest('hex');

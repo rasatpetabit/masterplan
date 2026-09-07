@@ -991,12 +991,10 @@ test('preCodeMaskGoalsHash detects a bundle whose stored hash predates the code 
   assert.equal(preCodeMaskGoalsHash(42), null);
 });
 
-test('this run\'s OWN frozen goals.md is not a migration', () => {
+const OWN_BUNDLE_PATH = path.join('/srv/dev/ras/masterplan', 'docs', 'masterplan', 'intent-to-completion', 'goals.md');
+test('this run\'s OWN frozen goals.md is not a migration', { skip: !fs.existsSync(OWN_BUNDLE_PATH) && 'this run\'s own bundle is host-local (absent on the CI runner — the check runs on the dev host)' }, () => {
   // The change must not invalidate the bundle it is being developed in — checked directly
   // rather than assumed, because a re-hash here would void this run's own receipts.
-  const live = fs.readFileSync(
-    path.join('/srv/dev/ras/masterplan', 'docs', 'masterplan', 'intent-to-completion', 'goals.md'),
-    'utf8',
-  );
+  const live = fs.readFileSync(OWN_BUNDLE_PATH, 'utf8');
   assert.equal(preCodeMaskGoalsHash(live), null, 'the live bundle hashes identically under both parsers');
 });

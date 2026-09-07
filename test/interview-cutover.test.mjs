@@ -57,7 +57,7 @@
 // Both surfaces are built from THIS tree's committed HEAD through the real installers'
 // contracts, so the proven bytes are the cutover's bytes, not a checkout's.
 
-import test from 'node:test';
+import { test as rawTest } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -71,6 +71,19 @@ const PIN_PATH = path.join(ROOT, 'policy', 'design-intent-skill.json');
 const PROMPT_PATH = path.join(ROOT, 'commands', 'masterplan.md');
 const BIN = path.join(ROOT, 'bin', 'masterplan.mjs');
 const pin = JSON.parse(fs.readFileSync(PIN_PATH, 'utf8'));
+// HOST-LOCAL PIN EVIDENCE: the pin's repo is an absolute host path (provenance of the pinned
+// skill). On a machine without it (the CI runner), this suite cannot verify the pinned bytes —
+// it SKIPS (never fails): the pin verification is host-local evidence, like the run's own
+// bundle; CI is the product-surface contract, not the pin-provenance witness.
+const PINNED_REPO_AVAILABLE = fs.existsSync(path.join(pin.repo, '.git')); // a bare existing dir is not a repo (the CI path is absent; an empty mount is not a checkout)
+// Every test in this file is pinned-skill evidence: on a machine without the pinned repo the
+// whole suite skips (a skip is honest — a failure would claim the product broke on CI).
+const test = PINNED_REPO_AVAILABLE ? rawTest : Object.assign(
+  // The skip alias keeps the harness surface: every registration becomes a skipped test,
+  // and the lifecycle hooks no-op (nothing was registered, nothing to clean up).
+  (name, opts, fn) => rawTest.skip(name, typeof opts === 'function' ? opts : fn),
+  { after: () => {}, before: () => {}, beforeEach: () => {}, afterEach: () => {} },
+);
 
 const sha256Hex = (b) => crypto.createHash('sha256').update(b).digest('hex');
 const git = (repo, ...args) => execFileSync('git', ['-C', repo, ...args]);
@@ -119,10 +132,13 @@ function jsonOut(r) {
 // Extract the pinned commit's closed file set from the pinned repo's tree — the exact bytes
 // the pin's manifest_digest was computed over (the sequencer-delegation suite's pinnedBytes
 // technique; the pinned tree IS the installed skill, never whatever a checkout holds).
-const pinnedBytes = (rel) => git(pin.repo, 'show', `${pin.commit}:${pin.skill_path}/${rel}`);
-const pinnedManifest = JSON.parse(pinnedBytes('manifest.json').toString('utf8'));
-const pinnedSkillMd = pinnedBytes('SKILL.md').toString('utf8');
-const PINNED_SCHEMA = JSON.parse(pinnedBytes('schema.json').toString('utf8'));
+const pinnedBytes = (rel) => {
+  if (!PINNED_REPO_AVAILABLE) throw new Error('the pinned repo is absent on this machine — the host-local pin evidence suite is skipped');
+  return git(pin.repo, 'show', `${pin.commit}:${pin.skill_path}/${rel}`);
+};
+const pinnedManifest = PINNED_REPO_AVAILABLE ? JSON.parse(pinnedBytes('manifest.json').toString('utf8')) : null;
+const pinnedSkillMd = PINNED_REPO_AVAILABLE ? pinnedBytes('SKILL.md').toString('utf8') : null;
+const PINNED_SCHEMA = PINNED_REPO_AVAILABLE ? JSON.parse(pinnedBytes('schema.json').toString('utf8')) : null;
 
 // Extract the REAL pinned skill into an installable tree. The recomputed identity over
 // these bytes equals the pin's manifest_digest (asserted once, below) — the dispatch cases
