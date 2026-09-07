@@ -12,6 +12,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { FORMAT_PINS, EVENT_SCHEMAS } from '../../../lib/bundle.mjs';
 
 const ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 
@@ -143,14 +144,28 @@ export function discoverPromptMarkers() {
   return [...prompt.matchAll(/<!-- knob: ([a-zA-Z0-9_.]+) -->/g)].map((m) => m[1]).sort();
 }
 
+// The durable bundle controls (the wave-16 guard extension): state-derived controls that
+// are not config knobs or CLI flags — the goals format pin and the schema-capture switch.
+// DERIVED from the library's own exports (never a copied list): FORMAT_PINS is the closed
+// pin vocabulary lib/bundle.mjs ships, and the schema_captured event schema is the capture
+// switch's own validator. A future pin value or a removed capture flows through here
+// without this file changing.
+export function discoverDurableControls() {
+  const durable = [];
+  if (Array.isArray(FORMAT_PINS) && FORMAT_PINS.length >= 2) durable.push('format_pin');
+  if (EVENT_SCHEMAS && typeof EVENT_SCHEMAS.schema_captured === 'function') durable.push('schema_capture');
+  return durable;
+}
+
 // The complete derived control inventory — every non-metadata control on every surface.
 export async function discoverAllControls() {
-  const [flags, config, env, state, markers] = await Promise.all([
+  const [flags, config, env, state, markers, durable] = await Promise.all([
     discoverFlags(),
     discoverConfigPaths(),
     Promise.resolve(discoverEnvControls()),
     discoverSeedStateFields(),
     Promise.resolve(discoverPromptMarkers()),
+    Promise.resolve(discoverDurableControls()),
   ]);
   return {
     flags,
@@ -158,6 +173,7 @@ export async function discoverAllControls() {
     env,
     state,
     markers,
-    all: [...new Set([...flags, ...config, ...env, ...state, ...markers])].sort(),
+    durable,
+    all: [...new Set([...flags, ...config, ...env, ...state, ...durable, ...markers])].sort(),
   };
 }

@@ -75,6 +75,7 @@ function derivedSurfaceIds(inv) {
     ...inv.config,
     ...inv.env,
     ...inv.state,
+    ...inv.durable, // the durable bundle controls (format_pin, schema_capture)
     ...inv.markers.map(markerContractId).filter((id) => id !== null),
   ]);
 }
@@ -100,6 +101,9 @@ function unmappedControls(inv, byId, exempt) {
     if (exempt(f)) continue;
     if (flagRegistryIds.has(f)) continue; // explicit flag contract
     // covered by the generic registration contract — not unmapped
+  }
+  for (const d of inv.durable ?? []) {
+    if (!exempt(d) && !byId.has(d)) unmapped.push(`durable:${d}`);
   }
   for (const c of inv.config) {
     if (!exempt(c) && !byId.has(c)) unmapped.push(`config:${c}`);
