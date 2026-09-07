@@ -102,10 +102,26 @@ export function readBundleEvents(statePath) {
         // (pass 1 never armed a release), the TARGETS' version is the series anchor — the
         // same fallback startPass itself applies.
         let anchored = priors;
+        if (anchored.length === 0 && typeof e.series_anchor === 'string') {
+          // The writer's fallback anchor, durably recorded on the pass event (startPass) —
+          // replay validates against THE anchor the writer used, never a re-derived default
+          // (the targeted-closure review's finding 2).
+          anchored = [e.series_anchor];
+        }
         if (anchored.length === 0) {
-          // NOT loadBundle (it re-enters readBundleEvents through the events read — infinite
-          // recursion); the state and MAIN derive the same way it does.
+          // No recorded anchor at all: pre-schema ledgers fall back to the resolved targets'
+          // version — startPass's own fallback. NOT loadBundle (it re-enters readBundleEvents
+          // through the events read — infinite recursion); the state derives the same way.
           anchored = [resolveTargets(join(dirname(statePath), '..', '..', '..'), readState(statePath), {}).version];
+        }
+        // The anchors themselves are ledger claims: each must be semver-shaped (the
+        // targeted-closure review's finding 1 — a hand-edited release-arm anchor like
+        // '10.0.0.junk' or '10.0.-1' previously smuggled a bogus series through unvalidated).
+        for (const anchor of anchored) {
+          if (typeof anchor !== 'string' || !/^\d+\.\d+\.\d+$/.test(anchor)) {
+            problems.push(`event ${i} (bootstrap_pass) version ${e.version} is anchored on a MALFORMED recorded version ${JSON.stringify(anchor)} — the series anchor itself is drift (§10.3)`);
+            return;
+          }
         }
         const [major, minor] = semver(anchored[0]);
         const v = semver(e.version);
@@ -924,7 +940,13 @@ export function startPass({ statePath, pass, triggeredBy, version = null, target
     if (e && e.type === 'bootstrap_pass' && e.version === version) throw new Error(`version ${version} was already bound to pass ${e.pass}`);
   }
   const prior = priorVersions(events);
-  if (prior.length === 0) prior.push(resolvedTargets.version); // pass 1 never armed a release here: its targets' version
+  let seriesAnchor = null; // durably recorded when the fallback anchors the series (below)
+  if (prior.length === 0) {
+    prior.push(resolvedTargets.version); // pass 1 never armed a release here: its targets' version
+    seriesAnchor = resolvedTargets.version; // the targeted-closure review's finding 2: the
+    // writer's fallback anchor is RECORDED on the pass event so replay validates against the
+    // anchor the writer actually used — never a re-derived default the writer never saw.
+  }
   const [major, minor] = semver(prior[0]);
   const [vMajor, vMinor] = semver(version);
   if (vMajor !== major || vMinor !== minor) {
@@ -970,7 +992,7 @@ export function startPass({ statePath, pass, triggeredBy, version = null, target
   // new tip, so a finding it did not name is addressed by the same corrective release.
   const consumed = openCorrectiveFindings(events, status.pass).map((f) => f.index);
   if (!consumed.includes(triggeredBy)) consumed.push(triggeredBy);
-  const record = { type: 'bootstrap_pass', ts: now, pass, triggered_by: triggeredBy, version, consumed };
+  const record = { type: 'bootstrap_pass', ts: now, pass, triggered_by: triggeredBy, version, consumed, ...(seriesAnchor ? { series_anchor: seriesAnchor } : {}) };
   appendEvent(statePath, record);
   return bootstrapStatus(statePath);
 }

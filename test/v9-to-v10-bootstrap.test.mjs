@@ -1889,6 +1889,56 @@ test('closure review: replay refuses a hand-edited corrective VERSION — series
   assert.equal(st.version, '10.0.1', 'the legitimate in-series monotone version derives cleanly');
 });
 
+test('targeted closure: the anchors themselves are validated, and the no-history fallback anchor is durably recorded', () => {
+  const editArmVersion = (fx, version) => {
+    const ledger = path.join(fx.bundleDir, 'events.jsonl');
+    const rows = fs.readFileSync(ledger, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    const arm = rows.find((e) => e.type === 'bootstrap_armed' && e.step === 'release');
+    arm.data.version = version;
+    fs.writeFileSync(ledger, `${rows.map((r) => JSON.stringify(r)).join('\n')}\n`);
+  };
+  const walkToCorrective = (fx) => {
+    seedThrough(fx, STEP_ORDER.slice(0, STEP_ORDER.indexOf('gate')));
+    appendEvent(fx.statePath, { type: 'bootstrap_armed', pass: 1, step: 'release', cmd: 'fixture', sha: git(fx.MAIN, 'rev-parse', fx.branch), ts: 95, data: { version: '10.0.0' } });
+    appendEvent(fx.statePath, { type: 'adversary_review', ts: 90, verdict: 'rework' });
+    const trigger = events(fx.statePath).length - 1;
+    startPass({ statePath: fx.statePath, pass: 2, triggeredBy: trigger, version: '10.0.1', targets: fx.targets });
+  };
+
+  // (a) The targeted-closure review's finding 1: a hand-edited release-arm anchor that is
+  // NOT semver ('10.0.0.junk', '10.0.-1') previously anchored the series unvalidated.
+  for (const junk of ['10.0.0.junk', '10.0.-1']) {
+    const fx = makeFixture();
+    walkToCorrective(fx);
+    editArmVersion(fx, junk);
+    assert.throws(() => bootstrapStatus(fx.statePath), /MALFORMED recorded version/,
+      `a malformed arm anchor (${junk}) is the named refusal during replay`);
+  }
+
+  // (b) The targeted-closure review's finding 2: with NO release arm, the writer's explicit
+  // target anchor is durably RECORDED on the pass event — writer and replay agree, the
+  // ledger never becomes unreadable after a legitimate startPass.
+  const nb = makeFixture();
+  seedThrough(nb, STEP_ORDER.slice(0, STEP_ORDER.indexOf('gate')));
+  appendEvent(nb.statePath, { type: 'adversary_review', ts: 90, verdict: 'rework' });
+  const nbTrigger = events(nb.statePath).length - 1;
+  const customTargets = { ...nb.targets, version: '11.4.0' };
+  const started = startPass({ statePath: nb.statePath, pass: 2, triggeredBy: nbTrigger, version: '11.4.1', targets: customTargets });
+  assert.equal(started.pass, 2, 'the writer accepts the in-series corrective version against its explicit target anchor');
+  const passRec = events(nb.statePath).find((e) => e.type === 'bootstrap_pass');
+  assert.equal(passRec.series_anchor, '11.4.0', 'the fallback anchor is durably recorded on the pass event');
+  const st = bootstrapStatus(nb.statePath); // replay: writer and replay agree — no refusal
+  assert.equal(st.pass, 2);
+  assert.equal(st.version, '11.4.1', 'replay validates against the RECORDED anchor, never a re-derived default');
+  // And the recorded anchor is validated too: a hand-edited series_anchor refuses.
+  const ledger = path.join(nb.bundleDir, 'events.jsonl');
+  const rows = fs.readFileSync(ledger, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  rows.find((e) => e.type === 'bootstrap_pass').series_anchor = '10.0.0.junk';
+  fs.writeFileSync(ledger, `${rows.map((r) => JSON.stringify(r)).join('\n')}\n`);
+  assert.throws(() => bootstrapStatus(nb.statePath), /MALFORMED recorded version/,
+    'a hand-edited recorded anchor is the named refusal');
+});
+
 test('finding 6: a zero-exit failed WITH a reason records through the driver and lands on the ledger', () => {
   const fx = makeFixture();
   seedThrough(fx, ['rehearsal', 'docs_normalize']);
