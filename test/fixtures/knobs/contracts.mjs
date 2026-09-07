@@ -111,7 +111,9 @@ export const REGISTRY = [
     values: ['legacy', 'schema_backed'],
     vary: (input, v) => ({ ...input, format_pin: v }),
     promptOnly: false,
-    observe: async ({ input, fixtures }) => fixtures[input._id]?.pinnedGoals ?? null,
+    // HASH-ONLY observable (wave-16 review finding): the pin itself must not make the sides
+    // differ — an inert constant hash must fail the contract's distinctness requirement.
+    observe: async ({ input, fixtures }) => fixtures[input._id]?.pinnedGoals?.goalsHash ?? null,
   },
   {
     id: 'schema_capture',
@@ -121,6 +123,33 @@ export const REGISTRY = [
     vary: (input, v) => ({ ...input, schema_capture: v }),
     promptOnly: false,
     observe: async ({ input, fixtures }) => fixtures[input._id]?.captureSwitch ?? null,
+  },
+  {
+    id: 'interview.probing_minimum.low',
+    kind: 'config',
+    describe: 'the low minimum (configured 2 vs shipped 1) changes the RECORDED WAIVER on an identical capped ledger: probing_minimum_unmet_at_cap + resolved 2 under configured, no cause under the shipped default',
+    values: [2, null],
+    vary: (input, v) => ({ ...input, 'interview.probing_minimum.low': v }),
+    promptOnly: false,
+    observe: async ({ input, fixtures }) => fixtures[input._id]?.probingContract ?? null,
+  },
+  {
+    id: 'interview.probing_minimum.medium',
+    kind: 'config',
+    describe: 'the medium minimum (configured 3 vs shipped 2) changes the recorded waiver cause + resolved value on the identical capped ledger',
+    values: [3, null],
+    vary: (input, v) => ({ ...input, 'interview.probing_minimum.medium': v }),
+    promptOnly: false,
+    observe: async ({ input, fixtures }) => fixtures[input._id]?.probingContract ?? null,
+  },
+  {
+    id: 'interview.probing_minimum.high',
+    kind: 'config',
+    describe: 'the high minimum (configured 5 vs shipped 4) changes the recorded waiver cause + resolved value on the identical capped ledger',
+    values: [5, null],
+    vary: (input, v) => ({ ...input, 'interview.probing_minimum.high': v }),
+    promptOnly: false,
+    observe: async ({ input, fixtures }) => fixtures[input._id]?.probingContract ?? null,
   },
   {
     id: 'interview.probing_minimum',

@@ -67,7 +67,6 @@ artifacts — see `commands/masterplan.md` §3b.
 | [task-verification.md](internals/task-verification.md) | D6 scope verify and the review stage: acceptance criteria, trust-skip conditions | `lib/wave.mjs` |
 | [design-intent-integration.md](internals/design-intent-integration.md) | The design-intent integration as landed: host contract/pin, the interview ledger, §5.3 convergence, the format pin + snapshot, reconciliation, the promotion transaction, checkpoint identity tuples, the knob contracts | `lib/interview.mjs` + `lib/reconcile-intent.mjs` + `lib/promote.mjs` + `lib/checkpoint-evidence.mjs` |
 | [doctor.md](internals/doctor.md) | Doctor contract: discovery, crash isolation, Finding shape, all 19 check modules | `bin/doctor.mjs` + `lib/doctor/*.mjs` |
-| [design-intent-integration.md](internals/design-intent-integration.md) | Design-intent skill host contract: ownership split, schema capture, the skill-identity pin and its amendment | `policy/design-intent-skill.json` + `lib/interview.mjs` |
 
 ## Cross-cutting References
 

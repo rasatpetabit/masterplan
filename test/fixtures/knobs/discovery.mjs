@@ -47,7 +47,13 @@ export async function discoverConfigPaths() {
   // context_watch.{threshold,focus}. 'done' itself is repoOnly + object|none — a structural
   // surface, not a scalar knob; its leaves are the actual controls.
   const containers = new Set(['done', 'context_watch']);
-  return keys.filter((k) => !containers.has(k)).sort();
+  const scalar = keys.filter((k) => !containers.has(k));
+  // The interview.probing_minimum per-level leaves (the wave-16 guard extension): the level
+  // vocabulary is the SHIPPED DEFAULT_PROBING_MINIMUM's keys — derived, never a copied list,
+  // so a future level or a removed one flows through without this file changing.
+  const { DEFAULT_PROBING_MINIMUM } = await import(path.join(ROOT, 'lib', 'config.mjs'));
+  const levels = Object.keys(DEFAULT_PROBING_MINIMUM ?? {}).map((l) => `interview.probing_minimum.${l}`);
+  return [...scalar, ...levels].sort();
 }
 
 // ---------------------------------------------------------------------------
