@@ -1309,3 +1309,71 @@ test('re-review finding 1: a hand-appended amendment event is NOT a supersession
   assert.equal(fs.readFileSync(path.join(fx.bundleDir, 'goals.md'), 'utf8'), mutatedV2,
     'the replay never rewinds the superseding transaction\'s approved bytes');
 });
+
+test('gate iteration 3: a tampered result_goals_evidence_hash launders nothing — the lineage cache is not an independent claim', () => {
+  const fx = mkbundle();
+  // tx1: a spec-only promotion (the goals half is its unchanged half).
+  const specResult = SPEC.replace('The old outcome.', 'The amended outcome.');
+  const inputs = amendmentInputs(fx, { specResult, goalsResult: GOALS, txid: 'it3-one' });
+  const one = promoteAmendment({ statePath: fx.statePath, ...inputs, self: self(fx), now: 3000 });
+  assert.equal(one.outcome, 'promoted', JSON.stringify(one));
+
+  // tx2: a legitimate follow-on amending the goals onward from tx1's (unchanged) result.
+  const goalsV2 = GOALS + '## G10: FollowOn\nsignal: test\n';
+  fs.writeFileSync(path.join(fx.scratch.a, 'spec.md'), specResult);
+  fs.writeFileSync(path.join(fx.scratch.a, 'goals.md'), GOALS);
+  fs.writeFileSync(path.join(fx.scratch.b, 'spec.md'), specResult);
+  fs.writeFileSync(path.join(fx.scratch.b, 'goals.md'), goalsV2);
+  const diff2 = gitDiffText(fx.scratch.a, fx.scratch.b);
+  const bases2 = { spec: sha256Of(specResult), goals: sha256Of(GOALS) };
+  const results2 = { spec: sha256Of(specResult), goals: sha256Of(goalsV2) };
+  const two = promoteAmendment({
+    statePath: fx.statePath,
+    transactionId: 'it3-two', diff: diff2, resultSpec: specResult, resultGoals: goalsV2,
+    approval: approvalReceipt({ txid: 'it3-two', bases: bases2, results: results2, diffDigest: sha256Of(diff2) }),
+    self: self(fx), now: 3001,
+  });
+  assert.equal(two.outcome, 'promoted', JSON.stringify(two));
+
+  // The drift: goals mutated beyond tx2's approved result — in the PARSED-GOAL set
+  // (the evidence hash family: goalsHash hashes the recognized G-blocks, §6.1 — a raw
+  // prose drift invisible to the parser is invisible to the whole lineage machinery by
+  // design; the drift here changes a goal so the evidence hashes genuinely differ).
+  const drift = goalsV2 + '## G11: Drift\nsignal: test\n';
+  fs.writeFileSync(path.join(fx.bundleDir, 'goals.md'), drift);
+  assert.notEqual(pinnedGoalsEvidenceHash(fx.statePath, drift), pinnedGoalsEvidenceHash(fx.statePath, goalsV2),
+    'the drift really changes the parsed goals (the family the lineage compares)');
+  const before = recoverPromotion({ statePath: fx.statePath, transactionId: 'it3-one', self: self(fx), now: 3002 });
+  assert.equal(before.outcome, 'refused', JSON.stringify(before));
+
+  // The gate iteration-3 tamper: rewrite ONLY tx2's doc.result_goals_evidence_hash to the
+  // drift's pinned hash — the approval-bound result_hashes.goals is left intact, so the OLD
+  // revalidation (which never bound the evidence-hash field to anything) passed and the
+  // supersession accepted the unapproved drift as tx2's approved lineage. With the binding,
+  // the tampered doc FAILS revalidation inside the supersession route — silently skipped,
+  // the drift refusal stands — and fails LOUDLY on tx2's own recovery.
+  const docPath = promotionDocPath(fx.statePath, 'it3-two');
+  const doc = JSON.parse(fs.readFileSync(docPath, 'utf8'));
+  assert.equal(doc.result_goals_evidence_hash, pinnedGoalsEvidenceHash(fx.statePath, goalsV2),
+    'the untampered doc carries the pinned hash of its approval-bound result (the pre-tamper sanity check)');
+  doc.result_goals_evidence_hash = pinnedGoalsEvidenceHash(fx.statePath, drift);
+  fs.writeFileSync(docPath, JSON.stringify(doc, null, 2) + '\n');
+  const after = recoverPromotion({ statePath: fx.statePath, transactionId: 'it3-one', self: self(fx), now: 3003 });
+  assert.equal(after.outcome, 'refused', JSON.stringify(after));
+  assert.equal(after.refusal, 'intervening_edit', 'the tampered supersession launders nothing');
+  assert.throws(
+    () => recoverPromotion({ statePath: fx.statePath, transactionId: 'it3-two', self: self(fx), now: 3004 }),
+    /result_goals_evidence_hash does not bind its approval-bound result bytes/,
+    'tx2\'s own recovery refuses loudly on the tampered lineage cache',
+  );
+  // The base-side twin of the same tamper class.
+  const doc2 = JSON.parse(fs.readFileSync(docPath, 'utf8'));
+  doc2.result_goals_evidence_hash = pinnedGoalsEvidenceHash(fx.statePath, goalsV2);
+  doc2.base_goals_evidence_hash = pinnedGoalsEvidenceHash(fx.statePath, GOALS + '## G99: TamperedBase\nsignal: test\n');
+  fs.writeFileSync(docPath, JSON.stringify(doc2, null, 2) + '\n');
+  assert.throws(
+    () => recoverPromotion({ statePath: fx.statePath, transactionId: 'it3-two', self: self(fx), now: 3005 }),
+    /base_goals_evidence_hash does not bind its pinned base bytes/,
+    'a tampered base lineage cache refuses too',
+  );
+});
