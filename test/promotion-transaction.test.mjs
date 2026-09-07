@@ -201,7 +201,7 @@ test('approval binds both bases + the diff + both results; both applied, one rec
   // The bases are PINNED BY REF against gc: the refs exist and point at the base blobs.
   for (const role of ['spec', 'goals']) {
     const ref = JSON.parse(fs.readFileSync(promotionDocPath(fx.statePath, 'tx-happy'), 'utf8')).base_pins[role].ref;
-    assert.equal(ref, `${PROMOTION_REFS_PREFIX}promo/tx-happy/${role}-base`, 'the pin is namespaced by the bundle slug');
+    assert.ok(ref.startsWith(`${PROMOTION_REFS_PREFIX}tx-happy/${role}-base-`), `content-addressed pin: ${ref}`);
     const oid = git(fx.MAIN, 'for-each-ref', '--format=%(objectname)', ref);
     assert.match(oid, /^[0-9a-f]{40}$/);
     assert.equal(gitRaw(fx.MAIN, 'cat-file', 'blob', oid),
@@ -209,7 +209,8 @@ test('approval binds both bases + the diff + both results; both applied, one rec
   }
   // And the pin survives a real gc prune: the pre-image stays recoverable.
   git(fx.MAIN, '-c', 'gc.reflogExpire=now', '-c', 'gc.reflogExpireUnreachable=now', 'gc', '--prune=now', '--quiet');
-  const specOid = git(fx.MAIN, 'for-each-ref', '--format=%(objectname)', `${PROMOTION_REFS_PREFIX}promo/tx-happy/spec-base`);
+  const happyDoc = JSON.parse(fs.readFileSync(promotionDocPath(fx.statePath, 'tx-happy'), 'utf8'));
+  const specOid = git(fx.MAIN, 'for-each-ref', '--format=%(objectname)', happyDoc.base_pins.spec.ref);
   assert.equal(gitRaw(fx.MAIN, 'cat-file', 'blob', specOid), SPEC);
 });
 
@@ -540,7 +541,7 @@ test('a diff that does not reproduce the approved result hashes is refused BEFOR
   assert.match(out.error, /does not reproduce the approved resulting/);
   // NOTHING was written: no doc, no refs, no event, and both artifacts untouched.
   assert.equal(fs.existsSync(promotionDocPath(fx.statePath, 'tx-baddiff')), false);
-  assert.equal(git(fx.MAIN, 'for-each-ref', `--format=%(refname)`, `${PROMOTION_REFS_PREFIX}promo/tx-baddiff/`), '');
+  assert.equal(git(fx.MAIN, 'for-each-ref', `--format=%(refname)`, `${PROMOTION_REFS_PREFIX}tx-baddiff/`), '');
   assert.deepEqual(readEvents(fx.bundleDir), []);
   assert.equal(fs.readFileSync(path.join(fx.bundleDir, 'spec.md'), 'utf8'), SPEC);
   assert.equal(fs.readFileSync(path.join(fx.bundleDir, 'goals.md'), 'utf8'), GOALS);
@@ -846,7 +847,7 @@ test('recovery works from a linked worktree (MAIN derivation, not the worktree)'
   const out = promoteAmendment({ statePath: wtState, ...inputs, self: buildOwnerIdentity({ host: 'h1', session: 'sess-wt', slug: 'promo', now: 1000 }), now: 1000 });
   assert.equal(out.outcome, 'promoted', JSON.stringify(out));
   // The pins landed in MAIN's object store (the common dir), readable from MAIN.
-  const ref = `${PROMOTION_REFS_PREFIX}promo/tx-wt/spec-base`;
+  const ref = `${PROMOTION_REFS_PREFIX}tx-wt/spec-base-${git(fx.MAIN, 'hash-object', '-w', '--', path.join(fx.bundleDir, 'spec.md'))}`;
   const oid = git(fx.MAIN, 'for-each-ref', '--format=%(objectname)', ref);
   assert.match(oid, /^[0-9a-f]{40}$/);
   assert.equal(gitRaw(fx.MAIN, 'cat-file', 'blob', oid), SPEC);
@@ -1380,12 +1381,13 @@ test('gate iteration 3: a tampered result_goals_evidence_hash launders nothing �
 });
 
 test('gate iteration 4: base pins are namespaced by bundle — a same-ID transaction in a sibling bundle cannot overwrite another bundle\'s GC protection', () => {
-  // The reviewer's reproduction: pins were repo-global by transaction ID while documents
-  // and duplicate-ID checks are bundle-local — two legitimate bundles sharing an ID
-  // overwrote each other's refs, and a gc pruned the first's uncommitted base, making its
-  // revalidation unrecoverable despite an untouched document. The namespaced ref
-  // (refs/masterplan/promotion/<bundle-slug>/<txid>/<role>-base) keeps every bundle's
-  // pins disjoint.
+  // Gate iterations 4+5: pins were repo-global by transaction ID while documents and
+  // duplicate-ID checks are bundle-local — two legitimate bundles sharing an ID overwrote
+  // each other's refs, and a gc pruned the first's uncommitted base. The slug-namespaced
+  // iteration-4 shape still let two LINKED WORKTREES of one repo (the same slug, the shared
+  // object store) collide. The pins are now CONTENT-ADDRESSED (the base oid is part of the
+  // ref name): different bases -> different refs (additive, nothing overwritten); the same
+  // base -> the same ref with the same oid (an idempotent no-op).
   const fx = mkbundle();
   const base1 = GOALS + '## G8: Uncommitted base\nsignal: test\n';
   fs.writeFileSync(path.join(fx.bundleDir, 'goals.md'), base1);
@@ -1419,4 +1421,58 @@ test('gate iteration 4: base pins are namespaced by bundle — a same-ID transac
   const out = recoverPromotion({ statePath: fx.statePath, transactionId: 'shared-id', self: self(fx), now: 4001 });
   assert.equal(out.outcome, 'recorded', JSON.stringify(out));
   assert.equal(out.replay, true, 'the first bundle\'s pre-image survived the gc — its pins were never overwritten');
+});
+
+test('gate iteration 5: content-addressed pins survive the same-slug linked-worktree case — and the same base is an idempotent no-op', () => {
+  // The reviewer's iteration-5 reproduction: TWO LINKED WORKTREES of one repo, the SAME
+  // slug, the SAME transaction ID, DIFFERENT uncommitted bases — the slug-namespaced shape
+  // still overwrote the first's ref, and a gc made its pre-image unrecoverable. With the
+  // base oid in the ref name the two pins are ADDITIVE (different content, different refs),
+  // so both survive the prune.
+  const fx = mkbundle();
+  const wt = path.join(fx.tmp, 'worktree');
+  git(fx.MAIN, 'worktree', 'add', '-q', '-b', 'parallel-run', wt);
+  const base1 = GOALS + '## G8: Uncommitted unique base\nsignal: test\n';
+  fs.writeFileSync(path.join(fx.bundleDir, 'goals.md'), base1);
+  fs.writeFileSync(path.join(fx.scratch.a, 'goals.md'), base1);
+  const first = amendmentInputs(fx, { specResult: SPEC + '\n', goalsResult: base1 + '## G9: First result\nsignal: test\n', txid: 'shared-id' });
+  first.approval.base_hashes.goals = sha256Of(base1);
+  first.approval.goals_amend.old_goals_hash = sha256Of(base1);
+  assert.equal(promoteAmendment({ statePath: fx.statePath, ...first, self: self(fx), now: 5000 }).outcome, 'promoted');
+  const before = JSON.parse(fs.readFileSync(promotionDocPath(fx.statePath, 'shared-id'), 'utf8'));
+
+  // The second run: the same slug, the same txid, a DIFFERENT base, in a linked worktree.
+  const sp = path.join(wt, 'docs', 'masterplan', 'promo', 'state.yml');
+  writeState(sp, buildSeedState({ slug: 'promo', topic: 'Parallel same-slug run', createdAt: '2026-01-01T00:00:00.000Z', complexity: 'low' }));
+  fs.writeFileSync(path.join(fx.scratch.a, 'goals.md'), GOALS);
+  const second = amendmentInputs(fx, { specResult: SPEC + '\n', goalsResult: GOALS + '## G4: Parallel result\nsignal: test\n', txid: 'shared-id' });
+  assert.equal(promoteAmendment({ statePath: sp, ...second, self: self(fx, 'sess-other'), now: 5001 }).outcome, 'promoted');
+  const after = JSON.parse(fs.readFileSync(promotionDocPath(sp, 'shared-id'), 'utf8'));
+  assert.notEqual(before.base_pins.goals.ref, after.base_pins.goals.ref,
+    'different bases pin under different (content-addressed) refs — nothing overwritten');
+  assert.equal(git(wt, 'rev-parse', before.base_pins.goals.ref), before.base_pins.goals.object_id,
+    'the first pin still points at the first pre-image');
+
+  // The reviewer's exact gc: both pre-images survive, both recoveries replay.
+  git(fx.MAIN, '-c', 'gc.reflogExpire=now', '-c', 'gc.reflogExpireUnreachable=now', 'gc', '--prune=now', '--quiet');
+  const r1 = recoverPromotion({ statePath: fx.statePath, transactionId: 'shared-id', self: self(fx), now: 5002 });
+  assert.equal(r1.outcome, 'recorded', JSON.stringify(r1));
+  const r2 = recoverPromotion({ statePath: sp, transactionId: 'shared-id', self: self(fx, 'sess-other'), now: 5003 });
+  assert.equal(r2.outcome, 'recorded', JSON.stringify(r2));
+
+  // The benign twin: the SAME base bytes under the same txid pin the SAME ref — an
+  // idempotent no-op, never an overwrite.
+  const fx2 = mkbundle();
+  const a1 = amendmentInputs(fx2, { specResult: SPEC + '\n', goalsResult: GOALS + '## G4: Same\nsignal: test\n', txid: 'same-base-id' });
+  assert.equal(promoteAmendment({ statePath: fx2.statePath, ...a1, self: self(fx2), now: 5004 }).outcome, 'promoted');
+  const docA = JSON.parse(fs.readFileSync(promotionDocPath(fx2.statePath, 'same-base-id'), 'utf8'));
+  const wt2 = path.join(fx2.tmp, 'wt2');
+  git(fx2.MAIN, 'worktree', 'add', '-q', '-b', 'parallel-run-2', wt2);
+  const sp2 = path.join(wt2, 'docs', 'masterplan', 'promo', 'state.yml');
+  writeState(sp2, buildSeedState({ slug: 'promo', topic: 'Same base', createdAt: '2026-01-01T00:00:00.000Z', complexity: 'low' }));
+  const b1 = amendmentInputs(fx2, { specResult: SPEC + '\n', goalsResult: GOALS + '## G4: Same\nsignal: test\n', txid: 'same-base-id' });
+  assert.equal(promoteAmendment({ statePath: sp2, ...b1, self: self(fx2, 'sess-wt2'), now: 5005 }).outcome, 'promoted');
+  const docB = JSON.parse(fs.readFileSync(promotionDocPath(sp2, 'same-base-id'), 'utf8'));
+  assert.equal(docA.base_pins.goals.ref, docB.base_pins.goals.ref, 'identical bases pin the identical ref');
+  assert.equal(docA.base_pins.goals.object_id, docB.base_pins.goals.object_id, 'the same object — an idempotent no-op, never an overwrite');
 });
