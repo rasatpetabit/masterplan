@@ -345,7 +345,10 @@ function buildCommittedSourceTree() {
     fs.copyFileSync(abs, path.join(src, rel));
   }
   git(src, 'add', 'commands/masterplan.md', 'test/interview-cutover.test.mjs', 'test/prompt-structure.test.mjs');
-  git(src, 'commit', '-q', '-m', 'task 59 cutover (test fixture commit)');
+  // --allow-empty: when the task's bytes are ALREADY at HEAD (the post-record state), the
+  // copied trio is identical and there is nothing to commit — the archive still snapshots
+  // the committed tree, which now IS the cutover's bytes either way.
+  git(src, 'commit', '-q', '--allow-empty', '-m', 'task 59 cutover (test fixture commit)');
   return src;
 }
 
