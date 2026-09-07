@@ -63,7 +63,7 @@ export function readBundleEvents(statePath) {
         // BEFORE the pass opened, judged on the history slice only (the ledger's state at open
         // time, never retroactively justified by later records), and its gate not yet recorded.
         const history = events.slice(0, i);
-        const required = stepsForPass(passSoFar).filter((st) => st !== 'gate');
+        const required = stepsForPass(passSoFar, history).filter((st) => st !== 'gate');
         const stepDone = (st) => {
           const recs = history.map((h, hi) => (h && h.type === 'bootstrap_step' && h.pass === passSoFar && h.step === st ? { ...h, index: hi } : null)).filter(Boolean);
           const last = recs[recs.length - 1];
@@ -170,10 +170,30 @@ export const STEP_ORDER = BOOTSTRAP_STEPS;
 // finish-step's durable markers that the v9 finish has begun (branch disposition, archive classes,
 // the finish-time review): from then on only `gate` may be armed or recorded in the same pass.
 export const FINISH_EVENT_TYPES = ['branch_finish', 'adversary_review', 'archived', 'incomplete_authorized', 'completion_confirmed', 'retro_written'];
-export const PASS2_OMITTED = ['rehearsal', 'docs_normalize', 'main_push'];
+export const PASS2_OMITTED = ['rehearsal', 'docs_normalize'];
 
-export function stepsForPass(pass) {
-  if (pass >= 2) return STEP_ORDER.filter((s) => !PASS2_OMITTED.includes(s));
+// main_push is omitted on a corrective pass ONLY when an EARLIER pass actually completed it.
+// The omission was written for the ordinary case — pass 1's step 5 published main, so the
+// corrective passes re-do only from verify. But a run whose pass 1 died BEFORE step 5 (every
+// pass of this run so far triggered at ci_wait) has no published main and no recorded base;
+// skipping main_push there would strand pr_merge with nothing to expect on the remote and
+// strand the finish's merge audit with an unpublished main. Judged on the events the caller
+// holds: pass N consults the ledger for a done main_push in passes 1..N-1.
+export function priorMainPushDone(events, beforePass) {
+  if (!Array.isArray(events)) return false;
+  for (let p = 1; p < beforePass; p += 1) {
+    const rec = latestRecord(events, p, 'main_push');
+    if (rec && isDone(rec)) return true;
+  }
+  return false;
+}
+
+export function stepsForPass(pass, events) {
+  if (pass >= 2) {
+    const omit = new Set(PASS2_OMITTED);
+    if (!events || priorMainPushDone(events, pass)) omit.add('main_push');
+    return STEP_ORDER.filter((s) => !omit.has(s));
+  }
   return STEP_ORDER;
 }
 
@@ -577,7 +597,7 @@ export function bootstrapStatus(statePath) {
   const steps = {};
   const completed = [];
   const failed = [];
-  const stepList = stepsForPass(pass);
+  const stepList = stepsForPass(pass, events);
   for (const step of stepList) {
     const rec = latestRecord(events, pass, step);
     if (!rec) {
@@ -657,7 +677,7 @@ export function armStep({ statePath, step, targets = {}, now = Date.now() }) {
   // sequencing rule that moves as the pass advances, while omission is permanent. Relying on
   // the coincidence would let the omission rule be deleted without any refusal changing, and
   // `release` and `push` are among the omitted steps: they are irreversible.
-  if (!stepsForPass(status.pass).includes(step)) {
+  if (!stepsForPass(status.pass, events).includes(step)) {
     refusals.push(`${step} is not part of pass ${status.pass} — a corrective pass omits it`);
   }
   if (status.next.step !== step) {
@@ -801,7 +821,7 @@ export function recordStep({ statePath, step, exit, digestFile = null, status = 
   }
   // Independently of the arm: an arm receipt left behind by an earlier pass, or written before
   // the pass was corrected, must not be enough to record a step this pass does not run.
-  if (!stepsForPass(statusInfo.pass).includes(step)) {
+  if (!stepsForPass(statusInfo.pass, events).includes(step)) {
     throw new Error(`step ${step} is not part of pass ${statusInfo.pass} — a corrective pass omits it, so it cannot be recorded`);
   }
   const priorStale = recordIsStale({ MAIN, events, pass: statusInfo.pass, step, rec: prior, tip: ctx.tip });
@@ -980,7 +1000,7 @@ export function startPass({ statePath, pass, triggeredBy, version = null, target
   // deliberately stuck (install-pi is not run on a red tag), and the corrective pass re-does the
   // sequence from verify for the new version. Nothing before push may be missing — nothing was
   // published, so the failure is ordinary branch work, not a corrective release.
-  const required = stepsForPass(status.pass).filter((st) => st !== 'gate');
+  const required = stepsForPass(status.pass, events).filter((st) => st !== 'gate');
   const missing = required.filter((st) => !isDone(latestOfType(events, 'bootstrap_step', status.pass, st)));
   if (missing.length) {
     const pushIdx = required.indexOf('push');

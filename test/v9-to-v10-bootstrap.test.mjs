@@ -157,14 +157,17 @@ const EXPECTED_ORDER = [
 test('the step list is fixed, and pass 2 omits exactly the steps that already went out', () => {
   assert.deepEqual(STEP_ORDER, EXPECTED_ORDER, 'the published order');
   assert.deepEqual(stepsForPass(1), EXPECTED_ORDER, 'and pass 1 runs exactly it');
-  // rehearsal, docs_normalize and main_push are done once for the release, not per corrective pass.
-  assert.deepEqual(PASS2_OMITTED, ['rehearsal', 'docs_normalize', 'main_push']);
+  // rehearsal and docs_normalize are done once for the release, not per corrective pass;
+  // main_push is omitted only when an earlier pass completed it (a run whose pass 1 died
+  // before step 5 keeps main_push — pr_merge has no recorded base without it).
+  assert.deepEqual(PASS2_OMITTED, ['rehearsal', 'docs_normalize']);
   const pass2 = stepsForPass(2);
   for (const omitted of PASS2_OMITTED) {
     assert.equal(pass2.includes(omitted), false, `${omitted} must not run on a corrective pass`);
   }
+  assert.equal(pass2.includes('main_push'), false, 'the no-events call keeps the ordinary release shape (pass 1 published main)');
   assert.equal(pass2[0], 'verify', 'a corrective pass re-enters at the pre-publish verify');
-  assert.deepEqual(pass2, EXPECTED_ORDER.filter((step) => !PASS2_OMITTED.includes(step)));
+  assert.deepEqual(pass2, EXPECTED_ORDER.filter((step) => !PASS2_OMITTED.includes(step) && step !== 'main_push'));
   assert.deepEqual(stepsForPass(3), pass2, 'every later pass has the pass-2 shape');
 });
 

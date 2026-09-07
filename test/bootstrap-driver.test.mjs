@@ -13,7 +13,7 @@ import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { writeState, appendEvent } from '../lib/bundle.mjs';
 import {
-  STEP_ORDER, PASS2_OMITTED, stepsForPass, STEP_SHAPES, STEPS,
+  STEP_ORDER, PASS2_OMITTED, stepsForPass, priorMainPushDone, STEP_SHAPES, STEPS,
   resolveTargets, bootstrapStatus, armStep, recordStep, startPass, scanWorkspaceBundles, readBundleEvents, targetsDigest, isBlockingFinding, SELF_BLOCKING_TRIGGERS, CORRECTIVE_TRIGGERS, openCorrectiveFindings, ghRepoFromRemoteUrl, priorVersions,
 } from '../scripts/bootstrap-v10.mjs';
 
@@ -158,8 +158,20 @@ function walk(fx, step, data = {}, extra = {}) {
 
 test('step table: fixed enum order, pass-2 omissions, a shape per step', () => {
   assert.deepEqual(STEP_ORDER, ['rehearsal', 'docs_normalize', 'verify', 'review', 'assess', 'release', 'push', 'ci_wait', 'install_pi', 'main_push', 'publish_ack', 'pr_merge', 'claude_surface', 'surfaces_live', 'gate']);
-  assert.deepEqual(PASS2_OMITTED, ['rehearsal', 'docs_normalize', 'main_push']);
-  assert.deepEqual(stepsForPass(2), STEP_ORDER.filter((s) => !PASS2_OMITTED.includes(s)));
+  assert.deepEqual(PASS2_OMITTED, ['rehearsal', 'docs_normalize']);
+  // main_push's omission is EVENT-CONDITIONAL now: a corrective pass omits it only when an
+  // earlier pass actually completed it. The no-events call keeps the old shape (main_push
+  // omitted — the ordinary release, whose pass 1 published main before any corrective pass).
+  assert.deepEqual(stepsForPass(2), STEP_ORDER.filter((s) => !PASS2_OMITTED.includes(s) && s !== 'main_push'));
+  // with a ledger whose pass 1 completed main_push, pass 2 omits it (the ordinary case);
+  // with a ledger where pass 1 died before step 5, pass 2 KEEPS main_push (pr_merge needs a base).
+  const doneLedger = [{ type: 'bootstrap_step', pass: 1, step: 'main_push', status: 'done' }];
+  const deadLedger = [{ type: 'bootstrap_step', pass: 1, step: 'ci_wait', status: 'failed' }];
+  assert.equal(stepsForPass(2, doneLedger).includes('main_push'), false, 'a prior done main_push omits it');
+  assert.equal(stepsForPass(2, deadLedger).includes('main_push'), true, 'no prior main_push keeps it — the PR needs its base');
+  assert.equal(priorMainPushDone(doneLedger, 2), true);
+  assert.equal(priorMainPushDone(deadLedger, 2), false);
+  assert.equal(priorMainPushDone(null, 2), false, 'no ledger is not evidence of a published main');
   for (const s of STEP_ORDER) {
     assert.ok(['git', 'gh', 'fs', 'local'].includes(STEP_SHAPES[s]), s);
     assert.equal(typeof STEPS[s].cmd, 'function');
