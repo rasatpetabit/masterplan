@@ -20,58 +20,65 @@ stage's remaining steps.
 - The review/assess records for pass 4 are done (approve; all branch-assessable goals achieved; G6 excluded —
   it is assessed LIVE at the finish goal check).
 
-## The remaining steps (in order — `node scripts/bootstrap-v10.mjs status --state=<state.yml>` is the resume point)
+## THE ROUTE (updated in-session — read this first)
 
-1. **publish_ack**: record with answer 'proceed' + the operator-directive note (the standing directive
-   "do not stop until all work is finished reviewed committed merged pushed and fleet deployed" is the
-   acceptance; NEVER invent a user-attested Q/A receipt).
-2. **THE CURRENT BLOCKER (the exact seam)**: the pr_merge arm refuses on remote_main_expected
-   ("remote 017a7c6 vs expected unknown") — its expected base comes from a prior pass's
-   main_push (pass 1) or pr_merge (later passes) record, and NO pass ever ran either (pass 1
-   died at ci_wait BEFORE step 5; every corrective pass OMITS main_push via PASS2_OMITTED).
-   THE FIX (well-defined): PASS2_OMITTED's main_push omission was written for the case where
-   pass 1 COMPLETED main_push — make the omission conditional (omit main_push on a corrective
-   pass only when a prior pass's main_push is done). With the fix, pass 4 gains main_push:
-   arm → the printed cmd (fetch + the ancestry check: origin/main 017a7c6 must be an ancestor
-   of local main — local main is ~108 ahead / 1 BEHIND: the 1-behind commit is the §10.2
-   per-commit audit case, 'a foreign commit reached origin/main') → run → record (its
-   postcondition: the remote main equals the pushed sha). THEN pr_merge: expected =
-   main_push.data.main_sha ✓ → arm → `gh pr create` + `gh pr merge --merge` (the FIRST merge;
-   the throwaway-repo rehearsal rehearsed the exact commands) → record with the merge sha.
-   Then claude_surface → surfaces_live → gate per the original list below.
-3. **claude_surface**: arm → the documented plugin-cache replication for the OPERATOR's real
-   ~/.claude (the doctor's plugin-registry-drift must PASS on it) — the market/plugin-manager normally owns
-   this; the stage's step builds/verifies the cache layout at the tag. Read the step's printed cmd.
-4. **surfaces_live**: arm → the step's own check (both surfaces live + executable at 10.0.3).
-5. **gate**: arm → the printed command runs INSIDE the branch_finish flow of `mp finish` per §10.2 (the
-   rebase + the bundle commit; the gate is recorded once, on the latest pass).
+The walk CANNOT pr_merge at the current state, and the machinery's own rules say so: the branch
+tip moved past the published release tip (post-release driver fixes), tip_is_published refuses,
+and a refused arm writes NO receipt (a pre-refusal cannot be recorded failed). The chain is
+frozen once the tag is cut. The DESIGNED trigger for the corrective pass is the FINISH-TIME
+REVIEW (mp finish's whole-branch adversary review): its revise verdict on the real state
+(branch tip f155411 != published tip fc99d4d — unreleased commits cannot be merged) is the
+honest §10.3 blocking finding that opens pass 5.
 
-## Then the finish flow (todo #23→#25)
+### Pass-4 state at hand-off
 
-- `mp finish` through the pinned-v9 rules: the goal check (G1-G5+G7/G8 + G6 LIVE — the bootstrap_step events
-  are its evidence), the finish-time adversary review (the whole-branch diff), the branch_finish AUQ
-  (--choice=merge), the archive (class complete), the push_archive gate.
-- THEN: the successor run `v10-validation` (the required_successor event exists — the successor run validates
-  the released surfaces live; it is where G6's live remainder and the native-dispatch remainder land), and the
-  deferred `review_round_cap` hook.
-- Archive LAST; the merge/push/deploy todo (#24) closes with the gate + the finish's push.
+- v10.0.3 released/tagged/pushed/CI-green/installed; install_pi + publish_ack + main_push DONE
+  (main_push pushed local main e16a276 to origin/main — the first origin/main move in the run).
+- pr_merge: DEADLOCKED (branch moved past fc99d4d). next = pr_merge.
+- Three driver fixes committed on the branch past the tag (all suite-verified, 2743/2743 at f155411):
+  1. 8aaa78b — stepsForPass(pass, events): main_push omitted on corrective passes ONLY when an
+     earlier pass completed it (pass 1 died pre-step-5 → every corrective pass carries main_push).
+  2. 0ad1a33 — the FIRST pr_merge binds its base to the CURRENT pass's main_push.
+  3. f155411 — generalized: the expected remote base = the last thing that SUCCESSFULLY moved main
+     (latest DONE pr_merge of an earlier pass, else the latest DONE main_push of any pass <= current).
+     This is what lets pass 5 arm pr_merge with main_push OMITTED (pass 4's is done, expected e16a276).
 
-## Standing constraints (unchanged + learned this session)
+### The pass-5 route (mechanical, every rule already in the tree)
 
-- The advisor's attestation constraint: NEVER fabricate a user-attested receipt (attested_by:'user' with an
-  invented Q/A). The standing directive is quoted as the acceptance source in the record data — as done for
-  install_pi — never as a fabricated receipt.
-- Honest capture: record only what actually ran (exit codes verbatim). A false exit-0 verify receipt was
-  recorded once mid-walk (tip 6fdae05) and DISCLOSED in the next record's data — it stays on the ledger.
-- The premature un-armed release attempt (pass 3, remediated before any push) is disclosed in the pass-3
-  review receipt.
-- Aggregate test output properly: xargs chunking prints MULTIPLE summaries — sum every one, never tail.
-- The suite must stay green in BOTH the canonical env AND with PI_CODING_AGENT=1 ambient (both hermetic now).
-- The workflow transport (subagent spawns are guard-broken) is the standing dispatch mechanism; the bounded
-  review loop (advisor-directed): fix + targeted closure of the finding + its invariant, never a broad hunt.
+1. Run the finish-time review (workflow transport, gpt-6-astra lane): the whole-branch diff vs
+   origin/main base e16a276, framed neutrally — 'can this branch merge as the walk's product?'
+   Its REVISE on the tip!=published state is the honest trigger. Record the finding per the
+   finish flow's own record surface (mp record-result / the finish-step event), then
+   `bootstrap-v10.mjs start --pass=5 --triggered-by=<the finding event index>` (version 10.0.4).
+2. Pass 5: verify (suite 2743/2743 + doctor) → review (bounded: the driver-fix delta + the pass-5
+   shape) → assess (same class as pass 4) → bump six surfaces to 10.0.4 → re-verify → re-record
+   review/assess recovered at the bumped tip → release v10.0.4 (armed release.mjs, CHANGELOG-only
+   commit + tag) → push (verbatim) → ci_wait (green expected: the suite passed at the tip; the
+   driver fixes are test-covered) → install_pi (A32 window again — scan, quote the directive) →
+   publish_ack → main_push OMITTED (prior done) → pr_merge: arms now (expected e16a276 = origin/main;
+   branch tip = the v10.0.4 release commit = published tip of pass 5) → `gh pr create` +
+   `gh pr merge --merge` → record merge_sha → claude_surface → surfaces_live.
+3. The gate (inside branch_finish per §10.2): MAIN on main, clean outside the bundle, remote
+   main = merge_sha, audit range = the merge's parents. Then mp finish's branch_finish (--choice=merge),
+   the G6 LIVE goal check (bootstrap_step events are its evidence), archive, required_successor
+   (v10-validation), the operator push AUQ.
+
+### The standing constraints (all unchanged, all binding)
+
+- Honest capture: never record an exit the command did not return; sum EVERY xargs chunk summary;
+  no fabricated attested_by:'user' receipts (the standing directive quoted as acceptance source only).
+- Public tags never move: v10.0.0/1/2/3 are all frozen (the first three red-CI, superseded; v10.0.3
+  is GREEN — the walk's failure to merge is not the tag's failure).
+- The bounded review loop (advisor-directed): fix + targeted closure of the finding + its invariant.
+- Workflow transport for all reviewer/builder agents (subagent spawns guard-broken fleet-wide).
+- The driver runs FROM THE WT COPY (.worktrees/intent-to-completion/scripts/bootstrap-v10.mjs) with
+  --state=docs/masterplan/intent-to-completion/state.yml FROM MAIN (record from MAIN, never the WT).
 
 ## Paths
 
-- MAIN /srv/dev/ras/masterplan; WT .worktrees/intent-to-completion (branch masterplan/intent-to-completion,
-  tip fc99d4d = v10.0.3); state docs/masterplan/intent-to-completion/state.yml; the whole trail in
-  whole-scope-reviews.json + the events ledger. Suite 2741/2741 both envs at the tip.
+- MAIN /srv/dev/ras/masterplan (local main at e16a276 = origin/main ✓); WT
+  .worktrees/intent-to-completion (branch masterplan/intent-to-completion at f155411); the bundle
+  docs/masterplan/intent-to-completion/ (state.yml + events.jsonl + whole-scope-reviews.json).
+- Suite 2743/2743 both envs at f155411; doctor green; pass 4 version 10.0.3; the corrective
+  history: pass1 red(test hermeticity) → pass2 red(pin evidence) → pass3 red(doctor host-local) →
+  pass4 green-but-unmergeable → pass5 (10.0.4) carries the three driver fixes into the product.
