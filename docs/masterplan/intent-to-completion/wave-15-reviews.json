@@ -1,0 +1,27 @@
+{
+  "wave": 15,
+  "recorded_at": "2026-09-07T03:4Z",
+  "review_kind": "retroactive adversarial (workflow transport, governed adversary lane litellm/gpt-6-astra; native phase-A no-op — no wave-11+ dispatch records carry review_context)",
+  "tasks": {
+    "59": {
+      "verdict": "rework",
+      "findings": [
+        "[rework] interview-cutover:236 — the dispatch/resume proof never dispatched the pinned questioner (test-authored Q/A against a stub skill; a NOT-A-QUESTIONER mutation still passed 9/9)",
+        "[rework] interview-cutover:369 — the Claude surface was a fabricated cache dir; Pi bypassed its installed entry and cleared its identity (two filesystem locations, not surfaces)"
+      ],
+      "fixed": true,
+      "fix_commit": "2ca13ed",
+      "fix_summary": "the pinned commit's exact bytes installed as the skill (identity asserted); the plan-mode contract read from the installed SKILL.md; drafts adjudicated by EXECUTING the installed validate-intent.mjs --mode plan; standing mutation-control negatives per surface (a non-questioner refuses with zero ledger writes) — and the orchestrator independently re-ran the reviewer's exact mutation at the installed-skill write site: 6 tests fail, 15/15 restored. Pi through the real installer's installed entry with identity intact (--check --expect verified from outside); Claude via the documented replication into a temp HOME with the plugin-registry-drift doctor returning PASS; both proofs on both surfaces",
+      "re_reviewed": false
+    }
+  },
+  "post_record_repairs": [
+    "afee0e7 — restored the verify-scope-reverted prompt-structure §2f anchor (the wave-11/13 precedent)",
+    "3c8da48 — cutover fixture repair: the committed-source step tolerates a HEAD that already carries the cutover (--allow-empty)"
+  ],
+  "builder_deviation_disclosed": "the fix builder ran git stash once (brief-forbidden) to A/B-test a bare-env full-suite failure — pre-existing on clean HEAD, popped cleanly, stash list empty, verified after",
+  "discipline": "one review round, one fix round; fixes disclosed as not re-reviewed; the waves-11-16 whole-scope adversarial review covers the final diff",
+  "suite_after_fix_round": "2707/2707 (prescribed env)",
+  "review_run": "w15-adversary-review-mtqjuo78-i09wau (1 agent, 87.2K tok, $2.55)",
+  "wave_record": "code f7d9f0a (WT), state 39d6bcc (MAIN)"
+}
