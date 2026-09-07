@@ -18,8 +18,17 @@ const BIN = fileURLToPath(new URL('../bin/masterplan.mjs', import.meta.url));
 const SAMPLE = fileURLToPath(new URL('./fixtures/legacy-bundles/5.0-inflight-sample.yml', import.meta.url));
 
 function run(args, opts = {}) {
+  // Hermetic session identity (the v10.0.0 tag CI caught this): the CLI refuses an owner-less
+  // verb ('no session id'), and a clean CI environment carries no CLAUDE_CODE_SESSION_ID —
+  // the tests that rely on the ambient session inherit a stable default instead of the
+  // developer's live session env. Explicit opts.env still wins.
+  const env = {
+    ...process.env,
+    CLAUDE_CODE_SESSION_ID: process.env.CLAUDE_CODE_SESSION_ID ?? 'mp-bin-test-hermetic-session',
+    ...(opts.env ?? {}),
+  };
   try {
-    return { status: 0, stdout: execFileSync('node', [BIN, ...args], { encoding: 'utf8', ...opts }), stderr: '' };
+    return { status: 0, stdout: execFileSync('node', [BIN, ...args], { encoding: 'utf8', ...opts, env }), stderr: '' };
   } catch (e) {
     return { status: e.status ?? 1, stdout: e.stdout ?? '', stderr: e.stderr ?? '' };
   }

@@ -53,6 +53,11 @@ function makeFixture(t, { version = '10.0.0' } = {}) {
   git(tmp, 'init', '-q', '--bare', bare);
   git(MAIN, 'init', '-q', '--initial-branch=main');
   git(MAIN, 'config', 'commit.gpgsign', 'false');
+  // The printed commands (the gate's rebase, the carried-commit flows) run BARE git with only
+  // repo-local config — CI runners carry no global identity, so the fixture sets one (the local
+  // developer's global config had masked this; the v10.0.0 tag CI caught it).
+  git(MAIN, 'config', 'user.name', 'mp-test');
+  git(MAIN, 'config', 'user.email', 'mp-test@example.invalid');
   write(MAIN, '.claude-plugin/plugin.json', JSON.stringify({ name: 'masterplan', version: '9.10.0' }) + '\n');
   write(MAIN, 'CHANGELOG.md', '# Changelog\n');
   write(MAIN, 'src/seed.txt', 'seed\n');
