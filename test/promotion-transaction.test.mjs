@@ -1476,3 +1476,27 @@ test('gate iteration 5: content-addressed pins survive the same-slug linked-work
   assert.equal(docA.base_pins.goals.ref, docB.base_pins.goals.ref, 'identical bases pin the identical ref');
   assert.equal(docA.base_pins.goals.object_id, docB.base_pins.goals.object_id, 'the same object — an idempotent no-op, never an overwrite');
 });
+
+test('gate iteration 6: the pin is the EXACT on-disk bytes — no clean/EOL filters under .gitattributes text normalization', () => {
+  // The reviewer's reproduction: 'git hash-object -w -- <path>' applies the repo's clean/EOL
+  // filters — with .gitattributes '*.md text eol=lf' and a CRLF spec.md, the pinned blob was the
+  // NORMALIZED LF bytes, not the approved CRLF bytes the approval bound, and both commit and
+  // recovery refused on a legitimate transaction ('the pinned base does not match the recorded
+  // base hash'). --no-filters pins exact bytes; the regression asserts the pinned blob IS the
+  // CRLF approval bytes and the commit + recovery flow succeeds under the normalization.
+  const base = SPEC.replaceAll('\n', '\r\n');
+  const fx = mkbundle({ specBase: base });
+  write(fx.MAIN, '.gitattributes', '*.md text eol=lf\n');
+  fs.writeFileSync(path.join(fx.scratch.a, 'spec.md'), base);
+  const inputs = amendmentInputs(fx, { specResult: base.replace('old problem', 'new problem'), goalsResult: GOALS, txid: 'crlf' });
+  inputs.approval.base_hashes.spec = sha256Of(base);
+  const out = promoteAmendment({ statePath: fx.statePath, ...inputs, self: self(fx), now: 6000 });
+  assert.equal(out.outcome, 'promoted', JSON.stringify(out));
+  const doc = JSON.parse(fs.readFileSync(promotionDocPath(fx.statePath, 'crlf'), 'utf8'));
+  assert.equal(gitRaw(fx.MAIN, 'cat-file', 'blob', doc.base_pins.spec.object_id), base,
+    'the pinned blob is the approved CRLF bytes — NOT the filter-normalized LF bytes');
+  // Recovery replays: the exact-bytes pin passes its own revalidation under the normalization.
+  const rec = recoverPromotion({ statePath: fx.statePath, transactionId: 'crlf', self: self(fx), now: 6001 });
+  assert.equal(rec.outcome, 'recorded', JSON.stringify(rec));
+  assert.equal(rec.replay, true);
+});
