@@ -1,7 +1,7 @@
 # Design-intent integration — the masterplan host contract
 
 > How masterplan's intent interview (`mp interview`, spec §5) and the installed
-> `/design-intent` skill (behavior-skills) divide the work, and how the skill revision
+> `/intent` skill (behavior-skills) divide the work, and how the skill revision
 > masterplan verifies against is pinned. Primary sources: the run bundle's `spec.md` §5
 > (interview protocol) and §5.5 (schema ownership, snapshot, and skill identity), the
 > design draft `docs/masterplan/intent-to-completion/design-intent-integration-draft.md`,
@@ -25,7 +25,10 @@ consumers. The split that makes that safe:
 
 ## The host contract (`host_contract_version: 1`)
 
-Plan mode is invoked by a masterplan host, not a bare operator. The contract is a structured
+Plan mode is invoked by a masterplan host, not a bare operator. On the skill side the
+contract lives in the skill's `verbs/plan.md` (`# plan (host-only)`); `SKILL.md` is the
+router that names it — "That contract lives in `verbs/plan.md` and is not restated here" —
+so masterplan reads the contract there. The contract is a structured
 block the host supplies; the skill reads it as data, never as instructions.
 
 **What masterplan provides:**
@@ -55,9 +58,12 @@ block the host supplies; the skill reads it as data, never as instructions.
 - the answers the owner gave;
 - when a picture forms, the updated **draft** — the intent projection plus its section
   bodies and the reconciliation rows (`repo_intent:` header + one row per repository
-  `INTENT.md` section) — rendered for the owner's `Approve` before anything is persisted.
+  `INTENT.md` section).
 
-The approved draft travels back through the permitted `mp interview draft` verb; masterplan
+The draft travels back through the permitted `mp interview draft` verb the MOMENT it forms
+(durability first — plan mode has NO confirm-the-restatement gate of its own: the host's
+fresh-context critic reviews each recorded draft, the spec gate is where intent review
+lands); masterplan
 writes its own `goals.md` / `spec.md`. The skill never writes `state.yml` or `events.jsonl`
 directly — `mp interview` remains the only recorder (CD-7 single-writer discipline holds:
 L1's subcommands are the sole writers of bundle state).
@@ -71,8 +77,11 @@ L1's subcommands are the sole writers of bundle state).
 - The skill presents **only the intent projection** to `validate-intent.mjs`
   (`--mode plan`), so the shared validator never sees the goal blocks at all. Goal-block
   validation stays owned by masterplan (`lib/goals.mjs`).
-- The repo and assess modes of the skill keep their existing public behavior byte-for-byte;
-  the host contract is plan-mode only.
+- The skill's public repo-facing surface (create/refine/audit/judge/align, the consultation
+  rule) keeps its existing behavior; the host contract is plan-mode only.
+- The plan-mode contract lives in the skill's `verbs/plan.md` — `SKILL.md` is the router that
+  names it ("That contract lives in `verbs/plan.md` and is not restated here"); the masterplan
+  side reads the contract there, not out of `SKILL.md`.
 
 ## Skill identity and the pin (`policy/design-intent-skill.json`)
 
@@ -101,7 +110,7 @@ CD-7) — records:
 | Field | Meaning |
 |---|---|
 | `repo` | absolute path of the behavior-skills repository |
-| `skill_path` | repo-relative skill directory (`skills/productivity/design-intent`) |
+| `skill_path` | repo-relative skill directory (`skills/productivity/intent`) |
 | `commit` | the 40-hex behavior-skills commit the integration is verified against |
 | `manifest_digest` | the recomputed skill identity over the closed file set at that commit |
 | `host_contract_version` / `schema_format_version` | the manifest's declared versions |

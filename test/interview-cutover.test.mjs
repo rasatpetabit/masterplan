@@ -2,7 +2,7 @@
 //
 // The duplicate questioning implementation is REMOVED from commands/masterplan.md (§2f
 // rewritten: the sequencer no longer composes questions natively — it dispatches the pinned
-// /design-intent skill's plan mode over the task-49 host contract, records through the
+// /intent skill's plan mode over the task-49 host contract, records through the
 // mp interview verbs, converges per spec §5.3's two conditions, and refuses fail-closed).
 // This suite proves the cutover against REAL dispatch and resume on BOTH running surfaces
 // named by §10 and G6 — the Claude Code plugin-cache surface and the Pi install surface —
@@ -13,8 +13,9 @@
 //      commit's tree exactly as test/interview-sequencer-delegation.test.mjs extracts them —
 //      git show the pin's commit; the recomputed identity equals the pin's manifest_digest),
 //      and the pinned skill's PROGRAM participates load-bearing: each round reads the
-//      plan-mode contract out of the installed SKILL.md's own bytes (its host-contract
-//      section names the validator invocation the contract teaches), and each draft the host
+//      plan-mode contract out of the installed skill's own bytes (its SKILL.md is the
+//      router; the contract itself lives in verbs/plan.md, whose host-contract section
+//      names the validator invocation the contract teaches), and each draft the host
 //      records is ADJUDICATED by executing the installed skill's real
 //      `validate-intent.mjs <projection> --mode plan` subprocess — the host consumes its
 //      actual output, and a projection the executable refuses NEVER reaches the recorder.
@@ -136,20 +137,26 @@ function extractPinnedSkill(destDir) {
   return destDir;
 }
 
-// The pinned SKILL.md's plan-mode contract, read as DATA (the host-contract block the
-// skill's own bytes teach): the plan-mode invocation line and the validator command the
-// contract names. These are extracted from the installed skill's bytes at dispatch time —
-// a mutated SKILL.md does not carry them, which is what makes the mutation control fail.
+// The plan-mode contract, read as DATA from the installed skill's own bytes. The pinned
+// skill's SKILL.md is the ROUTER: its masterplan-host-contract section names the contract's
+// home (`verbs/plan.md`) and restates nothing — "That contract lives in `verbs/plan.md`
+// and is not restated here" — so the contract itself (the plan-mode heading and the
+// validator invocation it teaches) is read from verbs/plan.md, as the router directs.
+// Both reads are load-bearing: a mutated SKILL.md (the mutation control's NOT-A-QUESTIONER
+// stub) loses the router and cannot satisfy the read, and a skill whose verbs/plan.md does
+// not teach the plan-mode contract or its validator invocation is not the questioner.
 function readPlanContract(skillRoot) {
   const md = fs.readFileSync(path.join(skillRoot, 'SKILL.md'), 'utf8');
   const manifest = JSON.parse(fs.readFileSync(path.join(skillRoot, 'manifest.json'), 'utf8'));
-  // The plan-mode mode line (the pinned SKILL.md's `- /design-intent plan <bundle-path>` —
-  // plan mode, run against a masterplan bundle under the **masterplan host contract**).
-  const planMode = /^- `\/design-intent plan <bundle-path>`/m.exec(md);
-  // The validator invocation the plan-mode lifecycle teaches: validate-intent.mjs --mode plan.
-  const validatorCmd = /node <skill-dir>\/validate-intent\.mjs <file> --mode plan/.exec(md);
-  if (!planMode || !validatorCmd) {
-    throw new Error(`the installed skill at ${skillRoot} does not teach the plan-mode host contract — it is not the pinned questioner (no plan-mode mode line or validator invocation in SKILL.md)`);
+  // The router line (the pinned SKILL.md's masterplan-host-contract pointer section).
+  const router = /That contract lives in `verbs\/plan\.md` and is not restated here/.exec(md);
+  // The contract's home: verbs/plan.md carries the plan-mode mode line (host-only) and the
+  // validator invocation the plan-mode lifecycle teaches: validate-intent.mjs --mode plan.
+  const planMd = fs.readFileSync(path.join(skillRoot, 'verbs', 'plan.md'), 'utf8');
+  const planMode = /^# plan \(host-only\)/m.exec(planMd);
+  const validatorCmd = /node <skill-dir>\/validate-intent\.mjs <file> --mode plan/.exec(planMd);
+  if (!router || !planMode || !validatorCmd) {
+    throw new Error(`the installed skill at ${skillRoot} does not teach the plan-mode host contract — it is not the pinned questioner (no plan-mode router in SKILL.md or plan-mode contract/validator invocation in verbs/plan.md)`);
   }
   return { manifest, planMode: planMode[0], validatorCmd: validatorCmd[0] };
 }
@@ -369,7 +376,7 @@ function convergeInterview({ entry, statePath, skillRoot, dir }) {
   fs.writeFileSync(coverageFile, JSON.stringify({
     sections: PINNED_SCHEMA.checked_sections.map((section) => ({
       section,
-      source: `operator interview via /design-intent plan mode (${section} check)`,
+      source: `operator interview via /intent plan mode (${section} check)`,
       uncertainty: '',
       verdict: 'serves',
     })),
@@ -856,7 +863,7 @@ test('REFUSAL: the removed native-questioner instructions are gone from the prom
   assert.ok(start !== -1 && end > start, 'the §2f section must exist');
   const section = prompt.slice(start, end);
   for (const expected of [
-    "delegated to the /design-intent skill's plan mode",
+    "delegated to the /intent skill's plan mode",
     'mp interview capture-schema',
     'mp interview amend-skill-identity',
     'permitted recorder operations',

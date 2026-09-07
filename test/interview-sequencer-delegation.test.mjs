@@ -5,9 +5,10 @@
 // implementation stays the working path, and this suite proves the pieces the cutover will
 // connect — never a second questioner of its own.
 //
-//   1. DELEGATION: questioning is delegated to /design-intent PLAN MODE over the task-49 host
-//      contract — policy/design-intent-skill.json (the pin: commit + manifest digest + the
-//      declared host_contract_version) and lib/goals.mjs decodeIntent (the native adapter) —
+//   1. DELEGATION: questioning is delegated to the pinned /intent skill's PLAN MODE over the
+//      task-49 host contract — policy/design-intent-skill.json (the pin: commit + manifest digest + the
+//      declared host_contract_version; the skill's plan-mode contract lives in its
+//      verbs/plan.md — SKILL.md routes there) and lib/goals.mjs decodeIntent (the native adapter) —
 //      never an ad-hoc prompt. Proven against the PINNED skill bytes (extracted from the pinned
 //      commit's tree, not the working checkout): the skill teaches the host contract both
 //      directions, presents only the intent projection to the shared validator while goal
@@ -145,11 +146,17 @@ function mkCapturedBundle(complexity = 'medium') {
 
 // Extract the pinned skill's exact bytes from the pinned commit's tree (the
 // design-intent-host-contract style): the delegation contract is verified against what the
-// pin names, never against whatever the checkout happens to hold.
+// pin names, never against whatever the checkout happens to hold. The pinned skill's SKILL.md
+// routes the host contract to verbs/plan.md — "This file is where the masterplan host
+// contract lives; nothing above restates it" — so the plan-mode contract bytes are read
+// from verbs/plan.md, the contract's home (SKILL.md's own masterplan-host-contract pointer
+// names it).
 const pinnedBytes = (rel) => git(pin.repo, 'show', `${pin.commit}:${pin.skill_path}/${rel}`);
 const pinnedSkill = pinnedBytes('SKILL.md').toString('utf8');
+const pinnedPlan = pinnedBytes('verbs/plan.md').toString('utf8');
 const pinnedManifest = JSON.parse(pinnedBytes('manifest.json').toString('utf8'));
 const flatSkill = pinnedSkill.replace(/\s+/g, ' ');
+const flatPlan = pinnedPlan.replace(/\s+/g, ' ');
 
 test('the delegation target is the pinned plan mode, not an ad-hoc prompt', () => {
   // The pin is the authority the host hands plan mode over: an exact revision, an identity
@@ -175,11 +182,13 @@ test('the delegation target is the pinned plan mode, not an ad-hoc prompt', () =
   );
   assert.equal(pin.host_contract_version, pinnedManifest.host_contract_version);
   assert.equal(pin.schema_format_version, pinnedManifest.schema_format_version);
-  assert.equal(pinnedManifest.skill, 'design-intent');
-  // The pinned skill's plan mode IS the delegated questioner and says so under the contract:
-  assert.ok(flatSkill.includes('plan mode, run against a masterplan bundle under the **masterplan host contract**'), 'plan mode is invoked by a masterplan host');
-  assert.ok(flatSkill.includes('The host (masterplan) owns the bundle, the ledger'), 'the skill teaches host ownership of the ledger');
-  assert.ok(flatSkill.includes('never refuses a `goals.md` merely because it carries `## G<n>:` goal blocks'), 'plan mode accepts the native artifact');
+  assert.equal(pinnedManifest.skill, 'intent');
+  // The pinned skill's plan mode IS the delegated questioner and says so under the contract
+  // (verbs/plan.md is where the masterplan host contract lives — SKILL.md's pointer names it):
+  assert.ok(flatSkill.includes('That contract lives in `verbs/plan.md` and is not restated here'), 'SKILL.md routes the host contract to its verbs/plan.md home');
+  assert.ok(flatPlan.includes('Plan mode is invoked by a masterplan host, not by a bare operator'), 'plan mode is invoked by a masterplan host');
+  assert.ok(flatPlan.includes('The host supplies context and is the **only** durable recorder'), 'the skill teaches host ownership of the ledger');
+  assert.ok(flatPlan.includes('A `goals.md` carrying goal blocks is the normal, expected plan-mode input, not a refusal ground'), 'plan mode accepts the native artifact');
 });
 
 test('the pinned skill is dispatched as a questioner that returns, never as a recorder', () => {
@@ -189,12 +198,12 @@ test('the pinned skill is dispatched as a questioner that returns, never as a re
     'asked through the host\'s recorder so they are durable',
     'sent back through the host\'s `mp interview draft` verb',
   ]) {
-    assert.ok(flatSkill.includes(expected), `the pinned skill must teach: ${expected}`);
+    assert.ok(flatPlan.includes(expected), `the pinned skill must teach: ${expected}`);
   }
   // The permitted recorder operations are the mp interview verbs, and the lifecycle is not
   // the skill's to run:
-  assert.ok(flatSkill.includes('(`ask`, `answer`, `withdraw`, `draft`, and critic/critic-unavailable recording)'), 'the permitted recorder operations are exactly the interview verbs');
-  assert.ok(flatSkill.includes('may not `set-phase`, `end`, `waive`, or reopen an interview'), 'the lifecycle verbs stay the host\'s');
+  assert.ok(flatPlan.includes('(`ask`, `answer`, `withdraw`, `draft`, and critic/critic-unavailable recording)'), 'the permitted recorder operations are exactly the interview verbs');
+  assert.ok(flatPlan.includes('The skill may not `set-phase`, `end`, `waive`, or reopen an interview'), 'the lifecycle verbs stay the host\'s');
 });
 
 test('the native adapter over the host artifact is decodeIntent — the projection the validator sees', () => {
@@ -492,7 +501,7 @@ test('every interview event in this suite landed through the mp interview verbs'
 test('the pinned skill contract names no ledger write of its own', () => {
   // The skill returns questions/answers/drafts; the recorder verbs are the host's. The
   // pinned plan-mode contract must not teach a write path for state.yml/events.jsonl:
-  assert.ok(flatSkill.includes('the host is the sole writer of bundle state'), 'the host is the sole writer');
+  assert.ok(flatPlan.includes('the host is the sole writer of bundle state'), 'the host is the sole writer');
   // The critic-side contract (this repo's agent doc) also stays read-only:
   assert.match(agentDoc, /You are read-only and fresh-context/);
   assert.match(agentDoc, /tools: read, bash/);

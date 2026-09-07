@@ -1,4 +1,4 @@
-// test/design-intent-host-contract.test.mjs — Task 49: the pinned /design-intent skill carries
+// test/design-intent-host-contract.test.mjs — Task 49: the pinned /intent skill carries
 // the masterplan host contract (spec.md §5, §5.5; docs/internals/design-intent-integration.md).
 // The pin in policy/design-intent-skill.json names the exact behavior-skills revision this
 // integration is verified against, so a skill edit that changes behavior — with or without a
@@ -69,7 +69,7 @@ test('the manifest at the pinned commit declares the pinned versions', () => {
   const m = skillManifest();
   assert.equal(m.host_contract_version, pin.host_contract_version, 'host_contract_version drift');
   assert.equal(m.schema_format_version, pin.schema_format_version, 'schema_format_version drift');
-  assert.equal(m.skill, 'design-intent');
+  assert.equal(m.skill, 'intent');
 });
 
 test('the pinned manifest digest recomputes over the closed file set at the pinned commit', () => {
@@ -98,7 +98,13 @@ test('the pinned skill teaches the host contract and stops refusing goal blocks'
   const skill = git(pin.repo, 'show', `${pin.commit}:${pin.skill_path}/SKILL.md`).toString('utf8');
   // SKILL.md is hard-wrapped prose; normalize whitespace so assertions match across line breaks.
   const flat = skill.replace(/\s+/g, ' ');
+  // The masterplan host contract MOVED out of SKILL.md into verbs/plan.md: SKILL.md's
+  // masterplan-host-contract section routes to it and restates nothing.
+  assert.ok(flat.includes('That contract lives in `verbs/plan.md` and is not restated here'),
+    'SKILL.md must route the host contract to its verbs/plan.md home');
   // Host contract, both directions (spec §5): what the host provides, what the skill returns.
+  const plan = git(pin.repo, 'show', `${pin.commit}:${pin.skill_path}/verbs/plan.md`).toString('utf8');
+  const flatPlan = plan.replace(/\s+/g, ' ');
   for (const expected of [
     'host_contract_version',
     'existing anchor and evidence',
@@ -110,25 +116,27 @@ test('the pinned skill teaches the host contract and stops refusing goal blocks'
     // The plan-mode draft lifecycle is the HOST's — no confirm-the-restatement gate in plan
     // mode (spec §5.1 step 6: intent review lands at the spec gate).
     'Plan mode: the host owns the draft lifecycle',
-    'Confirm, then write (repo and assess modes)',
   ]) {
-    assert.ok(flat.includes(expected), `SKILL.md must teach: ${expected}`);
+    assert.ok(flatPlan.includes(expected), `verbs/plan.md must teach: ${expected}`);
   }
   // The refusal ground is gone (plan mode never refuses a goals.md for carrying goal blocks).
-  assert.ok(/never refuses a `goals\.md`/.test(flat), 'plan mode must state it never refuses a goals.md over goal blocks');
-  assert.ok(!/refuses when the bundle already carries/.test(flat), 'the old goal-block refusal must be gone');
-  assert.ok(!/pending reconciliation/i.test(flat), 'the pending-reconciliation marker must be resolved');
+  assert.ok(/A `goals\.md` carrying goal blocks is the normal, expected plan-mode input, not a refusal ground/.test(flatPlan), 'plan mode must state it never refuses a goals.md over goal blocks');
+  assert.ok(!/refuses when the bundle already carries/.test(flatPlan), 'the old goal-block refusal must be gone');
+  assert.ok(!/pending reconciliation/i.test(flatPlan), 'the pending-reconciliation marker must be resolved');
 });
 
-test('repo and assess mode contracts survive in the pinned skill', () => {
+test('the public repo-mode contracts survive in the pinned skill', () => {
+  // The /intent skill's public surface (create/refine/audit/judge/align) keeps the repo
+  // contract: the consultation-rule check that gates an existing INTENT.md and the repo
+  // validator invocation (SKILL.md § The fights judgment / § Confirm, then write).
   const skill = git(pin.repo, 'show', `${pin.commit}:${pin.skill_path}/SKILL.md`).toString('utf8');
   const flat = skill.replace(/\s+/g, ' ');
   for (const expected of [
-    'repo mode. Output: `INTENT.md` at the repo root',
-    'assess mode. Read the repo `INTENT.md`',
-    'With no `INTENT.md` present, say so and offer repo mode',
+    'node <skill-dir>/validate-intent.mjs <file> --mode repo` is the test',
+    'Confirm, then write',
+    'The consultation rule',
   ]) {
-    assert.ok(flat.includes(expected), `repo/assess public contract must survive: ${expected}`);
+    assert.ok(flat.includes(expected), `the repo-mode public contract must survive: ${expected}`);
   }
 });
 
