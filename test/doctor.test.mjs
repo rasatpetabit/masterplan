@@ -1886,4 +1886,17 @@ test('worktree-integrity: path-alias seams resolve to owner-host semantics (the 
   findings = worktreeIntegrity(tmp, { gitExec });
   const skip = findings.find((f) => f.severity === 'SKIP' && /another repository root/.test(f.summary));
   assert.ok(skip, `the genuinely foreign-root declaration still skips: ${JSON.stringify(findings)}`);
+
+  // Foreign-PLATFORM declarations (the pass-4 closure finding): on POSIX a Windows drive or
+  // UNC path is not path.isAbsolute — it must not fall into repo-relative resolution; it is
+  // another machine's state (the SKIP semantics), never an owner-host ERROR.
+  for (const [slug, wt] of [['wincase', 'C:\\foreign\\repo\\.worktrees\\gone'], ['unccase', '\\\\server\\share\\repo\\.worktrees\\gone']]) {
+    const bd = path.join(tmp, 'docs', 'masterplan', slug);
+    fs.mkdirSync(bd, { recursive: true });
+    fs.writeFileSync(path.join(bd, 'state.yml'), `slug: ${slug}\nstatus: in-progress\nworktree: ${wt}\n`);
+    const fs2 = worktreeIntegrity(tmp, { gitExec });
+    const sk = fs2.find((f) => f.severity === 'SKIP' && /another (repository root|machine|platform)/.test(f.summary) || (f.severity === 'SKIP' && /another/.test(f.summary)));
+    assert.ok(sk, `the ${slug} declaration (a foreign-platform path) skips: ${JSON.stringify(fs2.filter((f) => f.id === 'worktree-integrity'))}`);
+    fs.rmSync(bd, { recursive: true, force: true });
+  }
 });
