@@ -1588,13 +1588,17 @@ export const STEPS = {
       problems.push({ name: 'publish_ack_proceed', ok: !!(ack && isDone(ack)), detail: ack ? ack.status : 'no publish_ack record' });
       const remoteMain = data.remote_main;
       let expected = null;
-      if (ctx.status.pass === 1) {
-        // The base the PR lands on is the main that main_push actually published — a commit added to
-        // main after that push is in no carried report and would slip past every later audit.
-        const mainPush = latestOfType(ctx.events, 'bootstrap_step', 1, 'main_push');
+      const prevPrMerge = latestOfType(ctx.events, 'bootstrap_step', ctx.status.pass - 1, 'pr_merge');
+      if (ctx.status.pass === 1 || !(prevPrMerge && prevPrMerge.data)) {
+        // The FIRST pr_merge of the run lands on the main that main_push published — pass 1's
+        // ordinary step 5, or (as here) a later pass's main_push when pass 1 died before step 5
+        // and the corrective pass carried it. No prior PR has ever moved main, so the same pass's
+        // main_push is the expected remote base; a commit added to main after that push is in no
+        // carried report and would slip past every later audit.
+        const mainPush = latestOfType(ctx.events, 'bootstrap_step', ctx.status.pass, 'main_push');
         expected = isDone(mainPush) && mainPush.data ? (mainPush.data.main_sha ?? mainPush.data.main_pre_bootstrap ?? null) : null;
       } else {
-        const prev = latestOfType(ctx.events, 'bootstrap_step', ctx.status.pass - 1, 'pr_merge');
+        const prev = prevPrMerge;
         expected = prev && prev.data ? prev.data.merge_sha ?? null : null;
       }
       problems.push({ name: 'remote_main_expected', ok: !!remoteMain && remoteMain === expected, detail: `remote ${remoteMain ?? 'unreachable'} vs expected ${expected ?? 'unknown'}` });

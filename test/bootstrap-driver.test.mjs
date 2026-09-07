@@ -1594,6 +1594,39 @@ test('pass 1 pr_merge binds the base to the main that main_push published', (t) 
   assert.ok(armed.preconditions.some((p) => p.name === 'remote_main_expected' && !p.ok), JSON.stringify(armed));
 });
 
+test('the FIRST pr_merge of a run whose pass 1 died before step 5 binds the base to the CURRENT pass main_push', (t) => {
+  const fx = makeFixture(t);
+  const targets2 = { ...fx.targets, version: '10.0.1' };
+  // Pass 1 died at ci_wait: everything through push done, the ci_wait failed, the corrective
+  // bootstrap_pass opened pass 2. No main_push, no pr_merge, ever.
+  for (const step of STEP_ORDER.filter((s) => !['gate', 'main_push', 'pr_merge', 'claude_surface', 'surfaces_live'].includes(s))) {
+    const data = step === 'publish_ack' ? { answer: 'proceed' } : step === 'push' ? { published_tip: fx.tip, published_tag: 'x' } : {};
+    appendEvent(fx.statePath, { type: 'bootstrap_step', ts: 2, pass: 1, step, cmd: 'seeded', exit: step === 'ci_wait' ? 1 : 0, status: step === 'ci_wait' ? 'failed' : 'done', data });
+  }
+  // the failed ci_wait's real index: the seeded pass-1 steps appended after the pass-1
+  // bootstrap_pass event (rehearsal..install_pi/publish_ack), ci_wait being the 8th of them
+  const eventsNow = fs.readFileSync(fx.statePath.replace(/state\.yml$/, 'events.jsonl'), 'utf8').trim().split('\n');
+  const ciWaitIdx = eventsNow.findIndex((l) => { try { const e = JSON.parse(l); return e.type === 'bootstrap_step' && e.pass === 1 && e.step === 'ci_wait' && e.status === 'failed'; } catch { return false; } });
+  assert.ok(ciWaitIdx >= 0, 'the seeded failed ci_wait exists in the ledger');
+  appendEvent(fx.statePath, { type: 'bootstrap_pass', ts: 3, pass: 2, version: '10.0.1', triggered_by: ciWaitIdx, trigger_step: 'ci_wait' });
+  for (const step of stepsForPass(2).filter((s) => !['gate', 'main_push', 'pr_merge', 'claude_surface', 'surfaces_live'].includes(s))) {
+    const data = step === 'publish_ack' ? { answer: 'proceed' } : step === 'push' ? { published_tip: fx.tip, published_tag: 'x' } : {};
+    appendEvent(fx.statePath, { type: 'bootstrap_step', ts: 4, pass: 2, step, cmd: 'seeded', exit: 0, status: 'done', data });
+  }
+  git(fx.MAIN, 'push', '-q', 'origin', fx.branch);
+  // pass 2 carries main_push (pass 1 never completed it) — it arms, runs, and records.
+  const armedMain = armStep({ statePath: fx.statePath, step: 'main_push', targets: targets2 });
+  assert.equal(armedMain.ok, true, JSON.stringify(armedMain));
+  execFileSync('sh', ['-c', armedMain.cmd], { stdio: 'ignore' });
+  const pushed = recordStep({ statePath: fx.statePath, step: 'main_push', exit: 0, targets: targets2 });
+  assert.equal(pushed.status, 'done');
+  appendEvent(fx.statePath, { type: 'bootstrap_step', ts: 5, pass: 2, step: 'publish_ack', cmd: 'seeded', exit: 0, status: 'done', data: { answer: 'proceed' } });
+  // The first pr_merge of the run arms against the CURRENT pass's published main.
+  const armed = armStep({ statePath: fx.statePath, step: 'pr_merge', targets: targets2 });
+  assert.equal(armed.ok, true, JSON.stringify(armed));
+  assert.ok(armed.preconditions.some((p) => p.name === 'remote_main_expected' && p.ok), JSON.stringify(armed));
+});
+
 test('a forged main_sha on the main_push record is replaced by the armed one', (t) => {
   const fx = makeFixture(t);
   for (const step of STEP_ORDER.filter((s) => !['gate', 'main_push', 'pr_merge', 'claude_surface', 'surfaces_live'].includes(s))) {
