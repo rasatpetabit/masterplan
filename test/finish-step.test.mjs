@@ -239,6 +239,37 @@ test('adversary review: a LEGACY state.codex.review still arms the gate (in-flig
   assert.equal(fx.step().op, 'run_adversary_review', 'legacy state.codex.review arms the gate');
 });
 
+test('adversary review verdict: --review-verdict lands on the event data; absent flag = no verdict field; a bad enum refuses', () => {
+  const fx = makeFixture({ state: { review: { adversary: 'on' } } });
+  fx.step({ verify: 'pass' });
+  fs.writeFileSync(path.join(fx.bundleDir, 'retro.md'), '# retro\n');
+  assert.equal(fx.step().op, 'run_adversary_review');
+  // the answer WITHOUT a verdict: the event carries no verdict field (back-compat)
+  fx.step({ review: 'done', reviewCount: 2, reviewBase: 'main' });
+  const ev = readEvents(fx.bundleDir).find((e) => e.type === 'adversary_review');
+  assert.equal(ev.data.sha, git(fx.WT, 'rev-parse', 'HEAD'));
+  assert.equal(ev.data.verdict, undefined, 'an absent --review-verdict writes no verdict field');
+  assert.equal('verdict' in ev.data, false);
+
+  // a fresh fixture: the verdict lands on the event's data, machine-readable
+  const fx2 = makeFixture({ state: { review: { adversary: 'on' } } });
+  fx2.step({ verify: 'pass' });
+  fs.writeFileSync(path.join(fx2.bundleDir, 'retro.md'), '# retro\n');
+  assert.equal(fx2.step().op, 'run_adversary_review');
+  fx2.step({ review: 'done', reviewCount: 1, reviewBase: 'main', reviewVerdict: 'revise' });
+  const ev2 = readEvents(fx2.bundleDir).find((e) => e.type === 'adversary_review');
+  assert.equal(ev2.data.verdict, 'revise', 'the verdict is machine-readable on the event');
+  assert.equal(ev2.data.count, 1);
+
+  // the enum is validated: an arbitrary string never lands on the durable record
+  const fx3 = makeFixture({ state: { review: { adversary: 'on' } } });
+  fx3.step({ verify: 'pass' });
+  fs.writeFileSync(path.join(fx3.bundleDir, 'retro.md'), '# retro\n');
+  assert.equal(fx3.step().op, 'run_adversary_review');
+  assert.throws(() => fx3.step({ review: 'done', reviewVerdict: 'ship-it' }), /--review-verdict must be one of approve\|revise\|rework\|reject/);
+  assert.equal(readEvents(fx3.bundleDir).filter((e) => e.type === 'adversary_review').length, 0, 'nothing written for a bad verdict');
+});
+
 test('adversary review skip: durable skip event at SHA prevents a re-ask loop; suppression never arms', () => {
   const fx = makeFixture({ state: { review: { adversary: true } } });
   fx.step({ verify: 'pass' });

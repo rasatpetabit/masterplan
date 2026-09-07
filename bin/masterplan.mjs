@@ -673,7 +673,7 @@ const KNOWN_FLAGS = new Set(
     'predecessor-transcript producer-status prs prune prune-non-pending pushed reason receipt reconcile ' +
     'recorded-base removal-confirmed removal-force remove-root render-images repo repo-git-dir repo-root ' +
     'repos-allowlist result result-file retro-only review review-base review-count review-digest-file ' +
-    'review-done review-json review-reason review-skipped reviews-file roots routing run-id run-slug ' +
+    'review-done review-json review-reason review-skipped review-verdict reviews-file roots routing run-id run-slug ' +
     'schema-version scope session sha slug spec-path state status subsystems ' +
     'subsystems-file summary takeover target task task-id to topic ts ttl-ms type verify-failed ' +
     'verify-output-hash verify-passed waive waiver wave worktree worktree-list worktree-registered ' +
@@ -4565,6 +4565,13 @@ function main() {
       const reviewBaseFlag = flags['review-base'] ?? flags['codex-base'];
       const reviewDigestFlag = flags['review-digest-file'] ?? flags['codex-digest-file'];
       const reviewReasonFlag = flags['review-reason'] ?? flags['codex-reason'];
+      // The review's machine-readable verdict (the v10 recovery contract): a validated enum that
+      // lands on the adversary_review event's data, so a blocking review is machine-readable as
+      // one. Traveled exactly like reviewCount/reviewBase above; absent = no verdict field.
+      const reviewVerdictFlag = flags['review-verdict'];
+      if (reviewVerdictFlag !== undefined && reviewVerdictFlag !== null && typeof reviewVerdictFlag !== 'string') {
+        die(`--review-verdict must be a string (approve|revise|rework|reject), got ${JSON.stringify(reviewVerdictFlag)}`);
+      }
       // A1 (2026-08-30): the goal-gate answer flags — the finish-step engine's documented vocabulary.
       // --goal-check=<failed> signals assessor dispatch failed (fail-closed → manual goals_unmet gate);
       // --goals-choice=<fix|waiver|abort> answers the goals_unmet gate AUQ. Both thread into finishStep's
@@ -4585,6 +4592,7 @@ function main() {
           reviewBase: typeof reviewBaseFlag === 'string' ? reviewBaseFlag : null,
           reviewDigestFile: typeof reviewDigestFlag === 'string' ? reviewDigestFlag : null,
           reviewReason: typeof reviewReasonFlag === 'string' ? reviewReasonFlag : null,
+          reviewVerdict: typeof reviewVerdictFlag === 'string' ? reviewVerdictFlag : null,
           docsSuppressed: !!flags['docs-suppressed'],
           docs: docsAns,
           docsCount: flags['docs-count'],

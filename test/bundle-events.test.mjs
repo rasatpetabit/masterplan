@@ -59,6 +59,9 @@ const validFixtures = {
   bootstrap_armed: { type: 'bootstrap_armed', pass: 1, step: 'rehearsal', cmd: 'c', sha: 's' },
   bootstrap_step: { type: 'bootstrap_step', pass: 1, step: 'rehearsal', cmd: 'c', exit: 0, status: 'done' },
   bootstrap_pass: { type: 'bootstrap_pass', pass: 2, triggered_by: 3, version: '10.0.1', consumed: [3, 4] },
+  bootstrap_refusal: { type: 'bootstrap_refusal', pass: 4, step: 'pr_merge', refusals: [{ name: 'tip_is_published', ok: false, detail: 'tip a vs the published tip b' }], evidence: { tip: 'a', published_tip: 'b', tag: 'v10.0.3', remote_main: 'c', expected_base: 'd' } },
+  main_advance_reconciled: { type: 'main_advance_reconciled', sha: 'a', prior_expected: 'b', paths: ['docs/handoffs/x.md'], author: 't <t@example.invalid>' },
+  receipt_correction: { type: 'receipt_correction', targets: [174, 219], note: 'the recorded pipeline exit was not the true exit' },
   goal_check: { type: 'goal_check', final: true, deploy_base_sha: 's', deploy_chain_hash: 'h', live_check_digest: null, intent_verdict: 'met' },
   schema_captured: { type: 'schema_captured', schema_sha256: 'a'.repeat(64), skill_identity: 'b'.repeat(64), host_contract_version: '1', schema_format_version: '1', format_pin: 'schema_backed' },
   skill_identity_amended: { type: 'skill_identity_amended', old_skill_identity: 'a'.repeat(64), new_skill_identity: 'b'.repeat(64), approval: { attested_by: 'user', purpose: 'skill_identity_amend', skill_identity: 'b'.repeat(64), question: 'approve?', answer: 'approved', ts: '2026-01-02T00:00:00.000Z' } },
@@ -96,6 +99,9 @@ const invalidField = {
   bootstrap_armed: 'pass',
   bootstrap_step: 'pass',
   bootstrap_pass: 'pass',
+  bootstrap_refusal: 'refusals',
+  main_advance_reconciled: 'sha',
+  receipt_correction: 'targets',
   goal_check: 'deploy_base_sha',
 };
 
@@ -131,6 +137,9 @@ const REQUIRED_EVENT_TYPES = [
   'bootstrap_armed',
   'bootstrap_step',
   'bootstrap_pass',
+  'bootstrap_refusal',
+  'main_advance_reconciled',
+  'receipt_correction',
   'goal_check',
 ];
 

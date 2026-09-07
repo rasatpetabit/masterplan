@@ -74,14 +74,10 @@ export function readBundleEvents(statePath) {
           // §10.3's red-tag boundary, mirrored from startPass: a predecessor complete through PUSH
           // whose trigger is its own failed post-push driver step (the tag is public) may open the
           // corrective pass; everything before push missing is drift — nothing was published.
-          const pushIdx = required.indexOf('push');
-          const pushRecIdx = history.reduce((acc, h, hi) => (h && h.type === 'bootstrap_step' && h.pass === passSoFar && h.step === 'push' && isDone(h) ? hi : acc), -1);
-          const publishedTagFailure = stepDone('push') && triggerRec && triggerRec.type === 'bootstrap_step'
-            && triggerRec.status === 'failed' && triggerRec.pass === passSoFar
-            && e.triggered_by > pushRecIdx && pushRecIdx >= 0
-            && Number.isInteger(pushIdx)
-            && required.indexOf(triggerRec.step) > pushIdx && missing.every((st) => required.indexOf(st) > pushIdx);
-          if (!publishedTagFailure) {
+          // The ONE shared predicate (correctiveTriggerOk) governs both here and startPass, so the
+          // two can never disagree about which trigger opens a pass over an incomplete predecessor.
+          const opensOverIncomplete = correctiveTriggerOk(history, passSoFar, e.triggered_by, required, missing);
+          if (!opensOverIncomplete) {
             problems.push(`event ${i} (bootstrap_pass) opens pass ${e.pass} but pass ${passSoFar} was not complete through surfaces_live at that point (missing: ${missing.join(', ')}) — a corrective pass cannot open over an incomplete predecessor (§10.3)`);
             return;
           }
@@ -883,15 +879,173 @@ export function recordStep({ statePath, step, exit, digestFile = null, status = 
   return record;
 }
 
+// ---- recordRefusal / reconcileAdvance / correctReceipt (the v10 recovery contract) -------
+
+// The last recorded main-mover: the same derivation pr_merge.pre's `expected` uses — the
+// latest DONE pr_merge of an earlier pass (its merge commit), else the latest DONE main_push
+// (this pass's own, or an earlier pass's). Order by LEDGER INDEX (the latest event wins), so
+// a reconciled advance recorded later supersedes an earlier mover below.
+export function recordedMainMover(events, pass) {
+  let basePr = null;
+  for (let p = (pass ?? Number.MAX_SAFE_INTEGER) - 1; p >= 1 && !basePr; p -= 1) {
+    const pr = latestOfType(events, 'bootstrap_step', p, 'pr_merge');
+    if (pr && isDone(pr) && pr.data) basePr = pr;
+  }
+  let baseMain = null;
+  for (let p = pass ?? Number.MAX_SAFE_INTEGER; p >= 1 && !baseMain; p -= 1) {
+    const mp = latestOfType(events, 'bootstrap_step', p, 'main_push');
+    if (mp && isDone(mp) && mp.data) baseMain = mp;
+  }
+  if (basePr) return basePr.data.merge_sha ?? null;
+  if (baseMain) return baseMain.data.main_sha ?? baseMain.data.main_pre_bootstrap ?? null;
+  return null;
+}
+
+// record-refusal — the typed record of a post-publication precondition refusal. A refusal is
+// NOT a step receipt (no command ran; no bootstrap_armed was even appended — a refused arm
+// writes nothing), and it exists only while the refusal is REAL: the step's pre() is re-run
+// live, and a step that does not currently refuse cannot be recorded. Every evidence field is
+// re-derived at record time; caller-supplied values are never accepted.
+export function recordRefusal({ statePath, step, note = null, targets = {}, now = Date.now() }) {
+  const { MAIN, state, events } = loadBundle(statePath);
+  const statusInfo = bootstrapStatus(statePath);
+  const resolvedTargets = bindPassVersion(resolveTargets(MAIN, state, targets), targets, events, statusInfo.pass);
+  const ctx = { statePath, MAIN, state, events, status: statusInfo, targets: resolvedTargets, tip: tipSha({ MAIN, targets: resolvedTargets }), version: resolvedTargets.version, tag: resolvedTargets.tag };
+  if (!STEP_ORDER.includes(step)) throw new Error(`unknown step: ${step}`);
+  // The step must be a known step of the CURRENT pass — arm's own refusal vocabulary.
+  if (!stepsForPass(statusInfo.pass, events).includes(step)) {
+    throw new Error(`${step} is not part of pass ${statusInfo.pass} — a corrective pass omits it, so its refusal cannot be recorded`);
+  }
+  // Run the step's pre() LIVE. One snapshot, like the arm: the refusal recorded is the one the
+  // preconditions report now, never a caller's claim about what they said earlier.
+  const stepDef = STEPS[step];
+  const data = stepDef.data ? stepDef.data(ctx) : undefined;
+  const pre = stepDef.pre(ctx, data);
+  const refusals = pre.filter((p) => !p.ok);
+  if (refusals.length === 0) {
+    throw new Error(`${step} does not currently refuse — a refusal that does not exist cannot be recorded`);
+  }
+  // Every evidence field re-derived live at record time, exactly the derivations the refusal
+  // describes: the branch tip, the published tip the push record binds, the tag, the fresh
+  // remote main, and the expected base pr_merge.pre derives. Caller-supplied values are ignored.
+  const fetched = tryGit(MAIN, ['fetch', resolvedTargets.remote, 'main']);
+  const record = {
+    type: 'bootstrap_refusal',
+    ts: now,
+    pass: statusInfo.pass,
+    step,
+    refusals,
+    evidence: {
+      tip: ctx.tip,
+      published_tip: publishedTip(events, statusInfo.pass),
+      tag: ctx.tag,
+      remote_main: fetched === null ? null : tryGit(MAIN, ['rev-parse', `${resolvedTargets.remote}/main`]),
+      expected_base: recordedMainMover(events, statusInfo.pass),
+    },
+  };
+  if (note) record.note = note;
+  appendEvent(statePath, record);
+  return record;
+}
+
+// reconcile-advance — the evidence-bound reconciliation receipt for an origin/main advance
+// (the spec's foreign-commit row made honest for the doc-only shape). The advance range must be
+// exactly ONE non-merge commit touching NEITHER the bundle directory NOR any path the branch
+// changed; anything else stays the foreign-commit row (stop, inspect, revert or reconcile by
+// hand — never widen the audit to admit it).
+export function reconcileAdvance({ statePath, sha, note = null, targets = {}, now = Date.now() }) {
+  const { MAIN, state, events } = loadBundle(statePath);
+  const statusInfo = bootstrapStatus(statePath);
+  const resolvedTargets = bindPassVersion(resolveTargets(MAIN, state, targets), targets, events, statusInfo.pass);
+  const ctx = { statePath, MAIN, state, events, status: statusInfo, targets: resolvedTargets, tip: tipSha({ MAIN, targets: resolvedTargets }), version: resolvedTargets.version, tag: resolvedTargets.tag };
+  if (typeof sha !== 'string' || !/^[0-9a-f]{7,40}$/i.test(sha)) {
+    throw new Error('reconcile-advance needs --sha=<the origin/main tip to reconcile>');
+  }
+  // Fresh-fetch the remote main; a stale or wrong sha refuses — the reconciliation is bound to
+  // the remote's CURRENT tip, never to a sha the caller hopes is still current.
+  const fetched = tryGit(MAIN, ['fetch', resolvedTargets.remote, 'main']);
+  if (fetched === null) {
+    throw new Error(`cannot fetch ${resolvedTargets.remote} main — an advance is reconciled only against a freshly verified remote tip`);
+  }
+  const remoteMain = tryGit(MAIN, ['rev-parse', `${resolvedTargets.remote}/main`]);
+  const resolvedSha = tryGit(MAIN, ['rev-parse', `${sha}^{commit}`]);
+  if (!remoteMain || !resolvedSha || resolvedSha !== remoteMain) {
+    throw new Error(`sha ${sha} is not the current tip of ${resolvedTargets.remote}/main (${remoteMain ?? 'unreachable'}) — a stale or wrong sha cannot be reconciled`);
+  }
+  // The advance range: <last recorded main-mover>..<sha>. Exactly one commit, non-merge.
+  const priorExpected = recordedMainMover(events, statusInfo.pass);
+  if (!priorExpected) {
+    throw new Error('no recorded main-mover (a done pr_merge or main_push) to reconcile against — the first push defines the base, never a reconciliation');
+  }
+  const count = Number(tryGit(MAIN, ['rev-list', '--count', `${priorExpected}..${resolvedSha}`]) ?? -1);
+  if (count !== 1) {
+    throw new Error(`the advance range ${priorExpected.slice(0, 12)}..${resolvedSha.slice(0, 12)} contains ${count === -1 ? 'an unresolvable range' : `${count} commits`} — the reconciliation admits exactly one commit; anything else is the foreign-commit row (stop, inspect, revert or reconcile by hand)`);
+  }
+  const parents = (tryGit(MAIN, ['rev-list', '--parents', '-n', '1', resolvedSha]) || '').split(/\s+/).filter(Boolean);
+  if (parents.length !== 2) {
+    throw new Error(`commit ${resolvedSha.slice(0, 12)} is a merge commit — a reconciled advance is a single non-merge commit; anything else is the foreign-commit row`);
+  }
+  // The path rule (the gate audit's own): the commit must touch NEITHER the bundle directory
+  // NOR any path the branch changed.
+  const paths = (tryGit(MAIN, ['diff-tree', '--no-commit-id', '--name-only', '--no-renames', '-r', resolvedSha]) || '').split('\n').filter(Boolean);
+  const bundleDir = `docs/masterplan/${state.slug}/`;
+  const bundleTouch = paths.filter((p) => p === bundleDir.slice(0, -1) || p.startsWith(bundleDir));
+  if (bundleTouch.length) {
+    throw new Error(`commit ${resolvedSha.slice(0, 12)} touches the bundle directory (${bundleTouch.slice(0, 3).join(', ')}) — a bundle write is the foreign-commit row, never a reconciliation`);
+  }
+  const mergeBase = tryGit(MAIN, ['merge-base', resolvedSha, ctx.tip || 'HEAD']);
+  const branchPaths = mergeBase ? (tryGit(MAIN, ['diff', '--name-only', mergeBase, ctx.tip || 'HEAD']) || '').split('\n').filter(Boolean) : [];
+  const overlap = paths.filter((p) => branchPaths.includes(p));
+  if (overlap.length) {
+    throw new Error(`commit ${resolvedSha.slice(0, 12)} touches paths the branch changed (${overlap.slice(0, 3).join(', ')}) — a branch-path change is the foreign-commit row, never a reconciliation`);
+  }
+  const author = (tryGit(MAIN, ['log', '-1', '--format=%cn <%ce>', resolvedSha]) || '').trim();
+  const record = {
+    type: 'main_advance_reconciled',
+    ts: now,
+    sha: resolvedSha,
+    prior_expected: priorExpected,
+    paths,
+    author,
+  };
+  if (note) record.note = note;
+  appendEvent(statePath, record);
+  return record;
+}
+
+// correct-receipt — the append-only disclosure against historical receipts. NEVER run
+// automatically: the orchestrator records the correction against the real ledger after review.
+// The historical events are never rewritten; the correction names them by index.
+export function correctReceipt({ statePath, targets, note, now = Date.now() }) {
+  const events = readBundleEvents(statePath);
+  if (typeof note !== 'string' || note.trim() === '') {
+    throw new Error('correct-receipt needs --note=<what the correction discloses>');
+  }
+  if (!Array.isArray(targets) || targets.length === 0) {
+    throw new Error('correct-receipt needs --targets=<comma-separated event indexes>');
+  }
+  for (const i of targets) {
+    if (!Number.isInteger(i) || i < 0 || i >= events.length) {
+      throw new Error(`target ${JSON.stringify(i)} is not a valid event index (0..${events.length - 1}) — a correction names real historical records`);
+    }
+  }
+  const record = { type: 'receipt_correction', ts: now, targets, note };
+  appendEvent(statePath, record);
+  return record;
+}
+
 // ---- startPass ---------------------------------------------------------------
 
 // The finish-time findings that open a corrective pass (§10.3): a partial/missed goal check, a
-// blocking finish-time review, a red verify after both surfaces are live.
-export const CORRECTIVE_TRIGGERS = ['goal_check', 'goals_unmet', 'adversary_review', 'run_verify', 'verify_failed'];
+// blocking finish-time review, a red verify after both surfaces are live — and a recorded
+// post-publication precondition REFUSAL (bootstrap_refusal, Part 1 of the v10 recovery
+// contract): an arm that refused because the tag is public and the world moved past it is a
+// corrective finding in its own right, the honest record of a pass that cannot proceed.
+export const CORRECTIVE_TRIGGERS = ['goal_check', 'goals_unmet', 'adversary_review', 'run_verify', 'verify_failed', 'bootstrap_refusal'];
 // Trigger types that DENOTE the failure: the record exists only because the check did not pass, so
 // the type alone is the finding (no verdict/exit/ok field needed). The others are outcome records
 // that carry a verdict and block only when it is a blocking one.
-export const SELF_BLOCKING_TRIGGERS = ['goals_unmet', 'verify_failed'];
+export const SELF_BLOCKING_TRIGGERS = ['goals_unmet', 'verify_failed', 'bootstrap_refusal'];
 const BLOCKING_VERDICTS = new Set(['partial', 'missed', 'revise', 'rework', 'reject', 'error', 'fail', 'failed', 'red']);
 // A finding is corrective only when it actually blocks: a self-describing failure type, a
 // partial/missed goal, a revise/reject/error review verdict, a failed verify (ok:false, status
@@ -904,9 +1058,44 @@ export function isBlockingFinding(ev) {
   for (const key of ['verdict', 'outcome', 'final_verdict', 'result']) {
     if (typeof ev[key] === 'string' && BLOCKING_VERDICTS.has(ev[key])) return true;
   }
+  // A machine-readable review verdict carried INSIDE the record's data (the panel's finding:
+  // the finish-time adversary_review event carried its verdict only in prose, so a blocking
+  // review was not machine-readable as one). The same enum as the top-level keys governs.
+  if (ev.data && typeof ev.data === 'object' && typeof ev.data.verdict === 'string' && BLOCKING_VERDICTS.has(ev.data.verdict)) return true;
   if (ev.type === 'goal_check' && ev.goals && typeof ev.goals === 'object') {
     return Object.values(ev.goals).some((v) => v === 'partial' || v === 'missed' || (v && typeof v === 'object' && BLOCKING_VERDICTS.has(v.verdict)));
   }
+  return false;
+}
+
+// §10.3's red-tag boundary as ONE shared predicate — startPass's missing-steps gate and the
+// replay validator's mirrored block must never disagree about which trigger may open a
+// corrective pass over an incomplete predecessor. Two trigger shapes are accepted, both with
+// every existing constraint of `publishedTagFailure` intact:
+//   • publishedTagFailure — the predecessor's OWN failed post-push `bootstrap_step` (the tag
+//     is public and the step genuinely ran and failed);
+//   • publishedRefusal — the predecessor's OWN post-push `bootstrap_refusal` (the panel's
+//     pass-5 shape: the tag is public, the arm REFUSED on a precondition, no command ran and
+//     therefore no step receipt exists — the refusal record is the honest evidence).
+// Both must be causally after the predecessor's own successful push record, name a step that
+// is post-push in `required`, and leave every missing step post-push.
+export function correctiveTriggerOk(events, pass, triggeredBy, required, missing) {
+  const triggerRec = Number.isInteger(triggeredBy) && triggeredBy >= 0 && triggeredBy < events.length ? events[triggeredBy] : null;
+  const pushIdx = required.indexOf('push');
+  // The predecessor's own successful push record, by ledger index — the causal boundary.
+  const pushRecIdx = events.reduce((acc, e, ei) => (e && e.type === 'bootstrap_step' && e.pass === pass && e.step === 'push' && isDone(e) ? ei : acc), -1);
+  if (pushRecIdx < 0 || !Number.isInteger(pushIdx)) return false;
+  const postPushMissing = missing.every((st) => required.indexOf(st) > pushIdx);
+  if (!postPushMissing) return false;
+  const causallyAfterPush = Number.isInteger(triggeredBy) && triggeredBy > pushRecIdx;
+  if (!causallyAfterPush) return false;
+  // (a) the predecessor's own failed post-push driver step — the tag is public and the step ran.
+  if (triggerRec && triggerRec.type === 'bootstrap_step' && triggerRec.status === 'failed' && triggerRec.pass === pass
+    && Number.isInteger(required.indexOf(triggerRec.step)) && required.indexOf(triggerRec.step) > pushIdx) return true;
+  // (b) the predecessor's own post-push recorded precondition refusal — the tag is public, the
+  // arm refused, no command ran (the refusal record is its OWN typed evidence, never a step receipt).
+  if (triggerRec && triggerRec.type === 'bootstrap_refusal' && triggerRec.pass === pass
+    && Number.isInteger(required.indexOf(triggerRec.step)) && required.indexOf(triggerRec.step) > pushIdx) return true;
   return false;
 }
 
@@ -1003,20 +1192,13 @@ export function startPass({ statePath, pass, triggeredBy, version = null, target
   const required = stepsForPass(status.pass, events).filter((st) => st !== 'gate');
   const missing = required.filter((st) => !isDone(latestOfType(events, 'bootstrap_step', status.pass, st)));
   if (missing.length) {
-    const pushIdx = required.indexOf('push');
-    const triggerRecord = Number.isInteger(triggeredBy) && triggeredBy >= 0 && triggeredBy < events.length ? events[triggeredBy] : null;
-    // The trigger must be THE PREDECESSOR'S OWN failure receipt (the pass-2 review's finding 1:
-    // a foreign pass's failed ci_wait record opened a corrective pass) and it must postdate the
-    // predecessor's successful push (finding 2: a failure appended BEFORE the push records was
-    // retroactively legitimized by later publication — the failure predates the tag).
-    const pushRecIdx = events.reduce((acc, e, ei) => (e && e.type === 'bootstrap_step' && e.pass === status.pass && e.step === 'push' && isDone(e) ? ei : acc), -1);
-    const publishedTagFailure = isDone(latestOfType(events, 'bootstrap_step', status.pass, 'push'))
-      && triggerRecord && triggerRecord.type === 'bootstrap_step' && triggerRecord.status === 'failed'
-      && triggerRecord.pass === status.pass
-      && triggeredBy > pushRecIdx && pushRecIdx >= 0
-      && Number.isInteger(pushIdx) && required.indexOf(triggerRecord.step) > pushIdx
-      && missing.every((st) => required.indexOf(st) > pushIdx);
-    if (!publishedTagFailure) {
+    // The ONE shared predicate (correctiveTriggerOk) governs both here and the replay validator:
+    // the trigger must be the predecessor's own failed post-push driver step (publishedTagFailure)
+    // or its own post-push recorded precondition refusal (publishedRefusal — the pass-5 shape: the
+    // tag is public, the arm refused, no command ran), causally after the predecessor's successful
+    // push record, with every missing step post-push. Anything else is drift — nothing was
+    // published before push, so the failure is ordinary branch work, not a corrective release.
+    if (!correctiveTriggerOk(events, status.pass, triggeredBy, required, missing)) {
       throw new Error(`pass ${status.pass} is not complete through surfaces_live (missing: ${missing.join(', ')}) — a corrective pass cannot open`);
     }
   }
@@ -1418,9 +1600,20 @@ export const STEPS = {
         if (ctx.tip && !isAncestor(ctx.MAIN, ctx.tip, remoteMain)) {
           problems.push({ name: 'tip_ancestor_of_remote', ok: false, detail: 'tip is not an ancestor of remote main' });
         }
-        const mainPre = latestRecord(ctx.events, 1, 'main_push');
+        // The local-main history audit's anchor: the successful main_push WHEREVER it occurred
+        // (the panel's major finding — the walk's actual shape completed main_push on pass 4,
+        // because pass 1 died before step 5, and the pass-1-only lookup silently SKIPPED the
+        // audit). The same cross-pass derivation as pr_merge's base; and a MISSING anchor
+        // REFUSES the gate — the pre-rebase audit is never silently skipped.
+        let mainPre = null;
+        for (let p = ctx.status.pass; p >= 1 && !mainPre; p -= 1) {
+          const mp = latestOfType(ctx.events, 'bootstrap_step', p, 'main_push');
+          if (mp && isDone(mp) && mp.data) mainPre = mp;
+        }
         const mainPreSha = mainPre && mainPre.data && mainPre.data.main_pre_bootstrap;
-        if (mainPreSha) {
+        if (!mainPreSha) {
+          problems.push({ name: 'main_push_anchor', ok: false, detail: 'no done main_push record carries main_pre_bootstrap — the gate cannot skip its local-main history audit' });
+        } else {
           const commits = tryGit(ctx.MAIN, ['rev-list', `${mainPreSha}..main`, `^${ctx.targets.remote}/main`]);
           if (commits) {
             for (const c of commits.split('\n').filter(Boolean)) {
@@ -1494,9 +1687,17 @@ export const STEPS = {
       // Bound to the repository the configured remote points at (--repo), never inferred from the
       // checkout's default remote; run from MAIN whatever directory the operator is in. The run is
       // selected by the COMMIT the push published (--commit), never by the mutable tag name.
+      // EXIT BOUNDARY (the panel's major finding): the raw pipeline `... | xargs gh run watch
+      // --exit-status` reports xargs's 123 when gh reports failure — an operator recording `$?`
+      // got a number the pipeline stage never emitted, and the receipts recorded exit 1 against a
+      // command whose true exit is 123. The pipeline is now wrapped so the command's exit is the
+      // pipeline's TRUE exit, captured and re-emitted verbatim (never translated: red stays 123,
+      // green stays 0, whatever xargs does) — the receipt records what the shell reports for the
+      // command the receipt names.
       const repo = q(resolveGhRepo(ctx));
       const commit = q(publishedTip(ctx.events, ctx.status.pass) ?? '');
-      return `cd ${q(ctx.MAIN)} && ${q(gh)} run list --repo ${repo} --commit ${commit} --workflow ci.yml --json databaseId --jq '.[0].databaseId' | xargs ${q(gh)} run watch --repo ${repo} --exit-status`;
+      const pipeline = `${q(gh)} run list --repo ${repo} --commit ${commit} --workflow ci.yml --json databaseId --jq '.[0].databaseId' | xargs ${q(gh)} run watch --repo ${repo} --exit-status`;
+      return `cd ${q(ctx.MAIN)} && { ${pipeline}; }; st=\$?; exit \$st`;
     },
     pre(ctx) {
       // §10.1 step 4: the tag is public and identical on the remote before CI is waited on.
@@ -1606,6 +1807,17 @@ export const STEPS = {
       }
       if (basePr) expected = basePr.data.merge_sha ?? null;
       else if (baseMain) expected = baseMain.data.main_sha ?? baseMain.data.main_pre_bootstrap ?? null;
+      // A reconciled doc-only main advance postdating the latest recorded mover supersedes it:
+      // the recorded reconciliation IS the authorized, path-rule-verified account of the remote
+      // moving past the recorded base (Part 3 of the recovery contract). Ordered by ledger index —
+      // the latest reconciliation wins over any earlier mover.
+      let reconciled = null;
+      ctx.events.forEach((e, ei) => {
+        if (e && e.type === 'main_advance_reconciled' && typeof e.sha === 'string') reconciled = { sha: e.sha, index: ei };
+      });
+      if (reconciled && (!basePr && !baseMain || Math.max(basePr ? basePr.index : -1, baseMain ? baseMain.index : -1) < reconciled.index)) {
+        expected = reconciled.sha;
+      }
       problems.push({ name: 'remote_main_expected', ok: !!remoteMain && remoteMain === expected, detail: `remote ${remoteMain ?? 'unreachable'} vs expected ${expected ?? 'unknown'}` });
       // What GitHub will merge is what was released: the tip the push published, on the remote and
       // locally. A branch that moved after the push (local, remote, or both) is refused here.
@@ -1709,9 +1921,10 @@ export const STEPS = {
 // ---- CLI ---------------------------------------------------------------------
 
 function parseArgs(argv) {
-  const args = { command: null, state: null, step: null, targets: null, exit: null, digestFile: null, status: null, data: null, reason: null, pass: null, triggeredBy: null, version: null };
+  const args = { command: null, state: null, step: null, targets: null, exit: null, digestFile: null, status: null, data: null, reason: null, pass: null, triggeredBy: null, version: null, note: null, sha: null, correctionTargets: null };
   for (const arg of argv) {
-    if (arg === 'status' || arg === 'arm' || arg === 'record' || arg === 'start') {
+    if (arg === 'status' || arg === 'arm' || arg === 'record' || arg === 'start'
+      || arg === 'record-refusal' || arg === 'reconcile-advance' || arg === 'correct-receipt') {
       args.command = arg;
     } else if (arg.startsWith('--state=')) {
       args.state = arg.slice('--state='.length);
@@ -1735,13 +1948,22 @@ function parseArgs(argv) {
       args.triggeredBy = Number(arg.slice('--triggered-by='.length));
     } else if (arg.startsWith('--version=')) {
       args.version = arg.slice('--version='.length);
+    } else if (arg.startsWith('--note=')) {
+      args.note = arg.slice('--note='.length);
+    } else if (arg.startsWith('--sha=')) {
+      args.sha = arg.slice('--sha='.length);
+    } else if (arg.startsWith('--correction-targets=')) {
+      args.correctionTargets = arg.slice('--correction-targets='.length);
     } else {
       console.error(`unknown argument: ${arg}`);
       process.exit(2);
     }
   }
   if (!args.command) {
-    console.error('usage: node scripts/bootstrap-v10.mjs <status|arm|record|start> --state=<path> [--step=] [--targets=] [--exit=N] [--digest-file=] [--status=failed|recovered] [--data=<json>] [--reason=] [--pass=N] [--triggered-by=N] [--version=X.Y.Z]');
+    console.error('usage: node scripts/bootstrap-v10.mjs <status|arm|record|start|record-refusal|reconcile-advance|correct-receipt> --state=<path> [--step=] [--targets=] [--exit=N] [--digest-file=] [--status=failed|recovered] [--data=<json>] [--reason=] [--pass=N] [--triggered-by=N] [--version=X.Y.Z] [--note=] [--sha=] [--correction-targets=N,N]');
+    console.error('  record-refusal --step=<step> [--note=] — record a post-publication precondition refusal (typed bootstrap_refusal, never a step receipt)');
+    console.error('  reconcile-advance --sha=<origin/main tip> [--note=] — record a doc-only main advance (main_advance_reconciled)');
+    console.error('  correct-receipt --correction-targets=<idx,...> --note= — append a receipt_correction disclosure against historical records');
     process.exit(2);
   }
   if (!args.state) {
@@ -1827,6 +2049,31 @@ function main() {
       }
       const status = startPass({ statePath, pass: args.pass, triggeredBy: args.triggeredBy, version: args.version, targets });
       console.log(JSON.stringify(status));
+      process.exit(0);
+    } else if (args.command === 'record-refusal') {
+      if (!args.step) {
+        console.error('--step is required for record-refusal');
+        process.exit(2);
+      }
+      const record = recordRefusal({ statePath, step: args.step, note: args.note, targets });
+      console.log(JSON.stringify(record));
+      process.exit(0);
+    } else if (args.command === 'reconcile-advance') {
+      if (!args.sha) {
+        console.error('--sha is required for reconcile-advance');
+        process.exit(2);
+      }
+      const record = reconcileAdvance({ statePath, sha: args.sha, note: args.note, targets });
+      console.log(JSON.stringify(record));
+      process.exit(0);
+    } else if (args.command === 'correct-receipt') {
+      if (args.correctionTargets === null || !args.note) {
+        console.error('--correction-targets and --note are required for correct-receipt');
+        process.exit(2);
+      }
+      const indexes = args.correctionTargets.split(',').map((x) => Number(x.trim())).filter((x) => Number.isInteger(x));
+      const record = correctReceipt({ statePath, targets: indexes, note: args.note });
+      console.log(JSON.stringify(record));
       process.exit(0);
     }
   } catch (err) {
