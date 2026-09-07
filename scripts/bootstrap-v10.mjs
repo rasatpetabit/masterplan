@@ -359,7 +359,7 @@ function cleanTree(ctx) {
 // is the single_commit contract. It is shared so the record-time PREFLIGHT (which runs before
 // the release's side effects are trusted and rolls a stray tag back) and the postcondition
 // (the after-the-fact invariant) can never disagree about what a legal release is.
-function releaseDeltaProblems(ctx, newTip) {
+export function releaseDeltaProblems(ctx, newTip) {
   const problems = [];
   const count = Number(tryGit(ctx.MAIN, ['rev-list', '--count', `${reviewedSha(ctx)}..${newTip}`]) ?? -1);
   const changed = (tryGit(ctx.MAIN, ['diff', '--name-only', reviewedSha(ctx), newTip]) || '').split('\n').filter(Boolean);

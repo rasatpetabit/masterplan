@@ -751,3 +751,31 @@ test('a MERGED response with no mergeCommit oid fails the reconciliation row', (
   assert.equal(r.rows.get('gh_pr_reconcile_merged'), 'fail', r.out);
   assert.match(r.out, /MERGED but no mergeCommit\.oid/);
 });
+
+// ---- the wave-11 rehearsal repairs: --only validation + the real release contract ------
+
+test("a typo'd --only group is refused at startup — zero evidence is never a pass", (t) => {
+  const env = makeEnv(t);
+  const r = run(env, { only: 'realease_rows' }); // the typo that used to select nothing and PASS
+  assert.equal(r.status, 2, `expected exit 2 on the unknown group, got ${r.status}`);
+  assert.match(r.out, /unknown --only group: realease_rows/);
+  assert.match(r.out, /known: /);
+  assert.ok(!/REHEARSAL PASS/.test(r.out), 'zero rows must never print REHEARSAL PASS');
+});
+
+test("the release rows drive the REAL single_commit contract, not the row's own arithmetic", (t) => {
+  // release_changelog_allowed: the real validator ACCEPTS the legitimate CHANGELOG-only
+  // release (empty problem set); release_extra_commit_refused: the real validator NAMES
+  // the sneaky extra commit (single_commit). The old extra row counted the commit it had
+  // just made itself — a tautology; this pins the load-bearing seam.
+  // The FULL run: the walk group builds the release tip the release rows judge (a bare
+  // --only=release_rows fixture has no release to accept).
+  const env = makeEnv(t);
+  const r = run(env, { scratch: path.join(env.tmp, 'scratch-realcontract') });
+  assert.equal(r.rows.get('release_changelog_allowed'), 'ok',
+    `the real contract must accept the CHANGELOG-only release: ${r.out}`);
+  assert.equal(r.rows.get('release_extra_commit_refused'), 'ok',
+    `the real contract must name the extra commit: ${r.out}`);
+  assert.match(r.out, /NAMES the sneaky extra commit/);
+});
+

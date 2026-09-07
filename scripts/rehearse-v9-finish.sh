@@ -36,6 +36,15 @@ done
 [ -f "$STATE" ]        || { echo "rehearse: state file not found: $STATE" >&2; exit 2; }
 [ -f "$TARGETS_FILE" ] || { echo "rehearse: targets file not found: $TARGETS_FILE" >&2; exit 2; }
 [ -f "$DRIVER" ]       || { echo "rehearse: bootstrap-v10.mjs not found at $DRIVER" >&2; exit 2; }
+# --only must name a KNOWN group: a typo used to select nothing, run zero rows, and print
+# REHEARSAL PASS — zero evidence reported as a pass (the wave-11 rehearsal finding).
+KNOWN_GROUPS="pinned_finish gh_cycle walk install_rollback push_rows base_audit merge_rows gate_equality release_rows user_only_checks"
+if [ -n "$ONLY" ]; then
+  case " $KNOWN_GROUPS " in
+    *" $ONLY "*) ;;
+    *) echo "rehearse: unknown --only group: $ONLY (known: $KNOWN_GROUPS)" >&2; exit 2 ;;
+  esac
+fi
 
 # ---- reporting ---------------------------------------------------------------
 ROWS=0; FAILED=0
@@ -960,19 +969,37 @@ fi
 # a release record refused when the tagged commit differs from the reviewed sha by more than
 # the CHANGELOG commit
 if selected release_rows; then
-  if [ -n "$RELEASE_TIP" ] && [ "$(G "$WORK" rev-list --count "$REVIEWED_SHA..$RELEASE_TIP")" -eq 1 ]; then
-    row release_changelog_allowed ok "the tagged commit is exactly one CHANGELOG commit past the reviewed sha"
+  # THE REAL single_commit CONTRACT drives both rows (the wave-11 rehearsal finding: the
+  # old extra-commit row counted the commit it had just made itself — a tautology that
+  # proved nothing). releaseDeltaProblems is the SAME validator the release preflight and
+  # postcondition run, so the positive control passes only a legitimate release and the
+  # negative is NAMED by the contract, not by the row's own arithmetic.
+  delta_problems() { # delta_problems <new-tip> -> the problem names, comma-joined (empty = legal)
+    node --input-type=module -e "
+      import { releaseDeltaProblems } from '$DRIVER';
+      const ctx = {
+        MAIN: process.argv[1], version: 'v' + process.argv[2], status: { pass: 'rehearsal' },
+        targets: { branch: process.argv[3] },
+        events: [{ type: 'bootstrap_step', pass: 'rehearsal', step: 'verify', status: 'done', data: { tip: process.argv[4] } }],
+      };
+      process.stdout.write(releaseDeltaProblems(ctx, process.argv[5]).map((p) => p.name).join(','));
+    " "$WORK" "$VERSION" "$BRANCH" "$REVIEWED_SHA" "$1" 2>/dev/null
+  }
+  if [ -n "$RELEASE_TIP" ] && [ -z "$(delta_problems "$RELEASE_TIP")" ]; then
+    row release_changelog_allowed ok "the real release contract accepts exactly the CHANGELOG commit past the reviewed sha"
   else
-    row release_changelog_allowed fail "the release tip is not one commit past the reviewed sha"
+    row release_changelog_allowed fail "the release contract refused the legitimate CHANGELOG-only release: $(delta_problems "${RELEASE_TIP:-$REVIEWED_SHA}")"
   fi
   G "$WORK" checkout -q --detach "${RELEASE_TIP:-$REVIEWED_SHA}" >/dev/null 2>&1
   printf 'unreviewed code\n' > "$WORK/sneaky.txt"
   G "$WORK" add sneaky.txt; G "$WORK" commit -q -m "an unreviewed commit rides along"
-  if [ "$(G "$WORK" rev-list --count "$REVIEWED_SHA..HEAD")" -gt 1 ]; then
-    row release_extra_commit_refused ok "a tagged commit more than the CHANGELOG past the reviewed sha is refused"
-  else
-    row release_extra_commit_refused fail "the extra commit was not detected"
-  fi
+  SNEAKY_PROBLEMS="$(delta_problems "$(G "$WORK" rev-parse HEAD)")"
+  case "$SNEAKY_PROBLEMS" in
+    *single_commit*)
+      row release_extra_commit_refused ok "the real release contract NAMES the sneaky extra commit (single_commit)" ;;
+    *)
+      row release_extra_commit_refused fail "the release contract did not name the extra commit (problems: '${SNEAKY_PROBLEMS:-none}')" ;;
+  esac
   G "$WORK" checkout -q main
 fi
 
@@ -996,6 +1023,11 @@ fi
 # ---- 6. digest ---------------------------------------------------------------
 say "== rows=$ROWS failed=$FAILED"
 for r in "${REPORT[@]}"; do say "SUMMARY $r"; done
+if [ "$ROWS" -eq 0 ]; then
+  say "REHEARSAL FAIL"
+  say "zero rows ran — no evidence is not a pass"
+  exit 1
+fi
 if [ "$FAILED" -eq 0 ]; then
   say "REHEARSAL PASS"
   exit 0
