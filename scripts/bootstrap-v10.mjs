@@ -86,6 +86,39 @@ export function readBundleEvents(statePath) {
           problems.push(`event ${i} (bootstrap_pass) names event ${e.triggered_by}, which is not a blocking finding — a corrective pass needs a partial/missed goal, a revise/reject review or a red verify (§10.3)`);
           return;
         }
+        // VERSION-SERIES validation (the release-candidate closure review's finding): replay
+        // already enforced pass sequencing, causal triggers, and predecessor completion — but
+        // not what startPass enforces for the version itself: series membership and
+        // monotonicity. A hand-edited bootstrap_pass version (10.0.1 -> 11.4.0) was accepted
+        // at replay while startPass refuses it. Mirror startPass's rules, judged on the
+        // ledger's OWN durable version history (priorVersions: the release arms + earlier
+        // passes — the same source startPass reads), never on a recomputed default.
+        if (typeof e.version !== 'string' || !/^\d+\.\d+\.\d+$/.test(e.version)) {
+          problems.push(`event ${i} (bootstrap_pass) carries a malformed corrective version ${JSON.stringify(e.version)} — a corrective pass needs --version=<major.minor.patch> (§10.3)`);
+          return;
+        }
+        const priors = priorVersions(events.slice(0, i));
+        // Mirror startPass's anchor exactly: when the ledger names no prior bound version
+        // (pass 1 never armed a release), the TARGETS' version is the series anchor — the
+        // same fallback startPass itself applies.
+        let anchored = priors;
+        if (anchored.length === 0) {
+          // NOT loadBundle (it re-enters readBundleEvents through the events read — infinite
+          // recursion); the state and MAIN derive the same way it does.
+          anchored = [resolveTargets(join(dirname(statePath), '..', '..', '..'), readState(statePath), {}).version];
+        }
+        const [major, minor] = semver(anchored[0]);
+        const v = semver(e.version);
+        if (v[0] !== major || v[1] !== minor) {
+          problems.push(`event ${i} (bootstrap_pass) version ${e.version} is outside the ${major}.${minor}.x series the ledger released (${priors[0]}) — a corrective pass is a patch release of that series, never a new series (§10.3)`);
+          return;
+        }
+        for (const p of anchored) {
+          if (!newer(e.version, p)) {
+            problems.push(`event ${i} (bootstrap_pass) version ${e.version} is not newer than ${p}, which the pass already bound — a corrective version is monotone, never repeated or downgraded (§10.3)`);
+            return;
+          }
+        }
         passSoFar = e.pass;
       };
       seq();

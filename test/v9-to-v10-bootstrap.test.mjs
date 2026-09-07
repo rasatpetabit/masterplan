@@ -1841,6 +1841,54 @@ test('finding 5 positive control: a legitimate startPass still writes cleanly an
   assert.equal(s.next.step, 'verify', 'the corrective pass re-enters at the pre-publish verify');
 });
 
+test('closure review: replay refuses a hand-edited corrective VERSION — series membership and monotonicity mirror startPass', () => {
+  // The release-candidate closure review's finding: replay validated pass sequencing, causal
+  // triggers, and predecessor completion but not the version itself — a legitimate 10.0.1
+  // hand-edited to 11.4.0 on the ledger was accepted at replay while startPass refuses it.
+  // The ledger's version rule must hold against hand edits, not just the writer.
+  const editPassVersion = (fx, version) => {
+    const ledger = path.join(fx.bundleDir, 'events.jsonl');
+    const rows = fs.readFileSync(ledger, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    rows.find((e) => e.type === 'bootstrap_pass').version = version;
+    fs.writeFileSync(ledger, `${rows.map((r) => JSON.stringify(r)).join('\n')}\n`);
+  };
+  const walkToCorrective = (fx) => {
+    seedThrough(fx, STEP_ORDER.slice(0, STEP_ORDER.indexOf('gate')));
+    appendEvent(fx.statePath, { type: 'bootstrap_armed', pass: 1, step: 'release', cmd: 'fixture', sha: git(fx.MAIN, 'rev-parse', fx.branch), ts: 95, data: { version: '10.0.0' } });
+    appendEvent(fx.statePath, { type: 'adversary_review', ts: 90, verdict: 'rework' });
+    const trigger = events(fx.statePath).length - 1;
+    startPass({ statePath: fx.statePath, pass: 2, triggeredBy: trigger, version: '10.0.1', targets: fx.targets });
+  };
+
+  // (a) The reviewer's exact mutation: in-series 10.0.1 hand-edited to 11.4.0 — out of series.
+  const a = makeFixture();
+  walkToCorrective(a);
+  editPassVersion(a, '11.4.0');
+  assert.throws(() => bootstrapStatus(a.statePath), /version 11\.4\.0 is outside the 10\.0\.x series/,
+    'an out-of-series corrective version is the named refusal during replay');
+
+  // (b) A downgrade: 10.0.1 -> 10.0.0 (not newer than the released anchor).
+  const b = makeFixture();
+  walkToCorrective(b);
+  editPassVersion(b, '10.0.0');
+  assert.throws(() => bootstrapStatus(b.statePath), /not newer than 10\.0\.0/,
+    'a repeated or downgraded corrective version is the named refusal');
+
+  // (c) A malformed version.
+  const c = makeFixture();
+  walkToCorrective(c);
+  editPassVersion(c, '10.0.x');
+  assert.throws(() => bootstrapStatus(c.statePath), /malformed corrective version/,
+    'a non-semver version is the named refusal');
+
+  // (d) The legitimate 10.0.1 stays accepted — the replay rule is the writer's rule, not stricter.
+  const d = makeFixture();
+  walkToCorrective(d);
+  const st = bootstrapStatus(d.statePath);
+  assert.equal(st.pass, 2);
+  assert.equal(st.version, '10.0.1', 'the legitimate in-series monotone version derives cleanly');
+});
+
 test('finding 6: a zero-exit failed WITH a reason records through the driver and lands on the ledger', () => {
   const fx = makeFixture();
   seedThrough(fx, ['rehearsal', 'docs_normalize']);
