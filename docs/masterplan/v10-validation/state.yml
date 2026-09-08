@@ -1,0 +1,25 @@
+---
+schema_version: 9
+slug: v10-validation
+status: in-progress
+phase: brainstorm
+topic: "Validate the released v10.0.6 surfaces: G6 live evidence, goal-assessment replay, and the bootstrap failure table exercised against the tagged release (required successor of intent-to-completion)."
+complexity: high
+complexity_source: user
+autonomy: loose
+planning_mode: auto
+created_at: 2026-09-08T08:12:11.893Z
+predecessor_transcript: null
+spec_path: /srv/dev/ras/masterplan/docs/masterplan/v10-validation/spec.md
+plan_path: /srv/dev/ras/masterplan/docs/masterplan/v10-validation/plan.md
+plan_index_path: /srv/dev/ras/masterplan/docs/masterplan/v10-validation/plan.index.json
+tasks: []
+active_run: null
+pending_gate: null
+goals_enabled: true
+goals: []
+review: {"adversary":true}
+render: {"images":"off"}
+dispatch: {"fabric":true}
+refs: {"back":[{"slug":"intent-to-completion"}],"forward":[]}
+predecessor: intent-to-completion

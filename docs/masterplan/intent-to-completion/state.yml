@@ -26,3 +26,4 @@ worktree: /srv/dev/ras/masterplan/.worktrees/intent-to-completion
 verified_sha: 442eb594c9a7e7a2adfcd309aa1b759c08862858
 worktree_disposition: kept_by_user
 completion: incomplete:version_not_bumped
+refs: {"back":[],"forward":[{"slug":"v10-validation","label":"Validate the released v10.0.6 surfaces: G6 live evidence, goal-assessment replay, and the bootstrap failure table exercised against the tagged release (required successor of intent-to-completion)."}]}

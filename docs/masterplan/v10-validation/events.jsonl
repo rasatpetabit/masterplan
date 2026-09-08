@@ -1,0 +1,3 @@
+{"type":"bundle_created","ts":"2026-09-08T08:12:11.929Z","data":{"goals_enabled":true,"slug":"v10-validation"},"predecessor":"intent-to-completion"}
+{"type":"overlap_review","ts":"2026-09-08T08:12:11.929Z","inventory_sha256":"3d3da7a893708fac2b6e07a50ff784f231ad12f7936ac29784160124e081f0c6","outcome":"proceed","candidates":[]}
+{"type":"refs_added","ts":"2026-09-08T08:14:25.594Z","direction":"back","target":"intent-to-completion"}
