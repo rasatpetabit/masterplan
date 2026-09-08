@@ -1,0 +1,39 @@
+{
+  "wave": 14,
+  "recorded_at": "2026-09-06T22:0Z",
+  "review_kind": "retroactive adversarial (workflow transport, governed adversary lane litellm/gpt-6-astra; native phase-A no-op — no wave-11+ dispatch records carry review_context)",
+  "tasks": {
+    "55": {
+      "verdict": "rework",
+      "findings": [
+        "[rework] promote.mjs:549 — satisfied bypassed drift detection (base===result blessed drifted disk)",
+        "[rework] promote.mjs:635,793-797 — crash between the exactly-once event and state convergence permanently stranded the goals cache",
+        "[rework] reconcile-intent.mjs:119-132 — annotated tag object IDs recorded as resolved_commit without peeling or type verification",
+        "[fix-now] bin amend-promote — successful recovery exited 1"
+      ],
+      "fixed": true,
+      "fix_commit": "15402a4",
+      "fix_summary": "disk-verified satisfied; replayRecorded completes convergence under the lock (crash injected at the real state-write seam); annotated tags peeled to commits with type verification; exit-0 set {promoted, recorded, recovered} with a black-box recovery regression",
+      "re_reviewed": false
+    },
+    "56": {
+      "verdict": "rework",
+      "findings": [
+        "[rework] task-review.mjs:254 — fresh review evidence relabeled with the current tuple instead of validated against the reviewer's echo",
+        "[rework] task-review.mjs:242 — re-entry validated identity but bypassed reviewer availability (a stripped reviewer_identity satisfied)",
+        "[rework] finish.mjs:797 — the finish verifier not connected to the production finish consumer (a foreign LEGACY receipt reached intent_confirm)",
+        "[rework] checkpoint-evidence.mjs:536 — schema-backed coverage optional; spec/alignment artifact identities never compared"
+      ],
+      "fixed": true,
+      "fix_commit": "15402a4",
+      "fix_summary": "brief-carried identity + echo validation; replay-time reviewer resolution; the finish verifier wired into all three production consumers (record-time refusal, replay re-validation, confirmation gate) with the mutation test driving them; coverage required from the frozen snapshot with independently computed artifact bindings bound into the real gate verbs. PLUS a real §6.1 seam defect the fix exposed and repaired: unpinned goals hashing in record-goal-check, finalReceiptFor, evaluateGoalCompletion and the two goals gates made every recorded check stale on schema-backed bundles",
+      "re_reviewed": false
+    }
+  },
+  "fix_round_transport": "sequential two-builder workflow (glm-5.3), findings reproduced inline",
+  "discipline": "one review round, one fix round per task; fixes disclosed as not re-reviewed; the end-of-waves whole-scope adversarial review covers the final diff",
+  "suite_after_fix_round": "2692/2692",
+  "review_run": "w14-adversary-reviews-mtqc23a5-71oeb0 (2 agents, 182.6K tok, $7.33)",
+  "wave_record": "code 0aae163 (WT), state c455684 (MAIN) — recorded with ZERO out-of-scope reverts (first wave where every edit sat inside declared loci)",
+  "external_pickup": "136f434 (AGENTS.md consultation rule, external session) cherry-picked as 30c1a59; the /intent handoff (3 mandatory edits) tracked as todo #26, blocked on the behavior-skills feat/intent-verbs merge"
+}

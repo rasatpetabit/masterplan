@@ -1,0 +1,43 @@
+{
+  "wave": 12,
+  "recorded_at": "2026-09-06T13:5Z",
+  "review_kind": "retroactive adversarial (workflow transport, governed adversary lane litellm/gpt-6-astra)",
+  "native_phase_a": {
+    "fired": false,
+    "root_cause": "no wave-N.dispatch.json exists for waves 11+ (the retired control plane wrote records for waves 0-10; the native dispatch fabric does not), so review_context is absent and reviewNativeResult is a pure no-op — the digest-wrapped result items alone do not trigger phase A",
+    "action": "retroactive per-task reviews via workflow at the governed adversary lane, same as wave 11"
+  },
+  "tasks": {
+    "51": {
+      "verdict": "rework",
+      "findings": [
+        "[rework] lib/goals.mjs canonicalIntentObject dropped accepted section-extension bodies from the richer hash — an edited extension did not move the schema_backed hash",
+        "[rework] the strict JSON reader accepted raw control characters (U+0000-U+001F) inside strings, so malformed claimed forms decoded clean where native JSON.parse rejects",
+        "[rework] an object-valued evidence/reconciliation note round-tripped insertion-ordered, letting equivalent key order move the richer hash (declared shape is string-only)"
+      ],
+      "fixed": true,
+      "fix_commit": "96bf404",
+      "fix_summary": "extensions canonicalized (sorted, body-shaped, validated) + raw control chars rejected + notes enforced string-only; 3 regression tests",
+      "re_reviewed": false
+    },
+    "52": {
+      "verdict": "rework",
+      "findings": [
+        "[rework] lib/schema-snapshot.mjs closed-set reads escaped through ancestor symlinks and leaf-swap races (lstat only guarded the final component) — outside bytes could enter the identity digest",
+        "[rework] lib/interview.mjs readSchemaSnapshot followed a snapshot symlink to the live schema.json, and the capture copy could follow a destination symlink — a frozen bundle could read/clobber the live file"
+      ],
+      "fixed": true,
+      "fix_commit": "96bf404",
+      "fix_summary": "confined reads (ancestor lstat walk + O_NOFOLLOW leaf + fstat regular + descriptor-only bytes) and no-follow snapshot reads/copies with temp+atomic-rename publication (schema_snapshot_not_regular named failure); 4 regression tests",
+      "re_reviewed": false
+    }
+  },
+  "out_of_scope_revert": {
+    "file": "test/interview-cli-surface.test.mjs",
+    "what": "the builder's consumer update — 2 tests asserted the schema-snapshot module's absence, a premise that ends when task 52 lands; adapted via the suite's copied-tree technique",
+    "action": "the wave transaction's verify-scope reverted it (file not in the wave's frozen scope); restored in commit 46afb31 with disclosure (wave-11 precedent)"
+  },
+  "discipline": "one review round, one fix round per task; fixes disclosed as not re-reviewed; the end-of-waves whole-scope adversarial review covers the final diff",
+  "suite_after_fix_round": "2555/2555",
+  "review_run": "w12-adversary-reviews-mtpv9fuo-mejxrc (2 agents, 92.6K tok, $2.98)"
+}

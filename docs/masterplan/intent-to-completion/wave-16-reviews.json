@@ -1,0 +1,26 @@
+{
+  "wave": 16,
+  "recorded_at": "2026-09-07T05:5Z",
+  "review_kind": "retroactive adversarial (workflow transport, governed adversary lane litellm/gpt-6-astra; native phase-A no-op — no wave-11+ dispatch records carry review_context)",
+  "tasks": {
+    "57": {
+      "verdict": "rework",
+      "findings": [
+        "[rework] knob-contract:445 — the per-level probing contracts never executed (discovery/registry carried only the container knob with the resolver-only observable; a throw at observeProbingContract's entry left the substantive-contracts proof passing; the doc's per-level verification claim was false)",
+        "[rework] knob-contract:262 — the format-pin contract passed with an inert hash (the observable included the varied pin itself, so a constant hash passed)",
+        "[note] docs/internals.md:68 — duplicate index row for the same document"
+      ],
+      "fixed": true,
+      "fix_commit": "27ee2c1",
+      "fix_summary": "the three per-level entries derive (from DEFAULT_PROBING_MINIMUM's keys) and register with the recorded-waiver observable through the committed observeProbingContract harness; the format-pin observable is hash-only; the stale duplicate index row removed. Both mutation controls verified in-session: a throw at observeProbingContract's entry and a constant-hash replacement each fail 'every substantive contract passes its two-value behavioral proof'",
+      "re_reviewed": false,
+      "honest_note": "finding 1 traced to the orchestrator's PARTIAL reconstruction of the reverted consumer updates (only the minimal-green set was restored, not the builder's per-level set) — disclosed"
+    }
+  },
+  "positively_verified_by_reviewer": "alternate-schema capture->frozen-read->coverage->terminal proofs pass; the AGENTS.md pointer exists and the consultation block is byte-identical to base; removing the FORMAT_PINS export fails discovery at import as required; doctor 0 errors (stale Claude plugin cache + Pi agent drift warns honestly reported); live install-pi --check check_ok for v9.10.1 — noted by the reviewer as NOT proof the live amendment is capability-complete (the finish stage's G6 owns that)",
+  "restoration": "0e0e64e — the four guard-required consumer updates reconstructed (the wave-11/12/13/15 precedent); finding 1 was a gap in that reconstruction, completed by this fix round",
+  "discipline": "one review round, one fix round; fixes disclosed as not re-reviewed; the waves-11-16 whole-scope adversarial review covers the final diff",
+  "suite_after_fix_round": "2710/2710",
+  "review_run": "w16-adversary-review-mtqtgjb3-1padw4 (1 agent, 79.6K tok, $3.18)",
+  "wave_record": "code ef5f472 (WT), state 5342c29 (MAIN) — next: COMPLETE (the amendment's task list fully executed)"
+}
