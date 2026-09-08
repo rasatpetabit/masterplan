@@ -12,6 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { writeState, appendEvent, validateEvent } from '../lib/bundle.mjs';
+import { surfaceExecVersion } from '../scripts/bootstrap-v10.mjs';
 import {
   STEP_ORDER, PASS2_OMITTED, stepsForPass, priorMainPushDone, STEP_SHAPES, STEPS,
   resolveTargets, bootstrapStatus, armStep, recordStep, startPass, scanWorkspaceBundles, readBundleEvents, targetsDigest, isBlockingFinding, SELF_BLOCKING_TRIGGERS, CORRECTIVE_TRIGGERS, openCorrectiveFindings, ghRepoFromRemoteUrl, priorVersions,
@@ -2215,4 +2216,28 @@ test('correct-receipt: appends the typed disclosure against real historical inde
   assert.throws(() => correctReceipt({ statePath: fx.statePath, targets: [], note: 'x' }), /comma-separated event indexes/);
   assert.throws(() => correctReceipt({ statePath: fx.statePath, targets: [0], note: '' }), /needs --note/);
   assert.equal(events(fx.statePath).length, n, 'refusals write nothing');
+});
+
+test("surfaces_live probe: surfaceExecVersion anchors on the documented CC-2 banner (the shipped regex expected a form that never existed)", () => {
+  // the REAL entry point prints formatBanner's exact form — the lone CC-2/CC-3 survivor
+  const banner = "→ /masterplan v10.0.5 args: '(empty)' cwd: /srv/dev/ras/masterplan";
+  const withArgs = "→ /masterplan v10.0.6 args: 'status docs/masterplan/x' cwd: /tmp";
+  const fixtureForm = "masterplan v10.0.5"; // the rehearsal's normative fixture substitution stays accepted
+  // a path-only output (an entry point with no version command) must stay rejected
+  const pathOnly = "/home/x/.claude/plugins/cache/rasatpetabit-masterplan/masterplan/10.0.0/bin/masterplan.mjs";
+  // surfaceExecVersion executes a FILE — assert the regex behavior through the shipped function
+  // on temp scripts, so the contract is pinned against the real code path
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'surf-probe-'));
+  const mk = (body) => {
+    const p = path.join(tmp, `e-${Math.random().toString(36).slice(2, 8)}.mjs`);
+    fs.writeFileSync(p, body);
+    return p;
+  };
+  const out = (s) => `process.stdout.write(${JSON.stringify(s)})`;
+  assert.equal(surfaceExecVersion(mk(out(banner))), '10.0.5', 'the real CC-2 banner parses');
+  assert.equal(surfaceExecVersion(mk(out(withArgs))), '10.0.6', 'args and cwd do not break the anchor');
+  assert.equal(surfaceExecVersion(mk(out(fixtureForm))), '10.0.5', 'the fixture substitution form still parses');
+  assert.equal(surfaceExecVersion(mk(out(pathOnly))), null, 'a path-only output is not a version');
+  assert.equal(surfaceExecVersion(mk('process.exit(3)')), null, 'a dying entry point is not a version');
+  fs.rmSync(tmp, { recursive: true, force: true });
 });
