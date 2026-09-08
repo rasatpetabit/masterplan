@@ -1771,6 +1771,11 @@ test('record-refusal: refuses when the step does not currently refuse; writes th
   assert.equal(events(fx2.statePath).length, before, 'nothing written for a non-refusing step');
   // a step not part of the pass carries arm's own refusal vocabulary
   assert.throws(() => recordRefusal({ statePath: fx.statePath, step: 'rehearsal', targets: fx.targets }), /not part of pass 4/);
+  // the gate has no refusal record (its refusals are arm-time preconditions with their own rows)
+  assert.throws(() => recordRefusal({ statePath: fx.statePath, step: 'gate', targets: fx.targets }), /the gate has no refusal record/);
+  // a CASCADE refusal is not a corrective trigger: surfaces_live refuses only because earlier
+  // steps of the pass never ran — the pass's CURRENT next step (pr_merge) is the only refusable step
+  assert.throws(() => recordRefusal({ statePath: fx.statePath, step: 'surfaces_live', targets: fx.targets }), /not pass 4's next step .* run the pass's next step first/);
   // the refused step records: the typed event carries the pre() problems verbatim and LIVE evidence
   const n = events(fx.statePath).length;
   const rec = recordRefusal({ statePath: fx.statePath, step: 'pr_merge', targets: fx.targets, note: 'the deadlock: the branch tip moved past the published release' });
@@ -1789,6 +1794,7 @@ test('record-refusal: refuses when the step does not currently refuse; writes th
   assert.equal(ev.evidence.tag, 'v10.0.3');
   assert.equal(ev.evidence.remote_main, git(fx.MAIN, 'rev-parse', 'origin/main'));
   assert.equal(ev.evidence.expected_base, recordedMainMover(events(fx.statePath), 4));
+  assert.equal(ev.evidence.expected_base, git(fx.MAIN, 'rev-parse', 'main'), 'the concrete mover (no reconciliation in this fixture) — the derivation is pinned, not just self-consistent');
   assert.equal(ev.note, 'the deadlock: the branch tip moved past the published release');
   // the schema: a well-formed one validates, malformed ones refuse
   assert.deepEqual(validateEvent(ev), []);
@@ -1870,8 +1876,12 @@ test('pass-5 opening negatives: pre-push refusal, foreign-pass refusal, post-gat
       appendEvent(fx.statePath, { type: 'bootstrap_step', ts: 7, pass: 4, step, cmd: 'seeded', exit: 0, status: 'done', data: step === 'pr_merge' ? { merge_sha: git(fx.MAIN, 'rev-parse', 'origin/main') } : {} });
     }
     appendEvent(fx.statePath, { type: 'bootstrap_step', ts: 7, pass: 4, step: 'gate', cmd: 'seeded', exit: 0, status: 'done' });
-    const rec = recordRefusal({ statePath: fx.statePath, step: 'pr_merge', targets: fx.targets });
-    void rec;
+    // the pass is complete through the gate: the next-step LOCK refuses to record anything (a
+    // refusal on a complete pass is exactly the run-poisoning shape finding 5 closes) …
+    assert.throws(() => recordRefusal({ statePath: fx.statePath, step: 'pr_merge', targets: fx.targets }), /not pass 4's next step .* run the pass's next step first/);
+    // … so the startPass negative uses the hand-appended refusal (this test's own pattern for
+    // shapes record-refusal cannot produce): a post-gate refusal opens nothing
+    appendEvent(fx.statePath, { type: 'bootstrap_refusal', ts: 7, pass: 4, step: 'pr_merge', refusals: [{ name: 'tip_is_published', ok: false, detail: 'post-gate' }], evidence: { tip: 'a', published_tip: 'b', tag: 'v10.0.3', remote_main: 'c', expected_base: 'd' } });
     assert.throws(() => startPass({ statePath: fx.statePath, pass: 5, triggeredBy: events(fx.statePath).findIndex((e) => e.type === 'bootstrap_refusal' && e.pass === 4), version: '10.0.4' }), /gate is already recorded/);
   }
   // (d) a missing step that is NOT post-push refuses — the shared predicate holds the boundary
@@ -1964,6 +1974,99 @@ test('reconcile-advance: a doc-only advance is accepted and becomes pr_merge\'s 
     });
     assert.throws(() => reconcileAdvance({ statePath: fxN.statePath, sha, targets: fxN.targets }), /touches paths the branch changed/);
   }
+});
+
+test('fix round: reconcile-advance refuses empty, non-doc-only, and rewritten advances — the operator-authorized boundary is enforced, not implied', (t) => {
+  const mk = (mkCommit, ...pushArgs) => {
+    const fxN = pass4Shape(t);
+    const c = path.join(fxN.tmp, `cfx-${Math.random().toString(36).slice(2, 8)}`);
+    git(fxN.tmp, 'clone', '-q', '-b', 'main', fxN.bare, c);
+    mkCommit(c);
+    git(c, ...(pushArgs.length ? pushArgs : ['push', '-q', 'origin', 'main']));
+    return { fxN, sha: git(c, 'rev-parse', 'HEAD') };
+  };
+  // an EMPTY commit changes no path — not an advance
+  {
+    const { fxN, sha } = mk((c) => { git(c, 'commit', '-q', '--allow-empty', '-m', 'empty'); });
+    assert.throws(() => reconcileAdvance({ statePath: fxN.statePath, sha, targets: fxN.targets }), /changes no path/);
+  }
+  // a SOURCE file (even a .txt one) outside docs/ is not a documentation path — the closure review's probe shape
+  {
+    const { fxN, sha } = mk((c) => { write(c, 'src/unrelated-new-file.txt', 'source\n'); git(c, 'add', '-A'); git(c, 'commit', '-q', '-m', 'src write'); });
+    assert.throws(() => reconcileAdvance({ statePath: fxN.statePath, sha, targets: fxN.targets }), /non-documentation paths/);
+  }
+  // a root README is still outside docs/ — fail closed, the operator widens the rule deliberately or not at all
+  {
+    const { fxN, sha } = mk((c) => { write(c, 'README.md', 'root readme\n'); git(c, 'add', '-A'); git(c, 'commit', '-q', '-m', 'root readme'); });
+    assert.throws(() => reconcileAdvance({ statePath: fxN.statePath, sha, targets: fxN.targets }), /non-documentation paths/);
+  }
+  // a FORCE-REWITTEN tip (amend) is not an advance of the recorded mover — the ancestry guard
+  {
+    const { fxN, sha } = mk((c) => { git(c, 'commit', '-q', '--amend', '-m', 'rewritten'); }, 'push', '-q', '--force', 'origin', 'main');
+    assert.throws(() => reconcileAdvance({ statePath: fxN.statePath, sha, targets: fxN.targets }), /is not an ancestor .* rewrite is not an advance/);
+  }
+});
+
+test("fix round: recordedMainMover is reconciliation-aware — sequential doc advances reconcile and record-refusal evidence cannot diverge from pr_merge's expected", (t) => {
+  const fx = pass4Shape(t);
+  const moverSha = git(fx.MAIN, 'rev-parse', 'main');
+  // the branch moves past the published tip first — the panel's exact precondition shape, so
+  // pr_merge refuses on tip_is_published throughout (the refusal records after reconciliation)
+  write(fx.worktree, 'src/driver-fix.txt', 'fix\n');
+  git(fx.worktree, 'add', '-A'); git(fx.worktree, 'commit', '-q', '-m', 'driver fix past the tag');
+  fx.tip = git(fx.MAIN, 'rev-parse', fx.branch);
+  git(fx.MAIN, 'push', '-q', 'origin', fx.branch);
+  const pushDoc = (name, file, body) => {
+    const c = path.join(fx.tmp, name);
+    git(fx.tmp, 'clone', '-q', '-b', 'main', fx.bare, c);
+    write(c, file, body);
+    git(c, 'add', '-A'); git(c, 'commit', '-q', '-m', name);
+    git(c, 'push', '-q', 'origin', 'main');
+    return git(c, 'rev-parse', 'HEAD');
+  };
+  // advance A reconciles against the mover
+  const shaA = pushDoc('adv-a', 'docs/handoffs/a.md', 'advance a\n');
+  const recA = reconcileAdvance({ statePath: fx.statePath, sha: shaA, targets: fx.targets });
+  assert.equal(recA.prior_expected, moverSha);
+  // the mover derivation is reconciliation-aware: pr_merge's expected and record-refusal's
+  // evidence.expected_base are THE SAME derivation (recordedMainMover) and name the reconciled sha
+  assert.equal(recordedMainMover(events(fx.statePath), 4), shaA);
+  const armed = armStep({ statePath: fx.statePath, step: 'pr_merge', targets: fx.targets });
+  const pre = armed.preconditions.find((p) => p.name === 'remote_main_expected');
+  assert.ok(pre && pre.ok && pre.detail.includes(shaA), `expected base resolves from the reconciliation: ${JSON.stringify(pre)}`);
+  // pr_merge still refuses on the moved tip — the refusal records with the RECONCILED expected base
+  const refusal = recordRefusal({ statePath: fx.statePath, step: 'pr_merge', targets: fx.targets, note: 'post-reconciliation refusal' });
+  assert.equal(refusal.evidence.expected_base, shaA, 'evidence.expected_base names the reconciled sha — it cannot diverge from pr_merge.pre');
+  // advance B: a SECOND sequential doc-only advance reconciles against A (not the original mover)
+  const shaB = pushDoc('adv-b', 'docs/handoffs/b.md', 'advance b\n');
+  const recB = reconcileAdvance({ statePath: fx.statePath, sha: shaB, targets: fx.targets });
+  assert.equal(recB.prior_expected, shaA, 'the second advance reconciles against the first reconciliation');
+  // a rewrite PAST the reconciled advance refuses: reset to the original mover, force-push a
+  // new doc commit — the reconciliation-aware base (shaB) is not an ancestor of the rewrite
+  const cloneR = path.join(fx.tmp, 'adv-r');
+  git(fx.tmp, 'clone', '-q', '-b', 'main', fx.bare, cloneR);
+  git(cloneR, 'reset', '-q', '--hard', moverSha);
+  write(cloneR, 'docs/handoffs/r.md', 'rewrite\n');
+  git(cloneR, 'add', '-A'); git(cloneR, 'commit', '-q', '-m', 'rewrite');
+  git(cloneR, 'push', '-q', '--force', 'origin', 'main');
+  const shaR = git(cloneR, 'rev-parse', 'HEAD');
+  assert.throws(() => reconcileAdvance({ statePath: fx.statePath, sha: shaR, targets: fx.targets }), /is not an ancestor .* rewrite is not an advance/);
+});
+
+test("fix round: correct-receipt CLI parse refuses malformed target lists whole — no silent drops, no Number('')===0", (t) => {
+  const fx = pass4Shape(t);
+  const script = path.resolve('scripts/bootstrap-v10.mjs');
+  const run = (ct) => spawnSync(process.execPath, [script, 'correct-receipt', `--state=${fx.statePath}`, `--correction-targets=${ct}`, '--note=probe'], { encoding: 'utf8' });
+  const before = events(fx.statePath).length;
+  assert.equal(run('12,34,').status, 2, 'a trailing comma is refused whole');
+  assert.equal(run('0,2,abc').status, 2, "a typo'd entry is refused whole, never dropped");
+  assert.equal(events(fx.statePath).length, before, 'nothing written for malformed lists');
+  const ok = run('3,5');
+  assert.equal(ok.status, 0, `a well-formed list records: ${ok.stderr ?? ''}`);
+  assert.equal(events(fx.statePath).length, before + 1, 'exactly one correction appended');
+  const ev = events(fx.statePath)[events(fx.statePath).length - 1];
+  assert.equal(ev.type, 'receipt_correction');
+  assert.deepEqual(ev.targets, [3, 5]);
 });
 
 test('isBlockingFinding: data.verdict carries machine-readable blocking verdicts; non-blocking ones stay non-blocking', () => {

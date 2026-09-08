@@ -881,10 +881,13 @@ export function recordStep({ statePath, step, exit, digestFile = null, status = 
 
 // ---- recordRefusal / reconcileAdvance / correctReceipt (the v10 recovery contract) -------
 
-// The last recorded main-mover: the same derivation pr_merge.pre's `expected` uses — the
-// latest DONE pr_merge of an earlier pass (its merge commit), else the latest DONE main_push
-// (this pass's own, or an earlier pass's). Order by LEDGER INDEX (the latest event wins), so
-// a reconciled advance recorded later supersedes an earlier mover below.
+// THE one derivation of the last recorded main-mover — pr_merge.pre's `expected`,
+// record-refusal's `evidence.expected_base`, and reconcile-advance's range base all call THIS
+// function, so the three can never diverge: the latest DONE pr_merge of an earlier pass (its
+// merge commit), else the latest DONE main_push (this pass's own, or an earlier pass's),
+// SUPERSEDED by a reconciled doc-only advance that postdates the chosen mover by ledger index —
+// the recorded reconciliation IS the authorized, path-rule-verified account of the remote
+// moving past the recorded base. Ordered by ledger index throughout: the latest event wins.
 export function recordedMainMover(events, pass) {
   let basePr = null;
   for (let p = (pass ?? Number.MAX_SAFE_INTEGER) - 1; p >= 1 && !basePr; p -= 1) {
@@ -896,9 +899,16 @@ export function recordedMainMover(events, pass) {
     const mp = latestOfType(events, 'bootstrap_step', p, 'main_push');
     if (mp && isDone(mp) && mp.data) baseMain = mp;
   }
-  if (basePr) return basePr.data.merge_sha ?? null;
-  if (baseMain) return baseMain.data.main_sha ?? baseMain.data.main_pre_bootstrap ?? null;
-  return null;
+  let mover = null;
+  if (basePr) mover = basePr.data.merge_sha ?? null;
+  else if (baseMain) mover = baseMain.data.main_sha ?? baseMain.data.main_pre_bootstrap ?? null;
+  const moverIndex = Math.max(basePr ? basePr.index : -1, baseMain ? baseMain.index : -1);
+  let reconciled = null;
+  events.forEach((e, ei) => {
+    if (e && e.type === 'main_advance_reconciled' && typeof e.sha === 'string') reconciled = { sha: e.sha, index: ei };
+  });
+  if (reconciled && (!basePr && !baseMain || moverIndex < reconciled.index)) return reconciled.sha;
+  return mover;
 }
 
 // record-refusal — the typed record of a post-publication precondition refusal. A refusal is
@@ -915,6 +925,18 @@ export function recordRefusal({ statePath, step, note = null, targets = {}, now 
   // The step must be a known step of the CURRENT pass — arm's own refusal vocabulary.
   if (!stepsForPass(statusInfo.pass, events).includes(step)) {
     throw new Error(`${step} is not part of pass ${statusInfo.pass} — a corrective pass omits it, so its refusal cannot be recorded`);
+  }
+  // The gate has no refusal record: its preconditions are arm-time checks with their own rows
+  // (the §10.2 audits), and a transient gate refusal recorded as a finding would permanently
+  // unarm the gate behind no_open_corrective_findings.
+  if (step === 'gate') {
+    throw new Error('the gate has no refusal record — its refusals are arm-time preconditions with their own rows (§10.2)');
+  }
+  // The refusal that opens a corrective pass is the pass's CURRENT next step refusing its own
+  // preconditions — never a cascade (an earlier step's absence making a later step refuse
+  // "run the missing step first" instead of the pass's real deadlock).
+  if (step !== statusInfo.next.step) {
+    throw new Error(`${step} is not pass ${statusInfo.pass}'s next step (${statusInfo.next.step} is) — a cascade refusal is not a corrective trigger: run the pass's next step first`);
   }
   // Run the step's pre() LIVE. One snapshot, like the arm: the refusal recorded is the one the
   // preconditions report now, never a caller's claim about what they said earlier.
@@ -977,6 +999,13 @@ export function reconcileAdvance({ statePath, sha, note = null, targets = {}, no
   if (!priorExpected) {
     throw new Error('no recorded main-mover (a done pr_merge or main_push) to reconcile against — the first push defines the base, never a reconciliation');
   }
+  // A rewrite is not an advance: the recorded mover must be an ANCESTOR of the reconciled tip.
+  // A force-push that drops or reorders the mover's descendants, or resets past an already
+  // reconciled advance, is the foreign-commit row, never a reconciliation — the range count
+  // alone cannot tell an advance from a rewrite.
+  if (!isAncestor(MAIN, priorExpected, resolvedSha)) {
+    throw new Error(`${priorExpected.slice(0, 12)} is not an ancestor of ${resolvedSha.slice(0, 12)} — a history rewrite is not an advance; it is the foreign-commit row (stop, inspect, revert or reconcile by hand)`);
+  }
   const count = Number(tryGit(MAIN, ['rev-list', '--count', `${priorExpected}..${resolvedSha}`]) ?? -1);
   if (count !== 1) {
     throw new Error(`the advance range ${priorExpected.slice(0, 12)}..${resolvedSha.slice(0, 12)} contains ${count === -1 ? 'an unresolvable range' : `${count} commits`} — the reconciliation admits exactly one commit; anything else is the foreign-commit row (stop, inspect, revert or reconcile by hand)`);
@@ -998,6 +1027,17 @@ export function reconcileAdvance({ statePath, sha, note = null, targets = {}, no
   const overlap = paths.filter((p) => branchPaths.includes(p));
   if (overlap.length) {
     throw new Error(`commit ${resolvedSha.slice(0, 12)} touches paths the branch changed (${overlap.slice(0, 3).join(', ')}) — a branch-path change is the foreign-commit row, never a reconciliation`);
+  }
+  // The operator-authorized boundary, in the spec row's own words: "a single non-merge
+  // doc-only commit". Documentation lives under docs/ (the walk's precedent: handoff docs);
+  // every changed path must lie there, and an empty-diff commit changes no path at all — it
+  // is not an advance. Fail-closed: anything else is the foreign-commit row, never admitted.
+  if (paths.length === 0) {
+    throw new Error(`commit ${resolvedSha.slice(0, 12)} changes no path (an empty commit) — a reconciled advance is a doc-only commit with at least one documentation path`);
+  }
+  const nonDoc = paths.filter((p) => !p.startsWith('docs/'));
+  if (nonDoc.length) {
+    throw new Error(`commit ${resolvedSha.slice(0, 12)} touches non-documentation paths (${nonDoc.slice(0, 3).join(', ')}) — a reconciled advance is doc-only (every changed path under docs/); anything else is the foreign-commit row (stop, inspect, revert or reconcile by hand)`);
   }
   const author = (tryGit(MAIN, ['log', '-1', '--format=%cn <%ce>', resolvedSha]) || '').trim();
   const record = {
@@ -1794,30 +1834,12 @@ export const STEPS = {
       // corrective pass carries it), else an earlier pass's (when this pass omits main_push because
       // a prior pass completed it). A commit added to main after that is in no carried report and
       // would slip past every later audit.
-      let expected = null;
-      let basePr = null;
-      for (let p = ctx.status.pass - 1; p >= 1 && !basePr; p -= 1) {
-        const pr = latestOfType(ctx.events, 'bootstrap_step', p, 'pr_merge');
-        if (pr && isDone(pr) && pr.data) basePr = pr;
-      }
-      let baseMain = null;
-      for (let p = ctx.status.pass; p >= 1 && !baseMain; p -= 1) {
-        const mp = latestOfType(ctx.events, 'bootstrap_step', p, 'main_push');
-        if (mp && isDone(mp) && mp.data) baseMain = mp;
-      }
-      if (basePr) expected = basePr.data.merge_sha ?? null;
-      else if (baseMain) expected = baseMain.data.main_sha ?? baseMain.data.main_pre_bootstrap ?? null;
-      // A reconciled doc-only main advance postdating the latest recorded mover supersedes it:
-      // the recorded reconciliation IS the authorized, path-rule-verified account of the remote
-      // moving past the recorded base (Part 3 of the recovery contract). Ordered by ledger index —
-      // the latest reconciliation wins over any earlier mover.
-      let reconciled = null;
-      ctx.events.forEach((e, ei) => {
-        if (e && e.type === 'main_advance_reconciled' && typeof e.sha === 'string') reconciled = { sha: e.sha, index: ei };
-      });
-      if (reconciled && (!basePr && !baseMain || Math.max(basePr ? basePr.index : -1, baseMain ? baseMain.index : -1) < reconciled.index)) {
-        expected = reconciled.sha;
-      }
+      // The expected base is THE one derivation — recordedMainMover, the same function
+      // record-refusal's evidence.expected_base and reconcile-advance's range base use — so
+      // the three consumers can never diverge. A reconciled doc-only main advance postdating
+      // the latest recorded mover supersedes it (Part 3 of the recovery contract), ordered by
+      // ledger index: the latest reconciliation wins over any earlier mover.
+      const expected = recordedMainMover(ctx.events, ctx.status.pass);
       problems.push({ name: 'remote_main_expected', ok: !!remoteMain && remoteMain === expected, detail: `remote ${remoteMain ?? 'unreachable'} vs expected ${expected ?? 'unknown'}` });
       // What GitHub will merge is what was released: the tip the push published, on the remote and
       // locally. A branch that moved after the push (local, remote, or both) is refused here.
@@ -2071,8 +2093,12 @@ function main() {
         console.error('--correction-targets and --note are required for correct-receipt');
         process.exit(2);
       }
-      const indexes = args.correctionTargets.split(',').map((x) => Number(x.trim())).filter((x) => Number.isInteger(x));
-      const record = correctReceipt({ statePath, targets: indexes, note: args.note });
+      const indexes = args.correctionTargets.split(',').map((x) => x.trim());
+      if (indexes.length === 0 || indexes.some((x) => !/^\d+$/.test(x))) {
+        console.error(`--correction-targets must be a comma-separated list of non-negative integers (got: ${args.correctionTargets}) — a disclosure names exactly the events it means; a malformed entry is refused whole, never dropped`);
+        process.exit(2);
+      }
+      const record = correctReceipt({ statePath, targets: indexes.map(Number), note: args.note });
       console.log(JSON.stringify(record));
       process.exit(0);
     }
