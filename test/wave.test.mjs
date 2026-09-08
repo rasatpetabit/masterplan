@@ -6,7 +6,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { prepareWave, declaredScope, verifyScope, qctlEligible, checkWaveDisjoint, captureInputFingerprint } from '../lib/wave.mjs';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { prepareWave, declaredScope, verifyScope, qctlEligible, checkWaveDisjoint, captureInputFingerprint, goalsReminder, bundleGoalsReminder, waveSummary, rawIntentOutcomeLine } from '../lib/wave.mjs';
+import { parseGoals, preCodeMaskGoalsHash, goalsHash } from '../lib/goals.mjs';
 
 // A state bundle (v8 shape) + a matching plan.index.json. Two waves; task 4 already done.
 const state = () => ({
@@ -594,4 +598,403 @@ test('captureInputFingerprint: git failure → fail-loud error naming the worktr
     () => captureInputFingerprint('/nope', {}, exec),
     /captureInputFingerprint: git -C \/nope rev-parse HEAD failed: fatal: not a git repository/,
   );
+});
+
+// ---------------------------------------------------------------------------
+// The mid-run goals reminder (wave task 5)
+// ---------------------------------------------------------------------------
+
+const V2_GOALS = [
+  'topic: |',
+  '  make the finish prove the deploy',
+  '',
+  '## Intent',
+  'why: runs archive without proving anything was deployed',
+  'outcome: a run archives complete only when the thing is live and the operator agrees',
+  'anti_goals: a green test suite standing in for a deployment',
+  'done_means: release, install and a live check',
+  '',
+  '## G1: The deploy stage runs',
+  '## G2: The live check gates the archive',
+  '## G3: The operator confirms intent',
+  '',
+].join('\n');
+
+const V1_GOALS = [
+  'topic: ship the widget',
+  '',
+  '## G1: the widget compiles',
+  'signal: command',
+  '',
+  '## G2: the widget is documented',
+  'signal: docs',
+  '',
+].join('\n');
+
+test('a v2 reminder quotes the Intent outcome line VERBATIM', () => {
+  const r = goalsReminder(V2_GOALS);
+  assert.equal(r.version, 2);
+  // Verbatim: a paraphrase is a different bar from the one the finish measures against.
+  assert.equal(r.outcome, 'a run archives complete only when the thing is live and the operator agrees');
+  // Asserted against the SOURCE document, not against the parsed value the implementation
+  // also produced — comparing the reminder to its own input would prove nothing.
+  const sourceLine = V2_GOALS.split('\n').find((l) => l.startsWith('outcome:'));
+  assert.equal(r.line, sourceLine);
+  assert.equal(r.goals.length, 3);
+});
+
+test('a v2 outcome line is quoted with its ORIGINAL spacing, not a normalized rebuild', () => {
+  // The teeth of "verbatim": the parsed value is trimmed and split off its key, so a reminder
+  // rebuilt from it silently reformats the operator's own words. Padded, this fixture differs
+  // from any reconstruction.
+  const padded = V2_GOALS.replace(
+    /^outcome: .*$/m,
+    'outcome:    the release is live   and the operator agrees   ',
+  );
+  const r = goalsReminder(padded);
+  const sourceLine = padded.split('\n').find((l) => l.trimStart().startsWith('outcome:'));
+  assert.equal(r.line, sourceLine, 'the source line survives byte for byte');
+  assert.notEqual(r.line, `outcome: ${r.outcome}`, 'a rebuild from the parsed value would differ');
+});
+
+test('rawIntentOutcomeLine only reads INSIDE the Intent block', () => {
+  // A goal further down the document may legitimately carry its own `outcome:` key. Picking
+  // that up instead of the Intent's would quote the wrong bar entirely.
+  const withGoalOutcome = [
+    'topic: t', '',
+    '## Intent',
+    'why: w',
+    'outcome: the intent outcome',
+    'done_means: d', '',
+    '## G1: a goal',
+    'outcome: the GOAL outcome, which is not the intent',
+    '## G2: another', '## G3: a third', '',
+  ].join('\n');
+  assert.equal(rawIntentOutcomeLine(withGoalOutcome), 'outcome: the intent outcome');
+  // No Intent block at all → nothing to quote, even though the document has an outcome line.
+  assert.equal(rawIntentOutcomeLine('## G1: g\noutcome: not an intent\n'), null);
+  assert.equal(rawIntentOutcomeLine(null), null);
+});
+
+test('a v1 bundle with no Intent block falls back to its goals rather than erroring', () => {
+  const r = goalsReminder(V1_GOALS);
+  assert.equal(r.version, 1);
+  assert.equal(r.outcome, null, 'there is no Intent block to quote');
+  assert.match(r.line, /^goals: /);
+  assert.match(r.line, /G1: the widget compiles/);
+  assert.match(r.line, /G2: the widget is documented/);
+});
+
+test('an absent or empty goals document yields a reminder with no line', () => {
+  for (const input of [null, undefined, '', '   ', 42]) {
+    const r = goalsReminder(input);
+    assert.equal(r.line, null, JSON.stringify(input));
+    assert.equal(r.version, null);
+    assert.deepEqual(r.goals, []);
+  }
+});
+
+test('a NON-EMPTY malformed document is swallowed rather than taking down the wave', () => {
+  // These reach parseGoals for real (the empty-input cases above are rejected before it), so
+  // this is the case that actually exercises the catch. A reminder is a courtesy; the
+  // finish-time goal check is what enforces the bar, and a summary must never fail a wave.
+  const malformed = '## Intent\nwhy: only a why, no outcome and no goals at all\n';
+  const r = goalsReminder(malformed);
+  assert.equal(r.line, null);
+  assert.deepEqual(r.goals, []);
+});
+
+test('a v2 document whose Intent carries no outcome still reminds with its goals', () => {
+  const noOutcome = V2_GOALS.replace(/^outcome: .*$/m, 'why: only a why here');
+  const r = goalsReminder(noOutcome);
+  assert.equal(r.version, 2, 'the Intent block still makes it v2');
+  assert.equal(r.outcome, null);
+  assert.match(r.line, /^goals: /);
+});
+
+test('waveSummary is terse and carries the reminder', () => {
+  const v2 = waveSummary({ wave: 3, recorded: [14, 25, 45], next: 'wave 4', goalsMd: V2_GOALS });
+  assert.equal(v2.lines.length, 2, 'one summary line plus the reminder — never a flood');
+  assert.match(v2.lines[0], /^wave 3: recorded tasks 14, 25, 45 — next: wave 4$/);
+  assert.match(v2.lines[1], /^outcome: a run archives complete/);
+
+  // A failed count is surfaced, and a bundle with no goals produces no second line.
+  const failed = waveSummary({ wave: 4, recorded: [3], failed: [{ id: 9 }], goalsMd: null });
+  assert.match(failed.lines[0], /1 failed/);
+  assert.equal(failed.lines.length, 1);
+});
+
+test('bundleGoalsReminder reads the bundle and tolerates a bundle with no goals', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-wave-goals-'));
+  try {
+    assert.equal(bundleGoalsReminder(dir).line, null, 'no goals.md is not an error');
+    fs.writeFileSync(path.join(dir, 'goals.md'), V2_GOALS);
+    assert.match(bundleGoalsReminder(dir).line, /^outcome: a run archives complete/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ---- round-2 findings: the extractor must use the parser's own lexical rules -------------
+
+test('a FENCED example outcome is never quoted as the run\'s intent', () => {
+  // A goals document may quote markdown as an example — this project's own do. Quoting a
+  // sample back to the operator as the bar the finish measures against is worse than quoting
+  // nothing at all.
+  const withFence = [
+    'topic: t', '',
+    '## Intent',
+    'why: w',
+    '```text',
+    'outcome: EXAMPLE, do not use',
+    '```',
+    'outcome: the release is live',
+    'done_means: d', '',
+    '## G1: a', '## G2: b', '## G3: c', '',
+  ].join('\n');
+  assert.equal(rawIntentOutcomeLine(withFence), 'outcome: the release is live');
+
+  // An INDENTED code block is code too.
+  const indented = [
+    'topic: t', '',
+    '## Intent',
+    'why: w',
+    '',
+    '    outcome: an indented example',
+    '',
+    'outcome: the real one',
+    '', '## G1: a', '## G2: b', '## G3: c', '',
+  ].join('\n');
+  assert.equal(rawIntentOutcomeLine(indented), 'outcome: the real one');
+
+  // ...and when the ONLY outcome-looking line is fenced, there is nothing to quote.
+  const onlyFenced = ['## Intent', 'why: w', '```', 'outcome: example', '```', '', '## G1: a', ''].join('\n');
+  assert.equal(rawIntentOutcomeLine(onlyFenced), null);
+});
+
+test('an H1 ends the Intent block; an H3 does not', () => {
+  const afterH1 = [
+    '## Intent', 'why: w', 'done_means: d', '',
+    '# Notes',
+    'outcome: this is NOT the intent outcome', '',
+  ].join('\n');
+  assert.equal(rawIntentOutcomeLine(afterH1), null, 'content past an H1 is outside the block');
+
+  const underH3 = [
+    '## Intent', 'why: w',
+    '### Detail',
+    'outcome: still inside the Intent block', '',
+  ].join('\n');
+  assert.equal(rawIntentOutcomeLine(underH3), 'outcome: still inside the Intent block');
+});
+
+test('a DUPLICATE Intent heading resolves the same way parseGoals does — the last one wins', () => {
+  // parseGoals re-initialises its intent on every `## Intent`, so the later block is what its
+  // verdict is judged against. A quotation that picked the earlier one would show the operator
+  // a different bar from the one actually in force.
+  const dup = [
+    'topic: t', '',
+    '## Intent', 'why: first', 'outcome: the FIRST outcome', '',
+    '## Intent', 'why: second', 'outcome: the SECOND outcome', '',
+    '## G1: a', '## G2: b', '## G3: c', '',
+  ].join('\n');
+  assert.equal(rawIntentOutcomeLine(dup), 'outcome: the SECOND outcome');
+  assert.equal(parseGoals(dup).intent.outcome, 'the SECOND outcome', 'and the parser agrees');
+
+  // ...including when the later block has none: the parser's reset means there is no outcome
+  // in force, so there is nothing to quote either.
+  const dupNoSecond = [
+    'topic: t', '',
+    '## Intent', 'why: first', 'outcome: the FIRST outcome', '',
+    '## Intent', 'why: second', 'done_means: d', '',
+    '## G1: a', '## G2: b', '## G3: c', '',
+  ].join('\n');
+  assert.equal(rawIntentOutcomeLine(dupNoSecond), null);
+  assert.equal(parseGoals(dupNoSecond).intent.outcome, '');
+});
+
+test('a CRLF document yields a clean line — no stray carriage return', () => {
+  // split('\n') alone strips the LF and leaves the CR ON the line: a control character in the
+  // operator's summary, and only half the terminator removed.
+  const crlf = V2_GOALS.replace(/\n/g, '\r\n');
+  const r = goalsReminder(crlf);
+  assert.equal(r.line.includes('\r'), false, JSON.stringify(r.line));
+  assert.equal(r.line, 'outcome: a run archives complete only when the thing is live and the operator agrees');
+
+  // Only the TERMINATOR is removed — real leading and trailing spaces still survive.
+  const padded = V2_GOALS.replace(/^outcome: .*$/m, 'outcome:   padded and trailing   ').replace(/\n/g, '\r\n');
+  assert.equal(goalsReminder(padded).line, 'outcome:   padded and trailing   ');
+});
+
+// ---- round-3: the quotation and the parse must describe the SAME document ----------------
+//
+// The reminder is now taken from the parser's own capture of the line it assigned, so the two
+// cannot use different lexical rules. Each case below asserts BOTH sides agree — a divergence
+// in either direction is the defect these close.
+
+function agrees(doc, expectedLine, expectedValue) {
+  const parsed = parseGoals(doc);
+  assert.equal(rawIntentOutcomeLine(doc), expectedLine, 'raw line');
+  assert.equal(parsed.intentOutcomeLine ?? null, expectedLine, 'the parser captured the same line');
+  assert.equal(parsed.intent ? parsed.intent.outcome : '', expectedValue, 'and the value it assigned');
+}
+
+test('a fenced example is invisible to BOTH the parser and the quotation', () => {
+  const onlyFenced = [
+    'topic: t', '',
+    '## Intent', 'why: w',
+    '```text',
+    'outcome: EXAMPLE, do not use',
+    '```',
+    'done_means: d', '',
+    '## G1: a', '## G2: b', '## G3: c', '',
+  ].join('\n');
+  // Neither picks up the example: the reminder falls back to the goal list, and the verdict is
+  // judged against a document with no declared outcome.
+  agrees(onlyFenced, null, '');
+});
+
+test('a LONGER fence is not closed by a shorter fence-looking line inside it', () => {
+  // The mask used to collapse every backtick fence to three, so a ```text line inside a
+  // ````markdown block read as the closer and everything after it stopped being masked.
+  const nested = [
+    'topic: t', '',
+    '## Intent', 'why: w',
+    '````markdown',
+    '```text',
+    'outcome: EXAMPLE inside the four-backtick fence',
+    '```',
+    '````',
+    'outcome: the real one',
+    'done_means: d', '',
+    '## G1: a', '## G2: b', '## G3: c', '',
+  ].join('\n');
+  agrees(nested, 'outcome: the real one', 'the real one');
+
+  // A fence with a trailing word is not a closer either.
+  const notAClose = [
+    '## Intent', 'why: w',
+    '```',
+    'outcome: still inside',
+    '``` and some prose',
+    'outcome: also still inside',
+    '```',
+    'outcome: out at last', '',
+  ].join('\n');
+  agrees(notAClose, 'outcome: out at last', 'out at last');
+});
+
+test('an INDENTED H1 ends the Intent block, for the parser as well as the quotation', () => {
+  // A heading may carry up to three leading spaces and still be a heading. Requiring `#` at
+  // column zero let a validly-indented H1 be walked straight through.
+  for (const indent of ['', ' ', '  ', '   ']) {
+    const doc = [
+      'topic: t', '',
+      '## Intent', 'why: w', 'done_means: d', '',
+      `${indent}# Notes`,
+      'outcome: this is NOT the intent outcome', '',
+      '## G1: a', '## G2: b', '## G3: c', '',
+    ].join('\n');
+    agrees(doc, null, '');
+  }
+  // Four spaces is an indented code block, not a heading — so the block never ends, and the
+  // line after it is still inside Intent.
+  const codeIndent = [
+    'topic: t', '',
+    '## Intent', 'why: w',
+    '    # not a heading, this is code',
+    'outcome: still inside the block', '',
+    '## G1: a', '## G2: b', '## G3: c', '',
+  ].join('\n');
+  agrees(codeIndent, 'outcome: still inside the block', 'still inside the block');
+});
+
+test('DUPLICATE outcome lines in one block: the last wins on both sides', () => {
+  // The extractor used to return the first eligible line while the parser's field assignment
+  // kept the last — so the operator was shown wording the verdict was not judged against.
+  const dup = [
+    'topic: t', '',
+    '## Intent', 'why: w',
+    'outcome: obsolete wording',
+    'outcome: final wording',
+    'done_means: d', '',
+    '## G1: a', '## G2: b', '## G3: c', '',
+  ].join('\n');
+  agrees(dup, 'outcome: final wording', 'final wording');
+});
+
+test('an Intent block AFTER the goals still wins, empty or not', () => {
+  const afterGoals = [
+    'topic: t', '',
+    '## Intent', 'why: first', 'outcome: the first outcome', '',
+    '## G1: a', '## G2: b', '## G3: c', '',
+    '## Intent', 'why: last', 'outcome: the last outcome', '',
+  ].join('\n');
+  agrees(afterGoals, 'outcome: the last outcome', 'the last outcome');
+
+  const afterGoalsEmpty = [
+    'topic: t', '',
+    '## Intent', 'why: first', 'outcome: the first outcome', '',
+    '## G1: a', '## G2: b', '## G3: c', '',
+    '## Intent', 'why: last', 'done_means: d', '',
+  ].join('\n');
+  agrees(afterGoalsEmpty, null, '');
+});
+
+test('CRLF: the parser captures a clean line, and the value still parses', () => {
+  const doc = ['topic: t', '', '## Intent', 'why: w', 'outcome:  padded  ', 'done_means: d', '',
+    '## G1: a', '## G2: b', '## G3: c', ''].join('\r\n');
+  agrees(doc, 'outcome:  padded  ', 'padded');
+  assert.equal(rawIntentOutcomeLine(doc).includes('\r'), false);
+});
+
+// ---- round-4: the code-aware parse is a NORMALIZATION CHANGE, and tabs indent code ---------
+
+test('a TAB-indented example is code, so it can never become the declared outcome', () => {
+  // Markdown measures indentation in COLUMNS and a tab is a full step, so a single leading tab
+  // is an indented code block. Counting characters read it as one space of whitespace, leaving
+  // the example as content — the exact escape the mask exists to close.
+  const tabbed = ['topic: t', '', '## Intent', 'why: w',
+    '\toutcome: EXAMPLE, not the intent', '', '## G1: a', '## G2: b', '## G3: c', ''].join('\n');
+  agrees(tabbed, null, '');
+
+  // A tab-indented fence marker is code too, not a fence opener — so it cannot close or open
+  // a block and swallow the real outcome after it.
+  const tabFence = ['topic: t', '', '## Intent', 'why: w',
+    '\t```', 'outcome: the real one', '', '## G1: a', '## G2: b', '## G3: c', ''].join('\n');
+  assert.equal(rawIntentOutcomeLine(tabFence), 'outcome: the real one');
+
+  // Spaces then a tab still reaches four columns.
+  const mixed = ['## Intent', 'why: w', '  \toutcome: also code', ''].join('\n');
+  assert.equal(rawIntentOutcomeLine(mixed), null);
+});
+
+test('preCodeMaskGoalsHash detects a bundle whose stored hash predates the code mask', () => {
+  // Masking code and ending Intent at an H1 are corrections, but they are ALSO a normalization
+  // change: a goals.md that quotes parser-looking text hashed differently before. Re-deriving
+  // its hash without noticing would void every goal_check and goal_waived receipt keyed to the
+  // stored one — the same hazard legacyGoalsHash guards for the `topic: |` block form.
+  const fenced = ['topic: t', '', '## Intent', 'why: w', 'outcome: the real outcome',
+    '```text', 'outcome: an example', '```', 'done_means: d', '',
+    '## G1: a', '## G2: b', '## G3: c', ''].join('\n');
+  const before = preCodeMaskGoalsHash(fenced);
+  assert.ok(before, 'a document quoting parser-looking text is a migration');
+  assert.notEqual(before, goalsHash(parseGoals(fenced)), 'and the two hashes really differ');
+  // The old parse took the fenced line (last assignment wins); the new one does not.
+  assert.equal(parseGoals(fenced).intent.outcome, 'the real outcome');
+
+  // A document with nothing to mask is NOT a migration — null, so no bundle is warned without
+  // cause.
+  const plain = ['topic: t', '', '## Intent', 'why: w', 'outcome: the real outcome', 'done_means: d', '',
+    '## G1: a', '## G2: b', '## G3: c', ''].join('\n');
+  assert.equal(preCodeMaskGoalsHash(plain), null);
+  assert.equal(preCodeMaskGoalsHash(42), null);
+});
+
+const OWN_BUNDLE_PATH = path.join('/srv/dev/ras/masterplan', 'docs', 'masterplan', 'intent-to-completion', 'goals.md');
+test('this run\'s OWN frozen goals.md is not a migration', { skip: !fs.existsSync(OWN_BUNDLE_PATH) && 'this run\'s own bundle is host-local (absent on the CI runner — the check runs on the dev host)' }, () => {
+  // The change must not invalidate the bundle it is being developed in — checked directly
+  // rather than assumed, because a re-hash here would void this run's own receipts.
+  const live = fs.readFileSync(OWN_BUNDLE_PATH, 'utf8');
+  assert.equal(preCodeMaskGoalsHash(live), null, 'the live bundle hashes identically under both parsers');
 });

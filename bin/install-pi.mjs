@@ -19,18 +19,19 @@
 // the install without touching the live link.
 //
 // Usage:
-//   node bin/install-pi.mjs [--ref=<ref>] [--source=<repo>]
+//   node bin/install-pi.mjs [--ref=<ref>] [--source=<repo>] [--expect=<version>]
 //                           [--install-root=<dir>] [--pi-root=<dir>] [--force]
-//   node bin/install-pi.mjs --check [--install-root=<dir>] [--pi-root=<dir>]
+//   node bin/install-pi.mjs --check [--install-root=<dir>] [--pi-root=<dir>] [--expect=<version>]
 //
 // --check is read-only: verifies current resolves, metadata agrees, skill
 // links resolve under current, and agent registration is drift-free.
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { runRegister } from './register-pi-agents.mjs';
+import { readEnv, childEnv } from '../lib/config.mjs';
 
 const INSTALL_META = '.pi-install.json';
 const RELEASES_DIR = 'releases';
@@ -62,10 +63,11 @@ function parseArgs(argv) {
   for (const arg of argv) {
     if (arg === '--check') { opts.check = true; continue; }
     if (arg === '--force') { opts.force = true; continue; }
-    const m = arg.match(/^--(ref|source|install-root|pi-root)=(.+)$/);
+    const m = arg.match(/^--(ref|source|install-root|pi-root|expect)=(.+)$/);
     if (m) {
-      const key = { ref: 'ref', source: 'source', 'install-root': 'installRoot', 'pi-root': 'piRoot' }[m[1]];
+      const key = { ref: 'ref', source: 'source', 'install-root': 'installRoot', 'pi-root': 'piRoot', expect: 'expect' }[m[1]];
       opts[key] = m[2];
+      if (key === 'expect') opts.expect = opts.expect.replace(/^v/, '');
       continue;
     }
     die(`unknown option: ${arg}`, 2);
@@ -130,8 +132,8 @@ function ensureSkillLink(piRoot, installRoot, name, force) {
 function install(opts) {
   const source = opts.source ?? defaultSource();
   const sha = resolveSha(source, opts.ref);
-  const installRoot = opts.installRoot ?? path.join(process.env.HOME ?? '/root', '.local', 'share', 'masterplan');
-  const piRoot = opts.piRoot ?? path.join(process.env.HOME ?? '/root', '.pi');
+  const installRoot = opts.installRoot ?? path.join(readEnv('HOME') ?? '/root', '.local', 'share', 'masterplan');
+  const piRoot = opts.piRoot ?? path.join(readEnv('HOME') ?? '/root', '.pi');
   const releaseDir = path.join(installRoot, RELEASES_DIR, sha);
   const currentPath = path.join(installRoot, CURRENT_LINK);
 
@@ -202,9 +204,27 @@ function install(opts) {
   }) + '\n');
 }
 
+// The version of the EXECUTING RELEASE itself — read from the release's own metadata
+// (<releaseDir>/package.json, falling back to its .claude-plugin/plugin.json), never from
+// the host's ambient Claude discovery (pre-publish review finding 3). The `version` command
+// runs readPluginVersion, which resolves the HOST's marketplace/cache candidates — a stale
+// marketplace on a Claude host would poison a Pi probe that has nothing to do with Claude,
+// and the Pi-before-Claude bootstrap order would deadlock on it. The marketplace is the
+// claude_surface step's and doctor's plugin-registry-drift's concern, never this check's.
+function releaseOwnVersion(releaseDir) {
+  const candidates = [path.join(releaseDir, 'package.json'), path.join(releaseDir, '.claude-plugin', 'plugin.json')];
+  for (const c of candidates) {
+    try {
+      const v = JSON.parse(fs.readFileSync(c, 'utf8'))?.version;
+      if (typeof v === 'string' && v !== '') return v;
+    } catch { /* try next candidate */ }
+  }
+  return null;
+}
+
 function check(opts) {
-  const installRoot = opts.installRoot ?? path.join(process.env.HOME ?? '/root', '.local', 'share', 'masterplan');
-  const piRoot = opts.piRoot ?? path.join(process.env.HOME ?? '/root', '.pi');
+  const installRoot = opts.installRoot ?? path.join(readEnv('HOME') ?? '/root', '.local', 'share', 'masterplan');
+  const piRoot = opts.piRoot ?? path.join(readEnv('HOME') ?? '/root', '.pi');
   const problems = [];
   if (!fs.existsSync(installRoot)) {
     process.stdout.write(JSON.stringify({ install_pi: 'check_failed', problems: [`install root missing: ${installRoot}`] }) + '\n');
@@ -232,9 +252,23 @@ function check(opts) {
         const st = fs.lstatSync(linkPath);
         if (!st.isSymbolicLink()) problems.push(`${linkPath} is not a symlink`);
         else {
+          // The link must resolve to the EXACT current release's skill directory — not merely
+          // somewhere under the install root (pre-publish review finding 4): a link into any
+          // other directory (a stale release, an empty wrong-skill dir) is drift. And the
+          // entrypoint must be a real, readable SKILL.md in the resolved dir — a link whose
+          // target has no SKILL.md is a broken skill no matter where it points.
           const resolved = fs.realpathSync(linkPath);
-          if (!resolved.startsWith(fs.realpathSync(installRoot) + path.sep)) {
-            problems.push(`${linkPath} resolves OUTSIDE the install root: ${resolved}`);
+          const expected = path.join(releaseDir, 'skills', name);
+          if (resolved !== expected) {
+            problems.push(`${linkPath} resolves to ${resolved}, not the current release's skill directory ${expected} — the skill link is drift`);
+          }
+          const skillMd = path.join(resolved, 'SKILL.md');
+          try {
+            const skSt = fs.statSync(skillMd);
+            if (!skSt.isFile()) problems.push(`${skillMd} is not a regular file — the skill entrypoint is not readable`);
+            else fs.accessSync(skillMd, fs.constants.R_OK);
+          } catch {
+            problems.push(`${skillMd} is missing or unreadable under the resolved skill link — the skill has no entrypoint there`);
           }
         }
       } catch {
@@ -249,7 +283,52 @@ function check(opts) {
     process.stdout.write(JSON.stringify({ install_pi: 'check_failed', problems }) + '\n');
     process.exit(1);
   }
-  process.stdout.write(JSON.stringify({ install_pi: 'check_ok', version: meta?.version, sha: meta?.sha, release: releaseDir }) + '\n');
+
+  if (opts.expect) {
+    let currentDir = null;
+    try {
+      currentDir = fs.realpathSync(currentPath);
+    } catch {
+      problems.push('current release missing');
+    }
+    if (currentDir) {
+      // The probe binds to the EXECUTING RELEASE'S OWN METADATA (finding 3) — never the
+      // host's ambient Claude discovery. The binary still runs (an install whose entrypoint
+      // cannot start is not live whatever its metadata says), but the version it is judged
+      // on is the release's own package.json/plugin.json, so a stale Claude marketplace on
+      // the host cannot poison the Pi check.
+      const own = releaseOwnVersion(currentDir);
+      if (own === null) problems.push(`the current release carries no readable package.json/.claude-plugin/plugin.json version under ${currentDir}`);
+      else if (own !== opts.expect) problems.push(`expected v${opts.expect}, the installed release's own metadata reports ${own}`);
+      try {
+        // The binary must RUN and print the RELEASE'S OWN version — pinned through
+        // CLAUDE_PLUGIN_ROOT (readPluginVersion's trusted "actually-loaded plugin" candidate,
+        // which takes priority over every marketplace/cache candidate), so the banner
+        // reflects the EXECUTING release wherever that release carries its own plugin.json
+        // (the real masterplan shape), and a stale marketplace elsewhere on the host can
+        // neither pass nor fail this probe.
+        const out = execFileSync(process.execPath, [path.join(currentDir, 'bin', 'masterplan.mjs'), 'version'], { cwd: currentDir, encoding: 'utf8', timeout: 30000, env: childEnv({ CLAUDE_PLUGIN_ROOT: currentDir }) });
+        const m = out.match(/v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)/);
+        if (!m) problems.push(`installed binary reports no version: ${out.trim()}`);
+        else if (fs.existsSync(path.join(currentDir, '.claude-plugin', 'plugin.json')) && m[1] !== own) {
+          problems.push(`the installed binary reports v${m[1]} but the release's own metadata says ${own} — the executing release and its entrypoint disagree`);
+        }
+      } catch (e) {
+        if (e.code === 'ETIMEDOUT' || /ETIMEDOUT/.test(e.message)) {
+          problems.push('installed binary timed out after 30s');
+        } else {
+          problems.push(`installed binary not executable: ${e.message}`);
+        }
+      }
+    }
+    if (problems.length) {
+      process.stdout.write(JSON.stringify({ install_pi: 'check_failed', problems }) + '\n');
+      process.exit(1);
+    }
+  }
+
+  const version = opts.expect || meta?.version;
+  process.stdout.write(JSON.stringify({ install_pi: 'check_ok', version, sha: meta?.sha, release: releaseDir }) + '\n');
 }
 
 const opts = parseArgs(process.argv.slice(2));

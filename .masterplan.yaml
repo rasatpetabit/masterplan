@@ -1,0 +1,21 @@
+# .masterplan.yaml — repo-local masterplan configuration (spec §7.1 definition of done)
+done:
+  version_from: .claude-plugin/plugin.json      # file whose "version" fills ${version}
+  release:
+    - run: node scripts/release.mjs --version=${version}
+      check: git rev-parse -q --verify refs/tags/v${version}
+  install:
+    - run: git push origin main --follow-tags
+      check: git ls-remote --exit-code --tags origin refs/tags/v${version} >/dev/null || exit 1
+    - run: gh run list --branch v${version} --workflow ci.yml --json databaseId --jq '.[0].databaseId' | xargs gh run watch --exit-status
+      check: gh run list --branch v${version} --workflow ci.yml --json conclusion --jq '.[0].conclusion' | grep -qx success
+    - run: node bin/install-pi.mjs --ref=v${version}
+      check: node bin/install-pi.mjs --check --expect=v${version}
+  user_only:
+    - text: "/plugin marketplace update rasatpetabit-masterplan, then /plugin update masterplan, then /reload-plugins"
+      check: node ~/.claude/plugins/cache/rasatpetabit-masterplan/masterplan/${version}/bin/masterplan.mjs version | grep -q v${version}
+    - text: "register the SessionStart(source: compact) resume-brief rule in /srv/workflows/hooks/policy.toml"
+      check: node bin/doctor.mjs --only=resume-brief-hook
+  live_check:
+    - run: node bin/install-pi.mjs --check --expect=v${version}
+    - run: node ~/.claude/plugins/cache/rasatpetabit-masterplan/masterplan/${version}/bin/doctor.mjs --only=plugin-registry-drift

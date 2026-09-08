@@ -4,7 +4,7 @@
 // The five plan-mandated cases: clean wave, out-of-scope revert, dirty-WT crash reconcile,
 // split-commit isolation, lost-to-other abort — plus the failed-task marker semantics and the
 // precondition guards (foreign wave / plan run).
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -16,6 +16,20 @@ import { captureWatchBaseline, writeWatchBaseline, snapshotRepoState, workspaceR
 import { readState, writeState } from '../lib/bundle.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
 import { acquireOwner } from '../lib/owner-fs.mjs';
+
+// Every fixture here builds a tree under os.tmpdir(); without this they accumulate across
+// runs and fill a shared /tmp. Registered on creation, removed once when the file finishes.
+const FIXTURE_TMPDIRS = [];
+function mkdtempTracked(prefix) {
+  const dir = fs.mkdtempSync(prefix);
+  FIXTURE_TMPDIRS.push(dir);
+  return dir;
+}
+after(() => {
+  for (const d of FIXTURE_TMPDIRS) {
+    try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* already gone */ }
+  }
+});
 
 function git(dir, ...args) {
   return String(execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' })).trim();
@@ -30,7 +44,7 @@ function write(root, rel, content) {
 // masterplan/<slug>, a bundle with the given tasks + active_run marker, and the owner
 // lock held by identity sess-A (record-result's heartbeat is STRICT: acquire precedes).
 function makeFixture({ tasks, activeRun, slug = 't22' }) {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-wavecommit-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-wavecommit-'));
   const MAIN = path.join(tmp, 'main');
   fs.mkdirSync(MAIN, { recursive: true });
   git(MAIN, 'init', '--initial-branch=main');
@@ -918,7 +932,7 @@ test('a sibling file that was ALREADY dirty at launch is reported but never reve
 // loose-file drift detection works off-fleet and for any worktree nesting.
 
 test('A8 workspaceRootFor derives the repo-root parent, off-fleet and non-null', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-wsroot-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-wsroot-'));
   // Off-fleet (under os.tmpdir, not /srv/dev) and a plain repo at the container root.
   const wsRoot = tmp;
   const repo = path.join(wsRoot, 'repo');
@@ -935,7 +949,7 @@ test('A8 workspaceRootFor derives the repo-root parent, off-fleet and non-null',
 });
 
 test('A8 workspaceRootFor is stable across a linked worktree nesting', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-wsroot-wt-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-wsroot-wt-'));
   const wsRoot = path.join(tmp, 'ws');
   const repo = path.join(wsRoot, 'repo');
   fs.mkdirSync(repo, { recursive: true });
@@ -992,4 +1006,88 @@ test('A8 record-result drift check reverts a new loose workspace-root file using
   );
   // Baseline entries are untouched.
   assert.equal(fs.existsSync(path.join(wsRoot, 'known-entry')), true);
+});
+
+// ---------------------------------------------------------------------------
+// The mid-run goals reminder reaches the shell (wave task 5)
+// ---------------------------------------------------------------------------
+//
+// goalsReminder is unit-tested in test/wave.test.mjs. What these prove is the half a unit
+// test structurally cannot: that the reminder travels out of the REAL record transaction the
+// shell reads, for both goals-document versions and for a bundle with no goals at all.
+
+const V2_GOALS_DOC = [
+  'topic: |',
+  '  prove the deploy',
+  '',
+  '## Intent',
+  'why: runs archive without proving anything shipped',
+  'outcome: a run archives complete only when the thing is live',
+  'anti_goals: a green suite standing in for a deployment',
+  'done_means: release and a live check',
+  '',
+  '## G1: the deploy stage runs',
+  '## G2: the live check gates the archive',
+  '## G3: the operator confirms intent',
+  '',
+].join('\n');
+
+const V1_GOALS_DOC = [
+  'topic: ship the widget',
+  '',
+  '## G1: the widget compiles',
+  'signal: command',
+  '',
+  '## G2: the widget is documented',
+  'signal: docs',
+  '',
+].join('\n');
+
+function recordOneCleanWave(fx) {
+  write(fx.WT, 'src/a.txt', 'A\n');
+  return recordWaveResult({
+    statePath: fx.statePath,
+    self: fx.self,
+    now: 2000,
+    result: { wave: 1, baseline: [], tasks: [digest(1, 'done')] },
+  });
+}
+
+function goalsFixture(slug, goalsMd) {
+  const fx = makeFixture({
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    activeRun: { wave: 1, run_id: 'r1', task_id: 'wf1', scope: ['src/a.txt'], baseline: [] },
+    slug,
+  });
+  if (goalsMd !== null) fs.writeFileSync(path.join(fx.bundleDir, 'goals.md'), goalsMd);
+  return fx;
+}
+
+test('record-result carries the v2 Intent outcome line VERBATIM out to the shell', () => {
+  const fx = goalsFixture('t-goals-v2', V2_GOALS_DOC);
+  const res = recordOneCleanWave(fx);
+  assert.equal(res.outcome, 'recorded');
+  // Compared to the SOURCE document, so a reformatting regression anywhere along the path
+  // from goals.md to the shell's output fails here.
+  const sourceLine = V2_GOALS_DOC.split('\n').find((l) => l.startsWith('outcome:'));
+  assert.ok(res.summary.includes(sourceLine), JSON.stringify(res.summary));
+  assert.equal(res.goals_reminder.version, 2);
+  // Terse: the wave line plus the reminder, never a flood.
+  assert.equal(res.summary.length, 2, JSON.stringify(res.summary));
+  assert.match(res.summary[0], /^wave 1: recorded tasks 1/);
+});
+
+test('record-result falls back to the goal list for a v1 bundle with no Intent block', () => {
+  const fx = goalsFixture('t-goals-v1', V1_GOALS_DOC);
+  const res = recordOneCleanWave(fx);
+  assert.equal(res.goals_reminder.version, 1);
+  assert.equal(res.goals_reminder.outcome, null, 'there is no Intent block to quote');
+  assert.match(res.summary[1], /^goals: .*G1: the widget compiles/);
+});
+
+test('record-result on a bundle with no goals emits the wave line alone', () => {
+  const fx = goalsFixture('t-goals-none', null);
+  const res = recordOneCleanWave(fx);
+  assert.equal(res.summary.length, 1, JSON.stringify(res.summary));
+  assert.equal(res.goals_reminder.line, null);
 });

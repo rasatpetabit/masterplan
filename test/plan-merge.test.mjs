@@ -567,3 +567,51 @@ test('validatePlanIndex with an empty goals list is a no-op (pre-feature bundles
   assert.deepEqual(validatePlanIndex(index), []);
   assert.deepEqual(validatePlanIndex(index, []), []);
 });
+
+// ---------------------------------------------------------------------------
+// The narrative meta in the canonical plan (wave task 4)
+// ---------------------------------------------------------------------------
+
+test('renderPlanMd renders the index narrative the way plan.html does', () => {
+  const index = {
+    schema_version: '6.0',
+    meta: {
+      purpose: 'prove the deploy actually happened',
+      problem: 'runs archive without evidence that anything shipped',
+      solution: 'a deploy stage gated on a live check and an operator confirmation',
+    },
+    tasks: [{ id: 1, wave: 0, key: 'a', description: 'do a', files: ['a.js'], verify_commands: ['true'] }],
+  };
+  const md = renderPlanMd(index, { title: 'Plan' });
+  // plan.md is the CANONICAL plan: a stage stated only in index.meta would otherwise be
+  // invisible to every reader who opens the markdown.
+  assert.match(md, /^## Purpose$/m);
+  assert.match(md, /prove the deploy actually happened/);
+  assert.match(md, /^## Problem$/m);
+  assert.match(md, /runs archive without evidence/);
+  assert.match(md, /^## Solution$/m);
+  assert.match(md, /gated on a live check/);
+  // The same three headings the HTML renders.
+  const html = renderPlanHtml(index, { title: 'Plan' });
+  for (const heading of ['Purpose', 'Problem', 'Solution']) {
+    assert.ok(html.includes(`<h2>${heading}</h2>`), `${heading} in html`);
+    assert.ok(md.includes(`## ${heading}`), `${heading} in md`);
+  }
+});
+
+test('an index with no narrative renders exactly as before', () => {
+  const index = { schema_version: '6.0', tasks: [{ id: 1, wave: 0, key: 'a', description: 'do a', files: ['a.js'], verify_commands: ['true'] }] };
+  const md = renderPlanMd(index, { title: 'Plan' });
+  assert.doesNotMatch(md, /^## Purpose$/m);
+  assert.doesNotMatch(md, /^## Problem$/m);
+  assert.doesNotMatch(md, /^## Solution$/m);
+  assert.match(md, /1 task\(s\)/);
+  // A partial narrative renders only what it has.
+  const partial = renderPlanMd({ ...index, meta: { solution: 'only a solution' } }, { title: 'Plan' });
+  assert.doesNotMatch(partial, /^## Purpose$/m);
+  assert.match(partial, /^## Solution$/m);
+  // A malformed meta is soft-ignored, never a throw.
+  for (const bad of [null, 'a string', 42, ['an array'], { purpose: 42 }]) {
+    assert.doesNotThrow(() => renderPlanMd({ ...index, meta: bad }, { title: 'Plan' }));
+  }
+});

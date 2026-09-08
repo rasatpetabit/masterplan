@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseGoals, validateGoals, validateAmendment, crossCheckGoals, amendmentDiff, goalsHash, legacyGoalsHash, GOAL_VERDICTS, waiverKey, validateUserApprovalReceipt, validateGoalCheckReceipt, validateGoalWaiver } from '../lib/goals.mjs';
+import { parseGoals, validateGoals, validateAmendment, crossCheckGoals, amendmentDiff, goalsHash, legacyGoalsHash, GOAL_VERDICTS, INTENT_VERDICTS, waiverKey, validateUserApprovalReceipt, validateGoalCheckReceipt, validateGoalWaiver, INTERVIEW_EXITS, validateInterviewExit, specAssumptionIds, assumedIdsFromEnd, validateAssumptionsCoverage, validateGoalsLoadGate } from '../lib/goals.mjs';
 
 // --- PARSE TESTS ---
 
@@ -790,4 +790,493 @@ test('legacyGoalsHash detects a bundle frozen under the pre-block reading of `to
 test('legacyGoalsHash returns null when the block form is not used', () => {
   assert.equal(legacyGoalsHash('topic: plain seed\n\n## G1: X\nsignal: test\n'), null);
   assert.equal(legacyGoalsHash('topic: a | b\n\n## G1: X\nsignal: test\n'), null);
+});
+
+// --- V2 INTENT BLOCK TESTS (wave task 13) ---
+
+const V2_FIXTURE = `topic: |
+  Build the thing
+
+## Intent
+why: the problem
+outcome: the outcome
+anti_goals:
+- not this
+- nor that
+done_means: it is live
+
+## G1: first
+signal: test
+evidence: e1
+
+## G2: second
+
+## G3: third
+`;
+
+const V1_FIXTURE = `topic: |
+  Build the thing
+
+## G1: first
+signal: test
+evidence: e1
+
+## G2: second
+
+## G3: third
+`;
+
+const V2_TWO = `topic: |
+  Build the thing
+
+## Intent
+why: the problem
+outcome: the outcome
+anti_goals:
+- not this
+done_means: it is live
+
+## G1: first
+signal: test
+
+## G2: second
+`;
+
+const V2_SIX = `topic: |
+  Build the thing
+
+## Intent
+why: the problem
+outcome: the outcome
+anti_goals:
+- not this
+done_means: it is live
+
+## G1: first
+## G2: second
+## G3: third
+## G4: fourth
+## G5: fifth
+## G6: sixth
+`;
+
+const V2_EMPTY_WHY = `topic: |
+  Build the thing
+
+## Intent
+why:
+outcome: the outcome
+anti_goals:
+- not this
+done_means: it is live
+
+## G1: first
+## G2: second
+## G3: third
+`;
+
+const V2_NO_SIGNAL = `topic: |
+  Build the thing
+
+## Intent
+why: the problem
+outcome: the outcome
+anti_goals:
+- not this
+done_means: it is live
+
+## G1: first
+## G2: second
+## G3: third
+`;
+
+test('v2 parses intent block with why/outcome/anti_goals/done_means', () => {
+  const parsed = parseGoals(V2_FIXTURE);
+  assert.equal(parsed.version, 2);
+  assert.deepEqual(parsed.intent, {
+    why: 'the problem',
+    outcome: 'the outcome',
+    anti_goals: ['not this', 'nor that'],
+    done_means: 'it is live',
+  });
+  assert.equal(parsed.goals.length, 3);
+});
+
+test('v1 parses with intent null and version 1', () => {
+  const parsed = parseGoals(V1_FIXTURE);
+  assert.equal(parsed.version, 1);
+  assert.equal(parsed.intent, null);
+  assert.equal(parsed.goals.length, 3);
+});
+
+test('validateGoals rejects v2 with wrong goal count or empty why', () => {
+  assert.equal(validateGoals(parseGoals(V2_TWO)).ok, false);
+  assert.equal(validateGoals(parseGoals(V2_SIX)).ok, false);
+  assert.equal(validateGoals(parseGoals(V2_EMPTY_WHY)).ok, false);
+});
+
+test('goalsHash covers intent fields and stays deterministic', () => {
+  assert.equal(goalsHash(V1_FIXTURE), goalsHash(V1_FIXTURE));
+  assert.notEqual(goalsHash(V1_FIXTURE), goalsHash(V2_FIXTURE));
+  const changedDone = V2_FIXTURE.replace('done_means: it is live', 'done_means: it is deployed');
+  assert.notEqual(goalsHash(V2_FIXTURE), goalsHash(changedDone));
+});
+
+test('validateAmendment reports an intent-only change and no change for identical docs', () => {
+  const changedOutcome = V2_FIXTURE.replace('outcome: the outcome', 'outcome: a different outcome');
+  const res = validateAmendment(parseGoals(V2_FIXTURE), parseGoals(changedOutcome));
+  assert.equal(res.ok, true);
+  assert.equal(res.changed, true);
+  assert.match(res.reason || '', /intent amended/);
+
+  const sameRes = validateAmendment(parseGoals(V2_FIXTURE), parseGoals(V2_FIXTURE));
+  assert.equal(sameRes.ok, true);
+  assert.notEqual(sameRes.changed, true);
+});
+
+test('v2 goals without signal/evidence still validate', () => {
+  const res = validateGoals(parseGoals(V2_NO_SIGNAL));
+  assert.equal(res.ok, true);
+});
+
+test('validateAmendment still rejects an illegal goal mutation when the intent also changed', () => {
+  const variant = V2_FIXTURE
+    .replace('outcome: the outcome', 'outcome: a different outcome')
+    .replace('## G2: second', '## G9: second');
+  const res = validateAmendment(parseGoals(V2_FIXTURE), parseGoals(variant));
+  assert.equal(res.ok, false);
+});
+
+// --- GOALS-LOAD GATE: interview exit + Assumptions coverage (task 14) ---
+
+const SPEC_WITH = `# Spec
+
+## Assumptions & Open Decisions
+
+| # | question | decision |
+|---|---|---|
+| A1 | first | yes |
+| U3 | which storage? | assumed sqlite |
+| C2 | conflicting deadlines | assumed the later one |
+
+## Next Section
+
+| # | not an assumption |
+|---|---|
+| M9 | this row is in another table |
+`;
+
+test('validateInterviewExit accepts each permitted exit and reports the reason', () => {
+  for (const exit of ['converged', 'exhausted', 'critic_off']) {
+    const r = validateInterviewExit({ terminal: exit, terminalReason: exit, reopened: false, events: [] });
+    assert.equal(r.ok, true, `${exit}: ${r.error}`);
+    assert.equal(r.exit, exit);
+  }
+  assert.deepEqual(INTERVIEW_EXITS, ['converged', 'exhausted', 'critic_off', 'waived']);
+});
+
+test('validateInterviewExit refuses an open interview and a reopened one, with distinct codes', () => {
+  const open = validateInterviewExit({ terminal: null, terminalReason: null, reopened: false, events: [] });
+  assert.equal(open.ok, false);
+  assert.equal(open.code, 'interview_open');
+  // A reopen clears `terminal`; the refusal must name the reopen, not report a generic open state.
+  const reopened = validateInterviewExit({ terminal: null, terminalReason: null, reopened: true, events: [] });
+  assert.equal(reopened.ok, false);
+  assert.equal(reopened.code, 'interview_reopened');
+  // Ended again after the reopen → allowed.
+  assert.equal(validateInterviewExit({ terminal: 'converged', reopened: false, events: [] }).ok, true);
+});
+
+test('validateInterviewExit admits waived only as a durable ledger event', () => {
+  const durable = validateInterviewExit({ terminal: 'waived', terminalReason: 'operator call', events: [{ type: 'interview_waived', reason: 'operator call' }] });
+  assert.equal(durable.ok, true, durable.error);
+  assert.equal(durable.exit, 'waived');
+  // A caller asserting a waiver the ledger does not carry is refused like an open interview.
+  const claimed = validateInterviewExit({ terminal: 'waived', events: [{ type: 'interview_end', reason: 'converged' }] });
+  assert.equal(claimed.ok, false);
+  assert.equal(claimed.code, 'interview_waiver_not_durable');
+});
+
+test('a waived exit with no readable ledger is refused — absence is not evidence of a waiver', () => {
+  // Treating a missing/malformed event list as "nothing to check" would make durability opt-out.
+  for (const events of [undefined, null, 'interview_waived', {}, 0]) {
+    const r = validateInterviewExit({ terminal: 'waived', terminalReason: 'x', events });
+    assert.equal(r.ok, false, `events=${JSON.stringify(events)} must be refused`);
+    assert.equal(r.code, 'interview_waiver_not_durable');
+  }
+  // An empty ledger is readable and simply carries no waiver.
+  assert.equal(validateInterviewExit({ terminal: 'waived', events: [] }).code, 'interview_waiver_not_durable');
+  // The other exits do not need the ledger at all.
+  assert.equal(validateInterviewExit({ terminal: 'converged' }).ok, true);
+});
+
+test('a reopened interview is refused even when it also claims a terminal exit', () => {
+  // In a real replay an interview_end after the reopen clears the flag, so both cannot be set —
+  // but trusting `terminal` over `reopened` here would let a reopened interview load goals.
+  for (const terminal of ['converged', 'exhausted', 'critic_off', 'waived']) {
+    const r = validateInterviewExit({ terminal, reopened: true, events: [{ type: 'interview_waived' }] });
+    assert.equal(r.ok, false, `${terminal} + reopened must be refused`);
+    assert.equal(r.code, 'interview_reopened');
+    assert.match(r.error, /claims terminal/);
+  }
+});
+
+test('validateInterviewExit rejects an unknown terminal value and a non-object replay', () => {
+  assert.equal(validateInterviewExit({ terminal: 'finished' }).code, 'interview_exit_invalid');
+  assert.equal(validateInterviewExit(null).code, 'interview_replay_invalid');
+  assert.equal(validateInterviewExit([]).code, 'interview_replay_invalid');
+});
+
+test('specAssumptionIds reads the first Assumptions table only, skipping header and separator rows', () => {
+  const ids = specAssumptionIds(SPEC_WITH);
+  assert.deepEqual([...ids].sort(), ['A1', 'C2', 'U3']);
+  assert.equal(ids.has('#'), false, 'the header row is not an assumption id');
+  // A table under a LATER heading is not the Assumptions table.
+  assert.equal(ids.has('M9'), false);
+  assert.deepEqual([...specAssumptionIds(null)], []);
+});
+
+test('assumedIdsFromEnd handles object and string entries and counts the id-less ones', () => {
+  const r = assumedIdsFromEnd({
+    unknowns: [{ id: 'U3', question: 'which storage?' }],
+    contradictions: ['C2'],
+    misclassified: ['M9', 'M9'],
+  });
+  assert.deepEqual(r.ids, ['U3', 'C2', 'M9']);
+  assert.equal(r.unidentified, 0);
+  assert.equal(assumedIdsFromEnd({ unknowns: [{ question: 'no id' }] }).unidentified, 1);
+});
+
+test('validateAssumptionsCoverage refuses assumed_row_missing and names every missing id', () => {
+  const endEvent = {
+    type: 'interview_end', reason: 'exhausted',
+    unknowns: [{ id: 'U3' }], contradictions: ['C2'], misclassified: ['M9'],
+  };
+  const r = validateAssumptionsCoverage({ endEvent, specText: SPEC_WITH });
+  assert.equal(r.ok, false);
+  assert.equal(r.code, 'assumed_row_missing');
+  assert.deepEqual(r.missing, ['M9']); // U3 and C2 have rows; M9's row is in another table
+  assert.deepEqual(r.required.sort(), ['C2', 'M9', 'U3']);
+  // Once the row exists the gate passes.
+  const withRow = SPEC_WITH.replace('| C2 | conflicting deadlines | assumed the later one |', '| C2 | conflicting deadlines | assumed the later one |\n| M9 | misclassified pick | assumed a design question |');
+  const ok = validateAssumptionsCoverage({ endEvent, specText: withRow });
+  assert.equal(ok.ok, true, ok.error);
+  assert.deepEqual(ok.missing, []);
+});
+
+test('validateAssumptionsCoverage owes nothing on a non-exhausted exit, and fails closed without a spec', () => {
+  assert.equal(validateAssumptionsCoverage({ endEvent: { reason: 'converged' }, specText: '' }).ok, true);
+  assert.equal(validateAssumptionsCoverage({ exit: 'converged', endEvent: null }).ok, true);
+  // exhausted with no event to check against is a refusal, never a silent pass
+  assert.equal(validateAssumptionsCoverage({ exit: 'exhausted', endEvent: null }).code, 'interview_end_missing');
+  // exhausted with ids but an unreadable spec is a refusal too
+  const r = validateAssumptionsCoverage({ endEvent: { reason: 'exhausted', unknowns: [{ id: 'U1' }] }, specText: '' });
+  assert.equal(r.code, 'spec_unreadable');
+  assert.deepEqual(r.required, ['U1']);
+  // an unresolved item with no id cannot be checked — refused rather than dropped
+  assert.equal(validateAssumptionsCoverage({ endEvent: { reason: 'exhausted', unknowns: [{ question: 'x' }] }, specText: SPEC_WITH }).code, 'assumed_id_missing');
+});
+
+test('validateGoalsLoadGate takes the terminal event from the ledger — a caller cannot supply one', () => {
+  const events = [
+    { type: 'interview_end', reason: 'exhausted', unknowns: [{ id: 'U3' }], contradictions: [], misclassified: ['M9'] },
+  ];
+  const replay = { terminal: 'exhausted', reopened: false, events };
+  // An emptied or stale event passed alongside the replay must not mask the ids the durable
+  // event lists — the override is not part of the API at all.
+  const spoofed = validateGoalsLoadGate({ replay, specText: SPEC_WITH, endEvent: { type: 'interview_end', reason: 'exhausted', unknowns: [], contradictions: [], misclassified: [] } });
+  assert.equal(spoofed.ok, false);
+  assert.equal(spoofed.code, 'assumed_row_missing');
+  assert.deepEqual(spoofed.missing, ['M9']);
+  // An exhausted exit with no readable ledger has no event to check against: refused, not passed.
+  const noLedger = validateGoalsLoadGate({ replay: { terminal: 'exhausted', reopened: false }, specText: SPEC_WITH });
+  assert.equal(noLedger.ok, false);
+  assert.equal(noLedger.code, 'interview_end_missing');
+});
+
+test('validateGoalsLoadGate finds the interview_end in the replay and enforces both halves', () => {
+  const events = [
+    { type: 'interview_end', reason: 'exhausted', unknowns: [{ id: 'U3' }], contradictions: [], misclassified: ['M9'] },
+  ];
+  const replay = { terminal: 'exhausted', terminalReason: 'exhausted', reopened: false, events };
+  const bad = validateGoalsLoadGate({ replay, specText: SPEC_WITH });
+  assert.equal(bad.ok, false);
+  assert.equal(bad.code, 'assumed_row_missing');
+  // the exit gate runs first: an open interview is refused before the table is consulted
+  const open = validateGoalsLoadGate({ replay: { terminal: null, events }, specText: SPEC_WITH });
+  assert.equal(open.code, 'interview_open');
+  // a converged run owes no rows
+  const good = validateGoalsLoadGate({ replay: { terminal: 'converged', events: [{ type: 'interview_end', reason: 'converged' }] }, specText: SPEC_WITH });
+  assert.equal(good.ok, true, good.error);
+  assert.deepEqual(good.assumed, []);
+});
+
+// --- FINAL ASSESSMENT RECEIPT (§6.2) ---
+
+const finalExpected = (over = {}) => ({
+  ...checkExpected(),
+  final: true,
+  deployBaseSha: 'deploybase1',
+  deployChainHash: 'sha256:chain',
+  liveCheckDigest: 'sha256:live',
+  ...over,
+});
+
+const goodFinalReceipt = (over = {}) => goodCheckReceipt({
+  deploy_base_sha: 'deploybase1',
+  deploy_chain_hash: 'sha256:chain',
+  live_check_digest: 'sha256:live',
+  intent_verdict: { verdict: 'met', evidence: 'the live check shows the deployed surface answering as intended' },
+  ...over,
+});
+
+test('validateGoalCheckReceipt accepts a final assessment and normalizes its deploy bindings', () => {
+  const r = validateGoalCheckReceipt(goodFinalReceipt(), finalExpected());
+  assert.equal(r.ok, true, r.error);
+  assert.equal(r.normalized.final, true);
+  assert.equal(r.normalized.deploy_base_sha, 'deploybase1');
+  assert.equal(r.normalized.deploy_chain_hash, 'sha256:chain');
+  assert.equal(r.normalized.live_check_digest, 'sha256:live');
+  assert.deepEqual(r.normalized.intent_verdict.verdict, 'met');
+  assert.deepEqual(INTENT_VERDICTS, ['met', 'partial', 'missed']);
+});
+
+test('a final receipt must echo each deploy binding the recorder bound', () => {
+  for (const k of ['deploy_base_sha', 'deploy_chain_hash', 'live_check_digest']) {
+    const stale = validateGoalCheckReceipt(goodFinalReceipt({ [k]: 'OTHER' }), finalExpected());
+    assert.equal(stale.ok, false, `${k} mismatch must be refused`);
+    assert.match(stale.error, new RegExp(k));
+    const missing = goodFinalReceipt();
+    delete missing[k];
+    assert.equal(validateGoalCheckReceipt(missing, finalExpected()).ok, false, `${k} absent must be refused`);
+  }
+});
+
+test('a final check whose bindings the recorder never supplied is a wiring failure, not a pass', () => {
+  // Accepting the caller's own value here would let the assessor's claim validate itself.
+  for (const k of ['deployBaseSha', 'deployChainHash', 'liveCheckDigest']) {
+    const r = validateGoalCheckReceipt(goodFinalReceipt(), finalExpected({ [k]: undefined }));
+    assert.equal(r.ok, false);
+    assert.match(r.error, /unbound/);
+  }
+});
+
+test('the intent verdict is required on a final assessment and forbidden on an implementation one', () => {
+  const noVerdict = goodFinalReceipt();
+  delete noVerdict.intent_verdict;
+  assert.equal(validateGoalCheckReceipt(noVerdict, finalExpected()).ok, false);
+  assert.equal(validateGoalCheckReceipt(goodFinalReceipt({ intent_verdict: { verdict: 'achieved', evidence: 'x' } }), finalExpected()).ok, false, 'goal verdicts are not intent verdicts');
+  assert.equal(validateGoalCheckReceipt(goodFinalReceipt({ intent_verdict: { verdict: 'met', evidence: '  ' } }), finalExpected()).ok, false);
+  // An implementation assessment returning one is fabricating a post-live judgement.
+  const fabricated = validateGoalCheckReceipt(goodCheckReceipt({ intent_verdict: { verdict: 'met', evidence: 'x' } }), checkExpected());
+  assert.equal(fabricated.ok, false);
+  assert.match(fabricated.error, /only by the final assessment/);
+});
+
+test('the implementation-assessment and v1 receipt shapes are unchanged by the final path', () => {
+  const r = validateGoalCheckReceipt(goodCheckReceipt(), checkExpected());
+  assert.equal(r.ok, true, r.error);
+  assert.equal(r.normalized.final, undefined, 'no final keys leak onto an implementation receipt');
+  assert.equal(r.normalized.intent_verdict, undefined);
+  // A v1-shaped receipt (no deploy tuple, no intent verdict) still validates.
+  const v1 = goodCheckReceipt();
+  assert.equal(validateGoalCheckReceipt(v1, { ...checkExpected(), final: false }).ok, true);
+});
+
+test('an id must appear in a real Assumptions TABLE — prose and a second table do not count', () => {
+  // A lone pipe-prefixed line under the heading is not a table row.
+  const prose = `# Spec
+
+## Assumptions
+
+No table is present yet.
+| U1 | merely mentioned in prose |
+
+## Next
+`;
+  assert.deepEqual([...specAssumptionIds(prose)], [], 'a pipe line with no header/delimiter is not a table');
+  const endEvent = { type: 'interview_end', reason: 'exhausted', unknowns: [{ id: 'U1' }] };
+  assert.equal(validateAssumptionsCoverage({ endEvent, specText: prose }).code, 'assumed_row_missing');
+
+  // A second table in the same section is not the Assumptions table.
+  const twoTables = `# Spec
+
+## Assumptions
+
+| # | question |
+|---|---|
+| A1 | first |
+
+Some prose between the tables.
+
+| # | something else |
+|---|---|
+| U1 | in the second table |
+
+## Next
+`;
+  assert.deepEqual([...specAssumptionIds(twoTables)], ['A1']);
+  assert.equal(validateAssumptionsCoverage({ endEvent, specText: twoTables }).code, 'assumed_row_missing');
+
+  // And the real thing still resolves: header, delimiter, data rows, stopping at the blank line.
+  const good = twoTables.replace('| A1 | first |', '| A1 | first |\n| U1 | which storage? |');
+  assert.deepEqual([...specAssumptionIds(good)].sort(), ['A1', 'U1']);
+  assert.equal(validateAssumptionsCoverage({ endEvent, specText: good }).ok, true);
+});
+
+test('table syntax inside a code block is an EXAMPLE, not the Assumptions table', () => {
+  // This spec quotes markdown in several places; Markdown renders a fenced block as code,
+  // so reading it as a table would let an example satisfy the coverage gate.
+  const fenced = [
+    '# Spec',
+    '',
+    '## Assumptions',
+    '',
+    'The table format is:',
+    '',
+    '```markdown',
+    '| # | question | decision |',
+    '|---|---|---|',
+    '| U1 | example only | not a real row |',
+    '```',
+    '',
+    '## Next',
+    '',
+  ].join('\n');
+  assert.deepEqual([...specAssumptionIds(fenced)], [], 'a fenced example is not the Assumptions table');
+  const endEvent = { type: 'interview_end', reason: 'exhausted', unknowns: [{ id: 'U1' }] };
+  assert.equal(validateAssumptionsCoverage({ endEvent, specText: fenced }).code, 'assumed_row_missing');
+
+  // Four-space-indented code is the same story.
+  const indented = [
+    '# Spec',
+    '',
+    '## Assumptions',
+    '',
+    'For example:',
+    '',
+    '    | # | question |',
+    '    |---|---|',
+    '    | U1 | example only |',
+    '',
+    '## Next',
+    '',
+  ].join('\n');
+  assert.deepEqual([...specAssumptionIds(indented)], []);
+  assert.equal(validateAssumptionsCoverage({ endEvent, specText: indented }).code, 'assumed_row_missing');
+
+  // A REAL table after the fenced example is still found, and satisfies the gate.
+  const both = fenced.replace('## Next', [
+    '| # | question | decision |',
+    '|---|---|---|',
+    '| U1 | which storage? | assumed sqlite |',
+    '',
+    '## Next',
+  ].join('\n'));
+  assert.deepEqual([...specAssumptionIds(both)], ['U1']);
+  assert.equal(validateAssumptionsCoverage({ endEvent, specText: both }).ok, true);
+
+  // A tilde fence behaves like a backtick fence.
+  const tilde = fenced.replace(/```markdown/, '~~~markdown').replace(/```/, '~~~');
+  assert.deepEqual([...specAssumptionIds(tilde)], []);
 });

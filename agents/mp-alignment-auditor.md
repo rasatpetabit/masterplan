@@ -134,6 +134,25 @@ Do not report these. Keeping the digest short is what keeps it read:
 
 A plan is allowed to be an engineering artifact. Drift is about the *ask*, not the craft.
 
+## The identity binding (what your audit is evidence of)
+
+Your audit is evidence, and evidence cannot cross an identity boundary: the digest you
+return names the run state you judged under. The brief carries the run's **intent
+identity** — the tuple `{goals_hash, schema_snapshot_digest, skill_identity,
+reconciliation_digest}` on a schema-backed run, or the explicit LEGACY marker (`legacy:
+true`, `goals_hash` only) on a run with no schema capture. Open your digest with one line
+naming the tuple you were handed, verbatim from the brief (never recomputed, never
+invented), beside your own dispatch provenance (`dispatch_id`, `model`, `output_tokens`)
+— an audit whose reviewer cannot be named is **unavailable**, never a clean audit. A
+run whose goal set, schema snapshot, skill identity or repository reconciliation has
+changed since the tuple you were handed needs a fresh audit: your earlier digest cannot
+authorize a plan it did not judge.
+
+A run with no schema capture reports its legacy absence explicitly: say so in the same
+opening line (`intent_identity: legacy`), and never phrase the audit as though the
+schema-backed contract had been checked. The absence of legacy evidence is not a
+new-format pass.
+
 ## Output shape (compact)
 Open with one line: `anchor_quality: verbatim | seed-only`. Then one entry per clause and goal — a
 JSON array, each element:

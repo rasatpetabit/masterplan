@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [10.0.5] — 2026-09-08
+
+## [10.0.4] — 2026-09-08
+
+## [10.0.3] — 2026-09-07
+
+## [10.0.2] — 2026-09-07
+
+## [10.0.1] — 2026-09-07
+
+## [10.0.0] — 2026-09-03
+
+v10 — the intent-to-completion release. Brainstorming is a structured intent
+interview with a fresh-context critic; goals gain a v2 Intent block;
+configuration moves to a repo-local config plane with a knob-inventory guard;
+finish deploys to live with completion classes and `push_archive`; seed-time
+overlap review; context watch and resume brief; doctor obligations; and a
+one-off v9-to-v10 bootstrap driver.
+
+### Added
+
+- **Intent interview with fresh-context critic.** Brainstorming is now a
+  structured interview (`mp interview *`) that converges on a clean intent
+  payload, with a fresh-context critic reviewing each round and a
+  `critic_off` path for low-complexity runs.
+- **Goals v2 — the Intent block.** Goals gain a v2 form anchored on an Intent
+  block; the goals hash covers it; v1 still parses; 1, 2, or 6 goals are
+  refused for v2; intent amendments re-arm the spec gate.
+- **Config plane with knob-inventory guard.** A repo-local `.masterplan.yaml`
+  config plane (`mp config show`) with a knob-inventory guard that fails the
+  build on any read-but-ignored or seeded-field-only synthetic knob.
+- **Deploy-to-live finish.** The finish flow gains a deploy stage with
+  completion classes (`complete` / `incomplete:*` / `merged` / `legacy`),
+  `push_archive`, and the `done:` definition-of-done block.
+- **Seed-time overlap check.** `mp seed` requires an `--overlap-review` and
+  refuses overlapping in-progress runs.
+- **Context watch and resume brief.** `mp context-status` reports session
+  lineage and focus; a resume-brief hook surfaces open obligations.
+- **Doctor obligations.** New doctor checks: `resume-brief-hook`,
+  `no-definition-of-done`, `incomplete-archive`, `legacy-archive`, and
+  `required-successor`.
+- **One-off v9-to-v10 bootstrap driver.** `scripts/bootstrap-v10.mjs` walks the
+  §10 bootstrap stage (rehearsal, pre-publish verify, release, push, install,
+  PR merge, gate) and retires with the successor.
 ## [9.10.1] — 2026-09-06
 
 ### Fixed

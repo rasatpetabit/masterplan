@@ -1,7 +1,7 @@
 // test/goals-record-check.test.mjs — the `record-goal-check` bin verb (anti-fabrication goal-completeness
 // receipt + waiver recorder). Spawns the real CLI over temp bundles. bin is fs-only: git facts (HEAD,
 // base, base..HEAD diff hash, dirty status, run_verify output hash) are PASSED IN as flags.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -10,6 +10,20 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { serializeState } from '../lib/bundle.mjs';
 import { goalsHash } from '../lib/goals.mjs';
+
+// Every fixture here builds a tree under os.tmpdir(); without this they accumulate across
+// runs and fill a shared /tmp. Registered on creation, removed once when the file finishes.
+const FIXTURE_TMPDIRS = [];
+function mkdtempTracked(prefix) {
+  const dir = fs.mkdtempSync(prefix);
+  FIXTURE_TMPDIRS.push(dir);
+  return dir;
+}
+after(() => {
+  for (const d of FIXTURE_TMPDIRS) {
+    try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* already gone */ }
+  }
+});
 
 const BIN = fileURLToPath(new URL('../bin/masterplan.mjs', import.meta.url));
 
@@ -30,7 +44,7 @@ const VOUT = 'sha256:verify-1';
 
 // Build a frozen-goals bundle on disk and return its paths.
 function makeBundle() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-gcheck-'));
+  const dir = mkdtempTracked(path.join(os.tmpdir(), 'mp-gcheck-'));
   const statePath = path.join(dir, 'state.yml');
   fs.writeFileSync(
     statePath,

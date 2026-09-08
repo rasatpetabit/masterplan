@@ -90,3 +90,6 @@ test/fixtures/**/id_ed25519
 
 # Local Pi session state
 .pi/
+
+# Operator scratch notes.
+TODO.md

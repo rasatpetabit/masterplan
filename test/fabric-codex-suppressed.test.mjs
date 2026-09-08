@@ -7,7 +7,7 @@
 // Note: this file intentionally names the deleted L2 op strings inside negative
 // regex checks (v5-orphan allowlisted) so a regression reintroducing them fails.
 
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -23,6 +23,20 @@ import {
 import { writeState, readState } from '../lib/bundle.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
 import { buildWorkItem } from '../lib/dispatch/dispatch-digest.mjs';
+
+// Every fixture here builds a tree under os.tmpdir(); without this they accumulate across
+// runs and fill a shared /tmp. Registered on creation, removed once when the file finishes.
+const FIXTURE_TMPDIRS = [];
+function mkdtempTracked(prefix) {
+  const dir = fs.mkdtempSync(prefix);
+  FIXTURE_TMPDIRS.push(dir);
+  return dir;
+}
+after(() => {
+  for (const d of FIXTURE_TMPDIRS) {
+    try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* already gone */ }
+  }
+});
 
 const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const binMasterplan = path.join(repoRoot, 'bin', 'masterplan.mjs');
@@ -40,7 +54,7 @@ function write(root, rel, content) {
 }
 
 function makeScratch({ slug = 'c4-codex' } = {}) {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-c4-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-c4-'));
   const MAIN = path.join(tmp, 'main');
   fs.mkdirSync(MAIN, { recursive: true });
   git(MAIN, 'init', '--initial-branch=main');

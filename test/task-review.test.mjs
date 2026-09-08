@@ -2,12 +2,26 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, it } from 'node:test';
+import { describe, it, after } from 'node:test';
 import {
   projectReviewRecord,
   reviewCompletedTasks,
   taskReviewBlocksWave,
 } from '../lib/task-review.mjs';
+
+// Every fixture here builds a tree under os.tmpdir(); without this they accumulate across
+// runs and fill a shared /tmp. Registered on creation, removed once when the file finishes.
+const FIXTURE_TMPDIRS = [];
+function mkdtempTracked(prefix) {
+  const dir = fs.mkdtempSync(prefix);
+  FIXTURE_TMPDIRS.push(dir);
+  return dir;
+}
+after(() => {
+  for (const d of FIXTURE_TMPDIRS) {
+    try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* already gone */ }
+  }
+});
 
 const healthy = {
   degraded: false,
@@ -80,7 +94,7 @@ const reviewInput = (sha = 'a'.repeat(64)) => ({
 
 describe('reviewCompletedTasks', () => {
   it('calls centralized review once and persists a satisfying structured event', async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-task-review-'));
+    const dir = mkdtempTracked(path.join(os.tmpdir(), 'mp-task-review-'));
     const statePath = path.join(dir, 'state.yml');
     fs.writeFileSync(statePath, 'schema_version: 9.0.0\n');
     const calls = [];
@@ -101,7 +115,7 @@ describe('reviewCompletedTasks', () => {
   });
 
   it('reuses a completed event for the same run task and payload sha', async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-task-review-reuse-'));
+    const dir = mkdtempTracked(path.join(os.tmpdir(), 'mp-task-review-reuse-'));
     const statePath = path.join(dir, 'state.yml');
     fs.writeFileSync(statePath, 'schema_version: 9.0.0\n');
     const item = { task_id: 7, digest: { task_id: 7, status: 'done' }, review_input: reviewInput() };
@@ -117,7 +131,7 @@ describe('reviewCompletedTasks', () => {
   });
 
   it('does not persist a satisfying done event when the review call throws', async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-task-review-fail-'));
+    const dir = mkdtempTracked(path.join(os.tmpdir(), 'mp-task-review-fail-'));
     const statePath = path.join(dir, 'state.yml');
     fs.writeFileSync(statePath, 'schema_version: 9.0.0\n');
     const item = { task_id: 7, digest: { task_id: 7, status: 'done' }, review_input: reviewInput() };
@@ -136,7 +150,7 @@ describe('reviewCompletedTasks', () => {
   });
 
   it('changed payload sha at the same base re-arms review', async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-task-review-rearm-'));
+    const dir = mkdtempTracked(path.join(os.tmpdir(), 'mp-task-review-rearm-'));
     const statePath = path.join(dir, 'state.yml');
     fs.writeFileSync(statePath, 'schema_version: 9.0.0\n');
     const itemA = { task_id: 7, digest: { task_id: 7, status: 'done' }, review_input: reviewInput('a'.repeat(64)) };

@@ -5,7 +5,7 @@
 // in a real git repo and asserts it is caught — plus a negative control per breach, so a
 // check that simply returned {ok:false} always would fail the suite.
 
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -26,11 +26,25 @@ import {
   watchBaselinePath,
 } from '../lib/watch-integrity.mjs';
 
+// Every fixture here builds a tree under os.tmpdir(); without this they accumulate across
+// runs and fill a shared /tmp. Registered on creation, removed once when the file finishes.
+const FIXTURE_TMPDIRS = [];
+function mkdtempTracked(prefix) {
+  const dir = fs.mkdtempSync(prefix);
+  FIXTURE_TMPDIRS.push(dir);
+  return dir;
+}
+after(() => {
+  for (const d of FIXTURE_TMPDIRS) {
+    try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* already gone */ }
+  }
+});
+
 const git = (dir, ...args) =>
   String(execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' })).trim();
 
 function makeRepo(prefix = 'wave-integrity-') {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const dir = mkdtempTracked(path.join(os.tmpdir(), prefix));
   git(dir, 'init', '-q', '-b', 'main');
   git(dir, 'config', 'user.email', 'test@example.invalid');
   git(dir, 'config', 'user.name', 'Test');

@@ -97,6 +97,25 @@ Take the artifact — the inline diff text (Layer 3, preferred) or the scoped co
 invariants, unhandled failure modes, contract drift, silent degradation, untested claims).
 Default to refuted when uncertain. Confine every finding to the artifact's paths.
 
+## The identity binding (what your review is evidence of)
+
+Your review is not a free-floating judgment: it is evidence bound to the run state you
+were given. The brief carries the run's **intent identity** — the tuple
+`{goals_hash, schema_snapshot_digest, skill_identity, reconciliation_digest}` on a
+schema-backed run, or the explicit LEGACY marker (`legacy: true`, `goals_hash` only) on
+a run with no schema capture. Echo that tuple back in your record's
+`intent_identity` field, verbatim from the brief — never recomputed, never invented —
+beside your own dispatch provenance in `reviewer_identity`
+(`{dispatch_id, model, output_tokens}`): a review whose producer cannot be named is
+**unavailable, never approval**. Evidence cannot cross an identity boundary: a review
+earned under one tuple cannot satisfy a checkpoint under another, so a run whose goal
+set, schema snapshot, skill identity or repository reconciliation has changed since the
+tuple you were handed must be re-reviewed, never waved through on your earlier verdict.
+
+A **v1 mode** dispatch (see below) carries no tuple: return the v9 envelope exactly and
+ever fabricate one — a receipt naming a tuple it was never handed is fabricated
+evidence, and the recorder refuses it as such.
+
 ## Output shape (CD-10 severity-first)
 Emit ordered findings — most severe first:
 
@@ -106,6 +125,20 @@ Emit ordered findings — most severe first:
     NOTE   <file>:<line> — <observation>. Fix: <optional>.
 
 Then one closing line: `verdict: blocking | advisory | clean | inconclusive`.
+
+## v1 mode (compatibility)
+A **v1 mode** dispatch is the legacy single-request shape: a brief carrying only the diff and the
+task text, with no v2 additions (no intent block, no deploy-stage bindings, no mode named). Detect
+it from the inputs rather than being told.
+
+In v1 mode return the **v9 output exactly** — the severity-first findings and the single
+`verdict:` line above, and nothing else. Emit no `intent_verdict` and no deploy-stage fields: a
+v9 recorder validates the shape it knows and would reject anything further. The review itself is
+unchanged; only the envelope is.
+
+This mode exists because this run's own v10 prompts are dispatched by a **pinned v9.10.0 finish**
+while both surfaces already serve v10 (§10 steps 4 and 6): one prompt file has to satisfy both
+recorders during the changeover.
 
 ## Architecture invariants
 - Read-only with respect to the run: never commit, never write `state.yml`.

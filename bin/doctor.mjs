@@ -13,6 +13,7 @@
 import { readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { readEnv } from '../lib/config.mjs';
 
 const SEV_RANK = { SKIP: 0, PASS: 1, WARN: 2, ERROR: 3 };
 
@@ -38,9 +39,15 @@ export async function discoverChecks(dir) {
 export function parseArgs(argv = []) {
   let repoRoot = null;
   let fix = false;
+  let only = null;
   for (const arg of argv) {
     if (arg === '--fix') {
       fix = true;
+      continue;
+    }
+    if (arg.startsWith('--only=')) {
+      only = arg.slice('--only='.length);
+      if (!only) throw new Error('--only requires a check id');
       continue;
     }
     if (arg.startsWith('--')) {
@@ -51,7 +58,12 @@ export function parseArgs(argv = []) {
     }
     repoRoot = arg;
   }
-  return { repoRoot: repoRoot || process.cwd(), fix };
+  return { repoRoot: repoRoot || process.cwd(), fix, only };
+}
+
+// Resolve a --only=<check-id> selection against the discovered checks (null when unknown).
+export function selectCheck(checks, id) {
+  return checks.find((c) => c.name === id) || null;
 }
 
 // Run every check, crash-isolated: a module that throws becomes ONE ERROR finding so a single
@@ -146,9 +158,20 @@ async function main() {
   }
   const here = path.dirname(fileURLToPath(import.meta.url));
   const checksDir = path.join(here, '..', 'lib', 'doctor');
-  const checks = await discoverChecks(checksDir);
+  let checks = await discoverChecks(checksDir);
+  if (parsed.only) {
+    // --only=<check-id>: run exactly one discovered check and exit with ITS outcome; an unknown
+    // id exits 2 and lists the known ids (spec §7.1 checks depend on this shape).
+    const selected = selectCheck(checks, parsed.only);
+    if (!selected) {
+      console.error(`masterplan doctor: unknown check id '${parsed.only}'; known ids: ${checks.map((c) => c.name).join(', ')}`);
+      process.exitCode = 2;
+      return;
+    }
+    checks = [selected];
+  }
   const opts = {
-    homeDir: process.env.HOME,
+    homeDir: readEnv('HOME'),
     now: Date.now(),
   };
   let { findings, exitCode } = runChecks(checks, parsed.repoRoot, opts);

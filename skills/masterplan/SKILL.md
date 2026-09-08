@@ -69,16 +69,41 @@ Prefer summary-first inventory (`rg --files docs/masterplan` plus targeted
 `state.yml` reads) before opening plan/spec artifacts. Avoid exploratory
 full-file dumps of large prompt, plan, transcript, or event-log files.
 
-## Configuration (seed flags + `set-review-config` → state.yml)
+## Configuration (CLI > repo > user > default)
 
-v8 has **no `.masterplan.yaml` config hierarchy** — there is no
-built-in/user-global/repo-local merge step to perform. Configuration is set on the
-run bundle and read back from `docs/masterplan/<slug>/state.yml`:
+Configuration resolves through a **four-layer hierarchy** (`lib/config.mjs`,
+`resolveRunConfig`): **CLI > repo (`.masterplan.yaml`) > user (`~/.masterplan.yaml`) >
+default**. A recognized key is validated against the schema enum and its source layer is
+reported (`config show` prints resolved values + `*_source`). Unsupported keys warn and
+are ignored; a malformed file or invalid enum is a hard error — a value never silently
+falls through. `done` and `context_watch` support whole-object replacement with partial
+`context_watch` defaults; `auto_compact` is a deprecated alias for `context_watch`.
 
-- **Seed-time flags** (`mp seed`): `--autonomy`, `--complexity`, `--planning-mode`
-  (`serial|parallel|auto`), **`--adversary-review=on|off` (default `on`; alias
-  `--codex-review`)** — persisted into `state.yml` at run creation. Every fresh bundle
-  arms `state.review.adversary: true` automatically; pass `off` for explicit opt-out.
+Recognized keys: `complexity` (`low|medium|high`), `autonomy` (`gated|loose`, alias
+`full` → `loose`), `planning_mode` (`serial|parallel|auto`), `adversary_review`
+(`on|off`), `render_images` (`on|off`), `fabric` (`on|off`), `context_watch`
+(`{threshold 1–99, focus}`), `done` (definition of done: `version_from`, fixed-order
+`release` steps, `${version}`, `commit_paths`).
+
+Only `complexity`, `autonomy`, and `planning_mode` are resolved **from the config
+chain at seed** and persisted into `state.yml`; `adversary_review`, `render_images`,
+and `fabric` come from their seed **flags/defaults only** (never from a config file at
+seed — `mp set-review-config` is the post-seed write for review). `fabric` accepts
+`on|off` at the flag (schema default `on`): `off` marks a bundle **unexecutable** —
+fabric is the only wave path since the L2 legacy dispatch was deleted, so a bundle
+without `state.dispatch.fabric: true` refuses dispatch (the legacy path is not restored).
+
+Deploy groups run in a **fixed order** — `release → install → user_only → live_check`
+(`DEPLOY_GROUP_ORDER` in `lib/finish.mjs`); group order is normative and within a group
+steps run in list order. `done: none` deploys nothing. Deploy steps record via
+`mp finish-step --deploy-step-done=<group>[<index>] --exit=<code>`.
+
+- **Seed-time flags** (`mp seed`): `--autonomy`, `--complexity`, `--planning-mode`,
+  **`--adversary-review=on|off` (default `on`; alias `--codex-review`)**, `--render-images`,
+  `--fabric=on`, `--overlap-review=<json>` (required), `--predecessor=<slug>` — persisted
+  into `state.yml` at run creation. Every fresh bundle arms `state.review.adversary: true`
+  automatically; pass `off` for explicit opt-out. `mp continue` accepts `--planning-mode`
+  on the command line and resolves it through the same chain.
 - **Review config** (`mp set-review-config --review=true|false` [`--routing=auto|on|off`];
   alias `mp set-codex-config`): a CD-7 write that arms `state.review.adversary`. The
   finish-step gate gates the optional review stage on `state.review.adversary === true`
@@ -86,8 +111,6 @@ run bundle and read back from `docs/masterplan/<slug>/state.yml`:
   inherit `true` from the seed-time default; pass `--review=false` post-seed to opt out.
   `--routing` is the legacy per-task dispatch default (`state.codex.routing`), still read
   by `prepare-wave` for in-flight bundles.
-
-Read the run's config from `state.yml`; do not look for or merge any config file.
 
 Host review-suppression (see the host adaptation sections) only forces the
 effective review behavior off for the current invocation to avoid recursive

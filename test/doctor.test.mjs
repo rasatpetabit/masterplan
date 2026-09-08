@@ -6,14 +6,15 @@
 // encodes the expected worst-severity (pass-/warn-/error-/skip-) — a language-agnostic contract
 // that replaces the deleted v7 expected.txt substring harness. SKIP edge cases that can't be a
 // committed fixture (empty dir, git-absent) are exercised in-code with tmp dirs / throwing stubs.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import fs from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
-import { runChecks, runFixes, parseArgs, discoverChecks } from '../bin/doctor.mjs';
+import { runChecks, runFixes, parseArgs, discoverChecks, selectCheck } from '../bin/doctor.mjs';
 import { check as scalarCap, fix as scalarCapFix } from '../lib/doctor/scalar-cap.mjs';
 import { check as worktreeIntegrity, fix as worktreeIntegrityFix } from '../lib/doctor/worktree-integrity.mjs';
 import { check as codexAuth } from '../lib/doctor/codex-auth.mjs';
@@ -38,6 +39,20 @@ import { CURRENT_SCHEMA_VERSION } from '../lib/bundle.mjs';
 import { acquireOwner } from '../lib/owner-fs.mjs';
 import { buildOwnerIdentity, ownerLockPath, ownerHeartbeatPath } from '../lib/owner.mjs';
 
+// Every fixture here builds a tree under os.tmpdir(); without this they accumulate across
+// runs and fill a shared /tmp. Registered on creation, removed once when the file finishes.
+const FIXTURE_TMPDIRS = [];
+function mkdtempTracked(prefix) {
+  const dir = fs.mkdtempSync(prefix);
+  FIXTURE_TMPDIRS.push(dir);
+  return dir;
+}
+after(() => {
+  for (const d of FIXTURE_TMPDIRS) {
+    try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* already gone */ }
+  }
+});
+
 const here = path.dirname(fileURLToPath(import.meta.url));
 const FX = path.join(here, 'fixtures', 'doctor');
 
@@ -57,7 +72,11 @@ const scenarios = (checkName) =>
 const GIT_STUB = (args) => {
   if (args[0] === 'worktree') return 'worktree /repo\nworktree /repo/.worktrees/feat\n';
   if (args[0] === 'branch') return 'main\nfeat\n';
-  if (args[0] === 'rev-parse') return '.git\n'; // --git-common-dir, resolved against repoRoot by the check
+  // --git-common-dir, resolved against repoRoot by the check. The stub's world is a repo ROOTED
+  // AT /repo (its worktree list says so) — the common dir names that root so the doctor's
+  // mainRepoRoot and the declared worktrees agree (the host-local-state rule: a declaration
+  // under the examined repo's root is the owner-host case; under another root, another host's).
+  if (args[0] === 'rev-parse') return '/repo/.git\n';
   throw new Error(`unexpected git args: ${args.join(' ')}`);
 };
 
@@ -109,10 +128,10 @@ test('dispatcher: discovers the lib/doctor check modules', async () => {
 
 test('dispatcher: parseArgs accepts --fix before or after optional repo root', () => {
   const cwd = process.cwd();
-  assert.deepEqual(parseArgs(['--fix']), { repoRoot: cwd, fix: true });
-  assert.deepEqual(parseArgs(['/repo', '--fix']), { repoRoot: '/repo', fix: true });
-  assert.deepEqual(parseArgs(['--fix', '/repo']), { repoRoot: '/repo', fix: true });
-  assert.deepEqual(parseArgs(['/repo']), { repoRoot: '/repo', fix: false });
+  assert.deepEqual(parseArgs(['--fix']), { repoRoot: cwd, fix: true, only: null });
+  assert.deepEqual(parseArgs(['/repo', '--fix']), { repoRoot: '/repo', fix: true, only: null });
+  assert.deepEqual(parseArgs(['--fix', '/repo']), { repoRoot: '/repo', fix: true, only: null });
+  assert.deepEqual(parseArgs(['/repo']), { repoRoot: '/repo', fix: false, only: null });
 });
 
 test('dispatcher: parseArgs rejects unknown flags and multiple repo roots', () => {
@@ -150,14 +169,14 @@ test('scalar-cap: fixtures match dir-prefix severity', async (t) => {
 });
 
 test('scalar-cap: SKIP when there are no run bundles', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-scalar-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-scalar-'));
   const findings = scalarCap(tmp);
   assertFindingShape(findings);
   assert.equal(maxSeverity(findings), 'SKIP');
 });
 
 test('scalar-cap: fix moves overlong flat string scalars to a bundle-local overflow file', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-scalar-fix-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-scalar-fix-'));
   const bundleDir = path.join(tmp, 'docs', 'masterplan', 'p1');
   fs.mkdirSync(bundleDir, { recursive: true });
   const longValue = '"' + 'x'.repeat(240) + '"';
@@ -180,7 +199,7 @@ test('scalar-cap: overlong structured fields are exempt from the cap and untouch
   // The cap is a prose-scalar discipline. `tasks` inline JSON is the v8 writer's own
   // canonical output — the check must not warn on it (it would fight the writer) and
   // the fixer must not move it (an overflow pointer there would corrupt resume).
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-scalar-structured-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-scalar-structured-'));
   const bundleDir = path.join(tmp, 'docs', 'masterplan', 'p1');
   fs.mkdirSync(bundleDir, { recursive: true });
   const tasks = JSON.stringify([{ id: 1, status: 'done', files: ['x'.repeat(240)] }]);
@@ -229,7 +248,7 @@ test('worktree-integrity: SKIP when git is unavailable', () => {
 });
 
 test('worktree-integrity: SKIP when there are no run bundles', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-wt-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-wt-'));
   const findings = worktreeIntegrity(tmp, { gitExec: GIT_STUB });
   assertFindingShape(findings);
   assert.equal(maxSeverity(findings), 'SKIP');
@@ -239,7 +258,7 @@ test('worktree-integrity: git->bundle reconcile surfaces strays as WARN (foreign
   // Phase 2: the doctor runs the SAME pure classifyWorktrees `mp worktree reconcile` does, so on-disk
   // strays the per-bundle loop structurally cannot see become WARNs — and a recoverable repo-move or a
   // legacy `missing` disposition is reported ONCE (as the WARN remedy), never also as a bundle->git ERROR.
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-wt-recon-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-wt-recon-'));
   const wt = (name, gitdir) => {
     const d = path.join(tmp, '.worktrees', name);
     fs.mkdirSync(d, { recursive: true });
@@ -250,7 +269,7 @@ test('worktree-integrity: git->bundle reconcile surfaces strays as WARN (foreign
   const crashedPath = wt('crashed', path.join(tmp, '.git', 'worktrees', 'crashed')); // into repo, registered+retired -> crash-leak
   // The foreign target must EXIST on disk so canonicalization can PROVE it foreign — an unresolvable
   // target is left untouched as foreign-unverified, never auto-removed (the Codex realpath BLOCKER).
-  const foreignAdmin = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'mp-foreign-')), '.git', 'worktrees', 'cc3');
+  const foreignAdmin = path.join(mkdtempTracked(path.join(os.tmpdir(), 'mp-foreign-')), '.git', 'worktrees', 'cc3');
   fs.mkdirSync(foreignAdmin, { recursive: true });
   wt('cc3', foreignAdmin); // foreign target that resolves outside the repo -> foreign-leftover
   const bundle = (slug, body) => {
@@ -287,7 +306,7 @@ test('worktree-integrity: a linked-cwd run classifies an on-disk retired worktre
   // checkout's (empty) .worktrees instead made a retired worktree still ON DISK under main/.worktrees
   // look gone -> mis-emit `prune` instead of `crash-leak`. mainRepoRoot = dirname(commonGitDir) unifies
   // the three classifier inputs.
-  const main = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-main-'));
+  const main = mkdtempTracked(path.join(os.tmpdir(), 'mp-main-'));
   const wt = (root, name, gitdir) => {
     const d = path.join(root, '.worktrees', name);
     fs.mkdirSync(d, { recursive: true });
@@ -323,7 +342,7 @@ test('worktree-integrity: a LIVE bundle\'s unregistered, foreign-resolving workt
   // (active-unregistered), which is NOT in handledPaths (only `repair` repo-moves suppress the ERROR), so
   // the per-bundle bundle->git ERROR "is not a registered git worktree" STILL fires. Suppressing it would
   // hide a real broken live reference; auto-removing it would be silent mid-run data loss.
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-wt-live-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-wt-live-'));
   // The repo's own admin dir EXISTS so repoGitDirCanonical resolves — making the foreign .git below
   // PROVABLY foreign. The live-bundle claim must override the `remove` ladder even then.
   fs.mkdirSync(path.join(tmp, '.git', 'worktrees'), { recursive: true });
@@ -331,7 +350,7 @@ test('worktree-integrity: a LIVE bundle\'s unregistered, foreign-resolving workt
   fs.mkdirSync(liveDir, { recursive: true });
   // .git points at a foreign admin dir that EXISTS on disk → canonicalization PROVES it foreign. Even so,
   // the live bundle claim must override the `remove` ladder and force `manual`.
-  const foreignAdmin = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'mp-foreign-live-')), '.git', 'worktrees', 'livewt');
+  const foreignAdmin = path.join(mkdtempTracked(path.join(os.tmpdir(), 'mp-foreign-live-')), '.git', 'worktrees', 'livewt');
   fs.mkdirSync(foreignAdmin, { recursive: true });
   fs.writeFileSync(path.join(liveDir, '.git'), `gitdir: ${foreignAdmin}\n`);
   const bdir = path.join(tmp, 'docs', 'masterplan', 'livebundle');
@@ -368,7 +387,7 @@ test('worktree-integrity: a LIVE bundle\'s unregistered, foreign-resolving workt
 // status is in-progress, and issue #7's primary case is an unfinished bundle merged externally).
 
 test('worktree-integrity fix: retires a gone-from-disk, unregistered worktree (records removed_after_merge, preserves memento, idempotent) — issue #7', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-wt-fix-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-wt-fix-'));
   const slug = 'merged-bundle';
   const gonePath = path.join(tmp, '.worktrees', 'gone'); // deliberately never created on disk
   const statePath = path.join(tmp, 'docs', 'masterplan', slug, 'state.yml');
@@ -404,7 +423,7 @@ test('worktree-integrity fix: retires a gone-from-disk, unregistered worktree (r
 });
 
 test('worktree-integrity fix: leaves an unregistered worktree that still EXISTS on disk untouched (BLOCKER — never silence a live reference) — issue #7', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-wt-fix-live-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-wt-fix-live-'));
   const slug = 'live-bundle';
   const liveDir = path.join(tmp, '.worktrees', 'livewt');
   fs.mkdirSync(liveDir, { recursive: true }); // EXISTS on disk → a potential live checkout
@@ -425,7 +444,7 @@ test('worktree-integrity fix: leaves an unregistered worktree that still EXISTS 
 });
 
 test('worktree-integrity fix: skips an archived bundle whose worktree is gone (subset of check-ERROR\'d) — issue #7', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-wt-fix-arch-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-wt-fix-arch-'));
   const slug = 'archived-bundle';
   const gonePath = path.join(tmp, '.worktrees', 'gone-arch'); // never created
   const statePath = path.join(tmp, 'docs', 'masterplan', slug, 'state.yml');
@@ -446,7 +465,7 @@ test('worktree-integrity fix: skips an archived bundle whose worktree is gone (s
 });
 
 test('worktree-integrity fix: clears a legacy schema<6 bundle (issue #7\'s real payload — the pre-rename /home/... cases) without dropping fields', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-wt-fix-legacy-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-wt-fix-legacy-'));
   const slug = 'cli-oper-queries';
   const gone = '/home/ras/dev/petabit-os-stack/petabit-os-mgmt/.claude/worktrees/phase-25'; // pre-rename, gone
   const statePath = path.join(tmp, 'docs', 'masterplan', slug, 'state.yml');
@@ -459,7 +478,11 @@ test('worktree-integrity fix: clears a legacy schema<6 bundle (issue #7\'s real 
   const gitExec = (args) => {
     if (args[0] === 'worktree') return `worktree ${tmp}\n`;
     if (args[0] === 'branch') return 'main\n';
-    if (args[0] === 'rev-parse') return '.git\n';
+    // The legacy bundle's repo ROOT (per the stub's world) is its pre-rename location — the
+    // declared worktree lives under THAT root, so the owner-host ERROR semantics apply (the
+    // host-local-state rule: under the examined repo's root, full verification; a path under
+    // a root absent on this machine — a CI runner seeing another host's live bundle — skips).
+    if (args[0] === 'rev-parse') return '/home/ras/dev/petabit-os-stack/petabit-os-mgmt/.git\n';
     throw new Error(`unexpected git args: ${args.join(' ')}`);
   };
   // check ERRORs on BOTH the dangling worktree and the dangling branch.
@@ -514,7 +537,7 @@ test('state-schema: fixtures match dir-prefix severity', async (t) => {
 });
 
 test('state-schema: SKIP when there are no run bundles', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-ss-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-ss-'));
   const findings = stateSchema(tmp);
   assertFindingShape(findings); // guards the >=1-finding contract: maxSeverity([]) would falsely read 'SKIP'
   assert.equal(maxSeverity(findings), 'SKIP');
@@ -539,7 +562,7 @@ test('state-schema: a modern schema-6 nested-worktree bundle omitting the old v8
   // those old flat fields, with the branch nested under `worktree:`, reaches the real check
   // (PASS, not SKIP) and raises no false-positive ERROR. Complements the schema<6 legacy-skip
   // test above — that one asserts the SKIP path; this asserts the validated path.
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-ss-issue13-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-ss-issue13-'));
   const d = path.join(tmp, 'docs', 'masterplan', 'build-monitor-portal');
   fs.mkdirSync(d, { recursive: true });
   fs.writeFileSync(
@@ -562,7 +585,7 @@ test('state-schema: a modern schema-6 nested-worktree bundle omitting the old v8
 test('state-schema: WARN (not silent skip) for a slug dir missing state.yml (Codex #4)', () => {
   // A slug dir with no readable state.yml is an orphan/incomplete bundle. Previously skipped
   // silently → an all-orphan docs/masterplan falsely returned PASS. Now it must WARN (exit 0).
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-ss-orphan-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-ss-orphan-'));
   fs.mkdirSync(path.join(tmp, 'docs', 'masterplan', 'orphan-slug'), { recursive: true });
   fs.writeFileSync(path.join(tmp, 'docs', 'masterplan', 'orphan-slug', 'plan.md'), '# Plan\n');
   const findings = stateSchema(tmp);
@@ -575,7 +598,7 @@ test('state-schema: hidden dirs (.graveyard) are not treated as bundle slugs', (
   // The `.graveyard/` retirement archive is a sibling of real bundle dirs and intentionally has no
   // state.yml of its own (its children are the archived bundles). It must not produce an orphan
   // WARN. Regression for the false positive on every repo using the archive convention.
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-ss-grave-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-ss-grave-'));
   fs.mkdirSync(path.join(tmp, 'docs', 'masterplan', '.graveyard', 'retired-bundle'), { recursive: true });
   fs.writeFileSync(path.join(tmp, 'docs', 'masterplan', '.graveyard', 'retired-bundle', 'plan.md'), '# retired\n');
   // Also seed one real bundle so the check runs (not SKIP) and must PASS.
@@ -611,14 +634,14 @@ test('legacy-bundle: fixtures match dir-prefix severity', async (t) => {
 });
 
 test('legacy-bundle: SKIP when no bundles and no docs/superpowers', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-lb-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-lb-'));
   const findings = legacyBundle(tmp);
   assertFindingShape(findings);
   assert.equal(maxSeverity(findings), 'SKIP');
 });
 
 test('legacy-bundle: WARN when docs/superpowers contains actual artifacts (no bundle slugs)', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-lb-sp-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-lb-sp-'));
   fs.mkdirSync(path.join(tmp, 'docs', 'superpowers', 'plans'), { recursive: true });
   fs.writeFileSync(path.join(tmp, 'docs', 'superpowers', 'plans', 'foo.md'), '# legacy artifact');
   const findings = legacyBundle(tmp);
@@ -627,7 +650,7 @@ test('legacy-bundle: WARN when docs/superpowers contains actual artifacts (no bu
 });
 
 test('legacy-bundle: no WARN when docs/superpowers is empty container (no bundle slugs)', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-lb-sp-empty-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-lb-sp-empty-'));
   fs.mkdirSync(path.join(tmp, 'docs', 'superpowers', 'old'), { recursive: true });
   const findings = legacyBundle(tmp);
   assertFindingShape(findings);
@@ -675,7 +698,7 @@ const RPH_FIXTURE = {
 };
 
 function rphFixturePath(extra = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-rph-'));
+  const dir = mkdtempTracked(path.join(os.tmpdir(), 'mp-rph-'));
   const policyPath = path.join(dir, 'policy.json');
   fs.writeFileSync(policyPath, JSON.stringify({ ...RPH_FIXTURE, ...extra }));
   return { dir, policyPath, liveMissing: path.join(dir, 'no-such-live.json') };
@@ -690,7 +713,7 @@ test('routing-policy-health: healthy repo policy -> PASS (advisory check)', () =
 });
 
 test('routing-policy-health: the CHECKED-IN repo policy is healthy (live surface)', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-rph-repo-'));
+  const dir = mkdtempTracked(path.join(os.tmpdir(), 'mp-rph-repo-'));
   const findings = routingPolicyHealth('/unused', { livePath: path.join(dir, 'no-live.json') });
   assertFindingShape(findings);
   assert.equal(maxSeverity(findings), 'PASS', JSON.stringify(findings));
@@ -751,14 +774,14 @@ test('index-staleness: fixtures match dir-prefix severity', async (t) => {
 });
 
 test('index-staleness: SKIP when no run bundles', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-is-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-is-'));
   const findings = indexStaleness(tmp);
   assertFindingShape(findings);
   assert.equal(maxSeverity(findings), 'SKIP');
 });
 
 test('index-staleness: PASS when plan.md has no recorded hash (not yet indexed)', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-is-nohash-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-is-nohash-'));
   const bundleDir = path.join(tmp, 'docs', 'masterplan', 'p1');
   fs.mkdirSync(bundleDir, { recursive: true });
   fs.writeFileSync(path.join(bundleDir, 'plan.md'), '# Plan\n', 'utf8');
@@ -768,7 +791,7 @@ test('index-staleness: PASS when plan.md has no recorded hash (not yet indexed)'
 });
 
 test('index-staleness: WARN via plan.index.json fallback when hash stale', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-is-idx-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-is-idx-'));
   const bundleDir = path.join(tmp, 'docs', 'masterplan', 'p1');
   fs.mkdirSync(bundleDir, { recursive: true });
   const planContent = '# Plan\nSome content\n';
@@ -781,7 +804,7 @@ test('index-staleness: WARN via plan.index.json fallback when hash stale', () =>
 });
 
 test('index-staleness: PASS via plan.index.json fallback when hash matches', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-is-idxok-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-is-idxok-'));
   const bundleDir = path.join(tmp, 'docs', 'masterplan', 'p1');
   fs.mkdirSync(bundleDir, { recursive: true });
   const planContent = '# Plan\nSome content\n';
@@ -844,7 +867,7 @@ test('stale-lock: PASS when no .lock file exists', () => {
 });
 
 test('stale-lock: SKIP when no run bundles', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-sl-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-sl-'));
   const findings = staleLock(tmp, { now: NOW });
   assertFindingShape(findings);
   assert.equal(maxSeverity(findings), 'SKIP');
@@ -864,14 +887,14 @@ test('plugin-registry-drift: fixtures match dir-prefix severity', async (t) => {
 });
 
 test('plugin-registry-drift: SKIP when installed_plugins.json absent', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-prd-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-prd-'));
   const findings = pluginRegistryDrift('/unused', { homeDir: tmp });
   assertFindingShape(findings);
   assert.equal(maxSeverity(findings), 'SKIP');
 });
 
 test('plugin-registry-drift: SKIP when masterplan entry absent from registry', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-prd-noentry-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-prd-noentry-'));
   const pluginsDir = path.join(tmp, '.claude', 'plugins');
   fs.mkdirSync(pluginsDir, { recursive: true });
   fs.writeFileSync(path.join(pluginsDir, 'installed_plugins.json'), JSON.stringify({ plugins: {} }));
@@ -920,7 +943,7 @@ test('plugin-registry-drift: PASS (graceful) when gitExec throws', () => {
 });
 
 test('plugin-registry-drift: PASS when entry has no gitCommitSha (nothing to compare)', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-prd-nosha-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-prd-nosha-'));
   const pluginsDir = path.join(tmp, '.claude', 'plugins');
   const mktDir = path.join(pluginsDir, 'marketplaces', 'rasatpetabit-masterplan', '.claude-plugin');
   fs.mkdirSync(mktDir, { recursive: true });
@@ -936,7 +959,7 @@ test('plugin-registry-drift: PASS when entry has no gitCommitSha (nothing to com
 // ---- pi-agent-registration (host-scoped, injected execFileSync / targetDir) ----
 
 test('pi-agent-registration: SKIP when target agents dir is absent', () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-pi-reg-home-'));
+  const home = mkdtempTracked(path.join(os.tmpdir(), 'mp-pi-reg-home-'));
   // no .pi/agent/agents under home
   const findings = piAgentRegistration(path.join(here, '..'), {
     homeDir: home,
@@ -948,7 +971,7 @@ test('pi-agent-registration: SKIP when target agents dir is absent', () => {
 });
 
 test('pi-agent-registration: PASS when register --check exits 0', () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-pi-reg-pass-'));
+  const home = mkdtempTracked(path.join(os.tmpdir(), 'mp-pi-reg-pass-'));
   const target = path.join(home, '.pi', 'agent', 'agents');
   fs.mkdirSync(target, { recursive: true });
   const findings = piAgentRegistration(path.join(here, '..'), {
@@ -961,7 +984,7 @@ test('pi-agent-registration: PASS when register --check exits 0', () => {
 });
 
 test('pi-agent-registration: WARN when register --check exits non-zero', () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-pi-reg-warn-'));
+  const home = mkdtempTracked(path.join(os.tmpdir(), 'mp-pi-reg-warn-'));
   const target = path.join(home, '.pi', 'agent', 'agents');
   fs.mkdirSync(target, { recursive: true });
   const findings = piAgentRegistration(path.join(here, '..'), {
@@ -987,7 +1010,7 @@ test('pi-agent-registration: WARN when register --check exits non-zero', () => {
 // exercises resolveRunsDir(repoRoot) end-to-end the way a real `doctor` run does.
 
 function pisRepo(bundles = {}) {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-pis-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-pis-'));
   for (const [slug, index] of Object.entries(bundles)) {
     const dir = path.join(tmp, 'docs', 'masterplan', slug);
     fs.mkdirSync(dir, { recursive: true });
@@ -1056,7 +1079,7 @@ test('coord-drift: fixtures match dir-prefix severity', async (t) => {
 });
 
 test('coord-drift: SKIP when no run bundles', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-cd-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-cd-'));
   const findings = coordDrift(tmp);
   assertFindingShape(findings);
   assert.equal(maxSeverity(findings), 'SKIP');
@@ -1097,7 +1120,7 @@ test('coord-drift: PASS for a clean coordinated bundle', () => {
 
 // Build a bundle dir under a tmp repoRoot with an owner lock acquired at `acquiredAt`.
 function ownerBundle(slug, self, acquiredAt) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-own-'));
+  const root = mkdtempTracked(path.join(os.tmpdir(), 'mp-own-'));
   const bundleDir = path.join(root, 'docs', 'masterplan', slug);
   fs.mkdirSync(bundleDir, { recursive: true });
   acquireOwner(bundleDir, self, { now: acquiredAt });
@@ -1106,7 +1129,7 @@ function ownerBundle(slug, self, acquiredAt) {
 const OWNER = (now) => buildOwnerIdentity({ host: 'epyc1', session: 'sess-A', slug: 'p', now });
 
 test('owner-sentinel: SKIP when no run bundles', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-own-skip-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-own-skip-'));
   const findings = ownerSentinel(tmp, { now: NOW });
   assertFindingShape(findings);
   assert.equal(maxSeverity(findings), 'SKIP');
@@ -1163,7 +1186,7 @@ const shq = (s) => "'" + String(s).replace(/'/g, "'\\''") + "'";
 // so last_activity is deterministic; `git` makes the root a git-repo root (for nested discovery).
 // Returns { root, canonRoot, bundleDir, statePath } with statePath under the CANONICAL root.
 function danglingBundle({ slug = 'p', dirName = slug, status = 'in-progress', eventsTs = null, git = false } = {}) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-dang-'));
+  const root = mkdtempTracked(path.join(os.tmpdir(), 'mp-dang-'));
   if (git) fs.mkdirSync(path.join(root, '.git'), { recursive: true });
   const bundleDir = path.join(root, 'docs', 'masterplan', dirName);
   fs.mkdirSync(bundleDir, { recursive: true });
@@ -1200,7 +1223,7 @@ test('dangling-run: repo-aware resume — plain form for a MAIN-repo bundle, cd 
   assert.ok(!mainWarn.fix.startsWith('cd '), 'MAIN-repo bundle has no cd prefix');
 
   // Foreign-repo bundle: a NESTED git repo beneath MAIN → record.repo !== MAIN → cd form.
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-dang-main-'));
+  const root = mkdtempTracked(path.join(os.tmpdir(), 'mp-dang-main-'));
   fs.mkdirSync(path.join(root, '.git'), { recursive: true });
   const sub = path.join(root, 'sub');
   fs.mkdirSync(path.join(sub, '.git'), { recursive: true });
@@ -1228,7 +1251,7 @@ test('dangling-run: resume command is shell-quote-escaped for a path with a spac
 });
 
 test('dangling-run: a stale in-progress owner lock triggers WARN independent of the day threshold', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-dang-own-'));
+  const root = mkdtempTracked(path.join(os.tmpdir(), 'mp-dang-own-'));
   const bundleDir = path.join(root, 'docs', 'masterplan', 'p');
   fs.mkdirSync(bundleDir, { recursive: true });
   fs.writeFileSync(path.join(bundleDir, 'state.yml'),
@@ -1247,7 +1270,7 @@ test('dangling-run: a stale in-progress owner lock triggers WARN independent of 
 
 // ---- dispatcher: all 17 modules auto-discovered ----------------------------
 
-test('dispatcher: discovers all 19 check modules', async () => {
+test('dispatcher: discovers every check module on disk', async () => {
   const checks = await discoverChecks(path.join(here, '..', 'lib', 'doctor'));
   const names = checks.map((c) => c.name);
   const expected = [
@@ -1259,7 +1282,10 @@ test('dispatcher: discovers all 19 check modules', async () => {
   for (const n of expected) {
     assert.ok(names.includes(n), `discovered ${n}`);
   }
-  assert.equal(names.length, expected.length, `expected ${expected.length} checks, found ${names.length}: ${names.join(', ')}`);
+  // The total is derived from the modules on disk: doctor checks are auto-discovered, so a new
+  // lib/doctor/*.mjs (the v10 checks, for instance) must never require editing this literal.
+  const onDisk = fs.readdirSync(path.join(here, '..', 'lib', 'doctor')).filter((f) => f.endsWith('.mjs') && !f.startsWith('_')).length;
+  assert.equal(names.length, onDisk, `expected ${onDisk} checks on disk, found ${names.length}: ${names.join(', ')}`);
 });
 
 // ---- plan-doc-cruft (#14, WARN) ------------------------------------------------
@@ -1275,7 +1301,7 @@ test('plan-doc-cruft: fixtures match dir-prefix severity', async (t) => {
 });
 
 test('plan-doc-cruft: SKIP when no runs dir at all', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-pdc-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-pdc-'));
   const findings = planDocCruft(tmp);
   assertFindingShape(findings);
   assert.equal(maxSeverity(findings), 'SKIP');
@@ -1297,7 +1323,7 @@ test('plan-doc-cruft: WARN names the offending file, slug, and signal; fix point
 });
 
 test('plan-doc-cruft: slug matches whole tokens only (no substring false positives)', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-pdc-tok-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-pdc-tok-'));
   fs.mkdirSync(path.join(tmp, 'docs', 'masterplan', 't9'), { recursive: true });
   fs.writeFileSync(path.join(tmp, 'docs', 'masterplan', 't9', 'state.yml'),
     'schema_version: 6\nslug: t9\nstatus: archived\nphase: building\n');
@@ -1314,7 +1340,7 @@ test('plan-doc-cruft: slug matches whole tokens only (no substring false positiv
 });
 
 test('plan-doc-cruft: single-word slugs never match headings (hyphenated-only signal)', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-pdc-head-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-pdc-head-'));
   fs.mkdirSync(path.join(tmp, 'docs', 'masterplan', 'cleanup'), { recursive: true });
   fs.writeFileSync(path.join(tmp, 'docs', 'masterplan', 'cleanup', 'state.yml'),
     'schema_version: 6\nslug: cleanup\nstatus: archived\nphase: building\n');
@@ -1362,7 +1388,7 @@ test('goals: fixtures match dir-prefix severity', async (t) => {
 });
 
 test('goals: SKIP when there are no run bundles (empty dir — not a committable fixture)', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-goals-empty-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-goals-empty-'));
   const findings = goals(tmp);
   assertFindingShape(findings); // guards the >=1-finding contract; maxSeverity([]) would falsely read SKIP
   assert.equal(maxSeverity(findings), 'SKIP');
@@ -1374,7 +1400,7 @@ test('goals: archived bundle with event-level ts and null state.goals re-validat
   // goals:null even though goals.md is authoritative. Doctor must reconstruct event-level provenance
   // and validate every verdict against goals.md, not reject a real receipt against an empty state cache.
   const H = goalsHash(GOALS_MD_FIXTURE);
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-goals-ts-eventlevel-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-goals-ts-eventlevel-'));
   const state =
     'schema_version: 6\nslug: ts-event\nstatus: archived\nphase: execute\n' +
     'goals_enabled: true\nworktree: /tmp/x\ngoals: null\n';
@@ -1409,7 +1435,7 @@ test('goals: a pre-feature bundle beside a post-feature one causes no false fail
   // adjacent goals-enabled bundle is checked and passes → overall PASS, never a WARN/ERROR from the
   // pre-feature resume. This is the spec §10 "pre-feature bundle resumes with no false failures".
   const H = goalsHash(GOALS_MD_FIXTURE);
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-goals-mixed-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-goals-mixed-'));
   writeGoalsBundle(tmp, 'pre-feature', {
     state: 'schema_version: 6\nslug: pre-feature\nstatus: in-progress\nphase: building\ntasks: []\n',
     events: '{"type":"bundle_created","data":{"goals_enabled":false}}\n',
@@ -1448,7 +1474,7 @@ test('goals: KNOWN DEFECT — a post-plan amendment leaving a goal uncovered sho
   // This test documents the live behavior (PASS) so the defect is on record (CD-7) and this test
   // flips to the WARN assertion once the check is fixed. Fix is outside this task's file scope.
   const H = goalsHash(GOALS_MD_FIXTURE);
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-goals-uncov-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-goals-uncov-'));
   writeGoalsBundle(tmp, 'uncovered', {
     state:
       'schema_version: 6\nslug: uncovered\nstatus: in-progress\nphase: building\n' +
@@ -1479,7 +1505,7 @@ function makeArchivedShellState(phase, taskCount) {
 }
 
 test('goals: abandoned archived brainstorm shell (zero tasks/goals/events) is exempt', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-goals-shell-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-goals-shell-'));
   try {
     writeGoalsBundle(tmp, 'shell', {
       state: makeArchivedShellState('brainstorm', 0),
@@ -1498,7 +1524,7 @@ test('goals: abandoned archived brainstorm shell (zero tasks/goals/events) is ex
 });
 
 test('goals: archived brainstorm shell WITH a task still requires a receipt', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-goals-shell-task-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-goals-shell-task-'));
   try {
     writeGoalsBundle(tmp, 'shell-task', {
       state: makeArchivedShellState('brainstorm', 1),
@@ -1516,7 +1542,7 @@ test('goals: archived brainstorm shell WITH a task still requires a receipt', ()
 });
 
 test('goals: archived completed run (phase done, active goals) without receipt still ERRORS', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-goals-done-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-goals-done-'));
   try {
     writeGoalsBundle(tmp, 'done', {
       state: makeArchivedShellState('done', 1),
@@ -1567,7 +1593,7 @@ function stateDoneWithGoals() {
 
 test('goals: valid receipt followed by an invalid trailing stub still passes', () => {
   const H = goalsHash(GOALS_MD_FIXTURE);
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-goals-valid-then-stub-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-goals-valid-then-stub-'));
   try {
     // Note state.goals is null here so the doctor falls back to goals.md (authoritative).
     const state =
@@ -1602,7 +1628,7 @@ test('goals: valid receipt followed by an invalid trailing stub still passes', (
 });
 
 test('goals: two invalid receipts still ERROR (no valid receipt to select)', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-goals-two-invalid-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-goals-two-invalid-'));
   try {
     const state =
       `schema_version: 6\nslug: rc2\nstatus: archived\nphase: execute\ngoals_enabled: true\ngoals:\n` +
@@ -1627,7 +1653,7 @@ test('goals: two invalid receipts still ERROR (no valid receipt to select)', () 
 });
 
 test('plan-doc-cruft: dot-directories and node_modules are never scanned', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-pdc-dot-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-pdc-dot-'));
   fs.mkdirSync(path.join(tmp, 'docs', 'masterplan', 't9-cleanup'), { recursive: true });
   fs.writeFileSync(path.join(tmp, 'docs', 'masterplan', 't9-cleanup', 'state.yml'),
     'schema_version: 6\nslug: t9-cleanup\nstatus: archived\nphase: building\n');
@@ -1662,7 +1688,7 @@ test('stalled-bundle: fixtures match dir-prefix severity', async (t) => {
 });
 
 test('stalled-bundle: SKIP when there is no run bundles directory', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-sb-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-sb-'));
   const findings = stalledBundle(tmp);
   assertFindingShape(findings);
   assert.equal(maxSeverity(findings), 'SKIP');
@@ -1673,7 +1699,7 @@ test('stalled-bundle: NOT version-scoped — a legacy bundle is still inspected'
   // spec-assumptions grandfathers anything below CURRENT_SCHEMA_VERSION and was thereby
   // dead for every real bundle. CD-7 is a universal invariant, so this check must fire
   // regardless of schema_version. A bundle far below the floor must still WARN.
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-sb-legacy-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-sb-legacy-'));
   const dir = path.join(tmp, 'docs', 'masterplan', 'ancient');
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'state.yml'), 'schema_version: 3\nslug: ancient\nstatus: in-progress\nphase: brainstorm\n');
@@ -1685,7 +1711,7 @@ test('stalled-bundle: NOT version-scoped — a legacy bundle is still inspected'
 });
 
 test('stalled-bundle: an empty events.jsonl counts as unrecorded', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-sb-empty-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-sb-empty-'));
   const dir = path.join(tmp, 'docs', 'masterplan', 'hollow');
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'state.yml'), `schema_version: ${CURRENT_SCHEMA_VERSION}\nslug: hollow\nstatus: in-progress\nphase: brainstorm\n`);
@@ -1697,7 +1723,7 @@ test('stalled-bundle: an empty events.jsonl counts as unrecorded', () => {
 });
 
 test('stalled-bundle: archived bundles are exempt', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-sb-arch-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-sb-arch-'));
   const dir = path.join(tmp, 'docs', 'masterplan', 'done');
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'state.yml'), `schema_version: ${CURRENT_SCHEMA_VERSION}\nslug: done\nstatus: archived\nphase: brainstorm\n`);
@@ -1708,7 +1734,7 @@ test('stalled-bundle: archived bundles are exempt', () => {
 });
 
 test('spec-assumptions: SKIP when there is no run bundles directory', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-sa-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-sa-'));
   const findings = specAssumptions(tmp);
   assertFindingShape(findings);
   assert.equal(maxSeverity(findings), 'SKIP');
@@ -1719,7 +1745,7 @@ test('spec-assumptions: version threshold tracks CURRENT_SCHEMA_VERSION (grandfa
   // A bundle one schema-version BELOW the current floor keeps its missing-section spec WARN-free
   // (grandfathered), while a bundle AT the floor with the same gap WARNs — proving the threshold is
   // sourced from the shared constant, not a divergent literal.
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-sa-ver-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-sa-ver-'));
   const write = (slug, sv, spec) => {
     const d = path.join(tmp, 'docs', 'masterplan', slug);
     fs.mkdirSync(d, { recursive: true });
@@ -1741,7 +1767,7 @@ test('spec-assumptions: version threshold tracks CURRENT_SCHEMA_VERSION (grandfa
 });
 
 test('spec-assumptions: an archived at-floor bundle missing the section is exempt (no WARN)', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-sa-arch-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-sa-arch-'));
   const d = path.join(tmp, 'docs', 'masterplan', 'frozen');
   fs.mkdirSync(d, { recursive: true });
   fs.writeFileSync(path.join(d, 'state.yml'),
@@ -1756,7 +1782,7 @@ test('spec-assumptions: an archived at-floor bundle missing the section is exemp
 // ---- rejected-idea-kb (durable .out-of-scope/ concept files) -----------------
 
 test('rejected-idea-kb: SKIP when directory absent', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-oos-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-oos-'));
   try {
     const findings = rejectedIdeaKb(tmp);
     assertFindingShape(findings);
@@ -1767,7 +1793,7 @@ test('rejected-idea-kb: SKIP when directory absent', () => {
 });
 
 test('rejected-idea-kb: PASS when required sections present', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-oos-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-oos-'));
   try {
     const dir = path.join(tmp, '.out-of-scope');
     fs.mkdirSync(dir);
@@ -1792,7 +1818,7 @@ test('rejected-idea-kb: PASS when required sections present', () => {
 });
 
 test('rejected-idea-kb: WARN when a required section is missing', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-oos-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-oos-'));
   try {
     const dir = path.join(tmp, '.out-of-scope');
     fs.mkdirSync(dir);
@@ -1803,5 +1829,74 @@ test('rejected-idea-kb: WARN when a required section is missing', () => {
     assert.match(findings.find((f) => f.severity === 'WARN').summary, /Why this is out of scope/);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('--only=<check-id> runs exactly one discovered check and exits with its outcome', async () => {
+  assert.deepEqual(parseArgs(['--only=state-schema']).only, 'state-schema');
+  assert.throws(() => parseArgs(['--only=']), /--only requires a check id/);
+  const checks = await discoverChecks(path.join(here, '..', 'lib', 'doctor'));
+  assert.equal(selectCheck(checks, 'state-schema').name, 'state-schema');
+  assert.equal(selectCheck(checks, 'nope'), null);
+  const bin = path.join(here, '..', 'bin', 'doctor.mjs');
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-doctor-only-'));
+  const unknown = spawnSync(process.execPath, [bin, '--only=nope', tmp], { encoding: 'utf8' });
+  assert.equal(unknown.status, 2);
+  assert.match(unknown.stderr, /unknown check id 'nope'/);
+  assert.match(unknown.stderr, /state-schema/);
+  const one = spawnSync(process.execPath, [bin, '--only=state-schema', tmp], { encoding: 'utf8' });
+  assert.equal(one.status, 0, one.stderr);
+  assert.ok(one.stdout.includes('state-schema'), 'the selected check reports');
+  assert.ok(!one.stdout.includes('worktree-integrity'), 'other checks do not run');
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+test('worktree-integrity: path-alias seams resolve to owner-host semantics (the pass-4 review findings)', () => {
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-wt-alias-'));
+  fs.mkdirSync(path.join(tmp, '.git', 'worktrees'), { recursive: true });
+  // A symlink ALIAS of the repo root; a bundle declares the alias spelling of a GONE worktree.
+  const alias = path.join(path.dirname(tmp), `alias-${path.basename(tmp)}`);
+  fs.symlinkSync(tmp, alias);
+  const gone = path.join(alias, '.worktrees', 'gone');
+  const bdir = path.join(tmp, 'docs', 'masterplan', 'aliascase');
+  fs.mkdirSync(bdir, { recursive: true });
+  fs.writeFileSync(path.join(bdir, 'state.yml'), `slug: aliascase\nstatus: in-progress\nworktree: ${gone}\n`);
+  const gitExec = (args) => {
+    if (args[0] === 'worktree') return `worktree ${tmp}\n`;
+    if (args[0] === 'branch') return 'main\n';
+    if (args[0] === 'rev-parse') return '.git\n';
+    throw new Error(`unexpected git args: ${args.join(' ')}`);
+  };
+  let findings = worktreeIntegrity(tmp, { gitExec });
+  let err = findings.find((f) => f.severity === 'ERROR' && /not a registered git worktree/.test(f.summary));
+  assert.ok(err, `the alias-spelled declaration still earns the owner-host ERROR: ${JSON.stringify(findings)}`);
+
+  // A RELATIVE declaration resolves against the repo root — owner-host semantics, not a skip.
+  const bdir2 = path.join(tmp, 'docs', 'masterplan', 'relcase');
+  fs.mkdirSync(bdir2, { recursive: true });
+  fs.writeFileSync(path.join(bdir2, 'state.yml'), `slug: relcase\nstatus: in-progress\nworktree: .worktrees/also-gone\n`);
+  findings = worktreeIntegrity(tmp, { gitExec });
+  err = findings.find((f) => f.severity === 'ERROR' && /relcase.*also-gone/.test(f.summary));
+  assert.ok(err, `a relative declaration resolves against the repo root (owner-host ERROR): ${JSON.stringify(findings)}`);
+
+  // The foreign-root SKIP still stands: a declaration under a root absent on this machine.
+  const bdir3 = path.join(tmp, 'docs', 'masterplan', 'foreigncase');
+  fs.mkdirSync(bdir3, { recursive: true });
+  fs.writeFileSync(path.join(bdir3, 'state.yml'), `slug: foreigncase\nstatus: in-progress\nworktree: /no-such-root/repo/.worktrees/live\n`);
+  findings = worktreeIntegrity(tmp, { gitExec });
+  const skip = findings.find((f) => f.severity === 'SKIP' && /another repository root/.test(f.summary));
+  assert.ok(skip, `the genuinely foreign-root declaration still skips: ${JSON.stringify(findings)}`);
+
+  // Foreign-PLATFORM declarations (the pass-4 closure finding): on POSIX a Windows drive or
+  // UNC path is not path.isAbsolute — it must not fall into repo-relative resolution; it is
+  // another machine's state (the SKIP semantics), never an owner-host ERROR.
+  for (const [slug, wt] of [['wincase', 'C:\\foreign\\repo\\.worktrees\\gone'], ['unccase', '\\\\server\\share\\repo\\.worktrees\\gone']]) {
+    const bd = path.join(tmp, 'docs', 'masterplan', slug);
+    fs.mkdirSync(bd, { recursive: true });
+    fs.writeFileSync(path.join(bd, 'state.yml'), `slug: ${slug}\nstatus: in-progress\nworktree: ${wt}\n`);
+    const fs2 = worktreeIntegrity(tmp, { gitExec });
+    const sk = fs2.find((f) => f.severity === 'SKIP' && /another (repository root|machine|platform)/.test(f.summary) || (f.severity === 'SKIP' && /another/.test(f.summary)));
+    assert.ok(sk, `the ${slug} declaration (a foreign-platform path) skips: ${JSON.stringify(fs2.filter((f) => f.id === 'worktree-integrity'))}`);
+    fs.rmSync(bd, { recursive: true, force: true });
   }
 });

@@ -44,6 +44,12 @@ const RETIRED_PATTERNS = [
 ];
 
 // History + detector exemption. Anything else under version control is live surface.
+// docs/handoffs/ joins the history set 2026-09-06: handoffs are dated, immutable
+// incident/transfer records — they quote retired identifiers verbatim when recording
+// why something failed (e.g. the 2026-09-06 routing release records preserve the exact
+// spawn-guard ENOENT errors). A record cannot reintroduce the retired system; dodging
+// the scanner inside a dated record would falsify history instead of protecting live
+// surfaces.
 // .worktrees/ holds linked git worktrees — separate working trees whose own test runs
 // own their scan; walking them from this tree double-counts surfaces and picks up
 // per-tree artifacts (post-merge, the scan root gains a full nested checkout).
@@ -51,6 +57,7 @@ const EXEMPT_PREFIXES = [
   'legacy/',
   '.worktrees/',
   'docs/masterplan/',
+  'docs/handoffs/',
   'docs/superpowers/',
   'docs/design/',
   'docs/contracts/',

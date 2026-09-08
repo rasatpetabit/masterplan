@@ -58,6 +58,11 @@ CI rather than silently drifting. `v7 ID` is the ported v7 check id, where appli
 | `coord-drift` | — | WARN | Coordination-state drift for GitHub-coordinated run bundles. |
 | `dangling-run` | — | WARN | Non-archived dangling run bundles: past the staleness threshold, or a stale in-progress bundle still holding an owner-lock. |
 | `goals` | — | ERROR | Goals-enabled bundles have consistent goal state: a frozen hash matching the current `goals.md`, and (archived) a valid `goal_check` receipt or covering waivers. |
+| `incomplete-archive` | — | WARN | Archived bundles whose completion class is `incomplete:<reason>` or `merged` are reported; a valid `incomplete_authorized` ledger record is required for each. |
+| `legacy-archive` | — | WARN | Pre-v10 archives with no completion field report `legacy` rather than being misread as complete; only legacy-grade archives pass. |
+| `no-definition-of-done` | — | WARN | Repo-local `.masterplan.yaml` with no `done:` definition (or `done: none`) is reported at archive time, since the deploy contract cannot be satisfied. |
+| `required-successor` | — | ERROR | Every `required_successor {slug}` obligation from an `intent_rejected` event must resolve to an existing bundle seeded with `--predecessor` naming its source; a missing successor is ERROR. |
+| `resume-brief-hook` | — | WARN/SKIP | Fleet hook policy (`/srv/workflows/hooks/policy.toml`) wires the SessionStart `resume-brief --repo-root` hook; absent/unwired/unreadable policy is reported. |
 | `owner-sentinel` | — | WARN | Stale/corrupt owner locks (`.owner.lock`, orphan `.owner.hb.*`) left by a crashed session. |
 | `pi-agent-registration` | — | WARN | Host drift of pi-installed `mp-*` agents (stale pins, missing copies, body mismatch). |
 | `plan-doc-cruft` | — | WARN | Repo-wide markdown outside run bundles that still carries provenance of an archived run. |

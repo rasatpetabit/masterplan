@@ -2,7 +2,7 @@
 // Unit-tests the two exported helpers directly; integration-tests every subcommand by spawning the
 // real CLI over temp bundles (the contract the markdown shell depends on). bin is fs-only: no git
 // here. Results land on stdout; errors exit non-zero with a stderr hint.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -11,20 +11,33 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { formatBanner, applyPlanIndex, readPluginVersion, shouldSuppressWorkflow } from '../bin/masterplan.mjs';
 import { serializeState, parseState, CURRENT_SCHEMA_VERSION } from '../lib/bundle.mjs';
+import { liveCheckDigest } from '../lib/finish.mjs';
 import { createHash } from 'node:crypto';
 
 const BIN = fileURLToPath(new URL('../bin/masterplan.mjs', import.meta.url));
 const SAMPLE = fileURLToPath(new URL('./fixtures/legacy-bundles/5.0-inflight-sample.yml', import.meta.url));
 
 function run(args, opts = {}) {
+  // Hermetic session identity (the v10.0.0 tag CI caught this): the CLI refuses an owner-less
+  // verb ('no session id'), and a clean CI environment carries no CLAUDE_CODE_SESSION_ID —
+  // the tests that rely on the ambient session inherit a stable default instead of the
+  // developer's live session env. Explicit opts.env still wins.
+  const env = {
+    ...process.env,
+    CLAUDE_CODE_SESSION_ID: process.env.CLAUDE_CODE_SESSION_ID ?? 'mp-bin-test-hermetic-session',
+    PI_CODING_AGENT: undefined, // hermetic non-pi host (the pass-4 review's finding: the pi-host
+    // suppression branch routes planning serial — tests asserting non-pi behavior must not see the
+    // ambient host marker; tests asserting pi-host behavior set it via opts.env, which wins).
+    ...(opts.env ?? {}),
+  };
   try {
-    return { status: 0, stdout: execFileSync('node', [BIN, ...args], { encoding: 'utf8', ...opts }), stderr: '' };
+    return { status: 0, stdout: execFileSync('node', [BIN, ...args], { encoding: 'utf8', ...opts, env }), stderr: '' };
   } catch (e) {
     return { status: e.status ?? 1, stdout: e.stdout ?? '', stderr: e.stderr ?? '' };
   }
 }
 function tmpDir(prefix) {
-  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  return mkdtempTracked(path.join(os.tmpdir(), prefix));
 }
 function tmpBundle(stateObj) {
   const p = path.join(tmpDir('mp-bin-'), 'state.yml');
@@ -32,6 +45,28 @@ function tmpBundle(stateObj) {
   return p;
 }
 const read = (p) => parseState(fs.readFileSync(p, 'utf8'));
+
+// §8: `mp seed` requires an overlap review bound to the current run inventory. These tests are
+// about seed's OTHER behaviours, so the review is minted here from whatever `runs list` reports
+// for the bundle's own repo root — the same digest the recorder recomputes.
+function seedArgs(statePath, extra = []) {
+  const repoRoot = seedRepoRootFor(statePath);
+  const listed = run(['runs', 'list', `--repo-root=${repoRoot}`]);
+  const digest = listed.status === 0 ? JSON.parse(listed.stdout).inventory_sha256 : null;
+  const reviewPath = path.join(path.dirname(statePath), '..', `.overlap-${path.basename(path.dirname(statePath))}.json`);
+  fs.mkdirSync(path.dirname(reviewPath), { recursive: true });
+  fs.writeFileSync(reviewPath, JSON.stringify({ inventory_sha256: digest, candidates: [], action: 'proceed' }));
+  return [`--repo-root=${repoRoot}`, `--overlap-review=${reviewPath}`, ...extra];
+}
+
+// A bundle path is <repo>/docs/masterplan/<slug>/state.yml; the repo root is what sits above
+// the docs directory. A fixture not shaped that way falls back to the state file's directory.
+function seedRepoRootFor(statePath) {
+  const parts = path.resolve(statePath).split(path.sep);
+  const i = parts.lastIndexOf('docs');
+  return i > 0 ? parts.slice(0, i).join(path.sep) || path.sep : path.dirname(statePath);
+}
+
 // Satisfy a pre-execute gate the honest way: mint a structured receipt for the gate's CURRENT artifacts
 // and record it as done so enforceGateReview lets the transition proceed — exercising the real gate-
 // satisfied path, NEVER --force. The gate is fail-closed (required artifacts must exist on disk), so we
@@ -177,7 +212,7 @@ test('seed: stamps CURRENT_SCHEMA_VERSION, so a fresh bundle is never grandfathe
   // so the next version bump cannot re-open this gap.
   const dir = tmpDir('mp-seedver-');
   const p = path.join(dir, 'state.yml');
-  run(['seed', `--state=${p}`, '--slug=freshly-seeded', '--topic=schema version regression']);
+  run(['seed', `--state=${p}`, '--slug=freshly-seeded', '--topic=schema version regression', ...seedArgs(p)]);
   const seeded = read(p);
   assert.equal(seeded.schema_version, CURRENT_SCHEMA_VERSION);
   assert.equal(typeof seeded.schema_version, 'number');
@@ -185,7 +220,7 @@ test('seed: stamps CURRENT_SCHEMA_VERSION, so a fresh bundle is never grandfathe
 });
 test('seed: --schema-version still overrides, for the migration/test paths that need it', () => {
   const p = path.join(tmpDir('mp-seedver-ovr-'), 'state.yml');
-  run(['seed', `--state=${p}`, '--slug=pinned', '--topic=pinned version', '--schema-version=8']);
+  run(['seed', `--state=${p}`, '--slug=pinned', '--topic=pinned version', '--schema-version=8', ...seedArgs(p)]);
   assert.equal(read(p).schema_version, 8);
 });
 test('ISSUE H: migrate-bundle on a sub-5.0 bundle refuses + surfaces the CD-7/seed-fresh guidance over the WIRE (operator surface, not just lib)', () => {
@@ -1027,7 +1062,7 @@ test('seed: creates a core-valid current-schema brainstorm bundle with sibling a
   const dir = tmpDir('mp-seed-');
   const p = path.join(dir, 'state.yml');
   const r = run(['seed', `--state=${p}`, '--slug=demo-run', '--topic=A licensing topic', '--created-at=2026-05-29T00:00:00Z',
-                 '--complexity=high', '--autonomy=loose']);
+                 '--complexity=high', '--autonomy=loose', ...seedArgs(p)]);
   assert.equal(r.status, 0);
   const s = read(p);
   // Was `8`, a literal that pinned fresh bundles below the doctor feature floor and
@@ -1058,12 +1093,12 @@ test('seed: creates a core-valid current-schema brainstorm bundle with sibling a
 });
 test('seed: accepts and validates --planning-mode', () => {
   const good = path.join(tmpDir('mp-seed-plan-mode-'), 'state.yml');
-  const r = run(['seed', `--state=${good}`, '--slug=demo-run', '--topic=A topic', '--planning-mode=parallel']);
+  const r = run(['seed', `--state=${good}`, '--slug=demo-run', '--topic=A topic', '--planning-mode=parallel', ...seedArgs(good)]);
   assert.equal(r.status, 0);
   assert.equal(read(good).planning_mode, 'parallel');
 
   const bad = path.join(tmpDir('mp-seed-plan-mode-bad-'), 'state.yml');
-  const rejected = run(['seed', `--state=${bad}`, '--slug=demo-run', '--topic=A topic', '--planning-mode=bogus']);
+  const rejected = run(['seed', `--state=${bad}`, '--slug=demo-run', '--topic=A topic', '--planning-mode=bogus', ...seedArgs(bad)]);
   assert.notEqual(rejected.status, 0);
   assert.match(rejected.stderr, /invalid --planning-mode/);
 });
@@ -1073,7 +1108,7 @@ test('seed: relative path flags are absolutized against cwd (gate-resolution foo
   const p = path.join(tmpDir('mp-seed-relpath-'), 'state.yml');
   const r = run(['seed', `--state=${p}`, '--slug=demo', '--topic=A topic',
     '--spec-path=docs/demo/spec.md', '--plan-path=docs/demo/plan.md',
-    '--plan-index-path=docs/demo/plan.index.json']);
+    '--plan-index-path=docs/demo/plan.index.json', ...seedArgs(p)]);
   assert.equal(r.status, 0);
   const st = read(p);
   assert.equal(st.spec_path, path.resolve('docs/demo/spec.md'));
@@ -1101,71 +1136,71 @@ test('rebase-paths: --base absolutizes relative path fields (repair seam for leg
 });
 test('seed: defaults state.review.adversary=true at seed time (spec §4.1 default-on)', () => {
   const p = path.join(tmpDir('mp-seed-review-default-'), 'state.yml');
-  const r = run(['seed', `--state=${p}`, '--slug=demo', '--topic=A topic']);
+  const r = run(['seed', `--state=${p}`, '--slug=demo', '--topic=A topic', ...seedArgs(p)]);
   assert.equal(r.status, 0);
   assert.deepEqual(read(p).review, { adversary: true });
   assert.ok(!('codex' in read(p)), 'vestigial state.codex routing is no longer seeded');
 });
 test('seed: --adversary-review=on arms explicitly (matches default behavior)', () => {
   const p = path.join(tmpDir('mp-seed-review-on-'), 'state.yml');
-  const r = run(['seed', `--state=${p}`, '--slug=demo', '--topic=A topic', '--adversary-review=on']);
+  const r = run(['seed', `--state=${p}`, '--slug=demo', '--topic=A topic', '--adversary-review=on', ...seedArgs(p)]);
   assert.equal(r.status, 0);
   assert.deepEqual(read(p).review, { adversary: true });
 });
 test('seed: --codex-review=on is a hidden back-compat alias for --adversary-review', () => {
   const p = path.join(tmpDir('mp-seed-review-alias-'), 'state.yml');
-  const r = run(['seed', `--state=${p}`, '--slug=demo', '--topic=A topic', '--codex-review=on']);
+  const r = run(['seed', `--state=${p}`, '--slug=demo', '--topic=A topic', '--codex-review=on', ...seedArgs(p)]);
   assert.equal(r.status, 0);
   assert.deepEqual(read(p).review, { adversary: true });
 });
 test('seed: --adversary-review=off opts out (omits state.review entirely, A9 absent-field style)', () => {
   const p = path.join(tmpDir('mp-seed-review-off-'), 'state.yml');
-  const r = run(['seed', `--state=${p}`, '--slug=demo', '--topic=A topic', '--adversary-review=off']);
+  const r = run(['seed', `--state=${p}`, '--slug=demo', '--topic=A topic', '--adversary-review=off', ...seedArgs(p)]);
   assert.equal(r.status, 0);
   assert.ok(!('review' in read(p)), 'explicit opt-out must leave state.review absent');
 });
 test('seed: --adversary-review rejects bogus values loud (on/off only)', () => {
   const p = path.join(tmpDir('mp-seed-review-bogus-'), 'state.yml');
-  const r = run(['seed', `--state=${p}`, '--slug=demo', '--topic=A topic', '--adversary-review=maybe']);
+  const r = run(['seed', `--state=${p}`, '--slug=demo', '--topic=A topic', '--adversary-review=maybe', ...seedArgs(p)]);
   assert.notEqual(r.status, 0);
   assert.match(r.stderr, /invalid --adversary-review/);
 });
 
 test('seed: defaults state.dispatch.fabric=true at seed time (fabric default-on)', () => {
   const p = path.join(tmpDir('mp-seed-fabric-default-'), 'state.yml');
-  const r = run(['seed', `--state=${p}`, '--slug=demo', '--topic=A topic']);
+  const r = run(['seed', `--state=${p}`, '--slug=demo', '--topic=A topic', ...seedArgs(p)]);
   assert.equal(r.status, 0);
   assert.deepEqual(read(p).dispatch, { fabric: true });
 });
 test('seed: --fabric=on arms explicitly (matches default)', () => {
   const p = path.join(tmpDir('mp-seed-fabric-on-'), 'state.yml');
-  const r = run(['seed', `--state=${p}`, '--slug=demo', '--topic=A topic', '--fabric=on']);
+  const r = run(['seed', `--state=${p}`, '--slug=demo', '--topic=A topic', '--fabric=on', ...seedArgs(p)]);
   assert.equal(r.status, 0);
   assert.deepEqual(read(p).dispatch, { fabric: true });
 });
 test('seed: --fabric=off opts out (omits state.dispatch, A9 absent-field style)', () => {
   const p = path.join(tmpDir('mp-seed-fabric-off-'), 'state.yml');
-  const r = run(['seed', `--state=${p}`, '--slug=demo', '--topic=A topic', '--fabric=off']);
+  const r = run(['seed', `--state=${p}`, '--slug=demo', '--topic=A topic', '--fabric=off', ...seedArgs(p)]);
   assert.equal(r.status, 0);
   assert.ok(!('dispatch' in read(p)), 'explicit fabric opt-out must leave state.dispatch absent');
 });
 test('seed: --fabric rejects bogus values loud (on/off only)', () => {
   const p = path.join(tmpDir('mp-seed-fabric-bogus-'), 'state.yml');
-  const r = run(['seed', `--state=${p}`, '--slug=demo', '--topic=A topic', '--fabric=maybe']);
+  const r = run(['seed', `--state=${p}`, '--slug=demo', '--topic=A topic', '--fabric=maybe', ...seedArgs(p)]);
   assert.notEqual(r.status, 0);
   assert.match(r.stderr, /invalid --fabric/);
 });
 test('seed: refuses an existing bundle unless --force', () => {
   const p = path.join(tmpDir('mp-seed2-'), 'state.yml');
-  assert.equal(run(['seed', `--state=${p}`, '--slug=x', '--topic=t']).status, 0);
-  const refused = run(['seed', `--state=${p}`, '--slug=x', '--topic=t']);
+  assert.equal(run(['seed', `--state=${p}`, '--slug=x', '--topic=t', ...seedArgs(p)]).status, 0);
+  const refused = run(['seed', `--state=${p}`, '--slug=x', '--topic=t', ...seedArgs(p)]);
   assert.equal(refused.status, 1);
   assert.match(refused.stderr, /already exists/);
-  assert.equal(run(['seed', `--state=${p}`, '--slug=x', '--topic=t', '--force']).status, 0); // --force overwrites
+  assert.equal(run(['seed', `--state=${p}`, '--slug=x', '--topic=t', '--force', ...seedArgs(p)]).status, 0); // --force overwrites
 });
 test('seed: a missing required flag fails loud', () => {
   const p = path.join(tmpDir('mp-seed3-'), 'state.yml');
-  assert.equal(run(['seed', `--state=${p}`, '--slug=x']).status, 2); // no --topic -> need() dies (exit 2)
+  assert.equal(run(['seed', `--state=${p}`, '--slug=x', ...seedArgs(p)]).status, 2); // no --topic -> need() dies (exit 2)
 });
 test('event: appends one JSON line per call to the bundle\'s events.jsonl, accumulating', () => {
   const p = path.join(tmpDir('mp-event-'), 'state.yml');
@@ -1301,7 +1336,7 @@ test('seed-tasks: populates state.tasks from plan.index.json so a freshly-planne
   // 4-field task lands, the rich fields stay in plan.index, and decide then dispatches wave 0.
   const dir = tmpDir('mp-seedtasks-');
   const p = path.join(dir, 'state.yml');
-  run(['seed', `--state=${p}`, '--slug=lic-lock', '--topic=commercial license lock']);
+  run(['seed', `--state=${p}`, '--slug=lic-lock', '--topic=commercial license lock', ...seedArgs(p)]);
   freezeInitialGoals(p, dir); // seeded bundle is goals_enabled — capture the goal set before planning
   passGate(p, 'spec');
   assert.equal(JSON.parse(run(['set-phase', `--state=${p}`, '--phase=plan']).stdout).phase, 'plan');
@@ -1343,7 +1378,7 @@ test('seed-tasks: refuses to clobber a non-empty task list unless --force', () =
 test('seed-tasks: a non-integer wave fails loud BEFORE writing (mirror of backfill-waves stuck-guard)', () => {
   const dir = tmpDir('mp-seedtasks3-');
   const p = path.join(dir, 'state.yml');
-  run(['seed', `--state=${p}`, '--slug=x', '--topic=t']);
+  run(['seed', `--state=${p}`, '--slug=x', '--topic=t', ...seedArgs(p)]);
   const planIdx = path.join(dir, 'plan.index.json');
   fs.writeFileSync(planIdx, JSON.stringify([{ id: 1, wave: 0, files: [] }, { id: 2, wave: '1', files: [] }]));
   const r = run(['seed-tasks', `--state=${p}`, `--plan-index=${planIdx}`]);
@@ -1354,7 +1389,7 @@ test('seed-tasks: a non-integer wave fails loud BEFORE writing (mirror of backfi
 test('seed-tasks: a task with no id fails loud (mark-task could never address it)', () => {
   const dir = tmpDir('mp-seedtasks4-');
   const p = path.join(dir, 'state.yml');
-  run(['seed', `--state=${p}`, '--slug=x', '--topic=t']);
+  run(['seed', `--state=${p}`, '--slug=x', '--topic=t', ...seedArgs(p)]);
   const planIdx = path.join(dir, 'plan.index.json');
   fs.writeFileSync(planIdx, JSON.stringify([{ wave: 0, files: [] }]));
   const r = run(['seed-tasks', `--state=${p}`, `--plan-index=${planIdx}`]);
@@ -1371,7 +1406,7 @@ test('ISSUE G: set-phase execute over 0 tasks is refused (--force advances but d
   // pre-execute (brainstorm|plan) guard for the phase it skipped.
   const dir = tmpDir('mp-issueg-');
   const p = path.join(dir, 'state.yml');
-  run(['seed', `--state=${p}`, '--slug=lic-lock', '--topic=commercial license lock']);
+  run(['seed', `--state=${p}`, '--slug=lic-lock', '--topic=commercial license lock', ...seedArgs(p)]);
   freezeInitialGoals(p, dir); // seeded bundle is goals_enabled — capture the goal set before planning
   passGate(p, 'spec');
   assert.equal(JSON.parse(run(['set-phase', `--state=${p}`, '--phase=plan']).stdout).phase, 'plan');
@@ -2353,6 +2388,20 @@ test('gate: --force bypasses set-phase→plan and appends a spec_gate_bypassed a
 
 // ---- goals-load: freeze goals.md into the bundle (one-shot capture + approval receipt) ----
 import { goalsHash as goalsHashFn } from '../lib/goals.mjs';
+
+// Every fixture here builds a tree under os.tmpdir(); without this they accumulate across
+// runs and fill a shared /tmp. Registered on creation, removed once when the file finishes.
+const FIXTURE_TMPDIRS = [];
+function mkdtempTracked(prefix) {
+  const dir = fs.mkdtempSync(prefix);
+  FIXTURE_TMPDIRS.push(dir);
+  return dir;
+}
+after(() => {
+  for (const d of FIXTURE_TMPDIRS) {
+    try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* already gone */ }
+  }
+});
 function goalsBundle(over = {}) {
   return tmpBundle(v8({ phase: 'brainstorm', goals_enabled: true, goals: [], tasks: [], ...over }));
 }
@@ -2795,6 +2844,43 @@ test('spec gate re-arm: goals-amend rewrites goals.md and re-arms the spec gate 
   assert.equal(op.gate, 'spec');
 });
 
+test('spec gate re-arm: an intent-only amendment invalidates review without changing any goal', () => {
+  const p = goalsBundle();
+  const dir = path.dirname(p);
+  const original = `topic: ship the widget
+
+## Intent
+why: operators need reliable delivery
+outcome: operators can use the widget
+anti_goals:
+- unrelated infrastructure
+done_means: the widget is usable
+
+## G1: the widget compiles
+## G2: the widget is documented
+## G3: the widget is available
+`;
+  const oldHash = goalsHashFn(original);
+  const gp = writeGoals(dir, original);
+  const approval = writeApproval(dir, oldHash);
+  const loaded = run(['goals-load', `--state=${p}`, `--goals=${gp}`, `--approval=${approval}`]);
+  assert.equal(loaded.status, 0, loaded.stderr);
+  const originalGoals = read(p).goals;
+  fs.writeFileSync(path.join(dir, 'spec.md'), '# spec\n');
+  passGate(p, 'spec');
+  const amended = original.replace('outcome: operators can use the widget', 'outcome: operators can use the widget independently');
+  const ap = writeAmendApproval(dir, oldHash, goalsHashFn(amended));
+  const change = run(['goals-amend', `--state=${p}`, `--goals=${writeAmendGoals(dir, amended)}`, `--approval=${ap}`, '--reason=clarify outcome', '--ts=2026-07-02T00:00:00Z']);
+  assert.equal(change.status, 0, change.stderr);
+  assert.deepEqual(read(p).goals, originalGoals);
+  assert.equal(read(p).goals_md_hash, goalsHashFn(amended));
+  const transition = run(['set-phase', `--state=${p}`, '--phase=plan']);
+  assert.equal(transition.status, 3, transition.stderr);
+  assert.equal(JSON.parse(transition.stdout).op, 'run_gate_review');
+  assert.equal(JSON.parse(transition.stdout).gate, 'spec');
+  assert.equal(read(p).phase, 'brainstorm');
+});
+
 test('split-brain guard (set-phase): goals.md drifted out-of-band from the committed hash → reconcile error, no advance', () => {
   const p = goalsBundle();
   const dir = path.dirname(p);
@@ -3169,4 +3255,345 @@ test('A5: record-result does NOT finalize the wave-dispatch record to \'recorded
   assert.ok(rec.record_error, 'A5: the nothing-recorded outcome must surface on the record as record_error');
   assert.ok(rec.record_error.reason, 'A5: record_error must carry a reason');
   assert.equal(read(statePath).tasks[0].status, 'pending', 'no task was marked done');
+});
+
+// ---------------------------------------------------------------------------
+// The v10 wiring (wave task 3) — implementation-facing smoke cases
+// ---------------------------------------------------------------------------
+
+test('record-goal-check --final binds the deploy tuple the RECORDER supplies', () => {
+  // A frozen-goals bundle, built the way the goal-check recorder expects: git facts are passed
+  // in as flags (bin is fs-only), and the goals hash is the real one for this document.
+  const GOALS = '## G1: Cover it\nsignal: test\n\n## G2: Flag it\nsignal: command\n';
+  const GH = goalsHashFn(GOALS);
+  const HEAD = 'a'.repeat(40);
+  const BASE = 'b'.repeat(40);
+  const DIFF = 'sha256:diff-1';
+  const VOUT = 'sha256:verify-1';
+  const DEPLOY_BASE = 'd'.repeat(40);
+  const CHAIN = 'sha256:deploy-chain';
+  // --digest-file names the FILE the live check wrote; the binding is the digest of its
+  // CONTENT, so the fixture computes it exactly as the recorder does rather than inventing a
+  // literal that no evidence backs.
+  const LIVE_FILE = path.join(tmpDir('mp-final-live-'), 'live.txt');
+  fs.writeFileSync(LIVE_FILE, 'the live check observed the deployed surface\n');
+  const LIVE = liveCheckDigest(LIVE_FILE);
+
+  const mkBundle = () => {
+    const dir = tmpDir('mp-final-');
+    const statePath = path.join(dir, 'state.yml');
+    fs.writeFileSync(statePath, serializeState({
+      schema_version: 8, slug: 'demo', status: 'active', phase: 'execute',
+      goals_enabled: true, goals_md_hash: GH,
+    }));
+    fs.writeFileSync(path.join(dir, 'goals.md'), GOALS);
+    return { dir, statePath, eventsPath: path.join(dir, 'events.jsonl') };
+  };
+  const receipt = (over = {}) => JSON.stringify({
+    goals_hash: GH, head_sha: HEAD, base_diff_hash: DIFF, verify_output_hash: VOUT, clean: true,
+    verdicts: {
+      G1: { verdict: 'achieved', evidence: 'the suite passes' },
+      G2: { verdict: 'achieved', evidence: 'the flag is wired' },
+    },
+    dispatch_id: 'disp-final-1', model: 'assessor', output_tokens: 256, ts: '2026-07-01T00:00:00Z',
+    ...over,
+  });
+  const baseFlags = (statePath) => [
+    `--state=${statePath}`, `--head-sha=${HEAD}`, `--base=${BASE}`,
+    `--diff-hash=${DIFF}`, `--verify-output-hash=${VOUT}`,
+  ];
+
+  // A FINAL receipt that echoes every recorder-supplied binding is accepted.
+  const ok = mkBundle();
+  // CHAIN is deliberately DIFFERENT from DIFF: the deploy-event chain hash and the
+  // implementation diff hash are independent values, and forcing them equal would make a
+  // valid final receipt unrecordable.
+  const accepted = run(['record-goal-check', ...baseFlags(ok.statePath), '--final',
+    `--base-sha=${DEPLOY_BASE}`, `--deploy-chain-hash=${CHAIN}`, `--digest-file=${LIVE_FILE}`,
+    `--receipt=${receipt({
+      deploy_base_sha: DEPLOY_BASE, deploy_chain_hash: CHAIN, live_check_digest: LIVE,
+      intent_verdict: { verdict: 'met', evidence: 'the deployed surface answers as intended' },
+    })}`]);
+  assert.equal(accepted.status, 0, accepted.stderr);
+  assert.equal(JSON.parse(accepted.stdout).recorded, 'goal_check');
+
+  // ...and altering ONE final-only binding is refused, naming that field. The recorder's value
+  // is authoritative: a receipt cannot supply its own deploy base and validate its own claim.
+  for (const [field, flagged] of [
+    ['deploy_base_sha', DEPLOY_BASE],
+    ['deploy_chain_hash', CHAIN],
+    ['live_check_digest', LIVE],
+  ]) {
+    const b = mkBundle();
+    const bad = run(['record-goal-check', ...baseFlags(b.statePath), '--final',
+      `--base-sha=${DEPLOY_BASE}`, `--deploy-chain-hash=${CHAIN}`, `--digest-file=${LIVE_FILE}`,
+      `--receipt=${receipt({
+        deploy_base_sha: DEPLOY_BASE, deploy_chain_hash: CHAIN, live_check_digest: LIVE,
+        intent_verdict: { verdict: 'met', evidence: 'x' },
+        [field]: `${flagged}-tampered`,
+      })}`]);
+    assert.notEqual(bad.status, 0, `${field} mismatch must be refused`);
+    assert.match(bad.stderr, new RegExp(field), `the refusal must name ${field}`);
+  }
+
+  // The SAME receipt without --final is the v1/implementation shape: no bindings demanded, and
+  // an intent_verdict on it is refused as a fabricated post-live judgement.
+  const impl = mkBundle();
+  const implOk = run(['record-goal-check', ...baseFlags(impl.statePath), `--receipt=${receipt()}`]);
+  assert.equal(implOk.status, 0, implOk.stderr);
+  const fabricated = mkBundle();
+  const rejected = run(['record-goal-check', ...baseFlags(fabricated.statePath),
+    `--receipt=${receipt({ intent_verdict: { verdict: 'met', evidence: 'x' } })}`]);
+  assert.notEqual(rejected.status, 0);
+  assert.match(rejected.stderr, /only by the final assessment/);
+});
+
+test('reindex-plan defaults its index from the bundle rather than requiring it twice', () => {
+  const dir = tmpDir('mp-planpath-');
+  const statePath = path.join(dir, 'state.yml');
+  const idxPath = path.join(dir, 'plan.index.json');
+  fs.writeFileSync(statePath, serializeState({
+    schema_version: 8, slug: 'pp', status: 'in-progress', phase: 'plan',
+    pending_gate: null, active_run: null, tasks: [], plan_index_path: idxPath,
+  }));
+  fs.writeFileSync(path.join(dir, 'events.jsonl'), '');
+  // reindex-plan reads the plan markdown beside the index and RESTAMPS an existing stamp, so
+  // the fixture supplies both.
+  fs.writeFileSync(path.join(dir, 'plan.md'), '# plan\n\nstub plan for the stored-path test\n');
+  // Pretty-printed: the restamp is a targeted line rewrite and refuses a blind one.
+  fs.writeFileSync(idxPath, `${JSON.stringify({
+    schema_version: '6.0', plan_hash: `sha256:${'0'.repeat(64)}`, generated_at: '2026-01-01T00:00:00Z', tasks: [],
+  }, null, 2)}\n`);
+  // No --plan-index: the bundle already records where its index lives, and the command must
+  // SUCCEED using it — "not a usage error" would still pass if the stored path were ignored.
+  const r = run(['reindex-plan', `--state=${statePath}`]);
+  assert.equal(r.status, 0, `reindex-plan must succeed from the stored path: ${r.stderr}`);
+  assert.doesNotMatch(r.stderr, /missing required --plan-index/);
+  // ...and it operated on THAT index: the file it rewrote is the stored one.
+  const reindexed = JSON.parse(fs.readFileSync(idxPath, 'utf8'));
+  assert.ok(reindexed && typeof reindexed === 'object', 'the stored index is still valid JSON');
+  assert.ok(Array.isArray(reindexed.tasks), 'and still an index');
+
+  // With neither a stored path nor a sibling index, it is a usage error naming both ways out.
+  const bare = tmpDir('mp-planpath2-');
+  const barePath = path.join(bare, 'state.yml');
+  fs.writeFileSync(barePath, serializeState({
+    schema_version: 8, slug: 'pp2', status: 'in-progress', phase: 'plan',
+    pending_gate: null, active_run: null, tasks: [],
+  }));
+  const missing = run(['reindex-plan', `--state=${barePath}`]);
+  assert.equal(missing.status, 2);
+  assert.match(missing.stderr, /missing required --plan-index/);
+});
+
+test('seed --predecessor projects an intent rejection into the successor bundle', () => {
+  const repo = tmpDir('mp-succ-');
+  execFileSync('git', ['init', '-q', '--initial-branch=main', repo]);
+  execFileSync('git', ['-C', repo, 'config', 'user.email', 't@e.invalid']);
+  execFileSync('git', ['-C', repo, 'config', 'user.name', 't']);
+  fs.writeFileSync(path.join(repo, 'README.md'), '# repo\n');
+  execFileSync('git', ['-C', repo, 'add', '-A']);
+  execFileSync('git', ['-C', repo, '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'seed']);
+
+  // The predecessor archived incomplete on an INTENT rejection, carrying the correction.
+  const predDir = path.join(repo, 'docs', 'masterplan', 'pred');
+  fs.mkdirSync(predDir, { recursive: true });
+  fs.writeFileSync(path.join(predDir, 'state.yml'), serializeState({
+    schema_version: 8, slug: 'pred', status: 'archived', phase: 'execute',
+    pending_gate: null, active_run: null, tasks: [],
+  }));
+  fs.writeFileSync(path.join(predDir, 'events.jsonl'), `${JSON.stringify({
+    type: 'incomplete_authorized', ts: '2026-07-01T00:00:00Z', reason: 'intent_rejected',
+    class: 'intent', correction: 'the operator wanted the deploy proven, not just the code merged',
+  })}\n`);
+
+  const succPath = path.join(repo, 'docs', 'masterplan', 'succ', 'state.yml');
+  const r = run(['seed', `--state=${succPath}`, '--slug=succ', '--topic=the successor run',
+    '--predecessor=pred', '--repo-root=' + repo, ...seedArgs(succPath)]);
+  assert.equal(r.status, 0, r.stderr);
+  // seed --predecessor prints the refs op and then its own line; the seed record is the last.
+  const lines = r.stdout.trim().split('\n').filter(Boolean);
+  const parsed = JSON.parse(lines.at(-1));
+  // The reciprocal ledger write is skipped on an archived predecessor, and says so.
+  const refsLine = JSON.parse(lines[0]);
+  assert.equal(refsLine.target_event_skipped, 'archived', JSON.stringify(refsLine));
+  // The correction reaches the successor's own record, so its interview opens holding it.
+  assert.ok(parsed.predecessor_rejection, `expected a projection: ${r.stdout}`);
+  assert.equal(parsed.predecessor_rejection.class, 'intent');
+  assert.match(parsed.predecessor_rejection.correction, /deploy proven/);
+  const evs = fs.readFileSync(path.join(path.dirname(succPath), 'events.jsonl'), 'utf8')
+    .split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  const projected = evs.find((e) => e.type === 'predecessor_rejection');
+  assert.ok(projected, 'the projection is durable, not just printed');
+  assert.equal(projected.predecessor, 'pred');
+});
+
+// ---- merge-plan-fragments honours the plan path the bundle owns (wave task 4) ----
+//
+// The planning fan-out advertises a plan path to its drafters; the merge writes the plan. If
+// the two pick differently, the run's real plan is never written and stays stale forever —
+// which is why one selection rule is shared rather than each side defaulting for itself.
+
+function planPathBundle(planPath) {
+  const dir = tmpDir('mp-planpath-');
+  fs.writeFileSync(path.join(dir, 'state.yml'), serializeState({
+    schema_version: 8, slug: 'pp', status: 'in-progress', phase: 'plan',
+    ...(planPath ? { plan_path: planPath } : {}),
+  }));
+  const fp = path.join(dir, 'frags.json');
+  fs.writeFileSync(fp, JSON.stringify([{
+    key: 'sub',
+    tasks: [{ key: 'sub.one', description: 'do a thing', files: ['a.js'], verify_commands: [], codex: 'no' }],
+  }]));
+  return { dir, fp, out: path.join(dir, 'plan.index.json') };
+}
+
+test('merge-plan-fragments writes the bundle\'s OWN plan_path when --plan-md is omitted', () => {
+  const { dir, fp, out } = planPathBundle('custom-plan.md');
+  const r = run(['merge-plan-fragments', `--fragments=${fp}`, `--out=${out}`, '--generated-at=2026-07-01T00:00:00Z']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(fs.existsSync(path.join(dir, 'custom-plan.md')), 'the plan the run owns is the one written');
+  assert.equal(fs.existsSync(path.join(dir, 'plan.md')), false, 'and the conventional name is NOT');
+});
+
+test('merge-plan-fragments: an explicit --plan-md beats a conflicting stored plan_path', () => {
+  const { dir, fp, out } = planPathBundle('custom-plan.md');
+  const explicit = path.join(dir, 'explicit.md');
+  const r = run(['merge-plan-fragments', `--fragments=${fp}`, `--out=${out}`, `--plan-md=${explicit}`, '--generated-at=2026-07-01T00:00:00Z']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(fs.existsSync(explicit));
+  assert.equal(fs.existsSync(path.join(dir, 'custom-plan.md')), false, 'only the explicit file is written');
+});
+
+test('merge-plan-fragments: no stored path and no flag keeps the conventional plan.md', () => {
+  const { dir, fp, out } = planPathBundle(null);
+  const r = run(['merge-plan-fragments', `--fragments=${fp}`, `--out=${out}`, '--generated-at=2026-07-01T00:00:00Z']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(fs.existsSync(path.join(dir, 'plan.md')));
+});
+
+test('merge-plan-fragments REFUSES a blank --plan-md instead of writing into cwd', () => {
+  const { fp, out } = planPathBundle('custom-plan.md');
+  const r = run(['merge-plan-fragments', `--fragments=${fp}`, `--out=${out}`, '--plan-md=', '--generated-at=2026-07-01T00:00:00Z']);
+  assert.equal(r.status, 2, r.stderr);
+  assert.match(r.stderr, /non-empty string/);
+});
+
+test('merge-plan-fragments REFUSES an unreadable state.yml rather than defaulting to plan.md', () => {
+  // Round-2 finding: catching every read/parse error made "no bundle" and "this bundle's
+  // recorded plan_path is unreadable" the same thing, and the second silently wrote a
+  // different file from the one the fan-out advertised.
+  const { dir, fp, out } = planPathBundle('custom-plan.md');
+  // Unreadable, not malformed: parseState is deliberately lenient, so the read is what has to
+  // fail for this to be the "exists but cannot be seen" case.
+  fs.rmSync(path.join(dir, 'state.yml'));
+  fs.mkdirSync(path.join(dir, 'state.yml'));
+  const r = run(['merge-plan-fragments', `--fragments=${fp}`, `--out=${out}`, '--generated-at=2026-07-01T00:00:00Z']);
+  assert.equal(r.status, 1, r.stdout);
+  assert.match(r.stderr, /could not be read/);
+  assert.equal(fs.existsSync(path.join(dir, 'plan.md')), false, 'no plan was written at all');
+  assert.equal(fs.existsSync(path.join(dir, 'custom-plan.md')), false);
+});
+
+test('mp continue STOPS when the planning mode cannot be resolved', () => {
+  // Round-2 finding: swallowing the resolution failure routed the run on the mode recorded at
+  // seed, which is the stale-value substitution the fail-closed rule forbids.
+  const dir = tmpDir('mp-planmode-');
+  const bundleDir = path.join(dir, 'docs', 'masterplan', 'pm');
+  fs.mkdirSync(bundleDir, { recursive: true });
+  const statePath = path.join(bundleDir, 'state.yml');
+  fs.writeFileSync(statePath, serializeState({
+    schema_version: 8, slug: 'pm', status: 'in-progress', phase: 'plan', tasks: [],
+    planning_mode: 'serial', concurrency: { owner_lock: 'off' },
+  }));
+  fs.writeFileSync(path.join(bundleDir, 'events.jsonl'), '');
+  // A real repo, so the config chain actually runs and can reject the value it finds.
+  execFileSync('git', ['init', '-q', dir]);
+  // A configured value the chain rejects: continuing would route on the persisted `serial`.
+  fs.writeFileSync(path.join(dir, '.masterplan.yaml'), 'planning_mode: sideways\n');
+  const r = run(['continue', `--state=${statePath}`, '--dead']);
+  assert.notEqual(r.status, 0, `expected a stop, got: ${r.stdout}`);
+  assert.match(`${r.stderr}${r.stdout}`, /planning_mode/, r.stderr);
+});
+
+test('mp continue STOPS when the repo root cannot be derived, rather than using the seeded mode', () => {
+  // The other half of the same finding: "could not evaluate the hierarchy" must not read as
+  // "the hierarchy said nothing".
+  const dir = tmpDir('mp-planmode-noroot-');
+  const bundleDir = path.join(dir, 'docs', 'masterplan', 'pm');
+  fs.mkdirSync(bundleDir, { recursive: true });
+  const statePath = path.join(bundleDir, 'state.yml');
+  fs.writeFileSync(statePath, serializeState({
+    schema_version: 8, slug: 'pm', status: 'in-progress', phase: 'plan', tasks: [],
+    planning_mode: 'serial', concurrency: { owner_lock: 'off' },
+  }));
+  fs.writeFileSync(path.join(bundleDir, 'events.jsonl'), '');
+  const r = run(['continue', `--state=${statePath}`, '--dead']); // not a git repo
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /planning mode could not be resolved/);
+});
+
+// ---- round-3: the fail-open edges of both boundaries ------------------------------------
+
+test('merge-plan-fragments refuses a DANGLING state.yml symlink', () => {
+  // existsSync follows symlinks and swallows errors, so a dangling link — an entry that plainly
+  // exists and plainly cannot be read — reported false and was treated as "no bundle at all".
+  const { dir, fp, out } = planPathBundle('custom-plan.md');
+  fs.rmSync(path.join(dir, 'state.yml'));
+  fs.symlinkSync(path.join(dir, 'gone.yml'), path.join(dir, 'state.yml'));
+  const r = run(['merge-plan-fragments', `--fragments=${fp}`, `--out=${out}`, '--generated-at=2026-07-01T00:00:00Z']);
+  assert.equal(r.status, 1, r.stdout);
+  assert.equal(fs.existsSync(path.join(dir, 'plan.md')), false, 'no plan was written');
+});
+
+test('merge-plan-fragments refuses a state.yml that parses but is not a bundle state', () => {
+  // parseState is lenient: an empty or truncated file yields an object with no plan_path, which
+  // is indistinguishable from a bundle that deliberately omitted one — and one of those two
+  // should write plan.md while the other must not.
+  for (const content of ['', '# just a comment\n', 'not: a bundle\n']) {
+    const { dir, fp, out } = planPathBundle('custom-plan.md');
+    fs.writeFileSync(path.join(dir, 'state.yml'), content);
+    const r = run(['merge-plan-fragments', `--fragments=${fp}`, `--out=${out}`, '--generated-at=2026-07-01T00:00:00Z']);
+    assert.equal(r.status, 1, `${JSON.stringify(content)}: ${r.stdout}`);
+    assert.match(r.stderr, /not a readable bundle state/);
+    assert.equal(fs.existsSync(path.join(dir, 'plan.md')), false);
+    assert.equal(fs.existsSync(path.join(dir, 'custom-plan.md')), false);
+  }
+});
+
+test('a bare --planning-mode is refused, not silently discarded', () => {
+  // `--planning-mode` with no value parses as a boolean. Dropping it discarded an explicit
+  // control and resumed on the mode recorded at seed.
+  const dir = tmpDir('mp-planmode-bare-');
+  const bundleDir = path.join(dir, 'docs', 'masterplan', 'pm');
+  fs.mkdirSync(bundleDir, { recursive: true });
+  const statePath = path.join(bundleDir, 'state.yml');
+  fs.writeFileSync(statePath, serializeState({
+    schema_version: 8, slug: 'pm', status: 'in-progress', phase: 'plan', tasks: [],
+    planning_mode: 'serial', concurrency: { owner_lock: 'off' },
+  }));
+  fs.writeFileSync(path.join(bundleDir, 'events.jsonl'), '');
+  execFileSync('git', ['init', '-q', dir]);
+  const r = run(['continue', `--state=${statePath}`, '--dead', '--planning-mode']);
+  assert.notEqual(r.status, 0, r.stdout);
+  assert.match(r.stderr, /--planning-mode needs a value/);
+});
+
+test('a resolved planning mode OVERRIDES the one recorded at seed, through the real CLI', () => {
+  // The positive half: without it, a stop-on-everything implementation would satisfy the
+  // negatives above while never actually routing on the resolved value.
+  const dir = tmpDir('mp-planmode-override-');
+  const bundleDir = path.join(dir, 'docs', 'masterplan', 'pm');
+  fs.mkdirSync(bundleDir, { recursive: true });
+  const statePath = path.join(bundleDir, 'state.yml');
+  fs.writeFileSync(statePath, serializeState({
+    schema_version: 8, slug: 'pm', status: 'in-progress', phase: 'plan', tasks: [],
+    planning_mode: 'serial', concurrency: { owner_lock: 'off' },
+  }));
+  fs.writeFileSync(path.join(bundleDir, 'events.jsonl'), '');
+  execFileSync('git', ['init', '-q', dir]);
+  const r = run(['continue', `--state=${statePath}`, '--dead', '--planning-mode=parallel']);
+  assert.equal(r.status, 0, r.stderr);
+  const op = JSON.parse(r.stdout);
+  assert.equal(op.planning_mode, 'parallel', `the persisted serial must not win: ${r.stdout}`);
 });

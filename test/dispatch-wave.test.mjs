@@ -29,7 +29,7 @@
 //      review → skipped event + verdict 'error', review-off → no lane calls and no writes,
 //      and D6 independence (approve never bypasses verify-scope).
 
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -61,6 +61,20 @@ import { buildOwnerIdentity } from '../lib/owner.mjs';
 import { buildTaskReviewEvent } from '../lib/reentry-guard.mjs';
 import { recordWaveResult } from '../lib/wave-commit.mjs';
 
+// Every fixture here builds a tree under os.tmpdir(); without this they accumulate across
+// runs and fill a shared /tmp. Registered on creation, removed once when the file finishes.
+const FIXTURE_TMPDIRS = [];
+function mkdtempTracked(prefix) {
+  const dir = fs.mkdtempSync(prefix);
+  FIXTURE_TMPDIRS.push(dir);
+  return dir;
+}
+after(() => {
+  for (const d of FIXTURE_TMPDIRS) {
+    try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* already gone */ }
+  }
+});
+
 function git(dir, ...args) {
   return String(execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' })).trim();
 }
@@ -77,7 +91,7 @@ const planEntry = (id, wave, files) => ({
 // A MAIN repo, a fabric-flagged v8 bundle, and plan.index.json beside it (the
 // continue.test.mjs fixture shape + state.dispatch.fabric — the live gate).
 function makeFixture({ tasks, planIndex, slug = 'dwave', fabric = true, extra = {} }) {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-dwave-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-dwave-'));
   const MAIN = path.join(tmp, 'main');
   fs.mkdirSync(MAIN, { recursive: true });
   git(MAIN, 'init', '--initial-branch=main');
@@ -323,7 +337,7 @@ test('composeWaveDispatchKey: stable shape, colon-safe encoding, integer-wave gu
 });
 
 test('createWaveDispatchRecord: atomic create-or-return-existing (the O_EXCL gate)', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-dwrec-'));
+  const dir = mkdtempTracked(path.join(os.tmpdir(), 'mp-dwrec-'));
   const rec = { key: composeWaveDispatchKey('r', 2), run_id: 'r', wave: 2, op: 'dispatch_fabric', status: 'pending', attempt: 1 };
   const first = createWaveDispatchRecord(dir, rec);
   assert.equal(first.created, true);
@@ -812,7 +826,7 @@ test('blocking_reviews[].findings is array-shaped on redrive of a legacy blockin
 });
 
 test('captureFullWorkingDiff: untracked paths with spaces, unicode, and embedded quotes are captured (NUL-split)', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-dwdiff-'));
+  const dir = mkdtempTracked(path.join(os.tmpdir(), 'mp-dwdiff-'));
   git(dir, 'init', '--initial-branch=main');
   git(dir, 'config', 'user.email', 't@t');
   git(dir, 'config', 'user.name', 't');
@@ -865,7 +879,7 @@ test('cwd stays null when the descriptor names no locus at all', () => {
 // ---------------------------------------------------------------------------
 
 test('gateAndValidate: flag-off fails closed when fabric is not true (A3)', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-gate-'));
+  const dir = mkdtempTracked(path.join(os.tmpdir(), 'mp-gate-'));
   const statePath = path.join(dir, 'state.yml');
   writeState(statePath, { schema_version: 9, slug: 's', dispatch: { fabric: false } });
   const result = gateAndValidate({ statePath });
@@ -1023,7 +1037,7 @@ test('acquireAndWatch: returns attempt and waveToken when precheck passes', () =
 // ---------------------------------------------------------------------------
 
 test('buildWaveLaunchContext: throws on missing plan.index.json', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-wctx-'));
+  const dir = mkdtempTracked(path.join(os.tmpdir(), 'mp-wctx-'));
   assert.throws(
     () => buildWaveLaunchContext({
       state: { slug: 's' },
@@ -1037,7 +1051,7 @@ test('buildWaveLaunchContext: throws on missing plan.index.json', () => {
 
 test('buildWaveLaunchContext: returns prepared tasks + MAIN from injected routing inputs', () => {
   // Real git repo so MAIN resolves via git-common-dir on the bundleDir.
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-wctx-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-wctx-'));
   const MAIN = path.join(tmp, 'main');
   fs.mkdirSync(MAIN, { recursive: true });
   git(MAIN, 'init', '--initial-branch=main');
@@ -1087,7 +1101,7 @@ test('buildWaveLaunchContext: returns prepared tasks + MAIN from injected routin
 });
 
 test('buildWaveLaunchContext: reposAllowlist is optional (omitted on fabric path)', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-wctx-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-wctx-'));
   const MAIN = path.join(tmp, 'main');
   fs.mkdirSync(MAIN, { recursive: true });
   git(MAIN, 'init', '--initial-branch=main');

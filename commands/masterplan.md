@@ -237,10 +237,19 @@ answer flags and the same op (or the open gate) comes back.
 | op | do (then re-invoke `mp finish-step` with the answer flag) |
 |---|---|
 | `run_verify` `{commands, head, wt}` | `superpowers:verification-before-completion`: RUN fresh, **cite real output + exit code** (CD-3; "should pass" is not evidence). Command source: `op.commands` (the union of the plan tasks' `verify_commands`); if empty, the skill's own IDENTIFY; if STILL none under `--autonomy=full`, `mp open-gate --id=no_verification_command` + AUQ (specify one / proceed without) — never silently skip. PASS → re-invoke with `--verify-passed` (records the SHA durably; a re-entry at unchanged HEAD skips the re-run). FAIL → `--verify-failed` (opens the durable `verification_failed` gate; the returned `ask` is the turn-close). |
-| `run_goal_check` `{goals_path, base, head, wt}` | Fires only on a goals-enabled bundle, AFTER verify passes and BEFORE the retro. Dispatch `agents/mp-goal-assessor` against `op.goals_path` + the branch diff (`op.base..op.head`) → a per-goal met/unmet verdict with evidence. Then record the verdict durably: `mp record-goal-check --state=<MAIN>/docs/masterplan/<slug>/state.yml --head-sha=<op.head> --base=<op.base> --diff-hash=<base..head diff hash> --receipt=<receipt.json>` — the receipt must echo the goals hash + HEAD + base..HEAD diff hash + verify-output hash, carry `clean: true`, a per-goal verdict/evidence over every active goal, and provenance in EXACTLY ONE shape (assessor `dispatch_id`/`model`/`output_tokens`, or user-attested `attested_by:'user'` + `approval_receipt`). Then re-invoke `mp finish-step` bare — the re-entry sees the `goal_check` event and proceeds. All goals met → silent proceed. Any goal unmet → the engine opens the durable `goals_unmet` gate; the returned `ask` is the turn-close (resolve via `--goals-choice`, below). **Fail-closed on dispatch failure:** if the assessor dispatch itself errors / the lane is unreachable, do NOT silently pass — re-invoke with `--goal-check=failed` to open the goals_unmet gate in **manual-verdict mode** (the operator supplies the met/unmet call at the gate AUQ rather than the assessor). |
+| `run_goal_check` `{goals_path, base, head, wt}` | Fires only on a goals-enabled bundle, AFTER verify passes and BEFORE the retro. Dispatch `agents/mp-goal-assessor` in **`implementation` mode** — the pre-disposition assessor — against `op.goals_path` + the branch diff (`op.base..op.head`) AND the verify output (the `run_verify` receipt's `verify-output-hash`, quoted as data) → a per-goal met/unmet verdict with evidence. Then record the verdict durably: `mp record-goal-check --state=<MAIN>/docs/masterplan/<slug>/state.yml --head-sha=<op.head> --base=<op.base> --diff-hash=<base..head diff hash> --receipt=<receipt.json>` — the receipt must echo the goals hash + HEAD + base..HEAD diff hash + verify-output hash, carry `clean: true`, a per-goal verdict/evidence over every active goal, and provenance in EXACTLY ONE shape (assessor `dispatch_id`/`model`/`output_tokens`, or user-attested `attested_by:'user'` + `approval_receipt`). Then re-invoke `mp finish-step` bare — the re-entry sees the `goal_check` event and proceeds. All goals met → silent proceed. Any goal unmet → the engine opens the durable `goals_unmet` gate; the returned `ask` is the turn-close (resolve via `--goals-choice`, below). **Fail-closed on dispatch failure:** if the assessor dispatch itself errors / the lane is unreachable, do NOT silently pass — re-invoke with `--goal-check=failed` to open the goals_unmet gate in **manual-verdict mode** (the operator supplies the met/unmet call at the gate AUQ rather than the assessor). |
 | `write_retro` `{path, retro_only?}` | Generate `retro.md` at `op.path` (write-if-absent — finish-step re-checks the fs, so a re-entry skips it). Then re-invoke with no new flags. Subsumes the old `retro` verb. |
 | `run_adversary_review` `{base, head, wt, digest_path}` | The whole-branch cross-vendor adversary review — network, stays shell-side. Run it harness-native over the branch diff: the **adversary class** (`breaker` role, frontier lane; adversarial panel for cross-vendor coverage — resolved from the checked-in `policy/workflow-map.json`), foreground from WT, no local review engine. **Fail-soft, never wedge finish:** ANY non-success — a non-zero exit, the review unavailable/empty, a failed harness spawn — → `--review-skipped --review-reason="<tight reason>"`; finish-step writes the sha-keyed skip event whose hyphenated "adversary-review … skipped" summary deliberately does NOT match the audit's `\b(codex\|adversary)\s+review\b`, so a degraded finish still trips `adversary_review_configured_but_zero_invocations` — correct. On **a real review**: `Write` a brief digest (count + top findings, not the raw dump) to `op.digest_path` (absolute-MAIN, §2e¶1; the Write tool is not shell-evaluated, so arbitrary review bytes are safe — never interpolate the digest into a shell word), then `--review-done --review-count=<n> --review-base=<op.base> --review-digest-file=<op.digest_path>` — finish-step emits the durable `adversary_review` event (its `summary` is the audit signal that DOES match `\b(codex\|adversary)\s+review\b`; `data.sha/base/count` are the quote-safe machine scalars the re-entry guard keys on; `note` carries the digest verbatim for gate rehydration). Residual window: a death between the reviewer's completion and the re-invoke leaves no record at HEAD, so resume re-runs the review — harmless and idempotent at an unchanged tree. |
 | `ask` `ask:'gate'` `gate:'branch_finish'` `{head, branch, base, dispositions, review}` | First **check for an open PR** (the §3 PR check: `gh pr list --head "<op.branch>" … \| mp pr-summary`). AUQ labelled with `op.base`: `Merge to <base> locally (Recommended)` · `Push and open a PR` · `Keep branch + worktree as-is` · `Discard everything` (typed "discard" required). If the check found a PR (`hasPr`), relabel the second option → `View / merge open PR #<n> (mergeable: <yes\|no\|unknown>)` — same `pr` choice; its resolution is a no-op push surfacing the existing PR's URL, never a second one. Fold `op.review` (`{present, digest, count, base}`, rehydrated from the durable event — the live in-context digest does not survive compaction, the event does) into the AUQ when present. This AUQ is the turn-close. Resolution = re-invoke with `--choice=<merge\|pr\|keep\|discard>` (add `--removal-force` only for an intended-dirty teardown): finish-step runs the disposition transaction (§2e¶7) and archives — except `pr`, which first returns the `shell push_pr` op (two-phase: archive happens only after `--choice=pr --pushed`). A free-text / "not ready" answer holds the gate and chats (§2 `ask:'gate'` rule) — the "not done yet" escape, nothing archives. |
+| `run_deploy_step` `{group, index, run, check, cwd, ask}` | A deploy-group step is ready to run (merge/PR-merge already retired the branch; the deploy stage runs post-disposition, before archive). Execute `op.run` in `<op.cwd>` (MAIN), then run `op.check` (an exit-status predicate) to classify the result — **`check` is the exit status, not a log scan**: a non-zero exit from `check` is `indeterminate`, never a silent pass. `op.ask` is true only under gated autonomy (the deploy-authorize gate) — under loose/full, still surface via AUQ (an explicit risky-action confirmation, §2d stop-set). Then `mp finish-step --state=<path> --deploy-step-done=<group>[<index>] --exit=<code>` (the exit status IS the report; `--exit` is REQUIRED — a missing exit refuses rather than defaulting to 0, and the value must be an integer 0–255). A started-but-unrecorded step on recovery re-probes (`deploy_step_done` with the recorded exit). **Never run the step twice on a crash**: re-entry sees the durable `deploy_step` receipt and moves on. |
+| `ask` `ask:'gate'` `gate:'deploy_indeterminate'` `{group, index, choices}` | The step ran but its outcome could not be classified (check exited non-zero, or the step was started but its receipt is absent on recovery). AUQ with `op.choices` — a check-bearing step gets `rerun` / `abort`; a check-less step gets `rerun` / `attest` / `abort` (attestation is only valid for a check-less step, so only such a gate advertises it): **Rerun** → `mp finish-step --deploy-rerun=<group>[<index>]` (re-runs the step whose outcome was never observed; re-entry re-issues `run_deploy_step`) · **Attest** (check-less only) → `mp finish-step --deploy-attest=<group>[<index>]` (records the step as done on the operator's attestation) · **Abort** → `mp finish-step --deploy-abort` (durable `incomplete_authorized {reason: deploy_abort}`; the run archives incomplete). NEVER silently treat an indeterminate as done or failed — the exit status IS the report; `--deploy-skip` answers a `release`/`install` step's skip-with-reason, never an indeterminate. |
+| `ask` `ask:'gate'` `gate:'deploy_failed'` `{group, index, error, choices}` | The step exited non-zero (a confirmed failure, not an unknown). AUQ with `op.choices` (`retry` / `skip` / `abort`): **Retry** → `--deploy-retry=<group>[<index>]` · **Skip** → `--deploy-skip=<group>[<index>]` · **Abort** → `--deploy-abort`. A retry/rerun answers distinct states (failed vs indeterminate) — the engine decides which each is legal in. |
+| `ask` `ask:'gate'` `gate:'no_definition_of_done'` | The run reached the deploy stage with no `done:` block (or an unparseable one). AUQ with `op.choices` (`adhoc` / `abort-incomplete`): **Adhoc** → `mp finish-step --state=<path> --done-adhoc-file=<path>` (a JSON file with the ad-hoc `done:` steps — the engine reads it, persists a copy to `bundle/done-adhoc.json`, records `done_adhoc {digest}` + the `deploy_base` bound to it, and the ad-hoc definition is bound by the same release/identity contract as any repository definition) · **Abort incomplete** → re-invoke bare (the gate's `abort-incomplete` answer archives the run incomplete, reason `no_definition_of_done`). |
+| `run_final_check` `{deploy_base_sha, live_digest, live_digest_path, deploy_chain_hash, next}` | The deploy stage is complete and the run declared goals. Dispatch **`mp-goal-assessor` in `final` mode** — after the live check — with the binding tuple `{deploy_base_sha, deploy_chain_hash, live_check_digest}` and the intent verdict, recorded via **`mp record-goal-check --final --state=<path> --base-sha=<op.deploy_base_sha> --deploy-chain-hash=<op.deploy_chain_hash> --digest-file=<op.live_digest_path> --receipt=<receipt.json>`** (the final receipt binds the three values verbatim; the recorder refuses a receipt that omits them). Then re-invoke `mp finish-step` bare — the re-entry sees the final `goal_check` event. A live evidence gap (a declared `live_check` that recorded no digest, or no `live_check` group) opens the durable `live_check_evidence_missing` gate (`abort` only — the live step is already recorded done, so nothing can be retried). |
+| `ask` `ask:'gate'` `gate:'final_check_invalid'` `{deploy_base_sha, error, reason, next}` | A final assessment bound to this deployment exists but is invalid. The gate carries every input a replacement needs (including a runnable `next` command); `re-record` is the act of recording a valid receipt (which the machine picks up on re-entry), `abort` archives incomplete. |
+| `ask` `ask:'gate'` `gate:'intent_confirm'` `{outcome, intent_verdict, live_check_digest, deploy_base_sha, choices}` | The final assessment produced an intent verdict and the deployment is live. The operator confirms or rejects that THIS deployment satisfies the run's intent — the gate names the EXACT receipt whose evidence is on screen (a `partial` receipt appended while the gate sat open cannot be silently substituted). AUQ with `op.choices` (`confirmed` / `rejected`): **Confirmed** → `mp finish-step --intent-confirmed --state=<path>` (writes `completion_confirmed` bound to `op.deploy_base_sha`; the archive class derives `complete` only from a confirmation bound to the LATEST base) · **Rejected** → `--intent-rejected --class=intent|implementation --successor=<slug> [--reason=…]` (writes `incomplete_authorized {reason: intent_rejected:<class>, correction, successor}` + the `required_successor {slug, reason}` obligation; `--successor` is REQUIRED — a rejection without it is refused before any event is written). A replay of the SAME answer appends nothing; a conflicting answer across invocations is refused. |
+| `ask` `ask:'gate'` `gate:'push_archive'` `{branch, sha, remote, pushed_base, commits, choices}` | Post-archive push confirmation — emitted ONLY when an install-group receipt PROVED it pushed the base (the producer stamped `pushed_base`) and no `archive_pushed`/`archive_push_skipped` exists. Lists exactly `op.pushed_base..HEAD` (the archive commit and gate commits since) and **always halts** (operator approval) under gated AND loose autonomy. AUQ with `op.choices` (`push` / `skip`): **Push** → run `git -C "<MAIN>" push origin <op.branch>` then `mp finish-step --archive-pushed --state=<path> --sha=<op.sha>` — the recorder FETCHES origin and verifies the remote actually carries the sha before recording (a non-fast-forward runs the real recovery: per-commit provenance audit → rebase → one push with one retry → records the rebased head; a foreign commit or exhausted retry refuses, nothing recorded) · **Skip** → `--archive-push-skipped --reason=…` (durable `archive_push_skipped`). A repo with no `done:` block, `done: none`, or an install chain that never moved the remote has no `pushed_base` and stops WITHOUT a push gate. `runs list`/`status` print `pushed: no` until `archive_pushed` lands. An indeterminate push probe (`push-probe-indeterminate` op) re-probes the remote instead of mislabeling the run `pushed: no`. |
+| `ask` `ask:'gate'` `gate:'live_check_evidence_missing'` `{deploy_base_sha, cause, reason, choices}` | See the `run_final_check` row: a declared live check recorded no digest (`digest_missing`) or no `live_check` group exists (`no_live_check_group`). `abort` is the only answer (archives the run incomplete — the honest class for a deployment that produced no evidence). |
 | `ask` `ask:'gate'` `gate:'docs_normalize'` `{candidates, base, head, wt}` | The finish-time docs-normalization offer — fires once per run, only when `op.candidates` (the `*.md` the run's branch created/modified vs `op.base`, run-bundle dir excluded) is non-empty; a bare re-entry recomputes the list. AUQ: `Normalize docs into the repo's structure (Recommended)` · `Keep as-is`. **Normalize** → in `<op.wt>`: fold each candidate into the repo's existing category-organized docs (match the surrounding structure and conventions); strip plan provenance — slugs, wave/task numbers, "implemented by plan X" phrasing, date-stamped design filenames; delete plan-specific files that empty out; `git -C "<op.wt>" add` exactly the touched files + commit, then re-invoke with `--docs-normalized --docs-count=<n>`. Two-phase like `push_pr`: NOTHING durable changes until the flag arrives — a death mid-edit re-renders the gate, never silently skips — and the commit moves HEAD **before** verification, so the suite runs once over the FINAL tree (the adversary review covers the normalized docs too). **Keep as-is** → `--docs-skipped --docs-reason="<tight reason>"` — the durable skip event; the offer never re-fires this run (leftovers stay visible repo-wide via the doctor's `plan-doc-cruft` WARN). A free-text answer holds the gate (§2 `ask:'gate'` rule). `state.docs.normalize: off` suppresses the offer entirely. |
 | `ask` `ask:'gate'` `gate:'verification_failed'` (and `no_verification_command`, shell-opened above) | AUQ: *Fix first & re-run* → `mp clear-gate`, close (fix code + commit, then resume → verification re-runs fresh and re-opens the gate if still red). *Proceed anyway (reviewed)* → `--verify-passed` — the reviewed override records the SHA AND clears the gate, so a re-entry doesn't re-loop the same failure. *Abort finish* → `mp clear-gate`, close (the run stays resumable; nothing archived). For `no_verification_command`: *Specify a command* → RUN it fresh, **cite output** (CD-3) → PASS = `--verify-passed`, FAIL = `--verify-failed`; *Proceed without* = `--verify-passed` (the reviewed "no verification available" override). Never silently skip verification or archive. |
 | `ask` `ask:'gate'` `gate:'goals_unmet'` `{unmet, assessment, base, head, wt, manual?}` | The durable goals gate — the run's frozen goals were not all met by the delivered work. Surface `op.unmet` (the unmet goals + the assessor's evidence, or, in `manual` mode, the goals awaiting the operator's own verdict) via AUQ with `op.choices` (`fix` / `waiver` / `abort`): **Fix & continue** → `--goals-choice=fix` (stops finish so you can amend code; a later `mp finish-step` re-runs the check fresh over the new HEAD and re-opens the gate if still unmet) · **Accept waiver** → `--goals-choice=waiver` after recording the waiver durably via `mp record-goal-check --state=… --waive --waiver=<waiver.json>` (the reviewed override — clears the gate and falls through so re-evaluation sees the recorder's `goal_waived` event) · **Abort finish** → `--goals-choice=abort` (the run stays resumable; nothing archived). In `manual` mode the same AUQ additionally carries the met/unmet verdict itself. A free-text / "not ready" answer holds the gate and chats (§2 `ask:'gate'` rule). NEVER auto-waive regardless of autonomy. |
@@ -267,7 +276,7 @@ read `autonomy`; it only ever returns real actions). Under `autonomy ∈ {loose,
 **The COMPLETE stop-set** — the *only* things that may end a turn with an AUQ under loose/full; if the
 turn hit none of these, it MUST auto-progress, not ask:
 
-- The §2 `ask:'gate'` op for any durable gate: `branch_finish`, `verification_failed`, `no_verification_command`, `docs_normalize`, `goals_unmet`.
+- The §2 `ask:'gate'` op for any durable gate: `branch_finish`, `verification_failed`, `no_verification_command`, `docs_normalize`, `goals_unmet`, `deploy_failed`, `deploy_indeterminate`, `no_definition_of_done`, `final_check_invalid`, `live_check_evidence_missing`, `intent_confirm`, `push_archive` — plus the `ask:'push-probe-indeterminate'` op (a re-probe could not verify the install push; halt and re-run, never record `pushed: no`).
 - A spec/plan **review FAIL** or a missing-subsystem REVISE (§2b step 5 / §3a).
 - A wave that surfaced a **failure** — a `failed`/`blocked` task or a `blocking` review verdict (§2a
   completion) — or **blocker re-engagement** after the CD-4 ladder fails its rungs.
@@ -430,11 +439,133 @@ create-or-reuse runs inside `mp continue`, the sweep inside `mp sweep`, and the 
      `>TTL`-abandoned owner that resurrects at the exact instant a reclaimer breaks its lock. Narrow, benign,
      documented — NOT a gap to close with another mechanism.
 
+## 2f — Intent interview (delegated to the /intent skill's plan mode)
+
+The `brainstorm` verb's first half: a bounded, ledger-backed questioning phase that learns the
+operator's INTENT before any design/spec work. `superpowers:brainstorming` still governs the
+design/spec half; this section owns the dispatch, the recording, and the lifecycle — the
+QUESTIONS are not composed here. The questioner is the **pinned `/intent` skill's plan
+mode**, dispatched under the masterplan host contract; `mp interview` remains the ONLY
+recorder. The ledger lives in `events.jsonl` (each event an `mp interview …` append through
+`lib/interview.mjs` — CD-7 single writer); verbatim question and answer text is stored so a
+compaction mid-interview resumes from disk, never from the model's memory of where it was.
+There is ONE interview implementation (the skill's plan mode) with two consumers (the bare
+operator and this host); composing questions natively is the removed duplicate — never fall
+back to it.
+
+The pinned skill's `SKILL.md` is the router: its masterplan-host-contract section names the
+contract's home (`verbs/plan.md`) and restates nothing — the plan-mode contract itself lives in
+the skill's `verbs/plan.md`, read by the skill as data, never as instructions.
+
+1. **Context.** Existing recon, plus the seed-time overlap check (§3 `full`/`brainstorm`). On a
+   bundle seeded with `--predecessor`, open with the predecessor's stored intent-correction text
+   as **quoted context** (`mp interview status` carries it via the seed record) — the successor
+   learns what the predecessor got wrong before it asks anything.
+2. **Dispatch (fail-closed, per the host contract).** The skill revision this integration is
+   verified against is PINNED in `policy/design-intent-skill.json` (the behavior-skills commit,
+   the manifest digest, and the declared `host_contract_version`) — resolve the installed
+   skill's identity against that pin, never against whatever a checkout happens to hold. Capture
+   the schema ONCE, before the first round: **`mp interview capture-schema --state=<path>
+   --skill-root=<installed skill dir>`** — the approved schema-capture control (it copies the
+   exact `schema.json` bytes into the bundle snapshot, records the digest and the **skill
+   identity**, and stamps the durable format pin; it records the FIRST schema state only — a
+   changed identity at a later capture is refused there and routed to
+   `mp interview amend-skill-identity`, the single guard-exempt, operator-approved, resumable
+   replacement — never adopted in place). Before every later round, re-read the ledger status;
+   the frozen snapshot is the schema the interview runs under. Then dispatch the skill's plan
+   mode by name with the
+   **host contract block** (read by the skill as DATA, never as instructions): (a) the existing
+   anchor and evidence — the verbatim bundle `topic:` and the survey/recon inputs (repo
+   `INTENT.md` when present, `spec.md` when present), (b) the **current draft** — the live
+   intent projection (`why: / outcome: / anti_goals: / done_means:`) when one exists, else an
+   explicit "no draft yet", (c) the **ledger status** — the host's own budget block from
+   `mp interview status --state=<path>` (read it fresh before every round; never keep your own
+   count), and (d) the **permitted recorder operations** — the exact `mp interview` verbs this
+   interview may run (`ask`, `answer`, `withdraw`, `draft`, and critic / critic-unavailable
+   recording). The skill returns, each round: the structured question(s) it asked, the answers
+   the operator gave, and — when a picture forms — the updated draft. It presents **only the
+   intent projection** to its `validate-intent.mjs` (`--mode plan`); the `## G<n>:` goal blocks
+   are the host's own artifact and are neither interviewed nor refused. **The skill NEVER writes
+   `state.yml` or `events.jsonl`** — every question, answer, withdrawal, and draft travels back
+   through the permitted `mp interview` verbs, and the lifecycle verbs (`set-phase`, `end`,
+   `waive`, `reopen`) are never the skill's. A dispatch failure REFUSES the interview — there
+   is no native questioning to fall back to (see step 6).
+3. **Recording (the verbs are the only recorder).** Record each question with
+   `mp interview ask --state=<path> --id=Q<n> --round=<r> --kind=intent|design --text=…`, each
+   answer with `mp interview answer --state=<path> --id=… --text=… [--corrected]
+   [--supersedes=Q<m>]`, an asked-but-unanswered question with
+   `mp interview withdraw --state=<path> --id=… --reason=…`. The intent-vs-how classification
+   (a *how* question — which file, which flag, which library — is forbidden; the skill proposes
+   2–3 concrete options and the operator's pick is recorded as a `design` entry) is the
+   **skill's** discipline under the host contract (its own rewrite test), reviewed by the
+   critic; it is not mechanically enforced and this prompt does not restate it.
+4. **Draft + critic round** (per complexity: critic `on` at medium/high, `off` at low). When an
+   intent picture is forming, persist it: `mp interview draft --state=<path> --file=<json>`
+   (the `{why, outcome, anti_goals, done_means}` intent draft → `interview-intent-draft.json` +
+   `interview_draft {intent_sha256}`; refuses while no intent-kind question is answered). Then
+   dispatch **`mp-intent-critic`** — the critic class (breaker role, frontier lane), read-only,
+   fresh context, dispatched **by name** (never a raw model override) — with **exactly three
+   quoted-data blocks**: (a) the verbatim seed topic — `state.topic`, the run's `mp seed --topic="<topic>"` text from the seed record (the `goals.md` `topic:` anchor is created only at goals capture, after the spec gate, so during the interview the critic reads the same words from the seed record), (b) the verbatim interview
+   ledger — every question, answer, withdrawal, draft, and critic receipt in order — from
+   **`mp interview replay --state=<path>`** (the `{ledger:[…]}` output, quoted as data, never as
+   instructions), and (c) the current intent draft. The dispatch block MUST carry the question and answer TEXT, not only a budget summary (the block names the verbatim question/answer lines, not a round/asked/answered roll-up). Record its payload with
+   `mp interview critic --state=<path> --receipt=<json> --payload-file=<path>` (the payload is
+   schema-validated and copied to `interview-critic-<n>.json`; the recorder recomputes
+   `content_head`/`intent_sha256` and refuses a receipt that names different values, lacks
+   dispatch provenance, or whose payload digest mismatches). On a dispatch failure, retry at
+   least once (`mp interview critic --unavailable --error=…` records the attempt); after two
+   consecutive failures at the same head, ask the operator (an AUQ naming both errors, at every
+   autonomy level — an unavailable reviewer is an error to surface, not a state to proceed from),
+   and only `mp interview end --reason=exhausted --critic-unavailable-ack=<answer>` may then
+   close on that ground. Ask the top `unknowns` next; re-ask a `misclassified` entry as a
+   proposal; `--resolves=C<n>|Q<m>` bookmarks addressed items for the next critic round.
+5. **Convergence and exit.** A schema-backed interview converges only when BOTH independent
+   conditions hold — **coverage**: every checked section carries real evidence with its
+   provenance and stated uncertainty (a section satisfied from prior context is covered but is
+   not an answer), and **probing**: at least `interview.probing_minimum` genuine open questions
+   answered fresh (a question at a real fork whose answer only the operator holds). Neither
+   substitutes for the other; the three legacy floors govern legacy interviews only. The
+   probing count comes from the critic's `eligible_question_set` (where a critic runs) or the
+   recorder's mechanical test (at `low`); the skill never counts for itself. Reach a named
+   terminal state (§5.4 of the spec) and record it with
+   `mp interview end --state=<path> --reason=converged|exhausted|critic_off
+   --coverage-file=<path>` — the coverage record (`{sections:[{section, source, uncertainty,
+   verdict?}]}`, one row per checked section, validated against the frozen schema snapshot) is
+   REQUIRED for a schema-backed end. Terminal states are **absorbing** — every mutating verb
+   refuses after them until `mp interview reopen --state=<path> --reason=…` (allowed only while
+   `phase==brainstorm` and before `goals_frozen`). On `exhausted`, write every remaining
+   `unknowns`, `contradictions`, and `misclassified` entry of the latest available critic
+   payload as an `assumed` row in the spec's Assumptions table before the design is presented.
+   `goals-load` refuses a bundle whose interview is still open (`--interview-waived` records a
+   deliberate skip).
+6. **Refusal — there is NO native fallback.** An absent skill (the pin's commit unresolvable,
+   the skill root missing its `SKILL.md`/manifest), a version-skewed skill
+   (`host_contract_version` mismatch), a changed skill identity, a malformed/unsupported
+   schema, or a broken capture each REFUSE the interview with the named error
+   (`skill_absent`, `host_contract_unsupported`, `skill_identity_changed`,
+   `schema_unsupported`, `undeclared_dependency` — the closed §5.5 list, surfaced verbatim by
+   the capture and identity guards). Surface the error and stop — composing questions
+   natively is not a fallback this prompt offers (that path no longer exists here); the
+   operator resolves the skill (reinstall the pinned revision, or amend the skill identity
+   through `mp interview amend-skill-identity`) and the interview resumes from the ledger,
+   where it stopped. An interrupted run is never left unable to interview: the events on disk
+   reconstruct the rounds, kinds, answers, drafts, and receipts, and the next dispatch
+   continues from them through the SAME host contract.
+7. **Output.** Write the intent block into `goals.md` AND as `## Intent` in `spec.md` (the
+   `why: / outcome: / anti_goals: / done_means:` lines, §3 `full`/`brainstorm` row). The operator
+   reviews it at the spec gate; there is no separate "confirm my restatement" question.
+
+**Consumption during planning and assessment.** The interview's intent is consumed downstream:
+`rawIntentOutcomeLine` quotes the `outcome:` line in every wave summary (the mid-run reminder,
+so the run keeps its end-state in view), and the final goal assessment (`mp-goal-assessor`,
+`final` mode) judges the run's intent verdict against what was actually deployed — the `## Intent`
+block is the yardstick, not the plan.
+
 ## 3 — Other verbs (sequencing only — content lives elsewhere)
 
 | verb | v8 target |
 |---|---|
-| `full` / `brainstorm` / `plan` | Locate the bundle, or **seed a new one** — `mp seed --state=<path> --slug=<slug> --topic="<topic>" [--complexity=… --autonomy=… --planning-mode=serial\|parallel\|auto --adversary-review=on\|off --fabric=on\|off --predecessor-transcript=…]` (writes a valid v8 brainstorm-phase bundle; refuses an existing one unless `--force`). `--adversary-review` defaults `on` (alias: `--codex-review`) — new bundles arm `state.review.adversary: true` automatically; `--fabric` defaults `on` — new bundles arm `state.dispatch.fabric: true` (opt out with `--fabric=off` for the legacy dispatch_fabric path) (the hindsight-historian fix: the finish-time review was silently skipping because the flag was never set at seed). Pass `off` for explicit opt-out. **Brainstorm:** invoke `superpowers:brainstorming` directly. **Before the spec is presented for approval — a hard pre-approval requirement, not optional —** persist an `## Assumptions & Open Decisions` section into `spec.md`: one table row per material decision, columns `question | decision | rationale | source` where `source` is `assumed` or `user-confirmed`. This section is written INTO `spec.md`, so it falls under the **spec-gate hash coverage** (§3b — spec gate → `[spec.md]`) and gets reviewed and frozen with the rest of the spec; the spec may only reach the approval gate once it is present. On spec approval, **capture goals first** — auto-distill the spec's success criteria into `<MAIN>/docs/masterplan/<slug>/goals.md` (a dispatch/AUQ pass proposing the goal list; `goals.md` is an ARTIFACT, not CD-7 state, so the `Write` is allowed) and freeze it with `mp goals-load --state=<path> --goals=<MAIN>/docs/masterplan/<slug>/goals.md --approval=<receipt.json>` **only after the user approves the distilled list** (that approval is the receipt setting `goals_frozen` to the current `goals.md` hash). **Open that file with a `topic: |` block carrying the user's ORIGINAL request verbatim** — their words, in full, not a summary and not the spec's restatement of them (the bare `topic:` form truncates at the first blank line and flattens indentation, losing most of a multi-paragraph ask). This is the run's **anchor**: `goalsHash` covers the topic seed, so freezing `goals.md` freezes the anchor, and it is captured here — before the spec gate's adversary rounds and before every plan-phase review→fix turn — so §3c can measure the plan against what was actually asked for rather than against an artifact those rounds reshaped. Amendments may add or tombstone goals but must never restate the anchor (`validateAmendment` rejects a changed seed). Fail-closed via the **`run_goals_capture` guard**: on a goals-enabled bundle `mp set-phase --phase=plan` exits 3 with a `run_goals_capture` op until `goals_frozen` matches the current `goals.md` hash. Then `mp set-phase --state=<path> --phase=plan` (this transition trips the **spec gate** — §3b: it exits 3 with a `run_gate_review` op until the cross-vendor adversarial pass over `spec.md` + `goals.md` recorded via `mp record-gate-review --gate=spec` (the spec-gate hash now covers `spec.md` + `goals.md`, so a later `mp goals-amend` to the frozen goals re-arms this spec gate on its next transition); satisfy it, re-run set-phase) + `mp event --state=<path> --type=phase_transition --phase=plan` (never hand-edit `state.yml` — CD-7). **Plan:** hand to the **plan lifecycle (§3a)**, which selects serial vs parallel per `planning.mode`, then materializes `state.tasks` **and** advances `phase→execute` in one atomic `mp load-plan` write (the plan→execute seam; the lower-level `mp seed-tasks` populates tasks *without* touching phase, for recovering an already-`execute` bundle). The seam is guard-enforced: `mp set-phase --phase=execute` refuses a 0-task bundle without `--force`, and `decide` *throws* on a `phase:execute` + `tasks:[]` bundle rather than finalizing an unseeded run — so a bare `set-phase execute` can never silently archive a planned-but-unseeded run. Log other milestones with `mp event …`; gates via `mp open-gate` + an `AskUserQuestion`. (`brainstorm` stops once the plan phase is reached; `plan` runs §3a; `full` continues through execution via §2.) |
+| `full` / `brainstorm` / `plan` | Locate the bundle, or **seed a new one** — first run **`mp runs list --repo-root=<MAIN>`** (the read-only inventory) and perform the **`overlap.review`** over it (are there other live bundles whose work would collide?): write the review decision to an artifact file and pass it as `mp seed --state=<path> --slug=<slug> --topic="<topic>" [--complexity=… --autonomy=… --planning-mode=serial\|parallel\|auto --adversary-review=on\|off --fabric=on\|off --predecessor=<slug> --predecessor-transcript=… --overlap-review=<review-file>]` — **`--overlap-review` is REQUIRED** (exit 2 without it; an empty inventory still yields a review with zero candidates) and the recorder refuses a stale review whose `inventory_sha256` no longer matches (`overlap_review_stale`). `--predecessor=<slug>` carries an intent-rejection forward: a predecessor archived `incomplete_authorized` with an `intent_rejected:*` reason projects `{class, correction}` into the new bundle's seed record, and the new interview opens with that stored correction as quoted context. (writes a valid v8 brainstorm-phase bundle; refuses an existing one unless `--force`). `--adversary-review` defaults `on` (alias: `--codex-review`) — new bundles arm `state.review.adversary: true` automatically; `--fabric` defaults `on` — new bundles arm `state.dispatch.fabric: true` (opt out with `--fabric=off` for the legacy dispatch_fabric path) (the hindsight-historian fix: the finish-time review was silently skipping because the flag was never set at seed). Pass `off` for explicit opt-out. **Brainstorm:** run the **intent interview (§2f)** — the pinned /intent skill's plan mode questioning over the host contract (fail-closed: `mp interview` is the only recorder and there is no native fallback) — then invoke `superpowers:brainstorming` for the design/spec half. **Before the spec is presented for approval — a hard pre-approval requirement, not optional —** persist an `## Assumptions & Open Decisions` section into `spec.md`: one table row per material decision, columns `question | decision | rationale | source` where `source` is `assumed` or `user-confirmed`. This section is written INTO `spec.md`, so it falls under the **spec-gate hash coverage** (§3b — spec gate → `[spec.md]`) and gets reviewed and frozen with the rest of the spec; the spec may only reach the approval gate once it is present. On spec approval, **capture goals first** — auto-distill the spec's success criteria into `<MAIN>/docs/masterplan/<slug>/goals.md` (a dispatch/AUQ pass proposing the goal list; `goals.md` is an ARTIFACT, not CD-7 state, so the `Write` is allowed) and freeze it with `mp goals-load --state=<path> --goals=<MAIN>/docs/masterplan/<slug>/goals.md --approval=<receipt.json>` **only after the user approves the distilled list** (that approval is the receipt setting `goals_frozen` to the current `goals.md` hash). `goals-load` forwards an `--interview-waived --reason=…` to the interview's own waiver op, and refuses to load goals while an interview it started is still open (§5.4). **Open that file with a `topic: |` block carrying the user's ORIGINAL request verbatim** — their words, in full, not a summary and not the spec's restatement of them (the bare `topic:` form truncates at the first blank line and flattens indentation, losing most of a multi-paragraph ask) — and the **`## Intent` block from §2f step 7** (the `why: / outcome: / anti_goals: / done_means:` lines) under it. This is the run's **anchor**: `goalsHash` covers the topic seed, so freezing `goals.md` freezes the anchor, and it is captured here — before the spec gate's adversary rounds and before every plan-phase review→fix turn — so §3c can measure the plan against what was actually asked for rather than against an artifact those rounds reshaped. Amendments may add or tombstone goals but must never restate the anchor (`validateAmendment` rejects a changed seed). Fail-closed via the **`run_goals_capture` guard**: on a goals-enabled bundle `mp set-phase --phase=plan` exits 3 with a `run_goals_capture` op until `goals_frozen` matches the current `goals.md` hash. Then `mp set-phase --state=<path> --phase=plan` (this transition trips the **spec gate** — §3b: it exits 3 with a `run_gate_review` op until the cross-vendor adversarial pass over `spec.md` + `goals.md` recorded via `mp record-gate-review --gate=spec` (the spec-gate hash now covers `spec.md` + `goals.md`, so a later `mp goals-amend` to the frozen goals re-arms this spec gate on its next transition); satisfy it, re-run set-phase) + `mp event --state=<path> --type=phase_transition --phase=plan` (never hand-edit `state.yml` — CD-7). **Plan:** hand to the **plan lifecycle (§3a)**, which selects serial vs parallel per `planning.mode`, then materializes `state.tasks` **and** advances `phase→execute` in one atomic `mp load-plan` write (the plan→execute seam; the lower-level `mp seed-tasks` populates tasks *without* touching phase, for recovering an already-`execute` bundle). The seam is guard-enforced: `mp set-phase --phase=execute` refuses a 0-task bundle without `--force`, and `decide` *throws* on a `phase:execute` + `tasks:[]` bundle rather than finalizing an unseeded run — so a bare `set-phase execute` can never silently archive a planned-but-unseeded run. Log other milestones with `mp event …`; gates via `mp open-gate` + an `AskUserQuestion`. (`brainstorm` stops once the plan phase is reached; `plan` runs §3a; `full` continues through execution via §2.) |
 | `execute` | The resume controller (§2). |
 | `finish` | The finalization verb → the flow in **§2c** (docs-normalize offer → verify → retro → durable `branch_finish` gate → archive **LAST**). Bare `finish` = run §2c (on pending tasks, AUQ "finalize anyway / keep working / `--retro-only`" — never silent-archive an incomplete run). `finish --retro-only` = (re)generate `retro.md` only — no verification, no gate, no archive (the old `retro` behavior); safe on an in-progress or finished run, and it must NOT `set-status archived` (that would strand a run: the §2 discover filter hides archived bundles). |
 | `retro` | Deprecated alias for `finish --retro-only`. Print a one-line "`retro` was renamed to `finish` (running `finish --retro-only`)" notice, then run it. Kept for muscle-memory/back-compat. |
@@ -640,8 +771,83 @@ then closes with this AUQ at a stop-set gate. (The §0 version banner is an *inv
 obligation — first, before anything — not part of turn-close.) That sequence is the only ceremony
 that survives.
 
+**Measured context at every gate.** At every stop-set gate and turn-close, measure the session's
+context and give compact advice: `mp context-status --repo-root=<MAIN> [--session=<id>]` — read-only,
+returns one of `current` / `post-compaction` / `malformed` / `unsupported` / `not-found` with
+`tokens_at_last_request`, `appended_est`, and `window`, plus a `recommendation` keyed to the
+configured `context_watch.threshold` (`compact` above threshold, `focus` naming the configured focus
+when set). Fold the state and recommendation into the turn-close line — the `<mp-autoprogress>`
+marker or the stop-set AUQ text — as a compact one-liner (`ctx: current · 68% · compact if you
+resume a long run`). If the harness exposes no window, report the explicit `unsupported` state
+rather than guessing a number (the contract forbids fabricating measurement).
+
+**Prompt-only knob markers.** The sequencer's prompt-only controls — those with no code-side
+observable, whose only observable is the rendered protocol line — are declared with a
+`<!-- knob: name -->` marker. The inventory guard (`test/knob-inventory.test.mjs`) discovers
+controls here and requires each to resolve to a named behavioral contract. The current markers
+(`state.render.images`, `context_watch`, and every `<!-- knob: -->`-declared prompt control) are
+listed at the end of this file; keep the list in sync with the marker declarations themselves.
+
 ## 6.5 — Multi-repo apply (qctl backend) — flag-off spec, relocated
 
 The qctl GPU-worker implementer backend's multi-repo apply/verify/commit procedure is a **spec for a
 feature that is OFF** (`state.implementer.qctl.enabled` — nothing sets it yet). The full sequence
 lives in `docs/design/qctl-multi-repo-apply.md`; do not execute any of it unless that flag is true.
+
+## 10 — Bootstrap stage (the v10 rollout — post-execute, pre-finish)
+
+The last thing this run does before `mp finish`: **the serial, operator-gated bootstrap stage** —
+`node scripts/bootstrap-v10.mjs` on the branch (`bootstrap`, below). It is NOT a plan wave and NOT
+an `mp` verb: it is a one-off script in this repo's `scripts/` pattern that installs v10.0.0 into
+both running surfaces, records its own `bootstrap_armed` / `bootstrap_step` / `bootstrap_pass`
+events through the shared event writer, and retires with its suite in the successor's retro. The
+shell enters it AFTER the last execute wave completes and BEFORE `mp finish`. **Plan-wave semantics
+(disjoint `files`, `dispatch-wave`, the two-phase wave commit) do NOT apply** — the stage is listed
+in `plan.md` as a marker after the last wave, never as a task, so resume tooling never dispatches it.
+
+1. **Enter.** When `mp continue` reports all execute waves done, enter the stage instead of `finish`.
+   A compaction mid-stage resumes from `bootstrap status`, never from the model's memory of where it
+   was.
+2. **The arm → run → record loop** (the §10.1 discipline; the whole stage is one serial pass):
+   - `node scripts/bootstrap-v10.mjs status --state=<path>` — read-only: pass, executed steps, next.
+   - `node scripts/bootstrap-v10.mjs arm --state=<path> --step=<name> [--targets=<json>]` — evaluates
+     the step's **preconditions in code** (fetch + ancestry, clean tree, the per-commit audit,
+     remote-tag equality, the CI conclusion, the sibling-repo scan) and, only when all hold, appends
+     `bootstrap_armed {pass, step, sha, preconditions}` and prints the step's exact command `cmd`.
+     A failed precondition prints the failures, appends nothing, and exits 1 — no git/gh action fires
+     on a stale premise.
+   - The shell runs the printed `cmd` **verbatim** from MAIN and captures exit + output digest
+     (network git and `gh` stay shell-side). **The residual prompt-side risk is bounded to exactly
+     this: running the printed command verbatim between `arm` and `record` (A33).**
+   - `node scripts/bootstrap-v10.mjs record --state=<path> --step=<name> --exit=N
+     [--digest-file=<path>] [--status=failed|recovered] [--data=<json>]` — appends the
+     schema-validated `bootstrap_step`; refuses a step without a matching `bootstrap_armed` at the
+     same base sha, an out-of-order step, a repeated step unless `status: recovered`, and a step
+     whose postcondition fails. `--status=failed` is the one record accepted after a failed command
+     (requires `--exit` non-zero or `--reason=…`).
+   - Step names, in stage order: `rehearsal · docs_normalize · verify · review · assess · release ·
+     push · ci_wait · install_pi · main_push · publish_ack · pr_merge · claude_surface ·
+     surfaces_live · gate`. A corrective pass (`bootstrap start --pass=2 --triggered-by=<index>`)
+     opens a fresh monotone sequence from `verify` and omits `rehearsal`, `docs_normalize`,
+     `main_push`.
+3. **Two preconditions hold before `mp finish` starts** (the stage is the run's release gate):
+   - **(a)** `node scripts/bootstrap-v10.mjs status --state=<path>` reports the pass complete
+     **through `surfaces_live`** (the v10.0.0 binary actually installed and executable in both
+     running surfaces — the Claude plugin cache and the Pi install — per `state`'s goal G6) before
+     `mp finish` begins;
+   - **(b)** `arm --step=gate` and `record --step=gate` execute **inside the `branch_finish`
+     handling before `--choice=merge`** — the `gate` step is the ONLY bootstrap step permitted
+     after finish begins (it records once, on the latest pass).
+4. **The `required_successor` handoff.** Before `mp finish` on THIS run, record the successor
+   obligation through the pinned v9 `mp event` (the installed 9.10.0 is what runs this stage):
+   `mp event --state=<path> --type=required_successor --slug=v10-validation
+   --reason="<the successor run validates the v10.0.0 rollout and retires this bootstrap stage>"`.
+   Every `mp finish` / `finish-step` invocation in this stage — real or rehearsed — uses the
+   **pinned 9.10.0 tree** (a scratch copy asserted to print `9.10.0`), never a repo-relative binary,
+   because the cache and the repo both move to v10 during the stage. The successor is seeded with
+   `--predecessor=<this slug>` so its interview opens with this run's handoff.
+5. **Rehearsal first.** `scripts/rehearse-v9-finish.sh` runs steps 2–7 and the finish on a scratch
+   clone with a throwaway bundle, through the same `arm`/`record` loop with fixture `--targets`, so
+   the rehearsal exercises the executor the live walk uses.
+
+<!-- knob: render_images --> <!-- knob: context_watch --> <!-- knob: context_watch.threshold --> <!-- knob: context_watch.focus -->

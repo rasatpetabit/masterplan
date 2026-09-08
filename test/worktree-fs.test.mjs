@@ -4,12 +4,26 @@
 // docs/masterplan/* bundles. The headline case is the Codex BLOCKER: readGitdirTarget must resolve a
 // RELATIVE `gitdir:` target to absolute, or a valid OUR-repo worktree mis-reads as foreign downstream
 // and gets removed (data loss). fs only here — still no git (CD-7).
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { readGitdirTarget, collectDiskDirs, collectBundleRecords } from '../lib/worktree-fs.mjs';
+
+// Every fixture here builds a tree under os.tmpdir(); without this they accumulate across
+// runs and fill a shared /tmp. Registered on creation, removed once when the file finishes.
+const FIXTURE_TMPDIRS = [];
+function mkdtempTracked(prefix) {
+  const dir = fs.mkdtempSync(prefix);
+  FIXTURE_TMPDIRS.push(dir);
+  return dir;
+}
+after(() => {
+  for (const d of FIXTURE_TMPDIRS) {
+    try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* already gone */ }
+  }
+});
 
 function mkWorktree(root, name, gitContents) {
   const d = path.join(root, '.worktrees', name);
@@ -19,7 +33,7 @@ function mkWorktree(root, name, gitContents) {
 }
 
 test('readGitdirTarget: a RELATIVE gitdir target resolves to absolute against the worktree dir (the BLOCKER)', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-wtfs-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-wtfs-'));
   // git writes a relative pointer for a relatively-created/repaired worktree.
   const dp = mkWorktree(tmp, 'rel', 'gitdir: ../../.git/worktrees/rel\n');
   const got = readGitdirTarget(dp);
@@ -30,14 +44,14 @@ test('readGitdirTarget: a RELATIVE gitdir target resolves to absolute against th
 });
 
 test('readGitdirTarget: an ABSOLUTE gitdir target is normalized and returned as-is', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-wtfs-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-wtfs-'));
   const target = path.join(tmp, '.git', 'worktrees', 'abs');
   const dp = mkWorktree(tmp, 'abs', `gitdir: ${target}\n`);
   assert.equal(readGitdirTarget(dp), target);
 });
 
 test('readGitdirTarget: a real `.git` DIRECTORY (nested clone), absent `.git`, and malformed content all → null', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-wtfs-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-wtfs-'));
   const nested = path.join(tmp, '.worktrees', 'clone');
   fs.mkdirSync(path.join(nested, '.git'), { recursive: true }); // .git is a DIR, not the linked-worktree FILE
   assert.equal(readGitdirTarget(nested), null);
@@ -53,7 +67,7 @@ test('readGitdirTarget: a real `.git` DIRECTORY (nested clone), absent `.git`, a
 });
 
 test('collectDiskDirs: tags each .worktrees/* dir with its resolved gitdir target; absent .worktrees → []', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-wtfs-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-wtfs-'));
   assert.deepEqual(collectDiskDirs(tmp), []); // no .worktrees/ yet
 
   mkWorktree(tmp, 'rel', 'gitdir: ../../.git/worktrees/rel\n');
@@ -71,7 +85,7 @@ test('collectDiskDirs: gitdirCanonical collapses a symlink alias to the real adm
   // The Codex realpath BLOCKER inputs: an OUR-repo worktree whose .git points through a symlink/NFS
   // alias must still canonicalize to the real admin dir so the classifier recognises it as ours (repair,
   // not remove). An unresolvable target yields null so the classifier refuses to PROVE it foreign.
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-wtfs-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-wtfs-'));
   const realAdmin = path.join(tmp, '.git', 'worktrees', 'sym');
   fs.mkdirSync(realAdmin, { recursive: true });
   const alias = path.join(tmp, 'alias');
@@ -88,7 +102,7 @@ test('collectDiskDirs: gitdirCanonical collapses a symlink alias to the real adm
 });
 
 test('collectBundleRecords: one record per readable bundle; missing runs dir / unreadable state.yml tolerated', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-wtfs-'));
+  const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-wtfs-'));
   assert.deepEqual(collectBundleRecords(tmp), []); // no docs/masterplan/ yet
 
   const bundle = (slug, body) => {

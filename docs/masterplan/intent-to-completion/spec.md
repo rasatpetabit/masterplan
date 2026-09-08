@@ -1295,7 +1295,9 @@ Named suites, each required by §4.4's inventory or by a finding in §13:
   at the same head without `--critic-unavailable-ack` refused, with the ack accepted and the
   attempts listed in the event; an ask naming a sealed round refused (the next ask at `r+1`
   accepted); both floors met but the intent-round minimum unmet (eight intent answers in two
-  rounds at `high`) → every non-waived exit refused; replay after compaction
+  rounds at `high`) → every non-waived exit refused — a LEGACY-path assertion: a schema-backed
+  interview (§5.5 capture) is judged by §5.3's two conditions instead of the three floors, and
+  `interview-design-intent` proves that substitution's matrix; replay after compaction
   reconstructs status from events and the payload artifact; `goals-load` accepts converged /
   exhausted / critic_off and refuses open without waiver.
 - `finish-replay`: restart before disposition retirement, after retirement before the first

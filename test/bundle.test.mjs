@@ -1,7 +1,7 @@
 // test/bundle.test.mjs — v8 run-bundle state read/write + pure transforms.
 // Canonical v8 state.yml is flat: one `key: value` per line, complex values as inline
 // JSON (valid YAML flow). Legacy v7 block-style is migrate.mjs's concern, not this module's.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -36,6 +36,20 @@ import {
   setRenderConfig,
   CURRENT_SCHEMA_VERSION,
 } from '../lib/bundle.mjs';
+
+// Every fixture here builds a tree under os.tmpdir(); without this they accumulate across
+// runs and fill a shared /tmp. Registered on creation, removed once when the file finishes.
+const FIXTURE_TMPDIRS = [];
+function mkdtempTracked(prefix) {
+  const dir = fs.mkdtempSync(prefix);
+  FIXTURE_TMPDIRS.push(dir);
+  return dir;
+}
+after(() => {
+  for (const d of FIXTURE_TMPDIRS) {
+    try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* already gone */ }
+  }
+});
 
 test('round-trips scalars with correct types', () => {
   const s = { schema_version: '6.0', slug: 'my-run', current_wave: 2, autonomy: 'loose', done: true, pending_gate: null };
@@ -75,7 +89,7 @@ test('parse skips ---, comments, and blank lines', () => {
 });
 
 test('writeState/readState round-trip atomically on disk (auto-creates dirs, cleans tmp)', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-bundle-'));
+  const dir = mkdtempTracked(path.join(os.tmpdir(), 'mp-bundle-'));
   try {
     const sp = path.join(dir, 'sub', 'state.yml');
     const state = { schema_version: '6.0', slug: 'r', tasks: [{ id: 1, wave: 1, status: 'pending', files: [] }], active_run: null };
@@ -493,7 +507,7 @@ test('upsertTasks: rejects a duplicate index id (1 and "1" collide after String 
 });
 
 test('appendEvent: writes one JSON line per call, accumulating, into a sibling events.jsonl', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-events-'));
+  const dir = mkdtempTracked(path.join(os.tmpdir(), 'mp-events-'));
   try {
     const sp = path.join(dir, 'state.yml');
     const ep = appendEvent(sp, { type: 'seeded', ts: 'T1' });
@@ -510,7 +524,7 @@ test('appendEvent: writes one JSON line per call, accumulating, into a sibling e
 
 // A5 — coordination state object (§6 schema, spec §7.4): round-trip + single-agent path unchanged.
 test('A5: setCoordination round-trips the full §6 schema through state.yml (write→read→deepEqual)', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-coord-'));
+  const dir = mkdtempTracked(path.join(os.tmpdir(), 'mp-coord-'));
   try {
     const sp = path.join(dir, 'state.yml');
     const base = {
