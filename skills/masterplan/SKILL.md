@@ -169,10 +169,11 @@ bundle. `state.yml` is the durable source of truth.
 
 Two observability verbs help here: `mp resume-brief --repo-root <dir>`
 resolves zero, one, or several active bundles into a compact resume brief
-(the resume-brief-hook doctor check wires it into harness hooks), and
-`mp context-status` reports the measured context usage at gates where the
-harness exposes it (and an explicit unknown state where it does not) — watch
-it at gates and compact when it recommends the threshold.
+(the resume-brief-hook doctor check verifies the hook wiring — reads the
+policy and reports PASS/WARN/SKIP, installs nothing), and
+`mp context-status --repo-root <dir>` reports the measured context usage at
+gates where the harness exposes it (and an explicit unknown state where it
+does not) — watch it at gates and compact when it recommends the threshold.
 
 ## Pi adaptation (primary host)
 
