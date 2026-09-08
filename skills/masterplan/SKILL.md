@@ -167,6 +167,13 @@ plan, inspect the current repo/worktree for:
 Do not assume there is no active work because this host did not create the run
 bundle. `state.yml` is the durable source of truth.
 
+Two observability verbs help here: `mp resume-brief --repo-root <dir>`
+resolves zero, one, or several active bundles into a compact resume brief
+(the resume-brief-hook doctor check wires it into harness hooks), and
+`mp context-status` reports the measured context usage at gates where the
+harness exposes it (and an explicit unknown state where it does not) — watch
+it at gates and compact when it recommends the threshold.
+
 ## Pi adaptation (primary host)
 
 - **Tools:** use the native fleet tools directly — `read`/`bash`/`edit`/`write`
