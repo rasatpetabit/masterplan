@@ -1,0 +1,21 @@
+Finish-time adversary review — intent-to-completion, base main...e96d39f, four rounds, cross-vendor gpt-6-astra (workflow transport), read-only.
+
+Scope: the unmerged finish delta (the SKILL.md observability paragraph), the finish record trail (the spec-gate re-arm review, the goal check with per-goal verdicts, the retro, whole-scope-reviews.json, the ledger tail), and the walk's honesty invariants (receipts, tags, operator gates). The reviewer independently recomputed the spec hash (match), re-ran the live evidence probes (install-pi check_ok at 80e3337, public tag v10.0.6, CI run 34191687673 both jobs success, both surface banners naming 10.0.6, clean registry drift, both PRs merged, tag ancestry beneath the finish head), and confirmed the ledger is a byte-identical prefix plus appended events (no historical rewrites).
+
+Round 1 (v10-finish-adversary-review-mtsatalo-hvi323): REVISE — three findings: (1, minor) the SKILL.md paragraph said the resume-brief-hook doctor check "wires it into harness hooks" (it reads policy, reports PASS/WARN/SKIP, installs nothing) and showed bare mp context-status (requires --repo-root); (2, major) the retro overstated — "Outcome: complete" while disposition/archive pending and one docs commit unmerged, the ~90-minute corrective-cycle claim contradicted by the amendment fix round's disclosed 3h09m failed delegations, and the pass-5 deadlock attributed to prose-only verdicts alone (the panel established even a machine-readable blocking review could not bypass the incomplete-predecessor restriction); the merge-resolution choice needed its decision source cited; (3, major) the blanket no-false-receipts claim was contradicted by the ledger's own disclosed false success receipt — the defensible invariant is disclosed, append-only correction.
+
+Fixes: the SKILL.md paragraph corrected (verifies wiring; --repo-root shown); the retro's outcome line now "released and live — finish pending", the unmerged docs commit named, the 3h09m exception disclosed, the two-layer deadlock attribution, the event-280 decision source cited; the disclosure sentence added.
+
+Round 2 closure (v10-finish-review-closure-mtsaxlcx-i6cg3i): findings 1 and 2 CLOSED (source-verified); finding 3's concept closed but my citation was wrong — "event 189" (a bootstrap_armed record) for what is event 186's pass-2 false-success verify receipt (disclosed by event 188), with 250/257 correcting a DIFFERENT violation (the ci_wait pipeline-exit boundary).
+
+Fix: the bullet rewritten — two distinct violations named with their actual events (186/188; 174/199/219 corrected by 250/257 with the 46fa0e8 boundary fix in the correction's note).
+
+Round 3 closure (v10-finish-review-closure2-mtsb0lzj-q8zy2w): verification 1 CLOSED (every cited event's content confirmed against the ledger). Verification 2 failed on evidence shape only: the supplied snapshot was post-fix (byte-identical), so correction-only scope was unproven.
+
+Fix: the pre-fix snapshot reconstructed mechanically (reverse-substituting the recorded unique edit) — the diff shows exactly one changed line (the bullet), all else byte-identical.
+
+Round 4 closure (v10-finish-review-closure3-mtsb23pp-ar0kfu): verification 2 CLOSED — one changed line, every other line byte-identical, the replacement already round-3-verified. Round 1 findings 1-2 and round 2 finding 3 all closed.
+
+Recorded verdict (round 4): APPROVE at base main, head e96d39f. The walk's substance was never in question; its account of itself is now accurate.
+
+Round 5 (v10-finish-review-head442-mtsbhr1o-z2w3ad), at the moved head 442eb59: APPROVE — the e96d39f..442eb59 delta is exactly the prescribed SKILL.md paragraph correction (verifies wiring, --repo-root shown), the retro unchanged since the approved review, the goal_check at head 442eb59 carrying all eight achieved verdicts with battery evidence bound to the new head. Noted honestly: the goal_check event's prose note repeated the earlier e96d39f assessment (the structured head_sha/verdicts are the binding record); this round confirms the moved-head state regardless. Recorded verdict: APPROVE at base main, head 442eb59 — the finish disposition proceeds.
