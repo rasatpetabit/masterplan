@@ -30,3 +30,8 @@ The plan said: one release, v10.0.0, through a rehearsed 7-step pipeline. The re
 - The walk's ledger discipline is the template: `docs/masterplan/intent-to-completion/events.jsonl` is the complete, replayable history — 7 passes, every refusal, correction, and recovery typed and validated. The invariant is disclosed correction, not a claim that no receipt was ever false. Two distinct historical violations, each disclosed in the same ledger: (1) event 186's pass-2 verify receipt at tip 6fdae05 recorded exit 0 while npm test exited 1 (one version-surface test failing on the llms.txt v-prefix) — a false success receipt whose falsity event 188 discloses at the re-verify (tip 42a6190), the corrective transition standing on the truthful re-record; (2) the pass-1–3 ci_wait receipts (events 174, 199, 219) recorded the child exit where the pipeline's true exit differed — corrected append-only by the receipt_correction events 250 and 257, with the pipeline-exit boundary fix (46fa0e8) disclosed in the correction's own note. No receipt was ever rewritten; every violation is visible with its recovery.
 - The bare v10.0.3/v10.0.4 GitHub release notes (created empty by the release-publish job) could carry the same substance as v10.0.5's.
 - The rehearsal's fixture substitutions (§10.1.1) deserve a pass of scrutiny against the real banner forms and live shapes this walk actually met.
+
+## Completion
+
+**Completion:** incomplete:version_not_bumped
+**Pushed to origin:** no
