@@ -387,7 +387,9 @@ export function piSurfaceEntry(installRoot) {
 export function surfaceExecVersion(entry) {
   if (!existsSync(entry)) return null;
   try {
-    // An EXACT contract, anchored on the whole trimmed output. Hunting a semver out of
+    // An EXACT contract, anchored on the exact expected form: the bare fixture form on the
+    // whole trimmed output; the real banner on its exact prefix through " args: " (the suffix
+    // carries free-form args/cwd and is deliberately not matched). Hunting a semver out of
     // arbitrary stdout accepts an entry point that ignores its argument and prints its own
     // path — `.../masterplan/10.0.0/bin/masterplan.mjs` contains a perfectly good 10.0.0 — so
     // the probe would pass a surface that has no version command at all. The REAL entry point
