@@ -1,108 +1,313 @@
 {
-  "wave": "whole-scope (waves 11-16 + the /intent handoff pickup)",
-  "recorded_at": "2026-09-07T11:5Z",
-  "record_revised_at": "2026-09-07T12:0Z",
-  "record_revision_note": "repaired 2026-09-07 per an advisor audit of the evidence records: this file was invalid JSON (a bare number followed by unquoted prose), the reviewed range named the fix commit instead of the reviewed tip, the two lenses were described as concurrent when the workflow's sequential awaits serialized them, the verification-cause account conflated two distinct mechanisms, and the record omitted the later gate-iteration trail. Historical verdicts are preserved as issued; nothing here rewrites a verdict as an approval.",
-  "review_kind": "end-of-waves whole-scope adversarial (workflow transport, governed adversary lane litellm/gpt-6-astra, two lenses run SEQUENTIALLY — the workflow script's consecutive awaits serialized them despite the concurrency setting; the review the per-wave reviews structurally could not be — the seams between waves, the unreviewed disclosed fix/restoration commits, and the pickup's own seams)",
-  "reviewed_diff": "81303d3..76da5f1 (the waves 11-16 diff INCLUDING the /intent handoff pickup; 67eb52d was the FIX round that followed, not part of what this pass reviewed)",
-  "lenses": {
-    "integration_coherence": {
-      "verdict": "rework",
-      "findings": [
-        "[rework] lib/promote.mjs:534-535,596,708 — promotion ignores the durable format pin; a schema-backed goals amendment persists an unpinned legacy goals_md_hash while the pinned consumer computes a different value; recovery repeats it (the goals lineage breaks at the promotion->checkpoint boundary)",
-        "[rework] lib/checkpoint-evidence.mjs:261-278 — checkpoints consume cached reconciliation without §6.3's mandatory target re-resolution; changed target INTENT.md and unavailable remote both pass",
-        "[rework] lib/interview.mjs:448-450 + bin/masterplan.mjs:4809-4815 — assertSkillIdentity existed with no production caller; changed captured SKILL.md still recorded askQuestion, approved task reviews, and passed checkpoint identity",
-        "[rework] lib/finish.mjs:805-816 — verifyFinishReceipt never compares the repository authorization members; repo_intent_digest 'absent' plus a foreign target_identity returned ok:true"
-      ]
-    },
-    "invariants_hostile_input": {
-      "verdict": "rework",
-      "findings": [
-        "[rework] lib/checkpoint-evidence.mjs:291,265 — skill-equality unenforced by consumers (no production caller for the guard; reviewCompletedTasks approved with a changed SKILL.md); checkpoint reuses recorded reconciliation without fresh resolution (changed target bytes and a nonexistent remote both approved)",
-        "[rework] lib/reconcile-intent.mjs:494 — persisted reconciliation rows unvalidated on consumption; rows replaced with [] still approved",
-        "[rework] lib/promote.mjs:368 — recovery trusts transaction fields without revalidating the approval binding; tampered durable diff/result-hashes and a rewritten approval all recovered, writing unapproved bytes",
-        "[rework] lib/promote.mjs:389 — a forged terminal event suppresses an unfinished promotion; a hand-appended spec_amended line yields recorded/replay with zero writes while the spec sits at its base"
-      ]
-    }
+ "wave": "whole-scope (waves 11-16 + the /intent handoff pickup)",
+ "recorded_at": "2026-09-07T11:5Z",
+ "record_revised_at": "2026-09-07T12:0Z",
+ "record_revision_note": "repaired 2026-09-07 per an advisor audit of the evidence records: this file was invalid JSON (a bare number followed by unquoted prose), the reviewed range named the fix commit instead of the reviewed tip, the two lenses were described as concurrent when the workflow's sequential awaits serialized them, the verification-cause account conflated two distinct mechanisms, and the record omitted the later gate-iteration trail. Historical verdicts are preserved as issued; nothing here rewrites a verdict as an approval.",
+ "review_kind": "end-of-waves whole-scope adversarial (workflow transport, governed adversary lane litellm/gpt-6-astra, two lenses run SEQUENTIALLY \u2014 the workflow script's consecutive awaits serialized them despite the concurrency setting; the review the per-wave reviews structurally could not be \u2014 the seams between waves, the unreviewed disclosed fix/restoration commits, and the pickup's own seams)",
+ "reviewed_diff": "81303d3..76da5f1 (the waves 11-16 diff INCLUDING the /intent handoff pickup; 67eb52d was the FIX round that followed, not part of what this pass reviewed)",
+ "lenses": {
+  "integration_coherence": {
+   "verdict": "rework",
+   "findings": [
+    "[rework] lib/promote.mjs:534-535,596,708 \u2014 promotion ignores the durable format pin; a schema-backed goals amendment persists an unpinned legacy goals_md_hash while the pinned consumer computes a different value; recovery repeats it (the goals lineage breaks at the promotion->checkpoint boundary)",
+    "[rework] lib/checkpoint-evidence.mjs:261-278 \u2014 checkpoints consume cached reconciliation without \u00a76.3's mandatory target re-resolution; changed target INTENT.md and unavailable remote both pass",
+    "[rework] lib/interview.mjs:448-450 + bin/masterplan.mjs:4809-4815 \u2014 assertSkillIdentity existed with no production caller; changed captured SKILL.md still recorded askQuestion, approved task reviews, and passed checkpoint identity",
+    "[rework] lib/finish.mjs:805-816 \u2014 verifyFinishReceipt never compares the repository authorization members; repo_intent_digest 'absent' plus a foreign target_identity returned ok:true"
+   ]
   },
-  "consolidation": "7 unique findings (lens overlap: the skill-equality consumer gap and the §6.3 re-resolution gap reported by both lenses); no re-reporting of per-wave findings — both lenses read wave-11..16-reviews.json first",
-  "fix_round": {
-    "builder": "glm-5.3 via workflow transport (whole-scope-fix-round-mtqwiyv2-2wik5b, 1 agent, 91.5M tok, $128.93)",
-    "commit": "67eb52d",
-    "verified_by_orchestrator": "all four reviewer probe scripts re-run in-session at the true sites — every original bad outcome fails to reproduce: PROMOTION recorded==expected==replay (pinned hash, not legacy); DRIFT {checkpointOk:false}; OUTAGE {resolution:unknown_unavailable, checkpoint:false}; AFTER_SKILL_CHANGE {askError:skill_absent, askRecorded:false, checkpoint:false} + reviewCompletedTasks refuses on skill-change/target-change/outage/empty-rows; tampered approval/diff/result-hashes all throw with spec at base; the forged event now completes through the decision table (recovered, real writes)",
-    "regressions_added": 9,
-    "regressions_added_detail": "promotion-transaction: F1 schema-backed lineage, F6 x3 (rewritten-diff, rewritten-result, agent-attested-approval), F7 forged-terminal-event; checkpoint F2 fresh target resolution; guard F3 changed-skill refusal at askQuestion/reviewCompletedTasks/checkpoint; finish-auth F4 absent-or-foreign authorization mutation; reconciliation F5 empty-rows refusal",
-    "disclosed_deviations": "F3's consumer wiring extends past the five named files (lib/dispatch-wave.mjs, lib/finish-step.mjs, lib/task-review.mjs gain the skill-root guard — the guard needs the root at each consumer boundary); two existing mutation tests updated to the STRONGER spec behavior (drift now refuses the checkpoint per §6.3; finish receipts carry §5.5's authorization members); knob-inventory ENV line re-anchored after the bin insertion",
-    "suite_after_fix_round": "2719 by test count in the builder's report",
-    "verification_causes_recorded": [
-      "the builder's 2719/2719 claim: the installed-surface suites (interview-cutover) build their fixture installs from the COMMITTED HEAD via git archive, and the builder ran PRE-commit — its installed-surface tests exercised the PRE-fix-round bin, so the recorder-verbs wiring defect was invisible to its run. Demonstrated by the post-commit cutover run failing 4/15 at the identical tree the builder had reported green.",
-      "the orchestrator's own subsequent 2719/2719 verification: the aggregated suite output prints one summary per xargs chunk and the verification read only the last chunk's summary (tail -3); the 4 cutover failures sat in an earlier chunk. Demonstrated by the per-file run at the same tree.",
-      "both mechanisms are recorded as demonstrated; neither is offered as a general explanation for other green results."
-    ],
-    "wiring_defect_in_fix_round": "the recorder verbs' guard received the RAW --skill-root flag while every other consumer used resolveInstalledSkillRoot — no flag, no resolution, skill_absent even when the installed pin resolves; fixed in 48b3857 with the aggregation lesson applied (sum every chunk summary)"
-  },
-  "coverage_limits_recorded": "the exhaustive kill-between-every-write promotion crash matrix remains unperformed (lens 2's honest limit). The named crash classes ARE covered (mid-flight expected-revision abort, the crash-after-event cache-convergence path, the §10.3 fixture rows), but no test kills the process between every consecutive pair of writes across both artifacts + state + the doc + the refs. The live release rehearsal exercises REAL kill points but is a distinct exercise, not this matrix. Retained as an explicit limitation for the gate-of-record reviewer to judge.",
-  "gate_of_record_iterations": [
-    {
-      "iteration": "pre-publish review",
-      "tip": "47f104d",
-      "verdicts": {"lens_1": "revise", "lens_2": "revise"},
-      "findings": 6,
-      "finding_summary": "runtime skill-root default read the developer checkout (pin.repo); commitPointReached inspected only the changed half; install-pi --expect judged the version through the host's Claude marketplace; --check accepted a broken skill link; bootstrap_pass had no permanent event validator; the event validator contradicted §10.1's failure-with-reason contract",
-      "fix_commits": ["aad6b36", "05af5d0"],
-      "note": "05af5d0 additionally repaired real drift the F5 replay validation surfaced in this run's own ledger (a legacy data-wrapped required_successor recorded 2026-09-04 through v9's mp event) with a disclosed read-time lift at every validating/projecting seam — the file's bytes never rewritten"
-    },
-    {
-      "iteration": "re-review 1",
-      "tip": "05af5d0",
-      "verdicts": {"lens_1": "revise", "lens_2": "approve"},
-      "findings": 2,
-      "finding_summary": "the events-only supersession match accepted a hand-appended amendment event; the F5 replay gate accepted a future corrective trigger and a pass over an incomplete predecessor",
-      "fix_commit": "54eb75b",
-      "fix_summary": "supersession demands route (a) a durable, F6-revalidated transaction record naming the current bytes or route (b) an operator-attested approval replayed through validateUserApprovalReceipt; replay mirrors startPass's causal-ordering and prior-pass-completion prerequisites"
-    },
-    {
-      "iteration": "re-review 2",
-      "tip": "54eb75b",
-      "verdicts": {"single_lens": "revise"},
-      "findings": 1,
-      "finding_summary": "revalidateTransactionDoc never bound result_goals_evidence_hash to the approval-bound result bytes — a tamperer rewriting only that field laundered unapproved bytes through the supersession route",
-      "fix_commit": "6eab226",
-      "fix_summary": "both lineage halves are re-derived from the durable pre-image + diff and compared against the stored fields"
-    },
-    {
-      "iteration": "re-review 3",
-      "tip": "6eab226",
-      "verdicts": {"single_lens": "revise"},
-      "findings": 1,
-      "finding_summary": "base pins were repository-global by transaction id while documents are bundle-local — two bundles sharing an id overwrote each other's GC protection",
-      "fix_commit": "b61a52d",
-      "fix_summary": "refs namespaced by the bundle slug (later found insufficient — see iteration 5)"
-    },
-    {
-      "iteration": "re-review 4",
-      "tip": "b61a52d",
-      "verdicts": {"single_lens": "revise"},
-      "findings": 3,
-      "finding_summary": "same-slug LINKED WORKTREES still overwrote each other's pins (the shared object store); the slug gate's regex rejected slugs mp seed accepts (Valid_legacy); String(undefined) passed the gate fail-open",
-      "fix_commit": "0142bf7",
-      "fix_summary": "content-addressed pins — the base oid is part of the ref name, so pins are additive and overwrite is impossible by construction; no slug component remains (the charset and missing-slug findings have no seam left)"
-    },
-    {
-      "iteration": "re-review 5",
-      "tip": "0142bf7",
-      "verdicts": {"single_lens": "revise"},
-      "findings": 1,
-      "finding_summary": "git hash-object -w applied clean/EOL filters — under .gitattributes '*.md text eol=lf' with a CRLF artifact the pinned blob was the normalized LF bytes, not the approved on-disk bytes, and both commit and recovery refused a legitimate transaction",
-      "fix_commit": "a10a89f",
-      "fix_summary": "--no-filters: the pin is exact bytes, the same identity the approval bound"
-    }
-  ],
-  "attestation_constraint_recorded": "no future evidence receipt may carry attested_by:'user' with an invented question and answer: the operator's standing execution authorization is NOT evidence that the user answered a specific approval question. Any evidence requiring a user-attested receipt either quotes the operator's actual words naming that decision or is not created. (The 2026-09-07 ledger-amendment approval draft in /tmp was never applied — the bundle was unarmed, no capture, no identity to amend — and is retained only as a negative example of this constraint.)",
-  "discipline": "one review round, one fix round per iteration; every fix round disclosed as not re-reviewed at the iteration that spawned it, with the NEXT iteration covering the fix's own seam; historical verdicts are never rewritten as approvals",
-  "review_runs": {
-    "review": "whole-scope-review-mtqw5dep-nzwsfq (2 agents, gpt-6-astra, run sequentially, 186.8K tok, $7.61)",
-    "fix_round": "whole-scope-fix-round-mtqwiyv2-2wik5b (glm-5.3, 91.5M tok, $128.93)",
-    "gate_iterations": "prepublish-review-mtr1rslc-jhputc, prepublish-rereview-mtr4iyo6-4yyouw, gate-rereview-3-mtr5r1xl-b6rm4f, gate-rereview-4-mtr6e9gr-1d7spx, gate-rereview-5-mtr708e8-5wl2gk, gate-rereview-6-mtr7eqg5-t38g7j (all gpt-6-astra)"
+  "invariants_hostile_input": {
+   "verdict": "rework",
+   "findings": [
+    "[rework] lib/checkpoint-evidence.mjs:291,265 \u2014 skill-equality unenforced by consumers (no production caller for the guard; reviewCompletedTasks approved with a changed SKILL.md); checkpoint reuses recorded reconciliation without fresh resolution (changed target bytes and a nonexistent remote both approved)",
+    "[rework] lib/reconcile-intent.mjs:494 \u2014 persisted reconciliation rows unvalidated on consumption; rows replaced with [] still approved",
+    "[rework] lib/promote.mjs:368 \u2014 recovery trusts transaction fields without revalidating the approval binding; tampered durable diff/result-hashes and a rewritten approval all recovered, writing unapproved bytes",
+    "[rework] lib/promote.mjs:389 \u2014 a forged terminal event suppresses an unfinished promotion; a hand-appended spec_amended line yields recorded/replay with zero writes while the spec sits at its base"
+   ]
   }
+ },
+ "consolidation": "7 unique findings (lens overlap: the skill-equality consumer gap and the \u00a76.3 re-resolution gap reported by both lenses); no re-reporting of per-wave findings \u2014 both lenses read wave-11..16-reviews.json first",
+ "fix_round": {
+  "builder": "glm-5.3 via workflow transport (whole-scope-fix-round-mtqwiyv2-2wik5b, 1 agent, 91.5M tok, $128.93)",
+  "commit": "67eb52d",
+  "verified_by_orchestrator": "all four reviewer probe scripts re-run in-session at the true sites \u2014 every original bad outcome fails to reproduce: PROMOTION recorded==expected==replay (pinned hash, not legacy); DRIFT {checkpointOk:false}; OUTAGE {resolution:unknown_unavailable, checkpoint:false}; AFTER_SKILL_CHANGE {askError:skill_absent, askRecorded:false, checkpoint:false} + reviewCompletedTasks refuses on skill-change/target-change/outage/empty-rows; tampered approval/diff/result-hashes all throw with spec at base; the forged event now completes through the decision table (recovered, real writes)",
+  "regressions_added": 9,
+  "regressions_added_detail": "promotion-transaction: F1 schema-backed lineage, F6 x3 (rewritten-diff, rewritten-result, agent-attested-approval), F7 forged-terminal-event; checkpoint F2 fresh target resolution; guard F3 changed-skill refusal at askQuestion/reviewCompletedTasks/checkpoint; finish-auth F4 absent-or-foreign authorization mutation; reconciliation F5 empty-rows refusal",
+  "disclosed_deviations": "F3's consumer wiring extends past the five named files (lib/dispatch-wave.mjs, lib/finish-step.mjs, lib/task-review.mjs gain the skill-root guard \u2014 the guard needs the root at each consumer boundary); two existing mutation tests updated to the STRONGER spec behavior (drift now refuses the checkpoint per \u00a76.3; finish receipts carry \u00a75.5's authorization members); knob-inventory ENV line re-anchored after the bin insertion",
+  "suite_after_fix_round": "2719 by test count in the builder's report",
+  "verification_causes_recorded": [
+   "the builder's 2719/2719 claim: the installed-surface suites (interview-cutover) build their fixture installs from the COMMITTED HEAD via git archive, and the builder ran PRE-commit \u2014 its installed-surface tests exercised the PRE-fix-round bin, so the recorder-verbs wiring defect was invisible to its run. Demonstrated by the post-commit cutover run failing 4/15 at the identical tree the builder had reported green.",
+   "the orchestrator's own subsequent 2719/2719 verification: the aggregated suite output prints one summary per xargs chunk and the verification read only the last chunk's summary (tail -3); the 4 cutover failures sat in an earlier chunk. Demonstrated by the per-file run at the same tree.",
+   "both mechanisms are recorded as demonstrated; neither is offered as a general explanation for other green results."
+  ],
+  "wiring_defect_in_fix_round": "the recorder verbs' guard received the RAW --skill-root flag while every other consumer used resolveInstalledSkillRoot \u2014 no flag, no resolution, skill_absent even when the installed pin resolves; fixed in 48b3857 with the aggregation lesson applied (sum every chunk summary)"
+ },
+ "coverage_limits_recorded": "the exhaustive kill-between-every-write promotion crash matrix remains unperformed (lens 2's honest limit). The named crash classes ARE covered (mid-flight expected-revision abort, the crash-after-event cache-convergence path, the \u00a710.3 fixture rows), but no test kills the process between every consecutive pair of writes across both artifacts + state + the doc + the refs. The live release rehearsal exercises REAL kill points but is a distinct exercise, not this matrix. Retained as an explicit limitation for the gate-of-record reviewer to judge.",
+ "gate_of_record_iterations": [
+  {
+   "iteration": "pre-publish review",
+   "tip": "47f104d",
+   "verdicts": {
+    "lens_1": "revise",
+    "lens_2": "revise"
+   },
+   "findings": 6,
+   "finding_summary": "runtime skill-root default read the developer checkout (pin.repo); commitPointReached inspected only the changed half; install-pi --expect judged the version through the host's Claude marketplace; --check accepted a broken skill link; bootstrap_pass had no permanent event validator; the event validator contradicted \u00a710.1's failure-with-reason contract",
+   "fix_commits": [
+    "aad6b36",
+    "05af5d0"
+   ],
+   "note": "05af5d0 additionally repaired real drift the F5 replay validation surfaced in this run's own ledger (a legacy data-wrapped required_successor recorded 2026-09-04 through v9's mp event) with a disclosed read-time lift at every validating/projecting seam \u2014 the file's bytes never rewritten"
+  },
+  {
+   "iteration": "re-review 1",
+   "tip": "05af5d0",
+   "verdicts": {
+    "lens_1": "revise",
+    "lens_2": "approve"
+   },
+   "findings": 2,
+   "finding_summary": "the events-only supersession match accepted a hand-appended amendment event; the F5 replay gate accepted a future corrective trigger and a pass over an incomplete predecessor",
+   "fix_commit": "54eb75b",
+   "fix_summary": "supersession demands route (a) a durable, F6-revalidated transaction record naming the current bytes or route (b) an operator-attested approval replayed through validateUserApprovalReceipt; replay mirrors startPass's causal-ordering and prior-pass-completion prerequisites"
+  },
+  {
+   "iteration": "re-review 2",
+   "tip": "54eb75b",
+   "verdicts": {
+    "single_lens": "revise"
+   },
+   "findings": 1,
+   "finding_summary": "revalidateTransactionDoc never bound result_goals_evidence_hash to the approval-bound result bytes \u2014 a tamperer rewriting only that field laundered unapproved bytes through the supersession route",
+   "fix_commit": "6eab226",
+   "fix_summary": "both lineage halves are re-derived from the durable pre-image + diff and compared against the stored fields"
+  },
+  {
+   "iteration": "re-review 3",
+   "tip": "6eab226",
+   "verdicts": {
+    "single_lens": "revise"
+   },
+   "findings": 1,
+   "finding_summary": "base pins were repository-global by transaction id while documents are bundle-local \u2014 two bundles sharing an id overwrote each other's GC protection",
+   "fix_commit": "b61a52d",
+   "fix_summary": "refs namespaced by the bundle slug (later found insufficient \u2014 see iteration 5)"
+  },
+  {
+   "iteration": "re-review 4",
+   "tip": "b61a52d",
+   "verdicts": {
+    "single_lens": "revise"
+   },
+   "findings": 3,
+   "finding_summary": "same-slug LINKED WORKTREES still overwrote each other's pins (the shared object store); the slug gate's regex rejected slugs mp seed accepts (Valid_legacy); String(undefined) passed the gate fail-open",
+   "fix_commit": "0142bf7",
+   "fix_summary": "content-addressed pins \u2014 the base oid is part of the ref name, so pins are additive and overwrite is impossible by construction; no slug component remains (the charset and missing-slug findings have no seam left)"
+  },
+  {
+   "iteration": "re-review 5",
+   "tip": "0142bf7",
+   "verdicts": {
+    "single_lens": "revise"
+   },
+   "findings": 1,
+   "finding_summary": "git hash-object -w applied clean/EOL filters \u2014 under .gitattributes '*.md text eol=lf' with a CRLF artifact the pinned blob was the normalized LF bytes, not the approved on-disk bytes, and both commit and recovery refused a legitimate transaction",
+   "fix_commit": "a10a89f",
+   "fix_summary": "--no-filters: the pin is exact bytes, the same identity the approval bound"
+  }
+ ],
+ "attestation_constraint_recorded": "no future evidence receipt may carry attested_by:'user' with an invented question and answer: the operator's standing execution authorization is NOT evidence that the user answered a specific approval question. Any evidence requiring a user-attested receipt either quotes the operator's actual words naming that decision or is not created. (The 2026-09-07 ledger-amendment approval draft in /tmp was never applied \u2014 the bundle was unarmed, no capture, no identity to amend \u2014 and is retained only as a negative example of this constraint.)",
+ "discipline": "one review round, one fix round per iteration; every fix round disclosed as not re-reviewed at the iteration that spawned it, with the NEXT iteration covering the fix's own seam; historical verdicts are never rewritten as approvals",
+ "review_runs": {
+  "review": "whole-scope-review-mtqw5dep-nzwsfq (2 agents, gpt-6-astra, run sequentially, 186.8K tok, $7.61)",
+  "fix_round": "whole-scope-fix-round-mtqwiyv2-2wik5b (glm-5.3, 91.5M tok, $128.93)",
+  "gate_iterations": "prepublish-review-mtr1rslc-jhputc, prepublish-rereview-mtr4iyo6-4yyouw, gate-rereview-3-mtr5r1xl-b6rm4f, gate-rereview-4-mtr6e9gr-1d7spx, gate-rereview-5-mtr708e8-5wl2gk, gate-rereview-6-mtr7eqg5-t38g7j (all gpt-6-astra)"
+ },
+ "finish_time_panel": {
+  "review_kind": "finish-time whole-branch adversarial panel (workflow transport, litellm/gpt-6-astra, THREE lenses run truly in PARALLEL via the workflow runtime's parallel(), then a consolidation agent that preserves per-lens verdicts verbatim and merges duplicate findings without softening)",
+  "recorded_at": "2026-09-07T18:5Z",
+  "run": "v10-finish-time-review-panel-mtrjch38-3ed7a7 (4 agents, gpt-6-astra, 260.8K tok, 1.6M cached, $9.33, 366.0s); raw results preserved at /home/ras/.pi/workflows/projects/masterplan-e00c1ec3acbb/runs/v10-finish-time-review-panel-mtrjch38-3ed7a7.json",
+  "framing": "neutral: 'can this branch merge as the walk's product?' \u2014 each lens judged independently, evidence-grounded, read-only (no writes anywhere)",
+  "honesty_note": "this was a full-range review with targeted lenses (merge-readiness, whole-branch correctness, ledger honest-capture), not proof of exhaustive whole-branch line-by-line coverage; branch-correctness's recorded coverage limit states it did not re-review the 154-file diff exhaustively and did not re-issue previously reported findings \u2014 a persistent or regressed prior finding remained reportable",
+  "reviewed_diff": "e16a276..f155411 (the whole branch vs the origin/main base e16a276 that pass 4's main_push receipt records; live origin/main had advanced to 8db2d9a \u2014 the panel's third blocking finding names the unrecorded advance)",
+  "overall_verdict": "rework",
+  "overall_basis": "The strictest verdict is merge-readiness's rework; branch-correctness and ledger-integrity both retain revise. Approval is therefore unavailable. The reported blocking basis is that the proposed pass-5 transition cannot open over the incomplete pass 4, the branch's three driver fixes are outside the published and verified release tip, and the advanced remote main does not match the driver's recorded merge base. Separately, branch-correctness reports a missing cross-pass pre-rebase audit anchor, and ledger-integrity reports inaccurate command-exit receipts and a misreported job conclusion. The duplicate corrective-transition finding is consolidated with attribution to both reporting lenses; all original verdicts, findings, and coverage limits remain unchanged below. This consolidation does not independently re-judge the branch.",
+  "lenses": {
+   "merge-readiness": {
+    "lens": "merge-readiness / release-state coherence",
+    "verdict": "rework",
+    "findings": [
+     {
+      "severity": "blocking",
+      "evidence": ".worktrees/intent-to-completion/scripts/bootstrap-v10.mjs:1003-1020,1033-1053; docs/handoffs/2026-09-07-v10-release-walk.md:48-52; read-only bootstrap status output: pass=4, next=pr_merge, failed=[], pr_merge/claude_surface/surfaces_live all unrecorded.",
+      "note": "The advertised finish-review \u2192 pass-5 route is not permitted at f155411. An adversary_review with verdict revise is a blocking finding, but that alone cannot open a pass over this incomplete predecessor. Before accepting the typed finding, startPass requires every predecessor step except gate to be done, or an exception whose trigger is that predecessor's own failed bootstrap_step after its successful push, recorded later than that push, with every missing step after push. A newly recorded review does not satisfy that exception. Assuming the version checks pass, the exact refusal is: 'pass 4 is not complete through surfaces_live (missing: pr_merge, claude_surface, surfaces_live) \u2014 a corrective pass cannot open'. For the ordinary finish-time route, the finding must also follow surfaces_live, remain unused, and precede completion of the gate. The replay reader independently enforces predecessor completion at lines 61-85, so bypassing startPass would not establish a valid transition. The handoff's proposed mechanical recovery needs a supported, evidence-preserving transition before pass 5 can begin; this panel verdict alone does not provide one."
+     },
+     {
+      "severity": "blocking",
+      "evidence": "git rev-parse masterplan/intent-to-completion 'v10.0.3^{commit}' returned f155411db117864a5f2f6eab3fe0322f0701ee37 and fc99d4d8572ce8c0477be963d99ead5269ab1e97; git log fc99d4d..f155411 lists 8aaa78b, 0ad1a33, f155411. docs/masterplan/intent-to-completion/events.jsonl, zero-based events 240,242,245; .worktrees/intent-to-completion/scripts/bootstrap-v10.mjs:423-432,704-722,1612-1614.",
+      "note": "The current branch product includes three driver fixes outside the published release. The recorded push, CI success and Pi installation describe fc99d4d, not f155411. A read-only call to pr_merge.pre using the observed refs returned tip_is_published=false with exact detail: 'tip f155411db117864a5f2f6eab3fe0322f0701ee37 vs the published tip fc99d4d8572ce8c0477be963d99ead5269ab1e97'. The remote branch and public v10.0.3 tag still resolve to fc99d4d. Consequently, merging the remote branch now would omit the fixes; pushing f155411 alone would not satisfy the published-tip gate. A failed precondition returns before bootstrap_armed is appended, so this refusal is not an executed failed-step receipt. A legitimate merge of the full product requires a supported corrective transition followed by verification, review, assessment, a new release/publication, successful CI and installation at the final product tip; v10.0.3 must remain frozen."
+     },
+     {
+      "severity": "blocking",
+      "evidence": "git ls-remote origin refs/heads/main returned 8db2d9afe6d1dfa161197c952c849501688c94ec; git log -3 origin/main shows 8db2d9a immediately above e16a276. docs/masterplan/intent-to-completion/events.jsonl, zero-based event 249, records main_sha=e16a276cba6d7c2e614e3555b31bad2634ada148. .worktrees/intent-to-completion/scripts/bootstrap-v10.mjs:191-195,1596-1609; docs/handoffs/2026-09-07-v10-release-walk.md:58-59.",
+      "note": "Live origin/main is no longer the supplied e16a276 base: it has advanced to the handoff commit 8db2d9a. The driver's expected base remains e16a276 because there is no earlier successful pr_merge and pass 4's successful main_push names e16a276. The read-only pr_merge.pre call returned remote_main_expected=false with exact detail: 'remote 8db2d9afe6d1dfa161197c952c849501688c94ec vs expected e16a276cba6d7c2e614e3555b31bad2634ada148'. Even if pass 5 were opened and 10.0.4 published, this independently blocks its merge: stepsForPass(5, events) omits main_push, and its expected base would still inherit event 249. The three fixes correctly select that recorded base, but do not account for the subsequent remote movement. The actual remote base must be reconciled through an authorized, recorded path; merely re-arming fetches the new value without changing the expected one."
+     }
+    ],
+    "coverage_limits": "Read-only review of release-state coherence, not implementation correctness or ledger honesty. Inspected the required handoff and previous review record before judgment; checked the worktree driver's uncommitted diff (empty), current refs, ledger-derived status and exported precondition logic. Did not execute arm/start/record, fetch, merge, release or installation commands, and did not rerun CI or independently execute the installed surfaces. The startPass refusal is derived from its code and current status, not from a mutating invocation. This review serves INTENT.md's evidence-backed completion and no-stranded-work invariants. **Next Steps:** establish a supported corrective transition for this incomplete published pass, reconcile the now-advanced remote base, then publish and verify the complete product at one immutable tip before merge; complete Claude-surface, surfaces_live and gate evidence afterward."
+   },
+   "branch-correctness": {
+    "lens": "whole-branch correctness",
+    "verdict": "revise",
+    "findings": [
+     {
+      "severity": "major",
+      "evidence": "At f155411, .worktrees/intent-to-completion/scripts/bootstrap-v10.mjs:181-198 permits the first main_push in a corrective pass, and :1598-1615 resolves pr_merge's base across passes, but :1421-1423 still selects main_pre_bootstrap exclusively from pass 1 and skips the pre-rebase audit when absent. docs/masterplan/intent-to-completion/spec.md:1164-1171 and :1217-1219 require that audit before rebasing. A read-only, in-memory probe evaluated the actual STEPS.gate.pre function with stubbed Git observations and identical history except for the main_push pass: pass 1 returned refused:true with 'commit foreign touches non-bundle paths'; pass 4 returned refused:false. The new regressions in test/bootstrap-driver.test.mjs:1597-1676 terminate at pr_merge arming; the existing end-to-end gate test at :1287-1340 completes main_push in pass 1.",
+      "note": "The three fixes do not carry the newly supported late-first-main_push identity through to the gate. When pass 1 died before main_push and a later pass completed it\u2014the walk's actual release shape\u2014the gate silently omits its local-main history audit. A committed source change on local main after that push can therefore receive authorization for the gate command, which commits the bundle and rebases main before checking the history again. The postcondition at scripts/bootstrap-v10.mjs:1474-1484 may refuse the resulting receipt, but that is after the prohibited rebase has occurred; it does not satisfy the required pre-action stop. Resolve the audit anchor from the successful main_push wherever it occurred, refuse a missing anchor, and extend the corrective-pass regression through the gate with both permitted bundle commits and a forbidden source commit."
+     }
+    ],
+    "coverage_limits": "Reviewed the required handoff, prior whole-scope findings, driver, specification sections, commit trail, branch-diff inventory, and targeted implementation/test seams at f155411. The three fixes have substantive coverage: event-conditional omission at test/bootstrap-driver.test.mjs:159-175, first merge against the current pass's real main_push at :1597-1628, and inherited main_push after a failed merge at :1630-1676. The existing two-pass walk covers the prior-successful-PR base case. These tests do not cover the late-first-main_push-to-gate interaction identified above. I did not rerun the suite: its fixtures create files and repositories, contrary to this panel's prohibition on writes anywhere. Thus 2743/2743 in both environments remains a reported result, not independently reproduced evidence. The probe was an in-memory function-level comparison, not a real Git integration run. The 154-file, 46,378-insertion branch was not exhaustively re-reviewed line by line; previous findings were not reissued. Merge deadlock and ledger honesty were excluded as assigned. Hindsight recall and further governed delegation were unavailable in this tool surface. **Next Steps:** Repair the gate's cross-pass audit-anchor lookup and obtain a late-first-main_push integration regression before accepting this branch."
+   },
+   "ledger-integrity": {
+    "lens": "ledger / honest-capture integrity",
+    "verdict": "revise",
+    "findings": [
+     {
+      "severity": "blocking",
+      "evidence": "docs/handoffs/2026-09-07-v10-release-walk.md:25-31,46-51; .worktrees/intent-to-completion/scripts/bootstrap-v10.mjs:1002-1021,1037-1056; replay validator at :65-87; requested status command returned pass=4, next.step=pr_merge, failed=[], with pr_merge/claude_surface/surfaces_live unrecorded.",
+      "note": "The handoff's proposed pass-5 trigger does not satisfy the driver contract. A new adversary_review carrying verdict:'revise' cannot open pass 5 while pass 4 is incomplete through surfaces_live. In THIS state, both startPass and replay require a preceding bootstrap_step with top-level pass:4, status:'failed', and a step ordered after push; its index must follow successful push event 240. The schema additionally requires cmd:string and exit:integer, with a nonblank top-level reason when exit is 0. The eligible step names structurally are ci_wait, install_pi, main_push, publish_ack, pr_merge, claude_surface, surfaces_live and gate. This is not permission to fabricate one: the completed steps cannot simply be re-recorded failed, pr_merge cannot obtain an arm while tip_is_published refuses, and later steps are out of order. There is currently no such failure receipt. Only AFTER predecessor completion would the ordinary goal_check/goals_unmet/adversary_review/run_verify/verify_failed trigger route apply. Those use top-level blocking:true, ok:false, status:'failed', nonzero exit, or blocking verdict/outcome/final_verdict/result strings; goals_unmet and verify_failed are self-blocking, and goal_check also recognizes partial/missed goal entries. A genuine panel revise is evidence of a finding, but cannot honestly be relabeled as a failed executed bootstrap step to bypass this prerequisite."
+     },
+     {
+      "severity": "major",
+      "evidence": "docs/masterplan/intent-to-completion/events.jsonl:175,200,220 (zero-based events 174,199,219); .worktrees/intent-to-completion/scripts/bootstrap-v10.mjs:1492-1499; spec.md:1034-1044. Read-only re-execution of event 219's recorded pipeline printed \"Run ci (34136541640) has already completed with 'failure'\" and returned armed_pipeline_exit=123. Independent local xargs probe also returned 123 for a child exiting 1.",
+      "note": "All three failed ci_wait receipts record exit:1 against a cmd ending in 'xargs gh run watch ... --exit-status'. On this host that pipeline returns 123 when gh reports failure, not the child's 1. The red CI outcomes are genuine and still justify the corrective transitions, but these are not verbatim command-exit receipts as required by honest capture. Either a different command actually ran, in which case cmd is inaccurate, or the child exit was substituted for the recorded pipeline exit. Preserve the historical records and append an explicit correction with the actual command/capture boundary; do not silently normalize the discrepancy."
+     },
+     {
+      "severity": "minor",
+      "evidence": "docs/masterplan/intent-to-completion/events.jsonl:220 (event 219), data.conclusions.test='success'; gh run view 34136541640 --repo rasatpetabit/masterplan --json databaseId,headSha,conclusion,jobs returned test job conclusion='failure', with failed step='Doctor' and release-publish='skipped'; driver :1519-1525 defines conclusions as job conclusions.",
+      "note": "Pass 3's reason correctly identifies the Doctor failure, but its structured test job conclusion is wrong: the unit-suite step passed, while the enclosing test job failed. This conflates step success with job success in the evidence record. It does not invalidate the failed status or pass-4 trigger, but the structured claim needs an append-only correction distinguishing those two levels."
+     }
+    ],
+    "coverage_limits": "Read-only ledger review; no product implementation or merge-mechanics verdict. Intent alignment: serves the repository's evidence-before-completion invariant. The requested status command accepted the ledger and derived pass 4/version 10.0.3 with next=pr_merge. The working ledger has 250 events; its first 144 lines exactly match HEAD and the remaining 106 are appends. Git status showed only this bundle-internal ledger dirty. That is consistent with the recording surface and clean-outside-bundle rule, not itself a merge blocker; the later gate separately requires committing the bundle. Pass openings 175/200/220 causally reference preceding failed events 174/199/219, each after its pass's successful push. GitHub confirms the first two runs failed at Unit suite, the third at Doctor, and run 34140794936 succeeded in both jobs. Rehearsal failures 118/120 lead to recovered 122; later recovered verification records can also represent stale-tip reruns under the driver's explicit rule, so absence of an immediately preceding failed record is not by itself a defect. Event 188 already discloses event 186's false success receipt; that existing disclosure is not presented as a new finding. The appended events contain no attested_by:'user' receipts; installation and publication acceptance explicitly quote a standing directive instead. Earlier rework/revise verdicts and the unperformed exhaustive crash matrix remain visible in whole-scope-reviews.json. I could not independently authenticate historical local command executions, digest preimages, original approval exchanges, or every reviewer transcript; ledger assertions alone do not establish those facts. **Next Steps:** reconcile the pass-5 entry route with the actual predecessor-completion contract and append evidence corrections for the CI receipt discrepancies before treating the walk as merge-ready."
+   }
+  },
+  "consolidated_findings": [
+   {
+    "severity": "blocking",
+    "evidence": "merge-readiness: .worktrees/intent-to-completion/scripts/bootstrap-v10.mjs:1003-1020,1033-1053; replay reader :61-85; docs/handoffs/2026-09-07-v10-release-walk.md:48-52. ledger-integrity: docs/handoffs/2026-09-07-v10-release-walk.md:25-31,46-51; .worktrees/intent-to-completion/scripts/bootstrap-v10.mjs:1002-1021,1037-1056; replay validator :65-87; successful push event 240. Both report status pass=4, next=pr_merge, failed=[], with pr_merge/claude_surface/surfaces_live unrecorded.",
+    "note": "Both lenses report the same defect: the advertised finish-review \u2192 pass-5 transition is unsupported while pass 4 remains incomplete through surfaces_live. A new adversary_review with verdict revise is a genuine blocking finding but cannot satisfy the incomplete-predecessor exception. startPass and replay require that predecessor's own failed bootstrap_step after its successful push, recorded later than that push, with every missing step after push. No such failure receipt exists. The schema requires top-level pass:4, status:'failed', cmd:string and exit:integer, plus a nonblank top-level reason when exit is 0. Structurally eligible steps are ci_wait, install_pi, main_push, publish_ack, pr_merge, claude_surface, surfaces_live and gate; this does not authorize fabricating a receipt, re-recording completed steps as failed, treating an unarmed pr_merge precondition refusal as an executed failure, or executing later steps out of order. The ordinary finding route requires predecessor completion through surfaces_live; its trigger must follow surfaces_live, remain unused, and precede gate completion. That route recognizes goal_check/goals_unmet/adversary_review/run_verify/verify_failed and the blocking fields and outcomes described in the original ledger-integrity finding. Assuming version checks pass, the reported refusal is: 'pass 4 is not complete through surfaces_live (missing: pr_merge, claude_surface, surfaces_live) \u2014 a corrective pass cannot open'. A supported, evidence-preserving transition is required; this panel verdict alone provides none, and bypassing startPass would still fail replay validation.",
+    "reported_by": [
+     "merge-readiness",
+     "ledger-integrity"
+    ]
+   },
+   {
+    "severity": "blocking",
+    "evidence": "git rev-parse masterplan/intent-to-completion 'v10.0.3^{commit}' returned f155411db117864a5f2f6eab3fe0322f0701ee37 and fc99d4d8572ce8c0477be963d99ead5269ab1e97; git log fc99d4d..f155411 lists 8aaa78b, 0ad1a33, f155411. docs/masterplan/intent-to-completion/events.jsonl, zero-based events 240,242,245; .worktrees/intent-to-completion/scripts/bootstrap-v10.mjs:423-432,704-722,1612-1614.",
+    "note": "The current branch product includes three driver fixes outside the published release. The recorded push, CI success and Pi installation describe fc99d4d, not f155411. A read-only call to pr_merge.pre using the observed refs returned tip_is_published=false with exact detail: 'tip f155411db117864a5f2f6eab3fe0322f0701ee37 vs the published tip fc99d4d8572ce8c0477be963d99ead5269ab1e97'. The remote branch and public v10.0.3 tag still resolve to fc99d4d. Consequently, merging the remote branch now would omit the fixes; pushing f155411 alone would not satisfy the published-tip gate. A failed precondition returns before bootstrap_armed is appended, so this refusal is not an executed failed-step receipt. A legitimate merge of the full product requires a supported corrective transition followed by verification, review, assessment, a new release/publication, successful CI and installation at the final product tip; v10.0.3 must remain frozen.",
+    "reported_by": [
+     "merge-readiness"
+    ]
+   },
+   {
+    "severity": "blocking",
+    "evidence": "git ls-remote origin refs/heads/main returned 8db2d9afe6d1dfa161197c952c849501688c94ec; git log -3 origin/main shows 8db2d9a immediately above e16a276. docs/masterplan/intent-to-completion/events.jsonl, zero-based event 249, records main_sha=e16a276cba6d7c2e614e3555b31bad2634ada148. .worktrees/intent-to-completion/scripts/bootstrap-v10.mjs:191-195,1596-1609; docs/handoffs/2026-09-07-v10-release-walk.md:58-59.",
+    "note": "Live origin/main is no longer the supplied e16a276 base: it has advanced to the handoff commit 8db2d9a. The driver's expected base remains e16a276 because there is no earlier successful pr_merge and pass 4's successful main_push names e16a276. The read-only pr_merge.pre call returned remote_main_expected=false with exact detail: 'remote 8db2d9afe6d1dfa161197c952c849501688c94ec vs expected e16a276cba6d7c2e614e3555b31bad2634ada148'. Even if pass 5 were opened and 10.0.4 published, this independently blocks its merge: stepsForPass(5, events) omits main_push, and its expected base would still inherit event 249. The three fixes correctly select that recorded base, but do not account for the subsequent remote movement. The actual remote base must be reconciled through an authorized, recorded path; merely re-arming fetches the new value without changing the expected one.",
+    "reported_by": [
+     "merge-readiness"
+    ]
+   },
+   {
+    "severity": "major",
+    "evidence": "At f155411, .worktrees/intent-to-completion/scripts/bootstrap-v10.mjs:181-198 permits the first main_push in a corrective pass, and :1598-1615 resolves pr_merge's base across passes, but :1421-1423 still selects main_pre_bootstrap exclusively from pass 1 and skips the pre-rebase audit when absent. docs/masterplan/intent-to-completion/spec.md:1164-1171 and :1217-1219 require that audit before rebasing. A read-only, in-memory probe evaluated the actual STEPS.gate.pre function with stubbed Git observations and identical history except for the main_push pass: pass 1 returned refused:true with 'commit foreign touches non-bundle paths'; pass 4 returned refused:false. The new regressions in test/bootstrap-driver.test.mjs:1597-1676 terminate at pr_merge arming; the existing end-to-end gate test at :1287-1340 completes main_push in pass 1.",
+    "note": "The three fixes do not carry the newly supported late-first-main_push identity through to the gate. When pass 1 died before main_push and a later pass completed it\u2014the walk's actual release shape\u2014the gate silently omits its local-main history audit. A committed source change on local main after that push can therefore receive authorization for the gate command, which commits the bundle and rebases main before checking the history again. The postcondition at scripts/bootstrap-v10.mjs:1474-1484 may refuse the resulting receipt, but that is after the prohibited rebase has occurred; it does not satisfy the required pre-action stop. Resolve the audit anchor from the successful main_push wherever it occurred, refuse a missing anchor, and extend the corrective-pass regression through the gate with both permitted bundle commits and a forbidden source commit.",
+    "reported_by": [
+     "branch-correctness"
+    ]
+   },
+   {
+    "severity": "major",
+    "evidence": "docs/masterplan/intent-to-completion/events.jsonl:175,200,220 (zero-based events 174,199,219); .worktrees/intent-to-completion/scripts/bootstrap-v10.mjs:1492-1499; spec.md:1034-1044. Read-only re-execution of event 219's recorded pipeline printed \"Run ci (34136541640) has already completed with 'failure'\" and returned armed_pipeline_exit=123. Independent local xargs probe also returned 123 for a child exiting 1.",
+    "note": "All three failed ci_wait receipts record exit:1 against a cmd ending in 'xargs gh run watch ... --exit-status'. On this host that pipeline returns 123 when gh reports failure, not the child's 1. The red CI outcomes are genuine and still justify the corrective transitions, but these are not verbatim command-exit receipts as required by honest capture. Either a different command actually ran, in which case cmd is inaccurate, or the child exit was substituted for the recorded pipeline exit. Preserve the historical records and append an explicit correction with the actual command/capture boundary; do not silently normalize the discrepancy.",
+    "reported_by": [
+     "ledger-integrity"
+    ]
+   },
+   {
+    "severity": "minor",
+    "evidence": "docs/masterplan/intent-to-completion/events.jsonl:220 (event 219), data.conclusions.test='success'; gh run view 34136541640 --repo rasatpetabit/masterplan --json databaseId,headSha,conclusion,jobs returned test job conclusion='failure', with failed step='Doctor' and release-publish='skipped'; driver :1519-1525 defines conclusions as job conclusions.",
+    "note": "Pass 3's reason correctly identifies the Doctor failure, but its structured test job conclusion is wrong: the unit-suite step passed, while the enclosing test job failed. This conflates step success with job success in the evidence record. It does not invalidate the failed status or pass-4 trigger, but the structured claim needs an append-only correction distinguishing those two levels.",
+    "reported_by": [
+     "ledger-integrity"
+    ]
+   }
+  ],
+  "overlaps": [
+   "merge-readiness finding 1 and ledger-integrity finding 1 report the same blocking defect: the proposed adversary_review-triggered pass 5 cannot open over incomplete pass 4 under either startPass or replay validation. They are merged into consolidated finding 1, retaining merge-readiness's transition-order constraints and ledger-integrity's receipt-schema and honest-capture constraints."
+  ],
+  "coverage_limits": [
+   "merge-readiness performed a read-only release-state coherence review, not implementation correctness or ledger honesty. It inspected the handoff and previous review record, the driver's empty uncommitted diff, current refs, ledger-derived status, and exported precondition logic. It did not execute arm/start/record, fetch, merge, release, or installation commands; rerun CI; or independently execute installed surfaces. Its startPass refusal was derived from code and current status, not a mutating invocation.",
+   "branch-correctness reviewed the handoff, prior whole-scope findings, driver, relevant specification sections, commit trail, branch-diff inventory, and targeted implementation/test seams at f155411. Existing coverage includes event-conditional omission, first merge against the current pass's main_push, inherited main_push after a failed merge, and the prior-successful-PR base case. It does not cover the late-first-main_push-to-gate interaction. The suite was not rerun because fixtures write files and repositories, prohibited for this panel; 2743/2743 in both environments remains reported, not independently reproduced. The probe was an in-memory function-level comparison with stubbed Git observations, not a real Git integration run.",
+   "branch-correctness did not exhaustively re-review the 154-file, 46,378-insertion branch line by line and did not reissue previous findings. Merge deadlock and ledger honesty were excluded from that lens as assigned. Hindsight recall and further governed delegation were unavailable in its tool surface.",
+   "ledger-integrity performed a read-only ledger review, not a product implementation or merge-mechanics review. Status accepted the ledger and derived pass 4/version 10.0.3 with next=pr_merge. Of 250 events, the first 144 lines matched HEAD exactly and the remaining 106 were appends; only the bundle-internal ledger was dirty. This is consistent with the recording surface and clean-outside-bundle rule, not itself a merge blocker; the later gate separately requires committing the bundle.",
+   "ledger-integrity traced pass openings 175/200/220 to preceding failed events 174/199/219, each after its pass's successful push. GitHub confirmed that the first two runs failed at Unit suite, the third at Doctor, and run 34140794936 succeeded in both jobs. Rehearsal failures 118/120 lead to recovered 122; later recovered verification records may be stale-tip reruns under the driver's explicit rule, so no immediately preceding failed record is not by itself a defect.",
+   "ledger-integrity did not present event 186's false success receipt as a new finding because event 188 already discloses it. The appended events contain no attested_by:'user' receipts; installation and publication acceptance quote a standing directive instead. Earlier rework/revise verdicts and the unperformed exhaustive crash matrix remain visible in whole-scope-reviews.json.",
+   "ledger-integrity could not independently authenticate historical local command executions, digest preimages, original approval exchanges, or every reviewer transcript; ledger assertions alone do not establish those facts. merge-readiness and ledger-integrity explicitly judged their review work as serving INTENT.md's evidence-backed completion invariants.",
+   "**Next Steps:** Establish a supported, evidence-preserving corrective transition for incomplete pass 4; reconcile the advanced remote base through an authorized, recorded path; repair and integration-test the gate's cross-pass audit anchor; append explicit corrections for the CI command-exit and job-conclusion discrepancies without rewriting historical records; then verify, review, assess, publish, obtain successful CI, and install the complete product at one immutable tip while keeping v10.0.3 frozen, followed by merge, Claude-surface, surfaces_live, and gate evidence."
+  ],
+  "disposition": "the operator authorized the recovery-contract amendment (AUQ 2026-09-07, chosen option 'Authorize the amendment'): typed refusal recovery, advance reconciliation, machine-readable review verdicts, the gate anchor fix, and the ci_wait exit-boundary correction land as ordinary branch work before pass 5 opens through the amended machinery; historical records, verdicts and tags are never rewritten"
+ },
+ "amendment_closure_review": {
+  "review_kind": "targeted closure review of the recovery-contract amendment delta (f155411..46fa0e8 + the spec row), bounded scope per /tmp/v10-amendment-review-brief.md",
+  "recorded_at": "2026-09-07T22:2Z",
+  "run": "v10-amendment-closure-review-mtrpshyg-h94b1q (workflow transport; raw result preserved at /home/ras/.pi/workflows/projects/masterplan-e00c1ec3acbb/runs/v10-amendment-closure-review-mtrpshyg-h94b1q.json)",
+  "reviewer_lane_note": "the intended litellm/gpt-6-astra override did not bind \u2014 the orchestrator's workflow script omitted the per-agent model opt, so the review ran on the session model (glm-5.3), the same model as the builder. Mitigation: all five findings are probe-proven empirical results (real refusals/admissions measured against the code), not judgment calls; and the pass-5 review step is required to run cross-vendor (gpt-6-astra, per-agent model opt) covering this fix round's seam.",
+  "verdict": "revise",
+  "honesty_core": "attacked and held: no fabrication route in record-refusal (caller-supplied evidence ignored, pre() re-run live, every evidence field re-derived); correct-receipt append-only (target byte-identical); correctiveTriggerOk is ONE predicate called from both startPass and the replay validator with every publishedTagFailure constraint preserved; gate anchor refusal at the arm, before any commit/rebase; ci_wait exit captured verbatim (123 stays 123); isBlockingFinding accepts exactly BLOCKING_VERDICTS strings; event schemas reject the malformed shapes; regression coverage strong (the pass-4 fixture mirrors the live ledger; the opening test fails if startPass regresses).",
+  "findings": [
+   {
+    "severity": "major",
+    "n": 1,
+    "finding": "reconcile-advance admits advances that are not doc-only (probe: a src/ commit admitted; empty commit admitted with paths:[]) \u2014 spec-row drift with audit-boundary consequence (unreviewed sibling code on main would pass remote_main_expected once reconciled)",
+    "fix": "require paths.length>=1 and every path doc-like (docs/ at any depth, or .md/.mdx/.txt/.rst)"
+   },
+   {
+    "severity": "major",
+    "n": 2,
+    "finding": "reconcile-advance admits non-fast-forward rewrites (probe: force-rewritten main admitted; a rewrite past an already-reconciled advance laundered the disappeared commit into a fresh advance receipt)",
+    "fix": "git merge-base --is-ancestor priorExpected sha guard"
+   },
+   {
+    "severity": "major",
+    "n": 3,
+    "finding": "recordedMainMover ignores main_advance_reconciled events, contradicting its own comment, the brief's named derivation, and the live reconcile-then-refuse sequence (probe: evidence.expected_base reported the pre-reconciliation mover while pr_merge.pre held against the reconciled sha; a second sequential doc-only advance refused as 'contains 2 commits')",
+    "fix": "consult the latest main_advance_reconciled by ledger index, mirroring pr_merge.pre; update the test that pinned the defect (test/bootstrap-driver.test.mjs:1791) to pin the contract"
+   },
+   {
+    "severity": "minor",
+    "n": 4,
+    "finding": "correct-receipt CLI parse silently drops malformed entries and converts empty segments into target 0 (Number('')===0) \u2014 a disclosure naming the wrong event on a hard-line surface",
+    "fix": "refuse the whole list on any non-canonical-integer segment"
+   },
+   {
+    "severity": "minor",
+    "n": 5,
+    "finding": "record-refusal omits arm's ordering/finish-lock vocabulary (probe: a cascade refusal at surfaces_live opened a pass over 'run the missing step first'; a transient gate refusal on a complete pass permanently unarms the gate)",
+    "fix": "require the step to be the pass's current next step; refuse gate outright (its refusals have their own rows)"
+   }
+  ],
+  "observations": [
+   "verdict_approve in review.post is PRE-EXISTING (bbdca1a), not added by this delta \u2014 the orchestrator's review brief premise was wrong; judged coherent anyway (a pre-publish review recorded done must be an approve; the machine-readable data.verdict belongs to the finish-time adversary_review event)",
+   "a hand-appended schema-valid bootstrap_refusal with evidence:{} opens a corrective pass and replays clean \u2014 the pre-existing trust model (shape validation was never authenticity; the forgery bar is unchanged from publishedTagFailure; writer-side honesty is record-refusal's live pre() re-run)"
+  ],
+  "fix_round": {
+   "status": "landed",
+   "disclosure": "this fix round is NOT re-reviewed by a second closure round (one review round + one fix round per iteration); the pass-5 review step runs cross-vendor (gpt-6-astra, per-agent model opt) over the full amendment delta f155411..a04e488 including this fix round, covering its seam",
+   "commit": "a04e4888ed488665a22239505b87c6781aa530d7 (branch masterplan/intent-to-completion, parent 46fa0e8)",
+   "implemented_by": "the orchestrator IN-SESSION, after two consecutive workflow-transport failures (run v10-amendment-fix-round-mtrst6s5-dp6f75: attempt 1 failed AGENT_EMPTY_OUTPUT after 2h02m/6.8M tok, attempt 2 failed the same after ~67min; total 3h09m/$16.35, zero writes to the worktree either time \u2014 the single-agent workflow shape that built 46fa0e8 did not deliver this smaller brief twice). The same contracts as the fix brief were kept: all five findings fixed, regressions added, suite green in both envs (2756/2756), one branch commit, nothing committed on main.",
+   "deviations": [
+    "finding 1's boundary was made STRICTER than the row's vague 'doc-only': every changed path must lie under docs/ (the walk's documentation tree) \u2014 the closure review's probe file src/unrelated-new-file.txt and even a root README.md refuse; the spec row was amended to state the enforced definition ('every changed path under docs/'); fail-closed is correct for this machinery",
+    "finding 3's fix is the deep fix: recordedMainMover is now THE one derivation and pr_merge.pre calls it, so expected-base, refusal evidence, and reconcile-advance's range base cannot diverge at all (three call sites, one function)",
+    "the fix brief's own constraint 'no pre-existing assertion modified except the finding-3 pin' was amended for test 56 case (c): finding 5's mitigation makes record-refusal REFUSE on a complete pass by design, so the post-gate startPass negative now hand-appends its refusal (the same pattern cases (a),(b),(d) already use) and the lock itself is asserted"
+   ]
+  }
+ }
 }
