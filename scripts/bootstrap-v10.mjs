@@ -387,16 +387,20 @@ export function piSurfaceEntry(installRoot) {
 export function surfaceExecVersion(entry) {
   if (!existsSync(entry)) return null;
   try {
-    const out = execFileSync(process.execPath, [entry, 'version'], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 30_000,
-    });
     // An EXACT contract, anchored on the whole trimmed output. Hunting a semver out of
     // arbitrary stdout accepts an entry point that ignores its argument and prints its own
     // path — `.../masterplan/10.0.0/bin/masterplan.mjs` contains a perfectly good 10.0.0 — so
-    // the probe would pass a surface that has no version command at all.
-    const m = /^masterplan v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/.exec(String(out).trim());
+    // the probe would pass a surface that has no version command at all. The REAL entry point
+    // prints the documented CC-2 banner (formatBanner: `→ /masterplan v<semver> args: '<args>'
+    // cwd: <dir>` — the lone CC-2/CC-3 survivor, a tested product contract); the bare
+    // `masterplan v<semver>` form is kept for the rehearsal's normative fixture substitutions.
+    const out = String(execFileSync(process.execPath, [entry, 'version'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 30_000,
+    })).trim();
+    const m = /^→ \/masterplan v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?) args: /.exec(out)
+      ?? /^masterplan v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/.exec(out);
     return m ? m[1] : null;
   } catch {
     return null;
