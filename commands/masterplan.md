@@ -274,7 +274,9 @@ read `autonomy`; it only ever returns real actions). Under `autonomy ∈ {loose,
 **auto-progresses** and does NOT manufacture an end-of-turn question.
 
 **The COMPLETE stop-set** — the *only* things that may end a turn with an AUQ under loose/full; if the
-turn hit none of these, it MUST auto-progress, not ask:
+turn hit none of these, it MUST auto-progress, not ask. Turn endings in general follow the fleet
+turn-end contract at `/srv/workflows/policy/turn-end.md` — this list enumerates masterplan's durable
+gates under that contract and restates nothing from it:
 
 - The §2 `ask:'gate'` op for any durable gate: `branch_finish`, `verification_failed`, `no_verification_command`, `docs_normalize`, `goals_unmet`, `deploy_failed`, `deploy_indeterminate`, `no_definition_of_done`, `final_check_invalid`, `live_check_evidence_missing`, `intent_confirm`, `push_archive` — plus the `ask:'push-probe-indeterminate'` op (a re-probe could not verify the install push; halt and re-run, never record `pushed: no`).
 - A spec/plan **review FAIL** or a missing-subsystem REVISE (§2b step 5 / §3a).
