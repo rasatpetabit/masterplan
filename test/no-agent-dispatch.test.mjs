@@ -21,6 +21,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -62,7 +63,17 @@ const EXEMPT_PREFIXES = [
   'test/no-agent-dispatch.test.mjs',
   'test/no-agent-dispatch-fixtures.test.mjs',
 ];
-const EXEMPT_FILES = new Set(['CHANGELOG.md', 'WORKLOG.md', 'test/e2e-native-wave-report.md']);
+const EXEMPT_FILES = new Set([
+  'CHANGELOG.md',
+  'WORKLOG.md',
+  'test/e2e-native-wave-report.md',
+  // Frozen historical completed-run handoffs. These are DATED records of past runs that
+  // quote the retired-vocabulary gate's test title verbatim; the records are committed and
+  // never edited (history, not live surface). They are exempted EXACTLY by filename below —
+  // a sibling live file in docs/handoffs/ is still scanned and flagged (regression test).
+  'docs/handoffs/2026-09-03-intent-to-completion-wave3.md',
+  'docs/handoffs/2026-09-04-intent-to-completion-wave5.md',
+]);
 
 function* walk(dir, rel = '') {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -81,9 +92,10 @@ function* walk(dir, rel = '') {
 
 const TEXT_EXT = new Set(['.mjs', '.js', '.md', '.json', '.yaml', '.yml', '.txt', '.sh', '.toml']);
 
-test('no retired agent-dispatch identifiers on any live surface', () => {
+/** Scan a directory root and return retired-identifier findings (shared by live + regression). */
+function collectRetiredFindings(rootDir) {
   const findings = [];
-  for (const { relPath, abs } of walk(REPO_ROOT)) {
+  for (const { relPath, abs } of walk(rootDir)) {
     const ext = path.extname(relPath).toLowerCase();
     if (!TEXT_EXT.has(ext) && !['Makefile', 'llms.txt'].includes(path.basename(relPath))) continue;
     let text;
@@ -103,6 +115,11 @@ test('no retired agent-dispatch identifiers on any live surface', () => {
       }
     });
   }
+  return findings;
+}
+
+test('no retired agent-dispatch identifiers on any live surface', () => {
+  const findings = collectRetiredFindings(REPO_ROOT);
   assert.deepEqual(
     findings,
     [],
@@ -111,4 +128,34 @@ test('no retired agent-dispatch identifiers on any live surface', () => {
       'History surfaces (legacy/, docs/masterplan/, docs/superpowers/, docs/design/, CHANGELOG.md, ' +
       'WORKLOG.md) and linked worktrees (.worktrees/) are exempt.',
   );
+});
+
+// Regression: the frozen-handoff exemption is EXACT-FILE, never directory-wide. A sibling
+// live file in the same docs/handoffs/ directory must still be scanned and flagged.
+test('handoff exemption is exact-file: a sibling live file in docs/handoffs/ is still flagged', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-handoff-scan-'));
+  try {
+    const rel = 'docs/handoffs';
+    const dir = path.join(tmp, rel);
+    fs.mkdirSync(dir, { recursive: true });
+    // The two frozen historical records (exempted EXACTLY by filename in EXEMPT_FILES).
+    fs.writeFileSync(
+      path.join(dir, '2026-09-03-intent-to-completion-wave3.md'),
+      '| 1187 — "no retired agent-dispatch identifiers on any live surface" |\n',
+    );
+    fs.writeFileSync(
+      path.join(dir, '2026-09-04-intent-to-completion-wave5.md'),
+      '1× `no retired agent-dispatch identifiers…`\n',
+    );
+    // A NEWER live handoff in the same directory must still be flagged.
+    fs.writeFileSync(
+      path.join(dir, '2026-09-05-live-handoff.md'),
+      'delegating via agent-dispatch is forbidden\n',
+    );
+    const findings = collectRetiredFindings(tmp);
+    assert.equal(findings.length, 1, `exactly the live sibling is flagged, got: ${findings.join('; ')}`);
+    assert.match(findings[0], /2026-09-05-live-handoff\.md/, 'the live sibling is the flagged file');
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
 });

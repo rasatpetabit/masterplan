@@ -188,6 +188,17 @@ harness-native review engine (`/srv/workflows/policy/dispatch.md`; the routing p
 only orchestrates lifecycle, payload binding, invocation, and durable recording
 (`lib/task-review.mjs`).
 
+**Committed-recovery mode** (`lib/recovery-controller.mjs`, `lib/recovery-preflight.mjs`). A wave
+whose work was committed to a recovered HEAD (clean tree, frozen `review_context.base_sha`) is
+reviewed via an explicit selector (`record-result --recovery-repo --recovery-head`). The controller
+validates the selector against the frozen context (single edit locus, exact HEAD, base ancestry,
+clean tree, nonempty delta), captures the deterministic two-endpoint base→HEAD diff (format
+`mp-recovery-diff-v1`, external diff/textconv disabled, HEAD+cleanliness read before and after),
+and binds every Phase B receipt to the full recomputed identity. Review events are DEFERRED until
+`recordWaveResult` appends them after the owner/epoch/scope guards pass; legacy SHA-only events and
+caller-supplied `item.review` never satisfy recovery coverage. Recording runs the
+scope/watch/baseline checks read-only and NEVER resets/cleans/reverts/commits.
+
 **Native path.** The wave's review requirement rides on the descriptors (`review: {adversary: true}`)
 and `review_context` is frozen into the wave-dispatch record before
 spawn. When host results arrive, `reviewNativeResult` runs the **same** `reviewCompletedTasks`

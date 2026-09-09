@@ -578,7 +578,7 @@ const KNOWN_FLAGS = new Set(
     'predecessor-transcript producer-status prs prune prune-non-pending pushed reason receipt reconcile ' +
     'recorded-base removal-confirmed removal-force remove-root render-images repo repo-git-dir repo-root ' +
     'repos-allowlist result result-file retro-only review review-base review-count review-digest-file ' +
-    'review-done review-json review-reason review-skipped reviews-file roots routing run-id run-slug ' +
+    'review-done review-json review-reason review-skipped reviews-file recovery-head recovery-repo roots routing run-id run-slug ' +
     'schema-version scope session sha slug spec-path state status subsystems ' +
     'subsystems-file summary takeover target task task-id to topic ts ttl-ms type verify-failed ' +
     'verify-output-hash verify-passed waive waiver wave worktree worktree-list worktree-registered ' +
@@ -3403,6 +3403,19 @@ function main() {
       // -C-qualified to loci lib/wave-commit.mjs derives itself (MAIN from the bundle's
       // --git-common-dir, WT from state/--worktree). Network git (push/gh) stays shell-side.
       const statePath = need(flags, 'state');
+      // Committed-recovery selector (explicit opt-in): --recovery-repo + --recovery-head
+      // (full 40-hex OID) select the committed-recovery review path. Both-or-neither;
+      // a bare half is an operator error, never a silent default. Validated up-front,
+      // before result parsing, so a typo'd half never half-runs the transaction.
+      const recRepo = flags['recovery-repo'];
+      const recHead = flags['recovery-head'];
+      if ((recRepo !== undefined) !== (recHead !== undefined)) {
+        die('record-result: --recovery-repo and --recovery-head must be supplied together for committed recovery');
+      }
+      let recoverySelector = null;
+      if (recRepo !== undefined) {
+        recoverySelector = { repo: String(recRepo), head: String(recHead) };
+      }
       // The L2 workflow's WHOLE result object ({wave, baseline, tasks:[{task_id, digest,
       // review}]}) via --result-file (preferred — no shell-quoting hazards) or --result inline.
       // --reconcile runs the finalize_run crash-reconciliation with NO result: no marks, the
@@ -3473,16 +3486,19 @@ function main() {
         statePath,
         result,
         providedReviews,
+        recoverySelector,
         now,
       })
         .then((reviewedResult) => {
           // Phase A: reviews are still owed — hand the orchestrator the native review
           // descriptors instead of recording. NOTHING is marked until reviews land.
-          if (reviewedResult?.review_outcome === 'native-review-pending') {
+          if (reviewedResult?.review_outcome === 'native-review-pending'
+            || reviewedResult?.review_outcome === 'recovery-review-pending') {
             out({
               op: 'run_native_reviews',
               wave: reviewedResult.wave ?? result?.wave ?? null,
               pending_reviews: reviewedResult.pending_reviews,
+              recovery: reviewedResult.review_outcome === 'recovery-review-pending',
               reason: reviewedResult.reason ?? 'run these adversary descriptors with the harness-native subagent API, then re-call record-result with --result-file AND --reviews-file=<task_id -> review record JSON>',
             });
             return;
@@ -3493,6 +3509,11 @@ function main() {
             self,
             now,
             worktree: typeof flags.worktree === 'string' ? flags.worktree : undefined,
+            deferredEvents: Array.isArray(reviewedResult?.deferred_review_events)
+              ? reviewedResult.deferred_review_events
+              : [],
+            recovery: recoverySelector != null,
+            recoverySelector,
           });
           // Finalize the wave-dispatch record: the native launch persisted it as
           // 'pending' BEFORE spawn; a successful record-result closes that window so
