@@ -166,4 +166,36 @@ describe('reviewCompletedTasks', () => {
     });
     assert.equal(calls, 1);
   });
+
+  it('onEvent receives ONE complete deferred batch (never partial/per-item) and defers all appends', async () => {
+    // The recovery mode contract: dispatch-wave assigns deferredEvents = the whole batch from
+    // a SINGLE onEvent call, so recordWaveResult can append it atomically after all guards
+    // pass. A per-item or partial callback would let a partial batch leak into the log.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-task-review-defer-'));
+    const statePath = path.join(dir, 'state.yml');
+    fs.writeFileSync(statePath, 'schema_version: 9.0.0\n');
+    const items = [
+      { task_id: 1, digest: { task_id: 1, status: 'done' }, review_input: reviewInput('a'.repeat(64)) },
+      { task_id: 2, digest: { task_id: 2, status: 'done' }, review_input: reviewInput('b'.repeat(64)) },
+      { task_id: 3, digest: { task_id: 3, status: 'pending' }, review_input: reviewInput('c'.repeat(64)) },
+    ];
+    let calls = 0;
+    let batch = null;
+    await reviewCompletedTasks({
+      statePath, runId: 'run-1', wave: 2, baseSha: 'base', now: 1000,
+      items,
+      callReview: async () => record('approve'),
+      onEvent: (events) => { calls += 1; batch = events; },
+    });
+    // Exactly one callback, containing ONLY the two done tasks (pending is skipped).
+    assert.equal(calls, 1, 'onEvent is called exactly once for the whole batch');
+    assert.equal(batch.length, 2, 'the batch contains one entry per done task');
+    assert.deepEqual(batch.map((e) => e.event.data.task), [1, 2], 'batch is complete and ordered');
+    for (const entry of batch) {
+      assert.equal(entry.event.type, 'task_adversary_review');
+      assert.equal(entry.review.verdict, 'approve');
+    }
+    // NOTHING was appended — the append is deferred to the caller (recordWaveResult).
+    assert.equal(fs.existsSync(path.join(dir, 'events.jsonl')), false, 'deferred mode appends nothing');
+  });
 });

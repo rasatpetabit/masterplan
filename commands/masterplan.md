@@ -135,6 +135,17 @@ via `mp continue`'s inline `finalize_run` reconcile — the same transaction, `-
    then `mp record-result --state=<path> --result-file=<that file>`. On the native path,
    `record-result` first runs `reviewNativeResult` (the two-phase native review seam: phase A emits `run_native_reviews` adversary descriptors for the harness to run — nothing recorded yet; phase B ingests the returned review records via `--reviews-file` through the same centralized projection) so every path produces the same canonical
    review projection before the commit transaction.
+
+   **Committed-recovery mode** (`--recovery-repo=<path> --recovery-head=<full-40-hex-oid>`, both
+   required together): an explicit opt-in path for resuming a wave whose work was already committed
+   to a recovered HEAD (clean tree, frozen base). The base comes ONLY from the frozen
+   `review_context.base_sha`; the selector's repo/HEAD are validated against the frozen context and
+   the live commit, the deterministic base→HEAD diff is captured (format `mp-recovery-diff-v1`,
+   external diff/textconv disabled), and every Phase B receipt must carry the full recomputed
+   identity (bundle/run/wave/attempt/context-fingerprint/task/repo/base/head/format/diff-sha) — a
+   missing or stale binding fails before any event is appended. In this mode `recordWaveResult` runs
+   the scope/watch/baseline checks READ-ONLY and NEVER resets/cleans/reverts/commits (the recovered
+   commit already holds the work); any violation rejects with `recovery-preservation-violation`.
 2. **Act on the returned JSON.**
    - `outcome:'lost-to-other'` → NOTHING was written; a second session took this bundle over while
      our wave ran. **STOP** — surface the takeover via `AskUserQuestion` (reclaim via

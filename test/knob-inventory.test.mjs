@@ -266,6 +266,9 @@ const CLOSED_SEAM_ALLOWLIST = [
   { at: 'lib/runs.mjs:336', why: 'readDiscoveryConfig(mainRoot, { env = process.env }): default-param env injection, forwarded to discoveryConfigPath/resolveRunsDir (all reads via readEnv)' },
   { at: 'lib/runs.mjs:458', why: 'discoverRuns({ env = process.env }): default-param env injection into resolveRunsDir/readDiscoveryConfig (all reads via readEnv)' },
   { at: 'bin/masterplan.mjs:1347', why: 'shouldSuppressWorkflow(flags = {}, env = process.env): default-param env injection; callers pass readEnvAll() (the seam proxy) and the only read is env.PI_CODING_AGENT' },
+  { at: 'lib/coord-client-config.mjs:57', why: 'applyCoordPathAutodiscover(baseEnv = process.env): default-param env injection; all reads via readEnv' },
+  { at: 'lib/coord-client-config.mjs:91', why: 'resolveCoordClientConfig({ env = process.env }): default-param env injection, forwarded to applyCoordPathAutodiscover (all reads via readEnv)' },
+  { at: 'lib/coord-client-config.mjs:166', why: 'buildCoordClient({ env = process.env }): default-param env injection, forwarded to resolveCoordClientConfig (all reads via readEnv)' },
 ];
 
 // ---------------------------------------------------------------------------

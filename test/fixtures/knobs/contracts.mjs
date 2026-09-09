@@ -385,6 +385,33 @@ export const REGISTRY = [
     promptOnly: false,
     observe: async ({ input, fixtures }) => fixtures[input._id].pluginVersion,
   },
+  {
+    id: 'XDG_CONFIG_HOME',
+    kind: 'env',
+    describe: 'XDG_CONFIG_HOME changes coord-client path autodiscovery (unattached seam)',
+    values: ['/tmp/xdg-a', '/tmp/xdg-b'],
+    vary: (input, v) => ({ ...input, XDG_CONFIG_HOME: v }),
+    promptOnly: false,
+    observe: async ({ input, fixtures }) => fixtures[input._id].coordConfigHome,
+  },
+  {
+    id: 'COORD_CREDS_FILE',
+    kind: 'env',
+    describe: 'COORD_CREDS_FILE selects the coord-service creds path (unattached seam; unset = network off)',
+    values: [null, '/tmp/creds.json'],
+    vary: (input, v) => ({ ...input, COORD_CREDS_FILE: v }),
+    promptOnly: false,
+    observe: async ({ input, fixtures }) => fixtures[input._id].coordCredsFile,
+  },
+  {
+    id: 'COORD_TLS_CA',
+    kind: 'env',
+    describe: 'COORD_TLS_CA selects the scoped CA PEM path for the unattached coord-client seam',
+    values: [null, '/tmp/ca.pem'],
+    vary: (input, v) => ({ ...input, COORD_TLS_CA: v }),
+    promptOnly: false,
+    observe: async ({ input, fixtures }) => fixtures[input._id].coordTlsCa,
+  },
   // ---- seed-state controls (emitted by buildSeedState) -------------------
   {
     id: 'spec_path',

@@ -615,6 +615,32 @@ async function buildFixture(entry, spec, tag) {
     return { pluginVersion: JSON.parse(out) };
   }
 
+  if (entry.id === 'XDG_CONFIG_HOME' || entry.id === 'COORD_CREDS_FILE' || entry.id === 'COORD_TLS_CA') {
+    const { applyCoordPathAutodiscover, resolveCoordClientConfig } = await import(
+      path.join(ROOT, 'lib', 'coord-client-config.mjs')
+    );
+    const env = {};
+    if (need.XDG_CONFIG_HOME != null) env.XDG_CONFIG_HOME = need.XDG_CONFIG_HOME;
+    if (need.COORD_CREDS_FILE != null) env.COORD_CREDS_FILE = need.COORD_CREDS_FILE;
+    if (need.COORD_TLS_CA != null) env.COORD_TLS_CA = need.COORD_TLS_CA;
+    const discovered = applyCoordPathAutodiscover(env, { pathExists: () => false, home: '/nonexistent-home' });
+    let resolved;
+    try {
+      resolved = resolveCoordClientConfig({
+        env, pathExists: () => false, home: '/nonexistent-home',
+        readFile: () => { throw new Error('unreadable'); },
+      });
+    } catch (e) {
+      resolved = { error: e.code };
+    }
+    return {
+      coordConfigHome: discovered.XDG_CONFIG_HOME ?? null,
+      coordCredsFile: discovered.COORD_CREDS_FILE ?? null,
+      coordTlsCa: discovered.COORD_TLS_CA ?? null,
+      coordResolved: resolved,
+    };
+  }
+
   if (entry.id === 'concurrency.owner_lock' || entry.id === 'owner_lock') {
     const { readState } = await import(path.join(ROOT, 'lib', 'bundle.mjs'));
     const { acquireOwner } = await import(path.join(ROOT, 'lib', 'owner-fs.mjs'));
