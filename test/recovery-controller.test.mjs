@@ -31,6 +31,8 @@ import {
   RECOVERY_CAPTURE_FORMAT,
   canonicalRepoIdentity,
   captureCommittedDiff,
+  encodeRecoveryDiff,
+  decodeRecoveryDiff,
   fingerprintReviewContext,
   buildRecoveryIdentity,
   validateRecoveryReceipt,
@@ -47,6 +49,11 @@ function write(root, rel, content) {
   const p = path.join(root, rel);
   fs.mkdirSync(path.dirname(p), { recursive: true });
   fs.writeFileSync(p, content);
+}
+function writeBytes(root, rel, bytes) {
+  const p = path.join(root, rel);
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  fs.writeFileSync(p, bytes);
 }
 
 const healthyHarness = () => ({
@@ -255,6 +262,45 @@ test('recovery: capture hashes Buffer bytes (invalid UTF-8 does not collide) and
   assert.notEqual(Buffer.from(u80.toString('utf8'), 'utf8').equals(u80), true, '0x80 is not round-trippable UTF-8');
   assert.notEqual(sha256hex(u80), sha256hex(u81), 'distinct invalid-UTF-8 byte sequences hash differently');
   assert.notEqual(sha256hex(u80), sha256hex(u80.toString('utf8')), 'hashing the replacement-decoded string is not hashing the bytes');
+});
+
+test('recovery: Phase A JSON carrier is lossless for UTF-8 and invalid-UTF-8 bytes (not Buffer JSON)', async () => {
+  const fx = makeRecoveryFixture();
+  // Recovered commit carries both a UTF-8 multibyte sequence and a raw 0xFF byte that is
+  // NOT valid UTF-8. Hashing/serializing via a string would replace 0xFF and collide.
+  const payload = Buffer.concat([
+    Buffer.from('caf\u00e9 ', 'utf8'), // UTF-8 multibyte (é)
+    Buffer.from([0xff]),              // invalid UTF-8
+    Buffer.from('\n', 'utf8'),
+  ]);
+  writeBytes(fx.MAIN, 'src/bin.dat', payload);
+  git(fx.MAIN, 'add', '--', 'src/bin.dat');
+  git(fx.MAIN, 'commit', '-q', '-m', 'binary recovered content');
+  const NEW_HEAD = git(fx.MAIN, 'rev-parse', 'HEAD');
+  git(fx.WT, 'checkout', '-q', NEW_HEAD);
+  // Frozen context still points at the ORIGINAL base; selector now names the new HEAD.
+  const pending = await runPhaseA(fx, { recoverySelector: { repo: fx.WT, head: NEW_HEAD } });
+  assert.equal(pending.review_outcome, 'recovery-review-pending');
+  const d = pending.pending_reviews[0];
+  const captured = captureCommittedDiff(fx.WT, fx.BASE, NEW_HEAD);
+  assert.ok(Buffer.isBuffer(captured));
+  assert.ok(captured.includes(payload), 'captured artifact contains the exact payload bytes');
+  assert.equal(d.diff_encoding, 'base64');
+  assert.equal(typeof d.diff, 'string', 'JSON carrier is a string, never a Buffer');
+  const roundTripped = decodeRecoveryDiff(d.diff);
+  assert.ok(roundTripped.equals(captured), 'descriptor re-encodes to the EXACT captured bytes');
+  assert.equal(d.diff_sha, sha256hex(captured));
+  assert.equal(d.diff_sha, sha256hex(roundTripped));
+  // JSON.stringify of the descriptor must not emit Buffer's default {type,data} form.
+  const serialized = JSON.stringify(d);
+  assert.equal(serialized.includes('"type":"Buffer"'), false, 'descriptor JSON is not Buffer.toJSON');
+  const parsed = JSON.parse(serialized);
+  assert.ok(decodeRecoveryDiff(parsed.diff).equals(captured), 'JSON round-trip preserves exact bytes');
+  assert.equal(parsed.diff_sha, sha256hex(captured));
+  // Phase B receipt binds against the same digest.
+  const bound = validateRecoveryReceipt(boundReceipt(fx, d.identity), d.identity);
+  assert.equal(bound.ok, true);
+  assert.equal(d.identity.diff_sha, sha256hex(captured));
 });
 
 test('recovery: deterministic capture is stable across repeated invocations', async () => {
