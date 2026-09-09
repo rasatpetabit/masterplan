@@ -4,28 +4,36 @@
 
 Follow-up to the 2026-09-08 archive entry: the gen-2 snapshot was assessed, found to close a
 still-live gap, and relanded onto main as four commits (`6f2012a` reland + `8f39bcc`/`ca170d3`/
-`7744ada` review-fix passes), merged ff to main at `7744ada` and pushed. `record-result` now has
-the opt-in `--recovery-repo`/`--recovery-head` committed-recovery review path (deterministic
-base→HEAD capture, Phase A manifest / Phase B receipt binding, non-mutating preflight) closing
-the audit-HOLD defect where a clean committed recovery reviewed an empty working diff
-(empty-content SHA `e3b0c442…`).
+`7744ada` review-fix passes) plus hotfix `8fd31ba`, merged ff to main and pushed. `record-result`
+now has the opt-in `--recovery-repo`/`--recovery-head` committed-recovery review path
+(deterministic base→HEAD capture, Phase A manifest / Phase B receipt binding, non-mutating
+preflight) closing the audit-HOLD defect where a clean committed recovery reviewed an empty
+working diff (empty-content SHA `e3b0c442…`).
 
 Process: value-assessment workflow (gap confirmed live on main; archived tests green in
-isolation) → builder reland onto main (base drift 153 commits hand-merged) → three adversarial
-review rounds (15 + 6 + 2 breaker/prover agents) driving R1–R6 fixes: deferred-events gating,
-repo-identity cwd independence, exact-byte Buffer hashing + byte-safe path enumeration, complete
-diff-config pinning (13 `-c` knobs + flags + `GIT_CONFIG_GLOBAL`/`GIT_CONFIG_NOSYSTEM` env
-isolation — ambient config can no longer change artifact bytes), disabled-context rejection, and
-the watch-baseline substitution judgment (original-baseline HEAD equality enforced in selector
-validation before substitution; documented in the compare header).
+isolation) → builder reland onto main (base drift 153 commits hand-merged) → adversarial review
+rounds driving fixes R1–R6: deferred-events gating, repo-identity cwd independence, exact-byte
+Buffer hashing + byte-safe path enumeration, disabled-context rejection, and the watch-baseline
+substitution judgment (original-baseline HEAD equality enforced in selector validation before
+substitution; documented in the compare header). Diff-config determinism was hardened across
+three passes: 13 `-c` knobs + flags pinned, global/system gitconfig env-isolated
+(`GIT_CONFIG_GLOBAL`/`GIT_CONFIG_NOSYSTEM`); the flip test covers that pinned set — repo-local
+config beyond it and inherited git environment remain possible ambient sources, so the guarantee
+is scoped to what is pinned and tested, and any further discovery is assessed on its own severity
+and evidence. The later pinning passes and hotfix were verified by focused slice review plus
+prover reproduction, not full adversarial rounds.
 
-Verification at merge: full suite **2861/2861/0** (baseline before reland: 2757/2757/0), seven
-recovery test files 116/116, CLI recovery + smuggled-deferred 4/4 — all independently reproduced
+Post-merge advisor review drove one hotfix (`8fd31ba`): the trust-all `safe.directory=*` pin was
+removed from the capture (nothing needed it — fixtures are same-uid), and the Phase A descriptor
+now carries the diff as base64 with an explicit `diff_encoding` marker (never a Buffer through
+JSON), with an exact-byte round-trip regression including invalid-UTF-8 content.
+
+Verification at merge: full suite **2862/2862/0** (baseline before reland: 2757/2757/0), seven
+recovery test files 117/117, CLI recovery + smuggled-deferred 4/4 — independently reproduced
 by a prover. Archive tags `archive/recovery-controller-gen{1,2}-20260908` remain on origin as
 provenance. Remaining by design: HOLD constraints 4–6 (occupant migration, owed-review rerun,
 wave3 advance) are run-level orchestrator work, not controller code; `lib/coord-client-config.mjs`
-stays an unwired future seam; any further exotic diff-config discoveries are follow-up hardening
-on main, not reland blockers.
+stays an unwired future seam.
 
 ## 2026-09-08 — recovery-controller WIP archived as tags; worktrees removed
 
