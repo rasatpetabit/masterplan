@@ -258,14 +258,20 @@ old `retro` behavior — never archives, never gates).
 
 ## 2d — Autonomy contract (loose / full — when a turn may auto-progress)
 
+When a turn may end, and what the Next Steps closer carries, is `/srv/workflows/policy/turn-end.md`;
+nothing here restates it. The fleet contract's gate, awaiting, and blocked kinds plus the
+masterplan-specific durable gates below are the stop-set; `<mp-autoprogress>` is this plugin's
+eligible opted-out hatch.
+
 `state.autonomy` governs exactly ONE thing: whether a turn that finished useful work but hit **no
 gate** may close **silently** (auto-progress) or must end with an `AskUserQuestion`. It does **not**
 widen, narrow, or skip any gate — the gate set is identical at every autonomy level (`decide` doesn't
 read `autonomy`; it only ever returns real actions). Under `autonomy ∈ {loose, full}` the orchestrator
 **auto-progresses** and does NOT manufacture an end-of-turn question.
 
-**The COMPLETE stop-set** — the *only* things that may end a turn with an AUQ under loose/full; if the
-turn hit none of these, it MUST auto-progress, not ask:
+**Masterplan-specific durable gates** — the §2d stop-set under loose/full, listed here because they
+are this plugin's, not the fleet's. If the turn hit none of the fleet kinds above and none of these,
+it MUST auto-progress, not ask:
 
 - The §2 `ask:'gate'` op for any durable gate: `branch_finish`, `verification_failed`, `no_verification_command`, `docs_normalize`, `goals_unmet`.
 - A spec/plan **review FAIL** or a missing-subsystem REVISE (§2b step 5 / §3a).
@@ -278,7 +284,6 @@ turn hit none of these, it MUST auto-progress, not ask:
   `alignment-clauses.json` exists for the anchor, later runs reuse it and do NOT re-ask.
 - The §2-step-1 **multi-bundle discover picker**, and the bare-`finish` **pending-tasks** prompt
   (finalize anyway / keep working / `--retro-only`, §2c manual entry) — both genuine "which path?" forks.
-- An explicit **risky-action** confirmation: push / merge / discard / force / external message / secrets.
 
 **Explicitly forbidden** orchestrator-added asks (these ARE the over-asking the contract kills — never
 emit them under loose/full):
@@ -295,20 +300,17 @@ emit them under loose/full):
 - Per-small-task "looks good?" / "shall I continue?" confirmations.
 - "Ready for Wave N" / "awaiting completion" / "status this turn:" ceremonial closers.
 
-**Carve-out marker.** On an **auto-progress turn** — work done, the §2 loop returned a non-gate op
+**`<mp-autoprogress>` hatch.** On an **auto-progress turn** — work done, the §2 loop returned a non-gate op
 (`dispatch_fabric` / `--alive`/`--dead`-handshake / `stop wait` / a committed + reconciled wave) and you are closing
-**without** an AUQ — end the turn's text with the literal token
-**`<mp-autoprogress>`**. The global Stop guard
-(`~/.claude/hooks/auq-guard.sh`) stands down when it sees this marker, so it won't force a ceremonial
-AUQ onto an authorized autonomous turn. **Never** emit it on a turn that surfaces a stop-set gate (the
-gate's own AUQ is the turn-close) or when `autonomy` is neither loose nor full. It is a stand-down
-signal for *this plugin's* authorized auto-progress, mirroring the user-side `<no-auq>` hatch.
+**without** an AUQ — end the turn's text with the literal token **`<mp-autoprogress>`**. **Never** emit
+it on a turn that surfaces a durable gate (the gate's own AUQ is the turn-close) or when `autonomy` is
+neither loose nor full. It is a stand-down signal for *this plugin's* authorized auto-progress.
 
-**Turn-close routing (CC-3-trampoline).** Every turn-close in this shell — a stop-set gate's AUQ, an
+**Turn-close routing (CC-3-trampoline).** Every turn-close in this shell — a durable-gate AUQ, an
 auto-progress `<mp-autoprogress>` close, or a plain stop — runs the same canonical **CC-3-trampoline**
 sequence, defined **here**: emit the turn's summary block + exit breadcrumb **exactly once**, at
 turn-close (never per-tool-call — the v7 hook-driven per-turn ceremony is gone, §5), then close with
-the right terminator — an `AskUserQuestion` at a stop-set gate (CD-9), or the `<mp-autoprogress>`
+the right terminator — an `AskUserQuestion` at a durable gate (CD-9), or the `<mp-autoprogress>`
 marker on an authorized auto-progress (above). The §0 version banner is an *invocation*-time
 obligation (first, before anything), **not** part of this turn-close sequence. This router is the
 single in-file enforcement point — no phase-file indirection.

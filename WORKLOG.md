@@ -1,5 +1,14 @@
 # WORKLOG
 
+## 2026-09-08 — auq-next-steps wave 0 / task 2 (§2d pointer rewrite)
+
+Worktree `.worktrees/auq-next-steps` on `masterplan/auq-next-steps` @ 8db2d9a. Uncommitted;
+landing is checklist step 7, not this wave. §2d now points at `/srv/workflows/policy/turn-end.md`
+and lists only masterplan-specific durable gates plus the eligible `<mp-autoprogress>` hatch;
+the fleet stop-set (COMPLETE stop-set + risky-action restatement + Claude auq-guard.sh
+stand-down) is gone. docs-contract extended red-first for the pointer. Main checkout left
+untouched (intent-to-completion dirty files stay theirs).
+
 ## 2026-09-02 (late) — intent-to-completion: cross-vendor panel → spec rev 11 (gate re-armed)
 
 Round 10 of the single-lane gate (gpt-5.6-sol) PASSED rev 10; the operator then asked for the
