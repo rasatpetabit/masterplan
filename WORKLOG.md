@@ -11,8 +11,9 @@ commit (frozen base → pinned head) instead of the working diff, via an opt-in
 modules `lib/recovery-controller.mjs`, `lib/recovery-preflight.mjs`, `lib/canonical.mjs`,
 `lib/coord-client-config.mjs` (gen 2 only) and six new test files. The module header cites
 `/home/ras/.pi-tmp/wave2-recovery/audit-continuation-hold.md` as the requirement source.
-No disposition for this work was recorded anywhere in main's docs or handoffs; both branch
-tips carried zero commits absent from origin/main, so the work existed only as dirty trees.
+No disposition for this work was found in the documentation searched (WORKLOG, docs/,
+handoffs); both branch tips carried zero commits absent from origin/main, so the work
+existed only as dirty trees.
 
 Resolution (2026-09-08 cleanup): each generation snapshotted byte-exact as a single commit,
 covered by annotated tags pushed to origin and verified by OID against `ls-remote`:
@@ -27,11 +28,12 @@ deleted. `masterplan/auq-next-steps` and its worktree were left untouched.
 
 **Not done, deliberately:** the snapshots are unvalidated (no tests were run at snapshot
 time) and were not ported or rebased onto current main (main has moved ~150 commits past
-both bases, with overlapping `lib/dispatch-wave.mjs` evolution — `probeWaveToken` — landing
-independently). Supersession between the two generations is NOT established: shared
-filenames differ in content and size, and each holds files the other lacks (gen 1's
-`test/recovery-controller.test.mjs` is a separate 1028-line generation from gen 2's 1312-line
-one). Resume by checking out a tag onto a fresh branch and treating integration as a real
+both bases, with `lib/dispatch-wave.mjs` having evolved on main in the same recovery domain
+— `probeWaveToken` — in the interim). Supersession between the two generations is NOT
+established: shared files differ in content and size, and the candidate generation
+additionally contains seven files (its `test/recovery-controller.test.mjs` is a separate
+1312-line generation from gen 1's 1028-line one). Resume by checking out a tag onto a fresh
+branch and treating integration as a real
 reconcile against current main, judged against the HOLD file's requirements.
 
 ## 2026-09-02 (late) — intent-to-completion: cross-vendor panel → spec rev 11 (gate re-armed)
