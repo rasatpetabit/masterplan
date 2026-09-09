@@ -1,5 +1,18 @@
 # WORKLOG
 
+## 2026-09-09 — schema-backed goals-amend/set-phase deadlock fixed
+
+`mp goals-amend` wrote the unpinned (legacy) hash while `set-phase`'s split-brain
+guard compared the pinned hash of the same bytes, so `set-phase --phase=plan` on a
+`format_pin: schema_backed` bundle fail-closed after a successful amend (recorded as
+`masterplan-schema-backed-goals-hash-deadlock` by the litellm pricing-capture run).
+Freeze, amend, status, and `continue.mjs` now hash through `pinnedGoalsEvidenceHash`
+so they agree with `set-phase`. Guard still does not honor `--force`. Landed `192e6b9`
+on main; suite 2863/2863/0 (one new deadlock regression). Independent review: two
+breaker slices PASS + prover reproduction. Intentional unpinned sites left: the
+legacy/preCodeMask detectors, the checkpoint-evidence legacy family, and finish-step's
+pin-less fallback.
+
 ## 2026-09-09 — auq-next-steps worktree archived as tag; worktree removed
 
 `.worktrees/auq-next-steps` (branch `masterplan/auq-next-steps`, tip 8db2d9a, 104 behind origin/main,
