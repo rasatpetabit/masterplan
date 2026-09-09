@@ -2388,7 +2388,10 @@ test('gate: --force bypasses set-phase→plan and appends a spec_gate_bypassed a
 });
 
 // ---- goals-load: freeze goals.md into the bundle (one-shot capture + approval receipt) ----
-import { goalsHash as goalsHashFn } from '../lib/goals.mjs';
+import { goalsHash as goalsHashFn, encodeIntentBlock, INTENT_CODEC_VERSION } from '../lib/goals.mjs';
+import { captureSchema, registerSchemaSnapshotModule } from '../lib/interview.mjs';
+import { captureSchemaSnapshot, computeSkillIdentity } from '../lib/schema-snapshot.mjs';
+import { repairFormatPin, resolveFormatPin } from '../lib/bundle.mjs';
 
 // Every fixture here builds a tree under os.tmpdir(); without this they accumulate across
 // runs and fill a shared /tmp. Registered on creation, removed once when the file finishes.
@@ -2843,6 +2846,98 @@ test('spec gate re-arm: goals-amend rewrites goals.md and re-arms the spec gate 
   const op = JSON.parse(r.stdout);
   assert.equal(op.op, 'run_gate_review');
   assert.equal(op.gate, 'spec');
+});
+
+// masterplan-schema-backed-goals-hash-deadlock: writers (goals-load / goals-amend) must
+// hash under the durable pin so set-phase's split-brain guard (pinnedGoalsHash) agrees.
+function schemaBackedVersionedGoals(g1Title) {
+  const authoritative = {
+    version: INTENT_CODEC_VERSION,
+    schema: { identity: 'design-intent@fixture', format_version: 1 },
+    sections: {
+      purpose: { body: 'Pin writers and guards to the same hash.\n' },
+      non_goals: { items: ['no second canonicalizer'] },
+      top_invariant: { body: 'One pin, every hash family.' },
+      direction: { body: 'goals-amend and set-phase agree.' },
+      posture: { body: 'Refuse unpinned hashes on a schema_backed bundle.' },
+    },
+    context: { outcome: { body: 'set-phase --phase=plan succeeds after a sanctioned amend.' }, done_means: { body: 'release' } },
+    evidence: [{ section: 'purpose', source: 'operator interview 2026-09-09' }],
+    reconciliation: [{ target: 'repository INTENT.md §1', status: 'verified' }],
+  };
+  const enc = encodeIntentBlock(authoritative);
+  assert.ok(enc.ok, JSON.stringify(enc));
+  return `topic: |\n  Schema-backed deadlock fixture.\n${enc.block}\n## G1: ${g1Title}\nsignal: test\n## G2: Fast\nsignal: test\n## G3: Documented\nsignal: docs\n`;
+}
+function stampSchemaBackedPin(statePath) {
+  const skillRoot = path.join(path.dirname(statePath), 'skill');
+  const manifest = {
+    manifest_version: 1, skill: 'fixture-intent', host_contract_version: 1, schema_format_version: 1,
+    identity: { algorithm: 'sha256', closed_file_set: ['SKILL.md', 'manifest.json', 'schema.json'] },
+  };
+  fs.mkdirSync(skillRoot, { recursive: true });
+  fs.writeFileSync(path.join(skillRoot, 'SKILL.md'), '# fixture design-intent\n');
+  fs.writeFileSync(path.join(skillRoot, 'schema.json'), `${JSON.stringify({
+    version: 1,
+    core: ['Purpose'],
+    standard_extensions: ['Direction', 'Posture'],
+    checked_sections: ['Purpose', 'Top invariant', 'Non-goals', 'Direction', 'Posture'],
+    check_verdicts: ['serves', 'neutral', 'fights', 'unavailable'],
+    plan_level: {
+      anchor_key: 'topic',
+      reconciliation: 'Reconciliation',
+      reconciliation_unit: 'section',
+      reconciliation_verdicts: ['serves', 'neutral', 'conflicts'],
+      goal_heading_pattern: '^## G\\d+:',
+    },
+  }, null, 2)}\n`);
+  fs.writeFileSync(path.join(skillRoot, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
+  registerSchemaSnapshotModule({ captureSchemaSnapshot, computeSkillIdentity });
+  captureSchema({ statePath, skillRoot });
+  repairFormatPin(statePath);
+  assert.deepEqual(resolveFormatPin(statePath), { pin: 'schema_backed' });
+  return skillRoot;
+}
+
+test('schema-backed deadlock: goals-amend then set-phase agrees under the durable pin (same bytes; split-brain not bypassed)', () => {
+  const base = schemaBackedVersionedGoals('Works');
+  const amended = schemaBackedVersionedGoals('Works better');
+  const p = goalsBundle();
+  const dir = path.dirname(p);
+  stampSchemaBackedPin(p);
+
+  const pinnedBase = goalsHashFn(base, { formatPin: 'schema_backed' });
+  const legacyBase = goalsHashFn(base);
+  const pinnedNew = goalsHashFn(amended, { formatPin: 'schema_backed' });
+  const legacyNew = goalsHashFn(amended);
+  assert.notEqual(pinnedBase, legacyBase, 'the two flavors must differ (the seam is real)');
+  assert.notEqual(pinnedNew, legacyNew, 'the two flavors must differ after the amendment too');
+
+  const gp = writeGoals(dir, base);
+  const ap = writeApproval(dir, pinnedBase);
+  const load = run(['goals-load', `--state=${p}`, `--goals=${gp}`, `--approval=${ap}`]);
+  assert.equal(load.status, 0, `goals-load must freeze under the pin: ${load.stderr}`);
+  const frozen = JSON.parse(load.stdout);
+  assert.equal(frozen.goals_hash, pinnedBase, 'goals-load must record the PINNED hash, never the unpinned legacy flavor');
+  assert.equal(read(p).goals_md_hash, pinnedBase);
+
+  const gp2 = writeAmendGoals(dir, amended);
+  const ap2 = writeAmendApproval(dir, pinnedBase, pinnedNew);
+  const amend = run(['goals-amend', `--state=${p}`, `--goals=${gp2}`, `--approval=${ap2}`, '--reason=tighten G1 wording']);
+  assert.equal(amend.status, 0, `goals-amend must succeed: ${amend.stderr}`);
+  const amendOut = JSON.parse(amend.stdout);
+  assert.equal(amendOut.new_goals_hash, pinnedNew, 'goals-amend must write the PINNED hash');
+  assert.notEqual(amendOut.new_goals_hash, legacyNew, 'a legacy hash of the same bytes is the deadlock');
+  assert.equal(read(p).goals_md_hash, pinnedNew);
+
+  fs.writeFileSync(path.join(dir, 'spec.md'), '# spec\n');
+  // --force here skips ONLY the spec-review gate (orthogonal: this fixture has no
+  // §6.3 reconciliation). The split-brain guard deliberately does NOT honor --force;
+  // a hash mismatch of the same bytes would still die. That is the deadlock.
+  const r = run(['set-phase', `--state=${p}`, '--phase=plan', '--force']);
+  assert.doesNotMatch(r.stderr + r.stdout, /split.brain|does not match the committed goal set/i);
+  assert.equal(r.status, 0, `set-phase must agree with the amend hash of the SAME bytes: ${r.stderr}${r.stdout}`);
+  assert.equal(read(p).phase, 'plan');
 });
 
 test('spec gate re-arm: an intent-only amendment invalidates review without changing any goal', () => {

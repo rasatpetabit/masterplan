@@ -224,6 +224,7 @@ import { verifyArtifact, parseQctlDigest } from '../lib/qctl-artifact.mjs';
 import { mapQctlStatus } from '../lib/qctl-status.mjs';
 import { decideBaseDrift } from '../lib/qctl-requeue.mjs';
 import { recordWaveResult, promoteAmendment } from '../lib/wave-commit.mjs';
+import { pinnedGoalsEvidenceHash } from '../lib/promote.mjs';
 import { dispatchWaveViaFabric, reviewNativeResult, readWaveDispatchRecord, writeWaveDispatchRecord } from '../lib/dispatch-wave.mjs';
 import { continueRun, dispatchPlanFanout, resolvePlanMdPath } from '../lib/continue.mjs';
 import { finishStep } from '../lib/finish-step.mjs';
@@ -508,15 +509,12 @@ function bundleGoalsEnabled(state, events) {
 // goals-load/goals-amend under the SAME pin. A pin-less bundle (the legacy shape) keeps
 // the unpinned hash, which IS its canonical one. The repair is §6.1's sanctioned one.
 function pinnedGoalsHash(statePath, goalsMd) {
-  let pin = resolveFormatPin(statePath);
-  if (!pin.pin && pin.repairable) {
-    try { repairFormatPin(statePath); } catch { /* fall through to the refusal */ }
-    pin = resolveFormatPin(statePath);
+  // One pin, every writer and guard: the same helper promote.mjs uses for lineage.
+  try {
+    return pinnedGoalsEvidenceHash(statePath, goalsMd);
+  } catch (e) {
+    die(`goals hash: ${e.message}`, 1);
   }
-  if (!pin.pin) {
-    die(`goals hash: ${pin.repairable ? 'the durable format pin is missing and could not be repaired from the capture history' : (pin.error ?? 'the durable format pin could not be resolved')}`, 1);
-  }
-  return goalsHash(goalsMd, { formatPin: pin.pin });
 }
 
 // Part 1 — the goals_frozen CAPTURE gate (set-phase --phase=plan). On a goals_enabled bundle, refuse to
@@ -1743,7 +1741,7 @@ function main() {
       const parsed = parseGoals(goalsMd);
       const val = validateGoals(parsed);
       if (!val.ok) die(`goals-load: invalid goals.md — ${val.error}`, 1);
-      const hash = goalsHash(goalsMd);
+      const hash = pinnedGoalsHash(p, goalsMd);
       let approval;
       try {
         approval = JSON.parse(fs.readFileSync(String(need(flags, 'approval')), 'utf8'));
@@ -1880,7 +1878,7 @@ function main() {
       const reason = String(need(flags, 'reason')).trim();
       if (!reason) die('goals-amend: --reason must be a non-empty amendment justification', 1);
       const parsed = parseGoals(goalsMd);
-      const newHash = goalsHash(goalsMd);
+      const newHash = pinnedGoalsHash(p, goalsMd);
       // Read events: an amendment requires an already-committed goal set (goals_frozen), and drives the
       // idempotent roll-forward off the latest goal_amended (absent file == no events; a non-ENOENT read
       // error fails loud rather than masquerading as an empty log).
@@ -2341,7 +2339,7 @@ function main() {
         goalsMdPresent = false;
       }
       const parsed = parseGoals(goalsMdText);
-      const computedHash = goalsMdPresent ? goalsHash(goalsMdText) : null;
+      const computedHash = goalsMdPresent ? pinnedGoalsHash(p, goalsMdText) : null;
       const hashOk = goalsMdPresent && computedHash === currentHash;
       const goals = parsed.goals.map((g) => ({
         id: g.id,
