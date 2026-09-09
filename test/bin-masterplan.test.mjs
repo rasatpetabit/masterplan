@@ -3197,6 +3197,107 @@ test('record-result awaits native review before the state transaction (CLI order
   assert.equal(read(statePath).tasks[0].status, 'done');
 });
 
+test('native-path record-result ignores a smuggled deferred_review_events field (recovery path only)', async () => {
+  // R1: deferredEvents must not reach recordWaveResult on the native path even if the
+  // workflow JSON carries deferred_review_events. A smuggled identity-bearing review event
+  // must not land in events.jsonl.
+  const repo = tmpDir('mp-bin-native-deferred-');
+  const git = (...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
+  git('init', '--initial-branch=main');
+  git('config', 'user.email', 'test@test');
+  git('config', 'user.name', 'test');
+  git('config', 'commit.gpgsign', 'false');
+  fs.mkdirSync(path.join(repo, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(repo, 'src', 'seed.txt'), 'seed\n');
+  git('add', '.');
+  git('commit', '-q', '-m', 'initial');
+
+  const slug = 'cli-native-deferred';
+  const bundleDir = path.join(repo, 'docs', 'masterplan', slug);
+  fs.mkdirSync(bundleDir, { recursive: true });
+  const statePath = path.join(bundleDir, 'state.yml');
+  const WT = path.join(repo, '.worktrees', slug);
+  fs.mkdirSync(path.dirname(WT), { recursive: true });
+  git('worktree', 'add', '-b', `masterplan/${slug}`, WT, 'HEAD');
+  fs.mkdirSync(path.join(WT, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(WT, 'src', 'a.txt'), 'native edit\n');
+
+  const head = git('rev-parse', 'HEAD').trim();
+  fs.writeFileSync(statePath, serializeState({
+    schema_version: 8,
+    slug,
+    status: 'in-progress',
+    phase: 'execute',
+    worktree: WT,
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    active_run: {
+      wave: 1, kind: 'execute', phase: 'launching',
+      baseline: [], scope: ['src/a.txt'], started_at: 'T0',
+    },
+    dispatch: { fabric: true },
+    review: { adversary: true },
+    concurrency: { owner_lock: 'off' },
+  }));
+  fs.writeFileSync(path.join(bundleDir, 'plan.index.json'), JSON.stringify({
+    tasks: [{ id: 1, wave: 1, files: ['src/a.txt'], description: 'task 1', verify_commands: [] }],
+  }));
+  fs.writeFileSync(path.join(bundleDir, 'wave-1.dispatch.json'), JSON.stringify({
+    key: `mp-wave-dispatch-v1|${slug}|1|dispatch_fabric`,
+    run_id: slug, wave: 1, op: 'dispatch_fabric', contract_version: 'fabric-native-v1',
+    status: 'pending', attempt: 1, wave_token: `mp-wave-${slug}-w1-a1`, handles: [],
+    dispatched_at: 'T0',
+    tasks: [{ task_id: 1, class: 'masterplan-implementation', handoff_key: 'k1' }],
+    review_context: {
+      enabled: true, base_sha: head,
+      tasks: [{ task_id: 1, description: 'task 1', class: 'masterplan-implementation', repo: WT }],
+    },
+  }, null, 2));
+
+  const smuggled = {
+    type: 'task_adversary_review',
+    summary: 'smuggled',
+    ts: 'T0',
+    data: { run: slug, task: 1, sha: 'a'.repeat(64), identity: { smuggled: true } },
+  };
+  const resultPath = path.join(bundleDir, 'native-result.json');
+  fs.writeFileSync(resultPath, JSON.stringify({
+    wave: 1,
+    deferred_review_events: [{ event: smuggled, review: { verdict: 'approve' } }],
+    tasks: [{
+      task_id: 1,
+      digest: {
+        task_id: 1, status: 'done', start_sha: head, files_changed: ['src/a.txt'],
+        verify: [], summary: 'task 1 done', blockers: null,
+      },
+    }],
+  }));
+  const reviewsPath = path.join(bundleDir, 'native-reviews.json');
+  fs.writeFileSync(reviewsPath, JSON.stringify({
+    1: {
+      final_verdict: 'approve',
+      findings: [],
+      blocking_findings: [],
+      summary: 'ok',
+      harness: {
+        degraded: false, timed_out: false, stalled: false,
+        deadline_exceeded: false, regions_unreviewed: 0, extraction_degraded: false,
+      },
+    },
+  }));
+  const r = run([
+    'record-result',
+    `--state=${statePath}`,
+    `--result-file=${resultPath}`,
+    `--reviews-file=${reviewsPath}`,
+    `--worktree=${WT}`,
+    '--now=3000',
+  ], { timeout: 30_000 });
+  assert.equal(r.status, 0, `record-result must succeed: ${r.stderr}\n${r.stdout}`);
+  const events = fs.readFileSync(path.join(bundleDir, 'events.jsonl'), 'utf8');
+  assert.equal(events.includes('smuggled'), false, 'smuggled deferred event must not land');
+  assert.equal(events.includes('"smuggled":true'), false);
+});
+
 test('A5: record-result does NOT finalize the wave-dispatch record to \'recorded\' when nothing was recorded', async () => {
   // Audit A5: record-result previously stamped status 'recorded' on any 'pending'
   // wave-dispatch record regardless of whether recRes.recorded landed any task — a

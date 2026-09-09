@@ -25,7 +25,7 @@ import { buildOwnerIdentity } from '../lib/owner.mjs';
 import { recordWaveResult } from '../lib/wave-commit.mjs';
 import { captureWatchBaseline, writeWatchBaseline, readWatchBaseline } from '../lib/watch-integrity.mjs';
 import { writeWaveDispatchRecord } from '../lib/dispatch-wave.mjs';
-import { preflightRecovery } from '../lib/recovery-preflight.mjs';
+import { committedDeltaPaths, preflightRecovery } from '../lib/recovery-preflight.mjs';
 
 function git(dir, ...args) {
   return String(execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' })).trim();
@@ -230,7 +230,47 @@ test('committed-locus: a selector head that does not match the live WT HEAD is r
   assertPreservationViolation(fx, [/live HEAD .* does not match the pinned head/], otherHead);
 });
 
+test('committed-locus: committedDeltaPaths rejects a non-round-trippable (invalid UTF-8) path', () => {
+  const fx = makeCommittedLocusFixture();
+  const invalid = Buffer.from([0x80, 0x00]); // lone continuation byte + NUL terminator
+  const fakeExec = () => invalid;
+  assert.throws(
+    () => committedDeltaPaths(fx.WT, fx.BASE, fx.HEAD, fakeExec),
+    /not valid UTF-8/,
+  );
+});
+
+test('committed-locus: disabled review_context fails preflight (never a silent ok)', () => {
+  const fx = makeCommittedLocusFixture();
+  const recPath = path.join(fx.bundleDir, 'wave-1.dispatch.json');
+  const rec = JSON.parse(fs.readFileSync(recPath, 'utf8'));
+  rec.review_context = { ...rec.review_context, enabled: false };
+  fs.writeFileSync(recPath, JSON.stringify(rec, null, 2));
+  const pre = preflightRecovery({
+    statePath: fx.statePath,
+    state: readState(fx.statePath),
+    run: { wave: 1, run_id: 'recovery', task_id: 'wf1', epoch: 5, scope: ['src/a.txt'], baseline: [] },
+    wave: 1,
+    WT: fx.WT,
+    MAIN: fx.MAIN,
+    slug: 'recovery',
+    baseline: [],
+    captureWtFiles: () => [],
+    captureWorkspaceRoot: () => [],
+    recoverySelector: { repo: fx.WT, head: fx.HEAD },
+  });
+  assert.equal(pre.ok, false, `disabled context must not pass: ${pre.violations.join('; ')}`);
+  assert.ok(
+    pre.violations.some((v) => /disabled/.test(v)),
+    `violations name the disabled context: ${pre.violations.join('; ')}`,
+  );
+});
+
 test('committed-locus: a launch baseline whose edit-locus HEAD differs from the frozen base is rejected', () => {
+  // R6: the ORIGINAL-baseline head constraint is enforced in verifyRecoverySelector
+  // BEFORE compareWatchWithRecoveryHead substitutes the recovered head. A baseline
+  // whose edit-locus HEAD is not the frozen base is an unauthorized pre-launch move
+  // and must reject — substitution must not mask it.
   // Corrupt the on-disk baseline: claim the edit locus was at the RECOVERED head at launch,
   // while the frozen base (and the real launch) was at BASE. The gate must detect that the
   // recovered commit does not provably build on the frozen base.

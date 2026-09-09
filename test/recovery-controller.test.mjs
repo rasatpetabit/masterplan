@@ -29,6 +29,7 @@ import { captureWatchBaseline, writeWatchBaseline, snapshotRepoState } from '../
 import { selectReentry } from '../lib/reentry-guard.mjs';
 import {
   RECOVERY_CAPTURE_FORMAT,
+  canonicalRepoIdentity,
   captureCommittedDiff,
   fingerprintReviewContext,
   buildRecoveryIdentity,
@@ -193,6 +194,7 @@ test('recovery: clean committed state captures the deterministic base→HEAD art
   assert.equal(d.format, RECOVERY_CAPTURE_FORMAT);
   // The artifact is the exact base→HEAD capture (byte-identical), not an empty working diff.
   const exact = captureCommittedDiff(fx.WT, fx.BASE, fx.HEAD);
+  assert.ok(Buffer.isBuffer(exact), 'capture returns exact bytes, not a UTF-8 string');
   assert.equal(d.diff_sha, sha256hex(exact));
   assert.ok(exact.includes('recovered change'), 'capture carries the recovered commit content');
   assert.equal(d.identity.base, fx.BASE);
@@ -204,6 +206,45 @@ test('recovery: clean committed state captures the deterministic base→HEAD art
   // Nothing recorded yet.
   assert.equal(readState(fx.statePath).tasks[0].status, 'pending');
   assert.equal(fs.existsSync(path.join(fx.bundleDir, 'events.jsonl')), false);
+});
+
+test('recovery: canonicalRepoIdentity resolves relative --git-common-dir against the selected repo, not process.cwd()', () => {
+  const fx = makeRecoveryFixture();
+  const fromHere = canonicalRepoIdentity(fx.WT);
+  const prev = process.cwd();
+  const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-recovery-cwd-'));
+  try {
+    process.chdir(elsewhere);
+    const fromElsewhere = canonicalRepoIdentity(fx.WT);
+    assert.deepEqual(fromElsewhere, fromHere);
+    assert.ok(path.isAbsolute(fromElsewhere.commonDir), 'commonDir is absolute');
+    assert.ok(
+      fromElsewhere.commonDir.startsWith(path.resolve(fx.MAIN)),
+      `commonDir ${fromElsewhere.commonDir} is under the selected repo, not cwd ${elsewhere}`,
+    );
+  } finally {
+    process.chdir(prev);
+    fs.rmSync(elsewhere, { recursive: true, force: true });
+  }
+});
+
+test('recovery: capture hashes Buffer bytes (invalid UTF-8 does not collide) and pins diff.* config', () => {
+  const fx = makeRecoveryFixture();
+  const a = captureCommittedDiff(fx.WT, fx.BASE, fx.HEAD);
+  // Pinning is proven by flipping repo-local diff.* and observing the SAME artifact bytes.
+  git(fx.WT, 'config', 'diff.algorithm', 'histogram');
+  git(fx.WT, 'config', 'diff.context', '0');
+  git(fx.WT, 'config', 'diff.noprefix', 'true');
+  git(fx.WT, 'config', 'diff.mnemonicPrefix', 'true');
+  const b = captureCommittedDiff(fx.WT, fx.BASE, fx.HEAD);
+  assert.ok(a.equals(b), 'capture is independent of repo-local diff.algorithm/context/noprefix/mnemonicPrefix');
+  // Distinct byte sequences that are not valid UTF-8 must hash differently — sha256hex on a
+  // Buffer hashes the bytes, never a replacement-character decode.
+  const u80 = Buffer.from([0x80]);
+  const u81 = Buffer.from([0x81]);
+  assert.notEqual(Buffer.from(u80.toString('utf8'), 'utf8').equals(u80), true, '0x80 is not round-trippable UTF-8');
+  assert.notEqual(sha256hex(u80), sha256hex(u81), 'distinct invalid-UTF-8 byte sequences hash differently');
+  assert.notEqual(sha256hex(u80), sha256hex(u80.toString('utf8')), 'hashing the replacement-decoded string is not hashing the bytes');
 });
 
 test('recovery: deterministic capture is stable across repeated invocations', async () => {

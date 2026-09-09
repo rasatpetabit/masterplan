@@ -4366,7 +4366,9 @@ function main() {
             self,
             now,
             worktree: typeof flags.worktree === 'string' ? flags.worktree : undefined,
-            deferredEvents: Array.isArray(reviewedResult?.deferred_review_events)
+            // Recovery path only: a native-path result (or a smuggled field on the
+            // workflow JSON) must never reach recordWaveResult as deferred events.
+            deferredEvents: recoverySelector != null && Array.isArray(reviewedResult?.deferred_review_events)
               ? reviewedResult.deferred_review_events
               : [],
             recovery: recoverySelector != null,
