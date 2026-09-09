@@ -1,5 +1,32 @@
 # WORKLOG
 
+## 2026-09-09 — committed-recovery review path relanded onto main (gap closed)
+
+Follow-up to the 2026-09-08 archive entry: the gen-2 snapshot was assessed, found to close a
+still-live gap, and relanded onto main as four commits (`6f2012a` reland + `8f39bcc`/`ca170d3`/
+`7744ada` review-fix passes), merged ff to main at `7744ada` and pushed. `record-result` now has
+the opt-in `--recovery-repo`/`--recovery-head` committed-recovery review path (deterministic
+base→HEAD capture, Phase A manifest / Phase B receipt binding, non-mutating preflight) closing
+the audit-HOLD defect where a clean committed recovery reviewed an empty working diff
+(empty-content SHA `e3b0c442…`).
+
+Process: value-assessment workflow (gap confirmed live on main; archived tests green in
+isolation) → builder reland onto main (base drift 153 commits hand-merged) → three adversarial
+review rounds (15 + 6 + 2 breaker/prover agents) driving R1–R6 fixes: deferred-events gating,
+repo-identity cwd independence, exact-byte Buffer hashing + byte-safe path enumeration, complete
+diff-config pinning (13 `-c` knobs + flags + `GIT_CONFIG_GLOBAL`/`GIT_CONFIG_NOSYSTEM` env
+isolation — ambient config can no longer change artifact bytes), disabled-context rejection, and
+the watch-baseline substitution judgment (original-baseline HEAD equality enforced in selector
+validation before substitution; documented in the compare header).
+
+Verification at merge: full suite **2861/2861/0** (baseline before reland: 2757/2757/0), seven
+recovery test files 116/116, CLI recovery + smuggled-deferred 4/4 — all independently reproduced
+by a prover. Archive tags `archive/recovery-controller-gen{1,2}-20260908` remain on origin as
+provenance. Remaining by design: HOLD constraints 4–6 (occupant migration, owed-review rerun,
+wave3 advance) are run-level orchestrator work, not controller code; `lib/coord-client-config.mjs`
+stays an unwired future seam; any further exotic diff-config discoveries are follow-up hardening
+on main, not reland blockers.
+
 ## 2026-09-08 — recovery-controller WIP archived as tags; worktrees removed
 
 Two linked worktrees (`.worktrees/recovery-controller`, branch `masterplan/recovery-controller`,
