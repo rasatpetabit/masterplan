@@ -1,5 +1,39 @@
 # WORKLOG
 
+## 2026-09-08 — recovery-controller WIP archived as tags; worktrees removed
+
+Two linked worktrees (`.worktrees/recovery-controller`, branch `masterplan/recovery-controller`,
+tip caf0219; and `.worktrees/recovery-controller-candidate`, branch
+`masterplan/recovery-controller-candidate`, tip f2ca804) held substantial **uncommitted**
+work implementing the committed-recovery review path — `record-result` reviewing a recovered
+commit (frozen base → pinned head) instead of the working diff, via an opt-in
+`--recovery-repo`/`--recovery-head` selector wired through `bin/masterplan.mjs`, with new
+modules `lib/recovery-controller.mjs`, `lib/recovery-preflight.mjs`, `lib/canonical.mjs`,
+`lib/coord-client-config.mjs` (gen 2 only) and six new test files. The module header cites
+`/home/ras/.pi-tmp/wave2-recovery/audit-continuation-hold.md` as the requirement source.
+No disposition for this work was recorded anywhere in main's docs or handoffs; both branch
+tips carried zero commits absent from origin/main, so the work existed only as dirty trees.
+
+Resolution (2026-09-08 cleanup): each generation snapshotted byte-exact as a single commit,
+covered by annotated tags pushed to origin and verified by OID against `ls-remote`:
+
+- `archive/recovery-controller-gen1-20260908` → b2173cc (base caf0219; 13 files: 9 modified,
+  4 new; file mtimes 2026-09-04 22:14–23:03)
+- `archive/recovery-controller-gen2-20260908` → c8506a7 (base f2ca804; 20 files: 10 modified,
+  10 new; file mtimes 2026-09-05 01:19–18:38)
+
+Both worktrees were then removed (clean, no ignored content) and both local branch refs
+deleted. `masterplan/auq-next-steps` and its worktree were left untouched.
+
+**Not done, deliberately:** the snapshots are unvalidated (no tests were run at snapshot
+time) and were not ported or rebased onto current main (main has moved ~150 commits past
+both bases, with overlapping `lib/dispatch-wave.mjs` evolution — `probeWaveToken` — landing
+independently). Supersession between the two generations is NOT established: shared
+filenames differ in content and size, and each holds files the other lacks (gen 1's
+`test/recovery-controller.test.mjs` is a separate 1028-line generation from gen 2's 1312-line
+one). Resume by checking out a tag onto a fresh branch and treating integration as a real
+reconcile against current main, judged against the HOLD file's requirements.
+
 ## 2026-09-02 (late) — intent-to-completion: cross-vendor panel → spec rev 11 (gate re-armed)
 
 Round 10 of the single-lane gate (gpt-5.6-sol) PASSED rev 10; the operator then asked for the
