@@ -3170,3 +3170,192 @@ test('A5: record-result does NOT finalize the wave-dispatch record to \'recorded
   assert.ok(rec.record_error.reason, 'A5: record_error must carry a reason');
   assert.equal(read(statePath).tasks[0].status, 'pending', 'no task was marked done');
 });
+
+// ---- committed-recovery controller mode (record-result CLI roundtrip) ----
+test('recovery CLI: --recovery-repo/--recovery-head reproduce the exact artifact identity and bind receipts', async () => {
+  const repo = tmpDir('mp-bin-recovery-');
+  const git = (...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
+  git('init', '--initial-branch=main');
+  git('config', 'user.email', 'test@test');
+  git('config', 'user.name', 'test');
+  git('config', 'commit.gpgsign', 'false');
+  fs.mkdirSync(path.join(repo, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(repo, 'src', 'seed.txt'), 'seed\n');
+  git('add', '.');
+  git('commit', '-q', '-m', 'initial');
+  const base = git('rev-parse', 'HEAD').trim();
+  fs.writeFileSync(path.join(repo, 'src', 'a.txt'), 'recovered change\n');
+  git('add', '--', 'src/a.txt');
+  git('commit', '-q', '-m', 'recovered work');
+  const head = git('rev-parse', 'HEAD').trim();
+
+  const slug = 'cli-recovery';
+  const bundleDir = path.join(repo, 'docs', 'masterplan', slug);
+  fs.mkdirSync(bundleDir, { recursive: true });
+  const statePath = path.join(bundleDir, 'state.yml');
+  const WT = path.join(repo, '.worktrees', slug);
+  fs.mkdirSync(path.dirname(WT), { recursive: true });
+  git('worktree', 'add', '-b', `masterplan/${slug}`, WT, 'HEAD');
+  fs.writeFileSync(statePath, serializeState({
+    schema_version: 8,
+    slug,
+    status: 'in-progress',
+    phase: 'execute',
+    worktree: WT,
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    active_run: {
+      wave: 1, kind: 'execute', phase: 'launching', epoch: 5,
+      baseline: [], scope: ['src/a.txt'], started_at: 'T0',
+    },
+    dispatch: { fabric: true },
+    review: { adversary: true },
+    concurrency: { owner_lock: 'off' },
+  }));
+  fs.writeFileSync(path.join(bundleDir, 'plan.index.json'), JSON.stringify({
+    tasks: [{ id: 1, wave: 1, files: ['src/a.txt'], description: 'task 1', verify_commands: [] }],
+  }));
+  fs.writeFileSync(path.join(bundleDir, 'wave-1.dispatch.json'), JSON.stringify({
+    key: `mp-wave-dispatch-v1|${slug}|1|dispatch_fabric`,
+    run_id: slug, wave: 1, op: 'dispatch_fabric', contract_version: 'fabric-native-v1',
+    status: 'pending', attempt: 2, wave_token: `mp-wave-${slug}-w1-a2`, handles: [],
+    dispatched_at: 'T0', tasks: [{ task_id: 1, class: 'bounded-edit', handoff_key: 'k1' }],
+    review_context: {
+      enabled: true, base_sha: base,
+      tasks: [{ task_id: 1, description: 'task 1', class: 'bounded-edit', repo: WT }],
+    },
+  }, null, 2));
+
+  const resultPath = path.join(bundleDir, 'native-result.json');
+  fs.writeFileSync(resultPath, JSON.stringify({
+    wave: 1, epoch: 5,
+    tasks: [{ task_id: 1, digest: { task_id: 1, status: 'done', start_sha: base, files_changed: ['src/a.txt'], verify: [], summary: 'task 1 done', blockers: null } }],
+  }));
+  // Phase A via the CLI: identity-bearing recovery descriptors.
+  const rA = run([
+    'record-result', `--state=${statePath}`, `--result-file=${resultPath}`,
+    `--recovery-repo=${WT}`, `--recovery-head=${head}`, '--now=3000',
+  ], { timeout: 30_000 });
+  assert.equal(rA.status, 0, `recovery phase A must succeed: ${rA.stderr}\n${rA.stdout}`);
+  const outA = JSON.parse(rA.stdout);
+  assert.equal(outA.op, 'run_native_reviews');
+  assert.equal(outA.recovery, true);
+  assert.equal(outA.pending_reviews.length, 1);
+  const d = outA.pending_reviews[0];
+  assert.equal(d.head, head);
+  assert.equal(d.base, base);
+  assert.equal(d.format, 'mp-recovery-diff-v1');
+  assert.equal(d.identity.head, head);
+  assert.equal(d.identity.base, base);
+  assert.equal(d.identity.attempt, 2);
+  assert.equal(read(statePath).tasks[0].status, 'pending', 'phase A records nothing');
+
+  // Phase B via the CLI with the EXACT identity the CLI itself emitted.
+  const reviewsPath = path.join(bundleDir, 'native-reviews.json');
+  fs.writeFileSync(reviewsPath, JSON.stringify({
+    1: {
+      final_verdict: 'approve',
+      findings: [],
+      blocking_findings: [],
+      summary: 'approve recovered commit',
+      harness: {
+        degraded: false, timed_out: false, stalled: false,
+        deadline_exceeded: false, regions_unreviewed: 0, extraction_degraded: false,
+      },
+      identity: d.identity,
+    },
+  }));
+  const r = run([
+    'record-result', `--state=${statePath}`, `--result-file=${resultPath}`,
+    `--reviews-file=${reviewsPath}`,
+    `--recovery-repo=${WT}`, `--recovery-head=${head}`, '--now=4000',
+  ], { timeout: 30_000 });
+  assert.equal(r.status, 0, `recovery phase B must succeed: ${r.stderr}\n${r.stdout}`);
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.outcome, 'recorded');
+  assert.deepEqual(out.recorded, [1]);
+  assert.equal(read(statePath).tasks[0].status, 'done');
+  const events = fs.readFileSync(path.join(bundleDir, 'events.jsonl'), 'utf8');
+  assert.match(events, /"type":"task_adversary_review"/);
+  assert.match(events, /"identity":\{/);
+  assert.ok(events.includes(d.identity.diff_sha), 'the identity-bearing diff sha lands in the event');
+});
+
+test('recovery CLI: --recovery-repo without --recovery-head is an operator error (both-or-neither)', () => {
+  const p = tmpBundle(v8());
+  const r = run(['record-result', `--state=${p}`, `--result-file=${p}`.replace('state.yml', 'result.json'), `--recovery-repo=/tmp/x`]);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /must be supplied together/);
+});
+
+test('recovery CLI: a dirty tree rejects with recovery-preservation-violation and leaves the tree intact', async () => {
+  const repo = tmpDir('mp-bin-recovery-preserve-');
+  const git = (...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
+  git('init', '--initial-branch=main');
+  git('config', 'user.email', 'test@test');
+  git('config', 'user.name', 'test');
+  git('config', 'commit.gpgsign', 'false');
+  fs.mkdirSync(path.join(repo, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(repo, 'src', 'seed.txt'), 'seed\n');
+  git('add', '.');
+  git('commit', '-q', '-m', 'initial');
+  const base = git('rev-parse', 'HEAD').trim();
+  fs.writeFileSync(path.join(repo, 'src', 'a.txt'), 'recovered\n');
+  git('add', '--', 'src/a.txt');
+  git('commit', '-q', '-m', 'recovered');
+  const head = git('rev-parse', 'HEAD').trim();
+
+  const slug = 'cli-recovery-preserve';
+  const bundleDir = path.join(repo, 'docs', 'masterplan', slug);
+  fs.mkdirSync(bundleDir, { recursive: true });
+  const statePath = path.join(bundleDir, 'state.yml');
+  const WT = path.join(repo, '.worktrees', slug);
+  fs.mkdirSync(path.dirname(WT), { recursive: true });
+  git('worktree', 'add', '-b', `masterplan/${slug}`, WT, 'HEAD');
+  fs.writeFileSync(statePath, serializeState({
+    schema_version: 8,
+    slug,
+    status: 'in-progress',
+    phase: 'execute',
+    worktree: WT,
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    active_run: { wave: 1, kind: 'execute', phase: 'launching', epoch: 5, baseline: [], scope: ['src/a.txt'], started_at: 'T0' },
+    dispatch: { fabric: true },
+    review: { adversary: true },
+    concurrency: { owner_lock: 'off' },
+  }));
+  fs.writeFileSync(path.join(bundleDir, 'plan.index.json'), JSON.stringify({
+    tasks: [{ id: 1, wave: 1, files: ['src/a.txt'], description: 'task 1', verify_commands: [] }],
+  }));
+  fs.writeFileSync(path.join(bundleDir, 'wave-1.dispatch.json'), JSON.stringify({
+    key: `mp-wave-dispatch-v1|${slug}|1|dispatch_fabric`,
+    run_id: slug, wave: 1, op: 'dispatch_fabric', contract_version: 'fabric-native-v1',
+    status: 'pending', attempt: 2, wave_token: `mp-wave-${slug}-w1-a2`, handles: [],
+    dispatched_at: 'T0', tasks: [{ task_id: 1, class: 'bounded-edit', handoff_key: 'k1' }],
+    review_context: {
+      enabled: true, base_sha: base,
+      tasks: [{ task_id: 1, description: 'task 1', class: 'bounded-edit', repo: WT }],
+    },
+  }, null, 2));
+
+  // Dirty tree: an out-of-scope untracked file in the worktree.
+  fs.writeFileSync(path.join(WT, 'out-of-scope.txt'), 'unexpected\n');
+  const beforeHead = git('rev-parse', 'HEAD').trim();
+
+  const resultPath = path.join(bundleDir, 'native-result.json');
+  fs.writeFileSync(resultPath, JSON.stringify({
+    wave: 1, epoch: 5,
+    tasks: [{ task_id: 1, digest: { task_id: 1, status: 'done', start_sha: base, files_changed: ['src/a.txt'], verify: [], summary: 'task 1 done', blockers: null } }],
+  }));
+  // Phase A still works (capture reads HEAD + clean probe — but the tree is dirty, so it should
+  // reject the CAPTURE itself with the clean-tree error).
+  const rA = run([
+    'record-result', `--state=${statePath}`, `--result-file=${resultPath}`,
+    `--recovery-repo=${WT}`, `--recovery-head=${head}`, '--now=3000',
+  ], { timeout: 30_000 });
+  assert.notEqual(rA.status, 0, 'a dirty tree must fail recovery capture (not record)');
+  assert.match(rA.stderr, /clean tree|not clean/);
+  // No destructive op: file still there, HEAD unchanged, nothing recorded.
+  assert.ok(fs.existsSync(path.join(WT, 'out-of-scope.txt')), 'the out-of-scope file is NOT deleted');
+  assert.equal(git('rev-parse', 'HEAD').trim(), beforeHead, 'HEAD unchanged');
+  assert.equal(read(statePath).tasks[0].status, 'pending', 'nothing recorded');
+});
