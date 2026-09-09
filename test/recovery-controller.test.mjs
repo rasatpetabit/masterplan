@@ -240,8 +240,14 @@ test('recovery: capture hashes Buffer bytes (invalid UTF-8 does not collide) and
   git(fx.WT, 'config', 'diff.mnemonicPrefix', 'true');
   git(fx.WT, 'config', 'diff.srcPrefix', 'x/');
   git(fx.WT, 'config', 'diff.dstPrefix', 'y/');
+  const orderFile = path.join(fx.WT, '.diff-order');
+  fs.writeFileSync(orderFile, 'src/a.txt\nsrc/seed.txt\n');
+  git(fx.WT, 'config', 'diff.orderFile', orderFile);
+  git(fx.WT, 'config', 'diff.orderfile', orderFile);
+  git(fx.WT, 'config', 'diff.suppressBlankEmpty', 'true');
+  git(fx.WT, 'config', 'diff.submodule', 'log');
   const b = captureCommittedDiff(fx.WT, fx.BASE, fx.HEAD);
-  assert.ok(a.equals(b), 'capture is independent of repo-local diff.algorithm/context/interHunkContext/indentHeuristic/noprefix/mnemonicPrefix/srcPrefix/dstPrefix');
+  assert.ok(a.equals(b), 'capture is independent of repo-local diff.algorithm/context/interHunkContext/indentHeuristic/noprefix/mnemonicPrefix/srcPrefix/dstPrefix/orderFile/suppressBlankEmpty/submodule');
   // Distinct byte sequences that are not valid UTF-8 must hash differently — sha256hex on a
   // Buffer hashes the bytes, never a replacement-character decode.
   const u80 = Buffer.from([0x80]);
