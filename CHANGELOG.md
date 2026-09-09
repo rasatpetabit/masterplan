@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [10.0.7] — 2026-09-09
+
+schema-backed `goals-amend` / `set-phase` deadlock: freeze, amend, status, and
+`continue.mjs` now hash through `pinnedGoalsEvidenceHash` so they agree with
+`set-phase` on `format_pin: schema_backed` bundles. Also on this tip: the
+committed-recovery review path (`record-result --recovery-repo/--recovery-head`)
+and the auq-next-steps §2d archive.
+
 ## [10.0.6] — 2026-09-08
 
 ## [10.0.5] — 2026-09-08
