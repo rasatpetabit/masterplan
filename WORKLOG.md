@@ -1,5 +1,15 @@
 # WORKLOG
 
+## 2026-09-09 — auq-next-steps worktree archived as tag; worktree removed
+
+`.worktrees/auq-next-steps` (branch `masterplan/auq-next-steps`, tip 8db2d9a, 104 behind origin/main,
+0 unique commits) held three uncommitted files: a more aggressive §2d rewrite than main's milder
+landing (`ef8bf23`). Unique vs main: §2d opens with "nothing here restates it", lists only
+masterplan-specific durable gates, drops the risky-action restatement, and adds `assert2dContract`
+tests that reject a paraphrased fleet restatement. Snapshotted byte-exact as `8e5803e` under tag
+`archive/auq-next-steps-2d-rewrite-20260909` (pushed, OID-verified); worktree and local branch
+removed. Not rebased (104-commit drift); tests not run at snapshot. Resume by checking out the tag.
+
 ## 2026-09-09 — committed-recovery review path relanded onto main (gap closed)
 
 Follow-up to the 2026-09-08 archive entry: the gen-2 snapshot was assessed, found to close a
