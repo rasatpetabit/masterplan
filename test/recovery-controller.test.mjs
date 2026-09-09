@@ -234,10 +234,14 @@ test('recovery: capture hashes Buffer bytes (invalid UTF-8 does not collide) and
   // Pinning is proven by flipping repo-local diff.* and observing the SAME artifact bytes.
   git(fx.WT, 'config', 'diff.algorithm', 'histogram');
   git(fx.WT, 'config', 'diff.context', '0');
+  git(fx.WT, 'config', 'diff.interHunkContext', '8');
+  git(fx.WT, 'config', 'diff.indentHeuristic', 'true');
   git(fx.WT, 'config', 'diff.noprefix', 'true');
   git(fx.WT, 'config', 'diff.mnemonicPrefix', 'true');
+  git(fx.WT, 'config', 'diff.srcPrefix', 'x/');
+  git(fx.WT, 'config', 'diff.dstPrefix', 'y/');
   const b = captureCommittedDiff(fx.WT, fx.BASE, fx.HEAD);
-  assert.ok(a.equals(b), 'capture is independent of repo-local diff.algorithm/context/noprefix/mnemonicPrefix');
+  assert.ok(a.equals(b), 'capture is independent of repo-local diff.algorithm/context/interHunkContext/indentHeuristic/noprefix/mnemonicPrefix/srcPrefix/dstPrefix');
   // Distinct byte sequences that are not valid UTF-8 must hash differently — sha256hex on a
   // Buffer hashes the bytes, never a replacement-character decode.
   const u80 = Buffer.from([0x80]);
