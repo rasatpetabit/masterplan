@@ -360,6 +360,87 @@ test('the baseline sidecar itself is an allowed MAIN transaction file', () => {
   assert.deepEqual(r.violations, []);
 });
 
+// ── WT-resident bundle: the controller's transaction files in the WORKTREE ──
+// A bundle whose docs live inside the run worktree (not MAIN) writes its own
+// bookkeeping — state.yml, events.jsonl, .wave-N.watch.json, wave-N.dispatch.json —
+// into the WATCHED worktree during the wave. Before the fix, verifyWatchListDelta's
+// controller exemption applied to MAIN only, so the wave flagged and then REVERTED the
+// machinery's own audit trail (measured 2026-09-11 on the pricing-capture bundle: the
+// wave-0 review events were wiped by the transaction that recorded them).
+
+function wtWithBundle(slug = 'demo') {
+  const wt = tmpRepo('wave-integrity-wt-');
+  const bundleDir = path.join(wt, 'docs', 'masterplan', slug);
+  fs.mkdirSync(bundleDir, { recursive: true });
+  fs.writeFileSync(path.join(bundleDir, 'state.yml'), 'slug: demo\nphase: execute\nstatus: in-progress\n');
+  fs.writeFileSync(path.join(bundleDir, 'events.jsonl'), `${JSON.stringify({ type: 'seed' })}\n`);
+  git(wt, 'add', '-A');
+  git(wt, 'commit', '-q', '-m', 'seed bundle in wt');
+  return { wt, bundleDir };
+}
+
+test('WT-resident bundle: the controller transaction in the worktree is validated, not flagged', () => {
+  const { wt, bundleDir } = wtWithBundle();
+  const baseline = captureWatchBaseline({
+    mainRoot: wt, bundleDir, worktree: wt, slug: 'demo', scopePaths: [],
+  });
+  // The worktree is watched as a NON-MAIN locus (isMain false), as it is when MAIN is a
+  // separate checkout.
+  const wl = [{ repo: wt, prefix: null, isMain: false }];
+  const before = snapshotWatchList(wl);
+
+  fs.appendFileSync(path.join(bundleDir, 'events.jsonl'), `${JSON.stringify({ type: 'wave_recorded' })}\n`);
+  fs.writeFileSync(path.join(bundleDir, 'state.yml'), 'slug: demo\nphase: execute\nstatus: in-progress\nactive_run: null\n');
+  writeWatchBaseline(bundleDir, 0, baseline);
+  fs.writeFileSync(path.join(bundleDir, 'wave-0.dispatch.json'), '{}\n');
+
+  const r = verifyWatchListDelta(before, snapshotWatchList(wl), [], { bundle: baseline.bundle });
+  assert.deepEqual(r.violations, [], `controller's own WT transaction must not trip the check: ${JSON.stringify(r.violations)}`);
+  assert.equal(r.ok, true);
+});
+
+test('WT-resident bundle: a rewritten (not appended) events.jsonl in the worktree is still rejected', () => {
+  const { wt, bundleDir } = wtWithBundle();
+  const baseline = captureWatchBaseline({
+    mainRoot: wt, bundleDir, worktree: wt, slug: 'demo', scopePaths: [],
+  });
+  const wl = [{ repo: wt, prefix: null, isMain: false }];
+  const before = snapshotWatchList(wl);
+  fs.writeFileSync(
+    path.join(bundleDir, 'events.jsonl'),
+    `${JSON.stringify({ type: 'forged' })}\n${JSON.stringify({ type: 'forged2' })}\n`,
+  );
+  const r = verifyWatchListDelta(before, snapshotWatchList(wl), [], { bundle: baseline.bundle });
+  assert.equal(r.ok, false);
+  assert.match(r.violations[0].reason, /rewritten, not appended/);
+});
+
+test('WT-resident bundle: a child edit to a NON-transaction bundle file is still flagged', () => {
+  const { wt, bundleDir } = wtWithBundle();
+  const baseline = captureWatchBaseline({
+    mainRoot: wt, bundleDir, worktree: wt, slug: 'demo', scopePaths: [],
+  });
+  const wl = [{ repo: wt, prefix: null, isMain: false }];
+  const before = snapshotWatchList(wl);
+  fs.writeFileSync(path.join(bundleDir, 'spec.md'), '# a child rewrote the spec mid-wave\n');
+  const r = verifyWatchListDelta(before, snapshotWatchList(wl), [], { bundle: baseline.bundle });
+  assert.equal(r.ok, false, 'spec.md is not a controller transaction file');
+  assert.match(r.violations[0].reason, /outside the controller's transaction files/);
+});
+
+test('WT-resident bundle: a state.yml change outside controller fields is still rejected', () => {
+  const { wt, bundleDir } = wtWithBundle();
+  const baseline = captureWatchBaseline({
+    mainRoot: wt, bundleDir, worktree: wt, slug: 'demo', scopePaths: [],
+  });
+  const wl = [{ repo: wt, prefix: null, isMain: false }];
+  const before = snapshotWatchList(wl);
+  fs.writeFileSync(path.join(bundleDir, 'state.yml'), 'slug: demo\nphase: archived\nstatus: in-progress\ngoals: forged\n');
+  const r = verifyWatchListDelta(before, snapshotWatchList(wl), [], { bundle: baseline.bundle });
+  assert.equal(r.ok, false);
+  assert.match(r.violations[0].reason, /outside the controller transaction/);
+});
+
 // ── vector 5 regression: clean tracked file in a watched sibling ─────────────
 // The 2026-08-04 e2e planted a child write into a watched sibling repo. It was DETECTED,
 // but for the wrong reason ("file created") and the sibling was left dirty — the breach
