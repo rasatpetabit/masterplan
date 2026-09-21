@@ -1,5 +1,16 @@
 # AGENTS.md — `masterplan`
 
+## Development host — 2026-09-21
+
+Use `ras@ai` (`192.168.100.200`) for all AI work, source/documentation edits,
+build development, and working-copy synchronization. The canonical checkout
+keeps this repository's `/srv/dev/...` path on `ai`; GitHub remains the
+source-control remote where configured. Do not replicate code or docs to
+`epyc1` or `epyc2`; they are VM servers. Older host references in evidence and
+runtime runbooks do not authorize development there. Verify a service's actual
+guest/endpoint before operating it; this policy does not prove runtime,
+credential, timer, or private-data migration.
+
 <!-- agentic-dispatch:central-pointer v2 -->
 ## Central agent policy
 
