@@ -30,7 +30,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { runRegister } from './register-pi-agents.mjs';
+import { runRegister, loadLaneOverrides } from './register-pi-agents.mjs';
 import { readEnv, childEnv } from '../lib/config.mjs';
 
 const INSTALL_META = '.pi-install.json';
@@ -144,7 +144,7 @@ function install(opts) {
   } catch { /* no current link yet */ }
   if (currentTarget === path.join(RELEASES_DIR, sha) || currentTarget === releaseDir) {
     for (const name of SKILL_NAMES) ensureSkillLink(piRoot, installRoot, name, opts.force);
-    const reg = runRegister({ agentsDir: path.join(releaseDir, 'agents'), targetDir: path.join(piRoot, 'agent', 'agents'), check: false });
+    const reg = runRegister({ agentsDir: path.join(releaseDir, 'agents'), targetDir: path.join(piRoot, 'agent', 'agents'), check: false, laneOverrides: loadLaneOverrides() });
     if (reg.drift > 0) die(`registration drift after relink:\n${reg.report.join('\n')}`, 1);
     process.stdout.write(JSON.stringify({ install_pi: 'idempotent', sha, release: releaseDir, registration: { written: reg.written, removed: reg.removed } }) + '\n');
     return;
@@ -171,7 +171,7 @@ function install(opts) {
 
   // Register agents from the staged release BEFORE switching current — a
   // failure here aborts with the live install untouched.
-  const reg = runRegister({ agentsDir: path.join(releaseDir, 'agents'), targetDir: path.join(piRoot, 'agent', 'agents'), check: false });
+  const reg = runRegister({ agentsDir: path.join(releaseDir, 'agents'), targetDir: path.join(piRoot, 'agent', 'agents'), check: false, laneOverrides: loadLaneOverrides() });
   if (reg.drift > 0) die(`registration from staged release failed:\n${reg.report.join('\n')}`, 1);
 
   // Atomic current swap: temp symlink + rename over.
@@ -275,7 +275,7 @@ function check(opts) {
         problems.push(`${linkPath} missing`);
       }
     }
-    const reg = runRegister({ agentsDir: path.join(releaseDir, 'agents'), targetDir: path.join(piRoot, 'agent', 'agents'), check: true });
+    const reg = runRegister({ agentsDir: path.join(releaseDir, 'agents'), targetDir: path.join(piRoot, 'agent', 'agents'), check: true, laneOverrides: loadLaneOverrides() });
     if (reg.drift > 0) problems.push(`agent registration drift ${reg.drift}:\n  ${reg.report.filter((l) => l.startsWith('DRIFT')).join('\n  ')}`);
   }
 
