@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [10.0.8] — 2026-09-22
+
+`reconcile-intent`: wire §6.3 intent reconciliation to a CLI verb. `lib/reconcile-intent.mjs`
+implemented the durable record and `lib/checkpoint-evidence.mjs` makes it mandatory for a
+schema-backed bundle, but `bin/masterplan.mjs` imported nothing from that module, so a bundle
+could not leave brainstorm: the spec gate refused with "no recorded reconciliation" and no
+subcommand could produce one. The verb resolves the integration target, reads the target
+intent, builds the rows and records them, surfacing lib's own reason verbatim on every
+failure mode and never defaulting `--accepted`.
+
+Host-local lane overrides in `register-pi-agents.mjs`, read from
+`~/.config/masterplan/lane-overrides.json`. A lane can be unusable on one host while staying
+correct fleet-wide, and the only prior workaround was hand-editing the generated agent files,
+which `--check` reports as drift and the next install erases. Overrides require a `reason` and
+a `decided_by`, are reported on stderr in both write and check mode, fail closed on an unknown
+lane or a malformed file, and are applied as a separate layer so `MODEL_MAP` stays an exact
+mirror of the routing policy. Every exported seam defaults to no overrides, so the suite cannot
+depend on the machine running it.
+
 ## [10.0.7] — 2026-09-09
 
 schema-backed `goals-amend` / `set-phase` deadlock: freeze, amend, status, and
