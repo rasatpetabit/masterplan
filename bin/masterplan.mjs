@@ -204,6 +204,14 @@ import { decideNextAction } from '../lib/resume.mjs';
 import { prepareWave, declaredScope, verifyScope } from '../lib/wave.mjs';
 import { detectHost } from '../lib/dispatch/index.mjs';
 import { selectReentry, reentryEventTypes, validateGateReceipt } from '../lib/reentry-guard.mjs';
+import {
+  resolveReconciliationTarget,
+  buildReconciliationRows,
+  recordReconciliation,
+  reconciliationPath,
+  RECONCILIATION_FILENAME,
+} from '../lib/reconcile-intent.mjs';
+import { runGit } from '../lib/watch-integrity.mjs';
 import { resolveConfigDir } from '../lib/paths.mjs';
 import { readEnv, childEnv, resolveRunConfig, resolveProbingMinimum, PLANNING_MODES } from '../lib/config.mjs';
 import { projectObligations, resolveResumeBrief, renderResumeBrief } from '../lib/resume-brief.mjs';
@@ -692,6 +700,12 @@ const KNOWN_FLAGS = new Set(
     // record a schema-backed terminal evaluation requires (one row per checked section,
     // validated against the frozen schema snapshot).
     'coverage-file '  +
+    // §6.3 intent reconciliation: --repository/--remote/--ref override the target derived
+    // from the bundle's own git context; --verdict is a comma-separated section=verdict
+    // judgment list; --accepted is the operator's acknowledgement of a drift/retarget.
+    // (`--ref` is the git ref to reconcile against; it is NOT `--contract-ref`, which is the
+    // coordination contract ref and means something else.)
+    'repository remote ref verdict accepted '  +
     'version-fix window').split(' ')
 );
 
@@ -2293,6 +2307,129 @@ function main() {
       });
       break;
     }
+    case 'reconcile-intent': {
+      // §6.3 — record the bundle's reconciliation with its integration target's INTENT.md.
+      //
+      // The durable record is what the spec gate compares against (lib/checkpoint-evidence.mjs
+      // buildIntentIdentity): a schema-backed bundle with NO recorded reconciliation cannot
+      // earn a reconciliation_digest, so the gate refuses and the run cannot leave brainstorm.
+      // lib/reconcile-intent.mjs has implemented and tested this since the intent work landed,
+      // but nothing in bin reached it — the feature was unreachable from the CLI, which is the
+      // gap this verb closes.
+      //
+      // Deliberately NOT named `reconcile` (that is the worktree orphan sweep) or
+      // `reconcile-integration` (GitHub issue reconciliation).
+      //
+      // git stays in lib: every helper below takes an `exec` seam and falls back to local
+      // -C-qualified git itself, exactly as verifyCheckpointEvidence does when the gate calls
+      // it. bin shells out to nothing.
+      const p = need(flags, 'state');
+      readState(p); // validate the bundle is readable (read-only; result intentionally unused)
+
+      // Target derivation. The default repository is the bundle's own repo root (never the
+      // session's MAIN — a parent operating a sub-repo bundle would otherwise mis-target).
+      // `remote` defaults to origin and `ref` to the repo's current branch; both are
+      // overridable because the integration target is an IDENTITY the operator names, and a
+      // bundle may legitimately reconcile against a ref other than its checkout's HEAD.
+      let repository = typeof flags.repository === 'string' && flags.repository.trim() ? flags.repository.trim() : null;
+      if (!repository) {
+        try {
+          repository = deriveDefaultTargetRepo(p);
+        } catch (e) {
+          die(`reconcile-intent: the bundle's repository could not be derived — ${e.message} (pass --repository to name the target explicitly)`, 1);
+        }
+      }
+      const remote = typeof flags.remote === 'string' && flags.remote.trim() ? flags.remote.trim() : 'origin';
+
+      // `--verdict=<section>=<verdict>` is REPEATABLE, but the shared arg parser overwrites a
+      // repeated flag, so it accepts a comma-separated list instead: section names may contain
+      // spaces ("Top invariant"), so the separator between pairs is a comma and the first '='
+      // in each pair splits name from verdict. Every section of the target's INTENT.md must be
+      // covered — buildReconciliationRows refuses a section with no verdict, because a silent
+      // default would be a judgment nobody made.
+      const verdictBySection = {};
+      if (typeof flags.verdict === 'string' && flags.verdict.trim()) {
+        for (const pair of flags.verdict.split(',')) {
+          const chunk = pair.trim();
+          if (!chunk) continue;
+          const eq = chunk.indexOf('=');
+          if (eq === -1) {
+            die(`reconcile-intent: --verdict entry ${JSON.stringify(chunk)} is not <section>=<verdict>`, 1);
+          }
+          const name = chunk.slice(0, eq).trim();
+          const verdict = chunk.slice(eq + 1).trim();
+          if (!name || !verdict) {
+            die(`reconcile-intent: --verdict entry ${JSON.stringify(chunk)} has an empty section or verdict`, 1);
+          }
+          verdictBySection[name] = verdict;
+        }
+      }
+
+      // A ref is required: a target with no ref selected cannot be established, and §6.3 makes
+      // that unknown/unavailable rather than a verified absence. Default to the checkout's
+      // current branch by reading HEAD through lib's own git seam — no bin-level git call.
+      let ref = typeof flags.ref === 'string' && flags.ref.trim() ? flags.ref.trim() : null;
+      if (!ref) {
+        // Read HEAD through lib's exported git seam — bin imports no child_process at all, so
+        // git stays in lib exactly as the boundary requires.
+        try {
+          ref = runGit(repository, ['symbolic-ref', '--short', 'HEAD']) || null;
+        } catch {
+          ref = null;
+        }
+        if (!ref) {
+          die(`reconcile-intent: the target repository ${repository} has no current branch (detached HEAD) — pass --ref to name the ref to reconcile against`, 1);
+        }
+      }
+
+      const resolved = resolveReconciliationTarget({ repository, remote, ref });
+      if (!resolved.ok) {
+        die(`reconcile-intent: the integration target could not be resolved — ${resolved.reason}`, 1);
+      }
+
+      const built = buildReconciliationRows({ identity: resolved.identity, statePath: p, verdictBySection });
+      if (!built.ok) {
+        // Surface lib's own reason verbatim: it distinguishes "no verdict vocabulary in the
+        // pinned snapshot" from "a section carries no verdict" from "a verdict outside the
+        // vocabulary", and each needs a different operator action.
+        die(`reconcile-intent: the reconciliation could not be built — ${built.reason}`, 1);
+      }
+
+      let recorded;
+      try {
+        recorded = recordReconciliation({ statePath: p, record: built.record, accepted: flags.accepted === true });
+      } catch (e) {
+        // The drift/retarget refusal is a real decision for the owner, never an error to work
+        // around: lib refuses to overwrite a prior record without `accepted`, so surface its
+        // reason verbatim AND name the flag that resolves it — lib's own message explains why
+        // it refused but not how to proceed, and an operator staring at a refusal with no
+        // stated next step is the failure this line exists to prevent. `--accepted` is never
+        // defaulted.
+        const msg = String(e.message ?? e);
+        const actionable = /\b(drift|retarget)\b/.test(msg) && /without accepting|accepted/.test(msg)
+          ? `\n  To proceed, re-run with --accepted to record the operator's decision (this is a real choice: the prior reconciliation is invalidated and every receipt binding its digest goes with it).`
+          : '';
+        die(`reconcile-intent: ${msg}${actionable}`, 1);
+      }
+
+      out({
+        verb: 'reconcile-intent',
+        path: recorded.path,
+        file: RECONCILIATION_FILENAME,
+        status: built.record.status,
+        identity: {
+          repository: resolved.identity.repository,
+          remote: resolved.identity.remote,
+          ref: resolved.identity.ref,
+          resolved_commit: resolved.identity.resolved_commit,
+        },
+        artifact_digest: built.record.artifact_digest,
+        rows: built.record.rows.map((r) => ({ section: r.section, verdict: r.verdict })),
+        comparison: recorded.comparison,
+      });
+      break;
+    }
+
     case 'goals-status': {
       // Anti-forgetting mid-run: derive the CURRENT goal set from goals.md + events (NOT the possibly
       // stale state.goals cache), surfacing tombstones and the frozen/amended hash lineage. Read-only —
