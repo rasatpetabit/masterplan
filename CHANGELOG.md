@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [10.0.9] — 2026-09-23
 
 ### Added — finish-gate fallback reviewer (review-fallback)
 
@@ -39,6 +39,12 @@ automatically to a different reviewer instead of skipping.
 circuit breaker's match, so a finish-gate fallback review is not counted against the
 per-file review-round cap. It stays limited to one review per HEAD by the existing re-entry
 guard, and it is disabled with `adversary_review_fallback: off`.
+
+### Fixed
+
+- `llms.txt` still stated v10.0.7 through the 10.0.8 release; it now reports the
+  package version, so E13 passes again.
+- The README L3 agent box lists all nine agents (it had dropped `mp-intent-critic`).
 
 ## [10.0.8] — 2026-09-22
 

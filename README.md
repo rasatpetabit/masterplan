@@ -2,7 +2,7 @@
 
 > A Claude Code & Codex CLI plugin for durable multi-hour engineering work — brainstorm → plan → execute → finish on top of `obra/superpowers` skills.
 
-Current release: **v10.0.8** · **License:** MIT · **Works with:** Claude Code, Codex CLI · See [CHANGELOG.md](./CHANGELOG.md)
+Current release: **v10.0.9** · **License:** MIT · **Works with:** Claude Code, Codex CLI · See [CHANGELOG.md](./CHANGELOG.md)
 
 ---
 
@@ -63,8 +63,9 @@ masterplan v8 is a five-layer system. Each layer delegates downward and never wr
 │  L3 — Agents                                                 │
 │  agents/mp-goal-assessor.md   agents/mp-adversarial-reviewer.md │
 │  agents/mp-planner.md         agents/mp-plan-reviewer.md       │
-│  agents/mp-fallback-reviewer.md agents/mp-subsystem-planner.md │
+│  agents/mp-intent-critic.md   agents/mp-subsystem-planner.md │
 │  agents/mp-spec-decomposer.md agents/mp-alignment-auditor.md │
+│  agents/mp-fallback-reviewer.md                              │
 │  ← no session history; return structured output only         │
 └───────────────────────┬─────────────────────────────────────┘
                         │ node bin/doctor.mjs
