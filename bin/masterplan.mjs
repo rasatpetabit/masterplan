@@ -679,7 +679,7 @@ const KNOWN_FLAGS = new Set(
     'predecessor-transcript producer-status prs prune prune-non-pending pushed reason receipt reconcile ' +
     'recorded-base removal-confirmed removal-force remove-root render-images repo repo-git-dir repo-root ' +
     'repos-allowlist result result-file retro-only review review-base review-count review-digest-file ' +
-    'review-done review-json review-reason review-skipped review-verdict reviews-file recovery-head recovery-repo roots routing run-id run-slug ' +
+    'review-done review-fallback-reason review-json review-reason review-reviewer review-skipped review-verdict reviews-file recovery-head recovery-repo roots routing run-id run-slug ' +
     'schema-version scope session sha slug spec-path state status subsystems ' +
     'subsystems-file summary takeover target task task-id to topic ts ttl-ms type verify-failed ' +
     'verify-output-hash verify-passed waive waiver wave worktree worktree-list worktree-registered ' +
@@ -4730,6 +4730,18 @@ function main() {
       if (reviewVerdictFlag !== undefined && reviewVerdictFlag !== null && typeof reviewVerdictFlag !== 'string') {
         die(`--review-verdict must be a string (approve|revise|rework|reject), got ${JSON.stringify(reviewVerdictFlag)}`);
       }
+      // review-fallback: --review-reviewer names the reviewer that produced the review (model
+      // ref or class) and --review-fallback-reason why the primary adversary reviewer was
+      // replaced by a fallback. Both optional (old callers unchanged); both land on the durable
+      // adversary_review event's data. The engine refuses a fallback reason without --review-done.
+      const reviewReviewerFlag = flags['review-reviewer'];
+      if (reviewReviewerFlag !== undefined && reviewReviewerFlag !== null && typeof reviewReviewerFlag !== 'string') {
+        die(`--review-reviewer must be a string (a model ref or the adversary class), got ${JSON.stringify(reviewReviewerFlag)}`);
+      }
+      const reviewFallbackReasonFlag = flags['review-fallback-reason'];
+      if (reviewFallbackReasonFlag !== undefined && reviewFallbackReasonFlag !== null && typeof reviewFallbackReasonFlag !== 'string') {
+        die(`--review-fallback-reason must be a string, got ${JSON.stringify(reviewFallbackReasonFlag)}`);
+      }
       // A1 (2026-08-30): the goal-gate answer flags — the finish-step engine's documented vocabulary.
       // --goal-check=<failed> signals assessor dispatch failed (fail-closed → manual goals_unmet gate);
       // --goals-choice=<fix|waiver|abort> answers the goals_unmet gate AUQ. Both thread into finishStep's
@@ -4751,6 +4763,8 @@ function main() {
           reviewDigestFile: typeof reviewDigestFlag === 'string' ? reviewDigestFlag : null,
           reviewReason: typeof reviewReasonFlag === 'string' ? reviewReasonFlag : null,
           reviewVerdict: typeof reviewVerdictFlag === 'string' ? reviewVerdictFlag : null,
+          reviewReviewer: typeof reviewReviewerFlag === 'string' ? reviewReviewerFlag : null,
+          reviewFallbackReason: typeof reviewFallbackReasonFlag === 'string' ? reviewFallbackReasonFlag : null,
           docsSuppressed: !!flags['docs-suppressed'],
           docs: docsAns,
           docsCount: flags['docs-count'],

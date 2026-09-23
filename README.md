@@ -63,7 +63,7 @@ masterplan v8 is a five-layer system. Each layer delegates downward and never wr
 │  L3 — Agents                                                 │
 │  agents/mp-goal-assessor.md   agents/mp-adversarial-reviewer.md │
 │  agents/mp-planner.md         agents/mp-plan-reviewer.md       │
-│  agents/mp-plan-reviewer.md   agents/mp-subsystem-planner.md │
+│  agents/mp-fallback-reviewer.md agents/mp-subsystem-planner.md │
 │  agents/mp-spec-decomposer.md agents/mp-alignment-auditor.md │
 │  ← no session history; return structured output only         │
 └───────────────────────┬─────────────────────────────────────┘
@@ -311,6 +311,7 @@ Each recognized key is validated against the schema enum and its **source layer*
 | `autonomy` | `gated \| loose` (alias `full` → `loose`) | `gated` | `gated` halts at every gate; `loose` auto-advances through successful gates; the branch-finish gate always halts regardless |
 | `planning_mode` | `serial \| parallel \| auto` | derived from complexity | `serial` = one `mp-planner`; `parallel` = `mp-subsystem-planner` fan-out merged by `lib/plan-merge.mjs` |
 | `adversary_review` | `on \| off` | `on` | Default-on finish-time adversary review; new bundles arm `state.review.adversary: true` |
+| `adversary_review_fallback` | list of model refs \| `off` | `null` (derive from the routing policy) | The **finish-gate fallback reviewers**: when the primary adversary review fails or its launch is refused, the gate tries these in order via the read-only `mp-fallback-reviewer` agent (one attempt each, model supplied per dispatch). Default derives from the routing policy — the `adversary` class `chain` then its panel members' models, primary excluded, de-duplicated. A list replaces that outright; `off` disables the fallback (a failed primary skips, as before the feature). See [docs/conventions/adversarial-review-failure-policy.md](docs/conventions/adversarial-review-failure-policy.md) |
 | `render_images` | `on \| off` | `off` | Gates the optional shell-side image *generation*; embedding is by-presence |
 | `fabric` | `on \| off` | `on` | The schema accepts `on\|off`; the legacy L2 wave path is deleted, so `off` marks a bundle **unexecutable** (no `state.dispatch.fabric: true` → dispatch refused, nothing restored) |
 | `context_watch` | object | `{threshold: 70, focus: null}` | `context_watch.threshold` is an int 1–99; `context_watch.focus` is a string or null |
@@ -348,7 +349,7 @@ Every `readEnv`-backed control — set these in the environment, not in config f
 
 Every finish-time review outcome — success, skip, or defensive arm — emits a durable event to `events.jsonl`. Searchable by `adversary_review*` prefix (legacy `codex_review*` events from in-flight bundles still satisfy the re-entry guard):
 
-- `adversary_review` — review completed (summary: `adversary review complete ...`).
+- `adversary_review` — review completed (summary: `adversary review complete ...`). `data.reviewer` names who reviewed (model ref or class); `data.fallback = { reason }` is present when the review came from a **fallback** reviewer and says why the primary was replaced.
 - `adversary_review_skipped` — review was configured but didn't run (summary includes a typed reason: `state.review.adversary not armed`, `codex_host_suppressed`, or `no_base_branch`).
 - `adversary_review_defensively_armed` — legacy bundle missing the review config was defensively armed once at the finish gate (one-time per bundle, presence-scoped).
 

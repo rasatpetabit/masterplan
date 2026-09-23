@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added — finish-gate fallback reviewer (review-fallback)
+
+The whole-branch finish review (`run_adversary_review`, §2c) used to map ANY primary
+failure to `--review-skipped`. In the fleet that included a launch the review circuit
+breaker REFUSES — it declines `breaker`/`*-adversarial-reviewer` agent names once a file
+exceeds its review-round cap — so a run could ship unreviewed because the cap tripped at
+exactly the moment a review was finally mandatory. The finish gate now falls back
+automatically to a different reviewer instead of skipping.
+
+- `lib/dispatch/routing-policy.mjs` `adversaryFallbackReviewers`: the ordered fallback
+  list, derived from the same routing policy that resolves the primary — the `adversary`
+  class `chain` in order, then the `model` of each member of the class's panel,
+  de-duplicated preserving first occurrence, primary excluded. Fail-soft at this seam on
+  purpose: an unavailable policy yields an empty list plus a recorded reason, and the gate
+  behaves exactly as it did before the fallback existed.
+- `lib/finish-step.mjs` resolves the list deterministically and carries it in the op
+  payload (`fallback_reviewers`, `fallback_reason` when empty) — the shell never re-derives
+  routing policy. New optional `--review-reviewer` / `--review-fallback-reason` answers land
+  on the durable `adversary_review` event as `data.reviewer` and `data.fallback = { reason }`
+  (old callers unchanged); a fallback reason without `--review-done` is refused. The
+  `branch_finish` AUQ review line now carries the reviewer and, for a fallback, why.
+- `.masterplan.yaml` key `adversary_review_fallback` (CLI > repo > user > default,
+  fail-closed validation): a list of model refs REPLACES the derived list; `off` disables
+  the fallback (skip-on-failure, as before).
+- New read-only agent `agents/mp-fallback-reviewer.md` — the same severity-first digest
+  contract as `mp-adversarial-reviewer`, dispatched once per fallback entry with that entry
+  as the harness-native model override over the same branch diff.
+
+**Governance caveat:** the fallback agent is deliberately named outside the fleet review
+circuit breaker's match, so a finish-gate fallback review is not counted against the
+per-file review-round cap. It stays limited to one review per HEAD by the existing re-entry
+guard, and it is disabled with `adversary_review_fallback: off`.
+
 ## [10.0.8] — 2026-09-22
 
 `reconcile-intent`: wire §6.3 intent reconciliation to a CLI verb. `lib/reconcile-intent.mjs`

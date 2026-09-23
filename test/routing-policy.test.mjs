@@ -19,6 +19,7 @@ import {
   resolveLane,
   resolvePanel,
   laneAliasMap,
+  adversaryFallbackReviewers,
 } from '../lib/dispatch/routing-policy.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -132,4 +133,109 @@ test('MP_ROUTING_POLICY override is honored when present', () => {
     if (prev === undefined) delete process.env.MP_ROUTING_POLICY;
     else process.env.MP_ROUTING_POLICY = prev;
   }
+});
+
+// ---- review-fallback: the finish-gate fallback reviewer list ------------------
+
+// A synthetic policy fixture whose ids are chosen so the ORDER rules are the only way
+// to produce the expected list (chain first in policy order, then panel members, primary
+// excluded, duplicates collapsed on first occurrence).
+function fallbackFixturePolicy({ chain = [], panelMembers = [], panelName = 'adversarial', withPanel = true } = {}) {
+  return {
+    lanes: { frontier: { model: 'litellm/primary', ctx: 1000 } },
+    agents: { breaker: { writes: false, tier: 'big' } },
+    tiers: { big: {} },
+    classes: {
+      adversary: {
+        agent: 'breaker',
+        lane: 'frontier',
+        model: 'litellm/primary',
+        chain,
+        ...(withPanel ? { panel: panelName } : {}),
+      },
+    },
+    ...(withPanel ? { panels: { [panelName]: { members: panelMembers, quorum: 1 } } } : {}),
+  };
+}
+
+test('adversaryFallbackReviewers: chain order, panel append, de-duplication, primary excluded', () => {
+  const policy = fallbackFixturePolicy({
+    chain: ['litellm/primary', 'litellm/chain-2', 'litellm/chain-3', 'litellm/chain-2'],
+    panelMembers: [
+      { lane: 'frontier', model: 'litellm/primary' },      // primary again — excluded
+      { lane: 'broad', model: 'litellm/panel-1' },
+      { lane: 'longform', model: 'litellm/chain-3' },       // already seen in the chain — dropped
+    ],
+  });
+  const r = adversaryFallbackReviewers({ policy });
+  assert.deepEqual(r.reviewers, ['litellm/chain-2', 'litellm/chain-3', 'litellm/panel-1']);
+  assert.equal(r.reason, null);
+  assert.equal(r.primary, 'litellm/primary');
+});
+
+test('adversaryFallbackReviewers: no panel declared → chain-only fallback list', () => {
+  const policy = fallbackFixturePolicy({ chain: ['litellm/primary', 'litellm/chain-2'], withPanel: false });
+  const r = adversaryFallbackReviewers({ policy });
+  assert.deepEqual(r.reviewers, ['litellm/chain-2']);
+});
+
+test('adversaryFallbackReviewers: nothing beyond the primary → empty list + recorded reason', () => {
+  const policy = fallbackFixturePolicy({
+    chain: ['litellm/primary'],
+    panelMembers: [{ lane: 'frontier', model: 'litellm/primary' }],
+  });
+  const r = adversaryFallbackReviewers({ policy });
+  assert.deepEqual(r.reviewers, []);
+  assert.match(r.reason, /no fallback reviewers in the routing policy beyond the primary/);
+});
+
+test('adversaryFallbackReviewers: a missing/unreadable policy → empty list + the outage recorded, never a throw', () => {
+  const missing = adversaryFallbackReviewers({ policyPath: path.join(os.tmpdir(), 'mp-no-such-policy.json') });
+  assert.deepEqual(missing.reviewers, []);
+  assert.match(missing.reason, /routing policy unavailable: /);
+  assert.equal(missing.primary, null);
+  // same fail-soft outcome for a policy that loads but has no adversary class at all
+  const emptyPolicy = { lanes: {}, classes: {}, agents: {}, tiers: {} };
+  const noClass = adversaryFallbackReviewers({ policy: emptyPolicy });
+  assert.deepEqual(noClass.reviewers, []);
+  assert.match(noClass.reason, /routing policy unavailable: /);
+});
+
+test('adversaryFallbackReviewers: MP_ROUTING_POLICY is honored (no separate parser)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-fallback-policy-'));
+  try {
+    const policyPath = path.join(dir, 'workflow-map.json');
+    fs.writeFileSync(policyPath, JSON.stringify(fallbackFixturePolicy({
+      chain: ['litellm/primary', 'litellm/env-chain'],
+      panelMembers: [{ lane: 'broad', model: 'litellm/env-panel' }],
+    })));
+    const prior = process.env.MP_ROUTING_POLICY;
+    try {
+      process.env.MP_ROUTING_POLICY = policyPath;
+      const r = adversaryFallbackReviewers();
+      assert.deepEqual(r.reviewers, ['litellm/env-chain', 'litellm/env-panel']);
+    } finally {
+      if (prior === undefined) delete process.env.MP_ROUTING_POLICY;
+      else process.env.MP_ROUTING_POLICY = prior;
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('adversaryFallbackReviewers: the real checked-in policy yields a usable fallback list', () => {
+  // Derived from the live policy document, never a copied list of model ids: the
+  // expectation is computed from the same policy the primary dispatches on.
+  const policy = loadRoutingPolicy();
+  const adversary = resolveWorkClass('adversary', { policy });
+  const r = adversaryFallbackReviewers({ policy });
+  assert.equal(r.primary, adversary.model);
+  assert.ok(r.reviewers.length >= 1, 'the checked-in policy should name at least one fallback reviewer');
+  assert.ok(!r.reviewers.includes(adversary.model), 'the primary must never be its own fallback');
+  // every entry is a model ref the policy itself declares (chain or panel member)
+  const declared = new Set([
+    ...(Array.isArray(adversary.chain) ? adversary.chain : []),
+    ...(policy.panels?.[adversary.panel]?.members ?? []).map((m) => m.model),
+  ]);
+  for (const m of r.reviewers) assert.ok(declared.has(m), `${m} is not declared by the policy`);
 });

@@ -182,6 +182,19 @@ export const REGISTRY = [
     },
   },
   {
+    id: 'adversary_review_fallback',
+    kind: 'config',
+    describe: 'adversary_review_fallback list vs off changes the finish-gate run_adversary_review op payload the shell dispatches fallback reviewers from',
+    values: [['litellm/knob-fallback-first', 'litellm/knob-fallback-second'], 'off'],
+    vary: (input, v) => ({ ...input, adversary_review_fallback: v }),
+    promptOnly: false,
+    // The REAL consumer is the finish machine's op payload (lib/finish-step.mjs resolves the
+    // config chain at the gate and hands the shell the ordered fallback list) — the same
+    // payload commands/masterplan.md's run_adversary_review row dispatches mp-fallback-reviewer
+    // from. Never a resolveRunConfig echo.
+    observe: async ({ input, fixtures }) => fixtures[input._id].reviewFallback,
+  },
+  {
     id: 'render_images',
     kind: 'config',
     describe: 'render_images on vs off changes the set-render-config op output',

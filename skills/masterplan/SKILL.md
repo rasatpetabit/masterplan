@@ -82,13 +82,19 @@ falls through. `done` and `context_watch` support whole-object replacement with 
 Recognized keys: `complexity` (`low|medium|high`), `autonomy` (`gated|loose`, alias
 `full` → `loose`), `planning_mode` (`serial|parallel|auto`), `adversary_review`
 (`on|off`), `render_images` (`on|off`), `fabric` (`on|off`), `context_watch`
-(`{threshold 1–99, focus}`), `done` (definition of done: `version_from`, fixed-order
+(`{threshold 1–99, focus}`), `adversary_review_fallback` (a list of model refs, or `off` —
+the finish-gate fallback reviewers; see `docs/conventions/adversarial-review-failure-policy.md`),
+`done` (definition of done: `version_from`, fixed-order
 `release` steps, `${version}`, `commit_paths`).
 
 Only `complexity`, `autonomy`, and `planning_mode` are resolved **from the config
 chain at seed** and persisted into `state.yml`; `adversary_review`, `render_images`,
 and `fabric` come from their seed **flags/defaults only** (never from a config file at
-seed — `mp set-review-config` is the post-seed write for review). `fabric` accepts
+seed — `mp set-review-config` is the post-seed write for review). `adversary_review_fallback`
+resolves from the chain **at the finish gate**: the ordered fallback reviewer list the
+`run_adversary_review` op carries (the routing policy's adversary `chain` then its panel
+members, primary excluded and de-duplicated, by default; the configured list instead when
+set; no fallback on `off`). `fabric` accepts
 `on|off` at the flag (schema default `on`): `off` marks a bundle **unexecutable** —
 fabric is the only wave path since the L2 legacy dispatch was deleted, so a bundle
 without `state.dispatch.fabric: true` refuses dispatch (the legacy path is not restored).

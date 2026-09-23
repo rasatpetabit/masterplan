@@ -1,5 +1,26 @@
 # WORKLOG
 
+## 2026-09-23 — finish-gate fallback reviewer (review-fallback) on branch `review-fallback`
+
+The finish gate's whole-branch review mapped ANY primary failure to
+`--review-skipped`, including a launch the fleet review circuit breaker REFUSES
+(`breaker`/`*-adversarial-reviewer` names past a per-file round cap) — so a run could
+ship unreviewed exactly when review was mandatory. The gate now falls back to a
+different reviewer before skipping. Design decisions worth keeping: the fallback
+list is derived in lib from the SAME routing policy as the primary (adversary
+`chain`, then panel member models, primary excluded, de-duped) because a fallback
+must never re-run the reviewer that just failed; the policy-outage case is
+deliberately fail-SOFT (empty list + recorded reason → pre-fallback behavior)
+while a malformed `adversary_review_fallback` config still throws — an operator
+error is not an outage. `--review-fallback-reason` without `--review-done` is
+refused so a fallback review can never be recorded without its provenance, and
+the reentry-guard projection was left untouched (reviewer/fallback read beside it
+in finish-step) because its exact shape is pinned by reentry-guard's own tests.
+The fallback agent deliberately carries no `preset: breaker` and a name outside
+the circuit-breaker match — that is the governance trade, documented in
+`docs/conventions/adversarial-review-failure-policy.md` (not counted against the
+per-file cap; bounded by the one-review-per-HEAD re-entry guard; `off` disables).
+
 ## 2026-09-09 — schema-backed goals-amend/set-phase deadlock fixed
 
 `mp goals-amend` wrote the unpinned (legacy) hash while `set-phase`'s split-brain

@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { formatBanner, applyPlanIndex, readPluginVersion, shouldSuppressWorkflow } from '../bin/masterplan.mjs';
+import { formatBanner, applyPlanIndex, readPluginVersion, shouldSuppressWorkflow, KNOWN_FLAGS, isKnownFlag } from '../bin/masterplan.mjs';
 import { serializeState, parseState, CURRENT_SCHEMA_VERSION } from '../lib/bundle.mjs';
 import { liveCheckDigest } from '../lib/finish.mjs';
 import { captureWatchBaseline, writeWatchBaseline } from '../lib/watch-integrity.mjs';
@@ -4008,4 +4008,24 @@ test('recovery CLI: a dirty tree rejects with recovery-preservation-violation an
   assert.ok(fs.existsSync(path.join(WT, 'out-of-scope.txt')), 'the out-of-scope file is NOT deleted');
   assert.equal(git('rev-parse', 'HEAD').trim(), beforeHead, 'HEAD unchanged');
   assert.equal(read(statePath).tasks[0].status, 'pending', 'nothing recorded');
+});
+
+// ---- review-fallback: the finish-step reviewer flags reach the CLI ----------------
+test('review-fallback: --review-reviewer / --review-fallback-reason are registered CLI flags', () => {
+  assert.ok(KNOWN_FLAGS.has('review-reviewer'), '--review-reviewer must be a known flag');
+  assert.ok(KNOWN_FLAGS.has('review-fallback-reason'), '--review-fallback-reason must be a known flag');
+  assert.ok(isKnownFlag('review-reviewer'));
+  assert.ok(isKnownFlag('review-fallback-reason'));
+});
+
+test('review-fallback: a valueless reviewer flag is refused at the CLI boundary, not silently dropped', () => {
+  // A bare flag parses as boolean true; dropping it would record a review with no reviewer
+  // while the shell believes it named one — so the bin refuses it before dispatch.
+  const statePath = tmpBundle({ schema_version: 8, slug: 's', status: 'in-progress', phase: 'execute', concurrency: { owner_lock: 'off' } });
+  const r = run(['finish-step', `--state=${statePath}`, '--review-reviewer']);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /--review-reviewer must be a string/);
+  const r2 = run(['finish-step', `--state=${statePath}`, '--review-fallback-reason']);
+  assert.equal(r2.status, 2);
+  assert.match(r2.stderr, /--review-fallback-reason must be a string/);
 });

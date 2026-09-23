@@ -49,6 +49,14 @@ check via the `mp-goal-assessor` agent, and a new `goals_unmet` gate (fix-&-cont
 abort) fires before archive.
 Flag: `--retro-only` (re)generates just `retro.md` (no verification, no gate, no archive).
 
+The whole-branch adversary review inside this flow (`run_adversary_review`) records its answer
+through `mp finish-step --review-done --review-count=<n> --review-base=<b>
+--review-digest-file=<path>` **plus `--review-reviewer=<model ref or 'adversary'>`**, and — when
+the review came from a FALLBACK reviewer because the primary lane was refused or failed —
+`--review-fallback-reason="<why the primary failed>"` (refused without `--review-done`). The
+`branch_finish` AUQ payload carries the reviewer and the fallback reason on its `review` line.
+See `docs/conventions/adversarial-review-failure-policy.md` § Finish-path review.
+
 ## `retro`
 **Deprecated alias** for `finish --retro-only` — prints a one-line rename notice, then runs it.
 
@@ -269,10 +277,14 @@ Configuration resolves **CLI > repo (`.masterplan.yaml`) > user (`~/.masterplan.
 (`lib/config.mjs` `resolveRunConfig`); `config show` prints resolved values + `*_source` for each key.
 Recognized keys: `complexity` (`low|medium|high`), `autonomy` (`gated|loose`, alias `full`→`loose`),
 `planning_mode` (`serial|parallel|auto`), `adversary_review` (`on|off`), `render_images` (`on|off`),
-`fabric` (`on|off`), `context_watch` (`{threshold 1–99, focus}`), `done` (definition of done with fixed-order
+`fabric` (`on|off`), `context_watch` (`{threshold 1–99, focus}`), `adversary_review_fallback`
+(a list of model refs, or `off`) and `done` (definition of done with fixed-order
 `release` steps). Only `complexity`, `autonomy`, and `planning_mode` are resolved from the chain at seed;
 `adversary_review`, `render_images`, `fabric` come from seed flags/defaults only (`fabric: off` marks a bundle
-unexecutable — the legacy dispatch path is deleted). Deploy groups run in the fixed order
+unexecutable — the legacy dispatch path is deleted). `adversary_review_fallback` resolves from the chain at the
+finish gate (`mp finish-step`): the ordered fallback reviewer list the `run_adversary_review` op carries — the
+routing policy's adversary `chain` then its panel members (primary excluded, de-duplicated) by default, the
+configured list instead when set, and no fallback at all on `adversary_review_fallback: off`. Deploy groups run in the fixed order
 `release → install → user_only → live_check` (group order normative, within-group list order). Environment
 controls: `CLAUDE_CODE_SESSION_ID` (+ `--session`/`--host` flags; Guard-D
 session identity), `MP_DISPATCH_WAVE_CONCURRENCY` (wave fan-out cap, default 8),

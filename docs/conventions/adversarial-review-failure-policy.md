@@ -81,11 +81,41 @@ silent approve.
 ## Finish-path review (whole-branch)
 
 The whole-branch finish path (`run_adversary_review`, §2c) is separate from per-task execution
-review. It runs the harness-native adversary class/panel over the branch diff. Any non-success
-there — a non-zero review exit, the review unavailable/empty, a failed harness spawn — maps to
-`--review-skipped --review-reason=<reason>`, whose durable `adversary_review_skipped` event uses
-a hyphenated summary that deliberately does NOT match the `\b(codex|adversary)\s+review\b` audit
-regex, so a degraded finish still trips `adversary_review_configured_but_zero_invocations`.
+review. It runs the harness-native adversary class/panel over the branch diff.
+
+**Fallback reviewers (review-fallback).** When the primary is not a success — a non-zero
+review exit, the review unavailable/empty, a failed harness spawn, **or a refused/blocked
+launch** (the fleet review circuit breaker refuses `breaker`/`*-adversarial-reviewer` agent
+names once a file exceeds its review-round cap, which is how a run once shipped unreviewed) —
+the gate tries the op's `fallback_reviewers` list **in order, one attempt each**, dispatching
+the read-only `mp-fallback-reviewer` agent with that entry as the harness-native model
+override, over the same branch diff. The first attempt that produces a real review wins and is
+recorded with `--review-done --review-reviewer=<model ref> --review-fallback-reason="<why the
+primary failed>"` (durable `adversary_review` event: `data.reviewer`, `data.fallback.reason`);
+a model the harness cannot run is a failed attempt, and the gate moves on.
+
+The list is resolved deterministically in lib (`lib/finish-step.mjs` →
+`lib/dispatch/routing-policy.mjs` `adversaryFallbackReviewers`) and carried in the op payload:
+by default the adversary class `chain` in order, then the `model` of each member of the class's
+panel, de-duplicated preserving first occurrence, with the class's primary `model` excluded —
+a fallback never re-runs the reviewer that just failed. The `.masterplan.yaml` key
+`adversary_review_fallback` (CLI > repo > user > default, fail-closed validation) replaces that
+list outright, or `off` disables the fallback. An unavailable routing policy yields an empty
+list plus a recorded reason — the gate then behaves exactly as it did before the fallback
+existed:
+
+Any remaining non-success — the primary AND every fallback failed — maps to
+`--review-skipped --review-reason="<primary reason>; fallback <ref>: <reason>; …"`, whose durable
+`adversary_review_skipped` event uses a hyphenated summary that deliberately does NOT match the
+`\b(codex|adversary)\s+review\b` audit regex, so a degraded finish still trips
+`adversary_review_configured_but_zero_invocations`. Fail-soft, never wedge finish — unchanged.
+
+**Governance caveat.** `mp-fallback-reviewer` is deliberately named OUTSIDE the fleet review
+circuit breaker's name match (`(?:^|[.\-])breaker$|adversarial[-_]?reviewer$`), so a finish-gate
+fallback review does not count against the per-file review-round cap. That is the point — the
+cap must stop review *churn*, not stop the finish gate from being reviewed at all — and it is
+bounded two ways: the existing re-entry guard still limits the finish gate to one review per
+HEAD, and `adversary_review_fallback: off` disables the fallback entirely.
 
 ---
 

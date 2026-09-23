@@ -35,7 +35,7 @@ bundle and resume exactly where it left off.
 | L0 | `docs/masterplan/<slug>/` run bundle | Durable disk state: `state.yml`, `spec.md`, `plan.md`, `plan.index.json`, `events.jsonl`, `retro.md`, `handoff.md` |
 | L1 | `commands/masterplan.md` (~800-line sequencer), `bin/masterplan.mjs` (`mp` CLI), `lib/resume.mjs` (`decideNextAction`) | Thin shell; **sole durable state writer**; owns git commit/checkout |
 | L2 | `lib/dispatch-wave.mjs`, `lib/dispatch/`, `lib/wave.mjs`, `lib/plan-merge.mjs` | Native wave dispatcher (fabric path): one wave per launch; returns digests/fragments only, never writes disk/git |
-| L3 | `agents/mp-*.md` (`mp-adversarial-reviewer`, `mp-alignment-auditor`, `mp-goal-assessor`, `mp-plan-reviewer`, `mp-planner`, `mp-spec-decomposer`, `mp-subsystem-planner`) | Stateless subagents dispatched per task |
+| L3 | `agents/mp-*.md` (`mp-adversarial-reviewer`, `mp-alignment-auditor`, `mp-fallback-reviewer`, `mp-goal-assessor`, `mp-intent-critic`, `mp-plan-reviewer`, `mp-planner`, `mp-spec-decomposer`, `mp-subsystem-planner`) | Stateless subagents dispatched per task |
 | L4 | `bin/doctor.mjs`, `lib/doctor/*.mjs` | Structural lint across 19 auto-discovered check modules (incl. `pi-agent-registration`); validates run-bundle integrity |
 
 ## Key components

@@ -16,6 +16,7 @@ import {
   readEnv,
   childEnv,
   CONFIG_SCHEMA,
+  validateAdversaryReviewFallback,
 } from '../lib/config.mjs';
 import { migrate, effectiveAutonomy } from '../lib/migrate.mjs';
 
@@ -380,4 +381,79 @@ test('the literal ls-remote predicate reports absence as exit 1 against a tagles
   } finally {
     fs.rmSync(parent, { recursive: true, force: true });
   }
+});
+
+// ---- review-fallback: the adversary_review_fallback config key ----------------
+
+test('adversary_review_fallback: default resolution is null (derive the list from the routing policy)', () => {
+  const { home, repoRoot } = freshDirs();
+  const r = runConfig({ home, repoRoot });
+  assert.equal(r.values.adversary_review_fallback, null);
+  assert.equal(r.sources.adversary_review_fallback, 'default');
+  // present in the schema, so the knob-inventory discovery picks it up
+  assert.ok(Object.prototype.hasOwnProperty.call(CONFIG_SCHEMA, 'adversary_review_fallback'));
+});
+
+test('adversary_review_fallback: a repo list override replaces the default and reports its source', () => {
+  const { home, repoRoot } = freshDirs();
+  const r = runConfig({ home, repoRoot, repo: 'adversary_review_fallback:\n  - litellm/fixture-one\n  - litellm/fixture-two\n' });
+  assert.deepEqual(r.values.adversary_review_fallback, ['litellm/fixture-one', 'litellm/fixture-two']);
+  assert.equal(r.sources.adversary_review_fallback, 'repo');
+});
+
+test('adversary_review_fallback: precedence CLI > repo > user', () => {
+  const { home, repoRoot } = freshDirs();
+  const r = runConfig({
+    home, repoRoot,
+    user: 'adversary_review_fallback:\n  - litellm/user-only\n',
+    repo: 'adversary_review_fallback:\n  - litellm/repo-only\n',
+  });
+  assert.deepEqual(r.values.adversary_review_fallback, ['litellm/repo-only']);
+  const r2 = runConfig({
+    home, repoRoot,
+    cli: { adversary_review_fallback: ['litellm/cli-only'] },
+    repo: 'adversary_review_fallback: off\n',
+  });
+  assert.deepEqual(r2.values.adversary_review_fallback, ['litellm/cli-only']);
+  assert.equal(r2.sources.adversary_review_fallback, 'cli');
+  // the user layer applies when the repo says nothing
+  const { home: h2, repoRoot: r2root } = freshDirs();
+  const r3 = runConfig({ home: h2, repoRoot: r2root, user: 'adversary_review_fallback: off\n' });
+  assert.equal(r3.values.adversary_review_fallback, 'off');
+  assert.equal(r3.sources.adversary_review_fallback, 'user');
+});
+
+test('adversary_review_fallback: the scalar off disables the fallback', () => {
+  const { home, repoRoot } = freshDirs();
+  const r = runConfig({ home, repoRoot, repo: 'adversary_review_fallback: off\n' });
+  assert.equal(r.values.adversary_review_fallback, 'off');
+  assert.equal(r.sources.adversary_review_fallback, 'repo');
+});
+
+test('adversary_review_fallback: invalid values fail closed', () => {
+  const cases = [
+    ['adversary_review_fallback: nope\n', /must be the scalar 'off' or a list of model-ref strings/],
+    ['adversary_review_fallback: 3\n', /must be the scalar 'off' or a list of model-ref strings/],
+    ['adversary_review_fallback:\n', /must be the scalar 'off' or a list of model-ref strings/],
+    ['adversary_review_fallback: []\n', /flow collections are not supported/],
+    ['adversary_review_fallback:\n  - litellm/ok\n  - ""\n', /entries must be non-empty model refs/],
+    ['adversary_review_fallback:\n  - 7\n', /entries must be model-ref strings/],
+    ['adversary_review_fallback:\n  - " litellm/padded"\n', /surrounding whitespace/],
+    // an empty list is a typo, not the decision to disable — `off` is
+    ['adversary_review_fallback:\n', /must be the scalar 'off' or a list/],
+  ];
+  for (const [repo, pattern] of cases) {
+    const { home, repoRoot } = freshDirs();
+    assert.throws(() => runConfig({ home, repoRoot, repo }), pattern, `expected ${pattern} for ${JSON.stringify(repo)}`);
+  }
+  // the empty-list branch of the validator (unreachable via the YAML subset parser, which
+  // refuses flow collections — reachable through the exported validator itself)
+  assert.throws(() => validateAdversaryReviewFallback([]), /list is empty.*'off'/);
+});
+
+test('adversary_review_fallback: duplicates collapse preserving first occurrence', () => {
+  assert.deepEqual(
+    validateAdversaryReviewFallback(['litellm/a', 'litellm/b', 'litellm/a']),
+    ['litellm/a', 'litellm/b'],
+  );
 });

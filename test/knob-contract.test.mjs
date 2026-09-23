@@ -706,6 +706,38 @@ async function buildFixture(entry, spec, tag) {
     return { reviewContext: { enabled: rec?.review_context?.enabled ?? null } };
   }
 
+  if (entry.id === 'adversary_review_fallback') {
+    // The REAL finish-gate consumer: a repo whose .masterplan.yaml carries the varied
+    // value, a bundle with the review armed, and the real finishStep walk to the
+    // run_adversary_review op — whose payload is what the shell dispatches
+    // mp-fallback-reviewer from (commands/masterplan.md §2c). 'off' empties the list
+    // and records why; a list replaces the policy-derived default outright.
+    const { writeState } = await import(path.join(ROOT, 'lib', 'bundle.mjs'));
+    const { finishStep } = await import(path.join(ROOT, 'lib', 'finish-step.mjs'));
+    const cfg = need.adversary_review_fallback;
+    const configYaml = cfg === 'off'
+      ? 'adversary_review_fallback: off\n'
+      : `adversary_review_fallback:\n${cfg.map((m) => `  - ${m}\n`).join('')}`;
+    const { statePath, WT, bundleDir, slug } = buildRepoForKnob({ configYaml, slug: `knobfb${tag.toLowerCase()}` });
+    writeState(statePath, {
+      schema_version: 8, slug, status: 'in-progress', phase: 'execute', worktree: WT,
+      pending_gate: null, active_run: null,
+      review: { adversary: true }, concurrency: { owner_lock: 'off' },
+      tasks: [{ id: 1, status: 'done', wave: 1, files: ['src/a.txt'] }],
+    });
+    fs.writeFileSync(path.join(bundleDir, 'plan.index.json'), JSON.stringify({
+      tasks: [{ id: 1, verify_commands: ['true'] }],
+    }));
+    const step = (extra = {}) => finishStep({ statePath, now: 2000, ...extra });
+    let op = step();
+    if (op.op === 'run_verify') op = step({ verify: 'pass' });
+    if (op.op === 'write_retro') { fs.writeFileSync(op.path, '# retro\n'); op = step(); }
+    if (op.op !== 'run_adversary_review') {
+      throw new Error(`adversary_review_fallback fixture: expected run_adversary_review, got ${JSON.stringify(op.op)}`);
+    }
+    return { reviewFallback: { reviewers: op.fallback_reviewers, reason: op.fallback_reason ?? null } };
+  }
+
   if (entry.id === 'render_images' || entry.id === 'render.images') {
     const { readState, setRenderConfig } = await import(path.join(ROOT, 'lib', 'bundle.mjs'));
     const dir = tmpdir('mp-knob-render-');
