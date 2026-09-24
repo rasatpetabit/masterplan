@@ -149,6 +149,9 @@ test('reportLaneOverrides reports each override and returns the count', () => {
   assert.ok(line.includes('litellm/override-target'), 'names the override target');
   assert.ok(line.includes('operator'), 'names who decided');
   assert.ok(line.includes('unusable on this host'), 'carries the reason');
+  // The override no longer changes what is emitted, and a log line that read as if it
+  // did is the misreading this mechanism exists to prevent.
+  assert.match(line, /no model hint is emitted/, 'must say the override does not change routing');
   rmSync(d, { recursive: true, force: true });
 });
 
@@ -163,14 +166,15 @@ function fakeAgents(dir) {
   return dir;
 }
 
-test('runRegister writes the overridden model, and check mode then reports no drift', () => {
+test('runRegister emits no model hint, still reports the override, and check mode reports no drift', () => {
   const d = tmp();
   const agents = fakeAgents(join(d, 'agents'));
   const target = join(d, 'target');
   const o = loadLaneOverrides(writeOverride(d, VALID('litellm/override-target')));
 
   const orig = process.stderr.write;
-  process.stderr.write = () => true;
+  const seen = [];
+  process.stderr.write = (s) => { seen.push(String(s)); return true; };
   let w, c;
   try {
     w = runRegister({ agentsDir: agents, targetDir: target, check: false, laneOverrides: o });
@@ -180,15 +184,25 @@ test('runRegister writes the overridden model, and check mode then reports no dr
   }
 
   const registered = readFileSync(join(target, 'mp-fake.md'), 'utf8');
-  assert.match(registered, /^model: litellm\/override-target$/m);
+  // No emitted ref is safe for every preset: Pi validates a frontmatter `model:`
+  // against the PRESET's class chain and refuses the spawn when it is outside it,
+  // which an override target outside that chain would be. The registered copy
+  // therefore carries no hint and the preset's class policy routes the child.
+  assert.ok(!/^model:/m.test(registered), `registered agent must carry no model: hint:\n${registered}`);
   assert.equal(w.written, 1);
-  // The assertion that matters: with the override applied on BOTH paths, a host
+  // The override still reaches the log, so a host-local pin stays visible in every
+  // install rather than becoming a silently ignored file.
+  assert.ok(
+    seen.join('').includes('litellm/override-target'),
+    `the override target must still be reported on stderr: ${seen.join('')}`,
+  );
+  // The assertion that matters: with the override loaded on BOTH paths, a host
   // that overrides a lane is not permanently reported as drift.
   assert.equal(c.drift, 0, `check mode must agree with what write mode produced: ${c.report.join('; ')}`);
   rmSync(d, { recursive: true, force: true });
 });
 
-test('DEFAULTS ARE PURE: with no laneOverrides the policy model is used, whatever the host has', () => {
+test('DEFAULTS ARE PURE: with no laneOverrides the registered copy carries no hint, whatever the host has', () => {
   const d = tmp();
   const agents = fakeAgents(join(d, 'agents'));
   const target = join(d, 'target');
@@ -203,7 +217,8 @@ test('DEFAULTS ARE PURE: with no laneOverrides the policy model is used, whateve
   } finally {
     process.stderr.write = orig;
   }
-  assert.match(readFileSync(join(target, 'mp-fake.md'), 'utf8'), new RegExp(`^model: ${POLICY_MODEL.replace('/', '\\/')}$`, 'm'));
+  assert.ok(!/^model:/m.test(readFileSync(join(target, 'mp-fake.md'), 'utf8')), 'no model hint may be emitted');
+  // The policy mirror is still what a lane resolves to for validation/reporting.
   assert.equal(effectiveModel(LANE), POLICY_MODEL);
   assert.equal(reportLaneOverrides(), 0);
   rmSync(d, { recursive: true, force: true });

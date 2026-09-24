@@ -110,17 +110,21 @@ test('MODEL_MAP targets match the lane model refs the checked-in policy declares
   );
 });
 
-test('mapModelLine swaps only the model line, leaving the body byte-identical', () => {
+test('mapModelLine drops the model line, leaving the rest of the body byte-identical', () => {
+  // A registered agent must NOT carry a model hint. Pi validates a frontmatter
+  // `model:` value against the PRESET's class chain and THROWS SpawnModelPolicyError
+  // when it is outside it (engine/standalone/runtime-routing.mjs, model-fallback.ts
+  // assertPolicyDidNotRefuse) — and no Pi path resolves a lane alias. Both the lane
+  // alias and the lane's model ref are refused for a breaker-preset agent, so the
+  // only hint that cannot refuse the spawn is none at all: the preset's class policy
+  // routes the child.
   const [liveAlias] = Object.keys(MODEL_MAP);
   const src = `---\nname: mp-x\ndescription: x\nmodel: ${liveAlias}\ntools: Read, Grep\n---\n\nbody line 1\nbody line 2\n`;
   const { alias, mapped, body } = mapModelLine(src, 'mp-x.md');
-  assert.equal(alias, liveAlias);
-  assert.equal(mapped, MODEL_MAP[liveAlias]);
-  const outLines = body.split('\n');
-  const srcLines = src.split('\n');
-  assert.equal(outLines.length, srcLines.length);
-  const diffs = outLines.filter((l, i) => l !== srcLines[i]);
-  assert.deepEqual(diffs, [`model: ${MODEL_MAP[liveAlias]}`]);
+  assert.equal(alias, liveAlias, 'the declared lane is still reported for validation/reporting');
+  assert.equal(mapped, MODEL_MAP[liveAlias], 'the lane is still resolved against the map');
+  assert.ok(!/^model:/m.test(body), 'the registered body must carry no model: hint');
+  assert.ok(body.includes('name: mp-x'), 'name line must be untouched');
   assert.ok(body.includes('tools: Read, Grep'), 'tools line must be untouched');
   assert.ok(body.includes('body line 1\nbody line 2'), 'body must be untouched');
 });
@@ -142,6 +146,26 @@ test('mapModelLine throws when there is no model line', () => {
     () => mapModelLine('---\nname: mp-x\n---\n', 'mp-x.md'),
     /no `model:` frontmatter line/,
   );
+});
+
+// The registered output must be dispatchable by Pi. This is the regression the
+// model-hint removal fixes: Pi validates a frontmatter `model:` value against the
+// PRESET's class chain and refuses the spawn when it is outside it, so BOTH the
+// lane alias AND the lane's resolved model ref refuse a breaker-preset agent
+// (breaker -> class adversary, whose chain does not contain the frontier lane's
+// model). Registering no hint at all is the only shape that cannot refuse.
+test('a registered agent carries no hint that Pi would refuse (adversary-preset regression)', () => {
+  // mp-intent-critic is a real preset:breaker agent (frontier lane) — the shape
+  // that was silently un-dispatchable while the model line was swapped in.
+  const lane = 'frontier';
+  assert.ok(lane in MODEL_MAP, 'fixture lane must exist in the routing policy');
+  const src = `---\nname: mp-intent-critic\ndescription: x\nmodel: ${lane}\npreset: breaker\ntools: read\n---\n\nbody\n`;
+  const { body } = mapModelLine(src, 'mp-intent-critic.md');
+  const hint = (body.match(/^model:\s*(\S+)\s*$/m) ?? [])[1];
+  assert.equal(hint, undefined, 'no model: hint may survive registration');
+  // Guard the other direction too: if a hint were ever reintroduced, it must be the
+  // lane alias rather than the resolved ref, so the failure mode stays diagnosable.
+  assert.notEqual(hint, MODEL_MAP[lane], 'the resolved lane ref is also refused by Pi and must never be emitted');
 });
 
 // ---- runRegister filesystem behavior (the CLI contract) ----
@@ -176,13 +200,13 @@ test('runRegister --check is READ-ONLY: no writes, no deletes, no file creation'
   assert.ok(res.drift > 0, 'check should report drift for missing files');
 });
 
-test('runRegister write mode produces bare-only with swapped model', () => {
+test('runRegister write mode produces bare-only with NO model hint (preset class policy routes)', () => {
   const { agentsDir, targetDir } = setupTmpAgents({ 'mp-x.md': VALID_AGENT });
   const res = runRegister({ agentsDir, targetDir, check: false });
   assert.equal(res.registered, 1);
   assert.equal(res.written, 1, 'bare only');
   const bare = readFileSync(join(targetDir, 'mp-x.md'), 'utf8');
-  assert.ok(bare.includes(`model: ${LIVE_TARGET}`));
+  assert.ok(!/^model:/m.test(bare), `registered agent must carry no model: hint:\n${bare}`);
   assert.equal(existsSync(join(targetDir, 'masterplan:mp-x.md')), false, 'no colon alias emitted');
 });
 
@@ -290,11 +314,11 @@ test('mapNameLine throws when there is no name line', () => {
 });
 
 test('outputsFor yields a bare copy only (no colon alias)', () => {
-  const swapped = `---\nname: mp-x\nmodel: ${LIVE_TARGET}\ntools: Read\n---\n\nbody\n`;
-  const outs = outputsFor('mp-x.md', swapped);
+  const body = `---\nname: mp-x\ntools: Read\n---\n\nbody\n`;
+  const outs = outputsFor('mp-x.md', body);
   assert.equal(outs.length, 1);
   assert.equal(outs[0].rel, 'mp-x.md');
-  assert.equal(outs[0].body, swapped, 'bare copy body is the model-swapped body verbatim');
+  assert.equal(outs[0].body, body, 'bare copy body is the mapped body verbatim');
 });
 
 
@@ -526,7 +550,7 @@ test('register-pi-agents discovers mp-intent-critic.md, maps its lane model, and
   assert.equal(write.written, 1, 'bare copy must be written');
 
   const installed = readFileSync(join(targetDir, 'mp-intent-critic.md'), 'utf8');
-  assert.ok(installed.includes(`model: ${MODEL_MAP['frontier']}`), 'lane model must be mapped from the routing map');
+  assert.ok(!/^model:/m.test(installed), 'the registered agent must carry no model: hint (the preset routes it)');
   assert.ok(installed.includes('name: mp-intent-critic'), 'name must be preserved');
   assert.ok(installed.includes('preset: breaker'), 'preset must be preserved');
   assert.ok(installed.includes('tools: read, bash'), 'tools must be preserved');

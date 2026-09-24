@@ -38,6 +38,62 @@ const RELEASES_DIR = 'releases';
 const CURRENT_LINK = 'current';
 const SKILL_NAMES = ['masterplan', 'masterplan-detect'];
 
+// Release retention. The installer published one dir per sha and never pruned, so the
+// install root accumulated every release ever installed. Keep the newest N and NEVER the
+// live `current` target — the same shape as the fleet's other release roots
+// (pi-fork scripts/install-atomic.mjs pruneReleases, inference internal/install DefaultKeep),
+// whose bound is 3 ("one manual rollback point plus headroom", /srv/AGENTS.md
+// "No backup trash in production roots"). A wider ceiling is the accumulation this stops.
+const KEEP_RELEASES = 3;
+
+/**
+ * Prune release dirs down to KEEP_RELEASES, newest-first by mtime, never the live target.
+ *
+ * Best-effort and non-fatal by design: a release that cannot be enumerated or removed must
+ * not fail an otherwise-good install (the install is the deliverable; retention is hygiene).
+ * The protected path is compared by realpath so a `current` symlink into the release being
+ * considered still protects it.
+ */
+function pruneReleases(installRoot, keep = KEEP_RELEASES) {
+  const releasesDir = path.join(installRoot, RELEASES_DIR);
+  let entries;
+  try {
+    entries = fs.readdirSync(releasesDir, { withFileTypes: true });
+  } catch {
+    return { kept: [], removed: [], total: 0 };
+  }
+  let protectedPath = null;
+  try {
+    protectedPath = fs.realpathSync(path.join(installRoot, CURRENT_LINK));
+  } catch { /* no current link yet: nothing is protected */ }
+
+  const releases = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+    const full = path.join(releasesDir, entry.name);
+    let mtimeMs;
+    try {
+      mtimeMs = fs.lstatSync(full).mtimeMs;
+    } catch {
+      continue;
+    }
+    releases.push({ name: entry.name, path: full, mtimeMs });
+  }
+  releases.sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+  const removed = [];
+  for (const rel of releases.slice(keep)) {
+    let real = null;
+    try { real = fs.realpathSync(rel.path); } catch { real = rel.path; }
+    if (protectedPath !== null && real === protectedPath) continue;
+    try {
+      fs.rmSync(rel.path, { recursive: true, force: true });
+      removed.push(rel.name);
+    } catch { /* best-effort: leave it for the next install */ }
+  }
+  return { kept: releases.slice(0, keep).map((r) => r.name), removed, total: releases.length };
+}
+
 // Paths a valid release snapshot MUST carry. Fail closed if any is missing —
 // a half-snapshot install would break the skill's resolution chain silently.
 const REQUIRED_PATHS = [
@@ -146,7 +202,10 @@ function install(opts) {
     for (const name of SKILL_NAMES) ensureSkillLink(piRoot, installRoot, name, opts.force);
     const reg = runRegister({ agentsDir: path.join(releaseDir, 'agents'), targetDir: path.join(piRoot, 'agent', 'agents'), check: false, laneOverrides: loadLaneOverrides() });
     if (reg.drift > 0) die(`registration drift after relink:\n${reg.report.join('\n')}`, 1);
-    process.stdout.write(JSON.stringify({ install_pi: 'idempotent', sha, release: releaseDir, registration: { written: reg.written, removed: reg.removed } }) + '\n');
+    // Retention runs on the idempotent path too: a host that stays on one sha would
+    // otherwise never prune the releases accumulated by every earlier install.
+    const pruned = pruneReleases(installRoot);
+    process.stdout.write(JSON.stringify({ install_pi: 'idempotent', sha, release: releaseDir, registration: { written: reg.written, removed: reg.removed }, retention: { kept: pruned.kept.length, removed: pruned.removed } }) + '\n');
     return;
   }
 
@@ -186,6 +245,10 @@ function install(opts) {
 
   const links = SKILL_NAMES.map((name) => ensureSkillLink(piRoot, installRoot, name, opts.force));
 
+  // Retention AFTER the current swap, so the just-installed release is the live target and
+  // is protected by path rather than by name.
+  const pruned = pruneReleases(installRoot);
+
   const pkg = JSON.parse(fs.readFileSync(path.join(releaseDir, 'package.json'), 'utf8'));
   fs.writeFileSync(
     path.join(installRoot, INSTALL_META),
@@ -201,6 +264,7 @@ function install(opts) {
     current: fs.realpathSync(currentPath),
     links: links.map((l) => `${path.basename(l.linkPath)}: ${l.note}`),
     registration: { written: reg.written, removed: reg.removed },
+    retention: { kept: pruned.kept.length, removed: pruned.removed },
   }) + '\n');
 }
 

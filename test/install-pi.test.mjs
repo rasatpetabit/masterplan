@@ -387,3 +387,70 @@ test('finding 4 regression: a skill link into a STALE release directory is drift
   assert.ok(!bad.json().problems.some((p) => p.includes('masterplan-detect')), 'only the drifted link is named');
   void current;
 });
+
+// ---- release retention (keep-N) -----------------------------------------------------
+//
+// The installer published a release dir per sha and never pruned, so the install root
+// accumulated every release ever installed. Retention keeps the newest N and never the
+// live `current` target — mirroring the fleet's other release roots
+// (pi-fork scripts/install-atomic.mjs pruneReleases, inference internal/install DefaultKeep).
+
+/** Seed `count` synthetic older releases under the install root, oldest-first by mtime. */
+function seedReleases(installRoot, count) {
+  const releases = path.join(installRoot, 'releases');
+  fs.mkdirSync(releases, { recursive: true });
+  const names = [];
+  for (let i = 0; i < count; i++) {
+    const name = `seed${String(i).padStart(3, '0')}`;
+    const dir = path.join(releases, name);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'masterplan', version: `0.0.${i}` }) + '\n');
+    const t = new Date(Date.now() - (count - i) * 60000);
+    fs.utimesSync(dir, t, t);
+    names.push(name);
+  }
+  return names;
+}
+
+test('retention: an install prunes older releases to the keep-N bound', () => {
+  const { src } = makeSourceRepo();
+  const env = layout();
+  // A first install creates releases/<sha> + current; then seed 6 older ones.
+  assert.equal(run([`--source=${src}`, ...env.args]).status, 0);
+  const seeds = seedReleases(env.installRoot, 6);
+  const before = fs.readdirSync(path.join(env.installRoot, 'releases'));
+  assert.equal(before.length, 7, `expected 7 releases before the second install, saw ${before.length}`);
+
+  // A second install of the SAME sha is idempotent and must still prune.
+  const r = run([`--source=${src}`, ...env.args]);
+  assert.equal(r.status, 0, r.stderr);
+  const after = fs.readdirSync(path.join(env.installRoot, 'releases')).sort();
+  assert.ok(after.length <= 3, `retention must leave at most 3 releases, saw ${after.length}: ${after.join(', ')}`);
+  const current = path.basename(fs.realpathSync(path.join(env.installRoot, 'current')));
+  assert.ok(after.includes(current), 'the live current release must never be pruned');
+  assert.ok(after.length >= 2, 'retention must keep a rollback point, not just current');
+  // Newest-first: the seeds with the oldest mtimes are the ones removed.
+  assert.ok(!after.includes(seeds[0]), 'the oldest release must be pruned first');
+  assert.ok(after.includes(seeds[seeds.length - 1]), 'the newest non-current release must survive');
+});
+
+test('retention: pruning never removes the current target even when it is the oldest', () => {
+  const { src } = makeSourceRepo();
+  const env = layout();
+  assert.equal(run([`--source=${src}`, ...env.args]).status, 0);
+  const currentDir = fs.realpathSync(path.join(env.installRoot, 'current'));
+  // Make current look like the OLDEST release, then add newer ones.
+  const old = new Date(Date.now() - 3600_000);
+  fs.utimesSync(currentDir, old, old);
+  seedReleases(env.installRoot, 5);
+  const r = run([`--source=${src}`, ...env.args]);
+  assert.equal(r.status, 0, r.stderr);
+  const after = fs.readdirSync(path.join(env.installRoot, 'releases'));
+  // current is protected by path, so it survives IN ADDITION to the newest N when it is
+  // not itself among them (the same semantics as pi-fork's `protect` list): the bound is
+  // therefore N+1, and what must hold is that the oldest releases were pruned at all.
+  assert.ok(after.length <= 4, `retention must run even when current is the oldest, saw ${after.length}`);
+  assert.ok(!after.includes('seed000'), 'the oldest seeded release must be pruned');
+  assert.ok(fs.existsSync(currentDir), 'current must survive retention pruning');
+  assert.equal(fs.realpathSync(path.join(env.installRoot, 'current')), currentDir, 'current must still resolve');
+});

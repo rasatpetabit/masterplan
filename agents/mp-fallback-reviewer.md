@@ -6,10 +6,11 @@ tools: read, bash
 ---
 
 > **Model provenance:** the `model:` field above names a routing-policy LANE (`frontier`);
-> `bin/register-pi-agents.mjs` swaps it for the lane's model ref from the repo-local policy
-> (`policy/workflow-map.json`). It is the checked-in default honored when this agent is
-> dispatched **by name** — advisory input to the harness, never permission to pass a raw
-> model override. See `/srv/workflows/policy/dispatch.md` (model provenance).
+> `bin/register-pi-agents.mjs` validates it against the repo-local policy
+> (`policy/workflow-map.json`) and then REMOVES the line from the registered pi copy — Pi
+> refuses a spawn whose frontmatter `model:` hint falls outside the preset's class chain,
+> and a lane name always does. The lane above is the checked-in intent; this agent's model is
+> supplied per dispatch (below). See `/srv/workflows/policy/dispatch.md` (model provenance).
 >
 > **Why this agent exists (review-fallback):** at the finish gate (`run_adversary_review`,
 > §2c) the primary review runs on the routing policy's **adversary class** (`breaker` role,

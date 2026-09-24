@@ -7,10 +7,13 @@ tools: read, bash
 ---
 
 > **Model provenance:** the `model:` field above names a routing-policy LANE (`frontier`);
-> `bin/register-pi-agents.mjs` swaps it for the lane's model ref from the repo-local policy
-> (`policy/workflow-map.json`). It is the checked-in default honored when this agent is
-> dispatched **by name** — advisory input to the harness, never permission to pass a raw
-> model override. See `/srv/workflows/policy/dispatch.md` (model provenance).
+> `bin/register-pi-agents.mjs` validates it against the repo-local policy
+> (`policy/workflow-map.json`) and then REMOVES the line from the registered pi copy — Pi
+> refuses a spawn whose frontmatter `model:` hint falls outside the preset's class chain,
+> and a lane name always does, so the preset's class policy routes the child instead. The
+> lane above is the checked-in intent honored when this agent is dispatched **by name** —
+> advisory input to the harness, never permission to pass a raw model override. See
+> `/srv/workflows/policy/dispatch.md` (model provenance).
 
 # mp-intent-critic — fresh-context intent critic (critic class)
 

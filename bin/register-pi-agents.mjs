@@ -2,8 +2,10 @@
 //
 // Claude Code discovers agents/mp-*.md via its plugin loader as the
 // `masterplan:mp-*` namespace. Pi hosts need adapted copies under
-// `~/.pi/agent/agents/` with the `model:` line swapped via MODEL_MAP
-// (aliases are the routing-policy lane names, mapped to their lane model refs).
+// `~/.pi/agent/agents/` with the `model:` line REMOVED: the frontmatter lane alias
+// is validated against MODEL_MAP (aliases are the routing-policy lane names) and then
+// dropped, because Pi refuses a spawn whose frontmatter `model:` hint falls outside
+// the preset's class chain — which a lane alias always does.
 //
 // Registration is **bare-only**: one file per agent (`mp-X.md`). Colon alias
 // copies (`masterplan:mp-X.md`) are no longer emitted. On write, managed
@@ -31,8 +33,9 @@ const PI_USER_AGENTS_DIR = join(homedir(), '.pi', 'agent', 'agents');
 
 // Live-alias map, DERIVED from the repo-local routing policy
 // (policy/workflow-map.json): every lane name is an alias for its lane model ref
-// (litellm/...). Agent frontmatter declares a LANE (`model: frontier`), and
-// registration swaps it for the lane's model ref. The policy file is the only
+// (litellm/...). Agent frontmatter declares a LANE (`model: frontier`); registration
+// VALIDATES it against this map and then removes the line from the registered copy, so
+// the preset's class policy routes the child. The policy file is the only
 // place model ids appear, so a fleet model change turns this map over
 // automatically; the test suite re-derives the same map from the policy, so any
 // drift between a declared alias and the policy fails closed.
@@ -116,13 +119,20 @@ export function effectiveModel(alias, overrides = {}) {
 /**
  * One stderr line per applied override, so a divergence from fleet routing is
  * visible in every install log rather than only in the generated files.
+ *
+ * The line says what the override does NOT do: registration emits no model hint at
+ * all (Pi refuses one that falls outside the preset's class chain), so the routing a
+ * child actually gets comes from its preset's class policy. A log line that read as
+ * if the override re-pointed the agent would be the very misreading this file exists
+ * to prevent.
  */
 export function reportLaneOverrides(overrides = {}) {
   const lanes = Object.keys(overrides);
   for (const lane of lanes) {
     const o = overrides[lane];
     process.stderr.write(
-      `lane-overrides: ${lane}: ${MODEL_MAP[lane]} -> ${o.model} (decided_by: ${o.decided_by}) — ${o.reason}\n`,
+      `lane-overrides: ${lane}: ${MODEL_MAP[lane]} -> ${o.model} (decided_by: ${o.decided_by}) — ${o.reason}\n`
+      + 'lane-overrides: recorded only — no model hint is emitted, so this does not change what a registered agent is routed to\n',
     );
   }
   return lanes.length;
@@ -157,7 +167,14 @@ function mapModelLine(body, file, overrides = {}) {
   const alias = m[1];
   const mapped = effectiveModel(alias, overrides);
   if (!mapped) throw new Error(`${file}: model alias \`${alias}\` has no pi mapping (extend MODEL_MAP)`);
-  return { alias, mapped, body: body.replace(/^model:\s*\S+\s*$/m, `model: ${mapped}`) };
+  // The lane is validated above and then REMOVED from the registered output. Pi does
+  // not resolve lane aliases: it validates a frontmatter `model:` value against the
+  // PRESET's class chain and refuses the spawn (`SpawnModelPolicyError`) when the value
+  // is outside it — which both the lane alias and the lane's resolved ref are for any
+  // preset whose class sits on a different lane. Emitting no hint lets the preset's
+  // class policy route the child, which is the only shape that cannot refuse.
+  // `alias`/`mapped` stay in the return value so callers still report provenance.
+  return { alias, mapped, body: body.replace(/^model:\s*\S+\s*\n?/m, '') };
 }
 
 // Kept for unit-test compatibility / historical callers; no longer used by write path.
@@ -169,10 +186,10 @@ function mapNameLine(body, file) {
   return body.replace(/^name:\s*\S+\s*$/m, `name: ${COLON_PREFIX}${base}`);
 }
 
-// Bare-only: one pi file per CC agent (model line swapped; name unchanged).
-function outputsFor(file, modelSwappedBody) {
+// Bare-only: one pi file per CC agent (model hint removed; name unchanged).
+function outputsFor(file, modelMappedBody) {
   const base = file.replace(/\.md$/, '');
-  return [{ rel: `${base}.md`, body: modelSwappedBody }];
+  return [{ rel: `${base}.md`, body: modelMappedBody }];
 }
 
 /** Managed colon alias path for a source basename (e.g. mp-planner.md → masterplan:mp-planner.md). */
@@ -271,12 +288,12 @@ export function runRegister({ agentsDir, targetDir, check, skipSet = SKIP_FOR_PI
           drift++;
           report.push(`DRIFT  ${out.rel} (installed ${installed === null ? 'MISSING' : 'differs from canonical+map'})`);
         } else {
-          report.push(`OK     ${out.rel}  ${alias} → ${mapped}`);
+          report.push(`OK     ${out.rel}  (lane ${alias} → ${mapped}; no model hint emitted)`);
         }
       } else {
         writeFileSync(dstPath, out.body, 'utf8');
         written++;
-        report.push(`WROTE  ${out.rel}  (${alias} → ${mapped})`);
+        report.push(`WROTE  ${out.rel}  (lane ${alias} → ${mapped}; no model hint emitted)`);
       }
     }
 
@@ -337,8 +354,12 @@ export { MODEL_MAP, COLON_PREFIX, SKIP_FOR_PI, mapModelLine, mapNameLine, output
 const USAGE = `Usage: node bin/register-pi-agents.mjs [--check] [--help]
 
 Registers the masterplan agents for a pi host: writes bare mp-*.md copies
-under ~/.pi/agent/agents/ with the model: line swapped via the routing-policy
-lane map (see docs/development.md). Colon alias copies are retired and cleaned.
+under ~/.pi/agent/agents/ with the model: line REMOVED — the lane alias in the
+source is validated against the routing-policy lane map (see
+docs/development.md) and then dropped, because pi refuses a spawn whose
+frontmatter model: hint falls outside the preset's class chain, and the
+preset's class policy routes the child instead. Colon alias copies are retired
+and cleaned.
 Owns a manifest (.masterplan-managed.json) listing which files it manages; in
 write mode it removes previously-managed files whose source agent is gone.
 Files it never managed are left untouched and reported as UNEXPECTED for
@@ -346,8 +367,9 @@ manual review.
 
 Options:
   --check   Read-only drift check: compare installed files against canonical
-            agents/mp-*.md + model map. Reports drift; exits 1 on drift, 0 when
-            in sync. Never writes, deletes, or creates anything.
+            agents/mp-*.md after lane validation and model-line removal. Reports
+            drift; exits 1 on drift, 0 when in sync. Never writes, deletes, or
+            creates anything.
   --help    Print this help and exit. Read-only — performs no writes.
 
 Any unrecognized option or unexpected argument is rejected with exit 2.

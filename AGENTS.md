@@ -59,7 +59,7 @@ are the owner's — amend it through the owner, never to fit the change.
 | Release history + decision rationale per version | [`CHANGELOG.md`](./CHANGELOG.md) |
 | Cross-cutting rules (CD-1…CD-10) + plan-field contract | `docs/conventions/cd-rules.md` · `docs/conventions/plan-annotations.md` |
 | Build/test/lint + contributor discipline | [`docs/development.md`](./docs/development.md) |
-| Agent registration (CC + pi) | CC: `agents/` → `masterplan:mp-*` (plugin loader). pi: `bin/register-pi-agents.mjs` writes `~/.pi/agent/agents/` — **bare** `mp-*.md` only (`model:` is a routing-policy lane name, e.g. `frontier`, resolved to its lane model ref from `policy/workflow-map.json`; managed colon leftovers removed; `--check` for drift). See [`docs/development.md`](./docs/development.md) §"Never silently inline a delegated role" |
+| Agent registration (CC + pi) | CC: `agents/` → `masterplan:mp-*` (plugin loader). pi: `bin/register-pi-agents.mjs` writes `~/.pi/agent/agents/` — **bare** `mp-*.md` only (`model:` in the source is a routing-policy lane name, e.g. `frontier`; registration validates it against `policy/workflow-map.json` and then **removes** the line, because pi refuses a frontmatter hint outside the preset's class chain and the preset's class policy routes the child; managed colon leftovers removed; `--check` for drift). See [`docs/development.md`](./docs/development.md) §"Never silently inline a delegated role" |
 | Active plans (current work) | `docs/masterplan/*/state.yml` (source of truth per CD-7) |
 
 **Canonical reading order for a new session:** this file →
