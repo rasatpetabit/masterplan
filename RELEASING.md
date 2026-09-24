@@ -2,7 +2,7 @@
 
 Run this checklist for every version bump. The publish-hygiene live test validates version-bearing files agree.
 
-**Publish-time gate:** `lib/hygiene.mjs` is the publish-time gate (C10, retain-intentionally). Its three detector families — (1) fixture-identifier leak scan, (2) cross-manifest version sync, (3) namespace collision — are driven ONLY by `test/publish-hygiene.test.mjs`, which runs under `npm test`. No runtime code imports it; the test is its sole consumer and its release-safety bar. If this module ever looks dead, it is not: it is the guard this checklist's step 7 runs.
+**Publish-time gate:** `lib/hygiene.mjs` is the publish-time gate (C10, retain-intentionally). Its three detector families — (1) fixture-identifier leak scan, (2) cross-manifest version sync, (3) namespace collision — are driven ONLY by `test/publish-hygiene.test.mjs`, which runs under `npm test`. No runtime code imports it; the test is its sole consumer and its release-safety bar. If this module ever looks dead, it is not: it is the guard this checklist's step 8 runs.
 
 ### Release contract
 
@@ -29,17 +29,18 @@ The corrective 10.0.x release supersedes, never withdraws, the bad v10.0.0.
 3. **`.codex-plugin/plugin.json`** — bump `version`
 4. **`package.json`** — bump `version`
 5. **`README.md`** — update `Current release: **vX.Y.Z**` line
-6. **`CHANGELOG.md`** — add `## [X.Y.Z]` entry with date and summary
-7. Run `node --test test/*.test.mjs` — the publish-hygiene live test confirms all version-bearing files agree.
-8. **Tag the release** — run `node scripts/release.mjs --version=X.Y.Z` (it
+6. **`llms.txt`** — update the `Current release: vX.Y.Z` line (the publish-hygiene E13 check reads it)
+7. **`CHANGELOG.md`** — add `## [X.Y.Z]` entry with date and summary
+8. Run `node --test test/*.test.mjs` — the publish-hygiene live test confirms all version-bearing files agree.
+9. **Tag the release** — run `node scripts/release.mjs --version=X.Y.Z` (it
    inserts and commits a missing CHANGELOG header, then creates the annotated
    tag `vX.Y.Z` at HEAD; it never bumps version files and is idempotent at its
    own tag).
-9. **Push the tag** — `git push origin vX.Y.Z` (push the tag explicitly; a plain
+10. **Push the tag** — `git push origin vX.Y.Z` (push the tag explicitly; a plain
    `git push` of the branch does **not** carry tags). CI's `release-publish` job
-   (`ci.yml`) only runs when a tag matching `v*` is pushed — **without step 8+9 the
+   (`ci.yml`) only runs when a tag matching `v*` is pushed — **without steps 9 and 10 the
    GitHub Release is never created**, even though the code landed on `main`.
-10. **Pi host install** — Pi has no plugin manager; its equivalent of
+11. **Pi host install** — Pi has no plugin manager; its equivalent of
     `/plugin update` is the repo's own installer. Run it AFTER the tag is committed
     and pushed (it snapshots the tagged commit via `git archive` — dirty bytes never
     enter an install):
@@ -52,14 +53,14 @@ The corrective 10.0.x release supersedes, never withdraws, the bad v10.0.0.
     Then verify: `node bin/install-pi.mjs --check` must report `check_ok`. Run
     `--check` any time to validate the live install.
 
-After steps 1–7 pass, commit with message `release: vX.Y.Z — <one-line summary>`, then run steps 8 and 9.
+After steps 1–8 pass, commit with message `release: vX.Y.Z — <one-line summary>`, then run steps 9 and 10.
 
 ### Tag discipline
 
 - **One annotated tag per release**, named exactly `vX.Y.Z` (matching the README
   `Current release` marker and every manifest version). `release-publish` parses
   `v<X.Y.Z>` from the tag and requires a matching `## [X.Y.Z]` section in
-  `CHANGELOG.md` (step 6) **before** the tag is pushed — create the CHANGELOG
+  `CHANGELOG.md` (step 7) **before** the tag is pushed — create the CHANGELOG
   entry first.
 - **No retroactive tagging.** Releases that shipped without a tag are left
   untagged; the next release tags only its own commit. This keeps the tag→commit

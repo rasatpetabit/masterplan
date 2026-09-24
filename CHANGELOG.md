@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [10.0.10] — 2026-09-23
+
+### Fixed — Pi refused to spawn five registered agents
+
+- `bin/register-pi-agents.mjs` still validates each agent's source lane fail-closed, then
+  registers the agent **without** a `model:` line. Pi checks a frontmatter `model:` against the
+  preset's class chain and refuses the spawn (`SpawnModelPolicyError`) when it falls outside it,
+  so the five breaker-preset agents (`mp-adversarial-reviewer`, `mp-alignment-auditor`,
+  `mp-goal-assessor`, `mp-intent-critic`, `mp-plan-reviewer`) could not be spawned at all; a
+  lane alias is refused the same way. With no hint every preset-bearing agent routes through its
+  preset's class policy, and the three judge-preset agents resolve exactly as before.
+- The lane-override file (`~/.config/masterplan/lane-overrides.json`) is validated and reported
+  but recorded only: registration no longer writes an override into the agent file.
+- Agent provenance prose (all nine `agents/mp-*.md`) describes the no-hint registration.
+  `mp-fallback-reviewer` declares no `preset:` and Pi still refuses it in every mode; that is
+  unchanged by this release.
+
+### Added — installed release retention
+
+- `bin/install-pi.mjs` keeps the newest three installed releases under
+  `~/.local/share/masterplan/releases` (newest first by mtime, never the `current` target), and
+  reports what it pruned in the install JSON's `retention`. A pruning failure does not fail the
+  install.
+
+### Changed — release checklist
+
+- `RELEASING.md` lists `llms.txt` as a version-bearing file (item 6). Its omission is why the E13
+  version-surface check failed at 10.0.8 and 10.0.9 fixed the file by hand.
+
 ## [10.0.9] — 2026-09-23
 
 ### Added — finish-gate fallback reviewer (review-fallback)
