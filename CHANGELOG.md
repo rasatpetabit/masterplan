@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Removed — the host lane-override file
+
+- `~/.config/masterplan/lane-overrides.json` is no longer read. Since 10.0.10 registration
+  emits no model hint, so an override only recorded a value and changed no routing, while a
+  malformed file still aborted `register-pi-agents` and `install-pi`. A lane that is
+  unusable on one host is handled by its class chain's fallback or a governed routing-policy
+  change. `loadLaneOverrides`, `reportLaneOverrides` and `effectiveModel` are gone, and
+  `runRegister` no longer takes `laneOverrides`.
+
 ## [10.0.10] — 2026-09-23
 
 ### Fixed — Pi refused to spawn five registered agents

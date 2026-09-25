@@ -41,103 +41,6 @@ const PI_USER_AGENTS_DIR = join(homedir(), '.pi', 'agent', 'agents');
 // drift between a declared alias and the policy fails closed.
 const MODEL_MAP = laneAliasMap();
 
-// ---------------------------------------------------------------------------
-// Host-local lane overrides
-//
-// MODEL_MAP stays an EXACT mirror of the routing policy — the test suite asserts
-// that declared aliases and the map agree — so overrides are applied as a
-// SEPARATE layer at the point of use and are never merged into the map.
-//
-// Why this exists: a lane can be unusable on one host while remaining correct
-// fleet-wide, and before this seam the only workaround was hand-editing the
-// generated files under ~/.pi/agent/agents, which `install-pi.mjs --check`
-// correctly reports as drift and which the next install silently erases.
-//
-// Three properties are deliberate:
-//   - host-local, under $HOME and never in the repo, so one host's workaround is
-//     not shipped to every other host;
-//   - it requires a `reason` and a `decided_by`, because fleet policy reserves a
-//     governed-lane model change to an explicit operator decision and the file
-//     must show that one happened rather than leaving an anonymous pin;
-//   - it defaults to NO overrides at every exported seam, so the test suite stays
-//     deterministic and cannot depend on the state of whichever machine runs it.
-//     Only the real entry points (this file's main, and install-pi.mjs) load the
-//     host file and pass it in explicitly.
-// ---------------------------------------------------------------------------
-const LANE_OVERRIDE_PATH = join(homedir(), '.config', 'masterplan', 'lane-overrides.json');
-
-/**
- * Read and validate the host-local override file. A missing file is not an error
- * (it means no overrides); an unreadable or malformed one IS, and is never
- * silently ignored — ignoring it would re-point every governed agent at the lane
- * the file exists to move them off, with no explanation anywhere.
- */
-export function loadLaneOverrides(overridePath = LANE_OVERRIDE_PATH) {
-  let raw;
-  try {
-    raw = readFileSync(overridePath, 'utf8');
-  } catch (e) {
-    if (e && e.code === 'ENOENT') return {};
-    throw new Error(`lane-overrides: ${overridePath} is unreadable (${e.message}) — refusing to register agents against a lane map I could not fully read`);
-  }
-  let parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (e) {
-    throw new Error(`lane-overrides: ${overridePath} is not valid JSON (${e.message}) — refusing rather than ignoring, because ignoring it would silently re-point agents at the lane this file exists to move them off`);
-  }
-  const entries = parsed && parsed.overrides;
-  if (entries === undefined || entries === null) return {};
-  if (typeof entries !== 'object' || Array.isArray(entries)) {
-    throw new Error(`lane-overrides: ${overridePath} "overrides" must be an object keyed by lane name`);
-  }
-  for (const [lane, o] of Object.entries(entries)) {
-    if (!o || typeof o !== 'object' || Array.isArray(o)) {
-      throw new Error(`lane-overrides: ${overridePath} override for lane \`${lane}\` must be an object carrying model, reason and decided_by`);
-    }
-    for (const k of ['model', 'reason', 'decided_by']) {
-      if (typeof o[k] !== 'string' || o[k].trim() === '') {
-        throw new Error(`lane-overrides: ${overridePath} override for lane \`${lane}\` is missing a non-empty \`${k}\` — an anonymous pin is exactly what this mechanism replaces`);
-      }
-    }
-    if (!Object.prototype.hasOwnProperty.call(MODEL_MAP, lane)) {
-      throw new Error(`lane-overrides: ${overridePath} names lane \`${lane}\`, which the routing policy does not declare — a typo here would silently leave agents on the lane this file exists to move them off`);
-    }
-    if (!o.model.startsWith('litellm/')) {
-      process.stderr.write(`lane-overrides: warning — lane \`${lane}\` -> \`${o.model}\` is not a \`litellm/\` ref, unlike every lane in the routing policy\n`);
-    }
-  }
-  return entries;
-}
-
-/** The model a lane resolves to given an override layer: the policy ref, unless overridden. */
-export function effectiveModel(alias, overrides = {}) {
-  const o = overrides[alias];
-  return o ? o.model : MODEL_MAP[alias];
-}
-
-/**
- * One stderr line per applied override, so a divergence from fleet routing is
- * visible in every install log rather than only in the generated files.
- *
- * The line says what the override does NOT do: registration emits no model hint at
- * all (Pi refuses one that falls outside the preset's class chain), so the routing a
- * child actually gets comes from its preset's class policy. A log line that read as
- * if the override re-pointed the agent would be the very misreading this file exists
- * to prevent.
- */
-export function reportLaneOverrides(overrides = {}) {
-  const lanes = Object.keys(overrides);
-  for (const lane of lanes) {
-    const o = overrides[lane];
-    process.stderr.write(
-      `lane-overrides: ${lane}: ${MODEL_MAP[lane]} -> ${o.model} (decided_by: ${o.decided_by}) — ${o.reason}\n`
-      + 'lane-overrides: recorded only — no model hint is emitted, so this does not change what a registered agent is routed to\n',
-    );
-  }
-  return lanes.length;
-}
-
 function resolveRepoRoot() {
   try {
     const out = execSync('git rev-parse --show-toplevel', {
@@ -158,15 +61,15 @@ const COLON_PREFIX = 'masterplan:';
 // Skip bare install; managed colon leftovers for listed names are still cleaned.
 const SKIP_FOR_PI = new Set();
 
-function mapModelLine(body, file, overrides = {}) {
+function mapModelLine(body, file) {
   // NOTE: the regex anchors on the first `^model:` line. The canonical agents/*.md keep
   // `model:` only in frontmatter, so this is safe for them; it is deliberately simple
   // rather than a full YAML parse. (Accept the low risk: we own agents/*.md.)
   const m = body.match(/^model:\s*(\S+)\s*$/m);
   if (!m) throw new Error(`${file}: no \`model:\` frontmatter line to map`);
   const alias = m[1];
-  const mapped = effectiveModel(alias, overrides);
-  if (!mapped) throw new Error(`${file}: model alias \`${alias}\` has no pi mapping (extend MODEL_MAP)`);
+  const mapped = Object.hasOwn(MODEL_MAP, alias) ? MODEL_MAP[alias] : undefined;
+  if (!mapped) throw new Error(`${file}: model alias \`${alias}\` has no pi mapping (no such lane in policy/workflow-map.json)`);
   // The lane is validated above and then REMOVED from the registered output. Pi does
   // not resolve lane aliases: it validates a frontmatter `model:` value against the
   // PRESET's class chain and refuses the spawn (`SpawnModelPolicyError`) when the value
@@ -225,14 +128,9 @@ function writeManagedManifest(targetDir, files) {
   );
 }
 
-export function runRegister({ agentsDir, targetDir, check, skipSet = SKIP_FOR_PI, laneOverrides = {} }) {
+export function runRegister({ agentsDir, targetDir, check, skipSet = SKIP_FOR_PI }) {
   const files = readdirSync(agentsDir).filter((f) => /^mp-.*\.md$/.test(f)).sort();
   if (files.length === 0) throw new Error(`no mp-*.md found under ${agentsDir}`);
-  // Report in BOTH modes: a `--check` run that silently applied host overrides
-  // would make drift undiagnosable, since the reader could not tell whether the
-  // registered model came from the policy or from this host.
-  reportLaneOverrides(laneOverrides);
-
   // Write mode ensures the target dir exists; check mode must NOT create anything.
   if (!check) mkdirSync(targetDir, { recursive: true });
 
@@ -277,7 +175,7 @@ export function runRegister({ agentsDir, targetDir, check, skipSet = SKIP_FOR_PI
     }
 
     const srcBody = readFileSync(join(agentsDir, file), 'utf8');
-    const { alias, mapped, body } = mapModelLine(srcBody, file, laneOverrides);
+    const { alias, mapped, body } = mapModelLine(srcBody, file);
     for (const out of outputsFor(file, body)) {
       expectedBare.add(out.rel);
       producedBare.add(out.rel);
@@ -412,7 +310,7 @@ function main() {
   const check = opts.check;
   const agentsDir = join(resolveRepoRoot(), 'agents');
   const targetDir = PI_USER_AGENTS_DIR;
-  const { report, drift, written, skipped, removed, registered } = runRegister({ agentsDir, targetDir, check, laneOverrides: loadLaneOverrides() });
+  const { report, drift, written, skipped, removed, registered } = runRegister({ agentsDir, targetDir, check });
 
   for (const line of report) console.error(line);
   if (check) {

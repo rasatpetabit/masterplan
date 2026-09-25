@@ -139,6 +139,11 @@ test('mapModelLine throws on an unmapped alias (fail-closed; not a live alias fi
     () => mapModelLine('---\nmodel: fable\n---\n', 'mp-x.md'),
     /has no pi mapping/,
   );
+  // A lane name that is an Object.prototype member is not a declared lane.
+  assert.throws(
+    () => mapModelLine('---\nmodel: constructor\n---\n', 'mp-x.md'),
+    /has no pi mapping/,
+  );
 });
 
 test('mapModelLine throws when there is no model line', () => {
@@ -415,6 +420,27 @@ function homeTree(home) {
   }
   return out;
 }
+
+// R9-9: the host lane-override file was recorded only (registration emits no model
+// hint), yet a malformed copy aborted registration and install-pi. The mechanism is
+// retired: registration must not read the file, even when it is unparseable.
+test('a malformed host lane-override file no longer aborts registration', () => {
+  const home = mkdtempTracked(join(tmpdir(), 'mp-reg-home-'));
+  const configDir = join(home, '.config', 'masterplan');
+  mkdirSync(configDir, { recursive: true });
+  writeFileSync(join(configDir, 'lane-overrides.json'), '{ not json');
+  const res = spawnSync(process.execPath, [BIN, '--check'], {
+    encoding: 'utf8', env: { ...process.env, HOME: home },
+  });
+  assert.doesNotMatch(res.stderr, /lane-overrides/, `the override file must not be read: ${res.stderr}`);
+  // An empty target is drift, so --check exits 1 after comparing — proof it got past startup.
+  assert.equal(res.status, 1, res.stderr);
+  assert.match(res.stderr, /drift item\(s\)/, res.stderr);
+  // Not aborting is not the same as not reading: nothing in bin/ names the file at all.
+  for (const f of readdirSync(join(repoRoot, 'bin')).filter((n) => n.endsWith('.mjs'))) {
+    assert.doesNotMatch(readFileSync(join(repoRoot, 'bin', f), 'utf8'), /lane-overrides/, `bin/${f} still names the override file`);
+  }
+});
 
 test('parseCliArgs accepts only --check/--help; unknown flags and positionals throw', () => {
   assert.deepEqual(parseCliArgs([]), { check: false, help: false });
