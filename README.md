@@ -332,7 +332,7 @@ Every `readEnv`-backed control — set these in the environment, not in config f
 |---|---|---|
 | `CLAUDE_CODE_SESSION_ID` | **Guard-D session identity** (the owner lock's identity is the LLM session, not the process). Companion flags: `--session=<id>`, `--host=<host>` to `mp seed` / `mp continue` / `mp record-result` | none — Guard-D refuses without a session id unless the bundle opted out (`--owner-lock=off`) |
 | `MP_DISPATCH_WAVE_CONCURRENCY` | Caps the wave fan-out parallelism (`lib/continue.mjs`, clamped to the descriptor count) | `8` |
-| `MP_ROUTING_POLICY` | Path to an override routing policy for work-class resolution (defaults to the checked-in `policy/workflow-map.json`) | checked-in repo copy |
+| `MP_ROUTING_POLICY` | Path to an override routing policy for work-class resolution | the delivered `~/.pi/workflows/workflow-map.json`, else the checked-in `policy/workflow-map.json` |
 | `SKYNET_VERIFY_ALLOWLIST` | Recorded verify allowlist for audit continuity (historical name; local verification does not gate on it — the value surfaces in the wave record) | `bash -c` |
 | `MP_CONTEXT_WINDOW` | Explicit context window override for `mp context-status` window resolution (takes precedence over harness-model/`[1m]` markers, below the explicit flag) | auto |
 | `MP_BIN` | Path to the `bin/masterplan.mjs` entrypoint | `bin/` beside the command file |

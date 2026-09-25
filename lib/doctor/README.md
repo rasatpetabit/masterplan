@@ -51,7 +51,7 @@ CI rather than silently drifting. `v7 ID` is the ported v7 check id, where appli
 | `codex-auth` | #39 | WARN/SKIP | User-scoped Codex `auth.json` health (exp / expiring-soon / stale-refresh; auth-mode-aware). Informational only. |
 | `state-schema` | #9 (+#10 folded) | ERROR | Validates each bundle's `state.yml` against the canonical v8 core schema (single source of truth in `lib/bundle.mjs`); unparseable folds in. |
 | `legacy-bundle` | #1 | WARN | Any bundle with `schema_version < 6`, or `docs/superpowers/` containing actual legacy planning artifacts. |
-| `routing-policy-health` | — | PASS/WARN | Repo-local routing policy (classes/agents/lanes) resolves — adversarial panel and required classes usable. |
+| `routing-policy-health` | — | PASS/WARN | The routing policy masterplan reads (MP_ROUTING_POLICY, else the delivered map, else the repo copy) resolves — adversarial panel and required classes usable; WARN when what it reads differs from the delivered map. |
 | `index-staleness` | #34 | WARN | `plan.index.json`'s `plan_hash` matches the current `plan.md` content. |
 | `stale-lock` | #42 | WARN | Bundle `.lock` files older than the 1-hour threshold (a crashed run may have left one). |
 | `plugin-registry-drift` | #50 | WARN | User-scoped: installed masterplan plugin version vs marketplace-cached version mismatch. Detection only. |

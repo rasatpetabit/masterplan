@@ -2,8 +2,9 @@
 //
 // The fleet's retired dispatch control plane no longer resolves routing; masterplan resolves work
 // classes against policy/workflow-map.json (checked-in canonical copy of the
-// fleet workflow routing map). These tests are hermetic: repo copy + injected
-// fixtures, never a host path.
+// fleet workflow routing map) when no delivered map is present. These tests are
+// hermetic: the repo copy is named explicitly, fixtures are injected, and the default
+// path is resolved against a fake home — never this host's delivered map.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -14,6 +15,8 @@ import { fileURLToPath } from 'node:url';
 
 import {
   REPO_POLICY_PATH,
+  defaultRoutingPolicyPath,
+  deliveredPolicyPath,
   loadRoutingPolicy,
   resolveWorkClass,
   resolveLane,
@@ -26,8 +29,8 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 
 test('repo-local canonical policy is checked in and structurally complete', () => {
   assert.equal(REPO_POLICY_PATH, path.join(REPO_ROOT, 'policy', 'workflow-map.json'));
-  const policy = loadRoutingPolicy();
-  for (const section of ['lanes', 'classes', 'agents', 'tiers', 'panels', 'phases']) {
+  const policy = loadRoutingPolicy({ policyPath: REPO_POLICY_PATH });
+  for (const section of ['lanes', 'classes', 'agents', 'panels', 'phases']) {
     assert.ok(policy[section] && typeof policy[section] === 'object', `missing ${section}`);
   }
   // Every class resolves to an existing agent + lane with a model ref.
@@ -40,7 +43,7 @@ test('repo-local canonical policy is checked in and structurally complete', () =
 test('resolveWorkClass returns the governed record for a known class', () => {
   // One policy load, injected — resolveWorkClass must consume this exact document,
   // not perform a second independent disk read.
-  const policy = loadRoutingPolicy();
+  const policy = loadRoutingPolicy({ policyPath: REPO_POLICY_PATH });
   const r = resolveWorkClass('adversary', { policy });
   assert.equal(r.agent, 'breaker');
   assert.equal(r.lane, 'frontier');
@@ -69,7 +72,7 @@ test('resolveWorkClass covers the masterplan work types', () => {
 });
 
 test('unknown class falls back to the policy defaultClass, never a guess', () => {
-  const r = resolveWorkClass('no-such-class');
+  const r = resolveWorkClass('no-such-class', { policyPath: REPO_POLICY_PATH });
   assert.notEqual(r.class, 'no-such-class');
   assert.match(r.model, /^litellm\//);
 });
@@ -85,8 +88,8 @@ test('resolveLane and resolvePanel expose lane refs and panel quorums', () => {
 });
 
 test('laneAliasMap derives every alias from the policy (no hard-coded ids)', () => {
-  const map = laneAliasMap();
-  const policy = loadRoutingPolicy();
+  const map = laneAliasMap({ policyPath: REPO_POLICY_PATH });
+  const policy = loadRoutingPolicy({ policyPath: REPO_POLICY_PATH });
   assert.deepEqual(Object.keys(map).sort(), Object.keys(policy.lanes).sort());
   for (const model of Object.values(map)) assert.match(model, /^litellm\//);
 });
@@ -112,6 +115,72 @@ test('fail-closed: unreadable path, invalid JSON, missing sections, unresolvable
     workflow: {},
   }));
   assert.throws(() => resolveWorkClass('anything', { policyPath: noDefault }), /unknown work class/);
+});
+
+// R5-6: masterplan reads the policy the fleet delivers, so what it derives (fallback
+// reviewers above all) is what Pi's spawn guard authorizes. MP_ROUTING_POLICY still
+// wins; the checked-in copy is only the fallback for a host with no delivered map.
+test('default policy path: MP_ROUTING_POLICY, then the delivered map, then the repo copy', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-home-'));
+  try {
+    const delivered = deliveredPolicyPath(home);
+    assert.equal(delivered, path.join(home, '.pi', 'workflows', 'workflow-map.json'));
+    assert.equal(defaultRoutingPolicyPath({ env: {}, homeDir: home }), REPO_POLICY_PATH, 'no delivered map: the repo copy');
+    fs.mkdirSync(path.dirname(delivered), { recursive: true });
+    fs.writeFileSync(delivered, '{}');
+    assert.equal(defaultRoutingPolicyPath({ env: {}, homeDir: home }), delivered, 'a delivered map wins over the repo copy');
+    assert.equal(
+      defaultRoutingPolicyPath({ env: { MP_ROUTING_POLICY: '/x/override.json' }, homeDir: home }),
+      '/x/override.json',
+      'MP_ROUTING_POLICY wins over both',
+    );
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('with no override, resolution reads the delivered map under the real home', () => {
+  // End to end through the shipped defaults: HOME points at a fake home holding a
+  // loadable delivered map, MP_ROUTING_POLICY is unset, and no path is passed.
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-home-'));
+  const prior = { HOME: process.env.HOME, MP: process.env.MP_ROUTING_POLICY };
+  try {
+    const delivered = path.join(home, '.pi', 'workflows', 'workflow-map.json');
+    fs.mkdirSync(path.dirname(delivered), { recursive: true });
+    fs.writeFileSync(delivered, JSON.stringify({
+      lanes: { only: { model: 'litellm/from-the-delivered-map' } },
+      classes: { work: { agent: 'a', lane: 'only' } },
+      agents: { a: { writes: false } },
+      workflow: {},
+    }));
+    process.env.HOME = home;
+    delete process.env.MP_ROUTING_POLICY;
+    assert.equal(os.homedir(), home, 'precondition: os.homedir() follows HOME');
+    assert.equal(resolveWorkClass('work').model, 'litellm/from-the-delivered-map');
+  } finally {
+    process.env.HOME = prior.HOME;
+    if (prior.MP === undefined) delete process.env.MP_ROUTING_POLICY;
+    else process.env.MP_ROUTING_POLICY = prior.MP;
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('a delivered policy without the retired tiers section loads', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-policy-'));
+  try {
+    const p = path.join(tmp, 'workflow-map.json');
+    fs.writeFileSync(p, JSON.stringify({
+      lanes: { only: { model: 'litellm/delivered-model' } },
+      classes: { work: { agent: 'a', lane: 'only', cap: 'chat', effort: 'low' } },
+      agents: { a: { writes: false, tier: 'small' } }, // an agent still naming a tier needs no tiers section
+      workflow: {},
+    }));
+    const r = resolveWorkClass('work', { policyPath: p });
+    assert.equal(r.model, 'litellm/delivered-model');
+    assert.equal(r.tier, 'small');
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
 });
 
 test('MP_ROUTING_POLICY override is honored when present', () => {
@@ -184,7 +253,7 @@ test('adversaryFallbackReviewers: a panel member is NEVER a fallback (outside th
     panelMembers: [
       { lane: 'broad', model: 'litellm/panel-1' },
       { lane: 'longform', model: 'litellm/panel-2' },
-      { lane: 'frontier', model: 'litellm/panel-3' },
+      { lane: 'longform', model: 'litellm/panel-3' },
     ],
   });
   const r = adversaryFallbackReviewers({ policy });
@@ -247,7 +316,7 @@ test('adversaryFallbackReviewers: MP_ROUTING_POLICY is honored (no separate pars
 test('adversaryFallbackReviewers: the real checked-in policy yields a usable fallback list', () => {
   // Derived from the live policy document, never a copied list of model ids: the
   // expectation is computed from the same policy the primary dispatches on.
-  const policy = loadRoutingPolicy();
+  const policy = loadRoutingPolicy({ policyPath: REPO_POLICY_PATH });
   const adversary = resolveWorkClass('adversary', { policy });
   const r = adversaryFallbackReviewers({ policy });
   assert.equal(r.primary, adversary.model);

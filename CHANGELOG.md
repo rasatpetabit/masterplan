@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — masterplan reads the routing policy the fleet delivers (R5-6)
+
+- Routing resolved against the checked-in `policy/workflow-map.json` unless `MP_ROUTING_POLICY` was
+  set, because the loader required a `tiers` section the SOT retired and so could not read the
+  delivered `~/.pi/workflows/workflow-map.json`. The checked-in copy was last synced 2026-09-04, and
+  its class chains no longer matched what Pi's spawn guard authorizes: every finish-gate fallback
+  reviewer it derived was refused. The default is now `MP_ROUTING_POLICY`, else the delivered map,
+  else the checked-in copy (kept for hosts with no delivered map). `tiers` is no longer required.
+  The routing-policy doctor check names the file it read and WARNs when that differs from the
+  delivered map.
+
 ### Fixed — the finish-gate fallback reviewer could not be spawned (R9-8)
 
 - `agents/mp-fallback-reviewer.md` declares no `preset:`, and Pi's subagent runtime registers

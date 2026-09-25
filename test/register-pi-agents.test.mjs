@@ -27,6 +27,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { defaultRoutingPolicyPath } from '../lib/dispatch/routing-policy.mjs';
 
 // Every fixture here builds a tree under os.tmpdir(); without this they accumulate across
 // runs and fill a shared /tmp. Registered on creation, removed once when the file finishes.
@@ -64,8 +65,10 @@ function agentModelAliases({ includeSkipped = true } = {}) {
 // Derive the lineup (lane alias → lane model ref) from the checked-in routing policy —
 // the single declared source of model ids. Fails loud if the policy is unreadable; a
 // silent fallback would let this suite rot into a pin.
+// Parsed here, not through the loader, so a loader defect cannot hide drift — but from
+// the same document the loader picks (the delivered map when present; R5-6).
 function lineupFromRoutingPolicy() {
-  const policyPath = join(repoRoot, 'policy', 'workflow-map.json');
+  const policyPath = defaultRoutingPolicyPath();
   const policy = JSON.parse(readFileSync(policyPath, 'utf8'));
   assert.ok(policy.lanes && typeof policy.lanes === 'object', `${policyPath}: no lanes section`);
   const lineup = {};

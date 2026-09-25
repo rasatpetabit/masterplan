@@ -7,8 +7,8 @@ tools: bash, read
 ---
 
 > **Model provenance:** the `model:` field above names a routing-policy LANE (`frontier`);
-> `bin/register-pi-agents.mjs` validates it against the repo-local policy
-> (`policy/workflow-map.json`) and then REMOVES the line from the registered pi copy — Pi
+> `bin/register-pi-agents.mjs` validates it against the routing policy masterplan reads
+> (the delivered map, else `policy/workflow-map.json`) and then REMOVES the line from the registered pi copy — Pi
 > refuses a spawn whose frontmatter `model:` hint falls outside the preset's class chain,
 > and a lane name always does, so the preset's class policy routes the child instead. The
 > lane above is the checked-in intent honored when this agent is dispatched **by name** —
@@ -16,7 +16,7 @@ tools: bash, read
 > `/srv/workflows/policy/dispatch.md` (model provenance).
 >
 > **Registration consumers (retained, C7):** runtime review execution never reads this file —
-> the wave dispatcher resolves the `adversary` class from `policy/workflow-map.json`
+> the wave dispatcher resolves the `adversary` class from the routing policy (delivered map, else `policy/workflow-map.json`)
 > (`lib/dispatch-wave.mjs` `resolveWorkClass('adversary', …)`). This agent file is retained
 > as the **contract document** for the review return shape, named by: `README.md` (L3
 > inventory + review mechanism), `docs/conventions/adversarial-review-dimensions.md:3,9`
