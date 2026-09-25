@@ -107,9 +107,16 @@ test('agent frontmatter is Pi-portable (native tool names, roster presets)', () 
     for (const t of toolList) {
       assert.ok(PI_TOOLS.has(t), `${file}: non-Pi tool name "${t}" in frontmatter tools (${parsed.fm.tools})`);
     }
-    if (parsed.fm.preset !== undefined) {
-      assert.ok(ROSTER_PRESETS.has(parsed.fm.preset), `${file}: preset "${parsed.fm.preset}" is not a roster role`);
-    }
+    // A preset is REQUIRED, not optional: Pi's subagent runtime registers a
+    // preset alias only for an agent whose frontmatter declares one, and denies
+    // every spawn of an agent it has no alias for ("unknown agent preset"). An
+    // agent that declares none is therefore un-dispatchable in every mode, which
+    // is how mp-fallback-reviewer was silently refused.
+    assert.ok(
+      parsed.fm.preset !== undefined && parsed.fm.preset !== '',
+      `${file}: frontmatter missing "preset" — Pi registers no alias for a presetless agent and refuses every spawn ("unknown agent preset")`,
+    );
+    assert.ok(ROSTER_PRESETS.has(parsed.fm.preset), `${file}: preset "${parsed.fm.preset}" is not a roster role`);
   }
 });
 

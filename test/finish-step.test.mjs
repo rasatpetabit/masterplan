@@ -1183,11 +1183,29 @@ test('review-fallback: adversary_review_fallback: off empties the list and recor
 
 test('review-fallback: a config list override replaces the policy-derived list', () => {
   const fx = armedFixture();
+  // Derived from the checked-in policy, never pasted: a configured entry must sit inside the
+  // adversary class chain, because the fallback is dispatched under that class and its spawn
+  // guard authorizes an override only inside the chain.
+  const chain = adversaryFallbackReviewers({ policy: loadRoutingPolicy() }).chain;
+  const [first, second] = chain.slice(1);
   write(fx.MAIN, '.masterplan.yaml',
-    'done: none\nadversary_review_fallback:\n  - litellm/override-first\n  - litellm/override-second\n');
+    `done: none\nadversary_review_fallback:\n  - ${first}\n  - ${second}\n`);
   const op = walkToReview(fx);
-  assert.deepEqual(op.fallback_reviewers, ['litellm/override-first', 'litellm/override-second']);
+  assert.deepEqual(op.fallback_reviewers, [first, second]);
   assert.equal(op.fallback_reason, undefined);
+});
+
+test('review-fallback: a config entry outside the adversary class chain fails closed', () => {
+  // Such an entry is a guaranteed spawn refusal (the class guard authorizes only chain
+  // members), so it is an operator error like a malformed value — never silently dropped,
+  // which would discard a reviewer the operator asked for.
+  const fx = armedFixture();
+  write(fx.MAIN, '.masterplan.yaml',
+    'done: none\nadversary_review_fallback:\n  - litellm/not-in-the-adversary-chain\n');
+  assert.throws(
+    () => walkToReview(fx),
+    /outside the routing policy's adversary class chain/,
+  );
 });
 
 test('review-fallback: an unavailable routing policy → empty list + recorded reason, gate never wedges', () => {

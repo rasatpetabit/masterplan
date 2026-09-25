@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — the finish-gate fallback reviewer could not be spawned (R9-8)
+
+- `agents/mp-fallback-reviewer.md` declares no `preset:`, and Pi's subagent runtime registers
+  a preset alias only for an agent that carries one. Every spawn of the finish gate's fallback
+  reviewer was therefore denied (`unknown agent preset`) — a run whose primary adversary review
+  was refused or failed fell through to a skip instead of a review. It now declares
+  `preset: breaker`, matching the other mp-* reviewer agents, and the orchestrator dispatches it
+  under the adversary class (task class `adversary`).
+- `lib/dispatch/routing-policy.mjs` `adversaryFallbackReviewers` returns the adversary class
+  `chain` minus the primary, de-duplicated, and no longer appends the class panel's members.
+  Pi's spawn guard authorizes a model override only inside the dispatched class's chain, so an
+  appended panel member was a guaranteed refusal. Same fail-soft behaviour on an unavailable
+  routing policy (empty list + recorded reason).
+- A configured `adversary_review_fallback` list entry outside the adversary class chain is
+  refused fail-closed with a clear message, matching how the knob's other malformed values are
+  handled: such an entry could never run, and dropping it silently would discard a reviewer the
+  operator asked for. A routing-policy outage still passes the configured list through — the
+  chain is then unknown, and an unauthorized model stays a documented per-entry failed attempt.
+- `test/agents.test.mjs` now requires every `agents/mp-*.md` to declare a roster preset (the red
+  test for the first item); the routing-policy and finish-step suites cover the chain-only list,
+  the never-a-panel-member rule, and the fail-closed config entry.
+
 ### Removed — the host lane-override file
 
 - `~/.config/masterplan/lane-overrides.json` is no longer read. Since 10.0.10 registration

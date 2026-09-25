@@ -138,8 +138,9 @@ test('MP_ROUTING_POLICY override is honored when present', () => {
 // ---- review-fallback: the finish-gate fallback reviewer list ------------------
 
 // A synthetic policy fixture whose ids are chosen so the ORDER rules are the only way
-// to produce the expected list (chain first in policy order, then panel members, primary
-// excluded, duplicates collapsed on first occurrence).
+// to produce the expected list (chain in policy order, primary excluded, duplicates
+// collapsed on first occurrence). Panel members are declared by default precisely so a
+// test can prove they are NOT consulted.
 function fallbackFixturePolicy({ chain = [], panelMembers = [], panelName = 'adversarial', withPanel = true } = {}) {
   return {
     lanes: { frontier: { model: 'litellm/primary', ctx: 1000 } },
@@ -158,7 +159,7 @@ function fallbackFixturePolicy({ chain = [], panelMembers = [], panelName = 'adv
   };
 }
 
-test('adversaryFallbackReviewers: chain order, panel append, de-duplication, primary excluded', () => {
+test('adversaryFallbackReviewers: chain order, de-duplication, primary excluded, panel ignored', () => {
   const policy = fallbackFixturePolicy({
     chain: ['litellm/primary', 'litellm/chain-2', 'litellm/chain-3', 'litellm/chain-2'],
     panelMembers: [
@@ -168,12 +169,32 @@ test('adversaryFallbackReviewers: chain order, panel append, de-duplication, pri
     ],
   });
   const r = adversaryFallbackReviewers({ policy });
-  assert.deepEqual(r.reviewers, ['litellm/chain-2', 'litellm/chain-3', 'litellm/panel-1']);
+  assert.deepEqual(r.reviewers, ['litellm/chain-2', 'litellm/chain-3']);
   assert.equal(r.reason, null);
   assert.equal(r.primary, 'litellm/primary');
 });
 
-test('adversaryFallbackReviewers: no panel declared → chain-only fallback list', () => {
+test('adversaryFallbackReviewers: a panel member is NEVER a fallback (outside the class chain)', () => {
+  // The fallback reviewer is dispatched under the adversary class, and Pi's spawn
+  // guard authorizes a model override only when it sits in that class's chain. A
+  // panel member that is not in the chain would be a guaranteed refusal, so the
+  // panel is never consulted — however many members it declares.
+  const policy = fallbackFixturePolicy({
+    chain: ['litellm/primary', 'litellm/chain-2'],
+    panelMembers: [
+      { lane: 'broad', model: 'litellm/panel-1' },
+      { lane: 'longform', model: 'litellm/panel-2' },
+      { lane: 'frontier', model: 'litellm/panel-3' },
+    ],
+  });
+  const r = adversaryFallbackReviewers({ policy });
+  assert.deepEqual(r.reviewers, ['litellm/chain-2']);
+  for (const m of ['litellm/panel-1', 'litellm/panel-2', 'litellm/panel-3']) {
+    assert.ok(!r.reviewers.includes(m), `${m} is a panel member outside the class chain and must never be dispatched`);
+  }
+});
+
+test('adversaryFallbackReviewers: no panel declared → the same chain-only fallback list', () => {
   const policy = fallbackFixturePolicy({ chain: ['litellm/primary', 'litellm/chain-2'], withPanel: false });
   const r = adversaryFallbackReviewers({ policy });
   assert.deepEqual(r.reviewers, ['litellm/chain-2']);
@@ -213,7 +234,7 @@ test('adversaryFallbackReviewers: MP_ROUTING_POLICY is honored (no separate pars
     try {
       process.env.MP_ROUTING_POLICY = policyPath;
       const r = adversaryFallbackReviewers();
-      assert.deepEqual(r.reviewers, ['litellm/env-chain', 'litellm/env-panel']);
+      assert.deepEqual(r.reviewers, ['litellm/env-chain']);
     } finally {
       if (prior === undefined) delete process.env.MP_ROUTING_POLICY;
       else process.env.MP_ROUTING_POLICY = prior;
@@ -232,10 +253,13 @@ test('adversaryFallbackReviewers: the real checked-in policy yields a usable fal
   assert.equal(r.primary, adversary.model);
   assert.ok(r.reviewers.length >= 1, 'the checked-in policy should name at least one fallback reviewer');
   assert.ok(!r.reviewers.includes(adversary.model), 'the primary must never be its own fallback');
-  // every entry is a model ref the policy itself declares (chain or panel member)
-  const declared = new Set([
-    ...(Array.isArray(adversary.chain) ? adversary.chain : []),
-    ...(policy.panels?.[adversary.panel]?.members ?? []).map((m) => m.model),
-  ]);
-  for (const m of r.reviewers) assert.ok(declared.has(m), `${m} is not declared by the policy`);
+  // every entry is a model ref the adversary class chain declares — the panel is
+  // never consulted, and a panel member outside the chain would be refused by the
+  // spawn guard
+  const declared = new Set(Array.isArray(adversary.chain) ? adversary.chain : []);
+  for (const m of r.reviewers) assert.ok(declared.has(m), `${m} is not declared by the adversary class chain`);
+  for (const member of policy.panels?.[adversary.panel]?.members ?? []) {
+    if (declared.has(member.model)) continue;
+    assert.ok(!r.reviewers.includes(member.model), `${member.model} is a panel-only member and must never be a fallback`);
+  }
 });

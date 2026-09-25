@@ -28,7 +28,8 @@ masterplan v8 is a 5-layer system. Each layer is thin and delegates downward:
   `mp-planner`, `mp-adversarial-reviewer`, `mp-plan-reviewer`,
   `mp-subsystem-planner`, `mp-spec-decomposer`, `mp-alignment-auditor`,
   `mp-intent-critic`, `mp-fallback-reviewer` — the finish-gate fallback reviewer, deliberately named outside the
-  fleet review circuit breaker's match). Agents receive bounded briefs
+  fleet review circuit breaker's match and declaring `preset: breaker` so Pi registers an alias and
+  authorizes its adversary-class model override). Agents receive bounded briefs
   and return structured output; they do not inherit session history.
   Implementation dispatch routes through the routing policy — each task's
   class resolves to a governed lane (`policy/workflow-map.json`) and the

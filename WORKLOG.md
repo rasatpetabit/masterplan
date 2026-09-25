@@ -16,10 +16,11 @@ error is not an outage. `--review-fallback-reason` without `--review-done` is
 refused so a fallback review can never be recorded without its provenance, and
 the reentry-guard projection was left untouched (reviewer/fallback read beside it
 in finish-step) because its exact shape is pinned by reentry-guard's own tests.
-The fallback agent deliberately carries no `preset: breaker` and a name outside
-the circuit-breaker match — that is the governance trade, documented in
-`docs/conventions/adversarial-review-failure-policy.md` (not counted against the
-per-file cap; bounded by the one-review-per-HEAD re-entry guard; `off` disables).
+The fallback agent carries a name outside the circuit-breaker match — that is the
+governance trade, documented in `docs/conventions/adversarial-review-failure-policy.md`
+(not counted against the per-file cap; bounded by the one-review-per-HEAD re-entry
+guard; `off` disables). It now declares `preset: breaker` (R9-8): without a preset Pi
+registers no alias and refuses every spawn, so the fallback was un-dispatchable.
 
 ## 2026-09-09 — schema-backed goals-amend/set-phase deadlock fixed
 

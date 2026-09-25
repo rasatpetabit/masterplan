@@ -92,9 +92,10 @@ chain at seed** and persisted into `state.yml`; `adversary_review`, `render_imag
 and `fabric` come from their seed **flags/defaults only** (never from a config file at
 seed — `mp set-review-config` is the post-seed write for review). `adversary_review_fallback`
 resolves from the chain **at the finish gate**: the ordered fallback reviewer list the
-`run_adversary_review` op carries (the routing policy's adversary `chain` then its panel
-members, primary excluded and de-duplicated, by default; the configured list instead when
-set; no fallback on `off`). `fabric` accepts
+`run_adversary_review` op carries (the routing policy's adversary `chain`, primary excluded
+and de-duplicated, by default; the configured list instead when set — refused fail-closed
+outside that chain, since the fallback is dispatched under the adversary class; no fallback
+on `off`). `fabric` accepts
 `on|off` at the flag (schema default `on`): `off` marks a bundle **unexecutable** —
 fabric is the only wave path since the L2 legacy dispatch was deleted, so a bundle
 without `state.dispatch.fabric: true` refuses dispatch (the legacy path is not restored).
