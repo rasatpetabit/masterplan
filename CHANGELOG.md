@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [10.0.12] — 2026-09-26
+
+### Fixed — `--repo-root <dir>` is accepted in its documented space form (R9-36)
+
+- The CLI's argument parser treated every `--flag` without `=` as a boolean, so the space form the
+  skill documents (`mp resume-brief --repo-root <dir>`) set `repo-root` to `true`, pushed the path
+  into the positionals, and failed with "The path argument must be of type string". `--repo-root`
+  now takes the next token as its value when there is one and it does not start with `--`; the
+  `--repo-root=<dir>` form is unchanged, and every other flag keeps its boolean behaviour.
+- Still open, unchanged by this release: a bare `--repo-root` (no value) is still accepted as
+  `true` and fails later in the command, and README's `--archive-pushed <sha>` example does not
+  match the handler, which reads `--archive-pushed --sha=<sha>`.
+
 ## [10.0.11] — 2026-09-25
 
 ### Fixed — masterplan reads the routing policy the fleet delivers (R5-6)
