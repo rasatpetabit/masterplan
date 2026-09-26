@@ -641,14 +641,30 @@ function loadGoalsForCoverage(statePath, label) {
 }
 
 // ---- tiny arg parser: positional[], flags{} (--k=v, or --k as boolean true) ----
+// R9-36: these flags take a VALUE, so the space form `--k <value>` is accepted alongside
+// `--k=<value>`. The next token is consumed only when it exists and is not itself an option
+// (does not start with `--`); otherwise the flag stays boolean true and the caller's existing
+// error path handles it. Every other flag keeps today's boolean behaviour.
+const VALUE_FLAGS = new Set(['repo-root']);
 function parseArgs(argv) {
   const positional = [];
   const flags = {};
-  for (const a of argv) {
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
     if (a.startsWith('--')) {
       const eq = a.indexOf('=');
-      if (eq === -1) flags[a.slice(2)] = true;
-      else flags[a.slice(2, eq)] = a.slice(eq + 1);
+      if (eq !== -1) {
+        flags[a.slice(2, eq)] = a.slice(eq + 1);
+      } else {
+        const name = a.slice(2);
+        const next = argv[i + 1];
+        if (VALUE_FLAGS.has(name) && next !== undefined && !next.startsWith('--')) {
+          flags[name] = next;
+          i++;
+        } else {
+          flags[name] = true;
+        }
+      }
     } else {
       positional.push(a);
     }
@@ -727,6 +743,7 @@ export function isKnownFlag(name) {
   return KNOWN_FLAGS.has(name);
 }
 export { KNOWN_FLAGS };
+export { parseArgs };
 
 // §5.5 (pre-publish review fix round — finding 1): the installed /intent skill's root the
 // RUNTIME identity guard resolves. The resolution order is:
