@@ -643,8 +643,9 @@ function loadGoalsForCoverage(statePath, label) {
 // ---- tiny arg parser: positional[], flags{} (--k=v, or --k as boolean true) ----
 // R9-36: these flags take a VALUE, so the space form `--k <value>` is accepted alongside
 // `--k=<value>`. The next token is consumed only when it exists and is not itself an option
-// (does not start with `--`); otherwise the flag stays boolean true and the caller's existing
-// error path handles it. Every other flag keeps today's boolean behaviour.
+// (does not start with `--`). R9-47: a value flag left without a non-empty string — bare, or
+// followed by another `--option`, or given as `--k=` — is a usage error, checked once after
+// parsing for every name in VALUE_FLAGS. Every other flag keeps today's boolean behaviour.
 const VALUE_FLAGS = new Set(['repo-root']);
 function parseArgs(argv) {
   const positional = [];
@@ -1391,6 +1392,16 @@ export { applyPlanIndex };
 function main() {
   const [cmd, ...rest] = process.argv.slice(2);
   const { positional, flags } = parseArgs(rest);
+  // R9-47: every VALUE_FLAGS name needs a non-empty string. A bare flag, one followed by
+  // another option, or `--k=` used to stay boolean true (or "") and fail later — a type
+  // error in resume-brief, a quiet "unsupported" exit 0 in context-status.
+  for (const name of VALUE_FLAGS) {
+    if (!Object.prototype.hasOwnProperty.call(flags, name)) continue;
+    const value = flags[name];
+    if (typeof value !== 'string' || value.length === 0) {
+      die(`--${name} needs a value: --${name} <dir> or --${name}=<dir>`, 2);
+    }
+  }
   // §5.5 (review round 2 — finding 3): register the task-52 snapshot module for the
   // in-process identity guards the guarded surfaces run (the interview verbs' and the
   // checkpoint consumers' assertSkillIdentity recomputes through this seam). An absent

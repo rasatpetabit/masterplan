@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed — a bare `--repo-root` is a usage error, and the archive-push example matches the handler (R9-47, R9-48)
+
+- A value flag (`--repo-root`) given with no value — bare, or followed by another `--option`, or as `--repo-root=` — used to stay boolean `true` (or an empty string). `resume-brief` then failed with a path type error, and `context-status` could exit 0 reporting "unsupported". Every name in `VALUE_FLAGS` is now checked once, right after parsing: a value that is not a non-empty string exits 2 with `masterplan: --repo-root needs a value: --repo-root <dir> or --repo-root=<dir>`. `--repo-root <dir>` and `--repo-root=<dir>` are unchanged.
+- README's push-publication example said `--archive-pushed <sha>`. The handler reads `--archive-pushed --sha=<sha>`; the example now says that. No other `--archive-pushed <sha>` example existed in `docs/`, `skills/`, or `commands/`.
+
 ## [10.0.12] — 2026-09-26
 
 ### Fixed — `--repo-root <dir>` is accepted in its documented space form (R9-36)

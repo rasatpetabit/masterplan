@@ -8,7 +8,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -38,16 +38,25 @@ test('R9-36: a boolean flag followed by a positional stays boolean + positional'
   assert.deepEqual(positional, ['some-positional']);
 });
 
-test('R9-36: --repo-root --other leaves repo-root true and --other a flag', () => {
-  const { positional, flags } = parseArgs(['--repo-root', '--other']);
-  assert.equal(flags['repo-root'], true);
-  assert.equal(flags.other, true);
-  assert.deepEqual(positional, []);
+// R9-47: a VALUE_FLAG with no value used to stay boolean true. need() only
+// rejects undefined, so resume-brief then threw a path type error and
+// context-status could exit 0 reporting "unsupported". A missing or empty
+// value is a usage error at the one place every verb is parsed.
+function runCli(args) {
+  const r = spawnSync('node', [BIN, ...args], { encoding: 'utf8' });
+  return { status: r.status, stderr: r.stderr ?? '', stdout: r.stdout ?? '' };
+}
+
+test('R9-47: resume-brief --repo-root with no value is a usage error', () => {
+  const r = runCli(['resume-brief', '--repo-root']);
+  assert.equal(r.status, 2, `expected usage exit 2, got ${r.status}: ${r.stderr}`);
+  assert.match(r.stderr, /--repo-root needs a value: --repo-root <dir> or --repo-root=<dir>/);
 });
 
-test('R9-36: --repo-root with nothing after it stays true', () => {
-  const { flags } = parseArgs(['--repo-root']);
-  assert.equal(flags['repo-root'], true);
+test('R9-47: context-status --repo-root followed by a flag is a usage error', () => {
+  const r = runCli(['context-status', '--repo-root', '--porcelain']);
+  assert.equal(r.status, 2, `expected usage exit 2, got ${r.status}: ${r.stderr}`);
+  assert.match(r.stderr, /--repo-root needs a value: --repo-root <dir> or --repo-root=<dir>/);
 });
 
 test('R9-36: --repo-root=<dir> keeps working unchanged', () => {
