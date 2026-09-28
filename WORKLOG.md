@@ -1,5 +1,9 @@
 # WORKLOG
 
+## 2026-09-28 — distinct finish gates on `fix/distinct-finish-gates`
+
+The PR disposition now stops at a separate publication gate before returning the network op; a tip-bound event preserves approval across re-entry and invalidates it when the branch changes. The caller can record an evidenced direct/standing grant without another question. The existing `await_merge` retirement boundary remains. The sequencer names integration, publication, activation and destructive/outward authority separately; seed-time `state.autonomy` remains the recorded activation grant, not a new deploy-mode change. Branch is intentionally not published or installed under this bounded request; independent breaker review is owed by the parent before landing.
+
 ## 2026-09-23 — finish-gate fallback reviewer (review-fallback) on branch `review-fallback`
 
 The finish gate's whole-branch review mapped ANY primary failure to

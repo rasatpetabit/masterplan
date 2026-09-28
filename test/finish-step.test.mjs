@@ -392,13 +392,19 @@ test('pr: two-phase handshake — push_pr leaves the gate open; --pushed retires
   // Phase 1: the shell op, with NOTHING durable changed — a death before the push must
   // re-render the gate, never silently archive with no PR (Codex r5 P1).
   let op = fx.step({ choice: 'pr' });
+  assert.equal(op.op, 'ask');
+  assert.equal(op.gate, 'publication');
+  assert.equal(readState(fx.statePath).pending_gate?.id, 'publication');
+  op = fx.step();
+  assert.equal(op.gate, 'publication', 'publication approval survives re-entry');
+  op = fx.step({ choice: 'pr', publicationApproved: true });
   assert.equal(op.op, 'shell');
   assert.equal(op.kind, 'push_pr');
   assert.equal(op.branch, 'masterplan/t24');
   assert.equal(op.base, 'main');
   let st = readState(fx.statePath);
   assert.notEqual(st.worktree_disposition, 'kept_by_user', 'not retired before the push is confirmed');
-  assert.equal(st.pending_gate?.id, 'branch_finish', 'gate stays open across the network half');
+  assert.equal(st.pending_gate?.id, 'branch_finish', 'retirement gate stays open across the network half');
   assert.ok(fs.existsSync(fx.WT), 'pr keeps the worktree');
 
   // Crash before the push: a bare re-call re-renders the gate — nothing archived.
@@ -407,7 +413,7 @@ test('pr: two-phase handshake — push_pr leaves the gate open; --pushed retires
   assert.equal(op.gate, 'branch_finish');
   assert.notEqual(readState(fx.statePath).status, 'archived');
 
-  // Re-issuing the choice re-emits the shell op (the push is idempotent shell-side).
+  // Re-issuing the choice re-emits the shell op without re-asking publication (approval is durable).
   op = fx.step({ choice: 'pr' });
   assert.equal(op.kind, 'push_pr');
 
@@ -425,6 +431,23 @@ test('pr: two-phase handshake — push_pr leaves the gate open; --pushed retires
   st = readState(fx.statePath);
   assert.equal(st.pending_gate, null);
   assert.equal(st.status, 'archived');
+});
+
+test('pr: direct/standing publication grant is recorded once, and a changed tip needs fresh approval', () => {
+  const fx = makeFixture();
+  walkToGate(fx);
+  assert.throws(() => fx.step({ choice: 'pr', pushed: true }), /requires publication approval/);
+  let op = fx.step({ choice: 'pr', publicationApproved: true });
+  assert.equal(op.kind, 'push_pr');
+  assert.equal(readEvents(fx.bundleDir).filter((e) => e.type === 'publication_approved').length, 1);
+  op = fx.step({ choice: 'pr' });
+  assert.equal(op.kind, 'push_pr', 'recorded approval avoids a ceremonial re-ask');
+  write(fx.WT, 'src/a.txt', 'changed tip\n');
+  git(fx.WT, 'add', 'src/a.txt');
+  git(fx.WT, 'commit', '-q', '-m', 'changed tip');
+  op = fx.step({ choice: 'pr' });
+  assert.equal(op.gate, 'publication', 'old tip approval must not authorize new bytes');
+  assert.notEqual(readState(fx.statePath).worktree_disposition, 'kept_by_user');
 });
 
 test('merge target guard: MAIN checked out on a non-base branch → dispatch-error, nothing merged', () => {
