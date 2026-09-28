@@ -283,8 +283,10 @@ Recognized keys: `complexity` (`low|medium|high`), `autonomy` (`gated|loose`, al
 `adversary_review`, `render_images`, `fabric` come from seed flags/defaults only (`fabric: off` marks a bundle
 unexecutable — the legacy dispatch path is deleted). `adversary_review_fallback` resolves from the chain at the
 finish gate (`mp finish-step`): the ordered fallback reviewer list the `run_adversary_review` op carries — the
-routing policy's adversary `chain` then its panel members (primary excluded, de-duplicated) by default, the
-configured list instead when set, and no fallback at all on `adversary_review_fallback: off`. Deploy groups run in the fixed order
+routing policy's adversary `chain` (primary excluded, de-duplicated) by default, the
+configured list instead when set — refused fail-closed if it names a model outside that chain,
+because the fallback is dispatched under the adversary class and its spawn guard authorizes an
+override only inside the chain — and no fallback at all on `adversary_review_fallback: off`. Deploy groups run in the fixed order
 `release → install → user_only → live_check` (group order normative, within-group list order). Environment
 controls: `CLAUDE_CODE_SESSION_ID` (+ `--session`/`--host` flags; Guard-D
 session identity), `MP_DISPATCH_WAVE_CONCURRENCY` (wave fan-out cap, default 8),

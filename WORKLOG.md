@@ -8,6 +8,10 @@ Review found the first publication gate accepted a bare boolean and re-read HEAD
 
 The PR disposition now stops at a separate publication gate before returning the network op; a tip-bound event preserves approval across re-entry and invalidates it when the branch changes. The caller can record an evidenced direct/standing grant without another question. The existing `await_merge` retirement boundary remains. The sequencer names integration, publication, activation and destructive/outward authority separately; seed-time `state.autonomy` remains the recorded activation grant, not a new deploy-mode change. Branch is intentionally not published or installed under this bounded request; independent breaker review is owed by the parent before landing.
 
+## 2026-09-26 — bare `--repo-root` is a usage error (R9-47, R9-48) on branch `techdebt/w4-r9-47`
+
+R9-36 accepted the space form but left a value-less `--repo-root` as boolean `true`, and `need()` only rejects `undefined`, so the failure landed inside the verb: `resume-brief` threw a path type error (exit 1) and `context-status` exited 0 reporting "unsupported". The check belongs once, after `parseArgs` in `main`, over every `VALUE_FLAGS` name, because that is the only path every verb is parsed through; `parseArgs` itself stays a pure parser so the unit tests that import it keep seeing the raw token. An empty `--repo-root=` is the same defect as a bare flag, so it takes the same exit 2. The usage text names `--<name> <dir>` because `repo-root` is the only value flag today and the brief pins that wording. README's `--archive-pushed <sha>` was the only example of that form; the handler has always read `--archive-pushed --sha=<sha>`.
+
 ## 2026-09-23 — finish-gate fallback reviewer (review-fallback) on branch `review-fallback`
 
 The finish gate's whole-branch review mapped ANY primary failure to
@@ -24,10 +28,11 @@ error is not an outage. `--review-fallback-reason` without `--review-done` is
 refused so a fallback review can never be recorded without its provenance, and
 the reentry-guard projection was left untouched (reviewer/fallback read beside it
 in finish-step) because its exact shape is pinned by reentry-guard's own tests.
-The fallback agent deliberately carries no `preset: breaker` and a name outside
-the circuit-breaker match — that is the governance trade, documented in
-`docs/conventions/adversarial-review-failure-policy.md` (not counted against the
-per-file cap; bounded by the one-review-per-HEAD re-entry guard; `off` disables).
+The fallback agent carries a name outside the circuit-breaker match — that is the
+governance trade, documented in `docs/conventions/adversarial-review-failure-policy.md`
+(not counted against the per-file cap; bounded by the one-review-per-HEAD re-entry
+guard; `off` disables). It now declares `preset: breaker` (R9-8): without a preset Pi
+registers no alias and refuses every spawn, so the fallback was un-dispatchable.
 
 ## 2026-09-09 — schema-backed goals-amend/set-phase deadlock fixed
 

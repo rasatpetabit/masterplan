@@ -107,13 +107,18 @@ host-specific:
   the `masterplan:mp-*` colon namespace. Those files are the single source of
   truth for role contracts; CC is unchanged by pi registration.
 - **pi hosts** discover a different set of paths (`~/.pi/agent/agents/`,
-  `.pi/agents/`, `.agents/`) and resolve CC bare `model:` lane names (a lane
-  such as `frontier` maps to its model ref from `policy/workflow-map.json`, e.g.
-  `litellm/gpt-6-astra`) — but not to a host-native fallback. So a pi host
-  needs adapted copies. Run
+  `.pi/agents/`, `.agents/`) and do not resolve CC bare `model:` lane names, so a
+  pi host needs adapted copies. Run
   [`bin/register-pi-agents.mjs`](../bin/register-pi-agents.mjs) to generate them
-  at `~/.pi/agent/agents/` — **bare-only** (`mp-spec-decomposer.md` etc.). The
-  lane map swaps `model: frontier` → `litellm/gpt-6-astra`. Colon alias copies
+  at `~/.pi/agent/agents/` — **bare-only** (`mp-spec-decomposer.md` etc.).
+  Registration validates the source lane against the map and then **removes the
+  `model:` line**: pi validates a frontmatter `model:` value against the
+  **preset's** class chain and refuses the spawn (`SpawnModelPolicyError`) when
+  it is outside it, so both the lane alias and the lane's resolved ref deny a
+  spawn for any preset whose class sits on a different lane. Emitting no hint
+  lets the preset's class policy route the child, which is the only shape that
+  cannot refuse; the source file keeps the lane as the checked-in intent. Colon
+  alias copies
   (`masterplan:mp-*`) are **retired**: write mode removes managed leftovers
   derived from `agents/mp-*.md` (+ SKIP_FOR_PI); `--check` flags those as drift.
   Unmanaged `masterplan:mp-*.md` outside that set are left alone. Idempotent.

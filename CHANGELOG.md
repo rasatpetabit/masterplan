@@ -5,6 +5,99 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [10.0.13] — 2026-09-26
+
+### Fixed — a bare `--repo-root` is a usage error, and the archive-push example matches the handler (R9-47, R9-48)
+
+- A value flag (`--repo-root`) given with no value — bare, or followed by another `--option`, or as `--repo-root=` — used to stay boolean `true` (or an empty string). `resume-brief` then failed with a path type error, and `context-status` could exit 0 reporting "unsupported". Every name in `VALUE_FLAGS` is now checked once, right after parsing: a value that is not a non-empty string exits 2 with `masterplan: --repo-root needs a value: --repo-root <dir> or --repo-root=<dir>`. `--repo-root <dir>` and `--repo-root=<dir>` are unchanged.
+- README's push-publication example said `--archive-pushed <sha>`. The handler reads `--archive-pushed --sha=<sha>`; the example now says that. No other `--archive-pushed <sha>` example existed in `docs/`, `skills/`, or `commands/`.
+
+## [10.0.12] — 2026-09-26
+
+### Fixed — `--repo-root <dir>` is accepted in its documented space form (R9-36)
+
+- The CLI's argument parser treated every `--flag` without `=` as a boolean, so the space form the
+  skill documents (`mp resume-brief --repo-root <dir>`) set `repo-root` to `true`, pushed the path
+  into the positionals, and failed with "The path argument must be of type string". `--repo-root`
+  now takes the next token as its value when there is one and it does not start with `--`; the
+  `--repo-root=<dir>` form is unchanged, and every other flag keeps its boolean behaviour.
+- Still open, unchanged by this release: a bare `--repo-root` (no value) is still accepted as
+  `true` and fails later in the command, and README's `--archive-pushed <sha>` example does not
+  match the handler, which reads `--archive-pushed --sha=<sha>`.
+
+## [10.0.11] — 2026-09-25
+
+### Fixed — masterplan reads the routing policy the fleet delivers (R5-6)
+
+- Routing resolved against the checked-in `policy/workflow-map.json` unless `MP_ROUTING_POLICY` was
+  set, because the loader required a `tiers` section the SOT retired and so could not read the
+  delivered `~/.pi/workflows/workflow-map.json`. The checked-in copy was last synced 2026-09-04, and
+  its class chains no longer matched what Pi's spawn guard authorizes: every finish-gate fallback
+  reviewer it derived was refused. The default is now `MP_ROUTING_POLICY`, else the delivered map,
+  else the checked-in copy (kept for hosts with no delivered map). `tiers` is no longer required.
+  The routing-policy doctor check names the file it read and WARNs when that differs from the
+  delivered map.
+
+### Fixed — the finish-gate fallback reviewer could not be spawned (R9-8)
+
+- `agents/mp-fallback-reviewer.md` declares no `preset:`, and Pi's subagent runtime registers
+  a preset alias only for an agent that carries one. Every spawn of the finish gate's fallback
+  reviewer was therefore denied (`unknown agent preset`) — a run whose primary adversary review
+  was refused or failed fell through to a skip instead of a review. It now declares
+  `preset: breaker`, matching the other mp-* reviewer agents, and the orchestrator dispatches it
+  under the adversary class (task class `adversary`).
+- `lib/dispatch/routing-policy.mjs` `adversaryFallbackReviewers` returns the adversary class
+  `chain` minus the primary, de-duplicated, and no longer appends the class panel's members.
+  Pi's spawn guard authorizes a model override only inside the dispatched class's chain, so an
+  appended panel member was a guaranteed refusal. Same fail-soft behaviour on an unavailable
+  routing policy (empty list + recorded reason).
+- A configured `adversary_review_fallback` list entry outside the adversary class chain is
+  refused fail-closed with a clear message, matching how the knob's other malformed values are
+  handled: such an entry could never run, and dropping it silently would discard a reviewer the
+  operator asked for. A routing-policy outage still passes the configured list through — the
+  chain is then unknown, and an unauthorized model stays a documented per-entry failed attempt.
+- `test/agents.test.mjs` now requires every `agents/mp-*.md` to declare a roster preset (the red
+  test for the first item); the routing-policy and finish-step suites cover the chain-only list,
+  the never-a-panel-member rule, and the fail-closed config entry.
+
+### Removed — the host lane-override file
+
+- `~/.config/masterplan/lane-overrides.json` is no longer read. Since 10.0.10 registration
+  emits no model hint, so an override only recorded a value and changed no routing, while a
+  malformed file still aborted `register-pi-agents` and `install-pi`. A lane that is
+  unusable on one host is handled by its class chain's fallback or a governed routing-policy
+  change. `loadLaneOverrides`, `reportLaneOverrides` and `effectiveModel` are gone, and
+  `runRegister` no longer takes `laneOverrides`.
+
+## [10.0.10] — 2026-09-23
+
+### Fixed — Pi refused to spawn five registered agents
+
+- `bin/register-pi-agents.mjs` still validates each agent's source lane fail-closed, then
+  registers the agent **without** a `model:` line. Pi checks a frontmatter `model:` against the
+  preset's class chain and refuses the spawn (`SpawnModelPolicyError`) when it falls outside it,
+  so the five breaker-preset agents (`mp-adversarial-reviewer`, `mp-alignment-auditor`,
+  `mp-goal-assessor`, `mp-intent-critic`, `mp-plan-reviewer`) could not be spawned at all; a
+  lane alias is refused the same way. With no hint every preset-bearing agent routes through its
+  preset's class policy, and the three judge-preset agents resolve exactly as before.
+- The lane-override file (`~/.config/masterplan/lane-overrides.json`) is validated and reported
+  but recorded only: registration no longer writes an override into the agent file.
+- Agent provenance prose (all nine `agents/mp-*.md`) describes the no-hint registration.
+  `mp-fallback-reviewer` declares no `preset:` and Pi still refuses it in every mode; that is
+  unchanged by this release.
+
+### Added — installed release retention
+
+- `bin/install-pi.mjs` keeps the newest three installed releases under
+  `~/.local/share/masterplan/releases` (newest first by mtime, never the `current` target), and
+  reports what it pruned in the install JSON's `retention`. A pruning failure does not fail the
+  install.
+
+### Changed — release checklist
+
+- `RELEASING.md` lists `llms.txt` as a version-bearing file (item 6). Its omission is why the E13
+  version-surface check failed at 10.0.8 and 10.0.9 fixed the file by hand.
+
 ## [10.0.9] — 2026-09-23
 
 ### Added — finish-gate fallback reviewer (review-fallback)

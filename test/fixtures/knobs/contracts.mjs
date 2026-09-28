@@ -23,8 +23,14 @@
 //   promptOnly — true only for `<!-- knob: -->` prompt-only controls (a rendered protocol line
 //               is the permitted observable). Everything else needs a code-side observable.
 import { METADATA_EXEMPTIONS } from './discovery.mjs';
+import { loadRoutingPolicy, resolveWorkClass } from '../../../lib/dispatch/routing-policy.mjs';
 
 export { METADATA_EXEMPTIONS };
+
+// The adversary class chain from the checked-in policy — the AUTHORIZED model set for a
+// finish-gate fallback dispatch. Derived here rather than pasted so a routing-policy change
+// turns the fixtures over automatically.
+const ADVERSARY_CHAIN = resolveWorkClass('adversary', { policy: loadRoutingPolicy() }).chain;
 
 // The flag-registration observable: a REGISTERED flag is accepted by the CLI (reach the verb,
 // exit 0), an UNREGISTERED one dies with the A7 fail-closed exit 2. This is a real
@@ -185,7 +191,11 @@ export const REGISTRY = [
     id: 'adversary_review_fallback',
     kind: 'config',
     describe: 'adversary_review_fallback list vs off changes the finish-gate run_adversary_review op payload the shell dispatches fallback reviewers from',
-    values: [['litellm/knob-fallback-first', 'litellm/knob-fallback-second'], 'off'],
+    // Derived from the checked-in policy, never pasted: the finish gate now REFUSES a
+    // configured entry outside the adversary class chain (the fallback is dispatched under
+    // that class and its spawn guard authorizes only chain members), so a fabricated ref
+    // would be a guaranteed error rather than an observable.
+    values: [ADVERSARY_CHAIN.slice(1, 3), 'off'],
     vary: (input, v) => ({ ...input, adversary_review_fallback: v }),
     promptOnly: false,
     // The REAL consumer is the finish machine's op payload (lib/finish-step.mjs resolves the

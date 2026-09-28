@@ -88,19 +88,25 @@ review exit, the review unavailable/empty, a failed harness spawn, **or a refuse
 launch** (the fleet review circuit breaker refuses `breaker`/`*-adversarial-reviewer` agent
 names once a file exceeds its review-round cap, which is how a run once shipped unreviewed) —
 the gate tries the op's `fallback_reviewers` list **in order, one attempt each**, dispatching
-the read-only `mp-fallback-reviewer` agent with that entry as the harness-native model
-override, over the same branch diff. The first attempt that produces a real review wins and is
+the read-only `mp-fallback-reviewer` agent — under the adversary class (task class
+`adversary`) — with that entry as the harness-native model override, over the same branch
+diff. The first attempt that produces a real review wins and is
 recorded with `--review-done --review-reviewer=<model ref> --review-fallback-reason="<why the
 primary failed>"` (durable `adversary_review` event: `data.reviewer`, `data.fallback.reason`);
 a model the harness cannot run is a failed attempt, and the gate moves on.
 
 The list is resolved deterministically in lib (`lib/finish-step.mjs` →
 `lib/dispatch/routing-policy.mjs` `adversaryFallbackReviewers`) and carried in the op payload:
-by default the adversary class `chain` in order, then the `model` of each member of the class's
-panel, de-duplicated preserving first occurrence, with the class's primary `model` excluded —
-a fallback never re-runs the reviewer that just failed. The `.masterplan.yaml` key
-`adversary_review_fallback` (CLI > repo > user > default, fail-closed validation) replaces that
-list outright, or `off` disables the fallback. An unavailable routing policy yields an empty
+by default the adversary class `chain` in order, de-duplicated preserving first occurrence,
+with the class's primary `model` excluded — a fallback never re-runs the reviewer that just
+failed. The class's PANEL is deliberately not consulted: the fallback is dispatched under the
+adversary class and Pi's spawn guard authorizes an explicit model override only inside that
+class's chain, so a panel member outside the chain would be a guaranteed refusal rather than a
+fallback. The `.masterplan.yaml` key `adversary_review_fallback` (CLI > repo > user > default,
+fail-closed validation) replaces that list outright, or `off` disables the fallback; a
+configured entry outside the chain is refused fail-closed for the same reason (an outage — an
+unreadable policy — passes the configured list through unchanged, since the chain is then
+unknown). An unavailable routing policy yields an empty
 list plus a recorded reason — the gate then behaves exactly as it did before the fallback
 existed:
 

@@ -2,7 +2,7 @@
 
 > A Claude Code & Codex CLI plugin for durable multi-hour engineering work — brainstorm → plan → execute → finish on top of `obra/superpowers` skills.
 
-Current release: **v10.0.9** · **License:** MIT · **Works with:** Claude Code, Codex CLI · See [CHANGELOG.md](./CHANGELOG.md)
+Current release: **v10.0.13** · **License:** MIT · **Works with:** Claude Code, Codex CLI · See [CHANGELOG.md](./CHANGELOG.md)
 
 ---
 
@@ -238,7 +238,7 @@ When the last execute wave's tasks are all `done`, the orchestrator **auto-fires
    This gate delegates to `superpowers:finishing-a-development-branch` and **always halts** regardless of autonomy level (it is a risky-action gate).
 5. **Final intent confirmation** — for deployed runs, the `intent_confirm` gate opens **after** a final assessment receipt bound to the latest deploy base; `--intent-confirmed` re-audits the boundary and the receipt must still be valid and `met`. Only an accepted confirmation writes `completion_confirmed`.
 6. **Archive** — last, after the user resolves the gate. The archive writes `state.completion` from durable authorization events (`completion_confirmed` / `incomplete_authorized`); an archive whose state carries a completion the ledger does not authorize is refused.
-7. **Push publication** — install-group runs that moved `origin/<base>` open the post-archive `push_archive` gate (`--archive-pushed <sha>` / `--archive-push-skipped`); re-entry without `archive_pushed` re-emits the gate and reports `pushed: no`.
+7. **Push publication** — install-group runs that moved `origin/<base>` open the post-archive `push_archive` gate (`--archive-pushed --sha=<sha>` / `--archive-push-skipped`); re-entry without `archive_pushed` re-emits the gate and reports `pushed: no`.
 
 `/masterplan finish` runs this flow manually. `/masterplan finish --retro-only` regenerates just `retro.md`.
 
@@ -312,7 +312,7 @@ Each recognized key is validated against the schema enum and its **source layer*
 | `autonomy` | `gated \| loose` (alias `full` → `loose`) | `gated` | `gated` halts at every gate; `loose` auto-advances through successful gates; the branch-finish gate always halts regardless |
 | `planning_mode` | `serial \| parallel \| auto` | derived from complexity | `serial` = one `mp-planner`; `parallel` = `mp-subsystem-planner` fan-out merged by `lib/plan-merge.mjs` |
 | `adversary_review` | `on \| off` | `on` | Default-on finish-time adversary review; new bundles arm `state.review.adversary: true` |
-| `adversary_review_fallback` | list of model refs \| `off` | `null` (derive from the routing policy) | The **finish-gate fallback reviewers**: when the primary adversary review fails or its launch is refused, the gate tries these in order via the read-only `mp-fallback-reviewer` agent (one attempt each, model supplied per dispatch). Default derives from the routing policy — the `adversary` class `chain` then its panel members' models, primary excluded, de-duplicated. A list replaces that outright; `off` disables the fallback (a failed primary skips, as before the feature). See [docs/conventions/adversarial-review-failure-policy.md](docs/conventions/adversarial-review-failure-policy.md) |
+| `adversary_review_fallback` | list of model refs \| `off` | `null` (derive from the routing policy) | The **finish-gate fallback reviewers**: when the primary adversary review fails or its launch is refused, the gate tries these in order via the read-only `mp-fallback-reviewer` agent (one attempt each, model supplied per dispatch). Default derives from the routing policy — the `adversary` class `chain`, primary excluded, de-duplicated. The fallback is dispatched under the adversary class, whose spawn guard authorizes a model override only inside that chain, so a configured list entry outside it is refused (fail-closed) and the class panel is never a fallback source. A list replaces the derived default outright; `off` disables the fallback (a failed primary skips, as before the feature). See [docs/conventions/adversarial-review-failure-policy.md](docs/conventions/adversarial-review-failure-policy.md) |
 | `render_images` | `on \| off` | `off` | Gates the optional shell-side image *generation*; embedding is by-presence |
 | `fabric` | `on \| off` | `on` | The schema accepts `on\|off`; the legacy L2 wave path is deleted, so `off` marks a bundle **unexecutable** (no `state.dispatch.fabric: true` → dispatch refused, nothing restored) |
 | `context_watch` | object | `{threshold: 70, focus: null}` | `context_watch.threshold` is an int 1–99; `context_watch.focus` is a string or null |
@@ -332,7 +332,7 @@ Every `readEnv`-backed control — set these in the environment, not in config f
 |---|---|---|
 | `CLAUDE_CODE_SESSION_ID` | **Guard-D session identity** (the owner lock's identity is the LLM session, not the process). Companion flags: `--session=<id>`, `--host=<host>` to `mp seed` / `mp continue` / `mp record-result` | none — Guard-D refuses without a session id unless the bundle opted out (`--owner-lock=off`) |
 | `MP_DISPATCH_WAVE_CONCURRENCY` | Caps the wave fan-out parallelism (`lib/continue.mjs`, clamped to the descriptor count) | `8` |
-| `MP_ROUTING_POLICY` | Path to an override routing policy for work-class resolution (defaults to the checked-in `policy/workflow-map.json`) | checked-in repo copy |
+| `MP_ROUTING_POLICY` | Path to an override routing policy for work-class resolution | the delivered `~/.pi/workflows/workflow-map.json`, else the checked-in `policy/workflow-map.json` |
 | `SKYNET_VERIFY_ALLOWLIST` | Recorded verify allowlist for audit continuity (historical name; local verification does not gate on it — the value surfaces in the wave record) | `bash -c` |
 | `MP_CONTEXT_WINDOW` | Explicit context window override for `mp context-status` window resolution (takes precedence over harness-model/`[1m]` markers, below the explicit flag) | auto |
 | `MP_BIN` | Path to the `bin/masterplan.mjs` entrypoint | `bin/` beside the command file |
