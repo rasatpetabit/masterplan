@@ -344,6 +344,14 @@ function makeFixture({ slug = 't24', state: over = {}, ownerLockOff = false, ver
   return { tmp, MAIN, WT, bundleDir, statePath, self, step };
 }
 
+// A PR-path disposition is not publication consent. Tests that need to pass publication
+// explicitly open the gate, then answer for the head that gate advertised.
+function approvePublication(fx, extra = {}) {
+  const gate = fx.step({ choice: 'pr' });
+  assert.equal(gate.gate, 'publication');
+  return fx.step({ choice: 'pr', publicationApproved: true, publicationHead: gate.head, ...extra });
+}
+
 // Walk a fixture to the open branch_finish gate: verify pass → retro written → gate.
 function walkToGate(fx) {
   let op = fx.step();
@@ -694,10 +702,10 @@ test('a PR deploy base is proven against the retirement tip, not the mutable bra
   commitOn(fx.MAIN, 'done definition');
   const tipA = git(fx.WT, 'rev-parse', 'HEAD');
   walkToGate(fx);
-  let op = fx.step({ choice: 'pr', publicationApproved: true });
+  let op = approvePublication(fx);
   assert.equal(op.op, 'shell');
   assert.equal(op.kind, 'push_pr');
-  op = fx.step({ choice: 'pr', publicationApproved: true, pushed: true }); // retirement: kept_by_user, branch_tip recorded
+  op = fx.step({ choice: 'pr', pushed: true }); // retirement: kept_by_user, branch_tip recorded
   assert.equal(op.op, 'stop');
   assert.equal(op.reason, 'await_merge', 'a PR with a deploy surface is not archived before the merge');
   assert.notEqual(readState(fx.statePath).status, 'archived');
@@ -766,7 +774,7 @@ test('an unresolvable definition of done on the branch fails closed before PR re
   write(fx.WT, '.masterplan.yaml', 'done:\n  release:\n    - run: /bin/true\n      bogus: [\n');
   commitOn(fx.WT, 'malformed done block');
   walkToGate(fx);
-  const op = fx.step({ choice: 'pr', publicationApproved: true });
+  const op = approvePublication(fx);
   assert.equal(op.op, 'ask');
   assert.equal(op.ask, 'dispatch-error');
   assert.match(op.error, /cannot resolve the definition of done/);
@@ -859,9 +867,9 @@ test('an ad-hoc definition does not relax the PR merge identity proof', () => {
   git(fx.WT, 'rm', '-q', '.masterplan.yaml');
   git(fx.WT, 'commit', '-q', '-m', 'no done definition on the branch');
   walkToGate(fx);
-  let op = fx.step({ choice: 'pr', publicationApproved: true });
+  let op = approvePublication(fx);
   assert.equal(op.kind, 'push_pr');
-  op = fx.step({ choice: 'pr', publicationApproved: true, pushed: true });
+  op = fx.step({ choice: 'pr', pushed: true });
   assert.equal(op.reason, 'await_merge', 'no definition anywhere: the no_definition gate waits at stage entry, after the merge');
   assert.notEqual(readState(fx.statePath).status, 'archived');
   const retire = readEvents(fx.bundleDir).find((e) => e.type === 'branch_finish');
@@ -951,8 +959,8 @@ test('--merge-sha must be a full commit id: a moving revision cannot become the 
   write(fx.MAIN, '.masterplan.yaml', 'done:\n  release:\n    - run: /bin/true\n');
   commitOn(fx.MAIN, 'done definition');
   walkToGate(fx);
-  fx.step({ choice: 'pr', publicationApproved: true });
-  fx.step({ choice: 'pr', publicationApproved: true, pushed: true });
+  approvePublication(fx);
+  fx.step({ choice: 'pr', pushed: true });
   const retire = readEvents(fx.bundleDir).find((e) => e.type === 'branch_finish');
   git(fx.MAIN, 'merge', '-q', '--no-ff', '--no-edit', retire.branch_tip);
   const mergeSha = git(fx.MAIN, 'rev-parse', 'HEAD');
@@ -970,9 +978,9 @@ test('a PR that deletes an inherited done: none waits for the merge and then mee
   git(fx.WT, 'rm', '-q', '.masterplan.yaml');
   git(fx.WT, 'commit', '-q', '-m', 'the branch drops the definition');
   walkToGate(fx);
-  let op = fx.step({ choice: 'pr', publicationApproved: true });
+  let op = approvePublication(fx);
   assert.equal(op.kind, 'push_pr');
-  op = fx.step({ choice: 'pr', publicationApproved: true, pushed: true });
+  op = fx.step({ choice: 'pr', pushed: true });
   assert.equal(op.reason, 'await_merge', 'the merge keeps the deletion: no effective definition, so the run waits');
   assert.notEqual(readState(fx.statePath).status, 'archived');
   const retire = readEvents(fx.bundleDir).find((e) => e.type === 'branch_finish');
@@ -987,8 +995,8 @@ test('a PR always waits for the merge: done: none deploys (deploy_base, no group
   // base is the merge commit, and the base may change while the PR is open
   let fx = makeFixture({ state: { autonomy: 'loose' } });
   walkToGate(fx);
-  fx.step({ choice: 'pr', publicationApproved: true });
-  let op = fx.step({ choice: 'pr', publicationApproved: true, pushed: true });
+  approvePublication(fx);
+  let op = fx.step({ choice: 'pr', pushed: true });
   assert.equal(op.reason, 'await_merge', JSON.stringify(op));
   assert.notEqual(readState(fx.statePath).status, 'archived');
   // the base gains a release surface while the PR waits: the landing carries it and it deploys
@@ -1001,8 +1009,8 @@ test('a PR always waits for the merge: done: none deploys (deploy_base, no group
   // and a landing that stays done: none records deploy_base and archives complete-with-no-groups
   fx = makeFixture({ state: { autonomy: 'loose' } });
   walkToGate(fx);
-  fx.step({ choice: 'pr', publicationApproved: true });
-  fx.step({ choice: 'pr', publicationApproved: true, pushed: true });
+  approvePublication(fx);
+  fx.step({ choice: 'pr', pushed: true });
   const tip = readEvents(fx.bundleDir).find((e) => e.type === 'branch_finish').branch_tip;
   git(fx.MAIN, 'merge', '-q', '--no-ff', '--no-edit', tip);
   op = fx.step({ merged: true, mergeSha: git(fx.MAIN, 'rev-parse', 'HEAD') });
@@ -1013,8 +1021,8 @@ test('a PR always waits for the merge: done: none deploys (deploy_base, no group
   write(fx.MAIN, '.masterplan.yaml', 'done:\n  release:\n    - run: /bin/true\n');
   commitOn(fx.MAIN, 'base-side surface');
   walkToGate(fx);
-  fx.step({ choice: 'pr', publicationApproved: true });
-  op = fx.step({ choice: 'pr', publicationApproved: true, pushed: true });
+  approvePublication(fx);
+  op = fx.step({ choice: 'pr', pushed: true });
   assert.equal(op.reason, 'await_merge', JSON.stringify(op));
 });
 
@@ -1154,8 +1162,8 @@ test('the release contract is re-checked at the real deploy base: a version tagg
   write(fx.WT, '.masterplan.yaml', 'done:\n  version_from: .claude-plugin/plugin.json\n  release:\n    - run: /bin/true\n');
   commitOn(fx.WT, 'release config');
   walkToGate(fx);
-  fx.step({ choice: 'pr', publicationApproved: true });
-  let op = fx.step({ choice: 'pr', publicationApproved: true, pushed: true });
+  approvePublication(fx);
+  let op = fx.step({ choice: 'pr', pushed: true });
   assert.equal(op.reason, 'await_merge');
   git(fx.MAIN, 'tag', 'v1.2.3'); // published by someone else while the PR was open
   const tip = readEvents(fx.bundleDir).find((e) => e.type === 'branch_finish').branch_tip;
@@ -1246,8 +1254,8 @@ test('local retirement replays across every teardown crash window with the inten
 test('a done: none PR still proves the landing carries the retired tip', () => {
   const fx = makeFixture({ state: { autonomy: 'loose' } }); // the fixture declares done: none
   walkToGate(fx);
-  fx.step({ choice: 'pr', publicationApproved: true });
-  let op = fx.step({ choice: 'pr', publicationApproved: true, pushed: true });
+  approvePublication(fx);
+  let op = fx.step({ choice: 'pr', pushed: true });
   assert.equal(op.reason, 'await_merge');
   // an unrelated commit on the base — not the landing of the retired tip
   write(fx.MAIN, 'src/unrelated.txt', 'u\n');
@@ -1429,7 +1437,7 @@ test('an ad-hoc release surface is guarded even when the hypothetical merge conf
   const adhoc = path.join(fx.tmp, 'adhoc.json');
   fs.writeFileSync(adhoc, JSON.stringify({ version_from: 'pkg.json', release: [{ run: '/bin/true' }] }));
   walkToGate(fx);
-  const op = fx.step({ choice: 'pr', publicationApproved: true, doneAdhocFile: adhoc });
+  const op = approvePublication(fx, { doneAdhocFile: adhoc });
   assert.equal(op.ask, 'dispatch-error', JSON.stringify(op));
   assert.match(op.error, /conflicts/);
   assert.ok(!readEvents(fx.bundleDir).some((e) => e.type === 'branch_finish'), 'the PR was not retired');
@@ -1575,8 +1583,8 @@ test('strict identity fails closed when no retirement record carries a tip', () 
   write(fx.MAIN, '.masterplan.yaml', 'done:\n  release:\n    - run: /bin/true\n');
   commitOn(fx.MAIN, 'done definition');
   walkToGate(fx);
-  fx.step({ choice: 'pr', publicationApproved: true });
-  fx.step({ choice: 'pr', publicationApproved: true, pushed: true });
+  approvePublication(fx);
+  fx.step({ choice: 'pr', pushed: true });
   // a legacy-shaped ledger: the retirement records exist but carry no branch_tip, and the branch is gone
   const evs = readEvents(fx.bundleDir).map((e) => (e.type === 'branch_finish' || e.type === 'branch_finish_intent') ? { ...e, branch_tip: undefined } : e);
   fs.writeFileSync(path.join(fx.bundleDir, 'events.jsonl'), evs.map((e) => JSON.stringify(e)).join('\n') + '\n');
@@ -1623,8 +1631,8 @@ test('a still-present branch ref is not identity: strict PR proof needs the reco
   write(fx.MAIN, '.masterplan.yaml', 'done:\n  release:\n    - run: /bin/true\n');
   commitOn(fx.MAIN, 'done definition');
   walkToGate(fx);
-  fx.step({ choice: 'pr', publicationApproved: true });
-  fx.step({ choice: 'pr', publicationApproved: true, pushed: true });
+  approvePublication(fx);
+  fx.step({ choice: 'pr', pushed: true });
   // the retirement records lose their branch_tip (a legacy-shaped ledger), but the branch survives
   const evs = readEvents(fx.bundleDir).map((e) => (e.type === 'branch_finish' || e.type === 'branch_finish_intent') ? { ...e, branch_tip: undefined } : e);
   fs.writeFileSync(path.join(fx.bundleDir, 'events.jsonl'), evs.map((e) => JSON.stringify(e)).join('\n') + '\n');
@@ -1719,8 +1727,8 @@ test('a deleted tag does not clear an opened version gate, before or after the m
   write(fx.WT, '.masterplan.yaml', 'done:\n  version_from: .claude-plugin/plugin.json\n  release:\n    - run: /bin/true\n');
   commitOn(fx.WT, 'release config');
   walkToGate(fx);
-  fx.step({ choice: 'pr', publicationApproved: true });
-  fx.step({ choice: 'pr', publicationApproved: true, pushed: true });
+  approvePublication(fx);
+  fx.step({ choice: 'pr', pushed: true });
   const tip = readEvents(fx.bundleDir).find((e) => e.type === 'branch_finish').branch_tip;
   git(fx.MAIN, 'tag', 'v6.6.6'); // published while the PR waited
   git(fx.MAIN, 'merge', '-q', '--no-ff', '--no-edit', tip);
@@ -1739,8 +1747,8 @@ test('a deleted tag does not clear an opened version gate, before or after the m
 test('a done: none PR with a legacy tip-less record still cannot take an unrelated commit as its base', () => {
   const fx = makeFixture({ state: { autonomy: 'loose' } }); // the fixture declares done: none
   walkToGate(fx);
-  fx.step({ choice: 'pr', publicationApproved: true });
-  fx.step({ choice: 'pr', publicationApproved: true, pushed: true });
+  approvePublication(fx);
+  fx.step({ choice: 'pr', pushed: true });
   // the retirement records lose their tip; the branch survives at the reviewed tip
   const evs = readEvents(fx.bundleDir).map((e) => (e.type === 'branch_finish' || e.type === 'branch_finish_intent') ? { ...e, branch_tip: undefined } : e);
   fs.writeFileSync(path.join(fx.bundleDir, 'events.jsonl'), evs.map((e) => JSON.stringify(e)).join('\n') + '\n');
@@ -1757,8 +1765,8 @@ test('an origin-only tag gate survives an origin outage and keep still answers i
   write(fx.WT, '.masterplan.yaml', 'done:\n  version_from: .claude-plugin/plugin.json\n  release:\n    - run: /bin/true\n');
   commitOn(fx.WT, 'release config');
   walkToGate(fx);
-  fx.step({ choice: 'pr', publicationApproved: true });
-  fx.step({ choice: 'pr', publicationApproved: true, pushed: true });
+  approvePublication(fx);
+  fx.step({ choice: 'pr', pushed: true });
   const tip = readEvents(fx.bundleDir).find((e) => e.type === 'branch_finish').branch_tip;
   // v8.8.8 exists ONLY on origin (a bare repo), not locally
   const bare = path.join(fx.tmp, 'origin.git');
@@ -1810,8 +1818,8 @@ test('with no recorded identity, an unrelated merge cannot certify itself — th
   write(fx.MAIN, '.masterplan.yaml', 'done:\n  release:\n    - run: /bin/true\n');
   commitOn(fx.MAIN, 'done definition');
   walkToGate(fx);
-  fx.step({ choice: 'pr', publicationApproved: true });
-  fx.step({ choice: 'pr', publicationApproved: true, pushed: true });
+  approvePublication(fx);
+  fx.step({ choice: 'pr', pushed: true });
   const branch = 'masterplan/t24';
   const realTip = git(fx.MAIN, 'rev-parse', branch);
   // every retirement record loses its identity (a legacy-shaped ledger)
@@ -1854,8 +1862,8 @@ test('a sha256 repository is not rejected by the merge-sha validator', () => {
   write(fx.MAIN, '.masterplan.yaml', 'done:\n  release:\n    - run: /bin/true\n');
   commitOn(fx.MAIN, 'done definition');
   walkToGate(fx);
-  fx.step({ choice: 'pr', publicationApproved: true });
-  fx.step({ choice: 'pr', publicationApproved: true, pushed: true });
+  approvePublication(fx);
+  fx.step({ choice: 'pr', pushed: true });
   const tip = readEvents(fx.bundleDir).find((e) => e.type === 'branch_finish').branch_tip;
   assert.equal(tip.length, 64, 'sha256 object ids');
   git(fx.MAIN, 'merge', '-q', '--no-ff', '--no-edit', tip);
@@ -1945,8 +1953,8 @@ test('an unrelated incomplete authorization does not resolve the PR merge wait',
   walkToGate(fx);
   // an incomplete authorization from an earlier, unrelated override
   fs.appendFileSync(path.join(fx.bundleDir, 'events.jsonl'), JSON.stringify({ type: 'incomplete_authorized', ts: 1, reason: 'verification_waived' }) + '\n');
-  fx.step({ choice: 'pr', publicationApproved: true });
-  const op = fx.step({ choice: 'pr', publicationApproved: true, pushed: true });
+  approvePublication(fx);
+  const op = fx.step({ choice: 'pr', pushed: true });
   assert.equal(op.reason, 'await_merge', JSON.stringify(op));
   assert.notEqual(readState(fx.statePath).status, 'archived');
   const tip = readEvents(fx.bundleDir).find((e) => e.type === 'branch_finish').branch_tip;

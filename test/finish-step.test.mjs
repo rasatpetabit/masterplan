@@ -397,7 +397,7 @@ test('pr: two-phase handshake — push_pr leaves the gate open; --pushed retires
   assert.equal(readState(fx.statePath).pending_gate?.id, 'publication');
   op = fx.step();
   assert.equal(op.gate, 'publication', 'publication approval survives re-entry');
-  op = fx.step({ choice: 'pr', publicationApproved: true });
+  op = fx.step({ choice: 'pr', publicationApproved: true, publicationHead: op.head });
   assert.equal(op.op, 'shell');
   assert.equal(op.kind, 'push_pr');
   assert.equal(op.branch, 'masterplan/t24');
@@ -433,11 +433,66 @@ test('pr: two-phase handshake — push_pr leaves the gate open; --pushed retires
   assert.equal(st.status, 'archived');
 });
 
-test('pr: direct/standing publication grant is recorded once, and a changed tip needs fresh approval', () => {
+test('pr: tip moved after publication gate opened — approval re-opens at new tip without push', () => {
+  const fx = makeFixture();
+  walkToGate(fx);
+  const opened = fx.step({ choice: 'pr' });
+  assert.equal(opened.gate, 'publication');
+  assert.equal(readState(fx.statePath).pending_gate?.head, opened.head);
+  write(fx.WT, 'src/a.txt', 'changed tip\n');
+  git(fx.WT, 'add', 'src/a.txt');
+  git(fx.WT, 'commit', '-q', '-m', 'changed tip');
+  const op = fx.step({ choice: 'pr', publicationApproved: true, publicationHead: opened.head });
+  assert.equal(op.op, 'ask');
+  assert.equal(op.gate, 'publication');
+  assert.equal(op.head, git(fx.WT, 'rev-parse', 'HEAD'));
+  assert.notEqual(op.head, opened.head);
+  assert.equal(readState(fx.statePath).pending_gate?.head, op.head);
+  assert.equal(readEvents(fx.bundleDir).filter((e) => e.type === 'publication_approved').length, 0);
+});
+
+test('pr: bare approval flag without open publication gate cannot authorize push', () => {
+  const fx = makeFixture();
+  walkToGate(fx);
+  const op = fx.step({ choice: 'pr', publicationApproved: true, publicationHead: git(fx.WT, 'rev-parse', 'HEAD') });
+  assert.equal(op.op, 'ask');
+  assert.equal(op.gate, 'publication');
+  assert.equal(op.head, readState(fx.statePath).pending_gate?.head);
+  assert.equal(readEvents(fx.bundleDir).filter((e) => e.type === 'publication_approved').length, 0);
+  // A boolean by itself still cannot satisfy an existing gate without its displayed head.
+  const unbound = fx.step({ choice: 'pr', publicationApproved: true });
+  assert.equal(unbound.gate, 'publication');
+  assert.equal(readEvents(fx.bundleDir).filter((e) => e.type === 'publication_approved').length, 0);
+});
+
+test('pr: pending publication gate whose tip moved re-opens even without answer flags', () => {
+  const fx = makeFixture();
+  walkToGate(fx);
+  const opened = fx.step({ choice: 'pr' });
+  write(fx.WT, 'src/a.txt', 'advanced\n');
+  git(fx.WT, 'add', 'src/a.txt');
+  git(fx.WT, 'commit', '-q', '-m', 'advanced');
+  const op = fx.step();
+  assert.equal(op.gate, 'publication');
+  assert.notEqual(op.head, opened.head);
+  assert.equal(readState(fx.statePath).pending_gate?.head, op.head);
+});
+
+test('pr: missing worktree refuses publication rather than treating missing tip as approved', () => {
+  const fx = makeFixture();
+  walkToGate(fx);
+  const gate = fx.step({ choice: 'pr' });
+  git(fx.MAIN, 'worktree', 'remove', '--force', fx.WT);
+  assert.throws(() => fx.step({ choice: 'pr', publicationApproved: true, publicationHead: gate.head }), /git -C .* failed/);
+  assert.equal(readEvents(fx.bundleDir).filter((e) => e.type === 'publication_approved').length, 0);
+});
+
+test('pr: tip-bound publication approval is recorded once, and a later tip needs fresh approval', () => {
   const fx = makeFixture();
   walkToGate(fx);
   assert.throws(() => fx.step({ choice: 'pr', pushed: true }), /requires publication approval/);
-  let op = fx.step({ choice: 'pr', publicationApproved: true });
+  const gate = fx.step({ choice: 'pr' });
+  let op = fx.step({ choice: 'pr', publicationApproved: true, publicationHead: gate.head });
   assert.equal(op.kind, 'push_pr');
   assert.equal(readEvents(fx.bundleDir).filter((e) => e.type === 'publication_approved').length, 1);
   op = fx.step({ choice: 'pr' });

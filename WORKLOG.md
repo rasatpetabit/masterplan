@@ -1,5 +1,9 @@
 # WORKLOG
 
+## 2026-09-28 — publication gate answer binding repair on `fix/distinct-finish-gates`
+
+Review found the first publication gate accepted a bare boolean and re-read HEAD at answer time, permitting an unadvertised tip to inherit consent. The approval now requires the open publication gate's persisted head and an explicit echoed `--publication-head`; stale heads re-open without recording an approval, including on bare re-entry. CLI flags alone are not direct/standing-grant evidence: a grant must first open the tip-bearing gate and then answer it. A missing/detached worktree fails closed, rather than deriving an empty or unrelated tip. No network publication, merge, or installation performed here; independent breaker review remains with the parent.
+
 ## 2026-09-28 — distinct finish gates on `fix/distinct-finish-gates`
 
 The PR disposition now stops at a separate publication gate before returning the network op; a tip-bound event preserves approval across re-entry and invalidates it when the branch changes. The caller can record an evidenced direct/standing grant without another question. The existing `await_merge` retirement boundary remains. The sequencer names integration, publication, activation and destructive/outward authority separately; seed-time `state.autonomy` remains the recorded activation grant, not a new deploy-mode change. Branch is intentionally not published or installed under this bounded request; independent breaker review is owed by the parent before landing.

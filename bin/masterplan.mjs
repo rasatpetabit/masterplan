@@ -676,7 +676,7 @@ const KNOWN_FLAGS = new Set(
     'key kind label linked-worktree local-run-branch mark-published merge-sha merged meta mode ' +
     'native-tools no-workflow note note-file now opened-at out owner-lock phase plan plan-deps plan-hash ' +
     'plan-html plan-index plan-index-path plan-md plan-path planning-mode porcelain pr predecessor ' +
-    'predecessor-transcript producer-status prs prune prune-non-pending pushed publication-approved reason receipt reconcile ' +
+    'predecessor-transcript producer-status prs prune prune-non-pending pushed publication-approved publication-head reason receipt reconcile ' +
     'recorded-base removal-confirmed removal-force remove-root render-images repo repo-git-dir repo-root ' +
     'repos-allowlist result result-file retro-only review review-base review-count review-digest-file ' +
     'review-done review-fallback-reason review-json review-reason review-reviewer review-skipped review-verdict reviews-file recovery-head recovery-repo roots routing run-id run-slug ' +
@@ -4772,6 +4772,7 @@ function main() {
           choice: typeof flags.choice === 'string' ? flags.choice : null,
           pushed: !!flags.pushed,
           publicationApproved: !!flags['publication-approved'],
+          publicationHead: typeof flags['publication-head'] === 'string' ? flags['publication-head'] : null,
           removalForce: !!flags['removal-force'],
           retroOnly: !!flags['retro-only'],
           goalCheck: goalCheckFlag,
