@@ -41,7 +41,9 @@ flow. `--resume=<path>` is an alias for `execute <path>`.
 ## `episode-disposition` (operator CLI)
 
 For an existing held/subjectless wave-review slot, decide explicitly without rewriting
-historical receipts: `mp episode-disposition --state=<primary-bundle>/state.yml --wave=<n> --task-id=<n> --disposition=retire --reason="<why>"` closes it **not reviewed**; use `--disposition=restart` without `--reason` to authorize new work on a new persisted subject linked to the old slot. Pass `--session=<owner-session> --host=<owner-host>` when Guard D is on. Identical re-entry is idempotent; conflicting decisions, stale `.worktrees/` bundle copies and missing slots refuse. No disposition is applied automatically.
+historical receipts: `mp episode-disposition --state=<primary-bundle>/state.yml --wave=<n> --task-id=<n> --disposition=retire --reason="<why>"` closes it **not reviewed**; use `--disposition=restart` without `--reason` to authorize new work on a new persisted subject linked to the old slot. Pass `--session=<owner-session> --host=<owner-host>` when Guard D is on. Identical re-entry is idempotent; conflicting decisions, stale `.worktrees/` bundle copies and missing slots refuse. The physical bundle and `state.yml` must match the canonical primary repository location; redirected directory/state-file symlinks refuse before ownership checks or writes. Relative paths to the ordinary primary bundle work. Review consumers enforce the same Guard D boundary as disposition writes, and a restart must have the one recomputed canonical subject and exact `{wave, task_id}` lineage for its slot. No disposition is applied automatically.
+
+**Residual trust boundary:** Guard D is a cooperative lock, not authentication against a same-UID writer who edits state directly (or changes lock/config evidence). Exact restart validation limits a hand-edited record to the one canonical restart; it does not prove an independent operator authorization. The existing `owner_lock=off` escape hatch remains explicit.
 
 ## `finish`
 Finalize a completed run (§2c): verify and **cite real output**

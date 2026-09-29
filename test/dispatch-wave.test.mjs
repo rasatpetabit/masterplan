@@ -201,7 +201,7 @@ async function recordNativeWave(fx, res, { edits = {}, providedReviews = null, s
     })),
   };
   const reviewed = await reviewNativeResult({
-    statePath: fx.statePath, result, providedReviews, now: 3000,
+    statePath: fx.statePath, self: fx.self, result, providedReviews, now: 3000,
   });
   if (reviewed.review_outcome === 'native-review-pending') return { result, reviewed };
   const recorded = recordWaveResult({

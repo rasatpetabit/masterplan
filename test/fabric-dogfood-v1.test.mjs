@@ -97,7 +97,7 @@ async function runNativeWave(fx, providedReviews) {
     tasks: res.plan.tasks.map((t) => ({ task_id: t.task_id, digest: workerDigest(t.task_id, t.files) })),
   };
   const reviewed = await reviewNativeResult({
-    statePath: fx.statePath, result, providedReviews, now: 3100,
+    statePath: fx.statePath, self: fx.self, result, providedReviews, now: 3100,
   });
   const recorded = recordWaveResult({
     statePath: fx.statePath, result: reviewed, self: fx.self, now: 3200,

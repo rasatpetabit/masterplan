@@ -24,12 +24,14 @@ import {
   readWaveDispatchRecord,
   writeWaveDispatchRecord,
   reviewNativeResult,
+  reviewCommittedRecovery,
   disposeReviewEpisode,
 } from '../lib/dispatch-wave.mjs';
 import { continueRun } from '../lib/continue.mjs';
 import { readState, writeState } from '../lib/bundle.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
 import { recordWaveResult } from '../lib/wave-commit.mjs';
+import { fingerprintReviewContext } from '../lib/recovery-controller.mjs';
 const dispatchFixture = JSON.parse(fs.readFileSync(new URL('./fixtures/dispatch-map.json', import.meta.url), 'utf8'));
 
 test('native handoff keeps bounded-edit intent and never stamps a model', () => {
@@ -387,7 +389,7 @@ test('phase A: owed reviews emit pending descriptors and record NOTHING', async 
     tasks: [{ task_id: 1, digest: workerDigest(1, 'done') }],
   };
   const pending = await reviewNativeResult({
-    statePath: fx.statePath, result: nativeResult, policy: dispatchFixture, now: 3000,
+    statePath: fx.statePath, self: fx.self, result: nativeResult, policy: dispatchFixture, now: 3000,
   });
   assert.equal(pending.review_outcome, 'native-review-pending');
   assert.equal(pending.pending_reviews.length, 1);
@@ -410,7 +412,7 @@ test('review episode keeps persisted project subject across artifact, token, rev
   await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 2000, policy: dispatchFixture });
   write(fx.WT, 'src/a.txt', 'first edit\n');
   const result = { wave: 1, tasks: [{ task_id: 1, digest: workerDigest(1, 'done') }] };
-  const first = (await reviewNativeResult({ statePath: fx.statePath, result, policy: dispatchFixture })).pending_reviews[0];
+  const first = (await reviewNativeResult({ statePath: fx.statePath, self: fx.self, now: 2300, result, policy: dispatchFixture })).pending_reviews[0];
   const record = readWaveDispatchRecord(fx.bundleDir, 1);
   assert.equal(first.subject, record.review_context.episodes['1'].subject);
   assert.ok(first.subject.startsWith(`${fx.MAIN}::docs/masterplan/stable-episode/wave-1/task-1`));
@@ -418,7 +420,7 @@ test('review episode keeps persisted project subject across artifact, token, rev
   write(fx.WT, 'src/a.txt', 'second edit\n');
   const remap = structuredClone(dispatchFixture);
   remap.usecases['adversarial-assessment'].agent = 'judge';
-  const second = (await reviewNativeResult({ statePath: fx.statePath, result, policy: remap })).pending_reviews[0];
+  const second = (await reviewNativeResult({ statePath: fx.statePath, self: fx.self, now: 2300, result, policy: remap })).pending_reviews[0];
   assert.equal(second.subject, first.subject);
   assert.equal(second.agent, 'judge');
   assert.notEqual(second.diff_sha, first.diff_sha);
@@ -435,7 +437,7 @@ test('old subjectless wave episode cannot acquire a fresh budget on recovery', a
   writeWaveDispatchRecord(fx.bundleDir, 1, record);
   write(fx.WT, 'src/a.txt', 'new edit\n');
   const result = { wave: 1, tasks: [{ task_id: 1, digest: workerDigest(1, 'done') }] };
-  await assert.rejects(() => reviewNativeResult({ statePath: fx.statePath, result, policy: dispatchFixture }), /no identifiable entry/);
+  await assert.rejects(() => reviewNativeResult({ statePath: fx.statePath, self: fx.self, now: 2300, result, policy: dispatchFixture }), /no identifiable entry/);
 });
 
 test('submitted wave with a legacy pin is reused, never launched or migrated in place', async () => {
@@ -462,7 +464,7 @@ test('new task episode freezes C2 constraints; both host-native gates preserve t
   write(fx.WT, 'src/a.txt', 'review me\n');
   const result = { wave: 1, tasks: [{ task_id: 1, digest: workerDigest(1, 'done') }] };
   for (const host of ['claude-code', 'codex']) {
-    const [d] = (await reviewNativeResult({ statePath: fx.statePath, result, host,
+    const [d] = (await reviewNativeResult({ statePath: fx.statePath, self: fx.self, now: 2300, result, host,
       discoveryOptions: absentDiscovery })).pending_reviews;
     assertConstraints(d, saved.review_context.episodes['1'].subject);
     assert.equal(d.model_source, 'host-native');
@@ -471,11 +473,11 @@ test('new task episode freezes C2 constraints; both host-native gates preserve t
     assert.equal(d.phase, 'challenge');
     assert.equal(Object.hasOwn(d, 'usecase'), false);
     assert.equal(Object.hasOwn(d, 'vocabulary'), false);
-    assert.equal(d.diff_sha, (await reviewNativeResult({ statePath: fx.statePath, result, policy: dispatchFixture })).pending_reviews[0].diff_sha);
+    assert.equal(d.diff_sha, (await reviewNativeResult({ statePath: fx.statePath, self: fx.self, now: 2300, result, policy: dispatchFixture })).pending_reviews[0].diff_sha);
   }
   // A rewrite must retain operation-owned constraints rather than defaulting them.
   writeWaveDispatchRecord(fx.bundleDir, 1, { ...saved, attempt: 2, wave_token: 'other-token' });
-  const configured = (await reviewNativeResult({ statePath: fx.statePath, result, policy: dispatchFixture })).pending_reviews[0];
+  const configured = (await reviewNativeResult({ statePath: fx.statePath, self: fx.self, now: 2300, result, policy: dispatchFixture })).pending_reviews[0];
   assertConstraints(configured, saved.review_context.episodes['1'].subject);
   assert.equal(configured.usecase, dispatchFixture.phases.challenge);
 });
@@ -491,7 +493,7 @@ test('an existing persisted subjectless or held episode emits zero reviews', asy
     writeWaveDispatchRecord(fx.bundleDir, 1, saved);
     write(fx.WT, 'src/a.txt', 'review me\n');
     const result = { wave: 1, tasks: [{ task_id: 1, digest: workerDigest(1, 'done') }] };
-    await assert.rejects(() => reviewNativeResult({ statePath: fx.statePath, result, policy: dispatchFixture }), /subjectless hold/);
+    await assert.rejects(() => reviewNativeResult({ statePath: fx.statePath, self: fx.self, now: 2300, result, policy: dispatchFixture }), /subjectless hold/);
     assert.deepEqual(readWaveDispatchRecord(fx.bundleDir, 1).review_context.episodes['1'], episode);
     assert.equal(readState(fx.statePath).tasks[0].status, 'pending');
   }
@@ -517,8 +519,8 @@ test('operator dispositions are durable, idempotent, conflicting re-apply refuse
   assert.throws(() => disposeReviewEpisode({ ...args, disposition: 'restart' }), /conflict/);
   write(fx.WT, 'src/a.txt', 'change\n');
   const result = { wave: 1, tasks: [{ task_id: 1, digest: workerDigest(1) }] };
-  await assert.rejects(() => reviewNativeResult({ statePath: fx.statePath, result, policy: dispatchFixture }), /retired.*not reviewed/);
-  await assert.rejects(() => reviewNativeResult({ statePath: fx.statePath, result, providedReviews: { 1: rejectRecord }, policy: dispatchFixture }), /retired.*not reviewed/);
+  await assert.rejects(() => reviewNativeResult({ statePath: fx.statePath, self: fx.self, now: 2300, result, policy: dispatchFixture }), /retired.*not reviewed/);
+  await assert.rejects(() => reviewNativeResult({ statePath: fx.statePath, self: fx.self, now: 2300, result, providedReviews: { 1: rejectRecord }, policy: dispatchFixture }), /retired.*not reviewed/);
   assert.equal(readState(fx.statePath).tasks[0].status, 'pending');
 });
 
@@ -538,8 +540,8 @@ test('restart records lineage, emits one new persisted subject, and refuses stal
   assert.throws(() => disposeReviewEpisode({ ...args, disposition: 'retire', reason: 'other' }), /conflict/);
   write(fx.WT, 'src/a.txt', 'change\n');
   const result = { wave: 1, tasks: [{ task_id: 1, digest: workerDigest(1) }] };
-  const one = await reviewNativeResult({ statePath: fx.statePath, result, policy: dispatchFixture });
-  const two = await reviewNativeResult({ statePath: fx.statePath, result, policy: dispatchFixture });
+  const one = await reviewNativeResult({ statePath: fx.statePath, self: fx.self, now: 2300, result, policy: dispatchFixture });
+  const two = await reviewNativeResult({ statePath: fx.statePath, self: fx.self, now: 2300, result, policy: dispatchFixture });
   assert.equal(one.pending_reviews[0].subject, d.disposition.subject);
   assert.equal(two.pending_reviews[0].subject, d.disposition.subject);
   const stale = path.join(fx.MAIN, '.worktrees', 'stale', 'docs', 'masterplan', 'disposition-restart');
@@ -560,14 +562,14 @@ test('missing disposition refuses an ambiguous prior emission; only a durable ne
   writeWaveDispatchRecord(fx.bundleDir, 1, record);
   write(fx.WT, 'src/a.txt', 'change\n');
   const result = { wave: 1, tasks: [{ task_id: 1, digest: workerDigest(1) }] };
-  await assert.rejects(() => reviewNativeResult({ statePath: fx.statePath, result, policy: dispatchFixture, self: fx.self }), /no identifiable entry/);
+  await assert.rejects(() => reviewNativeResult({ statePath: fx.statePath, self: fx.self, now: 2300, result, policy: dispatchFixture }), /no identifiable entry/);
   record.review_context.emitted_reviews = ['1'];
   writeWaveDispatchRecord(fx.bundleDir, 1, record);
-  await assert.rejects(() => reviewNativeResult({ statePath: fx.statePath, result, policy: dispatchFixture, self: fx.self }), /ambiguous prior emission/);
+  await assert.rejects(() => reviewNativeResult({ statePath: fx.statePath, self: fx.self, now: 2300, result, policy: dispatchFixture }), /ambiguous prior emission/);
   record.review_context.emitted_reviews = [];
   writeWaveDispatchRecord(fx.bundleDir, 1, record);
-  const first = await reviewNativeResult({ statePath: fx.statePath, result, policy: dispatchFixture, self: fx.self });
-  const second = await reviewNativeResult({ statePath: fx.statePath, result, policy: dispatchFixture, self: fx.self });
+  const first = await reviewNativeResult({ statePath: fx.statePath, self: fx.self, now: 2300, result, policy: dispatchFixture });
+  const second = await reviewNativeResult({ statePath: fx.statePath, self: fx.self, now: 2300, result, policy: dispatchFixture });
   assert.equal(first.pending_reviews[0].subject, second.pending_reviews[0].subject);
   assert.equal(readWaveDispatchRecord(fx.bundleDir, 1).review_context.emitted_reviews.filter((id) => id === '1').length, 1);
 });
@@ -582,7 +584,7 @@ test('phase B: provided native reviews ingest through the centralized projection
     tasks: [{ task_id: 1, digest: workerDigest(1, 'done') }],
   };
   const reviewed = await reviewNativeResult({
-    statePath: fx.statePath,
+    statePath: fx.statePath, self: fx.self,
     result: nativeResult,
     providedReviews: { 1: rejectRecord },
     now: 3000,
@@ -608,7 +610,7 @@ test('phase B: a missing provided review fails closed as an error review', async
     tasks: [{ task_id: 1, digest: workerDigest(1, 'done') }],
   };
   const reviewed = await reviewNativeResult({
-    statePath: fx.statePath, result: nativeResult, providedReviews: {}, now: 3000,
+    statePath: fx.statePath, self: fx.self, result: nativeResult, providedReviews: {}, now: 3000,
   });
   assert.equal(reviewed.tasks[0].review.verdict, 'error', 'an owed-but-absent review never passes silently');
   assert.match(reviewed.tasks[0].review.summary, /not provided/);
@@ -623,7 +625,152 @@ test('native review is a no-op when review_context is absent or disabled', async
     tasks: [{ task_id: 1, digest: workerDigest(1, 'done') }],
   };
   const reviewed = await reviewNativeResult({
-    statePath: fx.statePath, result: nativeResult, providedReviews: { 1: rejectRecord }, now: 3000,
+    statePath: fx.statePath, self: fx.self, result: nativeResult, providedReviews: { 1: rejectRecord }, now: 3000,
   });
   assert.equal(reviewed, nativeResult, 'disabled review context is a pure passthrough');
+});
+
+// x22-auth-path: reproduce the judge's authorization and physical-path probes
+// using disposable bundles only. Output records the actual boundary result.
+async function x22Fixture(slug) {
+  const fx = makeNativeFixture({ slug });
+  launchNative(fx);
+  await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 2000, policy: dispatchFixture });
+  const record = readWaveDispatchRecord(fx.bundleDir, 1);
+  record.review_context.episodes['1'] = { hold: 'historical' };
+  writeWaveDispatchRecord(fx.bundleDir, 1, record);
+  write(fx.WT, 'src/a.txt', 'change\n');
+  fx.result = { wave: 1, tasks: [{ task_id: 1, digest: workerDigest(1) }] };
+  fx.args = { statePath: fx.statePath, wave: 1, taskId: 1, self: fx.self, now: 2200, disposition: 'restart' };
+  return fx;
+}
+async function x22Probe(label, call) {
+  try {
+    const value = await call();
+    console.log(`PROBE ${label}: ACCEPTED`, JSON.stringify(value?.pending_reviews?.map((d) => d.subject) ?? value?.disposition?.kind ?? value?.review_outcome));
+    return { value };
+  } catch (error) {
+    console.log(`PROBE ${label}: REFUSED`, error.message);
+    return { error };
+  }
+}
+
+for (const mode of ['foreign owner', 'missing owner', 'foreign phase B', 'foreign recovery', 'foreign direct recovery']) {
+  test(`X22 F1 ${mode} cannot consume dispositions or mutate review events`, async () => {
+    const fx = await x22Fixture(`x22-${mode.replaceAll(' ', '-')}`);
+    disposeReviewEpisode(fx.args);
+    if (mode.includes('recovery')) {
+      git(fx.WT, 'add', 'src/a.txt');
+      git(fx.WT, 'commit', '-q', '-m', 'disposable recovered work');
+    }
+    const foreign = buildOwnerIdentity({ host: 'h2', session: 'not-owner', slug: readState(fx.statePath).slug, now: 2200 });
+    assert.throws(() => disposeReviewEpisode({ ...fx.args, self: foreign }), /owned by another/);
+    const eventPath = path.join(fx.bundleDir, 'events.jsonl');
+    const before = fs.existsSync(eventPath) ? fs.readFileSync(eventPath, 'utf8') : null;
+    const record = readWaveDispatchRecord(fx.bundleDir, 1);
+    const direct = mode === 'foreign direct recovery' ? {
+      absState: fx.statePath, state: readState(fx.statePath), bundleDir: fx.bundleDir,
+      record, ctx: record.review_context, runId: record.run_id, wave: 1,
+      contextFingerprint: fingerprintReviewContext(record.review_context),
+      selector: { repo: fx.WT, head: git(fx.WT, 'rev-parse', 'HEAD') },
+    } : {};
+    const consumer = mode === 'foreign direct recovery' ? reviewCommittedRecovery : reviewNativeResult;
+    const out = await x22Probe(mode, () => consumer({
+      ...direct,
+      statePath: fx.statePath, result: fx.result, policy: dispatchFixture, now: 2300,
+      self: mode === 'missing owner' ? null : foreign,
+      ...(mode === 'foreign phase B' ? { providedReviews: { 1: rejectRecord } } : {}),
+      ...(mode === 'foreign recovery' ? { recoverySelector: { repo: fx.WT, head: git(fx.WT, 'rev-parse', 'HEAD') } } : {}),
+    }));
+    assert.match(out.error?.message ?? '', /owned by another|owner identity required/);
+    assert.equal(fs.existsSync(eventPath) ? fs.readFileSync(eventPath, 'utf8') : null, before);
+    assert.equal(readState(fx.statePath).tasks[0].status, 'pending');
+  });
+}
+
+test('X22 F1 hand-edited restart subjects and nonexact lineage refuse both consumption and reapply', async () => {
+  const fx = await x22Fixture('x22-forgery');
+  const canonical = disposeReviewEpisode(fx.args).disposition;
+  const cases = [
+    { ...canonical, subject: 'forged-budget-A', lineage: {} },
+    { ...canonical, subject: 'forged-budget-B', lineage: {} },
+    { ...canonical, subject: 'forged-budget-C' },
+    ...[undefined, null, [], {}, { wave: 2, task_id: 1 }, { wave: 1, task_id: 2 }, { wave: '1', task_id: 1 },
+      { wave: 1, task_id: 1, extra: true }].map((lineage) => ({ ...canonical, lineage })),
+  ];
+  for (const disposition of cases) {
+    const record = readWaveDispatchRecord(fx.bundleDir, 1);
+    record.review_context.episodes['1'].disposition = disposition;
+    writeWaveDispatchRecord(fx.bundleDir, 1, record);
+    const out = await x22Probe(`hand-edited restart ${JSON.stringify(disposition)}`, () => reviewNativeResult({
+      statePath: fx.statePath, result: fx.result, self: fx.self, now: 2300, policy: dispatchFixture,
+    }));
+    assert.match(out.error?.message ?? '', /invalid restart/);
+    assert.throws(() => disposeReviewEpisode(fx.args), /invalid restart/);
+    await assert.rejects(() => reviewNativeResult({ statePath: fx.statePath, result: fx.result,
+      self: fx.self, now: 2300, providedReviews: { 1: rejectRecord }, policy: dispatchFixture }), /invalid restart/);
+  }
+  const record = readWaveDispatchRecord(fx.bundleDir, 1);
+  record.review_context.episodes['1'].disposition = canonical;
+  writeWaveDispatchRecord(fx.bundleDir, 1, record);
+  assert.equal((await reviewNativeResult({ statePath: fx.statePath, result: fx.result,
+    self: fx.self, now: 2300, policy: dispatchFixture })).pending_reviews[0].subject, canonical.subject);
+});
+
+for (const mode of ['primary symlink into stale worktree', 'state-file symlink', 'ordinary stale copy', 'relative primary path']) {
+  test(`X22 F2 ${mode}`, async () => {
+    const fx = await x22Fixture(`x22-${mode.replaceAll(' ', '-')}`);
+    let statePath = fx.statePath;
+    const stale = path.join(fx.WT, 'docs', 'masterplan', readState(fx.statePath).slug);
+    fs.mkdirSync(path.dirname(stale), { recursive: true });
+    if (mode === 'primary symlink into stale worktree') {
+      fs.renameSync(fx.bundleDir, stale);
+      fs.symlinkSync(stale, fx.bundleDir, 'dir');
+    } else if (mode === 'state-file symlink') {
+      fs.mkdirSync(stale, { recursive: true });
+      fs.renameSync(fx.statePath, path.join(stale, 'state.yml'));
+      fs.symlinkSync(path.join(stale, 'state.yml'), fx.statePath);
+    } else if (mode === 'ordinary stale copy') {
+      fs.cpSync(fx.bundleDir, stale, { recursive: true });
+      statePath = path.join(stale, 'state.yml');
+    } else {
+      statePath = path.relative(process.cwd(), fx.statePath);
+    }
+    const physicalBundle = mode === 'primary symlink into stale worktree' || mode === 'ordinary stale copy' ? stale : fx.bundleDir;
+    const recordPath = path.join(physicalBundle, 'wave-1.dispatch.json');
+    const lockPath = path.join(physicalBundle, '.owner.lock');
+    const before = fs.readFileSync(recordPath, 'utf8');
+    const lockBefore = fs.readFileSync(lockPath, 'utf8');
+    const out = await x22Probe(mode, () => disposeReviewEpisode({ ...fx.args, statePath }));
+    if (mode === 'relative primary path') {
+      assert.equal(out.value?.disposition.kind, 'restart');
+      const read = await reviewNativeResult({ statePath, result: fx.result, self: fx.self, now: 2300, policy: dispatchFixture });
+      assert.equal(read.pending_reviews[0].subject, out.value.disposition.subject);
+    } else {
+      assert.match(out.error?.message ?? '', /primary bundle/);
+      // Path refusal precedes even a missing-owner check, for writes and reads.
+      assert.throws(() => disposeReviewEpisode({ ...fx.args, statePath, self: null }), /primary bundle/);
+      await assert.rejects(() => reviewNativeResult({ statePath, result: fx.result, policy: dispatchFixture }), /primary bundle/);
+      assert.equal(fs.readFileSync(recordPath, 'utf8'), before);
+      assert.equal(fs.readFileSync(lockPath, 'utf8'), lockBefore);
+    }
+  });
+}
+
+
+test('X22 F1 recovery consumers refuse a forged restart subject and lineage', async () => {
+  const fx = await x22Fixture('x22-recovery-forgery');
+  disposeReviewEpisode(fx.args);
+  git(fx.WT, 'add', 'src/a.txt');
+  git(fx.WT, 'commit', '-q', '-m', 'disposable recovery forgery probe');
+  const record = readWaveDispatchRecord(fx.bundleDir, 1);
+  record.review_context.episodes['1'].disposition = { kind: 'restart', subject: 'forged-budget-A', lineage: {} };
+  writeWaveDispatchRecord(fx.bundleDir, 1, record);
+  for (const providedReviews of [null, { 1: rejectRecord }]) {
+    const out = await x22Probe(`recovery forged restart ${providedReviews ? 'phase B' : 'phase A'}`, () => reviewNativeResult({
+      statePath: fx.statePath, result: fx.result, self: fx.self, now: 2300, policy: dispatchFixture,
+      recoverySelector: { repo: fx.WT, head: git(fx.WT, 'rev-parse', 'HEAD') }, providedReviews,
+    }));
+    assert.match(out.error?.message ?? '', /invalid restart/);
+  }
 });
