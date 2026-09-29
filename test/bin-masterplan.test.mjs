@@ -3142,7 +3142,7 @@ test('continue (planning verb): a plan marker yields the read-only dispatch_plan
   assert.equal(op.op, 'dispatch_plan');
   assert.equal(op.kind, 'plan');
   assert.equal(op.read_only, true);
-  assert.equal(op.class, 'planned-execution');
+  assert.equal(op.phase, 'plan');
   assert.equal(op.next, 'stage-plan-fragments');
   assert.ok(Array.isArray(op.roots) && op.roots.length === 2, 'enumerated roots: repo + spec');
   assert.equal(op.roots[0], op.cwd);
@@ -3224,6 +3224,7 @@ test('record-result awaits native review before the state transaction (CLI order
     tasks: [{ task_id: 1, class: 'masterplan-implementation', handoff_key: 'k1' }],
     review_context: {
       enabled: true,
+      episodes: { '1': { subject: `${repo}::docs/masterplan/${slug}/wave-1/task-1` } },
       base_sha: head,
       tasks: [{
         task_id: 1,
@@ -3841,6 +3842,7 @@ test('recovery CLI: --recovery-repo/--recovery-head reproduce the exact artifact
     dispatched_at: 'T0', tasks: [{ task_id: 1, class: 'bounded-edit', handoff_key: 'k1' }],
     review_context: {
       enabled: true, base_sha: base,
+      episodes: { '1': { subject: `${repo}::docs/masterplan/${slug}/wave-1/task-1` } },
       tasks: [{ task_id: 1, description: 'task 1', class: 'bounded-edit', repo: WT }],
     },
   }, null, 2));
@@ -3983,6 +3985,7 @@ test('recovery CLI: a dirty tree rejects with recovery-preservation-violation an
     dispatched_at: 'T0', tasks: [{ task_id: 1, class: 'bounded-edit', handoff_key: 'k1' }],
     review_context: {
       enabled: true, base_sha: base,
+      episodes: { '1': { subject: `${repo}::docs/masterplan/${slug}/wave-1/task-1` } },
       tasks: [{ task_id: 1, description: 'task 1', class: 'bounded-edit', repo: WT }],
     },
   }, null, 2));

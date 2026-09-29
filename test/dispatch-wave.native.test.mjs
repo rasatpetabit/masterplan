@@ -22,12 +22,27 @@ import {
   probeWaveToken,
   dispatchWaveViaFabric,
   readWaveDispatchRecord,
+  writeWaveDispatchRecord,
   reviewNativeResult,
 } from '../lib/dispatch-wave.mjs';
 import { continueRun } from '../lib/continue.mjs';
 import { readState, writeState } from '../lib/bundle.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
 import { recordWaveResult } from '../lib/wave-commit.mjs';
+const dispatchFixture = JSON.parse(fs.readFileSync(new URL('./fixtures/dispatch-map.json', import.meta.url), 'utf8'));
+
+test('native handoff keeps bounded-edit intent and never stamps a model', () => {
+  const p = buildNativeSpawnPlan({
+    tasks: [{ id: 1, class: 'bounded-edit', description: 'edit' }],
+    descriptors: [{ repo: '/fixture', handoff_key: 'unchanged' }],
+    token: 'fixture-wave', concurrency: 1, policy: dispatchFixture, host: 'pi',
+  });
+  assert.equal(p.tasks[0].usecase, 'bounded-edit');
+  assert.equal(p.tasks[0].agent, dispatchFixture.usecases['bounded-edit'].agent);
+  assert.equal(p.tasks[0].handoff_key, 'unchanged');
+  assert.equal(Object.hasOwn(p.tasks[0], 'model'), false);
+  assert.equal(Object.hasOwn(p.tasks[0].badge, 'model'), false);
+});
 
 // Every fixture here builds a tree under os.tmpdir(); without this they accumulate across
 // runs and fill a shared /tmp. Registered on creation, removed once when the file finishes.
@@ -43,7 +58,7 @@ after(() => {
   }
 });
 
-// A hermetic routing-policy fixture (same shape as policy/workflow-map.json).
+// Historical policy fixture retained for older result-ingestion fixtures; C1 dispatch tests use dispatchFixture above.
 const POLICY_FIXTURE = {
   lanes: {
     agentic: { model: 'litellm/grok-4.6', ctx: 500000, cost: 'medium' },
@@ -100,36 +115,18 @@ test('the wave token is unique per (run, wave, attempt) and filename-safe', () =
 
 // ── routing provenance ──────────────────────────────────────────────────────
 
-test('routing comes from the routing policy, never from a table copied into masterplan', () => {
-  const r = resolveClassRouting('bounded-edit', { policy: POLICY_FIXTURE, _cache: new Map() });
-  assert.equal(r.lane, 'agentic');
-  assert.equal(r.model, 'litellm/grok-4.6');
-  assert.equal(r.effort, 'high');
-  assert.equal(r.capability, 'edit');
-  assert.equal(r.agent, 'builder');
-  assert.equal(r.writes, true);
-  assert.equal(r.resolved, true);
+test('routing resolves fresh canonical C1 intent, without a model or cache', () => {
+  const mutable = structuredClone(dispatchFixture);
+  const first = resolveClassRouting('bounded-edit', { policy: mutable });
+  assert.equal(first.agent, 'builder');
+  assert.equal(first.usecase, 'bounded-edit');
+  assert.equal(Object.hasOwn(first, 'model'), false);
+  mutable.usecases['bounded-edit'].agent = 'judge';
+  assert.equal(resolveClassRouting('bounded-edit', { policy: mutable }).agent, 'judge');
 });
 
-test('an unresolvable class is reported, never guessed into a lane', () => {
-  const noClasses = { ...POLICY_FIXTURE, classes: {}, workflow: {} };
-  const r = resolveClassRouting('no-such-class', { policy: noClasses, _cache: new Map() });
-  assert.equal(r.resolved, false);
-  assert.equal(r.lane, null, 'no fabricated lane');
-  assert.equal(r.model, null, 'no fabricated model');
-  assert.match(r.reason, /routing policy resolution failed/);
-});
-
-test('resolution is cached per class (a wave shares few classes)', () => {
-  const cache = new Map();
-  // The policy object MUTATES after the first resolution; a cached lookup must
-  // return the first resolution, proving the record was memoized.
-  const mutable = JSON.parse(JSON.stringify(POLICY_FIXTURE));
-  const first = resolveClassRouting('bounded-edit', { policy: mutable, _cache: cache });
-  mutable.classes['bounded-edit'].effort = 'low';
-  const second = resolveClassRouting('bounded-edit', { policy: mutable, _cache: cache });
-  assert.equal(first.effort, 'high');
-  assert.equal(second.effort, 'high', 'the second read is the cached record, not a re-resolution');
+test('unsupported legacy class refuses migration instead of falling back to iterate', () => {
+  assert.throws(() => resolveClassRouting('architecture', { policy: dispatchFixture }), /unsupported legacy class.*migrate/);
 });
 
 // ── spawn plan ──────────────────────────────────────────────────────────────
@@ -144,29 +141,37 @@ const planFixture = (overrides = {}) => buildNativeSpawnPlan({
     { cwd: '/repo/wt', branch: 'masterplan/demo', files: ['lib/b.mjs'], verify_commands: [], handoff_key: 'k4', create_files: true },
   ],
   token: 'mp-wave-demo-w1-a1',
-  _resolve: () => ({ ...NATIVE_EDIT }),
+  policy: dispatchFixture,
   ...overrides,
 });
 
-test('each spawn descriptor carries the lane pin, effort, agent role, scope, and badge', () => {
+test('each spawn descriptor carries model-free intent, scope, and badge', () => {
   const plan = planFixture();
   assert.equal(plan.tasks.length, 2);
   const s = plan.tasks[0];
   assert.equal(s.task_id, 3);
-  assert.equal(s.model, 'litellm/grok-4.6', 'the lane model ref rides the descriptor');
-  assert.equal(s.effort, 'high');
+  assert.equal(s.usecase, 'bounded-edit');
+  assert.equal(Object.hasOwn(s, 'model'), false);
   assert.equal(s.agent, 'builder');
   assert.deepEqual(s.files, ['lib/a.mjs']);
   assert.equal(s.cwd, '/repo/wt');
   assert.equal(s.branch, 'masterplan/demo');
   assert.equal(s.handoff_key, 'k3');
-  assert.deepEqual(s.badge, {
-    class: 'bounded-edit',
-    backend: 'native',
-    model: 'litellm/grok-4.6',
-    effort: 'high',
-  }, 'badge: class + native backend + lane model ref + effort');
+  assert.deepEqual(s.badge, { class: 'bounded-edit', backend: 'native' });
 });
+
+test('unconfigured host-native built-in implement retains agent and source without guessed usecase', () => {
+  const p = buildNativeSpawnPlan({ tasks: [{ id: 1, class: 'bounded-edit' }],
+    descriptors: [{}], token: 'fixture', host: 'claude-code',
+    _resolve: (klass) => resolveClassRouting(klass, { host: 'claude-code',
+      policy: null }),
+  });
+  // Host configuration may exist; regardless the transport does not pin a model.
+  assert.equal(p.tasks[0].agent, 'builder');
+  assert.equal(Object.hasOwn(p.tasks[0], 'model'), false);
+});
+
+test('Task 8 panel coordinator integration: C7 isolated counters exhaust the same subject', { skip: 'plan 04 Task 8 coordinator is not built; producer never expands a panel' }, () => {});
 
 test('the wave token rides in BOTH the label and the prompt (recovery greps for it)', () => {
   const plan = planFixture();
@@ -188,12 +193,8 @@ test('the prompt states the file scope and the verification bar', () => {
   assert.ok(noVerify.prompt.includes('(none declared)'), 'an empty verify list is explicit, not blank');
 });
 
-test('an unresolved class is flagged on the descriptor so the caller can fail closed', () => {
-  const plan = planFixture({
-    _resolve: () => ({ lane: null, model: null, effort: null, capability: null, agent: null, writes: null, panel: null, resolved: false, reason: 'policy unreadable' }),
-  });
-  assert.equal(plan.tasks[0].routing_resolved, false);
-  assert.equal(plan.tasks[0].routing_reason, 'policy unreadable');
+test('unresolved class refuses before a descriptor can reach the host', () => {
+  assert.throws(() => planFixture({ tasks: [{ id: 3, class: 'architecture' }] }), /unsupported legacy class/);
 });
 
 // ── bounded concurrency ─────────────────────────────────────────────────────
@@ -357,18 +358,55 @@ test('phase A: owed reviews emit pending descriptors and record NOTHING', async 
     tasks: [{ task_id: 1, digest: workerDigest(1, 'done') }],
   };
   const pending = await reviewNativeResult({
-    statePath: fx.statePath, result: nativeResult, policy: POLICY_FIXTURE, now: 3000,
+    statePath: fx.statePath, result: nativeResult, policy: dispatchFixture, now: 3000,
   });
   assert.equal(pending.review_outcome, 'native-review-pending');
   assert.equal(pending.pending_reviews.length, 1);
   const d = pending.pending_reviews[0];
   assert.equal(d.class, 'adversary');
   assert.equal(d.agent, 'breaker');
-  assert.equal(d.model, 'litellm/gpt-5.6-sol');
+  assert.equal(d.phase, 'challenge');
+  assert.equal(d.usecase, dispatchFixture.phases.challenge);
+  assert.equal(Object.hasOwn(d, 'model'), false);
+  assert.equal(d.subject, readWaveDispatchRecord(fx.bundleDir, 1).review_context.episodes['1'].subject);
   assert.equal(d.repo, fx.WT);
   assert.match(d.job_id, /-t1-[0-9a-f]{12}$/);
   // Nothing recorded yet: the digest did not reach recordWaveResult.
   assert.equal(readState(fx.statePath).tasks[0].status, 'pending');
+});
+
+test('review episode keeps persisted project subject across artifact, token, reviewer and attempt changes', async () => {
+  const fx = makeNativeFixture({ slug: 'stable-episode', review: { adversary: true } });
+  launchNative(fx);
+  await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 2000 });
+  write(fx.WT, 'src/a.txt', 'first edit\n');
+  const result = { wave: 1, tasks: [{ task_id: 1, digest: workerDigest(1, 'done') }] };
+  const first = (await reviewNativeResult({ statePath: fx.statePath, result, policy: dispatchFixture })).pending_reviews[0];
+  const record = readWaveDispatchRecord(fx.bundleDir, 1);
+  assert.equal(first.subject, record.review_context.episodes['1'].subject);
+  assert.ok(first.subject.startsWith(`${fx.MAIN}::docs/masterplan/stable-episode/wave-1/task-1`));
+  writeWaveDispatchRecord(fx.bundleDir, 1, { ...record, attempt: 4, wave_token: 'changed-token' });
+  write(fx.WT, 'src/a.txt', 'second edit\n');
+  const remap = structuredClone(dispatchFixture);
+  remap.usecases['adversarial-assessment'].agent = 'judge';
+  const second = (await reviewNativeResult({ statePath: fx.statePath, result, policy: remap })).pending_reviews[0];
+  assert.equal(second.subject, first.subject);
+  assert.equal(second.agent, 'judge');
+  assert.notEqual(second.diff_sha, first.diff_sha);
+  assert.notEqual(second.job_id, first.job_id);
+  assert.equal(second.job_id, `stable-episode-w1-t1-${second.diff_sha.slice(0, 12)}`);
+});
+
+test('old subjectless wave episode cannot acquire a fresh budget on recovery', async () => {
+  const fx = makeNativeFixture({ slug: 'held-episode', review: { adversary: true } });
+  launchNative(fx);
+  await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 2000 });
+  const record = readWaveDispatchRecord(fx.bundleDir, 1);
+  delete record.review_context.episodes;
+  writeWaveDispatchRecord(fx.bundleDir, 1, record);
+  write(fx.WT, 'src/a.txt', 'new edit\n');
+  const result = { wave: 1, tasks: [{ task_id: 1, digest: workerDigest(1, 'done') }] };
+  await assert.rejects(() => reviewNativeResult({ statePath: fx.statePath, result, policy: dispatchFixture }), /no identifiable entry/);
 });
 
 test('phase B: provided native reviews ingest through the centralized projection', async () => {

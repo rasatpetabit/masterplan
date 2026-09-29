@@ -1,5 +1,13 @@
 # WORKLOG
 
+## 2026-09-29 — plan 07 Task 5 implementation handoff
+
+C1 intent replaces per-process model routing cache for wave and plan descriptors; review episodes persist project-qualified subjects before launch and refuse subjectless historical records without an identifiable entry. Phase-A review retains current diff SHA/job binding while using the frozen subject; host-native known operations carry semantic phases without model projection. Task 8 isolated-counter/panel execution remains a named skipped integration test. Targeted tests pass; the four full-suite failures are the known Task 6 README/knob inventory baseline. Breaker review remains owed by parent before acceptance/landing; no installation or activation.
+
+## 2026-09-29 — plan 07 Task 5 dependency split
+
+Independent of plan 04 Task 8: C1 intent/provenance resolution for wave, plan, review and host operations; cache removal; model-free descriptors; persisted stable review subjects under wave-record atomic ownership; subjectless held-episode refusal; CLI host detection and migration diagnostics; producer tests and both suites. Task 8-dependent: executing critical panels (seats/recovery/adjudication), and isolated C7 counter exhaustion proving the producer's stable subject. Keep the latter as a named fail-closed integration seam or skipped test; never mimic a coordinator. Existing subjectless episodes must have an identifiable receipt entry before further dispatch, not a guessed new subject.
+
 ## 2026-09-29 — model-routing/07 Task 5 partial handoff correction
 
 Task 4 left the CLI `detect-host` without Pi's environment signal; a RED/GREEN CLI regression now proves it reads `PI_CODING_AGENT` through `readEnv` and rejects conflicting Codex identity. This was a one-off missing caller, not a new policy decision. The wider Task 5 handoff is deliberately parked: plan 04 native resolver/panel and plan 08 active-episode migration receipt were absent at checked paths, so review subjects cannot safely be allocated for active episodes. No model-bearing descriptor changes landed. Task 6 owns the four existing full-suite README/knob inventory failures; no installation or publication performed.

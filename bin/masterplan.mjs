@@ -1388,6 +1388,17 @@ export function shouldSuppressWorkflow(flags = {}, env = process.env) {
 // backfill without importing the CLI; re-exported here to keep bin's public import surface.
 export { applyPlanIndex };
 
+// Host identity and workflow suppression are independent facts: a Pi run can
+// suppress Workflow yet still require its configured C1 map.
+function cliDispatchHost(flags) {
+  return detectHost({
+    agentIsPi: !!flags['agent-is-pi'] || readEnv('PI_CODING_AGENT') === 'true',
+    agentIsCodex: !!flags['agent-is-codex'],
+    codexNativeTools: !!flags['native-tools'],
+    agentsMdPresent: !!flags['agents-md'],
+  }).kind;
+}
+
 // ---- subcommand dispatch ----
 function main() {
   const [cmd, ...rest] = process.argv.slice(2);
@@ -4500,6 +4511,7 @@ function main() {
         }
       }
       reviewNativeResult({
+        host: cliDispatchHost(flags),
         statePath,
         result,
         providedReviews,
@@ -4613,6 +4625,7 @@ function main() {
         if (!Number.isInteger(waveFlag)) die('dispatch-wave: --wave must be an integer');
       }
       dispatchWaveViaFabric({
+        host: cliDispatchHost(flags),
         statePath,
         self,
         now,
@@ -4653,6 +4666,7 @@ function main() {
       let plan;
       try {
         plan = dispatchPlanFanout({
+          host: cliDispatchHost(flags),
           statePath,
           subsystems,
           specPath: typeof flags['spec-path'] === 'string' ? path.resolve(flags['spec-path']) : null,

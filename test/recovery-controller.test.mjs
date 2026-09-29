@@ -134,6 +134,8 @@ function makeRecoveryFixture({ slug = 'recovery', ctxTasks = null, review = { ad
     tasks: [{ task_id: 1, class: 'bounded-edit', handoff_key: 'k1' }],
     review_context: {
       enabled: true,
+      episodes: Object.fromEntries((ctxTasks ?? ctxTasksDefault).map((t) => [String(t.task_id),
+        { subject: `${MAIN}::docs/masterplan/${slug}/wave-1/task-${t.task_id}` }])),
       base_sha: BASE,
       tasks: ctxTasks ?? ctxTasksDefault,
     },
@@ -640,6 +642,7 @@ test('recovery phase B: multi-task validation is all-before-append (one bad rece
     ...rec,
     review_context: {
       ...rec.review_context,
+      episodes: { ...rec.review_context.episodes, '2': { subject: `${fx.MAIN}::docs/masterplan/${fx.slug}/wave-1/task-2` } },
       tasks: [
         { task_id: 1, description: 't1', class: 'bounded-edit', repo: fx.WT },
         { task_id: 2, description: 't2', class: 'bounded-edit', repo: fx.WT },
@@ -882,6 +885,7 @@ test('recovery: an INTERRUPTED append (partial batch on disk) self-heals on retr
     ...rec,
     review_context: {
       ...rec.review_context,
+      episodes: { ...rec.review_context.episodes, '2': { subject: `${fx.MAIN}::docs/masterplan/${fx.slug}/wave-1/task-2` } },
       tasks: [
         { task_id: 1, description: 't1', class: 'bounded-edit', repo: fx.WT },
         { task_id: 2, description: 't2', class: 'bounded-edit', repo: fx.WT },
