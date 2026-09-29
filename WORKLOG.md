@@ -1,5 +1,9 @@
 # WORKLOG
 
+## 2026-09-29 — public fallback tracks delivered inference routing
+
+The repo-local policy was a stale pre-flip snapshot while runtime Pi used the delivered map. This copy is byte-for-byte from the delivered inference artifact after a relative public-exposure check; resolver now respects class primaries when they differ from lane heads and rejects incompatible declared versions. No fleet reconfigure or install was run; public plugin fallback remains independently usable.
+
 ## 2026-09-29 — codebase run 424df1b4: refutation rerouted, challenge wave blocked on one attestation
 
 The Kimi-quota blocker above is gone: refutation now falls back to qwen3.8-max (inference SOT `3150ca4`), and a probe dispatch was served by qwen after the 403. The 15-challenge wave was issued twice. The first batch bound nothing, because the codebase extension binds only against the session's latest `codebase.run` entry and `status` does not re-journal (behavior-skills todo). The second batch (`e44e971f`) bound and all 15 children ran on qwen, but step 8 (`challenge:resolvefilelocus-returns-undocumented-keys`) failed its `attestation` runtime check ("Structured acceptance report not found."; the other 14 passed). The engine then blocks the whole async batch, and `codebase_run retry` authorized attempt 2 for all 15 dispatches. That authorization is journaled but was not launched. The run stays blocked with `runtime-check-failed` until behavior-skills can ingest the passing siblings and retry only the failed dispatch. The challenge outputs agree the released try-merge (v10.0.14) is behavior-preserving; a finding is not a verdict, so the run is not recorded as reviewed.

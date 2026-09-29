@@ -461,7 +461,7 @@ function enforceGateReview(gate, statePath, flags, state, opts = {}) {
     artifacts: descriptors.map((d) => d.relName),
     message:
       `${gate} gate: no cross-vendor adversarial review is recorded for the CURRENT ${gate} artifacts. ` +
-      `Run the harness-native adversary review (adversary class: breaker role on the frontier lane, ` +
+      `Run the harness-native adversary review (adversary class: breaker role on its governed lane, ` +
       `or the adversarial panel for cross-vendor coverage) over them, then record it: ` +
       `\`mp record-gate-review --state=${statePath} --gate=${gate} --status=done --review-json=<review.json> --digest-file=<notes>\` ` +
       `(which pulls provider/model/dispatch_id/output_tokens out of the review's reviewers[] for you; ` +

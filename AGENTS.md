@@ -86,10 +86,9 @@ What is masterplan-specific lives in two docs:
 
 ## §routing — resolved from the checked-in policy
 
-Model/lane routing resolves from `policy/workflow-map.json` (the repo-local
-copy of the fleet workflow routing map: lanes `sweep`/`bulk`/`code`/`agentic`/`reason`/`longform`/`frontier`/`broad`/`mid`/`local` with `litellm/*` refs, and classes such as `bounded-edit`/`agentic-loop`/`planned-execution`/`adversary`/`critic`/`deep-investigation`). Waves launch as native spawn plans executed by the harness's parallel subagent API; adversarial review is harness-native (adversary class: breaker role, frontier lane; adversarial panel for cross-vendor coverage), with records supplied via `mp record-result --reviews-file`. Agent frontmatter `model:` fields are routing-policy lane names.
+Model/lane routing resolves from the delivered `~/.pi/workflows/workflow-map.json` when present, otherwise from `policy/workflow-map.json` (the repo-local fallback copy of the fleet workflow routing map, with `litellm/*` refs and governed work classes). Waves launch as native spawn plans executed by the harness's parallel subagent API; adversarial review is harness-native (adversary class: breaker role, governed lane; adversarial panel for cross-vendor coverage), with records supplied via `mp record-result --reviews-file`. Agent frontmatter `model:` fields are routing-policy lane names.
 
-Refresh the repo copy with `node /srv/workflows/config/generate.mjs` on a fleet host. Fleet dispatch policy lives at `/srv/workflows/policy/dispatch.md`.
+The authoritative producer is `/srv/inference/config/src/*.hcl`, rendered by inference reconfigure to the delivered map. After delivery and a public-secret exposure review against the existing copy, refresh **only this fallback** with `cp ~/.pi/workflows/workflow-map.json policy/workflow-map.json` and verify byte equality with `cmp policy/workflow-map.json ~/.pi/workflows/workflow-map.json`. Do not reconfigure to refresh this repo copy. Fleet dispatch policy lives at `/srv/workflows/policy/dispatch.md`.
 
 ## Knowledge
 
