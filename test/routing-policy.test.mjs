@@ -212,6 +212,15 @@ test('class model override wins over lane head; invalid override fails closed', 
   assert.equal(resolveWorkClass('work', { policy }).model, 'litellm/override');
   policy.classes.work.model = 'litellm/unauthorized';
   assert.throws(() => resolveWorkClass('work', { policy }), /not in its chain/);
+  // A declared primary that is not a non-empty string never resolves.
+  for (const model of ['', false, 0, null, ['litellm/override']]) {
+    policy.classes.work.model = model;
+    assert.throws(() => resolveWorkClass('work', { policy }), /invalid model/, JSON.stringify(model));
+  }
+  // A declared primary needs a chain that authorizes it.
+  policy.classes.work.model = 'litellm/override';
+  delete policy.classes.work.chain;
+  assert.throws(() => resolveWorkClass('work', { policy }), /not in its chain/);
 });
 
 test('MP_ROUTING_POLICY override is honored when present', () => {
