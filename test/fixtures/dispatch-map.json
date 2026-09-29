@@ -1,0 +1,26 @@
+{
+  "schema": 1, "_generated": "synthetic test fixture", "defaultUsecase": "iterate",
+  "workflow": {"excludeSubagentTools": ["subagent"], "enforceWriteGate": true},
+  "lists": {
+    "flash": {"min": "flash", "models": [{"model":"fixture-f","ref":"fixture/f","capability":"flash","lineage":["fixture-f"],"context":1000000,"efforts":["low","high"],"flags":[]}]},
+    "pro": {"min": "pro", "models": [{"model":"fixture-p","ref":"fixture/p","capability":"frontier","lineage":["fixture-p"],"context":1000000,"efforts":["low","medium","high","xhigh"],"flags":[]}]},
+    "frontier": {"min": "frontier", "models": [
+      {"model":"fixture-a","ref":"fixture/a","capability":"frontier","lineage":["fixture-a"],"context":1000000,"efforts":["high","xhigh"],"flags":[]},
+      {"model":"fixture-b","ref":"fixture/b","capability":"frontier","lineage":["fixture-b"],"context":1000000,"efforts":["high","xhigh"],"flags":[]},
+      {"model":"fixture-c","ref":"fixture/c","capability":"frontier","lineage":["fixture-c"],"context":1000000,"efforts":["high","xhigh"],"flags":[]}
+    ]}
+  },
+  "ladders": {"review": {"routine":"flash","consequential":"frontier","critical":"critical"}},
+  "panels": {"critical": {"lists":["frontier"],"min":"pro","seats":3,"verdict":"adjudicate"}},
+  "usecases": {
+    "iterate":{"agent":"builder","list":"pro","ladder":null,"effort":"low","context":0,"phases":["build"],"vocabulary":{"class":"iterate","role":"builder","lane":"pro"}},
+    "bounded-edit":{"agent":"builder","list":"flash","ladder":null,"effort":"low","context":0,"phases":["implement"],"vocabulary":{"class":"bounded-edit","role":"builder","lane":"flash"}},
+    "adversarial-assessment":{"agent":"breaker","list":null,"ladder":"review","effort":"medium","context":0,"phases":["challenge"],"vocabulary":{"class":"adversarial-assessment","role":"breaker","lane":"review"}},
+    "plan":{"agent":"judge","list":"frontier","ladder":null,"effort":"high","context":0,"phases":["plan"],"vocabulary":{"class":"plan","role":"judge","lane":"frontier"}},
+    "decide":{"agent":"judge","list":"frontier","ladder":null,"effort":"high","context":0,"phases":["design"],"vocabulary":{"class":"decide","role":"judge","lane":"frontier"}},
+    "adjudicate":{"agent":"judge","list":"frontier","ladder":null,"effort":"high","context":0,"phases":["consensus"],"vocabulary":{"class":"adjudicate","role":"judge","lane":"frontier"}},
+    "conduct":{"agent":"conductor","list":"frontier","ladder":null,"effort":"xhigh","context":0,"phases":[],"vocabulary":{"class":"conduct","role":"conductor","lane":"frontier"}}
+  },
+  "agents":{"builder":{"defaultUsecase":"iterate"},"breaker":{"defaultUsecase":"adversarial-assessment"},"judge":{"defaultUsecase":"plan"},"conductor":{"defaultUsecase":"conduct"}},
+  "phases":{"build":"iterate","implement":"bounded-edit","challenge":"adversarial-assessment","plan":"plan","design":"decide","consensus":"adjudicate"}
+}
