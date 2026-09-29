@@ -56,7 +56,7 @@ function makeSourceRepo() {
   put('agents/mp-x.md', '---\nname: mp-x\ndescription: x\nmodel: frontier\n---\n\nbody\n');
   put('skills/masterplan/SKILL.md', '# skill\n');
   put('skills/masterplan-detect/SKILL.md', '# detect skill\n');
-  put('policy/workflow-map.json', '{}\n');
+  put('policy/workflow-map.json', JSON.stringify({ version: 1, lanes: { frontier: { model: 'litellm/test' } }, classes: {}, agents: {}, servedEquivalents: {} }) + '\n');
   put('package.json', JSON.stringify({ name: 'masterplan', version: '9.10.0' }, null, 2) + '\n');
   git(src, 'init', '-q', '--initial-branch=main');
   git(src, 'config', 'user.email', 'test@test');
@@ -92,6 +92,9 @@ test('install-pi: fresh install builds releases/<sha>, current, skill links, met
   assert.equal(out.sha, sha);
   assert.equal(out.version, '9.10.0');
   assert.ok(fs.existsSync(path.join(env.installRoot, 'releases', sha, 'commands/masterplan.md')));
+  const installedMap = JSON.parse(fs.readFileSync(path.join(env.installRoot, 'releases', sha, 'policy/workflow-map.json'), 'utf8'));
+  assert.equal(installedMap.version, 1);
+  assert.deepEqual(installedMap.servedEquivalents, {}, 'new-schema fallback must survive snapshot install');
   assert.equal(fs.realpathSync(path.join(env.installRoot, 'current')), fs.realpathSync(path.join(env.installRoot, 'releases', sha)));
   for (const name of ['masterplan', 'masterplan-detect']) {
     const link = path.join(env.piRoot, 'agent', 'skills', name);

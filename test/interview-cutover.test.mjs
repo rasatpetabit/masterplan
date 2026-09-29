@@ -65,6 +65,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { loadRoutingPolicy, REPO_POLICY_PATH, resolveWorkClass } from '../lib/dispatch/routing-policy.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const PIN_PATH = path.join(ROOT, 'policy', 'design-intent-skill.json');
@@ -261,13 +262,16 @@ function recordReceipt({ statePath, entry, draft, eligible, forks, dir, n, criti
 // fabricated model string (the fleet's raw-override prohibition; the agent doc's own
 // frontmatter resolves the same way through bin/register-pi-agents.mjs).
 function criticDispatchIdentity() {
-  const map = JSON.parse(fs.readFileSync(path.join(ROOT, 'policy', 'workflow-map.json'), 'utf8'));
+  const map = loadRoutingPolicy({ policyPath: REPO_POLICY_PATH });
   const cls = map.classes.critic;
   assert.ok(cls, 'policy/workflow-map.json must declare the critic class');
   const agent = map.agents[cls.agent];
   assert.ok(agent, `the critic class names agent ${cls.agent}`);
   assert.equal(agent.writes, false, 'the critic agent is read-only');
-  return { agentName: cls.agent, model: agent.model, lane: agent.lane };
+  const route = resolveWorkClass('critic', { policy: map });
+  assert.equal(route.model, cls.model, 'the critic uses its governed class primary');
+  assert.equal(route.lane, cls.lane, 'the critic uses its governed class lane');
+  return { agentName: cls.agent, model: route.model, lane: route.lane };
 }
 
 // Compose a round's question text from the pinned SKILL.md's own plan-mode interview

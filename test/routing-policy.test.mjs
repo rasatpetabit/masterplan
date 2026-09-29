@@ -40,13 +40,26 @@ test('repo-local canonical policy is checked in and structurally complete', () =
   }
 });
 
+test('repo fallback schema and version match the routing-policy loader contract', () => {
+  const raw = JSON.parse(fs.readFileSync(REPO_POLICY_PATH, 'utf8'));
+  assert.equal(raw.version, 1);
+  assert.ok(raw.servedEquivalents && typeof raw.servedEquivalents === 'object');
+  assert.ok(!Object.hasOwn(raw, 'tiers'), 'retired tiers must not return');
+  assert.deepEqual(loadRoutingPolicy({ policyPath: REPO_POLICY_PATH }), raw);
+  for (const [name, c] of Object.entries(raw.classes)) {
+    const resolved = resolveWorkClass(name, { policy: raw });
+    assert.equal(resolved.model, c.model ?? raw.lanes[c.lane].model, `${name}: class model override`);
+    assert.deepEqual(resolved.chain, c.chain ?? [resolved.model], `${name}: governed chain`);
+  }
+});
+
 test('resolveWorkClass returns the governed record for a known class', () => {
   // One policy load, injected — resolveWorkClass must consume this exact document,
   // not perform a second independent disk read.
   const policy = loadRoutingPolicy({ policyPath: REPO_POLICY_PATH });
   const r = resolveWorkClass('adversary', { policy });
   assert.equal(r.agent, 'breaker');
-  assert.equal(r.lane, 'frontier');
+  assert.equal(r.lane, 'skeptic');
   assert.equal(r.cap, 'review');
   // The effort VALUE is validated against the dispatch transport's vocabulary, not
   // against the policy field the resolver just read — a self-referential compare
@@ -105,6 +118,12 @@ test('fail-closed: unreadable path, invalid JSON, missing sections, unresolvable
   const empty = path.join(tmp, 'empty.json');
   fs.writeFileSync(empty, JSON.stringify({ lanes: {} }));
   assert.throws(() => loadRoutingPolicy({ policyPath: empty }), /missing the classes section/);
+
+  const future = path.join(tmp, 'future.json');
+  fs.writeFileSync(future, JSON.stringify({ version: 2, lanes: {}, classes: {}, agents: {}, servedEquivalents: {} }));
+  assert.throws(() => loadRoutingPolicy({ policyPath: future }), /unsupported version/);
+  fs.writeFileSync(future, JSON.stringify({ version: 1, lanes: {}, classes: {}, agents: {}, servedEquivalents: [] }));
+  assert.throws(() => loadRoutingPolicy({ policyPath: future }), /invalid servedEquivalents/);
 
   const noDefault = path.join(tmp, 'nodefault.json');
   fs.writeFileSync(noDefault, JSON.stringify({
@@ -181,6 +200,18 @@ test('a delivered policy without the retired tiers section loads', () => {
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
+});
+
+test('class model override wins over lane head; invalid override fails closed', () => {
+  const policy = {
+    version: 1,
+    lanes: { l: { model: 'litellm/lane' } },
+    classes: { work: { agent: 'a', lane: 'l', model: 'litellm/override', chain: ['litellm/override'] } },
+    agents: { a: { writes: false } },
+  };
+  assert.equal(resolveWorkClass('work', { policy }).model, 'litellm/override');
+  policy.classes.work.model = 'litellm/unauthorized';
+  assert.throws(() => resolveWorkClass('work', { policy }), /not in its chain/);
 });
 
 test('MP_ROUTING_POLICY override is honored when present', () => {
