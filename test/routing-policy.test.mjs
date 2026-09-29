@@ -68,6 +68,13 @@ test('C1 reads every host without inspecting models and resolves own-property in
     assert.throws(() => resolveUsecase(name, parsed), /unknown use case/);
     assert.throws(() => resolvePhase(name, parsed), /unknown phase/);
   }
+  // An ordinary JSON-parsed policy has a normal prototype, so an inherited name
+  // like `toString` must still refuse (discovery's null-prototype tables hide this).
+  const plainPolicy = JSON.parse(JSON.stringify(dispatchFixture));
+  for (const name of ['toString', 'constructor', 'hasOwnProperty']) {
+    assert.throws(() => resolveUsecase(name, { policy: plainPolicy }), /unknown use case/);
+    assert.throws(() => resolvePhase(name, { policy: plainPolicy }), /unknown phase/);
+  }
   for (const broken of [
     { ...dispatchFixture, defaultUsecase: 'missing' },
     { ...dispatchFixture, usecases: { ...dispatchFixture.usecases, 'bounded-edit': { ...dispatchFixture.usecases['bounded-edit'], agent: 'judge' } } },
