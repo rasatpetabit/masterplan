@@ -4794,6 +4794,7 @@ function main() {
       let op;
       try {
         op = finishStep({
+          host: cliDispatchHost(flags),
           statePath,
           self,
           now,

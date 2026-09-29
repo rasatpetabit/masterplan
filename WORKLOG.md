@@ -1278,3 +1278,9 @@ correction-specific test cases the reviewer named (observation-only refresh,
 absence transitions, schema-backed outage replay, outage at cap), and Codex's
 support disposition, which the spec leaves undefined although the README calls
 it a host. Nothing pushed, deployed, or claimed as release evidence.
+
+## 2026-09-29 — plan 07 Task 5 repair (F1/F3/F4 and F2 regression)
+
+C2 review-episode stakes and exact raiseTier/raiseEffort/independentOf/noSubstitute keys now survive the wave record and both ordinary/recovery review descriptors. Host-native unconfigured Claude Code and Codex cases are exercised with deliberately absent discovery and keep critical blocking intent without claiming C1 or pinning a model. An unsubmitted model/chain-bearing descriptor refuses migration; pending submitted records remain reused. Subjectless/held existing episodes still refuse dispatch; no migration receipt linkage or new subject allocation was added (plan 08 owner). CLI finish inputs receive host identity; both implementation defaults have bounded-edit/builder assertions.
+
+Hermetic targeted C1 fixtures and isolated-HOME tests: 209 pass / 0 fail / 1 skip (including recovery); full suite 2928 pass / 5 fail / 1 skip. The five failures are the pre-existing E12 README env, registry coverage/behavior, and inventory coverage/synthetic-unmapped failures tied to the earlier C1 cutover. Mutants: synthetic model pin killed by three native assertions; disabled HOLD/subjectless guard killed by the direct persisted-episode assertion. No system manager/container namespace commands executed. Pending: plan 08 receipt producer/consumer linkage and independent review before activation; no merge, push or activation from this repair.

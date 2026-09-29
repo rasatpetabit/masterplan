@@ -11,6 +11,21 @@ import os from 'node:os';
 import path from 'node:path';
 import { prepareWave, declaredScope, verifyScope, qctlEligible, checkWaveDisjoint, captureInputFingerprint, goalsReminder, bundleGoalsReminder, waveSummary, rawIntentOutcomeLine } from '../lib/wave.mjs';
 import { parseGoals, preCodeMaskGoalsHash, goalsHash } from '../lib/goals.mjs';
+import { buildWorkItem } from '../lib/dispatch/dispatch-digest.mjs';
+import { resolveUsecase } from '../lib/dispatch/routing-policy.mjs';
+
+const dispatchFixture = JSON.parse(fs.readFileSync(new URL('./fixtures/dispatch-map.json', import.meta.url), 'utf8'));
+
+test('both work item and wave defaults are bounded-edit builder intent, not the C1 default', () => {
+  const wave = prepareWave(state(), planIndex(), 0, {}, {}).tasks[0];
+  const work = buildWorkItem({ task_id: 1, description: 'edit', files: [], verify_commands: [] });
+  assert.equal(wave.class, 'bounded-edit');
+  assert.equal(work.class, 'bounded-edit');
+  assert.equal(dispatchFixture.usecases['bounded-edit'].agent, 'builder');
+  assert.equal(resolveUsecase(wave.class, { policy: dispatchFixture }).agent, 'builder');
+  assert.equal(resolveUsecase(work.class, { policy: dispatchFixture }).agent, 'builder');
+  assert.equal(Object.hasOwn(dispatchFixture.usecases, dispatchFixture.defaultUsecase), true);
+});
 
 // A state bundle (v8 shape) + a matching plan.index.json. Two waves; task 4 already done.
 const state = () => ({

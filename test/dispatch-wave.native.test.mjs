@@ -101,6 +101,22 @@ const NATIVE_EDIT = {
   reason: null,
 };
 
+const CONSTRAINTS = {
+  stakes: 'critical', raiseTier: 'frontier', raiseEffort: 'xhigh',
+  independentOf: { lineage: ['fixture-author'], required: true }, noSubstitute: true,
+};
+const absentDiscovery = { env: {}, homeDir: '/deliberately-absent',
+  readFile: () => { throw Object.assign(new Error('absent'), { code: 'ENOENT' }); } };
+function assertConstraints(descriptor, subject) {
+  for (const [key, value] of Object.entries(CONSTRAINTS)) assert.deepEqual(descriptor[key], value, key);
+  assert.equal(descriptor.subject, subject);
+  assert.equal(descriptor.blocking, true);
+  assert.equal(Object.hasOwn(descriptor, 'model'), false);
+  assert.equal(Object.hasOwn(descriptor, 'chain'), false);
+  assert.equal(Object.hasOwn(descriptor, 'raises'), false);
+  assert.equal(Object.hasOwn(descriptor, 'independence'), false);
+}
+
 // ── wave token ──────────────────────────────────────────────────────────────
 
 test('the wave token is unique per (run, wave, attempt) and filename-safe', () => {
@@ -160,15 +176,27 @@ test('each spawn descriptor carries model-free intent, scope, and badge', () => 
   assert.deepEqual(s.badge, { class: 'bounded-edit', backend: 'native' });
 });
 
-test('unconfigured host-native built-in implement retains agent and source without guessed usecase', () => {
-  const p = buildNativeSpawnPlan({ tasks: [{ id: 1, class: 'bounded-edit' }],
-    descriptors: [{}], token: 'fixture', host: 'claude-code',
-    _resolve: (klass) => resolveClassRouting(klass, { host: 'claude-code',
-      policy: null }),
-  });
-  // Host configuration may exist; regardless the transport does not pin a model.
-  assert.equal(p.tasks[0].agent, 'builder');
-  assert.equal(Object.hasOwn(p.tasks[0], 'model'), false);
+test('unconfigured host-native implement retains built-in agent without C1 claims', () => {
+  for (const host of ['claude-code', 'codex']) {
+    const p = buildNativeSpawnPlan({ tasks: [{ id: 1, class: 'bounded-edit' }],
+      descriptors: [{ ...CONSTRAINTS, subject: 'fixture::episode', blocking: true }], token: 'fixture', host,
+      _resolve: (klass) => resolveClassRouting(klass, { host, policy: null,
+        discoveryOptions: absentDiscovery }),
+    });
+    const d = p.tasks[0];
+    assert.equal(d.agent, 'builder');
+    assert.equal(d.model_source, 'host-native');
+    assert.deepEqual(d.routing_map, { status: 'unconfigured', path: null, schema: null });
+    assert.equal(Object.hasOwn(d, 'usecase'), false);
+    assert.equal(Object.hasOwn(d, 'vocabulary'), false);
+    assertConstraints(d, 'fixture::episode');
+  }
+});
+
+test('unsubmitted legacy model or chain descriptors demand explicit migration', () => {
+  for (const pin of [{ model: 'synthetic-legacy-pin' }, { chain: ['synthetic-legacy-pin'] }]) {
+    assert.throws(() => planFixture({ descriptors: [pin, {}] }), /legacy model\/chain.*migration/);
+  }
 });
 
 test('Task 8 panel coordinator integration: C7 isolated counters exhaust the same subject', { skip: 'plan 04 Task 8 coordinator is not built; producer never expands a panel' }, () => {});
@@ -326,7 +354,7 @@ function makeNativeFixture({ slug = 'native-review', review = { adversary: true 
 }
 
 function launchNative(fx) {
-  const op = continueRun({ statePath: fx.statePath, self: fx.self, now: 2000 });
+  const op = continueRun({ statePath: fx.statePath, self: fx.self, now: 2000, policy: dispatchFixture });
   assert.equal(op.op, 'dispatch_fabric', `expected dispatch_fabric, got ${JSON.stringify(op)}`);
   fx.WT = op.cwd;
   return op;
@@ -336,7 +364,7 @@ test('native spawn record persists task review context for result ingestion', as
   const fx = makeNativeFixture({ slug: 'native-ctx', review: { adversary: true } });
   launchNative(fx);
   const res = await dispatchWaveViaFabric({
-    statePath: fx.statePath, self: fx.self, now: 2000,
+    statePath: fx.statePath, self: fx.self, now: 2000, policy: dispatchFixture,
   });
   assert.equal(res.outcome, 'native-spawn-plan');
   const record = readWaveDispatchRecord(fx.bundleDir, 1);
@@ -351,7 +379,7 @@ test('native spawn record persists task review context for result ingestion', as
 test('phase A: owed reviews emit pending descriptors and record NOTHING', async () => {
   const fx = makeNativeFixture({ slug: 'native-pending', review: { adversary: true } });
   launchNative(fx);
-  await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 2000 });
+  await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 2000, policy: dispatchFixture });
   write(fx.WT, 'src/a.txt', 'native edit\n');
   const nativeResult = {
     wave: 1,
@@ -378,7 +406,7 @@ test('phase A: owed reviews emit pending descriptors and record NOTHING', async 
 test('review episode keeps persisted project subject across artifact, token, reviewer and attempt changes', async () => {
   const fx = makeNativeFixture({ slug: 'stable-episode', review: { adversary: true } });
   launchNative(fx);
-  await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 2000 });
+  await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 2000, policy: dispatchFixture });
   write(fx.WT, 'src/a.txt', 'first edit\n');
   const result = { wave: 1, tasks: [{ task_id: 1, digest: workerDigest(1, 'done') }] };
   const first = (await reviewNativeResult({ statePath: fx.statePath, result, policy: dispatchFixture })).pending_reviews[0];
@@ -400,7 +428,7 @@ test('review episode keeps persisted project subject across artifact, token, rev
 test('old subjectless wave episode cannot acquire a fresh budget on recovery', async () => {
   const fx = makeNativeFixture({ slug: 'held-episode', review: { adversary: true } });
   launchNative(fx);
-  await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 2000 });
+  await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 2000, policy: dispatchFixture });
   const record = readWaveDispatchRecord(fx.bundleDir, 1);
   delete record.review_context.episodes;
   writeWaveDispatchRecord(fx.bundleDir, 1, record);
@@ -409,10 +437,69 @@ test('old subjectless wave episode cannot acquire a fresh budget on recovery', a
   await assert.rejects(() => reviewNativeResult({ statePath: fx.statePath, result, policy: dispatchFixture }), /no identifiable entry/);
 });
 
+test('submitted wave with a legacy pin is reused, never launched or migrated in place', async () => {
+  const fx = makeNativeFixture({ slug: 'submitted-pin', review: { adversary: true } });
+  launchNative(fx);
+  const first = await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 2000, policy: dispatchFixture });
+  assert.equal(first.outcome, 'native-spawn-plan');
+  const saved = readWaveDispatchRecord(fx.bundleDir, 1);
+  saved.tasks[0].model = 'synthetic-legacy-pin';
+  writeWaveDispatchRecord(fx.bundleDir, 1, saved);
+  const again = await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 2100, policy: dispatchFixture });
+  assert.equal(again.outcome, 'reused');
+  assert.equal(again.dispatched, false);
+  assert.equal(readWaveDispatchRecord(fx.bundleDir, 1).tasks[0].model, 'synthetic-legacy-pin');
+});
+
+test('new task episode freezes C2 constraints; both host-native gates preserve them on re-emission', async () => {
+  const fx = makeNativeFixture({ slug: 'c2-episode', review: { adversary: true, ...CONSTRAINTS } });
+  launchNative(fx);
+  const launch = await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 2000, policy: dispatchFixture });
+  assert.equal(launch.outcome, 'native-spawn-plan');
+  const saved = readWaveDispatchRecord(fx.bundleDir, 1);
+  assertConstraints({ ...saved.review_context.episodes['1'], blocking: true }, saved.review_context.episodes['1'].subject);
+  write(fx.WT, 'src/a.txt', 'review me\n');
+  const result = { wave: 1, tasks: [{ task_id: 1, digest: workerDigest(1, 'done') }] };
+  for (const host of ['claude-code', 'codex']) {
+    const [d] = (await reviewNativeResult({ statePath: fx.statePath, result, host,
+      discoveryOptions: absentDiscovery })).pending_reviews;
+    assertConstraints(d, saved.review_context.episodes['1'].subject);
+    assert.equal(d.model_source, 'host-native');
+    assert.deepEqual(d.routing_map, { status: 'unconfigured', path: null, schema: null });
+    assert.equal(d.agent, 'breaker');
+    assert.equal(d.phase, 'challenge');
+    assert.equal(Object.hasOwn(d, 'usecase'), false);
+    assert.equal(Object.hasOwn(d, 'vocabulary'), false);
+    assert.equal(d.diff_sha, (await reviewNativeResult({ statePath: fx.statePath, result, policy: dispatchFixture })).pending_reviews[0].diff_sha);
+  }
+  // A rewrite must retain operation-owned constraints rather than defaulting them.
+  writeWaveDispatchRecord(fx.bundleDir, 1, { ...saved, attempt: 2, wave_token: 'other-token' });
+  const configured = (await reviewNativeResult({ statePath: fx.statePath, result, policy: dispatchFixture })).pending_reviews[0];
+  assertConstraints(configured, saved.review_context.episodes['1'].subject);
+  assert.equal(configured.usecase, dispatchFixture.phases.challenge);
+});
+
+test('an existing persisted subjectless or held episode emits zero reviews', async () => {
+  for (const episode of [{ stakes: 'critical' }, { hold: 'migration-pending', subject: 'legacy::subject' }]) {
+    const fx = makeNativeFixture({ slug: 'held-episode-direct', review: { adversary: true } });
+    launchNative(fx);
+    const launch = await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 2000, policy: dispatchFixture });
+    assert.equal(launch.outcome, 'native-spawn-plan');
+    const saved = readWaveDispatchRecord(fx.bundleDir, 1);
+    saved.review_context.episodes['1'] = episode;
+    writeWaveDispatchRecord(fx.bundleDir, 1, saved);
+    write(fx.WT, 'src/a.txt', 'review me\n');
+    const result = { wave: 1, tasks: [{ task_id: 1, digest: workerDigest(1, 'done') }] };
+    await assert.rejects(() => reviewNativeResult({ statePath: fx.statePath, result, policy: dispatchFixture }), /subjectless hold/);
+    assert.deepEqual(readWaveDispatchRecord(fx.bundleDir, 1).review_context.episodes['1'], episode);
+    assert.equal(readState(fx.statePath).tasks[0].status, 'pending');
+  }
+});
+
 test('phase B: provided native reviews ingest through the centralized projection', async () => {
   const fx = makeNativeFixture({ slug: 'native-parity', review: { adversary: true } });
   launchNative(fx);
-  await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 2000 });
+  await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 2000, policy: dispatchFixture });
   write(fx.WT, 'src/a.txt', 'native edit\n');
   const nativeResult = {
     wave: 1,
@@ -438,7 +525,7 @@ test('phase B: provided native reviews ingest through the centralized projection
 test('phase B: a missing provided review fails closed as an error review', async () => {
   const fx = makeNativeFixture({ slug: 'native-missing', review: { adversary: true } });
   launchNative(fx);
-  await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 2000 });
+  await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 2000, policy: dispatchFixture });
   write(fx.WT, 'src/a.txt', 'native edit\n');
   const nativeResult = {
     wave: 1,
@@ -454,7 +541,7 @@ test('phase B: a missing provided review fails closed as an error review', async
 test('native review is a no-op when review_context is absent or disabled', async () => {
   const fx = makeNativeFixture({ slug: 'native-off', review: { adversary: false } });
   launchNative(fx);
-  await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 2000 });
+  await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 2000, policy: dispatchFixture });
   const nativeResult = {
     wave: 1,
     tasks: [{ task_id: 1, digest: workerDigest(1, 'done') }],

@@ -14,6 +14,7 @@
 // git capture + binding, so the tests exercise genuine MAIN + linked-worktree pairs.
 
 import { test } from 'node:test';
+
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -41,6 +42,10 @@ import {
   validateRecoveryTaskSet,
 } from '../lib/recovery-controller.mjs';
 import { sha256hex, stableStringify, diagnosticStringify } from '../lib/canonical.mjs';
+
+const dispatchFixture = JSON.parse(fs.readFileSync(new URL('./fixtures/dispatch-map.json', import.meta.url), 'utf8'));
+// Historical recovery cases without explicit policy use this checked-in C1 document.
+process.env.MP_DISPATCH_MAP = new URL('./fixtures/dispatch-map.json', import.meta.url).pathname;
 
 function git(dir, ...args) {
   return String(execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' })).trim();
@@ -183,7 +188,7 @@ async function runPhaseA(fx, opts = {}) {
     statePath: fx.statePath,
     result: recoveryResult(fx),
     providedReviews: null,
-    policy: null,
+    policy: dispatchFixture,
     now: 3000,
     recoverySelector: { repo: fx.WT, head: fx.HEAD },
     ...opts,
@@ -191,6 +196,48 @@ async function runPhaseA(fx, opts = {}) {
 }
 
 // ── deterministic capture ────────────────────────────────────────────────────
+
+test('recovery emitter preserves frozen critical C2 constraints and evidence identity on unconfigured hosts', async () => {
+  const fx = makeRecoveryFixture();
+  const episode = fx.record.review_context.episodes['1'];
+  Object.assign(episode, { stakes: 'critical', raiseTier: 'frontier', raiseEffort: 'xhigh',
+    independentOf: { lineage: ['fixture-author'], required: true }, noSubstitute: true });
+  writeWaveDispatchRecord(fx.bundleDir, 1, fx.record);
+  const absent = { env: {}, homeDir: '/deliberately-absent',
+    readFile: () => { throw Object.assign(new Error('absent'), { code: 'ENOENT' }); } };
+  let previous;
+  for (const host of ['claude-code', 'codex']) {
+    const pending = await runPhaseA(fx, { host, policy: null, discoveryOptions: absent });
+    const d = pending.pending_reviews[0];
+    for (const key of ['stakes', 'raiseTier', 'raiseEffort', 'independentOf', 'noSubstitute', 'subject'])
+      assert.deepEqual(d[key], episode[key], key);
+    assert.equal(d.blocking, true);
+    assert.equal(d.model_source, 'host-native');
+    assert.deepEqual(d.routing_map, { status: 'unconfigured', path: null, schema: null });
+    assert.equal(d.agent, 'breaker');
+    assert.equal(d.phase, 'challenge');
+    for (const key of ['usecase', 'vocabulary', 'model', 'chain', 'raises', 'independence'])
+      assert.equal(Object.hasOwn(d, key), false, key);
+    assert.equal(d.diff_sha, sha256hex(captureCommittedDiff(fx.WT, fx.BASE, fx.HEAD)));
+    assert.equal(d.base, fx.BASE);
+    assert.equal(d.head, fx.HEAD);
+    assert.ok(d.diff);
+    assert.equal(d.diff_encoding, 'base64');
+    assert.equal(d.format, RECOVERY_CAPTURE_FORMAT);
+    assert.equal(d.identity.head, fx.HEAD);
+    if (previous) {
+      assert.equal(d.job_id, previous.job_id);
+      assert.equal(d.diff_sha, previous.diff_sha);
+      assert.deepEqual(d.identity, previous.identity);
+    }
+    previous = d;
+  }
+  const configured = (await runPhaseA(fx, { policy: dispatchFixture })).pending_reviews[0];
+  assert.equal(configured.usecase, 'adversarial-assessment');
+  assert.equal(configured.job_id, previous.job_id);
+  assert.equal(configured.diff_sha, previous.diff_sha);
+  assert.equal(configured.raiseTier, episode.raiseTier);
+});
 
 test('recovery: clean committed state captures the deterministic base→HEAD artifact', async () => {
   const fx = makeRecoveryFixture();
