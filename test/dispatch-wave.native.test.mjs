@@ -24,6 +24,7 @@ import {
   readWaveDispatchRecord,
   writeWaveDispatchRecord,
   reviewNativeResult,
+  disposeReviewEpisode,
 } from '../lib/dispatch-wave.mjs';
 import { continueRun } from '../lib/continue.mjs';
 import { readState, writeState } from '../lib/bundle.mjs';
@@ -494,6 +495,81 @@ test('an existing persisted subjectless or held episode emits zero reviews', asy
     assert.deepEqual(readWaveDispatchRecord(fx.bundleDir, 1).review_context.episodes['1'], episode);
     assert.equal(readState(fx.statePath).tasks[0].status, 'pending');
   }
+});
+
+test('operator dispositions are durable, idempotent, conflicting re-apply refused and retire is never review success', async () => {
+  const fx = makeNativeFixture({ slug: 'disposition-retire' });
+  launchNative(fx);
+  await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 2000, policy: dispatchFixture });
+  const record = readWaveDispatchRecord(fx.bundleDir, 1);
+  record.review_context.episodes['1'] = { hold: 'historical' };
+  writeWaveDispatchRecord(fx.bundleDir, 1, record);
+  const args = { statePath: fx.statePath, wave: 1, taskId: 1, self: fx.self, now: 2200 };
+  const first = disposeReviewEpisode({ ...args, disposition: 'retire', reason: 'unverifiable old review' });
+  assert.equal(first.disposition.kind, 'retire');
+  assert.equal(first.disposition.reviewed, false);
+  const cli = execFileSync(process.execPath, [new URL('../bin/masterplan.mjs', import.meta.url).pathname,
+    'episode-disposition', `--state=${fx.statePath}`, '--wave=1', '--task-id=1',
+    '--disposition=retire', '--reason=unverifiable old review', '--session=sess-native',
+    '--host=h1', '--now=2200'], { encoding: 'utf8' });
+  assert.deepEqual(JSON.parse(cli), first);
+  assert.deepEqual(disposeReviewEpisode({ ...args, disposition: 'retire', reason: 'unverifiable old review' }), first);
+  assert.throws(() => disposeReviewEpisode({ ...args, disposition: 'restart' }), /conflict/);
+  write(fx.WT, 'src/a.txt', 'change\n');
+  const result = { wave: 1, tasks: [{ task_id: 1, digest: workerDigest(1) }] };
+  await assert.rejects(() => reviewNativeResult({ statePath: fx.statePath, result, policy: dispatchFixture }), /retired.*not reviewed/);
+  await assert.rejects(() => reviewNativeResult({ statePath: fx.statePath, result, providedReviews: { 1: rejectRecord }, policy: dispatchFixture }), /retired.*not reviewed/);
+  assert.equal(readState(fx.statePath).tasks[0].status, 'pending');
+});
+
+test('restart records lineage, emits one new persisted subject, and refuses stale bundle copies', async () => {
+  const fx = makeNativeFixture({ slug: 'disposition-restart' });
+  launchNative(fx);
+  await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 2000, policy: dispatchFixture });
+  const record = readWaveDispatchRecord(fx.bundleDir, 1);
+  record.review_context.episodes['1'] = { hold: 'historical' };
+  writeWaveDispatchRecord(fx.bundleDir, 1, record);
+  const args = { statePath: fx.statePath, wave: 1, taskId: 1, self: fx.self, now: 2200, disposition: 'restart' };
+  const d = disposeReviewEpisode(args);
+  assert.equal(d.disposition.kind, 'restart');
+  assert.deepEqual(d.disposition.lineage, { wave: 1, task_id: 1 });
+  assert.match(d.disposition.subject, /::docs\/masterplan\/disposition-restart\/wave-1\/task-1\/restart-1$/);
+  assert.deepEqual(disposeReviewEpisode(args), d);
+  assert.throws(() => disposeReviewEpisode({ ...args, disposition: 'retire', reason: 'other' }), /conflict/);
+  write(fx.WT, 'src/a.txt', 'change\n');
+  const result = { wave: 1, tasks: [{ task_id: 1, digest: workerDigest(1) }] };
+  const one = await reviewNativeResult({ statePath: fx.statePath, result, policy: dispatchFixture });
+  const two = await reviewNativeResult({ statePath: fx.statePath, result, policy: dispatchFixture });
+  assert.equal(one.pending_reviews[0].subject, d.disposition.subject);
+  assert.equal(two.pending_reviews[0].subject, d.disposition.subject);
+  const stale = path.join(fx.MAIN, '.worktrees', 'stale', 'docs', 'masterplan', 'disposition-restart');
+  fs.mkdirSync(stale, { recursive: true });
+  fs.copyFileSync(fx.statePath, path.join(stale, 'state.yml'));
+  fs.copyFileSync(path.join(fx.bundleDir, 'wave-1.dispatch.json'), path.join(stale, 'wave-1.dispatch.json'));
+  assert.throws(() => disposeReviewEpisode({ ...args, statePath: path.join(stale, 'state.yml') }), /primary bundle/);
+  await assert.rejects(() => reviewNativeResult({ statePath: path.join(stale, 'state.yml'), result, policy: dispatchFixture }), /primary bundle/);
+});
+
+test('missing disposition refuses an ambiguous prior emission; only a durable never-emitted marker permits new work', async () => {
+  const fx = makeNativeFixture({ slug: 'never-emitted' });
+  launchNative(fx);
+  await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 2000, policy: dispatchFixture });
+  const record = readWaveDispatchRecord(fx.bundleDir, 1);
+  delete record.review_context.episodes['1'];
+  delete record.review_context.emitted_reviews;
+  writeWaveDispatchRecord(fx.bundleDir, 1, record);
+  write(fx.WT, 'src/a.txt', 'change\n');
+  const result = { wave: 1, tasks: [{ task_id: 1, digest: workerDigest(1) }] };
+  await assert.rejects(() => reviewNativeResult({ statePath: fx.statePath, result, policy: dispatchFixture, self: fx.self }), /no identifiable entry/);
+  record.review_context.emitted_reviews = ['1'];
+  writeWaveDispatchRecord(fx.bundleDir, 1, record);
+  await assert.rejects(() => reviewNativeResult({ statePath: fx.statePath, result, policy: dispatchFixture, self: fx.self }), /ambiguous prior emission/);
+  record.review_context.emitted_reviews = [];
+  writeWaveDispatchRecord(fx.bundleDir, 1, record);
+  const first = await reviewNativeResult({ statePath: fx.statePath, result, policy: dispatchFixture, self: fx.self });
+  const second = await reviewNativeResult({ statePath: fx.statePath, result, policy: dispatchFixture, self: fx.self });
+  assert.equal(first.pending_reviews[0].subject, second.pending_reviews[0].subject);
+  assert.equal(readWaveDispatchRecord(fx.bundleDir, 1).review_context.emitted_reviews.filter((id) => id === '1').length, 1);
 });
 
 test('phase B: provided native reviews ingest through the centralized projection', async () => {

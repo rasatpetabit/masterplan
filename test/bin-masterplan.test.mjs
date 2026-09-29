@@ -3345,6 +3345,7 @@ test('native-path record-result ignores a smuggled deferred_review_events field 
     tasks: [{ task_id: 1, class: 'masterplan-implementation', handoff_key: 'k1' }],
     review_context: {
       enabled: true, base_sha: head,
+      episodes: { 1: { subject: `${repo}::docs/masterplan/${slug}/wave-1/task-1` } },
       tasks: [{ task_id: 1, description: 'task 1', class: 'masterplan-implementation', repo: WT }],
     },
   }, null, 2));

@@ -1,5 +1,9 @@
 # WORKLOG
 
+## 2026-09-29 — plan 07 Task 5 X22 follow-up
+
+Explicit per-slot operator disposition in the primary wave record keeps old held/subjectless slots refused by default. Retire is not review success; restart records lineage and a fresh subject without historical accounting identity. Durable no-emission evidence alone permits a missing slot to acquire ordinary new-work identity. Finish review ops now carry the CLI-detected host; the obsolete knob observer measures its own legacy path, while C1 discovery remains fail-closed. No real slot disposed, no receipt or hook state edited; review and Task 6 finish migration remain separate.
+
 ## 2026-09-29 — plan 07 Task 5 implementation handoff
 
 C1 intent replaces per-process model routing cache for wave and plan descriptors; review episodes persist project-qualified subjects before launch and refuse subjectless historical records without an identifiable entry. Phase-A review retains current diff SHA/job binding while using the frozen subject; host-native known operations carry semantic phases without model projection. Task 8 isolated-counter/panel execution remains a named skipped integration test. Targeted tests pass; the four full-suite failures are the known Task 6 README/knob inventory baseline. Breaker review remains owed by parent before acceptance/landing; no installation or activation.

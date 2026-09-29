@@ -233,7 +233,7 @@ import { mapQctlStatus } from '../lib/qctl-status.mjs';
 import { decideBaseDrift } from '../lib/qctl-requeue.mjs';
 import { recordWaveResult, promoteAmendment } from '../lib/wave-commit.mjs';
 import { pinnedGoalsEvidenceHash } from '../lib/promote.mjs';
-import { dispatchWaveViaFabric, reviewNativeResult, readWaveDispatchRecord, writeWaveDispatchRecord } from '../lib/dispatch-wave.mjs';
+import { dispatchWaveViaFabric, reviewNativeResult, readWaveDispatchRecord, writeWaveDispatchRecord, disposeReviewEpisode } from '../lib/dispatch-wave.mjs';
 import { continueRun, dispatchPlanFanout, resolvePlanMdPath } from '../lib/continue.mjs';
 import { finishStep } from '../lib/finish-step.mjs';
 import { sweepWorktrees } from '../lib/sweep.mjs';
@@ -4512,7 +4512,7 @@ function main() {
       }
       reviewNativeResult({
         host: cliDispatchHost(flags),
-        statePath,
+        statePath, self,
         result,
         providedReviews,
         recoverySelector,
@@ -4595,6 +4595,20 @@ function main() {
           out(recRes);
         })
         .catch((e) => die(e.message));
+      break;
+    }
+
+    case 'episode-disposition': {
+      const statePath = need(flags, 'state');
+      loadForWrite(statePath);
+      const state = readState(statePath);
+      const now = Number.isFinite(Number(flags.now)) ? Number(flags.now) : Date.now();
+      const self = state.concurrency?.owner_lock === 'off' ? null : resolveOwnerSelf(flags, statePath).self;
+      const wave = Number(flags.wave), taskId = Number(flags['task-id']);
+      try {
+        out(disposeReviewEpisode({ statePath, wave, taskId, self, now,
+          disposition: need(flags, 'disposition'), reason: flags.reason }));
+      } catch (error) { die(error.message); }
       break;
     }
 

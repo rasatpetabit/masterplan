@@ -38,6 +38,11 @@ Resume or begin execution — the resume controller (§2). No path → the activ
 wave per `mp dispatch-wave` (the fabric wave dispatcher) until all tasks are `done`, then auto-enters the finish
 flow. `--resume=<path>` is an alias for `execute <path>`.
 
+## `episode-disposition` (operator CLI)
+
+For an existing held/subjectless wave-review slot, decide explicitly without rewriting
+historical receipts: `mp episode-disposition --state=<primary-bundle>/state.yml --wave=<n> --task-id=<n> --disposition=retire --reason="<why>"` closes it **not reviewed**; use `--disposition=restart` without `--reason` to authorize new work on a new persisted subject linked to the old slot. Pass `--session=<owner-session> --host=<owner-host>` when Guard D is on. Identical re-entry is idempotent; conflicting decisions, stale `.worktrees/` bundle copies and missing slots refuse. No disposition is applied automatically.
+
 ## `finish`
 Finalize a completed run (§2c): verify and **cite real output**
 (`superpowers:verification-before-completion`) → write `retro.md` if absent → open the durable
