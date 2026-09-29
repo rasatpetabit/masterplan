@@ -1,5 +1,9 @@
 # WORKLOG
 
+## 2026-09-28 — /codebase-simplify on lib/dispatch: published result, blocked review, local main synced
+
+The only surviving simplification (single fail-soft try boundary in `adversaryFallbackReviewers`) is released as v10.0.14 (`7cdb335`) and installed (`install-pi --check` ok). The originating codebase run `424df1b4` is still active with 13 ordered refutation challenges: the `refutation` class is kimi-only by design (fail closed, no family substitution) and the gateway returns 403 weekly quota, so the run is blocked on an operator quota reset, not advanced with substitutes. Local `main` had one superseded commit (`2a8a2ed`, kept at `backup/main-2a8a2ed-pre-sync`) and was moved to origin/main with `reset --keep`; unowned dirty README/docs edits were re-applied by clean three-way merge, and the pre-sync copy remains in `stash@{0}`. Full state and resume order: `docs/handoffs/2026-09-28-simplify-run.md`.
+
 ## 2026-09-28 — publication gate answer binding repair on `fix/distinct-finish-gates`
 
 Review found the first publication gate accepted a bare boolean and re-read HEAD at answer time, permitting an unadvertised tip to inherit consent. The approval now requires the open publication gate's persisted head and an explicit echoed `--publication-head`; stale heads re-open without recording an approval, including on bare re-entry. CLI flags alone are not direct/standing-grant evidence: a grant must first open the tip-bearing gate and then answer it. A missing/detached worktree fails closed, rather than deriving an empty or unrelated tip. No network publication, merge, or installation performed here; independent breaker review remains with the parent.
