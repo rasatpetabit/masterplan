@@ -346,6 +346,15 @@ export const REGISTRY = [
     observe: async ({ input, fixtures }) => fixtures[input._id].routingCacheKey,
   },
   {
+    id: 'MP_DISPATCH_MAP',
+    kind: 'env',
+    describe: 'C1 discovery is configured only with an explicit readable map; missing explicit paths refuse',
+    values: [null, 'missing-explicit'],
+    vary: (input, v) => ({ ...input, MP_DISPATCH_MAP: v }),
+    promptOnly: false,
+    observe: async ({ input, fixtures }) => fixtures[input._id].dispatchMapDiscovery,
+  },
+  {
     id: 'CLAUDE_CONFIG_DIR',
     kind: 'env',
     describe: 'CLAUDE_CONFIG_DIR overrides the resolved Claude config dir (resolveConfigDir)',

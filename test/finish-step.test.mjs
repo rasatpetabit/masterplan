@@ -210,6 +210,8 @@ test('adversary review: armed (new key) → run_adversary_review once; done-even
   let op = fx.step();
   assert.equal(op.op, 'run_adversary_review');
   assert.equal(op.base, 'main');
+  assert.equal(op.host, 'pi');
+  assert.equal(fx.step({ host: 'codex' }).host, 'codex', 'finish handoff carries the actual host');
   // resume before the answer lands → the SAME op (no event yet at this HEAD)
   assert.equal(fx.step().op, 'run_adversary_review');
   // the answer: event written by finish-step (digest via file — shell-safe transport)
@@ -228,6 +230,18 @@ test('adversary review: armed (new key) → run_adversary_review once; done-even
   op = fx.step();
   assert.equal(op.gate, 'branch_finish');
   assert.equal(op.review.present, true);
+});
+
+test('CLI forwards Codex host into the finish review handoff', () => {
+  const fx = makeFixture({ state: { review: { adversary: 'on' } } });
+  fx.step({ verify: 'pass' });
+  fs.writeFileSync(path.join(fx.bundleDir, 'retro.md'), '# retro\n');
+  const binary = path.resolve('bin/masterplan.mjs');
+  const op = JSON.parse(execFileSync(process.execPath, [binary, 'finish-step', `--state=${fx.statePath}`,
+    '--agent-is-codex', '--session=sess-A', '--host=h1', '--now=2000'],
+  { encoding: 'utf8', env: { ...process.env, PI_CODING_AGENT: '' } }));
+  assert.equal(op.op, 'run_adversary_review');
+  assert.equal(op.host, 'codex');
 });
 
 test('adversary review: a LEGACY state.codex.review still arms the gate (in-flight bundle fallback)', () => {

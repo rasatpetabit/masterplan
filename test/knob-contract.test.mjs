@@ -486,17 +486,31 @@ async function buildFixture(entry, spec, tag) {
     return { verifyAllowlist: JSON.parse(out) };
   }
 
-  if (entry.id === 'MP_ROUTING_POLICY') {
-    // Invoke the REAL routing-policy consumer in an isolated process: resolveClassRouting
-    // reads the env through readEnv and its cache key marks the policy source ('repo' vs
-    // 'injected'). The externally observable difference is that cache key.
-    const lib = path.join(ROOT, 'lib', 'dispatch-wave.mjs').replace(/\\/g, '/');
+  if (entry.id === 'MP_DISPATCH_MAP') {
+    const lib = path.join(ROOT, 'lib', 'dispatch', 'routing-policy.mjs').replace(/\\/g, '/');
     const script = `
-      import { resolveClassRouting } from ${JSON.stringify(lib)};
-      const v = process.env.MP_ROUTING_POLICY || '';
-      const r = resolveClassRouting('bounded-edit', { policy: null });
-      const key = 'bounded-edit' + '\\u0000' + (v ? 'injected' : 'repo');
-      process.stdout.write(JSON.stringify({ key, lane: r.lane, model: r.model }));
+      import { discoverDispatchMap } from ${JSON.stringify(lib)};
+      try {
+        const d = discoverDispatchMap({ host: 'claude-code', env: process.env,
+          homeDir: '/no-map', readFile: () => { throw Object.assign(new Error('absent'), { code: 'ENOENT' }); } });
+        process.stdout.write(JSON.stringify({ status: d.status }));
+      } catch (error) { process.stdout.write(JSON.stringify({ code: error.code })); }
+    `;
+    const env = { ...mpEnv() };
+    delete env.MP_DISPATCH_MAP;
+    if (need.MP_DISPATCH_MAP) env.MP_DISPATCH_MAP = '/fixture/absent';
+    const out = execFileSync('node', ['--input-type=module', '-e', script], { encoding: 'utf8', env });
+    return { dispatchMapDiscovery: JSON.parse(out) };
+  }
+
+  if (entry.id === 'MP_ROUTING_POLICY') {
+    // Task 6 retires this legacy surface. Until then, observe its own real
+    // path resolver, not the migrated C1 wave consumer (which never reads it).
+    const lib = path.join(ROOT, 'lib', 'dispatch', 'routing-policy.mjs').replace(/\\/g, '/');
+    const script = `
+      import { defaultRoutingPolicyPath } from ${JSON.stringify(lib)};
+      process.stdout.write(JSON.stringify(defaultRoutingPolicyPath({ env: process.env,
+        homeDir: '/no-delivered-map', exists: () => false })));
     `;
     const env = { ...mpEnv(), MP_ROUTING_POLICY: need.MP_ROUTING_POLICY ?? '' };
     const out = execFileSync('node', ['--input-type=module', '-e', script], { encoding: 'utf8', env });

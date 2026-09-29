@@ -106,6 +106,14 @@ test('detect-host recognizes the Pi environment signal and refuses conflicting C
   assert.match(conflict.stderr, /conflict/i);
 });
 
+test('CLI finish-step forwards detected host to the review handoff', () => {
+  // The real CLI must produce the host at the review boundary, not merely parse detect-host.
+  const source = fs.readFileSync(path.join(ROOT, 'bin/masterplan.mjs'), 'utf8');
+  assert.match(source, /op = finishStep\(\{\s*host: cliDispatchHost\(flags\),/);
+  const engine = fs.readFileSync(path.join(ROOT, 'lib/finish-step.mjs'), 'utf8');
+  assert.match(engine, /host: ctx\.host,/);
+});
+
 test('every documented mp flag is a recognized KNOWN_FLAGS member (positive cross-check)', () => {
   const { flags } = extractDocSurface();
   assert.ok(flags.size >= 40, `expected a meaningful doc surface, got ${flags.size} flags`);
