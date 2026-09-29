@@ -1,5 +1,9 @@
 # WORKLOG
 
+## 2026-09-29 — fallback refresh landed unreleased; release deferred to plan 07
+
+`9661a6b`, `224df17` and `460e1b5` are on origin/main but in no release (installed: v10.0.14, `7cdb335`). Frontier review of the refresh found that a declared class primary of `""`, `false` or `0` skipped the chain check and still resolved; `460e1b5` requires a non-empty string that its own chain lists first. Operator decision 2026-09-29: do not cut a release for this alone — it ships with the next release the model-routing plan 07 session cuts on top of it — and installing the first release that carries `460e1b5` on this host is approved. Until then this host resolves bounded-edit, planned-execution, engineering and architecture to their lane heads rather than their governed class primaries.
+
 ## 2026-09-29 — public fallback tracks delivered inference routing
 
 The repo-local policy was a stale pre-flip snapshot while runtime Pi used the delivered map. This copy is byte-for-byte from the delivered inference artifact after a relative public-exposure check; resolver now respects class primaries when they differ from lane heads and rejects incompatible declared versions. No fleet reconfigure or install was run; public plugin fallback remains independently usable.
