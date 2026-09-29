@@ -15,7 +15,7 @@
 //
 // Subcommands:
 //   version [--args=STR] [--cwd=DIR]            -> the CC-2 banner line (the lone CC-2/CC-3 survivor)
-//   detect-host [--agent-is-codex] [--native-tools] [--agents-md]
+//   detect-host [--agent-is-pi] [--agent-is-codex] [--native-tools] [--agents-md]
 //                                               -> {isCodex, reasons}
 //   decide --state=PATH [--alive]               -> the decideNextAction result (migrates in-memory)
 //   seed --state=PATH --slug=S --topic=STR [--phase=P] [--status=S] [--schema-version=N]
@@ -682,7 +682,7 @@ function parseArgs(argv) {
 // flag some verb reads is in the set. A flag typo that collides with another verb's valid
 // name is the one residual gap (mitigated by the positive cli-surface cross-check test).
 const KNOWN_FLAGS = new Set(
-  ('actor add-root adversary-review after agent-is-codex agents-md alive all apply apply-ok ' +
+  ('actor add-root adversary-review after agent-is-pi agent-is-codex agents-md alive all apply apply-ok ' +
     'approval args autonomy base base-sha baseline before bootstrap branch branch-exists branches ' +
     'bytes-file choice codex-base codex-count codex-digest-file codex-done codex-reason codex-review ' +
     'codex-skipped codex-suppressed complexity complexity-source contract-ref count created-at ' +
@@ -1431,6 +1431,7 @@ function main() {
     }
     case 'detect-host': {
       const host = detectHost({
+        agentIsPi: !!flags['agent-is-pi'] || readEnv('PI_CODING_AGENT') === 'true',
         agentIsCodex: !!flags['agent-is-codex'],
         codexNativeTools: !!flags['native-tools'],
         agentsMdPresent: !!flags['agents-md'],

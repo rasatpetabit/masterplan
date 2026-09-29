@@ -1,5 +1,9 @@
 # WORKLOG
 
+## 2026-09-29 — model-routing/07 Task 5 partial handoff correction
+
+Task 4 left the CLI `detect-host` without Pi's environment signal; a RED/GREEN CLI regression now proves it reads `PI_CODING_AGENT` through `readEnv` and rejects conflicting Codex identity. This was a one-off missing caller, not a new policy decision. The wider Task 5 handoff is deliberately parked: plan 04 native resolver/panel and plan 08 active-episode migration receipt were absent at checked paths, so review subjects cannot safely be allocated for active episodes. No model-bearing descriptor changes landed. Task 6 owns the four existing full-suite README/knob inventory failures; no installation or publication performed.
+
 ## 2026-09-29 — public fallback tracks delivered inference routing
 
 The repo-local policy was a stale pre-flip snapshot while runtime Pi used the delivered map. This copy is byte-for-byte from the delivered inference artifact after a relative public-exposure check; resolver now respects class primaries when they differ from lane heads and rejects incompatible declared versions. No fleet reconfigure or install was run; public plugin fallback remains independently usable.
