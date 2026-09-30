@@ -4492,6 +4492,7 @@ function main() {
             result,
             self,
             now,
+            skillRoot: resolveInstalledSkillRoot(flags, statePath),
             worktree: typeof flags.worktree === 'string' ? flags.worktree : undefined,
           });
         } catch (e) {
@@ -4540,6 +4541,7 @@ function main() {
           const recRes = recordWaveResult({
             statePath,
             result: reviewedResult,
+            skillRoot: resolveInstalledSkillRoot(flags, statePath),
             self,
             now,
             worktree: typeof flags.worktree === 'string' ? flags.worktree : undefined,
@@ -4730,6 +4732,7 @@ function main() {
       try {
         op = continueRun({
           statePath,
+          skillRoot: resolveInstalledSkillRoot(flags, statePath),
           self,
           now,
           ttlMs,

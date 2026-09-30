@@ -77,7 +77,7 @@ const workerDigest = (id, status = 'done') => ({
  * review_context base is the FIRST commit and whose frozen repo is the worktree, and the
  * owner lock held. The worktree is CLEAN (the recovered state).
  */
-function makeRecoveryFixture({ slug = 'recovery', ctxTasks = null, review = { adversary: true }, activeRun = null, epoch = 5, watchBaseline = true } = {}) {
+function makeRecoveryFixture({ slug = 'recovery', ctxTasks = null, review = { adversary: true }, activeRun = null, epoch = 5, watchBaseline = true, recordable = false, ownerLock = 'off' } = {}) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-recovery-'));
   const MAIN = path.join(tmp, 'main');
   fs.mkdirSync(MAIN, { recursive: true });
@@ -109,11 +109,11 @@ function makeRecoveryFixture({ slug = 'recovery', ctxTasks = null, review = { ad
     worktree: WT,
     tasks,
     active_run: activeRun ?? {
-      wave: 1, run_id: slug, task_id: 'wf1', epoch, scope: ['src/a.txt'], baseline: [],
+      wave: 1, run_id: slug, task_id: 'wf1', epoch, scope: recordable ? ['src/a.txt', 'src/seed.txt'] : ['src/a.txt'], baseline: [],
     },
     dispatch: { fabric: true },
     review,
-    concurrency: { owner_lock: 'off' },
+    concurrency: { owner_lock: ownerLock },
   });
   write(bundleDir, 'plan.index.json', JSON.stringify({
     tasks: [{ id: 1, wave: 1, files: ['src/a.txt'], description: 'task 1', verify_commands: [] }],
@@ -152,10 +152,15 @@ function makeRecoveryFixture({ slug = 'recovery', ctxTasks = null, review = { ad
   // so recordWaveResult({recovery:true}) tests represent a legitimate committed recovery.
   // Tests that exercise the missing/malformed-baseline rejection pass watchBaseline:false.
   if (watchBaseline) {
+    // Recorder tests need a genuine launch baseline at BASE, not at the already
+    // recovered HEAD. Controller-only tests intentionally retain their old snapshot.
+    if (recordable) git(WT, 'checkout', '-q', '--detach', BASE);
     const baseline = captureWatchBaseline({
-      mainRoot: MAIN, bundleDir, worktree: WT, slug, scopePaths: ['src/a.txt'],
+      mainRoot: MAIN, bundleDir, worktree: WT, slug,
+      scopePaths: recordable ? ['src/a.txt', 'src/seed.txt'] : ['src/a.txt'],
     });
     writeWatchBaseline(bundleDir, 1, baseline);
+    if (recordable) git(WT, 'checkout', '-q', '--detach', HEAD);
   }
   if (review?.adversary !== false) {
     const acq = acquireOwner(bundleDir, self, { now: 1000 });
@@ -187,6 +192,7 @@ async function runPhaseA(fx, opts = {}) {
   return reviewNativeResult({
     statePath: fx.statePath,
     result: recoveryResult(fx),
+    self: fx.self,
     providedReviews: null,
     policy: dispatchFixture,
     now: 3000,
@@ -560,12 +566,13 @@ test('recovery: rejects unknown/duplicate tasks and item↔digest disagreement',
 // ── Phase B: receipt binding ─────────────────────────────────────────────────
 
 test('recovery phase B: a matching receipt binds and records through the transaction', async () => {
-  const fx = makeRecoveryFixture();
+  const fx = makeRecoveryFixture({ recordable: true });
   const pending = await runPhaseA(fx);
   const expected = pending.pending_reviews[0].identity;
   const reviewed = await reviewNativeResult({
     statePath: fx.statePath,
     result: recoveryResult(fx),
+    self: fx.self,
     providedReviews: { 1: boundReceipt(fx, expected, 'approve') },
     recoverySelector: { repo: fx.WT, head: fx.HEAD },
     now: 4000,
@@ -587,6 +594,8 @@ test('recovery phase B: a matching receipt binds and records through the transac
     now: 4000,
     worktree: fx.WT,
     deferredEvents: reviewed.deferred_review_events,
+    recovery: true,
+    recoverySelector: { repo: fx.WT, head: fx.HEAD },
   });
   assert.equal(recRes.outcome, 'recorded');
   assert.deepEqual(recRes.recorded, [1]);
@@ -989,12 +998,13 @@ test('recovery: an INTERRUPTED append (partial batch on disk) self-heals on retr
 });
 
 test('recovery: deferred events are appended ONLY inside recordWaveResult after guards pass', async () => {
-  const fx = makeRecoveryFixture();
+  const fx = makeRecoveryFixture({ recordable: true });
   const pending = await runPhaseA(fx);
   const expected = pending.pending_reviews[0].identity;
   const reviewed = await reviewNativeResult({
     statePath: fx.statePath,
     result: recoveryResult(fx),
+    self: fx.self,
     providedReviews: { 1: boundReceipt(fx, expected, 'approve') },
     recoverySelector: { repo: fx.WT, head: fx.HEAD },
     now: 4000,
@@ -1008,33 +1018,30 @@ test('recovery: deferred events are appended ONLY inside recordWaveResult after 
     now: 4000,
     worktree: fx.WT,
     deferredEvents: reviewed.deferred_review_events,
+    recovery: true,
+    recoverySelector: { repo: fx.WT, head: fx.HEAD },
   });
   assert.equal(recRes.outcome, 'recorded');
   assert.match(fs.readFileSync(path.join(fx.bundleDir, 'events.jsonl'), 'utf8'), /"type":"task_adversary_review"/);
 });
 
 test('recovery: zero review-event writes when the wave-commit guard fails (owner lost)', async () => {
-  const fx = makeRecoveryFixture({ review: { adversary: true } });
-  // owner_lock is on in this fixture (we did NOT set concurrency.owner_lock:'off' via
-  // makeRecoveryFixture default). To force a lost-to-other, release the lock first so the
-  // recordWaveResult heartbeat fails — but reviewNativeResult itself does not append.
+  const fx = makeRecoveryFixture({ review: { adversary: true }, recordable: true, ownerLock: 'on' });
+  // Owner lock is on from launch. A foreign recorder identity must fail without
+  // mutating the launch baseline or appending the deferred review event.
   const pending = await runPhaseA(fx);
   const expected = pending.pending_reviews[0].identity;
   const reviewed = await reviewNativeResult({
     statePath: fx.statePath,
     result: recoveryResult(fx),
+    self: fx.self,
     providedReviews: { 1: boundReceipt(fx, expected, 'approve') },
     recoverySelector: { repo: fx.WT, head: fx.HEAD },
     now: 4000,
   });
   assert.equal(reviewed.deferred_review_events.length, 1);
-  // Simulate ownership loss: another session acquires the lock.
+  // Simulate a recorder with another session identity (the original lock stays held).
   const other = buildOwnerIdentity({ host: 'h1', session: 'sess-other', slug: fx.record.run_id, now: 1000 });
-  // owner_lock default is on (fixture sets it to 'off' — force a marker change to on).
-  writeState(fx.statePath, {
-    ...readState(fx.statePath),
-    concurrency: { owner_lock: 'on' },
-  });
   const res = recordWaveResult({
     statePath: fx.statePath,
     result: reviewed,
@@ -1042,6 +1049,8 @@ test('recovery: zero review-event writes when the wave-commit guard fails (owner
     now: 4000,
     worktree: fx.WT,
     deferredEvents: reviewed.deferred_review_events,
+    recovery: true,
+    recoverySelector: { repo: fx.WT, head: fx.HEAD },
   });
   assert.equal(res.outcome, 'lost-to-other');
   // Zero review-event writes.

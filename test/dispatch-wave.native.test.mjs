@@ -1196,3 +1196,83 @@ for (const disposition of ['retire', 'restart']) {
     }
   });
 }
+
+// X22 round 4: actual checkpoint approvals, then crash-before-finalize.
+async function x22R4ReviewedFixture(slug, committed = false) {
+  const fx = await x22Fixture(slug);
+  disposeReviewEpisode(fx.args);
+  let recoverySelector;
+  if (committed) {
+    git(fx.WT, 'add', 'src/a.txt');
+    git(fx.WT, 'commit', '-q', '-m', 'reviewed committed work');
+    recoverySelector = { repo: fx.WT, head: git(fx.WT, 'rev-parse', 'HEAD') };
+  }
+  const manifest = await reviewNativeResult({ statePath: fx.statePath, self: fx.self,
+    result: fx.result, policy: dispatchFixture, recoverySelector, now: 2300 });
+  const { reviewCompletedTasks } = await import('../lib/task-review.mjs');
+  const reviewed = await reviewCompletedTasks({ statePath: fx.statePath,
+    runId: readState(fx.statePath).slug, wave: 1, items: manifest.tasks,
+    requireIdentity: committed, expectedIdentity: manifest.pending_reviews[0].identity,
+    callReview: async (args) => ({ ...x22Approval, episode_subject: args.subject,
+      intent_identity: args.intent_identity }), now: 2400 });
+  fx.reviewed = { ...fx.result, tasks: reviewed };
+  fx.manifest = manifest;
+  const state = readState(fx.statePath);
+  state.tasks[0].status = 'done';
+  writeState(fx.statePath, state);
+  return fx;
+}
+function x22R4RefusedUnchanged(fx, pattern, options = {}) {
+  const before = { head: git(fx.WT, 'rev-parse', 'HEAD'), main: git(fx.MAIN, 'rev-parse', 'HEAD'),
+    state: fs.readFileSync(fx.statePath, 'utf8'), events: x22Events(fx),
+    status: git(fx.WT, 'status', '--porcelain'),
+    heartbeat: fs.readdirSync(fx.bundleDir).filter((p) => p.startsWith('.owner.hb.'))
+      .map((p) => [p, fs.readFileSync(path.join(fx.bundleDir, p), 'utf8')]) };
+  assert.throws(() => recordWaveResult({ statePath: fx.statePath, self: fx.self,
+    worktree: fx.WT, result: null, now: 2500, ...options }), pattern);
+  assert.equal(git(fx.WT, 'rev-parse', 'HEAD'), before.head);
+  assert.equal(git(fx.MAIN, 'rev-parse', 'HEAD'), before.main);
+  assert.equal(fs.readFileSync(fx.statePath, 'utf8'), before.state);
+  assert.equal(x22Events(fx), before.events);
+  assert.equal(git(fx.WT, 'status', '--porcelain'), before.status);
+  for (const [p, bytes] of before.heartbeat) assert.equal(fs.readFileSync(path.join(fx.bundleDir, p), 'utf8'), bytes);
+}
+for (const residue of ['tracked', 'staged', 'untracked']) {
+  test(`X22 R4 F1 committed receipt refuses ${residue} residue before recorder mutation`, async () => {
+    const fx = await x22R4ReviewedFixture(`x22-r4-${residue}`, true);
+    // Track the reviewed file first for tracked/staged variants; it is now committed.
+    write(fx.WT, residue === 'untracked' ? 'src/residue.txt' : 'src/a.txt', 'UNREVIEWED new bytes\n');
+    if (residue === 'staged') git(fx.WT, 'add', 'src/a.txt');
+    x22R4RefusedUnchanged(fx, /clean|dirty|drift/i);
+  });
+}
+for (const committed of [false, true]) {
+  test(`X22 R4 F2 stale goals require fresh review, never reconcile (${committed})`, async () => {
+    const fx = await x22R4ReviewedFixture(`x22-r4-goals-${committed}`, committed);
+    write(fx.bundleDir, 'goals.md', 'topic: Updated purpose\n\n## G1: A different goal for this run\nsignal: new proof\n');
+    const { reviewCompletedTasks } = await import('../lib/task-review.mjs');
+    let calls = 0;
+    const check = await reviewCompletedTasks({ statePath: fx.statePath,
+      runId: readState(fx.statePath).slug, wave: 1, items: fx.manifest.tasks,
+      requireIdentity: committed, expectedIdentity: fx.manifest.pending_reviews[0].identity,
+      onEvent: () => {}, callReview: async (args) => {
+        calls++;
+        return { ...rejectRecord, episode_subject: args.subject, intent_identity: args.intent_identity };
+      } });
+    assert.equal(calls, 1, 'normal checkpoint refuses the old approval');
+    assert.equal(check[0].review.verdict, 'reject');
+    x22R4RefusedUnchanged(fx, /evidence|intent|fresh review/i);
+  });
+}
+test('X22 R4 adjacent explicitly unavailable reviewer cannot clear reconciliation', async () => {
+  const fx = await x22R4ReviewedFixture('x22-r4-reviewer');
+  const event = JSON.parse(x22Events(fx).trim().split('\n').at(-1));
+  event.data.review.reviewer_identity = { dispatch_id: '', model: '', output_tokens: null };
+  appendEvent(fx.statePath, event);
+  x22R4RefusedUnchanged(fx, /evidence|reviewer|fresh review/i);
+});
+test('X22 R4 adjacent submitted stale approval cannot bypass checkpoint eligibility', async () => {
+  const fx = await x22R4ReviewedFixture('x22-r4-submitted-stale');
+  write(fx.bundleDir, 'goals.md', 'topic: Changed purpose\n\n## G1: Changed goal\nsignal: new proof\n');
+  x22R4RefusedUnchanged(fx, /evidence|intent|fresh review/i, { result: fx.reviewed });
+});
