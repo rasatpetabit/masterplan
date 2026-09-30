@@ -927,3 +927,177 @@ for (const episode of [{}, null]) {
     assert.equal(x22Events(fx), '');
   });
 }
+
+// x22-r3-recorder: judge-2 findings 1 and 3, disposable bundles only.
+for (const partial of [false, true]) {
+  test(`X22 R3 F1 ${partial ? 'partial' : 'empty'} result refuses omitted retired done task`, async () => {
+    const fx = await x22Fixture(`x22-r3-retired-${partial}`);
+    const state = readState(fx.statePath);
+    state.tasks[0].status = 'done';
+    if (partial) state.tasks.push({ id: 2, wave: 1, status: 'done', files: [] });
+    writeState(fx.statePath, state);
+    disposeReviewEpisode({ ...fx.args, disposition: 'retire', reason: 'not reviewed' });
+    if (partial) {
+      const record = readWaveDispatchRecord(fx.bundleDir, 1);
+      record.review_context.episodes['2'] = { subject: 'disposable-new-slot' };
+      writeWaveDispatchRecord(fx.bundleDir, 1, record);
+    }
+    const before = fs.readFileSync(fx.statePath, 'utf8');
+    const events = x22Events(fx);
+    const out = await x22Probe(`R3 ${partial ? 'partial' : 'empty'} retired recorder`, () => recordWaveResult({
+      statePath: fx.statePath, self: fx.self, now: 2300, worktree: fx.WT,
+      result: { wave: 1, tasks: partial ? [{ task_id: 2, digest: workerDigest(2), review: x22ProjectedApproval }] : [] },
+    }));
+    const status = JSON.parse(execFileSync(process.execPath, [new URL('../bin/masterplan.mjs', import.meta.url).pathname,
+      'status', `--state=${fx.statePath}`], { encoding: 'utf8' }));
+    const next = await x22Probe('R3 retired continue', () => continueRun({ statePath: fx.statePath,
+      self: fx.self, now: 2400, routing: dispatchFixture, fabricDispatch: true }));
+    console.log('PROBE R3 retired status/continue:', JSON.stringify({ tasks: status.tasks, next: next.value ?? next.error?.message }));
+    assert.match(out.error?.message ?? '', /retired.*not reviewed/);
+    assert.equal(status.tasks.done, partial ? 1 : 0, 'retirement is not done-reviewed');
+    assert.notEqual(next.value?.skill, 'finish');
+    assert.equal(fs.readFileSync(fx.statePath, 'utf8'), before);
+    assert.equal(x22Events(fx), events);
+  });
+}
+
+for (const viaContinue of [false, true]) {
+  test(`X22 R3 F3 fresh reject crash restores blocking via ${viaContinue ? 'continue' : 'reconcile'}`, async () => {
+    const fx = await x22Fixture(`x22-r3-crash-reject-${viaContinue}`);
+    disposeReviewEpisode(fx.args);
+    const fresh = await reviewNativeResult({ statePath: fx.statePath, self: fx.self, now: 2300,
+      result: fx.result, providedReviews: { 1: rejectRecord }, policy: dispatchFixture });
+    assert.equal(fresh.tasks[0].review.verdict, 'reject');
+    // Actual step-1 crash window: status is durable, the marker and artifact remain.
+    const state = readState(fx.statePath);
+    state.tasks[0].status = 'done';
+    writeState(fx.statePath, state);
+    const history = x22Events(fx);
+    const res = viaContinue ? null : recordWaveResult({ statePath: fx.statePath, self: fx.self,
+      now: 2400, worktree: fx.WT, result: null });
+    const next = continueRun({ statePath: fx.statePath, self: fx.self, now: 2500, routing: dispatchFixture });
+    console.log('PROBE R3 fresh reject crash:', JSON.stringify({ blocking: res?.blocking_reviews, next }));
+    if (res) {
+      assert.equal(res.blocking_reviews[0]?.verdict, 'reject');
+      assert.match(JSON.stringify(res.blocking_reviews[0].findings), /introduces a data race/);
+      assert.equal(res.cleared, false);
+    }
+    assert.equal(next.op, 'ask');
+    assert.equal(next.ask, 'blocking-reviews');
+    assert.equal(next.blocking_reviews[0]?.verdict, 'reject');
+    assert.ok(readState(fx.statePath).active_run);
+    assert.ok(x22Events(fx).startsWith(history), 'historical event bytes preserved');
+  });
+}
+
+test('X22 R3 F3 wrong-diff reject event does not satisfy reconcile evidence', async () => {
+  const fx = await x22Fixture('x22-r3-wrong-diff');
+  const restart = disposeReviewEpisode(fx.args);
+  const state = readState(fx.statePath);
+  state.tasks[0].status = 'done';
+  writeState(fx.statePath, state);
+  appendEvent(fx.statePath, { type: 'task_adversary_review', data: { run: state.slug, task: 1,
+    sha: 'not-the-current-diff', episode_subject: restart.disposition.subject,
+    review: { ...x22ProjectedApproval, verdict: 'reject', blocking_findings: [{ summary: 'unrelated reject' }] } } });
+  const before = fs.readFileSync(fx.statePath, 'utf8');
+  const events = x22Events(fx);
+  const out = await x22Probe('R3 wrong diff reconcile', () => recordWaveResult({ statePath: fx.statePath,
+    self: fx.self, now: 2300, worktree: fx.WT, result: null }));
+  assert.match(out.error?.message ?? '', /evidence.*mismatch/);
+  assert.equal(fs.readFileSync(fx.statePath, 'utf8'), before);
+  assert.equal(x22Events(fx), events);
+});
+
+for (const verdict of ['approve', 'reject']) {
+  for (const committedRecovery of [false, true]) {
+    test(`X22 R3 F3 ${verdict} reconciles after code commit (${committedRecovery ? 'recovery' : 'ordinary'})`, async () => {
+      const fx = await x22Fixture(`x22-r3-after-code-${verdict}-${committedRecovery}`);
+      disposeReviewEpisode(fx.args);
+      let options = {};
+      if (committedRecovery) {
+        git(fx.WT, 'add', 'src/a.txt');
+        git(fx.WT, 'commit', '-q', '-m', 'disposable recovered work');
+        const recoverySelector = { repo: fx.WT, head: git(fx.WT, 'rev-parse', 'HEAD') };
+        const manifest = await reviewNativeResult({ statePath: fx.statePath, self: fx.self, now: 2300,
+          result: fx.result, recoverySelector, policy: dispatchFixture });
+        options = { recoverySelector, identity: manifest.pending_reviews[0].identity };
+      }
+      const supplied = verdict === 'approve' ? x22Approval : rejectRecord;
+      const reviewed = await reviewNativeResult({ statePath: fx.statePath, self: fx.self, now: 2400,
+        result: fx.result, providedReviews: { 1: { ...supplied, ...(options.identity ? { identity: options.identity } : {}) } },
+        ...(options.recoverySelector ? { recoverySelector: options.recoverySelector } : {}), policy: dispatchFixture });
+      for (const { event } of reviewed.deferred_review_events ?? []) appendEvent(fx.statePath, event);
+      if (!committedRecovery) {
+        git(fx.WT, 'add', 'src/a.txt');
+        git(fx.WT, 'commit', '-q', '-m', 'simulate recorder step 4');
+      }
+      const state = readState(fx.statePath);
+      state.tasks[0].status = 'done';
+      writeState(fx.statePath, state);
+      const res = recordWaveResult({ statePath: fx.statePath, self: fx.self, now: 2500, worktree: fx.WT, result: null });
+      console.log('PROBE R3 after code commit:', JSON.stringify({ verdict, committedRecovery,
+        blocking: res.blocking_reviews, cleared: res.cleared }));
+      assert.equal(res.cleared, verdict === 'approve');
+      assert.equal(res.blocking_reviews.length, verdict === 'approve' ? 0 : 1);
+      if (verdict === 'reject') assert.equal(res.blocking_reviews[0].verdict, 'reject');
+    });
+  }
+}
+
+test('X22 R3 F3 partial result restores omitted fresh rejection', async () => {
+  const fx = await x22Fixture('x22-r3-omitted-reject');
+  disposeReviewEpisode(fx.args);
+  await reviewNativeResult({ statePath: fx.statePath, self: fx.self, now: 2300,
+    result: fx.result, providedReviews: { 1: rejectRecord }, policy: dispatchFixture });
+  const state = readState(fx.statePath);
+  state.tasks[0].status = 'done';
+  writeState(fx.statePath, state);
+  const out = recordWaveResult({ statePath: fx.statePath, self: fx.self, now: 2400,
+    worktree: fx.WT, result: { wave: 1, tasks: [] } });
+  assert.equal(out.blocking_reviews[0]?.verdict, 'reject');
+  assert.equal(out.cleared, false);
+});
+
+for (const partial of [false, true]) {
+  test(`X22 R3 F1 omitted done HOLD/unlinked task refuses (${partial})`, async () => {
+    const fx = await x22Fixture(`x22-r3-omitted-hold-${partial}`);
+    const state = readState(fx.statePath);
+    state.tasks[0].status = 'done';
+    writeState(fx.statePath, state);
+    if (partial) {
+      const record = readWaveDispatchRecord(fx.bundleDir, 1);
+      delete record.review_context.episodes['1'];
+      writeWaveDispatchRecord(fx.bundleDir, 1, record);
+    }
+    const before = fs.readFileSync(fx.statePath, 'utf8');
+    assert.throws(() => recordWaveResult({ statePath: fx.statePath, self: fx.self, now: 2300,
+      worktree: fx.WT, result: { wave: 1, tasks: [] } }), /subjectless hold|no identifiable entry/);
+    assert.equal(fs.readFileSync(fx.statePath, 'utf8'), before);
+  });
+}
+
+test('X22 R3 F3 newly submitted rejection remains blocking on continue', async () => {
+  const fx = await x22Fixture('x22-r3-new-reject-continue');
+  disposeReviewEpisode(fx.args);
+  const reviewed = await reviewNativeResult({ statePath: fx.statePath, self: fx.self, now: 2300,
+    result: fx.result, providedReviews: { 1: rejectRecord }, policy: dispatchFixture });
+  const res = recordWaveResult({ statePath: fx.statePath, self: fx.self, now: 2400,
+    worktree: fx.WT, result: reviewed });
+  assert.equal(res.blocking_reviews[0]?.verdict, 'reject');
+  assert.equal(res.cleared, false);
+  const next = continueRun({ statePath: fx.statePath, self: fx.self, now: 2500, routing: dispatchFixture });
+  assert.equal(next.ask, 'blocking-reviews');
+  assert.equal(next.blocking_reviews[0]?.verdict, 'reject');
+});
+
+test('X22 R3 F1 retired done task without marker cannot hand off to finish', async () => {
+  const fx = await x22Fixture('x22-r3-retired-no-marker');
+  disposeReviewEpisode({ ...fx.args, disposition: 'retire', reason: 'not reviewed' });
+  const state = readState(fx.statePath);
+  state.tasks[0].status = 'done';
+  state.active_run = null;
+  writeState(fx.statePath, state);
+  const next = continueRun({ statePath: fx.statePath, self: fx.self, now: 2300, routing: dispatchFixture });
+  assert.equal(next.ask, 'review-episode-ineligible');
+  assert.deepEqual(next.tasks, [1]);
+});

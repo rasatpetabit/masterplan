@@ -187,6 +187,7 @@
 //                                                  rename/unlink); the .owner.lock is NOT CD-7 state.
 
 import fs from 'node:fs';
+import { taskEpisodeEligibleForCompletion } from '../lib/review-episode.mjs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -5274,7 +5275,7 @@ function main() {
       // 'cannot read state file: <p>' instead of an uncaught ENOENT stack trace.
       const state = parseState(readText(p));
       const tasks = state.tasks ?? [];
-      const done = tasks.filter((t) => t.status === 'done').length;
+      const done = tasks.filter((t) => t.status === 'done' && taskEpisodeEligibleForCompletion(p, state, t)).length;
       // Refs are a status concern (which bundles this one links to); rendering the links is not.
       // listRefs echoes stored entries verbatim: { slug, label?, repo? } under back/forward.
       const refs = listRefs(state);
