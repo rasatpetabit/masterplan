@@ -32,6 +32,7 @@ import {
   RECOVERY_CAPTURE_FORMAT,
   canonicalRepoIdentity,
   captureCommittedDiff,
+  captureStableCommittedDiff,
   encodeRecoveryDiff,
   decodeRecoveryDiff,
   fingerprintReviewContext,
@@ -1467,3 +1468,20 @@ test('recovery: a BigInt/circular identity field produces a validation error, no
   const errs2 = validateIdentityMandatory({ ...base, wave: w });
   assert.ok(errs2.some((e) => /wave.*non-negative integer/.test(e)), `circular wave rejected, got: ${errs2.join('; ')}`);
 });
+
+// The shared capture guards both ordinary recovery and recorder reconciliation.
+for (const drift of ['HEAD', 'tree']) {
+  test(`stable committed capture refuses ${drift} drift during artifact read`, () => {
+    const head = 'a'.repeat(40);
+    let captured = false;
+    const exec = (_cmd, args) => {
+      if (args.includes('rev-parse')) return captured && drift === 'HEAD' ? 'b'.repeat(40) : head;
+      if (args.includes('status')) return captured && drift === 'tree' ? '?? residue.txt\n' : '';
+      if (args.includes('diff')) { captured = true; return Buffer.from('reviewed diff'); }
+      assert.fail(`unexpected git command: ${args.join(' ')}`);
+    };
+    assert.throws(() => captureStableCommittedDiff('/disposable/repo', 'c'.repeat(40), head, exec),
+      /HEAD moved or tree became dirty during capture/);
+    assert.equal(captured, true, 'drift occurred inside capture, not before it');
+  });
+}
