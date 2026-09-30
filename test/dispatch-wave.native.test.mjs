@@ -1388,3 +1388,27 @@ for (const carrier of ['stripped', 'input']) {
     assert.equal(reconciled.reconciledReviews.get(1)?.verdict, 'reject', 'reconciliation selects the same rejecting event');
   });
 }
+
+for (const carrier of ['input', 'stripped', 'digest']) {
+  for (const phaseB of [false, true]) {
+    test(`X22a F1 unchanged embedded evidence survives re-ingestion (${carrier}, phase B ${phaseB})`, async () => {
+      const fx = await x22R4ReviewedFixture(`x22a-stable-${carrier}-${phaseB}`);
+      const submitted = { ...fx.reviewed, tasks: fx.reviewed.tasks.map((item) => {
+        if (carrier === 'stripped') { const { review_input, ...rest } = item; return rest; }
+        if (carrier === 'digest') { const { review, ...rest } = item; return rest; }
+        return item;
+      }) };
+      const original = JSON.stringify(submitted);
+      const ingested = await reviewNativeResult({ statePath: fx.statePath, self: fx.self,
+        now: 2500, result: submitted, policy: dispatchFixture,
+        providedReviews: phaseB ? {} : null });
+      assert.equal(JSON.stringify(submitted), original, 'preserve original evidence');
+      assert.deepEqual(ingested.tasks[0].review_input, submitted.tasks[0].review_input,
+        'never replace or invent the embedded carrier');
+      const out = recordWaveResult({ statePath: fx.statePath, self: fx.self, now: 2600,
+        worktree: fx.WT, result: ingested });
+      assert.equal(out.cleared, true, 'unchanged genuine approval remains usable');
+      assert.deepEqual(out.blocking_reviews, []);
+    });
+  }
+}
