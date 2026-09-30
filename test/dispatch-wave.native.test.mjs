@@ -30,7 +30,7 @@ import {
 import { continueRun } from '../lib/continue.mjs';
 import { readState, writeState, appendEvent } from '../lib/bundle.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
-import { recordWaveResult } from '../lib/wave-commit.mjs';
+import { recordWaveResult, authorizeRecording } from '../lib/wave-commit.mjs';
 import { fingerprintReviewContext } from '../lib/recovery-controller.mjs';
 const dispatchFixture = JSON.parse(fs.readFileSync(new URL('./fixtures/dispatch-map.json', import.meta.url), 'utf8'));
 
@@ -1298,3 +1298,93 @@ test('X22 R5 submitted ordinary artifact cannot carry committed identity', async
   fx.reviewed.tasks[0].review_input.identity = { head: git(fx.WT, 'rev-parse', 'HEAD') };
   x22R4RefusedUnchanged(fx, /artifact.*mismatch/i, { result: fx.reviewed });
 });
+
+// X22a slice 1: judge-6 provenance probes, using genuine checkpoint evidence.
+function x22aSnapshot(fx) {
+  return { head: git(fx.WT, 'rev-parse', 'HEAD'), main: git(fx.MAIN, 'rev-parse', 'HEAD'),
+    state: fs.readFileSync(fx.statePath, 'utf8'), events: x22Events(fx),
+    status: git(fx.WT, 'status', '--porcelain'),
+    heartbeat: fs.readdirSync(fx.bundleDir).filter((p) => p.startsWith('.owner.hb.'))
+      .map((p) => [p, fs.readFileSync(path.join(fx.bundleDir, p), 'utf8')]) };
+}
+for (const carrier of ['input', 'stripped', 'digest']) {
+  test(`X22a F1 native re-ingestion cannot refresh embedded approval (${carrier})`, async () => {
+    const fx = await x22R4ReviewedFixture(`x22a-refresh-${carrier}`);
+    const state = readState(fx.statePath);
+    state.tasks[0].status = 'pending';
+    writeState(fx.statePath, state);
+    const tasks = fx.reviewed.tasks.map((item) => {
+      if (carrier === 'stripped') { const { review_input, ...rest } = item; return rest; }
+      if (carrier === 'digest') { const { review, ...rest } = item; return rest; }
+      return item;
+    });
+    const submitted = { ...fx.reviewed, tasks };
+    const original = JSON.stringify(submitted);
+    write(fx.WT, 'src/a.txt', 'UNREVIEWED NATIVE REFRESH\n');
+    const before = x22aSnapshot(fx);
+    await assert.rejects(async () => {
+      const ingested = await reviewNativeResult({ statePath: fx.statePath, self: fx.self,
+        now: 2500, result: submitted, policy: dispatchFixture });
+      recordWaveResult({ statePath: fx.statePath, self: fx.self,
+        now: 2600, worktree: fx.WT, result: ingested });
+    }, /artifact.*mismatch|fresh review/i);
+    assert.deepEqual(x22aSnapshot(fx), before, 'refusal preserves HEAD/state/events/heartbeat');
+    assert.equal(JSON.stringify(submitted), original, 'original evidence is not relabelled');
+  });
+}
+
+test('X22a F1 actual record-result CLI refuses unchanged approval after artifact drift', async () => {
+  const fx = await x22R4ReviewedFixture('x22a-cli-refresh');
+  const state = readState(fx.statePath);
+  state.tasks[0].status = 'pending';
+  writeState(fx.statePath, state);
+  const resultFile = path.join(fx.tmp, 'reviewed-result.json');
+  fs.writeFileSync(resultFile, JSON.stringify(fx.reviewed));
+  write(fx.WT, 'src/a.txt', 'UNREVIEWED VIA ACTUAL CLI\n');
+  const before = x22aSnapshot(fx);
+  assert.throws(() => execFileSync(process.execPath, [
+    new URL('../bin/masterplan.mjs', import.meta.url).pathname, 'record-result',
+    `--state=${fx.statePath}`, `--result-file=${resultFile}`, `--worktree=${fx.WT}`,
+    `--session=${fx.self.session}`, `--host=${fx.self.host}`, '--now=2600',
+  ], { encoding: 'utf8', stdio: 'pipe' }), (err) => {
+    assert.match(String(err.stderr), /artifact.*mismatch|fresh review/i);
+    assert.notEqual(err.status, 0);
+    return true;
+  });
+  assert.deepEqual(x22aSnapshot(fx), before, 'CLI refusal preserves HEAD/state/events/heartbeat');
+});
+
+for (const carrier of ['stripped', 'input']) {
+  test(`X22a F3 genuine deferred rejection overrides submitted approval (${carrier})`, async () => {
+    const fx = await x22Fixture(`x22a-contradictory-${carrier}`);
+    disposeReviewEpisode(fx.args);
+    git(fx.WT, 'add', 'src/a.txt');
+    git(fx.WT, 'commit', '-q', '-m', 'committed artifact for both genuine reviews');
+    const recoverySelector = { repo: fx.WT, head: git(fx.WT, 'rev-parse', 'HEAD') };
+    const opts = { statePath: fx.statePath, self: fx.self, result: fx.result,
+      policy: dispatchFixture, recoverySelector, now: 2300 };
+    const manifest = await reviewNativeResult(opts);
+    const { identity, subject } = manifest.pending_reviews[0];
+    const approved = await reviewNativeResult({ ...opts, now: 2400,
+      providedReviews: { 1: { ...x22Approval, identity, episode_subject: subject } } });
+    const rejected = await reviewNativeResult({ ...opts, now: 2450,
+      providedReviews: { 1: { ...rejectRecord, identity, episode_subject: subject } } });
+    assert.equal(approved.tasks[0].review.verdict, 'approve');
+    assert.equal(rejected.tasks[0].review.verdict, 'reject');
+    if (carrier === 'input') approved.tasks[0].review_input = manifest.tasks[0].review_input;
+    const beforeEvents = x22Events(fx);
+    const head = git(fx.WT, 'rev-parse', 'HEAD');
+    const out = recordWaveResult({ statePath: fx.statePath, self: fx.self, now: 2500,
+      worktree: fx.WT, result: approved, deferredEvents: rejected.deferred_review_events,
+      recovery: true, recoverySelector });
+    assert.equal(out.cleared, false, 'submitted approval never clears genuine rejection');
+    assert.equal(out.blocking_reviews[0]?.verdict, 'reject');
+    assert.match(JSON.stringify(out.blocking_reviews), /data race/);
+    assert.ok(readState(fx.statePath).active_run);
+    assert.equal(git(fx.WT, 'rev-parse', 'HEAD'), head);
+    assert.ok(x22Events(fx).startsWith(beforeEvents), 'preserve earlier events');
+    assert.match(x22Events(fx), /"verdict":"reject"/);
+    const reconciled = authorizeRecording({ statePath: fx.statePath, state: readState(fx.statePath), result: null });
+    assert.equal(reconciled.reconciledReviews.get(1)?.verdict, 'reject', 'reconciliation selects the same rejecting event');
+  });
+}
