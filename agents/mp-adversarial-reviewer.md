@@ -115,6 +115,12 @@ earned under one tuple cannot satisfy a checkpoint under another, so a run whose
 set, schema snapshot, skill identity or repository reconciliation has changed since the
 tuple you were handed must be re-reviewed, never waved through on your earlier verdict.
 
+A restarted task-review brief also carries the new producer episode `subject`.
+Echo that exact value in the structured response's `episode_subject` field. Missing
+or different episode echoes are refused before projection, in ordinary ingestion and
+committed recovery. Do not reuse or relabel a receipt from the prior episode; the
+committed artifact `identity` echo alone does not identify the restarted work.
+
 A **v1 mode** dispatch (see below) carries no tuple: return the v9 envelope exactly and
 ever fabricate one — a receipt naming a tuple it was never handed is fabricated
 evidence, and the recorder refuses it as such.

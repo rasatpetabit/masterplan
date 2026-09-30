@@ -14,6 +14,7 @@ import { serializeState, parseState, CURRENT_SCHEMA_VERSION } from '../lib/bundl
 import { liveCheckDigest } from '../lib/finish.mjs';
 import { captureWatchBaseline, writeWatchBaseline } from '../lib/watch-integrity.mjs';
 import { createHash } from 'node:crypto';
+import { composeWaveDispatchKey } from '../lib/dispatch-wave.mjs';
 
 const BIN = fileURLToPath(new URL('../bin/masterplan.mjs', import.meta.url));
 const SAMPLE = fileURLToPath(new URL('./fixtures/legacy-bundles/5.0-inflight-sample.yml', import.meta.url));
@@ -3837,7 +3838,7 @@ test('recovery CLI: --recovery-repo/--recovery-head reproduce the exact artifact
     tasks: [{ id: 1, wave: 1, files: ['src/a.txt'], description: 'task 1', verify_commands: [] }],
   }));
   fs.writeFileSync(path.join(bundleDir, 'wave-1.dispatch.json'), JSON.stringify({
-    key: `mp-wave-dispatch-v1|${slug}|1|dispatch_fabric`,
+    key: composeWaveDispatchKey(slug, 1),
     run_id: slug, wave: 1, op: 'dispatch_fabric', contract_version: 'fabric-native-v1',
     status: 'pending', attempt: 2, wave_token: `mp-wave-${slug}-w1-a2`, handles: [],
     dispatched_at: 'T0', tasks: [{ task_id: 1, class: 'bounded-edit', handoff_key: 'k1' }],
@@ -3980,7 +3981,7 @@ test('recovery CLI: a dirty tree rejects with recovery-preservation-violation an
     tasks: [{ id: 1, wave: 1, files: ['src/a.txt'], description: 'task 1', verify_commands: [] }],
   }));
   fs.writeFileSync(path.join(bundleDir, 'wave-1.dispatch.json'), JSON.stringify({
-    key: `mp-wave-dispatch-v1|${slug}|1|dispatch_fabric`,
+    key: composeWaveDispatchKey(slug, 1),
     run_id: slug, wave: 1, op: 'dispatch_fabric', contract_version: 'fabric-native-v1',
     status: 'pending', attempt: 2, wave_token: `mp-wave-${slug}-w1-a2`, handles: [],
     dispatched_at: 'T0', tasks: [{ task_id: 1, class: 'bounded-edit', handoff_key: 'k1' }],

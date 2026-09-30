@@ -199,3 +199,30 @@ describe('reviewCompletedTasks', () => {
     assert.equal(fs.existsSync(path.join(dir, 'events.jsonl')), false, 'deferred mode appends nothing');
   });
 });
+
+for (const episode_subject of [undefined, 'old-episode', 'new-episode']) {
+  it(`X22 R3 F2 centralized response ${episode_subject ?? 'missing'} preserves or refuses producer echo`, async () => {
+    const dir = mkdtempTracked(path.join(os.tmpdir(), 'mp-task-review-episode-'));
+    const statePath = path.join(dir, 'state.yml');
+    fs.writeFileSync(statePath, 'schema_version: 9.0.0\n');
+    const response = record('approve', episode_subject === undefined ? {} : { episode_subject });
+    const before = JSON.stringify(response);
+    const call = () => reviewCompletedTasks({ statePath, runId: 'run-1', wave: 2, baseSha: 'base', now: 1000,
+      items: [{ task_id: 7, digest: { task_id: 7, status: 'done' },
+        review_input: { ...reviewInput(), episode_subject: 'new-episode' } }],
+      callReview: async (args) => { assert.equal(args.subject, 'new-episode'); return response; },
+    });
+    if (episode_subject === 'new-episode') {
+      const out = await call();
+      assert.equal(out[0].review.episode_subject, episode_subject);
+      assert.equal(out[0].review.verdict, 'approve');
+      assert.equal(projectReviewRecord(response).episode_subject, episode_subject);
+      const event = JSON.parse(fs.readFileSync(path.join(dir, 'events.jsonl'), 'utf8').trim());
+      assert.equal(event.data.review.episode_subject, episode_subject);
+    } else {
+      await assert.rejects(call, /episode.*mismatch/);
+      assert.equal(fs.existsSync(path.join(dir, 'events.jsonl')), false, 'refused before append');
+    }
+    assert.equal(JSON.stringify(response), before, 'never overwrite supplied echo');
+  });
+}
