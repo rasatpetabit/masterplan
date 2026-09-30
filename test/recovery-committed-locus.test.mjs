@@ -115,6 +115,8 @@ function makeCommittedLocusFixture({ scope = ['src/a.txt'], commitFiles = null, 
     tasks: [{ task_id: 1, class: 'bounded-edit', handoff_key: 'k1' }],
     review_context: {
       enabled: true,
+      // A new disposable eligible slot; recorder now enforces episode safety too.
+      episodes: { '1': { subject: 'fixture-new-review-slot' } },
       base_sha: BASE,
       tasks: [{ task_id: 1, description: 'task 1', class: 'bounded-edit', repo: WT }],
     },

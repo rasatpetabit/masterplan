@@ -28,7 +28,7 @@ import {
   disposeReviewEpisode,
 } from '../lib/dispatch-wave.mjs';
 import { continueRun } from '../lib/continue.mjs';
-import { readState, writeState } from '../lib/bundle.mjs';
+import { readState, writeState, appendEvent } from '../lib/bundle.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
 import { recordWaveResult } from '../lib/wave-commit.mjs';
 import { fingerprintReviewContext } from '../lib/recovery-controller.mjs';
@@ -774,3 +774,156 @@ test('X22 F1 recovery consumers refuse a forged restart subject and lineage', as
     assert.match(out.error?.message ?? '', /invalid restart/);
   }
 });
+
+// x22-evidence: reproduce all-path eligibility and restart re-entry probes.
+const x22Approval = { final_verdict: 'approve', findings: [], blocking_findings: [],
+  summary: 'OLD EPISODE APPROVAL', harness: healthyHarness() };
+const x22ProjectedApproval = { verdict: 'approve', findings: [], blocking_findings: [],
+  summary: 'synthetic approve', harness: healthyHarness() };
+const x22Events = (fx) => {
+  const p = path.join(fx.bundleDir, 'events.jsonl');
+  return fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : '';
+};
+
+for (const phase of ['A', 'B']) {
+  test(`X22 F3 held with embedded approval refused in phase ${phase}`, async () => {
+    const fx = await x22Fixture(`x22-held-embedded-${phase}`);
+    const before = x22Events(fx);
+    const result = { ...fx.result, tasks: fx.result.tasks.map((it) => ({ ...it, review: x22ProjectedApproval,
+      digest: { ...it.digest, review: x22ProjectedApproval } })) };
+    const out = await x22Probe(`held with embedded review phase ${phase}`, () => reviewNativeResult({
+      statePath: fx.statePath, self: fx.self, now: 2300, result, policy: dispatchFixture,
+      ...(phase === 'B' ? { providedReviews: { 1: x22Approval } } : {}),
+    }));
+    assert.match(out.error?.message ?? '', /subjectless hold/);
+    assert.equal(x22Events(fx), before);
+    assert.equal(readState(fx.statePath).tasks[0].status, 'pending');
+  });
+}
+
+for (const mode of ['held', 'retired', 'retired reconcile']) {
+  test(`X22 F3 ${mode} direct recorder refused before completion evidence`, async () => {
+    const fx = await x22Fixture(`x22-direct-${mode.replaceAll(' ', '-')}`);
+    if (mode.startsWith('retired')) disposeReviewEpisode({ ...fx.args, disposition: 'retire', reason: 'not reviewed' });
+    if (mode.endsWith('reconcile')) {
+      // A crash-reconcile must not finalize an already-marked unsafe episode.
+      const state = readState(fx.statePath);
+      state.tasks[0].status = 'done';
+      writeState(fx.statePath, state);
+    }
+    const beforeState = fs.readFileSync(fx.statePath, 'utf8');
+    const before = x22Events(fx);
+    let error;
+    try {
+      const recorded = recordWaveResult({ statePath: fx.statePath, self: fx.self, now: 2300, worktree: fx.WT,
+        result: mode.endsWith('reconcile') ? null : { ...fx.result, tasks: fx.result.tasks.map((it) => ({ ...it,
+          review: x22ProjectedApproval, digest: { ...it.digest, review: x22ProjectedApproval } })) } });
+      console.log(`PROBE ${mode} direct recorder:`, JSON.stringify({ outcome: recorded.outcome,
+        blocking: recorded.blocking_reviews, status: readState(fx.statePath).tasks[0].status }));
+    } catch (err) { error = err; console.log(`PROBE ${mode} direct recorder: REFUSED`, err.message); }
+    assert.match(error?.message ?? '', /subjectless hold|retired.*not reviewed/);
+    assert.equal(fs.readFileSync(fx.statePath, 'utf8'), beforeState);
+    assert.equal(x22Events(fx), before);
+    assert.ok(readState(fx.statePath).active_run);
+  });
+}
+
+test('X22 F4 restart consumes fresh reject, never old same-diff approval', async () => {
+  const fx = makeNativeFixture({ slug: 'x22-old-approval' });
+  launchNative(fx);
+  await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 2000, policy: dispatchFixture });
+  write(fx.WT, 'src/a.txt', 'change\n');
+  const result = { wave: 1, tasks: [{ task_id: 1, digest: workerDigest(1) }] };
+  const old = await reviewNativeResult({ statePath: fx.statePath, self: fx.self, now: 2100,
+    result, providedReviews: { 1: x22Approval }, policy: dispatchFixture });
+  assert.equal(old.tasks[0].review.verdict, 'approve');
+  const before = x22Events(fx);
+  const record = readWaveDispatchRecord(fx.bundleDir, 1);
+  record.review_context.episodes['1'] = { hold: 'historical' };
+  writeWaveDispatchRecord(fx.bundleDir, 1, record);
+  const restart = disposeReviewEpisode({ statePath: fx.statePath, self: fx.self, now: 2200, wave: 1, taskId: 1, disposition: 'restart' });
+  const out = await reviewNativeResult({ statePath: fx.statePath, self: fx.self, now: 2300,
+    result, providedReviews: { 1: rejectRecord }, policy: dispatchFixture });
+  console.log('PROBE restart NEW reject supplied, consumed verdict:', out.tasks[0].review.verdict,
+    'summary:', out.tasks[0].review.summary);
+  assert.equal(out.tasks[0].review.verdict, 'reject');
+  assert.equal(out.tasks[0].review.episode_subject, restart.disposition.subject);
+  assert.ok(x22Events(fx).startsWith(before), 'historical events unchanged');
+  const latest = x22Events(fx).trim().split('\n').map(JSON.parse).filter((ev) => ev.type === 'task_adversary_review').at(-1);
+  assert.equal(latest.data.episode_subject, restart.disposition.subject);
+  // Same new episode re-entry remains idempotent and reuses its reject, not an old approval.
+  const again = await reviewNativeResult({ statePath: fx.statePath, self: fx.self, now: 2400,
+    result, providedReviews: { 1: x22Approval }, policy: dispatchFixture });
+  assert.equal(again.tasks[0].review.verdict, 'reject');
+  const bytes = x22Events(fx);
+  await assert.rejects(() => reviewNativeResult({ statePath: fx.statePath, self: fx.self, now: 2400,
+    result: old, policy: dispatchFixture }), /episode.*mismatch/);
+  assert.throws(() => recordWaveResult({ statePath: fx.statePath, self: fx.self, now: 2400,
+    result: old, worktree: fx.WT }), /episode.*mismatch/);
+  assert.equal(readState(fx.statePath).tasks[0].status, 'pending');
+  assert.equal(x22Events(fx), bytes);
+  const recorded = recordWaveResult({ statePath: fx.statePath, self: fx.self, now: 2500,
+    result: out, worktree: fx.WT });
+  assert.equal(recorded.blocking_reviews[0].verdict, 'reject');
+});
+
+test('X22 F4 recovery re-entry and recorder exclude old deferred episode evidence', async () => {
+  const fx = await x22Fixture('x22-recovery-evidence');
+  const saved = readWaveDispatchRecord(fx.bundleDir, 1);
+  saved.review_context.episodes['1'] = { subject: 'fixture-active-episode' };
+  writeWaveDispatchRecord(fx.bundleDir, 1, saved);
+  git(fx.WT, 'add', 'src/a.txt');
+  git(fx.WT, 'commit', '-q', '-m', 'disposable recovered work');
+  const recoverySelector = { repo: fx.WT, head: git(fx.WT, 'rev-parse', 'HEAD') };
+  const opts = { statePath: fx.statePath, self: fx.self, now: 2300,
+    result: fx.result, recoverySelector, policy: dispatchFixture };
+  const manifest = await reviewNativeResult(opts);
+  const identity = manifest.pending_reviews[0].identity;
+  const old = await reviewNativeResult({ ...opts, providedReviews: { 1: { ...x22Approval, identity } } });
+  assert.equal(old.tasks[0].review.verdict, 'approve');
+  for (const { event } of old.deferred_review_events) appendEvent(fx.statePath, event);
+  const before = x22Events(fx);
+  const held = readWaveDispatchRecord(fx.bundleDir, 1);
+  held.review_context.episodes['1'] = { hold: 'historical' };
+  writeWaveDispatchRecord(fx.bundleDir, 1, held);
+  const restart = disposeReviewEpisode(fx.args);
+  const freshManifest = await reviewNativeResult(opts);
+  assert.equal(freshManifest.pending_reviews[0].subject, restart.disposition.subject);
+  // No receipt schema/binding change: the event's new episode key is independent
+  // of the existing committed-diff receipt identity, which stays untouched.
+  assert.deepEqual(freshManifest.pending_reviews[0].identity, identity);
+  const fresh = await reviewNativeResult({ ...opts, providedReviews: { 1: { ...rejectRecord, identity } } });
+  console.log('PROBE recovery restart NEW reject supplied, consumed verdict:', fresh.tasks[0].review.verdict,
+    'summary:', fresh.tasks[0].review.summary);
+  assert.equal(fresh.tasks[0].review.verdict, 'reject');
+  assert.equal(fresh.deferred_review_events.length, 1);
+  assert.equal(fresh.deferred_review_events[0].event.data.episode_subject, restart.disposition.subject);
+  assert.equal(fresh.tasks[0].digest.review.episode_subject, restart.disposition.subject);
+  assert.equal(x22Events(fx), before, 'recovery review append remains deferred');
+  const stateBefore = fs.readFileSync(fx.statePath, 'utf8');
+  assert.throws(() => recordWaveResult({ statePath: fx.statePath, self: fx.self, now: 2400,
+    worktree: fx.WT, result: fresh, deferredEvents: old.deferred_review_events,
+    recovery: true, recoverySelector }), /episode.*mismatch/);
+  assert.equal(fs.readFileSync(fx.statePath, 'utf8'), stateBefore);
+  assert.equal(x22Events(fx), before);
+  const recorded = recordWaveResult({ statePath: fx.statePath, self: fx.self, now: 2500,
+    worktree: fx.WT, result: fresh, deferredEvents: fresh.deferred_review_events,
+    recovery: true, recoverySelector });
+  assert.equal(recorded.blocking_reviews[0].verdict, 'reject');
+  assert.ok(x22Events(fx).startsWith(before));
+});
+
+for (const episode of [{}, null]) {
+  test(`X22 F3 unlinked ${JSON.stringify(episode)} direct recorder refuses`, async () => {
+    const fx = await x22Fixture('x22-unlinked-recorder');
+    const record = readWaveDispatchRecord(fx.bundleDir, 1);
+    if (episode) record.review_context.episodes['1'] = episode;
+    else delete record.review_context.episodes['1'];
+    writeWaveDispatchRecord(fx.bundleDir, 1, record);
+    const before = fs.readFileSync(fx.statePath, 'utf8');
+    assert.throws(() => recordWaveResult({ statePath: fx.statePath, self: fx.self, now: 2300,
+      worktree: fx.WT, result: fx.result }), /subjectless hold|no identifiable entry/);
+    assert.equal(fs.readFileSync(fx.statePath, 'utf8'), before);
+    assert.equal(x22Events(fx), '');
+  });
+}
