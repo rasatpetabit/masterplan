@@ -1510,3 +1510,76 @@ test('X22a F2 accepts a physical alias of the frozen worktree', async () => {
   assert.equal(out.cleared, true);
   assert.equal(git(fx.WT, 'show', 'HEAD:src/a.txt'), 'change');
 });
+
+// Judge-8 exact reproduction: both edits precede task 1's genuine approval.
+// No task is durably done; task 2 still needs a descriptor or a supplied receipt.
+for (const restart of [false, true]) {
+  for (const phaseB of [false, true]) {
+    test(`J8 mixed batch restart=${restart} phaseB=${phaseB}`, async () => {
+      const fx = makeNativeFixture({ slug: `j8-mixed-${restart}-${phaseB}` });
+      const state = readState(fx.statePath);
+      state.tasks.push({ id: 2, status: 'pending', wave: 1, files: ['src/b.txt'] });
+      writeState(fx.statePath, state);
+      write(fx.bundleDir, 'plan.index.json', JSON.stringify({
+        tasks: state.tasks.map((t) => planEntry(t.id, 1, t.files)),
+      }));
+      launchNative(fx);
+      await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 2000, policy: dispatchFixture });
+      if (restart) {
+        const record = readWaveDispatchRecord(fx.bundleDir, 1);
+        for (const id of [1, 2]) record.review_context.episodes[String(id)] = { hold: 'historical' };
+        writeWaveDispatchRecord(fx.bundleDir, 1, record);
+        for (const taskId of [1, 2]) disposeReviewEpisode({ statePath: fx.statePath,
+          wave: 1, taskId, self: fx.self, now: 2200, disposition: 'restart' });
+      }
+      write(fx.WT, 'src/a.txt', 'reviewed a\n');
+      write(fx.WT, 'src/b.txt', 'review b\n');
+      const result = { wave: 1, tasks: state.tasks.map((t) => ({ task_id: t.id, digest: workerDigest(t.id) })) };
+      const opts = { statePath: fx.statePath, self: fx.self, now: 2300, result, policy: dispatchFixture };
+      const manifest = await reviewNativeResult(opts);
+      const { reviewCompletedTasks } = await import('../lib/task-review.mjs');
+      const approve = (args) => ({ ...x22Approval, episode_subject: args.subject, intent_identity: args.intent_identity });
+      const reviewed = await reviewCompletedTasks({ statePath: fx.statePath, runId: state.slug,
+        wave: 1, items: [manifest.tasks[0]], now: 2400, callReview: async (args) => approve(args) });
+      let receipt;
+      if (phaseB) await reviewCompletedTasks({ statePath: fx.statePath, runId: state.slug,
+        wave: 1, items: [manifest.tasks[1]], now: 2401,
+        callReview: async (args) => (receipt = approve(args)), onEvent: () => {} });
+      const mixed = { ...result, tasks: [reviewed[0], result.tasks[1]] };
+      const original = JSON.stringify(mixed);
+      const ingest = () => reviewNativeResult({ ...opts, result: mixed, now: 2500,
+        ...(phaseB ? { providedReviews: { 2: receipt } } : {}) });
+
+      // Narrowing ingestion must not refresh stale embedded evidence, including
+      // when drift is in the OTHER task's file in the same physical artifact.
+      write(fx.WT, 'src/b.txt', 'UNREVIEWED drift\n');
+      const stale = x22aSnapshot(fx);
+      await assert.rejects(ingest, /artifact.*mismatch|fresh review/i);
+      assert.deepEqual(x22aSnapshot(fx), stale, 'stale mixed refusal precedes heartbeat');
+      write(fx.WT, 'src/b.txt', 'review b\n');
+      const before = x22aSnapshot(fx);
+      const out = await ingest();
+      assert.equal(out.review_outcome, phaseB ? 'native-reviews-recorded' : 'native-review-pending');
+      assert.equal(JSON.stringify(mixed), original, 'never relabel the submitted evidence');
+      assert.deepEqual(out.tasks[0], reviewed[0], 'retain the original embedded carrier and judgment');
+      assert.deepEqual(readState(fx.statePath).tasks.map((t) => t.status), ['pending', 'pending']);
+      console.log('J8 MIXED', JSON.stringify({ restart, phaseB, outcome: out.review_outcome,
+        pending: out.pending_reviews?.map((d) => d.task_id), verdicts: out.tasks.map((t) => t.review?.verdict) }));
+      if (phaseB) {
+        assert.deepEqual(out.tasks.map((t) => t.review.verdict), ['approve', 'approve']);
+        const recorded = recordWaveResult({ statePath: fx.statePath, self: fx.self, now: 2600,
+          worktree: fx.WT, result: out });
+        assert.equal(recorded.cleared, true, 'complete batch passes final authorization');
+        assert.deepEqual(recorded.blocking_reviews, []);
+      } else {
+        assert.deepEqual(out.pending_reviews.map((d) => d.task_id), [2]);
+        assert.deepEqual(out.tasks[1].review_input, manifest.tasks[1].review_input);
+        assert.equal(x22Events(fx), before.events, 'Phase A does not append a review');
+        const partial = x22aSnapshot(fx);
+        assert.throws(() => recordWaveResult({ statePath: fx.statePath, self: fx.self, now: 2600,
+          worktree: fx.WT, result: mixed }), /artifact.*mismatch|episode subject mismatch|fresh review/i);
+        assert.deepEqual(x22aSnapshot(fx), partial, 'final gate still refuses incomplete batch before writes');
+      }
+    });
+  }
+}
