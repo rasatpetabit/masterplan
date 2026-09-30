@@ -1412,3 +1412,101 @@ for (const carrier of ['input', 'stripped', 'digest']) {
     });
   }
 }
+
+// X22a slice 2: judge-6 probe 2 validates A but commits an alternate linked B.
+for (const entry of ['submitted', 'reconcile', 'CLI', 'CLI reconcile']) {
+  test(`X22a F2 wrong worktree refuses before writes (${entry})`, async () => {
+    const fx = await x22R4ReviewedFixture(`x22a-locus-${entry.replaceAll(' ', '-')}`);
+    if (!entry.includes('reconcile')) {
+      const state = readState(fx.statePath);
+      state.tasks[0].status = 'pending';
+      writeState(fx.statePath, state);
+    }
+    const other = path.join(fx.MAIN, '.worktrees', 'alternate');
+    const base = readWaveDispatchRecord(fx.bundleDir, 1).review_context.base_sha;
+    git(fx.MAIN, 'worktree', 'add', '--detach', other, base);
+    write(other, 'src/a.txt', 'UNREVIEWED ALTERNATE LOCUS\n');
+    assert.equal(git(other, 'rev-parse', '--git-common-dir'), git(fx.WT, 'rev-parse', '--git-common-dir'));
+    const otherSnapshot = () => ({ head: git(other, 'rev-parse', 'HEAD'),
+      status: git(other, 'status', '--porcelain'), bytes: fs.readFileSync(path.join(other, 'src/a.txt'), 'utf8') });
+    const before = { reviewed: x22aSnapshot(fx), alternate: otherSnapshot(),
+      dispatch: fs.readFileSync(path.join(fx.bundleDir, 'wave-1.dispatch.json'), 'utf8') };
+    if (entry.startsWith('CLI')) {
+      const resultFile = path.join(fx.tmp, 'reviewed-result.json');
+      fs.writeFileSync(resultFile, JSON.stringify(fx.reviewed));
+      assert.throws(() => execFileSync(process.execPath, [
+        new URL('../bin/masterplan.mjs', import.meta.url).pathname, 'record-result',
+        `--state=${fx.statePath}`, `--worktree=${other}`,
+        ...(entry.includes('reconcile') ? ['--reconcile'] : [`--result-file=${resultFile}`]),
+        `--session=${fx.self.session}`, `--host=${fx.self.host}`, '--now=2600',
+      ], { encoding: 'utf8', stdio: 'pipe' }), (err) => {
+        assert.match(String(err.stderr), /mutation locus.*mismatch/i);
+        assert.notEqual(err.status, 0);
+        return true;
+      });
+    } else {
+      assert.throws(() => recordWaveResult({ statePath: fx.statePath, self: fx.self, now: 2600,
+        worktree: other, result: entry === 'reconcile' ? null : fx.reviewed }), /mutation locus.*mismatch/i);
+    }
+    assert.deepEqual({ reviewed: x22aSnapshot(fx), alternate: otherSnapshot(),
+      dispatch: fs.readFileSync(path.join(fx.bundleDir, 'wave-1.dispatch.json'), 'utf8') }, before,
+    'refusal preserves both HEADs/dirty bytes, MAIN HEAD, state/events/heartbeat and dispatch record');
+  });
+}
+
+for (const mixed of [false, true]) {
+  test(`X22a F2 preserves frozen sibling mapping (mixed umbrella ${mixed})`, async () => {
+    const fx = makeNativeFixture({ slug: `x22a-sibling-${mixed}` });
+    const sibling = path.join(fx.MAIN, 'sibling');
+    // Same initial base as the umbrella, so both frozen artifacts have a real
+    // base commit without inventing a synthetic review carrier.
+    execFileSync('git', ['clone', '-q', fx.MAIN, sibling], { stdio: 'pipe' });
+    git(sibling, 'config', 'user.email', 'test@test');
+    git(sibling, 'config', 'user.name', 'test');
+    git(sibling, 'config', 'commit.gpgsign', 'false');
+    fs.appendFileSync(path.join(fx.MAIN, '.git', 'info', 'exclude'), '\nsibling/\n');
+    const state = readState(fx.statePath);
+    state.tasks[0].files = ['sibling/src/a.txt'];
+    if (mixed) state.tasks.push({ id: 2, status: 'pending', wave: 1, files: ['src/b.txt'] });
+    writeState(fx.statePath, state);
+    write(fx.bundleDir, 'plan.index.json', JSON.stringify({ tasks: state.tasks.map((t) => planEntry(t.id, 1, t.files)) }));
+    launchNative(fx);
+    await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 2000, policy: dispatchFixture });
+    const siblingWT = path.join(sibling, '.worktrees', state.slug);
+    const frozen = readWaveDispatchRecord(fx.bundleDir, 1).review_context;
+    assert.equal(frozen.tasks[0].repo, siblingWT);
+    write(siblingWT, 'src/a.txt', 'REVIEWED SIBLING\n');
+    if (mixed) write(fx.WT, 'src/b.txt', 'REVIEWED UMBRELLA\n');
+    const result = { wave: 1, tasks: state.tasks.map((t) => ({ task_id: t.id, digest: workerDigest(t.id) })) };
+    const manifest = await reviewNativeResult({ statePath: fx.statePath, self: fx.self,
+      result, policy: dispatchFixture, now: 2300 });
+    const { reviewCompletedTasks } = await import('../lib/task-review.mjs');
+    const tasks = await reviewCompletedTasks({ statePath: fx.statePath, runId: state.slug, wave: 1,
+      items: manifest.tasks, now: 2400,
+      callReview: async (args) => ({ ...x22Approval, episode_subject: args.subject, intent_identity: args.intent_identity }) });
+    const beforeUmbrella = git(fx.WT, 'rev-parse', 'HEAD');
+    const beforeSibling = git(siblingWT, 'rev-parse', 'HEAD');
+    const out = recordWaveResult({ statePath: fx.statePath, self: fx.self, worktree: fx.WT,
+      result: { ...result, tasks }, now: 2600 });
+    assert.equal(out.cleared, true);
+    assert.equal(out.scope.ok, true);
+    assert.notEqual(git(siblingWT, 'rev-parse', 'HEAD'), beforeSibling);
+    assert.equal(git(siblingWT, 'show', 'HEAD:src/a.txt'), 'REVIEWED SIBLING');
+    assert.equal(git(siblingWT, 'status', '--porcelain'), '');
+    if (mixed) {
+      assert.notEqual(git(fx.WT, 'rev-parse', 'HEAD'), beforeUmbrella);
+      assert.equal(git(fx.WT, 'show', 'HEAD:src/b.txt'), 'REVIEWED UMBRELLA');
+    } else assert.equal(git(fx.WT, 'rev-parse', 'HEAD'), beforeUmbrella);
+    assert.equal(git(fx.WT, 'status', '--porcelain'), '');
+  });
+}
+
+test('X22a F2 accepts a physical alias of the frozen worktree', async () => {
+  const fx = await x22R4ReviewedFixture('x22a-locus-alias');
+  const alias = path.join(fx.tmp, 'worktree-alias');
+  fs.symlinkSync(fx.WT, alias, 'dir');
+  const out = recordWaveResult({ statePath: fx.statePath, self: fx.self,
+    worktree: alias, result: fx.reviewed, now: 2600 });
+  assert.equal(out.cleared, true);
+  assert.equal(git(fx.WT, 'show', 'HEAD:src/a.txt'), 'change');
+});

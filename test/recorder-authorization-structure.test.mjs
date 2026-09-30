@@ -36,7 +36,7 @@ test('recorder mutating entry inventory passes through final authorizeRecording 
         if (!url.endsWith('/lib/wave-commit.mjs')) return loaded;
         let source = String(loaded.source);
         if (process.env.RECORDER_REMOVE_FINAL_GATE === '1') {
-          source = source.replace('  authorization = authorizeRecording({ statePath, state, result, deferredEvents,\\n    recovery, recoverySelector, skillRoot });', '  // mutation: omit final gate');
+          source = source.replace('  authorization = authorizeRecording({ statePath, state, result, deferredEvents, worktree,\\n    recovery, recoverySelector, skillRoot });', '  // mutation: omit final gate');
         }
         const start = source.indexOf('export function authorizeRecording(');
         const record = source.indexOf('export function recordWaveResult(');

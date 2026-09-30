@@ -4514,6 +4514,7 @@ function main() {
       }
       reviewNativeResult({
         host: cliDispatchHost(flags),
+        worktree: typeof flags.worktree === 'string' ? flags.worktree : undefined,
         statePath, self,
         result,
         providedReviews,
