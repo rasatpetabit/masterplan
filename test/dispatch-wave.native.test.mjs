@@ -1285,3 +1285,16 @@ test('X22 R5 submitted ordinary approval refuses changed unreviewed bytes', asyn
   write(fx.WT, 'src/a.txt', 'UNREVIEWED AFTER APPROVAL\n');
   x22R4RefusedUnchanged(fx, /artifact.*mismatch|drift/i, { result: fx.reviewed });
 });
+
+test('X22 R5 submitted stripped ordinary Phase B refuses changed bytes', async () => {
+  const fx = await x22R4ReviewedFixture('x22-r5-stripped-drift');
+  const reviewed = { ...fx.reviewed, tasks: fx.reviewed.tasks.map(({ review_input, ...item }) => item) };
+  write(fx.WT, 'src/a.txt', 'UNREVIEWED STRIPPED RESULT\n');
+  x22R4RefusedUnchanged(fx, /artifact.*mismatch|drift/i, { result: reviewed });
+});
+
+test('X22 R5 submitted ordinary artifact cannot carry committed identity', async () => {
+  const fx = await x22R4ReviewedFixture('x22-r5-ordinary-identity');
+  fx.reviewed.tasks[0].review_input.identity = { head: git(fx.WT, 'rev-parse', 'HEAD') };
+  x22R4RefusedUnchanged(fx, /artifact.*mismatch/i, { result: fx.reviewed });
+});

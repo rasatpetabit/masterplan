@@ -1503,3 +1503,35 @@ for (const variant of ['dirty', 'different-head']) {
     assert.deepEqual(snapshot(), before, 'refusal preserves HEAD/state/events/status/heartbeat');
   });
 }
+
+for (const carrier of ['input', 'deferred']) {
+  test(`X22 R5 full recovery identity equality refuses mismatched ${carrier} even with matching SHA`, async () => {
+    const fx = makeRecoveryFixture({ recordable: true, ownerLock: 'on' });
+    const pending = await runPhaseA(fx);
+    const reviewed = await reviewNativeResult({ statePath: fx.statePath, self: fx.self,
+      result: recoveryResult(fx), providedReviews: { 1: boundReceipt(fx, pending.pending_reviews[0].identity) },
+      recoverySelector: { repo: fx.WT, head: fx.HEAD }, now: 4000 });
+    if (carrier === 'input') {
+      reviewed.tasks[0].review_input = { ...pending.tasks[0].review_input,
+        identity: { ...pending.pending_reviews[0].identity, attempt: 999 } };
+    } else {
+      // A valid input must not launder even one bad deferred append.
+      reviewed.tasks[0].review_input = pending.tasks[0].review_input;
+      const bad = structuredClone(reviewed.deferred_review_events[0]);
+      bad.event.data.identity.attempt = 999;
+      reviewed.deferred_review_events.push(bad);
+    }
+    const state = fs.readFileSync(fx.statePath, 'utf8');
+    const main = git(fx.MAIN, 'rev-parse', 'HEAD');
+    const hb = fs.readdirSync(fx.bundleDir).filter((p) => p.startsWith('.owner.hb.'))
+      .map((p) => [p, fs.readFileSync(path.join(fx.bundleDir, p), 'utf8')]);
+    assert.throws(() => recordWaveResult({ statePath: fx.statePath, self: fx.self, now: 4100,
+      worktree: fx.WT, result: reviewed, deferredEvents: reviewed.deferred_review_events,
+      recovery: true, recoverySelector: { repo: fx.WT, head: fx.HEAD } }), /committed artifact identity mismatch/);
+    assert.equal(fs.readFileSync(fx.statePath, 'utf8'), state);
+    assert.equal(git(fx.MAIN, 'rev-parse', 'HEAD'), main);
+    assert.equal(git(fx.WT, 'rev-parse', 'HEAD'), fx.HEAD);
+    assert.equal(fs.existsSync(path.join(fx.bundleDir, 'events.jsonl')), false);
+    for (const [p, bytes] of hb) assert.equal(fs.readFileSync(path.join(fx.bundleDir, p), 'utf8'), bytes);
+  });
+}
