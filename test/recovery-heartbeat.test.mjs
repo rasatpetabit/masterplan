@@ -1,3 +1,4 @@
+import { reviewNativeResult } from '../lib/dispatch-wave.mjs';
 // test/recovery-heartbeat.test.mjs — recovery-mode owner-heartbeat DEFERRAL regression.
 //
 // Defect (zero-write contract, fixed in lib/wave-commit.mjs): the strict owner heartbeat ran
@@ -142,14 +143,14 @@ const recoveryResult = () => ({
   tasks: [{ task_id: 1, digest: workerDigest(1, 'done') }],
 });
 
-function callRecovery(fx, { self, now = 4000, head = fx.HEAD, result = recoveryResult() } = {}) {
+function callRecovery(fx, { self, now = 4000, head = fx.HEAD, result = { ...recoveryResult(), tasks: [] } } = {}) {
   return recordWaveResult({
     statePath: fx.statePath,
     result,
     self: self ?? fx.self,
     now,
     worktree: fx.WT,
-    deferredEvents: [],
+    deferredEvents: result?.deferred_review_events ?? [],
     recovery: true,
     recoverySelector: { repo: fx.WT, head },
   });
@@ -195,20 +196,25 @@ function assertWriteTargetsUnchanged(fx, before) {
 test('recovery-heartbeat: invalid task throws before refreshing the heartbeat', () => {
   const fx = makeHeartbeatFixture();
   const before = snapshotWriteTargets(fx);
-  const result = recoveryResult();
+  const result = { ...recoveryResult(), tasks: [] };
   result.tasks.push({ task_id: 999, digest: workerDigest(999, 'done') });
   assert.throws(() => callRecovery(fx, { result }), /999/);
   assertWriteTargetsUnchanged(fx, before);
 });
 
-test('recovery-heartbeat: clean committed recovery with the owner lock ON records (deferred heartbeat passes, ownership still required)', () => {
+test('recovery-heartbeat: clean committed recovery with the owner lock ON records (deferred heartbeat passes, ownership still required)', async () => {
   const fx = makeHeartbeatFixture();
   const lockPath = ownerLockPath(fx.bundleDir);
   const hbPath = ownerHeartbeatPath(fx.bundleDir, fx.self);
   // Sanity: the fixture really holds the lock with a heartbeat on disk.
   assert.equal(fs.existsSync(lockPath), true);
   assert.equal(fs.existsSync(hbPath), true);
-  const res = callRecovery(fx);
+  const pending = await reviewNativeResult({ policy: JSON.parse(fs.readFileSync(new URL('./fixtures/dispatch-map.json', import.meta.url), 'utf8')), statePath: fx.statePath, self: fx.self,
+    result: recoveryResult(), recoverySelector: { repo: fx.WT, head: fx.HEAD }, now: 2000 });
+  const reviewed = await reviewNativeResult({ policy: JSON.parse(fs.readFileSync(new URL('./fixtures/dispatch-map.json', import.meta.url), 'utf8')), statePath: fx.statePath, self: fx.self,
+    result: recoveryResult(), recoverySelector: { repo: fx.WT, head: fx.HEAD }, now: 3000,
+    providedReviews: { 1: { final_verdict: 'approve', identity: pending.pending_reviews[0].identity } } });
+  const res = callRecovery(fx, { result: reviewed });
   assert.equal(res.outcome, 'recorded', JSON.stringify(res));
   assert.deepEqual(res.recorded, [1]);
   assert.equal(res.commits.code, fx.HEAD, 'recovery never creates a new masterplan commit');

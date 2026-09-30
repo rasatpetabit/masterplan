@@ -1129,29 +1129,17 @@ test('recovery: epoch identity rides the manifest and is compared on receipts', 
 
 // ── preservation gate (contract item 7) ─────────────────────────────────────
 
-test('recovery: recordWaveResult with recovery:true performs NO destructive git op (scope/watch/clean/revert/commit)', () => {
-  const fx = makeRecoveryFixture();
-  const pending = reviewNativeResult ? null : null; // (phase A already proved capture is clean)
-  // Clean committed state: recovery records normally and must NOT commit a new code sha or
-  // run checkout/clean. HEAD must remain the recovered head.
-  const reviewed = {
-    wave: 1,
-    epoch: 5,
-    tasks: [{ task_id: 1, digest: workerDigest(1, 'done') }],
-    deferred_review_events: [],
-  };
+test('recovery: recordWaveResult with recovery:true performs NO destructive git op (scope/watch/clean/revert/commit)', async () => {
+  const fx = makeRecoveryFixture({ recordable: true });
+  const pending = await runPhaseA(fx);
+  const reviewed = await reviewNativeResult({ statePath: fx.statePath, self: fx.self,
+    result: recoveryResult(fx), providedReviews: { 1: boundReceipt(fx, pending.pending_reviews[0].identity) },
+    recoverySelector: { repo: fx.WT, head: fx.HEAD }, now: 4000 });
   const beforeHead = git(fx.WT, 'rev-parse', 'HEAD');
-  const res = recordWaveResult({
-    statePath: fx.statePath,
-    result: reviewed,
-    self: fx.self,
-    now: 4000,
-    worktree: fx.WT,
-    deferredEvents: [],
-    recovery: true,
-  });
+  const res = recordWaveResult({ statePath: fx.statePath, result: reviewed, self: fx.self,
+    now: 4000, worktree: fx.WT, deferredEvents: reviewed.deferred_review_events,
+    recovery: true, recoverySelector: { repo: fx.WT, head: fx.HEAD } });
   assert.equal(res.outcome, 'recorded');
-  // The code sha is the recovered HEAD — no new masterplan commit moved it.
   assert.equal(res.commits.code, fx.HEAD);
   assert.equal(git(fx.WT, 'rev-parse', 'HEAD'), beforeHead, 'recovery never moves HEAD');
   assert.equal(git(fx.WT, 'status', '--porcelain'), '', 'recovery leaves the tree clean');
@@ -1160,6 +1148,7 @@ test('recovery: recordWaveResult with recovery:true performs NO destructive git 
 });
 
 test('recovery: a scope/watch preflight violation REJECTS before any state write or destructive op', () => {
+  // No completion claim: exercise the preservation preflight independently of review evidence.
   const fx = makeRecoveryFixture();
   // Simulate an out-of-scope working file in the worktree: the preflight (same verifyScope
   // the normal path runs) must reject WITHOUT reverting it, and HEAD/state must stay put.
@@ -1170,7 +1159,7 @@ test('recovery: a scope/watch preflight violation REJECTS before any state write
     wave: 1,
     epoch: 5,
     baseline: [],
-    tasks: [{ task_id: 1, digest: workerDigest(1, 'done') }],
+    tasks: [],
     deferred_review_events: [],
   };
   const res = recordWaveResult({
@@ -1193,6 +1182,7 @@ test('recovery: a scope/watch preflight violation REJECTS before any state write
 });
 
 test('recovery: preflight never invokes destructive git even when watch-list would revert', () => {
+  // No completion claim: exercise the preservation preflight independently of review evidence.
   const fx = makeRecoveryFixture();
   // With recovery:true, even a watch-baseline delta must reject rather than revert. The
   // fixture has no watch baseline, so this asserts the flag path is non-destructive by
@@ -1201,7 +1191,7 @@ test('recovery: preflight never invokes destructive git even when watch-list wou
   const beforeHead = git(fx.WT, 'rev-parse', 'HEAD');
   const res = recordWaveResult({
     statePath: fx.statePath,
-    result: { wave: 1, epoch: 5, baseline: [], tasks: [{ task_id: 1, digest: workerDigest(1, 'done') }] },
+    result: { wave: 1, epoch: 5, baseline: [], tasks: [] },
     self: fx.self,
     now: 4000,
     worktree: fx.WT,
@@ -1214,6 +1204,7 @@ test('recovery: preflight never invokes destructive git even when watch-list wou
 });
 
 test('recovery: a watch-baseline HEAD move rejects instead of reverting', () => {
+  // No completion claim: exercise the preservation preflight independently of review evidence.
   const fx = makeRecoveryFixture();
   // Capture a real launch watch baseline over MAIN + WT, then MOVE WT's HEAD (a child-style
   // commit). verifyWatchListDelta flags the HEAD move; the recovery preflight must reject
@@ -1233,7 +1224,7 @@ test('recovery: a watch-baseline HEAD move rejects instead of reverting', () => 
   const stateBytes = fs.readFileSync(fx.statePath, 'utf8');
   const res = recordWaveResult({
     statePath: fx.statePath,
-    result: { wave: 1, epoch: 5, baseline: [], tasks: [{ task_id: 1, digest: workerDigest(1, 'done') }] },
+    result: { wave: 1, epoch: 5, baseline: [], tasks: [] },
     self: fx.self,
     now: 4000,
     worktree: fx.WT,
@@ -1256,7 +1247,7 @@ test('recovery: a MISSING watch baseline rejects the preflight with zero writes/
   const beforeHead = git(fx.WT, 'rev-parse', 'HEAD');
   const res = recordWaveResult({
     statePath: fx.statePath,
-    result: { wave: 1, epoch: 5, baseline: [], tasks: [{ task_id: 1, digest: workerDigest(1, 'done') }] },
+    result: { wave: 1, epoch: 5, baseline: [], tasks: [] },
     self: fx.self,
     now: 4000,
     worktree: fx.WT,
@@ -1281,7 +1272,7 @@ test('recovery: a MALFORMED watch baseline (no snapshots) rejects the preflight 
   const beforeHead = git(fx.WT, 'rev-parse', 'HEAD');
   const res = recordWaveResult({
     statePath: fx.statePath,
-    result: { wave: 1, epoch: 5, baseline: [], tasks: [{ task_id: 1, digest: workerDigest(1, 'done') }] },
+    result: { wave: 1, epoch: 5, baseline: [], tasks: [] },
     self: fx.self,
     now: 4000,
     worktree: fx.WT,
@@ -1301,7 +1292,7 @@ test('recovery: an empty-snapshots baseline ({} ) rejects the preflight (cannot 
   fs.writeFileSync(path.join(fx.bundleDir, '.wave-1.watch.json'), JSON.stringify({ snapshots: {}, bundle: {} }) + '\n', 'utf8');
   const res = recordWaveResult({
     statePath: fx.statePath,
-    result: { wave: 1, epoch: 5, baseline: [], tasks: [{ task_id: 1, digest: workerDigest(1, 'done') }] },
+    result: { wave: 1, epoch: 5, baseline: [], tasks: [] },
     self: fx.self,
     now: 4000,
     worktree: fx.WT,
@@ -1483,5 +1474,32 @@ for (const drift of ['HEAD', 'tree']) {
     assert.throws(() => captureStableCommittedDiff('/disposable/repo', 'c'.repeat(40), head, exec),
       /HEAD moved or tree became dirty during capture/);
     assert.equal(captured, true, 'drift occurred inside capture, not before it');
+  });
+}
+
+for (const variant of ['dirty', 'different-head']) {
+  test(`X22 R5 genuine Phase B submitted recovery refuses ${variant} before any write`, async () => {
+    const fx = makeRecoveryFixture({ recordable: true, ownerLock: 'on' });
+    const pending = await runPhaseA(fx);
+    const reviewed = await reviewNativeResult({ statePath: fx.statePath, self: fx.self,
+      result: recoveryResult(fx), providedReviews: { 1: boundReceipt(fx, pending.pending_reviews[0].identity) },
+      recoverySelector: { repo: fx.WT, head: fx.HEAD }, now: 4000 });
+    write(fx.WT, 'src/a.txt', `UNREVIEWED ${variant}\n`);
+    if (variant === 'different-head') {
+      git(fx.WT, 'add', 'src/a.txt');
+      git(fx.WT, 'commit', '-q', '-m', 'unreviewed additional work');
+    }
+    const snapshot = () => ({ head: git(fx.WT, 'rev-parse', 'HEAD'), main: git(fx.MAIN, 'rev-parse', 'HEAD'),
+      state: fs.readFileSync(fx.statePath, 'utf8'),
+      events: fs.existsSync(path.join(fx.bundleDir, 'events.jsonl')) ? fs.readFileSync(path.join(fx.bundleDir, 'events.jsonl'), 'utf8') : null,
+      status: git(fx.WT, 'status', '--porcelain'),
+      heartbeat: fs.readdirSync(fx.bundleDir).filter((p) => p.startsWith('.owner.hb.')).sort()
+        .map((p) => [p, fs.readFileSync(path.join(fx.bundleDir, p), 'utf8')]),
+    });
+    const before = snapshot();
+    assert.throws(() => recordWaveResult({ statePath: fx.statePath, self: fx.self, now: 4100,
+      worktree: fx.WT, result: reviewed, deferredEvents: reviewed.deferred_review_events,
+      recovery: true, recoverySelector: { repo: fx.WT, head: before.head } }), /clean|dirty|drift|artifact.*mismatch/i);
+    assert.deepEqual(snapshot(), before, 'refusal preserves HEAD/state/events/status/heartbeat');
   });
 }

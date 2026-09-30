@@ -1276,3 +1276,12 @@ test('X22 R4 adjacent submitted stale approval cannot bypass checkpoint eligibil
   write(fx.bundleDir, 'goals.md', 'topic: Changed purpose\n\n## G1: Changed goal\nsignal: new proof\n');
   x22R4RefusedUnchanged(fx, /evidence|intent|fresh review/i, { result: fx.reviewed });
 });
+
+test('X22 R5 submitted ordinary approval refuses changed unreviewed bytes', async () => {
+  const fx = await x22R4ReviewedFixture('x22-r5-submitted-drift');
+  const state = readState(fx.statePath);
+  state.tasks[0].status = 'pending';
+  writeState(fx.statePath, state);
+  write(fx.WT, 'src/a.txt', 'UNREVIEWED AFTER APPROVAL\n');
+  x22R4RefusedUnchanged(fx, /artifact.*mismatch|drift/i, { result: fx.reviewed });
+});

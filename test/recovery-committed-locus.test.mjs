@@ -1,3 +1,4 @@
+import { reviewNativeResult } from '../lib/dispatch-wave.mjs';
 // test/recovery-committed-locus.test.mjs — committed-recovery SELECTOR gate (contract item 7).
 //
 // Covers the explicit pinned-selector flow end-to-end through recordWaveResult:
@@ -135,14 +136,14 @@ const recoveryResult = (fx) => ({
   tasks: [{ task_id: 1, digest: workerDigest(1, 'done') }],
 });
 
-function callRecovery(fx, selectorHead) {
+function callRecovery(fx, selectorHead, reviewed = null) {
   return recordWaveResult({
     statePath: fx.statePath,
-    result: recoveryResult(fx),
+    result: reviewed ?? { ...recoveryResult(fx), tasks: [] },
     self: fx.self,
     now: 4000,
     worktree: fx.WT,
-    deferredEvents: [],
+    deferredEvents: reviewed?.deferred_review_events ?? [],
     recovery: true,
     recoverySelector: { repo: fx.WT, head: selectorHead ?? fx.HEAD },
   });
@@ -176,7 +177,7 @@ function assertPreservationViolation(fx, expectPatterns, selectorHead = fx.HEAD)
 
 // ── SUCCESS: baseline-before-commit through recordWaveResult ───────────────
 
-test('committed-locus: baseline-before-commit recovery records through recordWaveResult with the selector', () => {
+test('committed-locus: baseline-before-commit recovery records through recordWaveResult with the selector', async () => {
   const fx = makeCommittedLocusFixture();
   const baselineBytes = fs.readFileSync(fx.baselinePath, 'utf8');
   // The PREFLIGHT-level recovery-aware watch comparison (this module's contract) permits
@@ -198,7 +199,12 @@ test('committed-locus: baseline-before-commit recovery records through recordWav
   assert.ok(pre.watch.checked, 'preflight watch comparison ran');
   assert.equal(pre.watch.ok, true, 'preflight watch comparison permits ONLY the edit-locus HEAD move');
   // The full transaction then records through recordWaveResult with the selector.
-  const res = callRecovery(fx);
+  const pending = await reviewNativeResult({ policy: JSON.parse(fs.readFileSync(new URL('./fixtures/dispatch-map.json', import.meta.url), 'utf8')), statePath: fx.statePath, self: fx.self,
+    result: recoveryResult(fx), recoverySelector: { repo: fx.WT, head: fx.HEAD } });
+  const reviewed = await reviewNativeResult({ policy: JSON.parse(fs.readFileSync(new URL('./fixtures/dispatch-map.json', import.meta.url), 'utf8')), statePath: fx.statePath, self: fx.self,
+    result: recoveryResult(fx), recoverySelector: { repo: fx.WT, head: fx.HEAD },
+    providedReviews: { 1: { final_verdict: 'approve', identity: pending.pending_reviews[0].identity } } });
+  const res = callRecovery(fx, fx.HEAD, reviewed);
   assert.equal(res.outcome, 'recorded', JSON.stringify(res));
   assert.deepEqual(res.recorded, [1]);
   assert.equal(res.watch.ok, true, 'recording retains the recovery-aware watch verdict');
