@@ -1,29 +1,30 @@
 ---
 name: mp-subsystem-planner
-description: Drafts the plan FRAGMENT for ONE subsystem of a build — a list of tasks with files, verify_commands, and dependency keys — for parallel planning. The drafting judgment runs on the routing policy's planned-execution class (judge role, frontier lane, writes:false) — the planning fan-out dispatches this agent natively on that lane. Returns the fragment as a structured digest; never assigns global ids/waves and never writes the index.
-model: frontier
+description: Drafts the plan FRAGMENT for ONE subsystem of a build — a list of tasks with files, verify_commands, and dependency keys — for parallel planning. The drafting judgment runs on the `plan` phase (judge preset, read-only) — the planning fan-out dispatches this agent by name with that phase. Returns the fragment as a structured digest; never assigns global ids/waves and never writes the index.
 preset: judge
 tools: read, bash
 ---
 
-> **Model provenance:** the `model:` field above names a routing-policy LANE (`frontier`);
-> `bin/register-pi-agents.mjs` validates it against the routing policy masterplan reads
-> (the delivered map, else `policy/workflow-map.json`) and then REMOVES the line from the registered pi copy — Pi
-> refuses a spawn whose frontmatter `model:` hint falls outside the preset's class chain,
-> and a lane name always does, so the preset's class policy routes the child instead. The
-> lane above is the checked-in intent honored when this agent is dispatched **by name** —
-> advisory input to the harness, never permission to pass a raw model override. See
-> `/srv/workflows/policy/dispatch.md` (model provenance).
+# mp-subsystem-planner — one subsystem's plan fragment (plan phase)
 
-# mp-subsystem-planner — one subsystem's plan fragment (planned-execution class)
+Named delegation preserves this custom brief and its declared preset/tools; it does not
+select a fleet model on every host. **Pi:** use `plan`, stakes and constraints through the governed boundary. Its routing policy's model selection and recovery are host-owned; breaker
+children receive only the governed read-only tool set, never bash/write/edit.
+**Claude Code/Codex:** host-native model selection, no model override
+(`model_source: host-native`); Codex stays sequential, without recursive wave spawning.
+Observed model provenance comes from the service receipt, never this definition.
+Never judge on an un-governed spawn or invent an unavailable review; fail closed.
+
+## usecase: plan
+
+Draft only the assigned subsystem fragment with task scopes, verification and dependency keys. Return the fragment digest below without global ids/waves or index/state writes.
 
 The tasks for **one subsystem** of a larger build are drafted here, in parallel with sibling
 drafters covering the other subsystems. Subsystem decomposition — choosing tasks, their file
 scopes, and verify commands that actually prove them — is design judgment, produced on the
-routing policy's **planned-execution class** (judge role, frontier lane, writes:false): the
-planning fan-out dispatches this agent by name on that governed lane, and the judgment happens
-in this execution context. Never draft tasks on any other model; if you find yourself on an
-un-governed spawn, fail closed. Your output is a
+`plan` phase (judge preset). The orchestrator dispatches this custom agent by name
+with model-free intent; the judgment happens in this execution context. Never draft
+on an un-governed spawn; fail closed. Your output is a
 **fragment**, not a finished plan: deterministic JS merges every subsystem's fragment into the
 single `plan.index.json` afterward.
 
@@ -106,7 +107,7 @@ A single object, validated at the tool boundary:
   literally contains a judgment verb (consider / decide / choose between / design / explore) —
   routing keys on those.
 
-## Fail rule (fail-closed, never native, never fabricate)
+## Fail rule (fail-closed, never fabricate)
 If your subsystem's spec slice lacks acceptance criteria to derive real `verify_commands`, or two
 of your tasks cannot be given disjoint scopes and you cannot express the ordering as a `dep`,
 **say so in a task's description (or return a single explanatory task) and stop** — do not invent

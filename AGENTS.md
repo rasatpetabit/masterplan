@@ -16,9 +16,9 @@ credential, timer, or private-data migration.
 
 Cross-repo AskUserQuestion/ask_user_question (AUQ), Serena, Hindsight,
 context-mode, and subagent/model-dispatch policy is centralized in the
-fleet policy. Routing resolves from the repo-local `policy/workflow-map.json`
-(a checked-in copy of the fleet workflow routing map) and the fleet dispatch
-policy at `/srv/workflows/policy/dispatch.md`. Do not duplicate or override
+fleet policy. Masterplan reads model-free intent from C1 (`MP_DISPATCH_MAP`, else
+`~/.pi/workflows/dispatch-map.json`); the Pi governed boundary owns resolution.
+Fleet dispatch policy lives at `/srv/workflows/policy/dispatch.md`. Do not duplicate or override
 that policy here.
 
 ## What this repo is
@@ -59,7 +59,7 @@ are the owner's — amend it through the owner, never to fit the change.
 | Release history + decision rationale per version | [`CHANGELOG.md`](./CHANGELOG.md) |
 | Cross-cutting rules (CD-1…CD-10) + plan-field contract | `docs/conventions/cd-rules.md` · `docs/conventions/plan-annotations.md` |
 | Build/test/lint + contributor discipline | [`docs/development.md`](./docs/development.md) |
-| Agent registration (CC + pi) | CC: `agents/` → `masterplan:mp-*` (plugin loader). pi: `bin/register-pi-agents.mjs` writes `~/.pi/agent/agents/` — **bare** `mp-*.md` only (`model:` in the source is a routing-policy lane name, e.g. `frontier`; registration validates it against `policy/workflow-map.json` and then **removes** the line, because pi refuses a frontmatter hint outside the preset's class chain and the preset's class policy routes the child; managed colon leftovers removed; `--check` for drift). See [`docs/development.md`](./docs/development.md) §"Never silently inline a delegated role" |
+| Agent registration (CC + pi) | CC: model-free `agents/` → `masterplan:mp-*` (plugin loader, host inheritance). Pi: `bin/register-pi-agents.mjs` produces bare `mp-*.md` only, preserving names, presets, tools and C4 common/operation contracts; older model hints are stripped without a map. Governed preparation enforces breaker read-only tools. Managed colon leftovers are removed; `--check` reports drift. Delivery is separately gated. See [`docs/development.md`](./docs/development.md) §"Never silently inline a delegated role" |
 | Active plans (current work) | `docs/masterplan/*/state.yml` (source of truth per CD-7) |
 
 **Canonical reading order for a new session:** this file →
@@ -84,11 +84,31 @@ What is masterplan-specific lives in two docs:
   cross-vendor review of large edits, and finish-flow durability:
   [`docs/development.md`](./docs/development.md).
 
-## §routing — resolved from the checked-in policy
+## §routing — model-free host-native intent
 
-Model/lane routing resolves from the `MP_ROUTING_POLICY` path when set, then the delivered `~/.pi/workflows/workflow-map.json` when present, otherwise from `policy/workflow-map.json` (the repo-local fallback copy of the fleet workflow routing map, with `litellm/*` refs and governed work classes). Waves launch as native spawn plans executed by the harness's parallel subagent API; adversarial review is harness-native (adversary class: breaker role, governed lane; adversarial panel for cross-vendor coverage), with records supplied via `mp record-result --reviews-file`. Agent frontmatter `model:` fields are routing-policy lane names.
+Masterplan discovers C1 from `MP_DISPATCH_MAP` when set, otherwise
+`~/.pi/workflows/dispatch-map.json`. It packages neither map nor resolver and
+reads phases, use cases, agents and constraints only, never a model selection.
+Missing explicit paths refuse; a Pi host without a map refuses. A present but
+unreadable/invalid map (including `schema !== 1`) refuses on every host, as do
+unknown phases/use cases. Only a non-Pi host with neither an override nor a
+file is unconfigured: its descriptors carry phase and agent only.
 
-The authoritative producer is `/srv/inference/config/src/*.hcl`, rendered by inference reconfigure to the delivered map. After delivery and a public-secret exposure review against the existing copy, refresh **only this fallback** with `cp ~/.pi/workflows/workflow-map.json policy/workflow-map.json` and verify byte equality with `cmp policy/workflow-map.json ~/.pi/workflows/workflow-map.json`. Do not reconfigure to refresh this repo copy. Fleet dispatch policy lives at `/srv/workflows/policy/dispatch.md`.
+Planning selects phase `plan`; review selects `challenge`. Execute tasks keep
+`bounded-edit` defaults. Configured Pi descriptors carry use case, stakes,
+constraints and stable review `subject`, never a model. The native governed
+boundary owns resolution, recovery and critical panels; incomplete panels are
+inconclusive, not approval. Requested effort is a minimum; served effort and
+the observed model come from C3 receipts, not candidate selection. Claude Code
+and Codex use the host's own selection (`model_source: host-native`); named
+agents preserve contracts, not a fleet-model guarantee. Codex waves stay
+foreground-sequential, without recursive spawning. Never narrate an unavailable
+review as inline success. `mp doctor` reports map presence, path and schema.
+
+The producer is `/srv/inference/config/src/*.hcl`, delivered by inference
+reconfigure; do not copy a fallback into this package. Fleet policy lives at
+`/srv/workflows/policy/dispatch.md`. Retired routing overrides must be migrated
+to inference routing, not a local model list.
 
 ## Knowledge
 

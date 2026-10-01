@@ -40,9 +40,11 @@ Dispatch substantive work to agents (`agents/*.md` via the L2 engine), `mp`
 subcommands, or `superpowers` skills. The orchestrator context holds sequencing
 state only — never raw file contents or verification dumps. Subagents take a
 bounded brief (Goal / Inputs / Scope / Constraints / Return shape), don't
-inherit session history, and return compact digests. Model selection for
-dispatches follows the central routing policy (`policy/workflow-map.json`); never
-hardcode model tiers.
+inherit session history, and return compact digests. Dispatch carries model-free
+intent: `MP_DISPATCH_MAP` overrides the delivered C1 path
+`~/.pi/workflows/dispatch-map.json`. Masterplan packages neither map nor resolver.
+Pi's governed boundary selects models; Claude Code/Codex use host-native selection.
+A name preserves the custom contract, not a fleet model guarantee.
 
 ## Keep sync'd surfaces in lockstep
 
@@ -64,10 +66,9 @@ Drift breaks autocomplete, the hygiene test, or silently skips checks.
 Don't trust your own confirmation bias on large markdown/code edits. After a
 multi-edit pass, dispatch a fresh-eyes reader subagent over the changed files
 end-to-end for contradictions or dangling references. For a reviewable diff,
-prefer a cross-vendor pass — the harness-native adversary class (`breaker` role,
-frontier lane; adversarial panel for cross-vendor coverage — resolved from the
-checked-in `policy/workflow-map.json`) — over a same-vendor
-self-check (central policy: diff-review routes cross-vendor). Scope it
+prefer a pass with independent reviewer provenance — the model-free `challenge`
+phase intent with appropriate stakes and independence constraints (Pi-native
+critical panel when requested) — over a same-author self-check (central policy: diff-review routes cross-vendor). Scope it
 correctly: hand it a path-filtered `git diff -- <paths>` rather than a
 whole-tree scan; in a dirty bundle (active `state.yml`, `WORKLOG.md`,
 sibling-wave edits) commit first and use `--base <ref>`, or pass a scoped diff.
@@ -93,7 +94,7 @@ Hindsight rule). The escape ladder is strict:
 1. **Retry once** — a transient resolve error is not a verdict on availability.
 2. **Probe the real state** — `subagent({ action: 'list' })` for agent
    resolution and `mp doctor` (`routing-policy-health`) for the
-   routing policy. Never assert "degraded" without one of these; an
+   dispatch map. Never assert "degraded" without one of these; an
    unverified excuse is the anti-pattern.
 3. **Escalate** — open an AUQ (`ask_user_question`) with concrete options, or
    surface via `contact_supervisor`. Do not proceed on an unverified
@@ -106,27 +107,25 @@ host-specific:
 - **Claude Code** discovers `agents/mp-*.md` directly via its plugin loader as
   the `masterplan:mp-*` colon namespace. Those files are the single source of
   truth for role contracts; CC is unchanged by pi registration.
-- **pi hosts** discover a different set of paths (`~/.pi/agent/agents/`,
-  `.pi/agents/`, `.agents/`) and do not resolve CC bare `model:` lane names, so a
-  pi host needs adapted copies. Run
-  [`bin/register-pi-agents.mjs`](../bin/register-pi-agents.mjs) to generate them
-  at `~/.pi/agent/agents/` — **bare-only** (`mp-spec-decomposer.md` etc.).
-  Registration validates the source lane against the map and then **removes the
-  `model:` line**: pi validates a frontmatter `model:` value against the
-  **preset's** class chain and refuses the spawn (`SpawnModelPolicyError`) when
-  it is outside it, so both the lane alias and the lane's resolved ref deny a
-  spawn for any preset whose class sits on a different lane. Emitting no hint
-  lets the preset's class policy route the child, which is the only shape that
-  cannot refuse; the source file keeps the lane as the checked-in intent. Colon
-  alias copies
-  (`masterplan:mp-*`) are **retired**: write mode removes managed leftovers
-  derived from `agents/mp-*.md` (+ SKIP_FOR_PI); `--check` flags those as drift.
-  Unmanaged `masterplan:mp-*.md` outside that set are left alone. Idempotent.
-  The former skynet-MCP implementer agent is gone: implementer tasks now route
-  through the governed routing-policy lane — the plan task's `class` (e.g.
-  `bounded-edit`/`agentic-loop`) resolves to the `builder` role, dispatched by
-  its bare name (Pi) or the plugin namespace (CC). CC still loads `agents/` as
-  the `masterplan:mp-*` plugin namespace independently.
+- **Pi hosts** discover `~/.pi/agent/agents/`, `.pi/agents/` and `.agents/`.
+  Registration creates adapted **bare-only** copies (`mp-spec-decomposer.md`,
+  etc.) using [`bin/register-pi-agents.mjs`](../bin/register-pi-agents.mjs).
+  Source definitions omit model frontmatter; the registrar can still strip
+  old model lines without resolving them. It preserves names, declared tools,
+  presets, distinct common briefs and C4 `## usecase: <name>` sections.
+  Dispatch-local preparation includes the common brief plus exactly the selected
+  operation. Missing sections or unsupported presets fail closed; never flatten
+  all operations. Breaker aliases get only the trusted governed read-only tools,
+  not source-declared bash/write tools, in foreground, background and workflow
+  paths; the boundary reports dropped declarations. Source/registered declarations
+  alone are not enforcement. Plan 05 owns preparation, not masterplan.
+  Managed colon copies (`masterplan:mp-*`) are retired; write mode removes only
+  managed leftovers and `--check` flags drift. Unmanaged copies stay untouched.
+  Registration/delivery to real user paths is operator-gated; tests register only
+  disposable copies. Builder tasks retain `bounded-edit` defaults; planning
+  selects phase `plan`, reviews phase `challenge`. CC independently loads the
+  same contracts via its plugin namespace with no model override; Codex remains
+  foreground-sequential without recursive wave spawning.
 
 On pi, call **bare** names only: `subagent({ agent: 'mp-spec-decomposer' })`.
 Colon alias files are no longer installed; CC-authored `masterplan:mp-*` names
@@ -136,3 +135,22 @@ still resolve on Claude Code via the plugin loader. A host where
 
 This complements CD-3: CD-3 ensures you *verify* completion; CD-11 ensures
 the *delegation* actually happened rather than being narrated into existence.
+
+## C1 verification and service evidence
+
+Restore an absolute `W` naming the joint integration checkout for agent and full
+suite runs. `test/register-pi-agents.test.mjs` imports plan 05's
+`readGovernedBreakerTools()` and `prepareGovernedAgentForDispatch` beneath that
+root in a Node helper with cwd `$W/pi-subagents` and `--import tsx`; missing
+roots/exports fail rather than skip. Record `W` and `git -C "$W" rev-parse HEAD`
+with the test evidence. Run with disposable HOME seeded with synthetic C1,
+never with real host registration as a test shortcut.
+
+C1 discovery refuses an explicit missing path, missing Pi map, unreadable or
+invalid present map (`schema !== 1`), and unknown phases/use cases separately.
+Non-Pi marketplace hosts alone may be unconfigured (no override or default file).
+Configured Pi intents carry use case, stakes, constraints and stable `subject`,
+never model refs. Requested effort is a floor; observed model and served effort
+come from C3 service receipts, not the selected candidate or badge. Non-Pi records
+use `model_source: host-native`. An incomplete critical panel is inconclusive;
+an unavailable review is never replaced by narrated inline success.

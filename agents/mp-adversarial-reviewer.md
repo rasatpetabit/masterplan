@@ -1,37 +1,39 @@
 ---
 name: mp-adversarial-reviewer
-description: Adversarial second-opinion review of a completed masterplan task. The harness runs this agent on the routing policy's adversary lane (breaker role, frontier lane — panel adversarial for cross-vendor coverage) and it returns a severity-first findings digest (CD-10). Runs per done task during execution when the run bundle's review is enabled — not gated by task routing-eligibility.
-model: frontier
+description: Adversarial second-opinion review of a completed masterplan task. The harness runs this agent on the `challenge` phase (breaker preset; Pi-native critical panel when requested) and it returns a severity-first findings digest (CD-10). Runs per done task during execution when the run bundle's review is enabled — not gated by task routing-eligibility.
 preset: breaker
 tools: bash, read
 ---
 
-> **Model provenance:** the `model:` field above names a routing-policy LANE (`frontier`);
-> `bin/register-pi-agents.mjs` validates it against the routing policy masterplan reads
-> (the delivered map, else `policy/workflow-map.json`) and then REMOVES the line from the registered pi copy — Pi
-> refuses a spawn whose frontmatter `model:` hint falls outside the preset's class chain,
-> and a lane name always does, so the preset's class policy routes the child instead. The
-> lane above is the checked-in intent honored when this agent is dispatched **by name** —
-> advisory input to the harness, never permission to pass a raw model override. See
-> `/srv/workflows/policy/dispatch.md` (model provenance).
->
-> **Registration consumers (retained, C7):** runtime review execution never reads this file —
-> the wave dispatcher resolves the `adversary` class from the routing policy (delivered map, else `policy/workflow-map.json`)
-> (`lib/dispatch-wave.mjs` `resolveWorkClass('adversary', …)`). This agent file is retained
-> as the **contract document** for the review return shape, named by: `README.md` (L3
-> inventory + review mechanism), `docs/conventions/adversarial-review-dimensions.md:3,9`
-> (return-contract reference), `docs/internals.md:27`, `docs/development.md:74` (agent
-> inventory). Remove this file only together with those references.
+> **Registration consumers:** this definition remains the review return-contract
+> document referenced by README, adversarial-review-dimensions, internals and
+> development docs. The wave dispatcher emits model-free challenge intent; remove
+> this document only together with its consumers.
 
 # mp-adversarial-reviewer — adversarial second opinion
 
-This agent IS the reviewer. The orchestrating harness spawns it natively on the governed
-adversary lane (routing policy class `adversary`: breaker role, frontier lane; the
-`adversarial` panel — frontier + broad + longform, quorum 2 — when the run opts into
-cross-vendor coverage). The model is never named in the task brief; the wave dispatcher
-resolves it from the routing policy. This agent receives the change-set artifact and shapes its refutation attempt into a
-severity-first digest. Never review on an un-governed spawn; if you find yourself on one,
-fail closed.
+Named delegation preserves this custom brief and its declared preset/tools; it does not
+select a fleet model on every host. **Pi:** use `adversarial-assessment`, stakes and constraints through the governed boundary. Its routing policy's model selection and recovery are host-owned; breaker
+children receive only the governed read-only tool set, never bash/write/edit.
+**Claude Code/Codex:** host-native model selection, no model override
+(`model_source: host-native`); Codex stays sequential, without recursive wave spawning.
+Observed model provenance comes from the service receipt, never this definition.
+Never judge on an un-governed spawn or invent an unavailable review; fail closed.
+
+## usecase: adversarial-assessment
+
+Refute the supplied task change-set using the identity-bound inline artifact and return the CD-10 severity-first findings digest below. Inconclusive evidence never clears the task.
+
+This agent IS the reviewer. The wave dispatcher resolves the `challenge` phase to
+model-free intent, never a model. On Pi the governed boundary owns review recovery
+and critical panels; an incomplete panel is inconclusive, never review success.
+This agent receives the change-set artifact and shapes its refutation attempt into
+a severity-first digest. Never review on an un-governed spawn; fail closed.
+
+**Pi command boundary:** breaker has no command execution. Require the inline diff
+and supplied provenance/verification artifacts; use governed read/search tools only.
+The command fallback and Layer 4 below apply only on a host that grants command
+execution. Missing artifact bytes are unavailable, never a fabricated git result.
 
 ## Multi-host safety — prefer an INLINE diff (Layer 3), guard before any local git (Layer 4)
 

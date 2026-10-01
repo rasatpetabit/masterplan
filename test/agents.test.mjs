@@ -1,9 +1,8 @@
 // test/agents.test.mjs — frontmatter lint for the dedicated plugin-root agents (build step 3).
 //
-// Agents are prompts, not modules — they can't be unit-tested by behavior here.
-// This guards the one thing a typo silently breaks: the frontmatter the harness reads
-// to register each agent and pick its model tier. A bad `model:` would otherwise route
-// to the default (parent) tier with no error.
+// Source contracts omit model selection and retain host-readable frontmatter.
+// Effective Pi prompt/tools are exercised against the joint preparation authority
+// in register-pi-agents.test.mjs, not inferred from declarations here.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
@@ -29,6 +28,27 @@ function parseFrontmatter(text) {
 }
 
 const files = readdirSync(AGENTS_DIR).filter((f) => f.endsWith('.md'));
+
+test('source agent contracts do not pin a fleet routing model', () => {
+  for (const file of files) {
+    const text = readFileSync(join(AGENTS_DIR, file), 'utf8');
+    const parsed = parseFrontmatter(text);
+    assert.ok(parsed);
+    assert.equal(Object.hasOwn(parsed.fm, 'model'), false, file);
+    assert.doesNotMatch(text, /policy\/workflow-map\.json/, file);
+  }
+});
+
+test('consumer instructions describe model-free host-native dispatch', () => {
+  const root = join(AGENTS_DIR, '..');
+  for (const file of ['commands/masterplan.md', 'skills/masterplan/SKILL.md',
+    'AGENTS.md', 'docs/development.md', 'docs/verbs.md']) {
+    const text = readFileSync(join(root, file), 'utf8');
+    assert.doesNotMatch(text, /workflow-map\.json|fallback_reviewers|fallback_reason|review-fallback-reason|frontier lane|Model provenance/, file);
+    assert.match(text, /MP_DISPATCH_MAP/, file);
+    assert.match(text, /host-native/, file);
+  }
+});
 
 test('there are dedicated agent files to lint', () => {
   assert.ok(files.length >= 4, `expected >=4 agents/*.md, found ${files.length}`);
@@ -62,7 +82,7 @@ for (const file of files) {
 
 // --- harness-native contract lint -------------------------------------------------
 // The retired delegation contract is gone: every agent's judgment runs
-// on the routing-policy lane the harness dispatches it on. Guard the replacement:
+// in the host's governed execution context. Guard the replacement:
 // no retired dispatch surfaces, and the on-lane + fail-closed discipline documented.
 
 test('no agent declares a retired dispatch surface (dispatch tools, model_group)', () => {
@@ -86,7 +106,7 @@ test('agent frontmatter is Pi-portable (native tool names, roster presets)', () 
   // Claude-Code-era names (Read/Grep/Glob/Write/Bash) bind to NOTHING under Pi — a child
   // spawned with them has no usable tools and dies emitting raw markup (measured on
   // mp-planner, 2026-08-28). Presets must name one of the roster roles so the core model
-  // resolver lands the child on the documented lane family.
+  // resolver preserves the canonical operation owner.
   const PI_TOOLS = new Set(['read', 'bash', 'write', 'edit']);
   const ROSTER_PRESETS = new Set(['sweeper', 'finder', 'tracer', 'builder', 'prover', 'judge', 'breaker']);
   for (const file of files) {
@@ -100,7 +120,7 @@ test('agent frontmatter is Pi-portable (native tool names, roster presets)', () 
     // preset alias only for an agent whose frontmatter declares one, and denies
     // every spawn of an agent it has no alias for ("unknown agent preset"). An
     // agent that declares none is therefore un-dispatchable in every mode, which
-    // is how mp-fallback-reviewer was silently refused.
+    // is a dispatchability failure, never review success.
     assert.ok(
       parsed.fm.preset !== undefined && parsed.fm.preset !== '',
       `${file}: frontmatter missing "preset" — Pi registers no alias for a presetless agent and refuses every spawn ("unknown agent preset")`,

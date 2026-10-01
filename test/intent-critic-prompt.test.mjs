@@ -30,10 +30,11 @@ function parseFrontmatter(text) {
   return fields;
 }
 
-test('agent frontmatter declares the critic/breaker/frontier posture', () => {
+test('agent frontmatter declares the host-native breaker contract', () => {
   const fm = parseFrontmatter(agent);
   assert.equal(fm.name, 'mp-intent-critic');
-  assert.equal(fm.model, 'frontier');
+  assert.equal(Object.hasOwn(fm, 'model'), false);
+  assert.match(agent, /^## usecase: adversarial-assessment$/m);
   assert.equal(fm.preset, 'breaker');
   assert.match(fm.tools, /read/);
   assert.match(fm.tools, /bash/);
