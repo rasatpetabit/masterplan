@@ -1,0 +1,145 @@
+TAP version 13
+# Subtest: fixture-scan FLAGS absolute srv path
+ok 1 - fixture-scan FLAGS absolute srv path
+  ---
+  duration_ms: 4.208424
+  type: 'test'
+  ...
+# Subtest: fixture-scan FLAGS real (non-user) home
+ok 2 - fixture-scan FLAGS real (non-user) home
+  ---
+  duration_ms: 0.781547
+  type: 'test'
+  ...
+# Subtest: fixture-scan FLAGS owner org
+ok 3 - fixture-scan FLAGS owner org
+  ---
+  duration_ms: 0.220337
+  type: 'test'
+  ...
+# Subtest: fixture-scan FLAGS codename
+ok 4 - fixture-scan FLAGS codename
+  ---
+  duration_ms: 0.224314
+  type: 'test'
+  ...
+# Subtest: fixture-scan FLAGS product code FTCD
+ok 5 - fixture-scan FLAGS product code FTCD
+  ---
+  duration_ms: 0.238621
+  type: 'test'
+  ...
+# Subtest: fixture-scan FLAGS product code XCVR
+ok 6 - fixture-scan FLAGS product code XCVR
+  ---
+  duration_ms: 0.181894
+  type: 'test'
+  ...
+# Subtest: fixture-scan FLAGS codename wbn
+ok 7 - fixture-scan FLAGS codename wbn
+  ---
+  duration_ms: 0.35445
+  type: 'test'
+  ...
+# Subtest: fixture-scan does NOT flag allowed / synthetic identifiers
+ok 8 - fixture-scan does NOT flag allowed / synthetic identifiers
+  ---
+  duration_ms: 2.518169
+  type: 'test'
+  ...
+# Subtest: LIVE: no real-identifier leak in any test/fixtures/ file content
+ok 9 - LIVE: no real-identifier leak in any test/fixtures/ file content
+  ---
+  duration_ms: 11.79335
+  type: 'test'
+  ...
+# Subtest: version: readReleaseVersion parses the README marker; null when absent
+ok 10 - version: readReleaseVersion parses the README marker; null when absent
+  ---
+  duration_ms: 1.029256
+  type: 'test'
+  ...
+# Subtest: version: findVersionDrift flags a disagreeing manifest entry
+ok 11 - version: findVersionDrift flags a disagreeing manifest entry
+  ---
+  duration_ms: 0.381962
+  type: 'test'
+  ...
+# Subtest: version: findVersionDrift returns [] when all entries agree
+ok 12 - version: findVersionDrift returns [] when all entries agree
+  ---
+  duration_ms: 0.165152
+  type: 'test'
+  ...
+# Subtest: LIVE: every tracked manifest version field agrees with README Current release
+ok 13 - LIVE: every tracked manifest version field agrees with README Current release
+  ---
+  duration_ms: 0.770536
+  type: 'test'
+  ...
+# Subtest: namespace: parseReservedVerbs extracts the canonical verb list from the orchestrator prompt
+ok 14 - namespace: parseReservedVerbs extracts the canonical verb list from the orchestrator prompt
+  ---
+  duration_ms: 0.495827
+  type: 'test'
+  ...
+# Subtest: namespace FLAGS plan/status/doctor skill dirs as built-in shadows (v7.2.2 plan regression + v8 status/doctor cleanup)
+ok 15 - namespace FLAGS plan/status/doctor skill dirs as built-in shadows (v7.2.2 plan regression + v8 status/doctor cleanup)
+  ---
+  duration_ms: 0.317039
+  type: 'test'
+  ...
+# Subtest: namespace FLAGS an unwired (non-infra) skill dir
+ok 16 - namespace FLAGS an unwired (non-infra) skill dir
+  ---
+  duration_ms: 0.205057
+  type: 'test'
+  ...
+# Subtest: namespace: v8 allows ONLY infra dirs — any verb-named skill dir is flagged (verbs route through bin, not skills)
+ok 17 - namespace: v8 allows ONLY infra dirs — any verb-named skill dir is flagged (verbs route through bin, not skills)
+  ---
+  duration_ms: 0.173959
+  type: 'test'
+  ...
+# Subtest: LIVE: no skills/ dir shadows a built-in or is unwired from the verb router
+ok 18 - LIVE: no skills/ dir shadows a built-in or is unwired from the verb router
+  ---
+  duration_ms: 0.381601
+  type: 'test'
+  ...
+# Subtest: legacy routing authority is absent from the public surface and package
+ok 19 - legacy routing authority is absent from the public surface and package
+  ---
+  duration_ms: 2.830249
+  type: 'test'
+  ...
+# entrypoint evidence: 8 fresh records; 10 distinct refusals; 0 launches
+# native C3/C5/C7: {"admissions":8,"denials":1,"deniedChildren":0,"complete":7,"incomplete":1,"recoveryAttempts":1,"subject":"/tmp/mp-consumer-integration-whbp8h/main::docs/masterplan/task-cutover/wave-1/task-1"}
+# native C3/C5/C7: {"admissions":8,"denials":1,"deniedChildren":0,"complete":7,"incomplete":1,"recoveryAttempts":1,"subject":"/tmp/mp-consumer-integration-lNn25L/main::docs/masterplan/finish-cutover/finish-review"}
+# Subtest: installed-style configured and unconfigured entrypoints refresh intent and refuse without launches
+ok 20 - installed-style configured and unconfigured entrypoints refresh intent and refuse without launches
+  ---
+  duration_ms: 1597.211306
+  type: 'test'
+  ...
+# Subtest: installed-style task and committed-recovery producers reach native C5 and exhaust one persisted C7 episode
+ok 21 - installed-style task and committed-recovery producers reach native C5 and exhaust one persisted C7 episode
+  ---
+  duration_ms: 6871.9204
+  type: 'test'
+  ...
+# Subtest: installed-style finish producer reaches native C5 and exhausts its unchanged episode across changed heads and retries
+ok 22 - installed-style finish producer reaches native C5 and exhausts its unchanged episode across changed heads and retries
+  ---
+  duration_ms: 10162.586474
+  type: 'test'
+  ...
+1..22
+# tests 22
+# suites 0
+# pass 22
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 18889.317009

@@ -42,10 +42,10 @@ try {
     assert.equal(rows[0][0], counterKey, 'the canonical episode keeps its counter');
     assert.equal(JSON.parse(rows[0][1]), expected, 'seats/recovery cannot reserve extra rounds');
   };
-  for (const [index, { descriptor, head, attempt, token }] of launches.entries()) {
+  for (const [index, { descriptor, head, attempt, token, map: launchMap }] of launches.entries()) {
     assert.equal(descriptor.subject, summary.subject);
     assert.ok(head && attempt && token);
-    const map = structuredClone(fixture);
+    const map = structuredClone(launchMap ?? fixture);
     // The additional fixture pool member makes one recovery possible without
     // prescribing any selected model. Selection and floors remain C2/C5-owned.
     if (index === 0) map.panels.critical.lists.push('pro');
@@ -54,6 +54,8 @@ try {
     const decision = resolveDispatch(map, request);
     assert.equal(decision.kind, 'panel');
     assert.equal(decision.seats.length, 3);
+    if (launchMap) assert.equal(decision.seats[0].model, launchMap.lists.frontier.models[0].model,
+      'test policy replacement changes reviewer identity, not the episode subject');
     let children = 0;
     const incomplete = index === 1;
     // The harness consumes one producer descriptor. Its real admission adapter
