@@ -105,7 +105,6 @@ const REQUIRED_PATHS = [
   'agents',
   'skills/masterplan/SKILL.md',
   'skills/masterplan-detect/SKILL.md',
-  'policy/workflow-map.json',
   'package.json',
 ];
 

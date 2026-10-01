@@ -517,7 +517,7 @@ test('inventory: the lexical readEnv discovery stays as the cheap early signal',
   // DISCOVERED before the behavioral contract is demanded of it.
   const env = discoverEnvControls();
   assert.ok(env.length >= 5, `expected a substantial env surface, got ${env.length}`);
-  for (const known of ['CLAUDE_CODE_SESSION_ID', 'CLAUDE_PLUGIN_ROOT', 'PI_CODING_AGENT', 'MP_ROUTING_POLICY']) {
+  for (const known of ['CLAUDE_CODE_SESSION_ID', 'CLAUDE_PLUGIN_ROOT', 'PI_CODING_AGENT', 'MP_DISPATCH_MAP']) {
     assert.ok(env.includes(known), `env discovery must retain ${known} as an early signal`);
   }
 });

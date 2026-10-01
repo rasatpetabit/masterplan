@@ -11,14 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join, basename } from 'node:path';
 
 const AGENTS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'agents');
-import { laneAliasMap } from '../lib/dispatch/routing-policy.mjs';
-
-// Valid model aliases are the routing-policy LANE NAMES, derived from the checked-in
-// policy (never a hand-maintained list): a fleet model change turns this lint over
-// automatically, and a hand-written alias fails closed.
-const VALID_MODELS = new Set(Object.keys(laneAliasMap()));
-const REQUIRED_KEYS = ['name', 'description', 'model', 'tools'];
-
+const REQUIRED_KEYS = ['name', 'description', 'tools'];
 // Minimal scalar-frontmatter parser: the block between the first two `---` fences, one
 // `key: value` per line. These agent frontmatters are flat scalars (no nesting), so a
 // full YAML parser would be a dependency we don't need (zero-dep ethos).
@@ -51,10 +44,6 @@ for (const file of files) {
     for (const key of REQUIRED_KEYS) {
       assert.ok(fm[key] && fm[key].length > 0, `${file}: frontmatter missing "${key}"`);
     }
-    assert.ok(
-      VALID_MODELS.has(fm.model),
-      `${file}: model "${fm.model}" is not a routing-policy lane alias (${[...VALID_MODELS].join(',')})`,
-    );
     assert.equal(
       fm.name,
       basename(file, '.md'),
@@ -139,4 +128,8 @@ test('every judgment agent documents on-lane execution and fail-closed disciplin
       `${file}: must forbid judging on an un-governed spawn`,
     );
   }
+});
+
+test('release agent manifest excludes model-fallback bypass agent', () => {
+  assert.equal(files.includes('mp-fallback-reviewer.md'), false);
 });

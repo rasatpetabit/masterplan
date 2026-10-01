@@ -23,14 +23,7 @@
 //   promptOnly — true only for `<!-- knob: -->` prompt-only controls (a rendered protocol line
 //               is the permitted observable). Everything else needs a code-side observable.
 import { METADATA_EXEMPTIONS } from './discovery.mjs';
-import { loadRoutingPolicy, resolveWorkClass } from '../../../lib/dispatch/routing-policy.mjs';
-
 export { METADATA_EXEMPTIONS };
-
-// The adversary class chain from the checked-in policy — the AUTHORIZED model set for a
-// finish-gate fallback dispatch. Derived here rather than pasted so a routing-policy change
-// turns the fixtures over automatically.
-const ADVERSARY_CHAIN = resolveWorkClass('adversary', { policy: loadRoutingPolicy() }).chain;
 
 // The flag-registration observable: a REGISTERED flag is accepted by the CLI (reach the verb,
 // exit 0), an UNREGISTERED one dies with the A7 fail-closed exit 2. This is a real
@@ -190,18 +183,10 @@ export const REGISTRY = [
   {
     id: 'adversary_review_fallback',
     kind: 'config',
-    describe: 'adversary_review_fallback list vs off changes the finish-gate run_adversary_review op payload the shell dispatches fallback reviewers from',
-    // Derived from the checked-in policy, never pasted: the finish gate now REFUSES a
-    // configured entry outside the adversary class chain (the fallback is dispatched under
-    // that class and its spawn guard authorizes only chain members), so a fabricated ref
-    // would be a guaranteed error rather than an observable.
-    values: [ADVERSARY_CHAIN.slice(1, 3), 'off'],
+    describe: 'off forbids substitution; retired model arrays refuse at the finish consumer',
+    values: [['synthetic-retired-choice'], 'off'],
     vary: (input, v) => ({ ...input, adversary_review_fallback: v }),
     promptOnly: false,
-    // The REAL consumer is the finish machine's op payload (lib/finish-step.mjs resolves the
-    // config chain at the gate and hands the shell the ordered fallback list) — the same
-    // payload commands/masterplan.md's run_adversary_review row dispatches mp-fallback-reviewer
-    // from. Never a resolveRunConfig echo.
     observe: async ({ input, fixtures }) => fixtures[input._id].reviewFallback,
   },
   {
@@ -339,17 +324,17 @@ export const REGISTRY = [
   {
     id: 'MP_ROUTING_POLICY',
     kind: 'env',
-    describe: 'MP_ROUTING_POLICY changes the routing-policy cache key (the policy source)',
-    values: [null, 'workflow-map'],
+    describe: 'retired MP_ROUTING_POLICY refuses with a migration diagnostic instead of resolving a model map',
+    values: [null, 'retired-source'],
     vary: (input, v) => ({ ...input, MP_ROUTING_POLICY: v }),
     promptOnly: false,
-    observe: async ({ input, fixtures }) => fixtures[input._id].routingCacheKey,
+    observe: async ({ input, fixtures }) => fixtures[input._id].routingRetirement,
   },
   {
     id: 'MP_DISPATCH_MAP',
     kind: 'env',
-    describe: 'C1 discovery is configured only with an explicit readable map; missing explicit paths refuse',
-    values: [null, 'missing-explicit'],
+    describe: 'MP_DISPATCH_MAP changes actual fresh C1 source, schema and challenge intent observations',
+    values: [null, 'explicit-fixture'],
     vary: (input, v) => ({ ...input, MP_DISPATCH_MAP: v }),
     promptOnly: false,
     observe: async ({ input, fixtures }) => fixtures[input._id].dispatchMapDiscovery,

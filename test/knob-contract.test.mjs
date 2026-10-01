@@ -487,34 +487,22 @@ async function buildFixture(entry, spec, tag) {
   }
 
   if (entry.id === 'MP_DISPATCH_MAP') {
-    const lib = path.join(ROOT, 'lib', 'dispatch', 'routing-policy.mjs').replace(/\\/g, '/');
-    const script = `
-      import { discoverDispatchMap } from ${JSON.stringify(lib)};
-      try {
-        const d = discoverDispatchMap({ host: 'claude-code', env: process.env,
-          homeDir: '/no-map', readFile: () => { throw Object.assign(new Error('absent'), { code: 'ENOENT' }); } });
-        process.stdout.write(JSON.stringify({ status: d.status }));
-      } catch (error) { process.stdout.write(JSON.stringify({ code: error.code })); }
-    `;
-    const env = { ...mpEnv() };
-    delete env.MP_DISPATCH_MAP;
-    if (need.MP_DISPATCH_MAP) env.MP_DISPATCH_MAP = '/fixture/absent';
-    const out = execFileSync('node', ['--input-type=module', '-e', script], { encoding: 'utf8', env });
-    return { dispatchMapDiscovery: JSON.parse(out) };
+    const { discoverDispatchMap, resolvePhase } = await import(path.join(ROOT, 'lib/dispatch/routing-policy.mjs'));
+    const file = path.join(tmpdir('mp-knob-c1-'), 'dispatch-map.json');
+    fs.copyFileSync(path.join(ROOT, 'test/fixtures/dispatch-map.json'), file);
+    const env = need.MP_DISPATCH_MAP ? { MP_DISPATCH_MAP: file } : {};
+    const d = discoverDispatchMap({ host: 'codex', env, homeDir: path.dirname(file) });
+    return { dispatchMapDiscovery: { status: d.status, source: d.path === file ? 'explicit' : null,
+      schema: d.schema, phase: d.policy ? resolvePhase('challenge', { policy: d.policy }).usecase : null } };
   }
 
   if (entry.id === 'MP_ROUTING_POLICY') {
-    // Task 6 retires this legacy surface. Until then, observe its own real
-    // path resolver, not the migrated C1 wave consumer (which never reads it).
-    const lib = path.join(ROOT, 'lib', 'dispatch', 'routing-policy.mjs').replace(/\\/g, '/');
-    const script = `
-      import { defaultRoutingPolicyPath } from ${JSON.stringify(lib)};
-      process.stdout.write(JSON.stringify(defaultRoutingPolicyPath({ env: process.env,
-        homeDir: '/no-delivered-map', exists: () => false })));
-    `;
-    const env = { ...mpEnv(), MP_ROUTING_POLICY: need.MP_ROUTING_POLICY ?? '' };
-    const out = execFileSync('node', ['--input-type=module', '-e', script], { encoding: 'utf8', env });
-    return { routingCacheKey: JSON.parse(out) };
+    const { discoverDispatchMap } = await import(path.join(ROOT, 'lib/dispatch/routing-policy.mjs'));
+    try {
+      const d = discoverDispatchMap({ host: 'codex', env: need.MP_ROUTING_POLICY === null ? {} : { MP_ROUTING_POLICY: '/retired' },
+        homeDir: '/no-map', readFile: () => { throw Object.assign(new Error('absent'), { code: 'ENOENT' }); } });
+      return { routingRetirement: { status: d.status } };
+    } catch (error) { return { routingRetirement: { code: error.code } }; }
   }
 
   if (entry.id === 'context_watch' || entry.id === 'render_images_marker') {
@@ -721,11 +709,7 @@ async function buildFixture(entry, spec, tag) {
   }
 
   if (entry.id === 'adversary_review_fallback') {
-    // The REAL finish-gate consumer: a repo whose .masterplan.yaml carries the varied
-    // value, a bundle with the review armed, and the real finishStep walk to the
-    // run_adversary_review op — whose payload is what the shell dispatches
-    // mp-fallback-reviewer from (commands/masterplan.md §2c). 'off' empties the list
-    // and records why; a list replaces the policy-derived default outright.
+    // Real finish consumer: off emits noSubstitute; retired arrays refuse.
     const { writeState } = await import(path.join(ROOT, 'lib', 'bundle.mjs'));
     const { finishStep } = await import(path.join(ROOT, 'lib', 'finish-step.mjs'));
     const cfg = need.adversary_review_fallback;
@@ -743,13 +727,22 @@ async function buildFixture(entry, spec, tag) {
       tasks: [{ id: 1, verify_commands: ['true'] }],
     }));
     const step = (extra = {}) => finishStep({ statePath, now: 2000, ...extra });
-    let op = step();
+    let op;
+    try { op = step(); } catch (error) {
+      if (!/model arrays retired/.test(error.message)) throw error;
+      return { reviewFallback: { refused: true } };
+    }
     if (op.op === 'run_verify') op = step({ verify: 'pass' });
-    if (op.op === 'write_retro') { fs.writeFileSync(op.path, '# retro\n'); op = step(); }
+    if (op.op === 'write_retro') { fs.writeFileSync(op.path, '# retro\n');
+      try { op = step(); } catch (error) {
+      if (!/model arrays retired/.test(error.message)) throw error;
+      return { reviewFallback: { refused: true } };
+    }
+    }
     if (op.op !== 'run_adversary_review') {
       throw new Error(`adversary_review_fallback fixture: expected run_adversary_review, got ${JSON.stringify(op.op)}`);
     }
-    return { reviewFallback: { reviewers: op.fallback_reviewers, reason: op.fallback_reason ?? null } };
+    return { reviewFallback: { noSubstitute: op.noSubstitute ?? false } };
   }
 
   if (entry.id === 'render_images' || entry.id === 'render.images') {

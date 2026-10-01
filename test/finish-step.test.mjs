@@ -259,7 +259,8 @@ test('adversary review verdict: --review-verdict lands on the event data; absent
   fs.writeFileSync(path.join(fx.bundleDir, 'retro.md'), '# retro\n');
   assert.equal(fx.step().op, 'run_adversary_review');
   // the answer WITHOUT a verdict: the event carries no verdict field (back-compat)
-  fx.step({ review: 'done', reviewCount: 2, reviewBase: 'main' });
+  write(fx.bundleDir, 'adversary-review-digest.txt', 'Observed complete primary review\n');
+  fx.step({ review: 'done', reviewCount: 2, reviewBase: 'main', reviewDigestFile: path.join(fx.bundleDir, 'adversary-review-digest.txt') });
   const ev = readEvents(fx.bundleDir).find((e) => e.type === 'adversary_review');
   assert.equal(ev.data.sha, git(fx.WT, 'rev-parse', 'HEAD'));
   assert.equal(ev.data.verdict, undefined, 'an absent --review-verdict writes no verdict field');
@@ -270,7 +271,8 @@ test('adversary review verdict: --review-verdict lands on the event data; absent
   fx2.step({ verify: 'pass' });
   fs.writeFileSync(path.join(fx2.bundleDir, 'retro.md'), '# retro\n');
   assert.equal(fx2.step().op, 'run_adversary_review');
-  fx2.step({ review: 'done', reviewCount: 1, reviewBase: 'main', reviewVerdict: 'revise' });
+  write(fx2.bundleDir, 'adversary-review-digest.txt', 'Observed complete primary review\n');
+  fx2.step({ review: 'done', reviewCount: 1, reviewBase: 'main', reviewVerdict: 'revise', reviewDigestFile: path.join(fx2.bundleDir, 'adversary-review-digest.txt') });
   const ev2 = readEvents(fx2.bundleDir).find((e) => e.type === 'adversary_review');
   assert.equal(ev2.data.verdict, 'revise', 'the verdict is machine-readable on the event');
   assert.equal(ev2.data.count, 1);
@@ -284,19 +286,12 @@ test('adversary review verdict: --review-verdict lands on the event data; absent
   assert.equal(readEvents(fx3.bundleDir).filter((e) => e.type === 'adversary_review').length, 0, 'nothing written for a bad verdict');
 });
 
-test('adversary review skip: durable skip event at SHA prevents a re-ask loop; suppression never arms', () => {
+test('adversary review skip: outage is not an owner opt-out', () => {
   const fx = makeFixture({ state: { review: { adversary: true } } });
-  fx.step({ verify: 'pass' });
-  fs.writeFileSync(path.join(fx.bundleDir, 'retro.md'), '# retro\n');
+  fx.step({ verify: 'pass' }); fs.writeFileSync(path.join(fx.bundleDir, 'retro.md'), '# retro\n');
   assert.equal(fx.step().op, 'run_adversary_review');
-  const op = fx.step({ review: 'skipped', reviewReason: 'review runner unavailable' });
-  assert.equal(op.gate, 'branch_finish');
-  assert.equal(op.review, null);
-  const ev = readEvents(fx.bundleDir).find((e) => e.type === 'adversary_review_skipped');
-  assert.match(ev.summary, /adversary-review skipped \(degraded\) — review runner unavailable/);
-  // re-walk: the sha-keyed skip event suppresses another run_adversary_review
-  writeState(fx.statePath, { ...readState(fx.statePath), pending_gate: null });
-  assert.equal(fx.step().gate, 'branch_finish');
+  assert.throws(() => fx.step({ review: 'skipped', reviewReason: 'review runner unavailable' }), /inconclusive/);
+  assert.equal(fx.step().op, 'run_adversary_review');
 });
 
 // ---- defensive arming (spec §4.2-C) -------------------------------------------
@@ -377,15 +372,11 @@ test('Codex host no longer suppresses adversary review (cross-vendor lane, no re
   assert.equal(op.op, 'run_adversary_review');
 });
 
-test('branch_finish AUQ: notice field surfaces defensive-arm note for legacy bundles', () => {
+test('defensive arm remains blocked on a routing outage, never an authorized skip', () => {
   const fx = makeFixture({ explicitCodex: false });
-  fx.step({ verify: 'pass' });
-  fs.writeFileSync(path.join(fx.bundleDir, 'retro.md'), '# retro\n');
-  const op = fx.step({ review: 'skipped', reviewReason: 'review runner unavailable' });
-  // After the shell answers with review='skipped', re-enter: branch_finish rehydrates from the
-  // defensive-arm event (which IS still in events.jsonl) so the notice shows defensive.
-  assert.equal(op.gate, 'branch_finish');
-  assert.match(op.notice, /defensively armed/);
+  fx.step({ verify: 'pass' }); fs.writeFileSync(path.join(fx.bundleDir, 'retro.md'), '# retro\n');
+  assert.throws(() => fx.step({ review: 'skipped', reviewReason: 'review runner unavailable' }), /inconclusive/);
+  assert.equal(fx.step().op, 'run_adversary_review');
 });
 
 test('discard: forced teardown, branch -D, kept dirt discarded, archived', () => {
@@ -1233,162 +1224,134 @@ test('deploy: abort is refused unless the current step is halted in an abort-cap
   assert.equal(op.reason, 'archived');
 });
 
-// ---- review-fallback: the finish-gate fallback reviewer list + recording -------
-
-// The expected default list is DERIVED from the checked-in policy (never a copied list of
-// model ids): the finish-step op must carry exactly what the routing-policy resolver
-// produces for the same policy the primary review dispatches on.
-import { loadRoutingPolicy, adversaryFallbackReviewers } from '../lib/dispatch/routing-policy.mjs';
-
-function armedFixture(over = {}) {
-  return makeFixture({ state: { review: { adversary: true }, ...over } });
-}
-function walkToReview(fx) {
-  fx.step({ verify: 'pass' });
+// ---- model-free finish review ----
+import * as finishModule from '../lib/finish-step.mjs';
+const fixture = JSON.parse(fs.readFileSync(new URL('./fixtures/dispatch-map.json', import.meta.url), 'utf8'));
+function armedFixture(over = {}) { return makeFixture({ state: { review: { adversary: true }, ...over } }); }
+function walkToReview(fx, extra = {}) {
+  fx.step({ verify: 'pass', ...extra });
   fs.writeFileSync(path.join(fx.bundleDir, 'retro.md'), '# retro\n');
-  const op = fx.step();
-  assert.equal(op.op, 'run_adversary_review', `expected the review op, got ${JSON.stringify(op.op)}`);
+  const op = fx.step(extra);
+  assert.equal(op.op, 'run_adversary_review');
   return op;
 }
-
-test('review-fallback: the run_adversary_review op carries the policy-derived fallback list', () => {
-  const fx = armedFixture();
-  const op = walkToReview(fx);
-  const expected = adversaryFallbackReviewers({ policy: loadRoutingPolicy() });
-  assert.deepEqual(op.fallback_reviewers, expected.reviewers);
-  assert.ok(Array.isArray(op.fallback_reviewers) && op.fallback_reviewers.length >= 1,
-    'the checked-in policy must name at least one fallback reviewer');
-  assert.equal(op.fallback_reason, undefined, 'a non-empty list carries no reason');
-  // the op stays resumable/idempotent at an unchanged HEAD (no answer landed yet)
-  const again = fx.step();
-  assert.equal(again.op, 'run_adversary_review');
-  assert.deepEqual(again.fallback_reviewers, expected.reviewers);
-});
-
-test('review-fallback: adversary_review_fallback: off empties the list and records why', () => {
+test('finish review carries no model fallback and honors off', () => {
   const fx = armedFixture();
   write(fx.MAIN, '.masterplan.yaml', 'done: none\nadversary_review_fallback: off\n');
-  const op = walkToReview(fx);
-  assert.deepEqual(op.fallback_reviewers, []);
-  assert.match(op.fallback_reason, /adversary_review_fallback: off/);
+  const r = finishModule.finishReviewDispatch({ policy: fixture, main: fx.MAIN, host: 'pi', subject: 'fixture-project::finish-review' });
+  assert.equal(r.subject, 'fixture-project::finish-review');
+  assert.equal(r.usecase, fixture.phases.challenge);
+  assert.equal(r.stakes, 'consequential');
+  assert.equal(r.blocking, true);
+  assert.equal(r.noSubstitute, true);
+  assert.equal(Object.hasOwn(r, 'model'), false);
+  assert.equal(Object.hasOwn(r, 'fallback_reviewers'), false);
+  for (const subject of [undefined, '', ' ']) assert.throws(() => finishModule.finishReviewDispatch({ policy: fixture, main: fx.MAIN, host: 'pi', subject }), /subject/);
+  write(fx.MAIN, '.masterplan.yaml', 'done: none\nadversary_review_fallback:\n  - synthetic-choice\n');
+  assert.throws(() => finishModule.finishReviewDispatch({ policy: fixture, main: fx.MAIN, host: 'pi', subject: 'fixture-project::finish-review' }), /model arrays retired/);
+});
+test('finishStep persists one subject across changed HEAD, retry and process restart', () => {
+  const fx = armedFixture();
+  const first = walkToReview(fx, { policy: fixture, stakes: 'critical' });
+  assert.equal(first.subject, `${fx.MAIN}::docs/masterplan/t24/finish-review`);
+  assert.equal(readState(fx.statePath).finish_review_subject, first.subject);
+  assert.equal(first.stakes, 'critical');
+  const history = readEvents(fx.bundleDir);
+  write(fx.WT, 'src/a.txt', 'repair\n'); git(fx.WT, 'add', '.'); git(fx.WT, 'commit', '-qm', 'repair');
+  fx.step({ verify: 'pass' });
+  const again = finishStep({ statePath: fx.statePath, self: fx.self, now: 2000, policy: fixture });
+  assert.equal(again.subject, first.subject);
+  assert.equal(again.stakes, 'critical');
+  assert.deepEqual(readEvents(fx.bundleDir), history);
+  assert.equal(Object.hasOwn(again, 'fallback_reviewers'), false);
+  // Real new CLI process resumes the durable episode after the changed HEAD.
+  const binary = path.resolve('bin/masterplan.mjs');
+  const restarted = JSON.parse(execFileSync(process.execPath, [binary, 'finish-step', `--state=${fx.statePath}`,
+    '--agent-is-codex', '--session=sess-A', '--host=h1', '--now=2000'],
+    { encoding: 'utf8', env: { ...process.env, PI_CODING_AGENT: '' } }));
+  assert.equal(restarted.subject, first.subject);
+  assert.equal(restarted.stakes, 'critical'); assert.equal(restarted.host, 'codex');
+  assert.deepEqual(readEvents(fx.bundleDir), history);
+});
+for (const host of ['claude-code', 'codex']) test(`finishStep unconfigured ${host} retains critical intent and constraints`, () => {
+  const fx = armedFixture();
+  write(fx.MAIN, '.masterplan.yaml', 'done: none\nadversary_review_fallback: off\n');
+  const discoveryOptions = { env: {}, homeDir: '/fixture-absent', readFile: () => { throw Object.assign(new Error('absent'), { code: 'ENOENT' }); } };
+  const op = walkToReview(fx, { host, stakes: 'critical', discoveryOptions });
+  assert.deepEqual(op.routing_map, { status: 'unconfigured', path: null, schema: null });
+  assert.equal(op.model_source, 'host-native');
+  assert.equal(op.phase, 'challenge'); assert.equal(op.agent, 'breaker');
+  assert.equal(Object.hasOwn(op, 'usecase'), false);
+  assert.equal(Object.hasOwn(op, 'model'), false);
+  assert.equal(op.stakes, 'critical'); assert.equal(op.noSubstitute, true); assert.equal(op.blocking, true);
+  assert.equal(op.subject, readState(fx.statePath).finish_review_subject);
+});
+for (const reason of ['denied', 'exhausted', 'empty', 'incomplete critical panel']) test(`finishStep refuses routing-failure skip: ${reason}`, () => {
+  const fx = armedFixture(); walkToReview(fx, { policy: fixture, stakes: 'critical' });
+  const before = readEvents(fx.bundleDir);
+  assert.throws(() => fx.step({ review: 'skipped', reviewReason: reason }), /inconclusive|authorization/);
+  assert.deepEqual(readEvents(fx.bundleDir), before);
+  assert.equal(readState(fx.statePath).pending_gate, null);
+  assert.equal(fx.step({ policy: fixture }).op, 'run_adversary_review');
+});
+test('finishStep refuses successful inconclusive review before evidence or branch_finish', () => {
+  const fx = armedFixture(); walkToReview(fx, { policy: fixture, stakes: 'critical' });
+  assert.throws(() => fx.step({ review: 'done', reviewVerdict: 'inconclusive' }), /inconclusive/);
+  assert.equal(readEvents(fx.bundleDir).filter(e => e.type === 'adversary_review').length, 0);
+  assert.equal(readState(fx.statePath).pending_gate, null);
+});
+test('historical routing skip cannot clear a newly governed gate or allocate a new subject', () => {
+  const fx = armedFixture();
+  fs.writeFileSync(path.join(fx.bundleDir, 'events.jsonl'), JSON.stringify({ type: 'adversary_review_skipped', data: { sha: git(fx.WT, 'rev-parse', 'HEAD') }, summary: 'outage' })+'\n');
+  const before = fs.readFileSync(path.join(fx.bundleDir, 'events.jsonl'), 'utf8');
+  assert.throws(() => walkToReview(fx, { policy: fixture }), /active-episode.*migration/);
+  assert.equal(readState(fx.statePath).finish_review_subject, undefined);
+  assert.equal(fs.readFileSync(path.join(fx.bundleDir, 'events.jsonl'), 'utf8'), before);
 });
 
-test('review-fallback: a config list override replaces the policy-derived list', () => {
-  const fx = armedFixture();
-  // Derived from the checked-in policy, never pasted: a configured entry must sit inside the
-  // adversary class chain, because the fallback is dispatched under that class and its spawn
-  // guard authorizes an override only inside the chain.
-  const chain = adversaryFallbackReviewers({ policy: loadRoutingPolicy() }).chain;
-  const [first, second] = chain.slice(1);
-  write(fx.MAIN, '.masterplan.yaml',
-    `done: none\nadversary_review_fallback:\n  - ${first}\n  - ${second}\n`);
-  const op = walkToReview(fx);
-  assert.deepEqual(op.fallback_reviewers, [first, second]);
-  assert.equal(op.fallback_reason, undefined);
-});
-
-test('review-fallback: a config entry outside the adversary class chain fails closed', () => {
-  // Such an entry is a guaranteed spawn refusal (the class guard authorizes only chain
-  // members), so it is an operator error like a malformed value — never silently dropped,
-  // which would discard a reviewer the operator asked for.
-  const fx = armedFixture();
-  write(fx.MAIN, '.masterplan.yaml',
-    'done: none\nadversary_review_fallback:\n  - litellm/not-in-the-adversary-chain\n');
-  assert.throws(
-    () => walkToReview(fx),
-    /outside the routing policy's adversary class chain/,
-  );
-});
-
-test('review-fallback: an unavailable routing policy → empty list + recorded reason, gate never wedges', () => {
-  const fx = armedFixture();
-  const prior = process.env.MP_ROUTING_POLICY;
-  try {
-    process.env.MP_ROUTING_POLICY = path.join(os.tmpdir(), 'mp-no-such-policy.json');
-    const op = walkToReview(fx);
-    assert.deepEqual(op.fallback_reviewers, []);
-    assert.match(op.fallback_reason, /routing policy unavailable: /);
-  } finally {
-    if (prior === undefined) delete process.env.MP_ROUTING_POLICY;
-    else process.env.MP_ROUTING_POLICY = prior;
+test('critical empty or verdict-less completion refuses before any successful review event', () => {
+  for (const verdict of [null, 'approve']) {
+    const fx = armedFixture(); walkToReview(fx, { policy: fixture, stakes: 'critical' });
+    const empty = path.join(fx.bundleDir, 'empty-review.txt'); fs.writeFileSync(empty, '  \n');
+    assert.throws(() => fx.step({ review: 'done', reviewVerdict: verdict, reviewDigestFile: empty }), /inconclusive|complete review/);
+    assert.equal(readState(fx.statePath).pending_gate, null);
+    assert.equal(readEvents(fx.bundleDir).filter(e => e.type === 'adversary_review').length, 0);
   }
 });
-
-test('review-fallback: --review-reviewer/--review-fallback-reason land on the durable event data', () => {
-  const fx = armedFixture();
-  walkToReview(fx);
-  const digestFile = path.join(fx.bundleDir, 'adversary-review-digest.txt');
-  fs.writeFileSync(digestFile, 'P1: the thing\n');
-  const op = fx.step({
-    review: 'done', reviewCount: 2, reviewBase: 'main', reviewDigestFile: digestFile,
-    reviewReviewer: 'litellm/fallback-used', reviewFallbackReason: 'primary refused by the review circuit breaker',
-  });
-  assert.equal(op.gate, 'branch_finish');
-  const ev = readEvents(fx.bundleDir).find((e) => e.type === 'adversary_review');
-  assert.equal(ev.data.reviewer, 'litellm/fallback-used');
-  assert.deepEqual(ev.data.fallback, { reason: 'primary refused by the review circuit breaker' });
-  // the summary stays the audit signal it was — \b(codex|adversary)\s+review\b must still match
-  assert.match(ev.summary, /\b(codex|adversary)\s+review\b/);
-  assert.match(ev.summary, /adversary review complete/);
-  // ...and a skip summary must still NOT match it (fail-soft polarity preserved)
-  assert.doesNotMatch('adversary-review skipped (degraded)', /\b(codex|adversary)\s+review\b/);
+test('old outage-cleared branch_finish cannot authorize disposition or re-render as cleared', () => {
+  const fx = armedFixture(); walkToReview(fx, { policy: fixture });
+  const head = git(fx.WT, 'rev-parse', 'HEAD');
+  writeState(fx.statePath, { ...readState(fx.statePath), pending_gate: { id: 'branch_finish' } });
+  fs.writeFileSync(path.join(fx.bundleDir, 'events.jsonl'), JSON.stringify({ type: 'adversary_review_skipped', data: { sha: head }, summary: 'exhausted' })+'\n');
+  for (const extra of [{}, { choice: 'keep' }]) assert.throws(() => fx.step(extra), /governed review required/);
+  assert.equal(readState(fx.statePath).pending_gate.id, 'branch_finish');
+  assert.equal(git(fx.WT, 'rev-parse', 'HEAD'), head);
+});
+test('persisted finish constraints and subject cannot be reset on resume', () => {
+  const fx = armedFixture({ finish_review_subject: 'fixture-project::finish-review',
+    finish_review_intent: { stakes: 'critical', raiseTier: 'frontier', raiseEffort: 'xhigh', independentOf: { lineage: ['synthetic-author'], required: true }, noSubstitute: true } });
+  const op = walkToReview(fx, { policy: fixture });
+  for (const key of ['stakes', 'raiseTier', 'raiseEffort', 'independentOf', 'noSubstitute']) assert.deepEqual(op[key], readState(fx.statePath).finish_review_intent[key]);
+  assert.equal(op.subject, 'fixture-project::finish-review');
+  assert.throws(() => fx.step({ policy: fixture, stakes: 'consequential' }), /stakes.*persisted/);
 });
 
-test('review-fallback: a PRIMARY review records the reviewer with no fallback field', () => {
-  const fx = armedFixture();
-  walkToReview(fx);
-  fx.step({ review: 'done', reviewCount: 0, reviewBase: 'main', reviewReviewer: 'adversary' });
-  const ev = readEvents(fx.bundleDir).find((e) => e.type === 'adversary_review');
-  assert.equal(ev.data.reviewer, 'adversary');
-  assert.equal('fallback' in ev.data, false, 'no fallback reason → no fallback field on the event');
+test('consequential missing review output is inconclusive, not successful completion', () => {
+  const fx = armedFixture(); walkToReview(fx, { policy: fixture });
+  assert.throws(() => fx.step({ review: 'done', reviewCount: 0, reviewVerdict: 'approve' }), /complete review.*digest|inconclusive/);
+  assert.equal(readEvents(fx.bundleDir).filter(e => e.type === 'adversary_review').length, 0);
+  assert.equal(readState(fx.statePath).pending_gate, null);
 });
 
-test('review-fallback: old callers without the new flags are unchanged', () => {
-  const fx = armedFixture();
-  walkToReview(fx);
-  fx.step({ review: 'done', reviewCount: 1, reviewBase: 'main' });
-  const ev = readEvents(fx.bundleDir).find((e) => e.type === 'adversary_review');
-  assert.equal('reviewer' in ev.data, false);
-  assert.equal('fallback' in ev.data, false);
-  assert.match(ev.summary, /adversary review complete/);
-});
-
-test('review-fallback: a fallback reason without --review-done is refused, nothing recorded', () => {
-  const fx = armedFixture();
-  walkToReview(fx);
-  assert.throws(
-    () => fx.step({ review: 'skipped', reviewReason: 'primary failed', reviewFallbackReason: 'why' }),
-    /--review-fallback-reason is only valid with --review-done/,
-  );
-  assert.throws(
-    () => fx.step({ reviewFallbackReason: 'why' }),
-    /--review-fallback-reason is only valid with --review-done/,
-  );
-  // non-string / empty forms are refused too
-  assert.throws(() => fx.step({ review: 'done', reviewReviewer: 7 }), /--review-reviewer must be a non-empty string/);
-  assert.throws(() => fx.step({ review: 'done', reviewReviewer: '' }), /--review-reviewer must be a non-empty string/);
-  assert.equal(readEvents(fx.bundleDir).filter((e) => e.type === 'adversary_review').length, 0,
-    'a refused answer records no event');
-});
-
-test('review-fallback: the branch_finish AUQ review line carries the reviewer and the fallback', () => {
-  const fx = armedFixture();
-  walkToReview(fx);
-  const digestFile = path.join(fx.bundleDir, 'adversary-review-digest.txt');
-  fs.writeFileSync(digestFile, 'P1: the thing\n');
-  const op = fx.step({
-    review: 'done', reviewCount: 2, reviewBase: 'main', reviewDigestFile: digestFile,
-    reviewReviewer: 'litellm/fallback-used', reviewFallbackReason: 'primary lane refused',
-  });
-  assert.equal(op.gate, 'branch_finish');
-  assert.equal(op.review.present, true);
-  assert.equal(op.review.reviewer, 'litellm/fallback-used');
-  assert.deepEqual(op.review.fallback, { reason: 'primary lane refused' });
-
-  // the primary-only case: reviewer shown, no fallback
-  const fx2 = armedFixture();
-  walkToReview(fx2);
-  const op2 = fx2.step({ review: 'done', reviewCount: 0, reviewBase: 'main', reviewReviewer: 'adversary' });
-  assert.equal(op2.review.reviewer, 'adversary');
-  assert.equal(op2.review.fallback, null);
+test('complete critical primary review records observed digest and stable subject, not fallback metadata', () => {
+  const fx = armedFixture(); const op = walkToReview(fx, { policy: fixture, stakes: 'critical' });
+  const digest = "Three complete reports and adjudication: supported; shell bytes $(do-not-run) 'quoted'\n";
+  fs.writeFileSync(op.digest_path, digest);
+  const result = fx.step({ review: 'done', reviewCount: 0, reviewBase: 'main',
+    reviewVerdict: 'approve', reviewReviewer: 'observed-primary', reviewDigestFile: op.digest_path });
+  assert.equal(result.gate, 'branch_finish');
+  assert.equal(Object.hasOwn(result.review, 'fallback'), false);
+  const receipt = readEvents(fx.bundleDir).find(e => e.type === 'adversary_review');
+  assert.equal(receipt.data.subject, op.subject); assert.equal(receipt.data.reviewer, 'observed-primary');
+  assert.equal(receipt.note, digest); assert.equal(Object.hasOwn(receipt.data, 'fallback'), false);
 });
