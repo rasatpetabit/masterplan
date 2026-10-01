@@ -85,6 +85,10 @@ review. It runs the harness-native adversary class/panel over the branch diff.
 
 Pi dispatches the returned model-free challenge intent through the governed boundary, which owns recovery and records C3. Other hosts review on their own model. The persisted project-qualified finish-review subject survives repairs and process restart. Existing active episodes without a subject need an active-episode migration receipt; no fresh budget is allocated automatically.
 
+Only newly seeded bundles carry `finish_review_new:true`, consumed atomically when the subject is persisted before emission. Missing review events do not establish newness: the legacy producer emitted without logging a request. Subjectless, unmarked episodes therefore remain migration-required; reading an old bundle never adds the marker.
+
+An armed `branch_finish` gate persists its reviewed head. After worktree teardown, validation uses the surviving branch tip or durable retirement/gate tip, plus MAIN-side landing evidence (or recorded discard intent). Completed review at that tip is still required; worktree absence and outage-only receipts never exempt the guard.
+
 `adversary_review_fallback: off` means `noSubstitute:true`. Model arrays are retired; migrate choices to inference routing. There is no override loop or alternate reviewer identity outside circuit-breaker admission. Denial, exhaustion, empty reports, and incomplete critical panels are inconclusive: no success evidence, no automatic skip, no cleared finish gate. Independently recorded owner opt-outs remain valid.
 
 The shell writes reviewer-authored digest bytes to a file and passes its path, never the bytes as shell words. Historical receipt readers remain read-only; an old routing skip is not newly completed governed review.

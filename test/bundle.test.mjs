@@ -311,6 +311,7 @@ test('buildSeedState: a minimal seed is a core-valid v8 brainstorm bundle with t
   assert.deepEqual(s.tasks, []);
   assert.equal(s.active_run, null);
   assert.equal(s.pending_gate, null);
+  assert.equal(s.finish_review_new, true, 'only new seeds certify a finish episode has not emitted');
   assert.equal(s.complexity, null); // optional fields default to null, not undefined (round-trippable)
   assert.equal(s.planning_mode, 'auto');
   // Spec §4.1: default-on at seed arms finish-time adversary review via the nested state.review key
@@ -320,6 +321,12 @@ test('buildSeedState: a minimal seed is a core-valid v8 brainstorm bundle with t
   assert.equal(s.goals_enabled, true); // bundle-level capability marker (post-feature)
   assert.deepEqual(s.goals, []); // derived cache starts empty
   assert.deepEqual(parseState(serializeState(s)), s); // survives the on-disk format
+});
+
+test('legacy state read does not certify an ambiguous finish episode as new', () => {
+  const legacy = parseState('schema_version: 9\nslug: legacy\ntasks: []\n');
+  assert.equal(legacy.finish_review_new, undefined);
+  assert.equal(parseState(serializeState(legacy)).finish_review_new, undefined);
 });
 
 test('buildSeedState: codexReview opt-out omits the nested review field (A9 absent-field style)', () => {

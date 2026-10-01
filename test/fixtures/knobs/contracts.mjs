@@ -39,6 +39,15 @@ export const FLAG_REGISTRATION = {
 // Registry of substantive two-value behavioral contracts. Every DERIVED non-exempt control
 // must resolve here or to the generic flag-registration contract (see flagContract below).
 export const REGISTRY = [
+  {
+    id: 'finish_review_new',
+    kind: 'state',
+    describe: 'positive new-episode evidence permits subject allocation; ambiguous legacy episodes require migration',
+    values: [true, false],
+    vary: (input, v) => ({ ...input, finish_review_new: v }),
+    promptOnly: false,
+    observe: async ({ input, fixtures }) => fixtures[input._id].finishEpisode,
+  },
   // ---- config paths -------------------------------------------------------
   {
     id: 'complexity',

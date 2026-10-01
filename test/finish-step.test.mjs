@@ -9,11 +9,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { execFileSync } from 'node:child_process';
 
 import { finishStep } from '../lib/finish-step.mjs';
 import { liveCheckDigest } from '../lib/finish.mjs';
-import { readState, writeState } from '../lib/bundle.mjs';
+import { readState, writeState, buildSeedState, appendEvent } from '../lib/bundle.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
 import { acquireOwner } from '../lib/owner-fs.mjs';
 
@@ -75,6 +76,7 @@ function makeFixture({ slug = 't24', state: over = {}, ownerLockOff = false, ver
     worktree: WT,
     pending_gate: null,
     active_run: null,
+    finish_review_new: true, // fixtures represent new episodes unless explicitly legacy
     tasks: [{ id: 1, status: 'done', wave: 1, files: ['src/a.txt'] }],
     ...(ownerLockOff ? { concurrency: { owner_lock: 'off' } } : {}),
     ...over,
@@ -1354,4 +1356,106 @@ test('complete critical primary review records observed digest and stable subjec
   const receipt = readEvents(fx.bundleDir).find(e => e.type === 'adversary_review');
   assert.equal(receipt.data.subject, op.subject); assert.equal(receipt.data.reviewer, 'observed-primary');
   assert.equal(receipt.note, digest); assert.equal(Object.hasOwn(receipt.data, 'fallback'), false);
+});
+
+function walkToReviewedGate(fx) {
+  const review = walkToReview(fx, { policy: fixture });
+  fs.writeFileSync(review.digest_path, 'Complete review: approved, zero findings.\n');
+  const gate = fx.step({ review: 'done', reviewVerdict: 'approve', reviewCount: 0,
+    reviewBase: review.base, reviewDigestFile: review.digest_path });
+  assert.equal(gate.gate, 'branch_finish');
+  return gate;
+}
+
+for (const deleteBranch of [false, true]) test(`armed review teardown crash replay: branch deleted=${deleteBranch}`, () => {
+  const fx = armedFixture();
+  const gate = walkToReviewedGate(fx);
+  const history = readEvents(fx.bundleDir);
+  git(fx.MAIN, 'merge', '--no-edit', '-q', 'masterplan/t24');
+  git(fx.MAIN, 'worktree', 'remove', '--force', fx.WT);
+  if (deleteBranch) git(fx.MAIN, 'branch', '-d', 'masterplan/t24');
+  const replay = fx.step();
+  assert.equal(replay.gate, 'branch_finish');
+  assert.equal(replay.wt_missing, true);
+  assert.equal(replay.head, gate.head);
+  assert.equal(replay.review.present, true);
+  assert.deepEqual(readEvents(fx.bundleDir), history, 're-render does not rewrite historical evidence');
+  assert.equal(fx.step({ choice: 'merge' }).reason, 'archived');
+  assert.equal(readState(fx.statePath).worktree_disposition, 'removed_after_merge');
+});
+
+test('armed review missing worktree cannot substitute outage-only or unlanded evidence', () => {
+  for (const outage of [true, false]) {
+    const fx = armedFixture();
+    const gate = walkToReviewedGate(fx);
+    if (outage) {
+      fs.writeFileSync(path.join(fx.bundleDir, 'events.jsonl'), JSON.stringify({
+        type: 'adversary_review_skipped', data: { sha: gate.head }, summary: 'exhausted',
+      }) + '\n');
+      git(fx.MAIN, 'merge', '--no-edit', '-q', 'masterplan/t24');
+    }
+    git(fx.MAIN, 'worktree', 'remove', '--force', fx.WT);
+    git(fx.MAIN, 'branch', '-D', 'masterplan/t24');
+    for (const answer of [{}, { choice: 'merge' }])
+      assert.throws(() => fx.step(answer), /governed review required|teardown evidence/);
+    assert.equal(readState(fx.statePath).pending_gate.id, 'branch_finish');
+    assert.equal(readState(fx.statePath).worktree_disposition, undefined);
+  }
+});
+
+// Execute the actual pre-retirement producer and reader without restoring either
+// file to the checkout. Relative dependencies still resolve to this repository.
+async function baselineFinishStep() {
+  const repo = path.resolve(new URL('..', import.meta.url).pathname);
+  const sourceAt = (relative) => execFileSync('git', ['-C', repo, 'show', `823d6bc0aa1f3b7ff92d97e5e3252743f5f8305f:${relative}`], { encoding: 'utf8' });
+  const asModule = (relative, overrides = {}) => {
+    const url = pathToFileURL(path.join(repo, relative));
+    const source = sourceAt(relative).replace(/from '([^']+)'/g, (match, specifier) => {
+      if (!specifier.startsWith('.')) return match;
+      return `from '${overrides[specifier] ?? new URL(specifier, url).href}'`;
+    }).replaceAll('import.meta.url', JSON.stringify(url.href));
+    return `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
+  };
+  const routing = asModule('lib/dispatch/routing-policy.mjs');
+  return (await import(asModule('lib/finish-step.mjs', { './dispatch/routing-policy.mjs': routing }))).finishStep;
+}
+
+test('legacy emitted finish review with empty history requires migration before new subject allocation', async () => {
+  const fx = armedFixture({ finish_review_new: undefined });
+  write(fx.MAIN, '.masterplan.yaml', 'done: none\nadversary_review_fallback: off\n');
+  const legacyStep = await baselineFinishStep();
+  const args = { statePath: fx.statePath, self: fx.self, now: 2000 };
+  assert.equal(legacyStep({ ...args, verify: 'pass' }).op, 'write_retro');
+  fs.writeFileSync(path.join(fx.bundleDir, 'retro.md'), '# retro\n');
+  const emitted = legacyStep(args);
+  assert.equal(emitted.op, 'run_adversary_review');
+  assert.equal(emitted.subject, undefined);
+  assert.deepEqual(readEvents(fx.bundleDir), [], 'baseline emission leaves no event');
+  const stateBefore = fs.readFileSync(fx.statePath, 'utf8');
+  assert.throws(() => fx.step({ policy: fixture }), /active-episode.*migration/);
+  assert.equal(fs.readFileSync(fx.statePath, 'utf8'), stateBefore);
+  assert.deepEqual(readEvents(fx.bundleDir), []);
+});
+
+test('positively new seeded finish episode allocates subject once and consumes newness marker', () => {
+  const seed = buildSeedState({ slug: 't24', topic: 'new run', createdAt: '2026-09-30T00:00:00Z' });
+  assert.equal(seed.finish_review_new, true);
+  const fx = armedFixture({ finish_review_new: seed.finish_review_new });
+  const first = walkToReview(fx, { policy: fixture });
+  assert.ok(first.subject);
+  assert.equal(readState(fx.statePath).finish_review_new, undefined);
+  assert.equal(fx.step({ policy: fixture }).subject, first.subject);
+});
+
+for (const choice of ['merge', 'discard']) test(`armed review teardown recovers durable ${choice} intent without gate tip`, () => {
+  const fx = armedFixture();
+  const gate = walkToReviewedGate(fx);
+  writeState(fx.statePath, { ...readState(fx.statePath), pending_gate: { id: 'branch_finish' } });
+  if (choice === 'merge') git(fx.MAIN, 'merge', '--no-edit', '-q', 'masterplan/t24');
+  appendEvent(fx.statePath, { type: 'branch_finish_intent', note: choice, branch_tip: gate.head });
+  git(fx.MAIN, 'worktree', 'remove', '--force', fx.WT);
+  git(fx.MAIN, 'branch', choice === 'merge' ? '-d' : '-D', 'masterplan/t24');
+  assert.equal(fx.step().review.present, true);
+  assert.equal(fx.step({ choice }).reason, 'archived');
+  assert.equal(readState(fx.statePath).worktree_disposition, 'removed_after_merge');
 });

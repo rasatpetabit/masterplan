@@ -708,6 +708,29 @@ async function buildFixture(entry, spec, tag) {
     return { reviewContext: { enabled: rec?.review_context?.enabled ?? null } };
   }
 
+  if (entry.id === 'finish_review_new') {
+    const { writeState } = await requireBundle();
+    const { finishStep } = await import(path.join(ROOT, 'lib', 'finish-step.mjs'));
+    const { statePath, WT, bundleDir, slug } = buildRepoForKnob({ configYaml: 'done: none\n', slug: `knobnew${tag.toLowerCase()}` });
+    writeState(statePath, {
+      schema_version: 9, slug, status: 'in-progress', phase: 'execute', worktree: WT,
+      pending_gate: null, active_run: null, finish_review_new: need.finish_review_new,
+      review: { adversary: true }, concurrency: { owner_lock: 'off' },
+      tasks: [{ id: 1, status: 'done', wave: 1, files: ['src/a.txt'] }],
+    });
+    fs.writeFileSync(path.join(bundleDir, 'retro.md'), '# retro\n');
+    try {
+      const op = finishStep({ statePath, now: 2000, verify: 'pass', host: 'codex', discoveryOptions: {
+        env: {}, homeDir: '/fixture-absent', readFile: () => { throw Object.assign(new Error('absent'), { code: 'ENOENT' }); },
+      } });
+      assert.equal(op.op, 'run_adversary_review');
+      return { finishEpisode: { op: op.op, subjectAllocated: Boolean(op.subject) } };
+    } catch (error) {
+      if (!/active-episode.*migration/.test(error.message)) throw error;
+      return { finishEpisode: { refused: 'migration required' } };
+    }
+  }
+
   if (entry.id === 'adversary_review_fallback') {
     // Real finish consumer: off emits noSubstitute; retired arrays refuse.
     const { writeState } = await import(path.join(ROOT, 'lib', 'bundle.mjs'));
@@ -719,7 +742,7 @@ async function buildFixture(entry, spec, tag) {
     const { statePath, WT, bundleDir, slug } = buildRepoForKnob({ configYaml, slug: `knobfb${tag.toLowerCase()}` });
     writeState(statePath, {
       schema_version: 8, slug, status: 'in-progress', phase: 'execute', worktree: WT,
-      pending_gate: null, active_run: null,
+      pending_gate: null, active_run: null, finish_review_new: true,
       review: { adversary: true }, concurrency: { owner_lock: 'off' },
       tasks: [{ id: 1, status: 'done', wave: 1, files: ['src/a.txt'] }],
     });
