@@ -127,7 +127,11 @@ host-specific:
   same contracts via its plugin namespace with no model override; Codex remains
   foreground-sequential without recursive wave spawning.
 
-On pi, call **bare** names only: `subagent({ agent: 'mp-spec-decomposer' })`.
+On pi, call **bare** names with the explicit operation:
+`subagent({ agent: 'mp-spec-decomposer', usecase: 'plan' })`.
+A name-only call uses the judge preset's default operation (`decide`), which is
+not the decomposer's plan-only contract. Use `usecase: 'plan'` for both initial
+decomposition and recovery re-dispatch.
 Colon alias files are no longer installed; CC-authored `masterplan:mp-*` names
 still resolve on Claude Code via the plugin loader. A host where
 `subagent({ action: 'list' })` shows no `mp-*` is a registration gap to fix

@@ -6,6 +6,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, mkdirSync, writeFileSync, mkdtempSync, existsSync, unlinkSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { runInNewContext } from 'node:vm';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, isAbsolute } from 'node:path';
@@ -457,6 +458,61 @@ test('manifest prunes managed fallback reviewer copies and preserves unmanaged c
   assert.equal(readFileSync(join(targetDir, 'mp-fallback-reviewer.md'), 'utf8'), 'unmanaged');
 });
 
+
+// Execute the documented call locally to capture its request, then exercise the
+// actual registered decomposer against a nonmatching canonical judge default.
+test('documented Pi decomposer invocation prepares plan when judge defaults to decide', () => {
+  const W = process.env.W;
+  assert.ok(W && isAbsolute(W), 'W must name the absolute joint integration checkout');
+  const docs = readFileSync(join(repoRoot, 'docs/development.md'), 'utf8');
+  const example = docs.match(/`(subagent\(\{ agent: 'mp-spec-decomposer'[^`]*\}\))`/);
+  assert.ok(example, 'missing documented Pi decomposer invocation');
+  const request = runInNewContext(example[1], { subagent: args => args });
+  const targetDir = mkdtempTracked(join(tmpdir(), 'mp-reg-decomposer-'));
+  const project = mkdtempTracked(join(tmpdir(), 'mp-reg-decomposer-project-'));
+  const home = mkdtempTracked(join(tmpdir(), 'mp-reg-decomposer-home-'));
+  assert.equal(runRegister({ agentsDir: join(repoRoot, 'agents'), targetDir, check: false, homeDir: home }).registered, 8);
+  const result = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', String.raw`
+    import assert from 'node:assert/strict';
+    import fs from 'node:fs';
+    import path from 'node:path';
+    import { pathToFileURL } from 'node:url';
+    const { W, targetDir, project, fixturePath, request } = JSON.parse(fs.readFileSync(0, 'utf8'));
+    const load = relative => import(pathToFileURL(path.join(W, 'pi-subagents', relative)).href);
+    const { prepareGovernedAgentForDispatch, MissingUsecaseSectionError } = await load('engine/agent-prompt.ts');
+    const { readGovernedBreakerTools, discoverAgentsAll } = await load('subagents/src/agents/agents.ts');
+    const { createDispatchCoreModelResolver } = await load('engine/runtime-model-resolver.ts');
+    for (const fn of [prepareGovernedAgentForDispatch, readGovernedBreakerTools, discoverAgentsAll, createDispatchCoreModelResolver]) assert.equal(typeof fn, 'function');
+    const map = JSON.parse(fs.readFileSync(fixturePath, 'utf8'));
+    map.agents.judge.defaultUsecase = 'decide';
+    const mapPath = path.join(project, 'dispatch-map.json');
+    fs.writeFileSync(mapPath, JSON.stringify(map));
+    const resolver = createDispatchCoreModelResolver({ mapPath });
+    const raw = discoverAgentsAll(project).user.find(a => a.name === request.agent && a.filePath.startsWith(targetDir + path.sep));
+    assert.ok(raw, 'actual registered decomposer must be discovered');
+    const trusted = readGovernedBreakerTools();
+    const nameOnly = resolver.resolve({ agentName: raw.name, presetName: raw.preset });
+    assert.equal(nameOnly.verdict.verdict, 'allow');
+    assert.equal(nameOnly.dispatchDecision.usecase, 'decide');
+    assert.throws(() => prepareGovernedAgentForDispatch(raw, nameOnly.dispatchDecision, trusted, () => {}), MissingUsecaseSectionError);
+    const resolved = resolver.resolve({ ...request, agentName: request.agent, presetName: raw.preset });
+    assert.equal(resolved.verdict.verdict, 'allow');
+    const child = prepareGovernedAgentForDispatch(raw, resolved.dispatchDecision, trusted, () => {});
+    assert.equal(resolved.dispatchDecision.usecase, 'plan');
+    assert.match(child.systemPrompt, /# mp-spec-decomposer —/);
+    assert.deepEqual([...child.systemPrompt.matchAll(/^## usecase: ([a-z-]+)$/gm)].map(m => m[1]), ['plan']);
+    assert.match(child.systemPrompt, /Decompose the approved spec/);
+    assert.deepEqual(child.tools, raw.tools);
+    console.log('documented plan invocation prepared; name-only decide refused');
+  `], {
+    cwd: join(W, 'pi-subagents'), encoding: 'utf8',
+    input: JSON.stringify({ W, targetDir, project, request, fixturePath: join(repoRoot, 'test/fixtures/dispatch-map.json') }),
+    env: { ...process.env, HOME: home, USERPROFILE: home, PI_CODING_AGENT_DIR: join(home, '.pi/agent'),
+      PI_SUBAGENT_EXTRA_AGENT_DIRS: targetDir, PYTHONDONTWRITEBYTECODE: '1', TSX_DISABLE_CACHE: '1' },
+  });
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+  assert.equal(result.stdout.trim(), 'documented plan invocation prepared; name-only decide refused');
+});
 
 // Task 7: actual registered definitions through the joint checkout's C4/tool authority.
 // Synthetic runners observe prepared children only: no Pi process/provider is started.

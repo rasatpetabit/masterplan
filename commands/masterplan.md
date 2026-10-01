@@ -188,8 +188,9 @@ baseline and no `verify-scope`. `active_run.kind:'plan'` carries **no wave**.
 **Launch** (reached from §3a's parallel branch, and from crash recovery):
 
 1. **Subsystems in hand.** Use the decomposition from §3a (`mp-spec-decomposer`'s `{subsystems}`). On
-   a recovery re-entry with none in hand, re-dispatch `mp-spec-decomposer` first — the fan-out is
-   idempotent, so re-deriving the seam map is safe.
+   a recovery re-entry with none in hand, re-dispatch `mp-spec-decomposer` first, explicitly
+   selecting the `plan` operation (Pi: `usecase: 'plan'`) — the fan-out is idempotent, so
+   re-deriving the seam map is safe. Do not rely on the judge preset's default operation.
 2. **Phase-1 plan marker.** `mp set-active-run --state=<path> --kind=plan` — a planning marker (no
    wave) written BEFORE launch so a crash in the launch gap resumes as recovery, not a blind
    re-dispatch.
@@ -638,7 +639,8 @@ between the serial `superpowers:writing-plans` path and the parallel fan-out (§
    always carries `serial` (`mp continue` forces it — the plan fan-out needs the native Workflow tool (unused; fabric path only),
    which a suppressed host lacks); never route a suppressed host to the parallel branch.
 2. **Decompose (unless `serial`).** For `parallel`/`auto`, dispatch `agents/mp-spec-decomposer` against
-   `spec.md` → `{ subsystems, recommend_parallel, reason }`.
+   `spec.md`, explicitly selecting the `plan` operation (Pi: `usecase: 'plan'`)
+   → `{ subsystems, recommend_parallel, reason }`. Do not rely on the judge preset's default operation.
    - `parallel` → parallel branch (step 4) with this decomposition.
    - `auto` → parallel **iff** `recommend_parallel && subsystems.length ≥ 2`; otherwise serial (step 3).
      Carry the decomposer's `reason` into your narration.

@@ -50,6 +50,16 @@ test('consumer instructions describe model-free host-native dispatch', () => {
   }
 });
 
+test('decomposition and recovery instructions explicitly select the plan operation', () => {
+  const text = readFileSync(join(AGENTS_DIR, '..', 'commands/masterplan.md'), 'utf8');
+  const recovery = text.match(/1\. \*\*Subsystems in hand\.\*\*[\s\S]*?(?=\n2\.)/);
+  const decomposition = text.match(/2\. \*\*Decompose \(unless `serial`\)\.\*\*[\s\S]*?(?=\n3\.)/);
+  for (const [name, section] of [['recovery', recovery], ['decomposition', decomposition]]) {
+    assert.ok(section, `missing ${name} instructions`);
+    assert.match(section[0], /usecase: 'plan'/, `${name} must explicitly select Pi's plan operation`);
+  }
+});
+
 test('there are dedicated agent files to lint', () => {
   assert.ok(files.length >= 4, `expected >=4 agents/*.md, found ${files.length}`);
 });
