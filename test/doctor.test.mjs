@@ -682,6 +682,26 @@ test('routing-policy-health unconfigured non-Pi is supported; Pi and explicit mi
   assert.equal(maxSeverity(routingPolicyHealth('/unused', { host: 'pi', homeDir: dir, env: {} })), 'ERROR');
   assert.equal(maxSeverity(routingPolicyHealth('/unused', { host: 'codex', policyPath: path.join(dir, 'missing'), env: {} })), 'ERROR');
 });
+test('routing-policy-health CLI refuses actual Pi without C1', () => {
+  const home = mkdtempTracked(path.join(os.tmpdir(), 'mp-rph-cli-pi-'));
+  const env = { HOME: home, USERPROFILE: home, PI_CODING_AGENT: 'true' };
+  const host = spawnSync(process.execPath, [path.join(here, '../bin/masterplan.mjs'), 'detect-host'], { env, encoding: 'utf8' });
+  assert.equal(host.status, 0, host.stderr);
+  assert.equal(JSON.parse(host.stdout).kind, 'pi');
+  const result = spawnSync(process.execPath, [path.join(here, '../bin/doctor.mjs'), '--only=routing-policy-health'], { env, encoding: 'utf8' });
+  assert.equal(result.status, 1, result.stdout + result.stderr);
+  assert.match(result.stdout, /ERROR\s+routing-policy-health: C1 discovery failed:.*dispatch-map\.json: ENOENT/);
+  assert.match(result.stdout, /1 error, 0 warn/);
+});
+test('routing-policy-health CLI supports unconfigured non-Pi', () => {
+  const home = mkdtempTracked(path.join(os.tmpdir(), 'mp-rph-cli-native-'));
+  const result = spawnSync(process.execPath, [path.join(here, '../bin/doctor.mjs'), '--only=routing-policy-health'], {
+    env: { HOME: home, USERPROFILE: home }, encoding: 'utf8',
+  });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(result.stdout, /PASS\s+routing-policy-health: C1 discovery unconfigured: supported host-native execution/);
+  assert.match(result.stdout, /0 error, 0 warn/);
+});
 test('routing-policy-health validates required phases and agent references, not lists', () => {
   for (const broken of [
     { schema: 2 },

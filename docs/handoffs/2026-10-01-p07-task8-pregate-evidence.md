@@ -1,6 +1,6 @@
 # Plan 07 Task 8 — pre-gate source evidence and gated runbook
 
-Task label: `p07-t8-pregate`. **Source ready; integration/activation/release verification owed.** This document is build evidence, not independent approval or authority to execute the gates below. Plan 09 must retain dual emission until installed-consumer evidence exists.
+Task label: `p07-t8-pregate`. **Masterplan-only source test evidence; joint conductor dependency unresolved; integration/activation/release verification owed.** This document is build evidence, not independent approval or authority to execute the gates below. Plan 09 must retain dual emission until installed-consumer evidence exists.
 
 ## Entry, scope and provenance
 
@@ -10,6 +10,30 @@ Task label: `p07-t8-pregate`. **Source ready; integration/activation/release ver
 - Read Task 8, common brief, amendments, design spec, INTENT, development conventions, relevant sequencer/producer/doctor/installer/release source and existing C3/C5/C7 integration. INTENT assessment: **serves** Purpose/Top invariant/Non-goals/Direction/Posture by proving harness-native, model-free dispatch without pretending source evidence is delivery.
 - Existing-solution search: `test/dispatch-wave.native.test.mjs`, `test/fixtures/task5-panel-integration.mjs`, joint `dispatch-panel-execution.test.ts`, `dispatch-admission.test.ts`, native `review-admission.ts`, C3 `dispatch-receipt.ts`, C5 `resolve-dispatch.mjs`. Reused accepted APIs; no upstream workaround, vendored resolver, new panel coordinator or runtime code.
 - Hindsight recall/retain requires a prohibited production-service request; not attempted. Repository evidence/WORKLOG is durable handoff, not canonical memory retention.
+
+## Review repair — dependency boundary
+
+The conductor cancellation source/proof dependency is **UNRESOLVED**. The pinned
+joint SHA above supplies the native admission/resolution/preparation APIs consumed
+by the masterplan tests, not completed orchestrate Task 3 source. Review found
+settings-based conductor selection, `context.thinkingLevel` reads, unconditional
+successful entry after failed apply, no blocked-conduct input refusal, and no
+`conduct-lifecycle.test.ts` at that revision. The historical 228-test suite below
+is **not conductor readiness or cancellation proof**. No joint source was repaired
+or substituted by this masterplan-only repair.
+
+The orchestrate owner must supply the correct reviewed source SHA and non-skipped
+positive-control SDK transport followed by zero-transport refusal/cancellation
+proof. Refresh the joint pin and rerun applicable checks against that exact SHA
+before accepting the full pre-gate package or executing Gate 1/2. Until then the
+readiness claim is limited to masterplan-only source tests with the recorded joint
+API dependency. Independent review and delivery remain separate gates.
+
+Doctor's production Pi signal now matches the CLI (`PI_CODING_AGENT=true`);
+subprocess regressions cover missing-map Pi refusal and unconfigured non-Pi support.
+Each future gate recipe below establishes its own fail-closed subshell. Publication
+and installation are separately executable and separately authorized, never a
+single fall-through block. Repair commands/counts are appended in WORKLOG.
 
 ## Implementation and inventory
 
@@ -93,13 +117,17 @@ Independent frontier review is **owed**, not obtained or invented. Governed revi
 
 ## Exact gate runbook — NOT EXECUTED
 
-All actions below require fresh direct operator authority for the named gate. The authorization for this build grants none of them. Re-read the named plans, `RELEASING.md`, production-boundary and concurrency rules at execution time. Never reuse a guessed generation, release version/ref/SHA, install metadata or successful source run as deployment approval. Record complete credential-safe outputs in delivery evidence; refuse every missing/mismatched identity or failed required check. No credential values belong in evidence.
+All actions below require fresh direct operator authority for the named gate. Each block must be executed whole in Bash (not sourced or invoked in an `if`, `&&` or `||` context that disables errexit). Its subshell establishes strict behavior independently; a failed required command exits before any later command. Required variables come from reviewed records, never guessed values. The authorization for this build grants none of them. Re-read the named plans, `RELEASING.md`, production-boundary and concurrency rules at execution time. Never reuse a guessed generation, release version/ref/SHA, install metadata or successful source run as deployment approval. Record complete credential-safe outputs in delivery evidence; refuse every missing/mismatched identity or failed required check. No credential values belong in evidence.
 
 ### Gate 1 — integrate independently reviewed source
 
 Preconditions: frontier review of exact source/evidence (cancellation, host classification, reviewer binding, C4, panel ownership/package contents); accepted dispositions; target repo/branch expressly authorized; no overlapping writer. Preserve other sessions' dirty README/bundles/uncommitted work. Survey both repositories before any merge:
 
 ```bash
+(
+set -euo pipefail
+: "${TARGET_REPO:?}" "${SOURCE_REPO:?}" "${SOURCE_SHA:?}"
+[[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
 git -C "$TARGET_REPO" status --porcelain=v1
 git -C "$TARGET_REPO" branch -vv
 git -C "$TARGET_REPO" worktree list --porcelain
@@ -112,6 +140,7 @@ test "$(git -C "$SOURCE_REPO" rev-parse "$SOURCE_SHA^{commit}")" = "$SOURCE_SHA"
 git -C "$TARGET_REPO" merge --no-ff --no-edit "$SOURCE_SHA"
 git -C "$TARGET_REPO" rev-parse HEAD
 git -C "$TARGET_REPO" status --porcelain=v1
+)
 ```
 
 Apply separately to masterplan and the joint workflows integration under their respective grants. Expected: intended source ancestor of target, no lost unrelated lines, no conflict/dirty-path sweep, recorded pre-merge tip and merge commit. Run each repository's required checks at integrated tips with original exported W (and synthetic disposable HOME for source suites). On conflict stop; abort only this merge via `git merge --abort`. Post-landing rollback is an explicitly reviewed `git revert -m 1 "$INTEGRATION_MERGE_SHA"` after another survey, not a reset of shared work. Integration never installs/pushes implicitly.
@@ -123,6 +152,9 @@ Preconditions: plans 01/02 C1 delivered, dual vocabulary live, plan 08 C7 instal
 These are the existing staging/library interfaces (there is no `stage-generation.mjs` CLI). Execute after authority, from the approved compiled package:
 
 ```bash
+(
+set -euo pipefail
+: "${COMPILED_PACKAGE:?}"
 cd "$COMPILED_PACKAGE"
 export GENERATION_ROOT="$(pwd -P)/cache/generations"
 node --input-type=module <<'JS'
@@ -150,13 +182,19 @@ const id = 'routing-' + createHash('sha256').update(JSON.stringify(members)).dig
 const manifest = await assembleGeneration(root, { id, kind: 'orchestrate', ...members });
 console.log(JSON.stringify({ root, new: id, previous: selection.current, manifest }));
 JS
+)
 ```
 
-Set/export `NEW_GENERATION` and `PREVIOUS_GENERATION` only from this successful staging JSON. Record both digests/input hashes and source revisions. Refuse existing generation collision rather than overwriting it. Before activation, run both source projects' declared build/typecheck/test scripts, compiled tests including `node --test test/generation-loader.test.mjs test/reload-entry.test.mjs`, and a real-Pi-loader pair probe against **these staged bytes**, with sandbox selection and isolated receipts. For the latter, copy the compiled package's `workflow/index.js`, `workflow/loader-receipt.mjs`, `scripts/generation-lib.mjs` and staged generation into a disposable package tree; write its sandbox `current.json` selecting NEW_GENERATION only (not the production pointer). Use `loadExtensionsCached([sandboxEntry], sandboxCwd, createEventBus(), createExtensionRuntime())` and `clearExtensionCache()` from the actual installed Pi release recorded in the loader metadata. Assert `errors=[]`, exactly one aggregate extension, commands include exactly one `orchestrate`/`ultracode`, tools include `workflow`/`workflow_control`; reload it and repeat. Run the same sandbox probe on saved previous generation. `PI_COMPILED_RECEIPTS` must point into the sandbox for these probes. Record module release SHA and observed registrations; synthetic member tests alone do not prove staged-byte delivery.
+Set/export `GENERATION_ROOT`, `NEW_GENERATION` and `PREVIOUS_GENERATION` only from this successful staging JSON (`root`, `new`, `previous` respectively); subshell exports do not persist in the caller. Record both digests/input hashes and source revisions. Refuse existing generation collision rather than overwriting it. Before activation, run both source projects' declared build/typecheck/test scripts, compiled tests including `node --test test/generation-loader.test.mjs test/reload-entry.test.mjs`, and a real-Pi-loader pair probe against **these staged bytes**, with sandbox selection and isolated receipts. For the latter, copy the compiled package's `workflow/index.js`, `workflow/loader-receipt.mjs`, `scripts/generation-lib.mjs` and staged generation into a disposable package tree; write its sandbox `current.json` selecting NEW_GENERATION only (not the production pointer). Use `loadExtensionsCached([sandboxEntry], sandboxCwd, createEventBus(), createExtensionRuntime())` and `clearExtensionCache()` from the actual installed Pi release recorded in the loader metadata. Assert `errors=[]`, exactly one aggregate extension, commands include exactly one `orchestrate`/`ultracode`, tools include `workflow`/`workflow_control`; reload it and repeat. Run the same sandbox probe on saved previous generation. `PI_COMPILED_RECEIPTS` must point into the sandbox for these probes. Record module release SHA and observed registrations; synthetic member tests alone do not prove staged-byte delivery.
 
 The staged-byte pair probe can be run with the following explicit command after `PI_RELEASE` is resolved/verified from the actual installed Pi metadata (not the historical release literal in older tests). It copies only the named loader/library/generation bytes; it never activates a production pointer or starts a Pi provider session:
 
 ```bash
+(
+set -euo pipefail
+: "${PI_RELEASE:?}" "${NEW_GENERATION:?}" "${PREVIOUS_GENERATION:?}" "${GENERATION_ROOT:?}"
+: "${COMPILED_PACKAGE:?}"
+cd "$COMPILED_PACKAGE"
 export PI_RELEASE NEW_GENERATION PREVIOUS_GENERATION GENERATION_ROOT
 node --input-type=module <<'JS'
 import assert from 'node:assert/strict';
@@ -197,6 +235,7 @@ try {
   }
 } finally { fs.rmSync(root, { recursive: true, force: true }); }
 JS
+)
 ```
 
 If current upstream APIs differ, stop and update/review the probe against that installed loader before activation, rather than treating a missing export as success.
@@ -204,6 +243,9 @@ If current upstream APIs differ, stop and update/review the probe against that i
 Then, with original production receipt configuration restored, require real live-PID/start-time aggregate-loader adoption receipts (R1 step B, including detached runners); missing adoption blocks activation. The named native commands are:
 
 ```bash
+(
+set -euo pipefail
+: "${COMPILED_PACKAGE:?}" "${GENERATION_ROOT:?}" "${NEW_GENERATION:?}" "${PREVIOUS_GENERATION:?}"
 cd "$COMPILED_PACKAGE"
 node scripts/generation.mjs validate "$GENERATION_ROOT" "$NEW_GENERATION"
 node scripts/generation.mjs activate "$GENERATION_ROOT" "$NEW_GENERATION" "$PREVIOUS_GENERATION"
@@ -211,31 +253,44 @@ cat "$GENERATION_ROOT/current.json"
 node scripts/generation.mjs validate "$GENERATION_ROOT" "$NEW_GENERATION"
 cat "$GENERATION_ROOT/$NEW_GENERATION/manifest.json"
 sha256sum "$GENERATION_ROOT/$NEW_GENERATION/"{workflow,orchestrate}.mjs
+)
 ```
 
 Expected: validate schema/id/kind plus two correct digests; activate selection current=new/previous=saved prior; one pointer owns both members; mode remains enabled. Fresh/reloaded authorized sessions prove command ownership, workflow availability, conduct enter/leave and directive handshake. R1 raw-review-rule retirement is a **separate** plan-08-authorized action, never bundled here. On failure, re-enable raw rules through their owner first if R1 rolled them back, then:
 
 ```bash
+(
+set -euo pipefail
+: "${COMPILED_PACKAGE:?}" "${GENERATION_ROOT:?}" "${NEW_GENERATION:?}" "${PREVIOUS_GENERATION:?}"
+cd "$COMPILED_PACKAGE"
 node scripts/generation.mjs rollback "$GENERATION_ROOT" "$NEW_GENERATION"
 cat "$GENERATION_ROOT/current.json"
 node scripts/generation.mjs validate "$GENERATION_ROOT" "$PREVIOUS_GENERATION"
 cat "$GENERATION_ROOT/$PREVIOUS_GENERATION/manifest.json"
 sha256sum "$GENERATION_ROOT/$PREVIOUS_GENERATION/"{workflow,orchestrate}.mjs
+)
 ```
 
 Rollback's second argument is the generation **now active**. Require saved previous pair selected, reload/reprobe affected sessions; retain C7 while any caller runs and never restore counters to an earlier database.
 
 ### Gate 3 — masterplan tagged release/install and installed verification
 
-Preconditions: Gate 1 complete, independent acceptance, release version chosen from current reviewed release state, clean release worktree inside the owning repo's `.worktrees/`; no dirty README copied in. Read `RELEASING.md` fully again. Run its seven version-bearing edits in that worktree: canonical plugin, marketplace root/plugin, Codex plugin, package, README current release, llms current release, CHANGELOG dated entry. A new release number is not chosen by this build; set `VERSION` from the reviewed release record. Record source SHA and clean state. Restore `W=/srv/workflows/.worktrees/model-routing-r1` and recorded HEAD for every release-suite run.
+Preconditions: Gate 1 complete, independent acceptance, release version chosen from current reviewed release state, clean release worktree inside the owning repo's `.worktrees/`; no dirty README copied in. Read `RELEASING.md` fully again. Run its seven version-bearing edits in that worktree: canonical plugin, marketplace root/plugin, Codex plugin, package, README current release, llms current release, CHANGELOG dated entry. A new release number is not chosen by this build; set `VERSION` from the reviewed release record. Record source SHA and clean state. Set absolute `W` and full `WORKFLOWS_SHA` from the newly accepted joint receipt (not the unresolved historical pin) for every release-suite run; verify their identity before testing.
 
 ```bash
+(
+set -euo pipefail
+: "${RELEASE_WORKTREE:?}" "${VERSION:?}" "${W:?}" "${WORKFLOWS_SHA:?}"
+[[ "$W" = /* && "$WORKFLOWS_SHA" =~ ^[0-9a-f]{40}$ ]]
 cd "$RELEASE_WORKTREE"
 cat RELEASING.md
-export W=/srv/workflows/.worktrees/model-routing-r1
+export W
+test "$(git -C "$W" rev-parse HEAD)" = "$WORKFLOWS_SHA"
 printf '%s\n' "$W"; git -C "$W" rev-parse HEAD
-source /etc/profile.d/inference-gateway.sh
-H=$(mktemp -d); mkdir -p "$H/.pi/workflows"
+H=$(mktemp -d)
+trap 'rm -rf "$H"' EXIT
+mkdir -p "$H/.pi/workflows"
+# Synthetic C1 only; no credential profile is required.
 cp test/fixtures/dispatch-map.json "$H/.pi/workflows/dispatch-map.json"
 env -u MP_ROUTING_POLICY -u MP_DISPATCH_MAP HOME="$H" node --test test/*.test.mjs
 rm -rf "$H"
@@ -243,11 +298,15 @@ git diff --check
 git add -- .claude-plugin/plugin.json .claude-plugin/marketplace.json .codex-plugin/plugin.json package.json README.md llms.txt CHANGELOG.md
 git commit -m "release: v$VERSION — model-free consumer cutover" -- .claude-plugin/plugin.json .claude-plugin/marketplace.json .codex-plugin/plugin.json package.json README.md llms.txt CHANGELOG.md
 node scripts/release.mjs --version="$VERSION"
+)
 ```
 
 Expected: full suite all pass/no skips, manifest hygiene consistent, clean version commit, one annotated tag `v$VERSION` at reviewed tip; refuse foreign/existing mismatched tag or dirty paths. Before installation, read the actual default install-root metadata (installer declares `$HOME/.local/share/masterplan/.pi-install.json`) and retain **ref/SHA/source**, not just `--check`. Parse only non-secret identity fields; do not print environments:
 
 ```bash
+(
+set -euo pipefail
+: "${HOME:?}"
 node --input-type=module <<'JS'
 import fs from 'node:fs';
 import path from 'node:path';
@@ -256,10 +315,14 @@ for (const key of ['ref', 'sha', 'source']) if (typeof meta[key] !== 'string' ||
 if (!/^[0-9a-f]{40}$/.test(meta.sha)) throw Error('invalid rollback SHA');
 console.log(JSON.stringify({ ref: meta.ref, sha: meta.sha, source: meta.source }));
 JS
+)
 ```
  Set `PREVIOUS_REF`, `PREVIOUS_SHA`, `PREVIOUS_SOURCE` from that metadata and `RELEASE_TAG`, `RELEASE_SHA`, `RELEASE_SOURCE` from reviewed release output. Verify both in their recorded repositories:
 
 ```bash
+(
+set -euo pipefail
+[[ "${PREVIOUS_SHA:?}" =~ ^[0-9a-f]{40}$ && "${RELEASE_SHA:?}" =~ ^[0-9a-f]{40}$ ]]
 : "${PREVIOUS_REF:?}" "${PREVIOUS_SHA:?}" "${PREVIOUS_SOURCE:?}"
 : "${RELEASE_TAG:?}" "${RELEASE_SHA:?}" "${RELEASE_SOURCE:?}"
 test "$(git -C "$PREVIOUS_SOURCE" rev-parse "$PREVIOUS_REF^{commit}")" = "$PREVIOUS_SHA"
@@ -267,15 +330,32 @@ test "$(git -C "$RELEASE_SOURCE" rev-parse "$RELEASE_TAG^{commit}")" = "$RELEASE
 test "$(git -C "$RELEASE_SOURCE" cat-file -t "refs/tags/$RELEASE_TAG")" = tag
 # Separate publication authority required:
 git -C "$RELEASE_SOURCE" push origin "$RELEASE_TAG"
-# Wait for tag release-publish CI success and record it before separate install authority:
+)
+```
+
+Stop after publication. Wait for tag release-publish CI success, record that
+receipt, and obtain separate installation authority. Only then execute this
+independent block (revalidating the release identity):
+
+```bash
+(
+set -euo pipefail
+: "${RELEASE_SOURCE:?}" "${RELEASE_TAG:?}" "${RELEASE_SHA:?}"
+[[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+test "$(git -C "$RELEASE_SOURCE" rev-parse "$RELEASE_TAG^{commit}")" = "$RELEASE_SHA"
+test "$(git -C "$RELEASE_SOURCE" cat-file -t "refs/tags/$RELEASE_TAG")" = tag
 cd "$RELEASE_SOURCE"
 node bin/install-pi.mjs --ref="$RELEASE_TAG"
 node bin/install-pi.mjs --check
+)
 ```
 
 Expected `install_pi: installed` (or truthful idempotent), recorded SHA/version/current below copied release root; `install_pi: check_ok`. Inspect installed release for absent `policy/workflow-map.json`/`dispatch-map.json`, no packaged resolver, no runtime symlink into `/srv/dev`. Read effective C1 discovery from installed `lib/dispatch/routing-policy.mjs` using actual host and override metadata (not synthetic source fixture); require configured schema 1 for Pi. Run installed doctor routing-policy-health and a read-only native planning/review descriptor, preserving custom C4/subject/model-free fields. Read-only installed check commands (from the installed current release, after Gate 3 authority; not executed here):
 
 ```bash
+(
+set -euo pipefail
+: "${HOME:?}"
 cd "$HOME/.local/share/masterplan/current"
 node bin/doctor.mjs --only=routing-policy-health
 node --input-type=module <<'JS'
@@ -290,6 +370,7 @@ const descriptor = buildPlanWorkItem({ key: 'delivery-check' }, {
 assert.equal(descriptor.phase, 'plan'); assert.equal(Object.hasOwn(descriptor, 'model'), false);
 console.log(JSON.stringify({ discovery: { status: discovery.status, path: discovery.path, schema: discovery.schema }, descriptor }));
 JS
+)
 ```
 
 Separately authorized live smoke in a fresh Pi session: `/orchestrate conduct`, `/orchestrate status`, `/orchestrate off`, `/orchestrate status` (expect truthful conduct entry/exit, original parent selection restored, no blocked-conduct request traffic). Invoke the native tool with `subagent({ agent: 'breaker', usecase: 'adversarial-assessment', stakes: 'critical', blocking: true, subject: 'docs/handoffs/2026-10-01-p07-task8-pregate-evidence.md', task: 'Review only docs/handoffs/2026-10-01-p07-task8-pregate-evidence.md lines 1-80 for source-evidence fidelity; return at most 4 findings.' })` in the reviewed repository cwd; retain observed C3 receipts (3 seat reports and adjudication, or explicit inconclusive/unfilled seats). No production measurement is claimed until this occurs.
@@ -297,8 +378,14 @@ Separately authorized live smoke in a fresh Pi session: `/orchestrate conduct`, 
 Rollback, only using previously verified metadata/source identity:
 
 ```bash
+(
+set -euo pipefail
+: "${PREVIOUS_SOURCE:?}" "${PREVIOUS_REF:?}" "${PREVIOUS_SHA:?}"
+[[ "$PREVIOUS_SHA" =~ ^[0-9a-f]{40}$ ]]
+test "$(git -C "$PREVIOUS_SOURCE" rev-parse "$PREVIOUS_REF^{commit}")" = "$PREVIOUS_SHA"
 node "$PREVIOUS_SOURCE/bin/install-pi.mjs" --source="$PREVIOUS_SOURCE" --ref="$PREVIOUS_REF"
 node "$PREVIOUS_SOURCE/bin/install-pi.mjs" --check
+)
 ```
 
 Expected current and metadata SHA equal PREVIOUS_SHA and `check_ok`; reprobe installed discovery/native behavior. Never edit an immutable release directory, move a historical tag, restore counters, or link production to dev. Before Plan 09 drops dual emission, parent records all gate SHAs, staged/current/rollback identities, installed-consumer receipts and live measurements; source-only passing tests cannot discharge that obligation.
