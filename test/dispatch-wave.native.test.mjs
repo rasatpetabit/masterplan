@@ -202,7 +202,66 @@ test('unsubmitted legacy model or chain descriptors demand explicit migration', 
   }
 });
 
-test('Task 8 panel coordinator integration: C7 isolated counters exhaust the same subject', { skip: 'plan 04 Task 8 coordinator is not built; producer never expands a panel' }, () => {});
+test('Task 8 panel coordinator integration: C7 isolated counters exhaust the same subject', async () => {
+  // Joint-checkout dependencies are deliberately external: never use installed
+  // routing or silently skip when W is absent (plan 07's integration contract).
+  const W = process.env.W;
+  assert.ok(W && path.isAbsolute(W) && fs.statSync(W).isDirectory(), 'W must name the absolute joint integration checkout');
+  const helper = new URL('./fixtures/task5-panel-integration.mjs', import.meta.url);
+  const subagents = path.join(W, 'pi-subagents');
+  const helperEnv = { ...process.env, PYTHONDONTWRITEBYTECODE: '1', TSX_DISABLE_CACHE: '1' };
+  delete helperEnv.NODE_TEST_CONTEXT;
+  delete helperEnv.PYTHONOPTIMIZE;
+  const ceiling = Number(execFileSync('python3', ['-c',
+    'import sys; sys.path.insert(0, sys.argv[1]); from lib.review_circuit_config import load; print(load().max_rounds)',
+    path.join(W, 'hooks')], { env: helperEnv, encoding: 'utf8' }).trim());
+  assert.ok(Number.isInteger(ceiling) && ceiling > 1, 'read the accepted hook policy ceiling');
+  const fx = makeNativeFixture({ slug: 'c7-panel-episode', review: { adversary: true, stakes: 'critical' } });
+  launchNative(fx);
+  await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 2000, policy: dispatchFixture });
+  const result = { wave: 1, tasks: [{ task_id: 1, digest: workerDigest(1, 'done') }] };
+  const launches = [];
+  for (let i = 0; i <= ceiling; i++) {
+    const record = readWaveDispatchRecord(fx.bundleDir, 1);
+    writeWaveDispatchRecord(fx.bundleDir, 1, { ...record, attempt: i + 1, wave_token: `c7-token-${i}` });
+    write(fx.WT, 'src/a.txt', `panel edit ${i}\n`);
+    // Alternate ordinary and committed-recovery producers, including changed
+    // HEADs. The persisted episode, not any artifact/job/token, owns the budget.
+    if (i % 2) {
+      git(fx.WT, 'add', 'src/a.txt');
+      git(fx.WT, 'commit', '-q', '-m', `disposable recovery ${i}`);
+    }
+    const out = await reviewNativeResult({ statePath: fx.statePath, self: fx.self, now: 2300,
+      result, policy: dispatchFixture,
+      ...(i % 2 ? { recoverySelector: { repo: fx.WT, head: git(fx.WT, 'rev-parse', 'HEAD') } } : {}),
+    });
+    assert.equal(out.pending_reviews.length, 1, 'masterplan emits one descriptor, never seats');
+    const [descriptor] = out.pending_reviews;
+    assert.equal(descriptor.stakes, 'critical');
+    assert.equal(descriptor.subject, readWaveDispatchRecord(fx.bundleDir, 1).review_context.episodes['1'].subject);
+    assert.equal(descriptor.diff_sha, out.tasks[0].review_input.sha);
+    assert.equal(descriptor.job_id, `c7-panel-episode-w1-t1-${descriptor.diff_sha.slice(0, 12)}`);
+    assert.equal(Object.hasOwn(descriptor, 'model'), false);
+    if (i) {
+      assert.equal(descriptor.subject, launches[0].descriptor.subject);
+      assert.notEqual(descriptor.diff_sha, launches[i - 1].descriptor.diff_sha);
+      assert.notEqual(descriptor.job_id, launches[i - 1].descriptor.job_id);
+    }
+    launches.push({ descriptor, head: git(fx.WT, 'rev-parse', 'HEAD'), attempt: i + 1, token: `c7-token-${i}` });
+  }
+  const summary = JSON.parse(execFileSync(process.execPath, ['--import', 'tsx', helper.pathname], {
+    cwd: subagents, env: helperEnv, input: JSON.stringify({ W, launches, ceiling, map: dispatchFixture }),
+    encoding: 'utf8', timeout: 60000,
+  }));
+  assert.equal(summary.admissions, ceiling);
+  assert.equal(summary.denials, 1);
+  assert.equal(summary.deniedChildren, 0);
+  assert.equal(summary.complete, ceiling - 1);
+  assert.equal(summary.incomplete, 1);
+  assert.equal(summary.recoveryAttempts, 1);
+  assert.equal(summary.subject, launches[0].descriptor.subject);
+  console.log(`C7 panel evidence: ${JSON.stringify(summary)}`);
+});
 
 test('the wave token rides in BOTH the label and the prompt (recovery greps for it)', () => {
   const plan = planFixture();
