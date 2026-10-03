@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "core": [
+    "Purpose",
+    "Top invariant",
+    "Non-goals"
+  ],
+  "standard_extensions": [
+    "Audience",
+    "Core bet",
+    "Direction",
+    "Posture"
+  ],
+  "extension_markers": [
+    "not applicable",
+    "skipped (low complexity)"
+  ],
+  "plan_level": {
+    "anchor_key": "topic",
+    "reconciliation": "Reconciliation",
+    "reconciliation_unit": "section",
+    "reconciliation_verdicts": [
+      "serves",
+      "neutral",
+      "conflicts"
+    ],
+    "goal_heading_pattern": "^## G\\d+:"
+  },
+  "checked_sections": [
+    "Purpose",
+    "Top invariant",
+    "Non-goals",
+    "Direction",
+    "Posture"
+  ],
+  "check_verdicts": [
+    "serves",
+    "neutral",
+    "fights",
+    "unavailable"
+  ]
+}

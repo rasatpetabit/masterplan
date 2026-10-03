@@ -1,0 +1,74 @@
+{
+  "unknowns": [
+    {
+      "id": "U1",
+      "question": "The anchor topic names goal-assessment replay as a surface to validate, but your Q1 answer says you did not pick it. Which holds?",
+      "why_it_changes_design": "Determines whether the run bundle includes a replay task at all, or whether the topic (and every downstream reconciliation) is amended to drop it.",
+      "options": [
+        "Keep your decline: replay is out of scope, and the anchor topic is amended to match.",
+        "Include it as read-only replay evidence; anchor topic unchanged.",
+        "Include it only if the release-disposition decision turns on it."
+      ]
+    },
+    {
+      "id": "U2",
+      "question": "If live evidence or the bootstrap failure table surfaces a real defect in v10.0.6, is fixing it in scope, or is this run evidence-and-disposition only?",
+      "why_it_changes_design": "Decides whether the plan is one validation bundle or validation plus fix plus re-validation, and who owns the release cut.",
+      "options": [
+        "Evidence and disposition only; record the defect and let the disposition carry the fix into v10.0.7.",
+        "Fix in-scope defects and re-validate before any disposition is recorded.",
+        "Fix only defects that block the keep-10.0.6 vs v10.0.7 decision."
+      ]
+    },
+    {
+      "id": "U3",
+      "question": "What rule decides keep-10.0.6 (docs commits past the tag) versus owing a v10.0.7?",
+      "why_it_changes_design": "Fixes the run's exit condition and the evidence the tasks must gather; without it 'release state settled' has no pass/fail test.",
+      "options": [
+        "Stated rule: docs-only commits past the tag keep 10.0.6; any shipped-surface defect forces 10.0.7.",
+        "Operator decides at the end from the gathered evidence, with no pre-committed rule.",
+        "Mechanical commit-type analysis of tag-versus-HEAD diff decides."
+      ]
+    },
+    {
+      "id": "U4",
+      "question": "What artifact counts as the required live evidence on Pi and Claude, and produced from which install?",
+      "why_it_changes_design": "Sets what the tasks must capture and whether they run against the installed release root or a dev checkout.",
+      "options": [
+        "Recorded transcripts or receipts from running mp in the installed release root on ai, one per harness.",
+        "Full end-to-end run transcripts stored in the run bundle, from the tagged install.",
+        "Run-bundle events plus CI run URLs for the tag; no interactive transcripts."
+      ]
+    },
+    {
+      "id": "U5",
+      "question": "Which bootstrap failure-table rows are in scope, and how is the tagged release obtained for the exercise?",
+      "why_it_changes_design": "Determines the harness setup (isolated tag worktree vs installed root) and the size and shape of the table tasks.",
+      "options": [
+        "Full table, exercised against a clean checkout of tag v10.0.6 in an isolated worktree.",
+        "Full table, exercised against the installed production release root.",
+        "Only the rows the intent-to-completion predecessor left unverified."
+      ]
+    }
+  ],
+  "misclassified": [],
+  "contradictions": [
+    {
+      "id": "C1",
+      "question_ids": ["Q1"],
+      "note": "Anchor topic names goal-assessment replay as a surface to validate; Q1's answer declines it as a purpose and the draft converts that into a flat anti-goal — an anchor-vs-answer conflict the interview has not explicitly reconciled."
+    }
+  ],
+  "intent_draft": {
+    "why": "masterplan v10.0.6 shipped as the required successor of intent-to-completion; before that release is closed, its released surfaces must be validated against the real tagged release rather than rehearsal fixtures, and the outstanding release disposition must be settled on evidence rather than assumption.",
+    "outcome": "Documented, reproducible live evidence on both Pi and Claude that tagged v10.0.6 behaves as released (G6-style evidence, CI green), the bootstrap failure table exercised against the tagged release itself, and an explicit release disposition: keep v10.0.6 with docs commits past the tag, or owe a v10.0.7.",
+    "anti_goals": [
+      "A validation claim without fresh evidence from both Pi and Claude harnesses — no single-harness or recalled-from-context evidence.",
+      "Bootstrap failure-table runs against rehearsal fixtures or synthetic mocks instead of the tagged v10.0.6 release.",
+      "Treating goal-assessment replay as a purpose or requirement of this run: the operator did not pick it, though the anchor names it (see C1) — unresolved until U1 is answered."
+    ],
+    "done_means": "Live execution evidence gathered from both Pi and Claude on the tagged v10.0.6 release, the bootstrap failure table exercised against that release, CI green on the tag, and the release state explicitly settled (keep-10.0.6 vs v10.0.7) with the deciding evidence recorded."
+  },
+  "eligible_question_set": ["Q1"],
+  "forks_remaining": true
+}

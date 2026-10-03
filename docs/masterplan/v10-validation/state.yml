@@ -2,7 +2,7 @@
 schema_version: 9
 slug: v10-validation
 status: in-progress
-phase: brainstorm
+phase: execute
 topic: "Validate the released v10.0.6 surfaces: G6 live evidence, goal-assessment replay, and the bootstrap failure table exercised against the tagged release (required successor of intent-to-completion)."
 complexity: high
 complexity_source: user
@@ -13,13 +13,16 @@ predecessor_transcript: null
 spec_path: /srv/dev/ras/masterplan/docs/masterplan/v10-validation/spec.md
 plan_path: /srv/dev/ras/masterplan/docs/masterplan/v10-validation/plan.md
 plan_index_path: /srv/dev/ras/masterplan/docs/masterplan/v10-validation/plan.index.json
-tasks: []
+tasks: [{"id":1,"status":"done","wave":0,"files":[]},{"id":2,"status":"done","wave":1,"files":["docs/masterplan/v10-validation/evidence-g6-pi.txt"]},{"id":3,"status":"done","wave":1,"files":["docs/masterplan/v10-validation/evidence-g6-claude.txt"]},{"id":4,"status":"done","wave":1,"files":["docs/masterplan/v10-validation/bootstrap-failure-table-report.md"]},{"id":5,"status":"done","wave":1,"files":["docs/masterplan/v10-validation/evidence-ci-tag.txt"]},{"id":6,"status":"done","wave":1,"files":["docs/masterplan/v10-validation/release-disposition.md"]},{"id":7,"status":"done","wave":2,"files":["docs/masterplan/v10-validation/validation-summary.md"]}]
 active_run: null
 pending_gate: null
 goals_enabled: true
-goals: []
+goals: [{"id":"G1","text":"G6 Live Proof on Pi Harness","signal":"artifact","evidence":"docs/masterplan/v10-validation/evidence-g6-pi.txt"},{"id":"G2","text":"G6 Live Proof on Claude Harness","signal":"artifact","evidence":"docs/masterplan/v10-validation/evidence-g6-claude.txt"},{"id":"G3","text":"Bootstrap Failure Table Exercised","signal":"artifact","evidence":"docs/masterplan/v10-validation/bootstrap-failure-table-report.md"},{"id":"G4","text":"Release Tag CI Verification","signal":"artifact","evidence":"docs/masterplan/v10-validation/evidence-ci-tag.txt"},{"id":"G5","text":"Historical Release Disposition Audit","signal":"docs","evidence":"docs/masterplan/v10-validation/release-disposition.md"}]
 review: {"adversary":true}
 render: {"images":"off"}
 dispatch: {"fabric":true}
 refs: {"back":[{"slug":"intent-to-completion"}],"forward":[]}
 predecessor: intent-to-completion
+format_pin: schema_backed
+goals_md_hash: sha256:211c3a1097d64bb1842348a660f68a7bc945fa9e3b1b17b75df7d4e25cf13c7b
+worktree_disposition: removed_after_merge

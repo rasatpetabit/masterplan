@@ -1,0 +1,39 @@
+=== MASTERPLAN v10.0.6 PI HARNESS LIVE EXECUTION EVIDENCE ===
+Timestamp: 2026-10-03T19:39:21.996Z
+Host: ai (192.168.100.200)
+Harness: Pi (clean copy-based install per production-boundary policy)
+
+1. bin/install-pi.mjs --check:
+{"install_pi":"check_ok","version":"10.0.6","sha":"80e3337b8bb8ce50105b218b605b66273ddf8185","release":"/tmp/masterplan-v10.0.6-install/releases/80e3337b8bb8ce50105b218b605b66273ddf8185"}
+
+2. .pi-install.json metadata:
+{
+  "version": "10.0.6",
+  "sha": "80e3337b8bb8ce50105b218b605b66273ddf8185",
+  "ref": "v10.0.6",
+  "source": "/srv/dev/ras/masterplan",
+  "installed_at": "2026-10-03T19:38:33.951Z"
+}
+
+3. Skills symlink resolution:
+Link: /tmp/masterplan-v10.0.6-install/current/skills/masterplan
+Target canonical path: /tmp/masterplan-v10.0.6-install/releases/80e3337b8bb8ce50105b218b605b66273ddf8185/skills/masterplan
+Target exists: true
+
+4. Production Boundary Audit:
+Symlinks pointing to /srv/dev: NONE (COMPLIANT)
+
+5. bin/masterplan.mjs version execution:
+→ /masterplan v10.0.6 args: '(empty)' cwd: /srv/dev/ras/masterplan
+
+6. bin/masterplan.mjs detect-host execution:
+{"isCodex":false,"reasons":[]}
+
+7. bin/doctor.mjs execution:
+Exit code: 0
+Output: (clean exit, all invariant checks passed)
+
+8. Registered Pi Agent definitions:
+Registered agents (8): mp-adversarial-reviewer.md, mp-alignment-auditor.md, mp-goal-assessor.md, mp-intent-critic.md, mp-plan-reviewer.md, mp-planner.md, mp-spec-decomposer.md, mp-subsystem-planner.md
+
+=== PI HARNESS VERIFICATION PASSED: v10.0.6 LIVE EVIDENCE VERIFIED ===

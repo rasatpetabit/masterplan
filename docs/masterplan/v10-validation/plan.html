@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>v10-validation</title>
+<style>
+:root { color-scheme: light dark; }
+body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; margin: 2rem auto; max-width: 1100px; padding: 0 1rem; line-height: 1.45; }
+h1 { margin-bottom: .25rem; }
+.summary { color: #666; margin-top: 0; }
+.stamp { color: #999; font-size: .85rem; margin-top: 0; }
+.diagram { margin: 1.25rem 0; overflow-x: auto; }
+section.wave { margin: 1.5rem 0; }
+table { border-collapse: collapse; width: 100%; font-size: .92rem; }
+th, td { border: 1px solid #ddd; padding: .4rem .55rem; text-align: left; vertical-align: top; }
+th { background: #f5f5f5; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85rem; }
+.badge { display: inline-block; padding: .1rem .5rem; border-radius: 999px; font-size: .8rem; font-weight: 600; color: #fff; }
+.status-pending { background: #9e9e9e; }
+.status-done    { background: #2e7d32; }
+.status-failed  { background: #c62828; }
+.status-blocked { background: #ef6c00; }
+.status-waived   { background: #6a1b9a; }
+.svg-wavelabel { font: 600 13px system-ui, sans-serif; fill: #555; }
+.svg-id { font: 600 13px ui-monospace, monospace; fill: #fff; }
+.svg-node.status-pending rect { fill: #9e9e9e; }
+.svg-node.status-done    rect { fill: #2e7d32; }
+.svg-node.status-failed  rect { fill: #c62828; }
+.svg-node.status-blocked rect { fill: #ef6c00; }
+.svg-node.status-waived rect { fill: #6a1b9a; }
+section.meta { margin: 1rem 0; }
+.refs ul { list-style: none; padding-left: 0; margin: .3rem 0; }
+.refs li { margin: .2rem 0; }
+.narrative h2 { margin-top: 1.25rem; }
+img.hero, img.wave-img { max-width: 100%; height: auto; display: block; margin: .75rem 0; }
+.amendments ol.timeline { padding-left: 1.1rem; }
+.amendments time { font-weight: 600; color: #555; }
+.amendments .detail { color: #666; margin: .15rem 0 .4rem; }
+.goals ul { columns: 2; }
+</style>
+</head>
+<body>
+<h1>v10-validation</h1>
+<p class="summary">7 task(s) across 3 wave(s).</p>
+<p class="stamp">Generated: 2026-10-03T19:36:12.948Z</p>
+
+
+<section class="narrative"><h2>Purpose</h2><p>Validate released v10.0.6 surfaces across Pi and Claude live runtimes, exercise the bootstrap failure table against a clean tag worktree, verify release tag CI status, and audit intervening commits to settle historical release disposition.</p><h2>Problem</h2><p>v10.0.6 was released as the required successor to intent-to-completion, but formal G6 live proof, tag-level bootstrap recovery validation, and historical disposition remained unfinalized.</p><h2>Solution</h2><p>Execute isolated, reproducible validation tests on host ai and in an isolated git worktree, producing verifiable text and markdown evidence artifacts without modifying repository code.</p></section>
+<figure class="diagram"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 452 194" role="img" aria-label="Plan waves"><text x="16" y="36" class="svg-wavelabel">Wave 0</text><g class="svg-node status-pending"><rect x="106" y="16" width="54" height="30" rx="5"/><text x="133" y="36" text-anchor="middle" class="svg-id">#1</text></g><text x="16" y="90" class="svg-wavelabel">Wave 1</text><g class="svg-node status-pending"><rect x="106" y="70" width="54" height="30" rx="5"/><text x="133" y="90" text-anchor="middle" class="svg-id">#2</text></g><g class="svg-node status-pending"><rect x="172" y="70" width="54" height="30" rx="5"/><text x="199" y="90" text-anchor="middle" class="svg-id">#3</text></g><g class="svg-node status-pending"><rect x="238" y="70" width="54" height="30" rx="5"/><text x="265" y="90" text-anchor="middle" class="svg-id">#4</text></g><g class="svg-node status-pending"><rect x="304" y="70" width="54" height="30" rx="5"/><text x="331" y="90" text-anchor="middle" class="svg-id">#5</text></g><g class="svg-node status-pending"><rect x="370" y="70" width="54" height="30" rx="5"/><text x="397" y="90" text-anchor="middle" class="svg-id">#6</text></g><text x="16" y="144" class="svg-wavelabel">Wave 2</text><g class="svg-node status-pending"><rect x="106" y="124" width="54" height="30" rx="5"/><text x="133" y="144" text-anchor="middle" class="svg-id">#7</text></g></svg></figure>
+<section class="wave"><h2>Wave 0</h2>
+<table><thead><tr><th>#</th><th>Status</th><th>Task</th><th>Files</th><th>Verify</th><th>Codex</th><th>Spec refs</th></tr></thead><tbody>
+<tr><td>1</td><td><span class="badge status-pending">pending</span></td><td>Initialize isolated git worktree at .worktrees/v10-validation-tag checked out to tag v10.0.6</td><td class="mono"><em>(none)</em></td><td class="mono">test -d .worktrees/v10-validation-tag &amp;&amp; [ &quot;$(git -C .worktrees/v10-validation-tag rev-parse HEAD)&quot; = &quot;1e90cdae695dd8c3431efd35951815138bfdc25e&quot; ]</td><td>no</td><td>spec.md §4.2</td></tr>
+</tbody></table></section>
+<section class="wave"><h2>Wave 1</h2>
+<table><thead><tr><th>#</th><th>Status</th><th>Task</th><th>Files</th><th>Verify</th><th>Codex</th><th>Spec refs</th></tr></thead><tbody>
+<tr><td>2</td><td><span class="badge status-pending">pending</span></td><td>Capture G6 live execution proof for Pi harness against installed v10.0.6 on host ai</td><td class="mono">docs/masterplan/v10-validation/evidence-g6-pi.txt</td><td class="mono">test -s docs/masterplan/v10-validation/evidence-g6-pi.txt &amp;&amp; grep -q &quot;10.0.6&quot; docs/masterplan/v10-validation/evidence-g6-pi.txt</td><td>no</td><td>spec.md §4.1</td></tr>
+<tr><td>3</td><td><span class="badge status-pending">pending</span></td><td>Capture G6 live execution proof for Claude harness against installed v10.0.6 plugin on host ai</td><td class="mono">docs/masterplan/v10-validation/evidence-g6-claude.txt</td><td class="mono">test -s docs/masterplan/v10-validation/evidence-g6-claude.txt &amp;&amp; grep -q &quot;10.0.6&quot; docs/masterplan/v10-validation/evidence-g6-claude.txt</td><td>no</td><td>spec.md §4.1</td></tr>
+<tr><td>4</td><td><span class="badge status-pending">pending</span></td><td>Execute bootstrap failure table and driver recovery test suite in tag v10.0.6 worktree and record failure-mode receipts</td><td class="mono">docs/masterplan/v10-validation/bootstrap-failure-table-report.md</td><td class="mono">test -s docs/masterplan/v10-validation/bootstrap-failure-table-report.md &amp;&amp; grep -q -i &quot;pass&quot; docs/masterplan/v10-validation/bootstrap-failure-table-report.md &amp;&amp; grep -q &quot;ENOENT&quot; docs/masterplan/v10-validation/bootstrap-failure-table-report.md</td><td>no</td><td>spec.md §4.2</td></tr>
+<tr><td>5</td><td><span class="badge status-pending">pending</span></td><td>Verify green CI workflow run status for git tag v10.0.6 commit and record CI verification receipt</td><td class="mono">docs/masterplan/v10-validation/evidence-ci-tag.txt</td><td class="mono">test -s docs/masterplan/v10-validation/evidence-ci-tag.txt &amp;&amp; grep -q &quot;1e90cdae&quot; docs/masterplan/v10-validation/evidence-ci-tag.txt &amp;&amp; grep -q -iE &quot;success|completed&quot; docs/masterplan/v10-validation/evidence-ci-tag.txt</td><td>no</td><td>spec.md §4.4</td></tr>
+<tr><td>6</td><td><span class="badge status-pending">pending</span></td><td>Audit post-tag commits between v10.0.6 and successor releases and synthesize historical release disposition report</td><td class="mono">docs/masterplan/v10-validation/release-disposition.md</td><td class="mono">test -s docs/masterplan/v10-validation/release-disposition.md &amp;&amp; grep -q -i &quot;disposition&quot; docs/masterplan/v10-validation/release-disposition.md</td><td>no</td><td>spec.md §4.3</td></tr>
+</tbody></table></section>
+<section class="wave"><h2>Wave 2</h2>
+<table><thead><tr><th>#</th><th>Status</th><th>Task</th><th>Files</th><th>Verify</th><th>Codex</th><th>Spec refs</th></tr></thead><tbody>
+<tr><td>7</td><td><span class="badge status-pending">pending</span></td><td>Cleanly remove worktree .worktrees/v10-validation-tag and compile final validation summary</td><td class="mono">docs/masterplan/v10-validation/validation-summary.md</td><td class="mono">test -s docs/masterplan/v10-validation/validation-summary.md &amp;&amp; ! git worktree list | grep -q v10-validation-tag</td><td>no</td><td>spec.md §4.2, spec.md §5</td></tr>
+</tbody></table></section>
+<section class="goals"><h2>Goals</h2><ul><li>G1</li><li>G2</li><li>G3</li><li>G4</li><li>G5</li></ul></section>
+
+</body>
+</html>
