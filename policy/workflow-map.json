@@ -1,5 +1,5 @@
 {
-  "_generated": "from /srv/workflows/config/routing.yaml by generate.mjs — do not hand-edit",
+  "_generated": "from /srv/inference/config/src by inference reconfigure (internal/emit/workflowmap.go) — do not hand-edit",
   "version": 1,
   "lanes": {
     "sweep": {
@@ -47,17 +47,16 @@
       "strengths": "Holds a long tool-use loop together without drifting — best for iterate-until-green work where the model drives its own steps."
     },
     "build": {
-      "model": "litellm/grok-4.7",
-      "ctx": 500000,
-      "cost": "high",
+      "model": "litellm/zenmux/deepseek-v4.1-flash",
+      "ctx": 1000000,
+      "cost": "low",
       "fallback": "build-zenmux",
       "chain": [
-        "litellm/grok-4.7",
         "litellm/zenmux/deepseek-v4.1-flash",
         "litellm/deepseek-v4.1-flash",
         "litellm/gemini-3.8-flash"
       ],
-      "strengths": "Implementation work on mimo-v2.6-pro."
+      "strengths": "Implementation work on ZenMux-hosted deepseek-v4.1-flash."
     },
     "build-zenmux": {
       "model": "litellm/zenmux/deepseek-v4.1-flash",
@@ -69,18 +68,17 @@
         "litellm/deepseek-v4.1-flash",
         "litellm/gemini-3.8-flash"
       ],
-      "strengths": "ZenMux-hosted deepseek-v4.1-flash: the same checkpoint as the skynet3 build lane, reached only when that lane's request fails. An error fallback, never load-based overflow."
+      "strengths": "ZenMux-hosted deepseek-v4.1-flash, also serving the build lane. Falls back to the same checkpoint on skynet3 when its request fails. An error fallback, never load-based overflow."
     },
     "reason": {
-      "model": "litellm/grok-4.7",
-      "ctx": 500000,
+      "model": "litellm/gemini-3.8-flash",
+      "ctx": 1048576,
       "cost": "medium",
       "fallback": "longform",
       "chain": [
-        "litellm/grok-4.7",
         "litellm/gemini-3.8-flash"
       ],
-      "strengths": "Deep step-by-step reasoning at a moderate price with a half-million token window. Root-cause tracing and multi-hop investigation."
+      "strengths": "Deep step-by-step reasoning on gemini-3.8-flash with a million-token window. Root-cause tracing and multi-hop investigation."
     },
     "longform": {
       "model": "litellm/gemini-3.8-flash",
@@ -88,20 +86,30 @@
       "cost": "medium",
       "fallback": "reason",
       "chain": [
-        "litellm/gemini-3.8-flash",
-        "litellm/grok-4.7"
+        "litellm/gemini-3.8-flash"
       ],
       "strengths": "Best sustained reasoning over a very large corpus. Use when the evidence does not fit anywhere else — repo-wide synthesis, long traces."
     },
     "frontier": {
-      "model": "litellm/gpt-6-sol",
+      "model": "litellm/gpt-6.1-sol",
+      "ctx": 272000,
+      "cost": "high",
+      "fallback": "frontier-fallback",
+      "chain": [
+        "litellm/gpt-6.1-sol",
+        "litellm/opus-5.5"
+      ],
+      "strengths": "Strongest judgment available here. Architecture calls, adversarial review, and anything where being wrong is expensive. Smallest window of the group, so feed it curated evidence rather than raw dumps."
+    },
+    "frontier-fallback": {
+      "model": "litellm/opus-5.5",
       "ctx": 272000,
       "cost": "high",
       "fallback": null,
       "chain": [
-        "litellm/gpt-6-sol"
+        "litellm/opus-5.5"
       ],
-      "strengths": "Strongest judgment available here. Architecture calls, adversarial review, and anything where being wrong is expensive. Smallest window of the group, so feed it curated evidence rather than raw dumps."
+      "strengths": "Frontier-strength second occupant behind the frontier and critical lanes, serving them when their head fails. Same judgment tier; no further fallback."
     },
     "broad": {
       "model": "litellm/qwen3.8-max-0902",
@@ -149,27 +157,26 @@
       ],
       "strengths": "Generalist second opinion from a different model family."
     },
-    "delve": {
-      "model": "litellm/muse-spark-1.3",
-      "ctx": 1048576,
-      "cost": "lowest",
-      "fallback": "sweep",
-      "chain": [
-        "litellm/muse-spark-1.3",
-        "litellm/gemini-3.8-flash",
-        "litellm/deepseek-v4.1-flash"
-      ],
-      "strengths": "Cheap metered breadth that still reasons — a million-token window with always-on thinking, unlike sweep. Read a large tree and answer a specific question about it. Contributor tier, so traffic may train the vendor's models."
-    },
     "critical": {
-      "model": "litellm/gpt-6-sol",
+      "model": "litellm/gpt-6.1-sol",
+      "ctx": 272000,
+      "cost": "xhigh",
+      "fallback": "frontier-fallback",
+      "chain": [
+        "litellm/gpt-6.1-sol",
+        "litellm/opus-5.5"
+      ],
+      "strengths": "Consequential implementation where being wrong is expensive. Feed it curated context rather than raw dumps."
+    },
+    "security-judge": {
+      "model": "litellm/gpt-daybreak-blue-latest",
       "ctx": 272000,
       "cost": "high",
       "fallback": null,
       "chain": [
-        "litellm/gpt-6-sol"
+        "litellm/gpt-daybreak-blue-latest"
       ],
-      "strengths": "Frontier engineering on GPT-6 Sol. Consequential implementation where being wrong is expensive. Feed it curated context rather than raw dumps."
+      "strengths": "Frontier review of security-boundary code such as integrity checks and tamper refusal."
     }
   },
   "servedEquivalents": {
@@ -181,19 +188,16 @@
       "litellm/skynet3/deepseek-v4.1-flash",
       "litellm/zenmux/deepseek-v4.1-flash"
     ],
-    "litellm/grok-4.7": [
-      "litellm/grok-latest"
-    ],
     "litellm/zenmux/deepseek-v4.1-flash": [
       "litellm/deepseek-v4.1-flash",
       "litellm/skynet3/deepseek-v4-flash",
       "litellm/skynet3/deepseek-v4.1-flash"
     ],
-    "litellm/gpt-6-sol": [
+    "litellm/gpt-6.1-sol": [
       "litellm/gpt-sol-latest"
     ],
-    "litellm/muse-spark-1.3": [
-      "litellm/muse-spark-latest"
+    "litellm/opus-5.5": [
+      "litellm/opus-latest"
     ]
   },
   "agents": {
@@ -228,7 +232,7 @@
     "builder": {
       "writes": true,
       "lane": "build",
-      "model": "litellm/grok-4.7",
+      "model": "litellm/zenmux/deepseek-v4.1-flash",
       "intent": "Implement a bounded, specified change and verify it.",
       "classes": [
         "bounded-edit",
@@ -240,7 +244,7 @@
     "engineer": {
       "writes": true,
       "lane": "reason",
-      "model": "litellm/grok-4.7",
+      "model": "litellm/gemini-3.8-flash",
       "intent": "Resolve implementation uncertainty within an approved scope; choose details, test hypotheses, escalate genuine architecture or product decisions.",
       "classes": [
         "engineering",
@@ -259,12 +263,13 @@
     "judge": {
       "writes": false,
       "lane": "frontier",
-      "model": "litellm/gpt-6-sol",
+      "model": "litellm/gpt-6.1-sol",
       "intent": "Design judgment, trade-off calls, synthesis across findings.",
       "classes": [
         "planned-execution",
         "architecture",
-        "multi-agent-orchestration"
+        "multi-agent-orchestration",
+        "security-judge"
       ]
     },
     "breaker": {
@@ -353,7 +358,7 @@
         "litellm/gemini-3.8-flash"
       ],
       "cap": "edit",
-      "effort": "low",
+      "effort": "high",
       "writes": true,
       "strength": "flash",
       "also_served_by": [],
@@ -362,17 +367,16 @@
     "agentic-loop": {
       "agent": "builder",
       "lane": "build",
-      "model": "litellm/grok-4.7",
+      "model": "litellm/zenmux/deepseek-v4.1-flash",
       "chain": [
-        "litellm/grok-4.7",
         "litellm/zenmux/deepseek-v4.1-flash",
         "litellm/deepseek-v4.1-flash",
         "litellm/gemini-3.8-flash"
       ],
       "cap": "edit",
-      "effort": "low",
+      "effort": "high",
       "writes": true,
-      "strength": "pro",
+      "strength": "flash",
       "also_served_by": [],
       "fallback": "bounded-edit",
       "intent": "Iterate until green when the steps are not known up front."
@@ -380,27 +384,26 @@
     "graph-execution": {
       "agent": "builder",
       "lane": "build",
-      "model": "litellm/grok-4.7",
+      "model": "litellm/zenmux/deepseek-v4.1-flash",
       "chain": [
-        "litellm/grok-4.7",
         "litellm/zenmux/deepseek-v4.1-flash",
         "litellm/deepseek-v4.1-flash",
         "litellm/gemini-3.8-flash"
       ],
       "cap": "chat",
-      "effort": "low",
+      "effort": "high",
       "writes": true,
-      "strength": "pro",
+      "strength": "flash",
       "also_served_by": [],
       "intent": "Execute a dependency-ordered set of prepared steps."
     },
     "planned-execution": {
       "agent": "judge",
       "lane": "frontier",
-      "model": "litellm/gpt-6-astra",
+      "model": "litellm/gpt-6.1-sol",
       "chain": [
-        "litellm/gpt-6-astra",
-        "litellm/gpt-6-sol"
+        "litellm/gpt-6.1-sol",
+        "litellm/opus-5.5"
       ],
       "cap": "chat",
       "effort": "high",
@@ -413,9 +416,10 @@
     "engineering": {
       "agent": "engineer",
       "lane": "reason",
-      "model": "litellm/gpt-6-sol",
+      "model": "litellm/gpt-6.1-sol",
       "chain": [
-        "litellm/gpt-6-sol",
+        "litellm/gpt-6.1-sol",
+        "litellm/opus-5.5",
         "litellm/grok-4.7",
         "litellm/zai/glm-5.3"
       ],
@@ -429,10 +433,10 @@
     "engineering-critical": {
       "agent": "engineer",
       "lane": "critical",
-      "model": "litellm/gpt-6-sol",
+      "model": "litellm/gpt-6.1-sol",
       "chain": [
-        "litellm/gpt-6-sol",
-        "litellm/claude-opus-5-5"
+        "litellm/gpt-6.1-sol",
+        "litellm/opus-5.5"
       ],
       "cap": "edit",
       "effort": "high",
@@ -459,10 +463,10 @@
     "architecture": {
       "agent": "judge",
       "lane": "frontier",
-      "model": "litellm/gpt-6-astra",
+      "model": "litellm/gpt-6.1-sol",
       "chain": [
-        "litellm/gpt-6-astra",
-        "litellm/gpt-6-sol"
+        "litellm/gpt-6.1-sol",
+        "litellm/opus-5.5"
       ],
       "cap": "chat",
       "effort": "high",
@@ -571,9 +575,8 @@
     "unknown": {
       "agent": "builder",
       "lane": "build",
-      "model": "litellm/grok-4.7",
+      "model": "litellm/zenmux/deepseek-v4.1-flash",
       "chain": [
-        "litellm/grok-4.7",
         "litellm/zenmux/deepseek-v4.1-flash",
         "litellm/deepseek-v4.1-flash",
         "litellm/gemini-3.8-flash"
@@ -581,11 +584,25 @@
       "cap": "chat",
       "effort": "low",
       "writes": true,
-      "strength": "pro",
+      "strength": "flash",
       "also_served_by": [
         "finder"
       ],
       "intent": "Unclassified work. Middle of the cost curve, no surprises."
+    },
+    "security-judge": {
+      "agent": "judge",
+      "lane": "security-judge",
+      "model": "litellm/gpt-daybreak-blue-latest",
+      "chain": [
+        "litellm/gpt-daybreak-blue-latest"
+      ],
+      "cap": "review",
+      "effort": "high",
+      "writes": false,
+      "strength": "frontier",
+      "also_served_by": [],
+      "intent": "Frontier review of security-boundary code such as integrity checks and tamper refusal; record the actual serving model on every review."
     }
   },
   "panels": {
@@ -593,7 +610,7 @@
       "members": [
         {
           "lane": "",
-          "model": "litellm/grok-4.7:high"
+          "model": "litellm/gpt-6.1-sol:high"
         },
         {
           "lane": "",
@@ -607,7 +624,7 @@
       "members": [
         {
           "lane": "frontier",
-          "model": "litellm/gpt-6-sol"
+          "model": "litellm/gpt-6.1-sol"
         },
         {
           "lane": "longform",
@@ -623,7 +640,7 @@
     "explore": "investigation",
     "investigate": "deep-investigation",
     "design": "architecture",
-    "consensus": "architecture",
+    "consensus": "multi-agent-orchestration",
     "plan": "planned-execution",
     "implement": "bounded-edit",
     "build": "agentic-loop",
