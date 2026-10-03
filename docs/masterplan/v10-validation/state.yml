@@ -1,7 +1,7 @@
 ---
 schema_version: 9
 slug: v10-validation
-status: in-progress
+status: archived
 phase: execute
 topic: "Validate the released v10.0.6 surfaces: G6 live evidence, goal-assessment replay, and the bootstrap failure table exercised against the tagged release (required successor of intent-to-completion)."
 complexity: high
@@ -26,3 +26,4 @@ predecessor: intent-to-completion
 format_pin: schema_backed
 goals_md_hash: sha256:211c3a1097d64bb1842348a660f68a7bc945fa9e3b1b17b75df7d4e25cf13c7b
 worktree_disposition: removed_after_merge
+completion: incomplete:version_not_bumped
