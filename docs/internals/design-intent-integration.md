@@ -4,7 +4,7 @@
 > `/intent` skill (behavior-skills) divide the work, and how the skill revision
 > masterplan verifies against is pinned. Primary sources: the run bundle's `spec.md` §5
 > (interview protocol) and §5.5 (schema ownership, snapshot, and skill identity), the
-> design draft `docs/masterplan/intent-to-completion/design-intent-integration-draft.md`,
+> design draft `design-intent-integration-draft.md`,
 > and the decision of record in behavior-skills
 > `docs/superpowers/specs/2026-09-05-design-intent-design.md` §5 (DECIDED, 2026-09-05).
 
