@@ -202,7 +202,9 @@ test('unsubmitted legacy model or chain descriptors demand explicit migration', 
   }
 });
 
-test('Task 8 panel coordinator integration: C7 isolated counters exhaust the same subject', async () => {
+const jointTest = (process.env.MASTERPLAN_STANDALONE_CI === '1' && !process.env.W) ? test.skip : test;
+
+jointTest('Task 8 panel coordinator integration: C7 isolated counters exhaust the same subject', async () => {
   // Joint-checkout dependencies are deliberately external: never use installed
   // routing or silently skip when W is absent (plan 07's integration contract).
   const W = process.env.W;

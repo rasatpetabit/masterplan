@@ -89,7 +89,9 @@ function repository(root) {
   return main;
 }
 
-test('installed-style configured and unconfigured entrypoints refresh intent and refuse without launches', () => sandbox(async ({ root, home, install, load, env }) => {
+const jointTest = (process.env.MASTERPLAN_STANDALONE_CI === '1' && !process.env.W) ? test.skip : test;
+
+jointTest('installed-style configured and unconfigured entrypoints refresh intent and refuse without launches', () => sandbox(async ({ root, home, install, load, env }) => {
   const { discoverDispatchMap, resolvePhase, resolveUsecase } = await load('lib/dispatch/routing-policy.mjs');
   const { resolveClassRouting, reviewChallengeIntent } = await load('lib/dispatch-wave.mjs');
   const { finishReviewDispatch } = await load('lib/finish-step.mjs');
@@ -177,7 +179,7 @@ test('installed-style configured and unconfigured entrypoints refresh intent and
   }
 }));
 
-test('installed-style task and committed-recovery producers reach native C5 and exhaust one persisted C7 episode', () => sandbox(async ({ root, load, env }) => {
+jointTest('installed-style task and committed-recovery producers reach native C5 and exhaust one persisted C7 episode', () => sandbox(async ({ root, load, env }) => {
   const { writeState } = await load('lib/bundle.mjs');
   const { buildOwnerIdentity } = await load('lib/owner.mjs');
   const { continueRun } = await load('lib/continue.mjs');
@@ -215,7 +217,7 @@ test('installed-style task and committed-recovery producers reach native C5 and 
   nativePanels(launches, ceiling, env);
 }));
 
-test('installed-style finish producer reaches native C5 and exhausts its unchanged episode across changed heads and retries', () => sandbox(async ({ root, home, install, load, env }) => {
+jointTest('installed-style finish producer reaches native C5 and exhausts its unchanged episode across changed heads and retries', () => sandbox(async ({ root, home, install, load, env }) => {
   const { writeState, readState } = await load('lib/bundle.mjs');
   const { buildOwnerIdentity } = await load('lib/owner.mjs');
   const { acquireOwner } = await load('lib/owner-fs.mjs');

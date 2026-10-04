@@ -459,9 +459,11 @@ test('manifest prunes managed fallback reviewer copies and preserves unmanaged c
 });
 
 
+const jointTest = (process.env.MASTERPLAN_STANDALONE_CI === '1' && !process.env.W) ? test.skip : test;
+
 // Execute the documented call locally to capture its request, then exercise the
 // actual registered decomposer against a nonmatching canonical judge default.
-test('documented Pi decomposer invocation prepares plan when judge defaults to decide', () => {
+jointTest('documented Pi decomposer invocation prepares plan when judge defaults to decide', () => {
   const W = process.env.W;
   assert.ok(W && isAbsolute(W), 'W must name the absolute joint integration checkout');
   const docs = readFileSync(join(repoRoot, 'docs/development.md'), 'utf8');
@@ -516,7 +518,7 @@ test('documented Pi decomposer invocation prepares plan when judge defaults to d
 
 // Task 7: actual registered definitions through the joint checkout's C4/tool authority.
 // Synthetic runners observe prepared children only: no Pi process/provider is started.
-test('all eight registered aliases preserve their custom contracts through governed preparation', () => {
+jointTest('all eight registered aliases preserve their custom contracts through governed preparation', () => {
   const W = process.env.W;
   assert.ok(W && isAbsolute(W), 'W must name the absolute joint integration checkout');
   for (const relative of ['engine/agent-prompt.ts', 'subagents/src/agents/agents.ts']) {

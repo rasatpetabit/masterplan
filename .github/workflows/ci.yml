@@ -24,6 +24,11 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Provision synthetic C1 dispatch map
+        run: |
+          mkdir -p "$HOME/.pi/workflows"
+          cp test/fixtures/dispatch-map.json "$HOME/.pi/workflows/dispatch-map.json"
+
       - name: Unit suite
         env:
           # Cross-repo overlay tests skip only when the fleet policy is absent in
