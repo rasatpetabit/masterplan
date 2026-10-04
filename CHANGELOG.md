@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [10.0.15] — 2026-10-04
+
+### Changed — Model Routing Phase 7 model-free consumer cutover
+
+- Consumer descriptors emitted by masterplan are strictly model-free, relying entirely on host-native C1 dynamic discovery.
+- Retired legacy packaged maps (`policy/workflow-map.json` and `policy/dispatch-map.json`) and fallback resolution.
+- Runtime policy rejects malformed, non-string, or unauthorized primary models (`460e1b5`).
+- Preserved clean-core host discovery, with health validation verified fail-closed under `bin/doctor.mjs`.
+
 ## [10.0.14] — 2026-09-28
 
 ### Simplified — finish-gate fallback policy resolution
