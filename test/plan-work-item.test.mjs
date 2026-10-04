@@ -18,6 +18,8 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import { buildPlanWorkItem } from '../lib/continue.mjs';
+import fs from 'node:fs';
+const fixture = JSON.parse(fs.readFileSync(new URL('./fixtures/dispatch-map.json', import.meta.url), 'utf8'));
 
 const SUBSYSTEM = {
   key: 'server',
@@ -31,6 +33,7 @@ const OPTS = {
   roots: ['/repo', '/repo/docs/masterplan/demo/spec.md'],
   specPath: '/repo/docs/masterplan/demo/spec.md',
   repoRoot: '/repo',
+  policy: fixture,
 };
 
 describe('buildPlanWorkItem', () => {
@@ -41,10 +44,12 @@ describe('buildPlanWorkItem', () => {
     assert.equal(item.repo, OPTS.repoRoot);
   });
 
-  it('carries a non-empty class — also required by normalizeDescriptor', () => {
+  it('carries C1 plan intent and no model', () => {
     const item = buildPlanWorkItem(SUBSYSTEM, OPTS);
-    assert.equal(typeof item.class, 'string');
-    assert.ok(item.class.length > 0);
+    assert.equal(item.phase, 'plan');
+    assert.equal(item.usecase, fixture.phases.plan);
+    assert.equal(item.agent, 'judge');
+    assert.equal(Object.hasOwn(item, 'model'), false);
   });
 
   it('still declares read-only and no write-scope fields', () => {
@@ -67,8 +72,8 @@ describe('buildPlanWorkItem', () => {
       if (d == null || typeof d !== 'object' || Array.isArray(d)) {
         throw new Error('Task descriptor must be an object');
       }
-      if (typeof d.class !== 'string' || d.class.length === 0) {
-        throw new Error('Task descriptor requires a non-empty class');
+      if (typeof d.phase !== 'string' || typeof d.usecase !== 'string') {
+        throw new Error('Task descriptor requires C1 intent');
       }
       if (typeof d.repo !== 'string' || d.repo.length === 0) {
         throw new Error('Task descriptor requires a non-empty repo');

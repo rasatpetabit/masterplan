@@ -1,0 +1,9 @@
+bin/masterplan.mjs:154://                                                  policy/workflow-map.json), returned for the orchestrating
+lib/wave.mjs:102:// A2 (2026-08-30): the former default `masterplan-implementation` is absent from policy/workflow-map.json and
+lib/dispatch-wave.mjs:6:// repo-local routing policy (policy/workflow-map.json — classes -> agent role
+lib/dispatch-wave.mjs:423: * @property {object}  [policy]        — injected routing policy (tests; default repo copy / MP_ROUTING_POLICY)
+lib/dispatch/index.mjs:5:// (policy/workflow-map.json, see routing-policy.mjs); this package is the
+lib/dispatch/routing-policy.mjs:16:  const retired = env ? readEnv('MP_ROUTING_POLICY', env) : readEnv('MP_ROUTING_POLICY');
+lib/dispatch/routing-policy.mjs:17:  if (retired !== undefined) throw Object.assign(new Error('MP_ROUTING_POLICY retired; unset it and use MP_DISPATCH_MAP for C1 discovery; migrate model choices to inference routing'), { code: 'RETIRED_ROUTING_POLICY' });
+lib/doctor/routing-policy-health.mjs:6:const FIX = 'provide a valid delivered C1 dispatch-map.json or set MP_DISPATCH_MAP; unset retired MP_ROUTING_POLICY and migrate model choices to inference routing';
+lib/dispatch/routing.mjs:6:// policy/workflow-map.json) and no longer pre-bake a `target`/`eligible`/`reason` in

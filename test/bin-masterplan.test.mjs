@@ -14,6 +14,7 @@ import { serializeState, parseState, CURRENT_SCHEMA_VERSION } from '../lib/bundl
 import { liveCheckDigest } from '../lib/finish.mjs';
 import { captureWatchBaseline, writeWatchBaseline } from '../lib/watch-integrity.mjs';
 import { createHash } from 'node:crypto';
+import { composeWaveDispatchKey } from '../lib/dispatch-wave.mjs';
 
 const BIN = fileURLToPath(new URL('../bin/masterplan.mjs', import.meta.url));
 const SAMPLE = fileURLToPath(new URL('./fixtures/legacy-bundles/5.0-inflight-sample.yml', import.meta.url));
@@ -3142,7 +3143,7 @@ test('continue (planning verb): a plan marker yields the read-only dispatch_plan
   assert.equal(op.op, 'dispatch_plan');
   assert.equal(op.kind, 'plan');
   assert.equal(op.read_only, true);
-  assert.equal(op.class, 'planned-execution');
+  assert.equal(op.phase, 'plan');
   assert.equal(op.next, 'stage-plan-fragments');
   assert.ok(Array.isArray(op.roots) && op.roots.length === 2, 'enumerated roots: repo + spec');
   assert.equal(op.roots[0], op.cwd);
@@ -3224,6 +3225,7 @@ test('record-result awaits native review before the state transaction (CLI order
     tasks: [{ task_id: 1, class: 'masterplan-implementation', handoff_key: 'k1' }],
     review_context: {
       enabled: true,
+      episodes: { '1': { subject: `${repo}::docs/masterplan/${slug}/wave-1/task-1` } },
       base_sha: head,
       tasks: [{
         task_id: 1,
@@ -3344,6 +3346,7 @@ test('native-path record-result ignores a smuggled deferred_review_events field 
     tasks: [{ task_id: 1, class: 'masterplan-implementation', handoff_key: 'k1' }],
     review_context: {
       enabled: true, base_sha: head,
+      episodes: { 1: { subject: `${repo}::docs/masterplan/${slug}/wave-1/task-1` } },
       tasks: [{ task_id: 1, description: 'task 1', class: 'masterplan-implementation', repo: WT }],
     },
   }, null, 2));
@@ -3835,12 +3838,13 @@ test('recovery CLI: --recovery-repo/--recovery-head reproduce the exact artifact
     tasks: [{ id: 1, wave: 1, files: ['src/a.txt'], description: 'task 1', verify_commands: [] }],
   }));
   fs.writeFileSync(path.join(bundleDir, 'wave-1.dispatch.json'), JSON.stringify({
-    key: `mp-wave-dispatch-v1|${slug}|1|dispatch_fabric`,
+    key: composeWaveDispatchKey(slug, 1),
     run_id: slug, wave: 1, op: 'dispatch_fabric', contract_version: 'fabric-native-v1',
     status: 'pending', attempt: 2, wave_token: `mp-wave-${slug}-w1-a2`, handles: [],
     dispatched_at: 'T0', tasks: [{ task_id: 1, class: 'bounded-edit', handoff_key: 'k1' }],
     review_context: {
       enabled: true, base_sha: base,
+      episodes: { '1': { subject: `${repo}::docs/masterplan/${slug}/wave-1/task-1` } },
       tasks: [{ task_id: 1, description: 'task 1', class: 'bounded-edit', repo: WT }],
     },
   }, null, 2));
@@ -3977,12 +3981,13 @@ test('recovery CLI: a dirty tree rejects with recovery-preservation-violation an
     tasks: [{ id: 1, wave: 1, files: ['src/a.txt'], description: 'task 1', verify_commands: [] }],
   }));
   fs.writeFileSync(path.join(bundleDir, 'wave-1.dispatch.json'), JSON.stringify({
-    key: `mp-wave-dispatch-v1|${slug}|1|dispatch_fabric`,
+    key: composeWaveDispatchKey(slug, 1),
     run_id: slug, wave: 1, op: 'dispatch_fabric', contract_version: 'fabric-native-v1',
     status: 'pending', attempt: 2, wave_token: `mp-wave-${slug}-w1-a2`, handles: [],
     dispatched_at: 'T0', tasks: [{ task_id: 1, class: 'bounded-edit', handoff_key: 'k1' }],
     review_context: {
       enabled: true, base_sha: base,
+      episodes: { '1': { subject: `${repo}::docs/masterplan/${slug}/wave-1/task-1` } },
       tasks: [{ task_id: 1, description: 'task 1', class: 'bounded-edit', repo: WT }],
     },
   }, null, 2));

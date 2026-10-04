@@ -56,7 +56,6 @@ function makeSourceRepo() {
   put('agents/mp-x.md', '---\nname: mp-x\ndescription: x\nmodel: frontier\n---\n\nbody\n');
   put('skills/masterplan/SKILL.md', '# skill\n');
   put('skills/masterplan-detect/SKILL.md', '# detect skill\n');
-  put('policy/workflow-map.json', JSON.stringify({ version: 1, lanes: { frontier: { model: 'litellm/test' } }, classes: {}, agents: {}, servedEquivalents: {} }) + '\n');
   put('package.json', JSON.stringify({ name: 'masterplan', version: '9.10.0' }, null, 2) + '\n');
   git(src, 'init', '-q', '--initial-branch=main');
   git(src, 'config', 'user.email', 'test@test');
@@ -92,9 +91,7 @@ test('install-pi: fresh install builds releases/<sha>, current, skill links, met
   assert.equal(out.sha, sha);
   assert.equal(out.version, '9.10.0');
   assert.ok(fs.existsSync(path.join(env.installRoot, 'releases', sha, 'commands/masterplan.md')));
-  const installedMap = JSON.parse(fs.readFileSync(path.join(env.installRoot, 'releases', sha, 'policy/workflow-map.json'), 'utf8'));
-  assert.equal(installedMap.version, 1);
-  assert.deepEqual(installedMap.servedEquivalents, {}, 'new-schema fallback must survive snapshot install');
+  assert.equal(fs.existsSync(path.join(env.installRoot, 'releases', sha, 'policy')), false, 'release packages no routing map');
   assert.equal(fs.realpathSync(path.join(env.installRoot, 'current')), fs.realpathSync(path.join(env.installRoot, 'releases', sha)));
   for (const name of ['masterplan', 'masterplan-detect']) {
     const link = path.join(env.piRoot, 'agent', 'skills', name);
@@ -456,4 +453,26 @@ test('retention: pruning never removes the current target even when it is the ol
   assert.ok(!after.includes('seed000'), 'the oldest seeded release must be pruned');
   assert.ok(fs.existsSync(currentDir), 'current must survive retention pruning');
   assert.equal(fs.realpathSync(path.join(env.installRoot, 'current')), currentDir, 'current must still resolve');
+});
+
+test('install-pi map-free snapshot prunes managed fallback copies, preserves unmanaged files and uses only injected C1', () => {
+  const { src, sha } = makeSourceRepo(); const env = layout();
+  const target = path.join(env.piRoot, 'agent/agents'); fs.mkdirSync(target, { recursive: true });
+  for (const rel of ['mp-fallback-reviewer.md', 'masterplan:mp-fallback-reviewer.md', 'mp-mine.md']) fs.writeFileSync(path.join(target, rel), rel);
+  fs.writeFileSync(path.join(target, '.masterplan-managed.json'), JSON.stringify({ schema: 1, files: ['mp-fallback-reviewer.md', 'masterplan:mp-fallback-reviewer.md'] }));
+  const c1 = path.join(env.installRoot, 'host-c1.json'); fs.mkdirSync(env.installRoot, { recursive: true });
+  fs.copyFileSync(new URL('./fixtures/dispatch-map.json', import.meta.url), c1);
+  const installed = run([`--source=${src}`, ...env.args], { MP_DISPATCH_MAP: c1 });
+  assert.equal(installed.status, 0, installed.stderr);
+  assert.equal(fs.existsSync(path.join(target, 'mp-fallback-reviewer.md')), false);
+  assert.equal(fs.existsSync(path.join(target, 'masterplan:mp-fallback-reviewer.md')), false);
+  assert.equal(fs.readFileSync(path.join(target, 'mp-mine.md'), 'utf8'), 'mp-mine.md');
+  assert.equal(fs.existsSync(path.join(env.installRoot, 'releases', sha, 'policy')), false);
+  const discoveryModule = path.join(repoRoot, 'lib/dispatch/routing-policy.mjs');
+  const script = `import { discoverDispatchMap } from ${JSON.stringify(discoveryModule)};
+    const d = discoverDispatchMap({host:'pi'}); console.log(JSON.stringify({status:d.status,path:d.path,schema:d.schema}));`;
+  const observed = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', env: { ...process.env, MP_DISPATCH_MAP: c1 } });
+  assert.equal(observed.status, 0, observed.stderr);
+  assert.deepEqual(JSON.parse(observed.stdout), { status: 'configured', path: c1, schema: 1 });
+  assert.equal(fs.readFileSync(c1, 'utf8'), fs.readFileSync(new URL('./fixtures/dispatch-map.json', import.meta.url), 'utf8'));
 });

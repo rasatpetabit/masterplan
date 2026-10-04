@@ -38,6 +38,15 @@ Resume or begin execution — the resume controller (§2). No path → the activ
 wave per `mp dispatch-wave` (the fabric wave dispatcher) until all tasks are `done`, then auto-enters the finish
 flow. `--resume=<path>` is an alias for `execute <path>`.
 
+## `episode-disposition` (operator CLI)
+
+For an existing held/subjectless wave-review slot, decide explicitly without rewriting
+historical receipts: `mp episode-disposition --state=<primary-bundle>/state.yml --wave=<n> --task-id=<n> --disposition=retire --reason="<why>"` closes it **not reviewed**; use `--disposition=restart` without `--reason` to authorize new work on a new persisted subject linked to the old slot. Pass `--session=<owner-session> --host=<owner-host>` when Guard D is on. Identical re-entry is idempotent; conflicting decisions, stale `.worktrees/` bundle copies and missing slots refuse. The physical bundle and `state.yml` must match the canonical primary repository location; redirected directory/state-file symlinks refuse before ownership checks or writes. Relative paths to the ordinary primary bundle work. Review consumers enforce the same Guard D boundary as disposition writes, and a restart must have the one recomputed canonical subject and exact `{wave, task_id}` lineage for its slot. No disposition is applied automatically.
+
+Eligibility is checked for every done task (including embedded approvals) and again at `record-result`, including recovery/reconcile. Held, subjectless, unlinked, and retired slots refuse before task-state or completion-event writes. Retirement remains **not reviewed**: it does not mark a pending task done, contribute to the status done count, or enable finish. X22 defines no separate retired-task/finish transition, so the task remains blocked/pending. Restarted reviews carry the new `episode_subject` in new events and result projections; re-entry and recording require that exact subject. Old events stay unchanged and cannot satisfy the restart, even for the same task and diff. No historical accounting identity is imported and receipt formats/bytes are unchanged.
+
+**Residual trust boundary:** Guard D is a cooperative lock, not authentication against a same-UID writer who edits state directly (or changes lock/config evidence). Exact restart validation limits a hand-edited record to the one canonical restart; it does not prove an independent operator authorization. The existing `owner_lock=off` escape hatch remains explicit.
+
 ## `finish`
 Finalize a completed run (§2c): verify and **cite real output**
 (`superpowers:verification-before-completion`) → write `retro.md` if absent → open the durable
@@ -49,13 +58,15 @@ check via the `mp-goal-assessor` agent, and a new `goals_unmet` gate (fix-&-cont
 abort) fires before archive.
 Flag: `--retro-only` (re)generates just `retro.md` (no verification, no gate, no archive).
 
-The whole-branch adversary review inside this flow (`run_adversary_review`) records its answer
-through `mp finish-step --review-done --review-count=<n> --review-base=<b>
---review-digest-file=<path>` **plus `--review-reviewer=<model ref or 'adversary'>`**, and — when
-the review came from a FALLBACK reviewer because the primary lane was refused or failed —
-`--review-fallback-reason="<why the primary failed>"` (refused without `--review-done`). The
-`branch_finish` AUQ payload carries the reviewer and the fallback reason on its `review` line.
-See `docs/conventions/adversarial-review-failure-policy.md` § Finish-path review.
+The whole-branch challenge (`run_adversary_review`) returns model-free intent with
+stable `subject`, phase/agent, stakes and constraints. Pi's boundary owns recovery
+and critical panels; Claude Code/Codex use host-native selection. Record only a
+real complete verdict through `mp finish-step --review-done --review-count=<n>
+--review-base=<b> --review-digest-file=<path> --review-verdict=<verdict>
+--review-reviewer=<observed identity>`. The digest remains file-transported;
+observed service identity comes from the receipt. Unavailable/exhausted reviews
+and inconclusive panels remain blocked, never an alternate reviewer success or
+automatic skip. The `branch_finish` review line retains the real reviewer/digest.
 
 ## `retro`
 **Deprecated alias** for `finish --retro-only` — prints a one-line rename notice, then runs it.
@@ -271,6 +282,26 @@ is terminal for dispatch + finalize but operator-reversible.
 
 New seeds default `--fabric=on` (`state.dispatch.fabric: true`) and fabric is the only wave path since the L2 legacy dispatch path was deleted (A3) — the flag's `off` value is gone; a bundle without `state.dispatch.fabric: true` is unexecutable.
 
+## Model-free routing and receipts
+
+Discovery precedence: `MP_DISPATCH_MAP` when set, else
+`~/.pi/workflows/dispatch-map.json`. Masterplan packages neither map nor resolver.
+An explicit missing path refuses, as does Pi without a map. Present unreadable or
+invalid maps (`schema !== 1`) refuse on every host; unknown phases/use cases
+refuse by name. Only non-Pi with no override and no default file is unconfigured:
+descriptors carry phase/agent only. Planning selects `plan`, review selects
+`challenge`; execute tasks retain unchanged `bounded-edit` defaults.
+
+Configured Pi descriptors carry use case, stakes, constraints and stable review
+`subject`, never a model. Critical reviews go through Pi-native panels; incomplete
+panels are inconclusive, never gate clearance. Requested effort is a floor,
+served effort and observed model come from C3 receipts, not selection or a badge.
+Claude Code/Codex record `model_source: host-native` and use their own selection,
+without overrides. Named delegation preserves custom contracts, not a fleet-model
+guarantee. Codex waves stay foreground-sequential, without recursive spawning.
+Never replace an unavailable review with narrated inline success. Doctor reports
+map presence, path and schema.
+
 ## Config hierarchy & environment
 
 Configuration resolves **CLI > repo (`.masterplan.yaml`) > user (`~/.masterplan.yaml`) > default**
@@ -278,19 +309,17 @@ Configuration resolves **CLI > repo (`.masterplan.yaml`) > user (`~/.masterplan.
 Recognized keys: `complexity` (`low|medium|high`), `autonomy` (`gated|loose`, alias `full`→`loose`),
 `planning_mode` (`serial|parallel|auto`), `adversary_review` (`on|off`), `render_images` (`on|off`),
 `fabric` (`on|off`), `context_watch` (`{threshold 1–99, focus}`), `adversary_review_fallback`
-(a list of model refs, or `off`) and `done` (definition of done with fixed-order
+(`off` → `noSubstitute: true`; model arrays are retired, migrate to inference routing) and `done` (definition of done with fixed-order
 `release` steps). Only `complexity`, `autonomy`, and `planning_mode` are resolved from the chain at seed;
 `adversary_review`, `render_images`, `fabric` come from seed flags/defaults only (`fabric: off` marks a bundle
 unexecutable — the legacy dispatch path is deleted). `adversary_review_fallback` resolves from the chain at the
-finish gate (`mp finish-step`): the ordered fallback reviewer list the `run_adversary_review` op carries — the
-routing policy's adversary `chain` (primary excluded, de-duplicated) by default, the
-configured list instead when set — refused fail-closed if it names a model outside that chain,
-because the fallback is dispatched under the adversary class and its spawn guard authorizes an
-override only inside the chain — and no fallback at all on `adversary_review_fallback: off`. Deploy groups run in the fixed order
+finish gate (`mp finish-step`): `off` adds `noSubstitute: true` to the challenge
+intent. It does not authorize outage skips; recovery belongs to Pi's governed
+boundary, not a local fallback loop. Deploy groups run in the fixed order
 `release → install → user_only → live_check` (group order normative, within-group list order). Environment
 controls: `CLAUDE_CODE_SESSION_ID` (+ `--session`/`--host` flags; Guard-D
 session identity), `MP_DISPATCH_WAVE_CONCURRENCY` (wave fan-out cap, default 8),
-`MP_ROUTING_POLICY` (routing-policy override path), `SKYNET_VERIFY_ALLOWLIST` (recorded verify allowlist),
+`MP_DISPATCH_MAP` (C1 intent-discovery override path), `SKYNET_VERIFY_ALLOWLIST` (recorded verify allowlist),
 `MP_CONTEXT_WINDOW` (context-status window override), `MP_BIN`, `MP_MARKETPLACE_DIR`, `MASTERPLAN_RUNS_DIR`,
 `CLAUDE_PLUGIN_ROOT`, `PI_CODING_AGENT` (host routing, see the Pi adaptation sections).
 

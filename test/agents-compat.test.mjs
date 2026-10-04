@@ -282,10 +282,10 @@ test('both prompts keep their frontmatter contract', () => {
     assert.ok(fm, `${name} must keep its frontmatter`);
     assert.match(fm[1], /^name: mp-/m, name);
     assert.match(fm[1], /^description: /m, name);
-    // `model:` is a routing-policy LANE name, resolved at registration — never a raw model ref.
-    const model = /^model: (\S+)$/m.exec(fm[1]);
-    assert.ok(model, `${name} must declare its lane`);
-    assert.equal(model[1].includes('/'), false, `${name}: model must be a lane name, not a model ref`);
+    // Model-free source inherits host selection; the preset retains the contract.
+    assert.doesNotMatch(fm[1], /^model:/m, `${name}: no fleet model pin`);
+    assert.match(fm[1], /^preset: breaker$/m, name);
+    assert.match(text, /^## usecase: (claim-assessment|adversarial-assessment)$/m, name);
   }
 });
 

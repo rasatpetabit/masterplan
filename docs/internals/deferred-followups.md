@@ -64,3 +64,38 @@ reads the live return shape, not the doc).
 
 **Resolution shape:** Repoint the reference to `parts/contracts/brainstorm-anchor.md`
 (one-line edit) in the next pass that touches `parts/step-b.md`.
+
+## DF-4 — Re-drive stamps completion without authorization — **OPEN (X22a, 2026-09-30)**
+
+**Finding (MEDIUM, pre-existing from `0dbed78` onward):**
+`redriveRecordTransaction` in `lib/dispatch-wave.mjs` catches the recorder's
+“no active_run marker” refusal and writes `status: recorded`, `completed_at`,
+and an assertion that the prior transaction completed. The recorder refuses
+before its shared authorization gate; marker absence alone is not durable
+proof of an authorized finalization. This is an unsupported completion-audit
+claim, not an established full finish/archive exploit.
+
+**Reproduction:** In a disposable bundle, leave a pending task's dispatch record
+`dispatched` with a stored done result, retire the unreviewed episode, remove the
+active marker, then call `dispatchWaveViaFabric` for that wave. The re-drive
+returns `outcome: reused`, record `status: recorded` and
+`record_result.outcome: already-finalized` while the task remains pending and
+its disposition remains `retire`, `reviewed: false`.
+
+**Evidence:** Plan 07 `reviews/impl/07-x22-judge-6.md`, finding 4 (`J6 REDRIVE`),
+and `reviews/impl/07-x22-judge6-provenance.md`, finding 4 (`J6-4`), under
+`/srv/workflows/docs/superpowers/plans/2026-09-27-model-routing/`.
+The self-contained reproduction is `/tmp/p07-prov/probe.mjs`, selector `4`;
+its provenance runs reproduced at `3876029`, `fd4c3ca`, `d9ad7cc` and
+`0dbed78`. Temporary probe/log availability is not guaranteed; the durable
+review documents record the reproduction and observed outputs.
+
+**Why deferred:** Amendment X22a classifies this as an unrelated existing
+shortcut on no X22 disposition-consumption path, outside Task 5's recorder
+repair scope. Tracking is not remediation; the shortcut remains unchanged.
+
+**Resolution shape:** Require durable evidence of a previously authorized
+finalization before the no-marker shortcut; otherwise refuse. Extend structural
+coverage to dispatch-wrapper completion writes, not only `recordWaveResult`.
+Resolve as a separately authorized change without historical identity recovery
+or receipt migration.

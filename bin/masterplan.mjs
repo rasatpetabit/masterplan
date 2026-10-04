@@ -15,7 +15,7 @@
 //
 // Subcommands:
 //   version [--args=STR] [--cwd=DIR]            -> the CC-2 banner line (the lone CC-2/CC-3 survivor)
-//   detect-host [--agent-is-codex] [--native-tools] [--agents-md]
+//   detect-host [--agent-is-pi] [--agent-is-codex] [--native-tools] [--agents-md]
 //                                               -> {isCodex, reasons}
 //   decide --state=PATH [--alive]               -> the decideNextAction result (migrates in-memory)
 //   seed --state=PATH --slug=S --topic=STR [--phase=P] [--status=S] [--schema-version=N]
@@ -187,6 +187,7 @@
 //                                                  rename/unlink); the .owner.lock is NOT CD-7 state.
 
 import fs from 'node:fs';
+import { taskEpisodeEligibleForCompletion } from '../lib/review-episode.mjs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -233,7 +234,7 @@ import { mapQctlStatus } from '../lib/qctl-status.mjs';
 import { decideBaseDrift } from '../lib/qctl-requeue.mjs';
 import { recordWaveResult, promoteAmendment } from '../lib/wave-commit.mjs';
 import { pinnedGoalsEvidenceHash } from '../lib/promote.mjs';
-import { dispatchWaveViaFabric, reviewNativeResult, readWaveDispatchRecord, writeWaveDispatchRecord } from '../lib/dispatch-wave.mjs';
+import { dispatchWaveViaFabric, reviewNativeResult, readWaveDispatchRecord, writeWaveDispatchRecord, disposeReviewEpisode } from '../lib/dispatch-wave.mjs';
 import { continueRun, dispatchPlanFanout, resolvePlanMdPath } from '../lib/continue.mjs';
 import { finishStep } from '../lib/finish-step.mjs';
 import { sweepWorktrees } from '../lib/sweep.mjs';
@@ -682,7 +683,7 @@ function parseArgs(argv) {
 // flag some verb reads is in the set. A flag typo that collides with another verb's valid
 // name is the one residual gap (mitigated by the positive cli-surface cross-check test).
 const KNOWN_FLAGS = new Set(
-  ('actor add-root adversary-review after agent-is-codex agents-md alive all apply apply-ok ' +
+  ('actor add-root adversary-review after agent-is-pi agent-is-codex agents-md alive all apply apply-ok ' +
     'approval args autonomy base base-sha baseline before bootstrap branch branch-exists branches ' +
     'bytes-file choice codex-base codex-count codex-digest-file codex-done codex-reason codex-review ' +
     'codex-skipped codex-suppressed complexity complexity-source contract-ref count created-at ' +
@@ -1388,6 +1389,17 @@ export function shouldSuppressWorkflow(flags = {}, env = process.env) {
 // backfill without importing the CLI; re-exported here to keep bin's public import surface.
 export { applyPlanIndex };
 
+// Host identity and workflow suppression are independent facts: a Pi run can
+// suppress Workflow yet still require its configured C1 map.
+function cliDispatchHost(flags) {
+  return detectHost({
+    agentIsPi: !!flags['agent-is-pi'] || readEnv('PI_CODING_AGENT') === 'true',
+    agentIsCodex: !!flags['agent-is-codex'],
+    codexNativeTools: !!flags['native-tools'],
+    agentsMdPresent: !!flags['agents-md'],
+  }).kind;
+}
+
 // ---- subcommand dispatch ----
 function main() {
   const [cmd, ...rest] = process.argv.slice(2);
@@ -1431,6 +1443,7 @@ function main() {
     }
     case 'detect-host': {
       const host = detectHost({
+        agentIsPi: !!flags['agent-is-pi'] || readEnv('PI_CODING_AGENT') === 'true',
         agentIsCodex: !!flags['agent-is-codex'],
         codexNativeTools: !!flags['native-tools'],
         agentsMdPresent: !!flags['agents-md'],
@@ -4479,6 +4492,7 @@ function main() {
             result,
             self,
             now,
+            skillRoot: resolveInstalledSkillRoot(flags, statePath),
             worktree: typeof flags.worktree === 'string' ? flags.worktree : undefined,
           });
         } catch (e) {
@@ -4499,7 +4513,9 @@ function main() {
         }
       }
       reviewNativeResult({
-        statePath,
+        host: cliDispatchHost(flags),
+        worktree: typeof flags.worktree === 'string' ? flags.worktree : undefined,
+        statePath, self,
         result,
         providedReviews,
         recoverySelector,
@@ -4526,6 +4542,7 @@ function main() {
           const recRes = recordWaveResult({
             statePath,
             result: reviewedResult,
+            skillRoot: resolveInstalledSkillRoot(flags, statePath),
             self,
             now,
             worktree: typeof flags.worktree === 'string' ? flags.worktree : undefined,
@@ -4585,6 +4602,20 @@ function main() {
       break;
     }
 
+    case 'episode-disposition': {
+      const statePath = need(flags, 'state');
+      loadForWrite(statePath);
+      const state = readState(statePath);
+      const now = Number.isFinite(Number(flags.now)) ? Number(flags.now) : Date.now();
+      const self = state.concurrency?.owner_lock === 'off' ? null : resolveOwnerSelf(flags, statePath).self;
+      const wave = Number(flags.wave), taskId = Number(flags['task-id']);
+      try {
+        out(disposeReviewEpisode({ statePath, wave, taskId, self, now,
+          disposition: need(flags, 'disposition'), reason: flags.reason }));
+      } catch (error) { die(error.message); }
+      break;
+    }
+
     case 'dispatch-wave': {
       // The `dispatch_fabric` op consumer: dispatchWaveViaFabric re-derives the routed wave
       // (prepareWave, fabric payloads), builds one governed descriptor per task (buildWorkItem
@@ -4612,6 +4643,7 @@ function main() {
         if (!Number.isInteger(waveFlag)) die('dispatch-wave: --wave must be an integer');
       }
       dispatchWaveViaFabric({
+        host: cliDispatchHost(flags),
         statePath,
         self,
         now,
@@ -4652,6 +4684,7 @@ function main() {
       let plan;
       try {
         plan = dispatchPlanFanout({
+          host: cliDispatchHost(flags),
           statePath,
           subsystems,
           specPath: typeof flags['spec-path'] === 'string' ? path.resolve(flags['spec-path']) : null,
@@ -4700,6 +4733,7 @@ function main() {
       try {
         op = continueRun({
           statePath,
+          skillRoot: resolveInstalledSkillRoot(flags, statePath),
           self,
           now,
           ttlMs,
@@ -4779,6 +4813,7 @@ function main() {
       let op;
       try {
         op = finishStep({
+          host: cliDispatchHost(flags),
           statePath,
           self,
           now,
@@ -5244,7 +5279,7 @@ function main() {
       // 'cannot read state file: <p>' instead of an uncaught ENOENT stack trace.
       const state = parseState(readText(p));
       const tasks = state.tasks ?? [];
-      const done = tasks.filter((t) => t.status === 'done').length;
+      const done = tasks.filter((t) => t.status === 'done' && taskEpisodeEligibleForCompletion(p, state, t)).length;
       // Refs are a status concern (which bundles this one links to); rendering the links is not.
       // listRefs echoes stored entries verbatim: { slug, label?, repo? } under back/forward.
       const refs = listRefs(state);

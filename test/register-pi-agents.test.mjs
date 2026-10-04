@@ -1,33 +1,15 @@
-// test/register-pi-agents.test.mjs — guards the pi agent-registration model map.
-//
-// bin/register-pi-agents.mjs generates ~/.pi/agent/agents/mp-*.md from the CC
-// canonical agents/mp-*.md, swapping ONLY the `model:` line per MODEL_MAP. The
-// map is the fragile part: a missing or wrong entry means a pi agent either
-// throws (no mapping) or runs on the wrong tier.
-//
-// Complete input set of the script: only agents/mp-*.md under agents/, minus
-// SKIP_FOR_PI (empty since C7 deleted mp-implementer; tests inject a sentinel via
-// runRegister's skipSet seam). No other profiles/config feeds.
-//
-// Live alias contract: every canonical agent declares a routing-policy LANE name
-// (frontier/longform/…); MODEL_MAP maps every lane to its lane model ref. The map
-// is DERIVED from the checked-in policy/workflow-map.json below — never hardcoded
-// here — so a fleet model change turns this suite red instead of silently registering
-// a retired model. Declared aliases must be a subset of the map keys; unknown
-// aliases fail closed.
-//
-// The script's filesystem side-effects against the real host (~/.pi/...) are
-// NOT tested here; main() is import-guarded so this import is pure. Temp-dir
-// runRegister tests cover write/check/SKIP_FOR_PI exclusion + drift detection.
+// Registration preserves custom contracts and strips historical model hints.
+// Filesystem checks use disposable directories/HOME, never installed definitions.
+// Joint-checkout assertions below test effective C4 prompt and breaker tools.
 
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, mkdirSync, writeFileSync, mkdtempSync, existsSync, unlinkSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { runInNewContext } from 'node:vm';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
-import { REPO_POLICY_PATH } from '../lib/dispatch/routing-policy.mjs';
+import { dirname, join, isAbsolute } from 'node:path';
 
 // Every fixture here builds a tree under os.tmpdir(); without this they accumulate across
 // runs and fill a shared /tmp. Registered on creation, removed once when the file finishes.
@@ -45,142 +27,16 @@ after(() => {
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
-const { MODEL_MAP, COLON_PREFIX, SKIP_FOR_PI, mapModelLine, mapNameLine, outputsFor, runRegister, parseCliArgs } = await import(join(repoRoot, 'bin/register-pi-agents.mjs'));
+const { COLON_PREFIX, SKIP_FOR_PI, mapModelLine, mapNameLine, outputsFor, runRegister, parseCliArgs } = await import(join(repoRoot, 'bin/register-pi-agents.mjs'));
 
-function agentModelAliases({ includeSkipped = true } = {}) {
-  const agentsDir = join(repoRoot, 'agents');
-  const aliases = new Set();
-  const perFile = [];
-  for (const f of readdirSync(agentsDir).filter((x) => /^mp-.*\.md$/.test(x))) {
-    if (!includeSkipped && SKIP_FOR_PI.has(f)) continue;
-    const body = readFileSync(join(agentsDir, f), 'utf8');
-    const m = body.match(/^model:\s*(\S+)\s*$/m);
-    assert.ok(m, `${f}: missing model: line`);
-    aliases.add(m[1]);
-    perFile.push({ file: f, alias: m[1] });
-  }
-  return { aliases, perFile };
-}
-
-// Derive the lineup (lane alias → lane model ref) from the checked-in routing policy —
-// the single declared source of model ids. Fails loud if the policy is unreadable; a
-// silent fallback would let this suite rot into a pin.
-// Parsed here, not through the loader, so loader or host-delivered-map drift cannot
-// hide a stale checked-in fallback for public plugin consumers.
-function lineupFromRoutingPolicy() {
-  const policyPath = REPO_POLICY_PATH;
-  const policy = JSON.parse(readFileSync(policyPath, 'utf8'));
-  assert.ok(policy.lanes && typeof policy.lanes === 'object', `${policyPath}: no lanes section`);
-  const lineup = {};
-  for (const [lane, entry] of Object.entries(policy.lanes)) {
-    assert.ok(entry && entry.model, `${policyPath}: lane "${lane}" has no model ref`);
-    lineup[lane] = entry.model;
-  }
-  assert.ok(Object.keys(lineup).length > 0, `${policyPath}: empty lane lineup`);
-  return lineup;
-}
-
-test('the registration lane lineup includes the refreshed fallback schema', () => {
-  const policy = JSON.parse(readFileSync(REPO_POLICY_PATH, 'utf8'));
-  assert.equal(policy.version, 1);
-  assert.ok(policy.servedEquivalents);
-  assert.deepEqual(Object.keys(MODEL_MAP).sort(), Object.keys(policy.lanes).sort());
+test('mapModelLine strips synthetic model only in frontmatter and accepts model-free source', () => {
+  const src = '---\nname: mp-x\nmodel: frontier\npreset: breaker\ntools: read, bash\n---\n\nbody\nmodel: prose\n';
+  const expected = src.replace('model: frontier\n', '');
+  assert.deepEqual(mapModelLine(src, 'mp-x.md'), { mapped: null, body: expected });
+  assert.deepEqual(mapModelLine(expected, 'mp-x.md'), { mapped: null, body: expected });
 });
-
-test('every canonical agents/mp-*.md frontmatter model: is a routing-policy lane alias (incl. SKIP_FOR_PI)', () => {
-  const { perFile } = agentModelAliases({ includeSkipped: true });
-  assert.ok(perFile.length > 0, 'expected at least one mp-*.md agent');
-  const lineup = lineupFromRoutingPolicy();
-  for (const { file, alias } of perFile) {
-    assert.ok(
-      alias in lineup,
-      `${file}: model: ${alias} is not a routing-policy lane alias (${Object.keys(lineup).join(', ')})`,
-    );
-  }
-});
-
-test('declared aliases are a subset of MODEL_MAP keys; retired aliases fail closed', () => {
-  const { aliases } = agentModelAliases({ includeSkipped: false });
-  const mapKeys = new Set(Object.keys(MODEL_MAP));
-  for (const alias of aliases) {
-    assert.ok(mapKeys.has(alias), `declared alias "${alias}" missing from MODEL_MAP`);
-  }
-  // Retired aliases — reintroduction must fail closed, not map.
-  for (const dead of ['fable', 'sonnet', 'haiku', 'opus']) {
-    assert.equal(MODEL_MAP[dead], undefined, `${dead} must not be in MODEL_MAP (retired)`);
-  }
-});
-
-test('MODEL_MAP targets match the lane model refs the checked-in policy declares', () => {
-  const lineup = lineupFromRoutingPolicy();
-  assert.deepEqual(
-    MODEL_MAP,
-    lineup,
-    'MODEL_MAP must mirror the routing-policy lane lineup (alias → model ref) exactly',
-  );
-});
-
-test('mapModelLine drops the model line, leaving the rest of the body byte-identical', () => {
-  // A registered agent must NOT carry a model hint. Pi validates a frontmatter
-  // `model:` value against the PRESET's class chain and THROWS SpawnModelPolicyError
-  // when it is outside it (engine/standalone/runtime-routing.mjs, model-fallback.ts
-  // assertPolicyDidNotRefuse) — and no Pi path resolves a lane alias. Both the lane
-  // alias and the lane's model ref are refused for a breaker-preset agent, so the
-  // only hint that cannot refuse the spawn is none at all: the preset's class policy
-  // routes the child.
-  const [liveAlias] = Object.keys(MODEL_MAP);
-  const src = `---\nname: mp-x\ndescription: x\nmodel: ${liveAlias}\ntools: Read, Grep\n---\n\nbody line 1\nbody line 2\n`;
-  const { alias, mapped, body } = mapModelLine(src, 'mp-x.md');
-  assert.equal(alias, liveAlias, 'the declared lane is still reported for validation/reporting');
-  assert.equal(mapped, MODEL_MAP[liveAlias], 'the lane is still resolved against the map');
-  assert.ok(!/^model:/m.test(body), 'the registered body must carry no model: hint');
-  assert.ok(body.includes('name: mp-x'), 'name line must be untouched');
-  assert.ok(body.includes('tools: Read, Grep'), 'tools line must be untouched');
-  assert.ok(body.includes('body line 1\nbody line 2'), 'body must be untouched');
-});
-
-test('mapModelLine throws on an unmapped alias (fail-closed; not a live alias fixture)', () => {
-  assert.throws(
-    () => mapModelLine('---\nmodel: gemini\n---\n', 'mp-x.md'),
-    /has no pi mapping/,
-  );
-  // fable left the lineup 2026-08-04 — reintroduction fails closed rather than silently shipping.
-  assert.throws(
-    () => mapModelLine('---\nmodel: fable\n---\n', 'mp-x.md'),
-    /has no pi mapping/,
-  );
-  // A lane name that is an Object.prototype member is not a declared lane.
-  assert.throws(
-    () => mapModelLine('---\nmodel: constructor\n---\n', 'mp-x.md'),
-    /has no pi mapping/,
-  );
-});
-
-test('mapModelLine throws when there is no model line', () => {
-  assert.throws(
-    () => mapModelLine('---\nname: mp-x\n---\n', 'mp-x.md'),
-    /no `model:` frontmatter line/,
-  );
-});
-
-// The registered output must be dispatchable by Pi. This is the regression the
-// model-hint removal fixes: Pi validates a frontmatter `model:` value against the
-// PRESET's class chain and refuses the spawn when it is outside it, so BOTH the
-// lane alias AND the lane's resolved model ref refuse a breaker-preset agent
-// (breaker -> class adversary, whose chain does not contain the frontier lane's
-// model). Registering no hint at all is the only shape that cannot refuse.
-test('a registered agent carries no hint that Pi would refuse (adversary-preset regression)', () => {
-  // mp-intent-critic is a real preset:breaker agent (frontier lane) — the shape
-  // that was silently un-dispatchable while the model line was swapped in.
-  const lane = 'frontier';
-  assert.ok(lane in MODEL_MAP, 'fixture lane must exist in the routing policy');
-  const src = `---\nname: mp-intent-critic\ndescription: x\nmodel: ${lane}\npreset: breaker\ntools: read\n---\n\nbody\n`;
-  const { body } = mapModelLine(src, 'mp-intent-critic.md');
-  const hint = (body.match(/^model:\s*(\S+)\s*$/m) ?? [])[1];
-  assert.equal(hint, undefined, 'no model: hint may survive registration');
-  // Guard the other direction too: if a hint were ever reintroduced, it must be the
-  // lane alias rather than the resolved ref, so the failure mode stays diagnosable.
-  assert.notEqual(hint, MODEL_MAP[lane], 'the resolved lane ref is also refused by Pi and must never be emitted');
+test('canonical registration excludes the retired fallback reviewer', () => {
+  assert.equal(existsSync(join(repoRoot, 'agents/mp-fallback-reviewer.md')), false);
 });
 
 // ---- runRegister filesystem behavior (the CLI contract) ----
@@ -192,8 +48,8 @@ function setupTmpAgents(files) {
   return { agentsDir, targetDir };
 }
 
-const LIVE_ALIAS = Object.keys(MODEL_MAP)[0];
-const LIVE_TARGET = MODEL_MAP[LIVE_ALIAS];
+const LIVE_ALIAS = 'frontier';
+const LIVE_TARGET = 'synthetic-stale-hint';
 const VALID_AGENT = `---\nname: mp-x\ndescription: x\nmodel: ${LIVE_ALIAS}\ntools: Read, Grep\n---\n\nbody\n`;
 const IMPLEMENTER_AGENT = `---\nname: worker-digest\ndescription: x\nmodel: ${LIVE_ALIAS}\ntools: Read\n---\n\nbody\n`;
 
@@ -215,7 +71,7 @@ test('runRegister --check is READ-ONLY: no writes, no deletes, no file creation'
   assert.ok(res.drift > 0, 'check should report drift for missing files');
 });
 
-test('runRegister write mode produces bare-only with NO model hint (preset class policy routes)', () => {
+test('runRegister write mode produces bare-only with NO model hint (governed host routes)', () => {
   const { agentsDir, targetDir } = setupTmpAgents({ 'mp-x.md': VALID_AGENT });
   const res = runRegister({ agentsDir, targetDir, check: false });
   assert.equal(res.registered, 1);
@@ -431,24 +287,15 @@ function homeTree(home) {
   return out;
 }
 
-// R9-9: the host lane-override file was recorded only (registration emits no model
-// hint), yet a malformed copy aborted registration and install-pi. The mechanism is
-// retired: registration must not read the file, even when it is unparseable.
-test('a malformed host lane-override file no longer aborts registration', () => {
+test('nonempty or malformed lane overrides refuse without mutation or value disclosure', () => {
   const home = mkdtempTracked(join(tmpdir(), 'mp-reg-home-'));
-  const configDir = join(home, '.config', 'masterplan');
-  mkdirSync(configDir, { recursive: true });
-  writeFileSync(join(configDir, 'lane-overrides.json'), '{ not json');
-  const res = spawnSync(process.execPath, [BIN, '--check'], {
-    encoding: 'utf8', env: { ...process.env, HOME: home },
-  });
-  assert.doesNotMatch(res.stderr, /lane-overrides/, `the override file must not be read: ${res.stderr}`);
-  // An empty target is drift, so --check exits 1 after comparing — proof it got past startup.
-  assert.equal(res.status, 1, res.stderr);
-  assert.match(res.stderr, /drift item\(s\)/, res.stderr);
-  // Not aborting is not the same as not reading: nothing in bin/ names the file at all.
-  for (const f of readdirSync(join(repoRoot, 'bin')).filter((n) => n.endsWith('.mjs'))) {
-    assert.doesNotMatch(readFileSync(join(repoRoot, 'bin', f), 'utf8'), /lane-overrides/, `bin/${f} still names the override file`);
+  const configDir = join(home, '.config', 'masterplan'); mkdirSync(configDir, { recursive: true });
+  const file = join(configDir, 'lane-overrides.json');
+  for (const contents of ['{ not json', '{"frontier":"synthetic-private-value"}']) {
+    writeFileSync(file, contents);
+    const res = spawnSync(process.execPath, [BIN, '--check'], { encoding: 'utf8', env: { ...process.env, HOME: home } });
+    assert.equal(res.status, 2, res.stderr); assert.match(res.stderr, /lane-overrides.*retired.*inference routing/);
+    assert.doesNotMatch(res.stderr, /synthetic-private-value/); assert.equal(readFileSync(file, 'utf8'), contents);
   }
 });
 
@@ -577,7 +424,7 @@ test('A6: bare invocation (write mode) still works and is the only mutating path
 // mp-intent-critic.md using a minimal temp fixture — it never touches the real
 // agents/ tree or the real ~/.pi, so it takes no ownership of the agent prompt.
 
-test('register-pi-agents discovers mp-intent-critic.md, maps its lane model, and reports clean under --check', () => {
+test('register-pi-agents discovers historical mp-intent-critic.md, strips its model, and reports clean under --check', () => {
   const intentCritic = `---\nname: mp-intent-critic\ndescription: Fresh-context intent critic (critic class, breaker role)\nmodel: frontier\npreset: breaker\ntools: read, bash\n---\n\nbody\n`;
   const { agentsDir, targetDir } = setupTmpAgents({ 'mp-intent-critic.md': intentCritic });
 
@@ -598,4 +445,178 @@ test('register-pi-agents discovers mp-intent-critic.md, maps its lane model, and
   const check = runRegister({ agentsDir, targetDir, check: true });
   assert.equal(check.drift, 0, JSON.stringify(check.report));
   assert.ok(check.report.some((l) => /OK\s+mp-intent-critic\.md/.test(l)), JSON.stringify(check.report));
+});
+
+test('manifest prunes managed fallback reviewer copies and preserves unmanaged copies', () => {
+  const { agentsDir, targetDir } = setupTmpAgents({ 'mp-x.md': VALID_AGENT });
+  for (const rel of ['mp-fallback-reviewer.md', 'masterplan:mp-fallback-reviewer.md']) writeFileSync(join(targetDir, rel), 'historical managed');
+  writeFileSync(join(targetDir, '.masterplan-managed.json'), JSON.stringify({ schema: 1, files: ['mp-fallback-reviewer.md', 'masterplan:mp-fallback-reviewer.md'] }));
+  assert.equal(runRegister({ agentsDir, targetDir, check: true }).removed, 0);
+  assert.equal(runRegister({ agentsDir, targetDir, check: false }).removed, 2);
+  writeFileSync(join(targetDir, 'mp-fallback-reviewer.md'), 'unmanaged');
+  runRegister({ agentsDir, targetDir, check: false });
+  assert.equal(readFileSync(join(targetDir, 'mp-fallback-reviewer.md'), 'utf8'), 'unmanaged');
+});
+
+
+// Execute the documented call locally to capture its request, then exercise the
+// actual registered decomposer against a nonmatching canonical judge default.
+test('documented Pi decomposer invocation prepares plan when judge defaults to decide', () => {
+  const W = process.env.W;
+  assert.ok(W && isAbsolute(W), 'W must name the absolute joint integration checkout');
+  const docs = readFileSync(join(repoRoot, 'docs/development.md'), 'utf8');
+  const example = docs.match(/`(subagent\(\{ agent: 'mp-spec-decomposer'[^`]*\}\))`/);
+  assert.ok(example, 'missing documented Pi decomposer invocation');
+  const request = runInNewContext(example[1], { subagent: args => args });
+  const targetDir = mkdtempTracked(join(tmpdir(), 'mp-reg-decomposer-'));
+  const project = mkdtempTracked(join(tmpdir(), 'mp-reg-decomposer-project-'));
+  const home = mkdtempTracked(join(tmpdir(), 'mp-reg-decomposer-home-'));
+  assert.equal(runRegister({ agentsDir: join(repoRoot, 'agents'), targetDir, check: false, homeDir: home }).registered, 8);
+  const result = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', String.raw`
+    import assert from 'node:assert/strict';
+    import fs from 'node:fs';
+    import path from 'node:path';
+    import { pathToFileURL } from 'node:url';
+    const { W, targetDir, project, fixturePath, request } = JSON.parse(fs.readFileSync(0, 'utf8'));
+    const load = relative => import(pathToFileURL(path.join(W, 'pi-subagents', relative)).href);
+    const { prepareGovernedAgentForDispatch, MissingUsecaseSectionError } = await load('engine/agent-prompt.ts');
+    const { readGovernedBreakerTools, discoverAgentsAll } = await load('subagents/src/agents/agents.ts');
+    const { createDispatchCoreModelResolver } = await load('engine/runtime-model-resolver.ts');
+    for (const fn of [prepareGovernedAgentForDispatch, readGovernedBreakerTools, discoverAgentsAll, createDispatchCoreModelResolver]) assert.equal(typeof fn, 'function');
+    const map = JSON.parse(fs.readFileSync(fixturePath, 'utf8'));
+    map.agents.judge.defaultUsecase = 'decide';
+    const mapPath = path.join(project, 'dispatch-map.json');
+    fs.writeFileSync(mapPath, JSON.stringify(map));
+    const resolver = createDispatchCoreModelResolver({ mapPath });
+    const raw = discoverAgentsAll(project).user.find(a => a.name === request.agent && a.filePath.startsWith(targetDir + path.sep));
+    assert.ok(raw, 'actual registered decomposer must be discovered');
+    const trusted = readGovernedBreakerTools();
+    const nameOnly = resolver.resolve({ agentName: raw.name, presetName: raw.preset });
+    assert.equal(nameOnly.verdict.verdict, 'allow');
+    assert.equal(nameOnly.dispatchDecision.usecase, 'decide');
+    assert.throws(() => prepareGovernedAgentForDispatch(raw, nameOnly.dispatchDecision, trusted, () => {}), MissingUsecaseSectionError);
+    const resolved = resolver.resolve({ ...request, agentName: request.agent, presetName: raw.preset });
+    assert.equal(resolved.verdict.verdict, 'allow');
+    const child = prepareGovernedAgentForDispatch(raw, resolved.dispatchDecision, trusted, () => {});
+    assert.equal(resolved.dispatchDecision.usecase, 'plan');
+    assert.match(child.systemPrompt, /# mp-spec-decomposer —/);
+    assert.deepEqual([...child.systemPrompt.matchAll(/^## usecase: ([a-z-]+)$/gm)].map(m => m[1]), ['plan']);
+    assert.match(child.systemPrompt, /Decompose the approved spec/);
+    assert.deepEqual(child.tools, raw.tools);
+    console.log('documented plan invocation prepared; name-only decide refused');
+  `], {
+    cwd: join(W, 'pi-subagents'), encoding: 'utf8',
+    input: JSON.stringify({ W, targetDir, project, request, fixturePath: join(repoRoot, 'test/fixtures/dispatch-map.json') }),
+    env: { ...process.env, HOME: home, USERPROFILE: home, PI_CODING_AGENT_DIR: join(home, '.pi/agent'),
+      PI_SUBAGENT_EXTRA_AGENT_DIRS: targetDir, PYTHONDONTWRITEBYTECODE: '1', TSX_DISABLE_CACHE: '1' },
+  });
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+  assert.equal(result.stdout.trim(), 'documented plan invocation prepared; name-only decide refused');
+});
+
+// Task 7: actual registered definitions through the joint checkout's C4/tool authority.
+// Synthetic runners observe prepared children only: no Pi process/provider is started.
+test('all eight registered aliases preserve their custom contracts through governed preparation', () => {
+  const W = process.env.W;
+  assert.ok(W && isAbsolute(W), 'W must name the absolute joint integration checkout');
+  for (const relative of ['engine/agent-prompt.ts', 'subagents/src/agents/agents.ts']) {
+    assert.ok(existsSync(join(W, 'pi-subagents', relative)), `missing joint product: ${relative}`);
+  }
+  const targetDir = mkdtempTracked(join(tmpdir(), 'mp-reg-effective-'));
+  const project = mkdtempTracked(join(tmpdir(), 'mp-reg-project-'));
+  const home = mkdtempTracked(join(tmpdir(), 'mp-reg-isolated-'));
+  const sourceDir = join(repoRoot, 'agents');
+  assert.equal(runRegister({ agentsDir: sourceDir, targetDir, check: false, homeDir: home }).registered, 8);
+  const result = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', String.raw`
+    import assert from 'node:assert/strict';
+    import fs from 'node:fs';
+    import path from 'node:path';
+    import { pathToFileURL } from 'node:url';
+    const { W, targetDir, project, fixturePath } = JSON.parse(fs.readFileSync(0, 'utf8'));
+    const load = relative => import(pathToFileURL(path.join(W, 'pi-subagents', relative)).href);
+    const { prepareGovernedAgentForDispatch, MissingUsecaseSectionError } = await load('engine/agent-prompt.ts');
+    const { readGovernedBreakerTools, discoverAgentsAll } = await load('subagents/src/agents/agents.ts');
+    const { createDispatchCoreModelResolver } = await load('engine/runtime-model-resolver.ts');
+    for (const fn of [prepareGovernedAgentForDispatch, readGovernedBreakerTools, discoverAgentsAll, createDispatchCoreModelResolver]) assert.equal(typeof fn, 'function');
+    const trusted = readGovernedBreakerTools();
+    const map = JSON.parse(fs.readFileSync(fixturePath, 'utf8'));
+    const metadata = JSON.parse(fs.readFileSync(path.join(W, 'pi-subagents/subagents/test/support/agent-usecase-fixture.json'), 'utf8'));
+    for (const [name, entry] of Object.entries(metadata.usecases)) {
+      if (entry.agent !== 'breaker') continue;
+      map.usecases[name] = { ...map.usecases['adversarial-assessment'], ...entry };
+    }
+    const mapPath = path.join(project, 'dispatch-map.json'); fs.writeFileSync(mapPath, JSON.stringify(map));
+    const resolver = createDispatchCoreModelResolver({ mapPath });
+    const agents = discoverAgentsAll(project).user.filter(a => a.filePath.startsWith(targetDir + path.sep));
+    assert.equal(agents.length, 8);
+    const operations = {
+      'mp-adversarial-reviewer': 'adversarial-assessment',
+      'mp-alignment-auditor': 'claim-assessment',
+      'mp-goal-assessor': 'claim-assessment',
+      'mp-intent-critic': 'adversarial-assessment',
+      'mp-plan-reviewer': 'adversarial-assessment',
+      'mp-planner': 'plan', 'mp-spec-decomposer': 'plan', 'mp-subsystem-planner': 'plan',
+    };
+    const summary = { agents: 0, breakerAliases: 0, children: 0, staleChildren: 0 };
+    for (const raw of agents) {
+      const before = structuredClone(raw);
+      const usecase = operations[raw.name]; assert.ok(usecase, raw.name);
+      const resolved = resolver.resolve({ agentName: raw.name, presetName: raw.preset, usecase });
+      assert.equal(resolved.verdict.verdict, 'allow', raw.name + ': ' + resolved.verdict.reason);
+      const decision = resolved.dispatchDecision;
+      assert.equal(decision.agent, raw.preset);
+      assert.equal(decision.usecase, usecase);
+      assert.equal(raw.model, undefined);
+      const unsupported = resolver.resolve({ agentName: raw.name, presetName: 'unsupported-preset', usecase });
+      assert.equal(unsupported.verdict.verdict, 'deny', 'unsupported preset must fail closed');
+      const common = raw.systemPrompt.split(/^## usecase: /m)[0];
+      assert.ok(common.includes('# ' + raw.name + ' —'), 'distinct common brief missing');
+      const sections = [...raw.systemPrompt.matchAll(/^## usecase: ([a-z-]+)\n([\s\S]*?)(?=^## usecase: |$(?![\s\S]))/gm)];
+      const selected = sections.find(m => m[1] === usecase);
+      assert.ok(selected, raw.name + ': missing operation ' + usecase);
+      const diagnostics = [];
+      const inspectChild = async child => {
+        assert.equal(child.systemPrompt, common + '## usecase: ' + selected[1] + '\n' + selected[2]);
+        assert.deepEqual([...child.systemPrompt.matchAll(/^## usecase: ([a-z-]+)$/gm)].map(m => m[1]), [usecase]);
+        if (decision.agent === 'breaker') {
+          assert.deepEqual(child.tools, trusted);
+          assert.equal(child.mcpDirectTools, undefined);
+          assert.ok(!child.tools.some(t => /bash|write|edit/i.test(t)));
+        } else assert.deepEqual(child.tools, raw.tools);
+        summary.children++;
+      };
+      const runners = { foreground: inspectChild, background: inspectChild, workflow: inspectChild };
+      for (const runner of Object.values(runners)) {
+        await runner(prepareGovernedAgentForDispatch(raw, decision, trusted, m => diagnostics.push(m)));
+      }
+      const decoy = { ...raw, systemPrompt: raw.systemPrompt + '\n## usecase: unselected-operation\nUNSELECTED_SENTINEL\n' };
+      const selectedOnly = prepareGovernedAgentForDispatch(decoy, decision, trusted, () => {});
+      assert.doesNotMatch(selectedOnly.systemPrompt, /UNSELECTED_SENTINEL/);
+      assert.equal(selectedOnly.systemPrompt.trimEnd(), (common + '## usecase: ' + selected[1] + '\n' + selected[2]).trimEnd());
+      assert.deepEqual(raw, before, 'discovered definition must not be truncated/mutated');
+      assert.throws(() => prepareGovernedAgentForDispatch(raw, { agent: decision.agent, usecase: 'unsupported-operation' }, trusted, () => {}), MissingUsecaseSectionError);
+      if (decision.agent === 'breaker') {
+        summary.breakerAliases++;
+        assert.ok(diagnostics.some(m => /dropped.*bash/.test(m)), 'declared bash needs a diagnostic');
+        const stale = { ...raw, tools: [...raw.tools, 'write', 'edit'], mcpDirectTools: ['stale-write'] };
+        for (const runner of Object.values(runners)) {
+          const messages = [];
+          await runner(prepareGovernedAgentForDispatch(stale, decision, trusted, m => messages.push(m)));
+          assert.ok(messages.some(m => /bash/.test(m) && /write/.test(m) && /edit/.test(m) && /mcp:stale-write/.test(m)));
+          summary.staleChildren++;
+        }
+        assert.throws(() => prepareGovernedAgentForDispatch(raw, decision, [], () => {}), /allowlist is empty/);
+      }
+      summary.agents++;
+    }
+    assert.equal(summary.breakerAliases, 5);
+    console.log(JSON.stringify(summary));
+  `], {
+    cwd: join(W, 'pi-subagents'), encoding: 'utf8',
+    input: JSON.stringify({ W, targetDir, project, fixturePath: join(repoRoot, 'test/fixtures/dispatch-map.json') }),
+    env: { ...process.env, HOME: home, USERPROFILE: home, PI_CODING_AGENT_DIR: join(home, '.pi/agent'),
+      PI_SUBAGENT_EXTRA_AGENT_DIRS: targetDir, PYTHONDONTWRITEBYTECODE: '1' },
+  });
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+  assert.deepEqual(JSON.parse(result.stdout.trim()), { agents: 8, breakerAliases: 5, children: 39, staleChildren: 15 });
 });

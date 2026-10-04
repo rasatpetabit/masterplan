@@ -5,6 +5,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { detectHost, normalizeResumeHint, CODEX_ENTRYPOINT } from '../lib/dispatch/index.mjs';
 
+test('detectHost: explicit Pi is independent of map and AGENTS presence', () => {
+  assert.equal(detectHost({ agentIsPi: true }).kind, 'pi');
+  assert.equal(detectHost({ agentsMdPresent: true }).kind, 'claude-code');
+  assert.equal(detectHost({ agentIsCodex: true }).kind, 'codex');
+  assert.throws(() => detectHost({ agentIsPi: true, agentIsCodex: true }), /conflict/i);
+  assert.throws(() => detectHost({ agentIsPi: true, codexNativeTools: true }), /conflict/i);
+});
+
 test('detectHost: no signals -> not codex', () => {
   const h = detectHost({});
   assert.equal(h.isCodex, false);

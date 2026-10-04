@@ -5,6 +5,9 @@
 // fields on digests, and a blocking verdict path through blocking_reviews[].
 
 import { test, after } from 'node:test';
+// Isolate C1 discovery from ambient HOME; tests still exercise the real reader.
+process.env.MP_DISPATCH_MAP = new URL('./fixtures/dispatch-map.json', import.meta.url).pathname;
+
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -94,7 +97,7 @@ async function runNativeWave(fx, providedReviews) {
     tasks: res.plan.tasks.map((t) => ({ task_id: t.task_id, digest: workerDigest(t.task_id, t.files) })),
   };
   const reviewed = await reviewNativeResult({
-    statePath: fx.statePath, result, providedReviews, now: 3100,
+    statePath: fx.statePath, self: fx.self, result, providedReviews, now: 3100,
   });
   const recorded = recordWaveResult({
     statePath: fx.statePath, result: reviewed, self: fx.self, now: 3200,

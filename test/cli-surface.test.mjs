@@ -23,7 +23,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -92,6 +92,27 @@ const binCases = new Set(
     (x) => x[1],
   ),
 );
+
+test('detect-host recognizes the Pi environment signal and refuses conflicting Codex signals', () => {
+  const bin = path.join(ROOT, 'bin/masterplan.mjs');
+  const pi = JSON.parse(execFileSync(process.execPath, [bin, 'detect-host'], {
+    env: { ...process.env, PI_CODING_AGENT: 'true' }, encoding: 'utf8',
+  }));
+  assert.equal(pi.kind, 'pi');
+  const conflict = spawnSync(process.execPath, [bin, 'detect-host', '--agent-is-codex'], {
+    env: { ...process.env, PI_CODING_AGENT: 'true' }, encoding: 'utf8',
+  });
+  assert.notEqual(conflict.status, 0);
+  assert.match(conflict.stderr, /conflict/i);
+});
+
+test('CLI finish-step forwards detected host to the review handoff', () => {
+  // The real CLI must produce the host at the review boundary, not merely parse detect-host.
+  const source = fs.readFileSync(path.join(ROOT, 'bin/masterplan.mjs'), 'utf8');
+  assert.match(source, /op = finishStep\(\{\s*host: cliDispatchHost\(flags\),/);
+  const engine = fs.readFileSync(path.join(ROOT, 'lib/finish-step.mjs'), 'utf8');
+  assert.match(engine, /host: ctx\.host,/);
+});
 
 test('every documented mp flag is a recognized KNOWN_FLAGS member (positive cross-check)', () => {
   const { flags } = extractDocSurface();

@@ -8,6 +8,9 @@
 // regex checks (v5-orphan allowlisted) so a regression reintroducing them fails.
 
 import { test, after } from 'node:test';
+// Isolate C1 discovery from ambient HOME; tests still exercise the real reader.
+process.env.MP_DISPATCH_MAP = new URL('./fixtures/dispatch-map.json', import.meta.url).pathname;
+
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';

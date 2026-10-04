@@ -83,57 +83,19 @@ silent approve.
 The whole-branch finish path (`run_adversary_review`, §2c) is separate from per-task execution
 review. It runs the harness-native adversary class/panel over the branch diff.
 
-**Fallback reviewers (review-fallback).** When the primary is not a success — a non-zero
-review exit, the review unavailable/empty, a failed harness spawn, **or a refused/blocked
-launch** (the fleet review circuit breaker refuses `breaker`/`*-adversarial-reviewer` agent
-names once a file exceeds its review-round cap, which is how a run once shipped unreviewed) —
-the gate tries the op's `fallback_reviewers` list **in order, one attempt each**, dispatching
-the read-only `mp-fallback-reviewer` agent — under the adversary class (task class
-`adversary`) — with that entry as the harness-native model override, over the same branch
-diff. The first attempt that produces a real review wins and is
-recorded with `--review-done --review-reviewer=<model ref> --review-fallback-reason="<why the
-primary failed>"` (durable `adversary_review` event: `data.reviewer`, `data.fallback.reason`);
-a model the harness cannot run is a failed attempt, and the gate moves on.
+Pi dispatches the returned model-free challenge intent through the governed boundary, which owns recovery and records C3. Other hosts review on their own model. The persisted project-qualified finish-review subject survives repairs and process restart. Existing active episodes without a subject need an active-episode migration receipt; no fresh budget is allocated automatically.
 
-The list is resolved deterministically in lib (`lib/finish-step.mjs` →
-`lib/dispatch/routing-policy.mjs` `adversaryFallbackReviewers`) and carried in the op payload:
-by default the adversary class `chain` in order, de-duplicated preserving first occurrence,
-with the class's primary `model` excluded — a fallback never re-runs the reviewer that just
-failed. The class's PANEL is deliberately not consulted: the fallback is dispatched under the
-adversary class and Pi's spawn guard authorizes an explicit model override only inside that
-class's chain, so a panel member outside the chain would be a guaranteed refusal rather than a
-fallback. The `.masterplan.yaml` key `adversary_review_fallback` (CLI > repo > user > default,
-fail-closed validation) replaces that list outright, or `off` disables the fallback; a
-configured entry outside the chain is refused fail-closed for the same reason (an outage — an
-unreadable policy — passes the configured list through unchanged, since the chain is then
-unknown). An unavailable routing policy yields an empty
-list plus a recorded reason — the gate then behaves exactly as it did before the fallback
-existed:
+Only newly seeded bundles carry `finish_review_new:true`, consumed atomically when the subject is persisted before emission. Missing review events do not establish newness: the legacy producer emitted without logging a request. Subjectless, unmarked episodes therefore remain migration-required; reading an old bundle never adds the marker.
 
-Any remaining non-success — the primary AND every fallback failed — maps to
-`--review-skipped --review-reason="<primary reason>; fallback <ref>: <reason>; …"`, whose durable
-`adversary_review_skipped` event uses a hyphenated summary that deliberately does NOT match the
-`\b(codex|adversary)\s+review\b` audit regex, so a degraded finish still trips
-`adversary_review_configured_but_zero_invocations`. Fail-soft, never wedge finish — unchanged.
+An armed `branch_finish` gate persists its reviewed head. After worktree teardown, validation uses the surviving branch tip or durable retirement/gate tip, plus MAIN-side landing evidence (or recorded discard intent). Completed review at that tip is still required; worktree absence and outage-only receipts never exempt the guard.
 
-**Governance caveat.** `mp-fallback-reviewer` is deliberately named OUTSIDE the fleet review
-circuit breaker's name match (`(?:^|[.\-])breaker$|adversarial[-_]?reviewer$`), so a finish-gate
-fallback review does not count against the per-file review-round cap. That is the point — the
-cap must stop review *churn*, not stop the finish gate from being reviewed at all — and it is
-bounded two ways: the existing re-entry guard still limits the finish gate to one review per
-HEAD, and `adversary_review_fallback: off` disables the fallback entirely.
+`adversary_review_fallback: off` means `noSubstitute:true`. Model arrays are retired; migrate choices to inference routing. There is no override loop or alternate reviewer identity outside circuit-breaker admission. Denial, exhaustion, empty reports, and incomplete critical panels are inconclusive: no success evidence, no automatic skip, no cleared finish gate. Independently recorded owner opt-outs remain valid.
 
----
+The shell writes reviewer-authored digest bytes to a file and passes its path, never the bytes as shell words. Historical receipt readers remain read-only; an old routing skip is not newly completed governed review.
 
-## Adversary lane health → WARN (deterministic, via `doctor`)
+## Discovery health
 
-The `lib/doctor/routing-policy-health.mjs` check probes the routing policy: the repo copy is
-readable, every required review class resolves (adversary → breaker on the frontier lane, the
-adversarial panel cross-vendor), and host-artifact drift from the live generated
-`~/.pi/workflows/workflow-map.json` is a WARN. Findings are **WARN-level** diagnostics for
-operators. They do not weaken the wave gate: when execution review is armed and the review fails
-or returns incomplete coverage, masterplan still records a canonical `error` / incomplete
-projection and populates `blocking_reviews[]`.
+Doctor reports C1 discovery source and schema and validates phase/usecase/agent references. Unconfigured non-Pi is supported host-native execution. Pi/explicit missing, unreadable or invalid C1 is ERROR. It neither inspects models nor claims lineage diversity or compares a packaged snapshot.
 
 ---
 
@@ -144,5 +106,5 @@ projection and populates `blocking_reviews[]`.
 | 429 rate-limit, 5xx server error, TCP timeout | `api-retry-policy.md` |
 | Empty response (transport-level) | `api-retry-policy.md` |
 | Execution-review RPC / process failure / empty or incomplete structured result | This doc → block via `blocking_reviews[]` |
-| Adversary lane unhealthy (policy unresolvable / no route / host-artifact drift) | Doctor WARN + fail-closed wave gate when review is armed |
+| Adversary lane unhealthy (policy unresolvable / no route / host-artifact drift) | Doctor ERROR + fail-closed gate |
 | Engine-internal chunking, retries, findings schema | harness-native policy (do not duplicate) |

@@ -658,108 +658,63 @@ test('legacy-bundle: no WARN when docs/superpowers is empty container (no bundle
     'empty docs/superpowers container must not produce WARN or ERROR');
 });
 
-// ---- routing-policy-health (host-scoped; repo-local policy + drift WARN) ----
-
-const RPH_FIXTURE = {
-  lanes: {
-    frontier: { model: 'litellm/model-a', ctx: 100000, cost: 'high' },
-    broad: { model: 'litellm/model-b', ctx: 100000, cost: 'medium' },
-    longform: { model: 'litellm/model-c', ctx: 100000, cost: 'medium' },
-    code: { model: 'litellm/model-d', ctx: 100000, cost: 'low' },
-    reason: { model: 'litellm/model-e', ctx: 100000, cost: 'medium' },
-  },
-  agents: {
-    breaker: { tier: 'big', writes: false },
-    judge: { tier: 'big', writes: false },
-    builder: { tier: 'medium', writes: true },
-    tracer: { tier: 'medium', writes: false },
-  },
-  classes: {
-    adversary: { agent: 'breaker', lane: 'frontier', cap: 'review', effort: 'xhigh', panel: 'adversarial' },
-    critic: { agent: 'breaker', lane: 'frontier', cap: 'review', effort: 'high' },
-    'planned-execution': { agent: 'judge', lane: 'frontier', cap: 'chat', effort: 'xhigh' },
-    'bounded-edit': { agent: 'builder', lane: 'code', cap: 'edit', effort: 'high' },
-    'agentic-loop': { agent: 'builder', lane: 'code', cap: 'edit', effort: 'high' },
-    'deep-investigation': { agent: 'tracer', lane: 'reason', cap: 'investigate', effort: 'high' },
-    unknown: { agent: 'builder', lane: 'code', cap: 'chat', effort: 'high' },
-  },
-  tiers: { small: { lane: 'code' }, medium: { lane: 'code' }, big: { lane: 'frontier' } },
-  panels: {
-    adversarial: {
-      members: [
-        { lane: 'frontier', model: 'litellm/model-a' },
-        { lane: 'broad', model: 'litellm/model-b' },
-        { lane: 'longform', model: 'litellm/model-c' },
-      ],
-      quorum: 2,
-    },
-  },
-  workflow: { defaultClass: 'unknown' },
-};
-
+// ---- C1 discovery health ----
+const RPH_FIXTURE = JSON.parse(fs.readFileSync(new URL('./fixtures/dispatch-map.json', import.meta.url), 'utf8'));
 function rphFixturePath(extra = {}) {
   const dir = mkdtempTracked(path.join(os.tmpdir(), 'mp-rph-'));
-  const policyPath = path.join(dir, 'policy.json');
+  const policyPath = path.join(dir, 'dispatch-map.json');
   fs.writeFileSync(policyPath, JSON.stringify({ ...RPH_FIXTURE, ...extra }));
-  return { dir, policyPath, liveMissing: path.join(dir, 'no-such-live.json') };
+  return { dir, policyPath };
 }
-
-test('routing-policy-health: healthy repo policy -> PASS (advisory check)', () => {
-  const { policyPath, liveMissing } = rphFixturePath();
-  const findings = routingPolicyHealth('/unused', { policyPath, livePath: liveMissing });
-  assertFindingShape(findings);
-  assert.equal(maxSeverity(findings), 'PASS', JSON.stringify(findings));
-  assert.match(findings[0].summary, /routing policy healthy/);
+test('routing-policy-health reports C1 source/schema without model health inference', () => {
+  const { policyPath } = rphFixturePath();
+  const findings = routingPolicyHealth('/unused', { host: 'pi', policyPath, env: {} });
+  assertFindingShape(findings); assert.equal(maxSeverity(findings), 'PASS');
+  assert.match(findings[0].summary, /schema 1/); assert.ok(findings[0].summary.includes(policyPath));
+  assert.doesNotMatch(findings[0].summary, /cross-vendor|models|lanes/);
 });
-
-test('routing-policy-health: the CHECKED-IN repo policy is healthy (live surface)', () => {
-  const dir = mkdtempTracked(path.join(os.tmpdir(), 'mp-rph-repo-'));
-  const findings = routingPolicyHealth('/unused', { livePath: path.join(dir, 'no-live.json') });
-  assertFindingShape(findings);
-  assert.equal(maxSeverity(findings), 'PASS', JSON.stringify(findings));
+test('routing-policy-health unconfigured non-Pi is supported; Pi and explicit missing are errors', () => {
+  const dir = mkdtempTracked(path.join(os.tmpdir(), 'mp-rph-absent-'));
+  for (const host of ['claude-code', 'codex']) {
+    const findings = routingPolicyHealth('/unused', { host, homeDir: dir, env: {} });
+    assert.equal(maxSeverity(findings), 'PASS'); assert.match(findings[0].summary, /unconfigured.*supported/);
+  }
+  assert.equal(maxSeverity(routingPolicyHealth('/unused', { host: 'pi', homeDir: dir, env: {} })), 'ERROR');
+  assert.equal(maxSeverity(routingPolicyHealth('/unused', { host: 'codex', policyPath: path.join(dir, 'missing'), env: {} })), 'ERROR');
 });
-
-test('routing-policy-health: unreadable policy -> WARN, never ERROR (review is advisory)', () => {
-  const findings = routingPolicyHealth('/unused', { policyPath: '/nonexistent/policy.json', livePath: '/nonexistent/live.json' });
-  assertFindingShape(findings);
-  assert.equal(maxSeverity(findings), 'WARN', JSON.stringify(findings));
-  assert.ok(!findings.some((f) => f.severity === 'ERROR'), 'an advisory check must never surface ERROR');
+test('routing-policy-health CLI refuses actual Pi without C1', () => {
+  const home = mkdtempTracked(path.join(os.tmpdir(), 'mp-rph-cli-pi-'));
+  const env = { HOME: home, USERPROFILE: home, PI_CODING_AGENT: 'true' };
+  const host = spawnSync(process.execPath, [path.join(here, '../bin/masterplan.mjs'), 'detect-host'], { env, encoding: 'utf8' });
+  assert.equal(host.status, 0, host.stderr);
+  assert.equal(JSON.parse(host.stdout).kind, 'pi');
+  const result = spawnSync(process.execPath, [path.join(here, '../bin/doctor.mjs'), '--only=routing-policy-health'], { env, encoding: 'utf8' });
+  assert.equal(result.status, 1, result.stdout + result.stderr);
+  assert.match(result.stdout, /ERROR\s+routing-policy-health: C1 discovery failed:.*dispatch-map\.json: ENOENT/);
+  assert.match(result.stdout, /1 error, 0 warn/);
 });
-
-test('routing-policy-health: a required class missing -> WARN naming it', () => {
-  const classes = { ...RPH_FIXTURE.classes };
-  delete classes.adversary;
-  classes.unknown = RPH_FIXTURE.classes.unknown; // defaultClass still resolves
-  const { policyPath, liveMissing } = rphFixturePath({ classes });
-  const findings = routingPolicyHealth('/unused', { policyPath, livePath: liveMissing });
-  assertFindingShape(findings);
-  assert.equal(maxSeverity(findings), 'WARN', JSON.stringify(findings));
-  assert.ok(findings.some((f) => /adversary/.test(f.summary)), JSON.stringify(findings));
+test('routing-policy-health CLI supports unconfigured non-Pi', () => {
+  const home = mkdtempTracked(path.join(os.tmpdir(), 'mp-rph-cli-native-'));
+  const result = spawnSync(process.execPath, [path.join(here, '../bin/doctor.mjs'), '--only=routing-policy-health'], {
+    env: { HOME: home, USERPROFILE: home }, encoding: 'utf8',
+  });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(result.stdout, /PASS\s+routing-policy-health: C1 discovery unconfigured: supported host-native execution/);
+  assert.match(result.stdout, /0 error, 0 warn/);
 });
-
-test('routing-policy-health: adversarial panel with one distinct model -> WARN (not cross-vendor)', () => {
-  const panels = { adversarial: { members: [{ lane: 'frontier', model: 'litellm/model-a' }, { lane: 'frontier', model: 'litellm/model-a' }], quorum: 2 } };
-  const { policyPath, liveMissing } = rphFixturePath({ panels });
-  const findings = routingPolicyHealth('/unused', { policyPath, livePath: liveMissing });
-  assertFindingShape(findings);
-  assert.equal(maxSeverity(findings), 'WARN', JSON.stringify(findings));
-  assert.ok(findings.some((f) => /cross-vendor/.test(f.summary)), JSON.stringify(findings));
+test('routing-policy-health validates required phases and agent references, not lists', () => {
+  for (const broken of [
+    { schema: 2 },
+    { phases: { ...RPH_FIXTURE.phases, challenge: 'missing' } },
+    { phases: Object.fromEntries(Object.entries(RPH_FIXTURE.phases).filter(([key]) => key !== 'challenge')) },
+    { agents: { ...RPH_FIXTURE.agents, breaker: { defaultUsecase: 'missing' } } },
+  ]) {
+    const { policyPath } = rphFixturePath(broken);
+    assert.equal(maxSeverity(routingPolicyHealth('/unused', { host: 'pi', policyPath, env: {} })), 'ERROR');
+  }
+  const { policyPath } = rphFixturePath({ lists: null });
+  assert.equal(maxSeverity(routingPolicyHealth('/unused', { host: 'pi', policyPath, env: {} })), 'PASS');
 });
-
-test('routing-policy-health: live artifact drift -> WARN naming the path; identical live -> no drift WARN', () => {
-  const { dir, policyPath } = rphFixturePath();
-  const driftedLive = path.join(dir, 'live.json');
-  fs.writeFileSync(driftedLive, JSON.stringify({ ...RPH_FIXTURE, lanes: { ...RPH_FIXTURE.lanes, extra: { model: 'litellm/x' } } }));
-  let findings = routingPolicyHealth('/unused', { policyPath, livePath: driftedLive });
-  assert.equal(maxSeverity(findings), 'WARN', JSON.stringify(findings));
-  assert.ok(findings.some((f) => /drift/.test(f.summary) && f.summary.includes(driftedLive)), JSON.stringify(findings));
-
-  const sameLive = path.join(dir, 'same.json');
-  fs.writeFileSync(sameLive, JSON.stringify(RPH_FIXTURE));
-  findings = routingPolicyHealth('/unused', { policyPath, livePath: sameLive });
-  assert.equal(maxSeverity(findings), 'PASS', JSON.stringify(findings));
-});
-
 
 // ---- index-staleness (plan-scoped, node:crypto) ------------------------------
 

@@ -20,6 +20,8 @@ import { buildOwnerIdentity } from '../lib/owner.mjs';
 import { acquireOwner } from '../lib/owner-fs.mjs';
 import { goalsHash } from '../lib/goals.mjs';
 
+const dispatchFixture = JSON.parse(fs.readFileSync(new URL('./fixtures/dispatch-map.json', import.meta.url), 'utf8'));
+
 // Every fixture here builds a tree under os.tmpdir(); without this they accumulate across
 // runs and fill a shared /tmp. Registered on creation, removed once when the file finishes.
 const FIXTURE_TMPDIRS = [];
@@ -610,7 +612,7 @@ test('plan fan-out op: recover_plan_run emits the read-only dispatch_plan planni
   assert.equal(op.op, 'dispatch_plan');
   assert.equal(op.kind, 'plan');
   assert.equal(op.read_only, true);
-  assert.equal(op.class, 'planned-execution');
+  assert.equal(op.phase, 'plan');
   assert.equal(op.next, 'stage-plan-fragments');
   // Explicitly enumerated accessible roots: the repo + the spec path (conventional
   // spec.md beside state.yml when state carries no spec_path).
@@ -634,7 +636,7 @@ test('plan fan-out: READ-ONLY spawn descriptors + durable pre-snapshot; no state
   });
   write(fx.bundleDir, 'spec.md', '# spec\n');
   const res = dispatchPlanFanout({
-    statePath: fx.statePath,
+    policy: dispatchFixture, statePath: fx.statePath,
     subsystems: [{ key: 'core', title: 'Core' }, { key: 'ui', description: 'the UI' }],
   });
   assert.equal(res.outcome, 'native-spawn-plan');
@@ -646,7 +648,7 @@ test('plan fan-out: READ-ONLY spawn descriptors + durable pre-snapshot; no state
   // role, read_only:true, the enumerated roots — and no write-scope fields.
   // `repo` is the locus/identity field and MUST be present.
   for (const d of res.plan.descriptors) {
-    assert.equal(d.class, 'planned-execution');
+    assert.equal(d.phase, 'plan');
     assert.equal(d.read_only, true);
     assert.deepEqual(d.roots, res.roots);
     assert.equal(typeof d.repo, 'string');
@@ -655,13 +657,25 @@ test('plan fan-out: READ-ONLY spawn descriptors + durable pre-snapshot; no state
     assert.equal('files' in d, false, 'no write-scope field: files');
     assert.equal('worktree' in d, false, 'no write-scope field: worktree');
     assert.equal(d.agent, 'judge', 'planned-execution resolves to a writes:false role');
-    assert.match(d.model, /^litellm\//, 'the lane model ref rides the descriptor');
+    assert.equal(Object.hasOwn(d, 'model'), false);
   }
   // The pre-fan-out porcelain snapshot rides the plan (the orchestrator re-snapshots
   // after the fan-out and refuses staging on drift).
   assert.ok(res.porcelain_pre instanceof Map);
   // The executor writes NO state (L1 stays the single durable writer): marker intact.
   assert.deepEqual(readState(fx.statePath).active_run, { kind: 'plan', phase: 'launching' });
+});
+
+test('fan-out uses remapped plan phase intent rather than hard-coded planned-execution', () => {
+  const fx = makeFixture({ tasks: [], phase: 'plan', activeRun: { kind: 'plan', phase: 'launching' }, slug: 'plan-remap' });
+  write(fx.bundleDir, 'spec.md', '# spec\n');
+  const policy = JSON.parse(fs.readFileSync(new URL('./fixtures/dispatch-map.json', import.meta.url), 'utf8'));
+  policy.phases.plan = 'decide';
+  const result = dispatchPlanFanout({ statePath: fx.statePath, subsystems: [{ key: 'core' }], policy });
+  assert.equal(result.plan.descriptors[0].phase, 'plan');
+  assert.equal(result.plan.descriptors[0].usecase, 'decide');
+  assert.equal(result.plan.descriptors[0].agent, 'judge');
+  assert.equal(Object.hasOwn(result.plan.descriptors[0], 'model'), false);
 });
 
 test('NEGATIVE (a): drafters are structurally read-only — no descriptor carries write scope', () => {
@@ -672,13 +686,13 @@ test('NEGATIVE (a): drafters are structurally read-only — no descriptor carrie
     slug: 't5deny',
   });
   const res = dispatchPlanFanout({
-    statePath: fx.statePath,
+    policy: dispatchFixture, statePath: fx.statePath,
     subsystems: [{ key: 'good' }, { key: 'evil' }, { key: 'guarded' }],
   });
   assert.equal(res.plan.descriptors.length, 3);
   for (const d of res.plan.descriptors) {
     assert.equal(d.read_only, true, 'every drafter descriptor is read-only');
-    assert.equal(d.class, 'planned-execution');
+    assert.equal(d.phase, 'plan');
     assert.equal(d.agent, 'judge', 'the resolved role is writes:false by policy');
     assert.equal('files' in d, false);
     assert.equal('worktree' in d, false);
@@ -693,7 +707,7 @@ test('NEGATIVE (b): a drafter dirtying an enumerated root is caught by the pre/p
     slug: 't5breach',
   });
   const res = dispatchPlanFanout({
-    statePath: fx.statePath,
+    policy: dispatchFixture, statePath: fx.statePath,
     subsystems: [{ key: 'core' }],
   });
   // The fixture "drafter" writes INSIDE the enumerated repo root mid-fan-out.
@@ -707,7 +721,7 @@ test('NEGATIVE (b): a drafter dirtying an enumerated root is caught by the pre/p
 test('plan fan-out executor: a non-plan marker refuses loudly (never dispatches)', () => {
   const fx = makeFixture({ tasks: [], phase: 'plan', slug: 't5nomarker' }); // active_run: null
   assert.throws(
-    () => dispatchPlanFanout({ statePath: fx.statePath, subsystems: [{ key: 'core' }] }),
+    () => dispatchPlanFanout({ statePath: fx.statePath, subsystems: [{ key: 'core' }], policy: dispatchFixture }),
     /plan marker/,
   );
 });
@@ -937,14 +951,14 @@ test('dispatchPlanFanout refuses a bootstrap-stage marker by name', () => {
     });
     fs.writeFileSync(path.join(dir, 'events.jsonl'), '');
     assert.throws(
-      () => dispatchPlanFanout({ statePath, subsystems: [{ key: 'a', title: 'A' }] }),
+      () => dispatchPlanFanout({ statePath, subsystems: [{ key: 'a', title: 'A' }], policy: dispatchFixture }),
       /BOOTSTRAP-stage marker/,
       'plan drafters must never dispatch while the bootstrap stage is in flight',
     );
     // ...and the generic "not a plan marker" message is NOT what it gets: the refusal names
     // the actual condition, so the operator does not try to clear it as a stale marker.
     try {
-      dispatchPlanFanout({ statePath, subsystems: [{ key: 'a', title: 'A' }] });
+      dispatchPlanFanout({ statePath, subsystems: [{ key: 'a', title: 'A' }], policy: dispatchFixture });
     } catch (e) {
       assert.doesNotMatch(e.message, /run `mp continue` first/);
     }
@@ -958,13 +972,13 @@ test('a planner work item carries the plan path it is given, and none when it is
   // against that function below — asserting it here, where the path arrives pre-selected,
   // would prove nothing about how it was selected.
   const item = buildPlanWorkItem({ key: 'sub', title: 'Sub' }, {
-    roots: ['/repo'], specPath: '/repo/spec.md', planPath: '/repo/docs/masterplan/x/plan.md', repoRoot: '/repo',
+    policy: dispatchFixture, roots: ['/repo'], specPath: '/repo/spec.md', planPath: '/repo/docs/masterplan/x/plan.md', repoRoot: '/repo',
   });
   assert.equal(item.plan_path, '/repo/docs/masterplan/x/plan.md');
   assert.match(item.brief, /The plan this run owns: \/repo\/docs\/masterplan\/x\/plan\.md/);
   // Omitted: the descriptor simply carries none rather than inventing a path.
   const without = buildPlanWorkItem({ key: 'sub', title: 'Sub' }, {
-    roots: ['/repo'], specPath: '/repo/spec.md', repoRoot: '/repo',
+    policy: dispatchFixture, roots: ['/repo'], specPath: '/repo/spec.md', repoRoot: '/repo',
   });
   assert.equal(without.plan_path, undefined);
   assert.doesNotMatch(without.brief, /The plan this run owns/);

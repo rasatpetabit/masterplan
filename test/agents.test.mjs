@@ -1,9 +1,8 @@
 // test/agents.test.mjs — frontmatter lint for the dedicated plugin-root agents (build step 3).
 //
-// Agents are prompts, not modules — they can't be unit-tested by behavior here.
-// This guards the one thing a typo silently breaks: the frontmatter the harness reads
-// to register each agent and pick its model tier. A bad `model:` would otherwise route
-// to the default (parent) tier with no error.
+// Source contracts omit model selection and retain host-readable frontmatter.
+// Effective Pi prompt/tools are exercised against the joint preparation authority
+// in register-pi-agents.test.mjs, not inferred from declarations here.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
@@ -11,14 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join, basename } from 'node:path';
 
 const AGENTS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'agents');
-import { laneAliasMap } from '../lib/dispatch/routing-policy.mjs';
-
-// Valid model aliases are the routing-policy LANE NAMES, derived from the checked-in
-// policy (never a hand-maintained list): a fleet model change turns this lint over
-// automatically, and a hand-written alias fails closed.
-const VALID_MODELS = new Set(Object.keys(laneAliasMap()));
-const REQUIRED_KEYS = ['name', 'description', 'model', 'tools'];
-
+const REQUIRED_KEYS = ['name', 'description', 'tools'];
 // Minimal scalar-frontmatter parser: the block between the first two `---` fences, one
 // `key: value` per line. These agent frontmatters are flat scalars (no nesting), so a
 // full YAML parser would be a dependency we don't need (zero-dep ethos).
@@ -37,6 +29,37 @@ function parseFrontmatter(text) {
 
 const files = readdirSync(AGENTS_DIR).filter((f) => f.endsWith('.md'));
 
+test('source agent contracts do not pin a fleet routing model', () => {
+  for (const file of files) {
+    const text = readFileSync(join(AGENTS_DIR, file), 'utf8');
+    const parsed = parseFrontmatter(text);
+    assert.ok(parsed);
+    assert.equal(Object.hasOwn(parsed.fm, 'model'), false, file);
+    assert.doesNotMatch(text, /policy\/workflow-map\.json/, file);
+  }
+});
+
+test('consumer instructions describe model-free host-native dispatch', () => {
+  const root = join(AGENTS_DIR, '..');
+  for (const file of ['commands/masterplan.md', 'skills/masterplan/SKILL.md',
+    'AGENTS.md', 'docs/development.md', 'docs/verbs.md']) {
+    const text = readFileSync(join(root, file), 'utf8');
+    assert.doesNotMatch(text, /workflow-map\.json|fallback_reviewers|fallback_reason|review-fallback-reason|frontier lane|Model provenance/, file);
+    assert.match(text, /MP_DISPATCH_MAP/, file);
+    assert.match(text, /host-native/, file);
+  }
+});
+
+test('decomposition and recovery instructions explicitly select the plan operation', () => {
+  const text = readFileSync(join(AGENTS_DIR, '..', 'commands/masterplan.md'), 'utf8');
+  const recovery = text.match(/1\. \*\*Subsystems in hand\.\*\*[\s\S]*?(?=\n2\.)/);
+  const decomposition = text.match(/2\. \*\*Decompose \(unless `serial`\)\.\*\*[\s\S]*?(?=\n3\.)/);
+  for (const [name, section] of [['recovery', recovery], ['decomposition', decomposition]]) {
+    assert.ok(section, `missing ${name} instructions`);
+    assert.match(section[0], /usecase: 'plan'/, `${name} must explicitly select Pi's plan operation`);
+  }
+});
+
 test('there are dedicated agent files to lint', () => {
   assert.ok(files.length >= 4, `expected >=4 agents/*.md, found ${files.length}`);
 });
@@ -51,10 +74,6 @@ for (const file of files) {
     for (const key of REQUIRED_KEYS) {
       assert.ok(fm[key] && fm[key].length > 0, `${file}: frontmatter missing "${key}"`);
     }
-    assert.ok(
-      VALID_MODELS.has(fm.model),
-      `${file}: model "${fm.model}" is not a routing-policy lane alias (${[...VALID_MODELS].join(',')})`,
-    );
     assert.equal(
       fm.name,
       basename(file, '.md'),
@@ -73,7 +92,7 @@ for (const file of files) {
 
 // --- harness-native contract lint -------------------------------------------------
 // The retired delegation contract is gone: every agent's judgment runs
-// on the routing-policy lane the harness dispatches it on. Guard the replacement:
+// in the host's governed execution context. Guard the replacement:
 // no retired dispatch surfaces, and the on-lane + fail-closed discipline documented.
 
 test('no agent declares a retired dispatch surface (dispatch tools, model_group)', () => {
@@ -97,7 +116,7 @@ test('agent frontmatter is Pi-portable (native tool names, roster presets)', () 
   // Claude-Code-era names (Read/Grep/Glob/Write/Bash) bind to NOTHING under Pi — a child
   // spawned with them has no usable tools and dies emitting raw markup (measured on
   // mp-planner, 2026-08-28). Presets must name one of the roster roles so the core model
-  // resolver lands the child on the documented lane family.
+  // resolver preserves the canonical operation owner.
   const PI_TOOLS = new Set(['read', 'bash', 'write', 'edit']);
   const ROSTER_PRESETS = new Set(['sweeper', 'finder', 'tracer', 'builder', 'prover', 'judge', 'breaker']);
   for (const file of files) {
@@ -111,7 +130,7 @@ test('agent frontmatter is Pi-portable (native tool names, roster presets)', () 
     // preset alias only for an agent whose frontmatter declares one, and denies
     // every spawn of an agent it has no alias for ("unknown agent preset"). An
     // agent that declares none is therefore un-dispatchable in every mode, which
-    // is how mp-fallback-reviewer was silently refused.
+    // is a dispatchability failure, never review success.
     assert.ok(
       parsed.fm.preset !== undefined && parsed.fm.preset !== '',
       `${file}: frontmatter missing "preset" — Pi registers no alias for a presetless agent and refuses every spawn ("unknown agent preset")`,
@@ -139,4 +158,8 @@ test('every judgment agent documents on-lane execution and fail-closed disciplin
       `${file}: must forbid judging on an un-governed spawn`,
     );
   }
+});
+
+test('release agent manifest excludes model-fallback bypass agent', () => {
+  assert.equal(files.includes('mp-fallback-reviewer.md'), false);
 });

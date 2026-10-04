@@ -5,7 +5,7 @@ description: "Generic entrypoint for masterplan on non-CC hosts (Pi primary, Cod
 
 ## Central agent policy
 
-AUQ, Serena, Hindsight, context-mode, and agent policy is centralized in `AGENTS.md` (routing resolves from the delivered `~/.pi/workflows/workflow-map.json`, else `policy/workflow-map.json`; fleet policy at `/srv/workflows/policy/dispatch.md`). This skill must not duplicate or override dispatch rules. User-facing choices must use `ask_user_question` / `AskUserQuestion`, never prose questions.
+AUQ, Serena, Hindsight, context-mode, and agent policy is centralized in `AGENTS.md` (model-free C1 discovery uses `MP_DISPATCH_MAP`, else `~/.pi/workflows/dispatch-map.json`; fleet policy at `/srv/workflows/policy/dispatch.md`). This skill must not duplicate or override dispatch rules. User-facing choices must use `ask_user_question` / `AskUserQuestion`, never prose questions.
 
 
 # Generic entrypoint for Superpowers Masterplan (Pi primary, Codex-compatible)
@@ -27,6 +27,22 @@ and adapt it to the current host runtime.
   runs foreground-sequentially.
 - **Claude Code does not use this skill** — it loads masterplan as a plugin
   (`/masterplan`).
+
+### Dispatch intent and evidence
+
+Masterplan packages neither map nor resolver. It reads phases, use cases, agents
+and constraints from C1 only. Explicit missing paths refuse; Pi without a map
+refuses; present unreadable/invalid maps (`schema !== 1`) and unknown phases/use
+cases refuse on all hosts. Only non-Pi with no override and no default file may
+be unconfigured (phase/agent only). Planning selects `plan`, review selects
+`challenge`, execute tasks retain `bounded-edit` defaults. Pi receives model-free
+use case/stakes/constraints and stable `subject` through its governed boundary;
+critical panels are native and incomplete results are inconclusive, not success.
+Requested effort is a minimum; served effort and observed model are receipt-derived.
+Claude Code/Codex record `model_source: host-native`, never a model override.
+Named agents preserve contracts where supported, not a fleet-model guarantee;
+an unavailable review must not be replaced by narrated inline success. Codex
+waves stay sequential in this session with no recursive spawning (adaptation below).
 
 ## Source of truth (v8 clean-core layout)
 
@@ -82,8 +98,7 @@ falls through. `done` and `context_watch` support whole-object replacement with 
 Recognized keys: `complexity` (`low|medium|high`), `autonomy` (`gated|loose`, alias
 `full` → `loose`), `planning_mode` (`serial|parallel|auto`), `adversary_review`
 (`on|off`), `render_images` (`on|off`), `fabric` (`on|off`), `context_watch`
-(`{threshold 1–99, focus}`), `adversary_review_fallback` (a list of model refs, or `off` —
-the finish-gate fallback reviewers; see `docs/conventions/adversarial-review-failure-policy.md`),
+(`{threshold 1–99, focus}`), `adversary_review_fallback` (`off` → `noSubstitute: true`; model arrays are retired, migrate to inference routing),
 `done` (definition of done: `version_from`, fixed-order
 `release` steps, `${version}`, `commit_paths`).
 
@@ -91,11 +106,10 @@ Only `complexity`, `autonomy`, and `planning_mode` are resolved **from the confi
 chain at seed** and persisted into `state.yml`; `adversary_review`, `render_images`,
 and `fabric` come from their seed **flags/defaults only** (never from a config file at
 seed — `mp set-review-config` is the post-seed write for review). `adversary_review_fallback`
-resolves from the chain **at the finish gate**: the ordered fallback reviewer list the
-`run_adversary_review` op carries (the routing policy's adversary `chain`, primary excluded
-and de-duplicated, by default; the configured list instead when set — refused fail-closed
-outside that chain, since the fallback is dispatched under the adversary class; no fallback
-on `off`). `fabric` accepts
+resolves from the chain **at the finish gate**: `off` adds `noSubstitute: true` to
+model-free challenge intent; it does not authorize skipping unavailable reviews.
+Pi's boundary owns recovery and critical panels, not an alternate reviewer loop.
+`fabric` accepts
 `on|off` at the flag (schema default `on`): `off` marks a bundle **unexecutable** —
 fabric is the only wave path since the L2 legacy dispatch was deleted, so a bundle
 without `state.dispatch.fabric: true` refuses dispatch (the legacy path is not restored).

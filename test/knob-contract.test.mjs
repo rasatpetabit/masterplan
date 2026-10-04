@@ -486,21 +486,23 @@ async function buildFixture(entry, spec, tag) {
     return { verifyAllowlist: JSON.parse(out) };
   }
 
+  if (entry.id === 'MP_DISPATCH_MAP') {
+    const { discoverDispatchMap, resolvePhase } = await import(path.join(ROOT, 'lib/dispatch/routing-policy.mjs'));
+    const file = path.join(tmpdir('mp-knob-c1-'), 'dispatch-map.json');
+    fs.copyFileSync(path.join(ROOT, 'test/fixtures/dispatch-map.json'), file);
+    const env = need.MP_DISPATCH_MAP ? { MP_DISPATCH_MAP: file } : {};
+    const d = discoverDispatchMap({ host: 'codex', env, homeDir: path.dirname(file) });
+    return { dispatchMapDiscovery: { status: d.status, source: d.path === file ? 'explicit' : null,
+      schema: d.schema, phase: d.policy ? resolvePhase('challenge', { policy: d.policy }).usecase : null } };
+  }
+
   if (entry.id === 'MP_ROUTING_POLICY') {
-    // Invoke the REAL routing-policy consumer in an isolated process: resolveClassRouting
-    // reads the env through readEnv and its cache key marks the policy source ('repo' vs
-    // 'injected'). The externally observable difference is that cache key.
-    const lib = path.join(ROOT, 'lib', 'dispatch-wave.mjs').replace(/\\/g, '/');
-    const script = `
-      import { resolveClassRouting } from ${JSON.stringify(lib)};
-      const v = process.env.MP_ROUTING_POLICY || '';
-      const r = resolveClassRouting('bounded-edit', { policy: null });
-      const key = 'bounded-edit' + '\\u0000' + (v ? 'injected' : 'repo');
-      process.stdout.write(JSON.stringify({ key, lane: r.lane, model: r.model }));
-    `;
-    const env = { ...mpEnv(), MP_ROUTING_POLICY: need.MP_ROUTING_POLICY ?? '' };
-    const out = execFileSync('node', ['--input-type=module', '-e', script], { encoding: 'utf8', env });
-    return { routingCacheKey: JSON.parse(out) };
+    const { discoverDispatchMap } = await import(path.join(ROOT, 'lib/dispatch/routing-policy.mjs'));
+    try {
+      const d = discoverDispatchMap({ host: 'codex', env: need.MP_ROUTING_POLICY === null ? {} : { MP_ROUTING_POLICY: '/retired' },
+        homeDir: '/no-map', readFile: () => { throw Object.assign(new Error('absent'), { code: 'ENOENT' }); } });
+      return { routingRetirement: { status: d.status } };
+    } catch (error) { return { routingRetirement: { code: error.code } }; }
   }
 
   if (entry.id === 'context_watch' || entry.id === 'render_images_marker') {
@@ -706,12 +708,31 @@ async function buildFixture(entry, spec, tag) {
     return { reviewContext: { enabled: rec?.review_context?.enabled ?? null } };
   }
 
+  if (entry.id === 'finish_review_new') {
+    const { writeState } = await requireBundle();
+    const { finishStep } = await import(path.join(ROOT, 'lib', 'finish-step.mjs'));
+    const { statePath, WT, bundleDir, slug } = buildRepoForKnob({ configYaml: 'done: none\n', slug: `knobnew${tag.toLowerCase()}` });
+    writeState(statePath, {
+      schema_version: 9, slug, status: 'in-progress', phase: 'execute', worktree: WT,
+      pending_gate: null, active_run: null, finish_review_new: need.finish_review_new,
+      review: { adversary: true }, concurrency: { owner_lock: 'off' },
+      tasks: [{ id: 1, status: 'done', wave: 1, files: ['src/a.txt'] }],
+    });
+    fs.writeFileSync(path.join(bundleDir, 'retro.md'), '# retro\n');
+    try {
+      const op = finishStep({ statePath, now: 2000, verify: 'pass', host: 'codex', discoveryOptions: {
+        env: {}, homeDir: '/fixture-absent', readFile: () => { throw Object.assign(new Error('absent'), { code: 'ENOENT' }); },
+      } });
+      assert.equal(op.op, 'run_adversary_review');
+      return { finishEpisode: { op: op.op, subjectAllocated: Boolean(op.subject) } };
+    } catch (error) {
+      if (!/active-episode.*migration/.test(error.message)) throw error;
+      return { finishEpisode: { refused: 'migration required' } };
+    }
+  }
+
   if (entry.id === 'adversary_review_fallback') {
-    // The REAL finish-gate consumer: a repo whose .masterplan.yaml carries the varied
-    // value, a bundle with the review armed, and the real finishStep walk to the
-    // run_adversary_review op — whose payload is what the shell dispatches
-    // mp-fallback-reviewer from (commands/masterplan.md §2c). 'off' empties the list
-    // and records why; a list replaces the policy-derived default outright.
+    // Real finish consumer: off emits noSubstitute; retired arrays refuse.
     const { writeState } = await import(path.join(ROOT, 'lib', 'bundle.mjs'));
     const { finishStep } = await import(path.join(ROOT, 'lib', 'finish-step.mjs'));
     const cfg = need.adversary_review_fallback;
@@ -721,7 +742,7 @@ async function buildFixture(entry, spec, tag) {
     const { statePath, WT, bundleDir, slug } = buildRepoForKnob({ configYaml, slug: `knobfb${tag.toLowerCase()}` });
     writeState(statePath, {
       schema_version: 8, slug, status: 'in-progress', phase: 'execute', worktree: WT,
-      pending_gate: null, active_run: null,
+      pending_gate: null, active_run: null, finish_review_new: true,
       review: { adversary: true }, concurrency: { owner_lock: 'off' },
       tasks: [{ id: 1, status: 'done', wave: 1, files: ['src/a.txt'] }],
     });
@@ -729,13 +750,22 @@ async function buildFixture(entry, spec, tag) {
       tasks: [{ id: 1, verify_commands: ['true'] }],
     }));
     const step = (extra = {}) => finishStep({ statePath, now: 2000, ...extra });
-    let op = step();
+    let op;
+    try { op = step(); } catch (error) {
+      if (!/model arrays retired/.test(error.message)) throw error;
+      return { reviewFallback: { refused: true } };
+    }
     if (op.op === 'run_verify') op = step({ verify: 'pass' });
-    if (op.op === 'write_retro') { fs.writeFileSync(op.path, '# retro\n'); op = step(); }
+    if (op.op === 'write_retro') { fs.writeFileSync(op.path, '# retro\n');
+      try { op = step(); } catch (error) {
+      if (!/model arrays retired/.test(error.message)) throw error;
+      return { reviewFallback: { refused: true } };
+    }
+    }
     if (op.op !== 'run_adversary_review') {
       throw new Error(`adversary_review_fallback fixture: expected run_adversary_review, got ${JSON.stringify(op.op)}`);
     }
-    return { reviewFallback: { reviewers: op.fallback_reviewers, reason: op.fallback_reason ?? null } };
+    return { reviewFallback: { noSubstitute: op.noSubstitute ?? false } };
   }
 
   if (entry.id === 'render_images' || entry.id === 'render.images') {

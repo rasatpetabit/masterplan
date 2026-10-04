@@ -3,9 +3,7 @@
 // Claude Code discovers agents/mp-*.md via its plugin loader as the
 // `masterplan:mp-*` namespace. Pi hosts need adapted copies under
 // `~/.pi/agent/agents/` with the `model:` line REMOVED: the frontmatter lane alias
-// is validated against MODEL_MAP (aliases are the routing-policy lane names) and then
-// dropped, because Pi refuses a spawn whose frontmatter `model:` hint falls outside
-// the preset's class chain — which a lane alias always does.
+// is retired. The governed host owns routing, not source frontmatter.
 //
 // Registration is **bare-only**: one file per agent (`mp-X.md`). Colon alias
 // copies (`masterplan:mp-X.md`) are no longer emitted. On write, managed
@@ -25,21 +23,10 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { execSync } from 'node:child_process';
 import { homedir } from 'node:os';
-import { laneAliasMap } from '../lib/dispatch/routing-policy.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, '..');
 const PI_USER_AGENTS_DIR = join(homedir(), '.pi', 'agent', 'agents');
-
-// Live-alias map, DERIVED from the repo-local routing policy
-// (policy/workflow-map.json): every lane name is an alias for its lane model ref
-// (litellm/...). Agent frontmatter declares a LANE (`model: frontier`); registration
-// VALIDATES it against this map and then removes the line from the registered copy, so
-// the preset's class policy routes the child. The policy file is the only
-// place model ids appear, so a fleet model change turns this map over
-// automatically; the test suite re-derives the same map from the policy, so any
-// drift between a declared alias and the policy fails closed.
-const MODEL_MAP = laneAliasMap();
 
 function resolveRepoRoot() {
   try {
@@ -62,22 +49,24 @@ const COLON_PREFIX = 'masterplan:';
 const SKIP_FOR_PI = new Set();
 
 function mapModelLine(body, file) {
-  // NOTE: the regex anchors on the first `^model:` line. The canonical agents/*.md keep
-  // `model:` only in frontmatter, so this is safe for them; it is deliberately simple
-  // rather than a full YAML parse. (Accept the low risk: we own agents/*.md.)
-  const m = body.match(/^model:\s*(\S+)\s*$/m);
-  if (!m) throw new Error(`${file}: no \`model:\` frontmatter line to map`);
-  const alias = m[1];
-  const mapped = Object.hasOwn(MODEL_MAP, alias) ? MODEL_MAP[alias] : undefined;
-  if (!mapped) throw new Error(`${file}: model alias \`${alias}\` has no pi mapping (no such lane in policy/workflow-map.json)`);
-  // The lane is validated above and then REMOVED from the registered output. Pi does
-  // not resolve lane aliases: it validates a frontmatter `model:` value against the
-  // PRESET's class chain and refuses the spawn (`SpawnModelPolicyError`) when the value
-  // is outside it — which both the lane alias and the lane's resolved ref are for any
-  // preset whose class sits on a different lane. Emitting no hint lets the preset's
-  // class policy route the child, which is the only shape that cannot refuse.
-  // `alias`/`mapped` stay in the return value so callers still report provenance.
-  return { alias, mapped, body: body.replace(/^model:\s*\S+\s*\n?/m, '') };
+  // Strip only frontmatter. A body line beginning model: is reviewer-authored prose.
+  const match = body.match(/^(---\r?\n)([\s\S]*?)(^---[ \t]*(?:\r?\n|$))/m);
+  if (!match || match.index !== 0) throw new Error(`${file}: missing frontmatter`);
+  const frontmatter = match[2].replace(/^model:[^\r\n]*(?:\r?\n|$)/gm, '');
+  return { mapped: null, body: match[1] + frontmatter + match[3] + body.slice(match[0].length) };
+}
+
+/** Retired host pins refuse before registration writes; never echo their values. */
+function assertNoLaneOverrides(homeDir) {
+  const file = join(homeDir, '.config', 'masterplan', 'lane-overrides.json');
+  let value;
+  try { value = JSON.parse(readFileSync(file, 'utf8')); }
+  catch (error) {
+    if (error.code === 'ENOENT') return;
+    throw new Error('lane-overrides.json retired; remove it and migrate choices to inference routing');
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).length)
+    throw new Error('lane-overrides.json retired; remove it and migrate choices to inference routing');
 }
 
 // Kept for unit-test compatibility / historical callers; no longer used by write path.
@@ -128,7 +117,8 @@ function writeManagedManifest(targetDir, files) {
   );
 }
 
-export function runRegister({ agentsDir, targetDir, check, skipSet = SKIP_FOR_PI }) {
+export function runRegister({ agentsDir, targetDir, check, skipSet = SKIP_FOR_PI, homeDir = homedir() }) {
+  assertNoLaneOverrides(homeDir);
   const files = readdirSync(agentsDir).filter((f) => /^mp-.*\.md$/.test(f)).sort();
   if (files.length === 0) throw new Error(`no mp-*.md found under ${agentsDir}`);
   // Write mode ensures the target dir exists; check mode must NOT create anything.
@@ -175,7 +165,7 @@ export function runRegister({ agentsDir, targetDir, check, skipSet = SKIP_FOR_PI
     }
 
     const srcBody = readFileSync(join(agentsDir, file), 'utf8');
-    const { alias, mapped, body } = mapModelLine(srcBody, file);
+    const { body } = mapModelLine(srcBody, file);
     for (const out of outputsFor(file, body)) {
       expectedBare.add(out.rel);
       producedBare.add(out.rel);
@@ -186,12 +176,12 @@ export function runRegister({ agentsDir, targetDir, check, skipSet = SKIP_FOR_PI
           drift++;
           report.push(`DRIFT  ${out.rel} (installed ${installed === null ? 'MISSING' : 'differs from canonical+map'})`);
         } else {
-          report.push(`OK     ${out.rel}  (lane ${alias} → ${mapped}; no model hint emitted)`);
+          report.push(`OK     ${out.rel}  (host-owned routing; no model hint emitted)`);
         }
       } else {
         writeFileSync(dstPath, out.body, 'utf8');
         written++;
-        report.push(`WROTE  ${out.rel}  (lane ${alias} → ${mapped}; no model hint emitted)`);
+        report.push(`WROTE  ${out.rel}  (host-owned routing; no model hint emitted)`);
       }
     }
 
@@ -247,16 +237,14 @@ export function runRegister({ agentsDir, targetDir, check, skipSet = SKIP_FOR_PI
 
 // Exported for unit tests (test/register-pi-agents.test.mjs). main() is the only thing
 // that touches the real host filesystem; runRegister takes explicit dirs.
-export { MODEL_MAP, COLON_PREFIX, SKIP_FOR_PI, mapModelLine, mapNameLine, outputsFor, managedColonRel };
+export { COLON_PREFIX, SKIP_FOR_PI, mapModelLine, mapNameLine, outputsFor, managedColonRel };
 
 const USAGE = `Usage: node bin/register-pi-agents.mjs [--check] [--help]
 
 Registers the masterplan agents for a pi host: writes bare mp-*.md copies
 under ~/.pi/agent/agents/ with the model: line REMOVED — the lane alias in the
-source is validated against the routing-policy lane map (see
-docs/development.md) and then dropped, because pi refuses a spawn whose
-frontmatter model: hint falls outside the preset's class chain, and the
-preset's class policy routes the child instead. Colon alias copies are retired
+source is stripped without a model map (already model-free source is accepted).
+The governed host owns routing; source name, preset, tools and body are retained. Colon alias copies are retired
 and cleaned.
 Owns a manifest (.masterplan-managed.json) listing which files it manages; in
 write mode it removes previously-managed files whose source agent is gone.
@@ -265,7 +253,7 @@ manual review.
 
 Options:
   --check   Read-only drift check: compare installed files against canonical
-            agents/mp-*.md after lane validation and model-line removal. Reports
+            agents/mp-*.md after frontmatter model-line removal. Reports
             drift; exits 1 on drift, 0 when in sync. Never writes, deletes, or
             creates anything.
   --help    Print this help and exit. Read-only — performs no writes.
@@ -310,7 +298,10 @@ function main() {
   const check = opts.check;
   const agentsDir = join(resolveRepoRoot(), 'agents');
   const targetDir = PI_USER_AGENTS_DIR;
-  const { report, drift, written, skipped, removed, registered } = runRegister({ agentsDir, targetDir, check });
+  let result;
+  try { result = runRegister({ agentsDir, targetDir, check }); }
+  catch (error) { console.error(`register-pi-agents: ${error.message}`); process.exit(2); }
+  const { report, drift, written, skipped, removed, registered } = result;
 
   for (const line of report) console.error(line);
   if (check) {

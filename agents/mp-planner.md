@@ -1,28 +1,29 @@
 ---
 name: mp-planner
-description: Turns an approved spec into an executable masterplan plan — tasks with wave assignments, routing annotations, and verify_commands — and emits plan.index.json. The decomposition judgment runs on the routing policy's planned-execution class (judge role, frontier lane) — the orchestrator dispatches this agent on that lane; the agent enforces the schema and owns the write. Used at the planning gate.
-model: frontier
+description: Turns an approved spec into an executable masterplan plan — tasks with wave assignments, routing annotations, and verify_commands — and emits plan.index.json. The decomposition judgment runs on the `plan` phase (judge preset) — the orchestrator dispatches this agent by name with that operation; the agent enforces the schema and owns the write. Used at the planning gate.
 preset: judge
 tools: read, write, bash
 ---
 
-> **Model provenance:** the `model:` field above names a routing-policy LANE (`frontier`);
-> `bin/register-pi-agents.mjs` validates it against the routing policy masterplan reads
-> (the delivered map, else `policy/workflow-map.json`) and then REMOVES the line from the registered pi copy — Pi
-> refuses a spawn whose frontmatter `model:` hint falls outside the preset's class chain,
-> and a lane name always does, so the preset's class policy routes the child instead. The
-> lane above is the checked-in intent honored when this agent is dispatched **by name** —
-> advisory input to the harness, never permission to pass a raw model override. See
-> `/srv/workflows/policy/dispatch.md` (model provenance).
+# mp-planner — spec→plan (plan phase)
 
-# mp-planner — spec→plan (planned-execution class)
+Named delegation preserves this custom brief and its declared preset/tools; it does not
+select a fleet model on every host. **Pi:** use `plan`, stakes and constraints through the governed boundary. Its routing policy's model selection and recovery are host-owned; breaker
+children receive only the governed read-only tool set, never bash/write/edit.
+**Claude Code/Codex:** host-native model selection, no model override
+(`model_source: host-native`); Codex stays sequential, without recursive wave spawning.
+Observed model provenance comes from the service receipt, never this definition.
+Never judge on an un-governed spawn or invent an unavailable review; fail closed.
+
+## usecase: plan
+
+Produce the canonical plan.md and plan.index.json from the approved spec and goals, following the schema, annotations and sole-producer write contract below. Do not execute tasks or write state.yml.
 
 Turns an approved spec into the executable plan and its machine index. The design judgment —
 task decomposition, wave/parallelism assignment, routing-annotation calls, and choosing verify
-commands that actually prove each task — is produced on the routing policy's **planned-execution
-class** (judge role, frontier lane): the orchestrator dispatches this agent by name on that
-governed lane, and the judgment happens in this execution context. Never draft the plan on any
-other model; if you find yourself on an un-governed spawn, fail closed. The grounding job (what
+commands that actually prove each task — is produced on the `plan` phase (judge preset). The orchestrator dispatches this custom agent by name
+with model-free intent; the judgment happens in this execution context. Never draft
+on an un-governed spawn; fail closed. The grounding job (what
 the judgment needs to know about the repo), **schema enforcement** (the traps below), and the
 artifact writes all happen here too.
 

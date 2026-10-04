@@ -65,7 +65,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { loadRoutingPolicy, REPO_POLICY_PATH, resolveWorkClass } from '../lib/dispatch/routing-policy.mjs';
+
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const PIN_PATH = path.join(ROOT, 'policy', 'design-intent-skill.json');
@@ -257,21 +257,10 @@ function recordReceipt({ statePath, entry, draft, eligible, forks, dir, n, criti
   assert.equal(r.status, 0, r.stderr || r.stdout);
 }
 
-// The critic's dispatch provenance comes from the checked-in routing policy the §2f critic
-// dispatch names (the critic class → its pinned agent and lane), read as data — never a
-// fabricated model string (the fleet's raw-override prohibition; the agent doc's own
-// frontmatter resolves the same way through bin/register-pi-agents.mjs).
+// Synthetic observed service receipt, not C1 selection or a vendored resolver.
 function criticDispatchIdentity() {
-  const map = loadRoutingPolicy({ policyPath: REPO_POLICY_PATH });
-  const cls = map.classes.critic;
-  assert.ok(cls, 'policy/workflow-map.json must declare the critic class');
-  const agent = map.agents[cls.agent];
-  assert.ok(agent, `the critic class names agent ${cls.agent}`);
-  assert.equal(agent.writes, false, 'the critic agent is read-only');
-  const route = resolveWorkClass('critic', { policy: map });
-  assert.equal(route.model, cls.model, 'the critic uses its governed class primary');
-  assert.equal(route.lane, cls.lane, 'the critic uses its governed class lane');
-  return { agentName: cls.agent, model: route.model, lane: route.lane };
+  const observedReceipt = { agent: 'breaker', servedModel: 'synthetic-observed-reviewer', vocabulary: { lane: 'review' } };
+  return { agentName: observedReceipt.agent, model: observedReceipt.servedModel, lane: observedReceipt.vocabulary.lane };
 }
 
 // Compose a round's question text from the pinned SKILL.md's own plan-mode interview

@@ -265,7 +265,7 @@ const CLOSED_SEAM_ALLOWLIST = [
   { at: 'lib/runs.mjs:267', why: 'discoveryConfigPath(mainRoot, env = process.env): default-param env injection into resolveRunsDir (all reads via readEnv)' },
   { at: 'lib/runs.mjs:336', why: 'readDiscoveryConfig(mainRoot, { env = process.env }): default-param env injection, forwarded to discoveryConfigPath/resolveRunsDir (all reads via readEnv)' },
   { at: 'lib/runs.mjs:458', why: 'discoverRuns({ env = process.env }): default-param env injection into resolveRunsDir/readDiscoveryConfig (all reads via readEnv)' },
-  { at: 'bin/masterplan.mjs:1377', why: 'shouldSuppressWorkflow(flags = {}, env = process.env): default-param env injection; callers pass readEnvAll() (the seam proxy) and the only read is env.PI_CODING_AGENT' },
+  { at: 'bin/masterplan.mjs:1378', why: 'shouldSuppressWorkflow(flags = {}, env = process.env): default-param env injection; callers pass readEnvAll() (the seam proxy) and the only read is env.PI_CODING_AGENT' },
   { at: 'lib/coord-client-config.mjs:57', why: 'applyCoordPathAutodiscover(baseEnv = process.env): default-param env injection; all reads via readEnv' },
   { at: 'lib/coord-client-config.mjs:91', why: 'resolveCoordClientConfig({ env = process.env }): default-param env injection, forwarded to applyCoordPathAutodiscover (all reads via readEnv)' },
   { at: 'lib/coord-client-config.mjs:166', why: 'buildCoordClient({ env = process.env }): default-param env injection, forwarded to resolveCoordClientConfig (all reads via readEnv)' },
@@ -517,7 +517,7 @@ test('inventory: the lexical readEnv discovery stays as the cheap early signal',
   // DISCOVERED before the behavioral contract is demanded of it.
   const env = discoverEnvControls();
   assert.ok(env.length >= 5, `expected a substantial env surface, got ${env.length}`);
-  for (const known of ['CLAUDE_CODE_SESSION_ID', 'CLAUDE_PLUGIN_ROOT', 'PI_CODING_AGENT', 'MP_ROUTING_POLICY']) {
+  for (const known of ['CLAUDE_CODE_SESSION_ID', 'CLAUDE_PLUGIN_ROOT', 'PI_CODING_AGENT', 'MP_DISPATCH_MAP']) {
     assert.ok(env.includes(known), `env discovery must retain ${known} as an early signal`);
   }
 });

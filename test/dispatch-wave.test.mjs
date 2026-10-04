@@ -30,6 +30,9 @@
 //      and D6 independence (approve never bypasses verify-scope).
 
 import { test, after } from 'node:test';
+// Isolate C1 discovery from ambient HOME; tests still exercise the real reader.
+process.env.MP_DISPATCH_MAP = new URL('./fixtures/dispatch-map.json', import.meta.url).pathname;
+
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -198,7 +201,7 @@ async function recordNativeWave(fx, res, { edits = {}, providedReviews = null, s
     })),
   };
   const reviewed = await reviewNativeResult({
-    statePath: fx.statePath, result, providedReviews, now: 3000,
+    statePath: fx.statePath, self: fx.self, result, providedReviews, now: 3000,
   });
   if (reviewed.review_outcome === 'native-review-pending') return { result, reviewed };
   const recorded = recordWaveResult({
