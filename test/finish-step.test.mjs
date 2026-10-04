@@ -1420,7 +1420,19 @@ async function baselineFinishStep() {
   return (await import(asModule('lib/finish-step.mjs', { './dispatch/routing-policy.mjs': routing }))).finishStep;
 }
 
-test('legacy emitted finish review with empty history requires migration before new subject allocation', async () => {
+function hasCommit(repo, sha) {
+  try {
+    execFileSync('git', ['-C', repo, 'cat-file', '-e', `${sha}^{commit}`], { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const baselineCommitExists = hasCommit(path.resolve(new URL('..', import.meta.url).pathname), '823d6bc0aa1f3b7ff92d97e5e3252743f5f8305f');
+const legacyFinishTest = baselineCommitExists ? test : test.skip;
+
+legacyFinishTest('legacy emitted finish review with empty history requires migration before new subject allocation', async () => {
   const fx = armedFixture({ finish_review_new: undefined });
   write(fx.MAIN, '.masterplan.yaml', 'done: none\nadversary_review_fallback: off\n');
   const legacyStep = await baselineFinishStep();
