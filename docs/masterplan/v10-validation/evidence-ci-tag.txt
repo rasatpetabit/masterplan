@@ -1,0 +1,60 @@
+=== MASTERPLAN v10.0.6 CI RUN VERIFICATION EVIDENCE ===
+Timestamp: 2026-10-03T19:43:45Z
+Host: ai (192.168.100.200)
+Repository: rasatpetabit/masterplan
+Tag: v10.0.6 (object SHA: 1e90cdae695dd8c3431efd35951815138bfdc25e)
+Commit: 80e3337b8bb8ce50105b218b605b66273ddf8185
+
+1. GitHub Actions Run Summary:
+Run ID: 34191687673
+Workflow: ci
+Event: push
+Ref: refs/tags/v10.0.6
+Head SHA: 80e3337b8bb8ce50105b218b605b66273ddf8185
+Status: completed
+conclusion: success
+Created At: 2026-09-08T05:42:59Z
+Updated At: 2026-09-08T05:45:51Z
+URL: https://github.com/rasatpetabit/masterplan/actions/runs/34191687673
+
+2. Job Execution Receipts:
+Job 1: test (ID: 101950883163)
+  Status: completed
+  conclusion: success
+  Started At: 2026-09-08T05:43:02Z
+  Completed At: 2026-09-08T05:45:38Z
+  Steps:
+    1. Set up job - success
+    2. Checkout - success
+    3. Set up Node - success
+    4. Unit suite - success
+    5. Doctor - success
+    6. Plugin symlink resolves - success
+    7. Post Set up Node - success
+    8. Post Checkout - success
+    9. Complete job - success
+
+Job 2: release-publish (ID: 101951392157)
+  Status: completed
+  conclusion: success
+  Started At: 2026-09-08T05:45:43Z
+  Completed At: 2026-09-08T05:45:50Z
+  Steps:
+    1. Set up job - success
+    2. Checkout - success
+    3. Extract CHANGELOG section for this tag - success
+    4. Create GitHub Release - success
+    5. Post Checkout - success
+    6. Complete job - success
+
+3. Pull Request CI Correlation:
+Run ID: 34192117984
+Workflow: ci
+Event: pull_request
+Branch: masterplan/intent-to-completion
+Head SHA: 80e3337b8bb8ce50105b218b605b66273ddf8185
+Status: completed
+conclusion: success
+Duration: 2m17s
+
+=== G4 RELEASE TAG CI VERIFICATION PASSED: conclusion: success ===

@@ -12,10 +12,12 @@ masterplan v8 is a 5-layer system. Each layer is thin and delegates downward:
   `plan.index.json`, `retro.md`, `events.jsonl` (append-only), and
   `handoff.md`. The `phase` field in `state.yml` is the only authoritative
   progress enum (`brainstorm | plan | execute`).
-- **L1 — Thin shell:** `commands/masterplan.md` (~800-line verb sequencer) +
-  `bin/masterplan.mjs` (filesystem-only subcommands, invoked as `mp`; git stays
-  in the shell) + `lib/resume.mjs` (pure `decideNextAction`). L1 is the
-  **only** durable writer of run-bundle state (CD-7).
+- **L1 — Thin shell:** `commands/masterplan.md` (~870-line verb sequencer) +
+  `bin/masterplan.mjs` (filesystem-only subcommands, invoked as `mp`, with the
+  local-git exceptions that `record-result` runs git for its split commit and the
+  `finish-step` paths commit bundle state via `commitBundle`;
+  network git stays in the shell) + `lib/resume.mjs` (pure `decideNextAction`).
+  L1 is the **only** durable writer of run-bundle state (CD-7).
 - **L2 — Fabric dispatch path:** `lib/dispatch-wave.mjs` (`dispatchWaveViaFabric`,
   a thin orchestrator running 5 named stages: gateAndValidate →
   resolveWaveContext → buildDescriptors → acquireAndWatch → buildNativePlan;
@@ -34,7 +36,7 @@ masterplan v8 is a 5-layer system. Each layer is thin and delegates downward:
   Implementation dispatch routes through the routing policy — each task's
   class resolves to a governed lane (`policy/workflow-map.json`) and the
   harness spawns the child.
-- **L4 — Doctor:** `bin/doctor.mjs` dispatcher + 19 check modules under
+- **L4 — Doctor:** `bin/doctor.mjs` dispatcher + 24 check modules under
   `lib/doctor/*.mjs`. Auto-discovered alphabetically; each module exports a
   synchronous `check(repoRoot, opts) -> Finding[]`. See `doctor.md` below.
 
@@ -69,13 +71,13 @@ artifacts — see `commands/masterplan.md` §3b.
 | [wave-dispatch.md](internals/wave-dispatch.md) | Routing decisions and one-wave dispatch: how `lib/dispatch/` classifies tasks and `lib/dispatch-wave.mjs` runs a single wave | `lib/dispatch/` + `lib/dispatch-wave.mjs` |
 | [task-verification.md](internals/task-verification.md) | D6 scope verify and the review stage: acceptance criteria, trust-skip conditions | `lib/wave.mjs` |
 | [design-intent-integration.md](internals/design-intent-integration.md) | The design-intent integration as landed: host contract/pin, the interview ledger, §5.3 convergence, the format pin + snapshot, reconciliation, the promotion transaction, checkpoint identity tuples, the knob contracts | `lib/interview.mjs` + `lib/reconcile-intent.mjs` + `lib/promote.mjs` + `lib/checkpoint-evidence.mjs` |
-| [doctor.md](internals/doctor.md) | Doctor contract: discovery, crash isolation, Finding shape, all 19 check modules | `bin/doctor.mjs` + `lib/doctor/*.mjs` |
+| [doctor.md](internals/doctor.md) | Doctor contract: discovery, crash isolation, Finding shape, all 24 check modules | `bin/doctor.mjs` + `lib/doctor/*.mjs` |
 
 ## Cross-cutting References
 
 - **Verb routing + sequencer logic:** `commands/masterplan.md` (the primary source;
   read this first for any orchestrator behaviour question).
-- **CD rules (CD-1…CD-10):** canonical bodies live in
+- **CD rules (CD-1…CD-11):** canonical bodies live in
   [`docs/conventions/cd-rules.md`](conventions/cd-rules.md). CD-7 (single
   writer) and CD-4 (blocker ladder) are the ones most frequently referenced in
   the leaves above.

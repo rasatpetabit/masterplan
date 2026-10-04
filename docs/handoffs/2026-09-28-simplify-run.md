@@ -10,7 +10,7 @@ Re-verified after the local-main sync.
 
 | Fact | Command | Observation |
 |---|---|---|
-| Primary checkout | `git rev-parse --short HEAD; git rev-list --left-right --count main...origin/main` | `7cdb335`, `0 0` (in sync). Dirty: README.md, docs/internals.md, docs/internals/doctor.md, docs/masterplan/v10-validation/events.jsonl; untracked schema-snapshot.json. These predate this work (mtimes Sep 8–23), have no owning live process or open handle, and were preserved. |
+| Primary checkout | `git rev-parse --short HEAD; git rev-list --left-right --count main...origin/main` | `7cdb335`, `0 0` (in sync). Dirty: README.md, docs/internals.md, docs/internals/doctor.md, validation run events.jsonl; untracked schema-snapshot.json. These predate this work (mtimes Sep 8–23), have no owning live process or open handle, and were preserved. |
 | Suite | `npm test` in primary and clean worktree | 2915/2915 in both. One earlier full-suite run failed #1573 (`knob-contract` two-value proof); it passed in isolation (11/11) and on both reruns — treated as a load-dependent flake. |
 | Refutation reviewer | direct gateway POST `kimi-code/k3-256k` at 127.0.0.1:4000 | **HTTP 403 weekly (7-day) usage limit**; no fallback group. The `refutation` class is kimi-only and its intent says fail closed rather than substitute. |
 | Simplification branch | `git -C .worktrees/simplify-fallback-current rev-parse --short HEAD; git -C … status --short` | `7cdb335`; clean. |

@@ -44,7 +44,7 @@ masterplan v8 is a five-layer system. Each layer delegates downward and never wr
                         │ read / atomic write (CD-7)
 ┌───────────────────────▼─────────────────────────────────────┐
 │  L1 — Thin shell                                             │
-│  commands/masterplan.md  (~600-line verb sequencer)          │
+│  commands/masterplan.md  (~870-line verb sequencer)          │
 │  bin/masterplan.mjs  (mp — filesystem-only subcommands)      │
 │  lib/resume.mjs  (pure decideNextAction)                     │
 │  ← SOLE durable state writer; git commit/checkout live here  │
@@ -80,7 +80,7 @@ masterplan v8 is a five-layer system. Each layer delegates downward and never wr
 **Key invariants:**
 
 - L1 (`commands/masterplan.md` + `mp`) is the **only** durable state writer (CD-7). All state mutations go through `mp` subcommands; L2 and below never commit to git or write `state.yml`.
-- `bin/masterplan.mjs` is **filesystem-only** — git (`commit`, `checkout`, `clean`) is the shell's job.
+- `bin/masterplan.mjs` is **filesystem-only** apart from deliberate local-`git` exceptions: `mp record-result` runs local `git` for its split commit, and the `mp finish-step` paths commit bundle state through `commitBundle` (branch-finish, archive, push-gate and push-recovery milestones). All are `-C`-qualified to loci the CLI derives itself and pathspec-scoped to the bundle directory. Network git (`push`, `gh`) stays the shell's job.
 - L2 fabric dispatch communicates via descriptors on launch and return digests in the completion notification.
 
 ---
@@ -316,6 +316,7 @@ Each recognized key is validated against the schema enum and its **source layer*
 | `render_images` | `on \| off` | `off` | Gates the optional shell-side image *generation*; embedding is by-presence |
 | `fabric` | `on \| off` | `on` | The schema accepts `on\|off`; the legacy L2 wave path is deleted, so `off` marks a bundle **unexecutable** (no `state.dispatch.fabric: true` → dispatch refused, nothing restored) |
 | `context_watch` | object | `{threshold: 70, focus: null}` | `context_watch.threshold` is an int 1–99; `context_watch.focus` is a string or null |
+| `interview` | object | `{probing_minimum: {low: 1, medium: 2, high: 4}}` | §5.3 convergence: the probing minimum per complexity, validated fail-closed at resolution |
 | `done` | object | none | The definition of done: `version_from`, `release` steps in **fixed deploy order** (see below), `${version}` substitution, `commit_paths` |
 
 **Seed-time flags** (`mp seed`, persisted into `state.yml` at run creation): `--complexity`, `--autonomy`, `--planning-mode`, `--adversary-review=on|off` (alias `--codex-review`), `--render-images=on|off`, `--fabric=on`, `--overlap-review=<json>` (required — see Overlap below), `--predecessor=<slug>`. `mp continue` accepts `--planning-mode` on the command line and resolves it through the same chain.

@@ -1,0 +1,106 @@
+=== MASTERPLAN v10.0.6 CLAUDE HARNESS LIVE EXECUTION EVIDENCE ===
+Timestamp: 2026-10-03T19:40:13.307Z
+Host: ai (192.168.100.200)
+Harness: Claude Code (Plugin manifest & extension entrypoints)
+
+1. Plugin Manifest (.claude-plugin/plugin.json):
+{
+  "name": "masterplan",
+  "version": "10.0.6",
+  "description": "Brainstorm, plan, execute, resume, import, lint, and retrospect long-running Claude Code work with durable run bundles and strict context control.",
+  "author": {
+    "name": "Richard A Steenbergen",
+    "email": "ras@petabitscale.com"
+  },
+  "homepage": "https://github.com/rasatpetabit/masterplan",
+  "repository": "https://github.com/rasatpetabit/masterplan",
+  "license": "MIT",
+  "keywords": [
+    "claude-code",
+    "claude-code-plugin",
+    "workflow",
+    "brainstorm",
+    "planning",
+    "superpowers",
+    "codex",
+    "worktrees",
+    "automation",
+    "agent",
+    "parallelism",
+    "intra-plan-parallelism"
+  ],
+  "dependencies": [
+    {
+      "name": "superpowers",
+      "marketplace": "claude-plugins-official"
+    }
+  ]
+}
+
+2. Package Manifest (package.json):
+{
+  "name": "masterplan",
+  "version": "10.0.6",
+  "private": true,
+  "type": "module",
+  "description": "masterplan clean-core rebuild (v8) — brainstorm→plan→execute→finish orchestrator on native Claude Code primitives.",
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "doctor": "node bin/doctor.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
+
+3. Lifecycle Hooks (hooks/hooks.json):
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "mkdir -p \"$HOME/.claude/commands\"; shim=\"$HOME/.claude/commands/masterplan.md\"; if [ ! -e \"$shim\" ] || [ -L \"$shim\" ] || grep -q 'masterplan-shim: v[123]' \"$shim\" 2>/dev/null || grep -q 'You are the \\*\\*orchestrator\\*\\*' \"$shim\" 2>/dev/null; then [ -L \"$shim\" ] && unlink \"$shim\"; { printf '%s\\n' '---'; printf '%s\\n' 'description: \"Resumable orchestrator for /masterplan: brainstorm→plan→execute on durable run bundles. Verbs: full, brainstorm, plan, execute, finish, retro, import, doctor, status, validate, stats, clean, next, verbs, render, publish, follow.\"'; printf '%s\\n' 'argument-hint: \"[verb] [topic-or-path]\"'; printf '%s\\n' '---'; printf '%s\\n' '<!-- masterplan-shim: v4 -->'; printf '%s\\n' ''; printf '%s\\n' '/masterplan:masterplan $ARGUMENTS'; } > \"$shim\"; fi",
+            "timeout": 2,
+            "async": true
+          }
+        ]
+      }
+    ]
+  }
+}
+
+4. Plugin Version Command (CLAUDE_PLUGIN_ROOT isolation):
+Command: CLAUDE_PLUGIN_ROOT=/srv/dev/ras/masterplan/.worktrees/v10-validation-tag node bin/masterplan.mjs version
+Output: → /masterplan v10.0.6 args: '(empty)' cwd: /srv/dev/ras/masterplan/.worktrees/v10-validation-tag
+
+5. Plugin Host Detection (CLAUDE_PLUGIN_ROOT active):
+{"isCodex":false,"reasons":[]}
+
+6. Claude Command Entrypoints:
+commands/masterplan.md exists: true (102250 bytes)
+Frontmatter snippet:
+---
+description: "Resumable orchestrator for /masterplan: brainstorm→plan→execute on durable run bundles. Verbs: full, brainstorm, plan, execute, finish, retro, import, doctor, status, validate, stats, clean, next, verbs, render, publish, follow."
+---
+
+# /masterplan — thin resumable shell (v8)
+
+> v8 clean-core. The DECISIONS live in `lib/*.mjs` behind `bin/masterplan.mjs` (deterministic,
+> zero-LLM-token, unit-tested) — this shell only **sequences**. Durable state lives in
+> `docs/masterplan/<slug>/` (`state.yml` is the source of truth). CD-7: the shell is the SOLE
+> state writer, via `bin` — **never** hand-edit, `Write`, or `Edit` `state.yml` or `events.jsonl`;
+
+7. Git Object / Tag Identity:
+Worktree HEAD commit: 80e3337b8bb8ce50105b218b605b66273ddf8185
+Tag v10.0.6 object SHA: 1e90cdae695dd8c3431efd35951815138bfdc25e
+Tag v10.0.6 commit SHA: 80e3337b8bb8ce50105b218b605b66273ddf8185
+Commit equality match: true
+
+8. Marketplace and Cache Isolation Audit:
+Claude marketplace dir present: true
+Claude cache dir present: true
+Production symlinks mutated by test: NONE (ISOLATED)
+
+=== CLAUDE HARNESS VERIFICATION PASSED: v10.0.6 LIVE EVIDENCE VERIFIED ===

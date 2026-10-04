@@ -1,0 +1,34 @@
+{
+  "sections": [
+    {
+      "section": "Purpose",
+      "source": "interview:Q1,Q5,Q7",
+      "uncertainty": "",
+      "verdict": "serves"
+    },
+    {
+      "section": "Top invariant",
+      "source": "interview:Q1,Q4,Q8",
+      "uncertainty": "",
+      "verdict": "serves"
+    },
+    {
+      "section": "Non-goals",
+      "source": "interview:Q2,Q3,Q6",
+      "uncertainty": "",
+      "verdict": "serves"
+    },
+    {
+      "section": "Direction",
+      "source": "interview:Q5,Q7",
+      "uncertainty": "",
+      "verdict": "serves"
+    },
+    {
+      "section": "Posture",
+      "source": "interview:Q3,Q4",
+      "uncertainty": "",
+      "verdict": "serves"
+    }
+  ]
+}

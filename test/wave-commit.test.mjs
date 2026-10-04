@@ -43,7 +43,9 @@ function write(root, rel, content) {
 // A MAIN repo (initial commit: rogue.txt + src/seed.txt), a real linked worktree on
 // masterplan/<slug>, a bundle with the given tasks + active_run marker, and the owner
 // lock held by identity sess-A (record-result's heartbeat is STRICT: acquire precedes).
-function makeFixture({ tasks, activeRun, slug = 't22' }) {
+// bundleLocus 'worktree' places the bundle inside the run worktree (the WT-resident
+// shape the pricing-capture bundle uses) instead of MAIN (the documented split).
+function makeFixture({ tasks, activeRun, slug = 't22', bundleLocus = 'main' }) {
   const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-wavecommit-'));
   const MAIN = path.join(tmp, 'main');
   fs.mkdirSync(MAIN, { recursive: true });
@@ -53,11 +55,15 @@ function makeFixture({ tasks, activeRun, slug = 't22' }) {
   git(MAIN, 'config', 'commit.gpgsign', 'false');
   write(MAIN, 'rogue.txt', 'original\n');
   write(MAIN, 'src/seed.txt', 'seed\n');
+  // Mirror the production shape: the linked worktrees dir is ignored in MAIN, so the
+  // state commit's bundle pathspec is a no-op when the bundle lives in the worktree.
+  write(MAIN, '.gitignore', '.worktrees/\n');
   git(MAIN, 'add', '.');
   git(MAIN, 'commit', '-q', '-m', 'initial');
   const WT = path.join(MAIN, '.worktrees', slug);
   git(MAIN, 'worktree', 'add', '-q', '-b', `masterplan/${slug}`, WT);
-  const bundleDir = path.join(MAIN, 'docs', 'masterplan', slug);
+  const bundleHost = bundleLocus === 'worktree' ? WT : MAIN;
+  const bundleDir = path.join(bundleHost, 'docs', 'masterplan', slug);
   const statePath = path.join(bundleDir, 'state.yml');
   writeState(statePath, {
     schema_version: 8,
@@ -248,6 +254,82 @@ test('REGRESSION: the controller\'s own Guard-D heartbeat is not a watch breach'
   // …and the sentinel is still never committed (the pathspec exclusion is untouched).
   const stateFiles = git(fx.MAIN, 'show', '--name-only', '--format=', 'HEAD').split('\n').filter(Boolean);
   assert.ok(!stateFiles.some((f) => f.includes('.owner')), 'owner sentinels stay out of the state commit');
+});
+
+test('WT-resident bundle: the wave never flags or reverts the controller\'s own worktree bookkeeping', () => {
+  // 2026-09-11 (the pricing-capture bundle, which lives inside its run worktree):
+  // record-result's scope after-capture read the controller's OWN writes — events.jsonl
+  // appends, the wave dispatch record, the watch sidecar — as out-of-scope worktree
+  // changes, and step 3 REVERTED them: the wave's review events were wiped by the
+  // transaction that recorded them. The controller transaction files are exempt in
+  // whichever watched repo hosts the bundle, not just MAIN.
+  const fx = makeFixture({
+    bundleLocus: 'worktree',
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    activeRun: { wave: 1, run_id: 'r1', task_id: 'wf1', scope: ['src/a.txt'], baseline: [] },
+  });
+  // The launched bundle is committed in the WT (state.yml + the events log so far).
+  write(fx.bundleDir, 'events.jsonl', `${JSON.stringify({ type: 'seed' })}\n`);
+  git(fx.WT, 'add', '-A');
+  git(fx.WT, 'commit', '-q', '-m', 'bundle seeded in wt');
+  const baseline = captureWatchBaseline({
+    mainRoot: fx.MAIN, bundleDir: fx.bundleDir, worktree: fx.WT, slug: 't22', scopePaths: ['src/a.txt'],
+  });
+  writeWatchBaseline(fx.bundleDir, 1, baseline);
+
+  // Mid-wave: the controller's own bookkeeping moves in the WT (dispatch record written
+  // at launch, an event appended through the wave), plus the task's real work.
+  write(fx.bundleDir, 'wave-1.dispatch.json', '{}\n');
+  fs.appendFileSync(path.join(fx.bundleDir, 'events.jsonl'), `${JSON.stringify({ type: 'task_review' })}\n`);
+  write(fx.WT, 'src/a.txt', 'A\n');
+
+  const res = recordWaveResult({
+    statePath: fx.statePath,
+    self: fx.self,
+    now: 2000,
+    result: { wave: 1, baseline: [], tasks: [digest(1, 'done')] },
+  });
+
+  assert.equal(res.outcome, 'recorded');
+  assert.equal(res.scope.ok, true, `controller files are not scope breaches: ${JSON.stringify(res.scope.outOfScope)}`);
+  assert.deepEqual(res.reverted, [], 'the transaction must not revert its own audit trail');
+  assert.equal(res.watch.ok, true, `watch must accept the controller's WT transaction: ${JSON.stringify(res.watch.violations)}`);
+  // The audit trail survives intact: the mid-wave append AND the wave_recorded summary.
+  const events = fs.readFileSync(path.join(fx.bundleDir, 'events.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+  assert.ok(events.some((e) => e.type === 'task_review'), 'the mid-wave event survives');
+  assert.equal(events.at(-1).type, 'wave_recorded');
+  // The dispatch record + watch sidecar stay on disk (not cleaned as "out of scope").
+  assert.ok(fs.existsSync(path.join(fx.bundleDir, 'wave-1.dispatch.json')));
+  assert.ok(fs.existsSync(path.join(fx.bundleDir, '.wave-1.watch.json')));
+});
+
+test('WT-resident bundle: a child write to a non-transaction bundle file is still reverted', () => {
+  // The negative control: the exemption is MAIN_TRANSACTION_FILES only, never the whole
+  // bundle dir — a child rewriting spec.md mid-wave is a scope breach with a revert.
+  const fx = makeFixture({
+    bundleLocus: 'worktree',
+    tasks: [{ id: 1, status: 'pending', wave: 1, files: ['src/a.txt'] }],
+    activeRun: { wave: 1, run_id: 'r1', task_id: 'wf1', scope: ['src/a.txt'], baseline: [] },
+  });
+  write(fx.bundleDir, 'events.jsonl', `${JSON.stringify({ type: 'seed' })}\n`);
+  write(fx.bundleDir, 'spec.md', '# original spec\n');
+  git(fx.WT, 'add', '-A');
+  git(fx.WT, 'commit', '-q', '-m', 'bundle seeded in wt');
+
+  write(fx.bundleDir, 'spec.md', '# rewritten by a child\n');
+  write(fx.WT, 'src/a.txt', 'A\n');
+
+  const res = recordWaveResult({
+    statePath: fx.statePath,
+    self: fx.self,
+    now: 2000,
+    result: { wave: 1, baseline: [], tasks: [digest(1, 'done')] },
+  });
+
+  assert.equal(res.scope.ok, false, 'spec.md is not a controller transaction file');
+  assert.ok(res.scope.outOfScope.some((p) => p.endsWith('docs/masterplan/t22/spec.md')));
+  assert.ok(res.reverted.some((p) => p.endsWith('spec.md')), 'the breach is reverted');
+  assert.equal(fs.readFileSync(path.join(fx.bundleDir, 'spec.md'), 'utf8'), '# original spec\n');
 });
 
 test('REGRESSION: excluding the heartbeat did not blind the watch to a real MAIN write', () => {

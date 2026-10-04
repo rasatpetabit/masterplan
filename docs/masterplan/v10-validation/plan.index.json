@@ -1,0 +1,141 @@
+{
+  "schema_version": "6.0",
+  "meta": {
+    "purpose": "Validate released v10.0.6 surfaces across Pi and Claude live runtimes, exercise the bootstrap failure table against a clean tag worktree, verify release tag CI status, and audit intervening commits to settle historical release disposition.",
+    "problem": "v10.0.6 was released as the required successor to intent-to-completion, but formal G6 live proof, tag-level bootstrap recovery validation, and historical disposition remained unfinalized.",
+    "solution": "Execute isolated, reproducible validation tests on host ai and in an isolated git worktree, producing verifiable text and markdown evidence artifacts without modifying repository code."
+  },
+  "tasks": [
+    {
+      "id": 1,
+      "description": "Initialize isolated git worktree at .worktrees/v10-validation-tag checked out to tag v10.0.6",
+      "wave": 0,
+      "files": [],
+      "verify_commands": [
+        "test -d .worktrees/v10-validation-tag && [ \"$(git -C .worktrees/v10-validation-tag rev-parse HEAD)\" = \"80e3337b8bb8ce50105b218b605b66273ddf8185\" ]"
+      ],
+      "codex": "no",
+      "goals": [
+        "G3"
+      ],
+      "spec_refs": [
+        "spec.md §4.2"
+      ]
+    },
+    {
+      "id": 2,
+      "description": "Capture G6 live execution proof for Pi harness against installed v10.0.6 on host ai",
+      "wave": 1,
+      "files": [
+        "docs/masterplan/v10-validation/evidence-g6-pi.txt"
+      ],
+      "verify_commands": [
+        "test -s docs/masterplan/v10-validation/evidence-g6-pi.txt && grep -q \"10.0.6\" docs/masterplan/v10-validation/evidence-g6-pi.txt"
+      ],
+      "codex": "no",
+      "goals": [
+        "G1"
+      ],
+      "spec_refs": [
+        "spec.md §4.1"
+      ]
+    },
+    {
+      "id": 3,
+      "description": "Capture G6 live execution proof for Claude harness against installed v10.0.6 plugin on host ai",
+      "wave": 1,
+      "files": [
+        "docs/masterplan/v10-validation/evidence-g6-claude.txt"
+      ],
+      "verify_commands": [
+        "test -s docs/masterplan/v10-validation/evidence-g6-claude.txt && grep -q \"10.0.6\" docs/masterplan/v10-validation/evidence-g6-claude.txt"
+      ],
+      "codex": "no",
+      "goals": [
+        "G2"
+      ],
+      "spec_refs": [
+        "spec.md §4.1"
+      ]
+    },
+    {
+      "id": 4,
+      "description": "Execute bootstrap failure table and driver recovery test suite in tag v10.0.6 worktree and record failure-mode receipts",
+      "wave": 1,
+      "files": [
+        "docs/masterplan/v10-validation/bootstrap-failure-table-report.md"
+      ],
+      "verify_commands": [
+        "test -s docs/masterplan/v10-validation/bootstrap-failure-table-report.md && grep -q -i \"pass\" docs/masterplan/v10-validation/bootstrap-failure-table-report.md && grep -q \"ENOENT\" docs/masterplan/v10-validation/bootstrap-failure-table-report.md"
+      ],
+      "codex": "no",
+      "goals": [
+        "G3"
+      ],
+      "spec_refs": [
+        "spec.md §4.2"
+      ]
+    },
+    {
+      "id": 5,
+      "description": "Verify green CI workflow run status for git tag v10.0.6 commit and record CI verification receipt",
+      "wave": 1,
+      "files": [
+        "docs/masterplan/v10-validation/evidence-ci-tag.txt"
+      ],
+      "verify_commands": [
+        "test -s docs/masterplan/v10-validation/evidence-ci-tag.txt && grep -q \"1e90cdae\" docs/masterplan/v10-validation/evidence-ci-tag.txt && grep -q -iE \"success|completed\" docs/masterplan/v10-validation/evidence-ci-tag.txt"
+      ],
+      "codex": "no",
+      "goals": [
+        "G4"
+      ],
+      "spec_refs": [
+        "spec.md §4.4"
+      ]
+    },
+    {
+      "id": 6,
+      "description": "Audit post-tag commits between v10.0.6 and successor releases and synthesize historical release disposition report",
+      "wave": 1,
+      "files": [
+        "docs/masterplan/v10-validation/release-disposition.md"
+      ],
+      "verify_commands": [
+        "test -s docs/masterplan/v10-validation/release-disposition.md && grep -q -i \"disposition\" docs/masterplan/v10-validation/release-disposition.md"
+      ],
+      "codex": "no",
+      "goals": [
+        "G5"
+      ],
+      "spec_refs": [
+        "spec.md §4.3"
+      ]
+    },
+    {
+      "id": 7,
+      "description": "Cleanly remove worktree .worktrees/v10-validation-tag and compile final validation summary",
+      "wave": 2,
+      "files": [
+        "docs/masterplan/v10-validation/validation-summary.md"
+      ],
+      "verify_commands": [
+        "test -s docs/masterplan/v10-validation/validation-summary.md && ! git worktree list | grep -q v10-validation-tag"
+      ],
+      "codex": "no",
+      "goals": [
+        "G1",
+        "G2",
+        "G3",
+        "G4",
+        "G5"
+      ],
+      "spec_refs": [
+        "spec.md §4.2",
+        "spec.md §5"
+      ]
+    }
+  ],
+  "plan_hash": "sha256:783e06c76f71f9aa418ed475463db34675658bc9b866f73490428c9f3070a3e7",
+  "generated_at": "2026-10-03T19:36:12.948Z"
+}

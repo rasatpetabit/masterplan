@@ -1,0 +1,11 @@
+{
+  "why": "Ensure masterplan v10.0.6 is definitively validated in the real world across Pi and Claude with genuine evidence, closing out the successor commitment of intent-to-completion, and deciding by explicit rule whether keep-10.0.6 (docs-only commits past the tag) stands as complete or v10.0.7 is owed to carry fixes for any surfaced defects.",
+  "outcome": "Documented, reproducible G6 live proof on Pi and Claude that v10.0.6 functions as tagged and CI-green; verified bootstrap failure table execution against the actual tagged release; and an evidence-backed release disposition applying the rule: docs-only commits past the tag keep 10.0.6, while any shipped-surface defect is recorded and forces 10.0.7.",
+  "anti_goals": [
+    "Do not execute goal-assessment replay as a purpose or requirement of this validation run (explicitly excluded from scope, amending the anchor topic).",
+    "Do not implement defect fixes within this validation run; record any defect found and carry the fix into v10.0.7 via the disposition.",
+    "Do not rely on rehearsal fixtures or synthetic mocks when exercising the bootstrap failure table; test against the tagged v10.0.6 release directly.",
+    "Do not declare validation complete or release closed without fresh, verifiable evidence from both Pi and Claude harnesses."
+  ],
+  "done_means": "Live execution evidence gathered from both Pi and Claude proving v10.0.6 is operating correctly; bootstrap failure scenarios verified against the tagged release; CI checks green on the tagged release; and release disposition explicitly settled under the rule (docs-only commits past tag keep 10.0.6, any shipped-surface defect recorded to be fixed in v10.0.7)."
+}

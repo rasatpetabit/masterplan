@@ -1,0 +1,110 @@
+{
+  "status": "resolved",
+  "identity": {
+    "repository": "/srv/dev/ras/masterplan",
+    "remote": "origin",
+    "ref": "main",
+    "resolved_commit": "852ec78070bc12f3a120300b4556e5e23c01459b",
+    "resolved_at": "2026-10-03T19:27:33.948Z"
+  },
+  "artifact_path": "INTENT.md",
+  "artifact_digest": "sha256:b177533348d5ea9e9c0d79707aeaca65a63e0496374a6c2072500b9c374eedd5",
+  "rows": [
+    {
+      "section": "Purpose",
+      "verdict": "serves",
+      "artifact_path": "INTENT.md",
+      "artifact_digest": "sha256:ef70610b09c230969acca7d5e4b77e3597af38866eb17cc68869270cc7122e3f",
+      "resolved_ref": {
+        "repository": "/srv/dev/ras/masterplan",
+        "remote": "origin",
+        "ref": "main",
+        "resolved_commit": "852ec78070bc12f3a120300b4556e5e23c01459b",
+        "resolved_at": "2026-10-03T19:27:33.948Z"
+      }
+    },
+    {
+      "section": "Top invariant",
+      "verdict": "serves",
+      "artifact_path": "INTENT.md",
+      "artifact_digest": "sha256:594bd54e237efd19ed52f184cb9722d03b21bc1d7b59a17616fe6fa23e761b95",
+      "resolved_ref": {
+        "repository": "/srv/dev/ras/masterplan",
+        "remote": "origin",
+        "ref": "main",
+        "resolved_commit": "852ec78070bc12f3a120300b4556e5e23c01459b",
+        "resolved_at": "2026-10-03T19:27:33.948Z"
+      }
+    },
+    {
+      "section": "Non-goals",
+      "verdict": "serves",
+      "artifact_path": "INTENT.md",
+      "artifact_digest": "sha256:c891b39bdf70b2855c0de7633324aac8254c02acd0251975fd1e7f449e8643c0",
+      "resolved_ref": {
+        "repository": "/srv/dev/ras/masterplan",
+        "remote": "origin",
+        "ref": "main",
+        "resolved_commit": "852ec78070bc12f3a120300b4556e5e23c01459b",
+        "resolved_at": "2026-10-03T19:27:33.948Z"
+      }
+    },
+    {
+      "section": "Audience",
+      "verdict": "neutral",
+      "artifact_path": "INTENT.md",
+      "artifact_digest": "sha256:a85d54282c87d7da52af7b59287684bc9d522198e7ca7211c0bd3565e37b7e8b",
+      "resolved_ref": {
+        "repository": "/srv/dev/ras/masterplan",
+        "remote": "origin",
+        "ref": "main",
+        "resolved_commit": "852ec78070bc12f3a120300b4556e5e23c01459b",
+        "resolved_at": "2026-10-03T19:27:33.948Z"
+      }
+    },
+    {
+      "section": "Core bet",
+      "verdict": "serves",
+      "artifact_path": "INTENT.md",
+      "artifact_digest": "sha256:0303aafa49a49ecb3616b499f8313e0dabda1aa9e961fa716619f972637bffe8",
+      "resolved_ref": {
+        "repository": "/srv/dev/ras/masterplan",
+        "remote": "origin",
+        "ref": "main",
+        "resolved_commit": "852ec78070bc12f3a120300b4556e5e23c01459b",
+        "resolved_at": "2026-10-03T19:27:33.948Z"
+      }
+    },
+    {
+      "section": "Direction",
+      "verdict": "serves",
+      "artifact_path": "INTENT.md",
+      "artifact_digest": "sha256:d4b39cd12dafc098278e68e40bf12d528d46a7a77f8579cb55be02a711c2cd5a",
+      "resolved_ref": {
+        "repository": "/srv/dev/ras/masterplan",
+        "remote": "origin",
+        "ref": "main",
+        "resolved_commit": "852ec78070bc12f3a120300b4556e5e23c01459b",
+        "resolved_at": "2026-10-03T19:27:33.948Z"
+      }
+    },
+    {
+      "section": "Posture",
+      "verdict": "serves",
+      "artifact_path": "INTENT.md",
+      "artifact_digest": "sha256:e9b6d7d9645b23ce4037265d29b865ebbc1ed38e8bed8d371ee1406db147e462",
+      "resolved_ref": {
+        "repository": "/srv/dev/ras/masterplan",
+        "remote": "origin",
+        "ref": "main",
+        "resolved_commit": "852ec78070bc12f3a120300b4556e5e23c01459b",
+        "resolved_at": "2026-10-03T19:27:33.948Z"
+      }
+    }
+  ],
+  "recorded_at": "2026-10-03T19:27:33.963Z",
+  "comparison": {
+    "outcome": "first",
+    "prior_invalidated": false
+  }
+}
