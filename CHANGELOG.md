@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [10.0.17] — 2026-10-06
+
+### Changed
+- Repin the design-intent skill to behavior-skills `4ceffec` (identity
+  `f2ba234f…`): an `INTENT.md` checked section now binds the live accepted
+  decision records (ADRs) it links; `audit`/`refine` report an accepted record
+  no checked section represents; `judge`/`align` read linked records; `plan`
+  judges commitment text only. Host contract v1 and schema format v1 are
+  unchanged. Bundles captured under the old identity move through
+  `mp interview amend-skill-identity`.
+
 ## [10.0.16] — 2026-10-06
 
 ### Added — per-task review stakes sized by the orchestrator (`dispatch-wave --reviews-file`)
