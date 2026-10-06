@@ -4642,7 +4642,16 @@ function main() {
         waveFlag = coerceId(flags.wave);
         if (!Number.isInteger(waveFlag)) die('dispatch-wave: --wave must be an integer');
       }
+      // Same JSON-file transport as record-result; here values are sizing intent,
+      // not reviewer receipts. Validation happens before the launch record is written.
+      let taskReviews = null;
+      if (flags['reviews-file'] !== undefined) {
+        try { taskReviews = JSON.parse(fs.readFileSync(String(flags['reviews-file']), 'utf8')); }
+        catch (e) { die(`dispatch-wave: task review sizing file unreadable or invalid JSON (${e.message})`); }
+        if (taskReviews === null) die('dispatch-wave: task review sizing must be an object keyed by task id');
+      }
       dispatchWaveViaFabric({
+        taskReviews,
         host: cliDispatchHost(flags),
         statePath,
         self,

@@ -1616,3 +1616,88 @@ Verification environment for positive focused/both/full runs: env -i PATH=/usr/b
 - git diff --check — exit 0. Complete changed code/test/docs diff and decisive red/green/full outputs inspected. W unchanged/clean after tests. Ordinary path-limited git commit with hooks enabled; core.hooksPath unset, hooks directory contains samples only; no bypass or hook changes.
 
 Requested build repair complete. No genuinely new product/architecture decisions. Independent review/operator gates/live measurements are outside this build brief and not claimed. Escalation/handoff: orchestrate owner must resolve the explicit source/proof dependency before full pre-gate acceptance; it does not make this alternative masterplan-only repair incomplete. Hindsight requests would violate the production-request prohibition and were not performed; WORKLOG is durable handoff, not canonical memory retention. No merge/push, manager/unshare/nsenter/podman exec/run/ansible, deploy/install/restart/activation, production request, credential-value read, compiled-generation activation, protected/installed/config edits or other-worktree writes performed.
+
+## 2026-10-06 — masterplan-risk-sized-review (branch-only implementation)
+
+Operator scope: per-task consequence-sized code review; named worktree/branch only,
+commit but no push/merge/deploy/install/release. INTENT: serves evidence-backed,
+harness-native completion. Base: origin/main 9e51976. Main's existing dirty WORKLOG
+and legacy-review design were left untouched. Concurrent autoprogress work also
+edits commands/masterplan.md (different branch); preserve both when integrating.
+
+### Actual selection before this patch (path:line at 9e51976)
+
+- lib/config.mjs:254 defaults adversary_review to on; bin/masterplan.mjs:1511–1561
+  seeds review on unless explicitly off. lib/dispatch-wave.mjs:1419 computes one
+  wave-wide toggle from state.review.adversary (state.codex.review fallback).
+- lib/dispatch-wave.mjs:1276–1297 freezes enabled/base/task loci and per-task episodes
+  before launch; every new episode copies the SAME state.review.stakes and escalation
+  constraints (1287–1289). Existing episodes/subjects survive retries (1283–1284).
+- lib/review-episode.mjs:39–54 requires a linked active episode, normalizes stakes
+  to critical or consequential (49), preserves constraints and blocking:true.
+  lib/dispatch-wave.mjs:644–655 and 827–847 emit challenge descriptors for ordinary
+  and committed-recovery done tasks using that helper. C1/host owns model selection
+  (lib/dispatch-wave.mjs:443–453), not Masterplan.
+- lib/task-review.mjs:248–270 checks intent/reviewer identity and full recovery
+  artifact identity; 304–313 selects reusable run/task/payload-sha evidence.
+  lib/task-review.mjs:91–102 blocks non-approval, unavailable reviewers or incomplete
+  coverage. lib/wave-commit.mjs:397–401 collects blocking_reviews; 652–660 keeps
+  an enabled blocked wave's marker. No change to those evidence/HEAD/wave guards.
+
+Prior art: required rg review scan in lib/bin/skills/commands/agents/policy (1195
+matches); local docs/tests/history plus native C2 resolver and fixture ladder;
+GitHub all-state issues/PR title scan found historical #10/#11 routing/manual review
+items, not a risk-sizing implementation. Hindsight recalled the existing stakes/
+escalation preservation and outdated default-off history; current code outranks it.
+
+### Change and boundaries
+
+Reuse dispatch-wave's existing reviews-file flag as command-local sizing transport:
+task-id -> {stakes: routine|consequential|critical, reason}. The orchestrator judges
+consequences/restoration from the task/plan under review.md § "How much"; no numeric
+score, prose classifier, plan-schema migration, new verb or review-skip mechanism.
+Validation refuses unknown tasks/fields, malformed levels and empty rationale before
+writing a launch record. Freeze choices in existing review_context.episodes; preserve
+escalation floors and in-flight choices, including enabled state on retry. Explicit
+sizing arms the wave even if legacy config is off; omitted/empty sizing retains the
+legacy toggle. Unspecified stakes remain consequential; old run-wide routine without
+per-task rationale still normalizes to consequential. Both descriptor paths carry
+stakes/reason. Finish-time review and canonical evidence guards unchanged.
+
+Residual: semantic sizing and served-strength verification remain the orchestrator/
+native host's responsibility, not an automatic classifier. No live harness dispatch
+or install was exercised. The patch's required independent frontier review remains
+OWED: this session has no governed judge/subagent/workflow/advisor tool surface;
+no CLI/model substitute or invented approval was used. Treat this as a tested partial
+handoff, not independently cleared/release-ready work.
+
+### Verification
+
+All Node runs used disposable HOME with only test/fixtures/dispatch-map.json seeded
+at .pi/workflows/dispatch-map.json; MP_DISPATCH_MAP/MP_ROUTING_POLICY unset; no real
+agent registration. Joint W=/srv/workflows/.worktrees/model-routing-r1, read-only
+HEAD ad50fdbe6bf4147b5c663ec7ba93842c90cb1bcc checked before/after full runs.
+
+- Initial tests-first regression selection: 10 tests, 0 pass / 10 fail (exit 1).
+- Additional compatibility control: 2 tests, 1 pass / 1 fail before restoring
+  conservative run-wide routine behavior (exit 1).
+- Final new regression selection: 12 pass / 0 fail / 0 skip (exit 0).
+- Focused dispatch-wave.native/task-review/wave-commit: 172 pass / 0 fail / 0 skip.
+- Initial full suite: 3040 pass / 1 fail / 0 skip; doc edit broke op-table parity's
+  literal command match. Restored literal command; parity: 5 pass / 0 fail / 0 skip.
+- node --test test/*.test.mjs FINAL: 3041 pass / 0 fail / 0 skip, 4 suites, exit 0.
+- make test FINAL (npm test): 3041 pass / 0 fail / 0 skip, 4 suites, exit 0.
+  First make attempt interrupted by combined command timeout; not counted as success.
+- node --test test/publish-hygiene.test.mjs: 18 pass / 0 fail / 0 skip, exit 0.
+- node bin/doctor.mjs: 37 findings, 29 PASS / 7 SKIP / 1 WARN / 0 ERROR, exit 0.
+  Warning: resume-brief-hook absent in isolated HOME; no unrelated hook fix made.
+- git diff --check: exit 0. No executable repository pre-commit hook configured;
+  commit uses normal git hooks without bypass.
+
+RELEASING.md route (NOT executed): version-bearing manifests/package, README/llms,
+CHANGELOG bump on run branch before branch_finish; suite/pre-publish verification,
+cross-vendor review/G1–G5; node scripts/release.mjs --version=V requires files already
+bumped and clean tree, inserts only missing changelog header and creates annotated
+vV tag; PR opened/merged (corrective release uses new commits/new PR, never retags
+old release); explicit tag push activates release-publish; tagged Pi install/check
+is a separate gate. No version chosen/bumped, PR opened, tag/push/install performed.

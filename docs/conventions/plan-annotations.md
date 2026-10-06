@@ -60,9 +60,9 @@ on a fragment; the serial `mp-planner` path emits them directly):**
 - Routing's `target` is **informational** in v8: implementation is inline-only (there
   is no Codex implementer). `codex` records what a future implementer tier *could*
   offload — the native spawn-descriptor path (`lib/dispatch/dispatch-digest.mjs` `buildWorkItem`, with class resolution via `lib/dispatch/routing-policy.mjs` `resolveWorkClass`) is the live
-  production dispatch seam, imported and actively used by `lib/dispatch-wave.mjs` — but in v8 it gates **no** runtime behaviour — the optional review stage is
-  gated solely by the bundle's `state.review.adversary` config, independent of any task's
-  `codex`/`target`.
+  production dispatch seam, imported and actively used by `lib/dispatch-wave.mjs` — but in v8 it gates **no** runtime behaviour. Review sizing is independent of `codex`/`target`:
+  the orchestrator records task consequences and restoration rationale into the existing review
+  episode via `dispatch-wave --reviews-file` ([per-task review contract](../internals/wave-dispatch.md#harness-native-per-task-review-caller--recorder-only)); absent choices retain the bundle defaults.
 
 ## Three silent-fallthrough traps
 

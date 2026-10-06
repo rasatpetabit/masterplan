@@ -440,6 +440,113 @@ test('native spawn record persists task review context for result ingestion', as
   assert.equal(record.review_context.tasks[0].repo, res.plan.tasks[0].cwd);
 });
 
+// Risk sizing is an orchestrator judgment, not description/file-count classification.
+const sizing = {
+  1: { stakes: 'routine', reason: 'Plan task 1: example-only typo; git revert restores it; no runtime, data or security effect.' },
+  2: { stakes: 'consequential', reason: 'Plan task 2 changes what runs; revert the code commit to restore it.' },
+  3: { stakes: 'critical', reason: 'Plan task 3 rewrites customer records; recovery requires restoring the backup.' },
+};
+
+for (const recovery of [false, true]) {
+  test(`per-task review sizing survives ${recovery ? 'committed recovery' : 'working diff'} descriptors`, async () => {
+    const fx = makeNativeFixture({ slug: 'task-sized-review', review: { adversary: true } });
+    const tasks = [1, 2, 3, 4].map((id) => planEntry(id, 1, [`src/t${id}.txt`]));
+    writeState(fx.statePath, { ...readState(fx.statePath), tasks: tasks.map((t) => ({
+      id: t.id, wave: 1, status: 'pending', files: t.files,
+    })) });
+    write(fx.bundleDir, 'plan.index.json', JSON.stringify({ tasks }));
+    launchNative(fx);
+    const launch = await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 2000,
+      policy: dispatchFixture, taskReviews: sizing });
+    for (const id of [1, 2, 3, 4]) write(fx.WT, `src/t${id}.txt`, `edit ${id}\n`);
+    if (recovery) {
+      git(fx.WT, 'add', '.');
+      git(fx.WT, 'commit', '-qm', 'recovered wave');
+    }
+    const result = { wave: 1, tasks: tasks.map((t) => ({ task_id: t.id, digest: workerDigest(t.id) })) };
+    const args = { statePath: fx.statePath, self: fx.self, now: 3000, result, policy: dispatchFixture,
+      ...(recovery ? { recoverySelector: { repo: fx.WT, head: git(fx.WT, 'rev-parse', 'HEAD') } } : {}) };
+    const pending = await reviewNativeResult(args);
+    assert.deepEqual(pending.pending_reviews.map((d) => d.stakes),
+      ['routine', 'consequential', 'critical', 'consequential']);
+    assert.equal(pending.pending_reviews.length, 4, 'sizing never bypasses a review');
+    for (const d of pending.pending_reviews) {
+      assert.equal(d.subject, launch.record.review_context.episodes[String(d.task_id)].subject);
+      assert.equal(d.blocking, true);
+      assert.equal(d.reason, sizing[d.task_id]?.reason);
+    }
+    // Frozen choice survives a new artifact and a changed run-wide default.
+    writeState(fx.statePath, { ...readState(fx.statePath), review: { adversary: true, stakes: 'critical' } });
+    const again = await reviewNativeResult(args);
+    assert.deepEqual(again.pending_reviews.map((d) => d.stakes), pending.pending_reviews.map((d) => d.stakes));
+    // Missing reviews still fail closed; lower-strength review is not a bypass.
+    if (recovery) {
+      await assert.rejects(() => reviewNativeResult({ ...args, providedReviews: {} }), /receipt binding failed/);
+    } else {
+      const ingested = await reviewNativeResult({ ...args, providedReviews: {} });
+      assert.ok(ingested.tasks.every((t) => t.review.verdict === 'error'));
+    }
+  });
+}
+
+test('legacy run-wide routine stakes without a task rationale stay conservative', async () => {
+  const fx = makeNativeFixture({ review: { adversary: true, stakes: 'routine' } });
+  launchNative(fx);
+  await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 2000, policy: dispatchFixture });
+  write(fx.WT, 'src/a.txt', 'edit\n');
+  const out = await reviewNativeResult({ statePath: fx.statePath, self: fx.self, now: 3000,
+    result: { wave: 1, tasks: [{ task_id: 1, digest: workerDigest(1) }] }, policy: dispatchFixture });
+  assert.equal(out.pending_reviews[0].stakes, 'consequential');
+});
+
+test('retry retains frozen task sizing and the enabled wave block despite new inputs', async () => {
+  const fx = makeNativeFixture();
+  launchNative(fx);
+  const args = { statePath: fx.statePath, self: fx.self, now: 2000, policy: dispatchFixture };
+  const first = await dispatchWaveViaFabric({ ...args, taskReviews: { 1: sizing[1] } });
+  writeState(fx.statePath, { ...readState(fx.statePath), review: { adversary: false } });
+  const retry = await dispatchWaveViaFabric({ ...args, takeover: true, taskReviews: { 1: sizing[3] } });
+  assert.equal(retry.record.review_context.enabled, true);
+  assert.deepEqual(retry.record.review_context.episodes['1'], first.record.review_context.episodes['1']);
+});
+
+test('explicit per-task sizing arms reviews even when the legacy bundle switch is off', async () => {
+  const fx = makeNativeFixture({ review: { adversary: false, ...CONSTRAINTS } });
+  launchNative(fx);
+  const out = await dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 2000,
+    policy: dispatchFixture, taskReviews: { 1: sizing[2] } });
+  assert.equal(out.record.review_context.enabled, true);
+  assert.equal(out.plan.tasks[0].review.adversary, true);
+  write(fx.WT, 'src/a.txt', 'edit\n');
+  const pending = await reviewNativeResult({ statePath: fx.statePath, self: fx.self, now: 3000,
+    result: { wave: 1, tasks: [{ task_id: 1, digest: workerDigest(1) }] }, policy: dispatchFixture });
+  const d = pending.pending_reviews[0];
+  assert.equal(d.stakes, 'consequential');
+  for (const key of ['raiseTier', 'raiseEffort', 'independentOf', 'noSubstitute'])
+    assert.deepEqual(d[key], CONSTRAINTS[key]);
+});
+
+for (const taskReviews of [[], { 1: null }, { 1: { stakes: 'low', reason: 'bad enum' } },
+  { 1: { stakes: 'routine', reason: ' ' } }, { 9: sizing[1] }, { 1: { ...sizing[1], model: 'invented' } }]) {
+  test(`invalid task review sizing refuses before persisting a dispatch: ${JSON.stringify(taskReviews)}`, async () => {
+    const fx = makeNativeFixture();
+    launchNative(fx);
+    await assert.rejects(() => dispatchWaveViaFabric({ statePath: fx.statePath, self: fx.self, now: 2000,
+      policy: dispatchFixture, taskReviews }), /task review sizing/);
+    assert.equal(readWaveDispatchRecord(fx.bundleDir, 1), null);
+  });
+}
+
+test('CLI dispatch-wave reads per-task sizing from the existing reviews-file flag', () => {
+  const fx = makeNativeFixture({ extra: { concurrency: { owner_lock: 'off' } } });
+  launchNative(fx);
+  const file = path.join(fx.tmp, 'sizing.json');
+  fs.writeFileSync(file, JSON.stringify({ 1: sizing[1] }));
+  const stdout = execFileSync(process.execPath, [new URL('../bin/masterplan.mjs', import.meta.url).pathname,
+    'dispatch-wave', `--state=${fx.statePath}`, `--reviews-file=${file}`], { encoding: 'utf8' });
+  assert.equal(JSON.parse(stdout).record.review_context.episodes['1'].stakes, 'routine');
+});
+
 test('phase A: owed reviews emit pending descriptors and record NOTHING', async () => {
   const fx = makeNativeFixture({ slug: 'native-pending', review: { adversary: true } });
   launchNative(fx);

@@ -164,10 +164,39 @@ path could offload eligible tasks; it never gates which implementation lane runs
 
 ## Harness-Native Per-Task Review (caller + recorder only)
 
-Review is gated by **config only** (`state.review.adversary` / `review: 'on'|'off'`). It is seeded
-**on** at `mp seed` (explicitly disabled with `--adversary-review=off`),
-not by `target` or eligibility. Judgment-heavy tasks (which route `inline`) need a second opinion as
-much as annotation-approved tasks; gating review by eligibility would skip exactly the riskiest work.
+Review is seeded **on** at `mp seed` (`state.review.adversary`, legacy `state.codex.review`
+fallback). Before the first `mp dispatch-wave`, the orchestrator sizes each task from the
+consequences and restoration path already stated in the plan/task, following
+`/srv/workflows/policy/review.md` § "How much", then records its choice through
+`mp dispatch-wave --state=<path> --reviews-file=<task-sizing.json>`:
+
+```json
+{
+  "1": { "stakes": "routine", "reason": "Task 1 fixes a sample typo only; git revert restores it; no runtime/data/security effect." },
+  "2": { "stakes": "consequential", "reason": "Task 2 changes service execution; revert the commit to restore it." },
+  "3": { "stakes": "critical", "reason": "Task 3 rewrites customer data; recovery requires the pre-migration backup." }
+}
+```
+
+The keys are this wave's task ids; values contain only the native C2 `stakes` vocabulary
+(`routine | consequential | critical`) and a nonempty `reason` citing the task's consequences
+and restoration path. This is orchestrator judgment, not a prose classifier, numeric score,
+file-count heuristic or implementation-class inference. Changes to what runs, deletion/rewriting
+of data, or security/credentials retain at least `consequential` (the native frontier-strength
+default); use `critical` when a panel is warranted under the policy. `routine` is a quick
+independent check, **not** a review bypass. Pass these stakes/constraints unchanged to the
+harness, and check its served strength under the policy before accepting its receipt.
+
+Sizing is frozen in the existing `review_context.episodes[task_id]` before launch. Omitted
+choices preserve the run-wide defaults (unspecified stakes → `consequential`); run-wide
+`routine` without a task rationale retains today's conservative `consequential` behavior.
+The existing escalation/independence constraints remain floors. Retries and in-flight episodes
+retain their frozen choices, not new file or config values. Explicit sizing arms review even
+when the legacy bundle toggle is off; an omitted/empty map keeps that toggle's existing behavior.
+The finish-time whole-branch review is unchanged. No plan schema or state-task field is added.
+
+`--reviews-file` is command-local: at **dispatch-wave** it carries sizing intent, while at
+**record-result** it still carries reviewer receipts keyed by task id. Keep those files separate.
 
 Masterplan does **not** own the review engine. When review is on, for every `done` task it:
 
@@ -175,7 +204,7 @@ Masterplan does **not** own the review engine. When review is on, for every `don
 2. Hashes the exact payload (`payload_sha = sha256(diff bytes)`).
 3. Reuses a completed `run+task+sha` review event when one exists; otherwise runs the **native
    review seam** — `mp record-result` phase A returns `{op:'run_native_reviews', pending_reviews:[...]}`
-   (adversary-class descriptors, breaker role on the frontier lane), the orchestrator runs them
+   (adversary-class descriptors, breaker role with each episode's stakes/constraints), the orchestrator runs them
    with its harness-native subagent API, and phase B re-calls `mp record-result` with
    `--reviews-file=<task_id → review record JSON>`.
 4. Projects the harness review record into a compact canonical shape
