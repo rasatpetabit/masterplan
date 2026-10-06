@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [10.0.16] — 2026-10-06
+
+### Added — per-task review stakes sized by the orchestrator (`dispatch-wave --reviews-file`)
+
+- Execute-wave review is now sized **per task** before launch: `mp dispatch-wave --reviews-file=<task-sizing.json>`
+  carries one `{ stakes, reason }` choice per task id, using the review episode's existing
+  `routine | consequential | critical` vocabulary. Sizing stays intent, never prose classification — the
+  orchestrator names the choice, masterplan validates and freezes it.
+- A chosen stakes value is frozen into the task's review episode before launch, so a retry or an
+  in-flight wave keeps the choice it was dispatched with. Tasks with no explicit choice keep today's
+  conservative default (`consequential`; `critical` stays `critical`), and a wave whose state turns
+  review on behaves exactly as before.
+- No bypass. The sizing file is validated before the launch record is written: unknown task ids,
+  unknown fields, a missing or empty `reason`, and a `stakes` outside the vocabulary are all refused.
+  A `routine` choice is only effective with an explicit non-empty reason; without one it falls back to
+  `consequential`, so review is never silently weakened.
+
 ## [10.0.15] — 2026-10-04
 
 ### Changed — Model Routing Phase 7 model-free consumer cutover
