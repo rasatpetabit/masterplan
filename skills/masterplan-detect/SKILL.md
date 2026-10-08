@@ -1,6 +1,6 @@
 ---
 name: masterplan-detect
-description: Suggest `/masterplan import` only when legacy masterplan bundle state files (`docs/masterplan/<slug>/state.yml` at schema 5.x) exist without a matching v8 run. Generic planning artifacts (PLAN.md, TODO.md, ROADMAP.md, design docs, PR task lists) are NOT importable — no `/masterplan import` can ingest them; mention them only as context that a fresh `/masterplan brainstorm` would be the path to bring ideas under the schema. Surfaces a one-line suggestion only — never auto-runs.
+description: "Suggest /masterplan import only for unmigrated docs/masterplan/<slug>/state.yml schema 5.x bundles without a matching v8 run, at natural breaks. Generic PLAN/TODO/ROADMAP/design docs or PR task lists are not importable: suggest fresh /masterplan brainstorm as context instead. Suggest only; never auto-run or interrupt unrelated work."
 ---
 
 ## Central agent policy
