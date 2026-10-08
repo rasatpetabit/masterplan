@@ -1,6 +1,6 @@
 ---
 name: masterplan
-description: "Use masterplan on non-CC hosts (Pi primary, Codex-compatible): /masterplan, /masterplan:masterplan, $masterplan, or natural-language use/resume/check/import/continue. All verbs route here: full, brainstorm, plan, execute, finish, retro, import, doctor, status, validate, stats, clean, next, verbs, render, publish, follow. No per-verb /masterplan:<verb> skills."
+description: "Use masterplan on non-CC hosts (Pi primary, Codex-compatible): /masterplan, /masterplan:masterplan, $masterplan, or natural-language requests to use, resume, continue, check or import masterplan work. All verbs route here: full, brainstorm, plan, execute, finish, retro, import, doctor, status, validate, stats, clean, next, verbs, render, publish, follow. No per-verb /masterplan:<verb> skills."
 ---
 
 ## Central agent policy
