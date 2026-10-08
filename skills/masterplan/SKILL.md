@@ -1,6 +1,6 @@
 ---
 name: masterplan
-description: "Generic entrypoint for masterplan on non-CC hosts (Pi primary, Codex-compatible): bare /masterplan, /masterplan:masterplan, $masterplan, or any verb. All verbs (full, brainstorm, plan, execute, finish, retro, import, doctor, status, validate, stats, clean, next, verbs, render, publish, follow) route through this single command — v8 ships NO per-verb /masterplan:<verb> skills (they shadowed Claude Code built-ins like /plan, /status, /doctor and added nothing over bare-command routing)."
+description: "Use masterplan on non-CC hosts (Pi primary, Codex-compatible): /masterplan, /masterplan:masterplan, $masterplan, or natural-language use/resume/check/import/continue. All verbs route here: full, brainstorm, plan, execute, finish, retro, import, doctor, status, validate, stats, clean, next, verbs, render, publish, follow. No per-verb /masterplan:<verb> skills."
 ---
 
 ## Central agent policy
