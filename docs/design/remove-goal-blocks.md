@@ -1,7 +1,9 @@
 # Remove numbered goal blocks; keep the Intent block
 
 Status: decided 2026-10-14 (operator instruction; design settled by the conductor after a
-read-only coupling map, an advisor pass, and a cross-vendor design review).
+read-only coupling map, an advisor pass, and a cross-vendor design review — rev 2 resolves
+review blockers B1 (binding source after gate retirement) and B2 (`verify_passed`
+injectable through `mp event`) and advisories A3/A4).
 INTENT.md verdict: **serves** — Direction makes intent "the standard the finished work is
 judged against"; the top invariant's "nothing is declared done without evidence" is kept by
 the retained final Intent assessment.
@@ -84,12 +86,30 @@ downgrade refusal are unchanged.
 `finalReceiptFor` (`lib/finish-step.mjs:1411–1441`) refuses unless an **independently
 recorded** implementation `goal_check` supplies `head_sha` / diff hash / `verify_output_hash`,
 so a final receipt cannot validate its own branch bindings. With the implementation
-assessment gone, that independent source becomes a new mechanical `verify_passed` event the
-CLI appends when the shell answers `run_verify` with pass: `{head_sha, base, diff_hash,
-verify_output_hash}`, with head and diff hash computed by the CLI from git, never accepted
-from the caller. Binding source = latest `verify_passed`, else (in-flight legacy bundles)
-latest non-final `goal_check`; neither → the existing refusal. A legacy implementation
-`goal_check` proves branch bindings only; it is never read as evidence of an Intent review.
+assessment gone, that independent source becomes a new mechanical `verify_passed` event that
+`finish-step` appends when the shell answers `run_verify` with pass: `{head_sha, base,
+diff_hash, verify_output_hash}`.
+
+- **Git facts are computed, never accepted.** `head_sha`, `base` and `diff_hash` are derived
+  by the CLI from the worktree (`WT`, still present at verify time) — the same derivation the
+  current recorder validates caller flags against.
+- **Verification output transport.** The shell passes `--verify=pass --verify-output=<file>`;
+  the CLI hashes the file into `verify_output_hash`. That commands ran and passed remains the
+  shell's assertion — the same trust level as today's `--verify-output-hash` — and the design
+  does not claim more.
+- **Single producer.** `verify_passed` and `goal_check` are reserved event types: the generic
+  `mp event` writer (`bin/masterplan.mjs` ~1683–1718) refuses them (exit 2). Their only
+  producers are `finish-step` (verify) and `record-intent-check` / legacy recorder paths that
+  validate against git and the current Intent hash.
+- **Binding source** = latest `verify_passed` whose `head_sha` is the finish HEAD, else (in-
+  flight legacy bundles) latest non-final `goal_check`; neither → the existing refusal. A
+  legacy implementation `goal_check` proves branch bindings only; it is never read as evidence
+  of an Intent review.
+- **Always establishable before teardown.** The `run_verify` skip (`verified_sha` equals HEAD,
+  `lib/finish-step.mjs` ~2197–2205) additionally requires a binding source for that HEAD on a
+  `goals_enabled` bundle. An upgraded run that verified under the old flow but has no
+  `verify_passed` (e.g. paused at a manual implementation gate) re-runs verification once,
+  before merge or worktree removal, so the final assessment can always bind.
 
 ## In-flight bundles (no migration command)
 
@@ -97,7 +117,12 @@ latest non-final `goal_check`; neither → the existing refusal. A legacy implem
 - A pending `goals_unmet` with `mode: 'final'` is honored as `intent_unmet` (same failure,
   same unresolved disposition). A pending implementation-mode `goals_unmet` is obsolete: the
   next `finish-step` entry appends a `gate_retired` event (`{gate, mode, reason}`), clears it,
-  and continues the finish flow. A final failure is never silently cleared.
+  and continues the finish flow — which, per the binding rule above, re-runs verification when
+  no binding source exists for HEAD. A final failure is never silently cleared.
+- Promotion transactions gain `approval_contract: 2` in the prepared document. New
+  transactions write it and need only the outer approval; a prepared document without the
+  field is legacy and recovers under the original validation, including its `goal_amend`
+  receipt (`lib/promote.mjs` ~352–364, ~481–494).
 - Archived bundles stay terminal and byte-identical; `mp doctor` reports no new findings on
   them (historical G content is provenance, not a defect).
 
@@ -108,12 +133,19 @@ latest non-final `goal_check`; neither → the existing refusal. A legacy implem
 2. Zero-G lifecycle: a new bundle with topic + Intent only passes capture → spec gate → plan
    → execute → finish → final assessment → `intent_confirm` → archive `complete`.
 3. Missing Intent at spec→plan is refused; a stripped schema-backed representation is refused.
-4. Pending `goals_unmet` final mode → handled as `intent_unmet`; implementation mode → retired
-   with a `gate_retired` event, finish continues.
-5. Prepared legacy promotion with `goal_amend` receipt recovers; a new promotion needs only
-   the outer approval.
+4. Pending `goals_unmet` final mode → handled as `intent_unmet`. Implementation mode (incl.
+   manual mode after assessor dispatch failure, `verified_sha` == HEAD, no `goal_check`) →
+   retired with a `gate_retired` event, verification re-runs, and the run reaches a **valid
+   final assessment** after deploy — not `final_check_invalid`.
+5. Prepared legacy promotion (no `approval_contract`) with `goal_amend` receipt recovers under
+   the legacy contract and is refused without it; a new promotion (`approval_contract: 2`)
+   needs only the outer approval.
 6. Final receipt: stale (goals.md changed), tampered bindings, self-supplied bindings, and no
    `verify_passed`/legacy binding source are all refused.
-7. `verify_passed` refuses caller-supplied head/diff that disagree with git.
+7. `verify_passed` bindings come from git: a run whose WT HEAD differs from the claimed head
+   cannot produce a matching event; `mp event --type=verify_passed` and
+   `mp event --type=goal_check` exit 2.
+9. Upgraded run with `verified_sha` == HEAD and no binding source re-runs `run_verify`; with a
+   `verify_passed` for HEAD it skips as today.
 8. Archived bundles: byte-identical; `mp doctor` findings on this repo unchanged from `main`
    apart from removed goal checks.
