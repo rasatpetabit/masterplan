@@ -289,3 +289,34 @@ for (const variant of ['detached worktree at B', 'worktree removed, branch B sur
     if (variant.startsWith('detached')) assert.equal(fs.existsSync(WT), true, 'the detached worktree is intact');
   });
 }
+
+test('merge consumes the exact recorded branch tip, never a same-named tag (finish-merge-ambiguous-ref)', () => {
+  const slug = 'fctr-tagcollide';
+  const fx = mkFixture({ slug });
+  const { MAIN, WT, bundleDir, step, verifyOut } = fx;
+  const headA = git(WT, 'rev-parse', 'HEAD');
+  let op = step();
+  assert.equal(op.op, 'run_verify', JSON.stringify(op));
+  op = step({ verify: 'pass', verifyOutputFile: verifyOut });
+  if (op.op === 'write_retro') { fs.writeFileSync(op.path, '# retro\n'); op = step(); }
+  assert.equal(op.gate, 'branch_finish', JSON.stringify(op));
+
+  // The reviewer's sequence: commit B, tag masterplan/<slug> at B, reset the branch to A,
+  // remove the clean worktree — branch at verified A, a same-named tag at unverified B.
+  write(WT, 'src/b.txt', 'B\n');
+  git(WT, 'add', '.');
+  git(WT, 'commit', '-q', '-m', 'commit B');
+  const headB = git(WT, 'rev-parse', 'HEAD');
+  git(MAIN, 'tag', `masterplan/${slug}`, headB);
+  git(WT, 'reset', '-q', '--hard', headA);
+  git(MAIN, 'worktree', 'remove', WT);
+
+  op = step({ choice: 'merge' });
+  let bOnBase = true;
+  try { git(MAIN, 'merge-base', '--is-ancestor', headB, 'main'); } catch { bOnBase = false; }
+  assert.equal(bOnBase, false, 'the unverified tag tip B never lands');
+  git(MAIN, 'merge-base', '--is-ancestor', headA, 'main'); // throws if A did not land
+  const retire = readEvents(bundleDir).filter((e) => e.type === 'branch_finish').pop();
+  assert.ok(retire, JSON.stringify(op));
+  assert.equal(retire.branch_tip, headA);
+});
