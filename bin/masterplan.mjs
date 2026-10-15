@@ -530,22 +530,25 @@ function pinnedGoalsHash(statePath, goalsMd) {
   }
 }
 
-// Part 1 — the spec→plan INTENT CAPTURE seam (set-phase --phase=plan). On a goals_enabled
-// bundle that has no goals_frozen event yet, entering plan: (a) validates goals.md — the topic
-// anchor and the ## Intent block must be present and the Intent fields well-formed (the
-// historical G blocks are neither required nor validated; a document that still carries them
-// hashes identically); (b) enforces the interview-exit + Assumptions-coverage gate
-// (validateGoalsLoadGate — the same checks goals-load enforced); (c) appends `goals_frozen`
-// carrying the Intent hash under the bundle's DURABLE format pin and an empty goal list. No
-// operator approval receipt is required at this step: the spec gate, which runs immediately
-// after, is where the operator approves the Intent. Idempotent: a bundle already frozen is
-// untouched (the split-brain guard owns hash consistency from there), so a legacy bundle with
-// a goals_frozen event never gets a second one. `--force` does NOT bypass validation: capture
-// is mechanical document validation, not ceremony — a missing Intent is a data problem.
-function captureRunIntentAtPlanEntry(statePath, state) {
+// Part 1 — the spec→plan INTENT CAPTURE seam (set-phase --phase=plan), split in two (L1):
+// VALIDATE (below) runs on EVERY attempt regardless of an existing freeze, and the APPEND
+// (Part 1b) runs only after every plan-entry check — (a) this document + interview
+// validation, (b) the split-brain guard, (c) the spec-review gate — has passed on THIS
+// attempt. (a) validates goals.md — the topic anchor and the ## Intent block must be present and the
+// Intent fields well-formed (the historical G blocks are neither required nor validated; a
+// document that still carries them hashes identically); (b) the interview-exit +
+// Assumptions-coverage gate (validateGoalsLoadGate — the same checks goals-load enforced,
+// with exactly its exemptions: a bundle whose interview never ran — a pre-interview legacy
+// bundle — proceeds with a stated skip, and a waived exit needs its durable
+// interview_waived event). A bundle already frozen at the same hash gets no second event
+// (the split-brain guard owns hash consistency from there). No operator approval receipt is
+// required at this step: the spec gate, whose hash covers goals.md, is where the operator
+// approves the Intent. `--force` does NOT bypass validation (it bypasses only the
+// spec-review gate): capture is mechanical document and ledger validation, not ceremony —
+// a missing Intent or an open interview is a data problem no force flag can fix.
+function validateRunIntentAtPlanEntry(statePath, state) {
   const events = readBundleEventsForGoals(statePath, 'intent-capture');
-  if (!bundleGoalsEnabled(state, events)) return; // pre-feature: exempt
-  if (events.some((e) => e.type === 'goals_frozen')) return; // captured — split-brain guard owns the rest
+  if (!bundleGoalsEnabled(state, events)) return null; // pre-feature: exempt
   const dir = path.dirname(statePath);
   const goalsMdPath = path.join(dir, 'goals.md');
   let goalsMd;
@@ -611,7 +614,17 @@ function captureRunIntentAtPlanEntry(statePath, state) {
   }
   // §6.1: the canonical hash under the bundle's DURABLE format pin — a schema_backed bundle
   // whose versioned representation was stripped dies here (rejected downgrade), never hashed.
-  const hash = pinnedGoalsHash(statePath, goalsMd);
+  return pinnedGoalsHash(statePath, goalsMd);
+}
+
+// Part 1b — the freeze APPEND (L1): the ONLY idempotent step of the capture seam. It runs
+// after every plan-entry check has passed on THIS attempt (document + interview validation
+// above, then the split-brain guard and the spec-review gate in the set-phase caller), so a
+// failed attempt never leaves a freeze that masks the checks — and a bundle already frozen
+// gets no second event (the split-brain guard owns hash consistency from there).
+function appendRunIntentFreeze(statePath, hash) {
+  const events = readBundleEventsForGoals(statePath, 'intent-capture');
+  if (!hash || events.some((e) => e.type === 'goals_frozen')) return;
   appendEvent(statePath, {
     type: 'goals_frozen',
     ts: new Date().toISOString(),
@@ -2801,13 +2814,18 @@ function main() {
       }
       // §spec/plan gate enforcement: --phase=plan is the brainstorm→plan (SPEC) advance; --phase=execute
       // is the alt plan→execute (PLAN) path (load-plan is the normal one, gated identically below — H3
-      // closes this bypass). Emits run_gate_review + exits nonzero when unsatisfied; --force bypasses.
-      // The run-Intent capture runs BEFORE the spec/plan review gate so goals.md is captured + consistent
-      // when the (goals-enabled) spec gate hashes it. --phase=plan is the brainstorm->plan capture seam.
+      // closes this bypass). Emits run_gate_review + exits nonzero when unsatisfied; --force bypasses
+      // the gate review ONLY. L1 ordering on --phase=plan: the run-Intent VALIDATION (Intent
+      // validity, interview exit, Assumptions coverage — every attempt, an existing freeze never
+      // masks it), then the split-brain guard, then the spec-review gate, and only then the
+      // goals_frozen APPEND — so a failed attempt (gate refused, interview reopened, drifted or
+      // invalid document) never leaves a freeze behind, and --force bypasses none of the checks
+      // except the gate review itself.
       if (phase === 'plan') {
-        captureRunIntentAtPlanEntry(p, state); // captures the run Intent (appends goals_frozen) if not yet frozen
-        enforceGoalsSplitBrainGuard(p, state, 'set-phase'); // no-ops pre-capture; dies on goals.md drift
-        enforceGateReview('spec', p, flags, state, { op: 'set-phase' });
+        const intentHash = validateRunIntentAtPlanEntry(p, state); // L1: every attempt, freeze or not
+        enforceGoalsSplitBrainGuard(p, state, 'set-phase'); // dies on goals.md drift from the committed hash
+        enforceGateReview('spec', p, flags, state, { op: 'set-phase' }); // --force bypasses ONLY this
+        appendRunIntentFreeze(p, intentHash); // idempotent at the same hash — after every check passed
       }
       if (phase === 'execute') {
         enforceGoalsSplitBrainGuard(p, state, 'set-phase');

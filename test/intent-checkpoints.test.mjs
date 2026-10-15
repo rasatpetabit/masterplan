@@ -121,11 +121,19 @@ const LEGACY_GOALS_MD = [
   'topic: |',
   '  Prove the checkpoint bindings.',
   '',
+  '## Intent',
+  'why: the checkpoint tuples bind what the run actually judged',
+  'outcome: every checkpoint refuses a foreign identity',
+  'done_means: a green suite',
+  '',
   '## G1: The tuple binds',
   '## G2: The rejections fire',
   '## G3: The legacy absence is explicit',
   '',
 ].join('\n');
+// The Intent block keeps the document valid at the plan-entry capture seam (L1: validation
+// runs on every attempt); the family stays LEGACY (no schema_captured event) — the G blocks
+// and the legacy pin are what the legacy-family assertions exercise.
 
 // A versioned (schema-backed) goals document: the codec block plus the goal list.
 function versionedGoalsMd() {

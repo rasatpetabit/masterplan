@@ -2466,20 +2466,36 @@ test('capture: idempotent — re-entering plan at the same hash appends no secon
   assert.equal(frozenEvents(p).length, 1, 'no second goals_frozen event on idempotent re-entry');
 });
 
-test('capture: a legacy bundle already frozen is untouched — no second goals_frozen event', () => {
+test('capture: an existing freeze never bypasses validation; a frozen bundle gets no second goals_frozen event (L1)', () => {
   const p = goalsBundle();
   const dir = path.dirname(p);
-  // A legacy in-flight bundle: frozen before the upgrade, with G blocks in goals.md.
+  // A legacy in-flight bundle: frozen before the upgrade, with G blocks and NO Intent block.
+  // The freeze event is not a bypass of the plan-entry checks — validation runs on EVERY
+  // attempt, so re-entering plan is refused until goals.md carries an Intent block (added
+  // through a promotion transaction, the sanctioned amendment path; an out-of-band edit
+  // trips the split-brain guard).
   const legacyMd = 'topic: ship the widget\n\n## G1: the widget compiles\nsignal: command\n\n## G2: the widget is documented\nsignal: docs\n';
   writeBundleGoals(dir, legacyMd);
   fs.writeFileSync(path.join(dir, 'spec.md'), '# spec\n');
   run(['event', `--state=${p}`, '--type=goals_frozen', `--data=${JSON.stringify({ goals_hash: goalsHashFn(legacyMd) })}`]);
   passGate(p, 'spec');
+  const refused = run(['set-phase', `--state=${p}`, '--phase=plan']);
+  assert.equal(refused.status, 1, 'a legacy frozen document without an Intent block is refused at plan entry');
+  assert.match(refused.stderr, /no `## Intent` block/);
+  assert.equal(read(p).phase, 'brainstorm', 'no advance');
+  assert.equal(frozenEvents(p).length, 1, 'no second goals_frozen on the refused attempt');
+
+  // The same bundle WITH an Intent block (a sanctioned amendment, recorded as a goal_amended
+  // lineage event so the split-brain guard accepts the new hash): validation passes on the
+  // re-attempt and the existing freeze stands — exactly one event, no re-freeze.
+  const amendedMd = `${legacyMd}\n## Intent\nwhy: the widget ships\noutcome: the widget ships and is documented\nanti_goals:\n- unrelated infrastructure\ndone_means: the widget is usable in production\n`;
+  writeBundleGoals(dir, amendedMd);
+  run(['event', `--state=${p}`, '--type=goal_amended', `--data=${JSON.stringify({ goals_hash: goalsHashFn(amendedMd), old_goals_hash: goalsHashFn(legacyMd) })}`]);
+  passGate(p, 'spec');
   const r = run(['set-phase', `--state=${p}`, '--phase=plan']);
-  assert.equal(r.status, 0, `a legacy frozen bundle must advance untouched: ${r.stderr}${r.stdout}`);
+  assert.equal(r.status, 0, `a frozen bundle that validates must advance: ${r.stderr}${r.stdout}`);
   const frozen = frozenEvents(p);
-  assert.equal(frozen.length, 1, 'the legacy goals_frozen event is the only one');
-  assert.equal(frozen[0].data.goals_hash, goalsHashFn(legacyMd));
+  assert.equal(frozen.length, 1, 'the existing goals_frozen event is the only one — the append is idempotent');
 });
 
 test('capture: missing Intent at spec→plan is refused (design regression case 3)', () => {
