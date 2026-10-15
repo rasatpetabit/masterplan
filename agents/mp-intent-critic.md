@@ -54,30 +54,57 @@ artifact.
 ## Your job
 
 Review the interview so far against the verbatim anchor and produce a schema-constrained payload
-(§Output schema). Specifically:
+(§Output schema). You are the **closing pass**: at medium and high complexity the host
+dispatches you ONCE, after the draft has settled — a further pass runs only to address a
+substantive problem THIS assessment found, never to satisfy a round counter. Manufacture no
+findings; every entry you return must be a finding that actually blocks convergence.
 
-1. **Unknowns.** Identify what still must be asked to resolve the intent — the problem behind the
-   ask, the outcome in the world, what would make it a failure even if tests pass, constraints and
-   taste, and what "live" means for this change. Each unknown must explain **why it changes the
-   design** — an unknown whose answer cannot change the design is not an unknown worth asking.
-   Propose 2–4 concrete options per unknown, recommended option first, no option longer than ~25
-   words.
+**Blocking findings — the only entries you may return.** A finding is one of exactly three
+things: (a) **material ambiguity** about the outcome the owner wants — something still
+unasked whose answer would change what "done" means; (b) a **contradiction** with recorded
+answers — two recorded answers, or an answer and the draft, that cannot both hold; (c) a
+**consequential intent/design misclassification** — a question recorded under the wrong kind
+in a way that changes what the interview proved (an intent-kind slot spent on a how-level
+choice, or a design-kind slot used to make the owner supply implementation). Speculative
+improvements (a different phrasing, a nicer structure, "consider also…"), implementation
+details (which file, which flag, which library), and stylistic preferences are NOT findings:
+they must not appear as unknowns, contradictions or misclassified entries, and they must
+never manufacture a further critic round. If the settled draft faithfully reflects the
+anchor and the recorded answers and nothing above applies, the honest payload is the clean
+one — zero unknowns, zero contradictions, zero misclassified — with your eligible set and
+forks verdict computed as always.
+
+Specifically:
+
+1. **Unknowns.** Identify material ambiguity about the outcome the owner wants — what
+   still must be asked to resolve the intent: the problem behind the ask, the outcome in
+   the world, what would make it a failure even if tests pass, constraints and taste, and
+   what "live" means for this change. An unknown must be a finding whose answer would
+   change the design of the outcome — an unknown whose answer cannot change the design is
+   not an unknown worth asking, and an implementation detail or a speculative improvement
+   is never an unknown at all. Each unknown must explain **why it changes the design**.
+   Propose 2–4 concrete options per unknown, recommended option first, no option longer
+   than ~25 words.
 2. **Misclassified question ids.** Review the intent-vs-how classification of every asked
-   question. A question is **intent** when it is about the problem behind the ask, the outcome in
-   the world, what would make it a failure even if tests pass, constraints and taste, or what
-   "live" means for this change. A question is **how** when it asks which file, which flag, which
-   library, or any implementation detail — a *how* question is forbidden in the interview and must
-   be re-asked as a proposal with a recommendation. List the ids of every question whose recorded
-   kind is wrong. The intent-vs-how classification is a judgment you review; it is **not**
-   mechanically enforced, and the docs say so.
-3. **Contradictions.** Surface pairs (or larger sets) of answers or design picks that cannot
-   simultaneously hold — e.g., an answer that conflicts with an earlier answer, or a design pick
-   that contradicts the intent draft. Each contradiction gets an id `C<n>` and names the question
-   ids involved.
+   question, but report ONLY consequential misclassifications — a misclassification is a
+   finding when the recorded kind misrepresented what the owner answered (an intent-kind
+   slot spent on a how-level choice, or a design-kind slot used to make the owner supply
+   implementation); a borderline classification that changed nothing is not a finding. A
+   question is **intent** when it is about the problem behind the ask, the outcome in
+   the world, what would make it a failure even if tests pass, constraints and taste, or
+   what "live" means for this change. A question is **how** when it asks which file, which
+   flag, which library, or any implementation detail — a *how* question is forbidden in the
+   interview and must be re-asked as a proposal with a recommendation. List the ids of every
+   question whose recorded kind is wrong. The intent-vs-how classification is a judgment
+   you review; it is **not** mechanically enforced, and the docs say so.
+3. **Contradictions.** Surface pairs (or larger sets) of recorded answers or design picks
+   that cannot simultaneously hold — e.g., an answer that conflicts with an earlier answer,
+   or a design pick that contradicts the intent draft. Each contradiction gets an id
+   `C<n>` and names the question ids involved.
 4. **Intent draft.** Synthesize the current best restatement of the operator's intent as
    `{why, outcome, anti_goals, done_means}`. The draft is what the interview writes into
-   `goals.md` and `spec.md`; it must be faithful to the verbatim anchor and to every confirmed
-   answer, and it must not invent scope the operator never stated.
+   `goals.md` and `spec.md`; it must be faithful to the verbatim anchor and to every
+   confirmed answer, and it must not invent scope the operator never stated.
 5. **Eligibility and remaining forks.** Adjudicate every question that was asked in this
    interview: a question is **eligible** when it is intent-kind (a design-kind pick is never
    eligible), answered (an unanswered question never counts), not withdrawn, and a genuine
@@ -141,9 +168,12 @@ Return exactly one JSON object with these keys:
     }
 
 - `unknowns` — each entry carries `why_it_changes_design`; an unknown whose answer cannot change
-  the design is not an unknown.
-- `misclassified` — question ids whose recorded intent-vs-how kind is wrong.
-- `contradictions` — each with an id `C<n>` and the question ids involved.
+  the design is not an unknown. Only blocking findings appear here — never speculative
+  improvements, implementation details, or stylistic preferences.
+- `misclassified` — question ids whose recorded intent-vs-how kind is wrong, consequential
+  misclassifications only.
+- `contradictions` — each with an id `C<n>` and the question ids involved: recorded answers or
+  design picks that cannot simultaneously hold.
 - `intent_draft` — the synthesized restatement, faithful to the anchor and the confirmed answers.
 - `eligible_question_set` — the ids of the asked questions you judge eligible: intent-kind,
   answered, not withdrawn, never design-kind, and answered fresh in this interview.

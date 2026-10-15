@@ -90,10 +90,25 @@ test('prompt teaches the intent-to-completion dispatch contracts (critic blocks,
   // judges the operator's actual words, which a round/asked/answered roll-up cannot carry.
   // The block is parsed BOUNDED (between the §2f step-4 heading and the step-5 heading) so a
   // deletion anywhere else in the document cannot satisfy it.
-  const start = prompt.indexOf('4. **Draft + critic round**');
+  const start = prompt.indexOf('4. **Draft persistence + the closing critic pass**');
   const end = prompt.indexOf('5. **Convergence and exit.**');
-  assert.ok(start !== -1 && end > start, 'the §2f draft+critic round anchor must exist — update the structure test anchors');
+  assert.ok(start !== -1 && end > start, 'the §2f draft+closing-critic anchor must exist — update the structure test anchors');
   const criticSection = prompt.slice(start, end);
+  // Whitespace-tolerant view: the section is hard-wrapped prose.
+  const flatSection = criticSection.replace(/\s+/g, ' ');
+  // Closing-critic cadence (operator decision 2026-10-15): recording a draft never mandates
+  // a critic dispatch — the draft persists as it forms, and the ONE closing pass runs when
+  // the draft has settled; a further pass only addresses a substantive finding.
+  assert.ok(flatSection.includes('recording a draft never mandates a critic dispatch'),
+    'the prompt must state that recording a draft no longer mandates a critic dispatch');
+  assert.ok(/ONE\s+closing\s+critic pass/.test(flatSection),
+    'the prompt must describe the single closing critic pass');
+  assert.ok(/when the draft has\s*\*\*settled\*\*/i.test(flatSection),
+    'the closing pass must be tied to the settled draft, not to a round counter');
+  assert.ok(flatSection.includes('A FURTHER critic pass runs only to address a substantive problem'),
+    'a further critic pass must be gated on a substantive finding');
+  assert.ok(flatSection.includes('never to satisfy a round counter'),
+    'round-count-driven critic dispatches must be explicitly forbidden');
   // Exactly ONE dispatch paragraph: the block containing the three quoted-data blocks.
   const dispatchMentions = criticSection.match(/dispatch \*\*`mp-intent-critic`\*\*/g) ?? [];
   assert.equal(dispatchMentions.length, 1, `the critic dispatch block must appear exactly once in the §2f round, got ${dispatchMentions.length}`);

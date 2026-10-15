@@ -620,9 +620,9 @@ test('the three floors gate a LEGACY interview exactly as §11 says — the lega
   // (task 59 removes it) and its ledger still applies the three floors verbatim:
   const { statePath } = mkbundle('high'); // NO schema capture: a legacy interview
   assert.deepEqual(resolveFormatPin(statePath), { pin: 'legacy' });
-  // §11's exact case: EIGHT intent answers in TWO rounds at high (4 per round, each round
-  // carrying its own critic receipt per the high cadence), both floors met, the
-  // intent-round minimum (4) unmet.
+  // §11's exact case: EIGHT intent answers in TWO rounds at high (4 per round; receipts
+  // are recorded per round here purely as fixture — the closing-critic cadence requires none),
+  // both floors met, the intent-round minimum (4) unmet.
   const rounds = [[1, ['Q1', 'Q2', 'Q3', 'Q4']], [2, ['Q5', 'Q6', 'Q7', 'Q8']]];
   const draftAndCritic = (round, ids) => {
     const draft = { why: `w${round}`, outcome: `o${round}`, anti_goals: ['x'], done_means: 'd' };
@@ -645,7 +645,8 @@ test('the three floors gate a LEGACY interview exactly as §11 says — the lega
       payloadPath,
     });
   };
-  // Rounds 1 and 2 (four intent answers): the high cadence gives each round its critic.
+  // Rounds 1 and 2 (four intent answers): receipts recorded per round as fixture (the
+  // closing-critic cadence neither requires nor forbids them).
   for (const [round, ids] of rounds.slice(0, 2)) {
     for (const id of ids) askQuestion({ statePath, id, round, kind: 'intent', text: `q-${id}` });
     for (const id of ids) answerQuestion({ statePath, id, text: `a-${id}` });

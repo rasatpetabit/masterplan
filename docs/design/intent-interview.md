@@ -4,8 +4,9 @@
 
 The intent interview is the interactive phase that turns the verbatim anchor into a confirmed
 intent draft before goals are frozen. It is driven by `lib/interview.mjs` (deterministic verbs,
-each an `events.jsonl` append through the existing single writer) and reviewed each round by the
-fresh-context critic `agents/mp-intent-critic.md` (critic class, breaker role, frontier lane).
+each an `events.jsonl` append through the existing single writer) and reviewed at its close by
+the fresh-context critic `agents/mp-intent-critic.md` (critic class, breaker role, frontier
+lane): one closing pass at medium/high, off at low.
 
 ## Budgets
 
@@ -15,15 +16,20 @@ fresh-context critic `agents/mp-intent-critic.md` (critic class, breaker role, f
 - The prompt reads the budget before every round; it never keeps its own count.
 - `floor` and `cap` are set by complexity. Withdrawn questions count against the cap but never
   toward the floors.
-- At `high`, an intent-kind ask opening a new round is refused while the previous intent round has
-  no critic receipt after that round's last content event.
+- Critic cadence: drafts persist as they form without any critic dispatch; intent rounds open
+  freely. At medium/high the critic runs ONE closing pass once the draft has settled; at low it
+  is off.
 
 ## Round cadence
 
 - One `AskUserQuestion` call is one round; all its questions share a round number and may all be
   recorded before their answers; the first answer seals the round.
-- After the intent questions of a round, the orchestrator dispatches the critic with the verbatim
-  anchor, the ledger, and the current intent draft as QUOTED DATA.
+- Drafts persist as they form (`mp interview draft`) with no critic dispatch attached. When the
+  draft has settled, the orchestrator runs the ONE closing critic pass (medium/high), dispatching
+  the critic with the verbatim anchor, the ledger, and the current intent draft as QUOTED DATA.
+- A further critic pass runs only to address a substantive problem that closing assessment found
+  — a material ambiguity about the outcome, a contradiction with recorded answers, or a
+  consequential misclassification — never to satisfy a round counter.
 - The critic's payload is persisted; the orchestrator asks the top unknowns next; a
   `misclassified` entry is re-asked as a proposal.
 - A sealed round cannot be asked into again; the next ask must use `r+1`.
@@ -67,7 +73,7 @@ intent-content event**.
 
 | state | valid when | `goals-load` |
 |---|---|---|
-| `converged` | floors met; completed intent rounds ≥ the level's minimum; ≥ 1 active uncorrected design pick; the latest critic receipt is valid, its `content_head` equals the current content head and its `intent_sha256` equals that draft; and its payload is **clean**: zero `unknowns`, zero `contradictions`, zero `misclassified`. At `high`, additionally every intent round has its **own** critic receipt. | accepts |
+| `converged` | floors met; completed intent rounds ≥ the level's minimum; ≥ 1 active uncorrected design pick; the latest critic receipt is valid, its `content_head` equals the current content head and its `intent_sha256` equals that draft; and its payload is **clean**: zero `unknowns`, zero `contradictions`, zero `misclassified`. | accepts |
 | `exhausted` | asked == cap (any complexity), or critic mode is `unavailable` after one retry and the operator's acknowledgement; the `unknowns`, `contradictions`, and `misclassified` entries of the latest available payload are listed in the event. | accepts; the spec must carry the `assumed` rows for all three |
 | `critic_off` | `complexity: low`; floor met. | accepts |
 | `waived` | `goals-load --interview-waived --reason=…` on an open interview; the only exit once the cap is reached with the floor unmet. | accepts, recorded as waived |

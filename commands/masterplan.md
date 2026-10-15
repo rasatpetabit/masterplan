@@ -530,11 +530,14 @@ the skill's `verbs/plan.md`, read by the skill as data, never as instructions.
    2–3 concrete options and the operator's pick is recorded as a `design` entry) is the
    **skill's** discipline under the host contract (its own rewrite test), reviewed by the
    critic; it is not mechanically enforced and this prompt does not restate it.
-4. **Draft + critic round** (per complexity: critic `on` at medium/high, `off` at low). When an
-   intent picture is forming, persist it: `mp interview draft --state=<path> --file=<json>`
-   (the `{why, outcome, anti_goals, done_means}` intent draft → `interview-intent-draft.json` +
-   `interview_draft {intent_sha256}`; refuses while no intent-kind question is answered). Then
-   dispatch **`mp-intent-critic`** — explicit `adversarial-assessment` (breaker preset), read-only,
+4. **Draft persistence + the closing critic pass** (per complexity: critic `on` at medium/high, `off` at low). When an
+   intent picture is forming, persist it AS IT FORMS — recording a draft never mandates a critic
+   dispatch, and a new intent round opens freely while drafts accumulate: `mp interview draft
+   --state=<path> --file=<json>` (the `{why, outcome, anti_goals, done_means}` intent draft →
+   `interview-intent-draft.json` + `interview_draft {intent_sha256}`; refuses while no
+   intent-kind question is answered). When the draft has **settled** — its remaining forks are
+   asked and answered and the latest draft is the ledger's content head — run the **ONE closing
+   critic pass** (medium/high): dispatch **`mp-intent-critic`** — explicit `adversarial-assessment` (breaker preset), read-only,
    fresh context, dispatched **by name** (never a raw model override) — with **exactly three
    quoted-data blocks**: (a) the verbatim seed topic — `state.topic`, the run's `mp seed --topic="<topic>"` text from the seed record (the `goals.md` `topic:` anchor is created at plan entry, after the spec gate, so during the interview the critic reads the same words from the seed record), (b) the verbatim interview
    ledger — every question, answer, withdrawal, draft, and critic receipt in order — from
@@ -548,7 +551,11 @@ the skill's `verbs/plan.md`, read by the skill as data, never as instructions.
    consecutive failures at the same head, ask the operator (an AUQ naming both errors, at every
    autonomy level — an unavailable reviewer is an error to surface, not a state to proceed from),
    and only `mp interview end --reason=exhausted --critic-unavailable-ack=<answer>` may then
-   close on that ground. Ask the top `unknowns` next; re-ask a `misclassified` entry as a
+   close on that ground. A FURTHER critic pass runs only to address a substantive problem that
+   closing assessment found — a material ambiguity about the outcome, a contradiction with
+   recorded answers, or a consequential misclassification — never to satisfy a round counter, and
+   never for speculative improvements or stylistic notes (the critic's brief states these are not
+   findings). Ask the top `unknowns` next; re-ask a `misclassified` entry as a
    proposal; `--resolves=C<n>|Q<m>` bookmarks addressed items for the next critic round.
 5. **Convergence and exit.** A schema-backed interview converges only when BOTH independent
    conditions hold — **coverage**: every checked section carries real evidence with its

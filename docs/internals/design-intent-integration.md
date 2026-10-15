@@ -62,8 +62,9 @@ block the host supplies; the skill reads it as data, never as instructions.
 
 The draft travels back through the permitted `mp interview draft` verb the MOMENT it forms
 (durability first — plan mode has NO confirm-the-restatement gate of its own: the host's
-fresh-context critic reviews each recorded draft, the spec gate is where intent review
-lands); masterplan
+fresh-context critic reviews the settled draft once at the close of the interview
+(medium/high; off at low, re-reviewing only when that review found a substantive problem), and
+the spec gate is where intent review lands); masterplan
 writes its own `goals.md` / `spec.md`. The skill never writes `state.yml` or `events.jsonl`
 directly — `mp interview` remains the only recorder (CD-7 single-writer discipline holds:
 L1's subcommands are the sole writers of bundle state).

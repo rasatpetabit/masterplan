@@ -53,6 +53,40 @@ test('agent body states the intent-versus-how review rules', () => {
   assert.match(agent, /misclassified/);
 });
 
+test('agent body narrows blocking findings to the closing-critic contract', () => {
+  // Closing-critic cadence (operator decision 2026-10-15): the critic is the closing pass
+  // at medium/high, and only three classes are findings — material ambiguity about the
+  // outcome the owner wants, contradictions with recorded answers, and consequential
+  // intent/design misclassification. Speculative improvements, implementation details and
+  // stylistic preferences are not findings and must not manufacture further rounds. The
+  // payload contract itself is unchanged (the schema test above still pins its keys).
+  const flat = agent.replace(/\s+/g, ' ');
+  assert.ok(flat.includes('closing pass'), 'the critic must be framed as the closing pass');
+  assert.ok(flat.includes('Blocking findings'), 'the blocking-findings rule must be named');
+  for (const s of [
+    'material ambiguity',
+    'contradiction',
+    'consequential intent/design misclassification',
+  ]) {
+    assert.ok(flat.includes(s), `a blocking-finding class is missing: ${s}`);
+  }
+  for (const s of ['Speculative improvements', 'implementation details', 'stylistic preferences']) {
+    assert.ok(flat.includes(s), `the non-finding class must be named: ${s}`);
+  }
+  assert.ok(
+    /are NOT findings/.test(flat),
+    'the non-finding classes must be stated as NOT findings'
+  );
+  assert.ok(
+    flat.includes('never manufacture a further critic round'),
+    'manufacturing further rounds must be explicitly forbidden'
+  );
+  assert.ok(
+    /unknowns, contradictions or misclassified entries|never appear as unknowns/.test(flat),
+    'non-findings must be barred from every payload list'
+  );
+});
+
 test('agent body declares the complete output schema', () => {
   const heading = '## Output schema';
   const start = agent.indexOf(heading);
