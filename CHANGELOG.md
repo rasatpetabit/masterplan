@@ -35,6 +35,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   auditors (`mp-alignment-auditor`) judge plan fidelity directly against the run Intent and spec without G-ID citation or coverage rules.
 
 ### Compatibility notes
+- **`mp runs list` JSON no longer carries `goals`** per run, and the exported inventory digest
+  helpers (`serializeInventory` / `inventorySha256` in `lib/runs.mjs`) dropped the `goals` member
+  from the canonical row — an inventory digest computed over the same records differs before and
+  after this change. The live CLI overlap digest is unaffected: `mp seed` computes and binds it
+  from the same helper at runtime, so seed-time overlap reviews stay self-consistent; only a
+  digest persisted by an older version goes stale (re-run the overlap review, the recorder says
+  `overlap_review_stale`).
 - **On-disk wire names stay byte-identical**: `goals.md` remains the file name for the run Intent artifact;
   `goals_hash` remains the canonical run Intent identity; `goals_enabled` remains the bundle marker;
   `goals_frozen` and `goal_amended` remain the lineage events; and `goal_check` with `final: true` remains the final assessment event.

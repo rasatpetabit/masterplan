@@ -152,3 +152,43 @@ diff_hash, verify_output_hash}`.
    `verify_passed` for HEAD it skips as today.
 8. Archived bundles: byte-identical; `mp doctor` findings on this repo unchanged from `main`
    apart from removed goal checks.
+
+## rev 3 — review fixes
+
+A post-implementation review (adjudicated: five CONFIRMED blockers, three advisories) refined
+this design's mechanics; the decision above is unchanged. Fixes landed on this branch:
+
+1. **finish-bindings-1 — binding selection uses the finish HEAD everywhere.** A new
+   `resolveFinishHead` (the `branch_tip` on the latest `branch_finish`, else
+   `branch_finish_intent`, else the current worktree HEAD) now scopes every binding-source
+   consumer — the run_verify skip, the run_final_check briefing, record-intent-check and
+   finalReceiptFor. No consumer selects "latest event regardless of HEAD": a run that verified
+   at A, moved to B and returned to A retires at A and binds to A's event; a receipt carrying
+   B's facts is refused.
+2. **finish-bindings-2 — verify_output_hash is independent evidence.** Every pass answer
+   (the normal pass AND each reviewed override) requires `--verify-output=<file>` (exit 2
+   without it); the CLI hashes the file into the binding, so every new `verify_passed` carries
+   a CLI-computed `verify_output_hash` and there is no "incomplete binding" state. For an
+   override the file is the override evidence (the failing output, or the operator's recorded
+   override answer when there is no command). The validators require the receipt's hash to
+   EQUAL the selected binding's; legacy `goal_check` bindings keep the hash they recorded.
+3. **L1 — plan-entry validation runs on every spec→plan attempt.** Validation (Intent
+   validity, interview exit, assumption coverage) re-runs regardless of an existing freeze;
+   the order is validate → split-brain → spec-review gate → freeze append (idempotent at the
+   same hash). `--force` bypasses the spec-review gate only. A legacy bundle frozen
+   pre-upgrade without an Intent block is refused at plan re-entry until the Intent block is
+   added through a promotion transaction. The main-side exemptions (pre-interview bundles,
+   durable waivers) are preserved.
+4. **L2 — a new promotion must not delete an existing Intent block.** `beginPromotion`
+   refuses, before any transaction document, ref pin, artifact write or lineage event, when
+   the base goals.md carries an Intent block and the result does not. V1 documents that never
+   had one keep working; prepared legacy transactions recover under their original contract.
+5. **B1 — assessor outage at the first final assessment is reachable.** After one retry the
+   sequencer AUQs the operator for the verdict (met|partial|missed) with evidence and records
+   it with the existing user-attested provenance; a bare re-entry opens intent_confirm
+   (met) or intent_unmet (partial|missed). No fabricated assessor receipt opens either gate
+   (and finalReceiptFor now replays the recorder's `provenance.approval_receipt` spelling).
+
+Advisories: the CHANGELOG carries the `mp runs list`/inventory-digest compatibility note; the
+prompt and docs/verbs.md describe both binding sources; the spec-gate artifact matrix names
+`goals.md` on goals-enabled bundles.

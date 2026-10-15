@@ -163,10 +163,14 @@ text as quoted context.
   (`attested_by: user` + approval receipt — a manual receipt can never masquerade as assessor
   provenance). Re-entry at an unchanged tuple is idempotent; any Intent amendment re-arms.
 Pre-feature bundles without goals gracefully skip (no-op) all Intent steps. During finish, a
-passing `run_verify` answer (`--verify-passed --verify-output=<file>`) durably records the
-`verify_passed` branch binding; after the live check the final assessment runs, and a
-partial/missed Intent opens the durable `intent_unmet` gate (waiver / abort / reject-intent —
-fail-closed on assessor unavailability via a user-attested receipt).
+passing `run_verify` answer (`--verify-passed --verify-output=<file>`, the evidence file
+REQUIRED on every pass answer, overrides included) durably records the `verify_passed` branch
+binding — or, on an in-flight legacy bundle, a legacy non-final implementation `goal_check`
+serves as the binding source (branch bindings only, never an Intent review); both are selected
+for the FINISH HEAD. After the live check the final assessment runs, and a partial/missed
+Intent opens the durable `intent_unmet` gate (waiver / abort / reject-intent — assessor
+unavailability at the first assessment is fail-closed with a reachable floor: one retry, then
+the operator's own verdict as a user-attested receipt).
 
 ## Plan-graph & cross-run subcommands
 
