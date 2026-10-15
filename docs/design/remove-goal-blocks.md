@@ -65,9 +65,12 @@ downgrade refusal are unchanged.
 - Intent capture at the spec→plan boundary — **mechanical, no separate operator approval**.
   Entering `plan` validates `goals.md` (topic + Intent; G blocks neither required nor
   validated), enforces the interview exit and assumption coverage that
-  `validateGoalsLoadGate` (`lib/goals.mjs:1330`) enforced, sets `goals_enabled`, and appends
-  `goals_frozen` with the Intent hash and an empty goal list. Intent is approved where the
-  operator already approves it: the spec gate, whose hash spans `spec.md` + `goals.md`.
+  `validateGoalsLoadGate` (`lib/goals.mjs:1330`) enforced, and appends `goals_frozen` with the
+  Intent hash and an empty goal list. `goals_enabled` keeps its existing producer (seed time,
+  `lib/bundle.mjs` ~502) and the format pin keeps its (`schema_captured`, `lib/interview.mjs`
+  ~1207). Intent is approved where the operator already approves it: the spec gate, whose
+  hash spans `spec.md` + `goals.md` and whose prompt step presents the Intent for approval
+  (`commands/masterplan.md` ~587–589) — that presentation stays.
 - Substantive Intent/spec amendment through the existing promotion transaction
   (`lib/promote.mjs`), whose outer approval binds both artifacts' base/result hashes and the
   diff. Prepared (pre-upgrade) transactions recover under their **original** contract,
