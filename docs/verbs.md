@@ -14,13 +14,12 @@ Begin a new run end-to-end: brainstorm → plan → execute → finish. Seeds a 
 (`mp seed`), runs `superpowers:brainstorming`, the plan lifecycle (§3a), the wave loop
 (§2/§2a), then the finish flow (§2c). New bundles are seeded with `--codex-review=on`
 by default (finish-time Codex review armed); pass `--codex-review=off` to opt out. On a
-`goals_enabled` bundle the spec→plan boundary captures + freezes `goals.md` (user-approved)
-before planning, and the plan gate additionally fails on any uncovered goal.
+`goals_enabled` bundle the spec→plan boundary captures + freezes `goals.md` before planning.
 
 ## `brainstorm`
 Brainstorm phase only. Invokes `superpowers:brainstorming`; on spec approval advances
 `phase→plan` and halts at the close-out gate. On a `goals_enabled` bundle, at the
-spec→plan boundary `goals.md` is captured + frozen (user-approved) before advancing.
+spec→plan boundary `goals.md` is captured + frozen before advancing.
 Deliberately rejected ideas are recorded per `docs/conventions/out-of-scope.md`
 (`.out-of-scope/<concept>.md` rejected-idea KB in the target repo — not D6 path-scope)
 and checked before re-proposing; `mp doctor` check `rejected-idea-kb` validates file shape.
@@ -29,8 +28,6 @@ and checked before re-proposing; `mp doctor` check `rejected-idea-kb` validates 
 Plan phase only: decompose the approved spec into a validated `plan.index.json` + `plan.md`
 via the plan lifecycle (§3a) — serial, or a parallel `mp-subsystem-planner` fan-out merged
 deterministically by `lib/plan-merge.mjs`, selected per `planning.mode`. Halts before execution.
-On a `goals_enabled` bundle the plan gate additionally fails on any uncovered goal (every
-frozen goal must be covered by >=1 task).
 
 ## `execute`
 Resume or begin execution — the resume controller (§2). No path → the active-bundle picker;
@@ -165,7 +162,7 @@ text as quoted context.
   provenance in exactly one of assessor (dispatch id/model/tokens) or user-attested
   (`attested_by: user` + approval receipt — a manual receipt can never masquerade as assessor
   provenance). Re-entry at an unchanged tuple is idempotent; any Intent amendment re-arms.
-Pre-feature bundles without goals gracefully skip (no-op) all goal steps. During finish, a
+Pre-feature bundles without goals gracefully skip (no-op) all Intent steps. During finish, a
 passing `run_verify` answer (`--verify-passed --verify-output=<file>`) durably records the
 `verify_passed` branch binding; after the live check the final assessment runs, and a
 partial/missed Intent opens the durable `intent_unmet` gate (waiver / abort / reject-intent —

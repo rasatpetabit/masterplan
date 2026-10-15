@@ -33,26 +33,7 @@ is worthless.
 ruling; keep it but default to `skipped` with a policy citation; or make it
 configurable per bundle.
 
-## 2. `goals-amend` reports `changes: 0` for substantive edits
-
-**Hit during:** the same run — four separate goal amendments, each rewriting
-evidence clauses across multiple goals, every one reporting `changes: 0`.
-
-```
-{"goals_amend":"amended","old_goals_hash":"sha256:9eff0bf4...","new_goals_hash":"sha256:9591fb19...","changes":0,...}
-```
-
-The hashes move, so the amendment is recorded correctly and nothing downstream is
-wrong. But the counter appears to tally heading-level changes only: adding,
-removing, or renaming a `## G<n>:` line. Rewriting the body of an existing goal —
-which is what an amendment responding to review findings almost always does —
-counts as zero.
-
-A `changes: 0` on a real amendment reads as a no-op to anyone scanning
-`events.jsonl` later, which is the opposite of what the field is for. Counting
-goals whose *body* hash changed would be more faithful.
-
-## 3. Harness-native review output carries no timestamp
+## 2. Harness-native review output carries no timestamp
 
 **Hit during:** building a gate receipt from a review result, 2026-08-08.
 

@@ -33,7 +33,7 @@ single `plan.index.json` afterward.
   computed deterministically after all fragments merge (global ids from fragment order, waves
   from the dependency graph + file-disjointness). Strip them if the lane volunteers them.
 - **You read `goals.md`.** It is provided as quoted data alongside the spec / your subsystem
-  slice. Every fragment task must be annotated with the `goals` ids it serves.
+  slice (the `topic:` anchor + `## Intent`). Plan fidelity is judged against the Intent and spec.
 - **You have no Write tool by design.** You read for context and return a fragment digest —
   you never write `plan.index.json`, `plan.md`, `state.yml`, run git, or commit. L1 is the
   single durable writer (CD-7); the merge step owns the index bytes.
@@ -63,9 +63,8 @@ incomplete fragment. If the complete artifacts cannot be read, the run FAILS and
 applies — never a silently partial input.
 
 Validate the fragment mechanically before returning it: key prefixing, `codex` a string
-or null (never boolean), no `id`/`wave` fields (strip them), files repo-relative, every task
-carrying `goals`. One malformed draft → repair ONCE against the stated violation; still
-malformed → the fail rule. Stripping volunteered `id`/`wave`/global fields IS permitted deterministic normalization — mechanical and judgment-free — and is distinct from the forbidden semantic repair (inventing or altering keys, deps, files, verify commands, or goals).
+or null (never boolean), no `id`/`wave` fields (strip them), files repo-relative. One malformed draft → repair ONCE against the stated violation; still
+malformed → the fail rule. Stripping volunteered `id`/`wave`/global fields IS permitted deterministic normalization — mechanical and judgment-free — and is distinct from the forbidden semantic repair (inventing or altering keys, deps, files, or verify commands).
 
 ## What you return (the fragment digest)
 
@@ -84,7 +83,6 @@ A single object, validated at the tool boundary:
           "sensitive":       true,                                        // optional — touches secrets/auth/prod
           "conversational":  true,                                        // optional — discussion task, codex-ineligible
           "spec_refs":       ["spec.md#L33-L48", ...]                     // optional provenance
-          "goals":           ["<goal id from goals.md this task serves>", ...]        // task's goal refs; empty only for pure-infra covered elsewhere
         }
       ]
     }

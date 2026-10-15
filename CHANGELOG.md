@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Removed
+- Enumerated, separately-approved `## G<n>:` goal blocks and their entire lifecycle:
+  goal-count/signal/evidence validation at capture, per-goal plan coverage, task `goals` annotations,
+  the per-wave goal list reminder, goal-specific doctor checks (`lib/doctor/goals.mjs`),
+  and goal tables in status and retro output.
+- Subcommands `mp goals-load`, `mp goals-amend`, `mp goals-status`, and their CLI flags
+  (`--goals=`, `--interview-waived`).
+- Implementation-mode goal assessment: `run_goal_check` finish op, implementation-mode `goals_unmet` gate,
+  per-goal waivers (`goal_waived`), and the `--goal-check` flag.
+- Separate operator approval step for the run Intent artifact: capture is now mechanical at `set-phase --phase=plan`.
+  The operator approves Intent at the spec gate, whose hash coverage already includes `goals.md`.
+- Extra `approval.goals_amend` receipt requirement on new promotion transactions (`approval_contract: 2`).
+
+### Changed
+- The `topic:` anchor and `## Intent` block in `goals.md` stay and remain the yardstick finished work is judged against.
+- Run Intent is captured mechanically entering `plan` (`mp set-phase --phase=plan`), which validates `goals.md`
+  (topic anchor + `## Intent` fields), enforces the interview-exit gate, and appends `goals_frozen` with the Intent hash
+  and an empty goal list.
+- Final Intent assessment renamed to `record-intent-check` (replacing `record-goal-check --final`), dispatched via
+  `agents/mp-intent-assessor.md` (final-mode only, evaluated against `## Intent` after the live check).
+- Final gate renamed to `intent_unmet` (`--intent-choice=waiver|abort`), evaluated by `mp finish-step`.
+- Final receipt branch bindings: independent branch facts (`head_sha`, `base`, `diff_hash`, `verify_output_hash`)
+  are bound from a mechanical `verify_passed` event that `finish-step` appends upon a passing `run_verify`
+  (`--verify-passed --verify-output=<file>`), replacing the reliance on implementation goal check receipts.
+- Planners (`mp-planner`, `mp-subsystem-planner`, `mp-spec-decomposer`), reviewers (`mp-plan-reviewer`), and
+  auditors (`mp-alignment-auditor`) judge plan fidelity directly against the run Intent and spec without G-ID citation or coverage rules.
+
+### Compatibility notes
+- **On-disk wire names stay byte-identical**: `goals.md` remains the file name for the run Intent artifact;
+  `goals_hash` remains the canonical run Intent identity; `goals_enabled` remains the bundle marker;
+  `goals_frozen` and `goal_amended` remain the lineage events; and `goal_check` with `final: true` remains the final assessment event.
+- **Hash canonicalization unchanged**: `goalsHash` (both legacy and schema-backed pins), `canonicalGoalsList`,
+  `parseGoals`, and the durable format pin downgrade refusal stay byte-identical. Documents without G blocks
+  canonicalize with `goals: []`, preserving all existing hashes without voiding any receipt or requiring migration.
+- **In-flight and archived bundles**: Existing G blocks on frozen/archived bundles are inert provenance (not a defect);
+  `mp doctor` reports no new findings on archived bundles. Pending final-mode `goals_unmet` gates normalize to
+  `intent_unmet`; pending implementation-mode `goals_unmet` gates are retired with a durable `gate_retired` event
+  and verification re-runs before teardown to establish a `verify_passed` binding source.
+  Legacy promotion transactions without `approval_contract` continue to recover under their original contract.
+
 ## [10.0.18] — 2026-10-08
 
 ### Changed

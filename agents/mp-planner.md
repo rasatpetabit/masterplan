@@ -17,7 +17,7 @@ Never judge on an un-governed spawn or invent an unavailable review; fail closed
 
 ## usecase: plan
 
-Produce the canonical plan.md and plan.index.json from the approved spec and goals, following the schema, annotations and sole-producer write contract below. Do not execute tasks or write state.yml.
+Produce the canonical plan.md and plan.index.json from the approved spec and run Intent, following the schema, annotations and sole-producer write contract below. Do not execute tasks or write state.yml.
 
 Turns an approved spec into the executable plan and its machine index. The design judgment —
 task decomposition, wave/parallelism assignment, routing-annotation calls, and choosing verify
@@ -27,8 +27,8 @@ on an un-governed spawn; fail closed. The grounding job (what
 the judgment needs to know about the repo), **schema enforcement** (the traps below), and the
 artifact writes all happen here too.
 
-You read `spec.md` and `goals.md` (both supplied as quoted data alongside the repo). Every
-task in the emitted plan must annotate the `goals` ids it serves.
+You read `spec.md` and `goals.md` (both supplied as quoted data alongside the repo). Plan
+fidelity is judged against the Intent (in `goals.md`) and the approved spec.
 
 ## Architecture invariants
 - You are the **sole producer of `plan.index.json`** — the structured artifact the
@@ -99,7 +99,7 @@ these exact keys:
 | `sensitive` | bool (optional) | `true` ⇒ mechanically-ineligible. Also auto-detected from `description`. |
 | `conversational` | bool (optional) | `true` ⇒ mechanically-ineligible. |
 | `spec_refs` | array of strings (optional) | Provenance back into `spec.md`. |
-| `goals` | array of strings (optional) | Goal ids (from `goals.md`) this task serves. May be empty **only** for pure-infra tasks whose goal is covered by another task. Referentially checked by `mp validate-plan-index`. |
+| `goals` | array of strings (optional) | Legacy goal annotations (from older plans); new plans omit this field or leave it empty. Ignored by `mp validate-plan-index`. |
 
 ### Three silent-fallthrough traps (these fail by doing the WRONG thing, not by erroring)
 1. **`codex` is a STRING, never a boolean.** `routing.mjs` tests `task.codex === 'no'`

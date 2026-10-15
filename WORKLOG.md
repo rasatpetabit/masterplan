@@ -1,5 +1,22 @@
 # WORKLOG
 
+## 2026-10-14 — prompts, agents, and docs sync for goal-block removal
+
+Synchronized all live prompts, skill definitions, agent contracts, documentation, and test fixtures with the goal-block removal implemented across Steps 1–3:
+- `commands/masterplan.md`: removed `## G<n>:` references, updated capture prose to the mechanical `set-phase --phase=plan` seam, updated alignment auditor input description (`topic:` anchor + `## Intent`), cleaned up goal G6 reference in bootstrap stage.
+- `agents/*.md`: removed G-ID citation, goal coverage, and goal-mapping instructions from `mp-planner.md`, `mp-subsystem-planner.md`, `mp-plan-reviewer.md`, `mp-spec-decomposer.md`, and `mp-alignment-auditor.md`. Plan fidelity is judged against the run Intent (in `goals.md`) and the approved spec.
+- `docs/verbs.md`, `docs/internals.md`, `docs/internals/*.md`: updated capture description to mechanical plan-entry validation; removed goal coverage references; updated doctor check count to 23 (reflecting deleted `lib/doctor/goals.mjs`); removed Goal section in plan rendering docs; updated boundary rules in `design-intent-integration.md`.
+- `docs/conventions/plan-annotations.md`: removed G-ID mapping requirement; updated `goals` field description to legacy-only; updated Yocto image hygiene to reference run Intent.
+- `docs/known-issues.md`: removed retired `goals-amend` issue #2 and renumbered.
+- `README.md`: updated doctor check count to 23.
+- `test/fixtures/knobs/contracts.mjs` & `test/knob-contract.test.mjs`: updated `format_pin` description to Intent/goals; updated `goals_enabled` contract to observe the real `set-phase --phase=plan` capture seam rather than the removed `goals-load` subcommand.
+- `CHANGELOG.md`: added `## [Unreleased]` section with Removed, Changed, and Compatibility notes.
+
+Key decisions and rationale:
+- On-disk wire names (`goals.md`, `goals_hash`, `goals_enabled`, `goals_frozen`, `goal_amended`, `goal_check` final:true) are kept verbatim to maintain byte-identical compatibility with existing event ledgers, receipts, and archived bundles.
+- Hash canonicalization (`goalsHash` legacy and schema_backed, `canonicalGoalsList`, `parseGoals`, format-pin downgrade refusal) is completely preserved; zero-G documents canonicalize with `goals: []`.
+- Capture of run Intent at `set-phase --phase=plan` is strictly mechanical document validation with no separate approval AUQ (the operator approves Intent at the spec gate, whose hash covers `goals.md`).
+
 ## 2026-09-29 — plan 07 Task 5 X22 follow-up
 
 Explicit per-slot operator disposition in the primary wave record keeps old held/subjectless slots refused by default. Retire is not review success; restart records lineage and a fresh subject without historical accounting identity. Durable no-emission evidence alone permits a missing slot to acquire ordinary new-work identity. Finish review ops now carry the CLI-detected host; the obsolete knob observer measures its own legacy path, while C1 discovery remains fail-closed. No real slot disposed, no receipt or hook state edited; review and Task 6 finish migration remain separate. Hermetic finish/knob suites 324/324; finish CLI-host removal killed (one failure). Native/bin suites 258 passed, one skipped; disabling held-episode refusal and permitting a stale copy each killed (one failure). Full suite 2937 passed, one failed, one skipped: README E12 lacks MP_DISPATCH_MAP, one of the four failures reproduced at 0dbed78 by the confirming review. Baseline was not rerun here. Independent breaker review remains owed by the parent before acceptance.

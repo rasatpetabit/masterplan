@@ -19,7 +19,7 @@ consumers. The split that makes that safe:
 | Owned by masterplan (the host) | Owned by the skill (plan mode) |
 |---|---|
 | The ledger (`state.yml`, `events.jsonl`) — every write, through `mp interview` | The questions (one fork per question, rewrite test, option discipline) |
-| `goals.md` and its `## G<n>:` goal blocks — owned, written, and validated by masterplan | The section schema (`schema.json` is the authority) |
+| `goals.md` (the `topic:` anchor + `## Intent`) — owned, written, and validated by masterplan | The section schema (`schema.json` is the authority) |
 | The `## Intent` projection's persistence and hashes | Reconciliation of plan intent with the repository `INTENT.md` |
 | The lifecycle (`set-phase`, `end`, `waive`, `reopen`, gate integration) | The draft's section bodies and reconciliation rows |
 
@@ -68,15 +68,14 @@ writes its own `goals.md` / `spec.md`. The skill never writes `state.yml` or `ev
 directly — `mp interview` remains the only recorder (CD-7 single-writer discipline holds:
 L1's subcommands are the sole writers of bundle state).
 
-## Boundary rules (goal blocks and the shared validator)
+## Boundary rules (run Intent and the shared validator)
 
-- Goal blocks (`## G<n>:`) are masterplan's own artifact, written at spec approval. A
-  `goals.md` carrying them is the **normal, expected plan-mode input**, never a refusal
-  ground. The skill never interviews, edits, validates, or refuses them — amend them
-  through masterplan.
+- The run Intent (`topic:` anchor + `## Intent` in `goals.md`) is masterplan's own
+  artifact, captured at spec approval / plan entry. The skill never interviews, edits,
+  validates, or refuses it — substantive amendments run through promotion transactions.
 - The skill presents **only the intent projection** to `validate-intent.mjs`
-  (`--mode plan`), so the shared validator never sees the goal blocks at all. Goal-block
-  validation stays owned by masterplan (`lib/goals.mjs`).
+  (`--mode plan`), so the shared validator never sees the host-specific artifact structure.
+  Intent validation stays owned by masterplan (`lib/goals.mjs`).
 - The skill's public repo-facing surface (create/refine/audit/judge/align, the consultation
   rule) keeps its existing behavior; the host contract is plan-mode only.
 - The plan-mode contract lives in the skill's `verbs/plan.md` — `SKILL.md` is the router that
@@ -204,7 +203,7 @@ with all three floors deliberately unmet while its legacy twin refuses the same 
 `interview.probing_minimum` resolves through the §4 config hierarchy
 (`lib/config.mjs` `resolveRunConfig` → `resolveProbingMinimum`, `validateProbingMinimum`
 fail-closed) and is consumed by `mp interview end` / `mp interview waive` / the
-`goals-load --interview-waived` route (all three resolve it identically in
+`set-phase --phase=plan` interview-exit gate (which resolve it identically in
 `bin/masterplan.mjs`).
 
 ### The format pin and the schema snapshot
@@ -216,7 +215,7 @@ fail-closed) and is consumed by `mp interview end` / `mp interview waive` / the
   source-evidence provenance. Every consumer dispatches on the SAME pin through
   `resolveFormatPin` (`lib/bundle.mjs`): the checkpoint identity
   (`lib/checkpoint-evidence.mjs` `buildIntentIdentity`), the finish tuple and split-brain
-  guard (`bin/masterplan.mjs` `pinnedGoalsHash`), `record-goal-check`, and `lib/finish-step.mjs`.
+  guard (`bin/masterplan.mjs` `pinnedGoalsHash`), `record-intent-check`, and `lib/finish-step.mjs`.
   A missing pin with a capture event REFUSES to parse as legacy and is repaired from that
   history (`repairFormatPin`, idempotent, the §6.1 sanctioned repair); a present-but-unknown
   pin is an error; stripping the versioned representation from a schema_backed bundle is a
@@ -282,7 +281,7 @@ The consumers are the real seams: the spec gate (`bin/masterplan.mjs`), the alig
 and finish assessment (`lib/finish.mjs`, `lib/finish-step.mjs`), and per-task review
 (`lib/task-review.mjs`) all call `verifyCheckpointEvidence`; the reviewer prompts
 (`agents/mp-alignment-auditor.md`, `agents/mp-adversarial-reviewer.md`,
-`agents/mp-goal-assessor.md`) emit the tuple-carrying receipts. Proofs:
+`agents/mp-intent-assessor.md`) emit the tuple-carrying receipts. Proofs:
 `test/intent-checkpoints.test.mjs` (including the mutation test that bypasses the validator
 and the alternate-schema data-driven proof).
 

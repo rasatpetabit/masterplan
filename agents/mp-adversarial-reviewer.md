@@ -113,8 +113,8 @@ a run with no schema capture. Echo that tuple back in your record's
 beside your own dispatch provenance in `reviewer_identity`
 (`{dispatch_id, model, output_tokens}`): a review whose producer cannot be named is
 **unavailable, never approval**. Evidence cannot cross an identity boundary: a review
-earned under one tuple cannot satisfy a checkpoint under another, so a run whose goal
-set, schema snapshot, skill identity or repository reconciliation has changed since the
+earned under one tuple cannot satisfy a checkpoint under another, so a run whose run
+Intent, schema snapshot, skill identity or repository reconciliation has changed since the
 tuple you were handed must be re-reviewed, never waved through on your earlier verdict.
 
 A restarted task-review brief also carries the new producer episode `subject`.

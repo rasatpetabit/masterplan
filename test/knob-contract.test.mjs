@@ -889,9 +889,9 @@ async function buildFixture(entry, spec, tag) {
   }
 
   if (entry.id === 'goals_enabled') {
-    // The REAL goals-capability consumer: on a goals_enabled bundle the finish/goals machinery
-    // refuses to proceed without a readable goals.md + frozen goals; a pre-feature bundle is
-    // exempt. Drive the real binary's goals-load gate on a seeded state with/without the
+    // The REAL goals-capability consumer: on a goals_enabled bundle the capture seam at
+    // set-phase --phase=plan refuses to proceed without a readable goals.md; a pre-feature
+    // bundle is exempt. Drive set-phase --phase=plan --force on a seeded state with/without the
     // marker and observe the refusal difference.
     const dir = tmpdir('mp-knob-goals-');
     const bundleDir = path.join(dir, 'bundle');
@@ -900,13 +900,12 @@ async function buildFixture(entry, spec, tag) {
     const { writeState } = await import(path.join(ROOT, 'lib', 'bundle.mjs'));
     const on = need.goals_enabled === true;
     writeState(statePath, {
-      schema_version: 8, slug: 'knob', status: 'in-progress', phase: 'plan',
+      schema_version: 8, slug: 'knob', status: 'in-progress', phase: 'brainstorm',
       pending_gate: null, active_run: null, concurrency: { owner_lock: 'off' },
-      ...(on ? { goals_enabled: true, goals: [] } : {}),
+      ...(on ? { goals_enabled: true } : {}),
     });
-    // goals-load on a goals_enabled bundle with no goals.md and no approval must be refused
-    // (freeze gate); on a pre-feature bundle it is a no-op / allowed.
-    const r = run(['goals-load', `--state=${statePath}`], { env: mpEnv() });
+    fs.writeFileSync(path.join(bundleDir, 'events.jsonl'), '');
+    const r = run(['set-phase', `--state=${statePath}`, '--phase=plan', '--force'], { env: mpEnv() });
     return { goalsGate: on ? (r.status === 0 ? 'proceed' : 'refused') : (r.status === 0 ? 'proceed' : 'exempt') };
   }
 
