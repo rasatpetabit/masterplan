@@ -192,8 +192,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
-import { readState, parseState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, setWorktree, setWorktreeDisposition, setVerifiedSha, setCodexConfig, setReviewConfig, setRenderConfig, loadPlanTasks, buildSeedState, buildTasksFromPlanIndex, appendEvent, setCoordination, applyPlanIndex, upsertTasks, rebasePaths, GOAL_LIFECYCLE_EVENT_TYPES, inferGoalsCapability, CURRENT_SCHEMA_VERSION, resolveFormatPin, repairFormatPin } from '../lib/bundle.mjs';
-import { parseGoals, validateGoals, goalsHash, legacyGoalsHash, preCodeMaskGoalsHash, validateUserApprovalReceipt, validateAmendment, amendmentDiff, crossCheckGoals, validateGoalCheckReceipt, validateGoalWaiver, waiverKey, validateGoalsLoadGate } from '../lib/goals.mjs';
+import { readState, parseState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, setWorktree, setWorktreeDisposition, setVerifiedSha, setCodexConfig, setReviewConfig, setRenderConfig, loadPlanTasks, buildSeedState, buildTasksFromPlanIndex, appendEvent, setCoordination, applyPlanIndex, upsertTasks, rebasePaths, inferGoalsCapability, CURRENT_SCHEMA_VERSION, resolveFormatPin, repairFormatPin } from '../lib/bundle.mjs';
+import { parseGoals, validateGoals, goalsHash, validateGoalCheckReceipt, validateGoalWaiver, validateGoalsLoadGate } from '../lib/goals.mjs';
 import { planWorktreeCreate, parseWorktreeList, classifyWorktrees, normalizeDisposition, dispositionAfterTeardown, VALID_DISPOSITIONS as VALID_WORKTREE_DISPOSITION } from '../lib/worktree.mjs';
 import { collectDiskDirs, collectBundleRecords } from '../lib/worktree-fs.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
@@ -282,11 +282,12 @@ function resolveGateArtifacts({ gate, statePath, state, flags, op }) {
   const spec = gateConfine(path.resolve(bundleDirReal, specRaw), bundleDirReal, 'spec.md');
   if (gate === 'spec') {
     const descriptors = [{ role: 'spec', ...spec }];
-    // Goals-tracking (plan-review finding 1 / spec §4): on a goals_enabled bundle the spec gate covers
-    // goals.md too, so the gate hash spans spec.md + goals.md — a later `mp goals-amend` (which rewrites
-    // goals.md) re-arms the spec gate exactly like a spec edit. Pre-feature bundles (no goals_enabled
-    // marker, no capability/goal events) keep the spec-only hash (back-compat). Appended AFTER spec so a
-    // non-goals bundle's hash is byte-identical to before.
+    // Run-Intent tracking (plan-review finding 1 / spec §4): on a goals_enabled bundle the spec gate
+    // covers goals.md too, so the gate hash spans spec.md + goals.md — a later sanctioned amendment
+    // (the promotion transaction, which rewrites goals.md) re-arms the spec gate exactly like a spec
+    // edit. Pre-feature bundles (no goals_enabled marker, no capability/goal events) keep the
+    // spec-only hash (back-compat). Appended AFTER spec so a non-goals bundle's hash is byte-identical
+    // to before.
     const goalsEvents = readBundleEventsForGoals(statePath, 'gate-review');
     if (bundleGoalsEnabled(state, goalsEvents)) {
       const goals = gateConfine(path.resolve(bundleDirReal, 'goals.md'), bundleDirReal, 'goals.md');
@@ -474,12 +475,15 @@ function enforceGateReview(gate, statePath, flags, state, opts = {}) {
   process.exit(3);
 }
 
-// ---- goal-transition guards (goals-tracking): capture gate + split-brain hash guard --------------
+// ---- run-Intent transition guards: spec→plan capture + split-brain hash guard --------------
 //
-// A goals_enabled bundle must FREEZE its goals (goals-load -> goals_frozen event) before it leaves
-// brainstorm, and its on-disk goals.md must never silently diverge from the committed hash. Both guards
-// read the EVENT LOG (authority order: events > state) and are fs-only. Pre-feature bundles (no
-// goals_enabled marker AND no capability/goal events) are exempt — the guards no-op.
+// A goals_enabled bundle captures its run Intent (goals.md: topic anchor + ## Intent) when it
+// enters the plan phase — mechanically, no separate operator approval (the spec gate is where
+// the operator already approves the Intent: its hash spans spec.md + goals.md and its prompt
+// step presents the Intent). Its on-disk goals.md must never silently diverge from the committed
+// hash. Both guards read the EVENT LOG (authority order: events > state) and are fs-only.
+// Pre-feature bundles (no goals_enabled marker AND no capability/goal events) are exempt — the
+// guards no-op.
 function readBundleEventsForGoals(statePath, label) {
   const eventsPath = path.join(path.dirname(statePath), 'events.jsonl');
   let text = '';
@@ -515,7 +519,7 @@ function bundleGoalsEnabled(state, events) {
 }
 // §6.1 helper: the goals hash under the bundle's DURABLE format pin — the pin selects
 // the canonicalizer, and the goals gates compare against event hashes written by
-// goals-load/goals-amend under the SAME pin. A pin-less bundle (the legacy shape) keeps
+// goals-load (historically) and every goal amendment under the SAME pin. A pin-less bundle (the legacy shape) keeps
 // the unpinned hash, which IS its canonical one. The repair is §6.1's sanctioned one.
 function pinnedGoalsHash(statePath, goalsMd) {
   // One pin, every writer and guard: the same helper promote.mjs uses for lineage.
@@ -526,44 +530,100 @@ function pinnedGoalsHash(statePath, goalsMd) {
   }
 }
 
-// Part 1 — the goals_frozen CAPTURE gate (set-phase --phase=plan). On a goals_enabled bundle, refuse to
-// leave brainstorm until the goal set is frozen: emit an actionable run_goals_capture op and exit 3
-// (mirrors the fail-closed spec-gate pattern) whenever NO goals_frozen event exists yet. Pre-feature
-// bundles are exempt. This owns the PRE-CAPTURE window; the split-brain guard owns hash consistency
-// AFTER capture (PLAN-GATE FINDING). --force appends an audit event and bypasses.
-function enforceGoalsCaptureGate(statePath, state, flags) {
-  const events = readBundleEventsForGoals(statePath, 'goals-capture');
+// Part 1 — the spec→plan INTENT CAPTURE seam (set-phase --phase=plan). On a goals_enabled
+// bundle that has no goals_frozen event yet, entering plan: (a) validates goals.md — the topic
+// anchor and the ## Intent block must be present and the Intent fields well-formed (the
+// historical G blocks are neither required nor validated; a document that still carries them
+// hashes identically); (b) enforces the interview-exit + Assumptions-coverage gate
+// (validateGoalsLoadGate — the same checks goals-load enforced); (c) appends `goals_frozen`
+// carrying the Intent hash under the bundle's DURABLE format pin and an empty goal list. No
+// operator approval receipt is required at this step: the spec gate, which runs immediately
+// after, is where the operator approves the Intent. Idempotent: a bundle already frozen is
+// untouched (the split-brain guard owns hash consistency from there), so a legacy bundle with
+// a goals_frozen event never gets a second one. `--force` does NOT bypass validation: capture
+// is mechanical document validation, not ceremony — a missing Intent is a data problem.
+function captureRunIntentAtPlanEntry(statePath, state) {
+  const events = readBundleEventsForGoals(statePath, 'intent-capture');
   if (!bundleGoalsEnabled(state, events)) return; // pre-feature: exempt
-  if (flags.force) {
-    try {
-      appendEvent(statePath, {
-        type: 'goals_capture_bypassed',
-        ts: new Date().toISOString(),
-        data: { reason: 'force' },
-        summary: 'goals capture gate bypassed via --force',
-      });
-    } catch {
-      /* audit best-effort — never block a --force recovery on an events.jsonl write */
-    }
-    return;
-  }
   if (events.some((e) => e.type === 'goals_frozen')) return; // captured — split-brain guard owns the rest
-  const opObj = {
-    op: 'run_goals_capture',
-    gate: 'goals',
-    reason:
-      'goals are enabled but not yet frozen — capture the goal set before leaving brainstorm: ' +
-      '`mp goals-load --state=<bundle>/state.yml --goals=<goals.md> --approval=<receipt.json>`. ' +
-      '(--force bypasses; audited.)',
-  };
-  fs.writeSync(1, JSON.stringify(opObj) + '\n');
-  process.exit(3);
+  const dir = path.dirname(statePath);
+  const goalsMdPath = path.join(dir, 'goals.md');
+  let goalsMd;
+  try {
+    goalsMd = fs.readFileSync(goalsMdPath, 'utf8');
+  } catch (e) {
+    die(
+      `set-phase: goals.md unreadable (${e.message}) — the run Intent (topic anchor + ## Intent block) ` +
+        'is captured when the run enters plan. Write goals.md first; the brainstorm steps produce it.',
+      1
+    );
+  }
+  const parsed = parseGoals(goalsMd);
+  if (typeof parsed.topicSeed !== 'string' || parsed.topicSeed.trim() === '') {
+    die(
+      'set-phase: goals.md carries no `topic:` anchor — the run Intent begins with the verbatim ' +
+        'original request; a document without it cannot be captured. Restore the anchor.',
+      1
+    );
+  }
+  if (!parsed.intent) {
+    die(
+      'set-phase: goals.md carries no `## Intent` block — the run Intent is what the delivered work ' +
+        'is judged against, and the spec gate approves it. Write the Intent block (why / outcome / ' +
+        'anti_goals / done_means) before entering plan.',
+      1
+    );
+  }
+  const val = validateGoals(parsed);
+  if (!val.ok) die(`set-phase: invalid goals.md — ${val.error}`, 1);
+  // The interview-exit + Assumptions-coverage gate, keyed on the INTERVIEW LEDGER exactly as
+  // goals-load keyed it: an interview that was STARTED must exit properly (§5.4); a bundle
+  // where none ran (a pre-interview legacy bundle) proceeds with a stated skip. The spec text
+  // comes from the bundle's own spec.md (set-phase honors no path flags); an exhausted exit
+  // with no readable spec fails closed inside validateGoalsLoadGate.
+  {
+    let replay;
+    try {
+      replay = replayInterview(statePath);
+    } catch (e) {
+      die(`set-phase: cannot replay the interview ledger: ${e.message}`, 1);
+    }
+    const evs = replay.events ?? [];
+    const hasInterview = evs.some((e) => String(e?.type ?? '').startsWith('interview_'));
+    if (hasInterview) {
+      let specText = null;
+      const specPath = state && typeof state.spec_path === 'string' && state.spec_path
+        ? state.spec_path
+        : path.join(dir, 'spec.md');
+      try {
+        specText = fs.readFileSync(path.resolve(dir, specPath), 'utf8');
+      } catch {
+        specText = null; // validateGoalsLoadGate fails closed on an exhausted exit without a spec
+      }
+      const gate = validateGoalsLoadGate({ replay, specText });
+      if (!gate.ok) die(`set-phase: ${gate.code}: ${gate.error}`, 1);
+    } else {
+      // A bundle with NO interview ledger predates the interview (a v1 bundle); it has no
+      // exit to gate on. The skip is stated rather than silent, so it can never be mistaken
+      // for a gate that passed.
+      process.stderr.write('masterplan: set-phase: no interview ledger on this bundle — the §5.4 exit gate has no exit to judge; a deliberate skip is recorded with `mp interview waive --reason`\n');
+    }
+  }
+  // §6.1: the canonical hash under the bundle's DURABLE format pin — a schema_backed bundle
+  // whose versioned representation was stripped dies here (rejected downgrade), never hashed.
+  const hash = pinnedGoalsHash(statePath, goalsMd);
+  appendEvent(statePath, {
+    type: 'goals_frozen',
+    ts: new Date().toISOString(),
+    data: { goals_hash: hash, goals: [] },
+    summary: `run intent frozen at ${hash} (no goal blocks — new documents carry topic + Intent only)`,
+  });
 }
 // Part 2 — the SPLIT-BRAIN hash guard (set-phase + load-plan). Recompute goals.md's hash via lib/goals.mjs
 // and compare it to the committed hash from the event log; a mismatch means goals.md drifted out-of-band
 // from the last goals_frozen/goal_amended commit (a hand-edit / split brain). Exit non-zero with a
 // reconcile message. NO-OP when the bundle is pre-feature OR no goals_frozen/goal_amended event exists yet
-// (that window belongs to the capture gate — PLAN-GATE FINDING). --force is deliberately NOT honored: a
+// (that window belongs to the capture seam — PLAN-GATE FINDING). --force is deliberately NOT honored: a
 // split brain is a data-integrity error the operator must reconcile, not bypass.
 function enforceGoalsSplitBrainGuard(statePath, state, transition) {
   const events = readBundleEventsForGoals(statePath, 'goals-split-brain');
@@ -577,68 +637,21 @@ function enforceGoalsSplitBrainGuard(statePath, state, transition) {
   } catch (e) {
     die(
       `${transition}: goals.md unreadable (${e.message}) but the event log records a frozen goal set at ` +
-        `${committed} — reconcile the bundle (restore goals.md, or re-freeze via \`mp goals-amend\`) before advancing.`,
+        `${committed} — reconcile the bundle (restore goals.md, or record the change through an ` +
+        `approved promotion transaction) before advancing.`,
       1
     );
   }
   const actual = pinnedGoalsHash(statePath, goalsMd);
   if (actual !== committed) {
     die(
-      `${transition}: goals.md hash ${actual} does not match the committed goal set ${committed} from the ` +
+      `${transition}: goals.md hash ${actual} does not match the committed Intent hash ${committed} from the ` +
         `last goals_frozen/goal_amended event — goals.md drifted out-of-band (split brain). Reconcile before ` +
-        `advancing: record the change with \`mp goals-amend\` (sanctioned), or restore goals.md to the committed content.`,
+        `advancing: record the change through an approved promotion transaction (sanctioned), or restore ` +
+        `goals.md to the committed content.`,
       1
     );
   }
-}
-// Load the goal list for machine-checked plan coverage (§3.2). On a goals_enabled bundle, parse
-// goals.md, verify its hash matches the committed goal set from the event log, cross-check it against
-// the derived state.goals cache (lib/goals.mjs), and return the parsed goal list so validatePlanIndex
-// can enforce coverage centrally — uncovered/unknown goal refs then make the caller exit non-zero.
-// Pre-feature bundles (no state.yml / no goals_enabled marker) return [] so coverage is a no-op.
-// fs-only.
-function loadGoalsForCoverage(statePath, label) {
-  let state = null;
-  try {
-    if (fs.existsSync(statePath)) state = readState(statePath);
-  } catch (e) {
-    die(`${label}: state.yml unreadable: ${e.message}`, 1);
-  }
-  const events = readBundleEventsForGoals(statePath, label);
-  if (!bundleGoalsEnabled(state, events)) return []; // pre-feature: coverage is a no-op
-  const goalsMdPath = path.join(path.dirname(statePath), 'goals.md');
-  let goalsMd;
-  try {
-    goalsMd = fs.readFileSync(goalsMdPath, 'utf8');
-  } catch (e) {
-    die(
-      `${label}: goals are enabled but goals.md is unreadable (${e.message}) — freeze the goal set ` +
-        'with `mp goals-load` before validating the plan.',
-      1
-    );
-  }
-  const mdGoals = parseGoals(goalsMd).goals;
-  const committed = committedGoalsHash(events);
-  const actual = pinnedGoalsHash(statePath, goalsMd);
-  if (committed !== null && actual !== committed) {
-    die(
-      `${label}: goals.md hash ${actual} does not match the committed goal set ${committed} — reconcile ` +
-        'the split brain (`mp goals-amend`, or restore goals.md) before validating the plan.',
-      1
-    );
-  }
-  // Cross-check goals.md against the derived state.goals cache. When the hash matches the committed
-  // event set, goals.md IS that set, so it doubles as the event source for the three-way check.
-  const stateGoals = Array.isArray(state?.goals) ? state.goals : [];
-  const cc = crossCheckGoals(mdGoals, stateGoals, mdGoals);
-  if (!cc.ok) {
-    die(
-      `${label}: goals cross-check failed — ${cc.error} (state.goals cache diverged from goals.md; ` +
-        're-freeze via `mp goals-load` / `mp goals-amend`).',
-      1
-    );
-  }
-  return mdGoals;
 }
 
 // ---- tiny arg parser: positional[], flags{} (--k=v, or --k as boolean true) ----
@@ -690,7 +703,7 @@ const KNOWN_FLAGS = new Set(
     'current-head cwd d6-ok data date dead declared-sha256 detail diff-hash digest-file direction ' +
     'dirty disposition docs-count docs-normalized docs-reason docs-skipped docs-suppressed existing ' +
     'fabric fail-if-unconfigured fail-if-unpublishable force fragments from gate generated-at gh-json ' +
-    'goal-check goals goals-choice head head-sha host id images integration-branch issue issues job-id ' +
+    'goal-check goals-choice head head-sha host id images integration-branch issue issues job-id ' +
     'key kind label linked-worktree local-run-branch mark-published merge-sha merged meta mode ' +
     'native-tools no-workflow note note-file now opened-at out owner-lock phase plan plan-deps plan-hash ' +
     'plan-html plan-index plan-index-path plan-md plan-path planning-mode porcelain pr predecessor ' +
@@ -702,7 +715,7 @@ const KNOWN_FLAGS = new Set(
     'subsystems-file summary takeover target task task-id to topic ts ttl-ms type verify-failed ' +
     'verify-output-hash verify-passed waive waiver wave worktree worktree-list worktree-registered ' +
     'ws-baseline ' +
-    // §5.3 interview ledger + §6 goals-load gate + §7.5 rejection + the deploy/final-check flags
+    // §5.3 interview ledger + §7.5 rejection + the deploy/final-check flags
     'class corrected critic-unavailable-ack deploy-abort deploy-attest deploy-authorize deploy-rerun '  +
     'deploy-retry deploy-skip deploy-step-done done-adhoc-file error file final intent-confirmed intent-rejected '  + 'archive-pushed archive-push-skipped '  +
     'deploy-chain-hash exit focus interview-waived model overlap-review payload-file resolves '  +
@@ -1685,6 +1698,19 @@ function main() {
       // seed; the shell records lifecycle milestones HERE, never via raw Write/Edit (CD-7 + anti-flood).
       const p = need(flags, 'state');
       const record = { type: need(flags, 'type'), ts: flags.ts ?? new Date().toISOString() };
+      // Reserved event types: `verify_passed` and `goal_check` carry machine-computed bindings
+      // (git facts, diff hashes, the current Intent hash) that the generic writer cannot compute.
+      // Their only producers are the finish machinery that validates those bindings against git
+      // and the run's records — accepting a hand-built one here would let a fabricated event stand
+      // in for the evidence it claims to be. Refused like an unknown flag (exit 2).
+      if (record.type === 'verify_passed' || record.type === 'goal_check') {
+        die(
+          `event: type '${record.type}' is reserved — it is appended only by the masterplan finish machinery ` +
+            `that computes and validates its bindings (branch facts, verify output, the current Intent ` +
+            `hash), never by the generic event writer.`,
+          2
+        );
+      }
       if (flags.phase !== undefined) record.phase = flags.phase;
       if (flags.note !== undefined) record.note = flags.note;
       // --note-file is the SHELL-SAFE transport for free-text the caller can't trust on a command line.
@@ -1720,340 +1746,6 @@ function main() {
         die(e.message, 1);
       }
       out({ event: record.type, ts: record.ts, path: eventsPath }); // terse confirmation
-      break;
-    }
-    case 'goals-load': {
-      // Freeze goals.md into the bundle: parse/validate via lib/goals.mjs, cache into state.goals,
-      // record the goals.md content hash, and append goals_frozen (the COMMIT point) carrying the
-      // user-approval receipt keyed to the exact goals hash. One-shot semantics: any prior goal
-      // LIFECYCLE event (goals_frozen/goal_amended/goal_check/goal_waived) — NOT the seed-time
-      // capability event — or a phase past capture (anything other than brainstorm) rejects, so a
-      // re-freeze can never launder a new goal set in. A re-run at the IDENTICAL goals hash is an
-      // idempotent roll-forward (crash-safe): re-materialize the derived artifacts/cache but NEVER
-      // double-append the commit event. Multi-file write ordering is artifacts-FIRST (goals.md
-      // temp+rename, then state.yml temp+rename via the single-writer writeState), event append LAST.
-      const p = need(flags, 'state');
-      const dir = path.dirname(p);
-      // --interview-waived routes through the interview's OWN waiver operation before anything
-      // is frozen: a waiver is a durable ledger event, not a flag this verb interprets itself.
-      if (flags['interview-waived'] === true || flags['interview-waived'] === 'true') {
-        try {
-          // The SAME config-resolved probing minimum as `mp interview waive` (review finding,
-          // wave 13): this route's cap-waiver cause must not depend on which verb entered it.
-          const ivCfg = resolveRunConfig({ cli: {}, repoRoot: deriveDefaultTargetRepo(p), env: readEnvAll() });
-          waiveInterview({ statePath: p, reason: need(flags, 'reason'), probingMinimum: resolveProbingMinimum(ivCfg, readState(p)?.complexity), skillRoot: resolveInstalledSkillRoot(flags, p) });
-        } catch (e) {
-          die(`goals-load: --interview-waived refused: ${e.message}`, 1);
-        }
-      }
-      // The §5.4 gate: goals load only from a permitted interview exit, and an `exhausted` exit
-      // owes an Assumptions row for every unresolved id its terminal event listed. The replay and
-      // the spec path are handed to the library so its error CODE is what surfaces —
-      // `assumed_row_missing` is raised exactly as lib/goals.mjs emits it, never re-worded here.
-      {
-        // The replay is produced UNCONDITIONALLY: a replay that cannot be read is a hard
-        // failure, never a reason to skip the gate. (Swallowing the error would make an
-        // unreadable ledger the easiest way past the check.)
-        let replay;
-        try {
-          replay = replayInterview(p);
-        } catch (e) {
-          die(`goals-load: cannot replay the interview ledger: ${e.message}`, 1);
-        }
-        // The gate is keyed on the INTERVIEW LEDGER, not on the bundle's capability record.
-        // Keying it on the capability marker was tried and is wrong: this repo carries an
-        // explicit contract — test/bin-masterplan.test.mjs, "the seed-time capability event
-        // does NOT block the first goals-load" — that a freshly seeded bundle may load goals.
-        // So the rule is: an interview that was STARTED must exit properly (§5.4); a bundle
-        // where none ran proceeds, and `--interview-waived` is the documented way to record
-        // that choice durably.
-        const evs = replay.events ?? [];
-        const hasInterview = evs.some((e) => String(e?.type ?? '').startsWith('interview_'));
-        if (hasInterview) {
-          let specText = null;
-          const specPath = flags['spec-path'] ?? null;
-          if (specPath) {
-            try { specText = fs.readFileSync(String(specPath), 'utf8'); } catch (e) {
-              die(`goals-load: --spec-path unreadable: ${e.message}`, 1);
-            }
-          }
-          const gate = validateGoalsLoadGate({ replay, specText });
-          if (!gate.ok) die(`goals-load: ${gate.code}: ${gate.error}`, 1);
-        } else {
-          // A bundle with NO interview ledger predates the interview (a v1 bundle); it has no
-          // exit to gate on. The skip is stated rather than silent, so it can never be mistaken
-          // for a gate that passed.
-          process.stderr.write('masterplan: goals-load: no interview ledger on this bundle — the §5.4 exit gate has no exit to judge; use --interview-waived --reason to record a deliberate skip\n');
-        }
-      }
-      const state = loadForWrite(p);
-      let goalsMd;
-      try {
-        goalsMd = fs.readFileSync(String(need(flags, 'goals')), 'utf8');
-      } catch (e) {
-        die(`goals-load: --goals unreadable: ${e.message}`, 1);
-      }
-      const parsed = parseGoals(goalsMd);
-      const val = validateGoals(parsed);
-      if (!val.ok) die(`goals-load: invalid goals.md — ${val.error}`, 1);
-      const hash = pinnedGoalsHash(p, goalsMd);
-      let approval;
-      try {
-        approval = JSON.parse(fs.readFileSync(String(need(flags, 'approval')), 'utf8'));
-      } catch (e) {
-        die(`goals-load: --approval unreadable or not JSON: ${e.message}`, 1);
-      }
-      const ar = validateUserApprovalReceipt(approval, { goalsHash: hash, purpose: 'goal_load' });
-      if (!ar.ok) die(`goals-load: invalid approval receipt — ${ar.error}`, 1);
-      // Read events for the one-shot check (absent file == no events yet; any non-ENOENT read error
-      // fails loud rather than masquerading as an empty log).
-      const goalsEventsPath = path.join(dir, 'events.jsonl');
-      let goalsEventsText = '';
-      try {
-        goalsEventsText = fs.readFileSync(goalsEventsPath, 'utf8');
-      } catch (e) {
-        if (e.code !== 'ENOENT') die(`goals-load: events.jsonl unreadable: ${e.message}`, 1);
-      }
-      const goalEvents = goalsEventsText
-        .split('\n')
-        .filter((l) => l.trim())
-        .map((l) => {
-          try {
-            return JSON.parse(l);
-          } catch {
-            return null;
-          }
-        })
-        .filter(Boolean);
-      // PLAN-GATE FINDING: one-shot rejection counts only goal LIFECYCLE events; the seed-time
-      // capability event (bundle_created) does NOT block the first goals-load.
-      const priorFrozen = goalEvents.filter((e) => e.type === 'goals_frozen');
-      const otherGoalEvents = goalEvents.filter(
-        (e) => GOAL_LIFECYCLE_EVENT_TYPES.includes(e.type) && e.type !== 'goals_frozen'
-      );
-      if (otherGoalEvents.length) {
-        die(
-          `goals-load: rejected — a goal lifecycle event (${[...new Set(otherGoalEvents.map((e) => e.type))].join(', ')}) already exists; goals are past initial capture (use goals-amend for sanctioned changes)`,
-          1
-        );
-      }
-      if (priorFrozen.length) {
-        const priorHash = priorFrozen[priorFrozen.length - 1]?.data?.goals_hash;
-        if (priorHash === hash) {
-          // Idempotent roll-forward: a prior freeze already committed at THIS exact hash. A crash
-          // could have died between the artifact writes and the event append, or after — either way
-          // re-materialize the derived artifacts + cache to converge, but never re-append the event.
-          const goalsMdTmp = path.join(dir, 'goals.md.tmp');
-          fs.mkdirSync(dir, { recursive: true });
-          fs.writeFileSync(goalsMdTmp, goalsMd, 'utf8');
-          fs.renameSync(goalsMdTmp, path.join(dir, 'goals.md'));
-          writeState(p, { ...state, goals: parsed.goals, goals_md_hash: hash });
-          out({ goals_load: 'idempotent', goals_hash: hash, goals: parsed.goals.length });
-          break;
-        }
-        die(
-          `goals-load: rejected — goals already frozen at a different hash (${priorHash}); a re-freeze would launder a new goal set (use goals-amend)`,
-          1
-        );
-      }
-      // One-shot phase gate: capture is the brainstorm->plan boundary; any phase other than
-      // brainstorm is past the capture window.
-      if (state.phase !== undefined && state.phase !== null && state.phase !== 'brainstorm') {
-        die(
-          `goals-load: rejected — phase is '${state.phase}', past the goal-capture window (brainstorm); goals can only be frozen before planning`,
-          1
-        );
-      }
-      // `topic: |` was already valid input before the block form existed (the old parser read `|`
-      // as ordinary seed text). A bundle frozen under that spelling would re-hash silently here,
-      // voiding every goal_check/goal_waived receipt keyed to the old hash. Detect and refuse.
-      const legacyHash = legacyGoalsHash(goalsMd);
-      if (legacyHash && state.goals_md_hash && state.goals_md_hash === legacyHash && legacyHash !== hash) {
-        die(`goals-load: refusing to re-hash — this bundle's goals.md uses \`topic: |\`, which an `
-          + `earlier masterplan parsed as the literal seed "|" (stored hash ${legacyHash}); the block `
-          + `form now reads it as a verbatim anchor (${hash}). Re-freezing would invalidate every `
-          + `receipt bound to the stored hash. Rewrite the topic in the bare \`topic: <text>\` form to `
-          + `keep the old hash, or re-approve the goals deliberately to adopt the new anchor.`, 1);
-      }
-      // The SAME hazard, one normalization change later: masking fenced/indented code and
-      // ending the Intent block at an H1 are corrections, but a goals.md that quotes
-      // parser-looking text parsed differently before them. Re-hashing it here would void every
-      // receipt keyed to the stored hash, silently.
-      const preMaskHash = preCodeMaskGoalsHash(goalsMd);
-      if (preMaskHash && state.goals_md_hash && state.goals_md_hash === preMaskHash && preMaskHash !== hash) {
-        die(`goals-load: refusing to re-hash — this bundle's goals.md quotes parser-looking text `
-          + `inside a code block (or carries Intent fields under an H1), which an earlier masterplan `
-          + `read as content (stored hash ${preMaskHash}); code is no longer read as content `
-          + `(${hash}). Re-freezing would invalidate every receipt bound to the stored hash. Move the `
-          + `example out of the Intent block to keep the old hash, or re-approve the goals `
-          + `deliberately to adopt the corrected parse.`, 1);
-      }
-      // ---- multi-file write: artifacts FIRST (each temp+rename), event append LAST as commit ----
-      const goalsMdTmp = path.join(dir, 'goals.md.tmp');
-      fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(goalsMdTmp, goalsMd, 'utf8');
-      fs.renameSync(goalsMdTmp, path.join(dir, 'goals.md'));
-      writeState(p, { ...state, goals: parsed.goals, goals_md_hash: hash });
-      const goalsFrozenRecord = {
-        type: 'goals_frozen',
-        ts: flags.ts ?? new Date().toISOString(),
-        data: { goals_hash: hash, approval: ar.normalized },
-        summary: `goals frozen (${parsed.goals.length} goals) at ${hash}`,
-      };
-      appendEvent(p, goalsFrozenRecord);
-      out({
-        goals_load: 'frozen',
-        goals_hash: hash,
-        goals: parsed.goals.length,
-        event: 'goals_frozen',
-        ts: goalsFrozenRecord.ts,
-      });
-      break;
-    }
-    case 'goals-amend': {
-      // The ONLY sanctioned mid-run goal change. Requires a FRESH user-approval receipt bound to BOTH
-      // the prior (old) goals hash AND the new goals hash (purpose 'goal_amend') — never autonomous.
-      // IDs stay stable (renumbering rejected via validateAmendment); a removed goal must arrive as a
-      // tombstone {reason, amended_at} (a bare deletion is rejected). Appends a goal_amended event
-      // recording old->new hash + reason plus the full old/new content (text+signal) of every changed
-      // goal (amendmentDiff). Because every goal_check receipt and goal_waived waiver is keyed to the
-      // goals hash, advancing the frozen hash structurally invalidates them all (their validators reject
-      // a receipt/waiver whose goals_hash no longer matches) — the event records how many it strands.
-      // Reuses the goals-load multi-file write ordering: artifacts (goals.md temp+rename) FIRST, state
-      // via the single-writer writeState, event append LAST as the commit point.
-      const p = need(flags, 'state');
-      const dir = path.dirname(p);
-      const state = loadForWrite(p);
-      let goalsMd;
-      try {
-        goalsMd = fs.readFileSync(String(need(flags, 'goals')), 'utf8');
-      } catch (e) {
-        die(`goals-amend: --goals unreadable: ${e.message}`, 1);
-      }
-      const reason = String(need(flags, 'reason')).trim();
-      if (!reason) die('goals-amend: --reason must be a non-empty amendment justification', 1);
-      const parsed = parseGoals(goalsMd);
-      const newHash = pinnedGoalsHash(p, goalsMd);
-      // Read events: an amendment requires an already-committed goal set (goals_frozen), and drives the
-      // idempotent roll-forward off the latest goal_amended (absent file == no events; a non-ENOENT read
-      // error fails loud rather than masquerading as an empty log).
-      const amendEventsPath = path.join(dir, 'events.jsonl');
-      let amendEventsText = '';
-      try {
-        amendEventsText = fs.readFileSync(amendEventsPath, 'utf8');
-      } catch (e) {
-        if (e.code !== 'ENOENT') die(`goals-amend: events.jsonl unreadable: ${e.message}`, 1);
-      }
-      const amendAllEvents = amendEventsText
-        .split('\n')
-        .filter((l) => l.trim())
-        .map((l) => {
-          try {
-            return JSON.parse(l);
-          } catch {
-            return null;
-          }
-        })
-        .filter(Boolean);
-      const priorFrozenForAmend = amendAllEvents.filter((e) => e.type === 'goals_frozen');
-      if (!priorFrozenForAmend.length) {
-        die(
-          'goals-amend: rejected — no goals_frozen event exists; nothing to amend (use goals-load to freeze the initial goal set first)',
-          1
-        );
-      }
-      const amendEvents = amendAllEvents.filter((e) => e.type === 'goal_amended');
-      const lastAmend = amendEvents[amendEvents.length - 1];
-      // Idempotent roll-forward: the latest amendment already committed at THIS new hash (a crash could
-      // have died after the event append, or between the artifact writes and it). Re-materialize the
-      // derived artifacts + cache to converge, but NEVER double-append the event.
-      if (lastAmend && lastAmend.data && lastAmend.data.new_goals_hash === newHash) {
-        const goalsMdTmp = path.join(dir, 'goals.md.tmp');
-        fs.mkdirSync(dir, { recursive: true });
-        fs.writeFileSync(goalsMdTmp, goalsMd, 'utf8');
-        fs.renameSync(goalsMdTmp, path.join(dir, 'goals.md'));
-        writeState(p, { ...state, goals: parsed.goals, goals_md_hash: newHash });
-        out({ goals_amend: 'idempotent', new_goals_hash: newHash, goals: parsed.goals.length });
-        break;
-      }
-      // Old (currently committed) goal set + hash: state.goals is the derived cache, keyed by goals_md_hash.
-      const oldGoals = Array.isArray(state.goals) ? state.goals : [];
-      const oldHash =
-        state.goals_md_hash ??
-        (lastAmend ? lastAmend.data.new_goals_hash : priorFrozenForAmend[priorFrozenForAmend.length - 1].data.goals_hash);
-      // The ANCHOR: the topic seed of the currently-frozen goals.md — the original request this run
-      // is measured against (§3c). Read from disk because state.goals is the derived goal cache and
-      // carries no seed. The on-disk file is still the PRE-amendment one here (the idempotent branch
-      // above writes and breaks). Amendments may add or tombstone goals, never restate the ask; since
-      // every amendment from now on is checked against the current file, the seed cannot drift a step
-      // at a time. Pass the parsed DOCUMENTS so validateAmendment can see both seeds.
-      // FAIL CLOSED: a missing or unreadable goals.md means the anchor cannot be established, and
-      // `oldGoals` is a bare array carrying no seed to fall back on — so proceeding would skip the
-      // immutability check entirely and let an amendment recreate goals.md with a different ask.
-      // Silence there is exactly the hole this rule exists to close, so refuse instead.
-      let anchorSeed;
-      try {
-        anchorSeed = parseGoals(fs.readFileSync(path.join(dir, 'goals.md'), 'utf8')).topicSeed;
-      } catch (e) {
-        die(`goals-amend: cannot read the frozen goals.md to establish the anchor (${e.message}). `
-          + 'The anchor is the original request this run is measured against; amending without it '
-          + 'would let the ask be silently restated. Restore goals.md and retry.', 1);
-      }
-      // Amendment structural rules: new doc valid, IDs stable (no renumbering), removals are tombstones.
-      const amv = validateAmendment(oldGoals, parsed, { anchorSeed });
-      if (!amv.ok) die(`goals-amend: invalid amendment — ${amv.error}`, 1);
-      if (newHash === oldHash) {
-        die('goals-amend: rejected — new goals are identical to the current goals (nothing to amend)', 1);
-      }
-      // Fresh user-approval receipt bound to BOTH the old and new hash (never autonomous).
-      let approval;
-      try {
-        approval = JSON.parse(fs.readFileSync(String(need(flags, 'approval')), 'utf8'));
-      } catch (e) {
-        die(`goals-amend: --approval unreadable or not JSON: ${e.message}`, 1);
-      }
-      const ar = validateUserApprovalReceipt(approval, { goalsHash: newHash, oldGoalsHash: oldHash, purpose: 'goal_amend' });
-      if (!ar.ok) die(`goals-amend: invalid approval receipt — ${ar.error}`, 1);
-      const changes = amendmentDiff(oldGoals, parsed.goals);
-      // Count the receipts/waivers this amendment strands: all are hash-keyed, so advancing the goals
-      // hash invalidates every goal_check / goal_waived recorded against the OLD hash.
-      const invalidated = amendAllEvents.filter(
-        (e) =>
-          (e.type === 'goal_check' || e.type === 'goal_waived') &&
-          (e.data?.goals_hash === oldHash ||
-            e.data?.receipt?.goals_hash === oldHash ||
-            e.data?.waiver?.goals_hash === oldHash)
-      ).length;
-      // ---- multi-file write: artifacts FIRST (temp+rename), event append LAST as the commit ----
-      const goalsMdTmp = path.join(dir, 'goals.md.tmp');
-      fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(goalsMdTmp, goalsMd, 'utf8');
-      fs.renameSync(goalsMdTmp, path.join(dir, 'goals.md'));
-      writeState(p, { ...state, goals: parsed.goals, goals_md_hash: newHash });
-      const goalAmendedRecord = {
-        type: 'goal_amended',
-        ts: flags.ts ?? new Date().toISOString(),
-        data: {
-          old_goals_hash: oldHash,
-          new_goals_hash: newHash,
-          goals_hash: newHash,
-          reason,
-          changes,
-          invalidated_receipts: invalidated,
-          approval: ar.normalized,
-        },
-        summary: `goals amended (${changes.length} changed) ${oldHash} -> ${newHash}: ${reason}`,
-      };
-      appendEvent(p, goalAmendedRecord);
-      out({
-        goals_amend: 'amended',
-        old_goals_hash: oldHash,
-        new_goals_hash: newHash,
-        changes: changes.length,
-        invalidated_receipts: invalidated,
-        event: 'goal_amended',
-        ts: goalAmendedRecord.ts,
-      });
       break;
     }
     case 'record-goal-check': {
@@ -2471,80 +2163,6 @@ function main() {
       break;
     }
 
-    case 'goals-status': {
-      // Anti-forgetting mid-run: derive the CURRENT goal set from goals.md + events (NOT the possibly
-      // stale state.goals cache), surfacing tombstones and the frozen/amended hash lineage. Read-only —
-      // appends no event, writes no state. The current committed hash is the latest goal_amended's
-      // new_goals_hash, else the first goals_frozen's goals_hash; hash_ok flags whether goals.md on disk
-      // still matches that committed hash (a drift detector for a hand-edited or out-of-band goals.md).
-      const p = need(flags, 'state');
-      const dir = path.dirname(p);
-      readState(p); // validate the bundle is readable/parseable (read-only; result intentionally unused)
-      const eventsPath = path.join(dir, 'events.jsonl');
-      let eventsText = '';
-      try {
-        eventsText = fs.readFileSync(eventsPath, 'utf8');
-      } catch (e) {
-        if (e.code !== 'ENOENT') die(`goals-status: events.jsonl unreadable: ${e.message}`, 1);
-      }
-      const allEvents = eventsText
-        .split('\n')
-        .filter((l) => l.trim())
-        .map((l) => {
-          try {
-            return JSON.parse(l);
-          } catch {
-            return null;
-          }
-        })
-        .filter(Boolean);
-      const frozenEvents = allEvents.filter((e) => e.type === 'goals_frozen');
-      const amendEvents = allEvents.filter((e) => e.type === 'goal_amended');
-      if (!frozenEvents.length) {
-        out({ goals_status: 'unfrozen', frozen: false, amendments: 0, active: 0, tombstoned: 0, goals: [] });
-        break;
-      }
-      const frozenHash = frozenEvents[0].data?.goals_hash ?? null;
-      const lastAmend = amendEvents[amendEvents.length - 1];
-      const currentHash = lastAmend ? lastAmend.data?.new_goals_hash ?? null : frozenHash;
-      // Derive goals from goals.md on disk (the artifact), never state.goals — that is the whole point.
-      let goalsMdText = '';
-      let goalsMdPresent = true;
-      try {
-        goalsMdText = fs.readFileSync(path.join(dir, 'goals.md'), 'utf8');
-      } catch (e) {
-        if (e.code !== 'ENOENT') die(`goals-status: goals.md unreadable: ${e.message}`, 1);
-        goalsMdPresent = false;
-      }
-      const parsed = parseGoals(goalsMdText);
-      const computedHash = goalsMdPresent ? pinnedGoalsHash(p, goalsMdText) : null;
-      const hashOk = goalsMdPresent && computedHash === currentHash;
-      const goals = parsed.goals.map((g) => ({
-        id: g.id,
-        text: g.text,
-        signal: g.signal,
-        tombstoned: !!g.tombstone,
-        ...(g.tombstone
-          ? { tombstone_reason: g.tombstone.reason ?? null, tombstone_at: g.tombstone.amended_at ?? null }
-          : {}),
-      }));
-      const active = goals.filter((g) => !g.tombstoned).length;
-      const tombstoned = goals.filter((g) => g.tombstoned).length;
-      out({
-        goals_status: amendEvents.length ? 'amended' : 'frozen',
-        frozen: true,
-        frozen_hash: frozenHash,
-        current_hash: currentHash,
-        amendments: amendEvents.length,
-        goals_md_present: goalsMdPresent,
-        goals_md_hash: computedHash,
-        hash_ok: hashOk,
-        active,
-        tombstoned,
-        goals,
-      });
-      break;
-    }
     case 'migrate-bundle': {
       const p = need(flags, 'state');
       const text = readText(p);
@@ -2789,7 +2407,7 @@ function main() {
       let renderOk = true;
       try {
         // Commit: plan.md (tmp+rename, atomic) FIRST, then the plan_amended event append LAST as the
-        // commit point (mirrors the goals-amend artifact-then-event ordering).
+        // commit point (mirrors the promotion transaction's artifact-then-event ordering).
         const planMdTmp = planMdPath + '.tmp';
         fs.writeFileSync(planMdTmp, amended.planText, 'utf8');
         fs.renameSync(planMdTmp, planMdPath);
@@ -3227,10 +2845,10 @@ function main() {
       // §spec/plan gate enforcement: --phase=plan is the brainstorm→plan (SPEC) advance; --phase=execute
       // is the alt plan→execute (PLAN) path (load-plan is the normal one, gated identically below — H3
       // closes this bypass). Emits run_gate_review + exits nonzero when unsatisfied; --force bypasses.
-      // Goal-transition guards run BEFORE the spec/plan review gate so goals.md is present + consistent
+      // The run-Intent capture runs BEFORE the spec/plan review gate so goals.md is captured + consistent
       // when the (goals-enabled) spec gate hashes it. --phase=plan is the brainstorm->plan capture seam.
       if (phase === 'plan') {
-        enforceGoalsCaptureGate(p, state, flags); // exits 3 (run_goals_capture) if goals unfrozen
+        captureRunIntentAtPlanEntry(p, state); // captures the run Intent (appends goals_frozen) if not yet frozen
         enforceGoalsSplitBrainGuard(p, state, 'set-phase'); // no-ops pre-capture; dies on goals.md drift
         enforceGateReview('spec', p, flags, state, { op: 'set-phase' });
       }
@@ -3323,8 +2941,7 @@ function main() {
       } catch (e) {
         die(`merge-plan-fragments: ${e.message}`, 1);
       }
-      const mergeGoals = loadGoalsForCoverage(path.join(path.dirname(outIndex), 'state.yml'), 'merge-plan-fragments');
-      const errors = validatePlanIndex(index, mergeGoals);
+      const errors = validatePlanIndex(index);
       if (errors.length) {
         die(`merge-plan-fragments: produced an invalid index:\n  - ${errors.join('\n  - ')}`, 1);
       }
@@ -3352,8 +2969,7 @@ function main() {
       } catch (e) {
         die(`validate-plan-index: ${p} is not valid JSON (${e.message})`, 1);
       }
-      const validateGoals_ = loadGoalsForCoverage(path.join(path.dirname(p), 'state.yml'), 'validate-plan-index');
-      const errors = validatePlanIndex(index, validateGoals_);
+      const errors = validatePlanIndex(index);
       if (errors.length) {
         for (const e of errors) process.stderr.write(`  - ${e}\n`);
         die(`validate-plan-index: ${errors.length} error(s) in ${p}`, 1);

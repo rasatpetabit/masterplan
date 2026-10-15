@@ -661,24 +661,21 @@ test('a waiver persists the resolved minimum it was judged under, and the cap ca
   assert.equal(ev.cause, 'probing_minimum_unmet_at_cap');
   assert.equal(ev.probing_minimum, 3, 'the waiver persists the resolved minimum it was judged under');
   // THE BLACK-BOX ROUTE (advisor, wave-13 fix-round completion): drive the ACTUAL
-  // `goals-load --interview-waived` CLI route on the same ledger shape. The configured
-  // bundle (repo config medium: 3) records the cap-waiver cause + its resolved minimum
-  // 3; an identical unconfigured bundle (shipped default 2) records NO cause — omitting
-  // the configuration changes the recorded outcome, which is exactly the regression the
-  // adversary named (the route used to bypass the resolved minimum entirely).
-  const runWaiveRoute = (sp, sr) => spawnSync(process.execPath, [BIN, 'goals-load', `--state=${sp}`, '--interview-waived', '--reason=operator closed it', `--skill-root=${sr}`], { encoding: 'utf8' });
+  // `mp interview waive` CLI route on the same ledger shape (the retired goals-load
+  // route used to bypass the resolved minimum; the dedicated verb must not). The
+  // configured bundle (repo config medium: 3) records the cap-waiver cause + its
+  // resolved minimum 3; an identical unconfigured bundle (shipped default 2) records
+  // NO cause — omitting the configuration changes the recorded outcome.
+  const runWaiveRoute = (sp, sr) => spawnSync(process.execPath, [BIN, 'interview', 'waive', `--state=${sp}`, '--reason=operator closed it', `--skill-root=${sr}`], { encoding: 'utf8' });
   const cfg = build(true);
   const r1 = runWaiveRoute(cfg.statePath, cfg.skillRoot);
-  // The waive runs FIRST; the verb then dies on the freeze's missing --goals flag — the
-  // refusal is the freeze's, never the waiver's:
-  assert.match(r1.stderr, /missing required --goals/, 'the route got past the waiver to the freeze');
-  assert.doesNotMatch(r1.stderr, /interview-waived refused/);
+  assert.equal(r1.status, 0, `the waiver route must succeed: ${r1.stderr}`);
   const e1 = lastEvent(cfg.statePath, 'interview_waived');
   assert.equal(e1.cause, 'probing_minimum_unmet_at_cap', 'the CONFIGURED route records the cap cause');
   assert.equal(e1.probing_minimum, 3, 'the CONFIGURED route persists the resolved minimum 3');
   const noCfg = build(false);
   const r2 = runWaiveRoute(noCfg.statePath, noCfg.skillRoot);
-  assert.match(r2.stderr, /missing required --goals/);
+  assert.equal(r2.status, 0, `the unconfigured waiver route must succeed: ${r2.stderr}`);
   const e2 = lastEvent(noCfg.statePath, 'interview_waived');
   assert.equal(e2.cause, undefined, 'the UNCONFIGURED route (default minimum 2) has 2 eligible = met: no cap cause');
   assert.equal(e2.probing_minimum, 2, 'the unconfigured route persists the shipped default it was judged under');

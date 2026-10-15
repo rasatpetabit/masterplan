@@ -570,16 +570,54 @@ test('an approval that does not bind the on-disk bases is refused (replay/stale)
   assert.equal(fs.existsSync(promotionDocPath(fx.statePath, 'tx-stale')), false);
 });
 
-test('an approval missing the goals_amend receipt refuses when goals change', () => {
+test('approval contract 2: a new promotion needs only the outer approval when goals change (design regression case 5)', () => {
   const fx = mkbundle();
   const specResult = SPEC.replace('The old problem statement.', 'The amended problem statement.');
   const goalsResult = GOALS + '## G4: NoReceipt\nsignal: test\n';
   const inputs = amendmentInputs(fx, { specResult, goalsResult, txid: 'tx-noreceipt' });
   delete inputs.approval.goals_amend;
+  const out = beginPromotion({ statePath: fx.statePath, ...inputs, now: 1000 });
+  assert.equal(out.ok, true, 'the outer approval alone authorizes a goals.md change under contract 2');
+  const doc = JSON.parse(fs.readFileSync(promotionDocPath(fx.statePath, 'tx-noreceipt'), 'utf8'));
+  assert.equal(doc.approval_contract, 2, 'new prepared transactions carry approval_contract: 2');
+});
+
+test('approval contract: a legacy prepared document (no approval_contract) without its goal_amend receipt is refused (design regression case 5)', () => {
+  const fx = mkbundle();
+  const specResult = SPEC.replace('The old problem statement.', 'The amended problem statement.');
+  const goalsResult = GOALS + '## G4: LegacyDoc\nsignal: test\n';
+  const inputs = amendmentInputs(fx, { specResult, goalsResult, txid: 'tx-legacy-noreceipt' });
+  delete inputs.approval.goals_amend;
+  // Begin under contract 2 (the current writer), then strip the marker: the doc is now a
+  // legacy prepared document that changes goals.md and carries no goal_amend receipt.
+  beginPromotion({ statePath: fx.statePath, ...inputs, now: 1000 });
+  const docPath = promotionDocPath(fx.statePath, 'tx-legacy-noreceipt');
+  const doc = JSON.parse(fs.readFileSync(docPath, 'utf8'));
+  delete doc.approval_contract;
+  delete doc.approval.goals_amend;
+  fs.writeFileSync(docPath, JSON.stringify(doc, null, 2) + '\n');
   assert.throws(
-    () => beginPromotion({ statePath: fx.statePath, ...inputs, now: 1000 }),
+    () => commitPromotion({ statePath: fx.statePath, transactionId: 'tx-legacy-noreceipt', self: self(fx), now: 2000 }),
     /requires its own exact-artifact goal_amend approval receipt/
   );
+});
+
+test('approval contract: a legacy prepared document with its goal_amend receipt recovers under the original contract (design regression case 5)', () => {
+  const fx = mkbundle();
+  const specResult = SPEC.replace('The old problem statement.', 'The amended problem statement.');
+  const goalsResult = GOALS + '## G4: LegacyDoc\nsignal: test\n';
+  const inputs = amendmentInputs(fx, { specResult, goalsResult, txid: 'tx-legacy-receipt' });
+  beginPromotion({ statePath: fx.statePath, ...inputs, now: 1000 });
+  const docPath = promotionDocPath(fx.statePath, 'tx-legacy-receipt');
+  const doc = JSON.parse(fs.readFileSync(docPath, 'utf8'));
+  delete doc.approval_contract; // legacy shape
+  // A legacy begin normalized the goal_amend receipt into doc.approval; restore that half
+  // of the legacy document (contract-2 begin does not carry it).
+  doc.approval.goals_amend = inputs.approval.goals_amend;
+  fs.writeFileSync(docPath, JSON.stringify(doc, null, 2) + '\n');
+  const out = commitPromotion({ statePath: fx.statePath, transactionId: 'tx-legacy-receipt', self: self(fx), now: 2000 });
+  assert.equal(out.outcome, 'promoted', JSON.stringify(out));
+  assert.equal(fs.readFileSync(path.join(fx.bundleDir, 'goals.md'), 'utf8'), goalsResult);
 });
 
 // ---- the lock ------------------------------------------------------------------------

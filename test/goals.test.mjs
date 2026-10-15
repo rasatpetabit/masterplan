@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseGoals, validateGoals, validateAmendment, crossCheckGoals, amendmentDiff, goalsHash, legacyGoalsHash, GOAL_VERDICTS, INTENT_VERDICTS, waiverKey, validateUserApprovalReceipt, validateGoalCheckReceipt, validateGoalWaiver, INTERVIEW_EXITS, validateInterviewExit, specAssumptionIds, assumedIdsFromEnd, validateAssumptionsCoverage, validateGoalsLoadGate } from '../lib/goals.mjs';
+import { parseGoals, validateGoals, validateAmendment, goalsHash, legacyGoalsHash, GOAL_VERDICTS, INTENT_VERDICTS, waiverKey, validateUserApprovalReceipt, validateGoalCheckReceipt, validateGoalWaiver, INTERVIEW_EXITS, validateInterviewExit, specAssumptionIds, assumedIdsFromEnd, validateAssumptionsCoverage, validateGoalsLoadGate } from '../lib/goals.mjs';
 
 // --- PARSE TESTS ---
 
@@ -64,8 +64,10 @@ tombstone_at: 2026-07-01T00:00:00Z
 });
 
 // --- VALIDATE TESTS ---
+// G blocks are historical content: neither required nor validated. The operational
+// content is the Intent block.
 
-test('validateGoals accepts a well-formed active set', () => {
+test('validateGoals accepts a document with historical G blocks (either call shape)', () => {
   const md = `## G1: Test
 signal: test
 
@@ -80,78 +82,53 @@ signal: artifact
   assert.equal(res2.ok, true);
 });
 
-test('validateGoals rejects empty / all-tombstone set', () => {
-  const emptyRes = validateGoals({ topicSeed: '', goals: [] });
-  assert.equal(emptyRes.ok, false);
+test('validateGoals accepts a zero-G document — goals are neither required nor counted', () => {
+  const md = `topic: ship it
 
-  const tombstonedMd = `## G1: Old
-tombstone_reason: done
-tombstone_at: 2026-01-01T00:00:00Z
+## Intent
+why: w
+outcome: o
+anti_goals:
+- a
+done_means: d
 `;
-  const tombstonedParsed = parseGoals(tombstonedMd);
-  const tombRes = validateGoals(tombstonedParsed);
-  assert.equal(tombRes.ok, false);
+  const res = validateGoals(parseGoals(md));
+  assert.equal(res.ok, true);
 });
 
-test('validateGoals rejects duplicate ids', () => {
-  const goals = [
-    { id: 'G1', text: 'A', signal: 'test' },
-    { id: 'G1', text: 'B', signal: 'test' },
-  ];
-  const res = validateGoals(goals);
-  assert.equal(res.ok, false);
-  assert.match(res.error, /[Dd]uplicate/);
-});
-
-test('validateGoals rejects bad signal class', () => {
-  const goals = [
+test('validateGoals does not validate historical G content — arbitrary ids/signals/tombstones pass', () => {
+  // The G-block shape rules (unique ids, G<number> format, signal classes, tombstone
+  // completeness) are retired with the goal-block machinery.
+  const res = validateGoals([
     { id: 'G1', text: 'A', signal: 'vibes' },
-  ];
-  const res = validateGoals(goals);
-  assert.equal(res.ok, false);
-  // Error should mention allowed classes or signal
-  assert(res.error.includes('test') || res.error.includes('artifact') || res.error.match(/signal/i));
+    { id: 'G1', text: 'B', signal: 'test' },
+    { id: 'X9', text: 'C', signal: 'test', tombstone: { reason: '' } },
+  ]);
+  assert.equal(res.ok, true);
 });
 
-test('validateGoals rejects bad id format', () => {
-  const goals = [
-    { id: 'X1', text: 'A', signal: 'test' },
-  ];
-  const res = validateGoals(goals);
-  assert.equal(res.ok, false);
-});
+test('validateGoals validates the Intent fields when an Intent block is present', () => {
+  const md = `topic: t
 
-test('validateGoals rejects tombstone missing reason/amended_at', () => {
-  const goals = [
-    { id: 'G1', text: 'Active', signal: 'test' },
-    {
-      id: 'G2',
-      text: 'Tombstoned',
-      signal: 'test',
-      tombstone: { reason: '' },
-    },
-  ];
-  const res = validateGoals(goals);
+## Intent
+why: 
+outcome: o
+anti_goals:
+- a
+done_means: d
+`;
+  const res = validateGoals(parseGoals(md));
   assert.equal(res.ok, false);
+  assert.match(res.error, /Intent\.why must be a non-empty string/);
+
+  const badAnti = validateGoals({ topicSeed: 't', goals: [], intent: { why: 'w', outcome: 'o', done_means: 'd', anti_goals: 'nope' } });
+  assert.equal(badAnti.ok, false);
+  assert.match(badAnti.error, /anti_goals must be a list of strings/);
 });
 
 // --- AMENDMENT TESTS ---
 
-test('validateAmendment accepts stable ids with a new appended goal', () => {
-  const old = [
-    { id: 'G1', text: 'A', signal: 'test' },
-    { id: 'G2', text: 'B', signal: 'command' },
-  ];
-  const newGoals = [
-    { id: 'G1', text: 'A', signal: 'test' },
-    { id: 'G2', text: 'B', signal: 'command' },
-    { id: 'G3', text: 'C', signal: 'docs' },
-  ];
-  const res = validateAmendment(old, newGoals);
-  assert.equal(res.ok, true);
-});
-
-test('validateAmendment rejects a hard deletion (must tombstone)', () => {
+test('validateAmendment accepts goal churn while the anchor and Intent hold', () => {
   const old = [
     { id: 'G1', text: 'A', signal: 'test' },
     { id: 'G2', text: 'B', signal: 'command' },
@@ -159,144 +136,21 @@ test('validateAmendment rejects a hard deletion (must tombstone)', () => {
   const newGoals = [
     { id: 'G1', text: 'A', signal: 'test' },
   ];
-  const res = validateAmendment(old, newGoals);
-  assert.equal(res.ok, false);
-  assert(res.error.includes('G2') || res.error.match(/tombstone/i));
-});
-
-test('validateAmendment accepts a removal expressed as a tombstone', () => {
-  const old = [
-    { id: 'G1', text: 'A', signal: 'test' },
-    { id: 'G2', text: 'B', signal: 'command' },
-  ];
-  const newGoals = [
-    { id: 'G1', text: 'A', signal: 'test' },
-    {
-      id: 'G2',
-      text: 'B',
-      signal: 'command',
-      tombstone: { reason: 'done', amended_at: '2026-01-01T00:00:00Z' },
-    },
-  ];
-  const res = validateAmendment(old, newGoals);
-  assert.equal(res.ok, true);
-});
-
-test('validateAmendment rejects renumbering', () => {
-  // Old max num is 3. New goal G2 has num 2 <= 3, so it's considered a renumber/reuse error.
-  const old = [
-    { id: 'G1', text: 'A', signal: 'test' },
-    { id: 'G3', text: 'C', signal: 'command' },
-  ];
-  const newGoals = [
-    { id: 'G1', text: 'A', signal: 'test' },
-    { id: 'G3', text: 'C', signal: 'command' },
-    { id: 'G2', text: 'B', signal: 'docs' },
-  ];
-  const res = validateAmendment(old, newGoals);
-  assert.equal(res.ok, false);
-  assert.match(res.error, /renumber/i);
+  // A bare deletion, a renumbered addition, a tombstone — all inert now: G content is
+  // provenance, and the amendment's guarantees are the anchor and the Intent fields.
+  assert.equal(validateAmendment(old, newGoals).ok, true);
+  assert.equal(validateAmendment(old, [...newGoals, { id: 'G0', text: 'renumbered', signal: 'docs' }]).ok, true);
+  assert.equal(validateAmendment(old, [...old, { id: 'G2', text: 'B', signal: 'command', tombstone: { reason: 'done', amended_at: '2026-01-01T00:00:00Z' } }]).ok, true);
 });
 
 test('validateAmendment propagates single-doc invalidity', () => {
-  const old = [
-    { id: 'G1', text: 'A', signal: 'test' },
-  ];
-  const newGoals = [];
-  const res = validateAmendment(old, newGoals);
+  const old = { topicSeed: 't', goals: [], intent: { why: 'w', outcome: 'o', anti_goals: [], done_means: 'd' } };
+  const broken = { topicSeed: 't', goals: [], intent: { why: ' ', outcome: 'o', anti_goals: [], done_means: 'd' } };
+  const res = validateAmendment(old, broken);
   assert.equal(res.ok, false);
 });
 
-// --- CROSS-CHECK TESTS ---
-
-test('crossCheckGoals ok when md, state, event agree', () => {
-  const goals = [
-    { id: 'G1', text: 'A', signal: 'test' },
-    { id: 'G2', text: 'B', signal: 'command' },
-  ];
-  const res = crossCheckGoals(goals, goals, goals);
-  assert.equal(res.ok, true);
-});
-
-test('crossCheckGoals hard-errors on divergent text (never vacuous skip)', () => {
-  const md = [{ id: 'G1', text: 'A', signal: 'test' }];
-  const state = [{ id: 'G1', text: 'B', signal: 'test' }];
-  const event = [{ id: 'G1', text: 'A', signal: 'test' }];
-  const res = crossCheckGoals(md, state, event);
-  assert.equal(res.ok, false);
-  assert(res.error.includes('G1'));
-});
-
-test('crossCheckGoals hard-errors when a source is missing a goal', () => {
-  const md = [
-    { id: 'G1', text: 'A', signal: 'test' },
-    { id: 'G2', text: 'B', signal: 'command' },
-  ];
-  const state = [{ id: 'G1', text: 'A', signal: 'test' }];
-  const event = [
-    { id: 'G1', text: 'A', signal: 'test' },
-    { id: 'G2', text: 'B', signal: 'command' },
-  ];
-  const res = crossCheckGoals(md, state, event);
-  assert.equal(res.ok, false);
-  assert(res.error.includes('G2'));
-});
-
-test('crossCheckGoals treats null state as empty and still errors (no skip)', () => {
-  const md = [{ id: 'G1', text: 'A', signal: 'test' }];
-  const state = null;
-  const event = [{ id: 'G1', text: 'A', signal: 'test' }];
-  const res = crossCheckGoals(md, state, event);
-  assert.equal(res.ok, false);
-});
-
-// --- AMEND-DIFF TESTS ---
-
-test('amendmentDiff records added/modified/tombstoned and omits unchanged', () => {
-  const old = [
-    { id: 'G1', text: 'A', signal: 'test' },
-    { id: 'G2', text: 'B', signal: 'command' },
-  ];
-  const newGoals = [
-    { id: 'G1', text: 'A', signal: 'test' },
-    { id: 'G2', text: 'B2', signal: 'command' },
-    { id: 'G3', text: 'C', signal: 'docs' },
-  ];
-  const diff = amendmentDiff(old, newGoals);
-
-  const g2Entry = diff.find((d) => d.id === 'G2');
-  assert.equal(g2Entry.change, 'modified');
-  assert.equal(g2Entry.old.text, 'B');
-  assert.equal(g2Entry.new.text, 'B2');
-
-  const g3Entry = diff.find((d) => d.id === 'G3');
-  assert.equal(g3Entry.change, 'added');
-  assert.equal(g3Entry.old, null);
-  assert.equal(g3Entry.new.text, 'C');
-
-  const g1Entry = diff.find((d) => d.id === 'G1');
-  assert.equal(g1Entry, undefined);
-});
-
-test('amendmentDiff records a tombstoning', () => {
-  const old = [
-    { id: 'G1', text: 'A', signal: 'test' },
-  ];
-  const newGoals = [
-    {
-      id: 'G1',
-      text: 'A',
-      signal: 'test',
-      tombstone: { reason: 'done', amended_at: '2026-01-01T00:00:00Z' },
-    },
-  ];
-  const diff = amendmentDiff(old, newGoals);
-
-  const g1Entry = diff.find((d) => d.id === 'G1');
-  assert.equal(g1Entry.change, 'tombstoned');
-  assert(g1Entry.old);
-  assert(g1Entry.new);
-});
+// (crossCheckGoals and amendmentDiff are retired with the goal-block machinery.)
 
 // --- GOALS-HASH TESTS ---
 
@@ -909,9 +763,10 @@ test('v1 parses with intent null and version 1', () => {
   assert.equal(parsed.goals.length, 3);
 });
 
-test('validateGoals rejects v2 with wrong goal count or empty why', () => {
-  assert.equal(validateGoals(parseGoals(V2_TWO)).ok, false);
-  assert.equal(validateGoals(parseGoals(V2_SIX)).ok, false);
+test('validateGoals: the goal-count rule is gone; an empty Intent field still refuses', () => {
+  // G blocks are neither required nor counted — one, two, six or none all validate.
+  assert.equal(validateGoals(parseGoals(V2_TWO)).ok, true);
+  assert.equal(validateGoals(parseGoals(V2_SIX)).ok, true);
   assert.equal(validateGoals(parseGoals(V2_EMPTY_WHY)).ok, false);
 });
 
@@ -939,12 +794,16 @@ test('v2 goals without signal/evidence still validate', () => {
   assert.equal(res.ok, true);
 });
 
-test('validateAmendment still rejects an illegal goal mutation when the intent also changed', () => {
+test('validateAmendment reports a changed Intent even when G content churns alongside it', () => {
+  // G-block mutation rules (tombstoning, renumbering) are retired; the intent change is
+  // still a real, reported change that re-arms the spec gate.
   const variant = V2_FIXTURE
     .replace('outcome: the outcome', 'outcome: a different outcome')
     .replace('## G2: second', '## G9: second');
   const res = validateAmendment(parseGoals(V2_FIXTURE), parseGoals(variant));
-  assert.equal(res.ok, false);
+  assert.equal(res.ok, true);
+  assert.equal(res.changed, true);
+  assert.match(res.reason || '', /intent amended/);
 });
 
 // --- GOALS-LOAD GATE: interview exit + Assumptions coverage (task 14) ---

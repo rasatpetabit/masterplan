@@ -655,7 +655,7 @@ test('a v2 reminder quotes the Intent outcome line VERBATIM', () => {
   // also produced — comparing the reminder to its own input would prove nothing.
   const sourceLine = V2_GOALS.split('\n').find((l) => l.startsWith('outcome:'));
   assert.equal(r.line, sourceLine);
-  assert.equal(r.goals.length, 3);
+  assert.equal('goals' in r, false, 'the goal list is no longer part of the reminder');
 });
 
 test('a v2 outcome line is quoted with its ORIGINAL spacing, not a normalized rebuild', () => {
@@ -691,13 +691,11 @@ test('rawIntentOutcomeLine only reads INSIDE the Intent block', () => {
   assert.equal(rawIntentOutcomeLine(null), null);
 });
 
-test('a v1 bundle with no Intent block falls back to its goals rather than erroring', () => {
+test('a v1 bundle with no Intent block yields an empty reminder, not its historical goal list', () => {
   const r = goalsReminder(V1_GOALS);
   assert.equal(r.version, 1);
   assert.equal(r.outcome, null, 'there is no Intent block to quote');
-  assert.match(r.line, /^goals: /);
-  assert.match(r.line, /G1: the widget compiles/);
-  assert.match(r.line, /G2: the widget is documented/);
+  assert.equal(r.line, null, 'the goal-list fallback is retired with the goal blocks');
 });
 
 test('an absent or empty goals document yields a reminder with no line', () => {
@@ -705,26 +703,26 @@ test('an absent or empty goals document yields a reminder with no line', () => {
     const r = goalsReminder(input);
     assert.equal(r.line, null, JSON.stringify(input));
     assert.equal(r.version, null);
-    assert.deepEqual(r.goals, []);
+    assert.equal('goals' in r, false);
   }
 });
 
 test('a NON-EMPTY malformed document is swallowed rather than taking down the wave', () => {
   // These reach parseGoals for real (the empty-input cases above are rejected before it), so
   // this is the case that actually exercises the catch. A reminder is a courtesy; the
-  // finish-time goal check is what enforces the bar, and a summary must never fail a wave.
+  // finish-time Intent assessment is what enforces the bar, and a summary must never fail a wave.
   const malformed = '## Intent\nwhy: only a why, no outcome and no goals at all\n';
   const r = goalsReminder(malformed);
   assert.equal(r.line, null);
-  assert.deepEqual(r.goals, []);
+  assert.equal('goals' in r, false);
 });
 
-test('a v2 document whose Intent carries no outcome still reminds with its goals', () => {
+test('a v2 document whose Intent carries no outcome quotes nothing (no goal-list fallback)', () => {
   const noOutcome = V2_GOALS.replace(/^outcome: .*$/m, 'why: only a why here');
   const r = goalsReminder(noOutcome);
   assert.equal(r.version, 2, 'the Intent block still makes it v2');
   assert.equal(r.outcome, null);
-  assert.match(r.line, /^goals: /);
+  assert.equal(r.line, null);
 });
 
 test('waveSummary is terse and carries the reminder', () => {

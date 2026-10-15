@@ -63,13 +63,16 @@ test('prompt teaches the finish trampoline (mp finish-step op table, T2.4)', () 
   }
 });
 
-test('prompt teaches the goal-tracking contract (typed ops, gate, capture verb + finish flags)', () => {
+test('prompt teaches the goal-tracking contract (typed ops, gate, capture seam + finish flags)', () => {
   // The §2c goal ops + the goals gate are the load-bearing goal-tracking surface — each must be taught.
-  for (const op of ['run_goal_check', "gate:'goals_unmet'", 'run_goals_capture']) {
+  for (const op of ['run_goal_check', "gate:'goals_unmet'"]) {
     assert.ok(prompt.includes(op), `goal-tracking op/gate missing ${op}`);
   }
-  // The goals-capture verb freezes the run's goals — without it a goals-enabled bundle can't be armed.
-  assert.ok(prompt.includes('mp goals-load'), 'the goals-capture contract must name mp goals-load');
+  // The run-Intent capture is mechanical at the brainstorm→plan seam: entering plan validates
+  // goals.md and appends goals_frozen — no approval verb. The retired capture verb must be gone.
+  assert.ok(prompt.includes('--phase=plan'), 'the capture seam is the set-phase plan transition');
+  assert.ok(!prompt.includes('mp goals-load'), 'the retired goals-load verb must not be taught');
+  assert.ok(!prompt.includes('run_goals_capture'), 'the retired capture op must not be taught');
   // The goal-check answer flags ARE the resolution surface — each must be taught or the goal gate dead-ends.
   // A1 (2026-08-30): the engine vocabulary (GOALS_CHOICES = fix|waiver|abort in lib/finish-step.mjs) — the
   // former --goals-met/--goals-unmet/--goals-waived/--waiver-reason/--manual-verdict were never read by

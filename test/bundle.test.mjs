@@ -318,8 +318,8 @@ test('buildSeedState: a minimal seed is a core-valid v8 brainstorm bundle with t
   // the finish-step gate reads. The vestigial state.codex.routing default is no longer written.
   assert.deepEqual(s.review, { adversary: true });
   assert.ok(!('codex' in s), 'vestigial state.codex (routing) is no longer seeded');
-  assert.equal(s.goals_enabled, true); // bundle-level capability marker (post-feature)
-  assert.deepEqual(s.goals, []); // derived cache starts empty
+  assert.equal(s.goals_enabled, true); // durable run-Intent marker (the bundle has a run Intent)
+  assert.ok(!('goals' in s), 'the state.goals derived cache is no longer seeded');
   assert.deepEqual(parseState(serializeState(s)), s); // survives the on-disk format
 });
 
@@ -630,14 +630,12 @@ test('validateCoreState: goals is optional-when-present (pre-feature bundle with
   assert.deepEqual(validateCoreState(preFeature), []);
 });
 
-test('validateCoreState: flags malformed goals entries and a mutable status field', () => {
+test('validateCoreState: the historical state.goals cache is no longer validated (legacy content tolerated)', () => {
   const core = buildSeedState({ slug: 'g', topic: 't', createdAt: 'T' });
-  assert.ok(validateCoreState({ ...core, goals: {} }).some((p) => /goals must be an array/.test(p)));
-  assert.ok(validateCoreState({ ...core, goals: [{ text: 'x', signal: 's' }] }).some((p) => /goals\[0\] must have a non-empty string id/.test(p)));
-  assert.ok(validateCoreState({ ...core, goals: [{ id: 'G1', signal: 's' }] }).some((p) => /goals\[0\] must have a non-empty string text/.test(p)));
-  assert.ok(validateCoreState({ ...core, goals: [{ id: 'G1', text: 'x' }] }).some((p) => /goals\[0\] must have a non-empty string signal/.test(p)));
-  assert.ok(validateCoreState({ ...core, goals: [{ id: 'G1', text: 'x', signal: 's', status: 'achieved' }] }).some((p) => /must not carry a mutable status field/.test(p)));
-  assert.ok(validateCoreState({ ...core, goals: [{ id: 'G1', text: 'x', signal: 's', tombstone: { reason: 'r' } }] }).some((p) => /tombstone\.amended_at must be a non-empty string/.test(p)));
+  // The cache is no longer produced; a legacy bundle carrying any of these shapes —
+  // well-formed or not — keeps them as tolerated content, never a finding.
+  assert.deepEqual(validateCoreState({ ...core, goals: {} }), validateCoreState(core));
+  assert.deepEqual(validateCoreState({ ...core, goals: [{ text: 'x', signal: 's', status: 'achieved' }] }), validateCoreState(core));
 });
 
 test('buildCapabilityEvent: builds the event-backed capability record carrying goals_enabled', () => {

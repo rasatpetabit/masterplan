@@ -1339,9 +1339,7 @@ test('seed-tasks: populates state.tasks from plan.index.json so a freshly-planne
   const dir = tmpDir('mp-seedtasks-');
   const p = path.join(dir, 'state.yml');
   run(['seed', `--state=${p}`, '--slug=lic-lock', '--topic=commercial license lock', ...seedArgs(p)]);
-  freezeInitialGoals(p, dir); // seeded bundle is goals_enabled — capture the goal set before planning
-  passGate(p, 'spec');
-  assert.equal(JSON.parse(run(['set-phase', `--state=${p}`, '--phase=plan']).stdout).phase, 'plan');
+  captureInitialIntent(p, dir); // seeded bundle is goals_enabled — the run Intent is captured entering plan
   const planIdx = path.join(dir, 'plan.index.json');
   const planTasks = Array.from({ length: 42 }, (_, i) => ({
     id: i + 1, wave: Math.floor(i / 6), files: [`src/f${i}.rs`], description: `task ${i + 1}`,
@@ -1409,9 +1407,7 @@ test('ISSUE G: set-phase execute over 0 tasks is refused (--force advances but d
   const dir = tmpDir('mp-issueg-');
   const p = path.join(dir, 'state.yml');
   run(['seed', `--state=${p}`, '--slug=lic-lock', '--topic=commercial license lock', ...seedArgs(p)]);
-  freezeInitialGoals(p, dir); // seeded bundle is goals_enabled — capture the goal set before planning
-  passGate(p, 'spec');
-  assert.equal(JSON.parse(run(['set-phase', `--state=${p}`, '--phase=plan']).stdout).phase, 'plan');
+  captureInitialIntent(p, dir); // seeded bundle is goals_enabled — the run Intent is captured entering plan
   // (1) write guard: refuse to enter execute with 0 tasks; phase stays 'plan', nothing written.
   const refused = run(['set-phase', `--state=${p}`, '--phase=execute']);
   assert.equal(refused.status, 1);
@@ -2388,7 +2384,10 @@ test('gate: --force bypasses set-phase→plan and appends a spec_gate_bypassed a
   assert.match(events, /spec_gate_bypassed/);
 });
 
-// ---- goals-load: freeze goals.md into the bundle (one-shot capture + approval receipt) ----
+// ---- spec→plan run-Intent capture (set-phase --phase=plan) + reserved event types ----
+// The goals-load/goals-amend/goals-status verbs are retired: capture is mechanical at the
+// brainstorm→plan seam, the sanctioned mid-run Intent amendment is the promotion transaction,
+// and `mp event` refuses the machine-owned event types.
 import { goalsHash as goalsHashFn, encodeIntentBlock, INTENT_CODEC_VERSION } from '../lib/goals.mjs';
 import { captureSchema, registerSchemaSnapshotModule } from '../lib/interview.mjs';
 import { captureSchemaSnapshot, computeSkillIdentity } from '../lib/schema-snapshot.mjs';
@@ -2408,449 +2407,193 @@ after(() => {
   }
 });
 function goalsBundle(over = {}) {
-  return tmpBundle(v8({ phase: 'brainstorm', goals_enabled: true, goals: [], tasks: [], ...over }));
+  return tmpBundle(v8({ phase: 'brainstorm', goals_enabled: true, tasks: [], ...over }));
 }
-const GOALS_MD = 'topic: ship the widget\n\n## G1: the widget compiles\nsignal: command\n\n## G2: the widget is documented\nsignal: docs\n';
-function writeGoals(dir, md = GOALS_MD) {
-  const gp = path.join(dir, 'src-goals.md');
+// A zero-G run-Intent document: the `topic:` anchor + `## Intent` block, nothing else.
+const INTENT_MD = 'topic: ship the widget\n\n## Intent\nwhy: operators need the widget\noutcome: the widget ships and is documented\nanti_goals:\n- unrelated infrastructure\ndone_means: the widget is usable in production\n';
+function writeBundleGoals(dir, md = INTENT_MD) {
+  const gp = path.join(dir, 'goals.md');
   fs.writeFileSync(gp, md);
   return gp;
 }
-function writeApproval(dir, hash, over = {}) {
-  const ap = path.join(dir, 'approval.json');
-  fs.writeFileSync(ap, JSON.stringify({ attested_by: 'user', purpose: 'goal_load', goals_hash: hash, question: 'Approve these goals?', answer: 'yes', ts: '2026-07-01T00:00:00Z', ...over }));
-  return ap;
-}
-
-test('goals-load: freezes goals into state + appends goals_frozen with the approval receipt', () => {
-  const p = goalsBundle();
-  const dir = path.dirname(p);
-  const gp = writeGoals(dir);
-  const hash = goalsHashFn(GOALS_MD);
-  const ap = writeApproval(dir, hash);
-  const r = run(['goals-load', `--state=${p}`, `--goals=${gp}`, `--approval=${ap}`, '--ts=2026-07-01T00:00:00Z']);
-  assert.equal(r.status, 0, `goals-load should succeed: ${r.stderr}`);
-  const out = JSON.parse(r.stdout);
-  assert.equal(out.goals_load, 'frozen');
-  assert.equal(out.goals_hash, hash);
-  assert.equal(out.goals, 2);
-  const st = read(p);
-  assert.equal(st.goals_md_hash, hash);
-  assert.equal(st.goals.length, 2);
-  assert.equal(st.goals[0].id, 'G1');
-  assert.equal(fs.readFileSync(path.join(dir, 'goals.md'), 'utf8'), GOALS_MD);
-  const events = fs.readFileSync(path.join(dir, 'events.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
-  const frozen = events.filter((e) => e.type === 'goals_frozen');
-  assert.equal(frozen.length, 1);
-  assert.equal(frozen[0].data.goals_hash, hash);
-  assert.equal(frozen[0].data.approval.attested_by, 'user');
-});
-
-test('goals-load: rejects a malformed goals.md (validation failure)', () => {
-  const p = goalsBundle();
-  const dir = path.dirname(p);
-  const bad = 'topic: x\n\n## G1: only a title\nsignal: not-a-class\n';
-  const gp = writeGoals(dir, bad);
-  const ap = writeApproval(dir, goalsHashFn(bad));
-  const r = run(['goals-load', `--state=${p}`, `--goals=${gp}`, `--approval=${ap}`]);
-  assert.equal(r.status, 1);
-  assert.match(r.stderr, /invalid goals\.md/);
-});
-
-test('goals-load: rejects a missing/invalid approval receipt', () => {
-  const p = goalsBundle();
-  const dir = path.dirname(p);
-  const gp = writeGoals(dir);
-  const ap = writeApproval(dir, 'sha256:wronghash');
-  const r = run(['goals-load', `--state=${p}`, `--goals=${gp}`, `--approval=${ap}`]);
-  assert.equal(r.status, 1);
-  assert.match(r.stderr, /approval receipt/);
-});
-
-test('goals-load: one-shot — a re-freeze with DIFFERENT goals is rejected (no laundering)', () => {
-  const p = goalsBundle();
-  const dir = path.dirname(p);
-  const gp = writeGoals(dir);
-  const hash = goalsHashFn(GOALS_MD);
-  const ap = writeApproval(dir, hash);
-  assert.equal(run(['goals-load', `--state=${p}`, `--goals=${gp}`, `--approval=${ap}`]).status, 0);
-  const md2 = 'topic: different\n\n## G1: a changed goal\nsignal: test\n';
-  const gp2 = writeGoals(dir, md2);
-  const ap2 = writeApproval(dir, goalsHashFn(md2));
-  const r = run(['goals-load', `--state=${p}`, `--goals=${gp2}`, `--approval=${ap2}`]);
-  assert.equal(r.status, 1);
-  assert.match(r.stderr, /different hash|launder/);
-});
-
-test('goals-load: idempotent roll-forward — re-run at the SAME hash succeeds without a second event', () => {
-  const p = goalsBundle();
-  const dir = path.dirname(p);
-  const gp = writeGoals(dir);
-  const hash = goalsHashFn(GOALS_MD);
-  const ap = writeApproval(dir, hash);
-  assert.equal(run(['goals-load', `--state=${p}`, `--goals=${gp}`, `--approval=${ap}`]).status, 0);
-  const r2 = run(['goals-load', `--state=${p}`, `--goals=${gp}`, `--approval=${ap}`]);
-  assert.equal(r2.status, 0, `re-run should be idempotent: ${r2.stderr}`);
-  assert.equal(JSON.parse(r2.stdout).goals_load, 'idempotent');
-  const frozen = fs.readFileSync(path.join(dir, 'events.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((e) => e.type === 'goals_frozen');
-  assert.equal(frozen.length, 1, 'no second goals_frozen event on idempotent re-run');
-});
-
-test('goals-load: one-shot — rejected once another goal lifecycle event exists', () => {
-  const p = goalsBundle();
-  const dir = path.dirname(p);
-  const gp = writeGoals(dir);
-  const hash = goalsHashFn(GOALS_MD);
-  const ap = writeApproval(dir, hash);
-  run(['event', `--state=${p}`, '--type=goal_waived', '--data={"goals_hash":"sha256:x"}']);
-  const r = run(['goals-load', `--state=${p}`, `--goals=${gp}`, `--approval=${ap}`]);
-  assert.equal(r.status, 1);
-  assert.match(r.stderr, /past initial capture|lifecycle event/);
-});
-
-test('goals-load: one-shot — rejected when phase is past capture (not brainstorm)', () => {
-  const p = goalsBundle({ phase: 'plan' });
-  const dir = path.dirname(p);
-  const gp = writeGoals(dir);
-  const hash = goalsHashFn(GOALS_MD);
-  const ap = writeApproval(dir, hash);
-  const r = run(['goals-load', `--state=${p}`, `--goals=${gp}`, `--approval=${ap}`]);
-  assert.equal(r.status, 1);
-  assert.match(r.stderr, /past the goal-capture window|brainstorm/);
-});
-
-test('goals-load: the seed-time capability event does NOT block the first goals-load', () => {
-  const p = goalsBundle();
-  const dir = path.dirname(p);
-  run(['event', `--state=${p}`, '--type=bundle_created', '--data={"goals_enabled":true}']);
-  const gp = writeGoals(dir);
-  const hash = goalsHashFn(GOALS_MD);
-  const ap = writeApproval(dir, hash);
-  const r = run(['goals-load', `--state=${p}`, `--goals=${gp}`, `--approval=${ap}`]);
-  assert.equal(r.status, 0, `capability event must not block first load: ${r.stderr}`);
-  assert.equal(JSON.parse(r.stdout).goals_load, 'frozen');
-});
-
-// ---- goals-amend: the only sanctioned mid-run goal change (fresh approval, ids stable, tombstones) ----
-// A valid amendment of GOALS_MD (ids G1/G2 preserved): G1 text modified, G2 tombstoned (kept, not
-// deleted), G3 added with a strictly-greater number.
-const AMEND_MD =
-  'topic: ship the widget\n\n## G1: the widget compiles fast\nsignal: command\n\n## G2: the widget is documented\nsignal: docs\ntombstone_reason: descoped\ntombstone_at: 2026-07-02T00:00:00Z\n\n## G3: the widget ships to prod\nsignal: test\n';
-function freezeInitialGoals(p, dir) {
-  const gp = writeGoals(dir);
-  const hash = goalsHashFn(GOALS_MD);
-  const ap = writeApproval(dir, hash);
-  const r = run(['goals-load', `--state=${p}`, `--goals=${gp}`, `--approval=${ap}`]);
-  assert.equal(r.status, 0, `goals-load setup should succeed: ${r.stderr}`);
-  return hash;
-}
-function writeAmendApproval(dir, oldHash, newHash, over = {}) {
-  const ap = path.join(dir, 'amend-approval.json');
-  fs.writeFileSync(
-    ap,
-    JSON.stringify({
-      attested_by: 'user',
-      purpose: 'goal_amend',
-      goals_hash: newHash,
-      old_goals_hash: oldHash,
-      question: 'Approve this goal amendment?',
-      answer: 'yes',
-      ts: '2026-07-02T00:00:00Z',
-      ...over,
-    })
-  );
-  return ap;
-}
-function writeAmendGoals(dir, md) {
-  const gp = path.join(dir, 'amend-goals.md');
-  fs.writeFileSync(gp, md);
-  return gp;
-}
-
-test('goals-amend: amends goals — updates state + goals.md + appends goal_amended with old->new hash, reason, and full per-goal changes', () => {
-  const p = goalsBundle();
-  const dir = path.dirname(p);
-  const oldHash = freezeInitialGoals(p, dir);
-  const newHash = goalsHashFn(AMEND_MD);
-  const gp = writeAmendGoals(dir, AMEND_MD);
-  const ap = writeAmendApproval(dir, oldHash, newHash);
-  const r = run(['goals-amend', `--state=${p}`, `--goals=${gp}`, `--approval=${ap}`, '--reason=descope docs goal', '--ts=2026-07-02T00:00:00Z']);
-  assert.equal(r.status, 0, `goals-amend should succeed: ${r.stderr}`);
-  const out = JSON.parse(r.stdout);
-  assert.equal(out.goals_amend, 'amended');
-  assert.equal(out.old_goals_hash, oldHash);
-  assert.equal(out.new_goals_hash, newHash);
-  assert.equal(out.changes, 3);
-  const st = read(p);
-  assert.equal(st.goals_md_hash, newHash);
-  assert.equal(st.goals.length, 3);
-  assert.equal(fs.readFileSync(path.join(dir, 'goals.md'), 'utf8'), AMEND_MD);
-  const events = fs.readFileSync(path.join(dir, 'events.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
-  const amended = events.filter((e) => e.type === 'goal_amended');
-  assert.equal(amended.length, 1);
-  assert.equal(amended[0].data.old_goals_hash, oldHash);
-  assert.equal(amended[0].data.new_goals_hash, newHash);
-  assert.equal(amended[0].data.reason, 'descope docs goal');
-  const byId = Object.fromEntries(amended[0].data.changes.map((c) => [c.id, c]));
-  assert.equal(byId.G1.change, 'modified');
-  assert.equal(byId.G1.old.text, 'the widget compiles');
-  assert.equal(byId.G1.new.text, 'the widget compiles fast');
-  assert.equal(byId.G2.change, 'tombstoned');
-  assert.equal(byId.G3.change, 'added');
-  assert.equal(byId.G3.new.signal, 'test');
-});
-
-test('goals-amend: rejected when no goals_frozen exists yet (nothing to amend)', () => {
-  const p = goalsBundle();
-  const dir = path.dirname(p);
-  const newHash = goalsHashFn(AMEND_MD);
-  const gp = writeAmendGoals(dir, AMEND_MD);
-  const ap = writeAmendApproval(dir, 'sha256:none', newHash);
-  const r = run(['goals-amend', `--state=${p}`, `--goals=${gp}`, `--approval=${ap}`, '--reason=x']);
-  assert.equal(r.status, 1);
-  assert.match(r.stderr, /nothing to amend|no goals_frozen/);
-});
-
-test('goals-amend: rejects a bare deletion — a removed goal must become a tombstone', () => {
-  const p = goalsBundle();
-  const dir = path.dirname(p);
-  const oldHash = freezeInitialGoals(p, dir);
-  const md = 'topic: ship the widget\n\n## G1: the widget compiles\nsignal: command\n';
-  const newHash = goalsHashFn(md);
-  const gp = writeAmendGoals(dir, md);
-  const ap = writeAmendApproval(dir, oldHash, newHash);
-  const r = run(['goals-amend', `--state=${p}`, `--goals=${gp}`, `--approval=${ap}`, '--reason=drop G2']);
-  assert.equal(r.status, 1);
-  assert.match(r.stderr, /removed|tombstone/);
-});
-
-test('goals-amend: rejects renumbering — a new goal must not reuse a number <= the max old id', () => {
-  const p = goalsBundle();
-  const dir = path.dirname(p);
-  const oldHash = freezeInitialGoals(p, dir);
-  const md = 'topic: ship the widget\n\n## G0: sneaky early goal\nsignal: test\n\n## G1: the widget compiles\nsignal: command\n\n## G2: the widget is documented\nsignal: docs\n';
-  const newHash = goalsHashFn(md);
-  const gp = writeAmendGoals(dir, md);
-  const ap = writeAmendApproval(dir, oldHash, newHash);
-  const r = run(['goals-amend', `--state=${p}`, `--goals=${gp}`, `--approval=${ap}`, '--reason=renumber']);
-  assert.equal(r.status, 1);
-  assert.match(r.stderr, /renumber/);
-});
-
-test('goals-amend: rejects a restated topic seed — the anchor is immutable', () => {
-  // The seed is the run's ANCHOR: the original request §3c measures the plan against. An
-  // amendment may add or tombstone goals, but restating the ask would let the review→fix loop
-  // edit the very thing it is judged against.
-  const p = goalsBundle();
-  const dir = path.dirname(p);
-  const oldHash = freezeInitialGoals(p, dir);
-  const md = 'topic: ship a subtly different widget\n\n## G1: the widget compiles\nsignal: command\n\n## G2: the widget is documented\nsignal: docs\n';
-  const newHash = goalsHashFn(md);
-  const gp = writeAmendGoals(dir, md);
-  const ap = writeAmendApproval(dir, oldHash, newHash);
-  const r = run(['goals-amend', `--state=${p}`, `--goals=${gp}`, `--approval=${ap}`, '--reason=restate the ask']);
-  assert.equal(r.status, 1);
-  assert.match(r.stderr, /topic seed/i);
-});
-
-test('goals-amend: rejects an approval receipt not bound to the prior goals hash (stale/replay)', () => {
-  const p = goalsBundle();
-  const dir = path.dirname(p);
-  freezeInitialGoals(p, dir);
-  const newHash = goalsHashFn(AMEND_MD);
-  const gp = writeAmendGoals(dir, AMEND_MD);
-  const ap = writeAmendApproval(dir, 'sha256:wrongold', newHash);
-  const r = run(['goals-amend', `--state=${p}`, `--goals=${gp}`, `--approval=${ap}`, '--reason=x']);
-  assert.equal(r.status, 1);
-  assert.match(r.stderr, /approval receipt/);
-});
-
-test('goals-amend: rejects an approval receipt with the wrong purpose (goal_load replayed as amend)', () => {
-  const p = goalsBundle();
-  const dir = path.dirname(p);
-  const oldHash = freezeInitialGoals(p, dir);
-  const newHash = goalsHashFn(AMEND_MD);
-  const gp = writeAmendGoals(dir, AMEND_MD);
-  const ap = writeAmendApproval(dir, oldHash, newHash, { purpose: 'goal_load' });
-  const r = run(['goals-amend', `--state=${p}`, `--goals=${gp}`, `--approval=${ap}`, '--reason=x']);
-  assert.equal(r.status, 1);
-  assert.match(r.stderr, /approval receipt/);
-});
-
-test('goals-amend: idempotent roll-forward — re-running the same amendment does not append a second event', () => {
-  const p = goalsBundle();
-  const dir = path.dirname(p);
-  const oldHash = freezeInitialGoals(p, dir);
-  const newHash = goalsHashFn(AMEND_MD);
-  const gp = writeAmendGoals(dir, AMEND_MD);
-  const ap = writeAmendApproval(dir, oldHash, newHash);
-  assert.equal(run(['goals-amend', `--state=${p}`, `--goals=${gp}`, `--approval=${ap}`, '--reason=first']).status, 0);
-  const r2 = run(['goals-amend', `--state=${p}`, `--goals=${gp}`, `--approval=${ap}`, '--reason=first']);
-  assert.equal(r2.status, 0, `re-run should be idempotent: ${r2.stderr}`);
-  assert.equal(JSON.parse(r2.stdout).goals_amend, 'idempotent');
-  const amended = fs.readFileSync(path.join(dir, 'events.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((e) => e.type === 'goal_amended');
-  assert.equal(amended.length, 1, 'no second goal_amended event on idempotent re-run');
-});
-
-test('goals-amend: invalidates existing goal-check receipts and waivers keyed to the old hash', () => {
-  const p = goalsBundle();
-  const dir = path.dirname(p);
-  const oldHash = freezeInitialGoals(p, dir);
-  // Seed a goal_check and a goal_waived event keyed to the CURRENT (old) goals hash.
-  run(['event', `--state=${p}`, '--type=goal_check', `--data=${JSON.stringify({ goals_hash: oldHash })}`]);
-  run(['event', `--state=${p}`, '--type=goal_waived', `--data=${JSON.stringify({ goals_hash: oldHash })}`]);
-  const newHash = goalsHashFn(AMEND_MD);
-  const gp = writeAmendGoals(dir, AMEND_MD);
-  const ap = writeAmendApproval(dir, oldHash, newHash);
-  const r = run(['goals-amend', `--state=${p}`, `--goals=${gp}`, `--approval=${ap}`, '--reason=descope']);
-  assert.equal(r.status, 0, `goals-amend should succeed: ${r.stderr}`);
-  assert.equal(JSON.parse(r.stdout).invalidated_receipts, 2);
-  const st = read(p);
-  assert.equal(st.goals_md_hash, newHash);
-  assert.notEqual(st.goals_md_hash, oldHash);
-});
-
-test('goals-status: unfrozen bundle reports no frozen goals', () => {
-  const p = goalsBundle();
-  const r = run(['goals-status', `--state=${p}`]);
-  assert.equal(r.status, 0, `goals-status should succeed: ${r.stderr}`);
-  const out = JSON.parse(r.stdout);
-  assert.equal(out.goals_status, 'unfrozen');
-  assert.equal(out.frozen, false);
-  assert.equal(out.amendments, 0);
-  assert.deepEqual(out.goals, []);
-});
-
-test('goals-status: after goals-load reports frozen hash + active goals derived from goals.md', () => {
-  const p = goalsBundle();
-  const dir = path.dirname(p);
-  const hash = freezeInitialGoals(p, dir);
-  const r = run(['goals-status', `--state=${p}`]);
-  assert.equal(r.status, 0, `goals-status should succeed: ${r.stderr}`);
-  const out = JSON.parse(r.stdout);
-  assert.equal(out.goals_status, 'frozen');
-  assert.equal(out.frozen, true);
-  assert.equal(out.frozen_hash, hash);
-  assert.equal(out.current_hash, hash);
-  assert.equal(out.amendments, 0);
-  assert.equal(out.hash_ok, true);
-  assert.equal(out.active, 2);
-  assert.equal(out.tombstoned, 0);
-  assert.equal(out.goals.length, 2);
-  assert.equal(out.goals[0].id, 'G1');
-  assert.equal(out.goals[0].tombstoned, false);
-});
-
-test('goals-status: after goals-amend reflects amended hash + tombstones', () => {
-  const p = goalsBundle();
-  const dir = path.dirname(p);
-  const oldHash = freezeInitialGoals(p, dir);
-  const newHash = goalsHashFn(AMEND_MD);
-  const gp = writeAmendGoals(dir, AMEND_MD);
-  const ap = writeAmendApproval(dir, oldHash, newHash);
-  assert.equal(
-    run(['goals-amend', `--state=${p}`, `--goals=${gp}`, `--approval=${ap}`, '--reason=descope']).status,
-    0
-  );
-  const r = run(['goals-status', `--state=${p}`]);
-  assert.equal(r.status, 0, `goals-status should succeed: ${r.stderr}`);
-  const out = JSON.parse(r.stdout);
-  assert.equal(out.goals_status, 'amended');
-  assert.equal(out.frozen_hash, oldHash);
-  assert.equal(out.current_hash, newHash);
-  assert.equal(out.amendments, 1);
-  assert.equal(out.hash_ok, true);
-  assert.equal(out.active, 2);
-  assert.equal(out.tombstoned, 1);
-  const g2 = out.goals.find((g) => g.id === 'G2');
-  assert.equal(g2.tombstoned, true);
-  assert.equal(g2.tombstone_reason, 'descoped');
-});
-
-test('goals-status: derives from goals.md + events, not the stale state.goals cache', () => {
-  const p = goalsBundle();
-  const dir = path.dirname(p);
-  const hash = freezeInitialGoals(p, dir);
-  const st = read(p);
-  fs.writeFileSync(p, serializeState({ ...st, goals: [{ id: 'G9', text: 'stale cached goal', signal: 'test' }] }));
-  const r = run(['goals-status', `--state=${p}`]);
-  assert.equal(r.status, 0, `goals-status should succeed: ${r.stderr}`);
-  const out = JSON.parse(r.stdout);
-  assert.equal(out.goals.length, 2);
-  assert.ok(!out.goals.some((g) => g.id === 'G9'));
-  assert.equal(out.current_hash, hash);
-});
-
-// ---- goal-transition guards: capture gate + split-brain hash guard (task 7) --------------------
-// Fixtures reused from the goals sections above (goalsBundle, freezeInitialGoals, AMEND_MD,
-// writeAmendGoals, writeAmendApproval, goalsHashFn, passGate, planIndexFixture, v8, tmpBundle).
-
-test('capture gate: set-phase --phase=plan on a goals_enabled bundle with UNFROZEN goals exits 3 with a run_goals_capture op and does NOT advance', () => {
-  const p = goalsBundle();
-  fs.writeFileSync(path.join(path.dirname(p), 'spec.md'), '# spec\n');
+// The capture path a real run takes: write goals.md, record the spec review (the gate whose
+// hash spans spec.md + goals.md — where the operator approves the Intent), then enter plan.
+// set-phase validates the document, enforces the interview gate, and appends goals_frozen.
+function captureInitialIntent(p, dir, md = INTENT_MD) {
+  writeBundleGoals(dir, md);
+  fs.writeFileSync(path.join(dir, 'spec.md'), '# spec\nstub spec for gate test\n');
+  passGate(p, 'spec');
   const r = run(['set-phase', `--state=${p}`, '--phase=plan']);
-  assert.equal(r.status, 3, `expected exit 3, got ${r.status}: ${r.stderr}`);
-  const op = JSON.parse(r.stdout);
-  assert.equal(op.op, 'run_goals_capture');
-  assert.equal(op.gate, 'goals');
+  assert.equal(r.status, 0, `capture (set-phase --phase=plan) should succeed: ${r.stderr}${r.stdout}`);
+  return goalsHashFn(md);
+}
+function frozenEvents(p) {
+  return fs.readFileSync(path.join(path.dirname(p), 'events.jsonl'), 'utf8')
+    .trim().split('\n').map((l) => JSON.parse(l)).filter((e) => e.type === 'goals_frozen');
+}
+
+test('capture: entering plan freezes a zero-G run Intent — goals_frozen carries the Intent hash and an empty goal list', () => {
+  const p = goalsBundle();
+  const dir = path.dirname(p);
+  const hash = captureInitialIntent(p, dir);
+  assert.equal(read(p).phase, 'plan');
+  const frozen = frozenEvents(p);
+  assert.equal(frozen.length, 1);
+  assert.equal(frozen[0].data.goals_hash, hash, 'the frozen hash is the canonical goalsHash of the document');
+  assert.deepEqual(frozen[0].data.goals, [], 'new documents carry an empty goal list');
+  assert.equal(frozen[0].data.approval, undefined, 'no operator approval receipt at capture — the spec gate approves the Intent');
+  // The derived state.goals cache is no longer produced.
+  assert.equal(read(p).goals, undefined);
+  assert.equal(fs.readFileSync(path.join(dir, 'goals.md'), 'utf8'), INTENT_MD, 'capture never rewrites the document');
+});
+
+test('capture: a document that still carries historical G blocks is accepted — G blocks are neither required nor validated', () => {
+  const p = goalsBundle();
+  const dir = path.dirname(p);
+  const md = INTENT_MD + '\n## G1: a historical goal block\nsignal: whatever-class\n';
+  const hash = captureInitialIntent(p, dir, md);
+  const frozen = frozenEvents(p);
+  assert.equal(frozen.length, 1);
+  assert.equal(frozen[0].data.goals_hash, hash, 'the hash covers the whole document (G blocks included) byte-identically');
+});
+
+test('capture: idempotent — re-entering plan at the same hash appends no second goals_frozen', () => {
+  const p = goalsBundle();
+  const dir = path.dirname(p);
+  captureInitialIntent(p, dir);
+  const r2 = run(['set-phase', `--state=${p}`, '--phase=plan']);
+  assert.equal(r2.status, 0, `re-entry must be a no-op: ${r2.stderr}${r2.stdout}`);
+  assert.equal(frozenEvents(p).length, 1, 'no second goals_frozen event on idempotent re-entry');
+});
+
+test('capture: a legacy bundle already frozen is untouched — no second goals_frozen event', () => {
+  const p = goalsBundle();
+  const dir = path.dirname(p);
+  // A legacy in-flight bundle: frozen before the upgrade, with G blocks in goals.md.
+  const legacyMd = 'topic: ship the widget\n\n## G1: the widget compiles\nsignal: command\n\n## G2: the widget is documented\nsignal: docs\n';
+  writeBundleGoals(dir, legacyMd);
+  fs.writeFileSync(path.join(dir, 'spec.md'), '# spec\n');
+  run(['event', `--state=${p}`, '--type=goals_frozen', `--data=${JSON.stringify({ goals_hash: goalsHashFn(legacyMd) })}`]);
+  passGate(p, 'spec');
+  const r = run(['set-phase', `--state=${p}`, '--phase=plan']);
+  assert.equal(r.status, 0, `a legacy frozen bundle must advance untouched: ${r.stderr}${r.stdout}`);
+  const frozen = frozenEvents(p);
+  assert.equal(frozen.length, 1, 'the legacy goals_frozen event is the only one');
+  assert.equal(frozen[0].data.goals_hash, goalsHashFn(legacyMd));
+});
+
+test('capture: missing Intent at spec→plan is refused (design regression case 3)', () => {
+  const p = goalsBundle();
+  const dir = path.dirname(p);
+  writeBundleGoals(dir, 'topic: ship the widget\n\n## G1: the widget compiles\nsignal: command\n');
+  fs.writeFileSync(path.join(dir, 'spec.md'), '# spec\n');
+  passGate(p, 'spec');
+  const r = run(['set-phase', `--state=${p}`, '--phase=plan']);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /no `## Intent` block/);
+  assert.equal(read(p).phase, 'brainstorm', 'no advance');
+  assert.equal(frozenEvents(p).length, 0, 'nothing frozen');
+});
+
+test('capture: a missing topic anchor is refused', () => {
+  const p = goalsBundle();
+  const dir = path.dirname(p);
+  writeBundleGoals(dir, '## Intent\nwhy: w\noutcome: o\nanti_goals:\n- a\ndone_means: d\n');
+  fs.writeFileSync(path.join(dir, 'spec.md'), '# spec\n');
+  passGate(p, 'spec');
+  const r = run(['set-phase', `--state=${p}`, '--phase=plan']);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /no `topic:` anchor/);
+  assert.equal(frozenEvents(p).length, 0);
+});
+
+test('capture: an invalid Intent block is refused', () => {
+  const p = goalsBundle();
+  const dir = path.dirname(p);
+  writeBundleGoals(dir, 'topic: t\n\n## Intent\nwhy: \noutcome: o\nanti_goals:\n- a\ndone_means: d\n');
+  fs.writeFileSync(path.join(dir, 'spec.md'), '# spec\n');
+  passGate(p, 'spec');
+  const r = run(['set-phase', `--state=${p}`, '--phase=plan']);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /Intent\.why must be a non-empty string/);
+  assert.equal(frozenEvents(p).length, 0);
+});
+
+test('capture: an unreadable/absent goals.md is refused (fail-closed, no silent skip)', () => {
+  const p = goalsBundle();
+  const dir = path.dirname(p);
+  fs.writeFileSync(path.join(dir, 'spec.md'), '# spec\n');
+  // No goals.md at all: the capture seam (which runs BEFORE the spec gate) refuses — the
+  // run Intent cannot be captured from nothing. (The spec gate's own gate-hash refuses the
+  // same bundle too; here the capture seam owns the failure without a gate attempt.)
+  const r = run(['set-phase', `--state=${p}`, '--phase=plan']);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /goals\.md unreadable/);
   assert.equal(read(p).phase, 'brainstorm');
 });
 
-test('capture gate: once goals are frozen, set-phase --phase=plan clears capture and reaches the SPEC gate (which now covers goals.md)', () => {
+test('capture: the interview-exit gate — an exhausted interview owing an Assumptions row refuses entry', () => {
   const p = goalsBundle();
   const dir = path.dirname(p);
-  freezeInitialGoals(p, dir);
-  fs.writeFileSync(path.join(dir, 'spec.md'), '# spec\n');
+  writeBundleGoals(dir);
+  fs.writeFileSync(path.join(dir, 'spec.md'), '# spec\nno assumptions table\n');
+  // A terminal ledger event in the shape endInterview writes (top-level reason/unresolved
+  // lists — `mp event` cannot author one, which is the point of the reserved-type rule).
+  fs.appendFileSync(path.join(dir, 'events.jsonl'), `${JSON.stringify({ type: 'interview_end', ts: '2026-07-01T00:00:00Z', reason: 'exhausted', asked: 3, cap: 20, attempts: 1, critic_failures: [], payload_sha256: null, unknowns: [{ id: 'U1' }], contradictions: [], misclassified: [], policy: 'legacy' })}\n`);
+  passGate(p, 'spec');
   const r = run(['set-phase', `--state=${p}`, '--phase=plan']);
-  assert.equal(r.status, 3, `expected spec-gate exit 3, got ${r.status}: ${r.stderr}`);
-  const op = JSON.parse(r.stdout);
-  assert.equal(op.op, 'run_gate_review');
-  assert.equal(op.gate, 'spec');
-  assert.deepEqual(op.artifacts, ['spec.md', 'goals.md']);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /assumed_row_missing/);
+  assert.equal(read(p).phase, 'brainstorm');
+  assert.equal(frozenEvents(p).length, 0);
 });
+
+test('capture: the interview-exit gate — a permitted exit proceeds', () => {
+  const p = goalsBundle();
+  const dir = path.dirname(p);
+  writeBundleGoals(dir);
+  fs.writeFileSync(path.join(dir, 'spec.md'), '# spec\nno assumptions table\n');
+  fs.appendFileSync(path.join(dir, 'events.jsonl'), `${JSON.stringify({ type: 'interview_end', ts: '2026-07-01T00:00:00Z', reason: 'converged', asked: 3, cap: 20, attempts: 1, critic_failures: [], payload_sha256: null, unknowns: [], contradictions: [], misclassified: [], policy: 'legacy' })}\n`);
+  passGate(p, 'spec');
+  const r = run(['set-phase', `--state=${p}`, '--phase=plan']);
+  assert.equal(r.status, 0, `a converged interview must not block capture: ${r.stderr}${r.stdout}`);
+  assert.equal(frozenEvents(p).length, 1);
+});
+
+test('mp event refuses the reserved types verify_passed and goal_check (exit 2)', () => {
+  const p = goalsBundle();
+  const dir = path.dirname(p);
+  fs.writeFileSync(path.join(dir, 'events.jsonl'), `${JSON.stringify({ type: 'bundle_created', ts: '2026-07-01T00:00:00Z', data: { goals_enabled: true, slug: 'fixture' } })}\n`);
+  for (const type of ['verify_passed', 'goal_check']) {
+    const r = run(['event', `--state=${p}`, `--type=${type}`]);
+    assert.equal(r.status, 2, `${type} must exit 2, got ${r.status}`);
+    assert.match(r.stderr, new RegExp(`type '${type}' is reserved`));
+    const evs = fs.readFileSync(path.join(dir, 'events.jsonl'), 'utf8').trim().split('\n').filter(Boolean);
+    assert.ok(!evs.some((l) => JSON.parse(l).type === type), `no ${type} event may land in the ledger`);
+  }
+});
+
+// ---- spec gate coverage of goals.md (unchanged by the goal-block removal) ----------------------
 
 test('spec gate: gate-hash on a goals_enabled bundle includes goals.md alongside spec.md', () => {
   const p = goalsBundle();
   const dir = path.dirname(p);
-  freezeInitialGoals(p, dir);
+  writeBundleGoals(dir);
   fs.writeFileSync(path.join(dir, 'spec.md'), '# spec\n');
   const gh = JSON.parse(run(['gate-hash', `--state=${p}`, '--gate=spec']).stdout);
   assert.deepEqual(gh.artifacts, ['spec.md', 'goals.md']);
 });
 
-test('goals happy path: frozen goals + a recorded spec review lets set-phase --phase=plan advance', () => {
+test('run-Intent happy path: a zero-G document + a recorded spec review lets set-phase --phase=plan advance (design regression case 2, capture part)', () => {
   const p = goalsBundle();
   const dir = path.dirname(p);
-  freezeInitialGoals(p, dir);
-  fs.writeFileSync(path.join(dir, 'spec.md'), '# spec\n');
-  passGate(p, 'spec');
-  const r = run(['set-phase', `--state=${p}`, '--phase=plan']);
-  assert.equal(r.status, 0, `should advance: ${r.stderr}${r.stdout}`);
+  const hash = captureInitialIntent(p, dir);
   assert.equal(read(p).phase, 'plan');
+  assert.equal(frozenEvents(p)[0].data.goals_hash, hash);
 });
 
-test('spec gate re-arm: goals-amend rewrites goals.md and re-arms the spec gate (a stale review no longer satisfies it)', () => {
-  const p = goalsBundle();
-  const dir = path.dirname(p);
-  const oldHash = freezeInitialGoals(p, dir);
-  fs.writeFileSync(path.join(dir, 'spec.md'), '# spec\n');
-  passGate(p, 'spec');
-  const newHash = goalsHashFn(AMEND_MD);
-  const gp = writeAmendGoals(dir, AMEND_MD);
-  const ap = writeAmendApproval(dir, oldHash, newHash);
-  assert.equal(
-    run(['goals-amend', `--state=${p}`, `--goals=${gp}`, `--approval=${ap}`, '--reason=descope G2', '--ts=2026-07-02T00:00:00Z']).status,
-    0
-  );
-  const r = run(['set-phase', `--state=${p}`, '--phase=plan']);
-  assert.equal(r.status, 3, `goals-amend must re-arm the spec gate: ${r.stderr}`);
-  const op = JSON.parse(r.stdout);
-  assert.equal(op.op, 'run_gate_review');
-  assert.equal(op.gate, 'spec');
-});
-
-// masterplan-schema-backed-goals-hash-deadlock: writers (goals-load / goals-amend) must
-// hash under the durable pin so set-phase's split-brain guard (pinnedGoalsHash) agrees.
+// masterplan-schema-backed-goals-hash-deadlock: the capture seam must hash under the
+// durable pin so every later guard (split-brain, checkpoint identity) agrees.
 function schemaBackedVersionedGoals(g1Title) {
   const authoritative = {
     version: INTENT_CODEC_VERSION,
@@ -2859,16 +2602,16 @@ function schemaBackedVersionedGoals(g1Title) {
       purpose: { body: 'Pin writers and guards to the same hash.\n' },
       non_goals: { items: ['no second canonicalizer'] },
       top_invariant: { body: 'One pin, every hash family.' },
-      direction: { body: 'goals-amend and set-phase agree.' },
+      direction: { body: 'capture and set-phase agree.' },
       posture: { body: 'Refuse unpinned hashes on a schema_backed bundle.' },
     },
-    context: { outcome: { body: 'set-phase --phase=plan succeeds after a sanctioned amend.' }, done_means: { body: 'release' } },
+    context: { outcome: { body: 'set-phase --phase=plan succeeds at capture.' }, done_means: { body: 'release' } },
     evidence: [{ section: 'purpose', source: 'operator interview 2026-09-09' }],
     reconciliation: [{ target: 'repository INTENT.md §1', status: 'verified' }],
   };
   const enc = encodeIntentBlock(authoritative);
   assert.ok(enc.ok, JSON.stringify(enc));
-  return `topic: |\n  Schema-backed deadlock fixture.\n${enc.block}\n## G1: ${g1Title}\nsignal: test\n## G2: Fast\nsignal: test\n## G3: Documented\nsignal: docs\n`;
+  return `topic: |\n  Schema-backed deadlock fixture.\n${enc.block}## G1: ${g1Title}\nsignal: test\n`;
 }
 function stampSchemaBackedPin(statePath) {
   const skillRoot = path.join(path.dirname(statePath), 'skill');
@@ -2900,103 +2643,55 @@ function stampSchemaBackedPin(statePath) {
   return skillRoot;
 }
 
-test('schema-backed deadlock: goals-amend then set-phase agrees under the durable pin (same bytes; split-brain not bypassed)', () => {
-  const base = schemaBackedVersionedGoals('Works');
-  const amended = schemaBackedVersionedGoals('Works better');
+test('schema-backed capture: the frozen hash is the PINNED one, and a stripped representation is refused (design regression case 3)', () => {
+  const doc = schemaBackedVersionedGoals('Works');
   const p = goalsBundle();
   const dir = path.dirname(p);
   stampSchemaBackedPin(p);
+  const pinned = goalsHashFn(doc, { formatPin: 'schema_backed' });
+  const legacy = goalsHashFn(doc);
+  assert.notEqual(pinned, legacy, 'the two flavors must differ (the seam is real)');
 
-  const pinnedBase = goalsHashFn(base, { formatPin: 'schema_backed' });
-  const legacyBase = goalsHashFn(base);
-  const pinnedNew = goalsHashFn(amended, { formatPin: 'schema_backed' });
-  const legacyNew = goalsHashFn(amended);
-  assert.notEqual(pinnedBase, legacyBase, 'the two flavors must differ (the seam is real)');
-  assert.notEqual(pinnedNew, legacyNew, 'the two flavors must differ after the amendment too');
-
-  const gp = writeGoals(dir, base);
-  const ap = writeApproval(dir, pinnedBase);
-  const load = run(['goals-load', `--state=${p}`, `--goals=${gp}`, `--approval=${ap}`]);
-  assert.equal(load.status, 0, `goals-load must freeze under the pin: ${load.stderr}`);
-  const frozen = JSON.parse(load.stdout);
-  assert.equal(frozen.goals_hash, pinnedBase, 'goals-load must record the PINNED hash, never the unpinned legacy flavor');
-  assert.equal(read(p).goals_md_hash, pinnedBase);
-
-  const gp2 = writeAmendGoals(dir, amended);
-  const ap2 = writeAmendApproval(dir, pinnedBase, pinnedNew);
-  const amend = run(['goals-amend', `--state=${p}`, `--goals=${gp2}`, `--approval=${ap2}`, '--reason=tighten G1 wording']);
-  assert.equal(amend.status, 0, `goals-amend must succeed: ${amend.stderr}`);
-  const amendOut = JSON.parse(amend.stdout);
-  assert.equal(amendOut.new_goals_hash, pinnedNew, 'goals-amend must write the PINNED hash');
-  assert.notEqual(amendOut.new_goals_hash, legacyNew, 'a legacy hash of the same bytes is the deadlock');
-  assert.equal(read(p).goals_md_hash, pinnedNew);
-
+  writeBundleGoals(dir, doc);
   fs.writeFileSync(path.join(dir, 'spec.md'), '# spec\n');
-  // --force here skips ONLY the spec-review gate (orthogonal: this fixture has no
-  // §6.3 reconciliation). The split-brain guard deliberately does NOT honor --force;
-  // a hash mismatch of the same bytes would still die. That is the deadlock.
+  // --force skips ONLY the spec-review gate (orthogonal: this fixture has no §6.3
+  // reconciliation). Capture and the split-brain guard still run — that is the seam tested.
   const r = run(['set-phase', `--state=${p}`, '--phase=plan', '--force']);
-  assert.doesNotMatch(r.stderr + r.stdout, /split.brain|does not match the committed goal set/i);
-  assert.equal(r.status, 0, `set-phase must agree with the amend hash of the SAME bytes: ${r.stderr}${r.stdout}`);
-  assert.equal(read(p).phase, 'plan');
+  assert.equal(r.status, 0, `capture must succeed under the pin: ${r.stderr}${r.stdout}`);
+  assert.equal(frozenEvents(p)[0].data.goals_hash, pinned, 'capture records the PINNED hash, never the unpinned legacy flavor');
+
+  // A NEW bundle whose versioned representation is stripped dies at the downgrade refusal.
+  const p2 = goalsBundle();
+  const dir2 = path.dirname(p2);
+  stampSchemaBackedPin(p2);
+  const stripped = doc.replace(/```mp-intent-schema v1[\s\S]*?```/, '');
+  writeBundleGoals(dir2, stripped);
+  fs.writeFileSync(path.join(dir2, 'spec.md'), '# spec\n');
+  const r2 = run(['set-phase', `--state=${p2}`, '--phase=plan', '--force']);
+  assert.equal(r2.status, 1);
+  assert.match(r2.stderr, /downgrade refused/);
+  assert.equal(frozenEvents(p2).length, 0);
 });
 
-test('spec gate re-arm: an intent-only amendment invalidates review without changing any goal', () => {
-  const p = goalsBundle();
-  const dir = path.dirname(p);
-  const original = `topic: ship the widget
-
-## Intent
-why: operators need reliable delivery
-outcome: operators can use the widget
-anti_goals:
-- unrelated infrastructure
-done_means: the widget is usable
-
-## G1: the widget compiles
-## G2: the widget is documented
-## G3: the widget is available
-`;
-  const oldHash = goalsHashFn(original);
-  const gp = writeGoals(dir, original);
-  const approval = writeApproval(dir, oldHash);
-  const loaded = run(['goals-load', `--state=${p}`, `--goals=${gp}`, `--approval=${approval}`]);
-  assert.equal(loaded.status, 0, loaded.stderr);
-  const originalGoals = read(p).goals;
-  fs.writeFileSync(path.join(dir, 'spec.md'), '# spec\n');
-  passGate(p, 'spec');
-  const amended = original.replace('outcome: operators can use the widget', 'outcome: operators can use the widget independently');
-  const ap = writeAmendApproval(dir, oldHash, goalsHashFn(amended));
-  const change = run(['goals-amend', `--state=${p}`, `--goals=${writeAmendGoals(dir, amended)}`, `--approval=${ap}`, '--reason=clarify outcome', '--ts=2026-07-02T00:00:00Z']);
-  assert.equal(change.status, 0, change.stderr);
-  assert.deepEqual(read(p).goals, originalGoals);
-  assert.equal(read(p).goals_md_hash, goalsHashFn(amended));
-  const transition = run(['set-phase', `--state=${p}`, '--phase=plan']);
-  assert.equal(transition.status, 3, transition.stderr);
-  assert.equal(JSON.parse(transition.stdout).op, 'run_gate_review');
-  assert.equal(JSON.parse(transition.stdout).gate, 'spec');
-  assert.equal(read(p).phase, 'brainstorm');
-});
+// ---- split-brain hash guard (task 7; the guard itself is unchanged by the removal) -------------
 
 test('split-brain guard (set-phase): goals.md drifted out-of-band from the committed hash → reconcile error, no advance', () => {
   const p = goalsBundle();
   const dir = path.dirname(p);
-  freezeInitialGoals(p, dir);
-  fs.writeFileSync(path.join(dir, 'spec.md'), '# spec\n');
-  fs.writeFileSync(path.join(dir, 'goals.md'), 'topic: tampered\n\n## G1: something else\nsignal: command\n');
+  captureInitialIntent(p, dir);
+  fs.writeFileSync(path.join(dir, 'goals.md'), 'topic: tampered\n\n## Intent\nwhy: w\noutcome: o\nanti_goals:\n- a\ndone_means: d\n');
   const r = run(['set-phase', `--state=${p}`, '--phase=plan']);
   assert.equal(r.status, 1, `split brain must hard-fail: ${r.stdout}`);
   assert.match(r.stderr, /split brain|does not match the committed/);
-  assert.equal(read(p).phase, 'brainstorm');
 });
 
 test('split-brain guard (load-plan): drifted goals.md blocks materialization with a reconcile error', () => {
   const p = goalsBundle();
   const dir = path.dirname(p);
-  freezeInitialGoals(p, dir);
+  captureInitialIntent(p, dir);
   const planIdx = path.join(dir, 'plan.index.json');
   fs.writeFileSync(planIdx, JSON.stringify(planIndexFixture()));
-  fs.writeFileSync(path.join(dir, 'goals.md'), 'topic: tampered\n\n## G1: drift\nsignal: command\n');
+  fs.writeFileSync(path.join(dir, 'goals.md'), 'topic: tampered\n\n## Intent\nwhy: w\noutcome: o\nanti_goals:\n- a\ndone_means: d\n');
   const r = run(['load-plan', `--state=${p}`, `--plan-index=${planIdx}`]);
   assert.equal(r.status, 1, `split brain must hard-fail load-plan: ${r.stdout}`);
   assert.match(r.stderr, /split brain|does not match the committed/);
@@ -3015,7 +2710,7 @@ test('split-brain guard NO-OPS pre-capture: a goals_enabled bundle with no goals
   assert.equal(JSON.parse(r.stdout).gate, 'plan');
 });
 
-test('pre-feature exempt: a non-goals bundle (no goals_enabled marker) skips the capture gate entirely', () => {
+test('pre-feature exempt: a non-goals bundle (no goals_enabled marker) skips the capture seam entirely', () => {
   const p = tmpBundle(v8({ phase: 'brainstorm', tasks: [] }));
   fs.writeFileSync(path.join(path.dirname(p), 'spec.md'), '# spec\n');
   const r = run(['set-phase', `--state=${p}`, '--phase=plan']);
@@ -3023,93 +2718,37 @@ test('pre-feature exempt: a non-goals bundle (no goals_enabled marker) skips the
   assert.equal(JSON.parse(r.stdout).op, 'run_gate_review');
 });
 
-// ---- plan-index goal coverage: validate-plan-index + merge-plan-fragments enforce coverage ----
-// (goalsBundle / freezeInitialGoals / GOALS_MD reused from the goals sections above. freezeInitialGoals
-// freezes G1 + G2 into goals.md, state.goals, and the event log; coverage is enforced centrally by
-// validatePlanIndex once loadGoalsForCoverage feeds it the frozen goal list.)
-function writeCoverageIndex(dir, tasks) {
-  const ip = path.join(dir, 'plan.index.json');
-  fs.writeFileSync(ip, JSON.stringify({ schema_version: '6.0', tasks }));
-  return ip;
-}
-function writeCoverageFragments(dir, tasks) {
-  const fp = path.join(dir, 'fragments.json');
-  fs.writeFileSync(fp, JSON.stringify([{ key: 'sub', tasks }]));
-  return fp;
-}
+// ---- plan-index goal coverage is retired: an old index carrying goals fields still loads --------
+// (Goal coverage and task goals: annotations are gone; the historical field is ignored.)
 
-test('validate-plan-index: goals_enabled bundle passes when every goal is covered', () => {
-  const p = goalsBundle();
-  const dir = path.dirname(p);
-  freezeInitialGoals(p, dir);
-  const ip = writeCoverageIndex(dir, [
-    { id: 1, description: 'compile the widget', wave: 0, files: ['a.js'], verify_commands: [], codex: 'no', goals: ['G1'] },
-    { id: 2, description: 'document the widget', wave: 0, files: ['b.js'], verify_commands: [], codex: 'no', goals: ['G2'] },
-  ]);
-  const r = run(['validate-plan-index', `--plan-index=${ip}`]);
-  assert.equal(r.status, 0, `coverage should pass: ${r.stderr}`);
-  assert.equal(JSON.parse(r.stdout).valid, true);
-});
-
-test('validate-plan-index: goals_enabled bundle fails (exit 1) when a goal is uncovered', () => {
-  const p = goalsBundle();
-  const dir = path.dirname(p);
-  freezeInitialGoals(p, dir);
-  const ip = writeCoverageIndex(dir, [
-    { id: 1, description: 'compile the widget', wave: 0, files: ['a.js'], verify_commands: [], codex: 'no', goals: ['G1'] },
-  ]);
-  const r = run(['validate-plan-index', `--plan-index=${ip}`]);
-  assert.equal(r.status, 1);
-  assert.match(r.stderr, /goal "G2" is not covered/);
-});
-
-test('validate-plan-index: pre-feature bundle (no goals_enabled) skips coverage', () => {
+test('validate-plan-index: an old index carrying task goals fields still validates (the field is ignored)', () => {
   const dir = tmpDir('mp-cov-');
-  const ip = writeCoverageIndex(dir, [
-    { id: 1, description: 'do a thing', wave: 0, files: ['a.js'], verify_commands: [], codex: 'no' },
-  ]);
+  const ip = path.join(dir, 'plan.index.json');
+  fs.writeFileSync(ip, JSON.stringify({
+    schema_version: '6.0',
+    tasks: [
+      { id: 1, description: 'do a thing', wave: 0, files: ['a.js'], verify_commands: [], codex: 'no', goals: ['G1'] },
+      { id: 2, description: 'another thing', wave: 0, files: ['b.js'], verify_commands: [], codex: 'no', goals: 'not-even-an-array' },
+    ],
+  }));
   const r = run(['validate-plan-index', `--plan-index=${ip}`]);
-  assert.equal(r.status, 0, `pre-feature coverage must be a no-op: ${r.stderr}`);
+  assert.equal(r.status, 0, `the goals field must be ignored, not validated: ${r.stderr}`);
   assert.equal(JSON.parse(r.stdout).valid, true);
 });
 
-test('merge-plan-fragments: goals_enabled bundle passes when every goal is covered', () => {
-  const p = goalsBundle();
-  const dir = path.dirname(p);
-  freezeInitialGoals(p, dir);
-  const fp = writeCoverageFragments(dir, [
-    { key: 't1', description: 'compile the widget', files: ['a.js'], verify_commands: [], codex: 'no', goals: ['G1'] },
-    { key: 't2', description: 'document the widget', files: ['b.js'], verify_commands: [], codex: 'no', goals: ['G2'] },
-  ]);
+test('merge-plan-fragments: fragments carrying goals fields merge fine and the emitted tasks drop the field', () => {
+  const dir = tmpDir('mp-cov-');
+  const fp = path.join(dir, 'fragments.json');
+  fs.writeFileSync(fp, JSON.stringify([{
+    key: 'sub',
+    tasks: [{ key: 't1', description: 'do a thing', files: ['a.js'], verify_commands: [], codex: 'no', goals: ['G1'] }],
+  }]));
   const out = path.join(dir, 'plan.index.json');
   const r = run(['merge-plan-fragments', `--fragments=${fp}`, `--out=${out}`, '--generated-at=2026-07-01T00:00:00Z']);
-  assert.equal(r.status, 0, `coverage should pass: ${r.stderr}`);
-  assert.equal(JSON.parse(r.stdout).tasks, 2);
-});
-
-test('merge-plan-fragments: goals_enabled bundle fails (exit 1) when a goal is uncovered', () => {
-  const p = goalsBundle();
-  const dir = path.dirname(p);
-  freezeInitialGoals(p, dir);
-  const fp = writeCoverageFragments(dir, [
-    { key: 't1', description: 'compile the widget', files: ['a.js'], verify_commands: [], codex: 'no', goals: ['G1'] },
-  ]);
-  const out = path.join(dir, 'plan.index.json');
-  const r = run(['merge-plan-fragments', `--fragments=${fp}`, `--out=${out}`]);
-  assert.equal(r.status, 1);
-  assert.match(r.stderr, /goal "G2" is not covered/);
-  assert.equal(fs.existsSync(out), false, 'invalid merge must not land on disk');
-});
-
-test('merge-plan-fragments: pre-feature bundle (no goals_enabled) skips coverage', () => {
-  const dir = tmpDir('mp-cov-');
-  const fp = writeCoverageFragments(dir, [
-    { key: 't1', description: 'do a thing', files: ['a.js'], verify_commands: [], codex: 'no' },
-  ]);
-  const out = path.join(dir, 'plan.index.json');
-  const r = run(['merge-plan-fragments', `--fragments=${fp}`, `--out=${out}`]);
-  assert.equal(r.status, 0, `pre-feature coverage must be a no-op: ${r.stderr}`);
-  assert.equal(JSON.parse(r.stdout).tasks, 1);
+  assert.equal(r.status, 0, `coverage retirement must not break merges: ${r.stderr}`);
+  const index = JSON.parse(fs.readFileSync(out, 'utf8'));
+  assert.equal(index.tasks.length, 1);
+  assert.equal(index.tasks[0].goals, undefined, 'the emitted task carries no goals field');
 });
 
 // ---- the planning verb (task 5: planning-fanout — plan-gate fold R6 bin coverage) ----

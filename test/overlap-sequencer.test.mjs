@@ -363,7 +363,7 @@ test('a concurrent seed observes the repo seed lock held by a REAL first seed in
 
 // ---- 5. runs list exposes the fields G1 names + the reconstructed overlap trace ----------
 
-test('runs list exposes topic, goals, planned_paths, worktree, and the reconstructed overlap decision', () => {
+test('runs list exposes topic, planned_paths, worktree, and the reconstructed overlap decision', () => {
   const repo = makeGitRepo(tmp());
   const review = mintReview(repo);
   const statePath = path.join(repo, 'docs', 'masterplan', 'alpha', 'state.yml');
@@ -390,11 +390,7 @@ test('runs list exposes topic, goals, planned_paths, worktree, and the reconstru
   const rec = out.runs.find((x) => x.slug === 'alpha');
   assert.ok(rec, 'alpha is discovered');
   assert.equal(rec.topic, 'the alpha topic');
-  assert.deepEqual(rec.goals, [
-    { id: 'G1', text: 'goal a' },
-    { id: 'G2', text: 'goal b' },
-    { id: 'G3', text: 'goal c' },
-  ]);
+  assert.equal('goals' in rec, false, 'the goal list is no longer part of the runs record');
   assert.deepEqual(rec.planned_paths, ['lib/a.mjs', 'lib/m.mjs', 'lib/z.mjs']); // sorted, deduped union
   assert.equal(rec.worktree, '.worktrees/alpha-wt');
   // The reconstruction: the durable overlap_review event is the source, so outcome + the
@@ -532,11 +528,10 @@ test('§8 absence of conflicts: an empty inventory seeds with zero candidates an
   const ov = evs.find((e) => e.type === 'overlap_review');
   assert.equal(ov.outcome, 'proceed');
   assert.deepEqual(ov.candidates, []);
-  // The run lists with an empty planned_paths/goals (no artifacts yet) — no false conflict.
+  // The run lists with an empty planned_paths (no artifacts yet) — no false conflict.
   const listed = JSON.parse(run(['runs', 'list', `--repo-root=${repo}`]).stdout);
   const solo = listed.runs.find((x) => x.slug === 'solo');
   assert.deepEqual(solo.planned_paths, []);
-  assert.deepEqual(solo.goals, []);
   assert.equal(solo.overlap.outcome, 'proceed');
 });
 

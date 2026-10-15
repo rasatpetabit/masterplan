@@ -150,12 +150,12 @@ Terminal states: `converged | exhausted | critic_off`. A bundle seeded with `--p
 predecessor archived an `intent`-class rejection opens the interview with the stored correction
 text as quoted context.
 
-## Goal subcommands
-- `goals-load` — parse `goals.md`, freeze the goal set into `state.goals` + a `goals_frozen`
-  event (hash-pinned; the split-brain guard checks this hash on `set-phase`/`load-plan`).
-- `goals-amend` — amend the frozen goal set (add/edit/remove; tombstones, never deletes);
-  appends `goal_amended`, re-pins the hash, and re-arms the spec gate.
-- `goals-status` — report per-goal coverage / check status (read-only).
+## Run-Intent capture & checks
+- Intent capture is mechanical: `mp set-phase --phase=plan` validates `goals.md` (the
+  `topic:` anchor + `## Intent` block) and appends `goals_frozen` with the current
+  `goals.md` hash under the durable format pin (the split-brain guard checks this hash on
+  `set-phase`/`load-plan`). No separate approval verb — the operator approves the Intent at
+  the spec gate, whose hash covers `goals.md`.
 - `record-goal-check` — persist a goal-completeness assessment (mirrors `record-gate-review`,
   anti-fabrication). Default mode validates a `--receipt` binding goals-hash + `--head-sha` +
   `--base` + `--diff-hash` + the recomputed `--verify-output-hash` + clean status + a verdict
@@ -172,8 +172,8 @@ dispatch failure), and the `branch_finish` payload carries a one-line goals summ
 
 ## Plan-graph & cross-run subcommands
 
-New `mp` subcommands from the planf3 import (F1/F2/F4/F5). Like the goal
-subcommands above they are dispatched through `mp` (`node bin/masterplan.mjs …`),
+New `mp` subcommands from the planf3 import (F1/F2/F4/F5). Like the subcommands above they
+are dispatched through `mp` (`node bin/masterplan.mjs …`),
 not through the `/masterplan` reserved-verb list.
 
 - `refs add|remove|list` (F1) — bidirectional cross-run plan-graph refs stored in

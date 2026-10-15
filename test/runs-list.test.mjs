@@ -301,7 +301,7 @@ test('phase and worktree path or null', () => {
   assert.equal(noWt.phase, 'execute');
 });
 
-test('goals parsed to id/text pairs; absent goals.md yields the empty value', () => {
+test('the goal list is no longer part of the runs record (goal tables retired)', () => {
   const root = tmp();
   const MAIN = mkrepo(path.join(root, 'main'));
   const withGoals = bundle(MAIN, 'with-goals');
@@ -313,11 +313,8 @@ test('goals parsed to id/text pairs; absent goals.md yields the empty value', ()
   const runs = listRuns(MAIN).runs;
   const withRec = runs.find((r) => r.slug === 'with-goals');
   const noRec = runs.find((r) => r.slug === 'no-goals');
-  assert.deepEqual(withRec.goals, [
-    { id: 'G1', text: 'First goal' },
-    { id: 'G2', text: 'Second goal' },
-  ]);
-  assert.deepEqual(noRec.goals, []);
+  assert.equal('goals' in withRec, false, 'the goals field is no longer produced');
+  assert.equal('goals' in noRec, false);
 });
 
 test('planned paths are a sorted deduplicated union; absent plan.index.json yields the empty union', () => {
