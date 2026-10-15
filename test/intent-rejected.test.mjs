@@ -125,24 +125,18 @@ function mkFixture({ slug = 'ir', done = DONE_WITH_LIVE, goalsMd = GOALS_MD } = 
   const gHash = goalsHash(goalsMd);
   const step = (extra = {}) => finishStep({ statePath, now: 2000, ...extra });
 
-  // The implementation assessment, so the run reaches the deploy stage at all.
-  const recordImplementationCheck = () => appendEvent(bundleDir, {
-    type: 'goal_check', ts: '2026-01-01T00:00:01Z',
-    data: {
-      goals_hash: gHash, head_sha: git(WT, 'rev-parse', 'HEAD'), base: 'main',
-      diff_hash: 'sha256:diff', verify_output_hash: 'sha256:vo', provenance_kind: 'assessor',
-      verdicts: { G1: { verdict: 'achieved' }, G2: { verdict: 'achieved' }, G3: { verdict: 'achieved' } },
-    },
-  });
-
   // Captured now: the disposition tears the worktree down, so it cannot be read later.
   const headAtBuild = git(WT, 'rev-parse', 'HEAD');
-  return { tmp, MAIN, WT, bundleDir, statePath, slug, step, gHash, headAtBuild, recordImplementationCheck };
+  // The branch binding the verify pass records (verify_passed, machine-computed git facts).
+  const branchBinding = () => {
+    const evs = readEvents(bundleDir);
+    return [...evs].reverse().find((e) => e.type === 'verify_passed')?.data ?? null;
+  };
+  return { tmp, MAIN, WT, bundleDir, statePath, slug, step, gHash, headAtBuild, branchBinding };
 }
 
-// verify -> retro -> branch_finish -> merge, landing in the deploy stage.
+// verify (records the verify_passed branch binding) -> retro -> branch_finish -> merge.
 function walkToDeploy(fx) {
-  fx.recordImplementationCheck();
   let op = fx.step();
   assert.equal(op.op, 'run_verify', JSON.stringify(op));
   op = fx.step({ verify: 'pass' });
@@ -166,13 +160,17 @@ function runDeployChain(fx, { liveDigestText = 'live check output\n' } = {}) {
 
 // Record a final goal_check receipt bound to the deployment the op names.
 function recordFinalCheck(fx, op, { verdict = 'met', evidence = 'the deployed surface answers as intended', over = {} } = {}) {
+  // The receipt echoes the BRANCH BINDING the verify pass recorded — the machine-computed
+  // git facts finalReceiptFor validates against.
+  const binding = fx.branchBinding();
+  assert.ok(binding, 'the walk recorded a verify_passed branch binding');
   appendEvent(fx.bundleDir, {
     type: 'goal_check', ts: '2026-01-01T00:00:09Z',
     data: {
       final: true,
       goals_hash: fx.gHash,
-      head_sha: fx.headAtBuild,
-      base_diff_hash: 'sha256:diff',
+      head_sha: binding.head_sha,
+      base_diff_hash: binding.base_diff_hash ?? binding.diff_hash,
       verify_output_hash: 'sha256:vo',
       clean: true,
       deploy_base_sha: op.deploy_base_sha,
@@ -180,11 +178,6 @@ function recordFinalCheck(fx, op, { verdict = 'met', evidence = 'the deployed su
       live_check_digest: op.live_digest,
       provenance_kind: 'assessor',
       provenance: { dispatch_id: 'disp-final-1', model: 'assessor', output_tokens: 256 },
-      verdicts: {
-        G1: { verdict: 'achieved', evidence: 'the stage ran' },
-        G2: { verdict: 'achieved', evidence: 'the live check gated the archive' },
-        G3: { verdict: 'achieved', evidence: 'the operator was asked' },
-      },
       intent_verdict: { verdict, evidence },
       ...over,
     },
@@ -245,7 +238,6 @@ test('a confirmed done: none run archives as merged, never complete', () => {
 
 test('keep archives incomplete:kept with the authorization on the ledger', () => {
   const fx = mkFixture({ slug: 'ir-keep', done: 'done: none\n' });
-  fx.recordImplementationCheck();
   let op = fx.step();
   assert.equal(op.op, 'run_verify');
   op = fx.step({ verify: 'pass' });
@@ -261,7 +253,6 @@ test('keep archives incomplete:kept with the authorization on the ledger', () =>
 
 test('discard archives incomplete:discarded with the authorization on the ledger', () => {
   const fx = mkFixture({ slug: 'ir-discard', done: 'done: none\n' });
-  fx.recordImplementationCheck();
   let op = fx.step();
   assert.equal(op.op, 'run_verify');
   op = fx.step({ verify: 'pass' });
@@ -281,7 +272,6 @@ test('a discard NEVER enters the deploy stage, however real its done: surface lo
   // release/install commands on a run the operator retired as NOT-DONE (adversary r1 BLOCKER).
   // The stage must be skipped for a discard, straight to the incomplete:discarded archive.
   const fx = mkFixture({ slug: 'ir-discard-nodeploy', done: DONE_WITH_LIVE });
-  fx.recordImplementationCheck();
   let op = fx.step();
   assert.equal(op.op, 'run_verify', JSON.stringify(op));
   op = fx.step({ verify: 'pass' });

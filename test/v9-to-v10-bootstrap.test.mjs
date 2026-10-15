@@ -763,7 +763,7 @@ function walkRollout(fx, { version = '10.0.0', mainPushData = null, surfaces = n
   armOk('review');
   recordOk('review', { data: { tip, verdict: 'approve' } });
   armOk('assess');
-  recordOk('assess', { data: { tip, goals: { G1: 'achieved', G2: 'achieved' } } });
+  recordOk('assess', { data: { tip, intent_verdict: { verdict: 'met', evidence: 'the deployed surface answers as intended' } } });
 
   // 3. The release: armed at the reviewed tip, then ONE CHANGELOG commit and an annotated tag.
   armOk('release');
@@ -849,7 +849,7 @@ test('the release refuses before the version is bumped, and its tag identity is 
   armAnd('docs_normalize');
   armAnd('verify', { data: { tip: t } });
   armAnd('review', { data: { tip: t, verdict: 'approve' } });
-  armAnd('assess', { data: { tip: t, goals: { G1: 'achieved' } } });
+  armAnd('assess', { data: { tip: t, intent_verdict: { verdict: 'met', evidence: 'e' } } });
   // The tip names 10.0.0; arming a release for 10.5.0 is refused on version_matches.
   const mismatched = armStep({ statePath: fx2.statePath, step: 'release', targets: { ...fx2.targets, version: '10.5.0' } });
   assert.equal(mismatched.ok, false);
@@ -1427,7 +1427,7 @@ test('a release whose tree moved more than the release commit past the armed tip
   walkOk(fx, 'docs_normalize');
   walkOk(fx, 'verify', { tip: t });
   walkOk(fx, 'review', { tip: t, verdict: 'approve' });
-  walkOk(fx, 'assess', { tip: t, goals: { G1: 'achieved' } });
+  walkOk(fx, 'assess', { tip: t, intent_verdict: { verdict: 'met', evidence: 'e' } });
   // Arm release, then TWO commits land after the armed tip before the record: an unrelated
   // commit and the CHANGELOG one. A tag is created at the far tip the way release.mjs would.
   armOk(fx, 'release');
@@ -1478,7 +1478,7 @@ test('the single_commit guard is independently reachable: a malformed delta is r
   walkOk(fx, 'docs_normalize');
   walkOk(fx, 'verify', { tip: t });
   walkOk(fx, 'review', { tip: t, verdict: 'approve' });
-  walkOk(fx, 'assess', { tip: t, goals: { G1: 'achieved' } });
+  walkOk(fx, 'assess', { tip: t, intent_verdict: { verdict: 'met', evidence: 'e' } });
   armOk(fx, 'release');
   // ONE unrelated commit lands (not CHANGELOG-only), then a tag at the tip — the tree guard
   // sees HEAD at the tip and would pass its position check, but the delta is two commits.

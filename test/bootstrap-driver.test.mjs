@@ -274,7 +274,7 @@ test('a done-at-an-old-tip record is stale: after a failed-review fix moves the 
   // the designed exemption: the release commit (one CHANGELOG-only commit) does NOT stale the
   // recorded chain — after release records at the moved tip, the next step is push, not verify.
   recordStep({ statePath: fx.statePath, step: 'review', exit: 0, status: 'recovered', targets: fx.targets, data: { tip: fx.tip, verdict: 'approve' } });
-  walk(fx, 'assess', { goals: { G1: 'achieved' } });
+  walk(fx, 'assess', { intent_verdict: { verdict: 'met', evidence: 'the deployed surface answers as intended' } });
   // the designed exemption: the release commit (one CHANGELOG-only commit) does NOT stale the
   // recorded chain. Real order: arm release at the fix tip, run the release commit + tag, record.
   const releaseArm = armStep({ statePath: fx.statePath, step: 'release', targets: fx.targets });
@@ -319,8 +319,8 @@ test('git-only shape (release): precondition tag_absent refuses; postcondition b
   walk(fx, 'docs_normalize');
   walk(fx, 'verify');
   walk(fx, 'review', { verdict: 'approve' });
-  assert.throws(() => walk(fx, 'assess', { goals: { G1: 'achieved', G6: 'partial' } }), /postcondition failed: goal_G6/);
-  walk(fx, 'assess', { goals: { G1: 'achieved', G6: 'achieved' } });
+  assert.throws(() => walk(fx, 'assess', { intent_verdict: { verdict: 'partial', evidence: 'half works' } }), /postcondition failed: intent_verdict_met/);
+  walk(fx, 'assess', { intent_verdict: { verdict: 'met', evidence: 'e' } });
   // precondition: the tag must not exist yet
   git(fx.MAIN, 'tag', 'v10.0.0', fx.tip);
   let armed = armStep({ statePath: fx.statePath, step: 'release', targets: fx.targets });
@@ -353,7 +353,7 @@ test('gh-network shape (ci_wait): precondition remote_tag_equals_local; postcond
   addRehearsalScript(fx);
   const digest = path.join(fx.tmp, 'r.out'); fs.writeFileSync(digest, 'x');
   walk(fx, 'rehearsal', {}, { digestFile: digest });
-  walk(fx, 'docs_normalize'); walk(fx, 'verify'); walk(fx, 'review', { verdict: 'approve' }); walk(fx, 'assess', { goals: { G1: 'achieved' } });
+  walk(fx, 'docs_normalize'); walk(fx, 'verify'); walk(fx, 'review', { verdict: 'approve' }); walk(fx, 'assess', { intent_verdict: { verdict: 'met', evidence: 'the deployed surface answers as intended' } });
   release(fx);
   // push: arm, run the printed command for real against the bare remote, record
   const armed = armStep({ statePath: fx.statePath, step: 'push', targets: fx.targets });
@@ -380,7 +380,7 @@ test('filesystem-install shape (install_pi): precondition ci_wait_done + the wor
   addRehearsalScript(fx);
   const digest = path.join(fx.tmp, 'r.out'); fs.writeFileSync(digest, 'x');
   walk(fx, 'rehearsal', {}, { digestFile: digest });
-  walk(fx, 'docs_normalize'); walk(fx, 'verify'); walk(fx, 'review', { verdict: 'approve' }); walk(fx, 'assess', { goals: { G1: 'achieved' } });
+  walk(fx, 'docs_normalize'); walk(fx, 'verify'); walk(fx, 'review', { verdict: 'approve' }); walk(fx, 'assess', { intent_verdict: { verdict: 'met', evidence: 'the deployed surface answers as intended' } });
   release(fx);
   const pushArm = armStep({ statePath: fx.statePath, step: 'push', targets: fx.targets });
   execFileSync('sh', ['-c', pushArm.cmd], { stdio: 'ignore' });
@@ -517,7 +517,7 @@ test('targets digest binds nested keys; carried reports come from the arm, not t
   addRehearsalScript(fx); // the branch (execution tree) carries the script too
   const digest = path.join(fx.tmp, 'r.out'); fs.writeFileSync(digest, 'x');
   walk(fx, 'rehearsal', {}, { digestFile: digest });
-  walk(fx, 'docs_normalize'); walk(fx, 'verify'); walk(fx, 'review', { verdict: 'approve' }); walk(fx, 'assess', { goals: { G1: 'achieved' } });
+  walk(fx, 'docs_normalize'); walk(fx, 'verify'); walk(fx, 'review', { verdict: 'approve' }); walk(fx, 'assess', { intent_verdict: { verdict: 'met', evidence: 'the deployed surface answers as intended' } });
   release(fx);
   const pushArm = armStep({ statePath: fx.statePath, step: 'push', targets: fx.targets });
   execFileSync('sh', ['-c', pushArm.cmd], { stdio: 'ignore' });
@@ -756,7 +756,7 @@ test('release recorded in MAIN itself: the release commit moves MAIN HEAD and is
     return recordStep({ statePath: fx.statePath, step: name, exit: 0, data, targets, ...extra });
   };
   step('rehearsal', {}, { digestFile: digest });
-  step('docs_normalize'); step('verify'); step('review', { verdict: 'approve' }); step('assess', { goals: { G1: 'achieved' } });
+  step('docs_normalize'); step('verify'); step('review', { verdict: 'approve' }); step('assess', { intent_verdict: { verdict: 'met', evidence: 'e' } });
   const armed = armStep({ statePath: fx.statePath, step: 'release', targets });
   assert.equal(armed.ok, true, JSON.stringify(armed));
   // what scripts/release.mjs does: one CHANGELOG-only commit on the branch (here: MAIN's HEAD) + the tag
@@ -916,7 +916,8 @@ test('assess refuses an empty assessment', (t) => {
   walk(fx, 'rehearsal', {}, { digestFile: digest });
   walk(fx, 'docs_normalize'); walk(fx, 'verify'); walk(fx, 'review', { verdict: 'approve' });
   assert.equal(armStep({ statePath: fx.statePath, step: 'assess', targets: fx.targets }).ok, true);
-  assert.throws(() => recordStep({ statePath: fx.statePath, step: 'assess', exit: 0, data: { goals: {} }, targets: fx.targets }), /goals_object/);
+  assert.throws(() => recordStep({ statePath: fx.statePath, step: 'assess', exit: 0, data: {}, targets: fx.targets }), /intent_verdict_object/);
+  assert.throws(() => recordStep({ statePath: fx.statePath, step: 'assess', exit: 0, data: { intent_verdict: { verdict: 'met', evidence: '' } }, targets: fx.targets }), /intent_verdict_evidence/);
 });
 
 test('gate: a dirty non-bundle file after the command refuses the record', (t) => {
@@ -951,6 +952,7 @@ test('a rework review verdict is a blocking finding; sibling-bundle dirt blocks 
   }
   assert.equal(isBlockingFinding({ type: 'run_verify', ts: 1 }), false, 'an outcome record without a verdict is not a finding');
   assert.equal(isBlockingFinding({ type: 'goal_check', ts: 1, goals: { G1: 'achieved' } }), false);
+  assert.equal(isBlockingFinding({ type: 'goal_check', ts: 1, data: { final: true, intent_verdict: { verdict: 'partial', evidence: 'e' } } }), true);
   const fx = makeFixture(t);
   addRehearsalScript(fx);
   git(fx.MAIN, 'worktree', 'remove', '--force', fx.worktree);
@@ -967,7 +969,7 @@ test('release: a tag without the release commit is refused; a replay with the he
   addRehearsalScript(fx);
   const digest = path.join(fx.tmp, 'r.out'); fs.writeFileSync(digest, 'x');
   walk(fx, 'rehearsal', {}, { digestFile: digest });
-  walk(fx, 'docs_normalize'); walk(fx, 'verify'); walk(fx, 'review', { verdict: 'approve' }); walk(fx, 'assess', { goals: { G1: 'achieved' } });
+  walk(fx, 'docs_normalize'); walk(fx, 'verify'); walk(fx, 'review', { verdict: 'approve' }); walk(fx, 'assess', { intent_verdict: { verdict: 'met', evidence: 'the deployed surface answers as intended' } });
   assert.equal(armStep({ statePath: fx.statePath, step: 'release', targets: fx.targets }).ok, true);
   git(fx.MAIN, 'tag', '-a', 'v10.0.0', '-m', 'v10.0.0', fx.tip); // tag only, no release commit, no header
   // The preflight refuses the malformed delta and rolls the tag back (no release commit, no header).
@@ -978,7 +980,7 @@ test('release: a tag without the release commit is refused; a replay with the he
   git(fx.worktree, 'add', 'CHANGELOG.md'); git(fx.worktree, 'commit', '-q', '-m', 'header already present');
   fx.tip = git(fx.MAIN, 'rev-parse', fx.branch);
   // the tip moved: re-run verify/review/assess at it (release binds to the reviewed sha), then release
-  for (const [step, data] of [['verify', {}], ['review', { verdict: 'approve' }], ['assess', { goals: { G1: 'achieved' } }]]) {
+  for (const [step, data] of [['verify', {}], ['review', { verdict: 'approve' }], ['assess', { intent_verdict: { verdict: 'met', evidence: 'e' } }]]) {
     // these steps are already done in this pass; a moved tip means a corrective pass in real life.
     // For this fixture, seed replacement records at the new tip.
     appendEvent(fx.statePath, { type: 'bootstrap_step', ts: 3, pass: 1, step, cmd: 'seeded', exit: 0, status: 'done', data: { ...data, tip: fx.tip } });
@@ -1041,8 +1043,8 @@ test('a blocking finding after surfaces_live blocks the gate (arm and record) un
   armed = armStep({ statePath: fx.statePath, step: 'gate', targets: fx.targets });
   assert.equal(armed.ok, false);
   assert.ok(armed.preconditions.some((p) => p.name === 'no_open_corrective_finding' && !p.ok && /triggered-by=/.test(p.detail)), JSON.stringify(armed));
-  // an unblocking finding does not count
-  appendEvent(fx.statePath, { type: 'goal_check', ts: 6, goals: { G1: 'achieved' } });
+  // an unblocking finding does not count (a MET final Intent verdict is a pass, not a finding)
+  appendEvent(fx.statePath, { type: 'goal_check', ts: 6, data: { final: true, intent_verdict: { verdict: 'met', evidence: 'e' } } });
   assert.equal(openCorrectiveFindings(events(fx.statePath), 1).length, 1);
   // the corrective pass consumes the finding; pass 2 owns the gate from here (pass 1's gate arm is moot)
   const st = startPass({ statePath: fx.statePath, pass: 2, triggeredBy: finding, version: '10.0.1' });
@@ -1073,7 +1075,7 @@ test('gh commands are anchored to MAIN: run from another repository, gh still se
   addRehearsalScript(fx);
   const digest = path.join(fx.tmp, 'r.out'); fs.writeFileSync(digest, 'x');
   walk(fx, 'rehearsal', {}, { digestFile: digest });
-  walk(fx, 'docs_normalize'); walk(fx, 'verify'); walk(fx, 'review', { verdict: 'approve' }); walk(fx, 'assess', { goals: { G1: 'achieved' } });
+  walk(fx, 'docs_normalize'); walk(fx, 'verify'); walk(fx, 'review', { verdict: 'approve' }); walk(fx, 'assess', { intent_verdict: { verdict: 'met', evidence: 'the deployed surface answers as intended' } });
   release(fx);
   const pushArm = armStep({ statePath: fx.statePath, step: 'push', targets: fx.targets });
   execFileSync('sh', ['-c', pushArm.cmd], { stdio: 'ignore' });
@@ -1104,7 +1106,7 @@ test('the GitHub repository is the configured remote\'s, never the checkout\'s d
   addRehearsalScript(fx);
   const digest = path.join(fx.tmp, 'r.out'); fs.writeFileSync(digest, 'x');
   walk(fx, 'rehearsal', {}, { digestFile: digest });
-  walk(fx, 'docs_normalize'); walk(fx, 'verify'); walk(fx, 'review', { verdict: 'approve' }); walk(fx, 'assess', { goals: { G1: 'achieved' } });
+  walk(fx, 'docs_normalize'); walk(fx, 'verify'); walk(fx, 'review', { verdict: 'approve' }); walk(fx, 'assess', { intent_verdict: { verdict: 'met', evidence: 'the deployed surface answers as intended' } });
   release(fx);
   const pushArm = armStep({ statePath: fx.statePath, step: 'push', targets: fx.targets });
   execFileSync('sh', ['-c', pushArm.cmd], { stdio: 'ignore' });
@@ -1170,7 +1172,7 @@ test('push is atomic and authorised against the remote refs: a tag that appeared
   addRehearsalScript(fx);
   const digest = path.join(fx.tmp, 'r.out'); fs.writeFileSync(digest, 'x');
   walk(fx, 'rehearsal', {}, { digestFile: digest });
-  walk(fx, 'docs_normalize'); walk(fx, 'verify'); walk(fx, 'review', { verdict: 'approve' }); walk(fx, 'assess', { goals: { G1: 'achieved' } });
+  walk(fx, 'docs_normalize'); walk(fx, 'verify'); walk(fx, 'review', { verdict: 'approve' }); walk(fx, 'assess', { intent_verdict: { verdict: 'met', evidence: 'the deployed surface answers as intended' } });
   release(fx);
   let armed = armStep({ statePath: fx.statePath, step: 'push', targets: fx.targets });
   assert.equal(armed.ok, true, JSON.stringify(armed));
@@ -1204,7 +1206,7 @@ test('push publishes the ARMED objects: local refs retargeted after the arm neve
   addRehearsalScript(fx);
   const digest = path.join(fx.tmp, 'r.out'); fs.writeFileSync(digest, 'x');
   walk(fx, 'rehearsal', {}, { digestFile: digest });
-  walk(fx, 'docs_normalize'); walk(fx, 'verify'); walk(fx, 'review', { verdict: 'approve' }); walk(fx, 'assess', { goals: { G1: 'achieved' } });
+  walk(fx, 'docs_normalize'); walk(fx, 'verify'); walk(fx, 'review', { verdict: 'approve' }); walk(fx, 'assess', { intent_verdict: { verdict: 'met', evidence: 'the deployed surface answers as intended' } });
   release(fx);
   const armed = armStep({ statePath: fx.statePath, step: 'push', targets: fx.targets });
   assert.equal(armed.ok, true, JSON.stringify(armed));
@@ -1290,7 +1292,7 @@ test('end to end: pass 1 publishes 10.0.0, a blocking finding opens pass 2, and 
   const fx = makeFixture(t);
   addRehearsalScript(fx);
   const digest = path.join(fx.tmp, 'r.out'); fs.writeFileSync(digest, 'x');
-  const walkStep2 = () => { walk(fx, 'verify'); walk(fx, 'review', { verdict: 'approve' }); walk(fx, 'assess', { goals: { G1: 'achieved' } }); };
+  const walkStep2 = () => { walk(fx, 'verify'); walk(fx, 'review', { verdict: 'approve' }); walk(fx, 'assess', { intent_verdict: { verdict: 'met', evidence: 'the deployed surface answers as intended' } }); };
   walk(fx, 'rehearsal', {}, { digestFile: digest });
   walk(fx, 'docs_normalize');
   walkStep2();
@@ -1305,7 +1307,7 @@ test('end to end: pass 1 publishes 10.0.0, a blocking finding opens pass 2, and 
   walk(fx, 'surfaces_live');
   assert.equal(bootstrapStatus(fx.statePath).next.step, 'gate');
   // the finish's goal check misses a goal after both surfaces went live
-  appendEvent(fx.statePath, { type: 'goals_unmet', ts: 9, goals: { G3: 'missed' } });
+  appendEvent(fx.statePath, { type: 'intent_unmet', ts: 9, data: { intent_verdict: { verdict: 'missed', evidence: 'e' } } });
   const finding = events(fx.statePath).length - 1;
   assert.equal(armStep({ statePath: fx.statePath, step: 'gate', targets: fx.targets }).ok, false, 'the gate is blocked');
   const st = startPass({ statePath: fx.statePath, pass: 2, triggeredBy: finding, version: '10.0.1' });
@@ -1346,7 +1348,7 @@ test('release refuses a tag that already exists on the remote, writing nothing',
   addRehearsalScript(fx);
   const digest = path.join(fx.tmp, 'r.out'); fs.writeFileSync(digest, 'x');
   walk(fx, 'rehearsal', {}, { digestFile: digest });
-  walk(fx, 'docs_normalize'); walk(fx, 'verify'); walk(fx, 'review', { verdict: 'approve' }); walk(fx, 'assess', { goals: { G1: 'achieved' } });
+  walk(fx, 'docs_normalize'); walk(fx, 'verify'); walk(fx, 'review', { verdict: 'approve' }); walk(fx, 'assess', { intent_verdict: { verdict: 'met', evidence: 'the deployed surface answers as intended' } });
   // a remote-only v10.0.0 (some other machine published it) — no local tag
   git(fx.MAIN, 'push', '-q', 'origin', `${git(fx.MAIN, 'rev-parse', 'main')}:refs/tags/v10.0.0`);
   const before = events(fx.statePath).length;
@@ -1368,7 +1370,7 @@ test('after the push, every step is bound to the published tip: a branch that mo
   addRehearsalScript(fx);
   const digest = path.join(fx.tmp, 'r.out'); fs.writeFileSync(digest, 'x');
   walk(fx, 'rehearsal', {}, { digestFile: digest });
-  walk(fx, 'docs_normalize'); walk(fx, 'verify'); walk(fx, 'review', { verdict: 'approve' }); walk(fx, 'assess', { goals: { G1: 'achieved' } });
+  walk(fx, 'docs_normalize'); walk(fx, 'verify'); walk(fx, 'review', { verdict: 'approve' }); walk(fx, 'assess', { intent_verdict: { verdict: 'met', evidence: 'the deployed surface answers as intended' } });
   release(fx);
   const pushArm = armStep({ statePath: fx.statePath, step: 'push', targets: fx.targets });
   execFileSync('sh', ['-c', pushArm.cmd], { stdio: 'ignore' });
@@ -1479,7 +1481,7 @@ test('a tag retargeted after the push blocks every tag consumer, even at the sam
   addRehearsalScript(fx);
   const digest = path.join(fx.tmp, 'r.out'); fs.writeFileSync(digest, 'x');
   walk(fx, 'rehearsal', {}, { digestFile: digest });
-  walk(fx, 'docs_normalize'); walk(fx, 'verify'); walk(fx, 'review', { verdict: 'approve' }); walk(fx, 'assess', { goals: { G1: 'achieved' } });
+  walk(fx, 'docs_normalize'); walk(fx, 'verify'); walk(fx, 'review', { verdict: 'approve' }); walk(fx, 'assess', { intent_verdict: { verdict: 'met', evidence: 'the deployed surface answers as intended' } });
   release(fx);
   const armed = armStep({ statePath: fx.statePath, step: 'push', targets: fx.targets });
   execFileSync('sh', ['-c', armed.cmd], { stdio: 'ignore' });
@@ -1519,7 +1521,7 @@ test('a tag moved between the arm and the record cannot be recorded, and the com
   addRehearsalScript(fx);
   const digest = path.join(fx.tmp, 'r.out'); fs.writeFileSync(digest, 'x');
   walk(fx, 'rehearsal', {}, { digestFile: digest });
-  walk(fx, 'docs_normalize'); walk(fx, 'verify'); walk(fx, 'review', { verdict: 'approve' }); walk(fx, 'assess', { goals: { G1: 'achieved' } });
+  walk(fx, 'docs_normalize'); walk(fx, 'verify'); walk(fx, 'review', { verdict: 'approve' }); walk(fx, 'assess', { intent_verdict: { verdict: 'met', evidence: 'the deployed surface answers as intended' } });
   release(fx);
   const pushArm = armStep({ statePath: fx.statePath, step: 'push', targets: fx.targets });
   execFileSync('sh', ['-c', pushArm.cmd], { stdio: 'ignore' });
@@ -1558,7 +1560,7 @@ test('a second blocking finding is not stranded: the corrective pass consumes ev
   for (const step of STEP_ORDER.filter((s) => s !== 'gate')) {
     appendEvent(fx.statePath, { type: 'bootstrap_step', ts: 2, pass: 1, step, cmd: 'seeded', exit: 0, status: 'done', ...(step === 'push' ? { data: { published_tip: fx.tip, published_tag: 'x' } } : step === 'main_push' ? { data: { main_sha: git(fx.MAIN, 'rev-parse', 'main'), carried: [] } } : {}) });
   }
-  appendEvent(fx.statePath, { type: 'goals_unmet', ts: 3, goals: { G1: 'missed' } });
+  appendEvent(fx.statePath, { type: 'intent_unmet', ts: 3, data: { intent_verdict: { verdict: 'missed', evidence: 'e' } } });
   appendEvent(fx.statePath, { type: 'verify_failed', ts: 4 });
   const evs = events(fx.statePath);
   const a = evs.length - 2; const b = evs.length - 1;
@@ -2161,7 +2163,7 @@ test('ci_wait: the printed cmd captures the pipeline\'s TRUE exit — red stays 
   addRehearsalScript(fx);
   const digest = path.join(fx.tmp, 'r.out'); fs.writeFileSync(digest, 'x');
   walk(fx, 'rehearsal', {}, { digestFile: digest });
-  walk(fx, 'docs_normalize'); walk(fx, 'verify'); walk(fx, 'review', { verdict: 'approve' }); walk(fx, 'assess', { goals: { G1: 'achieved' } });
+  walk(fx, 'docs_normalize'); walk(fx, 'verify'); walk(fx, 'review', { verdict: 'approve' }); walk(fx, 'assess', { intent_verdict: { verdict: 'met', evidence: 'the deployed surface answers as intended' } });
   release(fx);
   const pushArm = armStep({ statePath: fx.statePath, step: 'push', targets: fx.targets });
   execFileSync('sh', ['-c', pushArm.cmd], { stdio: 'ignore' });

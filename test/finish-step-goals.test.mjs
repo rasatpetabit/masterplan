@@ -1,8 +1,9 @@
-// test/finish-step-goals.test.mjs — finishStep goal-completeness (goals_unmet) gating + spec-gate re-arm.
-// REAL git temp repos (the finish-step.test.mjs pattern). Exercises: run_goal_check emitted between
-// run_verify and write_retro on a goals_enabled bundle; all-achieved → silent auto-progress; partial →
-// goals_unmet AUQ; waiver resolution; fix/abort stops; fail-closed manual gate on assessor failure;
-// spec-gate re-arm refusal after a post-plan goals amendment; pre-feature bundles skip entirely.
+// test/finish-step-goals.test.mjs — the finish-time goal/Intent seam after the goal blocks
+// were removed: the spec-gate re-arm over the Intent artifact, the verify_passed branch
+// binding (git facts computed by the machine), the run_verify skip's binding-source
+// requirement, and the retirement/rename of pre-upgrade goals gates. The retro
+// completion/push-summary wiring that used to live behind the goal check is kept and
+// exercised through the real lifecycle (task 30).
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -67,6 +68,11 @@ function recordSpecReview(bundleDir) {
 
 const GOALS_MD = `topic: goal tracking test
 
+## Intent
+why: keep the Intent artifact as the judged standard
+outcome: the finish binds its final assessment to recorded branch facts
+done_means: a green suite
+
 ## G1: first goal
 signal: test
 
@@ -115,24 +121,16 @@ function mkFixture({ slug = 'g14', recordReview = true, goalsMd = GOALS_MD, done
   const head = git(WT, 'rev-parse', 'HEAD');
   const gHash = goalsHash(goalsMd);
   const step = (extra = {}) => finishStep({ statePath, now: 2000, ...extra });
-  // Append a goal_check event at the current tuple with the given verdicts map.
-  const recordCheck = (verdicts) => appendEvent(bundleDir, {
-    type: 'goal_check', ts: '2026-01-01T00:00:01Z',
-    data: { goals_hash: gHash, head_sha: head, base: 'main', diff_hash: 'sha256:diff', verify_output_hash: 'sha256:vo', provenance_kind: 'assessor', verdicts },
-  });
-  // Append a goal_waived event at the current tuple waiving the given ids (reason map).
-  const recordWaiver = (reasons) => appendEvent(bundleDir, {
-    type: 'goal_waived', ts: '2026-01-01T00:00:02Z',
-    data: { goals_hash: gHash, head_sha: head, base: 'main', diff_hash: 'sha256:diff', reasons },
-  });
+  // The branch binding the verify pass records (verify_passed, git facts computed by the machine).
+  const branchBinding = () => [...parseEventLines(bundleDir)].reverse().find((e) => e.type === 'verify_passed')?.data ?? null;
   // Record a FINAL goal_check receipt bound to the deployment the run_final_check op names.
-  const recordFinalCheck = (finalOp) => appendEvent(bundleDir, {
+  const recordFinalCheck = (finalOp, over = {}) => appendEvent(bundleDir, {
     type: 'goal_check', ts: '2026-01-01T00:00:09Z',
     data: {
       final: true,
       goals_hash: gHash,
-      head_sha: head,
-      base_diff_hash: 'sha256:diff',
+      head_sha: branchBinding()?.head_sha ?? head,
+      base_diff_hash: branchBinding()?.base_diff_hash ?? branchBinding()?.diff_hash ?? 'sha256:diff',
       verify_output_hash: 'sha256:vo',
       clean: true,
       deploy_base_sha: finalOp.deploy_base_sha,
@@ -140,96 +138,174 @@ function mkFixture({ slug = 'g14', recordReview = true, goalsMd = GOALS_MD, done
       live_check_digest: finalOp.live_digest,
       provenance_kind: 'assessor',
       provenance: { dispatch_id: 'disp-final-1', model: 'assessor', output_tokens: 256 },
-      verdicts: {
-        G1: { verdict: 'achieved', evidence: 'the stage ran' },
-        G2: { verdict: 'achieved', evidence: 'the live check gated the archive' },
-      },
       intent_verdict: { verdict: 'met', evidence: 'the deployed surface answers as intended' },
+      ...over,
     },
   });
-  return { tmp, MAIN, WT, bundleDir, statePath, head, gHash, step, recordCheck, recordWaiver, recordFinalCheck, origin };
+  return { tmp, MAIN, WT, bundleDir, statePath, head, gHash, step, branchBinding, recordFinalCheck, origin };
 }
 
-test('run_goal_check emitted after verify, before retro; all-achieved → silent → write_retro', () => {
+// ---------------------------------------------------------------------------
+// verify_passed — the mechanical branch-binding record (design regression case 7, git half)
+// ---------------------------------------------------------------------------
+
+test('a passing verify answer records a verify_passed whose git facts COME FROM the worktree', () => {
   const fx = mkFixture();
   let op = fx.step();
   assert.equal(op.op, 'run_verify');
-  op = fx.step({ verify: 'pass' });
-  assert.equal(op.op, 'run_goal_check');
-  assert.equal(op.goals_hash, fx.gHash);
-  assert.equal(op.head, fx.head);
-  fx.recordCheck({ G1: { verdict: 'achieved', evidence: 'e1' }, G2: { verdict: 'achieved', evidence: 'e2' } });
+  const verifyOut = path.join(fx.tmp, 'verify-output.txt');
+  fs.writeFileSync(verifyOut, '3 passing, 0 failing\n');
+  op = fx.step({ verify: 'pass', verifyOutputFile: verifyOut });
+  // The event is on the ledger, and every field is machine-derived:
+  const rec = [...parseEventLines(fx.bundleDir)].reverse().find((e) => e.type === 'verify_passed');
+  assert.ok(rec, 'the pass answer appended verify_passed');
+  assert.equal(rec.data.head_sha, git(fx.WT, 'rev-parse', 'HEAD'), 'head_sha is the WT tip, never caller-claimed');
+  assert.equal(rec.data.base, 'main');
+  const expectedDiff = `sha256:${createHash('sha256').update(git(fx.WT, 'diff', 'main...HEAD')).digest('hex')}`;
+  assert.equal(rec.data.base_diff_hash ?? rec.data.diff_hash, expectedDiff, 'diff_hash is the computed base...HEAD diff');
+  assert.equal(rec.data.verify_output_hash, `sha256:${createHash('sha256').update('3 passing, 0 failing\n').digest('hex')}`, 'the --verify-output file is hashed into the event');
+  // A run whose WT HEAD moved between op and answer records the NEW head — there is no
+  // caller-claimed head to disagree with the worktree.
+  const fx2 = mkFixture({ slug: 'g14-move' });
+  fx2.step();
+  write(fx2.WT, 'src/b.txt', 'B\n');
+  git(fx2.WT, 'add', '.');
+  git(fx2.WT, 'commit', '-q', '-m', 'moved after the op');
+  fx2.step({ verify: 'pass' });
+  const rec2 = [...parseEventLines(fx2.bundleDir)].reverse().find((e) => e.type === 'verify_passed');
+  assert.equal(rec2.data.head_sha, git(fx2.WT, 'rev-parse', 'HEAD'), 'the event always binds the CURRENT worktree head');
+  // No goal check is emitted anywhere in the new flow: the next op is the retro.
   op = fx.step();
   assert.equal(op.op, 'write_retro');
 });
 
-test('partial verdict opens the goals_unmet gate with a summary', () => {
-  const fx = mkFixture();
-  fx.step(); fx.step({ verify: 'pass' });
-  fx.recordCheck({ G1: { verdict: 'achieved', evidence: 'e1' }, G2: { verdict: 'partial', evidence: 'half' } });
-  const op = fx.step();
-  assert.equal(op.op, 'ask');
-  assert.equal(op.gate, 'goals_unmet');
-  assert.equal(op.mode, 'assess');
-  assert.equal(op.summary, '1 achieved / 1 partial / 0 waived');
-  assert.deepEqual(op.choices, ['fix', 'waiver', 'abort']);
-  assert.ok(op.unmet.some((u) => u.id === 'G2'));
-  assert.equal(readState(fx.statePath).pending_gate.id, 'goals_unmet');
-});
-
-test('waiver resolution clears the gate and proceeds to retro', () => {
-  const fx = mkFixture();
-  fx.step(); fx.step({ verify: 'pass' });
-  fx.recordCheck({ G1: { verdict: 'achieved', evidence: 'e1' }, G2: { verdict: 'partial', evidence: 'half' } });
-  let op = fx.step();
-  assert.equal(op.gate, 'goals_unmet');
-  fx.recordWaiver({ G2: 'accepted as good enough' });
-  op = fx.step({ goalsChoice: 'waiver' });
-  assert.equal(op.op, 'write_retro');
-  assert.equal(readState(fx.statePath).pending_gate, null);
-});
-
-test('fix and abort stop the finish flow', () => {
-  const fx = mkFixture();
-  fx.step(); fx.step({ verify: 'pass' });
-  fx.recordCheck({ G1: { verdict: 'achieved', evidence: 'e1' }, G2: { verdict: 'missed', evidence: 'no' } });
-  fx.step(); // open the gate
-  let op = fx.step({ goalsChoice: 'fix' });
-  assert.equal(op.op, 'stop');
-  assert.equal(op.reason, 'goals_unmet_fix');
-  op = fx.step({ goalsChoice: 'abort' });
-  assert.equal(op.op, 'stop');
-  assert.equal(op.reason, 'finish_aborted_goals_unmet');
-});
-
-test('assessor-dispatch failure is FAIL-CLOSED → manual goals_unmet gate', () => {
-  const fx = mkFixture();
-  fx.step(); fx.step({ verify: 'pass' });
-  const op = fx.step({ goalCheck: 'failed' });
-  assert.equal(op.op, 'ask');
-  assert.equal(op.gate, 'goals_unmet');
-  assert.equal(op.mode, 'manual');
-  assert.match(op.reason, /fail-closed/);
-  assert.equal(readState(fx.statePath).pending_gate.id, 'goals_unmet');
-});
-
-test('spec-gate re-arm: amend goals post-plan without re-running the gate → refused', () => {
+test('a pass answer without --verify-output records verify_passed with no verify_output_hash; re-entry appends nothing', () => {
   const fx = mkFixture();
   fx.step();
   let op = fx.step({ verify: 'pass' });
-  assert.equal(op.op, 'run_goal_check'); // recorded review satisfies the spec gate
-  // Amend goals.md post-plan (rewrites goals.md → spec-gate content hash changes → gate re-arms).
-  fs.writeFileSync(path.join(fx.bundleDir, 'goals.md'), `${GOALS_MD}\n## G3: added goal\nsignal: test\n`);
-  op = fx.step({ verify: 'pass' });
-  assert.equal(op.op, 'ask');
-  assert.equal(op.ask, 'spec_gate_rearmed');
-  // Re-run the spec gate at the NEW hash → refusal clears, flow proceeds to the goal check again.
-  recordSpecReview(fx.bundleDir);
-  op = fx.step({ verify: 'pass' });
-  assert.equal(op.op, 'run_goal_check');
+  assert.equal(op.op, 'write_retro');
+  const rec = fx.branchBinding();
+  assert.ok(rec);
+  assert.equal(rec.verify_output_hash, undefined, 'no output file → no claimed output hash');
+  // Idempotent: a replayed pass answer at the unchanged HEAD appends nothing.
+  const before = parseEventLines(fx.bundleDir).length;
+  fx.step(); // write_retro satisfied below by writing the file first? No — no retro yet: re-run verify path is closed; drive a bare re-entry.
+  fs.writeFileSync(path.join(fx.bundleDir, 'retro.md'), '# retro\n');
+  finishStep({ statePath: fx.statePath, now: 3000, verify: 'pass' });
+  const after = parseEventLines(fx.bundleDir).filter((e) => e.type === 'verify_passed').length;
+  assert.equal(after, 1, 'no second verify_passed at the same HEAD');
+  assert.ok(after <= parseEventLines(fx.bundleDir).length);
 });
 
-test('a bundle with NO recorded spec review is refused before any goal check', () => {
+// ---------------------------------------------------------------------------
+// The run_verify skip requires a binding source on a goals_enabled bundle (case 9)
+// ---------------------------------------------------------------------------
+
+test('verified_sha == HEAD with NO binding source re-runs verification; with one it skips', () => {
+  const fx = mkFixture();
+  // Simulate the upgraded run: it verified under the old flow (verified_sha == HEAD recorded)
+  // but the ledger carries no verify_passed and no legacy goal_check.
+  fs.appendFileSync(path.join(fx.bundleDir, 'events.jsonl'), '');
+  const st = readState(fx.statePath);
+  writeState(fx.statePath, { ...st, verified_sha: fx.head });
+  let op = fx.step();
+  assert.equal(op.op, 'run_verify', 'no binding source for this HEAD → verification re-runs');
+  op = fx.step({ verify: 'pass' });
+  assert.ok(fx.branchBinding(), 'the re-run established the binding');
+  assert.equal(op.op, 'write_retro');
+  // With the binding recorded, a later entry at the same HEAD skips the re-run.
+  fs.writeFileSync(path.join(fx.bundleDir, 'retro.md'), '# retro\n');
+  op = fx.step();
+  assert.notEqual(op.op, 'run_verify');
+});
+
+test('a legacy implementation goal_check for the HEAD is an acceptable binding source (in-flight bundles)', () => {
+  const fx = mkFixture();
+  const st = readState(fx.statePath);
+  writeState(fx.statePath, { ...st, verified_sha: fx.head });
+  appendEvent(fx.bundleDir, {
+    type: 'goal_check', ts: '2026-01-01T00:00:01Z',
+    data: { goals_hash: fx.gHash, head_sha: fx.head, base: 'main', diff_hash: 'sha256:diff', verify_output_hash: 'sha256:vo', provenance_kind: 'assessor', verdicts: { G1: { verdict: 'achieved' } } },
+  });
+  const op = fx.step();
+  assert.notEqual(op.op, 'run_verify', 'a legacy binding source for the HEAD satisfies the skip rule');
+  assert.equal(op.op, 'write_retro');
+});
+
+// ---------------------------------------------------------------------------
+// Pre-upgrade pending goals gates (design regression case 4)
+// ---------------------------------------------------------------------------
+
+test('a pending implementation-mode goals_unmet gate is RETIRED with a gate_retired event and the flow continues', () => {
+  const fx = mkFixture({ done: 'done:\n  release:\n    - run: /bin/true\n  live_check:\n    - run: /bin/true\n      check: /bin/true\n' });
+  fx.step(); // run_verify op outstanding
+  // The pre-upgrade bundle: it verified under the old flow (verified_sha == HEAD recorded
+  // then, before verify_passed existed) and an implementation-mode gate is open (manual,
+  // after an assessor dispatch failure) — no goal_check anywhere on the ledger.
+  writeState(fx.statePath, { ...readState(fx.statePath), verified_sha: fx.head, pending_gate: { id: 'goals_unmet', opened_at: '2026-01-01T00:00:00Z', mode: 'manual' } });
+  let op = fx.step();
+  assert.equal(op.op, 'run_verify', 'retirement continues the flow; with no binding source verification re-runs');
+  const retired = [...parseEventLines(fx.bundleDir)].reverse().find((e) => e.type === 'gate_retired');
+  assert.ok(retired, 'the retirement is durable');
+  assert.equal(retired.gate, 'goals_unmet');
+  assert.equal(retired.mode, 'manual');
+  assert.match(retired.reason, /retired/i);
+  assert.equal(readState(fx.statePath).pending_gate, null, 'the gate is cleared');
+  // The flow reaches a valid final assessment after deploy — not final_check_invalid.
+  op = fx.step({ verify: 'pass' });
+  if (op.op === 'write_retro') { fs.writeFileSync(op.path, '# retro\n'); op = fx.step(); }
+  assert.equal(op.gate, 'branch_finish');
+  op = fx.step({ choice: 'merge' });
+  assert.equal(op.group, 'release');
+  op = fx.step({ deployStepDone: { group: 'release', index: 0, exit: 0 } });
+  assert.equal(op.group, 'live_check');
+  const evidence = path.join(fx.tmp, 'evidence.txt');
+  fs.writeFileSync(evidence, 'the deployment is live\n');
+  op = fx.step({ deployStepDone: { group: 'live_check', index: 0, exit: 0, digestFile: evidence } });
+  assert.equal(op.op, 'run_final_check', JSON.stringify(op));
+  fx.recordFinalCheck(op);
+  op = fx.step();
+  assert.equal(op.gate, 'intent_confirm', 'the retired run reaches a VALID final assessment');
+});
+
+test('a pending FINAL-mode goals_unmet gate is honored as intent_unmet (same failure, same answers)', () => {
+  const fx = mkFixture();
+  fx.step();
+  writeState(fx.statePath, { ...readState(fx.statePath), verified_sha: fx.head, pending_gate: { id: 'goals_unmet', opened_at: '2026-01-01T00:00:00Z', mode: 'final' } });
+  const op = fx.step();
+  assert.equal(op.gate, 'intent_unmet', JSON.stringify(op));
+  assert.equal(op.mode, 'final');
+  assert.deepEqual(op.choices, ['waiver', 'abort', 'reject-intent']);
+  assert.equal(readState(fx.statePath).pending_gate?.id, 'intent_unmet', 'renamed in place, same unresolved disposition');
+  // Never silently cleared: the gate takes an explicit answer (this fixture has no deployment,
+  // so the waiver/rejection executors legitimately refuse — the terminal-waiver path is
+  // exercised against a real deployment in test/final-check.test.mjs). Abort answers it.
+  const aborted = fx.step({ intentChoice: 'abort' });
+  assert.equal(aborted.reason, 'finish_aborted_intent_unmet');
+  assert.equal(readState(fx.statePath).pending_gate, null, 'the answer cleared the gate');
+});
+
+// ---------------------------------------------------------------------------
+// Spec-gate re-arm over the Intent artifact
+// ---------------------------------------------------------------------------
+
+test('spec-gate re-arm: amend goals.md post-plan without re-running the gate → refused', () => {
+  const fx = mkFixture();
+  fx.step();
+  let op = fx.step({ verify: 'pass' });
+  assert.equal(op.op, 'write_retro'); // recorded review satisfies the spec gate
+  // Amend goals.md post-plan (rewrites goals.md → spec-gate content hash changes → gate re-arms).
+  fs.writeFileSync(path.join(fx.bundleDir, 'goals.md'), `${GOALS_MD}\n## G3: added goal\nsignal: test\n`);
+  op = fx.step();
+  assert.equal(op.op, 'ask');
+  assert.equal(op.ask, 'spec_gate_rearmed');
+  // Re-run the spec gate at the NEW hash → refusal clears, flow proceeds.
+  recordSpecReview(fx.bundleDir);
+  op = fx.step();
+  assert.equal(op.op, 'write_retro');
+});
+
+test('a bundle with NO recorded spec review is refused before the finish proceeds', () => {
   const fx = mkFixture({ recordReview: false });
   fx.step();
   const op = fx.step({ verify: 'pass' });
@@ -237,7 +313,7 @@ test('a bundle with NO recorded spec review is refused before any goal check', (
   assert.equal(op.ask, 'spec_gate_rearmed');
 });
 
-test('pre-feature bundle (no goals_enabled, no goal events) skips goal gating entirely', () => {
+test('pre-feature bundle (no goals_enabled, no goal events) skips the binding rule entirely', () => {
   const tmp = mkdtempTracked(path.join(os.tmpdir(), 'mp-finishpre-'));
   const MAIN = path.join(tmp, 'main');
   fs.mkdirSync(MAIN, { recursive: true });
@@ -257,25 +333,27 @@ test('pre-feature bundle (no goals_enabled, no goal events) skips goal gating en
     pending_gate: null, active_run: null, review: { adversary: false }, concurrency: { owner_lock: 'off' },
     tasks: [{ id: 1, status: 'done', wave: 1, files: ['src/a.txt'] }],
   });
+  // A pre-verified entry (verified under the old flow, no binding source): the binding rule
+  // is goals_enabled-scoped, so this bundle skips straight to the retro.
+  const head = git(WT, 'rev-parse', 'HEAD');
+  writeState(statePath, { ...readState(statePath), verified_sha: head });
   const step = (extra = {}) => finishStep({ statePath, now: 2000, ...extra });
   let op = step();
-  assert.equal(op.op, 'run_verify');
+  assert.equal(op.op, 'write_retro', 'no re-run demanded: no goals, no final assessment to bind');
   op = step({ verify: 'pass' });
-  assert.equal(op.op, 'write_retro'); // no run_goal_check, no spec-gate refusal
+  assert.equal(op.op, 'write_retro'); // no goal gate, no spec-gate refusal
 });
 
-test('branch_finish payload folds in the goals summary (all achieved)', () => {
+test('branch_finish payload carries no goal summary', () => {
   const fx = mkFixture();
   fx.step(); fx.step({ verify: 'pass' });
-  fx.recordCheck({ G1: { verdict: 'achieved', evidence: 'e1' }, G2: { verdict: 'achieved', evidence: 'e2' } });
   let op = fx.step();
   assert.equal(op.op, 'write_retro');
   fs.writeFileSync(op.path, '# retro\n');
   op = fx.step();
   assert.equal(op.op, 'ask');
   assert.equal(op.gate, 'branch_finish');
-  assert.equal(op.goals.summary, '2 achieved / 0 partial / 0 waived');
-  assert.equal(op.goals.achieved, 2);
+  assert.equal(op.goals, undefined, 'the per-goal summary is gone from the AUQ payload');
 });
 
 // ---- retro completion/pushed summary wired into the REAL finish-step lifecycle (task 30) ----
@@ -287,10 +365,8 @@ test('branch_finish payload folds in the goals summary (all achieved)', () => {
 // finish-step transitions, writes the retro.md at the write_retro op (as the shell would),
 // and asserts on the ACTUAL generated retro.md.
 
-// Walk a goals fixture to the point where the deploy stage is about to run: verify → goal_check
-// → retro (written when the op asks) → branch_finish gate. Returns the pre-archive fixture.
+// Walk a fixture to the branch_finish gate (verify pass recorded the binding along the way).
 function walkToBranchFinish(fx) {
-  fx.recordCheck({ G1: { verdict: 'achieved', evidence: 'e1' }, G2: { verdict: 'achieved', evidence: 'e2' } });
   let op = fx.step();
   assert.equal(op.op, 'run_verify', JSON.stringify(op));
   op = fx.step({ verify: 'pass' });
@@ -315,7 +391,7 @@ test('a keep archives incomplete:kept and the retro.md gains the Completion bloc
   assert.ok(retro.includes('## Completion'), 'retro.md gains the Completion block');
   assert.ok(retro.includes('**Completion:** incomplete:kept'));
   assert.ok(retro.includes('**Pushed to origin:** no'));
-  // The goal verdicts content written at write_retro survives.
+  // The content written at write_retro survives.
   assert.ok(retro.includes('## Goal verdicts'));
   // Idempotent: a re-entry does not duplicate the block.
   const again = fx.step();
@@ -341,7 +417,6 @@ test('an install-pushed archive opens the push gate and the push answer updates 
     done: 'done:\n  install:\n    - run: /bin/true\n  live_check:\n    - run: /bin/true\n      check: /bin/true\n',
     origin: true,
   });
-  fx.recordCheck({ G1: { verdict: 'achieved', evidence: 'e1' }, G2: { verdict: 'achieved', evidence: 'e2' } });
   let op = fx.step();
   assert.equal(op.op, 'run_verify', JSON.stringify(op));
   op = fx.step({ verify: 'pass' });
@@ -393,7 +468,6 @@ test('an install-pushed archive declined via archive_push_skipped keeps pushed: 
     done: 'done:\n  install:\n    - run: /bin/true\n  live_check:\n    - run: /bin/true\n      check: /bin/true\n',
     origin: true,
   });
-  fx.recordCheck({ G1: { verdict: 'achieved', evidence: 'e1' }, G2: { verdict: 'achieved', evidence: 'e2' } });
   let op = fx.step();
   op = fx.step({ verify: 'pass' });
   if (op.op === 'write_retro') {
@@ -405,7 +479,7 @@ test('an install-pushed archive declined via archive_push_skipped keeps pushed: 
   assert.equal(op.group, 'install', JSON.stringify(op));
   git(fx.MAIN, 'push', '-q', 'origin', 'main');
   op = fx.step({ deployStepDone: { group: 'install', index: 0, exit: 0 } });
-  assert.equal(op.group, 'live_check', JSON.stringify(op));
+  assert.equal(op.group, 'live_check');
   const evidence = path.join(fx.tmp, 'evidence.txt');
   fs.writeFileSync(evidence, 'the deployment is live\n');
   op = fx.step({ deployStepDone: { group: 'live_check', index: 0, exit: 0, digestFile: evidence } });

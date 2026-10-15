@@ -3100,13 +3100,14 @@ test('A5: record-result does NOT finalize the wave-dispatch record to \'recorded
 // The v10 wiring (wave task 3) — implementation-facing smoke cases
 // ---------------------------------------------------------------------------
 
-test('record-goal-check --final binds the deploy tuple the RECORDER supplies', () => {
-  // A frozen-goals bundle, built the way the goal-check recorder expects: git facts are passed
-  // in as flags (bin is fs-only), and the goals hash is the real one for this document.
-  const GOALS = '## G1: Cover it\nsignal: test\n\n## G2: Flag it\nsignal: command\n';
+test('record-intent-check binds the deploy tuple the RECORDER supplies and the branch facts the LEDGER recorded', () => {
+  // A goals_enabled bundle with the binding source the finish machinery records: a
+  // verify_passed whose git facts were computed by finish-step (the fixture writes the line
+  // exactly as appendEvent would — the generic `mp event` writer refuses the type).
+  const GOALS = 'topic: cover the widget\n\n## Intent\nwhy: the widget needs covering\noutcome: the widget ships covered\ndone_means: release\n';
   const GH = goalsHashFn(GOALS);
   const HEAD = 'a'.repeat(40);
-  const BASE = 'b'.repeat(40);
+  const BASE = 'main';
   const DIFF = 'sha256:diff-1';
   const VOUT = 'sha256:verify-1';
   const DEPLOY_BASE = 'd'.repeat(40);
@@ -3118,7 +3119,7 @@ test('record-goal-check --final binds the deploy tuple the RECORDER supplies', (
   fs.writeFileSync(LIVE_FILE, 'the live check observed the deployed surface\n');
   const LIVE = liveCheckDigest(LIVE_FILE);
 
-  const mkBundle = () => {
+  const mkBundle = ({ binding = true } = {}) => {
     const dir = tmpDir('mp-final-');
     const statePath = path.join(dir, 'state.yml');
     fs.writeFileSync(statePath, serializeState({
@@ -3126,35 +3127,37 @@ test('record-goal-check --final binds the deploy tuple the RECORDER supplies', (
       goals_enabled: true, goals_md_hash: GH,
     }));
     fs.writeFileSync(path.join(dir, 'goals.md'), GOALS);
+    if (binding) {
+      fs.writeFileSync(path.join(dir, 'events.jsonl'),
+        `${JSON.stringify({ type: 'verify_passed', ts: '2026-01-01T00:00:00Z', data: { head_sha: HEAD, base: BASE, diff_hash: DIFF, verify_output_hash: VOUT } })}\n`);
+    }
     return { dir, statePath, eventsPath: path.join(dir, 'events.jsonl') };
   };
   const receipt = (over = {}) => JSON.stringify({
     goals_hash: GH, head_sha: HEAD, base_diff_hash: DIFF, verify_output_hash: VOUT, clean: true,
-    verdicts: {
-      G1: { verdict: 'achieved', evidence: 'the suite passes' },
-      G2: { verdict: 'achieved', evidence: 'the flag is wired' },
-    },
+    deploy_base_sha: DEPLOY_BASE, deploy_chain_hash: CHAIN, live_check_digest: LIVE,
+    intent_verdict: { verdict: 'met', evidence: 'the deployed surface answers as intended' },
     dispatch_id: 'disp-final-1', model: 'assessor', output_tokens: 256, ts: '2026-07-01T00:00:00Z',
     ...over,
   });
   const baseFlags = (statePath) => [
-    `--state=${statePath}`, `--head-sha=${HEAD}`, `--base=${BASE}`,
-    `--diff-hash=${DIFF}`, `--verify-output-hash=${VOUT}`,
+    `--state=${statePath}`,
+    `--base-sha=${DEPLOY_BASE}`,
+    `--deploy-chain-hash=${CHAIN}`,
+    `--digest-file=${LIVE_FILE}`,
   ];
 
-  // A FINAL receipt that echoes every recorder-supplied binding is accepted.
+  // A FINAL receipt that echoes every recorder-supplied binding AND the ledger's branch facts
+  // is accepted.
   const ok = mkBundle();
   // CHAIN is deliberately DIFFERENT from DIFF: the deploy-event chain hash and the
   // implementation diff hash are independent values, and forcing them equal would make a
   // valid final receipt unrecordable.
-  const accepted = run(['record-goal-check', ...baseFlags(ok.statePath), '--final',
-    `--base-sha=${DEPLOY_BASE}`, `--deploy-chain-hash=${CHAIN}`, `--digest-file=${LIVE_FILE}`,
-    `--receipt=${receipt({
-      deploy_base_sha: DEPLOY_BASE, deploy_chain_hash: CHAIN, live_check_digest: LIVE,
-      intent_verdict: { verdict: 'met', evidence: 'the deployed surface answers as intended' },
-    })}`]);
+  const accepted = run(['record-intent-check', ...baseFlags(ok.statePath),
+    `--receipt=${receipt()}`]);
   assert.equal(accepted.status, 0, accepted.stderr);
   assert.equal(JSON.parse(accepted.stdout).recorded, 'goal_check');
+  assert.equal(JSON.parse(accepted.stdout).mode, 'final');
 
   // ...and altering ONE final-only binding is refused, naming that field. The recorder's value
   // is authoritative: a receipt cannot supply its own deploy base and validate its own claim.
@@ -3162,29 +3165,22 @@ test('record-goal-check --final binds the deploy tuple the RECORDER supplies', (
     ['deploy_base_sha', DEPLOY_BASE],
     ['deploy_chain_hash', CHAIN],
     ['live_check_digest', LIVE],
+    // ...and the branch facts echo the LEDGER's binding source, never the caller's claim.
+    ['head_sha', HEAD],
   ]) {
     const b = mkBundle();
-    const bad = run(['record-goal-check', ...baseFlags(b.statePath), '--final',
-      `--base-sha=${DEPLOY_BASE}`, `--deploy-chain-hash=${CHAIN}`, `--digest-file=${LIVE_FILE}`,
-      `--receipt=${receipt({
-        deploy_base_sha: DEPLOY_BASE, deploy_chain_hash: CHAIN, live_check_digest: LIVE,
-        intent_verdict: { verdict: 'met', evidence: 'x' },
-        [field]: `${flagged}-tampered`,
-      })}`]);
+    const bad = run(['record-intent-check', ...baseFlags(b.statePath),
+      `--receipt=${receipt({ [field]: `${flagged}-tampered` })}`]);
     assert.notEqual(bad.status, 0, `${field} mismatch must be refused`);
     assert.match(bad.stderr, new RegExp(field), `the refusal must name ${field}`);
   }
 
-  // The SAME receipt without --final is the v1/implementation shape: no bindings demanded, and
-  // an intent_verdict on it is refused as a fabricated post-live judgement.
-  const impl = mkBundle();
-  const implOk = run(['record-goal-check', ...baseFlags(impl.statePath), `--receipt=${receipt()}`]);
-  assert.equal(implOk.status, 0, implOk.stderr);
-  const fabricated = mkBundle();
-  const rejected = run(['record-goal-check', ...baseFlags(fabricated.statePath),
-    `--receipt=${receipt({ intent_verdict: { verdict: 'met', evidence: 'x' } })}`]);
-  assert.notEqual(rejected.status, 0);
-  assert.match(rejected.stderr, /only by the final assessment/);
+  // No binding source on the ledger at all: refused outright — a final receipt may never
+  // validate its own branch bindings.
+  const none = mkBundle({ binding: false });
+  const refused = run(['record-intent-check', ...baseFlags(none.statePath), `--receipt=${receipt()}`]);
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.stderr, /no verify_passed/);
 });
 
 test('reindex-plan defaults its index from the bundle rather than requiring it twice', () => {

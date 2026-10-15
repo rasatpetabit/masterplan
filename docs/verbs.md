@@ -53,9 +53,9 @@ Finalize a completed run (§2c): verify and **cite real output**
 `branch_finish` gate (merge / push+PR / keep / discard via
 `superpowers:finishing-a-development-branch`) → archive **last**. Auto-fires when the last wave
 completes; also invokable manually. On pending tasks it asks "finalize anyway / keep working /
-`--retro-only`" — never a silent archive. On a `goals_enabled` bundle, finish adds a per-goal
-check via the `mp-goal-assessor` agent, and a new `goals_unmet` gate (fix-&-continue / waiver /
-abort) fires before archive.
+`--retro-only`" — never a silent archive. On a `goals_enabled` bundle, the final Intent
+assessment (`mp-intent-assessor`, after the live check) gates the archive; a partial/missed
+Intent verdict opens the durable `intent_unmet` gate (waiver / abort / reject-intent).
 Flag: `--retro-only` (re)generates just `retro.md` (no verification, no gate, no archive).
 
 The whole-branch challenge (`run_adversary_review`) returns model-free intent with
@@ -156,19 +156,20 @@ text as quoted context.
   `goals.md` hash under the durable format pin (the split-brain guard checks this hash on
   `set-phase`/`load-plan`). No separate approval verb — the operator approves the Intent at
   the spec gate, whose hash covers `goals.md`.
-- `record-goal-check` — persist a goal-completeness assessment (mirrors `record-gate-review`,
-  anti-fabrication). Default mode validates a `--receipt` binding goals-hash + `--head-sha` +
-  `--base` + `--diff-hash` + the recomputed `--verify-output-hash` + clean status + a verdict
-  for every active goal, then appends `goal_check`; provenance is exactly one of assessor
-  (dispatch id/model/tokens) or user-attested (`attested_by: user` + approval receipt — a
-  manual receipt can never masquerade as assessor provenance). `--waive` mode validates a
-  `--waiver` (per-goal reasons + user-approval receipt over the same tuple) and appends
-  `goal_waived`. Refuses (exit 3) on a dirty worktree; re-entry at an unchanged tuple is
-  idempotent, and any goals amendment or later commit re-arms.
-Pre-feature bundles without goals gracefully skip (no-op) all goal steps. During finish,
-`finish-step` runs `run_goal_check` after verify and before the retro; any partial/missed
-goal opens the durable `goals_unmet` gate (fix / waive / abort — fail-closed on assessor
-dispatch failure), and the `branch_finish` payload carries a one-line goals summary.
+- `record-intent-check` — persist the FINAL Intent assessment (renamed from
+  `record-goal-check --final`; the appended event keeps the wire name `goal_check` with
+  `final: true`). Anti-fabrication: branch facts are never caller-supplied — the receipt must
+  echo the ledger's independently recorded binding source (the `verify_passed` event finish-step
+  appends when verification passes, or a legacy implementation `goal_check`), plus the Intent
+  hash under the durable format pin, the deploy tuple, `clean: true`, the `intent_verdict`, and
+  provenance in exactly one of assessor (dispatch id/model/tokens) or user-attested
+  (`attested_by: user` + approval receipt — a manual receipt can never masquerade as assessor
+  provenance). Re-entry at an unchanged tuple is idempotent; any Intent amendment re-arms.
+Pre-feature bundles without goals gracefully skip (no-op) all goal steps. During finish, a
+passing `run_verify` answer (`--verify-passed --verify-output=<file>`) durably records the
+`verify_passed` branch binding; after the live check the final assessment runs, and a
+partial/missed Intent opens the durable `intent_unmet` gate (waiver / abort / reject-intent —
+fail-closed on assessor unavailability via a user-attested receipt).
 
 ## Plan-graph & cross-run subcommands
 

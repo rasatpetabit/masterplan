@@ -94,7 +94,7 @@ export function readBundleEvents(statePath) {
           return;
         }
         if (!isBlockingFinding(events[e.triggered_by])) {
-          problems.push(`event ${i} (bootstrap_pass) names event ${e.triggered_by}, which is not a blocking finding — a corrective pass needs a partial/missed goal, a revise/reject review or a red verify (§10.3)`);
+          problems.push(`event ${i} (bootstrap_pass) names event ${e.triggered_by}, which is not a blocking finding — a corrective pass needs a partial/missed Intent verdict, a revise/reject review or a red verify (§10.3)`);
           return;
         }
         // VERSION-SERIES validation (the release-candidate closure review's finding): replay
@@ -1082,16 +1082,17 @@ export function correctReceipt({ statePath, targets, note, now = Date.now() }) {
 
 // ---- startPass ---------------------------------------------------------------
 
-// The finish-time findings that open a corrective pass (§10.3): a partial/missed goal check, a
-// blocking finish-time review, a red verify after both surfaces are live — and a recorded
+// The finish-time findings that open a corrective pass (§10.3): a partial/missed final Intent
+// verdict (the `goal_check` event the final assessment appends — wire name kept), a blocking
+// finish-time review, a red verify after both surfaces are live — and a recorded
 // post-publication precondition REFUSAL (bootstrap_refusal, Part 1 of the v10 recovery
 // contract): an arm that refused because the tag is public and the world moved past it is a
 // corrective finding in its own right, the honest record of a pass that cannot proceed.
-export const CORRECTIVE_TRIGGERS = ['goal_check', 'goals_unmet', 'adversary_review', 'run_verify', 'verify_failed', 'bootstrap_refusal'];
+export const CORRECTIVE_TRIGGERS = ['goal_check', 'intent_unmet', 'adversary_review', 'run_verify', 'verify_failed', 'bootstrap_refusal'];
 // Trigger types that DENOTE the failure: the record exists only because the check did not pass, so
 // the type alone is the finding (no verdict/exit/ok field needed). The others are outcome records
 // that carry a verdict and block only when it is a blocking one.
-export const SELF_BLOCKING_TRIGGERS = ['goals_unmet', 'verify_failed', 'bootstrap_refusal'];
+export const SELF_BLOCKING_TRIGGERS = ['intent_unmet', 'verify_failed', 'bootstrap_refusal'];
 const BLOCKING_VERDICTS = new Set(['partial', 'missed', 'revise', 'rework', 'reject', 'error', 'fail', 'failed', 'red']);
 // A finding is corrective only when it actually blocks: a self-describing failure type, a
 // partial/missed goal, a revise/reject/error review verdict, a failed verify (ok:false, status
@@ -1108,6 +1109,14 @@ export function isBlockingFinding(ev) {
   // the finish-time adversary_review event carried its verdict only in prose, so a blocking
   // review was not machine-readable as one). The same enum as the top-level keys governs.
   if (ev.data && typeof ev.data === 'object' && typeof ev.data.verdict === 'string' && BLOCKING_VERDICTS.has(ev.data.verdict)) return true;
+  // A final Intent assessment (the `goal_check` event, final: true) blocks when its Intent
+  // verdict is partial or missed — the finish flow's own gate reads the same field.
+  if (ev.type === 'goal_check' && ev.data && typeof ev.data === 'object'
+    && ev.data.intent_verdict && typeof ev.data.intent_verdict.verdict === 'string'
+    && BLOCKING_VERDICTS.has(ev.data.intent_verdict.verdict)) {
+    return true;
+  }
+  // A legacy per-goal verdict map (pre-removal finish flow) blocks on any partial/missed goal.
   if (ev.type === 'goal_check' && ev.goals && typeof ev.goals === 'object') {
     return Object.values(ev.goals).some((v) => v === 'partial' || v === 'missed' || (v && typeof v === 'object' && BLOCKING_VERDICTS.has(v.verdict)));
   }
@@ -1268,7 +1277,7 @@ export function startPass({ statePath, pass, triggeredBy, version = null, target
     throw new Error(`triggeredBy must name a corrective finding event (${CORRECTIVE_TRIGGERS.join(', ')}) or a failed published-tag driver step, got ${trigger ? trigger.type : 'nothing'}`);
   }
   if (!isBlockingFinding(trigger)) {
-    throw new Error(`event ${triggeredBy} (${trigger.type}) is not a blocking finding — a corrective pass needs a partial/missed goal, a revise/reject review or a red verify`);
+    throw new Error(`event ${triggeredBy} (${trigger.type}) is not a blocking finding — a corrective pass needs a partial/missed Intent verdict, a revise/reject review or a red verify`);
   }
   const live = latestOfType(events, 'bootstrap_step', status.pass, 'surfaces_live');
   // The finding window: a finding raised after BOTH SURFACES WENT LIVE opens the corrective pass
@@ -1384,15 +1393,20 @@ export const STEPS = {
       return problems.length ? problems : [{ name: 'review_done_at_tip', ok: true, detail: 'review done at tip' }];
     },
     post(ctx, record) {
+      // The pre-publish Intent contract (per-goal verdict maps are gone with the goal blocks):
+      // the assessment must return a final-style Intent verdict, and only `met` releases — a
+      // partial or missed Intent here is a corrective finding (isBlockingFinding reads the
+      // same field), never a release.
       const problems = [];
-      const goals = record.data.goals;
-      if (!goals || typeof goals !== 'object' || Array.isArray(goals) || Object.keys(goals).length === 0) {
-        problems.push({ name: 'goals_object', ok: false, detail: 'data.goals must be a non-empty object of goal → verdict' });
+      const iv = record.data && record.data.intent_verdict;
+      if (!iv || typeof iv !== 'object' || Array.isArray(iv)) {
+        problems.push({ name: 'intent_verdict_object', ok: false, detail: 'data.intent_verdict must be an object { verdict, evidence }' });
       } else {
-        for (const [k, v] of Object.entries(goals)) {
-          if (v !== 'achieved') {
-            problems.push({ name: `goal_${k}`, ok: false, detail: `${k} is ${v}, expected achieved` });
-          }
+        if (iv.verdict !== 'met') {
+          problems.push({ name: 'intent_verdict_met', ok: false, detail: `intent_verdict.verdict is ${JSON.stringify(iv.verdict)}, expected met` });
+        }
+        if (typeof iv.evidence !== 'string' || iv.evidence.trim() === '') {
+          problems.push({ name: 'intent_verdict_evidence', ok: false, detail: 'intent_verdict.evidence must be a non-empty string' });
         }
       }
       return problems;

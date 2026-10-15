@@ -193,7 +193,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { readState, parseState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, setWorktree, setWorktreeDisposition, setVerifiedSha, setCodexConfig, setReviewConfig, setRenderConfig, loadPlanTasks, buildSeedState, buildTasksFromPlanIndex, appendEvent, setCoordination, applyPlanIndex, upsertTasks, rebasePaths, inferGoalsCapability, CURRENT_SCHEMA_VERSION, resolveFormatPin, repairFormatPin } from '../lib/bundle.mjs';
-import { parseGoals, validateGoals, goalsHash, validateGoalCheckReceipt, validateGoalWaiver, validateGoalsLoadGate } from '../lib/goals.mjs';
+import { parseGoals, validateGoals, goalsHash, validateGoalCheckReceipt, validateGoalsLoadGate } from '../lib/goals.mjs';
 import { planWorktreeCreate, parseWorktreeList, classifyWorktrees, normalizeDisposition, dispositionAfterTeardown, VALID_DISPOSITIONS as VALID_WORKTREE_DISPOSITION } from '../lib/worktree.mjs';
 import { collectDiskDirs, collectBundleRecords } from '../lib/worktree-fs.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
@@ -236,7 +236,7 @@ import { recordWaveResult, promoteAmendment } from '../lib/wave-commit.mjs';
 import { pinnedGoalsEvidenceHash } from '../lib/promote.mjs';
 import { dispatchWaveViaFabric, reviewNativeResult, readWaveDispatchRecord, writeWaveDispatchRecord, disposeReviewEpisode } from '../lib/dispatch-wave.mjs';
 import { continueRun, dispatchPlanFanout, resolvePlanMdPath } from '../lib/continue.mjs';
-import { finishStep } from '../lib/finish-step.mjs';
+import { finishStep, branchBindingSource } from '../lib/finish-step.mjs';
 import { sweepWorktrees } from '../lib/sweep.mjs';
 import { discoverRuns, readDiscoveryConfig, serializeDiscoveryConfig, addDiscoveryRoot, removeDiscoveryRoot, discoveryConfigPath } from '../lib/runs.mjs';
 import { acquireSeedLock, releaseSeedLock } from '../lib/seed-lock.mjs';
@@ -700,10 +700,10 @@ const KNOWN_FLAGS = new Set(
     'approval args autonomy base base-sha baseline before bootstrap branch branch-exists branches ' +
     'bytes-file choice codex-base codex-count codex-digest-file codex-done codex-reason codex-review ' +
     'codex-skipped codex-suppressed complexity complexity-source contract-ref count created-at ' +
-    'current-head cwd d6-ok data date dead declared-sha256 detail diff-hash digest-file direction ' +
-    'dirty disposition docs-count docs-normalized docs-reason docs-skipped docs-suppressed existing ' +
+    'current-head cwd d6-ok data date dead declared-sha256 detail digest-file direction ' +
+    'disposition docs-count docs-normalized docs-reason docs-skipped docs-suppressed existing ' +
     'fabric fail-if-unconfigured fail-if-unpublishable force fragments from gate generated-at gh-json ' +
-    'goal-check goals-choice head head-sha host id images integration-branch issue issues job-id ' +
+    'head host id images integration-branch issue issues job-id ' +
     'key kind label linked-worktree local-run-branch mark-published merge-sha merged meta mode ' +
     'native-tools no-workflow note note-file now opened-at out owner-lock phase plan plan-deps plan-hash ' +
     'plan-html plan-index plan-index-path plan-md plan-path planning-mode porcelain pr predecessor ' +
@@ -713,11 +713,11 @@ const KNOWN_FLAGS = new Set(
     'review-done review-fallback-reason review-json review-reason review-reviewer review-skipped review-verdict reviews-file recovery-head recovery-repo roots routing run-id run-slug ' +
     'schema-version scope session sha slug spec-path state status subsystems ' +
     'subsystems-file summary takeover target task task-id to topic ts ttl-ms type verify-failed ' +
-    'verify-output-hash verify-passed waive waiver wave worktree worktree-list worktree-registered ' +
+    'verify-output verify-passed wave worktree worktree-list worktree-registered ' +
     'ws-baseline ' +
     // §5.3 interview ledger + §7.5 rejection + the deploy/final-check flags
     'class corrected critic-unavailable-ack deploy-abort deploy-attest deploy-authorize deploy-rerun '  +
-    'deploy-retry deploy-skip deploy-step-done done-adhoc-file error file final intent-confirmed intent-rejected '  + 'archive-pushed archive-push-skipped '  +
+    'deploy-retry deploy-skip deploy-step-done done-adhoc-file error file intent-choice intent-confirmed intent-rejected '  + 'archive-pushed archive-push-skipped '  +
     'deploy-chain-hash exit focus interview-waived model overlap-review payload-file resolves '  +
     'approval-file diff-file result-goals-file result-spec-file self transaction-id '  +
     'review-file round supersedes '  +
@@ -1748,32 +1748,36 @@ function main() {
       out({ event: record.type, ts: record.ts, path: eventsPath }); // terse confirmation
       break;
     }
-    case 'record-goal-check': {
-      // CD-7 write (events.jsonl): record an anti-fabrication goal-completeness assessment (mirrors
-      // record-gate-review). bin is fs-only — git facts (HEAD, base, base..HEAD diff hash, dirty status,
-      // the recomputed run_verify output hash) are PASSED IN by the shell. Two sub-modes:
-      //   default (check): --receipt validates via validateGoalCheckReceipt against the CURRENT goals
-      //     hash + the passed HEAD/base/diff/verify-output tuple + clean status; appends a `goal_check`
-      //     event. Provenance is EXACTLY ONE of assessor (dispatch_id/model/output_tokens) or
-      //     user-attested (attested_by:'user' + approval_receipt) — a manual receipt is explicitly
-      //     marked and can NEVER masquerade as assessor provenance (the validator owns that split).
-      //   --waive (waiver): --waiver validates via validateGoalWaiver (per-goal reasons + a user-
-      //     approval receipt binding the full tuple); appends a `goal_waived` event.
-      // REFUSES on a dirty worktree — the assessor saw uncommitted state a receipt key cannot pin.
-      // Re-entry at the UNCHANGED tuple (goals hash + HEAD + base + diff hash) is idempotent (skip, no
-      // double-append); any goals amendment or later commit moves the tuple and re-arms.
+    case 'record-intent-check': {
+      // CD-7 write (events.jsonl): record the FINAL Intent assessment — the post-deploy
+      // verdict on the run Intent (`goals.md`: topic anchor + ## Intent). Renamed from
+      // `record-goal-check --final` when the enumerated goal blocks were removed; the
+      // appended event keeps its historical wire name `goal_check` with `final: true`.
+      // Final mode ONLY: the implementation-mode goal assessment is gone.
+      //
+      // Anti-fabrication: the branch facts (HEAD, base..HEAD diff hash, verify output hash)
+      // are never accepted from the caller. They are read from the ledger's INDEPENDENTLY
+      // RECORDED binding source — the latest `verify_passed` (appended by finish-step with
+      // git facts computed from the worktree) or, on an in-flight legacy bundle, the latest
+      // non-final `goal_check` — and the receipt must echo THOSE. The Intent hash is
+      // recomputed from the bundle's goals.md under the durable format pin; the deploy tuple
+      // comes from the recorder's own flags and the digest of the --digest-file evidence.
+      // Provenance is EXACTLY ONE of assessor (dispatch_id/model/output_tokens) or
+      // user-attested (attested_by:'user' + approval_receipt) — a manual receipt is
+      // explicitly marked and can NEVER masquerade as assessor provenance (the validator
+      // owns that split). Re-entry at the unchanged tuple is idempotent (skip, no
+      // double-append); any Intent amendment moves the tuple and re-arms.
       const p = need(flags, 'state');
       const dir = path.dirname(p);
       const state = loadForWrite(p);
-      // Goals from the bundle (same source the split-brain guard uses).
+      // The run-Intent artifact from the bundle (same source the split-brain guard uses).
       const goalsMdPath = path.join(dir, 'goals.md');
       let goalsMd;
       try {
         goalsMd = fs.readFileSync(goalsMdPath, 'utf8');
       } catch (e) {
-        die(`record-goal-check: goals.md unreadable (${e.message}) — freeze the goal set with \`mp goals-load\` first`, 1);
+        die(`record-intent-check: goals.md (the run-Intent artifact) unreadable (${e.message}) — there is no Intent to assess`, 1);
       }
-      const gcParsed = parseGoals(goalsMd);
       // §6.1: goals.md hashes under the bundle's DURABLE format pin — a schema-backed
       // bundle's canonical goals_hash is the pinned one, and hashing unpinned here
       // would demand the assessor echo a hash no other checkpoint computes (the
@@ -1781,35 +1785,23 @@ function main() {
       // under the pin; the recorder is the same seam, not an exception).
       const gcPin = resolveFormatPin(p);
       if (!gcPin.pin) {
-        die(`record-goal-check: ${gcPin.repairable ? 'the durable format pin is missing and could not be repaired from the capture history' : gcPin.error}`, 1);
+        die(`record-intent-check: ${gcPin.repairable ? 'the durable format pin is missing and could not be repaired from the capture history' : gcPin.error}`, 1);
       }
       if (gcPin.pin === 'schema_backed') {
         try {
           repairFormatPin(p); // idempotent §6.1 repair: a capture event with no recorded pin refuses to parse as legacy
         } catch (e) {
-          die(`record-goal-check: the durable format pin could not be repaired from the capture history (${e.message})`, 1);
+          die(`record-intent-check: the durable format pin could not be repaired from the capture history (${e.message})`, 1);
         }
       }
       const gcHash = goalsHash(goalsMd, { formatPin: gcPin.pin });
-      // Git facts passed in by the shell (bin is fs-only).
-      const gcHead = String(need(flags, 'head-sha'));
-      const gcBase = String(need(flags, 'base'));
-      const gcDiffHash = String(need(flags, 'diff-hash'));
-      // REFUSE on a dirty worktree — a receipt key can't pin uncommitted state.
-      const gcDirty = flags.dirty === true || flags.dirty === 'true';
-      if (gcDirty) {
-        die(
-          'record-goal-check: refusing — the worktree is dirty; the assessor saw uncommitted state a receipt tuple cannot pin. Commit or stash, then re-run the goal check.',
-          3
-        );
-      }
       // Read the event log (absent == none; a non-ENOENT read error fails loud, never masquerades as empty).
       const gcEventsPath = path.join(dir, 'events.jsonl');
       let gcEventsText = '';
       try {
         gcEventsText = fs.readFileSync(gcEventsPath, 'utf8');
       } catch (e) {
-        if (e.code !== 'ENOENT') die(`record-goal-check: events.jsonl unreadable: ${e.message}`, 1);
+        if (e.code !== 'ENOENT') die(`record-intent-check: events.jsonl unreadable: ${e.message}`, 1);
       }
       const gcEvents = gcEventsText
         .split('\n')
@@ -1822,7 +1814,27 @@ function main() {
           }
         })
         .filter(Boolean);
-      // Helper: read a --receipt / --waiver value that is either inline JSON (starts with '{') or a path.
+      // The binding source: the independently recorded branch facts the receipt must echo.
+      // With neither a verify_passed nor a legacy implementation goal_check there is nothing
+      // independent to bind against, and accepting caller-supplied facts in their place would
+      // let the receipt validate its own branch bindings.
+      const binding = branchBindingSource(gcEvents);
+      if (!binding) {
+        die(
+          'record-intent-check: refusing — the ledger has no verify_passed (or legacy implementation goal_check) to bind the final assessment against; run the finish verification first (`mp finish-step --state=… --verify-passed --verify-output=<file>`)',
+          1
+        );
+      }
+      const gcHead = String(binding.data.head_sha);
+      const gcBase = typeof binding.data.base === 'string' ? binding.data.base : null;
+      // A binding source with no base (an undetectable base branch) carries no diff hash — the
+      // receipt then owes only a non-empty string, never an echo of `null`.
+      const gcDiffRaw = binding.data.base_diff_hash ?? binding.data.diff_hash;
+      const gcDiffHash = typeof gcDiffRaw === 'string' ? gcDiffRaw : undefined;
+      const gcVerifyHash = typeof binding.data.verify_output_hash === 'string'
+        ? binding.data.verify_output_hash
+        : undefined;
+      // Helper: read a --receipt value that is either inline JSON (starts with '{') or a path.
       const readReceiptArg = (raw, label) => {
         let text;
         if (String(raw).trimStart().startsWith('{')) {
@@ -1831,150 +1843,78 @@ function main() {
           try {
             text = fs.readFileSync(String(raw), 'utf8');
           } catch (e) {
-            die(`record-goal-check: ${label} file unreadable: ${e.message}`, 1);
+            die(`record-intent-check: ${label} file unreadable: ${e.message}`, 1);
           }
         }
         try {
           return JSON.parse(text);
         } catch (e) {
-          die(`record-goal-check: ${label} is not valid JSON (${e.message})`, 1);
+          die(`record-intent-check: ${label} is not valid JSON (${e.message})`, 1);
         }
       };
-
-      // ---- WAIVER mode -------------------------------------------------------------------------
-      const gcWaive = flags.waive === true || flags.waive === 'true' || flags.waiver !== undefined;
-      if (gcWaive) {
-        const waiver = readReceiptArg(need(flags, 'waiver'), '--waiver');
-        const wv = validateGoalWaiver(waiver, {
-          goalsHash: gcHash,
-          headSha: gcHead,
-          base: gcBase,
-          diffHash: gcDiffHash,
-          goals: gcParsed.goals,
-        });
-        if (!wv.ok) die(`record-goal-check: waiver rejected — ${wv.error}`, 1);
-        // IDEMPOTENCY IS EVIDENCE-BOUND: a repeat waiver for the same tuple with the SAME
-        // reasons is a no-op, but a waiver carrying DIFFERENT reasons is a distinct
-        // attestation and must be recorded, not silently dropped (adversarial review,
-        // fresh-eyes-remediation finish flow).
-        const waivedAlready = gcEvents.some(
-          (e) =>
-            e.type === 'goal_waived' &&
-            e.data?.goals_hash === gcHash &&
-            e.data?.head_sha === gcHead &&
-            e.data?.base === gcBase &&
-            e.data?.diff_hash === gcDiffHash &&
-            JSON.stringify(e.data?.reasons ?? null) === JSON.stringify(wv.normalized.reasons ?? null)
-        );
-        if (waivedAlready) {
-          out({ record_goal_check: 'idempotent', mode: 'waive', goals_hash: gcHash, key: wv.normalized.key });
-          break;
-        }
-        const waivedRecord = {
-          type: 'goal_waived',
-          ts: flags.ts ?? new Date().toISOString(),
-          data: {
-            goals_hash: gcHash,
-            head_sha: gcHead,
-            base: gcBase,
-            diff_hash: gcDiffHash,
-            reasons: wv.normalized.reasons,
-            approval: waiver.approval,
-            key: wv.normalized.key,
-          },
-          summary: `goals waived (${Object.keys(wv.normalized.reasons).length}) at ${gcHash}`,
-        };
-        try {
-          appendEvent(p, waivedRecord);
-        } catch (e) {
-          die(e.message, 1);
-        }
-        out({
-          recorded: 'goal_waived',
-          mode: 'waive',
-          goals_hash: gcHash,
-          head_sha: gcHead,
-          waived: Object.keys(wv.normalized.reasons).length,
-          ts: waivedRecord.ts,
-        });
-        break;
-      }
-
-      // ---- CHECK mode --------------------------------------------------------------------------
-      const gcVerifyHash =
-        flags['verify-output-hash'] !== undefined ? String(flags['verify-output-hash']) : undefined;
       const receipt = readReceiptArg(need(flags, 'receipt'), '--receipt');
-      // --final marks the §6.2 FINAL assessment: the one that runs after the live check and
-      // answers the intent question. Its extra bindings come from the RECORDER (the flags the
-      // finish passes), never from the receipt itself — a receipt that supplied its own
-      // deploy base would be validating its own claim.
-      const gcFinal = flags.final === true || flags.final === 'true';
       const v = validateGoalCheckReceipt(receipt, {
         goalsHash: gcHash,
         headSha: gcHead,
         baseDiffHash: gcDiffHash,
         verifyOutputHash: gcVerifyHash,
         clean: true,
-        goals: gcParsed.goals,
-        ...(gcFinal ? {
-          final: true,
-          deployBaseSha: need(flags, 'base-sha'),
-          deployChainHash: need(flags, 'deploy-chain-hash'),
-          liveCheckDigest: liveCheckDigest(String(need(flags, 'digest-file'))),
-        } : {}),
+        final: true,
+        deployBaseSha: need(flags, 'base-sha'),
+        deployChainHash: need(flags, 'deploy-chain-hash'),
+        liveCheckDigest: liveCheckDigest(String(need(flags, 'digest-file'))),
       });
-      if (!v.ok) die(`record-goal-check: receipt rejected — ${v.error}`, 1);
+      if (!v.ok) die(`record-intent-check: receipt rejected — ${v.error}`, 1);
       // The finish checkpoint's identity binding (§5.5, task 56): a FINAL assessment is
       // evidence about the run state it judged under, and the receipt must name that
       // state itself — `intent_identity` echoed verbatim from the brief, plus resolvable
       // assessor provenance. The binding is judged HERE, at record time, against the
-      // bundle's CURRENT identity: a receipt naming a foreign tuple (an amended goal set,
+      // bundle's CURRENT identity: a receipt naming a foreign tuple (an amended Intent,
       // a drifted reconciliation, a replaced skill) is refused before it ever reaches the
       // ledger, and a replayed receipt is re-validated by the same rule at selection.
-      // The implementation check (no --final) binds the task-review-style identity at
-      // its own checkpoint and stays out of scope here (task 56's finish surface).
-      if (gcFinal) {
-        const finishIdentity = finishCheckpointIdentity({ statePath: p, skillRoot: resolveInstalledSkillRoot(flags, p) });
-        if (!finishIdentity.ok) {
-          die(`record-goal-check: the finish checkpoint's intent identity could not be established — ${finishIdentity.reason}`, 1);
-        }
-        // The FULL finish tuple, composed from the recorder's OWN deploy members (the
-        // same flags the sibling validator demanded the receipt echo): the checkpoint
-        // judges the receipt against the whole binding it will write, never a
-        // half-composed one.
-        const gcLiveDigest = liveCheckDigest(String(need(flags, 'digest-file')));
-        const iv = verifyCheckpointEvidence({
-          checkpoint: 'finish',
-          receipt,
-          current: { ok: true, family: finishIdentity.family, identity: finishIdentity.intent_identity },
-          finishTuple: { ok: true, tuple: {
-            deploy_base_sha: String(need(flags, 'base-sha')),
-            deploy_chain_hash: String(need(flags, 'deploy-chain-hash')),
-            live_check_digest: gcLiveDigest,
-          } },
-          goalsArtifactDigest: finishIdentity.goals_artifact_digest,
-        });
-        if (!iv.ok) {
-          die(`record-goal-check: final receipt refused at the finish checkpoint — [${iv.status}] ${iv.reason}`, 1);
-        }
-        // The verified identity binding is WRITTEN beside the deploy members, so a later
-        // replay surface (finalReceiptFor) re-validates the same binding it judged.
-        v.normalized.intent_identity = iv.normalized?.intent_identity
-          ?? (finishIdentity.family === 'legacy'
-            ? { legacy: true, goals_hash: gcHash }
-            : finishIdentity.intent_identity);
+      const finishIdentity = finishCheckpointIdentity({ statePath: p, skillRoot: resolveInstalledSkillRoot(flags, p) });
+      if (!finishIdentity.ok) {
+        die(`record-intent-check: the finish checkpoint's intent identity could not be established — ${finishIdentity.reason}`, 1);
       }
+      // The FULL finish tuple, composed from the recorder's OWN deploy members (the
+      // same flags the sibling validator demanded the receipt echo): the checkpoint
+      // judges the receipt against the whole binding it will write, never a
+      // half-composed one.
+      const gcLiveDigest = liveCheckDigest(String(need(flags, 'digest-file')));
+      const iv = verifyCheckpointEvidence({
+        checkpoint: 'finish',
+        receipt,
+        current: { ok: true, family: finishIdentity.family, identity: finishIdentity.intent_identity },
+        finishTuple: { ok: true, tuple: {
+          deploy_base_sha: String(need(flags, 'base-sha')),
+          deploy_chain_hash: String(need(flags, 'deploy-chain-hash')),
+          live_check_digest: gcLiveDigest,
+        } },
+        goalsArtifactDigest: finishIdentity.goals_artifact_digest,
+      });
+      if (!iv.ok) {
+        die(`record-intent-check: final receipt refused at the finish checkpoint — [${iv.status}] ${iv.reason}`, 1);
+      }
+      // The verified identity binding is WRITTEN beside the deploy members, so a later
+      // replay surface (finalReceiptFor) re-validates the same binding it judged.
+      v.normalized.intent_identity = iv.normalized?.intent_identity
+        ?? (finishIdentity.family === 'legacy'
+          ? { legacy: true, goals_hash: gcHash }
+          : finishIdentity.intent_identity);
+      const gcDeployBase = String(need(flags, 'base-sha'));
+      const gcChainHash = String(need(flags, 'deploy-chain-hash'));
       const checkedAlready = gcEvents.some(
         (e) =>
           e.type === 'goal_check' &&
-          (e.data?.final === true) === gcFinal &&
+          e.data?.final === true &&
           e.data?.goals_hash === gcHash &&
           e.data?.head_sha === gcHead &&
-          e.data?.base === gcBase &&
-          e.data?.diff_hash === gcDiffHash
+          e.data?.deploy_base_sha === gcDeployBase &&
+          e.data?.deploy_chain_hash === gcChainHash &&
+          e.data?.live_check_digest === gcLiveDigest
       );
       if (checkedAlready) {
-        out({ record_goal_check: 'idempotent', mode: 'check', goals_hash: gcHash, head_sha: gcHead });
+        out({ record_intent_check: 'idempotent', mode: 'final', goals_hash: gcHash, head_sha: gcHead });
         break;
       }
       // Provenance is recorded explicitly by kind — a manual (user-attested) receipt is NEVER stored as
@@ -1992,6 +1932,7 @@ function main() {
         type: 'goal_check',
         ts: flags.ts ?? new Date().toISOString(),
         data: {
+          final: true,
           goals_hash: gcHash,
           head_sha: gcHead,
           base: gcBase,
@@ -2000,30 +1941,22 @@ function main() {
           verify_output_hash: v.normalized.verify_output_hash,
           clean: true,
           provenance_kind: v.provenance_kind,
-          verdicts: v.normalized.verdicts,
           provenance,
           // §6.2 FINAL-assessment bindings: the validator normalized them (and demanded the
-          // receipt echo them), but they must also be WRITTEN or the machine's finalReceiptFor
-          // can never find a valid final assessment — an implementation-only event has
-          // final !== true, so a `--final` check recorded on the same tuple would be
-          // indistinguishable from the implementation check that preceded it.
-          ...(gcFinal
-            ? {
-                final: true,
-                deploy_base_sha: v.normalized.deploy_base_sha,
-                deploy_chain_hash: v.normalized.deploy_chain_hash,
-                live_check_digest: v.normalized.live_check_digest,
-                intent_verdict: v.normalized.intent_verdict,
-                // The §5.5 identity binding, as verified at record time: the tuple the
-                // assessment judged under, written so the replay surfaces re-validate the
-                // same binding (a receipt the recorder refused never reaches the ledger).
-                ...(v.normalized.intent_identity !== undefined
-                  ? { intent_identity: v.normalized.intent_identity }
-                  : {}),
-              }
+          // receipt echo them), and they are WRITTEN so the machine's finalReceiptFor can find
+          // a valid final assessment bound to this deployment.
+          deploy_base_sha: v.normalized.deploy_base_sha,
+          deploy_chain_hash: v.normalized.deploy_chain_hash,
+          live_check_digest: v.normalized.live_check_digest,
+          intent_verdict: v.normalized.intent_verdict,
+          // The §5.5 identity binding, as verified at record time: the tuple the
+          // assessment judged under, written so the replay surfaces re-validate the
+          // same binding (a receipt the recorder refused never reaches the ledger).
+          ...(v.normalized.intent_identity !== undefined
+            ? { intent_identity: v.normalized.intent_identity }
             : {}),
         },
-        summary: `goal check recorded (${v.provenance_kind}) at ${gcHash}`,
+        summary: `final intent check recorded (${v.provenance_kind}) at ${gcHash}`,
       };
       try {
         appendEvent(p, checkRecord);
@@ -2032,7 +1965,7 @@ function main() {
       }
       out({
         recorded: 'goal_check',
-        mode: 'check',
+        mode: 'final',
         provenance_kind: v.provenance_kind,
         goals_hash: gcHash,
         head_sha: gcHead,
@@ -4429,12 +4362,16 @@ function main() {
       if (reviewFallbackReasonFlag !== undefined && reviewFallbackReasonFlag !== null && typeof reviewFallbackReasonFlag !== 'string') {
         die(`--review-fallback-reason must be a string, got ${JSON.stringify(reviewFallbackReasonFlag)}`);
       }
-      // A1 (2026-08-30): the goal-gate answer flags — the finish-step engine's documented vocabulary.
-      // --goal-check=<failed> signals assessor dispatch failed (fail-closed → manual goals_unmet gate);
-      // --goals-choice=<fix|waiver|abort> answers the goals_unmet gate AUQ. Both thread into finishStep's
-      // ctx (goalCheck / goalsChoice); the engine validates goalsChoice against GOALS_CHOICES.
-      const goalCheckFlag = typeof flags['goal-check'] === 'string' ? flags['goal-check'] : null;
-      const goalsChoiceFlag = typeof flags['goals-choice'] === 'string' ? flags['goals-choice'] : null;
+      // The final-gate answer flags — the finish-step engine's documented vocabulary.
+      // --intent-choice=<waiver|abort> answers the intent_unmet gate AUQ (the final Intent
+      // assessment returned partial|missed on a live deployment); it threads into finishStep's
+      // ctx (intentChoice), where the engine validates it against INTENT_CHOICES.
+      // --verify-output=<file> is the run_verify answer's output transport: the CLI-side file
+      // whose hash lands on the mechanical verify_passed event (git facts are computed by the
+      // engine from the worktree, never accepted from flags).
+      const intentChoiceFlag = typeof flags['intent-choice'] === 'string' ? flags['intent-choice'] : null;
+      const verifyOutputFlag = typeof flags['verify-output'] === 'string' && flags['verify-output'].trim()
+        ? flags['verify-output'].trim() : null;
       let op;
       try {
         op = finishStep({
@@ -4463,8 +4400,8 @@ function main() {
           publicationHead: typeof flags['publication-head'] === 'string' ? flags['publication-head'] : null,
           removalForce: !!flags['removal-force'],
           retroOnly: !!flags['retro-only'],
-          goalCheck: goalCheckFlag,
-          goalsChoice: goalsChoiceFlag,
+          intentChoice: intentChoiceFlag,
+          verifyOutputFile: verifyOutputFlag,
           // §7.3 the no_definition_of_done gate's `adhoc` answer: --done-adhoc-file=<path> supplies
           // a JSON ad-hoc done definition (the engine's doneAdhocFile parameter — it deploys, so it
           // is bound by the release/identity contract like any other definition). rejectUnknownFlags

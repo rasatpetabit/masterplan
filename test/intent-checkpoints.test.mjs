@@ -1072,7 +1072,19 @@ function mkFinishFixture({ capture = false, goalsMd = LEGACY_GOALS_MD, seedSpecG
       verdicts: { G1: { verdict: 'achieved' }, G2: { verdict: 'achieved' }, G3: { verdict: 'achieved' } },
     },
   });
-  Object.assign(fxRef, { tmp, MAIN, WT, bundleDir, statePath, step, gHash, headAtBuild, recordImplementationCheck,
+  // The branch binding the verify pass records (verify_passed): read from the ledger, the
+  // same source finalReceiptFor validates final receipts against.
+  const branchBinding = () => {
+    const evs = fs.readFileSync(path.join(bundleDir, 'events.jsonl'), 'utf8')
+      .split('\n').filter(Boolean).map((l) => JSON.parse(l));
+    // The same precedence finalReceiptFor applies: the latest verify_passed, else the
+    // latest non-final goal_check (the legacy implementation receipt a fixture walk seeds).
+    const verify = [...evs].reverse().find((e) => e.type === 'verify_passed');
+    if (verify) return verify.data;
+    const legacy = [...evs].reverse().find((e) => e.type === 'goal_check' && e.data?.final !== true);
+    return legacy?.data ?? null;
+  };
+  Object.assign(fxRef, { tmp, MAIN, WT, bundleDir, statePath, step, gHash, headAtBuild, recordImplementationCheck, branchBinding,
     // The goals hash under the CURRENT durable pin (§6.1) — re-derived at call time so a
     // fixture that captured its schema after construction (walkToFinalCheck) records its
     // implementation check under the hash the goal gate actually keys on.
@@ -1476,7 +1488,7 @@ const readAgent = (name) => fs.readFileSync(path.join(REPO, 'agents', name), 'ut
 const flat = (t) => String(t ?? '').replace(/\s+/g, ' ');
 
 test('the three dispatched agent docs bind the identity tuple additively (contract sections)', () => {
-  for (const name of ['mp-adversarial-reviewer.md', 'mp-alignment-auditor.md', 'mp-goal-assessor.md']) {
+  for (const name of ['mp-adversarial-reviewer.md', 'mp-alignment-auditor.md', 'mp-intent-assessor.md']) {
     const doc = readAgent(name);
     // The binding lives in its own section on the reviewer and auditor docs, and inside
     // the assessor's final-receipt bindings section (the assessor's contract already
@@ -1500,7 +1512,7 @@ test('the three dispatched agent docs bind the identity tuple additively (contra
   assert.match(reviewer, /dispatch_id/);
   // The assessor's final receipt binds the finish tuple members by name (the existing
   // section, extended):
-  const assessor = flat(readAgent('mp-goal-assessor.md'));
+  const assessor = flat(readAgent('mp-intent-assessor.md'));
   for (const m of FINISH_TUPLE_MEMBERS) {
     assert.match(assessor, new RegExp(`"${m}"`));
   }
@@ -1516,11 +1528,12 @@ test('the agent docs keep their existing structure and roles (additive sections 
   const auditor = readAgent('mp-alignment-auditor.md');
   assert.match(auditor, /## Phase 0 — anchor quality/);
   assert.match(auditor, /## The verdict contract/);
-  const assessor = readAgent('mp-goal-assessor.md');
+  const assessor = readAgent('mp-intent-assessor.md');
   assert.match(assessor, /## The missing-evidence rule/);
   assert.match(assessor, /## Phase 1 — verify the evidence yourself/);
+  assert.match(assessor, /## The intent verdict/);
   // Frontmatter untouched: name/model lanes still parse.
-  for (const name of ['mp-alignment-auditor.md', 'mp-adversarial-reviewer.md', 'mp-goal-assessor.md']) {
+  for (const name of ['mp-alignment-auditor.md', 'mp-adversarial-reviewer.md', 'mp-intent-assessor.md']) {
     const fm = /^---\n([\s\S]*?)\n---/.exec(readAgent(name));
     assert.ok(fm, `${name} frontmatter`);
     assert.match(fm[1], /^name: mp-/m, name);
@@ -1636,11 +1649,13 @@ test('F3 regression: a foreign-LEGACY final receipt fails closed at every finish
   assert.equal(current.family, 'schema_backed');
   // The reviewer's reproduction: an otherwise-accepted final receipt whose
   // intent_identity is a FOREIGN LEGACY tuple.
+  const binding = fx.branchBinding();
+  assert.ok(binding, 'the verify pass recorded a verify_passed branch binding');
   const receipt = {
     final: true,
     goals_hash: fx.gHash,
-    head_sha: fx.headAtBuild,
-    base_diff_hash: 'sha256:diff',
+    head_sha: binding.head_sha,
+    base_diff_hash: binding.base_diff_hash ?? binding.diff_hash,
     verify_output_hash: 'sha256:vo',
     clean: true,
     deploy_base_sha: op.deploy_base_sha,
@@ -1648,23 +1663,18 @@ test('F3 regression: a foreign-LEGACY final receipt fails closed at every finish
     live_check_digest: op.live_digest,
     provenance_kind: 'assessor',
     dispatch_id: 'disp-final-1', model: 'assessor', output_tokens: 256,
-    verdicts: {
-      G1: { verdict: 'achieved', evidence: 'e' },
-      G2: { verdict: 'achieved', evidence: 'e' },
-      G3: { verdict: 'achieved', evidence: 'e' },
-    },
     intent_verdict: { verdict: 'met', evidence: 'the deployed surface answers as intended' },
     ts: '2026-01-01T00:00:08Z',
     intent_identity: { legacy: true, goals_hash: fx.gHash }, // the FOREIGN tuple
   };
   // The RECORDED event shape (what the ledger append bypassing the recorder writes):
-  // provenance rides under `provenance`, exactly as record-goal-check persists it.
+  // provenance rides under `provenance`, exactly as record-intent-check persists it.
   const recordedForeign = {
     ...receipt,
     provenance: { dispatch_id: receipt.dispatch_id, model: receipt.model, output_tokens: receipt.output_tokens },
     dispatch_id: undefined,
   };
-  // CONSUMER 1 — record time: `mp record-goal-check --final` refuses the receipt
+  // CONSUMER 1 — record time: `mp record-intent-check` refuses the receipt
   // before it reaches the ledger.
   const BIN = fileURLToPath(new URL('../bin/masterplan.mjs', import.meta.url));
   const runCli = (args) => {
@@ -1679,8 +1689,7 @@ test('F3 regression: a foreign-LEGACY final receipt fails closed at every finish
     fs.writeFileSync(receiptFile, JSON.stringify(receipt));
     try {
       return { status: 0, stdout: execFileSync('node', [BIN,
-        'record-goal-check', `--state=${fx.statePath}`, `--head-sha=${fx.headAtBuild}`, '--base=main',
-        '--diff-hash=sha256:diff', '--verify-output-hash=sha256:vo', '--final',
+        'record-intent-check', `--state=${fx.statePath}`,
         `--base-sha=${op.deploy_base_sha}`, `--deploy-chain-hash=${op.deploy_chain_hash}`,
         `--digest-file=${path.join(fx.tmp, 'live-digest.txt')}`,
         `--receipt=${receiptFile}`,
@@ -1710,11 +1719,12 @@ test('F3 regression: a foreign-LEGACY final receipt fails closed at every finish
   // the binding refuses the foreign one, not the gate itself.
   const fx2 = mkFinishFixture({ goalsMd: versionedGoalsMd() });
   const op2 = walkToFinalCheck(fx2, { capture: true });
+  const binding2 = fx2.branchBinding();
   const okReceipt = {
     final: true,
     goals_hash: fx2.gHash,
-    head_sha: fx2.headAtBuild,
-    base_diff_hash: 'sha256:diff',
+    head_sha: binding2.head_sha,
+    base_diff_hash: binding2.base_diff_hash ?? binding2.diff_hash,
     verify_output_hash: 'sha256:vo',
     clean: true,
     deploy_base_sha: op2.op.deploy_base_sha,
@@ -1722,11 +1732,6 @@ test('F3 regression: a foreign-LEGACY final receipt fails closed at every finish
     live_check_digest: op2.op.live_digest,
     provenance_kind: 'assessor',
     provenance: { dispatch_id: 'disp-final-1', model: 'assessor', output_tokens: 256 },
-    verdicts: {
-      G1: { verdict: 'achieved', evidence: 'e' },
-      G2: { verdict: 'achieved', evidence: 'e' },
-      G3: { verdict: 'achieved', evidence: 'e' },
-    },
     intent_verdict: { verdict: 'met', evidence: 'the deployed surface answers as intended' },
     ts: '2026-01-01T00:00:08Z',
     // The CURRENT finish identity — the echo the recorder itself would have written.

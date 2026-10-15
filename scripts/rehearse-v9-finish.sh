@@ -522,7 +522,7 @@ if selected walk; then
   walk docs_normalize
   walk verify
   walk review '{"verdict":"approve"}'
-  walk assess '{"goals":{"G1":"achieved","G2":"achieved"}}'
+  walk assess '{"intent_verdict":{"verdict":"met","evidence":"the pinned finish walked every step green"}}'
 
   # release: armed FIRST (its precondition is that the tip is still the reviewed sha), then
   # the real CHANGELOG commit and tag — the work the printed command does — then recorded.
