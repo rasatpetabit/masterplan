@@ -66,10 +66,14 @@ answers — two recorded answers, or an answer and the draft, that cannot both h
 **consequential intent/design misclassification** — a question recorded under the wrong kind
 in a way that changes what the interview proved (an intent-kind slot spent on a how-level
 choice, or a design-kind slot used to make the owner supply implementation). Speculative
-improvements (a different phrasing, a nicer structure, "consider also…"), implementation
-details (which file, which flag, which library), and stylistic preferences are NOT findings:
-they must not appear as unknowns, contradictions or misclassified entries, and they must
-never manufacture a further critic round. If the settled draft faithfully reflects the
+improvements ("consider also…"), unrequested improvements, and stylistic suggestions the
+owner never addressed (a different phrasing, a nicer structure) are NOT findings: they must
+not appear as unknowns, contradictions or misclassified entries, and they must never
+manufacture a further critic round. A finding's SUBJECT never makes it a non-finding: a
+draft that contradicts a recorded answer or design pick IS a contradiction finding
+regardless of whether its subject is an implementation detail (which file, which flag, which
+library) or a matter of style — the owner recorded that choice, and a draft that silently
+overrides it cannot converge. If the settled draft faithfully reflects the
 anchor and the recorded answers and nothing above applies, the honest payload is the clean
 one — zero unknowns, zero contradictions, zero misclassified — with your eligible set and
 forks verdict computed as always.
@@ -81,8 +85,11 @@ Specifically:
    the world, what would make it a failure even if tests pass, constraints and taste, and
    what "live" means for this change. An unknown must be a finding whose answer would
    change the design of the outcome — an unknown whose answer cannot change the design is
-   not an unknown worth asking, and an implementation detail or a speculative improvement
-   is never an unknown at all. Each unknown must explain **why it changes the design**.
+   not an unknown worth asking, and a speculative or unrequested improvement, or a stylistic
+   suggestion the owner never addressed, is never an unknown at all; neither is a bare
+   implementation detail as a NEW question (which file, which flag, which library — that is a
+   *how* question: propose options and record the owner's pick as a design entry instead).
+   Each unknown must explain **why it changes the design**.
    Propose 2–4 concrete options per unknown, recommended option first, no option longer
    than ~25 words.
 2. **Misclassified question ids.** Review the intent-vs-how classification of every asked
@@ -99,8 +106,10 @@ Specifically:
    you review; it is **not** mechanically enforced, and the docs say so.
 3. **Contradictions.** Surface pairs (or larger sets) of recorded answers or design picks
    that cannot simultaneously hold — e.g., an answer that conflicts with an earlier answer,
-   or a design pick that contradicts the intent draft. Each contradiction gets an id
-   `C<n>` and names the question ids involved.
+   or a design pick that contradicts the intent draft. The subject does not matter: a
+   contradiction over an implementation detail (which library the owner picked) or a
+   matter of style is still a contradiction and must be reported. Each contradiction gets
+   an id `C<n>` and names the question ids involved.
 4. **Intent draft.** Synthesize the current best restatement of the operator's intent as
    `{why, outcome, anti_goals, done_means}`. The draft is what the interview writes into
    `goals.md` and `spec.md`; it must be faithful to the verbatim anchor and to every
@@ -168,12 +177,13 @@ Return exactly one JSON object with these keys:
     }
 
 - `unknowns` — each entry carries `why_it_changes_design`; an unknown whose answer cannot change
-  the design is not an unknown. Only blocking findings appear here — never speculative
-  improvements, implementation details, or stylistic preferences.
+  the design is not an unknown. Only blocking findings appear here — never speculative or
+  unrequested improvements or stylistic suggestions the owner never addressed.
 - `misclassified` — question ids whose recorded intent-vs-how kind is wrong, consequential
   misclassifications only.
 - `contradictions` — each with an id `C<n>` and the question ids involved: recorded answers or
-  design picks that cannot simultaneously hold.
+  design picks that cannot simultaneously hold — including a draft that contradicts a recorded
+  answer or design pick, whatever its subject (implementation detail or style included).
 - `intent_draft` — the synthesized restatement, faithful to the anchor and the confirmed answers.
 - `eligible_question_set` — the ids of the asked questions you judge eligible: intent-kind,
   answered, not withdrawn, never design-kind, and answered fresh in this interview.

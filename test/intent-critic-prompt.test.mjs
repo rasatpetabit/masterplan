@@ -57,9 +57,11 @@ test('agent body narrows blocking findings to the closing-critic contract', () =
   // Closing-critic cadence (operator decision 2026-10-15): the critic is the closing pass
   // at medium/high, and only three classes are findings — material ambiguity about the
   // outcome the owner wants, contradictions with recorded answers, and consequential
-  // intent/design misclassification. Speculative improvements, implementation details and
-  // stylistic preferences are not findings and must not manufacture further rounds. The
-  // payload contract itself is unchanged (the schema test above still pins its keys).
+  // intent/design misclassification. B2 (final review blocker): the non-finding exclusion
+  // is restricted to speculative or unrequested improvements and stylistic suggestions the
+  // owner never addressed — it may no longer forbid reporting a contradiction whose subject
+  // is an implementation detail. The payload contract itself is unchanged (the schema test
+  // below still pins its keys).
   const flat = agent.replace(/\s+/g, ' ');
   assert.ok(flat.includes('closing pass'), 'the critic must be framed as the closing pass');
   assert.ok(flat.includes('Blocking findings'), 'the blocking-findings rule must be named');
@@ -70,8 +72,8 @@ test('agent body narrows blocking findings to the closing-critic contract', () =
   ]) {
     assert.ok(flat.includes(s), `a blocking-finding class is missing: ${s}`);
   }
-  for (const s of ['Speculative improvements', 'implementation details', 'stylistic preferences']) {
-    assert.ok(flat.includes(s), `the non-finding class must be named: ${s}`);
+  for (const s of ['Speculative improvements', 'unrequested improvements', 'stylistic suggestions the owner never addressed']) {
+    assert.ok(flat.includes(s), `the restricted non-finding class must be named: ${s}`);
   }
   assert.ok(
     /are NOT findings/.test(flat),
@@ -84,6 +86,37 @@ test('agent body narrows blocking findings to the closing-critic contract', () =
   assert.ok(
     /unknowns, contradictions or misclassified entries|never appear as unknowns/.test(flat),
     'non-findings must be barred from every payload list'
+  );
+});
+
+test('agent body: a draft contradicting a recorded answer or design pick is a finding regardless of its subject (B2)', () => {
+  // B2 (final review blocker): the prompt's non-finding exclusion (implementation details,
+  // stylistic preferences) used to forbid reporting a draft that contradicts the owner's
+  // recorded library pick — while the contradictions rule requires surfacing conflicting
+  // design picks. The exclusion is now restricted to what the owner never addressed, and
+  // the contradiction rule states explicitly that its subject never disqualifies it.
+  const flat = agent.replace(/\s+/g, ' ');
+  assert.ok(
+    /contradicts a recorded answer or design pick IS a contradiction finding/i.test(flat),
+    'the explicit rule must be stated: a draft contradicting a recorded answer or design pick IS a contradiction finding'
+  );
+  assert.ok(
+    /regardless of whether its subject is an implementation detail/i.test(flat),
+    'the rule must cover implementation-detail subjects explicitly'
+  );
+  assert.ok(
+    /regardless|regardless of/.test(flat) && /matter of style|a matter of style/.test(flat),
+    'the rule must cover style subjects explicitly'
+  );
+  // And the unqualified exclusion is gone: no rule may bar implementation details or
+  // stylistic preferences from the contradictions list as such.
+  assert.ok(
+    !/implementation\s+details\s+\(which file, which flag, which library\),\s+and\s+stylistic\s+preferences\s+are\s+NOT\s+findings/i.test(flat),
+    'the old blanket non-finding exclusion must be gone'
+  );
+  assert.ok(
+    /The subject does not matter: a contradiction over an implementation detail/.test(flat),
+    'the contradictions item must state the subject rule'
   );
 });
 
