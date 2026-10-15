@@ -50,6 +50,13 @@ function makeBundle(complexity = 'medium', phase = 'brainstorm', extra = {}) {
   return { dir, statePath };
 }
 
+// The raw interview_end event (replayLedger projects a trimmed 'end' shape without
+// payload_sha256 — the B1 assertions read the durable fields the ledger drops).
+function loadRawEnd(statePath) {
+  const lines = fs.readFileSync(path.join(path.dirname(statePath), 'events.jsonl'), 'utf8').split('\n').filter(Boolean);
+  return lines.map((l) => JSON.parse(l)).filter((e) => e.type === 'interview_end').pop();
+}
+
 test('cap refusal at low', (t) => {
   const { dir, statePath } = makeBundle('low');
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
@@ -571,6 +578,85 @@ test('reopen is refused while the interview is neither ended nor waived', (t) =>
   waiveInterview({ statePath, reason: 'user' });
   reopenInterview({ statePath, reason: 'continue' });
   assert.throws(() => reopenInterview({ statePath, reason: 'again' }), /not ended or waived/);
+});
+
+test('legacy exhausted at the cap is refused at medium/high without the closing critic pass (B1)', (t) => {
+  // The B1 reproduction: with the per-round guard removed, a legacy medium/high interview
+  // could end 'exhausted' at the question cap with zero critic receipts, zero attempts and
+  // no acknowledgement. The closing pass is now REQUIRED on the cap ground.
+  for (const complexity of ['medium', 'high']) {
+    const { dir, statePath } = makeBundle(complexity);
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    const cap = BUDGETS[complexity].cap;
+    for (let i = 1; i <= cap; i += 1) {
+      askQuestion({ statePath, id: `Q${i}`, round: i, kind: 'intent', text: `q${i}` });
+      answerQuestion({ statePath, id: `Q${i}`, text: `a${i}` });
+    }
+    recordDraft({ statePath, intent: { why: 'w', outcome: 'o', anti_goals: ['x'], done_means: 'd' } });
+    const r = replayInterview(statePath);
+    assert.equal(r.asked, cap);
+    assert.equal(r.criticReceipts.length, 0);
+    assert.equal(r.unavailability.length, 0);
+    assert.throws(
+      () => endInterview({ statePath, reason: 'exhausted' }),
+      /closing critic pass/,
+      `${complexity}: the cap alone no longer ends the interview`,
+    );
+    assert.equal(replayInterview(statePath).terminal, null, `${complexity}: the interview stays open`);
+  }
+});
+
+test('legacy exhausted at the cap accepts ONE closing receipt with an UNCLEAN payload and records its unresolved items (B1)', (t) => {
+  const { dir, statePath } = makeBundle('medium');
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const cap = BUDGETS.medium.cap;
+  for (let i = 1; i <= cap; i += 1) {
+    askQuestion({ statePath, id: `Q${i}`, round: i, kind: 'intent', text: `q${i}` });
+    answerQuestion({ statePath, id: `Q${i}`, text: `a${i}` });
+  }
+  const intent = { why: 'w', outcome: 'o', anti_goals: ['x'], done_means: 'd' };
+  recordDraft({ statePath, intent });
+  // The ONE closing pass, with findings still open — exhausted retains them (Assumptions table).
+  const status = interviewStatus(statePath);
+  const payload = {
+    unknowns: [{ id: 'U1', question: 'which outcome?', why_it_changes_design: 'sets the target', options: ['A', 'B'] }],
+    contradictions: [{ id: 'C1', question_ids: ['Q1', 'Q2'], note: 'the answers disagree' }],
+    misclassified: [],
+  };
+  const payloadPath = path.join(dir, 'payload.json');
+  fs.writeFileSync(payloadPath, JSON.stringify(payload));
+  recordCritic({
+    statePath,
+    receipt: { dispatch_id: 'd1', model: 'm', output_tokens: 10, content_head: status.content_head, intent_sha256: intentSha(intent) },
+    payloadPath,
+  });
+  endInterview({ statePath, reason: 'exhausted' });
+  const end = replayLedger(statePath).filter((e) => e.type === 'end').pop();
+  assert.equal(end.reason, 'exhausted');
+  assert.equal(end.attempts, 1, 'the one closing pass is the whole critic evidence');
+  assert.deepEqual(end.unknowns, payload.unknowns, 'the unresolved unknowns are retained');
+  assert.deepEqual(end.contradictions, payload.contradictions, 'the unresolved contradictions are retained');
+  const raw = loadRawEnd(statePath);
+  assert.ok(raw.payload_sha256, 'the payload is digest-bound');
+  assert.equal(interviewStatus(statePath).state, 'exhausted');
+});
+
+test('legacy exhausted on the acknowledged-unavailable ground still needs no closing receipt (B1 unchanged)', (t) => {
+  // At the cap AND unavailable-with-ack: the ack ground permits ending — the closing-pass
+  // requirement applies to the cap ground alone.
+  const { dir, statePath } = makeBundle('medium');
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const cap = BUDGETS.medium.cap;
+  for (let i = 1; i <= cap; i += 1) {
+    askQuestion({ statePath, id: `Q${i}`, round: i, kind: 'intent', text: `q${i}` });
+    answerQuestion({ statePath, id: `Q${i}`, text: `a${i}` });
+  }
+  recordDraft({ statePath, intent: { why: 'w', outcome: 'o', anti_goals: ['x'], done_means: 'd' } });
+  recordCriticUnavailable({ statePath, error: 'e1' });
+  recordCriticUnavailable({ statePath, error: 'e2' });
+  acknowledgeCriticUnavailable({ statePath, answer: 'continue' });
+  endInterview({ statePath, reason: 'exhausted' });
+  assert.equal(interviewStatus(statePath).state, 'exhausted');
 });
 
 test('a durable critic-unavailable acknowledgement authorizes exhausted on replay alone', (t) => {

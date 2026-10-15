@@ -557,6 +557,10 @@ the skill's `verbs/plan.md`, read by the skill as data, never as instructions.
    never for speculative improvements or stylistic notes (the critic's brief states these are not
    findings). Ask the top `unknowns` next; re-ask a `misclassified` entry as a
    proposal; `--resolves=C<n>|Q<m>` bookmarks addressed items for the next critic round.
+   At medium/high, an `exhausted` end on the cap ground requires that closing critic pass —
+   the recorder refuses an `exhausted` whose latest receipt is not a valid one bound to the
+   latest draft (the acknowledged-unavailable ground, the waiver, and low complexity are the
+   exceptions).
 5. **Convergence and exit.** A schema-backed interview converges only when BOTH independent
    conditions hold — **coverage**: every checked section carries real evidence with its
    provenance and stated uncertainty (a section satisfied from prior context is covered but is
