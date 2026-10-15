@@ -232,7 +232,12 @@ jointTest('installed-style finish producer reaches native C5 and exhausts its un
     tasks: [{ id: 1, status: 'done', wave: 1, files: ['src/a.txt'] }] });
   const self = buildOwnerIdentity({ host: 'test', session: 'source-integration', slug, now: 1000 });
   assert.equal(acquireOwner(bundle, self, { now: 1000 }).outcome, 'acquire');
-  const step = extra => finishStep({ statePath, self, now: 2000, host: 'pi', policy: fixture, stakes: 'critical', ...extra });
+  // finish-bindings-2: a pass answer carries its evidence file (hashed by the engine).
+  const verifyOut = path.join(root, 'verify-output.txt');
+  fs.writeFileSync(verifyOut, 'suite green\n');
+  const step = extra => finishStep({ statePath, self, now: 2000, host: 'pi', policy: fixture, stakes: 'critical',
+    ...(extra.verify === 'pass' && extra.verifyOutputFile === undefined ? { verifyOutputFile: verifyOut } : {}),
+    ...extra });
   assert.equal(step({ verify: 'pass' }).op, 'write_retro');
   write(bundle, 'retro.md', '# synthetic retro\n');
   const ceiling = ceilingFromPolicy(env), launches = [];

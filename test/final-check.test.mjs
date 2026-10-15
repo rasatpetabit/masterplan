@@ -122,7 +122,15 @@ function mkFixture({ slug = 'fc', done = DONE_WITH_LIVE, goalsMd = GOALS_MD } = 
     data: { hash: specGateHash(bundleDir), count: 0, base: 'main' },
   });
   const gHash = goalsHash(goalsMd);
-  const step = (extra = {}) => finishStep({ statePath, now: 2000, ...extra });
+  // finish-bindings-2: every pass answer carries its evidence file — the default stands in
+  // for the verification output the real sequencer writes before re-invoking.
+  const verifyOut = path.join(tmp, 'verify-output.txt');
+  fs.writeFileSync(verifyOut, 'suite green\n');
+  const step = (extra = {}) => finishStep({
+    statePath, now: 2000,
+    ...(extra.verify === 'pass' && extra.verifyOutputFile === undefined ? { verifyOutputFile: verifyOut } : {}),
+    ...extra,
+  });
 
   // Captured now: the disposition tears the worktree down, so it cannot be read later.
   const headAtBuild = git(WT, 'rev-parse', 'HEAD');
@@ -175,7 +183,7 @@ function recordFinalCheck(fx, op, { verdict = 'met', evidence = 'the deployed su
       goals_hash: fx.gHash,
       head_sha: binding.head_sha,
       base_diff_hash: binding.base_diff_hash ?? binding.diff_hash,
-      verify_output_hash: 'sha256:vo',
+      verify_output_hash: binding.verify_output_hash, // echoes the binding — never an invented value (finish-bindings-2)
       clean: true,
       deploy_base_sha: op.deploy_base_sha,
       deploy_chain_hash: op.deploy_chain_hash,

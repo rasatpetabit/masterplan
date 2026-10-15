@@ -102,8 +102,11 @@ as though the schema-backed contract had been checked. A receipt whose reviewer 
 be resolved (dispatch id, model, positive token count) is **unavailable** — never approval.
 
 The receipt's branch facts (`head_sha`, `base_diff_hash`, `verify_output_hash`) echo the
-**branch binding** the brief carries (from the recorded `verify_passed` — the machine-computed
-git facts of the verified branch): echo them verbatim, never invent them.
+**branch binding** the brief carries — the recorded `verify_passed` (the machine-computed git
+facts of the verified branch; its `verify_output_hash` is the CLI-computed digest of the
+verification output evidence, so the brief always carries one): echo them **verbatim**, never
+invent them, and never omit `verify_output_hash` — the recorder refuses a receipt whose value
+is anything but the binding's own.
 
 ### The intent verdict
 The final assessment answers the run's own question — *does the deployed thing do what the

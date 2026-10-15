@@ -720,7 +720,10 @@ async function buildFixture(entry, spec, tag) {
     });
     fs.writeFileSync(path.join(bundleDir, 'retro.md'), '# retro\n');
     try {
-      const op = finishStep({ statePath, now: 2000, verify: 'pass', host: 'codex', discoveryOptions: {
+      // finish-bindings-2: a pass answer carries its evidence file (hashed by the engine).
+      const knobVerifyOut = path.join(tmpdir('mp-knob-vo-'), 'verify-output.txt');
+      fs.writeFileSync(knobVerifyOut, 'suite green\n');
+      const op = finishStep({ statePath, now: 2000, verify: 'pass', verifyOutputFile: knobVerifyOut, host: 'codex', discoveryOptions: {
         env: {}, homeDir: '/fixture-absent', readFile: () => { throw Object.assign(new Error('absent'), { code: 'ENOENT' }); },
       } });
       assert.equal(op.op, 'run_adversary_review');
@@ -749,7 +752,13 @@ async function buildFixture(entry, spec, tag) {
     fs.writeFileSync(path.join(bundleDir, 'plan.index.json'), JSON.stringify({
       tasks: [{ id: 1, verify_commands: ['true'] }],
     }));
-    const step = (extra = {}) => finishStep({ statePath, now: 2000, ...extra });
+    // finish-bindings-2: every pass answer carries its evidence file — the default stands in
+    // for the verification output the real sequencer writes before re-invoking.
+    const knobVerifyOut = path.join(tmpdir('mp-knob-vo-'), 'verify-output.txt');
+    fs.writeFileSync(knobVerifyOut, 'suite green\n');
+    const step = (extra = {}) => finishStep({ statePath, now: 2000,
+      ...(extra.verify === 'pass' && extra.verifyOutputFile === undefined ? { verifyOutputFile: knobVerifyOut } : {}),
+      ...extra });
     let op;
     try { op = step(); } catch (error) {
       if (!/model arrays retired/.test(error.message)) throw error;
@@ -1109,7 +1118,13 @@ async function walkAutonomy({ statePath, MAIN, WT, bundleDir, slug, autonomy }) 
       verdicts: { G1: { verdict: 'achieved' }, G2: { verdict: 'achieved' }, G3: { verdict: 'achieved' } },
     },
   });
-  const step = (extra = {}) => finishStep({ statePath, now: 2000, ...extra });
+  // finish-bindings-2: every pass answer carries its evidence file — the default stands in
+  // for the verification output the real sequencer writes before re-invoking.
+  const knobVerifyOut = path.join(tmpdir('mp-knob-vo-'), 'verify-output.txt');
+  fs.writeFileSync(knobVerifyOut, 'suite green\n');
+  const step = (extra = {}) => finishStep({ statePath, now: 2000,
+    ...(extra.verify === 'pass' && extra.verifyOutputFile === undefined ? { verifyOutputFile: knobVerifyOut } : {}),
+    ...extra });
   let op = step({ verify: 'pass' });
   if (op.op === 'write_retro') { fs.writeFileSync(op.path, '# retro\n'); op = step(); }
   let guard = 0;

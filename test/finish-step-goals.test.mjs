@@ -120,7 +120,15 @@ function mkFixture({ slug = 'g14', recordReview = true, goalsMd = GOALS_MD, done
   if (recordReview) recordSpecReview(bundleDir);
   const head = git(WT, 'rev-parse', 'HEAD');
   const gHash = goalsHash(goalsMd);
-  const step = (extra = {}) => finishStep({ statePath, now: 2000, ...extra });
+  // finish-bindings-2: every pass answer carries its evidence file — the default stands in
+  // for the verification output the real sequencer writes before re-invoking.
+  const verifyOut = path.join(tmp, 'verify-output.txt');
+  fs.writeFileSync(verifyOut, 'suite green\n');
+  const step = (extra = {}) => finishStep({
+    statePath, now: 2000,
+    ...(extra.verify === 'pass' && extra.verifyOutputFile === undefined ? { verifyOutputFile: verifyOut } : {}),
+    ...extra,
+  });
   // The branch binding the verify pass records (verify_passed, git facts computed by the machine).
   const branchBinding = () => [...parseEventLines(bundleDir)].reverse().find((e) => e.type === 'verify_passed')?.data ?? null;
   // Record a FINAL goal_check receipt bound to the deployment the run_final_check op names.
@@ -131,7 +139,7 @@ function mkFixture({ slug = 'g14', recordReview = true, goalsMd = GOALS_MD, done
       goals_hash: gHash,
       head_sha: branchBinding()?.head_sha ?? head,
       base_diff_hash: branchBinding()?.base_diff_hash ?? branchBinding()?.diff_hash ?? 'sha256:diff',
-      verify_output_hash: 'sha256:vo',
+      verify_output_hash: branchBinding()?.verify_output_hash ?? 'sha256:vo',
       clean: true,
       deploy_base_sha: finalOp.deploy_base_sha,
       deploy_chain_hash: finalOp.deploy_chain_hash,
@@ -179,22 +187,35 @@ test('a passing verify answer records a verify_passed whose git facts COME FROM 
   assert.equal(op.op, 'write_retro');
 });
 
-test('a pass answer without --verify-output records verify_passed with no verify_output_hash; re-entry appends nothing', () => {
+test('a pass answer without --verify-output is refused; with it the verify_passed carries the hashed evidence (finish-bindings-2)', () => {
   const fx = mkFixture();
   fx.step();
-  let op = fx.step({ verify: 'pass' });
+  // The engine refuses the pass answer BEFORE any state is written: no verified_sha, no
+  // verify_passed, the run_verify op stays outstanding.
+  assert.throws(
+    () => fx.step({ verify: 'pass', verifyOutputFile: undefined }),
+    /--verify-output=<file>/,
+    'a pass answer with no output evidence is refused, naming the flag'
+  );
+  assert.equal(readState(fx.statePath).verified_sha, undefined, 'nothing was recorded');
+  assert.equal(fx.branchBinding(), null, 'no verify_passed was appended');
+  const verifyOut = path.join(fx.tmp, 'verify-output.txt');
+  fs.writeFileSync(verifyOut, '2 passing, 0 failing\n');
+  let op = fx.step({ verify: 'pass', verifyOutputFile: verifyOut });
   assert.equal(op.op, 'write_retro');
   const rec = fx.branchBinding();
   assert.ok(rec);
-  assert.equal(rec.verify_output_hash, undefined, 'no output file → no claimed output hash');
-  // Idempotent: a replayed pass answer at the unchanged HEAD appends nothing.
-  const before = parseEventLines(fx.bundleDir).length;
-  fx.step(); // write_retro satisfied below by writing the file first? No — no retro yet: re-run verify path is closed; drive a bare re-entry.
+  assert.equal(
+    rec.verify_output_hash,
+    `sha256:${createHash('sha256').update('2 passing, 0 failing\n').digest('hex')}`,
+    'the event ALWAYS carries the CLI-computed verify_output_hash — there is no incomplete binding'
+  );
+  // Idempotent: a replayed pass answer (with its evidence file) at the unchanged HEAD
+  // appends nothing.
   fs.writeFileSync(path.join(fx.bundleDir, 'retro.md'), '# retro\n');
-  finishStep({ statePath: fx.statePath, now: 3000, verify: 'pass' });
+  finishStep({ statePath: fx.statePath, now: 3000, verify: 'pass', verifyOutputFile: verifyOut });
   const after = parseEventLines(fx.bundleDir).filter((e) => e.type === 'verify_passed').length;
   assert.equal(after, 1, 'no second verify_passed at the same HEAD');
-  assert.ok(after <= parseEventLines(fx.bundleDir).length);
 });
 
 // ---------------------------------------------------------------------------
@@ -337,7 +358,15 @@ test('pre-feature bundle (no goals_enabled, no goal events) skips the binding ru
   // is goals_enabled-scoped, so this bundle skips straight to the retro.
   const head = git(WT, 'rev-parse', 'HEAD');
   writeState(statePath, { ...readState(statePath), verified_sha: head });
-  const step = (extra = {}) => finishStep({ statePath, now: 2000, ...extra });
+  // finish-bindings-2: every pass answer carries its evidence file — the default stands in
+  // for the verification output the real sequencer writes before re-invoking.
+  const verifyOut = path.join(tmp, 'verify-output.txt');
+  fs.writeFileSync(verifyOut, 'suite green\n');
+  const step = (extra = {}) => finishStep({
+    statePath, now: 2000,
+    ...(extra.verify === 'pass' && extra.verifyOutputFile === undefined ? { verifyOutputFile: verifyOut } : {}),
+    ...extra,
+  });
   let op = step();
   assert.equal(op.op, 'write_retro', 'no re-run demanded: no goals, no final assessment to bind');
   op = step({ verify: 'pass' });

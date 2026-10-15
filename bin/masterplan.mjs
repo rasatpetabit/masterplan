@@ -194,7 +194,7 @@ import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { readState, parseState, writeState, openGate, clearGate, setActiveRun, clearActiveRun, markTask, setPhase, setStatus, setWorktree, setWorktreeDisposition, setVerifiedSha, setCodexConfig, setReviewConfig, setRenderConfig, loadPlanTasks, buildSeedState, buildTasksFromPlanIndex, appendEvent, setCoordination, applyPlanIndex, upsertTasks, rebasePaths, inferGoalsCapability, CURRENT_SCHEMA_VERSION, resolveFormatPin, repairFormatPin } from '../lib/bundle.mjs';
 import { parseGoals, validateGoals, goalsHash, validateGoalCheckReceipt, validateGoalsLoadGate } from '../lib/goals.mjs';
-import { planWorktreeCreate, parseWorktreeList, classifyWorktrees, normalizeDisposition, dispositionAfterTeardown, VALID_DISPOSITIONS as VALID_WORKTREE_DISPOSITION } from '../lib/worktree.mjs';
+import { planWorktreeCreate, parseWorktreeList, classifyWorktrees, normalizeDisposition, dispositionAfterTeardown, worktreePathFor, worktreeBranchFor, VALID_DISPOSITIONS as VALID_WORKTREE_DISPOSITION } from '../lib/worktree.mjs';
 import { collectDiskDirs, collectBundleRecords } from '../lib/worktree-fs.mjs';
 import { buildOwnerIdentity } from '../lib/owner.mjs';
 import { acquireOwner, heartbeatOwner, releaseOwner } from '../lib/owner-fs.mjs';
@@ -236,7 +236,7 @@ import { recordWaveResult, promoteAmendment } from '../lib/wave-commit.mjs';
 import { pinnedGoalsEvidenceHash } from '../lib/promote.mjs';
 import { dispatchWaveViaFabric, reviewNativeResult, readWaveDispatchRecord, writeWaveDispatchRecord, disposeReviewEpisode } from '../lib/dispatch-wave.mjs';
 import { continueRun, dispatchPlanFanout, resolvePlanMdPath } from '../lib/continue.mjs';
-import { finishStep, branchBindingSource, resolveFinishHead } from '../lib/finish-step.mjs';
+import { finishStep, branchBindingSource, resolveFinishHead, bindingVerifyOutputHash } from '../lib/finish-step.mjs';
 import { sweepWorktrees } from '../lib/sweep.mjs';
 import { discoverRuns, readDiscoveryConfig, serializeDiscoveryConfig, addDiscoveryRoot, removeDiscoveryRoot, discoveryConfigPath } from '../lib/runs.mjs';
 import { acquireSeedLock, releaseSeedLock } from '../lib/seed-lock.mjs';
@@ -1848,9 +1848,16 @@ function main() {
       // receipt then owes only a non-empty string, never an echo of `null`.
       const gcDiffRaw = binding.data.base_diff_hash ?? binding.data.diff_hash;
       const gcDiffHash = typeof gcDiffRaw === 'string' ? gcDiffRaw : undefined;
-      const gcVerifyHash = typeof binding.data.verify_output_hash === 'string'
-        ? binding.data.verify_output_hash
-        : undefined;
+      // finish-bindings-2: the receipt's verify_output_hash must EQUAL the selected binding's —
+      // never an unconstrained receipt-supplied value. A verify_passed binding always carries a
+      // CLI-computed hash (an event without one is an incomplete binding, refused here); a
+      // legacy implementation goal_check keeps the hash it recorded (absent there, the receipt
+      // owes only a non-empty string, exactly as before).
+      const gcVoh = bindingVerifyOutputHash(binding);
+      if (!gcVoh.ok) {
+        die(`record-intent-check: ${gcVoh.error}`, 1);
+      }
+      const gcVerifyHash = gcVoh.hash;
       // Helper: read a --receipt value that is either inline JSON (starts with '{') or a path.
       const readReceiptArg = (raw, label) => {
         let text;
@@ -4389,6 +4396,14 @@ function main() {
       const intentChoiceFlag = typeof flags['intent-choice'] === 'string' ? flags['intent-choice'] : null;
       const verifyOutputFlag = typeof flags['verify-output'] === 'string' && flags['verify-output'].trim()
         ? flags['verify-output'].trim() : null;
+      // finish-bindings-2: EVERY pass answer — the normal run_verify pass AND each reviewed
+      // override on verification_failed / no_verification_command — carries its evidence
+      // file. The CLI hashes the file into the binding's verify_output_hash, so a pass answer
+      // without one is refused before the engine runs (exit 2): there is no pass without
+      // output evidence to hash.
+      if (verify === 'pass' && verifyOutputFlag === null) {
+        die('--verify-passed requires --verify-output=<file> — write the verification output (or, for a reviewed override, the failing output / the operator\'s recorded override answer) to a file and pass its path; its hash lands on the durable verify_passed binding');
+      }
       let op;
       try {
         op = finishStep({

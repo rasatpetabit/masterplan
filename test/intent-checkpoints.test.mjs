@@ -1048,11 +1048,16 @@ function mkFinishFixture({ capture = false, goalsMd = LEGACY_GOALS_MD, seedSpecG
   const gHash = goalsHash(goalsMd);
   const headAtBuild = git(WT, 'rev-parse', 'HEAD');
   const fxRef = {}; // walkToFinalCheck fills .skillRoot once the fixture captures its schema
+  // finish-bindings-2: every pass answer carries its evidence file — the default stands in
+  // for the verification output the real sequencer writes before re-invoking.
+  const verifyOut = path.join(tmp, 'verify-output.txt');
+  fs.writeFileSync(verifyOut, 'suite green\n');
   const step = (extra = {}) => finishStep({
     statePath, now: 2000,
     // The §5.5 identity guard's skill root (review round 2 — finding 3): read at CALL
     // time — walkToFinalCheck sets it on the fixture once the bundle captures its schema.
     ...(fxRef?.skillRoot ? { skillRoot: fxRef.skillRoot } : {}),
+    ...(extra.verify === 'pass' && extra.verifyOutputFile === undefined ? { verifyOutputFile: verifyOut } : {}),
     ...extra,
   });
   // The goals hash under the durable pin, read fresh at call time: capture-schema (which
@@ -1656,7 +1661,7 @@ test('F3 regression: a foreign-LEGACY final receipt fails closed at every finish
     goals_hash: fx.gHash,
     head_sha: binding.head_sha,
     base_diff_hash: binding.base_diff_hash ?? binding.diff_hash,
-    verify_output_hash: 'sha256:vo',
+    verify_output_hash: binding.verify_output_hash, // echoes the binding — never an invented value (finish-bindings-2)
     clean: true,
     deploy_base_sha: op.deploy_base_sha,
     deploy_chain_hash: op.deploy_chain_hash,
@@ -1725,7 +1730,7 @@ test('F3 regression: a foreign-LEGACY final receipt fails closed at every finish
     goals_hash: fx2.gHash,
     head_sha: binding2.head_sha,
     base_diff_hash: binding2.base_diff_hash ?? binding2.diff_hash,
-    verify_output_hash: 'sha256:vo',
+    verify_output_hash: binding2.verify_output_hash, // echoes the binding — never an invented value (finish-bindings-2)
     clean: true,
     deploy_base_sha: op2.op.deploy_base_sha,
     deploy_chain_hash: op2.op.deploy_chain_hash,

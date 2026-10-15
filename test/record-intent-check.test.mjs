@@ -179,12 +179,24 @@ test('a receipt whose branch facts do not echo the binding source is rejected', 
   assert.equal(countEvents(b2.eventsPath, 'goal_check'), 0);
 });
 
-test('a binding source with NO verify_output_hash demands only a non-empty one', () => {
-  // A pass answer without --verify-output: the binding constrains nothing, matching the old
-  // optional-flag contract.
+test('a verify_passed binding with NO verify_output_hash is an incomplete binding and is refused; a legacy goal_check keeps the non-empty rule', () => {
+  // finish-bindings-2: every pass answer records the hashed --verify-output evidence, so a
+  // verify_passed without one is incomplete — never a looser non-empty rule for the receipt.
   const b = makeBundle({ binding: verifyPassedEvent({ vout: null }) });
   const r = run(['record-intent-check', ...baseFlags(b.statePath), `--receipt=${JSON.stringify(finalReceipt({ vout: 'sha256:any-nonempty' }))}`]);
-  assert.equal(r.status, 0, r.stderr);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /verify_output_hash/);
+  assert.equal(countEvents(b.eventsPath, 'goal_check'), 0);
+  // A LEGACY implementation goal_check binding keeps the hash it recorded — the legacy
+  // recorder accepted an optional --verify-output-hash, so absent there the receipt owes
+  // only a non-empty string (in-flight bundles, unchanged contract).
+  const legacyNoVout = {
+    type: 'goal_check', ts: '2026-01-01T00:00:00Z',
+    data: { goals_hash: 'sha256:older-doc', head_sha: HEAD, base: BASE, diff_hash: DIFF, provenance_kind: 'assessor' },
+  };
+  const b2 = makeBundle({ binding: legacyNoVout });
+  const r2 = run(['record-intent-check', ...baseFlags(b2.statePath), `--receipt=${JSON.stringify(finalReceipt({ vout: 'sha256:any-nonempty' }))}`]);
+  assert.equal(r2.status, 0, r2.stderr);
 });
 
 test('a LEGACY implementation goal_check is an acceptable binding source (in-flight bundles)', () => {
