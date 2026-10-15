@@ -236,7 +236,7 @@ import { recordWaveResult, promoteAmendment } from '../lib/wave-commit.mjs';
 import { pinnedGoalsEvidenceHash } from '../lib/promote.mjs';
 import { dispatchWaveViaFabric, reviewNativeResult, readWaveDispatchRecord, writeWaveDispatchRecord, disposeReviewEpisode } from '../lib/dispatch-wave.mjs';
 import { continueRun, dispatchPlanFanout, resolvePlanMdPath } from '../lib/continue.mjs';
-import { finishStep, branchBindingSource } from '../lib/finish-step.mjs';
+import { finishStep, branchBindingSource, resolveFinishHead } from '../lib/finish-step.mjs';
 import { sweepWorktrees } from '../lib/sweep.mjs';
 import { discoverRuns, readDiscoveryConfig, serializeDiscoveryConfig, addDiscoveryRoot, removeDiscoveryRoot, discoveryConfigPath } from '../lib/runs.mjs';
 import { acquireSeedLock, releaseSeedLock } from '../lib/seed-lock.mjs';
@@ -1814,14 +1814,31 @@ function main() {
           }
         })
         .filter(Boolean);
-      // The binding source: the independently recorded branch facts the receipt must echo.
-      // With neither a verify_passed nor a legacy implementation goal_check there is nothing
-      // independent to bind against, and accepting caller-supplied facts in their place would
-      // let the receipt validate its own branch bindings.
-      const binding = branchBindingSource(gcEvents);
+      // The binding source: the independently recorded branch facts the receipt must echo,
+      // selected FOR THE FINISH HEAD (resolveFinishHead: the retired branch_tip once a
+      // branch_finish/branch_finish_intent record exists — which it always does by the time
+      // the final assessment runs, the deploy stage following retirement — else the current
+      // worktree/branch HEAD). Never "latest regardless of HEAD": a run that verified at A,
+      // moved to B and returned to A retires at A, and its receipt must bind to A's event.
+      // With neither a verify_passed nor a legacy implementation goal_check for that HEAD
+      // there is nothing independent to bind against, and accepting caller-supplied facts in
+      // their place would let the receipt validate its own branch bindings.
+      const finishHead = resolveFinishHead(gcEvents, () => {
+        try {
+          const mainRoot = path.dirname(runGit(dir, ['rev-parse', '--path-format=absolute', '--git-common-dir']));
+          const wtBranch = worktreeBranchFor(typeof state.slug === 'string' && state.slug ? state.slug : 'run');
+          return runGit(mainRoot, ['rev-parse', '--verify', `refs/heads/${wtBranch}`]);
+        } catch (e) {
+          die(`record-intent-check: the finish HEAD could not be resolved (no branch_finish/branch_finish_intent record carries a branch_tip, and the bundle's worktree branch ref is unreadable: ${e.message})`, 1);
+        }
+      });
+      if (!finishHead) {
+        die('record-intent-check: the finish HEAD could not be resolved (no branch_finish/branch_finish_intent record carries a branch_tip, and no worktree HEAD was available)', 1);
+      }
+      const binding = branchBindingSource(gcEvents, finishHead);
       if (!binding) {
         die(
-          'record-intent-check: refusing — the ledger has no verify_passed (or legacy implementation goal_check) to bind the final assessment against; run the finish verification first (`mp finish-step --state=… --verify-passed --verify-output=<file>`)',
+          `record-intent-check: refusing — the ledger has no verify_passed (or legacy implementation goal_check) bound to the finish head ${finishHead} (the retired branch_tip) to bind the final assessment against; run the finish verification first (\`mp finish-step --state=… --verify-passed --verify-output=<file>\`)`,
           1
         );
       }

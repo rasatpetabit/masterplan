@@ -65,8 +65,16 @@ function verifyPassedEvent({ head = HEAD, base = BASE, diffHash = DIFF, vout = V
   };
 }
 
-// Build a goals_enabled bundle on disk, optionally seeded with a binding source.
-function makeBundle({ binding = verifyPassedEvent() } = {}) {
+// The retirement record the real flow always carries by final-assessment time (the deploy
+// stage follows branch_finish): its branch_tip IS the finish HEAD every binding selection
+// resolves through (resolveFinishHead).
+function branchFinishEvent({ tip = HEAD } = {}) {
+  return { type: 'branch_finish', ts: '2026-01-01T00:00:00Z', note: 'merge', branch_tip: tip };
+}
+
+// Build a goals_enabled bundle on disk, optionally seeded with a binding source and the
+// retirement record that fixes the finish HEAD.
+function makeBundle({ binding = verifyPassedEvent(), retire = branchFinishEvent() } = {}) {
   const dir = mkdtempTracked(path.join(os.tmpdir(), 'mp-gcheck-'));
   const statePath = path.join(dir, 'state.yml');
   fs.writeFileSync(
@@ -75,6 +83,7 @@ function makeBundle({ binding = verifyPassedEvent() } = {}) {
   );
   fs.writeFileSync(path.join(dir, 'goals.md'), GOALS_MD);
   if (binding) fs.appendFileSync(path.join(dir, 'events.jsonl'), `${JSON.stringify(binding)}\n`);
+  if (retire) fs.appendFileSync(path.join(dir, 'events.jsonl'), `${JSON.stringify(retire)}\n`);
   return { dir, statePath, eventsPath: path.join(dir, 'events.jsonl') };
 }
 
@@ -154,11 +163,12 @@ test('REFUSES with no binding source on the ledger — the receipt cannot valida
 
 test('a receipt whose branch facts do not echo the binding source is rejected', () => {
   // A verify_passed whose head moved (a later commit): the receipt still pinned to the OLD
-  // head → rejected, naming head_sha.
+  // head → rejected. With the finish head fixed by the retirement record (tip = HEAD), the
+  // only binding is for another head, so selection itself refuses, naming the finish head.
   const b = makeBundle({ binding: verifyPassedEvent({ head: 'c'.repeat(40) }) });
   const stale = run(['record-intent-check', ...baseFlags(b.statePath), `--receipt=${JSON.stringify(finalReceipt({ head: HEAD }))}`]);
   assert.notEqual(stale.status, 0);
-  assert.match(stale.stderr, /head_sha/);
+  assert.match(stale.stderr, /finish head/);
   assert.equal(countEvents(b.eventsPath, 'goal_check'), 0);
 
   // A claimed verify output hash that is not the recorded one → rejected.
@@ -192,14 +202,36 @@ test('a LEGACY implementation goal_check is an acceptable binding source (in-fli
   const ev = events(b.eventsPath).filter((e) => e.type === 'goal_check');
   assert.equal(ev.length, 2, 'the legacy receipt and the new final receipt');
   assert.equal(ev[1].data.final, true);
-  // ...and the latest binding source wins: with BOTH a verify_passed and a legacy check on
-  // the ledger, the receipt must echo the verify_passed.
+  // ...and verify_passed is preferred over a legacy check when BOTH match the finish HEAD:
+  // the receipt must echo the verify_passed's facts, not the legacy receipt's.
   const b2 = makeBundle({ binding: null });
   fs.appendFileSync(b2.eventsPath, `${JSON.stringify(legacyBinding)}\n`);
-  fs.appendFileSync(b2.eventsPath, `${JSON.stringify(verifyPassedEvent({ head: 'e'.repeat(40) }))}\n`);
-  const mixed = run(['record-intent-check', ...baseFlags(b2.statePath), `--receipt=${JSON.stringify(finalReceipt({ head: HEAD }))}`]);
+  fs.appendFileSync(b2.eventsPath, `${JSON.stringify(verifyPassedEvent({ diffHash: 'sha256:diff-vp' }))}\n`);
+  fs.appendFileSync(b2.eventsPath, `${JSON.stringify(branchFinishEvent())}\n`);
+  const mixed = run(['record-intent-check', ...baseFlags(b2.statePath), `--receipt=${JSON.stringify(finalReceipt({ diff: DIFF }))}`]);
   assert.notEqual(mixed.status, 0);
-  assert.match(mixed.stderr, /head_sha/);
+  assert.match(mixed.stderr, /base_diff_hash/);
+  assert.equal(countEvents(b2.eventsPath, 'goal_check'), 1, 'only the pre-seeded legacy receipt');
+  const echoVp = run(['record-intent-check', ...baseFlags(b2.statePath), `--receipt=${JSON.stringify(finalReceipt({ diff: 'sha256:diff-vp' }))}`]);
+  assert.equal(echoVp.status, 0, echoVp.stderr);
+});
+
+test('the binding is selected FOR THE FINISH HEAD — a verify_passed for another head is not selected', () => {
+  // finish-bindings-1: the run verified at A, moved to B (a second verify_passed), and
+  // retired at A. The retirement record's branch_tip (A) is the finish HEAD, so the latest
+  // event regardless of HEAD (B's) must NOT be the binding the receipt echoes.
+  const b = makeBundle({
+    binding: verifyPassedEvent({ head: HEAD }),
+    retire: branchFinishEvent({ tip: HEAD }),
+  });
+  fs.appendFileSync(b.eventsPath, `${JSON.stringify(verifyPassedEvent({ head: 'b'.repeat(40), diffHash: 'sha256:diff-b' }))}\n`);
+  // A receipt echoing B's (latest) facts is refused; one echoing A's records cleanly.
+  const bFacts = run(['record-intent-check', ...baseFlags(b.statePath), `--receipt=${JSON.stringify(finalReceipt({ head: 'b'.repeat(40), diff: 'sha256:diff-b' }))}`]);
+  assert.notEqual(bFacts.status, 0);
+  assert.match(bFacts.stderr, /head_sha/);
+  assert.equal(countEvents(b.eventsPath, 'goal_check'), 0);
+  const aFacts = run(['record-intent-check', ...baseFlags(b.statePath), `--receipt=${JSON.stringify(finalReceipt())}`]);
+  assert.equal(aFacts.status, 0, aFacts.stderr);
 });
 
 test('a legacy receipt carrying a per-goal verdict table is tolerated (verdicts are inert)', () => {

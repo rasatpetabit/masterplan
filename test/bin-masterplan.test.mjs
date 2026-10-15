@@ -3119,7 +3119,7 @@ test('record-intent-check binds the deploy tuple the RECORDER supplies and the b
   fs.writeFileSync(LIVE_FILE, 'the live check observed the deployed surface\n');
   const LIVE = liveCheckDigest(LIVE_FILE);
 
-  const mkBundle = ({ binding = true } = {}) => {
+  const mkBundle = ({ binding = true, retire = true } = {}) => {
     const dir = tmpDir('mp-final-');
     const statePath = path.join(dir, 'state.yml');
     fs.writeFileSync(statePath, serializeState({
@@ -3127,10 +3127,12 @@ test('record-intent-check binds the deploy tuple the RECORDER supplies and the b
       goals_enabled: true, goals_md_hash: GH,
     }));
     fs.writeFileSync(path.join(dir, 'goals.md'), GOALS);
-    if (binding) {
-      fs.writeFileSync(path.join(dir, 'events.jsonl'),
-        `${JSON.stringify({ type: 'verify_passed', ts: '2026-01-01T00:00:00Z', data: { head_sha: HEAD, base: BASE, diff_hash: DIFF, verify_output_hash: VOUT } })}\n`);
-    }
+    const lines = [];
+    if (binding) lines.push(JSON.stringify({ type: 'verify_passed', ts: '2026-01-01T00:00:00Z', data: { head_sha: HEAD, base: BASE, diff_hash: DIFF, verify_output_hash: VOUT } }));
+    // The retirement record the real flow always carries by final-assessment time: its
+    // branch_tip is the finish HEAD the binding is selected for (resolveFinishHead).
+    if (retire) lines.push(JSON.stringify({ type: 'branch_finish', ts: '2026-01-01T00:00:01Z', note: 'merge', branch_tip: HEAD }));
+    if (lines.length) fs.writeFileSync(path.join(dir, 'events.jsonl'), `${lines.join('\n')}\n`);
     return { dir, statePath, eventsPath: path.join(dir, 'events.jsonl') };
   };
   const receipt = (over = {}) => JSON.stringify({
