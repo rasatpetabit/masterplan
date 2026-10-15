@@ -758,6 +758,39 @@ test('a final assessment with NO binding source is refused, not unconstrained', 
   assert.match(op.error, /no verify_passed \(or legacy implementation goal_check\) to bind/);
 });
 
+test('final_check_invalid with NO binding source never advertises recording as the recovery (final-review advisory)', () => {
+  // The advisory: when the invalidity IS the missing binding source, record-intent-check
+  // refuses a replacement outright, so advertising `re-record` (and a `next` command) points
+  // at a door that cannot open. The gate names the actual state — no independent
+  // verification binding for the finish HEAD — and offers only the explicit incomplete
+  // abort. A genuinely replaceable invalid receipt (a binding stands; the receipt is
+  // malformed) keeps the recording guidance.
+  const fx = mkFixture({ slug: 'fc-no-binding-recovery' });
+  walkToDeploy(fx);
+  const chk = runDeployChain(fx);
+  recordFinalCheck(fx, chk, { verdict: 'met' });
+  const kept = readEvents(fx.bundleDir).filter((e) => e.type !== 'verify_passed');
+  fs.writeFileSync(path.join(fx.bundleDir, 'events.jsonl'), kept.map((e) => `${JSON.stringify(e)}\n`).join(''));
+  const op = fx.step();
+  assert.equal(op.gate, 'final_check_invalid', JSON.stringify(op));
+  assert.equal(op.branch_binding, null, 'the missing binding is the surfaced state');
+  assert.equal(op.next, undefined, 'no recorder command is advertised — it would be refused');
+  assert.deepEqual(op.choices, ['abort'], 'the explicit incomplete-abort route only');
+  assert.match(op.reason, /no independent verification binding stands for the finish head/);
+  assert.doesNotMatch(op.reason, /re-record/, 'the reason never frames recording as the recovery');
+
+  // The replaceable case keeps the guidance (binding present, receipt malformed).
+  const fx2 = mkFixture({ slug: 'fc-replaceable' });
+  walkToDeploy(fx2);
+  const chk2 = runDeployChain(fx2);
+  recordFinalCheck(fx2, chk2, { over: { clean: undefined } });
+  const op2 = fx2.step();
+  assert.equal(op2.gate, 'final_check_invalid');
+  assert.ok(op2.branch_binding, 'a binding stands');
+  assert.match(op2.next, /record-intent-check/);
+  assert.deepEqual(op2.choices, ['re-record', 'abort']);
+});
+
 test('a final receipt whose branch facts do not echo the verify_passed binding is refused', () => {
   // Regression case 6 (tampered/self-supplied branch bindings): the receipt's head/diff are
   // checked against the machine-computed verify_passed facts, never accepted as claimed.
