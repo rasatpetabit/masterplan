@@ -8,6 +8,8 @@ Decision (operator, settled; advisor-reviewed design): "we need to greatly loose
 
 Why: the per-round cadence cost a critic dispatch per recorded draft / completed intent round during planning — far beyond what intent review needs — while the protection the operator actually wants (an independent fresh-context check that the settled draft matches what was asked) is fully preserved by the single closing pass plus the unchanged current-receipt/clean-payload convergence bar. Kept unchanged: receipt provenance and payload-schema validation, current-draft binding (`content_head` + `intent_sha256`), eligible-set validation, coverage, the clean-payload requirement, critic-unavailable handling, budgets and probing minima; an old receipt never counts for a revised draft. Design-intent skill repinned to behavior-skills `0867d88` (cadence wording in `verbs/plan.md` only; versions stay 1/1), digest recomputed with `computeSkillIdentity` over that commit's tree.
 
+2026-10-15, later rounds on the same branch: cross-vendor review kept finding ways an interrupted finish could re-bind its durable records to facts nobody verified, so the finish binding went through hardening rounds (finish HEAD selection, required verify evidence, hashless-binding repair, open-gate repair, changed-tip refusal) and the critic cadence through the exhaustion/contradiction fixes — the durable lesson in both: a replay exemption must prove it replays the recorded fact (the tip, the hashed evidence, the settled draft), never that a record merely exists.
+
 ## 2026-10-14 — prompts, agents, and docs sync for goal-block removal
 
 Synchronized all live prompts, skill definitions, agent contracts, documentation, and test fixtures with the goal-block removal implemented across Steps 1–3:
