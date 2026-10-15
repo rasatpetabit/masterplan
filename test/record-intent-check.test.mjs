@@ -182,10 +182,12 @@ test('a receipt whose branch facts do not echo the binding source is rejected', 
 test('a verify_passed binding with NO verify_output_hash is an incomplete binding and is refused; a legacy goal_check keeps the non-empty rule', () => {
   // finish-bindings-2: every pass answer records the hashed --verify-output evidence, so a
   // verify_passed without one is incomplete — never a looser non-empty rule for the receipt.
+  // It is not a binding source at all (finish-step re-arms verification to repair it before
+  // teardown), so the recorder refuses for want of a binding for the finish head.
   const b = makeBundle({ binding: verifyPassedEvent({ vout: null }) });
   const r = run(['record-intent-check', ...baseFlags(b.statePath), `--receipt=${JSON.stringify(finalReceipt({ vout: 'sha256:any-nonempty' }))}`]);
   assert.notEqual(r.status, 0);
-  assert.match(r.stderr, /verify_output_hash/);
+  assert.match(r.stderr, /no verify_passed .* bound to the finish head/);
   assert.equal(countEvents(b.eventsPath, 'goal_check'), 0);
   // A LEGACY implementation goal_check binding keeps the hash it recorded — the legacy
   // recorder accepted an optional --verify-output-hash, so absent there the receipt owes

@@ -211,3 +211,31 @@ test('verify at A, then B, then return to A: everything binds to A (finish-bindi
   const gc = readEvents(bundleDir).find((e) => e.type === 'goal_check' && e.data?.final === true);
   assert.equal(gc.data.head_sha, headA, 'the recorded final assessment binds to A');
 });
+
+test('a hashless verify_passed at the finish HEAD is repaired by re-verification, never stranded (finish-bindings-2 recovery)', () => {
+  const fx = mkFixture({ slug: 'fhb-hashless' });
+  const { WT, bundleDir, statePath, step, verifyOut } = fx;
+  const head = git(WT, 'rev-parse', 'HEAD');
+
+  // The exact shape the pre-fix revision (cc4ac9c) emitted for an output-less pass answer:
+  // a verify_passed for this HEAD with no verify_output_hash, and verified_sha already at HEAD.
+  fs.appendFileSync(path.join(bundleDir, 'events.jsonl'), `${JSON.stringify({
+    type: 'verify_passed', ts: '2026-01-01T00:00:01Z',
+    data: { head_sha: head, base: 'main', diff_hash: 'sha256:legacy' },
+  })}\n`);
+  writeState(statePath, { ...readState(statePath), verified_sha: head });
+
+  // The incomplete event is not a binding source, so the verified-at-SHA skip does NOT apply.
+  let op = step();
+  assert.equal(op.op, 'run_verify', `an incomplete binding must re-arm verification: ${JSON.stringify(op)}`);
+
+  // Re-verification records a COMPLETE binding instead of being suppressed by the incomplete one.
+  op = step({ verify: 'pass', verifyOutputFile: verifyOut });
+  const complete = fx.verifyPassedEvents().filter((e) => e.data.head_sha === head
+    && typeof e.data.verify_output_hash === 'string' && e.data.verify_output_hash !== '');
+  assert.equal(complete.length, 1, 'a complete verify_passed for the finish HEAD is recorded');
+
+  // And the run proceeds past verification (no further run_verify at an unchanged HEAD).
+  op = step();
+  assert.notEqual(op.op, 'run_verify', JSON.stringify(op));
+});
