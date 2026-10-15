@@ -257,3 +257,35 @@ test('an open branch_finish gate over a changed tip surfaces the refusal visibly
   assert.equal(fs.existsSync(WT), true, 'keep tore nothing down');
   assert.equal(git(WT, 'rev-parse', 'HEAD'), headB, 'the changed tip is preserved in the kept worktree');
 });
+
+// Re-review follow-up: an absent or unreadable WORKTREE HEAD is not proof that the surviving
+// BRANCH is unchanged. Every surviving ref the landing or teardown would consume must still
+// be the recorded tip.
+for (const variant of ['detached worktree at B', 'worktree removed, branch B survives']) {
+  test(`changed-tip retry is refused when the ${variant} (finish-binding-changed-tip-retry)`, () => {
+    const slug = variant.startsWith('detached') ? 'fctr-detached' : 'fctr-wt-gone';
+    const fx = mkFixture({ slug });
+    const { MAIN, WT, bundleDir, statePath, step } = fx;
+    const { headA } = driveToFailedRemoval(fx, slug);
+    git(WT, 'add', '.');
+    git(WT, 'commit', '-q', '-m', 'commit B in the surviving worktree');
+    const headB = git(WT, 'rev-parse', 'HEAD');
+    if (variant.startsWith('detached')) {
+      git(WT, 'checkout', '-q', '--detach', headB);
+    } else {
+      git(MAIN, 'worktree', 'remove', '--force', WT);
+      assert.equal(fs.existsSync(WT), false);
+    }
+    const eventsPath = path.join(bundleDir, 'events.jsonl');
+    const eventsBefore = fs.readFileSync(eventsPath, 'utf8');
+    const stateBefore = fs.readFileSync(statePath, 'utf8');
+
+    assert.throws(() => step({ choice: 'merge' }), new RegExp(`recorded for tip ${headA.slice(0, 12)} but the`));
+    let bOnBase = true;
+    try { git(MAIN, 'merge-base', '--is-ancestor', headB, 'main'); } catch { bOnBase = false; }
+    assert.equal(bOnBase, false, 'B was never merged into the base');
+    assert.equal(fs.readFileSync(eventsPath, 'utf8'), eventsBefore, 'no retirement written for B');
+    assert.equal(fs.readFileSync(statePath, 'utf8'), stateBefore, 'state unchanged');
+    if (variant.startsWith('detached')) assert.equal(fs.existsSync(WT), true, 'the detached worktree is intact');
+  });
+}
