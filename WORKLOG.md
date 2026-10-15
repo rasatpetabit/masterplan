@@ -1,5 +1,13 @@
 # WORKLOG
 
+## 2026-10-15 — closing critic pass for the intent interview
+
+Scope: `lib/interview.mjs` critic cadence, `agents/mp-intent-critic.md` finding classes, `commands/masterplan.md` §2f step 4, the design/verbs docs that restate the cadence, the design-intent skill pin, and the interview/critic test suites. Worktree `.worktrees/intent-critic-cadence`, branch `intent-critic-cadence`, stacked on `remove-goal-blocks` (cc8ef9c).
+
+Decision (operator, settled; advisor-reviewed design): "we need to greatly loosen the requirement for mp critic rounds during the intent planning phase, we're WAY overdoing it right now". Implemented as: critic off at low; ONE closing `mp-intent-critic` pass after the interview draft settles at medium/high; drafts still persist as they form but recording one no longer mandates a critic dispatch; a further pass only addresses a substantive problem the closing assessment found, never a round counter. Removed the high-complexity ask-time guard (`askQuestion`), the `converged` per-round receipt count (`endInterview`), and the per-draft dispatch wording in the sequencer prompt. Narrowed `mp-intent-critic` blocking findings to material ambiguity about the wanted outcome, contradictions with recorded answers, and consequential intent/design misclassification; speculative improvements, implementation details and stylistic preferences are named non-findings so they cannot manufacture further rounds. Payload contract (unknowns, contradictions, misclassified, eligible_question_set, forks_remaining) unchanged.
+
+Why: the per-round cadence cost a critic dispatch per recorded draft / completed intent round during planning — far beyond what intent review needs — while the protection the operator actually wants (an independent fresh-context check that the settled draft matches what was asked) is fully preserved by the single closing pass plus the unchanged current-receipt/clean-payload convergence bar. Kept unchanged: receipt provenance and payload-schema validation, current-draft binding (`content_head` + `intent_sha256`), eligible-set validation, coverage, the clean-payload requirement, critic-unavailable handling, budgets and probing minima; an old receipt never counts for a revised draft. Design-intent skill repinned to behavior-skills `0867d88` (cadence wording in `verbs/plan.md` only; versions stay 1/1), digest recomputed with `computeSkillIdentity` over that commit's tree.
+
 ## 2026-10-14 — prompts, agents, and docs sync for goal-block removal
 
 Synchronized all live prompts, skill definitions, agent contracts, documentation, and test fixtures with the goal-block removal implemented across Steps 1–3:

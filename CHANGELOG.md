@@ -21,6 +21,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Extra `approval.goals_amend` receipt requirement on new promotion transactions (`approval_contract: 2`).
 
 ### Changed
+- Intent-interview critic cadence loosened to a closing pass (operator decision 2026-10-15): the critic is off at low
+  and runs ONE closing `mp-intent-critic` pass at medium/high once the interview draft has settled. Recording a draft
+  (`mp interview draft`) no longer mandates a critic dispatch; intent rounds open freely without intervening receipts;
+  the high-complexity per-intent-round ask guard and the `converged` per-round receipt count are removed; a further
+  critic pass runs only to address a substantive problem the closing assessment found. `mp-intent-critic`'s blocking
+  findings are narrowed to (a) material ambiguity about the outcome the owner wants, (b) contradictions with recorded
+  answers, (c) consequential intent/design misclassification — speculative improvements, implementation details and
+  stylistic preferences are not findings. Receipt provenance validation, payload schema validation, current-draft
+  binding (`content_head` + `intent_sha256`), eligible-set validation, coverage, the clean-payload requirement for
+  `converged`, critic-unavailability handling and question budgets are unchanged; an old critic receipt still never
+  counts for a revised draft. Design-intent skill pin repinned to behavior-skills `0867d88` (same closed file set;
+  `host_contract_version`/`schema_format_version` stay 1).
 - The `topic:` anchor and `## Intent` block in `goals.md` stay and remain the yardstick finished work is judged against.
 - Run Intent is captured mechanically entering `plan` (`mp set-phase --phase=plan`), which validates `goals.md`
   (topic anchor + `## Intent` fields), enforces the interview-exit gate, and appends `goals_frozen` with the Intent hash
