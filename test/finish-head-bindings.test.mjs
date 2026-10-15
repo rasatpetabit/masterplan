@@ -239,3 +239,84 @@ test('a hashless verify_passed at the finish HEAD is repaired by re-verification
   op = step();
   assert.notEqual(op.op, 'run_verify', JSON.stringify(op));
 });
+
+test('an open branch_finish gate with a hashless binding repairs through run_verify before any teardown (finish-bindings-2 recovery-open-gate)', () => {
+  const fx = mkFixture({ slug: 'fhb-open-gate' });
+  const { WT, bundleDir, statePath, step, verifyOut } = fx;
+  const head = git(WT, 'rev-parse', 'HEAD');
+
+  // The blocker's stranded shape: a persisted hashless verify_passed (an earlier revision's
+  // output-less pass), verified_sha already at HEAD, and an ALREADY-OPEN branch_finish gate —
+  // the pending-gate path used to return the gate before step 5's binding check could re-arm
+  // verification, so the merge answer tore the worktree down with branchBindingSource null.
+  fs.appendFileSync(path.join(bundleDir, 'events.jsonl'), `${JSON.stringify({
+    type: 'verify_passed', ts: '2026-01-01T00:00:01Z',
+    data: { head_sha: head, base: 'main', diff_hash: 'sha256:legacy' },
+  })}\n`);
+  writeState(statePath, {
+    ...readState(statePath),
+    verified_sha: head,
+    pending_gate: { id: 'branch_finish', opened_at: '2026-01-01T00:00:02Z' },
+  });
+
+  // (a) Bare re-entry returns run_verify INSTEAD of the gate; the gate stays pending
+  //     (neither cleared nor reopened).
+  let op = step();
+  assert.equal(op.op, 'run_verify', `the open gate must not bypass the repair: ${JSON.stringify(op)}`);
+  assert.equal(op.head, head, 'the repair names the head to verify');
+  assert.equal(readState(statePath).pending_gate?.id, 'branch_finish', 'the gate stays pending');
+
+  // (b) A direct merge answer against that gate is REFUSED — worktree intact, no retirement.
+  assert.throws(() => step({ choice: 'merge' }), /run the finish verification first/);
+  assert.equal(fs.existsSync(WT), true, 'the worktree is intact — nothing was torn down');
+  assert.equal(
+    readEvents(bundleDir).some((e) => e.type === 'branch_finish' || e.type === 'branch_finish_intent'),
+    false,
+    'no retirement was recorded',
+  );
+
+  // (c) The passing verify answer (with --verify-output) records the COMPLETE binding, and
+  //     re-entry re-renders the branch_finish gate again.
+  op = step({ verify: 'pass', verifyOutputFile: verifyOut });
+  assert.equal(op.gate, 'branch_finish', `re-entry re-renders the gate: ${JSON.stringify(op)}`);
+  assert.equal(readState(statePath).pending_gate?.id, 'branch_finish', 'still the same durable gate');
+  const complete = fx.verifyPassedEvents().filter((e) => e.data.head_sha === head
+    && typeof e.data.verify_output_hash === 'string' && e.data.verify_output_hash !== '');
+  assert.equal(complete.length, 1, 'a complete verify_passed for the finish head stands');
+
+  // (d) The merge now proceeds: teardown happens WITH the binding standing.
+  op = step({ choice: 'merge' });
+  const retire = readEvents(bundleDir).filter((e) => e.type === 'branch_finish').pop();
+  assert.ok(retire, 'branch_finish recorded');
+  assert.equal(retire.branch_tip, head, 'the retirement tip is the verified head');
+  assert.equal(fs.existsSync(WT), false, 'the worktree was removed by the merge — with the binding standing');
+});
+
+test('discard ends the run without a final assessment even while a binding repair is owed (unaffected choice)', () => {
+  const fx = mkFixture({ slug: 'fhb-open-gate-discard' });
+  const { WT, bundleDir, statePath, step } = fx;
+  const head = git(WT, 'rev-parse', 'HEAD');
+
+  fs.appendFileSync(path.join(bundleDir, 'events.jsonl'), `${JSON.stringify({
+    type: 'verify_passed', ts: '2026-01-01T00:00:01Z',
+    data: { head_sha: head, base: 'main', diff_hash: 'sha256:legacy' },
+  })}\n`);
+  writeState(statePath, {
+    ...readState(statePath),
+    verified_sha: head,
+    pending_gate: { id: 'branch_finish', opened_at: '2026-01-01T00:00:02Z' },
+  });
+
+  // The repair is offered on bare re-entry, but discard — a choice that ends the run with no
+  // final Intent assessment — is NOT refused: it archives incomplete:discarded as before.
+  let op = step();
+  assert.equal(op.op, 'run_verify');
+  op = step({ choice: 'discard' });
+  const retire = readEvents(bundleDir).filter((e) => e.type === 'branch_finish').pop();
+  assert.ok(retire && retire.note === 'discard', 'the discard retirement is recorded');
+  assert.equal(fs.existsSync(WT), false, 'the worktree is gone (the discard teardown ran)');
+  for (let i = 0; i < 4 && readState(statePath).status !== 'archived'; i++) op = step();
+  const state = readState(statePath);
+  assert.equal(state.status, 'archived');
+  assert.equal(state.completion, 'incomplete:discarded', 'archived incomplete on the discard authorization');
+});
